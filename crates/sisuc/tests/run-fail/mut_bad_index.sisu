@@ -1,0 +1,14 @@
+// GIVEN `fn bump(mut n: i64) { n += 1 }` and `let mut xs = [0]`
+// WHEN `main` calls `bump(mut xs[5])`
+// THEN it panics with "index 5 out of bounds for length 1" before the call, at the index `5` of
+// the argument
+fn bump(mut n: i64) {
+    n += 1
+}
+
+fn main() {
+    let mut xs = [0]
+    print("before")
+    bump(mut xs[5])
+    print(xs)
+}

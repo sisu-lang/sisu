@@ -1,0 +1,42 @@
+// GIVEN `inner`, `outer`, `fill` and `give`, whose `mut` parameter is passed on, returned and used
+// in recursion
+// WHEN `main` calls `outer(mut b.cells)` on a field, `fill(mut zs, 2)` and `give(mut ws)`
+// THEN it prints "[1, 2, 3] 3", then "[0, 0, 7]", then "[0, 9] [0, 9]"
+class Board {
+    mut cells: [i64]
+}
+
+fn inner(mut ys: [i64]) {
+    ys = [ys[0], ys[1], 3]
+}
+
+fn outer(mut ys: [i64]) -> i64 {
+    ys = [ys[0], 2]
+    inner(mut ys)
+    ys.len()
+}
+
+fn fill(mut ys: [i64], n: i64) {
+    if n == 0 {
+        return
+    }
+    ys[n - 1] = 0
+    fill(mut ys, n - 1)
+}
+
+fn give(mut ys: [i64]) -> [i64] {
+    ys[1] = 9
+    ys
+}
+
+fn main() {
+    let b = Board(cells: [1])
+    let n = outer(mut b.cells)
+    print("{b.cells} {n}")
+    let mut zs = [5, 6, 7]
+    fill(mut zs, 2)
+    print(zs)
+    let mut ws = [0, 0]
+    let got = give(mut ws)
+    print("{ws} {got}")
+}

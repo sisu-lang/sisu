@@ -1,0 +1,25 @@
+// GIVEN a generic `fn swap<T>(mut a: T, mut b: T)` and `class Pair { mut a: [i64]; mut b: [i64] }`
+// whose method `flip` calls `swap(mut self.a, mut self.b)`
+// WHEN `main` calls `flip` on `Pair(a: [1], b: [2, 3])` and prints both fields
+// THEN it prints "[2, 3]", then "[1]": the two fields swap
+class Pair {
+    mut a: [i64]
+    mut b: [i64]
+
+    fn flip(self) {
+        swap(mut self.a, mut self.b)
+    }
+}
+
+fn swap<T>(mut a: T, mut b: T) {
+    let t = a
+    a = b
+    b = t
+}
+
+fn main() {
+    let p = Pair(a: [1], b: [2, 3])
+    p.flip()
+    print(p.a)
+    print(p.b)
+}

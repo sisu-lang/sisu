@@ -52,6 +52,45 @@ fn mut_local_should_move_into_the_call() {
     );
 }
 
+/// GIVEN S10's `replace`, whose `mut` parameter is the `nodes` field of a `Bag`
+/// WHEN the mir of `main` is built
+/// THEN the store-back takes the old `nodes` out, stores the new value into the field, and only
+/// then releases the old value
+#[test]
+fn store_back_should_write_before_it_releases() {
+    let printed = built(
+        "class Node {\n    value: i64\n}\n\
+         class Bag {\n    mut nodes: [Node]\n}\n\
+         fn replace(mut nodes: [Node], b: Bag) {\n    print(b.nodes.len())\n    nodes = [Node(value: 1)]\n}\n\
+         fn main() {\n    let b = Bag(nodes: [Node(value: 1), Node(value: 2)])\n    replace(mut b.nodes, b)\n    print(b.nodes.len())\n}",
+    );
+    has(
+        &printed,
+        "main",
+        &["= out 0", "= take _.0", "_.0 = move _", "release _"],
+    );
+}
+
+/// The slices program: `pop_front` trims its array.
+const POP_FRONT: &str = "class Queue {\n    mut items: [i64]\n}\n\
+    fn pop_front(mut xs: [i64]) {\n    xs = xs[1..]\n}\n\
+    fn via_field(q: Queue) {\n    pop_front(mut q.items)\n}\n\
+    fn via_local() {\n    let mut ys = [1, 2, 3]\n    pop_front(mut ys)\n    print(ys)\n}\n\
+    fn main() {\n    via_field(Queue(items: [1, 2]))\n    via_local()\n}";
+
+/// GIVEN `fn pop_front(mut xs: [i64]) { xs = xs[1..] }`
+/// WHEN the mir of `pop_front(mut q.items)` and of `pop_front(mut ys)` on a local is built
+/// THEN the store-back into the field has a `trim` before the store, and the one into the local has
+/// none
+#[test]
+fn store_back_into_a_field_should_trim() {
+    let printed = built(POP_FRONT);
+    has(&printed, "via_field", &["= out 0", "= trim ", ".0 = move"]);
+    let local = function(&printed, "via_local");
+    let after = &local[local.find("= out 0").expect("an `out` follows the call")..];
+    assert!(!after.contains("trim"), "{local}");
+}
+
 /// GIVEN `show`, whose `mut` parameter the body only reads
 /// WHEN its mir is built
 /// THEN the signature line prints no `borrow` for the parameter

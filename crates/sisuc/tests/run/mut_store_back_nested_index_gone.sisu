@@ -1,0 +1,20 @@
+// GIVEN `class Grid { mut rows: [[i64]] }`, `fn f(mut x: i64, g: Grid) { g.rows = [[5]]; x = 1 }`
+// and `let g = Grid(rows: [[0, 0], [0, 0]])`
+// WHEN `main` calls `f(mut g.rows[1][0], g)`, prints `g.rows`, then prints "done"
+// THEN it prints "[[5]]", then "done", and exits with code 0: the store-back tests every index of
+// the place against the array as it is after the call, and index 1 is gone
+class Grid {
+    mut rows: [[i64]]
+}
+
+fn f(mut x: i64, g: Grid) {
+    g.rows = [[5]]
+    x = 1
+}
+
+fn main() {
+    let g = Grid(rows: [[0, 0], [0, 0]])
+    f(mut g.rows[1][0], g)
+    print(g.rows)
+    print("done")
+}

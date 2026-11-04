@@ -1,0 +1,19 @@
+// GIVEN `fn f(mut cells: [i64], b: Board) { cells[0] += 10; print(b.cells) }` and
+// `let b = Board(cells: [1, 2, 3])`
+// WHEN `main` calls `f(mut b.cells, b)` and prints `b.cells`
+// THEN it prints "[1, 2, 3]", then "[11, 2, 3]": code that reads the place during the call sees
+// the value that it had at the copy-in
+class Board {
+    mut cells: [i64]
+}
+
+fn f(mut cells: [i64], b: Board) {
+    cells[0] += 10
+    print(b.cells)
+}
+
+fn main() {
+    let b = Board(cells: [1, 2, 3])
+    f(mut b.cells, b)
+    print(b.cells)
+}

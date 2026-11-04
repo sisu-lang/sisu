@@ -1,0 +1,19 @@
+// GIVEN `class Grid { mut rows: [[i64]] }`,
+// `fn f(mut row: [i64], g: Grid) { g.rows = [g.rows[1], g.rows[2]]; row[0] = 1 }` and
+// `let g = Grid(rows: [[0], [0], [0]])`
+// WHEN `main` calls `f(mut g.rows[1], g)` and prints `g.rows`
+// THEN it prints "[[0], [1]]": the array shifted, and the store-back writes the saved index
+class Grid {
+    mut rows: [[i64]]
+}
+
+fn f(mut row: [i64], g: Grid) {
+    g.rows = [g.rows[1], g.rows[2]]
+    row[0] = 1
+}
+
+fn main() {
+    let g = Grid(rows: [[0], [0], [0]])
+    f(mut g.rows[1], g)
+    print(g.rows)
+}

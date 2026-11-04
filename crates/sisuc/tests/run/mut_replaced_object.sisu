@@ -1,0 +1,28 @@
+// GIVEN `Inner` and `Holder` of `mut_kept_object`, `fn replace(o: Holder) -> i64` that installs
+// `Inner(cells: [100])`, `fn f(mut cells: [i64], n: i64) { cells[0] = 7 }` and
+// `let o = Holder(inner: Inner(cells: [1]))`
+// WHEN `main` calls `f(mut o.inner.cells, replace(o))` and prints `o.inner.cells`
+// THEN it prints "[7]": the objects along the place are read after the other arguments, so the
+// copy-in and the store-back use the `Inner` that `replace` installed
+class Inner {
+    mut cells: [i64]
+}
+
+class Holder {
+    mut inner: Inner
+}
+
+fn replace(o: Holder) -> i64 {
+    o.inner = Inner(cells: [100])
+    0
+}
+
+fn f(mut cells: [i64], _n: i64) {
+    cells[0] = 7
+}
+
+fn main() {
+    let o = Holder(inner: Inner(cells: [1]))
+    f(mut o.inner.cells, replace(o))
+    print(o.inner.cells)
+}

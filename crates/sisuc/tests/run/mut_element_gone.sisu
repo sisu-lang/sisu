@@ -1,0 +1,20 @@
+// GIVEN `class Grid { mut rows: [[i64]] }`, `fn f(mut row: [i64], g: Grid) { g.rows = []; row[0] = 1 }`
+// AND `let g = Grid(rows: [[0], [0]])`
+// WHEN `main` calls `f(mut g.rows[1], g)` and prints `g.rows`, then "done"
+// THEN it prints "[]", then "done", and exits with code 0: the store-back into the element that
+// is gone is dropped
+class Grid {
+    mut rows: [[i64]]
+}
+
+fn f(mut row: [i64], g: Grid) {
+    g.rows = []
+    row[0] = 1
+}
+
+fn main() {
+    let g = Grid(rows: [[0], [0]])
+    f(mut g.rows[1], g)
+    print(g.rows)
+    print("done")
+}

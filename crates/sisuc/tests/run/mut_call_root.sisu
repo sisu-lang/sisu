@@ -1,0 +1,25 @@
+// GIVEN `fn mk() -> Board` that prints "mk ran", `fn side() -> i64` that prints "side ran" and
+// `fn f(mut cells: [i64], n: i64) { cells.push(n) }`
+// WHEN `main` calls `f(mut mk().cells, side())`
+// THEN it prints "mk ran", then "side ran": a root that is a call runs at the argument's position
+class Board {
+    mut cells: [i64]
+}
+
+fn mk() -> Board {
+    print("mk ran")
+    Board(cells: [0])
+}
+
+fn side() -> i64 {
+    print("side ran")
+    0
+}
+
+fn f(mut cells: [i64], n: i64) {
+    cells.push(n)
+}
+
+fn main() {
+    f(mut mk().cells, side())
+}

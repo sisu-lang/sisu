@@ -1,0 +1,26 @@
+// GIVEN `Inner` and `Holder` of `mut_kept_object` and
+// `fn f(mut cells: [i64], o: Holder) { o.inner = Inner(cells: [7]); cells[0] = 1 }`
+// AND `let o = Holder(inner: Inner(cells: [0, 0, 0]))`, with no other reference to the first
+// `Inner`
+// WHEN `main` calls `f(mut o.inner.cells, o)` and prints `o.inner.cells`
+// THEN it prints "[7]"
+// AND the `--rc-checks` build and Valgrind find no fault: the call keeps the first `Inner` alive
+// until the store-back, though the callee drops the last other reference to it
+class Inner {
+    mut cells: [i64]
+}
+
+class Holder {
+    mut inner: Inner
+}
+
+fn f(mut cells: [i64], o: Holder) {
+    o.inner = Inner(cells: [7])
+    cells[0] = 1
+}
+
+fn main() {
+    let o = Holder(inner: Inner(cells: [0, 0, 0]))
+    f(mut o.inner.cells, o)
+    print(o.inner.cells)
+}

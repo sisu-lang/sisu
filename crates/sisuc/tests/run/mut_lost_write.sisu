@@ -1,0 +1,19 @@
+// GIVEN `fn grow(mut cells: [i64], b: Board) { b.cells = [9]; cells[0] = 1 }` and
+// `let b = Board(cells: [0, 0])`
+// WHEN `main` calls `grow(mut b.cells, b)` and prints `b.cells`
+// THEN it prints "[1, 0]": the write of `[9]` by other code during the call is lost, because the
+// store-back replaces it
+class Board {
+    mut cells: [i64]
+}
+
+fn grow(mut cells: [i64], b: Board) {
+    b.cells = [9]
+    cells[0] = 1
+}
+
+fn main() {
+    let b = Board(cells: [0, 0])
+    grow(mut b.cells, b)
+    print(b.cells)
+}
