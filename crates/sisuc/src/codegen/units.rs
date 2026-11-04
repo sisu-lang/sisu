@@ -52,20 +52,15 @@ pub(crate) fn count(sizes: &[usize], flag: Option<usize>) -> usize {
 
 /// The unit of each function of `sizes`, indexed by the function's id. The largest function goes
 /// first, and each goes to the unit with the least size so far; ties go to the lower index.
+///
+/// # Panics
+///
+/// If `count` is 0 and `sizes` is not empty: a function needs a unit.
 #[cfg_attr(
     not(test),
     expect(dead_code, reason = "Task 2 calls `partition`, which calls it")
 )]
-///
-/// # Panics
-///
-/// If `count` is 0: a function needs a unit.
 pub(crate) fn assign(sizes: &[usize], count: usize) -> Vec<usize> {
-    assert!(
-        count > 0,
-        "{} functions need at least one unit",
-        sizes.len()
-    );
     let mut order: Vec<usize> = (0..sizes.len()).collect();
     // The sort is stable, so equal sizes stay in id order.
     order.sort_by_key(|&function| Reverse(sizes[function]));
@@ -74,7 +69,7 @@ pub(crate) fn assign(sizes: &[usize], count: usize) -> Vec<usize> {
         (0..count).map(|unit| Reverse((0, unit))).collect();
     let mut units = vec![0; sizes.len()];
     for function in order {
-        let Reverse((load, unit)) = loads.pop().expect("the heap should hold `count` units");
+        let Reverse((load, unit)) = loads.pop().expect("`count` should be at least 1");
         units[function] = unit;
         loads.push(Reverse((load + sizes[function], unit)));
     }
