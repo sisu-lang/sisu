@@ -1,0 +1,24 @@
+// GIVEN the prelude function `exchange(mut place, with)`, `class Board { mut cells: [i64] }`,
+// `let b = Board(cells: [1])` and `let mut x: i64? = None`
+// WHEN `main` runs `let old = exchange(mut b.cells, [])` and prints `old`, then `b.cells`
+// AND runs `let was = exchange(mut x, 5)` and prints `was`, then `x`
+// THEN it prints "[1]", then "[]"
+// AND it prints "None", then "5"
+class Board {
+    mut cells: [i64]
+}
+
+fn main() {
+    let b = Board(cells: [1])
+    let old = exchange(mut b.cells, [])
+    print(old)
+    print(b.cells)
+    let mut x: i64? = None
+    let was = exchange(mut x, 5)
+    if let Some(v) = was {
+        print(v)
+    } else {
+        print("None")
+    }
+    print(x ?? 0)
+}

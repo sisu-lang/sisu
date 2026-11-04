@@ -6048,3 +6048,70 @@ fn out_slot_should_be_in_the_entry_block() {
         "the out slot should be in the entry block:\n{main}"
     );
 }
+
+/// The parameters of the function that starts with `header` in `ir`, as `<type> <name>` texts.
+fn header_params<'a>(ir: &'a str, header: &str) -> Vec<&'a str> {
+    let (_, rest) = ir
+        .split_once(header)
+        .unwrap_or_else(|| panic!("no {header} in\n{ir}"));
+    let (params, _) = rest.split_once(')').expect("the header should close");
+    params.split(", ").collect()
+}
+
+/// A prelude function with a `mut` parameter takes its out pointers after its value parameters
+/// and before the two parameters of its caller's location. The call passes them in that order,
+/// and the function reads the location at the moved indexes.
+#[test]
+fn prelude_mut_call_should_pass_the_out_pointer_before_the_report_site() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "fn main() {\n    let mut x = 3\n    let old = exchange(mut x, 5)\n    print(old + x)\n}",
+    )
+    .print_to_string()
+    .to_string();
+    // The value arguments, then the out pointer, then the location of the call.
+    let main = function_body(&ir, "define internal void @sisu.main()");
+    let call = main
+        .lines()
+        .find(|line| line.contains("call i64 @\"sisu.exchange<i64>\"("))
+        .unwrap_or_else(|| panic!("no call of `exchange` in\n{main}"));
+    let (_, args) = call.split_once("exchange<i64>\"(").expect("the call opens");
+    let args: Vec<&str> = args.trim_end_matches(')').split(", ").collect();
+    let kinds: Vec<&str> = args
+        .iter()
+        .map(|arg| arg.split_whitespace().next().unwrap_or_default())
+        .collect();
+    assert_eq!(kinds, ["i64", "i64", "ptr", "ptr", "i64"], "{call}");
+    let out = args[2].trim_start_matches("ptr ");
+    assert!(
+        main.lines()
+            .any(|line| line.trim_start().starts_with(&format!("{out} = alloca "))),
+        "the out pointer {out} should be an `alloca` of `main`:\n{main}"
+    );
+    assert!(args[3].starts_with("ptr @report.text"), "{call}");
+    assert_eq!(
+        args[4],
+        format!("i64 {})", "test.sisu:3:19".len()),
+        "{call}"
+    );
+    // The function declares the same order, and stores the new value through its out pointer.
+    let header = "define internal i64 @\"sisu.exchange<i64>\"(";
+    let params = header_params(&ir, header);
+    let kinds: Vec<&str> = params
+        .iter()
+        .map(|param| param.split_whitespace().next().unwrap_or_default())
+        .collect();
+    assert_eq!(kinds, ["i64", "i64", "ptr", "ptr", "i64"], "{params:?}");
+    let out = params[2]
+        .rsplit(' ')
+        .next()
+        .expect("a parameter has a name");
+    let body = function_body(&ir, header);
+    assert!(
+        body.lines().any(|line| line
+            .trim_start()
+            .ends_with(&format!(", ptr {out}, align 8"))),
+        "`exchange` should store through its out pointer {out}:\n{body}"
+    );
+}
