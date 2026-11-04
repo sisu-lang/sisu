@@ -1,0 +1,15 @@
+error[E0167]: `Shape.Circle(…)` takes no `mut` argument: it copies each value into its field
+  --> E0167-variant-label.sisu:12:29
+   |
+12 |     let s = Shape.Circle(r: mut x)
+   |                             ^^^ no `mut` here
+   |
+   = help: an enum value never changes after it is built
+help: remove `mut`
+   |
+12 -     let s = Shape.Circle(r: mut x)
+12 +     let s = Shape.Circle(r: x)
+   |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0167

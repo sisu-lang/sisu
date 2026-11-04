@@ -2,7 +2,8 @@
 //! warnings of a local that is passed `mut`.
 
 use super::*;
-use crate::check::mut_args::MUT_KEY_STEPS;
+use crate::check::mut_args::{MUT_KEY_STEPS, RootKey, Step};
+use crate::tir::LocalId;
 
 /// A class with one `mut` array field.
 const BOARD: &str = "class Board {\n    mut cells: [i64]\n}\n";
@@ -1496,4 +1497,240 @@ fn unmarked_place_whose_call_misses_its_expected_type_should_report_the_mismatch
     found.sort_by_key(|d| d.span().start());
     let found: Vec<_> = found.iter().map(Diagnostic::code).collect();
     assert_eq!(found, [Code::Mismatch, Code::MutMarkerMissing], "return");
+}
+
+/// GIVEN `fn bad() -> Nope`, whose return type is unknown (E0030), and `set(mut bad())`
+/// WHEN it is checked
+/// THEN it is E0030 only: the call has no type because of an earlier error, so it is no context
+///   literal, and E0169 would repeat that error
+#[test]
+fn call_that_failed_earlier_should_not_be_reported_as_no_place() {
+    let src = format!("{SET}fn bad() -> Nope {{\n    1\n}}\nfn main() {{\n    set(mut bad())\n}}");
+    assert_eq!(found_codes(&src), [Code::UnknownType]);
+}
+
+/// GIVEN two `mut` places, and `f(mut a, mut b)`
+/// WHEN the places are the same, or only the index, the field or the object differs
+/// THEN only the same place is E0171: a literal index, a field of a field and a field of an
+///   element are each the same place when they are written the same
+#[test]
+fn mut_places_should_overlap_only_when_every_step_is_the_same() {
+    let decls = "class Item {\n    mut n: i64\n}\nclass Outer {\n    mut inner: Item\n}\n\
+        fn f(mut a: i64, mut b: i64) {\n    a = 1\n    b = 2\n}\n";
+    let xs = "let mut xs = [1, 2]";
+    let o = "let o = Outer(inner: Item(n: 1))";
+    let items = "let items = [Item(n: 1), Item(n: 2)]";
+    let rows = [
+        ("two literal indexes", xs, "mut xs[0], mut xs[1]", false),
+        ("the same literal index", xs, "mut xs[0], mut xs[0]", true),
+        (
+            "the same field of a field",
+            o,
+            "mut o.inner.n, mut o.inner.n",
+            true,
+        ),
+        (
+            "the same field of an element",
+            items,
+            "mut items[0].n, mut items[0].n",
+            true,
+        ),
+        (
+            "fields of two elements",
+            items,
+            "mut items[0].n, mut items[1].n",
+            false,
+        ),
+    ];
+    for (row, setup, args, twice) in rows {
+        let src = format!("{decls}fn main() {{\n    {setup}\n    f({args})\n}}");
+        let expected: &[Code] = if twice { &[Code::MutPlaceTwice] } else { &[] };
+        assert_eq!(found_codes(&src), expected, "row `{row}`");
+    }
+}
+
+/// The hash of `value` with the standard hasher.
+fn hash_of(value: &impl std::hash::Hash) -> u64 {
+    use std::hash::Hasher;
+    let mut hasher = std::hash::DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// GIVEN the steps and the roots of a `mut` place
+/// WHEN they are compared and hashed
+/// THEN each equals itself, including a `Temp` root and an `Unknown` step, and no two different
+///   steps are equal or hash alike: the lookups of `twice` stay constant
+#[test]
+fn mut_place_keys_should_equal_themselves_only() {
+    let steps = [
+        Step::Field(0),
+        Step::Field(1),
+        Step::Literal(0),
+        Step::Literal(1),
+        Step::Local(LocalId(0)),
+        Step::Local(LocalId(1)),
+        Step::Unknown,
+    ];
+    for (i, a) in steps.iter().enumerate() {
+        for (j, b) in steps.iter().enumerate() {
+            assert_eq!(a == b, i == j, "{a:?} and {b:?}");
+            assert_eq!(hash_of(a) == hash_of(b), i == j, "{a:?} and {b:?}");
+        }
+    }
+    let roots = [
+        RootKey::Local(LocalId(0)),
+        RootKey::Local(LocalId(1)),
+        RootKey::Temp,
+    ];
+    for (i, a) in roots.iter().enumerate() {
+        for (j, b) in roots.iter().enumerate() {
+            assert_eq!(a == b, i == j, "{a:?} and {b:?}");
+        }
+    }
+}
+
+/// GIVEN `fn set(mut xs: [i64])`
+/// WHEN a call passes a value with no `mut`: a string or an `i64` for the array
+/// THEN the value is checked as any other: the mismatch is E0032, and E0166 follows
+#[test]
+fn unmarked_value_at_a_mut_parameter_should_be_checked_as_a_value() {
+    for (row, call) in [
+        ("string for an array", "set(\"x\")"),
+        ("i64 for an array", "set(5)"),
+    ] {
+        let src = format!("{SET}fn main() {{\n    {call}\n}}");
+        let mut found = diags(&src);
+        found.sort_by_key(|d| d.span().start());
+        let found: Vec<_> = found.iter().map(Diagnostic::code).collect();
+        assert_eq!(
+            found,
+            [Code::Mismatch, Code::MutMarkerMissing],
+            "row `{row}`"
+        );
+    }
+}
+
+/// The E0166 diagnostics of `src`, in the order of their places, each as the line and the column
+/// of its place and whether it offers a fix.
+fn marker_fixes(src: &str) -> Vec<(usize, usize, bool)> {
+    let mut ds = diags(src);
+    ds.sort_by_key(|d| d.span().start());
+    ds.iter()
+        .map(|d| {
+            assert_eq!(d.code(), Code::MutMarkerMissing, "{src}");
+            let (line, col) = at(src, d.span());
+            (line, col, !d.fixes().is_empty())
+        })
+        .collect()
+}
+
+/// GIVEN `f(mut xs[0], xs[1], xs, n)`, where `xs[0]` and `xs[1]` are inside `xs`, and `n` is a
+///   plain local
+/// WHEN the unmarked arguments are reported
+/// THEN `xs[1]` and `xs` get no fix, as adding `mut` to each would pass overlapping places, and
+///   `n` gets the fix. `xs[1]` meets no place before it: only the keys read from the other end
+///   find the pair, and that pair does not start at the last key.
+#[test]
+fn unmarked_place_inside_a_later_place_should_get_no_fix() {
+    let src = "fn f(mut a: i64, mut b: i64, mut c: [i64], mut d: i64) {\n    a = 1\n    b = 2\n    \
+        c[0] = 3\n    d = 4\n}\n\
+        fn main() {\n    let mut xs = [1, 2]\n    let mut n = 0\n    f(mut xs[0], xs[1], xs, n)\n    \
+        print(xs)\n    print(n)\n}";
+    assert_eq!(
+        marker_fixes(src),
+        [(10, 18, false), (10, 25, false), (10, 29, true)]
+    );
+    // With no place after the pair, `xs[1]` is the key just before the last.
+    let short = "fn f(mut a: i64, mut b: i64, mut c: [i64]) {\n    a = 1\n    b = 2\n    c[0] = 3\n}\n\
+        fn main() {\n    let mut xs = [1, 2]\n    f(mut xs[0], xs[1], xs)\n    print(xs)\n}";
+    assert_eq!(marker_fixes(short), [(8, 18, false), (8, 25, false)]);
+}
+
+/// GIVEN a generic function `first<T>(mut xs: [T]) -> T`, and `bump(mut first(xs))`, where the
+///   call is the argument of a `mut` parameter and so is checked with no type expected of it
+/// WHEN it is checked
+/// THEN E0166 has the fix: the result meets a context that expects nothing
+#[test]
+fn unmarked_place_whose_result_has_no_context_should_get_its_fix() {
+    let src = "fn first<T>(mut xs: [T]) -> T {\n    let x = xs[0]\n    xs[0] = x\n    x\n}\n\
+        fn bump(mut n: i64) {\n    n += 1\n}\n\
+        fn main() {\n    let mut xs = [1]\n    bump(mut first(xs))\n    print(xs)\n}";
+    assert_eq!(marker_fixes(src), [(11, 20, true)]);
+}
+
+/// GIVEN a stray `mut` that a line break separates from its argument
+/// WHEN it is E0167
+/// THEN the fix removes `mut` alone, and the line break stays
+#[test]
+fn stray_mut_before_a_line_break_should_be_removed_alone() {
+    let src = "fn main() {\n    let mut xs = [1, 2]\n    print(mut\n        xs)\n    xs[0] = 3\n}";
+    let d = only(src, Code::MutMarkerNotMut);
+    assert_eq!(
+        fixes(src, &d),
+        [(true, vec![(3, 11, "mut", String::new())])]
+    );
+    let spaced = "fn main() {\n    let mut xs = [1, 2]\n    print(mut \t xs)\n    xs[0] = 3\n}";
+    let d = only(spaced, Code::MutMarkerNotMut);
+    assert_eq!(
+        fixes(spaced, &d),
+        [(true, vec![(3, 11, "mut \t ", String::new())])]
+    );
+}
+
+/// GIVEN a generic `clear<T>(mut n: T?, d: T) -> T` and a call with an `i64` place
+/// WHEN the call is checked and its result is used as a `string`
+/// THEN it is E0170 only: the failed `mut` argument fails the call, so the result raises no more
+///   errors
+#[test]
+fn generic_call_with_a_failed_mut_argument_should_not_cascade() {
+    let src = "fn clear<T>(mut n: T?, d: T) -> T {\n    n = None\n    d\n}\n\
+        fn text(s: string) {\n    print(s)\n}\n\
+        fn main() {\n    let mut n = 1\n    let r = clear(mut n, 5)\n    text(r)\n}";
+    assert_eq!(found_codes(src), [Code::MutArgumentType]);
+}
+
+/// GIVEN `f(mut xs[i], 5, k, 7 + 1, xs[j])`, where `i` is a `let mut` local and `k` and `j` are
+///   `let` locals
+/// WHEN the `tir` is printed
+/// THEN a literal and a `let` local stay in the call, as nothing can change them; the `let mut`
+///   index, the sum and the element are each read into a hidden local first, in written order
+#[test]
+fn mut_call_should_hide_each_argument_that_a_mut_argument_can_change() {
+    let src = "fn f(mut a: i64, b: i64, c: i64, d: i64, e: i64) {\n    a = b + c + d + e\n}\n\
+        fn main() {\n    let mut xs = [1, 2, 3]\n    let j = 1\n    let mut i = 0\n    let k = 2\n    \
+        f(mut xs[i], 5, k, 7 + 1, xs[j])\n    print(xs)\n    i = 0\n}";
+    contains(
+        src,
+        &[
+            "(block (let #5 i#2) (let #6 (+ 7 1)) (let #7 (index xs#0 j#1)) (mut_call (call f #4 5 k#3 #6 #7)",
+            "(mut #4 (index xs#0 #5))",
+        ],
+    );
+}
+
+/// GIVEN a generic `f` with a `mut` array parameter after an `i64`, and a generic `g` with the
+///   same parameters but no `mut`, each nested as an argument of another generic call
+/// WHEN the checker ranks the nested call
+/// THEN the place at the `mut` parameter is not ranked, as a place has no rank to find: the call
+///   of `f` costs one step less than the call of `g`, which ranks its array argument
+#[test]
+fn place_at_a_mut_parameter_should_not_be_ranked() {
+    crate::on_compiler_stack(|| {
+        let steps = |inner: &str| {
+            let src = format!(
+                "fn f<T>(n: i64, mut xs: [T]) -> T {{\n    let x = xs[0]\n    xs[0] = x\n    x\n}}\n\
+                fn g<T>(n: i64, xs: [T]) -> T {{\n    xs[0]\n}}\n\
+                fn k<T>(a: T, b: T) -> T {{\n    b\n}}\n\
+                fn main() {{\n    let mut xs = [1]\n    let r: i64 = k(1, {inner})\n    print(r)\n    \
+                xs[0] = 2\n}}"
+            );
+            generic::RANK_STEPS.set(0);
+            clean(&src);
+            generic::RANK_STEPS.get()
+        };
+        let (with_mut, without) = (steps("f(0, mut xs)"), steps("g(0, xs)"));
+        assert!(with_mut > 0, "the counter should count the walk");
+        assert_eq!(with_mut + 1, without);
+    });
 }
