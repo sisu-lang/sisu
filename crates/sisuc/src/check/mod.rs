@@ -55,7 +55,7 @@ use constant::{ConstInfo, ConstantSite};
 use enums::{EnumInfo, HoldsTable};
 use extend::Extension;
 use interface::{Bound, InterfaceInfo, PendingBound, Required, Scope, Slot, Waiting};
-use prelude::PRELUDE;
+use prelude::{PRELUDE, WRITTEN_PRELUDE};
 pub(crate) use unused_names::is_judged;
 use unused_names::{Owner, Pending, Use, Used};
 
@@ -1666,7 +1666,8 @@ impl Checker<'_> {
         kind: Definition,
         name: &ast::Ident,
     ) -> bool {
-        if PRELUDE.contains(&name.name.as_str()) {
+        let written = !name.span.in_prelude() && WRITTEN_PRELUDE.contains(&name.name.as_str());
+        if written || PRELUDE.contains(&name.name.as_str()) {
             self.report(defined_twice(kind, name, Earlier::BuiltIn));
             return false;
         }
