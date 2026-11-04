@@ -512,7 +512,7 @@ fn main() { print(e(1)) }";
         }
     }
 
-    /// Recurses with a 64 KiB array in each of 64 frames: about 4 MiB of stack. The 2 MiB stack of
+    /// Recurses with a 64 KiB array in each of 65 frames: about 4 MiB of stack. The 2 MiB stack of
     /// a default thread overflows.
     #[expect(
         clippy::large_stack_arrays,
