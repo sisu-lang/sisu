@@ -41,10 +41,10 @@ The wanted outputs come from this list. Do not change one to fit the code. A tas
 
 ## Your job
 
-1. Write the tests of the "Tests" list first. Run only these tests at the task base (`cargo nextest run -E 'test(<name>)'`). List each test that is red, and why. Commit the tests alone. The title starts with "Add failing tests", and the body gives the red list. `make test` fails at this commit.
+1. Write the tests of the "Tests" list first. Run only these tests at the task base (`cargo nextest run -E 'test(<name>)'`). List each test that is red, and why. Commit the tests alone. The title starts with "Add failing tests", and the body gives the red list. `make test` fails at this commit. A task with no test commit ("Tests" above) skips this step.
 2. Implement the fixes. Make each red test green with the smallest change at the cause. When the fix does not make a test green, that is a finding: report it. Do not change the test or its wanted output.
 3. Run `(cd <worktree> && nice -n 19 make test)`. It must pass. Clippy and fmt must be clean. When it prints `heavy-run: waiting for this run to end: make mutation-test ...`, stop it and run `(cd <worktree> && SISU_HEAVY_LOCK=skip nice -n 19 make test)`, and the same for `make coverage`. Say so in the report.
-4. Commit the fix after the test commit. Commit as `<author>`. Use `git -C <worktree> commit -F <file>`, one commit per Bash call. Write the message in STE. Add no `Claude-Session` or session-URL line. Then run `git log -1` to check that it landed.
+4. Commit the fix, after the test commit when there is one. Commit as `<author>`. Use `git -C <worktree> commit -F <file>`, one commit per Bash call. Write the message in STE. Add no `Claude-Session` or session-URL line. Then run `git log -1` to check that it landed.
 5. Run `(cd <worktree> && nice -n 19 make coverage BASE=<BASE> > <ledger folder>/<group>-task-<N>-coverage.txt 2>&1)`. Cover or explain each uncovered changed region.
 6. Run no mutation test: the controller runs one for the whole group, after the reviews.
 7. Stop every background job you started. Then report once:

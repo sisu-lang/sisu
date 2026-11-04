@@ -11,7 +11,9 @@ import unittest
 
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'heavy-run.sh')
 # A pre-commit hook runs these tests with GIT_DIR and its kin set to the outer repository.
-ENV = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
+# SISU_HEAVY_LOCK=skip in the shell would let the tests that wait for the lock run at once.
+ENV = {k: v for k, v in os.environ.items()
+       if not k.startswith('GIT_') and k != 'SISU_HEAVY_LOCK'}
 
 
 def wait_for(condition, what):
@@ -57,7 +59,8 @@ class HeavyRun(unittest.TestCase):
             held.flush()
             fcntl.flock(held, fcntl.LOCK_EX)
             run = self.start('touch', 'ran')
-            wait_for(lambda: 'heavy-run: waiting' in self.stderr(), 'the waiting message')
+            # The script writes the two lines with two `echo`s, so wait for the second one.
+            wait_for(lambda: 'SISU_HEAVY_LOCK=skip' in self.stderr(), 'the waiting message')
             self.assertIn('heavy-run: waiting for this run to end: make test in /elsewhere', self.stderr())
             self.assertIn('heavy-run: to run now with no lock, set SISU_HEAVY_LOCK=skip', self.stderr())
             self.assertIsNone(run.poll())
