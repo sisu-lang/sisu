@@ -263,7 +263,9 @@ of programs at once, and then the disk stops for every other process. So a
 second run prints `heavy-run: waiting for this run to end: <command> in
 <worktree>` and waits for the first. A second `make mutation-test` in the same
 worktree still fails at once. When the lock cannot be taken (no `flock`, no Git
-directory, a read-only `.git`), the run warns and goes on with no lock. Each
+directory, a read-only `.git`), the run warns and goes on with no lock.
+`SISU_HEAVY_LOCK=skip` runs it with no lock on purpose, for example while a
+mutation test of hours holds the lock and the machine has cores to spare. Each
 mutant of a mutation run tests 8 tests at a time. `NEXTEST_TEST_THREADS` sets
 another number.
 

@@ -37,13 +37,13 @@ Neighbours: <the table of neighbouring cases, with today's output and the wanted
 
 <The test list. One row for each case of the "Neighbours" tables, in both orders and at each depth, with its wanted output, and the fixture or unit test that holds it. One unit test that pins each cause. The docs to update.>
 
-The wanted outputs come from this list. Do not change one to fit the code. A task that changes only docs or the text of a diagnostic has no test commit: its fixture diff is the test. The test commit of a performance fix can add the `cfg(test)` counter and its ticks.
+The wanted outputs come from this list. Do not change one to fit the code. A task that changes only docs or the text of a diagnostic has no test commit: its fixture diff is the test. When a test in a behaviour task wants new diagnostic text, a bless at the base writes the old text, and the fixture is green. So bless, then edit each wanted line of the `.err` and the `.json` by hand, and check that the fixture fails at the base on those lines only. The test commit of a performance fix can add the `cfg(test)` counter and its ticks.
 
 ## Your job
 
 1. Write the tests of the "Tests" list first. Run only these tests at the task base (`cargo nextest run -E 'test(<name>)'`). List each test that is red, and why. Commit the tests alone. The title starts with "Add failing tests", and the body gives the red list. `make test` fails at this commit.
 2. Implement the fixes. Make each red test green with the smallest change at the cause. When the fix does not make a test green, that is a finding: report it. Do not change the test or its wanted output.
-3. Run `(cd <worktree> && nice -n 19 make test)`. It must pass. Clippy and fmt must be clean.
+3. Run `(cd <worktree> && nice -n 19 make test)`. It must pass. Clippy and fmt must be clean. When it prints `heavy-run: waiting for this run to end: make mutation-test ...`, stop it and run `(cd <worktree> && SISU_HEAVY_LOCK=skip nice -n 19 make test)`, and the same for `make coverage`. Say so in the report.
 4. Commit the fix after the test commit. Commit as `<author>`. Use `git -C <worktree> commit -F <file>`, one commit per Bash call. Write the message in STE. Add no `Claude-Session` or session-URL line. Then run `git log -1` to check that it landed.
 5. Run `(cd <worktree> && nice -n 19 make coverage BASE=<BASE> > <ledger folder>/<group>-task-<N>-coverage.txt 2>&1)`. Cover or explain each uncovered changed region.
 6. Run no mutation test: the controller runs one for the whole group, after the reviews.
