@@ -1,6 +1,8 @@
 //! Codegen units: the size rule that picks how many units a program builds in, and the
 //! assignment of its functions to those units.
 
+#[cfg(test)]
+use std::cell::Cell;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::num::NonZeroUsize;
@@ -10,6 +12,7 @@ use std::thread;
 
 use rustc_hash::FxHashSet;
 
+use super::OptLevel;
 use crate::mir;
 
 /// The mir size of one unit. It matches 25k raw IR instructions.
@@ -21,6 +24,16 @@ pub(crate) const UNIT_SIZE: usize = 4969;
 
 /// The most units a program builds in when the flag is not given.
 pub(crate) const MAX_UNITS: usize = 8;
+
+/// The largest mir size of a function that a unit may copy from another unit (C6). The spike
+/// copied functions of at most 40 raw IR instructions. A mir size of `UNIT_SIZE` (4,969) matches
+/// 25,000 raw IR instructions, so 40 raw IR instructions are 40 * 4,969 / 25,000 = 7.95 mir
+/// size, which rounds to 8.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "`copies` reads it in the code commit")
+)]
+pub(crate) const SMALL: usize = 8;
 
 /// The mir size of `function`: its statements, and one terminator for each block. Every
 /// function has a block, so the size is at least 1.
@@ -68,6 +81,9 @@ pub(crate) fn assign(sizes: &[usize], count: usize) -> Vec<usize> {
 pub(crate) enum Placement {
     /// The unit defines the function.
     Own,
+    /// The unit defines an `available_externally` copy of the function, so that LLVM can inline
+    /// it. Another unit defines the function.
+    Copy,
     /// The unit declares the function; another unit defines it.
     Other,
 }
@@ -99,19 +115,26 @@ impl Unit {
     }
 }
 
-/// The units of `mir` for the flag `flag` (see `count`). It measures the functions once.
-pub(crate) fn split(mir: &mir::Program, flag: Option<usize>) -> Vec<Unit> {
+/// The units of `mir` for the flag `flag` (see `count`) and the optimization level `level`. It
+/// measures the functions once.
+pub(crate) fn split(mir: &mir::Program, flag: Option<usize>, level: OptLevel) -> Vec<Unit> {
     let sizes: Vec<usize> = mir.functions.iter().map(size).collect();
-    partition(mir, &sizes, count(&sizes, flag))
+    partition(mir, &sizes, count(&sizes, flag), level)
 }
 
 /// The `count` units of `mir`, whose functions have the sizes `sizes`. One unit is `Unit::whole`,
-/// with no assignment.
+/// with no assignment. With more, and `level` above `O0`, a unit also copies the small functions
+/// of the other units that it calls (see `copies`).
 ///
 /// # Panics
 ///
 /// With `count > 1`, if two functions have one name: a split build links by name.
-pub(crate) fn partition(mir: &mir::Program, sizes: &[usize], count: usize) -> Vec<Unit> {
+pub(crate) fn partition(
+    mir: &mir::Program,
+    sizes: &[usize],
+    count: usize,
+    level: OptLevel,
+) -> Vec<Unit> {
     if count == 1 {
         return vec![Unit::whole(mir.functions.len())];
     }
@@ -124,12 +147,16 @@ pub(crate) fn partition(mir: &mir::Program, sizes: &[usize], count: usize) -> Ve
         );
     }
     let owner = assign(sizes, count);
-    (0..count)
-        .map(|index| Unit {
-            index,
-            count,
-            placement: owner
-                .iter()
+    let copied = if level == OptLevel::O0 {
+        vec![Vec::new(); count]
+    } else {
+        copies(sizes, &callees(mir), &owner, count)
+    };
+    copied
+        .into_iter()
+        .enumerate()
+        .map(|(index, copied)| {
+            let mut placement: Vec<Placement> = (owner.iter())
                 .map(|&unit| {
                     if unit == index {
                         Placement::Own
@@ -137,9 +164,57 @@ pub(crate) fn partition(mir: &mir::Program, sizes: &[usize], count: usize) -> Ve
                         Placement::Other
                     }
                 })
-                .collect(),
+                .collect();
+            for function in copied {
+                placement[function] = Placement::Copy;
+            }
+            Unit {
+                index,
+                count,
+                placement,
+            }
         })
         .collect()
+}
+
+/// For each function of `mir`, the sorted list, with no repeat, of the functions that its body
+/// calls.
+fn callees(mir: &mir::Program) -> Vec<Vec<usize>> {
+    mir.functions
+        .iter()
+        .map(|function| {
+            let mut callees: Vec<usize> = (function.blocks.iter())
+                .flat_map(|block| &block.stmts)
+                .filter_map(|stmt| match stmt {
+                    mir::Statement::Assign {
+                        value: mir::Rvalue::Call { func, .. },
+                        ..
+                    } => Some(func.0),
+                    _ => None,
+                })
+                .collect();
+            callees.sort_unstable();
+            callees.dedup();
+            callees
+        })
+        .collect()
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many callee edges `copies` has visited on this thread.
+    static COPY_STEPS: Cell<usize> = const { Cell::new(0) };
+}
+
+/// For each of the `count` units, the functions it copies.
+pub(crate) fn copies(
+    sizes: &[usize],
+    callees: &[Vec<usize>],
+    unit_of: &[usize],
+    count: usize,
+) -> Vec<Vec<usize>> {
+    let _ = (sizes, callees, unit_of);
+    vec![Vec::new(); count]
 }
 
 /// How the units of a build run. `Forward` and `Reverse` are for tests of the order of units (the
@@ -246,6 +321,7 @@ pub(crate) fn schedule<T: Send>(
 mod tests {
     use super::*;
     use crate::front_end::{PRELUDE_SOURCE, prelude_program};
+    use crate::mir::tests::assert_near_linear;
     use crate::parser::parse_ok;
     use std::fs;
     use std::sync::{Condvar, Mutex};
@@ -389,7 +465,7 @@ fn main() { print(e(1)) }";
     #[test]
     fn partition_should_own_each_function_in_one_unit() {
         let mir = mir_of(SIX);
-        let units = partition(&mir, &sizes_of(&mir), 3);
+        let units = partition(&mir, &sizes_of(&mir), 3, OptLevel::O0);
         assert_eq!(units.len(), 3);
         for (index, unit) in units.iter().enumerate() {
             assert_eq!((unit.index, unit.count), (index, 3));
@@ -414,7 +490,7 @@ fn main() { print(e(1)) }";
     fn partition_should_reject_two_functions_with_one_name() {
         let mut mir = mir_of(SIX);
         mir.functions[1].name = mir.functions[0].name.clone();
-        partition(&mir, &sizes_of(&mir), 2);
+        partition(&mir, &sizes_of(&mir), 2, OptLevel::O0);
     }
 
     #[test]
@@ -520,5 +596,132 @@ fn main() { print(e(1)) }";
     #[test]
     fn workers_should_have_the_stack_of_the_compiler() {
         assert_eq!(schedule(2, 2, Order::Threads, |_| deep(64)), [65, 65]);
+    }
+
+    /// The copy list of each unit, sorted, so that a test does not depend on the order in which
+    /// `copies` finds the functions.
+    fn sorted(mut copied: Vec<Vec<usize>>) -> Vec<Vec<usize>> {
+        for list in &mut copied {
+            list.sort_unstable();
+        }
+        copied
+    }
+
+    /// A function that is small.
+    const S: usize = SMALL;
+    /// A function that is not.
+    const L: usize = SMALL + 1;
+
+    #[test]
+    fn copies_should_close_over_small_callees() {
+        // a -> b -> c -> d, each in its own unit; b and c are small, d is not.
+        let callees = [vec![1], vec![2], vec![3], vec![]];
+        let copied = sorted(copies(&[S, S, S, L], &callees, &[0, 1, 2, 3], 4));
+        // `a` copies `b` and, through `b`, `c`, but not the large `d`. `b` copies `c`. No unit
+        // copies a function it owns.
+        assert_eq!(copied, [vec![1, 2], vec![2], vec![], vec![]]);
+    }
+
+    #[test]
+    fn copies_should_end_on_a_cycle() {
+        // a -> b <-> c, in three units, all small.
+        let callees = [vec![1], vec![2], vec![1]];
+        let copied = sorted(copies(&[S, S, S], &callees, &[0, 1, 2], 3));
+        assert_eq!(copied, [vec![1, 2], vec![2], vec![1]]);
+    }
+
+    #[test]
+    fn copies_should_expand_a_shared_callee_once() {
+        // a -> b, c; b -> d; c -> d; d -> e; each in its own unit, all small.
+        let callees = [vec![1, 2], vec![3], vec![3], vec![4], vec![]];
+        COPY_STEPS.set(0);
+        let copied = copies(&[S; 5], &callees, &[0, 1, 2, 3, 4], 5);
+        assert_eq!(copied[0], [1, 2, 3, 4]);
+        // The steps of each unit: `a` 5 (a->b, a->c, b->d, c->d, d->e), `b` 2 (b->d, d->e),
+        // `c` 2 (c->d, d->e), `d` 1 (d->e), `e` 0. An expansion for each push gives 11.
+        assert_eq!(COPY_STEPS.get(), 10);
+    }
+
+    /// The steps `copies` takes for `callees`, whose functions are all small, in 64 units round
+    /// robin.
+    fn copy_steps(callees: &[Vec<usize>]) -> usize {
+        let unit_of: Vec<usize> = (0..callees.len()).map(|function| function % 64).collect();
+        COPY_STEPS.set(0);
+        copies(&vec![S; callees.len()], callees, &unit_of, 64);
+        COPY_STEPS.get()
+    }
+
+    #[test]
+    fn copies_should_take_linear_steps() {
+        // A chain: each function calls the next.
+        let chain = |n: usize| -> Vec<Vec<usize>> {
+            (0..n)
+                .map(|f| if f + 1 < n { vec![f + 1] } else { vec![] })
+                .collect()
+        };
+        assert_near_linear(
+            copy_steps(&chain(200)),
+            copy_steps(&chain(400)),
+            copy_steps(&chain(600)),
+        );
+        // Layers of two: each function calls both functions of the next layer. A function that
+        // is expanded once for each caller makes 2^layers steps.
+        let layers = |n: usize| -> Vec<Vec<usize>> {
+            (0..n)
+                .map(|f| {
+                    let next = (f / 2 + 1) * 2;
+                    if next < n {
+                        vec![next, next + 1]
+                    } else {
+                        vec![]
+                    }
+                })
+                .collect()
+        };
+        assert_near_linear(
+            copy_steps(&layers(200)),
+            copy_steps(&layers(400)),
+            copy_steps(&layers(600)),
+        );
+    }
+
+    #[test]
+    fn partition_should_copy_nothing_at_o0() {
+        let mir = mir_of(CALLS_STEP);
+        let units = partition(&mir, &sizes_of(&mir), 2, OptLevel::O0);
+        assert!(
+            units
+                .iter()
+                .all(|unit| !unit.placement.contains(&Placement::Copy)),
+            "{units:?}"
+        );
+    }
+
+    /// A `main` that calls the small function `step`.
+    const CALLS_STEP: &str = "fn step(i: i64) -> i64 { i * 3 + 1 }
+fn main() {
+    let mut sum = 0
+    for i in 0..10 {
+        sum += step(i) % 7
+    }
+    print(sum)
+}";
+
+    #[test]
+    fn partition_should_copy_a_small_callee_at_o2_and_o3() {
+        let mir = mir_of(CALLS_STEP);
+        let at = |name: &str| {
+            (mir.functions.iter().position(|f| f.name == name)).expect("the program has it")
+        };
+        let (step, main) = (at("step"), at("main"));
+        for level in [OptLevel::O2, OptLevel::O3] {
+            let units = partition(&mir, &sizes_of(&mir), 2, level);
+            let own = (units
+                .iter()
+                .position(|u| u.placement[main] == Placement::Own))
+            .expect("a unit owns `main`");
+            assert_eq!(units[own].placement[step], Placement::Copy);
+            assert_eq!(units[1 - own].placement[step], Placement::Own);
+        }
     }
 }

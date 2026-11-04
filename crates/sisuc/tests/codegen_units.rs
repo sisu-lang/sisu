@@ -40,9 +40,22 @@ fn units(ir: &str) -> Vec<&str> {
     parts
 }
 
-/// Whether `unit` defines the function `name`.
+/// Whether the body of the function `name` in `unit` is an `available_externally` copy.
+/// `None` if `unit` has no body of it.
+fn copy_of(unit: &str, name: &str) -> Option<bool> {
+    let text = support::function_text(unit, name)?;
+    let header = text.lines().next().expect("a function has a header line");
+    Some(header.contains("available_externally"))
+}
+
+/// Whether `unit` defines the function `name` itself, not as a copy.
 fn defines(unit: &str, name: &str) -> bool {
-    support::function_text(unit, name).is_some()
+    copy_of(unit, name) == Some(false)
+}
+
+/// Whether `unit` has an `available_externally` copy of the function `name`.
+fn copies(unit: &str, name: &str) -> bool {
+    copy_of(unit, name) == Some(true)
 }
 
 /// Whether `unit` has a `call` of the function `name`.
@@ -55,6 +68,13 @@ fn calls(unit: &str, name: &str) -> bool {
 fn declares(unit: &str, name: &str) -> bool {
     let callee = format!("{}(", support::symbol(name));
     (unit.lines()).any(|line| line.starts_with("declare ") && line.contains(&callee))
+}
+
+/// The text after the pipeline of a unit of `--emit ir`.
+fn after_pipeline(unit: &str) -> &str {
+    unit.split_once("\n; after ")
+        .expect("a unit of `--emit ir` has an `; after` block")
+        .1
 }
 
 /// The index of the one unit of `units` that defines `name`.
@@ -113,7 +133,7 @@ fn with_larger_main(second: &str, call: &str) -> String {
 /// value of an interface that inherits another, and a small function `twice` that `main` calls
 /// WHEN it is built with `--codegen-units 4` and with `--codegen-units 1`, plain and with `-O2`
 /// THEN the split build reports 4 codegen units, and the unit that defines `twice` is not the unit
-/// of `main`, which declares and calls it
+/// of `main`, which calls it and, at `-O2`, has an `available_externally` copy of it
 /// AND both executables print the lines of the case and exit with the same status
 #[test]
 fn split_build_should_run_like_one_module() {
@@ -142,16 +162,21 @@ fn split_build_should_run_like_one_module() {
             &with(&["--codegen-units", "1"]),
         );
 
-        // `main` calls `twice` from another unit, which declares it.
-        let check = |what: &str, all: &[&str]| {
+        // `main` calls `twice` from another unit, which declares it, or at `-O2` has a copy.
+        let check = |what: &str, all: &[&str], copied: bool| {
             let (twice, main) = (home(all, "twice"), home(all, "main"));
             assert_ne!(
                 twice, main,
                 "{row}, {what}: `twice` and `main` share a unit"
             );
+            let has = if copied {
+                copies(all[main], "twice")
+            } else {
+                declares(all[main], "twice")
+            };
             assert!(
-                declares(all[main], "twice") && calls(all[main], "twice"),
-                "{row}, {what}: the unit of `main` should declare and call `twice`"
+                has && calls(all[main], "twice"),
+                "{row}, {what}: the unit of `main` should hold `twice` (copy: {copied}) and call it"
             );
         };
         let raw = emit(
@@ -159,7 +184,7 @@ fn split_build_should_run_like_one_module() {
             "codegen_units",
             &["--emit", "ir-raw", "--codegen-units", "4"],
         );
-        check("raw IR", &units(&raw));
+        check("raw IR", &units(&raw), false);
         if !level.is_empty() {
             let ir = emit(
                 &dir,
@@ -167,7 +192,7 @@ fn split_build_should_run_like_one_module() {
                 &["--emit", "ir", "-O2", "--codegen-units", "4"],
             );
             let before: Vec<&str> = units(&ir).into_iter().map(before_pipeline).collect();
-            check("IR before the pipeline", &before);
+            check("IR before the pipeline", &before, true);
         }
 
         let [split, whole] = [split, whole].map(|exe| run(&exe));
@@ -231,6 +256,8 @@ fn split_build_should_pass_the_memory_checks() {
 /// GIVEN `even` and `odd`, which call each other, and a `main` that calls both
 /// WHEN the program is built with `--codegen-units 3`
 /// THEN `even` and `odd` are in different units
+/// AND with `-O2`, the unit of `even` has an `available_externally` body of `odd`, and the unit of
+/// `odd` one of `even`
 /// AND with `-O2` the program prints what it prints with `--codegen-units 1`
 #[test]
 fn mutual_recursion_across_units_should_run() {
@@ -269,6 +296,14 @@ fn main() {
     let all = units(&ir);
     assert_eq!(all.len(), 3);
     assert_ne!(home(&all, "even"), home(&all, "odd"));
+    let ir = emit(
+        &dir,
+        "mutual",
+        &["--emit", "ir", "-O2", "--codegen-units", "3"],
+    );
+    let before: Vec<&str> = units(&ir).into_iter().map(before_pipeline).collect();
+    assert!(copies(before[home(&before, "even")], "odd"), "{ir}");
+    assert!(copies(before[home(&before, "odd")], "even"), "{ir}");
     let outputs = ["1", "3"].map(|count| {
         let (exe, _) = build(&dir, "mutual", count, &["-O2", "--codegen-units", count]);
         run(&exe)
@@ -280,6 +315,58 @@ fn main() {
     assert_eq!(outputs[0].stdout, outputs[1].stdout);
     assert_eq!(outputs[0].status.code(), Some(0));
     assert_eq!(outputs[1].status.code(), Some(0));
+}
+
+/// GIVEN a program whose hot loop calls a small function and prints a result that the function
+/// computes
+/// WHEN it is built with -O2 --codegen-units 2
+/// THEN the raw IR puts the loop and the function in different units, with a call between them
+/// AND the optimized IR of the loop's unit has no call to that function
+/// AND the program prints the same result as with --codegen-units 1
+/// AND the test fails when the copies of C6 are off
+#[test]
+fn small_function_of_another_unit_should_be_inlined() {
+    let source = "\
+fn step(i: i64) -> i64 {
+    i * 3 + 1
+}
+
+fn main() {
+    let mut sum = 0
+    for i in 0..1000000 {
+        sum += step(i) % 7
+    }
+    print(sum)
+}
+";
+    let dir = fixture(
+        "small_function_of_another_unit_should_be_inlined",
+        &[("hot_loop.sisu", source)],
+    );
+    let ir = emit(
+        &dir,
+        "hot_loop",
+        &["--emit", "ir", "-O2", "--codegen-units", "2"],
+    );
+    let all = units(&ir);
+    let before: Vec<&str> = all.iter().copied().map(before_pipeline).collect();
+    let (step, main) = (home(&before, "step"), home(&before, "main"));
+    assert_ne!(step, main, "`step` and `main` share a unit:\n{ir}");
+    assert!(
+        calls(before[main], "step"),
+        "the loop should call `step`:\n{ir}"
+    );
+    assert!(
+        !calls(after_pipeline(all[main]), "step"),
+        "the unit of `main` should inline `step`:\n{ir}"
+    );
+    let outputs = ["1", "2"].map(|count| {
+        let (exe, _) = build(&dir, "hot_loop", count, &["-O2", "--codegen-units", count]);
+        run(&exe)
+    });
+    assert_eq!(outputs[0].status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&outputs[0].stdout), "2999998\n");
+    assert_eq!(outputs[0].stdout, outputs[1].stdout);
 }
 
 /// GIVEN the case program built at `-O2` with `--codegen-units 4`

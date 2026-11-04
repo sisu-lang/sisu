@@ -6080,6 +6080,16 @@ fn main() {
 
 /// The modules of the `count` codegen units of `src`, each verified.
 fn compiled_units<'ctx>(context: &'ctx Context, src: &str, count: usize) -> Vec<Module<'ctx>> {
+    compiled_units_at(context, src, count, OptLevel::O0)
+}
+
+/// `compiled_units` for the level `level`, which decides the copies of small functions.
+fn compiled_units_at<'ctx>(
+    context: &'ctx Context,
+    src: &str,
+    count: usize,
+    level: OptLevel,
+) -> Vec<Module<'ctx>> {
     let program = parse_ok(src);
     let (program, diagnostics) = crate::check::check(
         &program,
@@ -6090,9 +6100,9 @@ fn compiled_units<'ctx>(context: &'ctx Context, src: &str, count: usize) -> Vec<
     let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
     let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
     let mir = mir::build(&program);
-    let machine = target_machine(OptLevel::O0).expect("the host is a target");
+    let machine = target_machine(level).expect("the host is a target");
     let analyses = Analyses::new(&program, src);
-    units::split(&mir, Some(count))
+    units::split(&mir, Some(count), level)
         .iter()
         .map(|unit| {
             let module = compile_unit(
@@ -6287,4 +6297,37 @@ fn one_unit_should_keep_every_function_internal() {
         has_body(&module, "sisu_rc.release.Idle"),
         "one unit makes the release helper of every class"
     );
+}
+
+/// At `-O2` with 2 units, the unit of `main` has a hidden body of `step` that LLVM may drop
+/// after it inlines the call, and the unit of `step` has the function itself.
+#[test]
+fn copy_should_be_available_externally() {
+    let src = "fn step(i: i64) -> i64 { i * 3 + 1 }
+fn main() {
+    let mut sum = 0
+    for i in 0..10 {
+        sum += step(i) % 7
+    }
+    print(sum)
+}";
+    let context = Context::create();
+    let modules = compiled_units_at(&context, src, 2, OptLevel::O2);
+    let [main_unit] = definers(&modules, "sisu.main")[..] else {
+        panic!("`main` should have one body");
+    };
+    let copy = modules[main_unit]
+        .get_function("sisu.step")
+        .expect("the unit of `main` should have `step`");
+    assert!(copy.count_basic_blocks() > 0, "the copy should have a body");
+    assert_eq!(copy.get_linkage(), Linkage::AvailableExternally);
+    assert_eq!(
+        copy.as_global_value().get_visibility(),
+        GlobalVisibility::Hidden
+    );
+    let home = &modules[1 - main_unit];
+    let step = home
+        .get_function("sisu.step")
+        .expect("the other unit has `step`");
+    assert_eq!(step.get_linkage(), Linkage::External);
 }

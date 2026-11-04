@@ -416,6 +416,13 @@ fn build(
         FORCE.get() != Some(Force::CompilerPanic),
         "a compiler panic forced by a test"
     );
+    // `FORCE` is read on this thread; the panic is on another.
+    #[cfg(test)]
+    if FORCE.get() == Some(Force::WorkerPanic) {
+        thread::scope(|scope| {
+            scope.spawn(|| panic!("a compiler panic on a worker forced by a test"));
+        });
+    }
     let dir = exe
         .parent()
         .expect("an executable should be in a directory");
@@ -675,6 +682,8 @@ enum Force {
     CompilerPanic,
     /// Each bound site's replacement conforms to its bound.
     Conforming,
+    /// The build step panics on a thread of its own, as a codegen worker would.
+    WorkerPanic,
 }
 
 #[cfg(test)]
@@ -2150,6 +2159,36 @@ mod tests {
             "{failure}"
         );
         assert!(failure.contains("fuzz_program.rs:"), "{failure}");
+    }
+
+    /// A panic on a thread that `program` did not start, as a codegen worker's, leaves the record
+    /// too. The aborting hook comes first, as in `a_compiler_panic_should_leave_the_dump`: without
+    /// it, the scope panics again on the calling thread, whose hook writes the record.
+    #[test]
+    fn a_compiler_panic_on_another_thread_should_leave_the_dump() {
+        if env::var_os(CHILD).is_some() {
+            std::panic::set_hook(Box::new(|_| std::process::abort()));
+            crate::on_compiler_stack(|| {
+                FORCE.set(Some(Force::WorkerPanic));
+                program(&seed(0), &runtime());
+            });
+            return;
+        }
+        let scratch = Scratch::new();
+        let out = child(
+            "a_compiler_panic_on_another_thread_should_leave_the_dump",
+            &scratch.0,
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.signal(), Some(6), "{stderr}");
+        let g = generate(&seed(0));
+        assert_record(&stderr, "compiler panic\n==> program\n", &g, &scratch.0);
+        let failure = fs::read_to_string(scratch.0.join("dump/failure.txt"))
+            .expect("the dump should hold failure.txt");
+        assert!(
+            failure.contains("a compiler panic on a worker forced by a test"),
+            "{failure}"
+        );
     }
 
     /// A dump that cannot be written is reported, and the record still reaches stderr.
