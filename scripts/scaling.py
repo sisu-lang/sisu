@@ -195,6 +195,26 @@ def mut_parameters(k):
             '    print("{xs[0]} {n}")\n}\n')
 
 
+def mut_width(k):
+    # `wide` has k plain parameters, one `mut` parameter and k early returns, each of which stores
+    # the final value of the `mut` parameter. `many` has k `mut` parameters, and `main` calls it
+    # with k `mut` arguments. A pass that scans every parameter at each return, or every argument
+    # for each `mut` argument, is quadratic in k. `main` adds to `total` once, so that size 0 has
+    # no W0002.
+    plain = ''.join(f'p{tag(i)}: i64, ' for i in range(k))
+    returns = ''.join(f'    if p{tag(i)} == 1 {{\n        return\n    }}\n' for i in range(k))
+    wide = f'fn wide({plain}mut xs: [i64]) {{\n{returns}    xs[0] = 1\n}}\n\n'
+    params = ', '.join(f'mut a{tag(i)}: i64' for i in range(k))
+    bumps = ''.join(f'    a{tag(i)} += 1\n' for i in range(k))
+    many = f'fn many({params}) {{\n{bumps}}}\n\n'
+    zeros = ''.join('0, ' for _ in range(k))
+    locals_ = ''.join(f'    let mut v{tag(i)} = 0\n' for i in range(k))
+    given = ', '.join(f'mut v{tag(i)}' for i in range(k))
+    shown = ''.join(f'    total += v{tag(i)}\n' for i in range(k))
+    return (wide + many + 'fn main() {\n    let mut xs = [0]\n    let mut total = 0\n' + locals_ +
+            f'    wide({zeros}mut xs)\n    total += xs[0]\n    many({given})\n{shown}    print("{{xs[0]}} {{total}}")\n}}\n')
+
+
 # The name of a shape, its `n` and the program at a size. The sizes are 0, n, 2n, 4n and 8n.
 SHAPES = {
     'functions': (250, functions),
@@ -216,6 +236,7 @@ SHAPES = {
     'string call depth': (12, string_call_depth),
     'comments': (250, comments),
     'mut parameters': (250, mut_parameters),
+    'mut width': (250, mut_width),
 }
 
 

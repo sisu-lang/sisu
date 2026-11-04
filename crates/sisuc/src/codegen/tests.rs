@@ -5996,12 +5996,14 @@ fn a_length_from_the_runtime_should_carry_the_facts_of_a_length() {
 }
 
 /// The out slot of a call is an `alloca` in the entry block, as every `alloca` is: one in a loop
-/// body would grow the stack on every iteration.
+/// body would grow the stack on every iteration. The test follows the pointer that the call
+/// passes as its out argument to its `alloca`, so it does not depend on the name of the slot.
 ///
 /// ```text
 /// GIVEN `set(mut xs)` of S1 called in a `while` loop of `main`
 /// WHEN the module is compiled, before optimization
-/// THEN the `alloca` of the out slot is in the entry block of `main`, and none is in the loop
+/// THEN the call is not in the entry block of `main`
+/// AND the pointer that it passes last is an `alloca` in the entry block
 /// ```
 #[test]
 fn out_slot_should_be_in_the_entry_block() {
@@ -6014,19 +6016,35 @@ fn out_slot_should_be_in_the_entry_block() {
     .print_to_string()
     .to_string();
     let main = function_body(&ir, "define internal void @sisu.main()");
-    // A label is a line that does not start with a space.
-    let labels: Vec<usize> = (main.lines().enumerate())
+    let lines: Vec<&str> = main.lines().collect();
+    // A label is a line that does not start with a space; the first block ends at the second.
+    let entry_end = lines
+        .iter()
+        .enumerate()
         .filter(|(_, line)| !line.starts_with(' ') && line.contains(':'))
-        .map(|(at, _)| at)
-        .collect();
-    let (entry_end, slots) = (labels[1], |range: std::ops::Range<usize>| {
-        main.lines()
-            .enumerate()
-            .filter(|(at, line)| {
-                range.contains(at) && line.contains("%out") && line.contains(" = alloca ")
-            })
-            .count()
-    });
-    assert_eq!(slots(0..entry_end), 1, "{main}");
-    assert_eq!(slots(entry_end..usize::MAX), 0, "{main}");
+        .nth(1)
+        .unwrap_or_else(|| panic!("the loop is in blocks after the entry block:\n{main}"))
+        .0;
+    let (call, line) = lines
+        .iter()
+        .enumerate()
+        .find(|(_, line)| line.contains("call void @sisu.set("))
+        .unwrap_or_else(|| panic!("no call of `set` in\n{main}"));
+    assert!(call >= entry_end, "the call should be in the loop:\n{main}");
+    let out = line
+        .trim_end_matches(')')
+        .rsplit(", ")
+        .next()
+        .and_then(|last| last.split_whitespace().last())
+        .unwrap_or_else(|| panic!("no out argument in {line}"));
+    let slot = lines
+        .iter()
+        .position(|line| line.trim_start().starts_with(&format!("{out} = alloca ")))
+        .unwrap_or_else(|| {
+            panic!("the out argument {out} should be an `alloca` of `main`:\n{main}")
+        });
+    assert!(
+        slot < entry_end,
+        "the out slot should be in the entry block:\n{main}"
+    );
 }

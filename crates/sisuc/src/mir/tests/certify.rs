@@ -4070,3 +4070,29 @@ fn out_for_another_local_should_be_rejected() {
     );
     rejects(&b.finish(), 0, u, Rule::Out);
 }
+
+/// GIVEN `b = borrow r`, `call f(move s)`, `end b` and then `s = out 0`
+/// WHEN the function is certified
+/// THEN it is accepted: pair removal turns the `release` after a call into an `end`
+#[test]
+fn out_after_an_end_should_be_accepted() {
+    let mut b = Builder::new("f");
+    let s = b.local("s", Type::STRING);
+    let r = b.local("r", Type::STRING);
+    let alias = b.local("alias", Type::STRING);
+    b.owner(alias, r);
+    b.block(
+        vec![
+            literal(s),
+            literal(r),
+            assign(alias, Rvalue::Borrow(whole(r))),
+            call(vec![Operand::Move(s)], vec![false]),
+            Statement::End(alias),
+            out(s, 0),
+            Statement::Release(s),
+            Statement::Release(r),
+        ],
+        ret(),
+    );
+    assert_eq!(certify(&b.finish()), Ok(()));
+}

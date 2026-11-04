@@ -1,0 +1,76 @@
+// GIVEN `fn bump(mut xs: [i64], n: i64)` that pushes `n`, and callers, one a method, that put
+// `o ?? return`, `o ?? continue` and `o ?? break` in the other argument of a `mut` call, and
+// `o ?? return` in the index of its `mut` place
+// WHEN each caller runs with `o` empty and with a value
+// THEN an empty `o` leaves through the `return`, `continue` or `break` before the copy-in, with no
+// call, and the final value of the caller's own `mut` parameter reaches its caller
+// AND a value runs the call, and a borrowed field argument `c.items` beside a `mut` local works
+class Putter {
+    fn put(self, mut xs: [i64], n: i64) {
+        xs.push(n)
+    }
+}
+
+class Items {
+    mut items: [i64]
+}
+
+fn bump(mut xs: [i64], n: i64) {
+    xs.push(n)
+}
+
+fn early(mut xs: [i64], o: i64?) {
+    bump(mut xs, o ?? return)
+    xs.push(100)
+}
+
+fn by_method(p: Putter, mut xs: [i64], o: i64?) {
+    p.put(mut xs, o ?? return)
+    xs.push(200)
+}
+
+fn skipping(mut xs: [i64], items: [i64?]) {
+    for o in items {
+        bump(mut xs, o ?? continue)
+    }
+}
+
+fn stopping(mut xs: [i64], items: [i64?]) {
+    for o in items {
+        bump(mut xs, o ?? break)
+    }
+}
+
+fn at(mut grid: [[i64]], o: i64?) {
+    bump(mut grid[o ?? return], 7)
+}
+
+fn show(items: [i64], mut xs: [i64]) {
+    xs.push(items.len())
+}
+
+fn main() {
+    let mut xs: [i64] = []
+    early(mut xs, None)
+    print(xs)
+    early(mut xs, 5)
+    print(xs)
+    let mut ys: [i64] = []
+    skipping(mut ys, [1, None, 3])
+    print(ys)
+    let mut zs: [i64] = []
+    stopping(mut zs, [1, None, 3])
+    print(zs)
+    let mut ms: [i64] = []
+    by_method(Putter(), mut ms, None)
+    by_method(Putter(), mut ms, 6)
+    print(ms)
+    let mut grid = [[0], [1]]
+    at(mut grid, None)
+    at(mut grid, 1)
+    print(grid)
+    let c = Items(items: [4, 5])
+    let mut ws: [i64] = []
+    show(c.items, mut ws)
+    print(ws)
+}
