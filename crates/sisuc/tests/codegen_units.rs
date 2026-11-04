@@ -2,6 +2,7 @@
 //! threads and linked, and a split build runs like one module. The tests read the raw IR of each
 //! unit to see where a function is, and run both builds of a program to compare them.
 
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -421,24 +422,52 @@ fn drop_depth_state_should_have_one_home() {
     }
 }
 
-/// GIVEN a program
+/// A program of `copies` functions of the same size and a `main` that calls them all, for a test
+/// that needs a program above the size where the compiler splits a build by itself.
+fn many_functions(copies: usize) -> String {
+    let functions: String = (0..copies).fold(String::new(), |mut text, at| {
+        let _ = writeln!(
+            text,
+            "fn work{at}(n: i64) -> i64 {{\n    let a = n + {at}\n    let b = a * 2\n    \
+             if b > 10 {{\n        b - 1\n    }} else {{\n        b + 1\n    }}\n}}\n"
+        );
+        text
+    });
+    let calls: String = (0..copies).fold(String::new(), |mut text, at| {
+        let _ = writeln!(text, "    sum += work{at}({at})");
+        text
+    });
+    format!("{functions}fn main() {{\n    let mut sum = 0\n{calls}    print(sum)\n}}\n")
+}
+
+/// GIVEN a program of 2000 functions, which `sisu build` splits into several codegen units
 /// WHEN `--emit ir -O2` and `--emit ir-raw` print it without `--codegen-units`
 /// THEN the output has no `; codegen unit` line and equals the output with `--codegen-units 1`
 /// AND the output of `--emit ir -O2` has one `; before default<O2>` line
+///
+/// 2000 copies are about twice `2 * UNIT_SIZE`, so a size rule applied to the IR output would
+/// split them too.
 #[test]
 fn emit_ir_should_print_one_module_without_the_flag() {
+    let source = many_functions(2000);
     let dir = fixture(
         "emit_ir_should_print_one_module_without_the_flag",
-        &[("codegen_units.sisu", CASE)],
+        &[("many.sisu", &source)],
     );
+    let (_, stderr) = build(&dir, "many", "auto", &["--timings"]);
+    let units: usize = (stderr.lines())
+        .find_map(|line| line.strip_prefix("timings: codegen units: "))
+        .and_then(|count| count.parse().ok())
+        .unwrap_or_else(|| panic!("no codegen units line: {stderr}"));
+    assert!(units > 1, "the build should split the program: {stderr}");
     for flags in [&["--emit", "ir", "-O2"][..], &["--emit", "ir-raw"]] {
-        let plain = emit(&dir, "codegen_units", flags);
+        let plain = emit(&dir, "many", flags);
         let one: Vec<&str> = flags
             .iter()
             .chain(&["--codegen-units", "1"])
             .copied()
             .collect();
-        assert!(plain == emit(&dir, "codegen_units", &one), "{flags:?}");
+        assert!(plain == emit(&dir, "many", &one), "{flags:?}");
         assert!(!plain.contains("; codegen unit"), "{flags:?}");
         if flags.contains(&"-O2") {
             let headers = plain.lines().filter(|l| *l == "; before default<O2>");
@@ -492,6 +521,44 @@ fn failed_link_of_a_split_build_should_remove_every_object() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(1), "{stderr}");
     assert!(stderr.contains("cc failed"), "{stderr}");
+    let left: Vec<_> = fs::read_dir(&tmp)
+        .expect("reads TMPDIR")
+        .map(|entry| entry.expect("reads an entry").file_name())
+        .collect();
+    assert_eq!(left, Vec::<std::ffi::OsString>::new());
+}
+
+/// GIVEN a program of 9 functions and methods
+/// AND the limit `ulimit -v 524288` (512 MiB), under which `--codegen-units 1` builds it
+/// WHEN `sisu build --codegen-units 64` builds it, with an empty `TMPDIR`
+/// THEN it exits 0, because a thread that cannot start leaves its units to the calling thread
+/// AND the executable prints the lines of the case
+/// AND `TMPDIR` holds no object file
+///
+/// Each worker thread maps 64 MiB of stack, so the limit stops some of them from starting. At the
+/// 1 GiB of the first try, a machine with fewer cores starts all of its workers.
+#[cfg(target_os = "linux")]
+#[test]
+fn split_build_should_succeed_when_threads_cannot_start() {
+    let dir = fixture(
+        "split_build_should_succeed_when_threads_cannot_start",
+        &[("codegen_units.sisu", CASE)],
+    );
+    let tmp = scratch_path::empty_dir("limited_split_tmp");
+    let exe = dir.join("limited");
+    let out = Command::new("sh")
+        .current_dir(&dir)
+        .env("TMPDIR", &tmp)
+        .args(["-c", "ulimit -c 0; ulimit -v 524288; exec \"$0\" \"$@\""])
+        .arg(env!("CARGO_BIN_EXE_sisu"))
+        .args(["build", "--codegen-units", "64", "codegen_units.sisu", "-o"])
+        .arg(&exe)
+        .output()
+        .expect("sh starts");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    let ran = run(&exe);
+    assert_eq!(String::from_utf8_lossy(&ran.stdout), CASE_OUT);
     let left: Vec<_> = fs::read_dir(&tmp)
         .expect("reads TMPDIR")
         .map(|entry| entry.expect("reads an entry").file_name())
