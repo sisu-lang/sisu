@@ -1645,6 +1645,11 @@ fn unmarked_place_inside_a_later_place_should_get_no_fix() {
     let short = "fn f(mut a: i64, mut b: i64, mut c: [i64]) {\n    a = 1\n    b = 2\n    c[0] = 3\n}\n\
         fn main() {\n    let mut xs = [1, 2]\n    f(mut xs[0], xs[1], xs)\n    print(xs)\n}";
     assert_eq!(marker_fixes(short), [(8, 18, false), (8, 25, false)]);
+    // A place that meets nothing keeps its fix, between the pair.
+    let between = "fn f(mut a: i64, mut b: [i64], mut c: [i64]) {\n    a = 1\n    b[0] = 2\n    c[0] = 3\n}\n\
+        fn main() {\n    let mut xs = [1, 2]\n    let mut ys = [3]\n    f(mut xs[0], ys, xs)\n    \
+        print(xs)\n    print(ys)\n}";
+    assert_eq!(marker_fixes(between), [(9, 18, true), (9, 22, false)]);
 }
 
 /// GIVEN a generic function `first<T>(mut xs: [T]) -> T`, and `bump(mut first(xs))`, where the
