@@ -153,22 +153,32 @@ pub(crate) fn certify(function: &Function) -> Result<(), Violation> {
 /// Each `out` takes the final value of an argument of the call just before it. The nearest call in
 /// its block must pass the `out`'s destination at the index that the `out` names. Only `release`s,
 /// `end`s and other `out`s may come between them. Codegen reads the out slots of that call, so no
-/// other call may come between.
+/// other call may come between. A `DynCall` must also flag that index: codegen gives an out slot
+/// to a flagged argument only.
 fn outs(function: &Function) -> Result<(), Violation> {
     for (b, block) in function.blocks.iter().enumerate() {
-        let mut args: Option<&[Operand]> = None;
+        // The arguments of the nearest call, and the flags of a call through a table.
+        let mut call: Option<(&[Operand], Option<&[bool]>)> = None;
         for stmt in &block.stmts {
             match stmt {
                 Statement::Assign {
-                    value: Rvalue::Call { args: passed, .. } | Rvalue::DynCall { args: passed, .. },
+                    value: Rvalue::Call { args: passed, .. },
                     ..
-                } => args = Some(passed),
+                } => call = Some((passed, None)),
+                Statement::Assign {
+                    value:
+                        Rvalue::DynCall {
+                            args: passed, muts, ..
+                        },
+                    ..
+                } => call = Some((passed, Some(muts))),
                 Statement::Assign {
                     dest: Some(dest),
                     value: Rvalue::Out { index },
                 } => {
-                    let passed = args
-                        .and_then(|args| args.get(*index))
+                    let passed = call
+                        .filter(|(_, muts)| muts.is_none_or(|muts| muts.get(*index) == Some(&true)))
+                        .and_then(|(args, _)| args.get(*index))
                         .and_then(operand_place);
                     if passed != Some((*dest, &[])) {
                         return Err(Violation {
@@ -179,7 +189,7 @@ fn outs(function: &Function) -> Result<(), Violation> {
                     }
                 }
                 Statement::Release(_) | Statement::End(_) => {}
-                _ => args = None,
+                _ => call = None,
             }
         }
     }
