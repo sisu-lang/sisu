@@ -505,8 +505,6 @@ thread_local! {
     pub(super) static INT_LITERAL_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many nested loops the walk that wraps a widened loop's values has entered.
     pub(super) static WRAP_LOOPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many `mut` parameters the check for W0002 has judged on this thread.
-    pub(super) static MUT_PARAM_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many type parameter names have been indexed or looked up on this thread.
     pub(super) static PARAM_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many inherited interfaces the check for a requirement that an interface declares

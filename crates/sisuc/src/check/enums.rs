@@ -828,7 +828,7 @@ pub(super) struct HoldsTable {
 }
 
 /// `ty` without its array and optional wrappers.
-fn unwrapped(mut ty: Type) -> Type {
+pub(super) fn unwrapped(mut ty: Type) -> Type {
     while let TypeKind::Array(inner) | TypeKind::Optional(inner) = ty.kind() {
         ty = inner;
     }

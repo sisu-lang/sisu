@@ -324,9 +324,10 @@ impl CheckedPlace {
 }
 
 impl Checker<'_> {
-    /// Stamps the root of each `mut` argument of `args` as written. A call that fails to resolve
-    /// checks its arguments as values, so this runs before it: the call may have changed the
-    /// local, and W0002 must not warn on it as the cascade of the call's error.
+    /// Stamps the root of each `mut` argument of `args` as written, for every call: a `mut`
+    /// argument counts as a write whatever the call then gets wrong. A call that fails to resolve
+    /// checks its arguments as values, so this runs before it, and W0002 does not warn on the
+    /// local as the cascade of the call's error.
     pub(super) fn stamp_marked(&mut self, args: &[ast::Arg]) {
         for arg in args.iter().filter(|arg| arg.mut_keyword.is_some()) {
             self.stamp_push(&arg.value);

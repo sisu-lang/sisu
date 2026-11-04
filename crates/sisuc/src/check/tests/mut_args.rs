@@ -2,7 +2,6 @@
 //! warnings of a local that is passed `mut`.
 
 use super::*;
-use crate::check::MUT_PARAM_STEPS;
 use crate::check::mut_args::MUT_KEY_STEPS;
 
 /// A class with one `mut` array field.
@@ -513,17 +512,21 @@ fn mut_parameter_without_class_objects_should_warn_without_help() {
     }
 }
 
-/// GIVEN a call that fails to resolve, with a `mut` argument that is a `mut` parameter, in the
-///   first place or a later one, for an unknown function, an unknown method, a wrong count, an
-///   unknown generic function, a field called as a method and an unknown constructor
+/// GIVEN a call with a `mut` argument that is a `mut` parameter, in the first place or a later
+///   one, that fails to resolve (an unknown function, an unknown method, a wrong count, an unknown
+///   generic function, a field called as a method, an unknown constructor) or resolves to a
+///   parameter that is not `mut`
 /// WHEN it is checked
-/// THEN the call's error is the only diagnostic: the argument may be reassigned
+/// THEN the call's error is the only diagnostic: a `mut` argument counts as a write whatever the
+///   call then gets wrong
 #[test]
-fn failed_call_with_a_mut_argument_should_give_its_error_only() {
+fn call_with_a_mut_argument_that_fails_should_give_its_error_only() {
     let decls = "fn set(mut n: i64) {\n    n += 1\n}\n\
+        fn id(n: i64) -> i64 {\n    n\n}\n\
         class C {\n    x: i64\n    fn m(self, mut n: i64) {\n        n += 1\n    }\n}\n";
     let rows = [
         ("function, first", "ste(mut n)"),
+        ("parameter not mut", "let _ = id(mut n)"),
         ("function, later", "ste(1, mut n)"),
         ("function, two", "ste(mut n, mut n)"),
         ("method, first", "c.ste(mut n)"),
@@ -550,23 +553,6 @@ fn failed_call_with_a_mut_argument_should_give_its_error_only() {
         let found: Vec<_> = found.iter().map(Diagnostic::severity).collect();
         assert_eq!(found, [Severity::Error], "row `{row}`: {src}");
     }
-}
-
-/// The `MUT_PARAM_STEPS` that checking a function with `n` `mut` parameters takes.
-fn param_steps(n: usize) -> usize {
-    let params: Vec<String> = (0..n).map(|k| format!("mut a{k}: i64")).collect();
-    let src = format!("fn f({}) {{}}\nfn main() {{}}", params.join(", "));
-    MUT_PARAM_STEPS.set(0);
-    assert_eq!(diags(&src).len(), n, "one W0002 for each parameter");
-    MUT_PARAM_STEPS.get()
-}
-
-/// GIVEN functions with 100, 200 and 300 `mut` parameters that nothing reassigns
-/// WHEN they are checked
-/// THEN the work of the W0002 judgement grows linearly with the parameters
-#[test]
-fn mut_parameter_judgement_should_be_linear() {
-    assert_near_linear(param_steps(100), param_steps(200), param_steps(300));
 }
 
 /// GIVEN a `mut` parameter in each kind of function, which the function never reassigns

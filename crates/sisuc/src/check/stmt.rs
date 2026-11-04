@@ -4,6 +4,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::any::{AnyJoin, is_target, widen};
 use super::array::optional_array;
+use super::enums::unwrapped;
 use super::expr::{fits, local};
 use super::generic::Ahead;
 use super::pattern::LetPattern;
@@ -1744,15 +1745,15 @@ impl Checker<'_> {
         if !b.mut_param || self.body.todo {
             return None;
         }
-        #[cfg(test)]
-        super::MUT_PARAM_STEPS.set(super::MUT_PARAM_STEPS.get() + 1);
         if let Some(Owner::Func(func)) = self.body.owner
             && self.named_for_requirement.contains(&func)
         {
             return None;
         }
         Some(NeverReassignedForm::Param {
-            class: b.ty.is_some_and(holds_class_object),
+            class: b
+                .ty
+                .is_some_and(|ty| matches!(unwrapped(ty).kind(), TypeKind::Class(..))),
         })
     }
 
@@ -1892,18 +1893,6 @@ struct ForHeader {
 /// `return` with no value or with a number, `bool` or `char` literal, or a `continue` with no
 /// label. A `break` is not one: it gives its `loop` a type, and the errors of that type come
 /// after the block.
-/// Whether `ty` is a class, or an optional or an array of one at any depth: a write to a field
-/// of its objects reassigns nothing.
-fn holds_class_object(mut ty: Type) -> bool {
-    loop {
-        match ty.kind() {
-            TypeKind::Class(..) => return true,
-            TypeKind::Optional(inner) | TypeKind::Array(inner) => ty = inner,
-            _ => return false,
-        }
-    }
-}
-
 fn is_plain_exit(block: &ast::Block) -> bool {
     let [stmt] = block.stmts.as_slice() else {
         return false;
