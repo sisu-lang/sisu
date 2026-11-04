@@ -845,6 +845,11 @@ fn main() {
     fn groups_should_end_on_a_cycle() {
         // a and b call only each other.
         assert_eq!(groups(&[1, 1], &[vec![1], vec![0]], 100), [0, 0]);
+        // `c` is called by `b`. The group of `a` and `b` has size 2, and `c` makes 3, under the
+        // cap of 4. A group that meets itself again must not count its size twice (2 + 2 = 4 fits
+        // the cap, and 4 + 1 would stop `c`).
+        let callees = [vec![1], vec![0, 2], vec![]];
+        assert_eq!(groups(&[1; 3], &callees, 4), [0, 0, 0]);
     }
 
     #[test]
