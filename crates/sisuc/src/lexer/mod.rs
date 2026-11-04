@@ -123,6 +123,13 @@ pub(crate) struct Token {
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(size_of::<Token>() == 40, "a token should be 40 bytes");
 
+impl Token {
+    /// An empty `Newline` token is a line break that ends a statement; a `;` gives one with text.
+    pub(crate) fn is_line_break(&self) -> bool {
+        self.kind == TokenKind::Newline && self.span.range().is_empty()
+    }
+}
+
 impl TokenKind {
     /// The variant name, as `--emit tokens` prints it.
     pub(crate) fn name(&self) -> &'static str {

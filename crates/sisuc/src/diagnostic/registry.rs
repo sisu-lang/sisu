@@ -1190,7 +1190,8 @@ pub(crate) enum DiagnosticKind {
         at: Span,
         plain: Plain,
     },
-    /// A range written another language's way, with its operator at `at`.
+    /// A range written another language's way, reported at `at`: its operator, or the first
+    /// negative bound of a colon slice that has one.
     ForeignRange { form: ForeignRange, at: Span },
     /// A line of an arm list, from `at`, its first token, that starts with `|`, `=>` or a
     /// guard's `if`, and so continues the arm above. `join` is the space from the end of the
@@ -2171,10 +2172,10 @@ pub(crate) enum ForeignRange {
     },
     /// `start...end`.
     Ellipsis { start: String, end: Option<String> },
-    /// `base[start:end]`, as Python and Go write a slice; the operator is the `:` at `at`. A bound
-    /// that is left out is `None`. `whole` is the `[:]` of `base[:]`, which the fix removes.
-    /// `base_place` is true when `base` is a place that starts at a name or `self`, so that to
-    /// count from `base.len()` reads the same place.
+    /// `base[start:end]`, as Python and Go write a slice. `at` is the `:`, or the first negative
+    /// bound when a bound is negative. A bound that is left out is `None`. `whole` is the `[:]`
+    /// of `base[:]`, which the fix removes. `base_place` is true when `base` is a place that starts
+    /// at a name or `self`, so that to count from `base.len()` reads the same place.
     Colon {
         base: String,
         base_place: bool,
@@ -5504,7 +5505,10 @@ impl From<DiagnosticKind> for Diagnostic {
                         let d = Diagnostic::coded(code, at, format!("write `{written}`"));
                         match whole {
                             Some(whole) => d.with_fix(safe_fix("remove the `[:]`", whole, "")),
-                            None => d.with_fix(safe_fix("write `..`", at, "..")),
+                            // The parser cannot see the type of `base`: on a string, `..` counts
+                            // bytes where Python counts characters; a bound past the end stops
+                            // the program where Python stops at the end.
+                            None => d.with_fix(unsafe_fix("write `..`", at, "..")),
                         }
                     }
                 }
