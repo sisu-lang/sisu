@@ -1051,3 +1051,64 @@ fn stray_mut_should_not_be_reported_beside_a_count_error() {
         );
     }
 }
+
+/// GIVEN a call with an unmarked place at a `mut` parameter, and a result of a type that the
+///   call's context does not expect: a typed `let`, a `return`, an argument of another call and a
+///   field of a constructor, with a `let` local, a `let mut` local and a field, for a function
+///   and a method, generic or not
+/// WHEN it is checked
+/// THEN the mismatch of the result is E0032, as for the call with `mut`, and E0166 follows
+#[test]
+fn unmarked_place_whose_call_misses_its_expected_type_should_report_the_mismatch() {
+    let decls = "fn first<T>(mut xs: [T]) -> T {\n    xs[0]\n}\n\
+        fn count(mut xs: [i64]) -> i64 {\n    xs[0]\n}\n\
+        fn text(s: string) {\n    print(s)\n}\n\
+        class Holder {\n    s: string\n}\n\
+        class Names {\n    cells: [string]\n    fn pick<T>(self, mut xs: [T]) -> T {\n        xs[0]\n    }\n}\n";
+    let rows = [
+        (
+            "let",
+            "let names = [\"a\"]\n    let n: i64 = first(names)\n    print(n)",
+        ),
+        (
+            "let mut",
+            "let mut names = [\"a\"]\n    let n: i64 = first(names)\n    print(n)",
+        ),
+        (
+            "function that is not generic",
+            "let ys = [1]\n    let s: string = count(ys)\n    print(s)",
+        ),
+        (
+            "field",
+            "let b = Names(cells: [\"a\"])\n    let n: i64 = first(b.cells)\n    print(n)",
+        ),
+        (
+            "method",
+            "let b = Names(cells: [\"a\"])\n    let ys = [\"a\"]\n    let n: i64 = b.pick(ys)\n    print(n)",
+        ),
+        (
+            "argument of another call",
+            "let ys = [1]\n    text(first(ys))",
+        ),
+        (
+            "field of a constructor",
+            "let ys = [1]\n    let h = Holder(s: first(ys))\n    print(h.s)",
+        ),
+    ];
+    for (row, body) in rows {
+        let src = format!("{decls}fn main() {{\n    {body}\n}}");
+        let mut found = diags(&src);
+        found.sort_by_key(|d| d.span().start());
+        let found: Vec<_> = found.iter().map(Diagnostic::code).collect();
+        assert_eq!(
+            found,
+            [Code::Mismatch, Code::MutMarkerMissing],
+            "row `{row}`: {src}"
+        );
+    }
+    let ret = format!("{decls}fn give(ys: [i64]) -> string {{\n    first(ys)\n}}\nfn main() {{}}");
+    let mut found = diags(&ret);
+    found.sort_by_key(|d| d.span().start());
+    let found: Vec<_> = found.iter().map(Diagnostic::code).collect();
+    assert_eq!(found, [Code::Mismatch, Code::MutMarkerMissing], "return");
+}

@@ -1,0 +1,14 @@
+// GIVEN `let s: string = gget(ys)`, where `ys` is a `let mut` `[i64]` and `gget` has a `mut` `T`
+// WHEN `sisu check` runs on it
+// THEN it reports E0032 for the result, then E0166 on `ys`
+// AND the E0166 has no fix: adding `mut` would leave the E0032
+fn gget<T>(mut x: T) -> T {
+    x
+}
+
+fn main() {
+    let mut ys = [1]
+    let s: string = gget(ys)
+    ys[0] = 2
+    print(s)
+}
