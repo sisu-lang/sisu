@@ -1459,11 +1459,10 @@ fn text_part(ty: Type) -> bool {
     )
 }
 
-/// Verifies `module` in a debug build, then runs the pipeline. A release build does not verify:
-/// the verifier takes about 180 ms of a 143k-line build, and the tests, which run a debug build,
-/// verify each module that they compile. This is the only verifier run of a build: a pass
-/// pipeline that broke the IR reaches instruction selection instead of a clean error, which would
-/// be an LLVM bug.
+/// Verifies `module` in a debug build, then runs the pipeline. A release build does not verify,
+/// because the verifier takes about 180 ms of a 143k-line build. The tests that run `sisu` run a
+/// debug build, so it verifies each module that they build. No verifier runs after the pipeline: a
+/// pass that broke the IR reaches instruction selection, which would be an LLVM bug.
 pub(crate) fn optimize(
     module: &Module<'_>,
     machine: &TargetMachine,

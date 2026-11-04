@@ -148,8 +148,8 @@ pub(crate) fn on_compiler_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
 /// it. A fuzzer or a test that compiles again and again in one process leaves it clear.
 static EXITS_AFTER: AtomicBool = AtomicBool::new(false);
 
-/// Drops `value`, except in the command-line tool. There the process exits soon after, and the
-/// OS frees all of its memory in one step, which is faster than a drop that frees each node.
+/// Drops `value`, except in the command-line tool. There the process exits soon after. The OS then
+/// frees all of its memory in one step, which is faster than a drop that frees each node.
 fn release<T>(value: T) {
     if EXITS_AFTER.load(Ordering::Relaxed) {
         std::mem::forget(value);
@@ -678,11 +678,11 @@ fn compile(
     let code = timings.time(timings::Stage::Object, || {
         codegen::object_code(&module, &machine)
     })?;
-    // A name of its own, so a user's `<output>.o` is left alone.
     // The module goes before the context that owns it.
     release(module);
     release(context);
     release(mir);
+    // A name of its own, so a user's `<output>.o` is left alone.
     let object = create_object(dir, code.as_slice(), fresh_names(".o"))?;
     // Remove the object file whether or not the link worked; a link error wins.
     let linking = link::Linking {
@@ -748,6 +748,13 @@ fn create_object(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn release_should_drop_the_value_outside_the_command_line_tool() {
+        let value = std::rc::Rc::new(());
+        release(std::rc::Rc::clone(&value));
+        assert_eq!(std::rc::Rc::strong_count(&value), 1);
+    }
 
     #[test]
     fn read_at_most_stops_one_past_the_limit() {
