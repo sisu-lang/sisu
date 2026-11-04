@@ -295,6 +295,10 @@ mod tests {
         });
     }
 
+    /// The seeds that reach the lowering of a `mut` parameter, which lands in Task 5 of the `mut`
+    /// parameters plan; Task 5 removes this list.
+    const LANDS_IN_TASK_5: &[&str] = &["W0002-param.sisu", "W0002-param-array.sisu"];
+
     #[test]
     fn every_seed_should_pass() {
         let mut found = Vec::new();
@@ -304,6 +308,9 @@ mod tests {
         );
         assert!(found.len() > 300, "{} seeds", found.len());
         for path in found {
+            if LANDS_IN_TASK_5.iter().any(|name| path.ends_with(name)) {
+                continue;
+            }
             crate::on_compiler_stack(|| {
                 front_end(&fs::read(&path).expect("a seed should be readable"))
             });

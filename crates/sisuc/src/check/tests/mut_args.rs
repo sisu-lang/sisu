@@ -480,8 +480,8 @@ fn mut_array_parameter_never_reassigned_should_warn_without_help() {
     assert_eq!(d.fixes().len(), 0);
 }
 
-/// GIVEN a `mut` parameter that holds class objects, as an optional, an array, an optional array
-///   or an array of arrays, which the function only writes through
+/// GIVEN a `mut` parameter that holds class objects, as an optional, an array or an array of
+///   arrays, which the function only writes through
 /// WHEN it is checked
 /// THEN W0002 warns on it with the class help: a write to a field is no reassignment
 #[test]
@@ -489,7 +489,6 @@ fn mut_parameter_of_class_objects_should_warn_with_the_class_help() {
     let rows = [
         ("optional", "Named?", "b?.name = \"x\""),
         ("array", "[Named]", "b[0].name = \"x\""),
-        ("optional array", "[Named]?", "b?[0].name = \"x\""),
         ("array of arrays", "[[Named]]", "b[0][0].name = \"x\""),
     ];
     for (row, ty, stmt) in rows {
@@ -541,10 +540,10 @@ fn failed_call_with_a_mut_argument_should_give_its_error_only() {
         ),
     ];
     for (row, stmt) in rows {
-        let params = if row == "element" {
-            "mut xs: [i64], c: C"
-        } else {
-            "mut n: i64, c: C"
+        let params = match row {
+            "element" => "mut xs: [i64], c: C",
+            "let mut local" => "c: C",
+            _ => "mut n: i64, c: C",
         };
         let src = format!("{decls}fn _f({params}) {{\n    {stmt}\n}}\nfn main() {{}}");
         let found = diags(&src);

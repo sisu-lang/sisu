@@ -1725,7 +1725,7 @@ impl Checker<'_> {
         }
         let form = match keyword {
             Some(keyword) => Some(NeverReassignedForm::Let { keyword }),
-            None if never => self.never_reassigned_param(name, b),
+            None if never => self.never_reassigned_param(b),
             None => None,
         };
         if let Some(form) = form {
@@ -1737,27 +1737,23 @@ impl Checker<'_> {
         }
     }
 
-    /// The form of W0002 for `b`, which nothing reassigns, when it is a `mut` parameter that no
-    /// requirement spells `mut` and that a `todo` body does not hide.
-    fn never_reassigned_param(&self, name: Symbol, b: &Binding) -> Option<NeverReassignedForm> {
+    /// The form of W0002 for `b`, which nothing reassigns, when it is a `mut` parameter that a
+    /// `todo` body does not hide, and that is not a method's for a requirement: the requirement
+    /// spells its `mut`, or E0152 reports it.
+    fn never_reassigned_param(&self, b: &Binding) -> Option<NeverReassignedForm> {
         if !b.mut_param || self.body.todo {
             return None;
         }
-        if let Some(Owner::Func(func)) = self.body.owner {
-            let position = (self.signatures[func.0].param_names.iter())
-                .inspect(|_| {
-                    #[cfg(test)]
-                    super::MUT_PARAM_STEPS.set(super::MUT_PARAM_STEPS.get() + 1);
-                })
-                .position(|p| p.name == name);
-            let spelled = self.required_muts.get(&func).zip(position);
-            if spelled.is_some_and(|(muts, i)| muts.get(i) == Some(&true)) {
-                return None;
-            }
+        #[cfg(test)]
+        super::MUT_PARAM_STEPS.set(super::MUT_PARAM_STEPS.get() + 1);
+        if let Some(Owner::Func(func)) = self.body.owner
+            && self.named_for_requirement.contains(&func)
+        {
+            return None;
         }
-        let class =
-            b.ty.is_some_and(|ty| matches!(ty.kind(), TypeKind::Class(..)));
-        Some(NeverReassignedForm::Param { class })
+        Some(NeverReassignedForm::Param {
+            class: b.ty.is_some_and(holds_class_object),
+        })
     }
 
     /// Reports W0011 for the checked condition `cond` at `at` of a `while` whose body checked,
@@ -1896,6 +1892,18 @@ struct ForHeader {
 /// `return` with no value or with a number, `bool` or `char` literal, or a `continue` with no
 /// label. A `break` is not one: it gives its `loop` a type, and the errors of that type come
 /// after the block.
+/// Whether `ty` is a class, or an optional or an array of one at any depth: a write to a field
+/// of its objects reassigns nothing.
+fn holds_class_object(mut ty: Type) -> bool {
+    loop {
+        match ty.kind() {
+            TypeKind::Class(..) => return true,
+            TypeKind::Optional(inner) | TypeKind::Array(inner) => ty = inner,
+            _ => return false,
+        }
+    }
+}
+
 fn is_plain_exit(block: &ast::Block) -> bool {
     let [stmt] = block.stmts.as_slice() else {
         return false;

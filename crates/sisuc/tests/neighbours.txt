@@ -131,3 +131,10 @@ take(mut $)
 take($)
 let _s: string = take($)
 let _s: string = take(mut $)
+# A call that fails to resolve, with a `mut` argument first or later: the argument is stamped as
+# written, and nothing crashes.
+ste(mut $)
+ste(1, mut $)
+n.ste(mut $)
+take(mut $, 1)
+take<i64, i64>(mut $)

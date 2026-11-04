@@ -324,6 +324,15 @@ impl CheckedPlace {
 }
 
 impl Checker<'_> {
+    /// Stamps the root of each `mut` argument of `args` as written. A call that fails to resolve
+    /// checks its arguments as values, so this runs before it: the call may have changed the
+    /// local, and W0002 must not warn on it as the cascade of the call's error.
+    pub(super) fn stamp_marked(&mut self, args: &[ast::Arg]) {
+        for arg in args.iter().filter(|arg| arg.mut_keyword.is_some()) {
+            self.stamp_push(&arg.value);
+        }
+    }
+
     /// The place that the `mut` argument `arg` names: a `let mut` local or `mut` parameter, a
     /// `mut` field of a class object, or an element of one. Why it is none otherwise, with no
     /// report: the caller reports E0169. The range index of a slice comes first. The place

@@ -677,11 +677,7 @@ impl Checker<'_> {
             let name = requirement.name.name;
             let found = self.written_method(p.source, name);
             if let Some(Declared::Known(f)) = found {
-                let muts = self.required_muts.entry(f).or_default();
-                muts.resize(muts.len().max(requirement.muts.len()), false);
-                for (slot, &spelled) in muts.iter_mut().zip(&requirement.muts) {
-                    *slot |= spelled;
-                }
+                self.named_for_requirement.insert(f);
             }
             let elsewhere = others
                 .iter()
@@ -696,9 +692,14 @@ impl Checker<'_> {
                 Some(Declared::Known(f)) => {
                     let sig = &self.signatures[f.0];
                     // The first parameter whose `mut` the requirement does not share: its own
-                    // note on the requirement.
-                    let differs = (requirement.muts.iter().zip(&sig.muts))
-                        .position(|(want, found)| want != found)
+                    // note on the requirement. With another count the parameters do not
+                    // correspond, so there is no note.
+                    let differs = (requirement.muts.len() == sig.muts.len())
+                        .then(|| {
+                            (requirement.muts.iter().zip(&sig.muts))
+                                .position(|(want, found)| want != found)
+                        })
+                        .flatten()
                         .map(|i| (requirement.param_names[i].clone(), requirement.muts[i]));
                     reports.push(DiagnosticKind::ConformanceBody {
                         ty: ty.clone(),

@@ -2480,8 +2480,9 @@ pub(crate) enum BadRange {
 /// A parameter of a requirement whose `mut` the method does not share.
 #[derive(Clone)]
 pub(crate) struct MutDiffers {
-    /// The name of the requirement's parameter.
+    /// Where the requirement's parameter is named.
     pub(crate) at: Span,
+    /// Its name.
     pub(crate) name: String,
     /// Whether the requirement's parameter is `mut`.
     pub(crate) mutable: bool,

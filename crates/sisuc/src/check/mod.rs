@@ -505,7 +505,7 @@ thread_local! {
     pub(super) static INT_LITERAL_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many nested loops the walk that wraps a widened loop's values has entered.
     pub(super) static WRAP_LOOPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many steps the check of a `mut` parameter for W0002 has taken on this thread.
+    /// How many `mut` parameters the check for W0002 has judged on this thread.
     pub(super) static MUT_PARAM_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many type parameter names have been indexed or looked up on this thread.
     pub(super) static PARAM_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -577,10 +577,9 @@ struct Checker<'src> {
     interfaces: Vec<InterfaceInfo>,
     /// For each method that meets a requirement, its interfaces: a call of it uses them.
     meets: FxHashMap<tir::FuncId, Vec<tir::InterfaceId>>,
-    /// For each method that a conformance names for a requirement, whether a requirement spells
-    /// `mut` at each parameter, also when the method does not meet it: W0002 leaves such a
-    /// parameter alone.
-    required_muts: FxHashMap<tir::FuncId, Vec<bool>>,
+    /// The methods that a conformance names for a requirement, also those that do not meet it. A
+    /// `mut` parameter of one is the requirement's, or E0152 reports it: W0002 leaves it alone.
+    named_for_requirement: FxHashSet<tir::FuncId>,
     /// For each method name, the interfaces that declare a requirement of it.
     declaring: FxHashMap<Symbol, Vec<tir::InterfaceId>>,
     /// For each name of an associated type, the interfaces that declare one of it, with its place
@@ -1277,7 +1276,7 @@ impl<'src> Checker<'src> {
             enum_ids: FxHashMap::default(),
             interfaces: Vec::new(),
             meets: FxHashMap::default(),
-            required_muts: FxHashMap::default(),
+            named_for_requirement: FxHashSet::default(),
             declaring: FxHashMap::default(),
             declaring_assoc: FxHashMap::default(),
             assoc_at: FxHashMap::default(),
