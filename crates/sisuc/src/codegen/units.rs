@@ -406,11 +406,35 @@ impl Order {
     /// The order that `SISU_UNIT_ORDER` names: `forward` or `reverse`. Any other value, or none,
     /// gives `Threads`.
     pub(crate) fn from_env() -> Order {
-        match std::env::var("SISU_UNIT_ORDER").as_deref() {
-            Ok("forward") => Order::Forward,
-            Ok("reverse") => Order::Reverse,
+        Order::named(std::env::var("SISU_UNIT_ORDER").ok().as_deref())
+    }
+
+    /// The order that the value `value` of `SISU_UNIT_ORDER` names; `None` is a variable that is
+    /// not set.
+    pub(crate) fn named(value: Option<&str>) -> Order {
+        match value {
+            Some("forward") => Order::Forward,
+            Some("reverse") => Order::Reverse,
             _ => Order::Threads,
         }
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Whether `schedule` on this thread starts no worker, as when the system cannot start one.
+    static REFUSE_THREADS: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Whether a test asks `schedule` to start no worker. Never true outside a test.
+fn refuses_threads() -> bool {
+    #[cfg(test)]
+    {
+        REFUSE_THREADS.get()
+    }
+    #[cfg(not(test))]
+    {
+        false
     }
 }
 
@@ -466,10 +490,14 @@ pub(crate) fn schedule<T: Send>(
     let mut done: Vec<(usize, T)> = thread::scope(|scope| {
         let mut handles = Vec::new();
         for _ in 0..workers {
-            let spawned = thread::Builder::new()
-                .name("codegen".to_owned())
-                .stack_size(crate::STACK_SIZE)
-                .spawn_scoped(scope, take_turns);
+            let spawned = if refuses_threads() {
+                Err(std::io::Error::other("a test refuses to start a thread"))
+            } else {
+                thread::Builder::new()
+                    .name("codegen".to_owned())
+                    .stack_size(crate::STACK_SIZE)
+                    .spawn_scoped(scope, take_turns)
+            };
             match spawned {
                 Ok(handle) => handles.push(handle),
                 Err(_) => break,
@@ -1150,5 +1178,36 @@ fn main() {
             "the premise: not in unit 0"
         );
         assert!(units[0].exported[main]);
+    }
+
+    #[test]
+    fn named_should_read_the_order_of_the_variable() {
+        assert_eq!(Order::named(Some("forward")), Order::Forward);
+        assert_eq!(Order::named(Some("reverse")), Order::Reverse);
+        for other in [
+            None,
+            Some(""),
+            Some("Forward"),
+            Some("threads"),
+            Some("both"),
+        ] {
+            assert_eq!(Order::named(other), Order::Threads, "{other:?}");
+        }
+    }
+
+    #[test]
+    fn threads_should_use_a_thread_for_each_unit_up_to_the_cores() {
+        let cores = thread::available_parallelism().map_or(1, NonZeroUsize::get);
+        assert_eq!(threads(1), 1);
+        assert_eq!(threads(cores), cores);
+        assert_eq!(threads(cores + 5), cores);
+    }
+
+    #[test]
+    fn schedule_should_run_every_unit_on_the_calling_thread_when_no_worker_starts() {
+        REFUSE_THREADS.set(true);
+        let results = schedule(5, 3, Order::Threads, |unit| (unit, thread::current().id()));
+        let here = thread::current().id();
+        assert_eq!(results, (0..5).map(|unit| (unit, here)).collect::<Vec<_>>());
     }
 }
