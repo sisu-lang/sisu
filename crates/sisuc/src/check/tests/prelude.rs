@@ -228,6 +228,25 @@ fn prelude_defined_twice() {
     }
 }
 
+/// A prelude function that `prelude.sisu` writes, such as `exchange`, takes a name from every
+/// top-level item in the same way as `print`: the item gets "is a built-in function". A local, a
+/// parameter and a method may take the name still.
+#[test]
+fn exchange_should_be_a_prelude_name_for_top_level_items() {
+    with_prelude();
+    for (item, col) in [
+        ("fn exchange() {}", 4),
+        ("class exchange {}", 7),
+        ("const exchange = 1", 7),
+    ] {
+        let src = format!("{item}\nfn main() {{}}");
+        diagnostic(&src, Code::DefinedTwice, (1, col, "exchange"), &[]);
+    }
+    clean(
+        "class P {\n    fn exchange(self) {}\n}\nfn f(exchange: i64) {\n    let exchange = 1\n}\nfn main() {}",
+    );
+}
+
 /// A local, a parameter and a method may take a prelude name.
 #[test]
 fn prelude_names_free_elsewhere() {
