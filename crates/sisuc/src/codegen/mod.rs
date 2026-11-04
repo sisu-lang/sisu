@@ -1224,15 +1224,30 @@ impl<'ctx> Codegen<'ctx, '_> {
             param.set_name(name);
             param
         });
-        let passed = if sisu_main.count_params() == 0 {
+        let args_type = Type::intern(TypeKind::Array(Type::STRING));
+        let mut passed = if sisu_main.count_params() == 0 {
             Vec::new()
         } else {
             let args = self.args(count.into_int_value(), strings.into_pointer_value());
-            self.split(Type::intern(TypeKind::Array(Type::STRING)), args)
+            self.split(args_type, args)
         };
+        // A `mut` parameter of `main` has an out slot too. Nothing reads the final value, so it
+        // is released after the call.
+        let out = (self.mir.functions.iter())
+            .any(|f| f.name == "main" && f.muts.contains(&true))
+            .then(|| {
+                let ty = (self.llvm_type(args_type))
+                    .expect("the arguments of `main` should have a value type");
+                let slot = self.entry_alloca(ty, "out");
+                passed.push(slot.into());
+                (slot, ty)
+            });
         self.builder
             .build_call(sisu_main, &passed, "")
             .expect(POSITIONED);
+        if let Some((slot, ty)) = out {
+            self.release(self.load(ty, slot), args_type);
+        }
         // `print` buffers; this delivers what is left, or panics if standard output fails.
         self.call(self.runtime("sisu_flush_stdout"), &[]);
         if self.rc_fault.is_some() {
