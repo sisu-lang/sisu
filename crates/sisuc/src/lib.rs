@@ -559,7 +559,12 @@ fn each_ir_unit(
     timings: &mut Timings,
     print: impl Fn(usize, &Module<'_>, &TargetMachine, &mut Timings) -> Result<String, String> + Sync,
 ) -> Result<String, String> {
-    let parts = codegen::units::split(input.mir, Some(units.unwrap_or(1)), input.level);
+    let parts = codegen::units::split(
+        input.mir,
+        input.program,
+        Some(units.unwrap_or(1)),
+        input.level,
+    );
     each_unit(input, &parts, timings, print)
         .into_iter()
         .collect::<Result<Vec<_>, _>>()
@@ -801,7 +806,7 @@ fn compile(
         units: wanted,
     } = *backend;
     let mir = timings.time(timings::Stage::Mir, || mir::build(program));
-    let units = codegen::units::split(&mir, wanted, level);
+    let units = codegen::units::split(&mir, program, wanted, level);
     let results = each_unit(
         &UnitInput {
             program,

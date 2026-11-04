@@ -371,47 +371,58 @@ fn main() {
     assert_eq!(outputs[0].stdout, outputs[1].stdout);
 }
 
+/// The sieve of `bench/sieve`, with `main` that calls it once with a constant, then `extra`, and
+/// eight large functions that nothing calls, so that one unit's share holds `sieve` and `main`.
+fn sieve_with_pads(extra: &str) -> String {
+    let mut source = format!(
+        "\
+fn sieve(n: i64) -> [bool] {{
+    let mut is_prime = [true; n + 1]
+    is_prime[0] = false
+    is_prime[1] = false
+    for i in 2..n + 1 {{
+        if is_prime[i] {{
+            let mut j = i * i
+            while j <= n {{
+                is_prime[j] = false
+                j += i
+            }}
+        }}
+    }}
+    is_prime
+}}
+
+fn main() {{
+    let mut count = 0
+    for p in sieve(1000) {{
+        if p {{ count += 1 }}
+    }}
+    print(count{extra})
+}}
+"
+    );
+    for pad in 0..8 {
+        {
+            let sum = (0..80)
+                .map(|k| format!("n + {k}"))
+                .collect::<Vec<_>>()
+                .join(" + ");
+            let _ = writeln!(source, "fn pad{pad}(n: i64) -> i64 {{ {sum} }}");
+        }
+    }
+    source
+}
+
 /// GIVEN a sieve-shaped program: a large function `sieve` that `main` calls once with a constant,
 /// next to eight large functions that nothing calls, so that one unit's share holds `sieve` and
 /// `main`
 /// WHEN `--emit ir -O2 --codegen-units 8` prints its units
 /// THEN `sieve` and `main` are defined in the same unit
+/// AND the optimized IR of that unit has no call to `sieve`
 /// AND the executable prints the same primes as with `--codegen-units 1`
 #[test]
 fn hot_function_with_one_caller_should_share_its_callers_unit() {
-    let mut source = "\
-fn sieve(n: i64) -> [bool] {
-    let mut is_prime = [true; n + 1]
-    is_prime[0] = false
-    is_prime[1] = false
-    for i in 2..n + 1 {
-        if is_prime[i] {
-            let mut j = i * i
-            while j <= n {
-                is_prime[j] = false
-                j += i
-            }
-        }
-    }
-    is_prime
-}
-
-fn main() {
-    let mut count = 0
-    for p in sieve(1000) {
-        if p { count += 1 }
-    }
-    print(count)
-}
-"
-    .to_owned();
-    for pad in 0..8 {
-        let sum = (0..80)
-            .map(|k| format!("n + {k}"))
-            .collect::<Vec<_>>()
-            .join(" + ");
-        let _ = writeln!(source, "fn pad{pad}(n: i64) -> i64 {{ {sum} }}");
-    }
+    let source = sieve_with_pads("");
     let dir = fixture(
         "hot_function_with_one_caller_should_share_its_callers_unit",
         &[("sieve.sisu", &source)],
@@ -429,12 +440,53 @@ fn main() {
         sieve, main,
         "`sieve` and `main` are in different units:\n{ir}"
     );
+    assert!(
+        !calls(after_pipeline(all[main]), "sieve"),
+        "the unit of `main` should inline `sieve`:\n{ir}"
+    );
     let outputs = ["1", "8"].map(|count| {
         let (exe, _) = build(&dir, "sieve", count, &["-O2", "--codegen-units", count]);
         run(&exe)
     });
     assert_eq!(String::from_utf8_lossy(&outputs[0].stdout), "168\n");
     assert_eq!(outputs[0].stdout, outputs[1].stdout);
+}
+
+/// GIVEN a program in 8 units where `sieve` is called only from the unit of `main`, and `twice`
+/// is called from `main` in another unit
+/// WHEN `--emit ir --codegen-units 8` prints its units
+/// THEN `twice` is defined `hidden`, with external linkage, in its unit
+/// AND `sieve` and the pads are defined `internal`
+#[test]
+fn function_should_be_external_only_when_another_unit_calls_it() {
+    let mut source = sieve_with_pads(" + twice(1) + twice(2)");
+    source.push_str("fn twice(n: i64) -> i64 {\n    let mut s = n\n");
+    for k in 0..40 {
+        let _ = writeln!(source, "    s += n * {k}");
+    }
+    source.push_str("    s\n}\n");
+    let dir = fixture(
+        "function_should_be_external_only_when_another_unit_calls_it",
+        &[("sieve.sisu", &source)],
+    );
+    let ir = emit(&dir, "sieve", &["--emit", "ir", "--codegen-units", "8"]);
+    let all = units(&ir);
+    let before: Vec<&str> = all.iter().copied().map(before_pipeline).collect();
+    let header = |name: &str| {
+        let text = support::function_text(before[home(&before, name)], name)
+            .expect("the owner has a body");
+        text.lines().next().expect("a header line").to_owned()
+    };
+    assert_ne!(
+        home(&before, "twice"),
+        home(&before, "main"),
+        "the premise: `twice` is in another unit than `main`:\n{ir}"
+    );
+    assert!(header("twice").contains("hidden"), "{}", header("twice"));
+    assert!(!header("twice").contains("internal"), "{}", header("twice"));
+    for name in ["sieve", "pad0", "pad7"] {
+        assert!(header(name).starts_with("internal"), "{}", header(name));
+    }
 }
 
 /// GIVEN the case program built at `-O2` with `--codegen-units 4`

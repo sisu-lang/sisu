@@ -6102,7 +6102,7 @@ fn compiled_units_at<'ctx>(
     let mir = mir::build(&program);
     let machine = target_machine(level).expect("the host is a target");
     let analyses = Analyses::new(&program, src);
-    units::split(&mir, Some(count), level)
+    units::split(&mir, &program, Some(count), level)
         .iter()
         .map(|unit| {
             let module = compile_unit(
@@ -6147,6 +6147,23 @@ fn global_names(module: &Module<'_>, prefix: &str) -> Vec<String> {
         .collect()
 }
 
+/// Whether `module` uses the function `name`: some instruction calls or refers to it. The
+/// declaration or the body of the function itself does not count.
+fn uses(module: &Module<'_>, name: &str) -> bool {
+    let reference = format!("@{name}");
+    module.print_to_string().to_string().lines().any(|line| {
+        let uses_it = line.match_indices(&reference).any(|(at, _)| {
+            !line[at + reference.len()..]
+                .starts_with(|c: char| c.is_alphanumeric() || matches!(c, '.' | '_' | ':'))
+        });
+        uses_it && !line.starts_with("define ") && !line.starts_with("declare ")
+    })
+}
+
+/// The methods that the `any` table of `UNIT_SOURCE` calls: the functions that a helper of any
+/// unit may call, so that they are always external.
+const UNIT_SOURCE_PINNED: [&str; 2] = ["sisu.Circle.title", "sisu.Circle.area"];
+
 #[test]
 fn split_units_should_define_each_function_once() {
     let context = Context::create();
@@ -6161,17 +6178,59 @@ fn split_units_should_define_each_function_once() {
         let owners = definers(&modules, name);
         assert_eq!(owners.len(), 1, "`{name}` should have one body");
         for module in &modules {
-            let function = module
-                .get_function(name)
-                .unwrap_or_else(|| panic!("every unit should declare `{name}`"));
+            assert!(
+                module.get_function(name).is_some(),
+                "every unit should declare `{name}`"
+            );
+        }
+    }
+}
+
+#[test]
+fn split_units_should_export_a_function_only_when_another_unit_uses_it() {
+    let context = Context::create();
+    let modules = compiled_units(&context, UNIT_SOURCE, 3);
+    let names: Vec<String> = modules[0]
+        .get_functions()
+        .map(|function| function.get_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("sisu."))
+        .collect();
+    let (mut exported, mut internal) = (0, 0);
+    for name in &names {
+        let [owner] = definers(&modules, name)[..] else {
+            panic!("`{name}` should have one body");
+        };
+        let used_elsewhere = (0..modules.len()).any(|at| at != owner && uses(&modules[at], name));
+        let pinned = UNIT_SOURCE_PINNED.contains(&name.as_str());
+        let function = modules[owner].get_function(name).expect("the owner has it");
+        if used_elsewhere || pinned {
+            exported += 1;
+            // Another unit links to it by name.
             assert_eq!(function.get_linkage(), Linkage::External, "`{name}`");
             assert_eq!(
                 function.as_global_value().get_visibility(),
                 GlobalVisibility::Hidden,
                 "`{name}`"
             );
+        } else {
+            internal += 1;
+            // No other unit refers to it, so it is internal, as in a build of one unit.
+            assert_eq!(function.get_linkage(), Linkage::Internal, "`{name}`");
+        }
+        // The other units declare it as before.
+        for (at, module) in modules.iter().enumerate().filter(|&(at, _)| at != owner) {
+            let declared = module.get_function(name).expect("every unit declares it");
+            assert_eq!(
+                declared.get_linkage(),
+                Linkage::External,
+                "`{name}` in {at}"
+            );
         }
     }
+    assert!(
+        exported > 0 && internal > 0,
+        "{exported} exported, {internal} internal"
+    );
 }
 
 #[test]

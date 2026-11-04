@@ -7,6 +7,7 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::num::NonZeroUsize;
 use std::panic::resume_unwind;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 
@@ -14,6 +15,7 @@ use rustc_hash::FxHashSet;
 
 use super::OptLevel;
 use crate::mir;
+use crate::tir;
 
 /// The mir size of one unit. It matches 25k raw IR instructions.
 ///
@@ -134,6 +136,13 @@ pub(crate) struct Unit {
     pub(crate) count: usize,
     /// What this unit does with each function, indexed by the function's id.
     pub(crate) placement: Vec<Placement>,
+    /// For each function, indexed by its id: whether another unit refers to it, so that the unit
+    /// that owns it must give it external linkage (see `exported`). One list serves every unit.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "`codegen::declare` reads it in this task")
+    )]
+    pub(crate) exported: Arc<[bool]>,
 }
 
 impl Unit {
@@ -143,6 +152,7 @@ impl Unit {
             index: 0,
             count: 1,
             placement: vec![Placement::Own; functions],
+            exported: vec![false; functions].into(),
         }
     }
 
@@ -152,14 +162,59 @@ impl Unit {
     }
 }
 
-/// The units of `mir` for the flag `flag` (see `count`) and the optimization level `level`. It
-/// measures the functions once.
-pub(crate) fn split(mir: &mir::Program, flag: Option<usize>, level: OptLevel) -> Vec<Unit> {
-    let sizes: Vec<usize> = mir.functions.iter().map(size).collect();
-    partition(mir, &sizes, count(&sizes, flag), level)
+/// The functions, by id, that the helpers of a unit may call although no `Call` of the mir names
+/// them: the written `Eq` and `Display` methods that the release, `eq` and `to_string` helpers
+/// call, and the methods in the `any` tables. A helper is made in the unit that needs it, so any
+/// unit may call these.
+pub(crate) fn helper_methods(program: &tir::Program, functions: usize) -> Vec<bool> {
+    let mut pinned = vec![false; functions];
+    let lang = &program.lang;
+    for (interface, conformance) in program.conformances.iter() {
+        if interface == lang.eq || interface == lang.display {
+            for method in &conformance.methods {
+                pinned[method.0] = true;
+            }
+        }
+    }
+    for table in &program.any_tables {
+        for method in table.methods.iter().flatten().flatten() {
+            pinned[method.0] = true;
+        }
+    }
+    pinned
 }
 
-/// The `count` units of `mir`, whose functions have the sizes `sizes`. One unit is `Unit::whole`,
+/// For each function, whether the unit that owns it must export it: a function that a unit other
+/// than its owner emits (owns or copies) calls, `main` when the C `main` is in another unit
+/// (`main` is the id of `sisu.main`; the C `main` is in unit 0), and a `pinned` function (see
+/// `helper_methods`). `unit_of[f]` is the unit that owns `f`, `copied[u]` the functions that unit
+/// `u` copies, and `callees[f]` the functions that `f` calls.
+pub(crate) fn exported(
+    unit_of: &[usize],
+    copied: &[Vec<usize>],
+    callees: &[Vec<usize>],
+    pinned: &[bool],
+    main: Option<usize>,
+) -> Vec<bool> {
+    let _ = (copied, callees, pinned, main);
+    vec![true; unit_of.len()]
+}
+
+/// The units of `mir` for the flag `flag` (see `count`) and the optimization level `level`. It
+/// measures the functions once.
+pub(crate) fn split(
+    mir: &mir::Program,
+    program: &tir::Program,
+    flag: Option<usize>,
+    level: OptLevel,
+) -> Vec<Unit> {
+    let sizes: Vec<usize> = mir.functions.iter().map(size).collect();
+    let pinned = helper_methods(program, sizes.len());
+    partition(mir, &sizes, count(&sizes, flag), level, &pinned)
+}
+
+/// The `count` units of `mir`, whose functions have the sizes `sizes`; `pinned` is from
+/// `helper_methods`. One unit is `Unit::whole`,
 /// with no assignment. With more, and `level` above `O0`, a unit also copies the small functions
 /// of the other units that it calls (see `copies`).
 ///
@@ -171,6 +226,7 @@ pub(crate) fn partition(
     sizes: &[usize],
     count: usize,
     level: OptLevel,
+    pinned: &[bool],
 ) -> Vec<Unit> {
     if count == 1 {
         return vec![Unit::whole(mir.functions.len())];
@@ -203,6 +259,8 @@ pub(crate) fn partition(
     } else {
         copies(sizes, &callees, &owner, count)
     };
+    let main = mir.functions.iter().position(|f| f.name == "main");
+    let exported: Arc<[bool]> = exported(&owner, &copied, &callees, pinned, main).into();
     copied
         .into_iter()
         .enumerate()
@@ -223,6 +281,7 @@ pub(crate) fn partition(
                 index,
                 count,
                 placement,
+                exported: Arc::clone(&exported),
             }
         })
         .collect()
@@ -534,7 +593,7 @@ fn main() { print(e(1)) }";
     #[test]
     fn partition_should_own_each_function_in_one_unit() {
         let mir = mir_of(SIX);
-        let units = partition(&mir, &sizes_of(&mir), 3, OptLevel::O0);
+        let units = partition(&mir, &sizes_of(&mir), 3, OptLevel::O0, &[]);
         assert_eq!(units.len(), 3);
         for (index, unit) in units.iter().enumerate() {
             assert_eq!((unit.index, unit.count), (index, 3));
@@ -559,7 +618,7 @@ fn main() { print(e(1)) }";
     fn partition_should_reject_two_functions_with_one_name() {
         let mut mir = mir_of(SIX);
         mir.functions[1].name = mir.functions[0].name.clone();
-        partition(&mir, &sizes_of(&mir), 2, OptLevel::O0);
+        partition(&mir, &sizes_of(&mir), 2, OptLevel::O0, &[]);
     }
 
     #[test]
@@ -776,7 +835,7 @@ fn main() { print(e(1)) }";
     #[test]
     fn partition_should_copy_nothing_at_o0() {
         let mir = mir_of(CALLS_STEP);
-        let units = partition(&mir, &sizes_of(&mir), 2, OptLevel::O0);
+        let units = partition(&mir, &sizes_of(&mir), 2, OptLevel::O0, &[]);
         assert!(
             units
                 .iter()
@@ -803,7 +862,7 @@ fn main() {
         };
         let (step, main) = (at("step"), at("main"));
         for level in [OptLevel::O2, OptLevel::O3] {
-            let units = partition(&mir, &sizes_of(&mir), 2, level);
+            let units = partition(&mir, &sizes_of(&mir), 2, level, &[]);
             let own = (units
                 .iter()
                 .position(|u| u.placement[main] == Placement::Own))
@@ -889,7 +948,7 @@ fn main() {
             "the premise: a unit's share holds both: {sizes:?}"
         );
         for (level, name) in [(OptLevel::O0, "O0"), (OptLevel::O2, "O2")] {
-            let units = partition(&mir, &sizes, 8, level);
+            let units = partition(&mir, &sizes, 8, level, &[]);
             let owner = |function: usize| {
                 (units.iter())
                     .position(|unit| unit.placement[function] == Placement::Own)
@@ -901,5 +960,113 @@ fn main() {
                 assert!(unit.placement.contains(&Placement::Own), "{unit:?}");
             }
         }
+    }
+
+    #[test]
+    fn exported_should_mark_a_function_called_from_another_unit() {
+        // main (unit 0) calls a (unit 1); a calls b (unit 1). Only `a` is called across units.
+        let callees = [vec![1], vec![2], vec![]];
+        let exported = exported(&[0, 1, 1], &[vec![], vec![]], &callees, &[], None);
+        assert_eq!(exported, [false, true, false]);
+    }
+
+    #[test]
+    fn exported_should_not_mark_a_function_called_only_from_its_own_unit() {
+        let callees = [vec![1, 1], vec![], vec![]];
+        let exported = exported(&[0, 0, 1], &[vec![], vec![]], &callees, &[], None);
+        assert_eq!(exported, [false, false, false]);
+    }
+
+    #[test]
+    fn exported_should_count_the_calls_of_a_copy() {
+        // Unit 1 owns `b` and copies `a` (unit 0), which calls `c` (unit 0): `a` and `c` are
+        // referenced from unit 1 (the copy calls `c`, and `b` calls `a`).
+        let callees = [vec![2], vec![0], vec![]];
+        let exported = exported(&[0, 1, 0], &[vec![], vec![0]], &callees, &[], None);
+        assert_eq!(exported, [true, false, true]);
+    }
+
+    #[test]
+    fn exported_should_mark_main_when_the_c_main_is_in_another_unit() {
+        let callees = [vec![], vec![]];
+        let unit_of = [0, 1];
+        let at = |main| exported(&unit_of, &[vec![], vec![]], &callees, &[], Some(main));
+        // The C `main` is in unit 0.
+        assert_eq!(at(0), [false, false]);
+        assert_eq!(at(1), [false, true]);
+    }
+
+    #[test]
+    fn exported_should_mark_a_pinned_function() {
+        let callees = [vec![], vec![]];
+        let exported = exported(&[0, 0], &[vec![]], &callees, &[false, true], None);
+        assert_eq!(exported, [false, true]);
+    }
+
+    /// A program of three functions: `big` of about 100 terms, `other` of about 80, and `main`,
+    /// which calls both once. `big` is the largest, so the greedy rule puts `other` and `main`
+    /// together, apart from `big`.
+    fn big_and_main_program() -> String {
+        let function = |name: &str, steps: usize| {
+            let body: Vec<String> = (0..steps).map(|k| format!("    s += n + {k}")).collect();
+            let body = body.join("\n");
+            format!("fn {name}(n: i64) -> i64 {{\n    let mut s = n\n{body}\n    s\n}}\n")
+        };
+        format!(
+            "{}{}fn main() {{ print(big(1) + other(2)) }}\n",
+            function("big", 100),
+            function("other", 80)
+        )
+    }
+
+    #[test]
+    fn partition_should_cap_a_group_at_a_share_and_the_largest_function() {
+        let mir = mir_of(&big_and_main_program());
+        let sizes = sizes_of(&mir);
+        let at = |name: &str| {
+            (mir.functions.iter().position(|f| f.name == name)).expect("the program has it")
+        };
+        let (big, other, main) = (at("big"), at("other"), at("main"));
+        let total = sizes.iter().sum::<usize>();
+        // The premise: `big` and `main` do not fit in a share of 2 units, but fit in a share
+        // plus the largest function.
+        assert!(sizes[big] + sizes[main] > total / 2, "{sizes:?}");
+        assert!(
+            sizes[big] + sizes[main] <= total / 2 + sizes[big],
+            "{sizes:?}"
+        );
+        let units = partition(&mir, &sizes, 2, OptLevel::O0, &[]);
+        assert_eq!(units.len(), 2);
+        let owner = |function: usize| {
+            (units.iter())
+                .position(|unit| unit.placement[function] == Placement::Own)
+                .expect("a unit owns it")
+        };
+        assert_eq!(owner(big), owner(main));
+        assert_ne!(owner(big), owner(other));
+    }
+
+    #[test]
+    fn partition_should_export_only_what_another_unit_calls() {
+        let mir = mir_of(&one_call_site_program());
+        let sizes = sizes_of(&mir);
+        let at = |name: &str| {
+            (mir.functions.iter().position(|f| f.name == name)).expect("the program has it")
+        };
+        let (helper, main) = (at("helper"), at("main"));
+        let units = partition(&mir, &sizes, 8, OptLevel::O0, &[]);
+        // `helper` is in the unit of `main`, so nothing calls across units; unit 0 holds the C
+        // `main`, and `main` is exported unless its unit is 0.
+        let owner = (units.iter())
+            .position(|unit| unit.placement[main] == Placement::Own)
+            .expect("a unit owns `main`");
+        let exported = &units[0].exported;
+        assert!(!exported[helper]);
+        assert_eq!(exported[main], owner != 0);
+        assert!(
+            units
+                .iter()
+                .all(|unit| Arc::ptr_eq(&unit.exported, exported))
+        );
     }
 }
