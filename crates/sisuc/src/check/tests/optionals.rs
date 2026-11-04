@@ -641,3 +641,52 @@ fn a_waiting_branch_that_is_no_optional_should_be_reported_for_its_type() {
         codes_row(statement, &src, &[(Code::Mismatch, at)]);
     }
 }
+
+/// `class Node` with a method `get` that takes no argument and the fields `v` (`mut`) and `w`,
+/// then `body` on line 8 of a function over `c: Node?`, and an empty `main`.
+fn on_node_optional(body: &str) -> String {
+    format!(
+        "class Node {{\n    mut v: i64\n    w: i64\n    fn get(self) -> i64 {{ self.v }}\n}}\nfn f(c: Node?) {{\n    {body}\n}}\nfn main() {{}}"
+    )
+}
+
+/// A `.` call on an optional checks the call on the payload, as `?.` does: E0062 first, then the
+/// error of the call.
+#[test]
+fn dot_call_on_optional_should_check_the_arguments_on_the_payload() {
+    codes(
+        &on_node_optional("print(c.get(1))"),
+        &[(Code::MayBeNone, (7, 11)), (Code::ArgumentCount, (7, 11))],
+    );
+}
+
+/// A `.` field on an optional whose payload lacks it is that error alone: the `?.` fix would
+/// lead to it.
+#[test]
+fn dot_field_on_optional_should_report_a_missing_field_alone() {
+    codes(
+        &on_node_optional("print(c.q)"),
+        &[(Code::NoMember, (7, 13))],
+    );
+}
+
+/// A write to a field of an optional checks the write rule and the value on the payload's field.
+#[test]
+fn dot_assign_on_optional_should_check_the_write_rule_and_the_value() {
+    codes(
+        &on_node_optional("c.w = 2"),
+        &[(Code::MayBeNone, (7, 5)), (Code::AssignToImmutable, (7, 5))],
+    );
+    codes(
+        &on_node_optional("c.v = \"a\""),
+        &[(Code::MayBeNone, (7, 5)), (Code::Mismatch, (7, 11))],
+    );
+}
+
+/// `c?.v` on a `Node??` is E0062 again, so a `.` on it has no `?.` fix.
+#[test]
+fn dot_on_double_optional_should_have_no_safe_access_fix() {
+    let src = "class Node {\n    v: i64\n}\nfn f(c: Node??) {\n    print(c.v)\n}\nfn main() {}";
+    let d = diagnostic(src, Code::MayBeNone, (5, 11, "c"), &[]);
+    assert_eq!(fixes(src, &d), []);
+}
