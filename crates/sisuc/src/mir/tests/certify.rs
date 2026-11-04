@@ -3876,13 +3876,19 @@ fn any_value() -> Type {
 /// `call_through(args)`: the call of the first requirement of interface 0 through a table, with
 /// a `unit` result.
 fn dyn_call(args: Vec<Operand>) -> Statement {
+    let muts = vec![false; args.len()];
+    dyn_call_muts(args, muts)
+}
+
+/// `dyn_call` with the given `mut` flags, one for each of `args`.
+fn dyn_call_muts(args: Vec<Operand>, muts: Vec<bool>) -> Statement {
     Statement::Assign {
         dest: None,
         value: Rvalue::DynCall {
             interface: tir::InterfaceId(0),
             iargs: TypeArgs::NONE,
             method: 0,
-            muts: vec![false; args.len()],
+            muts,
             args,
         },
     }
@@ -4003,6 +4009,34 @@ fn out_after_a_second_call_should_be_rejected() {
             ret(),
         );
         rejects(&b.finish(), 0, t, Rule::Out);
+    }
+}
+
+/// GIVEN `dyn_call s(t)` and then `t = out 1`, whose `DynCall` flags the index 1 as `mut`, or
+/// does not
+/// WHEN the function is certified
+/// THEN it is accepted with the flag, and rejected without it: codegen gives an out slot only to
+/// a flagged argument, so an `out` of an unflagged one would read a slot that does not exist
+#[test]
+fn out_of_a_dyn_call_argument_should_need_its_flag() {
+    for (flagged, accepted) in [(true, true), (false, false)] {
+        let mut b = Builder::new("f");
+        let s = b.param("s", any_value());
+        let t = b.local("t", Type::I64);
+        b.block(
+            vec![
+                assign(t, Rvalue::Use(Operand::Const(Const::Int(0, Type::I64)))),
+                dyn_call_muts(vec![read(s), read(t)], vec![false, flagged]),
+                out(t, 1),
+                Statement::Release(s),
+            ],
+            ret(),
+        );
+        if accepted {
+            assert_eq!(certify(&b.finish()), Ok(()), "flagged: {flagged}");
+        } else {
+            rejects(&b.finish(), 0, t, Rule::Out);
+        }
     }
 }
 
