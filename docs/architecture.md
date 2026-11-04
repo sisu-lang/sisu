@@ -484,14 +484,26 @@ build does not. Runs the `mem2reg` pass, which turns stack slots into registers,
 or with `-O2` or `-O3` the `default<O2>` or `default<O3>` pipeline. Then it
 emits object code for the machine `sisu` runs on, x86-64 or ARM64.
 
+**Codegen units** (`codegen/units.rs`, [ADR 0045](adr/0045-codegen-units-split-by-default.md)).
+A large program splits into codegen units: one LLVM module each, which codegen,
+the optimizer and the object writer handle on their own thread. The count comes
+only from the size of the program in `mir`, at most 8, and `--codegen-units`
+sets a maximum. A function with one call site joins the group of its caller, up to a cap.
+Then the largest group goes to the unit with the least size. At `-O2` and
+`-O3`, a unit gets an `available_externally` copy of each small function of
+another unit that it calls. A function is external, with hidden visibility,
+only when another unit refers to it; all others are internal. The units are
+named and linked in unit order, so the executable does not depend on the
+threads.
+
 **Link step** (`link.rs`). Before it compiles, the driver checks that
 the runtime archive and the output's directory exist, so a missing one fails
 at once. `--allocator` picks the archive: `libsisu_runtime_mimalloc.a` by
 default, `libsisu_runtime_system.a` for `--allocator system`. The link step
-writes the object code to a fresh temporary file and runs `cc` on it together
-with that archive. `cc` adds the C startup code and libc and writes the
+writes the object code of each codegen unit to a fresh temporary file and
+runs `cc` on them together with that archive. `cc` adds the C startup code and libc and writes the
 executable, through its default linker or the one `--linker` names. The
-temporary file is removed whether or not the link succeeds.
+temporary files are removed whether or not the link succeeds.
 
 **Runtime** (`crates/runtime`). A Rust library with a C ABI. The two static
 archives `sisu-runtime-mimalloc` and `sisu-runtime-system` link it, and every

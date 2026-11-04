@@ -833,6 +833,7 @@ These flags run the pipeline up to one stage and stop there.
 | `sisu build --emit ir-raw file.sisu` | The LLVM IR before any pass, as one module that LLVM's `opt` reads |
 | `sisu build --rc-checks --emit ir-raw file.sisu` | The same, with the count checks of `--rc-checks` built in |
 | `sisu build --timings file.sisu` | The time of each stage, one `timings:` line each, on stderr after the diagnostics. It also works with `--emit <output>`, which times only the stages that make it, and on `sisu check` |
+| `sisu build --codegen-units 1 file.sisu` | One LLVM module, optimized as a whole, as before codegen units; the default splits a large program into at most 8 units ([ADR 0045](adr/0045-codegen-units-split-by-default.md)). With `--emit ir` or `--emit ir-raw`, the flag prints each unit under a `; codegen unit` header |
 | `sisu check file.sisu` | Only diagnostics; exits with code 1 if any is an error |
 | `sisu explain E0001` | The explanation of a diagnostic code, in any case; unknown codes exit with code 1 |
 
@@ -840,7 +841,10 @@ These flags run the pipeline up to one stage and stop there.
 It ends with an `other` line and a `total` line. `total` is the wall time from
 the start of the command to the end of its work. `other` is the rest of
 `total`: reading the file, printing the diagnostics and the emitted output, and
-the time between stages. This is `sisu check --timings selfhost/lexer.sisu`, on a release build:
+the time between stages. In a split build, the `codegen`, `optimize` and
+`object` lines give the slowest unit, a `codegen units:` line gives the count,
+and the stage times can add up to more than `total`, because the units run on
+several threads. This is `sisu check --timings selfhost/lexer.sisu`, on a release build:
 
 ```text
 timings: lex           0.4 ms   15.2%  946 lines  2.2M lines/s  4779 tokens  11.1M tokens/s
