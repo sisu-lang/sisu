@@ -200,8 +200,8 @@ store when it is released. ADR 0005 accepts that cost.
 
 ## quicksort on an array value
 
-A Sisu function cannot change its caller's array (ADR 0007), so `quicksort`
-takes the array and returns it, and recurses with
+The `quicksort` benchmark does not use a `mut` parameter (ADR 0043). It
+takes the array and returns it (ADR 0007), and recurses with
 `a = quicksort(a, lo, i - 1)`. Last use hands the array over, so each call
 holds the only reference and every element write happens in place. Peak
 memory shows it: Sisu holds 83.8 MiB, against C's 77.6 MiB for its one array

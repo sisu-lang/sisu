@@ -277,7 +277,7 @@ The rules:
 
 - An array that the program reads out of another array, or out of a field, is a value too. A write to it does not change the original.
 - A copy of an array holds the same objects as the original. A change to a `mut` field of such an object shows in both arrays.
-- A function cannot change an array that it gets as an argument. A function that makes a changed array returns it, and the caller writes `xs = change(xs)`.
+- A function cannot change an array that it gets as a plain argument. To change the array of the caller, the parameter is `mut` ([`mut` parameters](functions.md#mut-parameters)). A function can also return a changed array, and the caller writes `xs = change(xs)`.
 
 ```sisu
 fn doubled(xs: [i64]) -> [i64] {
@@ -298,3 +298,33 @@ fn main() {
 ```
 
 Sisu does not copy the elements when the program binds or passes an array. A small slice, such as `xs[1..3]` of a long array, can go into a class field, an enum payload, an array or an `any I`. That store copies the slice. So the slice does not keep the long array alive ([ADR 0042](../adr/0042-a-slice-shares-its-block.md)). Other stores do not copy the elements. The holders share the elements until a write to one of them. That write copies the elements first, and a loop that writes the array can copy them before it starts. A program cannot see when the copy occurs.
+
+## When an array is copied
+
+Binding, passing, storing or returning an array copies no element. The holders share the elements. A write to an array copies the elements first when another holder shares them. Then the writer has elements of its own, and its next writes do not copy. A program cannot see the copy, but it costs time.
+
+The cases:
+
+- A write to an array that no other holder shares does not copy.
+- A write to a copy that the program made with `let mut b = a` copies at the first write, while `a` still holds the elements.
+- A plain parameter cannot be written. A function that needs a changed array copies it into a `let mut` binding, and the first write copies the elements.
+- A `mut` argument that is a local variable moves the array into the parameter. A write by the function does not copy, unless another holder shares the elements. When the call ends, the array goes back into the variable.
+- A `mut` argument that is a field or an element copies the value in: the field keeps its array during the call, because code that reads the field sees the old value. The first write by the function copies the elements once, and the next writes do not.
+
+```sisu
+fn fill(mut xs: [i64], n: i64) {
+    for i in 0..xs.len() {
+        xs[i] = n
+    }
+}
+
+fn main() {
+    let mut xs = [0; 1000]
+    for n in 1..=3 {
+        fill(mut xs, n)
+    }
+    print(xs[999])               // 3
+}
+```
+
+Here, each call moves `xs` into the parameter and back, so no call copies the 1000 elements.

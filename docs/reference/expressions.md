@@ -198,7 +198,7 @@ fn main() {
 The rules:
 
 - The number of arguments must be the number of parameters ([E0053](../diagnostics/E0053.md)).
-- Each argument must have the type of its parameter ([E0032](../diagnostics/E0032.md)). Where the parameter is a `T?`, a `T` becomes a `T?` ([Types](types.md#optionals)).
+- Each argument must have the type of its parameter ([E0032](../diagnostics/E0032.md)). Where the parameter is a `T?`, a `T` becomes a `T?` ([Types](types.md#optionals)). The argument for a `mut` parameter is the exception: it has exactly the type of the parameter, and it is never promoted ([`mut` parameters](functions.md#mut-parameters)).
 - A call of a function that does not exist is an error ([E0052](../diagnostics/E0052.md)).
 - A call of a function that has no return type has no value ([E0043](../diagnostics/E0043.md)).
 - A call written with the name of a type, such as `f64(n)`, is a conversion ([Types](types.md#conversions)).
@@ -210,6 +210,26 @@ fn area(width: i64, height: i64) -> i64 {
 
 fn main() {
     print(area(6))               // error[E0053]
+}
+```
+
+### Calls with mut arguments
+
+An argument for a `mut` parameter is written `mut place`. The call calculates all the arguments from left to right before it reads any `mut` place. Then it copies in each `mut` place, runs the function, and stores each last value back, in the order of the arguments ([What a call does](functions.md#what-a-call-does)).
+
+So a call inside an argument runs first. It can change the place that a `mut` argument names, and the function then gets the changed value. A plain argument that reads the same place gets the value from before the copy-in.
+
+```sisu
+fn show(mut xs: [i64], old: [i64]) {
+    xs[0] += 1
+    print(old)                   // [1, 2]
+    print(xs)                    // [2, 2]
+}
+
+fn main() {
+    let mut xs = [1, 2]
+    show(mut xs, xs)
+    print(xs)                    // [2, 2]
 }
 ```
 

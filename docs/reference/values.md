@@ -63,9 +63,11 @@ The rules:
 
 ## Calls
 
-A call does not copy its arguments. A parameter cannot change ([Parameters](functions.md#parameters)), so a function cannot change a value that it gets as an argument and that behaves as a copy.
+A call does not copy its arguments. A plain parameter cannot change ([Parameters](functions.md#parameters)), so a function cannot change a value that it gets as an argument and that behaves as a copy.
 
 A function can write the `mut` fields of an object that it gets, because the object is shared.
+
+A `mut` parameter is different. The call copies the value of the caller's place in, and stores the last value of the parameter back into that place ([`mut` parameters](functions.md#mut-parameters)). The caller sees the change, and no other holder of the old value does.
 
 ```sisu
 class Box {
@@ -87,6 +89,16 @@ fn main() {
     print(xs[0])                 // 1
 }
 ```
+
+A call that passes a place `mut` copies or shares the value in as this table tells:
+
+| Place of the `mut` argument | What the call copies in |
+| --- | --- |
+| A `let mut` variable or a `mut` parameter | Nothing: the parameter takes the value of the variable. A write by the function does not copy the memory, unless another holder shares it |
+| A `mut` field of an object | The value of the field. The first write by the function copies the memory, as `x = f(x)` does |
+| An element of an array | The value of the element, in the same way |
+
+A function that changes the value in a field of an object during the call does not change what its `mut` parameter holds. The store-back replaces that change ([What a call does](functions.md#what-a-call-does)).
 
 ## Copy-on-write
 
