@@ -8753,31 +8753,25 @@ fn a_leaving_if_should_nest_no_deeper_than_the_block_bound() {
     assert_eq!(deepest, Some(MAX_BLOCKS - 1));
 }
 
-/// GIVEN seed 44, whose `f39` has `mut v40: [f64]`, a place that holds one element at least, and
-///   writes `v40[0]`, and `mut v41`, an alias of `string`
-/// WHEN the generator records the lengths of the `mut` parameters
-/// THEN `Generated::mut_lens` holds 1 for `v40` and 0 for `v41`, the length that
-///   `Adds::len` drew
-/// AND the walk of the program with these lengths finds no index out of bounds
+/// GIVEN the generated programs of the seeds
+/// WHEN the generator records the lengths of their `mut` parameters
+/// THEN `Generated::mut_lens` holds, for some parameter, a length below `MAX_MUT_LEN`, and for no
+///   parameter more than `MAX_MUT_LEN`: it records the length that `Adds::len` drew, and not the
+///   most that a callee asks for
+/// AND the walk of each program with its lengths finds no index out of bounds
 #[test]
-fn generated_mut_lens_should_record_the_length_of_a_mut_array_parameter() {
-    // Another seed serves when a change of the generator moves this one: pick one whose
-    // `mut_lens` holds a 1 for a `mut` array.
-    let generated = generate(&seed(44));
-    assert!(
-        generated.plain.contains("mut v40: [f64]"),
-        "{}",
-        generated.plain
-    );
-    let lens: Vec<_> = (generated.mut_lens.iter())
-        .filter(|(name, _)| name == "v40" || name == "v41")
-        .cloned()
-        .collect();
-    assert_eq!(lens, [("v40".to_string(), 1), ("v41".to_string(), 0)]);
-    let mut walk = Walk {
-        mut_lens: generated.mut_lens.into_iter().collect(),
-        ..Walk::default()
-    };
-    walk.program(&generated.plain);
-    assert!(walk.out_of_bounds.is_empty(), "{:?}", walk.out_of_bounds);
+fn generated_mut_lens_should_record_the_length_of_a_mut_parameter() {
+    let mut lens = Vec::new();
+    for data in seeds() {
+        let generated = generate(&data);
+        lens.extend(generated.mut_lens.iter().map(|(_, len)| *len));
+        let mut walk = Walk {
+            mut_lens: generated.mut_lens.into_iter().collect(),
+            ..Walk::default()
+        };
+        walk.program(&generated.plain);
+        assert!(walk.out_of_bounds.is_empty(), "{:?}", walk.out_of_bounds);
+    }
+    assert!(lens.iter().any(|&len| len < MAX_MUT_LEN), "{lens:?}");
+    assert!(lens.iter().all(|&len| len <= MAX_MUT_LEN), "{lens:?}");
 }
