@@ -1,0 +1,48 @@
+// GIVEN `interface Base` with a requirement that has a `mut string`, `interface Sub: Base`, a class
+// `Shout` that conforms to `Sub`, a class `Holder` with a field `f: any Sub`, and a generic
+// function that calls through an `any Base`
+// WHEN `main` calls `shout` on an `any Sub`, on that value as an `any Base`, on the field of a
+// `Holder`, and through the generic function
+// THEN each call stores the new text back into the caller's string
+interface Base {
+    fn shout(self, mut s: string, n: i64)
+}
+
+interface Sub: Base {
+    fn other(self) -> i64
+}
+
+class Shout: Sub {
+    fn shout(self, mut s: string, n: i64) {
+        s = "{s}{n}!"
+    }
+
+    fn other(self) -> i64 {
+        1
+    }
+}
+
+class Holder {
+    f: any Sub
+}
+
+fn via<T>(b: any Base, x: T, mut s: string) -> T {
+    b.shout(mut s, 9)
+    x
+}
+
+fn main() {
+    let sub: any Sub = Shout()
+    let mut s = "a"
+    sub.shout(mut s, 1)
+    print(s)
+    let base: any Base = sub
+    base.shout(mut s, 2)
+    print(s)
+    let h = Holder(f: sub)
+    h.f.shout(mut s, 3)
+    print(s)
+    print(via(base, 4, mut s))
+    print(s)
+    print(sub.other())
+}

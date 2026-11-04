@@ -8,7 +8,8 @@
 //!   which a release calls once the count is 0;
 //! - slots 1 and 2 show the value, as `print` and as `dbg` do: `(sink, data, quoted)`;
 //! - then one entry for each requirement of each interface of the layout of the `any` type
-//!   (`tir::AnyLayout`), in its order: `(data, owned arguments...)` returning the result;
+//!   (`tir::AnyLayout`), in its order: `(data, owned arguments..., out pointers...)` returning the
+//!   result, with one out pointer for each `mut` parameter of the requirement;
 //! - then a pointer to the table of each interface of the layout after the first, so that
 //!   converting an `any J` to an `any I` that `J` inherits, or to `any Display`, loads the table
 //!   of `I` without knowing the type inside.
@@ -293,10 +294,6 @@ impl<'ctx> Codegen<'ctx, '_> {
             !function.prelude,
             "no table entry should call a method of the prelude"
         );
-        assert!(
-            !function.muts.contains(&true),
-            "a `mut` parameter through `any I` lands in Task 8"
-        );
         // The receiver is the data, a pointer, whatever the method's `self` is.
         let ptr = self.context.ptr_type(AddressSpace::default());
         let others: Vec<Type> = function.locals[1..function.params]
@@ -305,6 +302,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             .collect();
         let params: Vec<BasicMetadataTypeEnum<'ctx>> = std::iter::once(ptr.into())
             .chain(others.iter().flat_map(|&ty| self.param_types(ty)))
+            .chain(self.out_param_types(&function.muts))
             .collect();
         let fn_type = match self.llvm_type(function.ret) {
             Some(ret) => ret.fn_type(&params, false),
@@ -328,11 +326,22 @@ impl<'ctx> Codegen<'ctx, '_> {
         }
         let mut args = vec![receiver];
         args.extend(self.joined_params(glue, 1, &others));
-        let call_args: Vec<BasicMetadataValueEnum<'ctx>> = (std::iter::once(ty))
+        let mut call_args: Vec<BasicMetadataValueEnum<'ctx>> = (std::iter::once(ty))
             .chain(others.iter().copied())
             .zip(&args)
             .flat_map(|(ty, &arg)| self.split(ty, arg))
             .collect();
+        // The out pointers of the entry go on to the method, in the order they came.
+        let values = 1 + others
+            .iter()
+            .map(|&ty| self.param_types(ty).len())
+            .sum::<usize>();
+        call_args.extend(
+            (Self::out_pointers(glue, values, &function.muts)
+                .into_iter()
+                .flatten())
+            .map(BasicMetadataValueEnum::from),
+        );
         let result = self.call_value(method, &call_args);
         // An argument that the method borrows is the entry's to release, after the call.
         for (i, local) in function.locals[..function.params]
@@ -452,13 +461,15 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// `DynCall`: the requirement `method` of `interface`, with the arguments `iargs` after
     /// `Self`, called on `receiver`, an `any` value of type `any`, with the owned `args`, each
-    /// with its type.
+    /// with its type. `muts` has one flag for the receiver and then one for each of `args`: the
+    /// call passes an out slot for each flagged one, and leaves the slots for the `out`s that
+    /// follow it.
     pub(super) fn dyn_call(
         &self,
         any: Type,
         (interface, iargs, method): (InterfaceId, TypeArgs, u32),
         receiver: BasicValueEnum<'ctx>,
-        args: &[(BasicValueEnum<'ctx>, Type)],
+        (args, muts): (&[(BasicValueEnum<'ctx>, Type)], &[bool]),
         ret: Option<Type>,
     ) -> Option<BasicValueEnum<'ctx>> {
         let at = self
@@ -472,12 +483,21 @@ impl<'ctx> Codegen<'ctx, '_> {
         let mut params: Vec<BasicMetadataTypeEnum<'ctx>> =
             vec![self.context.ptr_type(AddressSpace::default()).into()];
         params.extend(args.iter().flat_map(|&(_, ty)| self.param_types(ty)));
+        params.extend(self.out_param_types(muts));
         let fn_type = match ret.and_then(|ret| self.llvm_type(ret)) {
             Some(ret) => ret.fn_type(&params, false),
             None => self.context.void_type().fn_type(&params, false),
         };
         let mut call_args: Vec<BasicMetadataValueEnum<'ctx>> = vec![data.into()];
         call_args.extend(args.iter().flat_map(|&(arg, ty)| self.split(ty, arg)));
+        if muts.contains(&true) {
+            let slots = self.push_out_slots(
+                muts,
+                |i| if i == 0 { any } else { args[i - 1].1 },
+                &mut call_args,
+            );
+            *self.last_outs.borrow_mut() = slots;
+        }
         let result = self
             .builder
             .build_indirect_call(fn_type, entry, &call_args, "dyn")

@@ -28,6 +28,8 @@
 //! the function stores the parameter's final value there with `SetOut`, before each `return`.
 //! A call with a `mut` argument moves the argument's value into a temporary, calls, reads each
 //! final value with `Out`, and stores it back. A `mut` parameter is owned, never borrowed.
+//! A `DynCall` flags its `mut` arguments (`muts`), as the callee is not known: its table entry has
+//! the out pointers after its value parameters and passes them on to the method.
 //!
 //! The reuse pass (`reuse.rs`) then gives each boxed field of a construction a token of its
 //! enum that every path into it holds, so the box is built into the token's block.
@@ -304,12 +306,14 @@ pub(crate) enum Rvalue {
     /// requirement `method` of `interface`, with `iargs` as its type arguments (the receiver's
     /// type first). Its convention is fixed, not inferred: the receiver is read in place, and the
     /// callee holds no reference to it that the caller keeps; every other argument is owned, so
-    /// the table's entry adapts to the concrete method's flags.
+    /// the table's entry adapts to the concrete method's flags. `muts` has one flag for each of
+    /// `args`: whether it is a `mut` argument, which the call gives an out slot after its values.
     DynCall {
         interface: tir::InterfaceId,
         iargs: tir::TypeArgs,
         method: u32,
         args: Vec<Operand>,
+        muts: Vec<bool>,
     },
     Concat {
         lhs: Operand,

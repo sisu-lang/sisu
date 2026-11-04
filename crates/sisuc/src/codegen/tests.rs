@@ -6156,8 +6156,7 @@ fn prelude_mut_function_should_report_the_location_that_follows_its_out_pointer(
 /// WHEN the module is compiled, before optimization
 /// THEN the entry glue of `Nines.fill` has a `ptr` parameter after its value parameters
 /// AND it passes that parameter as the last argument of the call to the method
-/// AND the call in `main` passes an `alloca` of `main` last, through a function type that ends
-///   in `ptr`
+/// AND the call through the table in `main` passes an `alloca` of `main` as its last argument
 /// ```
 #[test]
 fn entry_glue_should_pass_the_out_pointer() {
@@ -6200,7 +6199,7 @@ fn entry_glue_should_pass_the_out_pointer() {
     let main = function_body(&ir, "define internal void @sisu.main()");
     let dyn_call = main
         .lines()
-        .find(|line| line.contains("%dyn = call"))
+        .find(|line| line.contains("call void %"))
         .unwrap_or_else(|| panic!("no call through the table in\n{main}"));
     let slot = dyn_call
         .trim_end_matches(')')

@@ -3882,6 +3882,7 @@ fn dyn_call(args: Vec<Operand>) -> Statement {
             interface: tir::InterfaceId(0),
             iargs: TypeArgs::NONE,
             method: 0,
+            muts: vec![false; args.len()],
             args,
         },
     }

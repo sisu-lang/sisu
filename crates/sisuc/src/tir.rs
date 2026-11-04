@@ -696,12 +696,14 @@ pub(crate) enum ExprKind {
     ToAny(Box<Expr>),
     /// A call through the table of the receiver, an `any` value that `args` hold first, of the
     /// requirement `method` of `interface` with the arguments `iargs`. `mono` makes it from an
-    /// `InterfaceCall` whose receiver is an `any` value.
+    /// `InterfaceCall` whose receiver is an `any` value. `muts` says, for each of `args`, whether
+    /// it is the temporary of a `mut` argument of the `MutCall` around the call.
     DynCall {
         interface: InterfaceId,
         iargs: TypeArgs,
         method: u32,
         args: Vec<Expr>,
+        muts: Vec<bool>,
     },
     /// `u8(e)`, `i64(e)` or `char(e)`: `e` converted to the node's own type, a `u8?` or a
     /// `char?` for a conversion that can fail.
@@ -1652,6 +1654,7 @@ impl Printer<'_> {
                 iargs,
                 method,
                 args,
+                ..
             } => {
                 let info = &self.program.interfaces[interface.0];
                 let name = format!(
@@ -3567,6 +3570,7 @@ mod tests {
                     iargs: TypeArgs::NONE,
                     method: 0,
                     args: ints([1, 2]),
+                    muts: vec![false; 2],
                 },
                 2,
             ),

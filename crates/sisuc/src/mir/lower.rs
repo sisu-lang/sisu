@@ -490,8 +490,10 @@ impl<'a> Lowering<'a> {
         back: &Block,
         dest: Option<LocalId>,
     ) -> Lowered {
-        let ExprKind::Call { args, .. } = &call.kind else {
-            panic!("a `mut` parameter through `any I` lands in Task 8");
+        let (ExprKind::Call { args, .. } | ExprKind::DynCall { args, .. }) = &call.kind else {
+            panic!(
+                "the call of a `mut` argument should be a call of a function or through a table"
+            );
         };
         for m in muts {
             for (object, read) in &m.keep {
@@ -820,6 +822,7 @@ impl<'a> Lowering<'a> {
                 iargs,
                 method,
                 args,
+                muts,
             } => {
                 // The receiver is read in place, as `is` reads its operands, and the other
                 // arguments are consumed.
@@ -836,6 +839,7 @@ impl<'a> Lowering<'a> {
                         iargs: *iargs,
                         method: *method,
                         args: operands,
+                        muts: muts.clone(),
                     },
                 );
                 for temp in temps {
