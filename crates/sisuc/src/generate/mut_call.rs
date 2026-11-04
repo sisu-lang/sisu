@@ -43,13 +43,21 @@ impl Place {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// How many places `placeable` has looked at on this thread.
+    static PLACE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Whether each of `wants` can take a place of `places` that starts at a local no earlier one
-/// did, and none of `used` did (E0170: two `mut` arguments may not name one place or overlap).
+/// did, and none of `used` did (E0171: two `mut` arguments may not name one place or overlap).
 fn placeable(wants: &[(Ty, u64)], places: &[Place], used: &mut Vec<usize>) -> bool {
     let Some((want, rest)) = wants.split_first() else {
         return true;
     };
     places.iter().any(|place| {
+        #[cfg(test)]
+        PLACE_STEPS.set(PLACE_STEPS.get() + 1);
         if !place.fits(want) || used.contains(&place.root) {
             return false;
         }
@@ -184,18 +192,15 @@ impl Gen<'_> {
             .collect();
         let start = self.w.mark();
         let mut locals = Vec::new();
-        let own;
         if !callees.is_empty() && (swaps.is_empty() || self.pick(3) != 0) {
             let callee = callees[self.pick(callees.len())];
             let chosen = self.choose_places(&self.mut_wants(callee), &places);
-            own = chosen.len();
             if self.scope.funcs[callee].ret != Ty::Unit {
                 self.w.text("let _ = ");
             }
             self.invoke_with(callee, false, &chosen, &mut locals);
         } else {
             let place = &places[swaps[self.pick(swaps.len())]];
-            own = 1;
             self.w.text("let _ = exchange(mut ");
             self.write_place(place, &mut locals);
             self.w.text(", ");
@@ -203,13 +208,13 @@ impl Gen<'_> {
             self.w.text(")");
         }
         let copy = self.rewrite_pick(2) == 0;
-        self.w.mut_block(start, own, &locals, copy);
+        self.w.mut_block(start, &locals, copy, true);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Kind, Place, Ty, placeable};
+    use super::{Kind, PLACE_STEPS, Place, Ty, placeable};
 
     fn place(root: usize, ty: Ty, size: u64) -> Place {
         Place {
@@ -223,7 +228,7 @@ mod tests {
 
     /// GIVEN two `mut` parameters of `i64` and two places that start at one local
     /// WHEN each parameter takes a place
-    /// THEN none can, because two arguments of a call may not overlap (E0170)
+    /// THEN none can, because two arguments of a call may not overlap (E0171)
     #[test]
     fn placeable_should_refuse_two_places_of_one_local() {
         let wants = [(Ty::I64, 0), (Ty::I64, 0)];
@@ -249,5 +254,22 @@ mod tests {
             &[place(0, Ty::String, 16)],
             &mut Vec::new()
         ));
+    }
+
+    /// GIVEN `mut` parameters of `i64`, `i64` and `string`, and `n` places of `i64`, each at a
+    /// local of its own, which no parameter of `string` can take
+    /// WHEN `placeable` looks for a place for each parameter
+    /// THEN its work grows in proportion to `n`, not to its cube: it has no backtracking
+    /// over the places. The sizes are 10 times the 2 places that show the search.
+    #[test]
+    fn placeable_should_read_the_places_linearly() {
+        let wants = [(Ty::I64, 0), (Ty::I64, 0), (Ty::String, 0)];
+        let reads = |n: usize| {
+            let places: Vec<Place> = (0..n).map(|root| place(root, Ty::I64, 0)).collect();
+            PLACE_STEPS.set(0);
+            assert!(!placeable(&wants, &places, &mut Vec::new()));
+            PLACE_STEPS.get()
+        };
+        crate::mir::tests::assert_near_linear(reads(20), reads(40), reads(60));
     }
 }

@@ -2059,6 +2059,17 @@ fn mut_param(name: String, ty: Ty, size: u64) -> Var {
 mod tests {
     use super::*;
 
+    /// GIVEN a `mut` parameter of `[i64]` that a caller's place holds at most 100 of
+    /// WHEN the parameter is a variable of the body
+    /// THEN an element of it can reach that size, as an element of a plain parameter can
+    #[test]
+    fn a_mut_array_parameter_should_hold_elements_of_the_size_it_takes() {
+        let ty = Ty::Array(Box::new(Ty::I64));
+        let var = mut_param("v1".to_string(), ty.clone(), 100);
+        let plain = param("v1".to_string(), ty, 100);
+        assert_eq!((var.size, var.elem), (100, plain.elem));
+    }
+
     #[test]
     fn a_draw_should_give_an_interface_the_associated_type_of_its_part() {
         for draw in 0..18 {

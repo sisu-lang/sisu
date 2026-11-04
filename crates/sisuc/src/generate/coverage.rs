@@ -4024,6 +4024,47 @@ fn a_call_statement_should_name_any_function_the_budget_lets_it() {
     assert_eq!(g.callees_any().len(), 2);
 }
 
+/// What the functions of `program` do to a `mut` parameter, when some `mut` call passes it a
+/// place: whether one writes an element of a `mut` array, whether one pushes to a `mut` array,
+/// and whether one appends to a `mut` string.
+fn mut_writes(program: &str) -> [bool; 3] {
+    let mut found = [false; 3];
+    let mut rest = program;
+    while let Some(at) = rest.find("\nfn ") {
+        rest = &rest[at + 1..];
+        let function = &rest[..rest.find("\n}\n").unwrap_or(rest.len())];
+        let header = function.lines().next().unwrap_or_default();
+        let name = header[3..].split('(').next().unwrap_or_default();
+        let call = format!("{name}(");
+        let called = (program.lines())
+            .any(|l| !l.starts_with("fn ") && l.contains(&call) && l.contains("mut "));
+        for param in header.split("mut v").skip(1) {
+            let (var, ty) = param.split_once(": ").unwrap_or_default();
+            let var = format!("v{var}");
+            let ty = ty.split([',', ')']).next().unwrap_or_default();
+            let array = ty.starts_with('[');
+            found[0] |= called && array && function.contains(&format!("{var}[0] = "));
+            found[1] |= called && array && function.contains(&format!("{var}.push("));
+            found[2] |= called && ty == "string" && function.contains(&format!("{var} += "));
+        }
+    }
+    found
+}
+
+/// GIVEN the generated programs
+/// WHEN a function takes a `mut` array or a `mut` string, and a `mut` call passes it a place
+/// THEN some seed writes an element of the array, some pushes to it, and some appends to the
+/// string: the caller's place gets what the function made of it
+#[test]
+fn some_seed_should_change_and_grow_what_a_mut_call_passes() {
+    let mut found = [false; 3];
+    for data in seeds() {
+        let writes = mut_writes(&generate(&data).program);
+        found = [0, 1, 2].map(|i| found[i] || writes[i]);
+    }
+    assert_eq!(found, [true; 3], "element write, push, string append");
+}
+
 /// GIVEN `f1`, `f2` and `f3`, of which `f2` has a `mut` parameter
 /// WHEN a call may name a function
 /// THEN `f2` is no callee: only a `mut` call names it
