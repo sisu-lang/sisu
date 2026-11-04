@@ -1,0 +1,27 @@
+// GIVEN `class Inner { mut xs: [i64] }`, `class Outer { mut inner: Inner }` and
+// `fn f(mut a: Outer, mut xs: [i64])` that sets `a` to a new `Outer` of `Inner(xs: [20])` and
+// `xs` to `[30]`
+// WHEN `main` calls `f(mut a, mut a.inner.xs)` on `let mut a = Outer(inner: Inner(xs: [10]))`
+// and prints `old.inner.xs`, where `old` is the first object, then `a.inner.xs`
+// THEN it prints "[30]", then "[20]": the store-back of a field two levels deep lands in the
+// object kept at the copy-in
+class Inner {
+    mut xs: [i64]
+}
+
+class Outer {
+    mut inner: Inner
+}
+
+fn f(mut a: Outer, mut xs: [i64]) {
+    a = Outer(inner: Inner(xs: [20]))
+    xs = [30]
+}
+
+fn main() {
+    let mut a = Outer(inner: Inner(xs: [10]))
+    let old = a
+    f(mut a, mut a.inner.xs)
+    print(old.inner.xs)
+    print(a.inner.xs)
+}

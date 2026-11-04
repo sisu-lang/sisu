@@ -1,0 +1,21 @@
+// GIVEN `class Box { mut x: [i64] }` and `fn f(mut b: Box, mut x: i64)` that sets `b` to a new
+// `Box(x: [])` and `x` to 30
+// WHEN `main` calls `f(mut b, mut b.x[0])` on `let mut b = Box(x: [10])` and prints `old.x`, where
+// `old` is the first object, then `b.x`
+// THEN it prints "[30]", then "[]": the write of the element lands in the kept object
+class Box {
+    mut x: [i64]
+}
+
+fn f(mut b: Box, mut x: i64) {
+    b = Box(x: [])
+    x = 30
+}
+
+fn main() {
+    let mut b = Box(x: [10])
+    let old = b
+    f(mut b, mut b.x[0])
+    print(old.x)
+    print(b.x)
+}

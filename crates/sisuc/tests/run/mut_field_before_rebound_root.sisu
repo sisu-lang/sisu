@@ -1,0 +1,22 @@
+// GIVEN `class Box { mut x: [i64] }` and `fn f(mut x: [i64], mut b: Box)` that sets `b` to a new
+// `Box(x: [20])` and `x` to `[30]`
+// WHEN `main` calls `f(mut b.x, mut b)` on `let mut b = Box(x: [10])` and prints `old.x`, where
+// `old` is the first object, then `b.x`
+// THEN it prints "[30]", then "[20]": the order of the arguments does not change which object
+// the store-back of `b.x` writes to
+class Box {
+    mut x: [i64]
+}
+
+fn f(mut x: [i64], mut b: Box) {
+    b = Box(x: [20])
+    x = [30]
+}
+
+fn main() {
+    let mut b = Box(x: [10])
+    let old = b
+    f(mut b.x, mut b)
+    print(old.x)
+    print(b.x)
+}
