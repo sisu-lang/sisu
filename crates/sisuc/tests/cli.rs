@@ -450,6 +450,44 @@ fn assert_usage_errors(cases: &[&[&str]]) -> String {
     stderr
 }
 
+/// GIVEN `--codegen-units` with 0, with 65, and with `--emit mir`
+/// WHEN `sisu build` runs
+/// THEN it exits 2 with a usage error that names `--codegen-units`
+/// AND the error for `--emit mir` says that the flag works only when building an executable or
+/// with `--emit ir` or `--emit ir-raw`
+#[test]
+fn codegen_units_should_be_a_usage_error_out_of_range_or_without_codegen() {
+    for count in ["0", "65"] {
+        let stderr = assert_usage_errors(&[&["build", "--codegen-units", count, "f.sisu"]]);
+        assert!(stderr.contains("--codegen-units"), "{count}: {stderr}");
+    }
+    let stderr =
+        assert_usage_errors(&[&["build", "--emit", "mir", "--codegen-units", "2", "f.sisu"]]);
+    assert!(
+        stderr.starts_with(
+            "error: `--codegen-units` works only when building an executable or with `--emit ir` \
+             or `--emit ir-raw`\n"
+        ),
+        "{stderr}"
+    );
+}
+
+/// GIVEN two functions and `main`
+/// WHEN `sisu run --codegen-units 2 -e <program>` runs it
+/// THEN the program's output is on stdout and the exit code is 0
+#[test]
+fn run_should_take_codegen_units() {
+    let code = "fn one() -> i64 {\n    1\n}\n\nfn main() {\n    print(one() + 1)\n}\n";
+    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
+        .current_dir(env!("CARGO_TARGET_TMPDIR"))
+        .args(["run", "--codegen-units", "2", "-e", code])
+        .output()
+        .expect("sisu starts");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "2\n", "{stderr}");
+}
+
 /// GIVEN `--rc-checks` with `explain`, `check`, a stage other than `ir`, no file or a repeat
 /// WHEN `sisu` runs
 /// THEN it exits 2 with a usage error
@@ -3120,12 +3158,38 @@ fn build_should_accept_an_enum_whose_cycle_is_boxed() {
     assert_eq!(out.status.code(), Some(0), "{stderr}");
 }
 
-/// The fields of each `timings:` line of `stderr`, split at white space.
+/// The line that gives the number of codegen units, which is not a stage line.
+const UNITS_LINE: &str = "timings: codegen units:";
+
+/// The fields of each stage line of `stderr`, the `timings:` lines but the one of codegen units,
+/// split at white space.
 fn timing_lines(stderr: &str) -> Vec<Vec<&str>> {
     (stderr.lines())
-        .filter(|line| line.starts_with("timings:"))
+        .filter(|line| line.starts_with("timings:") && !line.starts_with(UNITS_LINE))
         .map(|line| line.split_whitespace().collect())
         .collect()
+}
+
+/// Checks the line of codegen units on `stderr`: with `runs_codegen`, exactly one line
+/// `timings: codegen units: 1`, after the last stage line and before the `other` line, and else
+/// none.
+fn assert_units_line(stderr: &str, runs_codegen: bool, what: &str) {
+    let lines: Vec<&str> = (stderr.lines())
+        .filter(|line| line.starts_with("timings:"))
+        .collect();
+    let found: Vec<usize> = (0..lines.len())
+        .filter(|&at| lines[at].starts_with(UNITS_LINE))
+        .collect();
+    if !runs_codegen {
+        assert_eq!(found, Vec::<usize>::new(), "{what}: {stderr}");
+        return;
+    }
+    let other = lines
+        .iter()
+        .position(|line| line.split_whitespace().nth(1) == Some("other"))
+        .expect("the report has an `other` line");
+    assert_eq!(found, [other - 1], "{what}: {stderr}");
+    assert_eq!(lines[other - 1], "timings: codegen units: 1", "{what}");
 }
 
 /// The stage names on the `timings:` lines of `stderr`, in order.
@@ -3165,6 +3229,7 @@ const CLEAN: &str = "fn main() {\n    print(1)\n}\n";
 /// THEN standard error of the build has one `timings:` line for each stage, and a `prelude` line
 /// after parse
 /// AND the stages are lex, parse, check, mono, mir, codegen, optimize, object and link
+/// AND one line `timings: codegen units: 1` comes after the last stage
 /// AND an `other` line and a `total` line come after them
 /// AND the executable prints `1`
 #[test]
@@ -3178,6 +3243,7 @@ fn build_with_timings_should_report_each_stage_on_stderr() {
     assert_eq!(out.status.code(), Some(0), "{stderr}");
     let rest = ["mono", "mir", "codegen", "optimize", "object", "link"];
     assert_eq!(timing_names(&stderr), front_then(&rest), "{stderr}");
+    assert_units_line(&stderr, true, "build");
     let exe = Path::new(env!("CARGO_TARGET_TMPDIR")).join("timings_build.exe");
     let ran = Command::new(exe).output().expect("the executable starts");
     assert_eq!(String::from_utf8_lossy(&ran.stdout), "1\n");
@@ -3263,18 +3329,24 @@ fn timings_should_not_change_stdout() {
 /// GIVEN a program that checks clean
 /// WHEN `sisu build --emit <output> --timings` runs on it, for each output `--emit` takes
 /// THEN standard error has `timings:` lines for the stages that make `<output>`, and no others
+/// AND for `ir` and `ir-raw`, which run codegen, one line `timings: codegen units: 1` comes after
+/// the last stage, and for the other outputs there is none
 /// AND an `other` line and a `total` line come after them
 #[test]
 fn emit_with_timings_should_report_the_stages_it_runs() {
-    let cases: [(&str, Vec<&str>); 6] = [
-        ("tokens", with_tail(&["lex"])),
-        ("ast", with_tail(&["lex", "parse"])),
-        ("tir", front_then(&["mono"])),
-        ("mir", front_then(&["mono", "mir"])),
-        ("ir", front_then(&["mono", "mir", "codegen", "optimize"])),
-        ("ir-raw", front_then(&["mono", "mir", "codegen"])),
+    let cases: [(&str, Vec<&str>, bool); 6] = [
+        ("tokens", with_tail(&["lex"]), false),
+        ("ast", with_tail(&["lex", "parse"]), false),
+        ("tir", front_then(&["mono"]), false),
+        ("mir", front_then(&["mono", "mir"]), false),
+        (
+            "ir",
+            front_then(&["mono", "mir", "codegen", "optimize"]),
+            true,
+        ),
+        ("ir-raw", front_then(&["mono", "mir", "codegen"]), true),
     ];
-    for (stage, names) in cases {
+    for (stage, names, runs_codegen) in cases {
         let out = run_on(
             "timings_emit",
             CLEAN,
@@ -3283,6 +3355,7 @@ fn emit_with_timings_should_report_the_stages_it_runs() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert_eq!(out.status.code(), Some(0), "{stage}: {stderr}");
         assert_eq!(timing_names(&stderr), names, "{stage}: {stderr}");
+        assert_units_line(&stderr, runs_codegen, stage);
         // Five fields of time and percent; the lex line adds 8 of throughput, the parse and check
         // lines 4.
         for fields in timing_lines(&stderr) {

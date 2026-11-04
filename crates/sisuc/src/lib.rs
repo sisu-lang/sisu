@@ -697,6 +697,14 @@ fn compile(
     link_result.and(removed)
 }
 
+/// The object files of the units, in unit order, when every unit wrote one. Else the error of the
+/// lowest unit that failed, and the files that the other units wrote are removed.
+#[cfg_attr(not(test), expect(dead_code, reason = "Task 4 `compile` calls it"))]
+fn written_objects(results: Vec<Result<PathBuf, String>>) -> Result<Vec<PathBuf>, String> {
+    drop(results);
+    Err(String::new())
+}
+
 /// Ten names for a new file or directory in the temp dir: `sisu-<pid>-<nanoseconds><suffix>`.
 /// The nanoseconds pick a fresh name when one is taken.
 fn fresh_names(suffix: &'static str) -> impl Iterator<Item = String> {
@@ -755,6 +763,38 @@ mod tests {
         let value = std::rc::Rc::new(());
         release(std::rc::Rc::clone(&value));
         assert_eq!(std::rc::Rc::strong_count(&value), 1);
+    }
+
+    #[test]
+    fn written_objects_should_remove_every_object_and_keep_the_first_error() {
+        let dir = std::env::temp_dir().join(format!("sisu-written-objects-{}", std::process::id()));
+        // It is absent unless an earlier run failed, so a failure here is expected and harmless.
+        drop(fs::remove_dir_all(&dir));
+        fs::create_dir(&dir).expect("creates the directory");
+        let [a, b] = ["a.o", "b.o"].map(|name| {
+            let path = dir.join(name);
+            fs::write(&path, "object").expect("writes");
+            path
+        });
+
+        // A failed unit removes the objects of the units that worked, and the lowest error wins.
+        let failed = written_objects(vec![
+            Ok(a.clone()),
+            Err("unit 1".to_string()),
+            Ok(b.clone()),
+            Err("unit 3".to_string()),
+        ]);
+        assert_eq!(failed, Err("unit 1".to_string()));
+        assert!(!a.exists() && !b.exists());
+
+        // Every unit worked: the paths come back in order, and the files stay.
+        for path in [&a, &b] {
+            fs::write(path, "object").expect("writes");
+        }
+        let written = written_objects(vec![Ok(a.clone()), Ok(b.clone())]);
+        assert_eq!(written, Ok(vec![a.clone(), b.clone()]));
+        assert!(a.exists() && b.exists());
+        fs::remove_dir_all(&dir).expect("removes the directory");
     }
 
     #[test]
