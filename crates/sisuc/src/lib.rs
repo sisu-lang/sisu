@@ -33,6 +33,7 @@ use std::fs;
 use std::io::{self, ErrorKind, IsTerminal, Read, Stderr, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use codegen::OptLevel;
@@ -143,6 +144,21 @@ pub(crate) fn on_compiler_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
     })
 }
 
+/// Whether `sisu` runs as the command-line tool, which exits when its command ends. `cli` sets
+/// it, except for `sisu run`, which waits for the program and so frees the compiler's memory
+/// first. A fuzzer or a test that compiles again and again in one process leaves it clear.
+static EXITS_AFTER: AtomicBool = AtomicBool::new(false);
+
+/// Drops `value`, except in the command-line tool. There the process exits soon after. The OS then
+/// frees all of its memory in one step, which is faster than a drop that frees each node.
+fn release<T>(value: T) {
+    if EXITS_AFTER.load(Ordering::Relaxed) {
+        std::mem::forget(value);
+    } else {
+        drop(value);
+    }
+}
+
 /// Parses the arguments, does what they ask for, and reports.
 pub fn cli() -> ExitCode {
     let (format, mode) = match args::parse(&std::env::args_os().collect::<Vec<_>>()) {
@@ -167,6 +183,7 @@ pub fn cli() -> ExitCode {
             return ExitCode::from(u8::try_from(e.exit_code()).unwrap_or(2));
         }
     };
+    EXITS_AFTER.store(!matches!(mode, Mode::Run { .. }), Ordering::Relaxed);
     let color = report::use_color(
         io::stderr().is_terminal(),
         std::env::var_os("NO_COLOR").as_deref(),
@@ -481,7 +498,9 @@ fn run_check(reporter: &mut Report, input: &Source, timings: &mut Timings) -> Ex
     let (program, diagnostics) =
         front_end::checked_timed(front_end::PRELUDE_SOURCE, &text, timings);
     reporter.diagnostics(&name, &text, &diagnostics);
-    if program.is_some() {
+    let checked = program.is_some();
+    release(program);
+    if checked {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
@@ -577,6 +596,7 @@ fn build(
         backend,
         timings,
     );
+    release(program);
     match compiled {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
@@ -659,6 +679,10 @@ fn compile(
     let code = timings.time(timings::Stage::Object, || {
         codegen::object_code(&module, &machine)
     })?;
+    // The module goes before the context that owns it.
+    release(module);
+    release(context);
+    release(mir);
     // A name of its own, so a user's `<output>.o` is left alone.
     let object = create_object(dir, code.as_slice(), fresh_names(".o"))?;
     // Remove the object file whether or not the link worked; a link error wins.
@@ -725,6 +749,13 @@ fn create_object(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn release_should_drop_the_value_outside_the_command_line_tool() {
+        let value = std::rc::Rc::new(());
+        release(std::rc::Rc::clone(&value));
+        assert_eq!(std::rc::Rc::strong_count(&value), 1);
+    }
 
     #[test]
     fn read_at_most_stops_one_past_the_limit() {

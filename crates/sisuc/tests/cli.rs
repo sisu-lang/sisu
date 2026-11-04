@@ -2459,16 +2459,15 @@ fn run_should_accept_build_flags_before_the_file() {
 
 /// GIVEN `MIMALLOC_VERBOSE=1`, and `--allocator system` or no allocator flag
 /// WHEN `sisu run -e` runs
-/// THEN the default run prints `mimalloc:` lines to stderr, the `system` run prints none, and both
-/// print 1
+/// THEN mimalloc starts twice in the default run and once in the `system` run, and both print 1
 ///
 /// `sisu run` links the runtime `--allocator` names: mimalloc by default, which writes
-/// `mimalloc:` lines to stderr under `MIMALLOC_VERBOSE=1`, and with `system` a runtime that
-/// holds no mimalloc.
+/// `mimalloc: process init` to stderr under `MIMALLOC_VERBOSE=1`, and with `system` a runtime
+/// that holds no mimalloc. `sisu` itself runs on mimalloc, so its own start is the other line.
 #[test]
 fn run_should_link_the_runtime_that_the_allocator_flag_names() {
     let tmp = scratch_path::empty_dir("run_takes_the_allocator_flag");
-    for (flags, mimalloc) in [(&[][..], true), (&["--allocator", "system"], false)] {
+    for (flags, starts) in [(&[][..], 2), (&["--allocator", "system"], 1)] {
         let out = sisu_run(&tmp)
             .env("MIMALLOC_VERBOSE", "1")
             .args(flags)
@@ -2479,8 +2478,8 @@ fn run_should_link_the_runtime_that_the_allocator_flag_names() {
         assert_eq!(out.status.code(), Some(0), "{flags:?}: {stderr}");
         assert_eq!(String::from_utf8_lossy(&out.stdout), "1\n", "{flags:?}");
         assert_eq!(
-            stderr.contains("mimalloc:"),
-            mimalloc,
+            stderr.matches("mimalloc: process init").count(),
+            starts,
             "{flags:?}: {stderr}"
         );
     }

@@ -160,9 +160,10 @@ yourself. A program built without the flag fails under Valgrind on mimalloc's
 startup read and shows none of its Sisu allocations
 ([ADR 0031](adr/0031-compiled-programs-allocate-with-mimalloc.md)).
 
-mimalloc reads the `MIMALLOC_*` variables of the environment. An option such as
-`MIMALLOC_VERBOSE=1` can write to stderr and fail the tests that check a
-default build's stderr, so unset every `MIMALLOC_*` variable before `make test`.
+mimalloc reads the `MIMALLOC_*` variables of the environment, in `sisu` itself
+and in a default build. An option such as `MIMALLOC_VERBOSE=1` can write to
+stderr and fail the tests that check the stderr of either, so unset every
+`MIMALLOC_*` variable before `make test`.
 
 A `run/` case whose output depends on a value crossing a real call says so
 with a marker line, `// o2-calls: <caller> <callee> <count>`. The test then
