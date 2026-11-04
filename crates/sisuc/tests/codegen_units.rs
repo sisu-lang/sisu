@@ -326,7 +326,7 @@ fn panic_in_another_unit_should_name_its_place() {
     let ir = emit(&dir, "boom", &["--emit", "ir-raw", "--codegen-units", "2"]);
     let all = units(&ir);
     assert_eq!(home(&all, "boom"), 1);
-    assert!(calls(all[0], "main") || defines(all[0], "main"));
+    assert_eq!(home(&all, "main"), 0);
     assert!(calls(all[0], "boom"), "unit 0 should call `boom`");
     let [split, whole] = ["2", "1"].map(|count| {
         let (exe, _) = build(&dir, "boom", count, &["--codegen-units", count]);

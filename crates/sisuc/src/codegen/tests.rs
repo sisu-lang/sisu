@@ -6092,7 +6092,7 @@ fn compiled_units<'ctx>(context: &'ctx Context, src: &str, count: usize) -> Vec<
     let mir = mir::build(&program);
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
     let analyses = Analyses::new(&program, src);
-    units::partition(&mir, count)
+    units::split(&mir, Some(count))
         .iter()
         .map(|unit| {
             let module = compile_unit(

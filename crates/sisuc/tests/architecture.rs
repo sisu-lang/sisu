@@ -52,14 +52,9 @@ const BACK_EDGES: &[(&str, &str, &str)] = &[
     (
         "codegen",
         "crate",
-        "`STACK_SIZE` stays at the crate root, where `main.rs` and the fuzz targets read it as \
-         `sisuc::STACK_SIZE`; the scheduler gives it to its workers",
-    ),
-    (
-        "codegen",
-        "timings",
-        "`each_unit` records the time of each unit in its own `Timings` and merges them for the \
-         driver",
+        "`STACK_SIZE` is the one item of the crate root that codegen uses. It stays there, where \
+         `main.rs` and the fuzz targets read it as `sisuc::STACK_SIZE`; the scheduler gives it to \
+         its workers",
     ),
     (
         "link",

@@ -99,24 +99,31 @@ impl Unit {
     }
 }
 
-/// The `count` units of `mir`.
+/// The units of `mir` for the flag `flag` (see `count`). It measures the functions once.
+pub(crate) fn split(mir: &mir::Program, flag: Option<usize>) -> Vec<Unit> {
+    let sizes: Vec<usize> = mir.functions.iter().map(size).collect();
+    partition(mir, &sizes, count(&sizes, flag))
+}
+
+/// The `count` units of `mir`, whose functions have the sizes `sizes`. One unit is `Unit::whole`,
+/// with no assignment.
 ///
 /// # Panics
 ///
 /// With `count > 1`, if two functions have one name: a split build links by name.
-pub(crate) fn partition(mir: &mir::Program, count: usize) -> Vec<Unit> {
-    if count > 1 {
-        let mut names = FxHashSet::default();
-        for function in &mir.functions {
-            assert!(
-                names.insert(function.name.as_str()),
-                "two functions are named `{}`; a split build links by name",
-                function.name
-            );
-        }
+pub(crate) fn partition(mir: &mir::Program, sizes: &[usize], count: usize) -> Vec<Unit> {
+    if count == 1 {
+        return vec![Unit::whole(mir.functions.len())];
     }
-    let sizes: Vec<usize> = mir.functions.iter().map(size).collect();
-    let owner = assign(&sizes, count);
+    let mut names = FxHashSet::default();
+    for function in &mir.functions {
+        assert!(
+            names.insert(function.name.as_str()),
+            "two functions are named `{}`; a split build links by name",
+            function.name
+        );
+    }
+    let owner = assign(sizes, count);
     (0..count)
         .map(|index| Unit {
             index,
@@ -170,10 +177,13 @@ pub(crate) fn threads(count: usize) -> usize {
 /// to `threads` workers take the units one by one. With `Forward` or `Reverse`, one worker runs
 /// every unit in that order.
 ///
+/// A thread that the system cannot start is no error. Then no more threads start, and the calling
+/// thread, which has the stack of the compiler, takes the units that are left.
+///
 /// # Panics
 ///
 /// If `work` panics, the panic goes on in the caller. A panic on a worker names the thread
-/// `codegen`. Also, if the system cannot start a thread, it panics.
+/// `codegen`.
 pub(crate) fn schedule<T: Send>(
     count: usize,
     threads: usize,
@@ -190,33 +200,43 @@ pub(crate) fn schedule<T: Send>(
     } else {
         1
     };
+    let take_turns = || {
+        let mut done = Vec::new();
+        loop {
+            let turn = next.fetch_add(1, Ordering::Relaxed);
+            if turn >= count {
+                break done;
+            }
+            let unit = if order == Order::Reverse {
+                count - 1 - turn
+            } else {
+                turn
+            };
+            done.push((unit, work(unit)));
+        }
+    };
     let mut done: Vec<(usize, T)> = thread::scope(|scope| {
-        let handles: Vec<_> = (0..workers)
-            .map(|_| {
-                thread::Builder::new()
-                    .name("codegen".to_owned())
-                    .stack_size(crate::STACK_SIZE)
-                    .spawn_scoped(scope, || {
-                        let mut done = Vec::new();
-                        loop {
-                            let turn = next.fetch_add(1, Ordering::Relaxed);
-                            if turn >= count {
-                                break done;
-                            }
-                            let unit = if order == Order::Reverse {
-                                count - 1 - turn
-                            } else {
-                                turn
-                            };
-                            done.push((unit, work(unit)));
-                        }
-                    })
-                    .expect("the thread should start")
-            })
-            .collect();
-        (handles.into_iter())
-            .flat_map(|handle| handle.join().unwrap_or_else(|panic| resume_unwind(panic)))
-            .collect()
+        let mut handles = Vec::new();
+        for _ in 0..workers {
+            let spawned = thread::Builder::new()
+                .name("codegen".to_owned())
+                .stack_size(crate::STACK_SIZE)
+                .spawn_scoped(scope, take_turns);
+            match spawned {
+                Ok(handle) => handles.push(handle),
+                Err(_) => break,
+            }
+        }
+        // The calling thread takes a turn too only when a worker did not start.
+        let mut done = if handles.len() < workers {
+            take_turns()
+        } else {
+            Vec::new()
+        };
+        for handle in handles {
+            done.extend(handle.join().unwrap_or_else(|panic| resume_unwind(panic)));
+        }
+        done
     });
     done.sort_unstable_by_key(|&(unit, _)| unit);
     done.into_iter().map(|(_, result)| result).collect()
@@ -239,6 +259,11 @@ mod tests {
         let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
         let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
         mir::build(&program)
+    }
+
+    /// The sizes of the functions of `mir`.
+    fn sizes_of(mir: &mir::Program) -> Vec<usize> {
+        mir.functions.iter().map(size).collect()
     }
 
     /// A program of six functions.
@@ -364,7 +389,7 @@ fn main() { print(e(1)) }";
     #[test]
     fn partition_should_own_each_function_in_one_unit() {
         let mir = mir_of(SIX);
-        let units = partition(&mir, 3);
+        let units = partition(&mir, &sizes_of(&mir), 3);
         assert_eq!(units.len(), 3);
         for (index, unit) in units.iter().enumerate() {
             assert_eq!((unit.index, unit.count), (index, 3));
@@ -389,7 +414,7 @@ fn main() { print(e(1)) }";
     fn partition_should_reject_two_functions_with_one_name() {
         let mut mir = mir_of(SIX);
         mir.functions[1].name = mir.functions[0].name.clone();
-        partition(&mir, 2);
+        partition(&mir, &sizes_of(&mir), 2);
     }
 
     #[test]

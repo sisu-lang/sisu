@@ -33,11 +33,13 @@ use std::fs;
 use std::io::{self, ErrorKind, IsTerminal, Read, Stderr, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use codegen::OptLevel;
+use codegen::units::Unit;
 use diagnostic::{Code, Diagnostic, RETIRED, Severity};
+use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::targets::TargetMachine;
 use report::{Format, Reporter};
@@ -425,6 +427,81 @@ fn lex<'a>(
     }
 }
 
+/// What `each_unit` needs to build the units of one program.
+struct UnitInput<'src> {
+    program: &'src Program,
+    mir: &'src mir::Program,
+    /// The name of the source in panic messages.
+    path: &'src str,
+    source: &'src str,
+    level: OptLevel,
+    rc_checks: bool,
+}
+
+/// Builds each of `units` and runs `finish` on its index, its module and its target machine, and
+/// returns the results in unit order. With one unit, both run on the calling thread, and the
+/// module is `codegen::compile`'s. With several, each unit has its own context and target
+/// machine, and runs on a thread of `units::schedule`. `finish` runs on that thread, before the
+/// module goes. The time of each unit is `timings`' stage `Codegen`, with the stages that
+/// `finish` records, and the slowest unit counts (`Timings::merge_units`).
+///
+/// A unit that fails has an `Err`. The caller reports the lowest index.
+fn each_unit<T: Send>(
+    input: &UnitInput<'_>,
+    units: &[Unit],
+    timings: &mut Timings,
+    finish: impl Fn(usize, &Module<'_>, &TargetMachine, &mut Timings) -> Result<T, String> + Sync,
+) -> Vec<Result<T, String>> {
+    // Once, on this thread; the units only create target machines.
+    if let Err(message) = codegen::initialize_native_target() {
+        return units.iter().map(|_| Err(message.clone())).collect();
+    }
+    let analyses = (units.len() > 1).then(|| codegen::Analyses::new(input.program, input.source));
+    let parent = &*timings;
+    let built = codegen::units::schedule(
+        units.len(),
+        codegen::units::threads(units.len()),
+        codegen::units::Order::from_env(),
+        |at| {
+            let mut unit_timings = parent.for_unit();
+            let result = codegen::create_target_machine(input.level).and_then(|machine| {
+                let context = Context::create();
+                let module = unit_timings.time(timings::Stage::Codegen, || match &analyses {
+                    None => codegen::compile(
+                        &context,
+                        input.program,
+                        input.mir,
+                        input.path,
+                        input.source,
+                        &machine,
+                        input.rc_checks,
+                    ),
+                    Some(analyses) => codegen::compile_unit(
+                        &context,
+                        input.program,
+                        input.mir,
+                        analyses,
+                        &units[at],
+                        input.path,
+                        input.source,
+                        &machine,
+                        input.rc_checks,
+                    ),
+                });
+                let done = finish(at, &module, &machine, &mut unit_timings);
+                // The module goes before the context that owns it.
+                release(module);
+                release(context);
+                done
+            });
+            (result, unit_timings)
+        },
+    );
+    let (results, recorded): (Vec<_>, Vec<_>) = built.into_iter().unzip();
+    timings.merge_units(recorded);
+    results
+}
+
 /// Prints the module for `source` before and after the pipeline, once it passes the checker. With
 /// `units`, each codegen unit prints in turn (`join_units`).
 fn emit_ir(
@@ -442,7 +519,7 @@ fn emit_ir(
     let mir = timings.time(timings::Stage::Mir, || mir::build(&program));
     let pipeline = codegen::pipeline(level);
     let printed = each_ir_unit(
-        &codegen::UnitInput {
+        &UnitInput {
             program: &program,
             mir: &mir,
             path,
@@ -452,7 +529,7 @@ fn emit_ir(
         },
         units,
         timings,
-        |module, machine, timings| {
+        |_, module, machine, timings| {
             // For the `o2-calls` check in the tests (`docs/development.md`); `--emit ir` only, so
             // no executable is affected, and not in the usage text.
             if let Ok(names) = std::env::var("SISU_KEEP_FUNCTIONS") {
@@ -477,20 +554,13 @@ fn emit_ir(
 /// alone. With several, each text follows the line `; codegen unit <k> of <n>`, from 0, and the
 /// texts are joined with one empty line. The error of the lowest unit that failed is the result.
 fn each_ir_unit(
-    input: &codegen::UnitInput<'_>,
+    input: &UnitInput<'_>,
     units: Option<usize>,
     timings: &mut Timings,
-    print: impl Fn(&Module<'_>, &TargetMachine, &mut Timings) -> Result<String, String> + Sync,
+    print: impl Fn(usize, &Module<'_>, &TargetMachine, &mut Timings) -> Result<String, String> + Sync,
 ) -> Result<String, String> {
-    let sizes: Vec<usize> = input
-        .mir
-        .functions
-        .iter()
-        .map(codegen::units::size)
-        .collect();
-    let count = codegen::units::count(&sizes, Some(units.unwrap_or(1)));
-    let parts = codegen::units::partition(input.mir, count);
-    codegen::each_unit(input, &parts, timings, print)
+    let parts = codegen::units::split(input.mir, Some(units.unwrap_or(1)));
+    each_unit(input, &parts, timings, print)
         .into_iter()
         .collect::<Result<Vec<_>, _>>()
         .map(join_units)
@@ -534,7 +604,7 @@ fn emit_ir_raw(
     };
     let mir = timings.time(timings::Stage::Mir, || mir::build(&program));
     let printed = each_ir_unit(
-        &codegen::UnitInput {
+        &UnitInput {
             program: &program,
             mir: &mir,
             path,
@@ -544,7 +614,7 @@ fn emit_ir_raw(
         },
         units,
         timings,
-        |module, _, _| {
+        |_, module, _, _| {
             module.verify().map_err(|e| e.to_string())?;
             Ok(module.print_to_string().to_string())
         },
@@ -731,12 +801,9 @@ fn compile(
         units: wanted,
     } = *backend;
     let mir = timings.time(timings::Stage::Mir, || mir::build(program));
-    let sizes: Vec<usize> = mir.functions.iter().map(codegen::units::size).collect();
-    let units = codegen::units::partition(&mir, codegen::units::count(&sizes, wanted));
-    // Gives each unit's object file a name of its own.
-    let made = AtomicUsize::new(0);
-    let results = codegen::each_unit(
-        &codegen::UnitInput {
+    let units = codegen::units::split(&mir, wanted);
+    let results = each_unit(
+        &UnitInput {
             program,
             mir: &mir,
             path,
@@ -746,16 +813,17 @@ fn compile(
         },
         &units,
         timings,
-        |module, machine, timings| {
+        |at, module, machine, timings| {
             timings.time(timings::Stage::Optimize, || {
                 codegen::optimize(module, machine, level)
             })?;
             let code = timings.time(timings::Stage::Object, || {
                 codegen::object_code(module, machine)
             })?;
-            // A name of its own, so a user's `<output>.o` is left alone.
-            let names = fresh_names(format!("-{}.o", made.fetch_add(1, Ordering::Relaxed)));
-            create_object(dir, code.as_slice(), names)
+            // A name of its own, so a user's `<output>.o` is left alone. A panic (an internal
+            // compiler error) ends `sisu` with no cleanup, under `panic = "abort"`, and can leave
+            // the object of another unit here.
+            create_object(dir, code.as_slice(), fresh_names(format!("-{at}.o")))
         },
     );
     release(mir);
