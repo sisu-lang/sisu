@@ -145,7 +145,8 @@ pub(crate) fn on_compiler_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
 }
 
 /// Whether `sisu` runs as the command-line tool, which exits when its command ends. `cli` sets
-/// it. A fuzzer or a test that compiles again and again in one process leaves it clear.
+/// it, except for `sisu run`, which waits for the program and so frees the compiler's memory
+/// first. A fuzzer or a test that compiles again and again in one process leaves it clear.
 static EXITS_AFTER: AtomicBool = AtomicBool::new(false);
 
 /// Drops `value`, except in the command-line tool. There the process exits soon after. The OS then
@@ -160,7 +161,6 @@ fn release<T>(value: T) {
 
 /// Parses the arguments, does what they ask for, and reports.
 pub fn cli() -> ExitCode {
-    EXITS_AFTER.store(true, Ordering::Relaxed);
     let (format, mode) = match args::parse(&std::env::args_os().collect::<Vec<_>>()) {
         Ok(parsed) => parsed,
         Err(e) => {
@@ -183,6 +183,7 @@ pub fn cli() -> ExitCode {
             return ExitCode::from(u8::try_from(e.exit_code()).unwrap_or(2));
         }
     };
+    EXITS_AFTER.store(!matches!(mode, Mode::Run { .. }), Ordering::Relaxed);
     let color = report::use_color(
         io::stderr().is_terminal(),
         std::env::var_os("NO_COLOR").as_deref(),

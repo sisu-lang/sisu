@@ -24,9 +24,10 @@ links a program into a private temporary directory, runs it and removes the
 directory. The `sisu` binary (`main.rs`) runs it on a thread with a 64 MiB
 stack, and allocates with mimalloc. It reads at most 1 GiB of source,
 so every span offset fits in a `u32`; a larger file is a tool error. The
-command-line tool does not free the typed program, the mir or the LLVM module:
-the process exits soon after, and the OS frees all of its memory faster. The
-fuzzer calls the library too, and frees them.
+commands `check` and `build` (without `--emit`) do not free the typed program,
+the mir or the LLVM module: the process exits soon after, and the OS frees all
+of its memory faster. `--emit`, `run` (which waits for the program) and the
+fuzzer free them.
 `fuzz.rs` runs the `check` path on raw bytes and asserts that every
 diagnostic span and fix edit is well formed, and that every safe fix, applied
 alone, deletes no comment and removes its diagnostic and no other. For an
