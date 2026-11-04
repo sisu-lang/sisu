@@ -642,8 +642,8 @@ fn a_waiting_branch_that_is_no_optional_should_be_reported_for_its_type() {
     }
 }
 
-/// `class Node` with a method `get` that takes no argument and the fields `v` (`mut`) and `w`,
-/// then `body` on line 8 of a function over `c: Node?`, and an empty `main`.
+/// `class Node` with a method `get` that takes no argument and the fields `v` (`mut`) and `w`.
+/// Then `body` on line 7 of a function over `c: Node?`, and an empty `main`.
 fn on_node_optional(body: &str) -> String {
     format!(
         "class Node {{\n    mut v: i64\n    w: i64\n    fn get(self) -> i64 {{ self.v }}\n}}\nfn f(c: Node?) {{\n    {body}\n}}\nfn main() {{}}"
@@ -689,4 +689,25 @@ fn dot_on_double_optional_should_have_no_safe_access_fix() {
     let src = "class Node {\n    v: i64\n}\nfn f(c: Node??) {\n    print(c.v)\n}\nfn main() {}";
     let d = diagnostic(src, Code::MayBeNone, (5, 11, "c"), &[]);
     assert_eq!(fixes(src, &d), []);
+}
+
+/// A `.` call on an optional whose method is found twice keeps E0062: the ambiguity does not say
+/// that the member is missing, and the `?.` fix leads to E0156.
+#[test]
+fn dot_call_on_optional_should_keep_may_be_none_beside_an_ambiguous_method() {
+    let src = "interface Label {\n    fn name(self) -> string\n}\ninterface Code {\n    fn name(self) -> i64\n}\nclass Circle {\n    r: f64\n}\nextend Circle: Label {\n    fn name(self) -> string { \"c\" }\n}\nextend Circle: Code {\n    fn name(self) -> i64 { 7 }\n}\nfn f(c: Circle?) {\n    let n = c.name()\n    print(n)\n}\nfn main() {}";
+    codes(
+        src,
+        &[(Code::MayBeNone, (17, 13)), (Code::Ambiguous, (17, 15))],
+    );
+}
+
+/// The same holds when the type parameter of the method cannot be inferred (E0050, at its name).
+#[test]
+fn dot_call_on_optional_should_keep_may_be_none_beside_an_uninferred_parameter() {
+    let src = "class G {\n    fn mk<U>(self) -> [U] { [] }\n}\nfn f(g: G?) {\n    let x = g.mk()\n    print(x)\n}\nfn main() {}";
+    codes(
+        src,
+        &[(Code::MayBeNone, (5, 13)), (Code::CannotInfer, (5, 15))],
+    );
 }

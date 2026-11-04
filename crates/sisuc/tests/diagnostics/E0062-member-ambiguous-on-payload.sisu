@@ -1,0 +1,107 @@
+// GIVEN an optional whose member is found, used with `.`, in a function for each case
+// AND the member is ambiguous, or its type parameter cannot be inferred
+// WHEN `sisu check` runs on it
+// THEN it reports E0062 at the optional, then the error that the member gives on the payload
+// AND each guard function keeps the output that it had before
+interface Label {
+    fn name(self) -> string
+}
+interface Code {
+    fn name(self) -> i64
+}
+class Circle {
+    r: f64
+}
+extend Circle: Label {
+    fn name(self) -> string { "circle" }
+}
+extend Circle: Code {
+    fn name(self) -> i64 { 7 }
+}
+type M<T> = T?
+class H {
+    o: Circle?
+}
+extend H {
+    fn amb_self_dot(self) {
+        let n = self.o.name()
+        print(n)
+    }
+}
+class G {
+    fn mk<U>(self) -> [U] { [] }
+}
+extend i64 {
+    fn twice(self) -> i64 { self * 2 }
+}
+extend [i64] {
+    fn second(self) -> i64 { 0 }
+}
+extend string {
+    fn shout(self) -> string { self }
+}
+extend<T> T {
+    fn same(self) -> bool { true }
+}
+class C {
+    v: i64
+}
+
+fn opus_1(c: Circle?) {
+    let n = c.name()
+    print(n)
+}
+
+fn amb_arg_dot(c: Circle?) {
+    let n = c.name(1)
+    print(n)
+}
+
+fn amb_dbl_dot(c: Circle??) {
+    let n = c.name()
+    print(n)
+}
+
+fn amb_alias_dot(c: M<Circle>) {
+    let n = c.name()
+    print(n)
+}
+
+fn amb_param_dot<T: Label & Code>(c: T?) {
+    let n = c.name()
+    print(n)
+}
+
+fn infer_dot(g: G?) {
+    let x = g.mk()
+    print(x)
+}
+
+fn sum_dot(xs: [string]?) {
+    print(xs.sum())
+}
+
+// A rejected block may have given the name: no lookup is reported, so E0062 stands.
+fn rejected_dot(a: i64?, b: [i64]?, s: string?, c: C?) {
+    print(a.twice())
+    print(b.second())
+    print(s.shout())
+    print(c.same())
+}
+
+fn rejected_dot_param<U>(u: U?) {
+    print(u.same())
+}
+
+fn main() {
+    opus_1(None)
+    amb_arg_dot(None)
+    amb_dbl_dot(None)
+    amb_alias_dot(None)
+    amb_param_dot<Circle>(None)
+    infer_dot(None)
+    sum_dot(None)
+    rejected_dot(None, None, None, None)
+    rejected_dot_param(0)
+    H(o: None).amb_self_dot()
+}
