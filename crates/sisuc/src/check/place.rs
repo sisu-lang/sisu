@@ -12,7 +12,7 @@ use super::{
     type_of,
 };
 use crate::ast;
-use crate::diagnostic::{DiagnosticKind, Immutable, UnwrapHelp};
+use crate::diagnostic::{DiagnosticKind, Immutable, IndexUsage, UnwrapHelp};
 use crate::parser::{is_place, is_range_target};
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -37,6 +37,16 @@ enum Change {
 }
 
 impl Change {
+    /// How the index that this change reaches uses its element: an assignment writes it, when
+    /// it is the whole target. A `push` and a deeper index only read it.
+    fn index_usage(self) -> IndexUsage {
+        if self == Change::Assign {
+            IndexUsage::Write
+        } else {
+            IndexUsage::Read
+        }
+    }
+
     /// E0001 for the root `name`, whose write at `at` its `cause` forbids.
     fn immutable(self, name: String, at: Span, cause: Immutable) -> DiagnosticKind {
         match self {
@@ -833,7 +843,7 @@ impl Checker<'_> {
                         self.optional_array_target(base, &inner);
                         None
                     }
-                    ty => self.element(base, ty),
+                    ty => self.element(base, ty, change.index_usage()),
                 };
                 // The index is not part of the chain that it ends.
                 self.body.indexed = false;

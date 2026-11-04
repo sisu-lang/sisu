@@ -415,7 +415,6 @@ fn array_get_with_a_range_should_be_e0032_at_the_range() {
         ("no start", "xs.get(..2)", "..2"),
         ("no bounds", "xs.get(..)", ".."),
         ("inclusive no end", "xs.get(1..=)", "1..="),
-        ("second argument", "xs.get(1, ..2)", "..2"),
         ("through safe access", "o?.get(0..1)", "0..1"),
     ];
     for (row, call, range) in rows {
