@@ -1040,26 +1040,33 @@ impl Checker<'_> {
     /// read starts at the local of the object before it. No object and no element is read yet.
     /// The result is the base as the place reads it: the local of the last object, or the
     /// binding.
+    ///
+    /// A binding in `rebound` is kept as well, when it holds a class object: the call has a `mut`
+    /// argument that is that bare binding, and its store-back can rebind it before the store-back
+    /// of this place. Only a `mut` argument of the call itself can rebind a binding of the caller
+    /// while the call runs. The binding needs no keep when no argument rebinds it.
     fn bind_base(
         &mut self,
         e: tir::Expr,
+        rebound: &[LocalId],
         lets: &mut Vec<tir::Stmt>,
         keep: &mut Vec<(LocalId, tir::Expr)>,
     ) -> tir::Expr {
-        if matches!(e.kind, ExprKind::Local(_)) {
+        if matches!(e.kind, ExprKind::Local(id) if !rebound.contains(&id)) {
             return e;
         }
         let (ty, span) = (e.ty, e.span);
         let e = match e.kind {
             ExprKind::Field { base, index } => {
-                let base = Box::new(self.bind_base(*base, lets, keep));
+                let base = Box::new(self.bind_base(*base, rebound, lets, keep));
                 tir::Expr::new(ExprKind::Field { base, index }, ty, span)
             }
             ExprKind::Index { base, index } => {
-                let base = Box::new(self.bind_base(*base, lets, keep));
+                let base = Box::new(self.bind_base(*base, rebound, lets, keep));
                 let index = Box::new(self.hide(*index, lets));
                 tir::Expr::new(ExprKind::Index { base, index }, ty, span)
             }
+            kind @ ExprKind::Local(_) => tir::Expr::new(kind, ty, span),
             kind => return self.hide(tir::Expr::new(kind, ty, span), lets),
         };
         if !matches!(ty.kind(), TypeKind::Class(..)) {
@@ -1156,6 +1163,15 @@ impl Checker<'_> {
             unreachable!("a call with `mut` arguments should be a call of a function or a method")
         };
         let mut lets = Vec::new();
+        // The bindings that a store-back of this call can rebind: the `mut` arguments that are a
+        // bare binding.
+        let rebound_roots: Vec<LocalId> = parts
+            .iter()
+            .filter_map(|part| match part.path.root {
+                Root::Local(id) if part.path.operands.is_empty() => Some(id),
+                _ => None,
+            })
+            .collect();
         let mut parts = parts.into_iter().peekable();
         let (mut muts, mut back) = (Vec::new(), Vec::new());
         let mut rebound = Vec::with_capacity(args.len());
@@ -1178,7 +1194,7 @@ impl Checker<'_> {
                 let base = operands
                     .next()
                     .expect("a field root's base should be the first operand of its path");
-                bound.push(self.bind_base(base, &mut lets, &mut keep));
+                bound.push(self.bind_base(base, &rebound_roots, &mut lets, &mut keep));
             }
             for index in operands {
                 bound.push(self.hide(index, &mut lets));
