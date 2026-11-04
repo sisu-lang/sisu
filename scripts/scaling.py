@@ -208,17 +208,20 @@ def mut_returns(k):
 
 
 def mut_call_width(k):
-    # `many` has k `mut` parameters, and `main` calls it with k `mut` arguments. A search of all
-    # the arguments for each `mut` argument is quadratic in k. `main` adds to `total` once, so
-    # that size 0 has no W0002.
-    params = ', '.join(f'mut a{tag(i)}: i64' for i in range(k))
-    bumps = ''.join(f'    a{tag(i)} += 1\n' for i in range(k))
-    locals_ = ''.join(f'    let mut v{tag(i)} = 0\n' for i in range(k))
-    given = ', '.join(f'mut v{tag(i)}' for i in range(k))
-    shown = ''.join(f'    total += v{tag(i)}\n' for i in range(k))
-    return (f'fn many({params}) {{\n{bumps}}}\n\n'
-            'fn main() {\n    let mut total = 0\n    total += 1\n' + locals_ + f'    many({given})\n{shown}'
-            '    print("{total}")\n}\n')
+    # `many` has k `mut` parameters of a class and k of `i64`. `main` calls it with the k `mut`
+    # roots `mut v`, and then with a field of each: `mut v.x`. A search of all the arguments for
+    # each `mut` argument, or of all the roots for each field, is quadratic in k. `main` adds to
+    # `total` once, and reads a `Cell` once, so that size 0 has no W0002 or W0012.
+    params = ', '.join([f'mut a{tag(i)}: Cell' for i in range(k)] +
+                       [f'mut c{tag(i)}: i64' for i in range(k)])
+    bumps = ''.join(f'    a{tag(i)} = Cell(x: 0)\n    c{tag(i)} += 1\n' for i in range(k))
+    locals_ = ''.join(f'    let mut v{tag(i)} = Cell(x: 0)\n' for i in range(k))
+    given = ', '.join([f'mut v{tag(i)}' for i in range(k)] + [f'mut v{tag(i)}.x' for i in range(k)])
+    shown = ''.join(f'    total += v{tag(i)}.x\n' for i in range(k))
+    return ('class Cell {\n    mut x: i64\n}\n\n'
+            f'fn many({params}) {{\n{bumps}}}\n\n'
+            'fn main() {\n    let mut total = 0\n    let base = Cell(x: 1)\n    total += base.x\n' + locals_ +
+            f'    many({given})\n{shown}    print("{{total}}")\n}}\n')
 
 
 # The name of a shape, its `n` and the program at a size. The sizes are 0, n, 2n, 4n and 8n.

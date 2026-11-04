@@ -5,7 +5,7 @@ use std::borrow::Borrow;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
-use rustc_hash::{FxBuildHasher, FxHashMap};
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 
 use super::expr::{fits, local};
 use super::generic::mark;
@@ -1041,14 +1041,17 @@ impl Checker<'_> {
     /// The result is the base as the place reads it: the local of the last object, or the
     /// binding.
     ///
-    /// A binding in `rebound` is kept as well, when it holds a class object: the call has a `mut`
-    /// argument that is that bare binding, and its store-back can rebind it before the store-back
-    /// of this place. Only a `mut` argument of the call itself can rebind a binding of the caller
-    /// while the call runs. The binding needs no keep when no argument rebinds it.
+    /// A binding in `rebound` is kept as well, when it holds a class object. `rebound` holds the
+    /// root of each `mut` argument of the call that starts at a binding. The store-back of such an
+    /// argument can rebind the binding, and the store-back of this place must still write to the
+    /// object that the copy-in read. Only a `mut` argument of the call itself can rebind a
+    /// binding of the caller while the call runs. A call with no such argument pays for no keep.
+    /// For `f(mut b.x, mut b)` the keep is not needed, because the store-back of `b.x` comes
+    /// first. It costs one retain and one release, and the output is the same.
     fn bind_base(
         &mut self,
         e: tir::Expr,
-        rebound: &[LocalId],
+        rebound: &FxHashSet<LocalId>,
         lets: &mut Vec<tir::Stmt>,
         keep: &mut Vec<(LocalId, tir::Expr)>,
     ) -> tir::Expr {
@@ -1166,7 +1169,7 @@ impl Checker<'_> {
         // The bindings that a store-back of this call can rebind: the roots of the `mut`
         // arguments that start at a binding. A part with operands starts at an array local, which
         // is no class object, so `bind_base` keeps nothing for it.
-        let rebound_roots: Vec<LocalId> = parts
+        let rebound_roots: FxHashSet<LocalId> = parts
             .iter()
             .filter_map(|part| match part.path.root {
                 Root::Local(id) => Some(id),
