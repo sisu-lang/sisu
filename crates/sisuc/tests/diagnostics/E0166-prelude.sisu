@@ -1,0 +1,7 @@
+// GIVEN `print(exchange(5, 3))`, where `exchange` is a prelude function with a `mut` parameter
+// WHEN `sisu check` runs on it
+// THEN it reports E0166 on `5` with no help to change only a local copy: a prelude parameter has
+//   no declaration in the file to point at
+fn main() {
+    print(exchange(5, 3))
+}

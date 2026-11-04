@@ -46,14 +46,20 @@ thread_local! {
 }
 
 thread_local! {
-    /// Whether this test checks with the prelude's items; `with_prelude` sets it.
-    static PRELUDE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The prelude's text that this test checks with; `with_prelude` and `with_prelude_text` set
+    /// it. `None` is an empty prelude.
+    static PRELUDE: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
 }
 
 /// Declares the prelude's items (`Result`, `Ok` and `Err`) for the rest of this test, which
 /// `checked` leaves out otherwise: most tests need none of them.
 fn with_prelude() {
-    PRELUDE.set(true);
+    PRELUDE.set(Some(PRELUDE_SOURCE));
+}
+
+/// `with_prelude`, with the prelude `text` in place of the real one.
+fn with_prelude_text(text: &'static str) {
+    PRELUDE.set(Some(text));
 }
 
 /// Keeps the unused-names warnings for the rest of this test, which `checked` drops otherwise:
@@ -63,7 +69,7 @@ fn judge_unused() {
 }
 
 pub(super) fn checked(src: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
-    let prelude = prelude_program(if PRELUDE.get() { PRELUDE_SOURCE } else { "" });
+    let prelude = prelude_program(PRELUDE.get().unwrap_or(""));
     let (program, mut ds) = check(&parse_ok(src), &prelude, src, &[]);
     if !UNUSED.get() {
         ds.retain(|d| !is_judged(d));

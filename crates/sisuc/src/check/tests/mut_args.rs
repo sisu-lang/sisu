@@ -454,6 +454,43 @@ fn let_mut_passed_mut_and_never_read_should_warn() {
     codes(&src, &[(Code::UnusedVariable, (5, 13))]);
 }
 
+/// GIVEN `fn take(mut n: i64) -> i64` that returns the value it was passed, and a local, an
+///   element or a field that is passed `mut` to it with no other read
+/// WHEN it is compiled with the warnings of unused names
+/// THEN there is no W0014: the copy-in reads the place, and the result carries the value out
+#[test]
+fn place_passed_mut_to_a_call_with_a_result_should_count_as_read() {
+    judge_unused();
+    let take = "fn take(mut n: i64) -> i64 {\n    let old = n\n    n = 1\n    old\n}\n";
+    let rows = [
+        ("local", "let mut x = 2\n    print(take(mut x))"),
+        ("element", "let mut xs = [2]\n    print(take(mut xs[0]))"),
+        (
+            "local in a loop",
+            "let mut x = 2\n    for i in 0..2 {\n        print(take(mut x) + i)\n    }",
+        ),
+    ];
+    for (row, body) in rows {
+        let src = format!("{take}fn main() {{\n    {body}\n}}");
+        codes_row(row, &src, &[]);
+    }
+    with_prelude();
+    let src = "fn main() {\n    let mut x = 2\n    print(exchange(mut x, 3))\n}";
+    codes_row("exchange", src, &[]);
+}
+
+/// GIVEN a local that is passed `mut` to `take`, a function with a result, and a local that is
+///   only written
+/// WHEN it is compiled with the warnings of unused names
+/// THEN W0014 still names the local that is only written
+#[test]
+fn local_that_is_only_written_should_warn_beside_a_mut_call_with_a_result() {
+    judge_unused();
+    let src = "fn take(mut n: i64) -> i64 {\n    let old = n\n    n = 1\n    old\n}\n\
+        fn main() {\n    let mut x = 2\n    print(take(mut x))\n    let mut y = 2\n    y = 3\n}";
+    codes(src, &[(Code::UnusedVariable, (9, 13))]);
+}
+
 /// GIVEN `class Named { mut name: string }` and `fn rename(mut b: Named, name: string)` that only
 ///   writes `b.name`
 /// WHEN it is checked
