@@ -1163,13 +1163,14 @@ impl Checker<'_> {
             unreachable!("a call with `mut` arguments should be a call of a function or a method")
         };
         let mut lets = Vec::new();
-        // The bindings that a store-back of this call can rebind: the `mut` arguments that are a
-        // bare binding.
+        // The bindings that a store-back of this call can rebind: the roots of the `mut`
+        // arguments that start at a binding. A part with operands starts at an array local, which
+        // is no class object, so `bind_base` keeps nothing for it.
         let rebound_roots: Vec<LocalId> = parts
             .iter()
             .filter_map(|part| match part.path.root {
-                Root::Local(id) if part.path.operands.is_empty() => Some(id),
-                _ => None,
+                Root::Local(id) => Some(id),
+                Root::Field(_) => None,
             })
             .collect();
         let mut parts = parts.into_iter().peekable();
