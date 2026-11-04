@@ -1107,4 +1107,44 @@ fn main() {
                 .all(|unit| Arc::ptr_eq(&unit.exported, exported))
         );
     }
+
+    #[test]
+    fn build_should_record_the_entry_function() {
+        let mir = mir_of(SIX);
+        let main = mir.main.expect("a built program has an entry function");
+        assert_eq!(mir.functions[main].name, "main");
+    }
+
+    /// Two large functions that nothing calls, a small `main` that calls `helper` twice, so that
+    /// the greedy rule puts `main` in the last of 3 units.
+    fn main_in_a_late_unit_program() -> String {
+        let pad = |name: &str| {
+            let body: Vec<String> = (0..100).map(|k| format!("    s += n + {k}")).collect();
+            format!(
+                "fn {name}(n: i64) -> i64 {{\n    let mut s = n\n{}\n    s\n}}\n",
+                body.join("\n")
+            )
+        };
+        format!(
+            "{}{}fn helper(n: i64) -> i64 {{ n + 1 }}\nfn main() {{ print(helper(1) + helper(2)) }}\n",
+            pad("pad0"),
+            pad("pad1")
+        )
+    }
+
+    #[test]
+    fn partition_should_export_the_entry_function_that_mir_names() {
+        let mut mir = mir_of(&main_in_a_late_unit_program());
+        let main = mir.main.expect("a built program has an entry function");
+        // The entry is the id in `mir`, not the function with the name `main`.
+        mir.functions[main].name = "start".to_owned();
+        let units = partition(&mir, &sizes_of(&mir), 3, OptLevel::O0, &[]);
+        assert_eq!(units.len(), 3);
+        assert_ne!(
+            units[0].placement[main],
+            Placement::Own,
+            "the premise: not in unit 0"
+        );
+        assert!(units[0].exported[main]);
+    }
 }

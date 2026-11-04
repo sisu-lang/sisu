@@ -1130,7 +1130,6 @@ crates/sisuc/src/mir/tests/lower.rs::loops_record_their_blocks
 crates/sisuc/src/mir/tests/lower.rs::lowers_chains_and_exits
 crates/sisuc/src/mir/tests/lower.rs::nested_read_copies_the_middle_level
 crates/sisuc/src/mir/tests/lower.rs::operand_read_before_a_later_sibling_assigns
-crates/sisuc/src/mir/tests/lower.rs::some_projection_prints_as_a_pattern
 crates/sisuc/src/mir/tests/lower.rs::store_order_field_base_before_the_value
 crates/sisuc/src/mir/tests/lower.rs::store_order_index_then_value_then_check
 crates/sisuc/src/mir/tests/lower.rs::store_order_value_before_the_root_array

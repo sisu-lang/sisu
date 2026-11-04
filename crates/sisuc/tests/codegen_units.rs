@@ -488,6 +488,123 @@ fn function_should_be_external_only_when_another_unit_calls_it() {
     }
 }
 
+/// Four large functions that nothing calls, so that the greedy rule spreads a small program over
+/// the units.
+fn pads() -> String {
+    let mut text = String::new();
+    for pad in 0..4 {
+        let sum: Vec<String> = (0..60).map(|k| format!("n + {k}")).collect();
+        let _ = writeln!(text, "fn pad{pad}(n: i64) -> i64 {{ {} }}", sum.join(" + "));
+    }
+    text
+}
+
+/// Builds `source` with `--codegen-units 1` and with 4 and runs both. Before that it prints the raw
+/// IR of the 4 units and checks that the unit which defines `method` is not a unit that calls it:
+/// a helper of another unit calls it, and no `Call` of the mir names it.
+fn written_method_across_units(test: &str, source: &str, method: &str, want: &str) {
+    let dir = fixture(test, &[("helper.sisu", source)]);
+    let ir = emit(
+        &dir,
+        "helper",
+        &["--emit", "ir-raw", "--codegen-units", "4"],
+    );
+    let all = units(&ir);
+    assert_eq!(all.len(), 4, "{ir}");
+    let home = home(&all, method);
+    let callers: Vec<usize> = (0..all.len())
+        .filter(|&at| calls(all[at], method))
+        .collect();
+    assert!(
+        !callers.is_empty() && !callers.contains(&home),
+        "`{method}` is in unit {home} and unit(s) {callers:?} call it:\n{ir}"
+    );
+    let outputs = ["1", "4"].map(|count| {
+        let (exe, _) = build(&dir, "helper", count, &["--codegen-units", count]);
+        run(&exe)
+    });
+    assert_eq!(
+        outputs[0].status.code(),
+        Some(0),
+        "one unit: {:?}",
+        outputs[0]
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&outputs[0].stdout),
+        want,
+        "one unit"
+    );
+    assert_eq!(
+        outputs[1].status, outputs[0].status,
+        "4 units: {:?}",
+        outputs[1]
+    );
+    assert_eq!(outputs[1].stdout, outputs[0].stdout, "4 units");
+}
+
+/// GIVEN a class with a written `Eq` and no `any` table, which an array comparison uses through a
+/// helper
+/// WHEN the program is built with `--codegen-units 4` and with `--codegen-units 1`
+/// THEN the unit that defines `eq` is not a unit that calls it
+/// AND both executables print the same lines
+#[test]
+fn written_eq_called_by_a_helper_in_another_unit_should_link_and_run() {
+    let source = format!(
+        "class P: Eq {{
+    v: i64
+    fn eq(self, other: Self) -> bool {{ self.v == other.v }}
+}}
+
+fn check(a: P, b: P) -> bool {{
+    [a] == [b]
+}}
+
+fn main() {{
+    print(check(P(v: 1), P(v: 1)))
+    print(check(P(v: 1), P(v: 2)))
+}}
+{}",
+        pads()
+    );
+    written_method_across_units(
+        "written_eq_called_by_a_helper_in_another_unit_should_link_and_run",
+        &source,
+        "P.eq",
+        "true\nfalse\n",
+    );
+}
+
+/// GIVEN a class with a written `Display` and no `any` table, which `print` uses through a helper
+/// WHEN the program is built with `--codegen-units 4` and with `--codegen-units 1`
+/// THEN the unit that defines `to_string` is not a unit that calls it
+/// AND both executables print the same lines
+#[test]
+fn written_display_called_by_a_helper_in_another_unit_should_link_and_run() {
+    let source = format!(
+        "class P: Display {{
+    v: i64
+    fn to_string(self) -> string {{ \"P{{self.v}}\" }}
+}}
+
+fn show(p: P) {{
+    print(p)
+}}
+
+fn main() {{
+    show(P(v: 1))
+    show(P(v: 2))
+}}
+{}",
+        pads()
+    );
+    written_method_across_units(
+        "written_display_called_by_a_helper_in_another_unit_should_link_and_run",
+        &source,
+        "P.to_string",
+        "P1\nP2\n",
+    );
+}
+
 /// GIVEN the case program built at `-O2` with `--codegen-units 4`
 /// WHEN `sisu` builds it three times, each in its own process: with `SISU_UNIT_ORDER=forward`,
 /// with `SISU_UNIT_ORDER=reverse`, and with no such variable
@@ -711,11 +828,14 @@ fn a_count_above_the_functions_should_build_and_run() {
 /// THEN it exits 1 and `TMPDIR` holds no object file, so the link error removed all three
 #[test]
 fn failed_link_of_a_split_build_should_remove_every_object() {
-    let source = "fn one() -> i64 {\n    1\n}\n\nfn two() -> i64 {\n    2\n}\n\nfn main() {\n    print(one())\n    print(two())\n}\n";
+    let source = "fn one() -> i64 {\n    1\n}\n\nfn two() -> i64 {\n    2\n}\n\nfn main() {\n    print(one() + one())\n    print(two() + two())\n}\n";
     let dir = fixture(
         "failed_link_of_a_split_build_should_remove_every_object",
         &[("link.sisu", source)],
     );
+    // The premise: the build has 3 units, so the failed link has 3 objects to remove.
+    let ir = emit(&dir, "link", &["--emit", "ir-raw", "--codegen-units", "3"]);
+    assert_eq!(units(&ir).len(), 3, "{ir}");
     let only_cc = scratch_path::only_cc("split_link_failure_path");
     let tmp = scratch_path::empty_dir("split_link_failure_tmp");
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
