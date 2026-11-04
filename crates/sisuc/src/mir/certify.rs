@@ -150,10 +150,10 @@ pub(crate) fn certify(function: &Function) -> Result<(), Violation> {
     )
 }
 
-/// Each `out` takes the final value of an argument of the call just before it: the nearest call in
-/// its block, past only `release`s, `end`s and other `out`s, passes the `out`'s destination at the
-/// index that the `out` names. Codegen reads the out slots of that call, so no other call may
-/// come between.
+/// Each `out` takes the final value of an argument of the call just before it. The nearest call in
+/// its block must pass the `out`'s destination at the index that the `out` names. Only `release`s,
+/// `end`s and other `out`s may come between them. Codegen reads the out slots of that call, so no
+/// other call may come between.
 fn outs(function: &Function) -> Result<(), Violation> {
     for (b, block) in function.blocks.iter().enumerate() {
         let mut args: Option<&[Operand]> = None;

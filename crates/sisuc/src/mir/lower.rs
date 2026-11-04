@@ -97,6 +97,8 @@ struct Lowering<'a> {
     written: &'a mut Written,
     /// Per parameter, whether lowering takes it as borrowed.
     borrowed: &'a [bool],
+    /// The indexes of the `mut` parameters, in order: each return hands on their final values.
+    mut_params: Vec<usize>,
     /// Per parameter, whether its flag decided the form of a `match` or an `if let`.
     consulted: Vec<bool>,
     /// Per parameter, whether a `match` on it has an arm that would take a box of some enum `F`
@@ -214,6 +216,9 @@ impl<'a> Lowering<'a> {
             declared: &f.locals,
             written,
             borrowed,
+            mut_params: (0..f.params.len())
+                .filter(|&i| f.locals[i].mutable)
+                .collect(),
             consulted: vec![false; f.params.len()],
             reuses: vec![false; f.params.len()],
             built: FxHashMap::default(),
@@ -463,14 +468,13 @@ impl<'a> Lowering<'a> {
 
     /// Hands on the final value of each `mut` parameter, just before a return.
     fn set_outs(&mut self) {
-        for index in 0..self.borrowed.len() {
-            if self.declared[index].mutable {
-                let value = self.read(LocalId(index));
-                self.push(Statement::Assign {
-                    dest: None,
-                    value: Rvalue::SetOut { index, value },
-                });
-            }
+        for i in 0..self.mut_params.len() {
+            let index = self.mut_params[i];
+            let value = self.read(LocalId(index));
+            self.push(Statement::Assign {
+                dest: None,
+                value: Rvalue::SetOut { index, value },
+            });
         }
     }
 
@@ -506,16 +510,20 @@ impl<'a> Lowering<'a> {
         // No temporary joins the scope: no exit comes between a copy-in and its store-back, and a
         // call in the branch of an `&&` has no block of its own to release in.
         let value = self.into(call, dest)?;
-        for m in muts {
-            let index = args
-                .iter()
-                .position(|arg| local_of(arg) == Some(m.temp))
-                .expect("a `mut` argument of the call should be its temporary");
-            self.push(Statement::Assign {
-                dest: Some(m.temp),
-                value: Rvalue::Out { index },
-            });
+        // The temporaries stand in the arguments in the order of `muts`: one pass finds them.
+        let mut rest = muts.iter().peekable();
+        for (index, arg) in args.iter().enumerate() {
+            if let Some(m) = rest.next_if(|m| local_of(arg) == Some(m.temp)) {
+                self.push(Statement::Assign {
+                    dest: Some(m.temp),
+                    value: Rvalue::Out { index },
+                });
+            }
         }
+        assert!(
+            rest.next().is_none(),
+            "each `mut` argument of the call should be its temporary, in order"
+        );
         self.block(back, None)?;
         Some(value)
     }

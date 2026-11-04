@@ -646,6 +646,15 @@ The block of a box that a `match` took apart while it held the box's only
 reference. The arm builds a new box of the same enum into it, or frees it.
 _Avoid_: reset, hole
 
+**Out slot**:
+The place where a function leaves the final value of a `mut` parameter. The
+caller passes a pointer to it for each `mut` parameter, after the values of
+the call. The function stores the final value there before each return, and
+the caller reads it back after the call, then stores it into the `mut`
+argument's place. The slot lives in the caller's frame, made once at the start
+of the caller, so a call in a loop does not grow the stack.
+_Avoid_: out parameter, return slot
+
 **Borrowed read**:
 A read of a local that uses its value without a reference of its own,
 because nothing can release or replace the local before the use ends: the

@@ -1106,6 +1106,8 @@ impl Checker<'_> {
             rebound.push(arg);
         }
         *args = rebound;
+        // An argument that can leave is in a hidden `let` now, so the call itself cannot leave.
+        call.refresh_exits();
         let back = tir::Block {
             stmts: back,
             value: None,
