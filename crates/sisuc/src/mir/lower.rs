@@ -470,6 +470,8 @@ impl<'a> Lowering<'a> {
     fn set_outs(&mut self) {
         for i in 0..self.mut_params.len() {
             let index = self.mut_params[i];
+            #[cfg(test)]
+            SET_OUT_STEPS.set(SET_OUT_STEPS.get() + 1);
             let value = self.read(LocalId(index));
             self.push(Statement::Assign {
                 dest: None,
@@ -513,6 +515,8 @@ impl<'a> Lowering<'a> {
         // The temporaries stand in the arguments in the order of `muts`: one pass finds them.
         let mut rest = muts.iter().peekable();
         for (index, arg) in args.iter().enumerate() {
+            #[cfg(test)]
+            OUT_STEPS.set(OUT_STEPS.get() + 1);
             if let Some(m) = rest.next_if(|m| local_of(arg) == Some(m.temp)) {
                 self.push(Statement::Assign {
                     dest: Some(m.temp),
@@ -1670,6 +1674,12 @@ thread_local! {
     pub(super) static WALKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many arms of an `if`, an `if let` or a `match` lowering has lowered on this thread.
     pub(super) static ARM_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many parameters `set_outs` has read on this thread, one for each `mut` parameter at
+    /// each return.
+    pub(super) static SET_OUT_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many arguments `mut_call` has compared with a temporary on this thread, to find the
+    /// argument that each `mut` argument stands in.
+    pub(super) static OUT_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many guard-membership records `is_guarded` has read on this thread: one flag per
     /// question about a source local.
     pub(super) static PROBED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };

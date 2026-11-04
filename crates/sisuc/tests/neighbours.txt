@@ -30,6 +30,7 @@ class Rock {}
 class Bx {
     fn wrap<T>(self, v: T) -> T { v }
     fn none<T>(self) -> T? { None }
+    fn put<T>(self, mut x: T?, n: i64) { x = None }
 }
 type M<T> = T?
 type MM<T> = T??
@@ -41,6 +42,7 @@ fn mk<T>() -> T { loop {} }
 fn some<T>(v: T) -> T? { Some(v) }
 fn id<T>(v: T) -> T { v }
 fn take<T>(mut x: T?) { x = None }
+fn take2<T>(mut x: T?, n: i64) { x = None }
 fn generic<U: Named, V>(u: U, v: V, c: bool, d: bool, k: i64, n: any Named, p: any Pet, op: (any Pet)?, ob: Bx?) {
     {stmt}
 }
@@ -139,5 +141,16 @@ n.ste(mut $)
 take(mut $, 1)
 take<i64, i64>(mut $)
 ob?.ste(mut $)
+# A `mut` call with an exit in another argument or in the receiver: the call is rebound, and its
+# exit flag follows its new arguments.
+take2(mut $, some(k) ?? return)
+loop { take2(mut $, some(k) ?? break) }
+for _i in [1] { take2(mut $, some(k) ?? continue) }
+take2(mut $, if c { return } else { k })
+take2(mut $, match k { 0 => return; _ => 1 })
+take2(mut $, { return })
+(ob ?? return).put(mut $, 1)
+ob?.put(mut $, some(k) ?? return)
+(ob ?? return).put(mut $, some(k) ?? return)
 Bx.ste(mut $)
 id(mut $)
