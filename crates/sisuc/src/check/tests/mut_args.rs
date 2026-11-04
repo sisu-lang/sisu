@@ -887,6 +887,34 @@ fn mut_place_overlap_should_be_linear() {
     assert_near_linear(path(50), path(100), path(150));
 }
 
+/// The number of expressions in `main` after checking `src`.
+///
+/// The path is deep, so this runs on the compiler's stack.
+fn main_nodes(src: &str) -> usize {
+    crate::on_compiler_stack(|| {
+        let (program, _) = checked(src);
+        let program = program.expect("the program should check");
+        let main = program
+            .functions
+            .iter()
+            .find(|f| f.name == "main")
+            .expect("the program should have `main`");
+        let mut all = Vec::new();
+        main.body.exprs(&mut all);
+        all.len()
+    })
+}
+
+/// GIVEN a call with one `mut` argument whose place has 50, 100 and 150 indexes
+/// WHEN it is checked
+/// THEN the expressions of `main` grow in step with the source: the guard of the store-back
+///   reads each array of the path once, not a copy of the path for each index
+#[test]
+fn mut_store_back_should_be_linear_in_the_depth_of_the_place() {
+    let nodes = |len: usize| main_nodes(&long_path(len));
+    assert_near_linear(nodes(50), nodes(100), nodes(150));
+}
+
 /// The `Code::MutMarkerMissing` count of `src`, and the other codes in order.
 fn marker_codes(src: &str, code: Code) -> (usize, Vec<Code>) {
     let found = found_codes(src);
