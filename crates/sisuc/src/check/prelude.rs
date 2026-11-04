@@ -15,10 +15,6 @@ use crate::tir::{self, Stream, Type, TypeKind};
 /// The prelude's names.
 pub(super) const PRELUDE: &[&str] = &["print", "eprint", "panic", "read_line", "dbg"];
 
-/// The functions that `prelude.sisu` writes. A top-level item of the user's may not take one of
-/// these names, as it may not take one of `PRELUDE`'s.
-pub(super) const WRITTEN_PRELUDE: &[&str] = &["exchange"];
-
 /// Whether the prelude function `name` takes arguments: only `read_line` takes none.
 pub(super) fn takes_arguments(name: &str) -> bool {
     name != "read_line"

@@ -55,7 +55,7 @@ use constant::{ConstInfo, ConstantSite};
 use enums::{EnumInfo, HoldsTable};
 use extend::Extension;
 use interface::{Bound, InterfaceInfo, PendingBound, Required, Scope, Slot, Waiting};
-use prelude::{PRELUDE, WRITTEN_PRELUDE};
+use prelude::PRELUDE;
 pub(crate) use unused_names::is_judged;
 use unused_names::{Owner, Pending, Use, Used};
 
@@ -561,6 +561,9 @@ struct Checker<'src> {
     source: Source<'src>,
     /// The first function of each name, and every broken one.
     function_ids: FxHashMap<Symbol, Declared<tir::FuncId>>,
+    /// The names of the prelude's free functions, which no item of the user's may take
+    /// (`collect_names`).
+    prelude_functions: FxHashSet<Symbol>,
     /// Indexed by `FuncId`, so a duplicate function has a signature of its own.
     signatures: Vec<Signature>,
     /// Indexed by `ClassId`, so a duplicate class has fields and methods of its own.
@@ -1267,6 +1270,7 @@ impl<'src> Checker<'src> {
                 newlines: &program.newlines,
             },
             function_ids: FxHashMap::default(),
+            prelude_functions: FxHashSet::default(),
             signatures: Vec::new(),
             classes: Vec::new(),
             class_ids: FxHashMap::default(),
@@ -1444,6 +1448,7 @@ impl Checker<'_> {
     /// enum's methods at its place.
     /// The first `user_items` of `items` are the user's: `self.prelude` is where the rest start.
     fn collect_names(&mut self, items: &[&ast::Item], user_items: usize, broken: &[ast::Broken]) {
+        self.prelude_functions = prelude_function_names(&items[user_items..]);
         let mut first = FxHashMap::default();
         let mut next_function = 0;
         // Source order among the constants.
@@ -1666,7 +1671,7 @@ impl Checker<'_> {
         kind: Definition,
         name: &ast::Ident,
     ) -> bool {
-        let written = !name.span.in_prelude() && WRITTEN_PRELUDE.contains(&name.name.as_str());
+        let written = !name.span.in_prelude() && self.prelude_functions.contains(&name.name);
         if written || PRELUDE.contains(&name.name.as_str()) {
             self.report(defined_twice(kind, name, Earlier::BuiltIn));
             return false;
@@ -1684,8 +1689,10 @@ impl Checker<'_> {
         name: &ast::Ident,
     ) -> bool {
         if let Some(&(span, first_kind)) = first.get(&name.name) {
-            // A user's item took the prelude's name first, and its `BuiltInName` has said so. A
-            // language interface still takes its name, which only the prelude's code reads.
+            // A user's item took the prelude's name first. For a type or a constructor name,
+            // `BuiltInName` has said so. A language interface still takes its name, which only
+            // the prelude's code reads. A prelude function never gets here: `first_callable`
+            // keeps a user item of its name out of `first`.
             if name.span.in_prelude() && !span.in_prelude() {
                 return is_language_interface(name.name.as_str());
             }
@@ -2648,6 +2655,16 @@ fn wrap_block(block: &mut CheckedBlock, ty: Type) {
         }
         Err(poisoned) => poisoned.ty = Some(ty),
     }
+}
+
+/// The names of the free functions among the prelude's `items`.
+fn prelude_function_names(items: &[&ast::Item]) -> FxHashSet<Symbol> {
+    (items.iter())
+        .filter_map(|item| match item {
+            ast::Item::Function(f) => Some(f.name.name),
+            _ => None,
+        })
+        .collect()
 }
 
 /// `kind` is the second definition's; `first` is the earlier one.
