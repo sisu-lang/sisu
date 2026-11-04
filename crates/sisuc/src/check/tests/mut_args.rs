@@ -1900,3 +1900,24 @@ fn unmarked_place_in_an_optional_or_any_context_should_get_its_fix() {
         assert_eq!(marker_fixes(&src), [(line, col, true)], "row `{row}`");
     }
 }
+
+/// GIVEN `class Box { mut x: [i64] }`, `fn f(mut x: [i64])` and `fn g(mut b: Box, mut x: [i64])`
+/// WHEN `main` calls `f(mut b.x)`, and `g(mut b, mut b.x)`, and the `tir` is printed
+/// THEN the lone call keeps no object, because no store-back of it can rebind `b`
+/// AND the second call keeps the object of `b`, because the store-back of `mut b` can
+#[test]
+fn mut_call_should_keep_a_root_binding_only_when_an_argument_rebinds_it() {
+    let decls = "class Box {\n    mut x: [i64]\n}\n\
+        fn f(mut x: [i64]) {\n    x[0] = 1\n}\n\
+        fn g(mut b: Box, mut x: [i64]) {\n    b = Box(x: [2])\n    x[0] = 3\n}\n";
+    let lone = format!(
+        "{decls}fn main() {{\n    let mut b = Box(x: [0])\n    f(mut b.x)\n    b = Box(x: [1])\n}}"
+    );
+    let printed = lowered(&lone);
+    assert!(printed.contains("(mut_call (call f"), "{printed}");
+    assert!(!printed.contains("(keep "), "{printed}");
+    let pair =
+        format!("{decls}fn main() {{\n    let mut b = Box(x: [0])\n    g(mut b, mut b.x)\n}}");
+    let printed = lowered(&pair);
+    assert_eq!(printed.matches("(keep ").count(), 1, "{printed}");
+}
