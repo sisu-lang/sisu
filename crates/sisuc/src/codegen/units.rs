@@ -72,6 +72,16 @@ pub(crate) fn assign(sizes: &[usize], count: usize) -> Vec<usize> {
     units
 }
 
+/// The group of each function, as the lowest function id in the group. A function with exactly
+/// one direct call site, in another function `c`, joins the group of `c` when the two groups
+/// together are at most `cap` in size. `sizes[f]` is the size of `f`. `callees[f]` lists the
+/// functions that `f` calls, one entry for each call.
+#[cfg_attr(not(test), expect(dead_code, reason = "Task 7 `partition` calls it"))]
+pub(crate) fn groups(sizes: &[usize], callees: &[Vec<usize>], cap: usize) -> Vec<usize> {
+    let _ = (callees, cap);
+    (0..sizes.len()).collect()
+}
+
 /// What a unit does with a function.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Placement {
@@ -337,6 +347,7 @@ mod tests {
     use crate::front_end::{PRELUDE_SOURCE, prelude_program};
     use crate::mir::tests::assert_near_linear;
     use crate::parser::parse_ok;
+    use std::fmt::Write as _;
     use std::fs;
     use std::sync::{Condvar, Mutex};
     use std::time::Duration;
@@ -755,6 +766,91 @@ fn main() {
             .expect("a unit owns `main`");
             assert_eq!(units[own].placement[step], Placement::Copy);
             assert_eq!(units[1 - own].placement[step], Placement::Own);
+        }
+    }
+
+    #[test]
+    fn groups_should_join_a_one_call_site_function_to_its_caller() {
+        // main -> a -> b, each called once: one group, named by its lowest id.
+        assert_eq!(
+            groups(&[1, 1, 1], &[vec![1], vec![2], vec![]], 100),
+            [0, 0, 0]
+        );
+        // The same chain with the ids reversed: 0 is called by 3, and 3 by 2, and 2 by 1.
+        let callees = [vec![], vec![2], vec![3], vec![0]];
+        assert_eq!(groups(&[1; 4], &callees, 100), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn groups_should_keep_a_function_with_two_call_sites_apart() {
+        // main calls `b` twice.
+        assert_eq!(groups(&[1, 1], &[vec![1, 1], vec![]], 100), [0, 1]);
+        // `c` is called by `a` and by `b`.
+        assert_eq!(groups(&[1; 3], &[vec![2], vec![2], vec![]], 100), [0, 1, 2]);
+    }
+
+    #[test]
+    fn groups_should_stop_at_the_cap() {
+        // main -> a -> b -> c, each of size 2 and called once, with a cap of 6. `a` and `b` join
+        // `main` (4, then 6). `c` would make 8, so it stays out.
+        let callees = [vec![1], vec![2], vec![3], vec![]];
+        assert_eq!(groups(&[2; 4], &callees, 6), [0, 0, 0, 3]);
+    }
+
+    #[test]
+    fn groups_should_end_on_a_cycle() {
+        // a and b call only each other.
+        assert_eq!(groups(&[1, 1], &[vec![1], vec![0]], 100), [0, 0]);
+    }
+
+    #[test]
+    fn groups_should_not_join_a_self_call() {
+        // The one call site of `b` is in `b`, so `b` has no caller and `main` does not call it.
+        assert_eq!(groups(&[1, 1], &[vec![], vec![1]], 100), [0, 1]);
+        // `b` is called by `main` and by itself: two call sites.
+        assert_eq!(groups(&[1, 1], &[vec![1], vec![1]], 100), [0, 1]);
+    }
+
+    /// A program of ten functions: `main` calls `helper` once, and eight functions that nothing
+    /// calls are large, so that a unit of one eighth of the program holds `main` and `helper`.
+    fn one_call_site_program() -> String {
+        let mut source =
+            "fn helper(n: i64) -> i64 { n + 1 }\nfn main() { print(helper(1)) }\n".to_owned();
+        for pad in 0..8 {
+            let sum = (0..20)
+                .map(|k| format!("n + {k}"))
+                .collect::<Vec<_>>()
+                .join(" + ");
+            let _ = writeln!(source, "fn pad{pad}(n: i64) -> i64 {{ {sum} }}");
+        }
+        source
+    }
+
+    #[test]
+    fn partition_should_put_a_one_call_site_function_with_its_caller() {
+        let mir = mir_of(&one_call_site_program());
+        let sizes = sizes_of(&mir);
+        let at = |name: &str| {
+            (mir.functions.iter().position(|f| f.name == name)).expect("the program has it")
+        };
+        let (helper, main) = (at("helper"), at("main"));
+        assert_eq!(mir.functions.len(), 10);
+        assert!(
+            sizes[helper] + sizes[main] <= sizes.iter().sum::<usize>() / 8,
+            "the premise: a unit's share holds both: {sizes:?}"
+        );
+        for (level, name) in [(OptLevel::O0, "O0"), (OptLevel::O2, "O2")] {
+            let units = partition(&mir, &sizes, 8, level);
+            let owner = |function: usize| {
+                (units.iter())
+                    .position(|unit| unit.placement[function] == Placement::Own)
+                    .expect("a unit owns it")
+            };
+            assert_eq!(owner(helper), owner(main), "{name}");
+            // Every unit still owns a function.
+            for unit in &units {
+                assert!(unit.placement.contains(&Placement::Own), "{unit:?}");
+            }
         }
     }
 }
