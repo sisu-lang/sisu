@@ -656,10 +656,10 @@ mod tests {
         assert!(of(Kind::Field(0, 0), array).exchangeable());
     }
 
-    /// GIVEN `mut` parameters of `i64` and `string`, and places whose only match leaves each
-    /// parameter a local of its own: the `string` can go to one local only, which is before the
-    /// local that the `i64` takes in the first row, between two in the second, and after in the
-    /// third
+    /// GIVEN `mut` parameters, and places whose only match leaves each parameter a local of its
+    /// own: the `string` can go to one local only, which is before the local that the `i64` takes
+    /// in the first row, and after it in the second. The other 4 rows have 3 locals that serve 3
+    /// parameters, with the `string` between two locals of `i64` in the third
     /// WHEN `choose_places` picks a place for each parameter, from many seeds
     /// THEN a parameter never takes the local that a later one needs
     #[test]
@@ -681,7 +681,7 @@ mod tests {
                 vec![int(0), int(1), text(1), int(2)],
                 vec![Ty::String, Ty::I64, Ty::I64],
             ),
-            // Three locals that serve two parameters, and the `string` at the last.
+            // Three locals that serve three parameters, and the `string` at the last.
             (
                 vec![int(0), int(1), int(2), text(2)],
                 vec![Ty::I64, Ty::I64, Ty::String],
@@ -691,7 +691,7 @@ mod tests {
                 vec![Ty::I64, Ty::I64, Ty::String],
             ),
         ];
-        for (places, types) in rows {
+        for (row, (places, types)) in rows.into_iter().enumerate() {
             let wants: Vec<Want> = types.iter().map(|ty| want(ty.clone(), 0)).collect();
             let string_root = places
                 .iter()
@@ -703,19 +703,22 @@ mod tests {
                 let chosen = g.choose_places(&wants, &places);
                 let roots: Vec<usize> = chosen.iter().map(|place| place.root).collect();
                 let got: Vec<&Ty> = chosen.iter().map(|place| &place.ty).collect();
-                assert_eq!(got, types.iter().collect::<Vec<_>>(), "seed {n}");
+                assert_eq!(got, types.iter().collect::<Vec<_>>(), "row {row}, seed {n}");
                 let mut apart = roots.clone();
                 apart.sort_unstable();
                 apart.dedup();
-                assert_eq!(apart.len(), roots.len(), "seed {n}: {roots:?}");
+                assert_eq!(apart.len(), roots.len(), "row {row}, seed {n}: {roots:?}");
                 let at = types.iter().position(|ty| *ty == Ty::String);
-                assert_eq!(at.map(|at| roots[at]), string_root, "seed {n}: {roots:?}");
+                assert_eq!(
+                    at.map(|at| roots[at]),
+                    string_root,
+                    "row {row}, seed {n}: {roots:?}"
+                );
             }
         }
     }
 
-    /// GIVEN a local `string` that sits in a loop of 2 runs, with room 16 and an array with
-    /// growth 64
+    /// GIVEN a local `string` with room 16 and growth 64, declared outside a loop of 2 runs
     /// WHEN the places of the point are listed
     /// THEN the local's place has half of each, for each run, and says it runs twice
     #[test]
@@ -903,11 +906,13 @@ mod tests {
     /// GIVEN the body of a `mut` function that holds a local `i64` and calls a function with a
     /// `mut` parameter, in blocks and loops so deep that no statement opens another
     /// WHEN a statement is written, from many seeds
-    /// THEN a `mut` call is one of the rules now and then, and rarely: it is one rule in 4 draws
+    /// THEN a `mut` call is written now and then, and less often than a `print`, a rule that is
+    /// always one of the draws: over 2048 seeds the rule gives 47 calls and 176 prints, and the
+    /// mutant of the draw 157 and 139
     #[test]
     fn a_statement_of_a_mut_function_should_rarely_be_a_mut_call() {
-        let (mut calls, total) = (0_u64, 2048);
-        for n in 0..total {
+        let (mut calls, mut prints) = (0_u64, 0_u64);
+        for n in 0..2048 {
             let data = seed(n);
             let mut g = gen_with_local(&data, Ty::I64, (0, 0), Adds::default());
             g.mut_fn = true;
@@ -915,7 +920,11 @@ mod tests {
             (0..MAX_LOOPS).for_each(|_| g.cost.enter_loop(1));
             g.stmt();
             calls += u64::from(g.w.out.program.contains("f1("));
+            prints += u64::from(g.w.out.program.trim_start().starts_with("print("));
         }
-        assert!(calls > 0 && calls * 16 < total, "{calls} of {total}");
+        assert!(
+            calls > 0 && calls * 2 < prints,
+            "{calls} calls, {prints} prints"
+        );
     }
 }
