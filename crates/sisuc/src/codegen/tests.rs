@@ -6049,13 +6049,15 @@ fn out_slot_should_be_in_the_entry_block() {
     );
 }
 
-/// The parameters of the function that starts with `header` in `ir`, as `<type> <name>` texts.
-fn header_params<'a>(ir: &'a str, header: &str) -> Vec<&'a str> {
+/// The parameters of the function that starts with `header` in `ir`, as `<type> <name>` texts,
+/// without the `range` attribute of an array's length.
+fn header_params(ir: &str, header: &str) -> Vec<String> {
     let (_, rest) = ir
         .split_once(header)
         .unwrap_or_else(|| panic!("no {header} in\n{ir}"));
+    let rest = rest.replace(" range(i64 0, -9223372036854775808)", "");
     let (params, _) = rest.split_once(')').expect("the header should close");
-    params.split(", ").collect()
+    params.split(", ").map(str::to_string).collect()
 }
 
 /// A prelude function with a `mut` parameter takes its out pointers after its value parameters
@@ -6090,11 +6092,10 @@ fn prelude_mut_call_should_pass_the_out_pointer_before_the_report_site() {
         "the out pointer {out} should be an `alloca` of `main`:\n{main}"
     );
     assert!(args[3].starts_with("ptr @report.text"), "{call}");
-    assert_eq!(
-        args[4],
-        format!("i64 {})", "test.sisu:3:19".len()),
-        "{call}"
-    );
+    // The call starts at `exchange`, on line 3, column 15 of the source.
+    let location = "test.sisu:3:15";
+    assert!(ir.contains(&format!("c\"{location}\\00\"")), "{ir}");
+    assert_eq!(args[4], format!("i64 {}", location.len()), "{call}");
     // The function declares the same order, and stores the new value through its out pointer.
     let header = "define internal i64 @\"sisu.exchange<i64>\"(";
     let params = header_params(&ir, header);
@@ -6114,4 +6115,33 @@ fn prelude_mut_call_should_pass_the_out_pointer_before_the_report_site() {
             .ends_with(&format!(", ptr {out}, align 8"))),
         "`exchange` should store through its out pointer {out}:\n{body}"
     );
+}
+
+/// The body of a prelude function with a `mut` parameter reads its caller's location from the
+/// last two parameters, which come after the out pointer, and not from the out pointer.
+#[test]
+fn prelude_mut_function_should_report_the_location_that_follows_its_out_pointer() {
+    let context = Context::create();
+    let ir = compiled_over(
+        &context,
+        "fn zero(mut xs: [i64]) {\n    xs[0] = 0\n}\n",
+        "fn main() {\n    let mut xs = [1]\n    zero(mut xs)\n    print(xs)\n}",
+        false,
+        |_| {},
+    )
+    .print_to_string()
+    .to_string();
+    let header = "define internal void @sisu.zero(";
+    let params = header_params(&ir, header);
+    // The array is three parameters, then the out pointer, then the location.
+    let [.., out, at, at_len] = &params[..] else {
+        panic!("`zero` should take its array, an out pointer and the location: {params:?}");
+    };
+    assert_eq!(params.len(), 6, "{params:?}");
+    let name = |param: &String| param.rsplit(' ').next().unwrap_or_default().to_string();
+    let (out, at, at_len) = (name(out), name(at), name(at_len));
+    let body = function_body(&ir, header);
+    let bounds = format!("call void @sisu_panic_bounds(ptr {at}, i64 {at_len}, i64 ");
+    assert!(body.contains(&bounds), "{bounds} in\n{body}");
+    assert!(!body.contains(&format!("ptr {out}, i64")), "{body}");
 }

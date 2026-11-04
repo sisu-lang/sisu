@@ -92,3 +92,12 @@ extend<T> [T] {
         self[i]
     }
 }
+
+// Stores `with` in `place` and returns the value that `place` held. The caller writes `mut`
+// before the place: `exchange(mut self.cells, [])`. The place can be a local, a field or an
+// element, and `T` is the type of the place.
+fn exchange<T>(mut place: T, with: T) -> T {
+    let old = place
+    place = with
+    old
+}
