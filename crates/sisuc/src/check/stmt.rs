@@ -1744,8 +1744,12 @@ impl Checker<'_> {
             return None;
         }
         if let Some(Owner::Func(func)) = self.body.owner {
-            let position =
-                (self.signatures[func.0].param_names.iter()).position(|p| p.name == name);
+            let position = (self.signatures[func.0].param_names.iter())
+                .inspect(|_| {
+                    #[cfg(test)]
+                    super::MUT_PARAM_STEPS.set(super::MUT_PARAM_STEPS.get() + 1);
+                })
+                .position(|p| p.name == name);
             let spelled = self.required_muts.get(&func).zip(position);
             if spelled.is_some_and(|(muts, i)| muts.get(i) == Some(&true)) {
                 return None;

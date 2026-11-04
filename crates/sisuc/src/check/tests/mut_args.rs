@@ -2,6 +2,7 @@
 //! warnings of a local that is passed `mut`.
 
 use super::*;
+use crate::check::MUT_PARAM_STEPS;
 use crate::check::mut_args::MUT_KEY_STEPS;
 
 /// A class with one `mut` array field.
@@ -463,6 +464,7 @@ fn mut_class_parameter_never_reassigned_should_warn_with_the_class_help() {
         fn rename(mut b: Named, name: string) {\n    b.name = name\n}\n\
         fn main() {\n    let mut n = Named(name: \"a\")\n    rename(mut n, \"b\")\n    print(n.name)\n}";
     let d = diagnostic(src, Code::NeverReassigned, (4, 15, "b"), &[]);
+    assert!(d.help().is_some(), "the class help");
     assert_eq!(d.fixes().len(), 0, "removing `mut` changes every caller");
 }
 
@@ -474,7 +476,98 @@ fn mut_array_parameter_never_reassigned_should_warn_without_help() {
     let src = "fn show(mut xs: [i64]) {\n    print(xs)\n}\n\
         fn main() {\n    let mut xs = [1]\n    show(mut xs)\n}";
     let d = diagnostic(src, Code::NeverReassigned, (1, 13, "xs"), &[]);
+    assert_eq!(d.help(), None);
     assert_eq!(d.fixes().len(), 0);
+}
+
+/// GIVEN a `mut` parameter that holds class objects, as an optional, an array, an optional array
+///   or an array of arrays, which the function only writes through
+/// WHEN it is checked
+/// THEN W0002 warns on it with the class help: a write to a field is no reassignment
+#[test]
+fn mut_parameter_of_class_objects_should_warn_with_the_class_help() {
+    let rows = [
+        ("optional", "Named?", "b?.name = \"x\""),
+        ("array", "[Named]", "b[0].name = \"x\""),
+        ("optional array", "[Named]?", "b?[0].name = \"x\""),
+        ("array of arrays", "[[Named]]", "b[0][0].name = \"x\""),
+    ];
+    for (row, ty, stmt) in rows {
+        let src = format!(
+            "class Named {{\n    mut name: string\n}}\nfn f(mut b: {ty}) {{\n    {stmt}\n}}\nfn main() {{}}"
+        );
+        let d = diagnostic_row(row, &src, Code::NeverReassigned, (4, 10, "b"), &[]);
+        assert!(d.help().is_some(), "row `{row}`: the class help");
+    }
+}
+
+/// GIVEN a `mut` parameter of a type with no class object in it
+/// WHEN it is checked
+/// THEN W0002 warns with no help
+#[test]
+fn mut_parameter_without_class_objects_should_warn_without_help() {
+    for ty in ["[i64]", "i64?", "[[string]]"] {
+        let src = format!("fn f(mut b: {ty}) {{\n    print(b == b)\n}}\nfn main() {{}}");
+        let found = diags(&src);
+        let d = (found.iter().find(|d| d.code() == Code::NeverReassigned)).expect("a W0002");
+        assert_eq!(d.help(), None, "type `{ty}`");
+    }
+}
+
+/// GIVEN a call that fails to resolve, with a `mut` argument that is a `mut` parameter, in the
+///   first place or a later one, for an unknown function, an unknown method, a wrong count, an
+///   unknown generic function, a field called as a method and an unknown constructor
+/// WHEN it is checked
+/// THEN the call's error is the only diagnostic: the argument may be reassigned
+#[test]
+fn failed_call_with_a_mut_argument_should_give_its_error_only() {
+    let decls = "fn set(mut n: i64) {\n    n += 1\n}\n\
+        class C {\n    x: i64\n    fn m(self, mut n: i64) {\n        n += 1\n    }\n}\n";
+    let rows = [
+        ("function, first", "ste(mut n)"),
+        ("function, later", "ste(1, mut n)"),
+        ("function, two", "ste(mut n, mut n)"),
+        ("method, first", "c.ste(mut n)"),
+        ("method, later", "c.ste(1, mut n)"),
+        ("count, function", "set(mut n, 1)"),
+        ("count, method", "c.m(mut n, mut n)"),
+        ("generic", "ste<i64>(mut n)"),
+        ("field", "c.x(mut n)"),
+        ("constructor", "Foo(x: 1, mut n)"),
+        ("element", "ste(mut xs[0])"),
+        (
+            "let mut local",
+            "let mut k = 1\n    ste(mut k)\n    print(k)",
+        ),
+    ];
+    for (row, stmt) in rows {
+        let params = if row == "element" {
+            "mut xs: [i64], c: C"
+        } else {
+            "mut n: i64, c: C"
+        };
+        let src = format!("{decls}fn _f({params}) {{\n    {stmt}\n}}\nfn main() {{}}");
+        let found = diags(&src);
+        let found: Vec<_> = found.iter().map(Diagnostic::severity).collect();
+        assert_eq!(found, [Severity::Error], "row `{row}`: {src}");
+    }
+}
+
+/// The `MUT_PARAM_STEPS` that checking a function with `n` `mut` parameters takes.
+fn param_steps(n: usize) -> usize {
+    let params: Vec<String> = (0..n).map(|k| format!("mut a{k}: i64")).collect();
+    let src = format!("fn f({}) {{}}\nfn main() {{}}", params.join(", "));
+    MUT_PARAM_STEPS.set(0);
+    assert_eq!(diags(&src).len(), n, "one W0002 for each parameter");
+    MUT_PARAM_STEPS.get()
+}
+
+/// GIVEN functions with 100, 200 and 300 `mut` parameters that nothing reassigns
+/// WHEN they are checked
+/// THEN the work of the W0002 judgement grows linearly with the parameters
+#[test]
+fn mut_parameter_judgement_should_be_linear() {
+    assert_near_linear(param_steps(100), param_steps(200), param_steps(300));
 }
 
 /// GIVEN a `mut` parameter in each kind of function, which the function never reassigns
@@ -602,22 +695,76 @@ fn requirement_mut_should_not_warn() {
     }
 }
 
-/// GIVEN a requirement that spells `mut` on one parameter, and a conformance method that spells it
-///   on a second parameter too, and reassigns neither
+/// GIVEN a conformance method with a `mut` parameter that its requirement does not spell, because
+///   the requirement has the parameter without `mut`, or has no such parameter, or the method
+///   spells `mut` on a second parameter too
 /// WHEN it is checked
-/// THEN E0152 reports the method, and W0002 warns on the second parameter only
+/// THEN E0152 reports the method, and W0002 does not warn on the same `mut`
 #[test]
-fn requirement_mut_should_exempt_only_its_own_parameter() {
-    let src = "interface Filler {\n    fn fill(self, mut xs: [i64], ys: [i64])\n}\n\
-        class C: Filler {\n    n: i64\n    fn fill(self, mut xs: [i64], mut ys: [i64]) {\n        print(xs)\n        print(ys)\n    }\n}\n\
-        fn main() {}";
-    assert_eq!(
-        found(src),
-        [
-            (Code::ConformanceBody, (6, 8), vec![(2, 34)]),
-            (Code::NeverReassigned, (6, 38), vec![]),
-        ]
-    );
+fn stray_mut_on_a_conformance_method_should_give_e0152_only() {
+    let rows = [
+        (
+            "parameter without mut",
+            "interface Filler {\n    fn fill(self, xs: [i64])\n}\n\
+            class C: Filler {\n    n: i64\n    fn fill(self, mut xs: [i64]) {\n        print(xs)\n    }\n}",
+        ),
+        (
+            "extra parameter",
+            "interface Filler {\n    fn fill(self)\n}\n\
+            class C: Filler {\n    n: i64\n    fn fill(self, mut xs: [i64]) {\n        print(xs)\n    }\n}",
+        ),
+        (
+            "second parameter",
+            "interface Filler {\n    fn fill(self, mut xs: [i64], ys: [i64])\n}\n\
+            class C: Filler {\n    n: i64\n    fn fill(self, mut xs: [i64], mut ys: [i64]) {\n        print(xs)\n        print(ys)\n    }\n}",
+        ),
+        (
+            "extend block",
+            "interface Filler {\n    fn fill(self, xs: [i64])\n}\n\
+            class C {\n    n: i64\n}\n\
+            extend C: Filler {\n    fn fill(self, mut xs: [i64]) {\n        print(xs)\n    }\n}",
+        ),
+        (
+            "generic interface",
+            "interface Filler<T> {\n    fn fill(self, xs: [T])\n}\n\
+            class C: Filler<i64> {\n    n: i64\n    fn fill(self, mut xs: [i64]) {\n        print(xs)\n    }\n}",
+        ),
+        (
+            "inherited interface",
+            "interface A {\n    fn fill(self, xs: [i64])\n}\n\
+            interface B: A {\n    fn other(self)\n}\n\
+            class C: B {\n    n: i64\n    fn fill(self, mut xs: [i64]) {\n        print(xs)\n    }\n    \
+            fn other(self) {}\n}",
+        ),
+    ];
+    for (row, decl) in rows {
+        let src = format!("{decl}\nfn main() {{}}");
+        let found: Vec<_> = diags(&src).iter().map(Diagnostic::code).collect();
+        assert_eq!(found, [Code::ConformanceBody], "row `{row}`");
+    }
+}
+
+/// GIVEN a requirement and a method with a different number of parameters, one of them `mut`
+/// WHEN it is checked
+/// THEN E0152 reports the method with no note: the parameters do not correspond
+#[test]
+fn conformance_with_another_parameter_count_should_give_e0152_without_a_note() {
+    let rows = [
+        (
+            "method lacks a mut parameter",
+            "interface Filler {\n    fn fill(self, mut xs: [i64], n: i64)\n}\n\
+            class C: Filler {\n    n: i64\n    fn fill(self, n: i64) {\n        print(n)\n    }\n}",
+        ),
+        (
+            "requirement lacks a mut parameter",
+            "interface Filler {\n    fn fill(self, a: i64, mut xs: [i64])\n}\n\
+            class C: Filler {\n    n: i64\n    fn fill(self, mut a: i64) {\n        a = 1\n    }\n}",
+        ),
+    ];
+    for (row, decl) in rows {
+        let src = format!("{decl}\nfn main() {{}}");
+        diagnostic_row(row, &src, Code::ConformanceBody, (6, 8, "fill"), &[]);
+    }
 }
 
 /// GIVEN a requirement and a conformance that differ in the type of a parameter that both spell

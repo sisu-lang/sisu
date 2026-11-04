@@ -1,0 +1,17 @@
+// GIVEN `ste(mut n)`, a call of a function that does not exist, where `n` is a `mut` parameter
+// WHEN `sisu check` runs on it
+// THEN it reports E0052 only: the call may have changed `n`, so W0002 does not warn on it
+fn set(mut n: i64) {
+    n += 1
+}
+
+fn forward(mut n: i64) {
+    ste(mut n)
+}
+
+fn main() {
+    let mut n = 1
+    set(mut n)
+    forward(mut n)
+    print(n)
+}

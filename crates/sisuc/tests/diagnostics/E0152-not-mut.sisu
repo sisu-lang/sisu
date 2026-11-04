@@ -1,6 +1,7 @@
 // GIVEN a requirement whose parameter `xs` is not `mut`
 // WHEN a conformance spells the parameter `mut`
 // THEN it reports E0152 on the method, with the note that the requirement's parameter is not `mut`
+// AND it does not warn W0002 on `xs`: the error already names its `mut`
 interface Filler {
     fn fill(self, xs: [i64])
 }
@@ -9,7 +10,7 @@ class Nines: Filler {
     n: i64
 
     fn fill(self, mut xs: [i64]) {
-        xs[0] = 9
+        print(xs)
     }
 }
 
