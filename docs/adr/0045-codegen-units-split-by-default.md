@@ -16,8 +16,8 @@ threads. `sisu` links their objects into one executable.
    run-time cost: one rule needs one set of tests.
 2. **`--codegen-units 1` gives one module**, as before this decision. That
    build optimizes the whole program and gives the fastest program. The flag
-   takes 1 to 64, and it is a maximum: a program with fewer functions gets one
-   unit for each function.
+   takes 1 to 64, and it is a maximum: a program with fewer groups gets one
+   unit for each group (decision 4).
 3. **The count comes only from the program**, never from the core count. A
    machine with fewer cores runs the same units on fewer threads, and the
    executable is the same bytes. There is no `auto` value and no environment
@@ -64,8 +64,9 @@ needs no new ADR:
 - **External linkage costs some speed in a split `-O2` build.** A function
   that another unit calls is external (with hidden visibility), so the
   units link by name. LLVM cannot delete a function that it inlined into
-  every caller, and dead-argument elimination, IPSCCP and argument promotion
-  no longer apply to such a function. Only the functions that another unit
+  every caller, and dead-argument elimination, argument promotion and the
+  IPSCCP propagation of constant arguments no longer apply to such a
+  function. IPSCCP still propagates its return values. Only the functions that another unit
   calls are external. The others are internal, as in a build of one unit.
   The written `Eq` and `Display` methods and the methods in `any` tables are
   external too, because the helpers of any unit may call them. The copies of

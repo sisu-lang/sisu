@@ -244,10 +244,10 @@ impl Analyses {
 
 /// The LLVM module of codegen unit `unit` of a program; see `compile`. With one unit, every
 /// function is internal and the module is the whole program. In a split build, a function that
-/// another unit refers to (see `units::exported`) has external linkage and hidden visibility, so
-/// that the units link by name, and every other function is internal. A unit defines the
-/// functions that it owns, defines an `available_externally` copy of each small function of
-/// another unit that it calls (see `units::copies`), and declares the others. Unit 0 holds the C
+/// another unit refers to (see `units::exported`) has external linkage and hidden visibility. The
+/// units link by name. Every other function is internal. A unit defines the functions that it
+/// owns. It defines an `available_externally` copy of each small function of another unit that it
+/// calls (see `units::copies`). It declares the other functions. Unit 0 holds the C
 /// `main` and the drop-depth state (`sisu_rc.depth`, `sisu_rc.deferred`), which the other units
 /// declare. A unit makes the release helpers and the `any` tables that its functions use, and no
 /// other.
