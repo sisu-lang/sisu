@@ -4,11 +4,7 @@ error[E0062]: `s` may be `None`
 7 |     print(s.get(0..1) ?? "")
   |           ^
   |
-  = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
-help: if a `None` result is fine, use `?.`
-  |
-7 |     print(s?.get(0..1) ?? "")
-  |            +
+  = help: unwrap it with `if let`, `let ... else` or `?? return`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0062

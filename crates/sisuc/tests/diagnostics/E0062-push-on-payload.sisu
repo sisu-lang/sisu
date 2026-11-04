@@ -1,0 +1,253 @@
+// GIVEN a `.push` whose receiver may be `None`, in a function for each case
+// WHEN `sisu check` runs on it
+// THEN it reports E0062, then the error of the same call through `?.`, such as E0032, E0021, E0053 or E0055
+// AND an array in a binding that cannot change reports E0001 first, as `?.push` does
+// AND each guard function keeps the output that it had before
+class Node {
+    mut v: i64
+    w: i64
+    mut xs: [i64]
+    ys: [i64]
+}
+class N2 {
+    mut xss: [[i64]]
+}
+class Box {
+    inner: Node
+    mut m: Node?
+}
+class Stack {
+    fn push(self, v: i64) {}
+}
+class Holder {
+    s: Stack
+}
+class H {
+    o: Node?
+}
+type M<T> = T?
+fn mko() -> [i64]? { None }
+extend H {
+    fn self_dot_wrong(self) {
+        self.o.xs.push("a")
+    }
+
+    fn self_safe_wrong(self) {
+        self.o?.xs.push("a")
+    }
+}
+
+fn safe_dot_wrong(c: Node?) {
+    c?.xs.push("a")
+}
+
+fn field_dot_wrong(c: Node?) {
+    c.xs.push("a")
+}
+
+fn local_wrong() {
+    let mut xs: [i64]? = None
+    xs.push("a")
+}
+
+fn dot_then_index_wrong(c: N2?) {
+    c.xss[0].push("a")
+}
+
+fn double_field_dot_wrong(c: Node??) {
+    c.xs.push("a")
+}
+
+fn stack_local_wrong(s: Stack?) {
+    s.push("a")
+}
+
+fn stack_holder_wrong(b: Holder?) {
+    b?.s.push("a")
+}
+
+fn temporary() {
+    mko().push("a")
+}
+
+fn temporary_count() {
+    mko().push()
+}
+
+fn missing_argument(xs: [i64]?) {
+    xs.push()
+}
+
+fn count_zero_safe(c: Node?) {
+    c?.xs.push()
+}
+
+fn count_zero_mut_local() {
+    let mut xs: [i64]? = None
+    xs.push()
+}
+
+fn label_safe(c: Node?) {
+    c?.xs.push(v: 1)
+}
+
+fn label_local() {
+    let mut xs: [i64]? = None
+    xs.push(v: 1)
+}
+
+fn label_dot(c: Node?) {
+    c.xs.push(v: 1)
+}
+
+fn deep_mut(b: Box?) {
+    b?.inner.xs.push(1)
+}
+
+fn optional_field(b: Box?) {
+    b?.m.xs.push(1)
+}
+
+fn safe_mut(c: Node?) {
+    c?.xs.push(1)
+}
+
+fn dot_mut(c: Node?) {
+    c.xs.push(1)
+}
+
+fn mut_local() {
+    let mut xs: [i64]? = None
+    xs.push(1)
+}
+
+fn safe_safe_immutable(c: Node?) {
+    c?.ys?.push(1)
+}
+
+fn safe_safe_wrong(c: Node?) {
+    c?.xs?.push("a")
+}
+
+fn safe_then_index_mut(c: N2?) {
+    c?.xss[0].push("a")
+}
+
+fn argument_error_safe(c: Node?) {
+    c?.xs.push(nope)
+}
+
+fn argument_error_local() {
+    let mut xs: [i64]? = None
+    xs.push(nope)
+}
+
+fn int_field_safe(c: Node?) {
+    c?.v.push(1)
+}
+
+fn missing_field_safe(c: Node?) {
+    c?.q.push(1)
+}
+
+fn not_optional_safe(n: Node) {
+    n?.xs.push(1)
+}
+
+fn double_object(c: Node??) {
+    c?.ys.push(1)
+}
+
+fn type_parameter<U>(u: U?) {
+    u.push(1)
+}
+
+fn string_receiver(s: string?) {
+    s.push(1)
+}
+
+fn stack_local(s: Stack?) {
+    s.push(1)
+}
+
+fn stack_holder(b: Holder?) {
+    b?.s.push(1)
+}
+
+fn stack_holder_dot(b: Holder?) {
+    b.s.push(1)
+}
+
+fn local_optional_array(xs: [i64]?) {
+    xs.push(1)
+}
+
+fn count_two_local(xs: [i64]?) {
+    xs.push(1, 2)
+}
+
+fn index_local_optional(xss: [[i64]?]) {
+    xss[0].push("a")
+}
+
+fn alias_local_wrong(xs: M<[i64]>) {
+    xs.push("a")
+}
+
+fn double_local(xs: [i64]??) {
+    xs.push(1)
+}
+
+fn double_local_wrong(xs: [i64]??) {
+    xs.push("a")
+}
+
+fn double_local_count(xs: [i64]??) {
+    xs.push()
+}
+
+fn main() {
+    H(o: None).self_dot_wrong()
+    H(o: None).self_safe_wrong()
+    safe_dot_wrong(None)
+    field_dot_wrong(None)
+    local_wrong()
+    dot_then_index_wrong(None)
+    double_field_dot_wrong(None)
+    stack_local_wrong(None)
+    stack_holder_wrong(None)
+    temporary()
+    temporary_count()
+    missing_argument(None)
+    count_zero_safe(None)
+    count_zero_mut_local()
+    label_safe(None)
+    label_local()
+    label_dot(None)
+    deep_mut(None)
+    optional_field(None)
+    safe_mut(None)
+    dot_mut(None)
+    mut_local()
+    safe_safe_immutable(None)
+    safe_safe_wrong(None)
+    safe_then_index_mut(None)
+    argument_error_safe(None)
+    argument_error_local()
+    int_field_safe(None)
+    missing_field_safe(None)
+    not_optional_safe(Node(v: 1, w: 1, xs: [], ys: []))
+    double_object(None)
+    type_parameter<i64>(None)
+    string_receiver(None)
+    stack_local(None)
+    stack_holder(None)
+    stack_holder_dot(None)
+    local_optional_array(None)
+    count_two_local(None)
+    index_local_optional([])
+    alias_local_wrong(None)
+    double_local(None)
+    double_local_wrong(None)
+    double_local_count(None)
+}

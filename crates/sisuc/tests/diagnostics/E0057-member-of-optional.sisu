@@ -1,0 +1,75 @@
+// GIVEN an optional whose payload has a member of the other kind, used with `.` in a function for each case
+// WHEN `sisu check` runs on it
+// THEN it reports E0057, E0058, E0120 or E0121 at the name of the member and no E0062
+interface Named {
+    fn name(self) -> string
+}
+class Node {
+    mut v: i64
+    w: i64
+    mut xs: [i64]
+    ys: [i64]
+    fn get(self) -> i64 { self.v }
+}
+enum E {
+    A(x: i64)
+    fn tag(self) -> i64 { 1 }
+}
+type M<T> = T?
+class Box {
+    mut o: Node?
+    inner: Node
+}
+class Cat: Named {
+    fn name(self) -> string { "cat" }
+}
+class G {
+    fn pick<T>(self, a: T) -> T { a }
+}
+extend Node {
+    fn ext(self) -> i64 { 1 }
+}
+class W<T> {
+    v: i64
+}
+extend<T: Named> W<T> {
+    fn only(self) -> i64 { 1 }
+}
+class H {
+    mut o: Node?
+}
+fn mk() -> Node? { None }
+fn id<T>(v: T) -> T { v }
+
+fn f_enum_field(e: E?) {
+    print(e.x)
+}
+
+fn f_enum_assign(e: E?) {
+    e.x = 2
+}
+
+fn f_len_field(xs: [i64]?) {
+    print(xs.len)
+}
+
+fn f_method_as_field(c: Node?) {
+    print(c.get)
+}
+
+fn m_field_as_method(c: Node?) {
+    print(c.v())
+}
+
+fn m_enum_variant_call(e: E?) {
+    print(e.A())
+}
+
+fn main() {
+    f_enum_field(None)
+    f_enum_assign(None)
+    f_len_field(None)
+    f_method_as_field(None)
+    m_field_as_method(None)
+    m_enum_variant_call(None)
+}
