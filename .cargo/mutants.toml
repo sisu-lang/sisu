@@ -1,7 +1,7 @@
 # cargo-mutants (https://mutants.rs). Run it as `AGENTS.md` shows.
 test_tool = "nextest"
 # Pass 1 of `scripts/mutants.sh` waits 2x its baseline.
-# Pass 2 sets `--timeout 600`, which beats this.
+# Pass 2 sets `--timeout 600` for both of its groups, which beats this.
 # The whole suite, 2 mutants at a time, can be slower than 2x its baseline.
 # A timeout counts as caught, so a short wait would hide a missed mutant.
 timeout_multiplier = 2.0
