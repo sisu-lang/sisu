@@ -590,9 +590,11 @@ impl Checker<'_> {
                 .iter()
                 .any(|a| matches!(a.value.kind, ExprKind::Range(_)));
         if gets_range
-            && type_of(&receiver).is_some_and(|ty| matches!(ty.kind(), TypeKind::Array(_)))
+            && let Some(array) =
+                type_of(&receiver).filter(|ty| matches!(ty.kind(), TypeKind::Array(_)))
         {
-            return self.array_get_range(args);
+            // `base[a..b]` is the help for a `.` call only: through `?.`, it would be E0062.
+            return self.array_get_range((span, array), (!safe).then_some(receiver_expr), args);
         }
         let receiver = match self.generated_operator(span, receiver, site, args) {
             Ok(checked) => return checked,
@@ -656,11 +658,11 @@ impl Checker<'_> {
             }
             // An optional array's `get` is E0062 first, then E0032 for the range, as through `?.`.
             None if gets_range
-                && ty.is_some_and(|ty| {
-                    matches!(array::innermost(ty).kind(), TypeKind::Array(_))
-                }) =>
+                && let Some(array) = ty
+                    .map(array::innermost)
+                    .filter(|array| matches!(array.kind(), TypeKind::Array(_))) =>
             {
-                self.array_get_range(args)
+                self.array_get_range((span, array), None, args)
             }
             None => {
                 self.labels(args);
@@ -1188,9 +1190,9 @@ fn generated_display_only(ty: Type) -> bool {
     )
 }
 
-/// Whether `ty.name(..)` takes a range as its argument: the `get` of a `string`, or of a `string?`,
-/// which reports that it may be `None` before it reads the range.
+/// Whether `ty.name(..)` takes a range as its argument: the `get` of a `string`, or of an optional
+/// `string`, which reports that it may be `None` before it reads the range. A receiver whose type
+/// is not known (`None`) reported itself, so its `get` may take one too.
 pub(super) fn takes_range(ty: Option<Type>, name: Symbol) -> bool {
-    name.as_str() == "get"
-        && ty.is_some_and(|ty| ty == Type::STRING || ty == Type::optional(Type::STRING))
+    name.as_str() == "get" && ty.is_none_or(|ty| array::innermost(ty) == Type::STRING)
 }

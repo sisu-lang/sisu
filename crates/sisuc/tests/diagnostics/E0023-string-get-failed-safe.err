@@ -1,0 +1,76 @@
+error[E0049]: `s` is not optional
+  --> E0023-string-get-failed-safe.sisu:12:11
+   |
+12 |     print(s?.get(..) ?? "")
+   |           ^
+   |
+help: replace `?.` with `.`
+   |
+12 -     print(s?.get(..) ?? "")
+12 +     print(s.get(..) ?? "")
+   |
+
+error[E0023]: `s?.get(..)` has no bounds
+  --> E0023-string-get-failed-safe.sisu:12:18
+   |
+12 |     print(s?.get(..) ?? "")
+   |                  ^^ this range has no bounds
+
+error[E0049]: `s` is not optional
+  --> E0023-string-get-failed-safe.sisu:13:11
+   |
+13 |     print(s?.get(..=) ?? "")
+   |           ^
+   |
+help: replace `?.` with `.`
+   |
+13 -     print(s?.get(..=) ?? "")
+13 +     print(s.get(..=) ?? "")
+   |
+
+error[E0023]: `s?.get(..=)` has no bounds
+  --> E0023-string-get-failed-safe.sisu:13:18
+   |
+13 |     print(s?.get(..=) ?? "")
+   |                  ^^^ this range has no bounds
+
+error[E0062]: `o?.` leaves a `string?`, which may be `None`
+  --> E0023-string-get-failed-safe.sisu:14:11
+   |
+14 |     print(o?.get(..) ?? "")
+   |           ^
+   |
+   = help: peel the other layer first: `(o ?? None)?.get`
+
+error[E0023]: `o?.get(..)` has no bounds
+  --> E0023-string-get-failed-safe.sisu:14:18
+   |
+14 |     print(o?.get(..) ?? "")
+   |                  ^^ this range has no bounds
+
+error[E0049]: this value is not optional
+  --> E0023-string-get-failed-safe.sisu:15:11
+   |
+15 |     print(g(nope)?.get(..) ?? "")
+   |           ^^^^^^^
+   |
+help: replace `?.` with `.`
+   |
+15 -     print(g(nope)?.get(..) ?? "")
+15 +     print(g(nope).get(..) ?? "")
+   |
+
+error[E0033]: cannot find binding `nope`
+  --> E0023-string-get-failed-safe.sisu:15:13
+   |
+15 |     print(g(nope)?.get(..) ?? "")
+   |             ^^^^
+
+error[E0023]: `g(nope)?.get(..)` has no bounds
+  --> E0023-string-get-failed-safe.sisu:15:24
+   |
+15 |     print(g(nope)?.get(..) ?? "")
+   |                        ^^ this range has no bounds
+
+sisu: 9 errors
+sisu: for more on a code, run `sisu explain <code>`: E0023, E0033, E0049, E0062

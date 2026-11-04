@@ -877,12 +877,23 @@ pub(crate) enum DiagnosticKind {
     /// An index into the value at `at`, of type `ty`, which is no array; with `range`, a range
     /// index into one that is neither an array nor a string.
     CannotIndex { ty: String, at: Span, range: bool },
-    /// A single index into the string at `at`: a string takes a range index only.
-    StringIndex { at: Span },
-    /// The argument at `at` of a string's `get`, which is no range written in the call.
-    StringGetNeedsRange { at: Span },
-    /// The range at `at`, given to an array's `get`, which takes an `i64`.
-    ArrayGetTakesIndex { at: Span },
+    /// A single index into the string at `at`: a string takes a range index only. `base` is the
+    /// string as written, and `usage` says whether the index reads or is the target of a write.
+    StringIndex {
+        at: Span,
+        base: String,
+        usage: IndexUsage,
+    },
+    /// The argument at `at` of a string's `get`, which is no range written in the call: `base` is
+    /// the receiver as written, and `call` how the call is written.
+    StringGetNeedsRange {
+        at: Span,
+        base: String,
+        call: GetCall,
+    },
+    /// The range at `at`, given to an array's `get`, which takes an `i64`. `base` is the receiver
+    /// as written, when `base[a..b]` is the help: the receiver is an array and the call is `.`.
+    ArrayGetTakesIndex { at: Span, base: Option<String> },
     /// The method `method` at `at`, called on an array of type `ty`. The prelude gives the method
     /// to the array types `targets`, and none of them is `ty`. `function` is whether the call
     /// writes the method as a function, `method(xs)`, and the label then says it is a method: it
@@ -2209,13 +2220,32 @@ pub(crate) enum RangeForm {
     NoEnd { range: String, start: String },
     /// `base[..]` or `base[..=]`: the whole of `base`, which is `base`.
     NoBounds { base: String, inclusive: bool },
-    /// `base.get(..)` or `base.get(..=)`, a string's `get` of its whole value; with `safe`,
-    /// `base?.get(..)`, which is `base`.
+    /// `base.get(..)` or `base.get(..=)`, a string's `get` of its whole value, written as `call`.
     NoBoundsGet {
         base: String,
         inclusive: bool,
-        safe: bool,
+        call: GetCall,
     },
+}
+
+/// How the `get` of a string is written.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GetCall {
+    /// `base.get(..)`.
+    Plain,
+    /// `base?.get(..)` on an optional: it is `base`.
+    Safe,
+    /// `base?.get(..)` where the `?.` failed (E0049 or E0062), so the call has no value to name.
+    SafeFailed,
+}
+
+/// What an index into a string does with its element.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IndexUsage {
+    /// The element is read, or only part of a longer target.
+    Read,
+    /// The element is the whole target of an assignment.
+    Write,
 }
 
 /// Which bound of a range is missing.
@@ -2285,22 +2315,22 @@ impl RangeForm {
             Self::NoBoundsGet {
                 base,
                 inclusive,
-                safe,
+                call: how,
             } => {
                 let dots = if inclusive { "..=" } else { ".." };
-                let (call, value) = if safe {
-                    (format!("{base}?.get"), base)
-                } else {
-                    (format!("{base}.get"), format!("Some({base})"))
+                let (call, value) = match how {
+                    GetCall::Plain => (format!("{base}.get"), Some(format!("Some({base})"))),
+                    GetCall::Safe => (format!("{base}?.get"), Some(base)),
+                    // The call is not `base`, so no help names a value for it.
+                    GetCall::SafeFailed => (format!("{base}?.get"), None),
                 };
-                let help = if inclusive {
-                    format!("write `{value}`")
-                } else {
-                    format!("`{call}(..)` is `{value}`")
-                };
-                Diagnostic::coded(code, at, format!("`{call}({dots})` has no bounds"))
-                    .with_label("this range has no bounds")
-                    .with_help(help)
+                let d = Diagnostic::coded(code, at, format!("`{call}({dots})` has no bounds"))
+                    .with_label("this range has no bounds");
+                match value {
+                    Some(value) if inclusive => d.with_help(format!("write `{value}`")),
+                    Some(value) => d.with_help(format!("`{call}(..)` is `{value}`")),
+                    None => d,
+                }
             }
         }
     }
@@ -4526,24 +4556,39 @@ impl From<DiagnosticKind> for Diagnostic {
                     "only arrays can be indexed"
                 })
             }
-            DiagnosticKind::StringIndex { at } => {
+            DiagnosticKind::StringIndex { at, base, usage } => {
+                // `string` takes no `[u8]`, so a write has no bytes form.
+                let help = match usage {
+                    IndexUsage::Read => format!(
+                        "for bytes, write `let bs = {base}.bytes()` once, then `bs[i]`; for characters, write `let cs = {base}.chars()` once, then `cs[i]`"
+                    ),
+                    IndexUsage::Write => format!(
+                        "to change a character, write `let mut cs = {base}.chars()`, change `cs[i]`, then write `{base} = string(cs)`"
+                    ),
+                };
                 Diagnostic::coded(code, at, "a string has no single index")
                     .with_label("this is a string")
-                    .with_help(
-                        "for bytes, write `let bs = s.bytes()` once, then `bs[i]`; for characters, write `let cs = s.chars()` once, then `cs[i]`",
-                    )
+                    .with_help(help)
             }
-            DiagnosticKind::StringGetNeedsRange { at } => {
+            DiagnosticKind::StringGetNeedsRange { at, base, call } => {
+                // A call after a failed `?.` fails again, so its help names the range only.
+                let example = match call {
+                    GetCall::Plain => format!("{base}.get(1..3)"),
+                    GetCall::Safe => format!("{base}?.get(1..3)"),
+                    GetCall::SafeFailed => "1..3".to_owned(),
+                };
                 Diagnostic::coded(code, at, "a string's `get` takes a range")
                     .with_label("this is not a range")
-                    .with_help("write a range, such as `s.get(1..3)`")
+                    .with_help(format!("write a range, such as `{example}`"))
             }
-            DiagnosticKind::ArrayGetTakesIndex { at } => {
+            DiagnosticKind::ArrayGetTakesIndex { at, base } => {
+                // `base[a..b]` on an optional array is E0062, and Sisu has no `?[`.
+                let base = base.as_deref().unwrap_or("xs");
                 Diagnostic::coded(code, at, "an array's `get` takes an `i64`, not a range")
                     .with_label("this is a range")
-                    .with_help(
-                        "use `xs[a..b]`, which stops the program when the range is out of bounds",
-                    )
+                    .with_help(format!(
+                        "use `{base}[a..b]`, which stops the program when the range is out of bounds"
+                    ))
             }
             DiagnosticKind::SumNeedsNumbers {
                 method,

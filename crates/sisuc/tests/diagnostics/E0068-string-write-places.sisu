@@ -1,0 +1,38 @@
+// GIVEN writes into an index of a string, in a field, an element, a range and a call
+// WHEN `sisu check` runs on it
+// THEN it reports E0068 for each index
+// AND the help of a write to an index of a string, or of a substring with no start, names the base in `chars()` and `string(cs)`
+// AND the help of a write to an index of a substring with a start names the substring in `bytes()` and `chars()`
+// AND the help of a deeper index or a push names the base in `bytes()` and `chars()`
+class Node {
+    mut name: string
+}
+
+fn f() -> string {
+    return "abc"
+}
+
+fn main() {
+    let c = Node(name: "x")
+    let mut ss = ["ab"]
+    let mut t = "abc"
+    c.name[0] = "y"
+    ss[0][1] = "x"
+    t[0..2][0] = "x"
+    t[0].push(1)
+    t[0] += "x"
+    t[0][1] = "x"
+    f()[0..2][0] = "x"
+    t[0..2][0][1] = "x"
+    t[1..3][0] = "x"
+    t[1..3][0] += "x"
+    t[1..3][0] -= "x"
+    t[1..][0] = "x"
+    t[1..=2][0] = "x"
+    ss[0][1..2][0] = "x"
+    c.name[1..2][0] = "x"
+    t[..2][0] = "x"
+    t[..][0] = "x"
+    t[..=1][0] = "x"
+    ss[0][..2][0] = "x"
+}

@@ -415,7 +415,6 @@ fn array_get_with_a_range_should_be_e0032_at_the_range() {
         ("no start", "xs.get(..2)", "..2"),
         ("no bounds", "xs.get(..)", ".."),
         ("inclusive no end", "xs.get(1..=)", "1..="),
-        ("second argument", "xs.get(1, ..2)", "..2"),
         ("through safe access", "o?.get(0..1)", "0..1"),
     ];
     for (row, call, range) in rows {
@@ -745,4 +744,294 @@ fn range_index_of_an_array_should_have_the_array_type() {
     let printed = program.to_string();
     assert!(printed.contains("(slice "), "{printed}");
     assert!(printed.contains("(slice..= "), "{printed}");
+}
+
+/// GIVEN a string's `get` with a range that is an error for good, or with a receiver or an
+///       argument that is wrong too, on a plain, optional, nested optional or unknown receiver
+/// WHEN the program is checked
+/// THEN it reports each true error once, in source order, and E0023 only when the range is
+///      wrong by itself
+#[test]
+#[expect(clippy::too_many_lines, reason = "one row for each case of the table")]
+fn get_with_a_range_should_report_only_true_errors() {
+    const NODE: &str = "class Node {\n    mut name: string\n}\n\n";
+    const OPTIONAL: Code = Code::MayBeNone;
+    const NOT_OPTIONAL: Code = Code::SafeAccessNotOptional;
+    const RANGE: Code = Code::RangeOutsideFor;
+    let rows: Vec<(&str, String, Vec<Wanted>)> = vec![
+        (
+            "failed safe access",
+            main_with("let s = \"x\"\n    print(s?.get(..) ?? \"\")"),
+            vec![(NOT_OPTIONAL, (3, 11)), (RANGE, (3, 18))],
+        ),
+        (
+            "failed safe access, inclusive",
+            main_with("let s = \"x\"\n    print(s?.get(..=) ?? \"\")"),
+            vec![(NOT_OPTIONAL, (3, 11)), (RANGE, (3, 18))],
+        ),
+        (
+            "failed safe access, no end",
+            main_with("let s = \"x\"\n    print(s?.get(1..=) ?? \"\")"),
+            vec![(NOT_OPTIONAL, (3, 11)), (RANGE, (3, 18))],
+        ),
+        (
+            "failed safe access, nested optional",
+            main_with("let s: string?? = Some(Some(\"ab\"))\n    print(s?.get(..) ?? \"\")"),
+            vec![(OPTIONAL, (3, 11)), (RANGE, (3, 18))],
+        ),
+        (
+            "safe access on an optional",
+            main_with("let s: string? = \"x\"\n    print(s?.get(..) ?? \"\")"),
+            vec![(RANGE, (3, 18))],
+        ),
+        (
+            "plain",
+            main_with("let s = \"x\"\n    print(s.get(..) ?? \"\")"),
+            vec![(RANGE, (3, 17))],
+        ),
+        (
+            "failed safe access on a field",
+            format!(
+                "{NODE}fn main() {{\n    let c = Node(name: \"x\")\n    print(c?.name.get(..) ?? \"\")\n}}"
+            ),
+            vec![(NOT_OPTIONAL, (7, 11))],
+        ),
+        (
+            "wrong count",
+            "fn f(n: i64) -> string {\n    return \"x\"\n}\n\nfn main() {\n    print(f(1, 2).get(..) ?? \"\")\n}"
+                .to_string(),
+            vec![(Code::ArgumentCount, (6, 11))],
+        ),
+        (
+            "unknown receiver",
+            main_with("print(nope?.get(..) ?? \"\")"),
+            vec![(Code::BindingNotFound, (2, 11))],
+        ),
+        (
+            "unknown receiver, bad bound",
+            main_with("print(nope.get(0..true) ?? \"\")"),
+            vec![(Code::BindingNotFound, (2, 11)), (Code::Mismatch, (2, 23))],
+        ),
+        (
+            "unknown receiver, no end",
+            main_with("print(nope.get(1..=) ?? \"\")"),
+            vec![(Code::BindingNotFound, (2, 11))],
+        ),
+        (
+            "unknown receiver, label",
+            main_with("print(nope.get(r: ..) ?? \"\")"),
+            vec![(Code::BindingNotFound, (2, 11)), (Code::LabeledArgument, (2, 20))],
+        ),
+        (
+            "unknown receiver, other method",
+            main_with("print(nope.foo(..))"),
+            vec![(Code::BindingNotFound, (2, 11)), (RANGE, (2, 20))],
+        ),
+        (
+            "array",
+            main_with("let xs = [1]\n    print(xs?.get(..) ?? 0)"),
+            vec![(NOT_OPTIONAL, (3, 11)), (Code::Mismatch, (3, 19))],
+        ),
+        (
+            "index through failed safe access",
+            format!(
+                "{NODE}fn main() {{\n    let c = Node(name: \"x\")\n    print(c?.name[..])\n}}"
+            ),
+            vec![(NOT_OPTIONAL, (7, 11)), (RANGE, (7, 19))],
+        ),
+        (
+            "assignment through failed safe access",
+            format!(
+                "{NODE}fn main() {{\n    let c = Node(name: \"x\")\n    c?.name[..] = \"y\"\n}}"
+            ),
+            vec![(NOT_OPTIONAL, (7, 5)), (RANGE, (7, 13))],
+        ),
+        (
+            "nested optional",
+            main_with("let s: string?? = Some(Some(\"ab\"))\n    print(s.get(0..1) ?? \"\")"),
+            vec![(OPTIONAL, (3, 11))],
+        ),
+        (
+            "triple optional",
+            main_with(
+                "let s: string??? = Some(Some(Some(\"ab\")))\n    print(s.get(0..1) ?? \"\")",
+            ),
+            vec![(OPTIONAL, (3, 11))],
+        ),
+        (
+            "nested optional, no bounds",
+            main_with("let s: string?? = Some(Some(\"ab\"))\n    print(s.get(..) ?? \"\")"),
+            vec![(OPTIONAL, (3, 11))],
+        ),
+        (
+            "nested optional, bad bound",
+            main_with("let s: string?? = Some(Some(\"ab\"))\n    print(s.get(0..true) ?? \"\")"),
+            vec![(OPTIONAL, (3, 11)), (Code::Mismatch, (3, 20))],
+        ),
+        (
+            "nested optional, label",
+            main_with("let s: string?? = Some(Some(\"ab\"))\n    print(s.get(r: 0..1) ?? \"\")"),
+            vec![(OPTIONAL, (3, 11)), (Code::LabeledArgument, (3, 17))],
+        ),
+        (
+            "nested optional, safe access",
+            main_with("let s: string?? = Some(Some(\"ab\"))\n    print(s?.get(0..1) ?? \"\")"),
+            vec![(OPTIONAL, (3, 11))],
+        ),
+        (
+            "nested optional array",
+            main_with("let xs: [i64]?? = Some(Some([1]))\n    print(xs.get(0..1) ?? 0)"),
+            vec![(OPTIONAL, (3, 11)), (Code::Mismatch, (3, 18))],
+        ),
+        (
+            "optional, dot",
+            main_with("let s: string? = \"ab\"\n    print(s.get(0..1) ?? \"\")"),
+            vec![(OPTIONAL, (3, 11))],
+        ),
+        (
+            "optional, bad bound",
+            main_with("let s: string? = \"ab\"\n    print(s.get(0..true) ?? \"\")"),
+            vec![(OPTIONAL, (3, 11)), (Code::Mismatch, (3, 20))],
+        ),
+        (
+            "optional, no bounds",
+            main_with("let s: string? = \"ab\"\n    print(s.get(..) ?? \"\")"),
+            vec![(OPTIONAL, (3, 11))],
+        ),
+        (
+            "chain of failed safe accesses",
+            main_with("let s = \"abc\"\n    print(s?.get(..)?.get(..) ?? \"\")"),
+            vec![(NOT_OPTIONAL, (3, 11)), (RANGE, (3, 18))],
+        ),
+        (
+            "failed safe access after a poisoned call",
+            "fn g(n: i64) -> string {\n    return \"x\"\n}\nfn main() {\n    print(g(nope)?.get(..) ?? \"\")\n}"
+                .to_string(),
+            vec![
+                (NOT_OPTIONAL, (5, 11)),
+                (Code::BindingNotFound, (5, 13)),
+                (RANGE, (5, 24)),
+            ],
+        ),
+    ];
+    for (row, src, expected) in rows {
+        codes_row(row, &src, &expected);
+    }
+}
+
+/// GIVEN an array's `get` with a range, and with a count or a label that is wrong too, on a plain
+///       and on an optional receiver
+/// WHEN the program is checked
+/// THEN it reports each true error once, in source order: E0055 for a label, E0053 for a count
+///      that is not one, and E0032 for each range
+#[test]
+#[expect(clippy::too_many_lines, reason = "one row for each case of the table")]
+fn array_get_with_a_range_should_report_every_true_error() {
+    const COUNT: Code = Code::ArgumentCount;
+    const LABEL: Code = Code::LabeledArgument;
+    const RANGE: Code = Code::Mismatch;
+    // The prelude's `get` must not answer first.
+    with_prelude();
+    let rows: Vec<(&str, &str, Vec<Wanted>)> = vec![
+        (
+            "range second",
+            "let xs = [1, 2]\n    print(xs.get(1, ..2) ?? 0)",
+            vec![(COUNT, (3, 11)), (RANGE, (3, 21))],
+        ),
+        (
+            "range first",
+            "let xs = [1, 2]\n    print(xs.get(..2, 1) ?? 0)",
+            vec![(COUNT, (3, 11)), (RANGE, (3, 18))],
+        ),
+        (
+            "two ranges",
+            "let xs = [1, 2]\n    print(xs.get(..1, ..2) ?? 0)",
+            vec![(COUNT, (3, 11)), (RANGE, (3, 18)), (RANGE, (3, 23))],
+        ),
+        (
+            "label",
+            "let xs = [1, 2]\n    print(xs.get(at: ..2) ?? 0)",
+            vec![(LABEL, (3, 18)), (RANGE, (3, 22))],
+        ),
+        (
+            "label and count",
+            "let xs = [1, 2]\n    print(xs.get(at: 1, ..2) ?? 0)",
+            vec![(COUNT, (3, 11)), (LABEL, (3, 18)), (RANGE, (3, 25))],
+        ),
+        (
+            "optional receiver, dot",
+            "let xs: [i64]? = [1, 2]\n    print(xs.get(1, ..2) ?? 0)",
+            vec![
+                (Code::MayBeNone, (3, 11)),
+                (COUNT, (3, 11)),
+                (RANGE, (3, 21)),
+            ],
+        ),
+        (
+            "optional receiver, safe access",
+            "let xs: [i64]? = [1, 2]\n    print(xs?.get(1, ..2) ?? 0)",
+            vec![(COUNT, (3, 11)), (RANGE, (3, 22))],
+        ),
+        (
+            "nested optional receiver, safe access",
+            "let oo: [i64]?? = Some(Some([1, 2]))\n    print(oo?.get(1, ..2) ?? 0)",
+            vec![
+                (Code::MayBeNone, (3, 11)),
+                (COUNT, (3, 11)),
+                (RANGE, (3, 22)),
+            ],
+        ),
+        (
+            "wrong other argument",
+            "let xs = [1, 2]\n    print(xs.get(nope, ..2) ?? 0)",
+            vec![
+                (COUNT, (3, 11)),
+                (Code::BindingNotFound, (3, 18)),
+                (RANGE, (3, 24)),
+            ],
+        ),
+        (
+            "nested array",
+            "let xss = [[1]]\n    print(xss.get(0, ..1) ?? [0])",
+            vec![(COUNT, (3, 11)), (RANGE, (3, 22))],
+        ),
+        (
+            "single range, nested array",
+            "let xss = [[1]]\n    print(xss.get(..1) ?? [0])",
+            vec![(RANGE, (3, 19))],
+        ),
+        (
+            "two integers",
+            "let xs = [1, 2]\n    print(xs.get(1, 2) ?? 0)",
+            vec![(COUNT, (3, 11))],
+        ),
+        (
+            "no argument",
+            "let xs = [1, 2]\n    print(xs.get() ?? 0)",
+            vec![(COUNT, (3, 11))],
+        ),
+        (
+            "label on an integer",
+            "let xs = [1, 2]\n    print(xs.get(at: 1) ?? 0)",
+            vec![(LABEL, (3, 18))],
+        ),
+        (
+            "string, two arguments",
+            "let s = \"ab\"\n    print(s.get(1, ..2) ?? \"\")",
+            vec![(COUNT, (3, 11))],
+        ),
+        (
+            "string, label",
+            "let s = \"ab\"\n    print(s.get(r: ..2) ?? \"\")",
+            vec![(LABEL, (3, 17))],
+        ),
+        (
+            "string, label and count",
+            "let s = \"ab\"\n    print(s.get(r: 1, ..2) ?? \"\")",
+            vec![(COUNT, (3, 11)), (LABEL, (3, 17))],
+        ),
+    ];
+    for (row, body, expected) in rows {
+        codes_row(row, &main_with(body), &expected);
+    }
 }
