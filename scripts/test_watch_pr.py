@@ -16,7 +16,11 @@ SCRIPT = Path(__file__).resolve().parent / 'watch_pr.py'
 FAKE_GH = f"""#!{sys.executable}
 import json, os, sys
 table = json.load(open(os.environ['GH_TABLE']))
-print(json.dumps(table[sys.argv[2].split('?')[0]]))
+answer = table[sys.argv[-1].split('?')[0]]
+# --paginate --slurp: a list of pages. A list over 2 items comes as two pages.
+if '--slurp' in sys.argv:
+    answer = [answer[:2], answer[2:]] if isinstance(answer, list) and len(answer) > 2 else [answer]
+print(json.dumps(answer))
 """
 P = 'repos/sisu-lang/sisu'
 
@@ -59,6 +63,10 @@ class WatchPr(unittest.TestCase):
         out = self.watch()
         self.assertEqual((out.returncode, out.stdout), (0, 'inline 1 bot a.rs:3: Fix the line u1\n'))
         self.assertEqual(self.watch().returncode, 1)
+
+    def test_watch_should_read_every_page(self):
+        self.table[f'{P}/issues/7/comments'] = [comment(i, 'bot', f'c{i}') for i in range(3)]
+        self.assertEqual(self.watch().stdout.count('comment 2 bot: c2'), 1)
 
     def test_watch_should_skip_the_in_progress_note_and_wake_on_its_edit(self):
         note = '<!-- This is an auto-generated comment: review in progress by coderabbit.ai -->'
