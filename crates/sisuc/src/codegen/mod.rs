@@ -204,6 +204,39 @@ pub(crate) fn compile<'ctx>(
     codegen.module
 }
 
+/// What a whole program gives every codegen unit: the analyses of its types and the line starts of
+/// its source. A unit reads them and never changes them.
+pub(crate) struct Analyses;
+
+impl Analyses {
+    /// The analyses of `program`, whose text is `source`.
+    #[cfg_attr(not(test), expect(dead_code, reason = "Task 2 reads it"))]
+    pub(crate) fn new(_program: &Program, _source: &str) -> Analyses {
+        Analyses
+    }
+}
+
+/// The LLVM module of codegen unit `unit` of a program; see `compile`.
+#[cfg_attr(not(test), expect(dead_code, reason = "Task 2 calls it"))]
+#[inline(never)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a unit needs the program, its analyses, its place, its text and the target"
+)]
+pub(crate) fn compile_unit<'ctx>(
+    context: &'ctx Context,
+    _program: &Program,
+    _mir: &mir::Program,
+    _analyses: &Analyses,
+    _unit: &units::Unit,
+    _path: &str,
+    _source: &str,
+    _machine: &TargetMachine,
+    _rc_checks: bool,
+) -> Module<'ctx> {
+    context.create_module("main")
+}
+
 /// The runtime's print functions for one stream, by operand type.
 #[derive(Clone, Copy)]
 struct Printers<'ctx> {
