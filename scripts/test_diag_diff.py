@@ -39,7 +39,7 @@ class DiagDiff(unittest.TestCase):
                                            'moved': moved})
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
-                status = dd.main(base, head, tmp)
+                status = dd.main(base, head, tmp, full=False)
         self.assertEqual(status, 1)
         lines = out.getvalue().splitlines()
         self.assertEqual([line.split(':')[0] for line in lines if not line.startswith(' ')][:-1],
@@ -101,8 +101,8 @@ class DiagDiff(unittest.TestCase):
         """
         GIVEN programs whose diagnostic differs in one field each: the message, the label, a
         secondary label, the message of a fix, an edit of a fix and the safe flag of a fix
-        WHEN diag_diff runs from the command line without and with `--full`
-        THEN only the run with `--full` reports each of them
+        WHEN diag_diff runs from the command line with `--codes`, with no flag and with `--full`
+        THEN the run with `--codes` reports none of them, and each other run reports each of them
         """
         def diagnostic(message='m', label='l', other='o', fix='f', replacement='', safe=True):
             return json.dumps({
@@ -121,13 +121,15 @@ class DiagDiff(unittest.TestCase):
             base = fake_sisu(tmp, 'base', {stem: diagnostic() for stem in changed})
             head = fake_sisu(tmp, 'head', {stem: diagnostic(**f) for stem, f in changed.items()})
             runs = [subprocess.run([sys.executable, script, *flag, base, head, tmp],
-                                   capture_output=True, text=True) for flag in ([], ['--full'])]
+                                   capture_output=True, text=True)
+                    for flag in (['--codes'], [], ['--full'])]
         self.assertEqual((runs[0].returncode, runs[0].stdout),
                          (0, 'diag_diff: 6 programs, no differences\n'))
-        self.assertEqual(runs[1].returncode, 1)
-        reported = {Path(line.split(': ', 1)[1]).stem
-                    for line in runs[1].stdout.splitlines() if line.startswith('changed: ')}
-        self.assertEqual(reported, set(changed))
+        for run in runs[1:]:
+            self.assertEqual(run.returncode, 1)
+            reported = {Path(line.split(': ', 1)[1]).stem
+                        for line in run.stdout.splitlines() if line.startswith('changed: ')}
+            self.assertEqual(reported, set(changed))
 
 
 if __name__ == '__main__':

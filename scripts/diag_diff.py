@@ -1,12 +1,13 @@
 """Checks every `.sisu` file under each DIR with two sisu builds and prints each program whose
-diagnostics differ (their codes, positions or count), and each program that crashes the head,
-also when the base crashes. A review uses it to show that a change accepts no program it should
-reject, adds no cascade and crashes on no program.
+diagnostics differ, and each program that crashes the head, also when the base crashes. A review
+uses it to show that a change accepts no program it should reject, adds no cascade, changes no
+text it should keep and crashes on no program.
 
-With `--full`, a diagnostic also differs when its message, labels, help or fixes (their message,
-edits and safe flag) differ. Use it for a change to the text of a diagnostic.
+A diagnostic differs when its code, position, message, labels, help or fixes (their message, edits
+and safe flag) differ. With `--codes`, only the codes, positions and count count, for a change that
+rewords many diagnostics on purpose. `--full` is the default, and is still accepted.
 
-Usage: python3 diag_diff.py [--full] BASE_SISU HEAD_SISU DIR...
+Usage: python3 diag_diff.py [--codes] BASE_SISU HEAD_SISU DIR...
 Exits 1 when a program differs or crashes the head.
 """
 import json
@@ -16,11 +17,11 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
-# The fields of a diagnostic that `--full` compares, besides its code and positions.
+# The fields of a diagnostic that the default compares, besides its code and positions.
 TEXT = ('message', 'help', 'fixes')
 
 
-def diagnostics(sisu, path, full=False):
+def diagnostics(sisu, path, full=True):
     """Each diagnostic sisu reports on `path`: (code, severity, line, column, secondaries, text).
 
     `text` is '' unless `full`; then it is the JSON of the diagnostic's text and fixes."""
@@ -56,7 +57,7 @@ def show(ds):
                      for c, _, line, col, s, t in ds) or 'none'
 
 
-def main(base_sisu, head_sisu, *roots, full=False):
+def main(base_sisu, head_sisu, *roots, full=True):
     paths = sorted({p for root in roots for p in Path(root).rglob('*.sisu')})
     with ThreadPoolExecutor() as pool:
         bases = pool.map(lambda p: diagnostics(base_sisu, p, full), paths)
@@ -73,7 +74,7 @@ def main(base_sisu, head_sisu, *roots, full=False):
 
 
 if __name__ == '__main__':
-    args = [a for a in sys.argv[1:] if a != '--full']
+    args = [a for a in sys.argv[1:] if a not in ('--codes', '--full')]
     if len(args) < 3:
         sys.exit(__doc__)
-    sys.exit(main(*args, full=len(args) < len(sys.argv) - 1))
+    sys.exit(main(*args, full='--codes' not in sys.argv[1:]))
