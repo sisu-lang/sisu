@@ -1,0 +1,12 @@
+fn g(n: i64) -> string {
+    return "x"
+}
+
+fn main() {
+    let s = "x"
+    let o: string?? = Some(Some("ab"))
+    print(s?.get(..) ?? "")
+    print(s?.get(..=) ?? "")
+    print(o?.get(..) ?? "")
+    print(g(nope)?.get(..) ?? "")
+}

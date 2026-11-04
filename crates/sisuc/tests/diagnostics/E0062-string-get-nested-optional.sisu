@@ -1,0 +1,4 @@
+fn main() {
+    let s: string?? = Some(Some("ab"))
+    print(s.get(0..1) ?? "")
+}

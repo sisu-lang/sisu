@@ -1,0 +1,8 @@
+class Node {
+    name: string
+}
+
+fn main() {
+    let c = Node(name: "x")
+    print(c?.name.get(..) ?? "")
+}

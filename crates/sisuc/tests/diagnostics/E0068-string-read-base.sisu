@@ -1,0 +1,10 @@
+fn f() -> string {
+    return "x"
+}
+
+fn main() {
+    let t = "abc"
+    print(f()[0])
+    print((t
+        + "d")[0])
+}

@@ -1,0 +1,18 @@
+error[E0068]: a string has no single index
+ --> E0068-string-write.sisu:3:11
+  |
+3 |     print(t[0])
+  |           ^ this is a string
+  |
+  = help: for bytes, write `let bs = t.bytes()` once, then `bs[i]`; for characters, write `let cs = t.chars()` once, then `cs[i]`
+
+error[E0068]: a string has no single index
+ --> E0068-string-write.sisu:4:5
+  |
+4 |     t[0] = "x"
+  |     ^ this is a string
+  |
+  = help: to change a character, write `let mut cs = t.chars()`, change `cs[i]`, then write `t = string(cs)`
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0068

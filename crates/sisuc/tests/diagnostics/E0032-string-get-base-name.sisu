@@ -1,0 +1,6 @@
+fn main() {
+    let t = "ab"
+    let u: string? = "ab"
+    print(t.get(1) ?? "")
+    print(u?.get(1) ?? "")
+}

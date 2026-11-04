@@ -1,0 +1,20 @@
+error[E0068]: a string has no single index
+ --> E0068-string-read-base.sisu:7:11
+  |
+7 |     print(f()[0])
+  |           ^^^ this is a string
+  |
+  = help: for bytes, write `let bs = f().bytes()` once, then `bs[i]`; for characters, write `let cs = f().chars()` once, then `cs[i]`
+
+error[E0068]: a string has no single index
+ --> E0068-string-read-base.sisu:8:11
+  |
+8 |       print((t
+  |  ___________^
+9 | |         + "d")[0])
+  | |______________^ this is a string
+  |
+  = help: for bytes, write `let bs = (t + "d").bytes()` once, then `bs[i]`; for characters, write `let cs = (t + "d").chars()` once, then `cs[i]`
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0068

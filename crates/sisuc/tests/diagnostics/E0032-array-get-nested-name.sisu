@@ -1,0 +1,4 @@
+fn main() {
+    let xss = [[1]]
+    print(xss.get(0, ..1) ?? [0])
+}

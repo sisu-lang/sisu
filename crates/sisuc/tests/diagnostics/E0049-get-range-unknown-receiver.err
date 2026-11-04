@@ -1,0 +1,14 @@
+error[E0049]: `c` is not optional
+ --> E0049-get-range-unknown-receiver.sisu:7:11
+  |
+7 |     print(c?.name.get(..) ?? "")
+  |           ^
+  |
+help: replace `?.` with `.`
+  |
+7 -     print(c?.name.get(..) ?? "")
+7 +     print(c.name.get(..) ?? "")
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0049

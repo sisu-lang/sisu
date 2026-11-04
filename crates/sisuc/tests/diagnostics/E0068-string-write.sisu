@@ -1,0 +1,5 @@
+fn main() {
+    let mut t = "abc"
+    print(t[0])
+    t[0] = "x"
+}

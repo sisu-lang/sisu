@@ -1,0 +1,14 @@
+error[E0062]: `s` may be `None`
+ --> E0062-string-get-nested-optional.sisu:3:11
+  |
+3 |     print(s.get(0..1) ?? "")
+  |           ^
+  |
+  = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+  |
+3 |     print(s?.get(0..1) ?? "")
+  |            +
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0062

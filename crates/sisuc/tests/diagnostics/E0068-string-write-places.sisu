@@ -1,0 +1,21 @@
+class Node {
+    mut name: string
+}
+
+fn f() -> string {
+    return "abc"
+}
+
+fn main() {
+    let c = Node(name: "x")
+    let mut ss = ["ab"]
+    let mut t = "abc"
+    c.name[0] = "y"
+    ss[0][1] = "x"
+    t[0..2][0] = "x"
+    t[0].push(1)
+    t[0] += "x"
+    t[0][1] = "x"
+    f()[0..2][0] = "x"
+    t[0..2][0][1] = "x"
+}

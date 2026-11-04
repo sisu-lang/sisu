@@ -1,0 +1,16 @@
+error[E0053]: `[[i64]].get` takes 1 argument, found 2
+ --> E0032-array-get-nested-name.sisu:3:11
+  |
+3 |     print(xss.get(0, ..1) ?? [0])
+  |           ^^^^^^^^^^^^^^^
+
+error[E0032]: an array's `get` takes an `i64`, not a range
+ --> E0032-array-get-nested-name.sisu:3:22
+  |
+3 |     print(xss.get(0, ..1) ?? [0])
+  |                      ^^^ this is a range
+  |
+  = help: use `xss[a..b]`, which stops the program when the range is out of bounds
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032, E0053
