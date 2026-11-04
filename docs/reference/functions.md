@@ -179,8 +179,9 @@ The rules:
 - The argument must be a place that an assignment can write. A `let` variable, a field without `mut`, a call, a literal and a range index are not places ([E0169](../diagnostics/E0169.md)).
 - The place must have exactly the type of the parameter, and no conversion applies. An `i64` place is not an `i64?`, because the function could store `None` in it ([E0170](../diagnostics/E0170.md)).
 - A path through `?.`, such as `b?.cells`, reads as an optional and writes as the type of the field. No parameter type fits both, so it is an error too ([E0170](../diagnostics/E0170.md)).
-- Two `mut` arguments of one call cannot name the same place, or one place that holds the other. `swap(mut xs[i], mut xs[j])` is valid, because `i` and `j` can differ ([E0171](../diagnostics/E0171.md)).
-- A method can have `mut` parameters. `self` is not one: a method that changes its receiver takes `mut self` ([Classes](classes.md#methods)).
+- Two `mut` arguments of one call cannot name the same place, or one place that holds the other, when the compiler can see it ([E0171](../diagnostics/E0171.md)). It sees the same variable with the same fields, and indexes that are the same literal, or the same `let` variable or plain parameter. An index that is a `let mut` variable is never an error, because another argument can change it. `swap(mut xs[i], mut xs[j])` is valid, because `i` and `j` can differ.
+- When two places are one at run time, the call is valid, and the last store-back wins. This happens when two references name one object (`mut a.cells, mut b.cells` where `a` and `b` are the same object), and when two indexes are equal.
+- A method can have `mut` parameters. `self` is never `mut` ([E0018](../diagnostics/E0018.md)): a method changes the `mut` fields of its receiver through `self`.
 - A generic function can have `mut` parameters, and so can an interface requirement. A class that conforms to the interface must write `mut` in the same places ([E0152](../diagnostics/E0152.md)).
 - A `mut` parameter that the function never changes builds with a warning ([W0002](../diagnostics/W0002.md)), because its `mut` changes nothing for the caller.
 
@@ -200,12 +201,12 @@ fn main() {
 
 A call with `mut` arguments runs in this order:
 
-1. It calculates the arguments from left to right. For a `mut` argument, it calculates each index along the place, once, and an object that is the root of the place.
-2. It copies in each `mut` argument, in order: it reads the value of the place. An index that is out of range stops the program with a panic, as `xs[i]` does.
+1. It calculates the arguments from left to right. For a `mut` argument, it calculates the root of the place when the root is not a binding, such as `mk()` in `mut mk().cells`. It also calculates each index along the place, once, and keeps the values. It reads no object and no element of the place yet.
+2. It copies in each `mut` argument, in order. It follows the place from its root, reads each object along it, keeps each of these objects until the store-back, and reads the value of the place. An index that is out of range stops the program with a panic, as `xs[i]` does.
 3. It runs the function. Code that reads the place during the call sees the value from step 2.
-4. It stores back the last value of each `mut` parameter into its place, in order. The store-back runs on each way out of the function, `return` included. When two places are one, the last store-back wins.
+4. It stores back the last value of each `mut` parameter, in order. Each store-back is the assignment `place = value` on the objects that step 2 kept, with the indexes from step 1. It runs on each way out of the function, `return` included. When two places are one, the last store-back wins.
 
-So the other arguments run before the copy-in, and a call in one of them can change the place.
+So the other arguments run before the copy-in, and a call in one of them can change the place. The copy-in then reads the objects that these calls left: when one of them replaces an object along the place, the function gets the value from the new object.
 
 ```sisu
 fn g(mut xs: [i64]) -> i64 {
@@ -240,6 +241,25 @@ fn main() {
     let b = Board(cells: [0, 0])
     grow(mut b.cells, b)
     print(b.cells)               // [1, 0]
+}
+```
+
+When the function removes the element that the place names, the store-back has no element to write. It drops the value, and the program goes on.
+
+```sisu
+class Board {
+    mut cells: [i64]
+}
+
+fn set(mut n: i64, b: Board) {
+    b.cells = []
+    n = 9
+}
+
+fn main() {
+    let b = Board(cells: [0])
+    set(mut b.cells[0], b)
+    print(b.cells)               // []
 }
 ```
 

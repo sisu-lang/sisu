@@ -178,6 +178,15 @@ before milestone 9.
   a slice that holds a quarter or less of a block of 256 bytes or more is
   copied into a block of its own when a field, an enum payload or an array
   stores it ([ADR 0042](adr/0042-a-slice-shares-its-block.md))
+- `mut` parameters: `fn set(mut cells: [i64], i: i64)` lets a function change
+  the caller's variable, `mut` field or array element, and the call writes
+  `mut` too: `set(mut b.cells, i)`. The call copies the place in and stores the
+  last value back, in the order of the arguments, on each way out of the
+  function; `exchange(mut place, with)` is a prelude function. A missing,
+  extra or misplaced `mut`, a place that cannot be written, a type that is not
+  exactly the parameter's, and two places that overlap where the compiler
+  sees it are errors (`E0166` to `E0171`)
+  ([ADR 0043](adr/0043-mut-parameters-copy-in-and-out.md))
 - `char`, one Unicode scalar value such as `'ä'`, compared by code point and
   converted with `i64(c)` and `char(n)`, a `char?` that is `None` for a
   surrogate or a value above `0x10FFFF`, with no panic

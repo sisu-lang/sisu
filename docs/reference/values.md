@@ -67,7 +67,7 @@ A call does not copy its arguments. A plain parameter cannot change ([Parameters
 
 A function can write the `mut` fields of an object that it gets, because the object is shared.
 
-A `mut` parameter is different. The call copies the value of the caller's place in, and stores the last value of the parameter back into that place ([`mut` parameters](functions.md#mut-parameters)). The caller sees the change, and no other holder of the old value does.
+A `mut` parameter is different. The call copies the value of the caller's place in, and stores the last value of the parameter back into that place ([`mut` parameters](functions.md#mut-parameters)). For an array, a string or an enum value, the caller sees the change, and no other holder of the old value does. For an object of a class, the value in the place is the reference. The call does not copy the object, so a change to its fields shows through each holder.
 
 ```sisu
 class Box {
@@ -90,15 +90,16 @@ fn main() {
 }
 ```
 
-A call that passes a place `mut` copies or shares the value in as this table tells:
+A call that passes a place `mut` copies the value in the place, as this table tells:
 
-| Place of the `mut` argument | What the call copies in |
-| --- | --- |
-| A `let mut` variable or a `mut` parameter | Nothing: the parameter takes the value of the variable. A write by the function does not copy the memory, unless another holder shares it |
-| A `mut` field of an object | The value of the field. The first write by the function copies the memory, as `x = f(x)` does |
-| An element of an array | The value of the element, in the same way |
+| Place of the `mut` argument | What the parameter gets | When the memory of an array or a string copies |
+| --- | --- | --- |
+| A `let mut` variable or a `mut` parameter | The value moves into the parameter | At the first write, only when another holder shares the memory |
+| A `mut` field of an object, or an element of an array | The value of the place | At the first write, because the place still holds the value during the call. `b.cells = f(b.cells)` costs the same |
 
-A function that changes the value in a field of an object during the call does not change what its `mut` parameter holds. The store-back replaces that change ([What a call does](functions.md#what-a-call-does)).
+An object of a class is never copied. In each row, the parameter gets the reference.
+
+A function that changes a field of an object during the call does not change what its `mut` parameter holds. The store-back replaces that change ([What a call does](functions.md#what-a-call-does)).
 
 ## Copy-on-write
 

@@ -301,15 +301,15 @@ Sisu does not copy the elements when the program binds or passes an array. A sma
 
 ## When an array is copied
 
-Binding, passing, storing or returning an array copies no element. The holders share the elements. A write to an array copies the elements first when another holder shares them. Then the writer has elements of its own, and its next writes do not copy. A program cannot see the copy, but it costs time.
+Binding, passing, storing or returning an array copies no element, but a small slice that a field, an enum payload, an array or an `any I` stores ([ADR 0042](../adr/0042-a-slice-shares-its-block.md)). The holders share the elements. A write to an array copies the elements first when another holder shares them. Then the writer has elements of its own, and its next writes do not copy. A program cannot see the copy, but it costs time.
 
 The cases:
 
 - A write to an array that no other holder shares does not copy.
 - A write to a copy that the program made with `let mut b = a` copies at the first write, while `a` still holds the elements.
-- A plain parameter cannot be written. A function that needs a changed array copies it into a `let mut` binding, and the first write copies the elements.
+- A plain parameter cannot be written. A function that needs a changed array copies it into a `let mut` binding. The first write copies the elements only when another holder still shares them. When the caller does not read the array again, the call hands it over, and the first write does not copy.
 - A `mut` argument that is a local variable moves the array into the parameter. A write by the function does not copy, unless another holder shares the elements. When the call ends, the array goes back into the variable.
-- A `mut` argument that is a field or an element copies the value in: the field keeps its array during the call, because code that reads the field sees the old value. The first write by the function copies the elements once, and the next writes do not.
+- A `mut` argument that is a field or an element copies the value in. The field keeps its array during the call, because code that reads the field sees the old value. So the first write by the function copies the elements once. The next writes do not copy.
 
 ```sisu
 fn fill(mut xs: [i64], n: i64) {
