@@ -190,7 +190,8 @@ def mut_parameters(k):
     funs = ''.join(f'fn set{tag(i)}(mut xs: [i64], mut n: i64) {{\n    xs[0] = n\n    n += 1\n}}\n\n'
                    for i in range(k))
     calls = ''.join(f'    set{tag(i)}(mut xs, mut n)\n' for i in range(k))
-    return (funs + f'fn main() {{\n    let mut xs = [0]\n    let mut n = 0\n{calls}'
+    # Main writes both locals itself, so that the program at size 0 has no W0002.
+    return (funs + f'fn main() {{\n    let mut xs = [0]\n    let mut n = 0\n    xs[0] = 1\n    n = 1\n{calls}'
             '    print("{xs[0]} {n}")\n}\n')
 
 
