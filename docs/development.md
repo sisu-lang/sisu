@@ -449,8 +449,9 @@ Three limits of fork mode:
   more crashes says in the log and the summary how many it left out; replay
   those with `--replay`. The replays change neither the exit status nor
   which inputs count. The summary gives, under each replayed crash, the
-  panic location and the first line of the panic message, so you do not
-  search `fuzz.log`, which holds binary bytes (`grep -a`).
+  panic location and the first line of the panic message. So you do not have
+  to search `fuzz.log`, which holds binary bytes (`grep -a`). The message is
+  cut to 300 bytes and shown in a code span.
 - A stack overflow leaves a `crash-` file only on a best-effort basis:
   libFuzzer's crash handler is not async-signal-safe. It dies by a fatal
   signal, with no panic message and no Rust backtrace. A crash with no panic

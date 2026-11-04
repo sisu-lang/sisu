@@ -62,14 +62,28 @@ class FuzzSummary(unittest.TestCase):
         text = self.summary(r"\377\000\001\200 noise\n\000thread '<unnamed>' (7) panicked at "
                             r"crates/sisuc/src/fuzz.rs:70:9:\nBraceOnNewLine: a safe fix removes NoMember too:\n"
                             r"second line\n")
-        self.assertIn('  Panic at crates/sisuc/src/fuzz.rs:70:9: BraceOnNewLine: a safe fix removes NoMember too:\n', text)
+        self.assertIn('  Panic at `crates/sisuc/src/fuzz.rs:70:9`: `BraceOnNewLine: a safe fix removes NoMember too:`\n', text)
         self.assertNotIn('second line', text)
         self.assertIn('Its replay is at the end of `fuzz.log`.', text)
         self.assertNotIn('stack overflow', text)
 
     def test_a_panic_message_should_lose_its_backticks_and_control_characters(self):
         text = self.summary(r"panicked at a.rs:1:2:\nbad `code` \001here\n")
-        self.assertIn('  Panic at a.rs:1:2: bad code here\n', text)
+        self.assertIn('  Panic at `a.rs:1:2`: `bad code here`\n', text)
+
+    def test_a_long_message_should_be_cut_in_whole_characters(self):
+        text = self.summary(r"panicked at a.rs:1:2:\na" + r"\303\251" * 200 + r"\n")
+        line = next(line for line in text.splitlines() if 'Panic at' in line)
+        self.assertTrue(line.startswith('  Panic at `a.rs:1:2`: `a'))
+        self.assertLessEqual(len(line.encode()), 400)
+
+    def test_a_mention_in_a_message_should_stay_in_a_code_span(self):
+        text = self.summary(r"panicked at a.rs:1:2:\nhello @octocat #12\n")
+        self.assertIn('`hello @octocat #12`', text)
+
+    def test_a_panic_without_a_message_line_should_show_the_location_alone(self):
+        text = self.summary(r"panicked at a.rs:1:2:")
+        self.assertIn('  Panic at `a.rs:1:2`\n', text)
 
     def test_a_crash_without_a_panic_message_should_keep_the_note_about_a_fatal_signal(self):
         text = self.summary(r"\377\000 AddressSanitizer: stack-overflow\n")

@@ -214,15 +214,22 @@ done < <(find "$found" -type f -newer "$marker" -print0 | sort -z)
 # crash on a restored input leaves no panic message in the log. A plain replay prints it;
 # its own status changes neither the run's status nor which inputs count.
 # The panic location and the first line of the panic message of the replay in file $1, as
-# "<location>: <message>", or nothing when the replay has no panic message. The output holds
-# binary bytes, so grep reads it with -a. The message is cut to 300 bytes and loses its control
-# characters, invalid UTF-8 and backticks, so it is safe in the summary and in an issue.
+# "`<location>`: `<message>`", or the location alone when the message is empty. Nothing is
+# printed when the replay has no panic message.
+# The output holds binary bytes, so grep reads it with -a. The message is cut to 300 bytes
+# first. Then it loses its control characters, its invalid UTF-8 and its backticks. It is
+# printed in a code span, so a mention or a link in it does not work in an issue.
 panic_note() {
-    local found
-    found=$(grep -a -m1 -A1 'panicked at ' "$1" | LC_ALL=C tr -d '\000-\010\013-\037\177`' |
-        iconv -f UTF-8 -t UTF-8 -c) || return 0
+    local found location message
+    found=$(grep -a -m1 -A1 'panicked at ' "$1" | LC_ALL=C tr -d '\000-\010\013-\037\177`') || return 0
     [[ -n $found ]] || return 0
-    printf '%s: %s\n' "$(sed -n '1s/.*panicked at //; 1s/:$//p' <<<"$found")" "$(sed -n 2p <<<"$found" | cut -c1-300)"
+    location=$(sed -n '1s/.*panicked at //; 1s/:$//p' <<<"$found" | iconv -f UTF-8 -t UTF-8 -c)
+    message=$(sed -n 2p <<<"$found" | cut -c1-300 | iconv -f UTF-8 -t UTF-8 -c)
+    if [[ -n $message ]]; then
+        printf "\`%s\`: \`%s\`\n" "$location" "$message"
+    else
+        printf "\`%s\`\n" "$location"
+    fi
 }
 
 crashes=0
