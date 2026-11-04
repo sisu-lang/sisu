@@ -8,9 +8,11 @@ use rustc_hash::FxHashSet;
 
 use crate::mir;
 
-/// The mir size of one unit. It matches 25k raw IR instructions. The generated program of
-/// `make compile-speed` with 100 copies has 195,729 raw IR instructions in `--emit ir-raw` and a
-/// mir size of 38,903 in all: 25,000 * 38,903 / 195,729 is 4,969. That program gets 7 units.
+/// The mir size of one unit. It matches 25k raw IR instructions.
+///
+/// The generated program of `make compile-speed` with 100 copies has 195,729 raw IR instructions
+/// in `--emit ir-raw`. Its mir size in all is 38,903. So the value is 25,000 * 38,903 / 195,729,
+/// which is 4,969. That program gets 7 units.
 #[cfg_attr(
     not(test),
     expect(dead_code, reason = "Task 4 calls `count`, which reads it")
@@ -54,7 +56,16 @@ pub(crate) fn count(sizes: &[usize], flag: Option<usize>) -> usize {
     not(test),
     expect(dead_code, reason = "Task 2 calls `partition`, which calls it")
 )]
+///
+/// # Panics
+///
+/// If `count` is 0: a function needs a unit.
 pub(crate) fn assign(sizes: &[usize], count: usize) -> Vec<usize> {
+    assert!(
+        count > 0,
+        "{} functions need at least one unit",
+        sizes.len()
+    );
     let mut order: Vec<usize> = (0..sizes.len()).collect();
     // The sort is stable, so equal sizes stay in id order.
     order.sort_by_key(|&function| Reverse(sizes[function]));
@@ -63,9 +74,7 @@ pub(crate) fn assign(sizes: &[usize], count: usize) -> Vec<usize> {
         (0..count).map(|unit| Reverse((0, unit))).collect();
     let mut units = vec![0; sizes.len()];
     for function in order {
-        let Some(Reverse((load, unit))) = loads.pop() else {
-            break;
-        };
+        let Reverse((load, unit)) = loads.pop().expect("the heap should hold `count` units");
         units[function] = unit;
         loads.push(Reverse((load + sizes[function], unit)));
     }
@@ -207,11 +216,49 @@ fn main() { print(e(1)) }";
         }
     }
 
+    /// `main` of `SIX`, with `blocks` in place of its body.
+    fn function_of(blocks: Vec<mir::Block>) -> mir::Function {
+        let mut function = mir_of(SIX)
+            .functions
+            .into_iter()
+            .find(|function| function.name == "main")
+            .expect("the program has a main");
+        function.blocks = blocks;
+        function
+    }
+
+    fn statement() -> mir::Statement {
+        mir::Statement::Assign {
+            dest: None,
+            value: mir::Rvalue::Use(mir::Operand::Const(mir::Const::Bool(true))),
+        }
+    }
+
+    fn block(statements: usize, term: mir::Terminator) -> mir::Block {
+        mir::Block {
+            stmts: (0..statements).map(|_| statement()).collect(),
+            term,
+        }
+    }
+
+    #[test]
+    fn size_should_count_each_statement_and_one_terminator_per_block() {
+        let ret = || mir::Terminator::Return(None);
+        let go = |to| mir::Terminator::Goto(mir::BlockId(to));
+        // A block of 4 statements and its terminator.
+        assert_eq!(size(&function_of(vec![block(4, ret())])), 5);
+        // Blocks of 2, 0 and 3 statements: 5 statements and 3 terminators.
+        let three = vec![block(2, go(1)), block(0, go(2)), block(3, ret())];
+        assert_eq!(size(&function_of(three)), 8);
+        // The smallest function: one block, no statement.
+        assert_eq!(size(&function_of(vec![block(0, ret())])), 1);
+    }
+
     #[test]
     fn count_should_split_at_the_limit() {
         assert_eq!(count(&vec![1; 2 * UNIT_SIZE - 1], None), 1);
         assert_eq!(count(&vec![1; 2 * UNIT_SIZE], None), 2);
-        assert_eq!(count(&vec![UNIT_SIZE; 100], None), MAX_UNITS);
+        assert_eq!(count(&vec![UNIT_SIZE; 100], None), 8);
     }
 
     #[test]
@@ -229,6 +276,8 @@ fn main() { print(e(1)) }";
     fn assign_should_put_the_largest_first_on_the_lightest_unit() {
         assert_eq!(assign(&[5, 3, 3, 1], 2), [0, 1, 1, 0]);
         assert_eq!(assign(&[2, 2], 2), [0, 1]);
+        // The sizes are not in order: the largest still goes first.
+        assert_eq!(assign(&[1, 3, 3, 5], 2), [0, 1, 1, 0]);
     }
 
     #[test]
@@ -252,6 +301,7 @@ fn main() { print(e(1)) }";
         assert_eq!(units.len(), 3);
         for (index, unit) in units.iter().enumerate() {
             assert_eq!((unit.index, unit.count), (index, 3));
+            assert!(unit.is_split(), "unit {index} of 3");
             assert_eq!(unit.placement.len(), mir.functions.len());
         }
         for function in 0..mir.functions.len() {
