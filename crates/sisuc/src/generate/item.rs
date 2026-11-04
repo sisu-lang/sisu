@@ -830,6 +830,10 @@ impl Gen<'_> {
                 Vec::new()
             };
             for usage in uses {
+                // A statement before this one may have taken what it needs.
+                if !self.mut_uses(v).contains(&usage) {
+                    continue;
+                }
                 self.w.line();
                 self.cost.statement();
                 self.statement(|g| g.mut_use(v, usage));

@@ -4073,6 +4073,26 @@ fn some_seed_should_change_and_grow_what_a_mut_call_passes() {
     assert_eq!(found, [true; 3], "element write, push, string append");
 }
 
+/// GIVEN the bytes of fuzz input crash-e973ec3e, where a block in the first statement of a
+/// `mut` function takes the growth that its next statement, a `push`, needs
+/// WHEN the generator writes the program
+/// THEN it finishes: the `push` checks again that the parameter has the growth
+#[test]
+fn a_leading_push_should_wait_for_the_growth_that_a_block_left() {
+    const INPUT: &[u8] = &[
+        10, 39, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215,
+        215, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 17, 17, 17, 17, 17, 17, 17, 17, 17,
+        17, 17, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+        255, 255, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58,
+        58, 58, 58, 58, 58, 58, 58, 58, 255, 215, 215, 215, 215, 215, 215, 126, 215, 215, 215, 215,
+        215, 215, 215, 215, 215, 17, 215, 26, 17, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215,
+        215, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215, 39, 215, 215,
+        215, 215, 215, 215, 215, 215, 10, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215,
+    ];
+    let program = generate(INPUT).program;
+    assert!(program.contains("fn main()"), "{program}");
+}
+
 /// GIVEN `f1`, `f2` and `f3`, of which `f2` has a `mut` parameter
 /// WHEN a call may name a function
 /// THEN `f2` is no callee: only a `mut` call names it
