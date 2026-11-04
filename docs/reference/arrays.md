@@ -301,7 +301,7 @@ Sisu does not copy the elements when the program binds or passes an array. A sma
 
 ## When an array is copied
 
-Binding, passing, storing or returning an array copies no element, but a small slice that a field, an enum payload, an array or an `any I` stores ([ADR 0042](../adr/0042-a-slice-shares-its-block.md)). The holders share the elements. A write to an array copies the elements first when another holder shares them. Then the writer has elements of its own, and its next writes do not copy. A program cannot see the copy, but it costs time.
+Binding, passing, storing or returning an array copies no element. Only a small slice is copied, when a field, an enum payload, an array or an `any I` stores it ([ADR 0042](../adr/0042-a-slice-shares-its-block.md)). The holders share the elements. A write to an array copies the elements first when another holder shares them. Then the writer has elements of its own, and its next writes do not copy. A program cannot see the copy, but it costs time.
 
 The cases:
 
