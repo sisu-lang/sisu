@@ -27,6 +27,9 @@ pub(crate) enum Rewrite {
     Let,
     /// `e` becomes a fresh `C<n>`, and `const C<n>: T = e` goes after everything else.
     Const,
+    /// A statement that passes a local as a `mut` argument runs on a copy of it: `({ let mut w<n>
+    /// = x; f(mut w<n>); x = w<n> })`.
+    MutCopy,
 }
 
 /// What a rewrite's condition reads of the point it would rewrite (decision 2).
@@ -62,7 +65,8 @@ pub(crate) fn allowed(rewrite: Rewrite, site: &Site) -> bool {
         Rewrite::Block => !site.in_const && !site.place,
         // After a block's last expression, it would take the block's value (E0031).
         Rewrite::DeadIf => !site.last,
-        Rewrite::Swap => true,
+        // The condition of `MutCopy` is on the call, not on a point: see `mut_rewrite_allowed`.
+        Rewrite::Swap | Rewrite::MutCopy => true,
         Rewrite::Let => site.pure && site.unconditional && !site.in_const && !site.place,
         Rewrite::Const => site.folds && !site.place,
     }
@@ -266,6 +270,40 @@ impl Writer {
         self.made(Rewrite::Const);
     }
 
+    /// Writes the statement from `start` on, in the rewritten copy, on copies of the `locals` it
+    /// passes as `mut` arguments, if `copy` and `mut_rewrite_allowed`: each local, with where the
+    /// rewritten copy holds its text, goes into a fresh `w<n>` before the call and comes back
+    /// after it. `own` is how many `mut` arguments the call has.
+    pub(crate) fn mut_block(
+        &mut self,
+        start: Mark,
+        own: usize,
+        locals: &[(String, usize)],
+        copy: bool,
+    ) {
+        let call = &self.out.rewritten[start.rewritten..];
+        if !copy || locals.is_empty() || !mut_rewrite_allowed(call, own) {
+            return;
+        }
+        let copies: Vec<String> = locals.iter().map(|_| self.fresh("w")).collect();
+        // From the last, so that the offsets before it still hold.
+        for ((local, at), copy) in locals.iter().zip(&copies).rev() {
+            self.out
+                .rewritten
+                .replace_range(*at..*at + local.len(), copy);
+        }
+        let (mut before, mut after) = (String::from("({ "), String::new());
+        for ((local, _), copy) in locals.iter().zip(&copies) {
+            write!(before, "let mut {copy} = {local}; ")
+                .expect("writing to a `String` should succeed");
+            write!(after, "; {local} = {copy}").expect("writing to a `String` should succeed");
+        }
+        self.out.rewritten.insert_str(start.rewritten, &before);
+        self.out.rewritten.push_str(&after);
+        self.out.rewritten.push_str(" })");
+        self.made(Rewrite::MutCopy);
+    }
+
     /// Writes `if c { a } else { b }`, from the condition `cond` on in the rewritten copy, as
     /// `if !(c) { b } else { a }`, where `a` and `b` are the arms' text.
     pub(crate) fn swap_arms(&mut self, cond: Range<usize>, a: Range<usize>, b: Range<usize>) {
@@ -287,15 +325,16 @@ impl Writer {
 
 /// Whether the rewrite of a `mut` call keeps the meaning (decision 2). It reads `call`, the call's
 /// text, which holds `own` `mut` arguments. The rewrite copies a local in before the other
-/// arguments run, so an argument that is a `mut` call of its own could change the local first.
-#[cfg(test)]
-pub(crate) fn mut_rewrite_allowed(_call: &str, _own: usize) -> bool {
-    true
+/// arguments run, so a `mut` call among them could change the local first (S31). Any other `mut`
+/// in the text, even in a string, stops the rewrite.
+pub(crate) fn mut_rewrite_allowed(call: &str, own: usize) -> bool {
+    let words = call.split(|c: char| !c.is_alphanumeric() && c != '_');
+    words.filter(|&word| word == "mut").count() == own
 }
 
 #[cfg(test)]
 mod tests {
-    use super::mut_rewrite_allowed;
+    use super::{Writer, mut_rewrite_allowed};
 
     /// GIVEN S31's `f(mut xs, g(mut xs))`, where `g` changes `xs`, and `f(mut xs, 1)`
     /// WHEN the writer decides whether the rewrite of decision 2 keeps the meaning
@@ -305,5 +344,48 @@ mod tests {
         assert!(!mut_rewrite_allowed("f(mut xs, g(mut xs))", 1));
         assert!(mut_rewrite_allowed("f(mut xs, 1)", 1));
         assert!(mut_rewrite_allowed("let _ = exchange(mut xs, [])", 1));
+    }
+
+    /// GIVEN a call `f(mut x, mut o.g, 1)` of which two arguments are `mut`, and `x` is a local
+    /// WHEN the writer rewrites it
+    /// THEN the rewritten copy runs the call on a copy of `x`, and the program is as it was
+    #[test]
+    fn mut_block_should_copy_each_local_in_and_out() {
+        let mut w = Writer::default();
+        let start = w.mark();
+        w.text("f(mut ");
+        let first = w.at();
+        w.text("x");
+        w.text(", mut o.g, mut ");
+        let second = w.at();
+        w.text("y)");
+        let locals = [("x".to_string(), first), ("y".to_string(), second)];
+        w.mut_block(start, 3, &locals, true);
+        assert_eq!(w.out.program, "f(mut x, mut o.g, mut y)");
+        assert_eq!(
+            w.out.rewritten,
+            "({ let mut w1 = x; let mut w2 = y; f(mut w1, mut o.g, mut w2); x = w1; y = w2 })"
+        );
+    }
+
+    /// GIVEN a call that the writer may rewrite
+    /// WHEN the choice is not to copy, or the call holds no local
+    /// THEN the rewritten copy is as the program is
+    #[test]
+    fn mut_block_should_leave_a_call_that_is_not_copied() {
+        for (copy, locals) in [(false, true), (true, false)] {
+            let mut w = Writer::default();
+            let start = w.mark();
+            w.text("f(mut ");
+            let at = w.at();
+            w.text("x)");
+            let locals = if locals {
+                vec![("x".to_string(), at)]
+            } else {
+                Vec::new()
+            };
+            w.mut_block(start, 1, &locals, copy);
+            assert_eq!(w.out.rewritten, "f(mut x)");
+        }
     }
 }

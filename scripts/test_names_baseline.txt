@@ -779,7 +779,6 @@ crates/sisuc/src/fuzz_program.rs::seed_3_rewritten_passes
 crates/sisuc/src/fuzz_program.rs::stdin_past_its_end_agrees
 crates/sisuc/src/fuzz_program.rs::unreached_panic_site_needs_a_panic
 crates/sisuc/src/fuzz_program.rs::unused_overflow_panics_in_every_build
-crates/sisuc/src/generate/coverage.rs::a_call_statement_names_any_function_the_budget_lets_it
 crates/sisuc/src/generate/coverage.rs::a_cap_holds_the_least_value_of_its_field
 crates/sisuc/src/generate/coverage.rs::a_chain_counts_each_node_within_its_room
 crates/sisuc/src/generate/coverage.rs::a_chain_ends_in_a_variant_within_its_room
@@ -833,7 +832,6 @@ crates/sisuc/src/generate/coverage.rs::known_answers_happen
 crates/sisuc/src/generate/coverage.rs::known_sites_take_every_count_and_negative_arguments
 crates/sisuc/src/generate/coverage.rs::let_binding_keeps_the_type
 crates/sisuc/src/generate/coverage.rs::let_binding_skips_a_short_circuit
-crates/sisuc/src/generate/coverage.rs::main_calls_fit_the_budget_left
 crates/sisuc/src/generate/coverage.rs::no_block_as_a_place
 crates/sisuc/src/generate/coverage.rs::no_block_in_a_const
 crates/sisuc/src/generate/coverage.rs::no_const_with_an_overflowing_step
@@ -844,7 +842,6 @@ crates/sisuc/src/generate/coverage.rs::no_panic_site_follows_a_return
 crates/sisuc/src/generate/coverage.rs::rare_constant_forms_check_clean
 crates/sisuc/src/generate/coverage.rs::read_line_past_the_input_checks_clean
 crates/sisuc/src/generate/coverage.rs::rewrites_are_rare
-crates/sisuc/src/generate/coverage.rs::rewrites_happen
 crates/sisuc/src/generate/coverage.rs::the_costliest_statement_fits_the_reserve
 crates/sisuc/src/generate/coverage.rs::the_walker_bounds_a_while_let_only_on_a_chain_it_steps_down
 crates/sisuc/src/generate/coverage.rs::the_walker_lists_each_class_object_stored_in_a_field_or_an_element

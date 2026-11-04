@@ -6,7 +6,7 @@ use rustc_hash::FxHashMap;
 
 use super::expr::{CHARS, OPS, arithmetic_value};
 use super::scope::{Alias, Class, Const, Enum, Field, Func, Ty, Var, Variant, Wrap};
-use super::stmt::Jumps;
+use super::stmt::{Jumps, MUT_FUEL};
 use super::writer::Piece;
 use super::{
     Answer, BoundSite, Cost, DEPTHS, Gen, Known, MAX_NESTING, MAX_SIZE, NO_BOUND, NOT_A_CLASS,
@@ -16,6 +16,8 @@ use super::{
 const MAX_ITEMS: usize = 8;
 /// The most parameters a function takes after `depth`.
 const MAX_PARAMS: usize = 3;
+/// The most functions with `mut` parameters.
+const MAX_MUT_FUNCTIONS: usize = 2;
 /// The most lines of stdin.
 const MAX_LINES: usize = 4;
 /// The sizes a function's `string` parameter or result may have.
@@ -495,11 +497,12 @@ impl Gen<'_> {
             if self.pick(2) == 0 {
                 self.constant();
             } else {
-                self.function(None);
+                self.function(None, false);
                 self.w.line();
             }
             items += 1;
         }
+        self.mut_functions();
         self.fuel += reserve;
         self.w.text("fn main() ");
         self.open_body();
@@ -703,13 +706,20 @@ impl Gen<'_> {
 
     /// `fn f(depth: i64, params) -> R { if depth <= 0 { return default } ... value }`, or a
     /// method `fn m(self, depth: i64, ...)` of the class `owner`.
-    fn function(&mut self, owner: Option<Ty>) {
+    fn function(&mut self, owner: Option<Ty>, mut_params: bool) {
         let name = self.scope.fresh(if owner.is_some() { "m" } else { "f" });
         let mut params = Vec::new();
-        for _ in 0..self.pick(MAX_PARAMS + 1) {
+        let count = if mut_params {
+            1 + self.pick(MAX_PARAMS)
+        } else {
+            self.pick(MAX_PARAMS + 1)
+        };
+        for _ in 0..count {
             let ty = self.any_type();
             let size = self.size_for(&ty, &SIZES);
-            params.push((self.scope.fresh("v"), ty, size));
+            // The first is, so that the function has one.
+            let mutable = mut_params && (params.is_empty() || self.pick(2) == 0);
+            params.push((self.scope.fresh("v"), ty, size, mutable));
         }
         let ret = if self.pick(Ty::VALUES.len() + 1) == 0 {
             Ty::Unit
@@ -719,9 +729,10 @@ impl Gen<'_> {
         let ret_size = self.size_for(&ret, &SIZES);
         let receiver = if owner.is_some() { "self, " } else { "" };
         self.w.text(&format!("fn {name}({receiver}depth: i64"));
-        for (param, ty, _) in &params {
+        for (param, ty, _, mutable) in &params {
             let written = self.spelled_in(ty, owner.as_ref());
-            self.w.text(&format!(", {param}: {written}"));
+            let keyword = if *mutable { "mut " } else { "" };
+            self.w.text(&format!(", {keyword}{param}: {written}"));
         }
         self.w.text(")");
         if ret != Ty::Unit {
@@ -734,8 +745,9 @@ impl Gen<'_> {
             owner: owner.clone(),
             params: params
                 .iter()
-                .map(|(_, ty, size)| (ty.clone(), *size))
+                .map(|(_, ty, size, _)| (ty.clone(), *size))
                 .collect(),
+            muts: params.iter().map(|&(.., mutable)| mutable).collect(),
             ret: ret.clone(),
             ret_size,
             cost: [1; DEPTHS],
@@ -747,8 +759,13 @@ impl Gen<'_> {
             self.scope.vars.push(param("self".to_string(), class, size));
         }
         self.scope.vars.push(param("depth".to_string(), Ty::I64, 0));
-        for (name, ty, size) in params {
-            self.scope.vars.push(param(name, ty, size));
+        for (name, ty, size, mutable) in params {
+            let var = if mutable {
+                mut_param(name, ty, size)
+            } else {
+                param(name, ty, size)
+            };
+            self.scope.vars.push(var);
         }
         self.open_body();
         self.w.line();
@@ -780,6 +797,22 @@ impl Gen<'_> {
             .last_mut()
             .expect("the function should have been pushed")
             .cost = cost;
+    }
+
+    /// Now and then, up to two functions with `mut` parameters, after the others. They are written
+    /// from the spare streams with fuel of their own, so no other function or item moves for them,
+    /// and no ordinary call names them (`callees`): only a `mut` call does.
+    fn mut_functions(&mut self) {
+        for _ in 0..self.mut_pick(MAX_MUT_FUNCTIONS + 1) {
+            let fuel = std::mem::replace(&mut self.fuel, MUT_FUEL);
+            self.swap_streams();
+            self.mut_fn = true;
+            self.function(None, true);
+            self.mut_fn = false;
+            self.w.line();
+            self.swap_streams();
+            self.fuel = fuel;
+        }
     }
 
     /// `spell`, except that the class `owner` of the method being written is now and then
@@ -1541,12 +1574,10 @@ impl Gen<'_> {
     /// The most size for a value of `ty` (decision 5): a class object's own, else its floor
     /// and one of `sizes`, an optional's floor that of its payload. 0 for a type without one.
     pub(crate) fn size_for(&mut self, ty: &Ty, sizes: &[u64]) -> u64 {
-        let floor = match ty {
-            Ty::Class { size, .. } => return *size,
-            _ if !ty.sized() => return 0,
-            Ty::Optional(payload) => payload.floor(),
-            _ => ty.floor(),
-        };
+        let floor = least_size(ty);
+        if matches!(ty, Ty::Class { .. }) || !ty.sized() {
+            return floor;
+        }
         (floor + sizes[self.pick(sizes.len())]).min(MAX_SIZE)
     }
 
@@ -1639,7 +1670,7 @@ impl Gen<'_> {
                 break;
             }
             self.w.line();
-            self.function(Some(ty.clone()));
+            self.function(Some(ty.clone()), false);
         }
         if id % 3 == 1 {
             self.w.line();
@@ -1999,9 +2030,29 @@ pub(crate) fn payload(labels: &[String], values: &[String]) -> String {
     format!("({})", parts.join(", "))
 }
 
+/// The size of the smallest value of `ty` that a plain write may store (see `size_for`).
+fn least_size(ty: &Ty) -> u64 {
+    match ty {
+        Ty::Class { size, .. } => *size,
+        _ if !ty.sized() => 0,
+        Ty::Optional(payload) => payload.floor(),
+        _ => ty.floor(),
+    }
+}
+
 /// A parameter: in scope, never assigned.
 fn param(name: String, ty: Ty, size: u64) -> Var {
     Var::new(name, ty, false, size, 0, 0)
+}
+
+/// A `mut` parameter: a variable that the body may assign. It holds at most `size`, the most that
+/// a caller's place holds, and stores back at most the smallest value of its type, which fits
+/// every place of that type.
+fn mut_param(name: String, ty: Ty, size: u64) -> Var {
+    let least = least_size(&ty);
+    let mut var = Var::new(name, ty, true, least, 0, 0);
+    var.size = size;
+    var
 }
 
 #[cfg(test)]

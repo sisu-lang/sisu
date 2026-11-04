@@ -2,7 +2,9 @@
 
 use super::{Body, GField, GFunc, GTy, GVariant, Generic, MAX_SOLVE, Shape, unify};
 use crate::generate::scope::{RESULT, Ty};
-use crate::generate::{BUDGET, FUEL, Gen, MAX_NESTING, MAX_SIZE, STATEMENT_MOST, generate};
+use crate::generate::{
+    BUDGET, FUEL, Gen, MAX_NESTING, MAX_SIZE, MUT_BUDGET, STATEMENT_MOST, generate,
+};
 use crate::tir::Rank;
 
 /// No generic function.
@@ -515,7 +517,7 @@ fn a_call_should_write_the_type_arguments_it_cannot_leave_out() {
     assert!(!info.pure);
     // In `main`, the cost comes out of the budget; it goes into the statements, too.
     assert_eq!(g.cost.statements, 2);
-    assert_eq!(g.budget, BUDGET - FUEL * STATEMENT_MOST - 2);
+    assert_eq!(g.budget, BUDGET - MUT_BUDGET - FUEL * STATEMENT_MOST - 2);
 }
 
 #[test]

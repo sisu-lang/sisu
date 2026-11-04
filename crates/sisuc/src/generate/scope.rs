@@ -472,11 +472,21 @@ pub(crate) struct Func {
     pub(crate) owner: Option<Ty>,
     /// Each parameter's type, and for a `string` the most chars an argument may hold.
     pub(crate) params: Vec<(Ty, u64)>,
+    /// For each parameter: whether it is `mut`. A `mut` parameter's size is the most that the
+    /// caller's place may hold; the function stores at most the smallest value of its type back.
+    pub(crate) muts: Vec<bool>,
     pub(crate) ret: Ty,
     /// For a `string` result: the most chars it holds.
     pub(crate) ret_size: u64,
     /// What a call costs at each `depth` it can pass (decision 5); set once the body is written.
     pub(crate) cost: [u64; DEPTHS],
+}
+
+impl Func {
+    /// Whether it has a `mut` parameter.
+    pub(crate) fn has_mut(&self) -> bool {
+        self.muts.contains(&true)
+    }
 }
 
 /// A field of a class.

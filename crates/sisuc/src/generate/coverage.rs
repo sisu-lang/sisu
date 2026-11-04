@@ -3937,7 +3937,7 @@ fn the_costliest_statement_fits_the_reserve() {
 }
 
 #[test]
-fn main_calls_fit_the_budget_left() {
+fn main_calls_should_fit_the_budget_left() {
     // `f1` costs 300,000 at depth 2, 354,201 at depth 3 and 100,000 at depth 1. Called twice in
     // a loop of 2, out of the 1,000,000 budget less 400 statements of 729 runs each: 708,400.
     // The first call fits depths 0 to 2 (2 * 354,201 is 708,402) and takes depth 2, leaving
@@ -3948,6 +3948,7 @@ fn main_calls_fit_the_budget_left() {
         name: "f1".to_string(),
         owner: None,
         params: Vec::new(),
+        muts: Vec::new(),
         ret: Ty::Unit,
         ret_size: 0,
         cost: [1, 100_000, 300_000, 354_201, 1_000_000],
@@ -3971,6 +3972,7 @@ fn with_funcs(data: &[u8]) -> Gen<'_> {
             name: name.to_string(),
             owner: None,
             params: Vec::new(),
+            muts: Vec::new(),
             ret,
             ret_size: 0,
             cost: [1; DEPTHS],
@@ -4008,18 +4010,18 @@ fn main_should_print_what_a_call_returns_but_unit() {
 }
 
 #[test]
-fn a_call_statement_names_any_function_the_budget_lets_it() {
+fn a_call_statement_should_name_any_function_the_budget_lets_it() {
     // In `main`, every function, of any type, while the loops around the call run no more
     // times than the budget left, so that a call at depth 0 fits; in a function, itself and
     // the earlier ones, whatever the loops.
     let mut g = with_funcs(&[]);
     g.budget = 8;
     g.cost.enter_loop(8);
-    assert_eq!(g.callees_any(), 3);
+    assert_eq!(g.callees_any().len(), 3);
     g.cost.enter_loop(2);
-    assert_eq!(g.callees_any(), 0);
+    assert_eq!(g.callees_any().len(), 0);
     g.scope.func = Some(1);
-    assert_eq!(g.callees_any(), 2);
+    assert_eq!(g.callees_any().len(), 2);
 }
 
 #[test]
@@ -6841,14 +6843,14 @@ fn no_message_breaks_a_line() {
 }
 
 #[test]
-fn rewrites_happen() {
+fn every_rewrite_should_be_made_by_some_seed() {
     let mut made = FxHashMap::default();
     for data in seeds() {
         for rewrite in generate(&data).made {
             *made.entry(format!("{rewrite:?}")).or_insert(0) += 1;
         }
     }
-    let missing: Vec<&str> = ["Block", "DeadIf", "Swap", "Let", "Const"]
+    let missing: Vec<&str> = ["Block", "DeadIf", "Swap", "Let", "Const", "MutCopy"]
         .into_iter()
         .filter(|rewrite| !made.contains_key(*rewrite))
         .collect();
