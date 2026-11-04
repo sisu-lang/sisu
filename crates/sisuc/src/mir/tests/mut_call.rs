@@ -67,7 +67,7 @@ fn store_back_should_write_before_it_releases() {
     has(
         &printed,
         "main",
-        &["= out 0", "= take _.0", "_.0 = move _", "release _"],
+        &["= out 0", "= take b#0.0", "b#0.0 = move _", "release _"],
     );
 }
 

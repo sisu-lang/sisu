@@ -493,18 +493,11 @@ impl<'a> Lowering<'a> {
         let ExprKind::Call { args, .. } = &call.kind else {
             panic!("a `mut` parameter through `any I` lands in Task 8");
         };
-        assert!(
-            muts.iter().all(|m| m.keep.is_empty())
-                && back.stmts.iter().all(|stmt| matches!(
-                    stmt,
-                    Stmt::Assign {
-                        place: Place::Local(_),
-                        ..
-                    }
-                )),
-            "a `mut` field or element lands in Task 6"
-        );
         for m in muts {
+            for (object, read) in &m.keep {
+                self.locals[object.0].scope = self.here();
+                self.into(read, Some(*object))?;
+            }
             self.locals[m.temp.0].scope = self.here();
             let temp = valued(self.locals[m.temp.0].ty).then_some(m.temp);
             self.into(&m.read, temp)?;
@@ -529,6 +522,15 @@ impl<'a> Lowering<'a> {
             "each `mut` argument of the call should be its temporary, in order"
         );
         self.block(back, None)?;
+        // A store-back that its index test skipped leaves the temporary owned: the lost write. The
+        // kept objects live until here.
+        for m in muts.iter().rev() {
+            for local in once(m.temp).chain(m.keep.iter().rev().map(|k| k.0)) {
+                if self.locals[local.0].counted {
+                    self.push(Statement::ScopeRelease(local));
+                }
+            }
+        }
         Some(value)
     }
 

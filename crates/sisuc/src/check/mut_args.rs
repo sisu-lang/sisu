@@ -1052,12 +1052,71 @@ impl Checker<'_> {
         }
     }
 
+    /// The class objects along the base `e` of a place, a chain of fields and indexes, from the
+    /// root outwards. Each one that is no binding is pushed to `keep` as a fresh local with the
+    /// read of the object, which starts at the local of the object before it. Gives the base as
+    /// the place reads it: the local of the last object, or the binding.
+    fn keep_objects(&mut self, e: tir::Expr, keep: &mut Vec<(LocalId, tir::Expr)>) -> tir::Expr {
+        if matches!(e.kind, ExprKind::Local(_)) {
+            return e;
+        }
+        let (ty, span) = (e.ty, e.span);
+        let e = match e.kind {
+            ExprKind::Field { base, index } => {
+                let base = Box::new(self.keep_objects(*base, keep));
+                tir::Expr::new(ExprKind::Field { base, index }, ty, span)
+            }
+            ExprKind::Index { base, index } => {
+                let base = Box::new(self.keep_objects(*base, keep));
+                tir::Expr::new(ExprKind::Index { base, index }, ty, span)
+            }
+            kind => return tir::Expr::new(kind, ty, span),
+        };
+        if !matches!(ty.kind(), TypeKind::Class(..)) {
+            return e;
+        }
+        let object = self.fresh(ty);
+        keep.push((object, e));
+        local(object, ty, span)
+    }
+
+    /// Whether every index of `place` is in range, read now: `i < len(base)` for each index from
+    /// the root outwards, joined by `&&`, so that an index is read only after the ones before it
+    /// passed. `None` for a place with no index.
+    ///
+    /// shortcut: each test reads its own copy of the path before its index, so a place of `n`
+    /// indexes builds `n^2` nodes; upgrade when a place can be nested deep in real programs.
+    fn indexes_in_range(&self, place: &tir::Place, at: Span) -> Option<tir::Expr> {
+        let mut tests = Vec::new();
+        let mut walk = place;
+        while let tir::Place::Index { base, index } = walk {
+            let array = self.read((**base).clone(), at);
+            let len = tir::Expr::new(ExprKind::Len(Box::new(array)), Type::I64, at);
+            let test = ExprKind::Compare {
+                operands: vec![index.clone(), len],
+                ops: vec![ast::CompareOp::Lt],
+            };
+            tests.push(tir::Expr::new(test, Type::BOOL, at));
+            walk = base;
+        }
+        tests.into_iter().rev().reduce(|lhs, rhs| {
+            let and = ExprKind::Binary {
+                op: tir::BinaryOp::And,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
+            tir::Expr::new(and, Type::BOOL, at)
+        })
+    }
+
     /// The call `call`, of a callee that has the `mut` parameters whose arguments are `parts`,
     /// as a `MutCall` in a block that binds the values of step 1, in written order: each
     /// argument that is no `mut` argument, and the root and the indexes of each `mut` argument.
     /// `call` reads the temp of each part where its argument is. The block ends in the call.
     ///
-    /// Every copy-in is the read of its place and every store-back is `place = temp`.
+    /// The copy-in of a part keeps the class objects along its place, then reads the place from
+    /// the last one. The store-back is `place = temp` on those objects, and only when every index
+    /// of the place is in range then: a write to an element that is gone is lost.
     pub(super) fn mut_call(&mut self, mut call: tir::Expr, parts: Vec<MutPart>) -> tir::Expr {
         let (ty, span) = (call.ty, call.span);
         let (ExprKind::Call { args, .. } | ExprKind::InterfaceCall { args, .. }) = &mut call.kind
@@ -1082,27 +1141,41 @@ impl Checker<'_> {
                 ..
             } = part;
             let mut operands = path.operands.into_iter();
-            let mut bound = Vec::new();
+            let (mut bound, mut keep) = (Vec::new(), Vec::new());
             if matches!(path.root, Root::Field(_)) {
                 let base = operands
                     .next()
                     .expect("a field root's base should be the first operand of its path");
-                bound.push(self.bind_base(base, &mut lets));
+                let base = self.bind_base(base, &mut lets);
+                bound.push(self.keep_objects(base, &mut keep));
             }
             for index in operands {
                 bound.push(self.hide(index, &mut lets));
             }
             let place = build(path.root, bound);
             let read = self.read(place.clone(), at);
-            back.push(tir::Stmt::Assign {
+            let in_range = self.indexes_in_range(&place, at);
+            let store = tir::Stmt::Assign {
                 place,
                 value: local(temp, part_ty, at),
+            };
+            back.push(match in_range {
+                None => store,
+                Some(cond) => {
+                    let then_block = tir::Block {
+                        stmts: vec![store],
+                        value: None,
+                        ty: Type::UNIT,
+                    };
+                    let guarded = ExprKind::If {
+                        cond: Box::new(cond),
+                        then_block,
+                        else_block: None,
+                    };
+                    tir::Stmt::Expr(tir::Expr::new(guarded, Type::UNIT, at))
+                }
             });
-            muts.push(tir::MutArg {
-                keep: Vec::new(),
-                temp,
-                read,
-            });
+            muts.push(tir::MutArg { keep, temp, read });
             rebound.push(arg);
         }
         *args = rebound;

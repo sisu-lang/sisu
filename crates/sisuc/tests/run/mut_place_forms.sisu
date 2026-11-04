@@ -1,0 +1,84 @@
+// GIVEN `mut` parameters of `string`, optional, array and `i64` types, and a class `Crate` whose
+// fields hold arrays of objects, of strings, and of optionals
+// WHEN `main` passes `mut` an element of a field, a field of an element, a field of the result of
+// a call or a method, an element of an element, an element of a `mut` parameter, a field through
+// `self`, and an element by a loop variable
+// THEN each store-back lands in its place, and the program prints the changed values
+// AND Valgrind and `--rc-checks` find every kept object and temporary released once
+class Item {
+    mut cells: [i64]
+    mut name: string
+}
+
+class Crate {
+    mut items: [Item]
+    mut rows: [[string]]
+    mut maybe: [i64?]
+
+    fn first(self) -> Item {
+        self.items[0]
+    }
+
+    fn run(self) {
+        grow(mut self.items[0].cells)
+        shout(mut self.items[0].name)
+        shout(mut self.rows[0][0])
+        put(mut self.maybe[0])
+    }
+}
+
+fn grow(mut xs: [i64]) {
+    xs.push(1)
+}
+
+fn shout(mut s: string) {
+    s += "!"
+}
+
+fn put(mut o: i64?) {
+    o = 7
+}
+
+fn bump(mut n: i64) {
+    n += 1
+}
+
+fn same(c: Crate) -> Crate {
+    c
+}
+
+fn through(mut grid: [[i64]], c: Crate) {
+    grow(mut grid[0])
+    bump(mut grid[1][0])
+    grow(mut c.items[1].cells)
+}
+
+fn main() {
+    let c = Crate(
+        items: [Item(cells: [], name: "a"), Item(cells: [], name: "b")],
+        rows: [["x"], ["y", "z"]],
+        maybe: [None, 3]
+    )
+    shout(mut c.items[1].name)
+    grow(mut c.items[0].cells)
+    shout(mut c.rows[1][1])
+    put(mut c.maybe[0])
+    grow(mut same(c).items[0].cells)
+    grow(mut c.first().cells)
+    c.run()
+    let mut grid = [[0], [5]]
+    through(mut grid, c)
+    for i in 0..2 {
+        bump(mut c.items[i].cells[0])
+    }
+    let local = [Item(cells: [9], name: "q")]
+    grow(mut local[0].cells)
+    shout(mut local[0].name)
+    for item in c.items {
+        print("{item.cells} {item.name}")
+    }
+    print(c.rows)
+    print(c.maybe)
+    print(grid)
+    print("{local[0].cells} {local[0].name}")
+}
