@@ -1,0 +1,13 @@
+// GIVEN `bump(mut (x))`, where `x` is declared with `let`
+// WHEN `sisu check` runs on it
+// THEN it reports E0169 on the argument
+// AND the help names the variable `x`, not the parenthesized text
+fn bump(mut n: i64) {
+    n += 1
+}
+
+fn main() {
+    let x = 1
+    bump(mut (x))
+    print(x)
+}

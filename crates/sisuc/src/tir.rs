@@ -3397,6 +3397,43 @@ mod tests {
         assert!(!block_expr(vec![Stmt::Expr(if_stmt)], Some(int(1))).exits());
     }
 
+    /// A jump in the call, in the store-backs, in the read of a place or in an object that a
+    /// `MutCall` keeps makes the `MutCall` exit, and no jump makes it stay.
+    #[test]
+    fn mut_call_should_exit_when_a_part_of_it_exits() {
+        let jump = || expr(ExprKind::Return(None), Type::NEVER);
+        // The call, the store-backs, the read and the kept object.
+        let mut_call = |call: Expr, back: Block, read: Expr, kept: Expr| {
+            expr(
+                ExprKind::MutCall {
+                    call: Box::new(call),
+                    muts: vec![MutArg {
+                        keep: vec![(LocalId(0), kept)],
+                        temp: LocalId(1),
+                        read,
+                    }],
+                    back,
+                },
+                Type::UNIT,
+            )
+        };
+        assert!(!mut_call(int(1), block(vec![]), int(2), int(3)).exits());
+        assert!(
+            mut_call(jump(), block(vec![]), int(2), int(3)).exits(),
+            "call"
+        );
+        let back = block(vec![Stmt::Expr(jump())]);
+        assert!(mut_call(int(1), back, int(2), int(3)).exits(), "store-back");
+        assert!(
+            mut_call(int(1), block(vec![]), jump(), int(3)).exits(),
+            "read"
+        );
+        assert!(
+            mut_call(int(1), block(vec![]), int(2), jump()).exits(),
+            "kept object"
+        );
+    }
+
     /// `each_child_mut` reaches each expression directly inside every kind, in order: through
     /// its blocks, statements and places, and no further.
     #[test]

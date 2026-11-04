@@ -693,6 +693,7 @@ impl Checker<'_> {
     ) {
         let name = method.name.as_str();
         let arity = match ty.kind() {
+            // `len` takes no argument, and `push` is refused before (`refuse_method` above).
             TypeKind::Array(_) => array::METHODS.iter().find(|(m, _)| *m == name),
             TypeKind::String => string::METHODS.iter().find(|(m, _)| *m == name),
             _ => None,

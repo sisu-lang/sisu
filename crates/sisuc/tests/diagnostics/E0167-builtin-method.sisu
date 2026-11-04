@@ -1,0 +1,11 @@
+// GIVEN `xs.push(mut y)`, with the receiver `xs` on one line
+// WHEN `sisu check` runs on it
+// THEN it reports E0167 on the `mut`, and the message names the method as the call writes it,
+//   `xs.push`
+// AND the safe fix removes `mut `
+fn main() {
+    let mut xs = [1]
+    let y = 2
+    xs.push(mut y)
+    print(xs)
+}

@@ -429,6 +429,7 @@ impl Checker<'_> {
     }
 
     /// The text before the first `?.` of the place `e`, when it is on one line.
+    /// An index above a `?.` is E0062 before this runs, so the walk stops at the first index.
     fn chain_head(&self, mut e: &ast::Expr) -> Option<String> {
         let mut head = e;
         loop {
@@ -439,7 +440,6 @@ impl Checker<'_> {
                     }
                     e = base;
                 }
-                ast::ExprKind::Index { base, .. } => e = base,
                 _ => {
                     return self
                         .one_line(head.span)
@@ -450,6 +450,7 @@ impl Checker<'_> {
     }
 
     /// How many `?.` the place `e` goes through.
+    /// An index above a `?.` is E0062 before this runs, so the walk stops at the first index.
     fn chain_steps(mut e: &ast::Expr) -> usize {
         let mut steps = 0;
         loop {
@@ -458,7 +459,6 @@ impl Checker<'_> {
                     steps += usize::from(*safe);
                     e = base;
                 }
-                ast::ExprKind::Index { base, .. } => e = base,
                 _ => return steps,
             }
         }
