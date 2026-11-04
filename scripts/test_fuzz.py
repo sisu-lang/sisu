@@ -1,0 +1,81 @@
+"""Unit tests for the summary of fuzz.sh: python3 -m unittest discover -s scripts -p 'test_*.py'.
+
+Each test runs the script in a small repository with a fake `cargo` on PATH, so no fuzzer runs.
+"""
+import os
+import shutil
+import stat
+import subprocess
+import tempfile
+import unittest
+
+SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fuzz.sh')
+# A pre-commit hook runs these tests with GIT_DIR and its kin set to the outer repository.
+ENV = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
+# The fake cargo fuzz run (the one with --jobs) writes a crash input and fails, as libFuzzer does.
+# A replay of that input prints the bytes of $FAKE_REPLAY, which a test sets with printf escapes.
+FAKE_CARGO = """#!/usr/bin/env bash
+[[ $1 == fuzz ]] || exit 1
+case $2 in
+build) exit 0 ;;
+--version) echo "cargo-fuzz 0.0.0"; exit 0 ;;
+esac
+if [[ " $* " == *" --jobs "* ]]; then
+  sleep 0.05
+  mkdir -p fuzz/artifacts/front_end
+  echo x >fuzz/artifacts/front_end/crash-abc
+  exit 77
+fi
+printf "$FAKE_REPLAY"
+exit 77
+"""
+
+
+class FuzzSummary(unittest.TestCase):
+    def setUp(self):
+        self.repo = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.repo)
+        os.mkdir(os.path.join(self.repo, 'scripts'))
+        shutil.copy(SCRIPT, os.path.join(self.repo, 'scripts'))
+        os.makedirs(os.path.join(self.repo, 'crates', 'sisuc', 'tests'))
+        os.makedirs(os.path.join(self.repo, 'fuzz'))
+        self.bin = os.path.join(self.repo, 'bin')
+        os.mkdir(self.bin)
+        cargo = os.path.join(self.bin, 'cargo')
+        with open(cargo, 'w', encoding='utf-8') as f:
+            f.write(FAKE_CARGO)
+        os.chmod(cargo, os.stat(cargo).st_mode | stat.S_IXUSR)
+        git = ['git', '-C', self.repo, '-c', 'user.name=t', '-c', 'user.email=t@t']
+        subprocess.run(git + ['init', '-q'], check=True, env=ENV)
+        subprocess.run(git + ['commit', '-q', '--allow-empty', '-m', 'base'], check=True, env=ENV)
+
+    def summary(self, replay):
+        env = dict(ENV, PATH=f'{self.bin}:{ENV["PATH"]}', FAKE_REPLAY=replay)
+        run = subprocess.run(['bash', 'scripts/fuzz.sh', '1'], cwd=self.repo, capture_output=True,
+                             env=env, timeout=60)
+        self.assertEqual(run.returncode, 1, run.stderr)
+        with open(os.path.join(self.repo, 'fuzz', 'artifacts', 'summary.md'), encoding='utf-8') as f:
+            return f.read()
+
+    def test_a_crash_with_a_panic_message_should_show_its_location_and_first_message_line(self):
+        # The replay output holds binary bytes, and the panic line comes after some of them.
+        text = self.summary(r"\377\000\001\200 noise\n\000thread '<unnamed>' (7) panicked at "
+                            r"crates/sisuc/src/fuzz.rs:70:9:\nBraceOnNewLine: a safe fix removes NoMember too:\n"
+                            r"second line\n")
+        self.assertIn('  Panic at crates/sisuc/src/fuzz.rs:70:9: BraceOnNewLine: a safe fix removes NoMember too:\n', text)
+        self.assertNotIn('second line', text)
+        self.assertIn('Its replay is at the end of `fuzz.log`.', text)
+        self.assertNotIn('stack overflow', text)
+
+    def test_a_panic_message_should_lose_its_backticks_and_control_characters(self):
+        text = self.summary(r"panicked at a.rs:1:2:\nbad `code` \001here\n")
+        self.assertIn('  Panic at a.rs:1:2: bad code here\n', text)
+
+    def test_a_crash_without_a_panic_message_should_keep_the_note_about_a_fatal_signal(self):
+        text = self.summary(r"\377\000 AddressSanitizer: stack-overflow\n")
+        self.assertNotIn('Panic at', text)
+        self.assertIn('is a stack overflow or another fatal signal', text)
+
+
+if __name__ == '__main__':
+    unittest.main()

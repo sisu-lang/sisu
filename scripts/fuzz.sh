@@ -17,7 +17,8 @@
 # A fuzz run writes fuzz/artifacts/fuzz.log, run.txt and summary.md, and failing inputs
 # land in fuzz/artifacts/<target>/. Each new crash- input is then replayed once, and its
 # output appended to fuzz.log. The run exits 1 when it produced a crash-, timeout- or
-# oom- artifact, and otherwise with cargo-fuzz's status.
+# oom- artifact, and otherwise with cargo-fuzz's status. summary.md gives the panic location
+# and the first line of the panic message of each replayed crash.
 set -euo pipefail
 
 usage="usage: scripts/fuzz.sh [--target front_end|program] [seconds] | --replay <input> | --tmin <input> | --cmin | --coverage"
@@ -143,7 +144,8 @@ esac
 # Every .sisu file under the test tree, copied under a unique name into a temp directory.
 seeds=$(mktemp -d)
 marker=$(mktemp)
-trap 'rm -rf "$seeds" "$marker"' EXIT
+replay_out=$(mktemp)
+trap 'rm -rf "$seeds" "$marker" "$replay_out"' EXIT
 i=0
 while IFS= read -r -d '' f; do
     i=$((i + 1))
@@ -211,20 +213,36 @@ done < <(find "$found" -type f -newer "$marker" -print0 | sort -z)
 # Fork mode's first pass over the corpus sends the children's output to /dev/null, so a
 # crash on a restored input leaves no panic message in the log. A plain replay prints it;
 # its own status changes neither the run's status nor which inputs count.
+# The panic location and the first line of the panic message of the replay in file $1, as
+# "<location>: <message>", or nothing when the replay has no panic message. The output holds
+# binary bytes, so grep reads it with -a. The message is cut to 300 bytes and loses its control
+# characters, invalid UTF-8 and backticks, so it is safe in the summary and in an issue.
+panic_note() {
+    local found
+    found=$(grep -a -m1 -A1 'panicked at ' "$1" | LC_ALL=C tr -d '\000-\010\013-\037\177`' |
+        iconv -f UTF-8 -t UTF-8 -c) || return 0
+    [[ -n $found ]] || return 0
+    printf '%s: %s\n' "$(sed -n '1s/.*panicked at //; 1s/:$//p' <<<"$found")" "$(sed -n 2p <<<"$found" | cut -c1-300)"
+}
+
 crashes=0
-for failure in "${failures[@]}"; do
+panic_notes=()
+for i in "${!failures[@]}"; do
+    failure=${failures[i]}
     if [[ ${failure%% *} != crash ]]; then continue; fi
     crashes=$((crashes + 1))
     if ((crashes > replay_limit)); then continue; fi
     path=${failure#* }
+    : >"$replay_out"
     {
         echo
         echo "==> scripts/fuzz.sh: replay of ${path}"
         replay=0
         SISU_FUZZ_DUMP=$(dump_dir "$path") timeout -k 10 "$replay_seconds" \
-            cargo fuzz run --sanitizer none "$target" "$path" -- "${limits[@]}" || replay=$?
+            cargo fuzz run --sanitizer none "$target" "$path" -- "${limits[@]}" 2>&1 | tee "$replay_out" || replay=$?
         echo "==> scripts/fuzz.sh: the replay exited ${replay}"
     } >>"$log" 2>&1 || log_complete=false
+    panic_notes[i]=$(panic_note "$replay_out")
 done
 not_replayed=0
 if ((crashes > replay_limit)); then
@@ -256,11 +274,15 @@ executions=$(awk '/^#[0-9]+: cov:/ { n = substr($1, 2, length($1) - 2) } END { p
         echo "Paths are the run's own. Replay a downloaded input by its own path: \`--replay\` resolves it from your directory."
         echo
     fi
-    for failure in "${failures[@]}"; do
+    for i in "${!failures[@]}"; do
+        failure=${failures[i]}
         class=${failure%% *}
         path=${failure#* }
         echo "- **${class}**: \`${path}\`. Replay: \`scripts/fuzz.sh --target ${target} --replay ${path}\`."
-        if [[ $class == crash ]]; then
+        if [[ $class == crash && -n ${panic_notes[i]:-} ]]; then
+            echo "  Panic at ${panic_notes[i]}"
+            echo "  Its replay is at the end of \`fuzz.log\`."
+        elif [[ $class == crash ]]; then
             echo "  Its replay is at the end of \`fuzz.log\`. A crash whose replay shows no panic message is a stack overflow or another fatal signal."
         else
             echo "  No Rust backtrace: without a sanitizer, libFuzzer prints no native stack for this class."
