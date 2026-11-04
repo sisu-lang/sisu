@@ -41,6 +41,9 @@ class WatchPr(unittest.TestCase):
             f'{P}/pulls/7/comments': [],
             f'{P}/issues/7/comments': [],
             f'{P}/commits/abcdef0123/check-runs': {'check_runs': [{'status': 'in_progress'}]},
+            f'{P}/commits/abcdef0123/check-suites': {'check_suites': [
+                {'app': {'slug': 'github-actions'}, 'status': 'completed'},
+                {'app': {'slug': 'greptile-apps'}, 'status': 'queued'}]},
         }
 
     def watch(self):
@@ -70,6 +73,13 @@ class WatchPr(unittest.TestCase):
         self.assertEqual(self.watch().stdout, 'review 9 COMMENTED bot: One r9\n')
         self.table[f'{P}/pulls/7/reviews'] = [dict(review, body='Two')]
         self.assertEqual(self.watch().stdout, 'review 9 COMMENTED bot: Two r9\n')
+
+    def test_watch_should_wait_for_a_workflow_that_has_not_started(self):
+        self.table[f'{P}/commits/abcdef0123/check-runs'] = {'check_runs': [
+            {'status': 'completed', 'conclusion': 'skipped', 'name': 'plan', 'html_url': 'u'}]}
+        self.table[f'{P}/commits/abcdef0123/check-suites']['check_suites'].append(
+            {'app': {'slug': 'github-actions'}, 'status': 'queued'})
+        self.assertEqual(self.watch().returncode, 1)
 
     def test_watch_should_report_a_failed_check_and_then_the_end_of_checks_once(self):
         runs = f'{P}/commits/abcdef0123/check-runs'

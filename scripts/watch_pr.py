@@ -65,7 +65,12 @@ def events(pr, me):
         found.append((f"ci-fail {sha}",
                       "checks failed at " + sha[:8] + ": "
                       + "; ".join(f"{r['name']} {r['html_url']}" for r in failed)))
-    elif runs and all(r["status"] == "completed" for r in runs):
+    # A workflow that has not started yet has a suite but no check runs. Other apps keep a queued
+    # suite with no runs (Greptile until someone asks it), so only GitHub Actions suites count.
+    elif runs and all(r["status"] == "completed" for r in runs) and all(
+            s["status"] == "completed"
+            for s in gh(f"{REPO}/commits/{sha}/check-suites?per_page=100")["check_suites"]
+            if s["app"]["slug"] == "github-actions"):
         found.append((f"ci-done {sha}", f"checks passed at {sha[:8]}: {len(runs)} checks"))
     return found
 
