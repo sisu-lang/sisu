@@ -29,10 +29,6 @@ pub(crate) const MAX_UNITS: usize = 8;
 /// copied functions of at most 40 raw IR instructions. A mir size of `UNIT_SIZE` (4,969) matches
 /// 25,000 raw IR instructions, so 40 raw IR instructions are 40 * 4,969 / 25,000 = 7.95 mir
 /// size, which rounds to 8.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "`copies` reads it in the code commit")
-)]
 pub(crate) const SMALL: usize = 8;
 
 /// The mir size of `function`: its statements, and one terminator for each block. Every
@@ -206,15 +202,54 @@ thread_local! {
     static COPY_STEPS: Cell<usize> = const { Cell::new(0) };
 }
 
-/// For each of the `count` units, the functions it copies.
+/// For each of the `count` units, the functions it copies (C6): the small functions (`sizes` at
+/// most `SMALL`) that its functions call, or that its copies call, and that it does not own.
+/// `callees[f]` is the sorted list of the functions that `f` calls, and `unit_of[f]` the unit
+/// that owns `f`. The result depends only on these, in function order, never on a hash map.
+///
+/// A function is marked when it is pushed on the unit's work list, so each is expanded at most
+/// once for each unit. One list of marks serves every unit and is cleared through the unit's own
+/// list. The work is O(units * (small functions + their edges)) plus every edge once.
 pub(crate) fn copies(
     sizes: &[usize],
     callees: &[Vec<usize>],
     unit_of: &[usize],
     count: usize,
 ) -> Vec<Vec<usize>> {
-    let _ = (sizes, callees, unit_of);
-    vec![Vec::new(); count]
+    let mut owned = vec![Vec::new(); count];
+    for (function, &unit) in unit_of.iter().enumerate() {
+        owned[unit].push(function);
+    }
+    let mut marked = vec![false; sizes.len()];
+    (0..count)
+        .map(|unit| {
+            let mut list: Vec<usize> = Vec::new();
+            // Pushes the small callees of `source` that `unit` does not own and has not met.
+            let mut expand = |source: usize, list: &mut Vec<usize>| {
+                for &callee in &callees[source] {
+                    #[cfg(test)]
+                    COPY_STEPS.set(COPY_STEPS.get() + 1);
+                    if sizes[callee] <= SMALL && unit_of[callee] != unit && !marked[callee] {
+                        marked[callee] = true;
+                        list.push(callee);
+                    }
+                }
+            };
+            for &function in &owned[unit] {
+                expand(function, &mut list);
+            }
+            // The list grows while it is read: a copy's own small callees follow it.
+            let mut at = 0;
+            while let Some(&function) = list.get(at) {
+                expand(function, &mut list);
+                at += 1;
+            }
+            for &function in &list {
+                marked[function] = false;
+            }
+            list
+        })
+        .collect()
 }
 
 /// How the units of a build run. `Forward` and `Reverse` are for tests of the order of units (the

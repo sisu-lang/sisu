@@ -1,16 +1,15 @@
 //! The entry point of the program fuzz target: generates a Sisu program from the input bytes,
-//! builds it and its rewritten copy at O0, at `-O2` and with `--rc-checks`, runs each build and
-//! panics on a breach of a property (ADR 0033). Properties 1 and 2 are that the program checks
-//! clean and compiles to a module LLVM verifies; property 3 is that every build exits 0 or 101,
-//! and all three the same way; property 4 is that the rewritten copy runs as the program does;
-//! property 5 is that the program prints the known integer answers, and that each call of an
-//! interface's requirement prints the value of the method it should reach, where the method has an
-//! `i64` or `string` result (or a `T` result, when the argument of the conformance is one of them)
-//! and the call is in `shapes` or in a generic function it calls; property 6 is that a
-//! copy of the program where one argument breaks the bound of its type parameter gets E0154 at
-//! that argument and no other error.
+//! builds it and its rewritten copy at O0, at `-O2` in one codegen unit, with `--rc-checks` and at
+//! `-O2` in four codegen units, runs each build and panics on a breach of a property (ADR 0033).
+//! Properties 1 and 2 are that the program checks clean and compiles to a module LLVM verifies;
+//! property 3 is that every build exits 0 or 101, and all four the same way; property 4 is that
+//! the rewritten copy runs as the program does; property 5 is that the program prints the known
+//! integer answers, and that each call of an interface's requirement prints the value of the
+//! method it should reach, where the method has an `i64` or `string` result (or a `T` result, when
+//! the argument of the conformance is one of them) and the call is in `shapes` or in a generic
+//! function it calls; property 6 is that a copy of the program where one argument breaks the bound
+//! of its type parameter gets E0154 at that argument and no other error.
 
-use std::cell::RefCell;
 use std::fmt::Write as _;
 use std::fs::{self, File};
 use std::io::{self, Write as _};
@@ -18,7 +17,7 @@ use std::os::unix::process::ExitStatusExt;
 use std::panic::PanicHookInfo;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
-use std::sync::Once;
+use std::sync::{Arc, Mutex, Once};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -34,8 +33,9 @@ use crate::{Backend, compile, fresh_names, front_end, fuzz, run};
 /// How long a run may take (decision 5): a program within budget takes milliseconds.
 const LIMIT: Duration = Duration::from_secs(10);
 
-/// The three builds of a program, by the flags that make them.
-const BUILDS: [(&str, Backend); 3] = [
+/// The four builds of a program, by the flags that make them. The `-O2` build is one codegen unit,
+/// and the last is a forced split into four, with copies of small functions.
+const BUILDS: [(&str, Backend); 4] = [
     (
         "O0",
         Backend {
@@ -53,7 +53,7 @@ const BUILDS: [(&str, Backend); 3] = [
             rc_checks: false,
             linker: None,
             allocator: None,
-            units: None,
+            units: Some(1),
         },
     ),
     (
@@ -64,6 +64,16 @@ const BUILDS: [(&str, Backend); 3] = [
             linker: None,
             allocator: None,
             units: None,
+        },
+    ),
+    (
+        "-O2 --codegen-units 4",
+        Backend {
+            level: OptLevel::O2,
+            rc_checks: false,
+            linker: None,
+            allocator: None,
+            units: Some(4),
         },
     ),
 ];
@@ -103,9 +113,10 @@ impl Failure {
     }
 }
 
-/// The input `program` is judging on this thread, for the panic hook.
+/// The input `program` is judging, for the panic hook.
 struct Current {
-    generated: Generated,
+    /// Shared, so that `judge` reads it with the lock released.
+    generated: Arc<Generated>,
     /// The input's temporary directory.
     dir: PathBuf,
     /// Set by a property failure before its panic: the property line and the failed builds.
@@ -114,9 +125,10 @@ struct Current {
     broken: Option<String>,
 }
 
-thread_local! {
-    static CURRENT: RefCell<Option<Current>> = const { RefCell::new(None) };
-}
+/// The input being judged. A static, not a thread local, so that a panic on a codegen worker
+/// finds it too. One input runs at a time in a process. The lock is never held while `judge`
+/// runs, and the panic hook only tries it.
+static CURRENT: Mutex<Option<Current>> = Mutex::new(None);
 
 /// Generates a program from `data`, builds it and its rewritten copy at O0, -O2 and with
 /// --rc-checks against `runtime`, runs each build and panics on a breach of a property.
@@ -139,37 +151,38 @@ fn program_in(data: &[u8], runtime: &Path, tmp: &Path) {
     let dir = run::private_dir(tmp, fresh_names(""))
         .unwrap_or_else(|e| panic!("the fuzzer should make its temporary directory: {e}"));
     let _clear = Clear(dir.clone());
-    CURRENT.set(Some(Current {
-        generated,
-        dir,
+    let generated = Arc::new(generated);
+    set_current(Some(Current {
+        generated: Arc::clone(&generated),
+        dir: dir.clone(),
         failure: None,
         broken: None,
     }));
-    let judged = CURRENT.with_borrow(|current| {
-        let current = current
-            .as_ref()
-            .expect("`program` should have set the input");
-        judge(&current.generated, runtime, &current.dir)
-    });
-    if let Err((failure, builds)) = judged {
+    if let Err((failure, builds)) = judge(&generated, runtime, &dir) {
         let property = failure.property;
-        CURRENT.with_borrow_mut(|current| {
-            let current = current
-                .as_mut()
-                .expect("`program` should have set the input");
+        if let Some(current) = CURRENT
+            .lock()
+            .expect("the lock should not be poisoned")
+            .as_mut()
+        {
             current.failure = Some((format!("property {property}: {}", failure.detail), builds));
             current.broken = failure.broken;
-        });
+        }
         panic!("program fuzzer: property {property} failed");
     }
 }
 
-/// Clears this thread's input and removes its directory when `program` returns or unwinds.
+/// Sets the input that the panic hook records.
+fn set_current(current: Option<Current>) {
+    *CURRENT.lock().expect("the lock should not be poisoned") = current;
+}
+
+/// Clears the input and removes its directory when `program` returns or unwinds.
 struct Clear(PathBuf);
 
 impl Drop for Clear {
     fn drop(&mut self) {
-        CURRENT.set(None);
+        set_current(None);
         // The panic hook may have removed it already, and a leftover temporary directory must
         // not turn a pass into a panic, or a panic into an abort.
         drop(fs::remove_dir_all(&self.0));
@@ -177,22 +190,20 @@ impl Drop for Clear {
 }
 
 /// Installs, once, a panic hook in front of the one already set (libFuzzer's aborts, so code
-/// after a compiler panic never runs): on a thread inside `program`, it prints the record of
-/// decision 9, writes it to `SISU_FUZZ_DUMP` when that is set, removes the input's directory,
-/// then calls the earlier hook.
+/// after a compiler panic never runs): while `program` judges an input, on any thread, it prints
+/// the record of decision 9, writes it to `SISU_FUZZ_DUMP` when that is set, removes the input's
+/// directory, then calls the earlier hook.
 fn install_hook() {
     static HOOK: Once = Once::new();
     HOOK.call_once(|| {
         let earlier = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
-            // `try_with`: the thread may be tearing down its locals.
-            let _ = CURRENT.try_with(|current| {
-                if let Ok(current) = current.try_borrow()
-                    && let Some(current) = current.as_ref()
-                {
-                    leave_record(current, info);
-                }
-            });
+            // `try_lock`: a panic on a worker never waits for a lock.
+            if let Ok(current) = CURRENT.try_lock()
+                && let Some(current) = current.as_ref()
+            {
+                leave_record(current, info);
+            }
             earlier(info);
         }));
     });
@@ -207,7 +218,7 @@ fn leave_record(current: &Current, info: &PanicHookInfo<'_>) {
         rewritten,
         stdin,
         ..
-    } = &current.generated;
+    } = &*current.generated;
     let panic;
     let (first, builds) = if let Some((first, builds)) = &current.failure {
         (first.as_str(), builds.as_str())
@@ -276,7 +287,7 @@ fn judge(g: &Generated, runtime: &Path, dir: &Path) -> Result<(), (Failure, Stri
     judge_marked(&runs, &g.expected).map_err(|f| (f, record("program", &runs)))
 }
 
-/// Property 3 for `source`, checked as `program`: its three builds in `dir`, run with `stdin`,
+/// Property 3 for `source`, checked as `program`: its four builds in `dir`, run with `stdin`,
 /// which it gives back.
 fn judge_source(
     name: &str,
@@ -285,7 +296,7 @@ fn judge_source(
     runtime: &Path,
     dir: &Path,
     stdin: &Path,
-) -> Result<[Run; 3], (Failure, String)> {
+) -> Result<[Run; 4], (Failure, String)> {
     #[cfg_attr(not(test), expect(unused_mut, reason = "only a test forces a failure"))]
     let mut runs = builds(name, source, program, runtime, dir, stdin, LIMIT);
     #[cfg(test)]
@@ -383,7 +394,7 @@ fn checked(name: &str, source: &str) -> Result<Program, Failure> {
     Ok(program)
 }
 
-/// Builds `program`, checked from `source`, three ways into `dir`, and runs each build with
+/// Builds `program`, checked from `source`, four ways into `dir`, and runs each build with
 /// `stdin` for at most `limit`.
 fn builds(
     name: &str,
@@ -393,7 +404,7 @@ fn builds(
     dir: &Path,
     stdin: &Path,
     limit: Duration,
-) -> [Run; 3] {
+) -> [Run; 4] {
     std::array::from_fn(|i| {
         let exe = dir.join(format!("{name}-{i}"));
         build(name, source, program, &BUILDS[i].1, runtime, &exe);
@@ -485,8 +496,8 @@ fn exit(status: ExitStatus) -> Exit {
 }
 
 /// Property 3: each build exits 0 or with a Sisu panic, 101, so the `--rc-checks` build reports
-/// no count fault or leak (102); and the three agree on exit, stdout and stderr exactly.
-fn judge_builds(runs: &[Run; 3]) -> Result<(), Failure> {
+/// no count fault or leak (102); and the four agree on exit, stdout and stderr exactly.
+fn judge_builds(runs: &[Run; 4]) -> Result<(), Failure> {
     let fail = |detail: String| Err(Failure::new(3, detail));
     for ((build, _), run) in BUILDS.iter().zip(runs) {
         if !matches!(run.exit, Exit::Code(0 | 101)) {
@@ -662,7 +673,7 @@ fn judge_marked(runs: &[Run], expected: &[String]) -> Result<(), Failure> {
 }
 
 /// The builds of `name` in `runs`, each as its exit, stdout and stderr under `==>` lines.
-fn record(name: &str, runs: &[Run; 3]) -> String {
+fn record(name: &str, runs: &[Run; 4]) -> String {
     let mut out = String::new();
     for ((build, _), run) in BUILDS.iter().zip(runs) {
         let _ = writeln!(out, "==> {name} {build}: {:?}", run.exit);
@@ -757,8 +768,8 @@ mod tests {
         }
     }
 
-    /// The three builds of `source`, each run with `stdin` for at most `limit`.
-    fn runs_of(source: &str, stdin: &str, limit: Duration) -> [Run; 3] {
+    /// The four builds of `source`, each run with `stdin` for at most `limit`.
+    fn runs_of(source: &str, stdin: &str, limit: Duration) -> [Run; 4] {
         let scratch = Scratch::new();
         let program = checked("program", source).expect("the test's program should check clean");
         let stdin_path = scratch.0.join("stdin.txt");
@@ -774,14 +785,14 @@ mod tests {
         )
     }
 
-    fn exits(runs: &[Run; 3]) -> [Exit; 3] {
+    fn exits(runs: &[Run; 4]) -> [Exit; 4] {
         runs.each_ref().map(|run| run.exit)
     }
 
     #[test]
-    fn a_clean_program_passes() {
+    fn a_clean_program_should_pass() {
         let runs = runs_of("fn main() {\n    print(\"hi\")\n}\n", "", LIMIT);
-        assert_eq!(exits(&runs), [Exit::Code(0); 3]);
+        assert_eq!(exits(&runs), [Exit::Code(0); 4]);
         for run in &runs {
             assert_eq!(run.stdout, b"hi\n");
             assert_eq!(run.stderr, b"");
@@ -790,29 +801,29 @@ mod tests {
     }
 
     #[test]
-    fn a_panic_passes_when_every_build_agrees() {
+    fn a_panic_should_pass_when_every_build_agrees() {
         let runs = runs_of("fn main() {\n    panic(\"x\")\n}\n", "", LIMIT);
-        assert_eq!(exits(&runs), [Exit::Code(101); 3]);
+        assert_eq!(exits(&runs), [Exit::Code(101); 4]);
         judge_builds(&runs).expect("a panic in every build should pass property 3");
     }
 
     /// Review Focus 2: the overflow's value is never used, and `-O2` must keep its panic.
     #[test]
-    fn unused_overflow_panics_in_every_build() {
+    fn unused_overflow_should_panic_in_every_build() {
         let source =
             "fn f(a: i64) -> i64 {\n    a * a\n}\n\nfn main() {\n    let _ = f(4_000_000_000)\n}\n";
         let runs = runs_of(source, "", LIMIT);
-        assert_eq!(exits(&runs), [Exit::Code(101); 3]);
+        assert_eq!(exits(&runs), [Exit::Code(101); 4]);
         judge_builds(&runs).expect("every build should panic the same way");
     }
 
     /// Review Focus 4: `read_line` past the end of the stdin is `None` in every build.
     #[test]
-    fn stdin_past_its_end_agrees() {
+    fn stdin_past_its_end_should_agree_in_every_build() {
         let line = "    print(read_line() ?? \"none\")\n";
         let source = format!("fn main() {{\n{}}}\n", line.repeat(3));
         let runs = runs_of(&source, "a\n", LIMIT);
-        assert_eq!(exits(&runs), [Exit::Code(0); 3]);
+        assert_eq!(exits(&runs), [Exit::Code(0); 4]);
         for run in &runs {
             assert_eq!(run.stdout, b"a\nnone\nnone\n");
         }
@@ -825,7 +836,7 @@ mod tests {
     fn large_output_should_be_compared_exactly() {
         let source = "fn main() {\n    let mut i = 0\n    while i < 20_000 {\n        print(i)\n        i += 1\n    }\n}\n";
         let mut runs = runs_of(source, "", LIMIT);
-        assert_eq!(exits(&runs), [Exit::Code(0); 3]);
+        assert_eq!(exits(&runs), [Exit::Code(0); 4]);
         for run in &runs {
             let text = String::from_utf8_lossy(&run.stdout);
             assert_eq!(text.lines().count(), 20_000);
@@ -839,7 +850,7 @@ mod tests {
     }
 
     #[test]
-    fn a_hang_fails_property_3() {
+    fn a_hang_should_fail_property_3() {
         let source = "fn main() {\n    while true {\n    }\n}\n";
         let scratch = Scratch::new();
         let program = checked("program", source).expect("the test's program should check clean");
@@ -849,7 +860,8 @@ mod tests {
         fs::write(&stdin, "").expect("the test should write the stdin");
         let hung = run(&exe, &stdin, &scratch.0, Duration::from_millis(200));
         assert_eq!(hung.exit, Exit::TimedOut);
-        let failure = judge_builds(&[hung, clean(), clean()]).expect_err("a hang should fail");
+        let failure =
+            judge_builds(&[hung, clean(), clean(), clean()]).expect_err("a hang should fail");
         assert_eq!(failure.property, 3);
     }
 
@@ -895,14 +907,14 @@ mod tests {
         }
     }
 
-    /// A change to three runs.
-    type Change = fn(&mut [Run; 3]);
+    /// A change to four runs.
+    type Change = fn(&mut [Run; 4]);
 
     #[test]
-    fn judge_builds_rejects_any_difference() {
-        judge_builds(&[clean(), clean(), clean()]).expect("equal clean runs should pass");
-        // Each case differs from three clean runs in one thing: one field of one run, or the exit
-        // of all three, so only the exit rule can catch it.
+    fn judge_builds_should_reject_any_difference() {
+        judge_builds(&[clean(), clean(), clean(), clean()]).expect("equal clean runs should pass");
+        // Each case differs from four clean runs in one thing: one field of one run, or the exit
+        // of all four, so only the exit rule can catch it.
         let cases: [(&str, Change); 5] = [
             ("exit", |runs| runs[1].exit = Exit::Code(101)),
             ("stdout", |runs| runs[2].stdout = b"2\n".to_vec()),
@@ -919,10 +931,31 @@ mod tests {
             }),
         ];
         for (case, change) in cases {
-            let mut runs = [clean(), clean(), clean()];
+            let mut runs = [clean(), clean(), clean(), clean()];
             change(&mut runs);
             let failure = judge_builds(&runs).expect_err(case);
             assert_eq!(failure.property, 3, "{case}");
+        }
+    }
+
+    /// A split build that prints or exits otherwise than the other three fails property 3 and is
+    /// named: the comparison reaches the fourth build.
+    #[test]
+    fn judge_builds_should_catch_a_split_build_that_differs() {
+        let cases: [(&str, Change); 2] = [
+            ("stdout", |runs| runs[3].stdout = b"2\n".to_vec()),
+            ("exit", |runs| runs[3].exit = Exit::Code(101)),
+        ];
+        for (case, change) in cases {
+            let mut runs = [clean(), clean(), clean(), clean()];
+            change(&mut runs);
+            let failure = judge_builds(&runs).expect_err(case);
+            assert_eq!(failure.property, 3, "{case}");
+            assert!(
+                failure.detail.contains("-O2 --codegen-units 4"),
+                "{case}: {}",
+                failure.detail
+            );
         }
     }
 
@@ -1579,7 +1612,7 @@ mod tests {
     }
 
     /// The `n`th seed's program, or its rewritten copy, passes properties 1 to 3 through the
-    /// path `judge` takes. One test per source keeps each to three builds.
+    /// path `judge` takes. One test per source keeps each to four builds.
     fn seed_passes(n: u64, rewritten: bool) {
         let g = generate(&seed(n));
         let (name, source) = if rewritten {
