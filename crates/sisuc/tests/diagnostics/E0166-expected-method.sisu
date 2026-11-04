@@ -6,7 +6,9 @@ class Names {
     cells: [string]
 
     fn pick<T>(self, mut xs: [T]) -> T {
-        xs[0]
+        let x = xs[0]
+        xs[0] = x
+        x
     }
 }
 

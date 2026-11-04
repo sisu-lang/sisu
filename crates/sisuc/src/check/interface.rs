@@ -1060,8 +1060,9 @@ impl Checker<'_> {
 
     /// Whether the method `func` meets `requirement`: after `Self`, the interface's arguments
     /// and the method's own type parameters stand in for the requirement's (`base` holds the
-    /// first two), it has the same parameter types and return type, and the same number of type
-    /// parameters of its own, with the same bounds. A type that is `Error` matches any.
+    /// first two), it has the same parameter types, the same `mut` on each parameter and the same
+    /// return type, and the same number of type parameters of its own, with the same bounds. A
+    /// type that is `Error` matches any.
     pub(super) fn meets(&self, requirement: &RequirementInfo, func: FuncId, base: &[Type]) -> bool {
         let sig = &self.signatures[func.0];
         if requirement.own.len() != sig.own || requirement.params.len() != sig.params.len() {
@@ -1079,7 +1080,9 @@ impl Checker<'_> {
             (Some(want), Some(found)) => self.subst(want, &with).is_some_and(|want| want != found),
             _ => false,
         };
-        if (requirement.params.iter().zip(&sig.params)).any(|(&want, &found)| differs(want, found))
+        if requirement.muts != sig.muts
+            || (requirement.params.iter().zip(&sig.params))
+                .any(|(&want, &found)| differs(want, found))
             || differs(requirement.ret, sig.ret)
         {
             return false;

@@ -6,7 +6,7 @@ class Point {
 }
 
 fn f(mut first: Point, mut all: [Point]) {
-    first.x = 1
+    first = Point(x: 1)
     all[0] = first
 }
 

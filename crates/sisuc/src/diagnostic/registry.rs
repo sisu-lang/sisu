@@ -301,11 +301,12 @@ pub(crate) enum DiagnosticKind {
     },
     /// A statement at `at` after one that never finishes.
     UnreachableCode { at: Span },
-    /// The `let mut` binding `name`, at `at`, which nothing reassigns; `keyword` is its `mut`.
+    /// The binding `name`, at `at`, which is a `let mut` or a `mut` parameter, and which nothing
+    /// reassigns.
     NeverReassigned {
         name: String,
         at: Span,
-        keyword: Span,
+        form: NeverReassignedForm,
     },
     /// A binary `-` at `at` that starts a line.
     LeadingBinaryMinus { at: Span },
@@ -2476,6 +2477,26 @@ pub(crate) enum BadRange {
     Empty,
 }
 
+/// A parameter of a requirement whose `mut` the method does not share.
+#[derive(Clone)]
+pub(crate) struct MutDiffers {
+    /// The name of the requirement's parameter.
+    pub(crate) at: Span,
+    pub(crate) name: String,
+    /// Whether the requirement's parameter is `mut`.
+    pub(crate) mutable: bool,
+}
+
+/// The binding that W0002 names.
+#[derive(Clone)]
+pub(crate) enum NeverReassignedForm {
+    /// A `let mut`, with its `mut`, which the fix removes.
+    Let { keyword: Span },
+    /// A `mut` parameter, of a class type when `class`. Removing its `mut` changes every caller,
+    /// so there is no fix.
+    Param { class: bool },
+}
+
 /// What owns a method.
 #[derive(Clone)]
 pub(crate) enum Owner {
@@ -2499,6 +2520,7 @@ pub(crate) enum ConformanceForm {
         method: String,
         found: String,
         want: String,
+        mut_differs: Option<MutDiffers>,
     },
     /// The method `method` of an `extend` block, which is no requirement; `target` is the type
     /// that its own block would extend.
@@ -2937,15 +2959,34 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::UnreachableCode { at } => {
                 Diagnostic::coded(code, at, "unreachable code")
             }
-            DiagnosticKind::NeverReassigned { name, at, keyword } => {
-                Diagnostic::coded(code, at, format!("`{name}` is never reassigned")).with_fix(Fix {
-                    message: "declare it with `let`".to_string(),
-                    safe: true,
-                    edits: vec![Edit {
-                        span: Span::new(keyword.start(), at.start()),
-                        replacement: String::new(),
-                    }],
-                })
+            DiagnosticKind::NeverReassigned {
+                name,
+                at,
+                form: NeverReassignedForm::Let { keyword },
+            } => Diagnostic::coded(code, at, format!("`{name}` is never reassigned")).with_fix(Fix {
+                message: "declare it with `let`".to_string(),
+                safe: true,
+                edits: vec![Edit {
+                    span: Span::new(keyword.start(), at.start()),
+                    replacement: String::new(),
+                }],
+            }),
+            DiagnosticKind::NeverReassigned {
+                name,
+                at,
+                form: NeverReassignedForm::Param { class },
+            } => {
+                let d = Diagnostic::coded(
+                    code,
+                    at,
+                    format!("`{name}` is never reassigned, so its `mut` changes nothing for the caller"),
+                )
+                .with_label("never reassigned");
+                if class {
+                    d.with_help("the fields of a class object change without `mut`")
+                } else {
+                    d
+                }
             }
             DiagnosticKind::LeadingBinaryMinus { at } => {
                 Diagnostic::coded(code, at, "a line cannot start with a binary `-`").with_help(
@@ -3295,13 +3336,26 @@ impl From<DiagnosticKind> for Diagnostic {
                     method,
                     found,
                     want,
-                } => Diagnostic::coded(
-                    code,
-                    at,
-                    format!("`{method}` does not match `{interface}`'s requirement"),
-                )
-                .with_label(format!("found `{found}`"))
-                .with_help(format!("`{interface}` requires `{want}`")),
+                    mut_differs,
+                } => {
+                    let d = Diagnostic::coded(
+                        code,
+                        at,
+                        format!("`{method}` does not match `{interface}`'s requirement"),
+                    )
+                    .with_label(format!("found `{found}`"))
+                    .with_help(format!("`{interface}` requires `{want}`"));
+                    match mut_differs {
+                        Some(MutDiffers { at, name, mutable }) => {
+                            let not = if mutable { "" } else { "not " };
+                            d.with_secondary(
+                                at,
+                                format!("the requirement's parameter `{name}` is {not}`mut`"),
+                            )
+                        }
+                        None => d,
+                    }
+                }
                 ConformanceForm::NotRequirement { method, target } => Diagnostic::coded(
                     code,
                     at,

@@ -7,7 +7,7 @@ class Node {
 }
 
 fn relink3(mut n: Node) {
-    n.next = None
+    n = Node(next: None)
 }
 
 fn main() {

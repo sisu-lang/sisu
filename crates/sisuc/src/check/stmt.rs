@@ -15,7 +15,8 @@ use super::{
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{
-    ClashForm, ClashKind, DiagnosticKind, MismatchSource, RangePlace, Unwrap, UnwrapHelp, closest,
+    ClashForm, ClashKind, DiagnosticKind, MismatchSource, NeverReassignedForm, RangePlace, Unwrap,
+    UnwrapHelp, closest,
 };
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -1650,7 +1651,7 @@ impl Checker<'_> {
             shown: None,
         };
         if kind == BindingKind::Param
-            && let Some(first) = scope.get(&name.name)
+            && let Some(first) = scope.get_mut(&name.name)
         {
             self.diagnostics.push(
                 DiagnosticKind::AlreadyDeclared {
@@ -1661,10 +1662,12 @@ impl Checker<'_> {
                 .into(),
             );
             // A use after it may mean either parameter, so neither is judged: the name becomes
-            // `Error` and can be assigned.
+            // `Error` and can be assigned, which also keeps W0002 off a `mut` parameter.
+            first.reassigned = true;
             binding = Binding {
                 ty: None,
                 kind: BindingKind::Var,
+                reassigned: true,
                 ..binding
             };
         }
@@ -1690,9 +1693,10 @@ impl Checker<'_> {
     /// Judges `b`, which `name` can no longer reach. When nothing read it, its name does not
     /// start with `_` and it is a function's or a method's, it waits for the pass (W0014). A
     /// parameter of a body with a `todo` does not wait. Otherwise a `let mut` that was never
-    /// reassigned gets W0002.
+    /// reassigned gets W0002, and so does a `mut` parameter, unless a requirement spells its `mut`.
     fn retire(&mut self, name: Symbol, b: &Binding) {
-        let keyword = b.keyword.filter(|_| !b.reassigned && !b.loop_named);
+        let never = !b.reassigned && !b.loop_named;
+        let keyword = b.keyword.filter(|_| never);
         if let Some(Owner::Func(func)) = self.body.owner
             && !b.read
             && !b.mut_param
@@ -1719,13 +1723,37 @@ impl Checker<'_> {
             });
             return;
         }
-        if let Some(keyword) = keyword {
+        let form = match keyword {
+            Some(keyword) => Some(NeverReassignedForm::Let { keyword }),
+            None if never => self.never_reassigned_param(name, b),
+            None => None,
+        };
+        if let Some(form) = form {
             self.report(DiagnosticKind::NeverReassigned {
                 name: name.to_string(),
                 at: b.span,
-                keyword,
+                form,
             });
         }
+    }
+
+    /// The form of W0002 for `b`, which nothing reassigns, when it is a `mut` parameter that no
+    /// requirement spells `mut` and that a `todo` body does not hide.
+    fn never_reassigned_param(&self, name: Symbol, b: &Binding) -> Option<NeverReassignedForm> {
+        if !b.mut_param || self.body.todo {
+            return None;
+        }
+        if let Some(Owner::Func(func)) = self.body.owner {
+            let position =
+                (self.signatures[func.0].param_names.iter()).position(|p| p.name == name);
+            let spelled = self.required_muts.get(&func).zip(position);
+            if spelled.is_some_and(|(muts, i)| muts.get(i) == Some(&true)) {
+                return None;
+            }
+        }
+        let class =
+            b.ty.is_some_and(|ty| matches!(ty.kind(), TypeKind::Class(..)));
+        Some(NeverReassignedForm::Param { class })
     }
 
     /// Reports W0011 for the checked condition `cond` at `at` of a `while` whose body checked,

@@ -3,7 +3,9 @@
 // THEN it reports E0166 on `ys`, and the result meets its type
 // AND the safe fix adds `mut`
 fn gget<T>(mut x: T) -> T {
-    x
+    let y = x
+    x = y
+    y
 }
 
 fn main() {

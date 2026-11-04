@@ -3,7 +3,9 @@
 // THEN it reports E0032 for the result, then E0166 on `ys`
 // AND the E0166 has no fix: adding `mut` would leave the E0032
 fn gget<T>(mut x: T) -> T {
-    x
+    let y = x
+    x = y
+    y
 }
 
 fn main() {

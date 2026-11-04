@@ -68,10 +68,10 @@ fn place_inside_a_class_place_should_check_clean() {
     let src = "class P {\n    mut x: [i64]\n}\n\
         class Inner {\n    mut cells: [i64]\n}\n\
         class Outer {\n    mut inner: Inner\n}\n\
-        fn a(mut p: P, mut xs: [i64]) {\n    xs[0] = 1\n    p.x = xs\n}\n\
-        fn b(mut xs: [i64], mut p: P) {\n    xs[0] = 1\n    p.x = xs\n}\n\
-        fn c(mut i: Inner, mut xs: [i64]) {\n    xs[0] = 1\n    i.cells = xs\n}\n\
-        fn d(mut xs: [i64], mut i: Inner) {\n    xs[0] = 1\n    i.cells = xs\n}\n\
+        fn a(mut p: P, mut xs: [i64]) {\n    xs[0] = 1\n    p = P(x: xs)\n}\n\
+        fn b(mut xs: [i64], mut p: P) {\n    xs[0] = 1\n    p = P(x: xs)\n}\n\
+        fn c(mut i: Inner, mut xs: [i64]) {\n    xs[0] = 1\n    i = Inner(cells: xs)\n}\n\
+        fn d(mut xs: [i64], mut i: Inner) {\n    xs[0] = 1\n    i = Inner(cells: xs)\n}\n\
         fn main() {\n    let mut p = P(x: [1])\n    a(mut p, mut p.x)\n    b(mut p.x, mut p)\n    \
         let o = Outer(inner: Inner(cells: [1]))\n    c(mut o.inner, mut o.inner.cells)\n    \
         d(mut o.inner.cells, mut o.inner)\n    print(p.x)\n    print(o.inner.cells)\n}";
@@ -86,12 +86,12 @@ fn element_of_a_class_array_should_be_inside() {
     let rows = [
         (
             "ps, ps[0]",
-            "fn f(mut a: [Point], mut b: Point) {\n    b.x = 1\n    a[0] = b\n}\n\
+            "fn f(mut a: [Point], mut b: Point) {\n    b = Point(x: 1)\n    a[0] = b\n}\n\
             fn main() {\n    let mut ps = [Point(x: 1)]\n    f(mut ps, mut ps[0])\n    print(ps[0].x)\n}",
         ),
         (
             "ps[0], ps",
-            "fn f(mut a: Point, mut b: [Point]) {\n    a.x = 1\n    b[0] = a\n}\n\
+            "fn f(mut a: Point, mut b: [Point]) {\n    a = Point(x: 1)\n    b[0] = a\n}\n\
             fn main() {\n    let mut ps = [Point(x: 1)]\n    f(mut ps[0], mut ps)\n    print(ps[0].x)\n}",
         ),
         (
@@ -560,7 +560,7 @@ fn mut_parameter_of_a_todo_body_should_not_warn() {
 
 /// GIVEN an interface requirement that spells `mut`, and a conformance method that never
 ///   reassigns the parameter, in the body of a class, in an `extend` block, for a generic
-///   interface and for a method that two interfaces require
+///   interface, for an inherited requirement and for a method that two interfaces require
 /// WHEN it is checked
 /// THEN there is no W0002: the caller needs the `mut` through the interface
 #[test]
@@ -581,6 +581,13 @@ fn requirement_mut_should_not_warn() {
             "generic interface",
             "interface Filler<T> {\n    fn fill(self, mut xs: [T])\n}\n\
             class C: Filler<i64> {\n    n: i64\n    fn fill(self, mut xs: [i64]) {\n        print(xs)\n    }\n}",
+        ),
+        (
+            "inherited interface",
+            "interface A {\n    fn fill(self, mut xs: [i64])\n}\n\
+            interface B: A {\n    fn other(self)\n}\n\
+            class C: B {\n    n: i64\n    fn fill(self, mut xs: [i64]) {\n        print(xs)\n    }\n    \
+            fn other(self) {}\n}",
         ),
         (
             "two interfaces",
@@ -624,6 +631,24 @@ fn requirement_mut_should_exempt_a_method_that_fails_on_a_type() {
         class C: Filler {\n    n: i64\n    fn fill(self, mut xs: [bool]) {\n        print(xs)\n    }\n}\n\
         fn main() {}";
     diagnostic(src, Code::ConformanceBody, (6, 8, "fill"), &[]);
+}
+
+/// GIVEN two parameters of one name, both `mut`, or one of them
+/// WHEN it is checked
+/// THEN E0039 is the only diagnostic: the repeated name is poisoned and can be assigned, so
+///   neither parameter gets W0002
+#[test]
+fn repeated_mut_parameter_should_give_the_repeat_only() {
+    let rows = [
+        ("both", "fn f(mut a: i64, mut a: i64) {\n}"),
+        ("first", "fn f(mut a: i64, a: i64) {\n}"),
+        ("second", "fn f(a: i64, mut a: i64) {\n}"),
+    ];
+    for (row, decl) in rows {
+        let src = format!("{decl}\nfn main() {{}}");
+        let found: Vec<_> = diags(&src).iter().map(Diagnostic::code).collect();
+        assert_eq!(found, [Code::AlreadyDeclared], "row `{row}`");
+    }
 }
 
 /// GIVEN a requirement and a conformance that differ in the `mut` of a parameter, in either
@@ -1116,10 +1141,10 @@ fn missing_mut_fix_should_be_linear() {
 /// THEN it is E0166 only: the value binds `T` as any argument does, so `T` is no cascade
 #[test]
 fn unmarked_value_at_a_generic_mut_parameter_should_give_the_missing_marker_only() {
-    let decls = "fn id<T>(x: T) -> T {\n    x\n}\nfn g<T>(mut x: T) -> T {\n    x\n}\n\
+    let decls = "fn id<T>(x: T) -> T {\n    x\n}\nfn g<T>(mut x: T) -> T {\n    let y = x\n    x = y\n    y\n}\n\
         fn h<T>(a: T, b: T) -> T {\n    a\n}\n\
         interface Gt {\n    fn g<T>(self, mut x: T) -> T\n}\n\
-        class C: Gt {\n    n: i64\n    fn g<T>(self, mut x: T) -> T {\n        x\n    }\n}\n";
+        class C: Gt {\n    n: i64\n    fn g<T>(self, mut x: T) -> T {\n        let y = x\n        x = y\n        y\n    }\n}\n";
     let rows = [
         ("function", "let r = g(1)\n    print(r)"),
         (
@@ -1288,11 +1313,11 @@ fn stray_mut_should_not_be_reported_beside_a_count_error() {
 /// THEN the mismatch of the result is E0032, as for the call with `mut`, and E0166 follows
 #[test]
 fn unmarked_place_whose_call_misses_its_expected_type_should_report_the_mismatch() {
-    let decls = "fn first<T>(mut xs: [T]) -> T {\n    xs[0]\n}\n\
-        fn count(mut xs: [i64]) -> i64 {\n    xs[0]\n}\n\
+    let decls = "fn first<T>(mut xs: [T]) -> T {\n    let x = xs[0]\n    xs[0] = x\n    x\n}\n\
+        fn count(mut xs: [i64]) -> i64 {\n    xs[0] += 1\n    xs[0]\n}\n\
         fn text(s: string) {\n    print(s)\n}\n\
         class Holder {\n    s: string\n}\n\
-        class Names {\n    cells: [string]\n    fn pick<T>(self, mut xs: [T]) -> T {\n        xs[0]\n    }\n}\n";
+        class Names {\n    cells: [string]\n    fn pick<T>(self, mut xs: [T]) -> T {\n        let x = xs[0]\n        xs[0] = x\n        x\n    }\n}\n";
     let rows = [
         (
             "let",

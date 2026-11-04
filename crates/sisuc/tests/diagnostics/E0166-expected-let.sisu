@@ -3,7 +3,9 @@
 // THEN it reports E0032 for the result, then E0166 on `names`
 // AND the E0166 has no help: declaring `names` with `let mut` would leave the E0032
 fn first<T>(mut xs: [T]) -> T {
-    xs[0]
+    let x = xs[0]
+    xs[0] = x
+    x
 }
 
 fn main() {

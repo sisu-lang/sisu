@@ -10,7 +10,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::extend::holder_of;
 use super::{Checker, Declared, Holder};
 use crate::conformance::has_written;
-use crate::diagnostic::{Code, Definition, Diagnostic, DiagnosticKind, UsedBy};
+use crate::diagnostic::{
+    Code, Definition, Diagnostic, DiagnosticKind, NeverReassignedForm, UsedBy,
+};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir;
@@ -101,7 +103,8 @@ impl Pending {
             );
         }
         let keyword = self.keyword?;
-        Some(DiagnosticKind::NeverReassigned { name, at, keyword }.into())
+        let form = NeverReassignedForm::Let { keyword };
+        Some(DiagnosticKind::NeverReassigned { name, at, form }.into())
     }
 }
 

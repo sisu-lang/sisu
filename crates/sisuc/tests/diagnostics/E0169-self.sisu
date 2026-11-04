@@ -10,7 +10,7 @@ class Counter {
 }
 
 fn bump(mut c: Counter) {
-    c.n += 1
+    c = Counter(n: c.n + 1)
 }
 
 fn main() {

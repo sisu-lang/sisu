@@ -8,7 +8,7 @@ use super::interface::{Bound, RequirementInfo};
 use super::{Body, Checker, Choice, Choices, Declared, Holder, own_args};
 use crate::ast;
 use crate::conformance::{self, find, find_with};
-use crate::diagnostic::{ConformanceForm, DiagnosticKind, NotConformForm, Ungenerated};
+use crate::diagnostic::{ConformanceForm, DiagnosticKind, MutDiffers, NotConformForm, Ungenerated};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, Conformances, InterfaceId, Type, TypeKind};
@@ -676,6 +676,13 @@ impl Checker<'_> {
         for requirement in &info.requirements {
             let name = requirement.name.name;
             let found = self.written_method(p.source, name);
+            if let Some(Declared::Known(f)) = found {
+                let muts = self.required_muts.entry(f).or_default();
+                muts.resize(muts.len().max(requirement.muts.len()), false);
+                for (slot, &spelled) in muts.iter_mut().zip(&requirement.muts) {
+                    *slot |= spelled;
+                }
+            }
             let elsewhere = others
                 .iter()
                 .any(|&o| self.written_method(o, name).is_some());
@@ -688,6 +695,11 @@ impl Checker<'_> {
                 Some(Declared::Known(_)) if elsewhere => {}
                 Some(Declared::Known(f)) => {
                     let sig = &self.signatures[f.0];
+                    // The first parameter whose `mut` the requirement does not share: its own
+                    // note on the requirement.
+                    let differs = (requirement.muts.iter().zip(&sig.muts))
+                        .position(|(want, found)| want != found)
+                        .map(|i| (requirement.param_names[i].clone(), requirement.muts[i]));
                     reports.push(DiagnosticKind::ConformanceBody {
                         ty: ty.clone(),
                         interface: interface.clone(),
@@ -696,6 +708,11 @@ impl Checker<'_> {
                             method: name.to_string(),
                             found: self.source_text(sig.header).trim_end().to_string(),
                             want: self.required_text(p.source, p.interface, requirement),
+                            mut_differs: differs.map(|(param, mutable)| MutDiffers {
+                                at: param.span,
+                                name: param.name.to_string(),
+                                mutable,
+                            }),
                         },
                     });
                 }

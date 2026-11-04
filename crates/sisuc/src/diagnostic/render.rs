@@ -287,7 +287,9 @@ mod tests {
     use annotate_snippets::{AnnotationKind, Level, Patch, Renderer, Snippet};
 
     use super::{Excerpt, MARGIN, window};
-    use crate::diagnostic::{Code, Diagnostic, DiagnosticKind, Edit, Fix, Immutable, Severity};
+    use crate::diagnostic::{
+        Code, Diagnostic, DiagnosticKind, Edit, Fix, Immutable, NeverReassignedForm, Severity,
+    };
     use crate::source::{LineIndex, Span};
 
     const ASSIGN: &str = "fn main() {\n    let n = 0\n    n = 1\n}\n";
@@ -317,12 +319,14 @@ mod tests {
     }
 
     #[test]
-    fn renders_warning() {
+    fn warning_should_render_with_its_fix() {
         let source = "fn main() {\n    let mut count = 0\n}\n";
         let d: Diagnostic = DiagnosticKind::NeverReassigned {
             name: "count".to_string(),
             at: Span::new(24, 29),
-            keyword: Span::new(20, 23),
+            form: NeverReassignedForm::Let {
+                keyword: Span::new(20, 23),
+            },
         }
         .into();
         let rendered = d.render("w.sisu", source, &LineIndex::new(source), false);

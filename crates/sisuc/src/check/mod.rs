@@ -575,6 +575,10 @@ struct Checker<'src> {
     interfaces: Vec<InterfaceInfo>,
     /// For each method that meets a requirement, its interfaces: a call of it uses them.
     meets: FxHashMap<tir::FuncId, Vec<tir::InterfaceId>>,
+    /// For each method that a conformance names for a requirement, whether a requirement spells
+    /// `mut` at each parameter, also when the method does not meet it: W0002 leaves such a
+    /// parameter alone.
+    required_muts: FxHashMap<tir::FuncId, Vec<bool>>,
     /// For each method name, the interfaces that declare a requirement of it.
     declaring: FxHashMap<Symbol, Vec<tir::InterfaceId>>,
     /// For each name of an associated type, the interfaces that declare one of it, with its place
@@ -1271,6 +1275,7 @@ impl<'src> Checker<'src> {
             enum_ids: FxHashMap::default(),
             interfaces: Vec::new(),
             meets: FxHashMap::default(),
+            required_muts: FxHashMap::default(),
             declaring: FxHashMap::default(),
             declaring_assoc: FxHashMap::default(),
             assoc_at: FxHashMap::default(),

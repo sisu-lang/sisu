@@ -1,16 +1,16 @@
 error[E0032]: expected `string`, found `[i64]`
-  --> E0166-expected-let-mut.sisu:11:21
+  --> E0166-expected-let-mut.sisu:13:21
    |
-11 |     let s: string = gget(ys)
+13 |     let s: string = gget(ys)
    |                     ^^^^^^^^
 
 error[E0166]: the parameter `x` of `gget` is `mut`, so its argument needs `mut`
-  --> E0166-expected-let-mut.sisu:11:26
+  --> E0166-expected-let-mut.sisu:13:26
    |
  5 | fn gget<T>(mut x: T) -> T {
    |                - declared `mut` here
 ...
-11 |     let s: string = gget(ys)
+13 |     let s: string = gget(ys)
    |                          ^^ needs `mut`
 
 sisu: 2 errors
