@@ -1,7 +1,8 @@
 // GIVEN `class Node { value: i64 }`, `class Bag { mut nodes: [Node] }` and
-// `fn replace(mut nodes: [Node], b: Bag) { print(b.nodes.len()); nodes = [Node(value: 1)] }`
-// WHEN `main` calls `replace(mut b.nodes, b)` on two nodes and prints `b.nodes.len()`
-// THEN it prints "2", then "1"
+// `fn replace(mut nodes: [Node], b: Bag) { print(b.nodes[1].value); nodes = [Node(value: 1)] }`
+// WHEN `main` calls `replace(mut b.nodes, b)` on two nodes, with the values 1 and 2, and prints
+// `b.nodes.len()`
+// THEN it prints "2" (the second node of the old array, which `b` still holds), then "1"
 // AND the `--rc-checks` build and Valgrind find no fault: the store-back writes the new value,
 // then releases the old one, which `b` still held while the callee ran
 class Node {
@@ -13,7 +14,7 @@ class Bag {
 }
 
 fn replace(mut nodes: [Node], b: Bag) {
-    print(b.nodes.len())
+    print(b.nodes[1].value)
     nodes = [Node(value: 1)]
 }
 

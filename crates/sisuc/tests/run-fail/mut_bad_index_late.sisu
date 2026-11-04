@@ -1,8 +1,8 @@
 // GIVEN `class Item { mut cells: [i64] }`, `class Crate { mut items: [Item] }`,
 // `fn f(mut cells: [i64], n: i64) { cells.push(n) }` and `fn g() -> i64` that prints "g ran"
-// AND `let o = Crate(items: [])`
+// AND `let o = Crate(items: [Item(cells: [1])])`
 // WHEN `main` calls `f(mut o.items[5].cells, g())`
-// THEN it prints "g ran", then panics with "index 5 out of bounds for length 0" at the index `5` of
+// THEN it prints "g ran", then panics with "index 5 out of bounds for length 1" at the index `5` of
 // the argument: the objects along the place are read after the other arguments
 class Item {
     mut cells: [i64]
@@ -22,6 +22,6 @@ fn g() -> i64 {
 }
 
 fn main() {
-    let o = Crate(items: [])
+    let o = Crate(items: [Item(cells: [1])])
     f(mut o.items[5].cells, g())
 }
