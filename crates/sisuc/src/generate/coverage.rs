@@ -4024,6 +4024,19 @@ fn a_call_statement_should_name_any_function_the_budget_lets_it() {
     assert_eq!(g.callees_any().len(), 2);
 }
 
+/// GIVEN `f1`, `f2` and `f3`, of which `f2` has a `mut` parameter
+/// WHEN a call may name a function
+/// THEN `f2` is no callee: only a `mut` call names it
+#[test]
+fn a_function_with_a_mut_parameter_should_be_no_callee_of_an_ordinary_call() {
+    let mut g = with_funcs(&[]);
+    g.scope.funcs[1].params.push((Ty::I64, 0));
+    g.scope.funcs[1].muts.push(true);
+    assert_eq!(g.callees_any(), [0, 2]);
+    assert_eq!(g.callees(&Ty::Unit, 0), Vec::<usize>::new());
+    assert_eq!(g.reachable(), [0, 1, 2]);
+}
+
 #[test]
 fn fuel_runs_out() {
     let mut g = Gen::new(&[]);
