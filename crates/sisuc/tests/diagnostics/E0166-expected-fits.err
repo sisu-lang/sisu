@@ -1,0 +1,16 @@
+error[E0166]: the parameter `x` of `gget` is `mut`, so its argument needs `mut`
+  --> E0166-expected-fits.sisu:11:25
+   |
+ 5 | fn gget<T>(mut x: T) -> T {
+   |                - declared `mut` here
+...
+11 |     let s: [i64] = gget(ys)
+   |                         ^^ needs `mut`
+   |
+help: add `mut`
+   |
+11 |     let s: [i64] = gget(mut ys)
+   |                         +++
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0166

@@ -93,7 +93,11 @@ impl Checker<'_> {
         let written = (site.written, site.angles);
         let result = self.generic_call_mut(span, &sig, written, args, site.expected, &mut parts);
         let list = result.as_ref().ok().map(|(_, list, _)| *list);
-        self.marks(args, &mut parts, &mut_site, (&params, list));
+        let met = (
+            site.expected,
+            result.as_ref().ok().and_then(|(_, _, ret)| *ret),
+        );
+        self.marks(args, &mut parts, &mut_site, (&params, list), met);
         let (checked, list, ret) = result?;
         let (iargs, types) = list.get().split_at(owner.len());
         let (iargs, types) = (TypeArgs::intern(iargs), TypeArgs::intern(types));

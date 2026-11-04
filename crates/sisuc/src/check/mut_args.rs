@@ -7,7 +7,7 @@ use std::hash::{Hash, Hasher};
 
 use rustc_hash::{FxBuildHasher, FxHashMap};
 
-use super::expr::local;
+use super::expr::{fits, local};
 use super::generic::mark;
 use super::place::{Chain, Change, CheckedPlace, Path, Root, build};
 use super::{Checked, Checker, Poisoned, UNKNOWN, block_expr, type_of};
@@ -692,7 +692,8 @@ impl Checker<'_> {
             let _ = self.bind_param(call, pattern, *have, arg.value.span);
         }
         parts.unmarked.push((at, check));
-        Some(mark((Err(Poisoned::error()), true)))
+        // The call keeps its result type: the result meets its context or is E0032 as usual.
+        Some(Err(Poisoned::error()))
     }
 
     /// The argument `arg` at the `mut` parameter `at` of a call that `site` describes, whose type
@@ -766,19 +767,23 @@ impl Checker<'_> {
     /// (E0167), and each that has none where it has one (E0166). `parts` holds the check of each
     /// argument of the second kind that names a place, and `params` are the types of the
     /// parameters, which `list` makes the types they have once the call is checked (`None` when
-    /// it failed). It checks nothing itself.
+    /// it failed). `result` is the type that the call's context expects and the type of its
+    /// result: a fix or a help is offered only when the result meets its context. It checks
+    /// nothing itself.
     pub(super) fn marks(
         &mut self,
         args: &[ast::Arg],
         parts: &mut MutParts,
         site: &MutSite<'_>,
         (params, list): (&[Option<Type>], Option<TypeArgs>),
+        result: (Option<Type>, Option<Type>),
     ) {
         self.refuse_mut(args, Callee::Written(site));
         if !site.muts.contains(&true) {
             return;
         }
         let wants = self.final_params(params, list, parts);
+        let meets = self.result_meets(result);
         let checks = std::mem::take(&mut parts.unmarked);
         // A place that `mut` would pass twice with another gets no fix: both fixes together are
         // E0171. `twice` names the later key of a pair and the first one that it meets; the
@@ -820,7 +825,7 @@ impl Checker<'_> {
                 .is_some_and(|key| related[key]);
             let want = wants.get(i).copied().flatten();
             let check = found.map(|((_, check), _)| check);
-            let fix = self.missing_fix(arg, check, (related, want));
+            let fix = self.missing_fix(arg, check, (related || !meets, want));
             let param = site
                 .names
                 .get(i)
@@ -835,9 +840,19 @@ impl Checker<'_> {
         }
     }
 
+    /// Whether the result of a call, of type `got`, meets the type `want` that its context
+    /// expects. A context that is unknown or holds a hole expects nothing.
+    fn result_meets(&mut self, (want, got): (Option<Type>, Option<Type>)) -> bool {
+        let (Some(want), Some(got)) = (want, got) else {
+            return true;
+        };
+        want == UNKNOWN || want.holds_hole() || fits(want, got) || self.converts_to_any(got, want)
+    }
+
     /// What the report of the missing `mut` of `arg` offers. `check` is the check of the argument,
-    /// `related` whether another `mut` place of the call meets it, and `want` the parameter's
-    /// type. A fix or a help is offered only when following it gives a valid call.
+    /// `related` whether another `mut` place of the call meets it or the result misses its
+    /// context, and `want` the parameter's type. A fix or a help is offered only when following
+    /// it gives a valid call.
     fn missing_fix(
         &self,
         arg: &ast::Arg,

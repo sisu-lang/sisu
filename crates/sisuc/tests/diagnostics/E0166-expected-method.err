@@ -1,0 +1,17 @@
+error[E0032]: expected `i64`, found `string`
+  --> E0166-expected-method.sisu:16:18
+   |
+16 |     let n: i64 = b.pick(ys)
+   |                  ^^^^^^^^^^
+
+error[E0166]: the parameter `xs` of `Names.pick` is `mut`, so its argument needs `mut`
+  --> E0166-expected-method.sisu:16:25
+   |
+ 8 |     fn pick<T>(self, mut xs: [T]) -> T {
+   |                          -- declared `mut` here
+...
+16 |     let n: i64 = b.pick(ys)
+   |                         ^^ needs `mut`
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032, E0166

@@ -935,7 +935,11 @@ impl Checker<'_> {
             self.generic_call_mut(span, &sig, written, args, site.expected, &mut parts)
         };
         let list = checked.as_ref().ok().map(|(_, types, _)| *types);
-        self.marks(args, &mut parts, &mut_site, (&params, list));
+        let result = (
+            site.expected,
+            checked.as_ref().ok().and_then(|(_, _, ret)| *ret),
+        );
+        self.marks(args, &mut parts, &mut_site, (&params, list), result);
         let (checked, types, ret) = checked?;
         let parts = self.mut_overlaps(parts);
         let failed = labeled || checked.iter().any(mismatched);

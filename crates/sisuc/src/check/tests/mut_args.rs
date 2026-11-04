@@ -909,7 +909,7 @@ fn unmarked_value_at_a_generic_mut_parameter_should_give_the_missing_marker_only
         ),
         (
             "place nested in a call that fixes T",
-            "let mut c = 2\n    let b: u8 = 1\n    print(h(g(c), b))",
+            "let mut c: u8 = 2\n    let b: u8 = 1\n    print(h(g(c), b))",
         ),
     ];
     for (row, body) in rows {

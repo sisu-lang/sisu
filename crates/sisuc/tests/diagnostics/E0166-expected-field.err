@@ -1,0 +1,17 @@
+error[E0032]: expected `i64`, found `string`
+  --> E0166-expected-field.sisu:15:18
+   |
+15 |     let n: i64 = first(b.cells)
+   |                  ^^^^^^^^^^^^^^
+
+error[E0166]: the parameter `xs` of `first` is `mut`, so its argument needs `mut`
+  --> E0166-expected-field.sisu:15:24
+   |
+ 9 | fn first<T>(mut xs: [T]) -> T {
+   |                 -- declared `mut` here
+...
+15 |     let n: i64 = first(b.cells)
+   |                        ^^^^^^^ needs `mut`
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032, E0166
