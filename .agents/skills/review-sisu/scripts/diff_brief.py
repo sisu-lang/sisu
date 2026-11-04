@@ -3,7 +3,7 @@ keeps the sections for the target's kind and drops the others. Fails, writing no
 a slot above "# Report" is left unfilled, so a template change cannot slip past it.
 
 Usage: python3 diff_brief.py REPO TARGET OUT [--kind spec|plan|diff] [--doc PATH]... [--focus FILE]
-           [--mutation-log LOG] [--coverage FILE] [--round N --prior REPORT... --rulings FILE]
+           [--mutation-log LOG]... [--coverage FILE] [--round N --prior REPORT... --rulings FILE]
   REPO     the repository root that holds the target (a worktree is fine)
   TARGET   for a diff, BASE..HEAD, written into the brief as full SHAs so that a later commit or
            fetch cannot move it; for a spec or a plan, its path, copied to target-<round>.md next
@@ -13,9 +13,10 @@ Usage: python3 diff_brief.py REPO TARGET OUT [--kind spec|plan|diff] [--doc PATH
 REPO and each --doc are written as absolute paths: the reviewer runs in REPO, and a doc under
 the main checkout's gitignored docs/superpowers/ is not in a worktree.
   --focus  a file whose text goes under "# Focus"; without it, Focus is "none"
-  --mutation-log  the log of `make mutation-test LOG=...` for the diff; Focus names it by its absolute
-           path, so the reviewer checks its summary line. Fails when the file does not exist, or
-           when its summary line names a commit outside the range. A log measured
+  --mutation-log  the log of `make mutation-test LOG=...` for the diff; repeat for each log, such as
+           one for each part of a large diff. Focus has one line for each log, with its absolute
+           path, so the reviewer checks its summary line. Fails when a file does not exist, or
+           when the summary line of a log names a commit outside the range. A log measured
            at an earlier commit of the range is accepted, and Focus lists the commits after it,
            because later commits (such as a fix round's) are not mutated. A log
            measured before a rebase is accepted when a commit of the range has the same
@@ -180,7 +181,7 @@ def main():
     p.add_argument('--kind', choices=KINDS, default='diff')
     p.add_argument('--doc', action='append', default=[])
     p.add_argument('--focus')
-    p.add_argument('--mutation-log')
+    p.add_argument('--mutation-log', action='append', default=[])
     p.add_argument('--coverage')
     p.add_argument('--round', type=int, default=1)
     p.add_argument('--prior', action='append', default=[])
@@ -191,7 +192,7 @@ def main():
         sys.exit('diff_brief: a round after the first needs --prior and --rulings')
     if a.kind != 'diff' and (a.mutation_log or a.coverage):
         sys.exit('diff_brief: --mutation-log and --coverage are for a diff')
-    for path in [a.mutation_log, a.coverage, *a.prior, a.rulings, a.target if a.kind != 'diff' else None]:
+    for path in [*a.mutation_log, a.coverage, *a.prior, a.rulings, a.target if a.kind != 'diff' else None]:
         if path and not Path(path).is_file():
             sys.exit(f'diff_brief: no file at {Path(path).resolve()}')
 
@@ -202,8 +203,8 @@ def main():
         if not all(shas):
             sys.exit(f'diff_brief: {a.target} is not a range of two commits in {repo}')
         target = '..'.join(shas)
-        if a.mutation_log:
-            log = Path(a.mutation_log).resolve()
+        for mutation_log in a.mutation_log:
+            log = Path(mutation_log).resolve()
             if why := log_mismatch(log, repo, shas[0], shas[1]):
                 sys.exit(f'diff_brief: {why}')
             measured = summary(log)[1]
