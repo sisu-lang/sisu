@@ -300,10 +300,12 @@ impl<'ctx> Codegen<'ctx, '_> {
             .iter()
             .map(|param| param.ty)
             .collect();
-        let params: Vec<BasicMetadataTypeEnum<'ctx>> = std::iter::once(ptr.into())
+        let mut params: Vec<BasicMetadataTypeEnum<'ctx>> = std::iter::once(ptr.into())
             .chain(others.iter().flat_map(|&ty| self.param_types(ty)))
-            .chain(self.out_param_types(&function.muts))
             .collect();
+        // The out pointers follow the receiver and the value parameters.
+        let values = params.len();
+        params.extend(self.out_param_types(&function.muts));
         let fn_type = match self.llvm_type(function.ret) {
             Some(ret) => ret.fn_type(&params, false),
             None => self.context.void_type().fn_type(&params, false),
@@ -332,10 +334,6 @@ impl<'ctx> Codegen<'ctx, '_> {
             .flat_map(|(ty, &arg)| self.split(ty, arg))
             .collect();
         // The out pointers of the entry go on to the method, in the order they came.
-        let values = 1 + others
-            .iter()
-            .map(|&ty| self.param_types(ty).len())
-            .sum::<usize>();
         call_args.extend(
             (Self::out_pointers(glue, values, &function.muts)
                 .into_iter()

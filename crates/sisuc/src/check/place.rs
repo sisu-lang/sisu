@@ -960,7 +960,6 @@ impl Checker<'_> {
     }
 }
 
-/// Whether a `?.` sits anywhere in the chain of fields and indexes that makes up the place `e`.
 /// The expression at the root of the place `e`: `e` with each field and index taken off.
 pub(super) fn place_root(mut e: &ast::Expr) -> &ast::Expr {
     while let ast::ExprKind::Index { base, .. } | ast::ExprKind::Field { base, .. } = &e.kind {
@@ -969,6 +968,7 @@ pub(super) fn place_root(mut e: &ast::Expr) -> &ast::Expr {
     e
 }
 
+/// Whether a `?.` sits anywhere in the chain of fields and indexes that makes up the place `e`.
 fn goes_through_safe_access(e: &ast::Expr) -> bool {
     match &e.kind {
         ast::ExprKind::Field { base, safe, .. } => *safe || goes_through_safe_access(base),
