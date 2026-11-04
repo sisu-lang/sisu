@@ -1,12 +1,13 @@
 //! `--timings`: the wall time of each stage of one compile, as the `timings:` lines that the
 //! reporter prints to stderr.
 
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use crate::lexer::{Lexed, TokenKind};
 
 /// One stage of the compiler, as the glossary lists them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Stage {
     Lex,
     Parse,
@@ -47,6 +48,8 @@ struct Recording {
     stages: Vec<(Stage, Duration)>,
     /// The lines and the tokens of the user's file, unless the lex stopped.
     counts: Option<(usize, usize)>,
+    /// The number of codegen units, once `merge_units` has run.
+    units: Option<usize>,
 }
 
 impl Timings {
@@ -61,7 +64,39 @@ impl Timings {
             start: Instant::now(),
             stages: Vec::new(),
             counts: None,
+            units: None,
         }))
+    }
+
+    /// A recorder for one codegen unit, on when `self` is on. It runs on the unit's thread, and
+    /// `merge_units` takes its stages back.
+    pub(crate) fn for_unit(&self) -> Timings {
+        Timings(self.0.is_some().then(|| Recording {
+            start: Instant::now(),
+            stages: Vec::new(),
+            counts: None,
+            units: None,
+        }))
+    }
+
+    /// Records the stages of `units`: for each stage that any unit recorded, in stage order, the
+    /// longest time that one unit took for that stage. This is not the elapsed time of the stage:
+    /// a worker can run several units one after the other. It also records the number of units
+    /// for the `codegen units` line.
+    pub(crate) fn merge_units(&mut self, units: Vec<Timings>) {
+        if let Some(recording) = &mut self.0 {
+            recording.units = Some(units.len());
+            let mut slowest: BTreeMap<Stage, Duration> = BTreeMap::new();
+            for (stage, time) in units
+                .into_iter()
+                .filter_map(|unit| unit.0)
+                .flat_map(|r| r.stages)
+            {
+                let longest = slowest.entry(stage).or_default();
+                *longest = (*longest).max(time);
+            }
+            recording.stages.extend(slowest);
+        }
     }
 
     /// Runs `work` and records its time as `stage`.
@@ -85,7 +120,7 @@ impl Timings {
     /// The `timings:` lines, or none when off. The total ends now.
     pub(crate) fn report(self) -> Vec<String> {
         match self.0 {
-            Some(r) => render(&r.stages, r.start.elapsed(), r.counts),
+            Some(r) => render(&r.stages, r.start.elapsed(), r.counts, r.units),
             None => Vec::new(),
         }
     }
@@ -99,12 +134,13 @@ pub(crate) fn counts(source: &str, lexed: &Lexed<'_>) -> (usize, usize) {
     (source.lines().count(), tokens)
 }
 
-/// A line for each of `stages`, then `other` and `total`. Lex, parse and check have throughput
-/// when `counts` is known; lex also gives tokens.
+/// A line for each of `stages`, then the `codegen units` line when `units` is known, then `other`
+/// and `total`. Lex, parse and check have throughput when `counts` is known; lex also gives tokens.
 fn render(
     stages: &[(Stage, Duration)],
     total: Duration,
     counts: Option<(usize, usize)>,
+    units: Option<usize>,
 ) -> Vec<String> {
     let percent = |time: Duration| {
         if total.is_zero() {
@@ -137,6 +173,9 @@ fn render(
             line(stage.name(), time) + &throughput
         })
         .collect();
+    if let Some(count) = units {
+        lines.push(format!("timings: codegen units: {count}"));
+    }
     let spent: Duration = stages.iter().map(|&(_, time)| time).sum();
     lines.push(line("other", total.saturating_sub(spent)));
     lines.push(line("total", total));
@@ -185,7 +224,7 @@ mod tests {
             (Stage::Check, ms(2)),
         ];
         assert_eq!(
-            render(&stages, ms(10), Some((3, 12))),
+            render(&stages, ms(10), Some((3, 12)), None),
             [
                 "timings: lex           1.0 ms   10.0%  3 lines  3.0k lines/s  12 tokens  12.0k tokens/s",
                 "timings: parse         2.0 ms   20.0%  3 lines  1.5k lines/s",
@@ -201,7 +240,7 @@ mod tests {
     fn report_should_have_no_throughput_when_the_lex_stops() {
         let ms = Duration::from_millis;
         assert_eq!(
-            render(&[(Stage::Lex, ms(1))], ms(2), None),
+            render(&[(Stage::Lex, ms(1))], ms(2), None, None),
             [
                 "timings: lex           1.0 ms   50.0%",
                 "timings: other         1.0 ms   50.0%",
@@ -213,7 +252,7 @@ mod tests {
     #[test]
     fn report_should_print_zero_percent_when_the_total_is_zero() {
         assert_eq!(
-            render(&[(Stage::Lex, Duration::ZERO)], Duration::ZERO, None),
+            render(&[(Stage::Lex, Duration::ZERO)], Duration::ZERO, None, None),
             [
                 "timings: lex           0.0 ms    0.0%",
                 "timings: other         0.0 ms    0.0%",
@@ -249,5 +288,44 @@ mod tests {
         assert_eq!(t.time(Stage::Lex, || 7), 7);
         t.count(|| unreachable!("an off report counts nothing"));
         assert_eq!(t.report(), Vec::<String>::new());
+    }
+
+    /// A recorder that has run `stages`, as `time` would record them.
+    fn recorded(stages: &[(Stage, u64)]) -> Timings {
+        Timings(Some(Recording {
+            start: Instant::now(),
+            stages: (stages.iter())
+                .map(|&(stage, millis)| (stage, Duration::from_millis(millis)))
+                .collect(),
+            counts: None,
+            units: None,
+        }))
+    }
+
+    #[test]
+    fn merge_units_should_keep_the_slowest_unit_of_each_stage() {
+        let mut timings = Timings::start();
+        let units = vec![
+            recorded(&[(Stage::Codegen, 3), (Stage::Optimize, 4)]),
+            recorded(&[(Stage::Codegen, 5), (Stage::Optimize, 1)]),
+        ];
+        timings.merge_units(units);
+        let lines = timings.report();
+        assert!(
+            lines[0].starts_with("timings: codegen       5.0 ms"),
+            "{lines:?}"
+        );
+        assert!(
+            lines[1].starts_with("timings: optimize      4.0 ms"),
+            "{lines:?}"
+        );
+        assert_eq!(lines[2], "timings: codegen units: 2");
+        assert!(lines[3].starts_with("timings: other"), "{lines:?}");
+    }
+
+    #[test]
+    fn for_unit_should_be_on_only_when_the_report_is_on() {
+        assert!(Timings::start().for_unit().0.is_some());
+        assert!(Timings::off().for_unit().0.is_none());
     }
 }

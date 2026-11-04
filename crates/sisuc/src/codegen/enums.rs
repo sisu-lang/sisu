@@ -21,7 +21,7 @@
 //! depth and shape of value.
 
 use std::num::NonZeroU32;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use inkwell::AddressSpace;
 use inkwell::IntPredicate;
@@ -112,7 +112,7 @@ pub(super) fn nested(ty: Type) -> Option<Type> {
 /// An enum's component with boxes: its members in declaration order, and the index of the enum
 /// among them.
 pub(super) struct Component {
-    pub(super) members: Rc<[EnumId]>,
+    pub(super) members: Arc<[EnumId]>,
     pub(super) index: usize,
 }
 
@@ -132,7 +132,7 @@ pub(super) fn components(enums: &[Enum]) -> Vec<Option<Component>> {
             })
         })
         .collect();
-    let shared: FxHashMap<usize, Rc<[EnumId]>> = by_cycle
+    let shared: FxHashMap<usize, Arc<[EnumId]>> = by_cycle
         .into_iter()
         .map(|(cycle, members)| (cycle, members.into()))
         .collect();
@@ -140,7 +140,7 @@ pub(super) fn components(enums: &[Enum]) -> Vec<Option<Component>> {
         .into_iter()
         .map(|slot| {
             slot.map(|(cycle, index)| Component {
-                members: Rc::clone(&shared[&cycle]),
+                members: Arc::clone(&shared[&cycle]),
                 index,
             })
         })
@@ -166,14 +166,14 @@ impl<'ctx> Codegen<'ctx, '_> {
     ///
     /// It checks in constant time that `member` is in that component. The `unsafe` index of
     /// `head` relies on this check.
-    fn member_position(&self, members: &Rc<[EnumId]>, member: EnumId) -> usize {
+    fn member_position(&self, members: &Arc<[EnumId]>, member: EnumId) -> usize {
         #[cfg(test)]
         super::MEMBER_SCANS.set(super::MEMBER_SCANS.get() + 1);
-        let component = self.components[member.0]
+        let component = self.analyses.components[member.0]
             .as_ref()
             .expect("an enum that a component links to should be in a component with boxes");
         assert!(
-            Rc::ptr_eq(&component.members, members),
+            Arc::ptr_eq(&component.members, members),
             "the checker should box only a field whose enum is in the declaring enum's component"
         );
         component.index
@@ -812,9 +812,9 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// The members of the enum `id`'s component, in declaration order, when the component has
     /// boxes; `None` otherwise.
-    pub(super) fn component(&self, id: EnumId) -> Option<Rc<[EnumId]>> {
-        let component = self.components[id.0].as_ref()?;
-        Some(Rc::clone(&component.members))
+    pub(super) fn component(&self, id: EnumId) -> Option<Arc<[EnumId]>> {
+        let component = self.analyses.components[id.0].as_ref()?;
+        Some(Arc::clone(&component.members))
     }
 
     /// The enum of payload field `payload` of the enum `id`, whose component has boxes, when the
@@ -1489,7 +1489,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// The `kind` of `member` in its component: its index, as an `i32`.
-    pub(super) fn member_index(&self, members: &Rc<[EnumId]>, member: EnumId) -> IntValue<'ctx> {
+    pub(super) fn member_index(&self, members: &Arc<[EnumId]>, member: EnumId) -> IntValue<'ctx> {
         self.kind(self.member_position(members, member))
     }
 
@@ -2037,7 +2037,7 @@ impl<'ctx> Codegen<'ctx, '_> {
 
 /// The blocks and phis of an `eq_component` helper's loop that each variant's comparison uses.
 struct EqLoop<'ctx> {
-    members: Rc<[EnumId]>,
+    members: Arc<[EnumId]>,
     /// The loop's head, and its `kind`, `a` and `b` phis.
     top: BasicBlock<'ctx>,
     current: [PhiValue<'ctx>; 3],

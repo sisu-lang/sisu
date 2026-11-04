@@ -604,6 +604,12 @@ codegen, optimize, object, link. Each stage reads what the stage before
 it made.
 _Avoid_: pass (that is LLVM's), phase
 
+**Codegen unit**:
+One of the modules that codegen splits a program into. LLVM optimizes
+each one and writes its object independently of the others, so several
+run at once on several threads. A small program is one codegen unit.
+_Avoid_: part, unit (alone), CGU, partition, shard
+
 **Front end**:
 The stages that make the typed tree that codegen needs: lex, parse,
 check and mono. `sisu check` runs the front end without mono.

@@ -1147,12 +1147,13 @@ library.
   2026-10-29). `sisu run` and `sisu build` still need `main`.
 - Modules may import each other in a cycle. The checker sees the whole
   program at once, with one scope per module, so this costs nothing.
-- Codegen puts the whole program into one LLVM module. Each generated name,
+- Codegen splits the whole program into codegen units by size, not by module
+  ([ADR 0045](adr/0045-codegen-units-split-by-default.md)). Each generated name,
   the reference-count helpers too, carries its module path, so two modules
   with a class of the same name do not clash. `main` keeps its name.
 - Separate compilation and build caching wait until `--time` shows builds
-  are slow. Then codegen emits one LLVM module per Sisu module and LLVM
-  compiles them in parallel, as Rust's codegen units do. Inferred ownership
+  are slow. Then a cache needs a stable assignment of functions to units,
+  such as one unit per Sisu module (ADR 0045). Inferred ownership
   ([ADR 0029](adr/0029-parameters-are-borrowed-unless-consumed.md)) and
   monomorphized generics need the whole program, so a cache key must cover
   more than one file's source.

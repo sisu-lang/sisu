@@ -41,6 +41,7 @@ are GitHub issues.
 | The fixed-size inline array is `FixedArray<T, N>`. | 2026-10-17 | none; the roadmap's "fixed-size inline array" bullet points here | Milestone 9 part 1, Task 0 (roadmap) |
 | A bare variant `V` means `E.V` when the expected type is the enum `E`. A name that is also a local is an error. | 2026-10-31 | ADR 0019 (bare `Num(2)`, the reserved `.Variant` form); `docs/roadmap.md` ("Names and namespaces" keeps Swift's `.circle` open, with a note) | After slices: a new ADR |
 | `sisu check` builds the mir. Copies show as the loop-copy warning only, with no run-time copy report. | 2026-10-26 | `docs/architecture.md` (check stops after the checker; the mir is built on the build path only); `GLOSSARY.md` (Front end); ADR 0023 and E0030 (a chain that mono stops passes `sisu check`) | The loop-copy warning |
+| When projects arrive, `sisu.toml` gets a setting for the codegen unit count, and a setting for LTO once LTO exists. No environment variable sets the count. | 2026-11-02 | none | The `sisu.toml` work |
 
 ## Debt
 

@@ -50,6 +50,13 @@ const BACK_EDGES: &[(&str, &str, &str)] = &[
         "the registry quotes the payload limit that payload_limit owns",
     ),
     (
+        "codegen",
+        "crate",
+        "`STACK_SIZE` is the one item of the crate root that codegen uses. It stays there, where \
+         `main.rs` and the fuzz targets read it as `sisuc::STACK_SIZE`; the scheduler gives it to \
+         its workers",
+    ),
+    (
         "link",
         "crate",
         "`Allocator` is a command-line choice in lib.rs, and link picks the runtime by it",

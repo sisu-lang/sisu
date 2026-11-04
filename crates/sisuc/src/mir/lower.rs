@@ -60,6 +60,7 @@ pub(crate) fn lower(program: &tir::Program, modes: &[Vec<bool>]) -> super::Progr
             .enumerate()
             .map(|(id, borrowed)| function(program, FuncId(id), borrowed, &mut written).0)
             .collect(),
+        main: None,
     }
 }
 

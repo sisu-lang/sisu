@@ -70,7 +70,7 @@ pub(super) fn infer(functions: &[Function], main: FuncId, reuses: &[Vec<bool>]) 
         first.push(nodes);
         nodes += function.locals.len();
     }
-    let calls: Vec<Vec<usize>> = functions.iter().map(callees).collect();
+    let calls: Vec<Vec<usize>> = functions.iter().map(Function::callees).collect();
     let component = components(&calls);
     let mut graph = Graph {
         edges: vec![Vec::new(); nodes],
@@ -123,7 +123,7 @@ pub(super) fn infer(functions: &[Function], main: FuncId, reuses: &[Vec<bool>]) 
 /// statement of each prelude function is visited once. Each function's component is read once
 /// to find the members, and twice for each call.
 pub(super) fn quiet(functions: &mut [Function]) {
-    let calls: Vec<Vec<usize>> = functions.iter().map(callees).collect();
+    let calls: Vec<Vec<usize>> = functions.iter().map(Function::callees).collect();
     let component = Component(components(&calls));
     let mut members = vec![Vec::new(); component.count()];
     for id in 0..component.len() {
@@ -261,23 +261,6 @@ const fn read(local: LocalId, borrow: bool, guard: bool) -> Operand {
         borrow,
         guard,
     })
-}
-
-/// The functions `function` calls.
-fn callees(function: &Function) -> Vec<usize> {
-    let mut called = Vec::new();
-    for block in &function.blocks {
-        for stmt in &block.stmts {
-            if let Statement::Assign {
-                value: Rvalue::Call { func, .. },
-                ..
-            } = stmt
-            {
-                called.push(func.0);
-            }
-        }
-    }
-    called
 }
 
 /// The local an operand reads whole and consumes.

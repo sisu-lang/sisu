@@ -36,7 +36,8 @@ enum Command {
     Build {
         #[command(flatten)]
         flags: BuildFlags,
-        /// Print this output of the compiler to stdout instead of building
+        /// Print this output of the compiler to stdout instead of building; `ir` and `ir-raw`
+        /// print one module; give `--codegen-units` to see the codegen units
         #[arg(long, value_enum, conflicts_with = "output")]
         emit: Option<Stage>,
         #[command(flatten)]
@@ -118,6 +119,10 @@ struct BuildFlags {
     )]
     #[arg(long, value_enum)]
     allocator: Option<Allocator>,
+    /// Split the program into at most N codegen units, built on several threads; 1 gives
+    /// whole-program optimization and the fastest program
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u8).range(1..=64))]
+    codegen_units: Option<u8>,
     /// How to print diagnostics: as text, or as JSON Lines.
     #[arg(long, value_enum, default_value = "text")]
     format: Format,
@@ -131,6 +136,7 @@ impl BuildFlags {
             rc_checks: self.rc_checks,
             linker: self.linker,
             allocator: self.allocator,
+            units: self.codegen_units.map(usize::from),
         };
         (self.format, backend)
     }
@@ -296,12 +302,20 @@ fn build_mode(
             "`--allocator` works only when building an executable",
         ));
     }
+    if backend.units.is_some() && !matches!(stage, Stage::Ir | Stage::IrRaw) {
+        return Err(usage_error(
+            "build",
+            "`--codegen-units` works only when building an executable or with `--emit ir` or \
+             `--emit ir-raw`",
+        ));
+    }
     Ok(Mode::Emit {
         stage,
         input: source,
         level: backend.level,
         rc_checks: backend.rc_checks,
         timings,
+        units: backend.units,
     })
 }
 

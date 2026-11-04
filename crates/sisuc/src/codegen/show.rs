@@ -44,13 +44,13 @@ use crate::conformance::{calls_written, holds_class, prints_by_helper};
 use crate::source::Span;
 use crate::tir::{Align, ClassId, EnumId, Format, FuncId, Pad, Stream, Type, TypeArgs, TypeKind};
 use rustc_hash::FxHashMap;
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// The blocks and phis of a `show_component` helper's loop that each variant uses.
 struct ShowLoop<'ctx> {
     sink: PointerValue<'ctx>,
     mode: Mode,
-    members: Rc<[EnumId]>,
+    members: Arc<[EnumId]>,
     /// The `kind` of each member, so that a link finds the one it enters at once.
     kinds: FxHashMap<EnumId, u64>,
     /// The loop's head, and its `kind`, address and `owed` phis.
@@ -453,7 +453,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                     Some(method) => {
                         self.show_written(sink, method, ty, self.load_value(ty, slot));
                     }
-                    None => match &self.components[id.0] {
+                    None => match &self.analyses.components[id.0] {
                         Some(Component { members, index }) => {
                             let first = Type::intern(TypeKind::Enum(members[0], TypeArgs::NONE));
                             let kind = self.kind(*index);

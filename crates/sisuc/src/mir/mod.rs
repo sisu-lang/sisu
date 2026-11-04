@@ -89,6 +89,8 @@ pub(crate) fn lowered(program: &tir::Program) -> Program {
 #[derive(Debug)]
 pub(crate) struct Program {
     pub(crate) functions: Vec<Function>,
+    /// The id of the entry function, `main`. `None` in a test lowering that does not look for it.
+    pub(crate) main: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -120,6 +122,27 @@ pub(crate) struct Function {
     /// Each `match` binding, and the scrutinee local it borrows from; and each member of a pair
     /// that pair removal made a borrow, and the local its copy read.
     pub(crate) owners: FxHashMap<LocalId, LocalId>,
+}
+
+impl Function {
+    /// The functions this one calls directly, in the order of its call sites, with a repeat for
+    /// each call. A call through a table (`DynCall`) names no function. This is the one place
+    /// that lists the functions that a function calls.
+    pub(crate) fn callees(&self) -> Vec<usize> {
+        let mut called = Vec::new();
+        for block in &self.blocks {
+            for stmt in &block.stmts {
+                if let Statement::Assign {
+                    value: Rvalue::Call { func, .. },
+                    ..
+                } = stmt
+                {
+                    called.push(func.0);
+                }
+            }
+        }
+        called
+    }
 }
 
 #[derive(Debug)]
@@ -617,7 +640,10 @@ pub(crate) fn build(program: &tir::Program) -> Program {
         modes_checked(&functions);
     }
     finish(&mut functions, program);
-    Program { functions }
+    Program {
+        functions,
+        main: Some(main),
+    }
 }
 
 /// The passes that follow `params::rewrite`. The first four add clobbers, so they run for every

@@ -37,8 +37,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use codegen::OptLevel;
+use codegen::units::Unit;
 use diagnostic::{Code, Diagnostic, RETIRED, Severity};
 use inkwell::context::Context;
+use inkwell::module::Module;
 use inkwell::targets::TargetMachine;
 use report::{Format, Reporter};
 use timings::Timings;
@@ -64,6 +66,8 @@ enum Mode {
         rc_checks: bool,
         /// Print the time of each stage.
         timings: bool,
+        /// The number of codegen units for `ir` and `ir-raw`; one without it.
+        units: Option<usize>,
     },
     Check {
         source: Source,
@@ -103,6 +107,9 @@ struct Backend {
     linker: Option<String>,
     /// The allocator of the runtime the executable links; `None` is mimalloc.
     allocator: Option<Allocator>,
+    /// The most codegen units to split the program into; `None` lets the size of the program
+    /// decide.
+    units: Option<usize>,
 }
 
 /// The allocator a compiled program allocates with: the runtime archive it links.
@@ -208,6 +215,7 @@ fn execute(mut reporter: Report, format: &Format, mode: Mode) -> ExitCode {
             input,
             level,
             rc_checks,
+            units,
             ..
         } => emit(
             &mut reporter,
@@ -215,6 +223,7 @@ fn execute(mut reporter: Report, format: &Format, mode: Mode) -> ExitCode {
             &input,
             level,
             rc_checks,
+            units,
             &mut timings,
         ),
         Mode::Check { source, .. } => run_check(&mut reporter, &source, &mut timings),
@@ -336,13 +345,14 @@ fn read_source(reporter: &mut Report, input: &Source) -> Option<(String, String)
 }
 
 /// Prints one stage's output for `input` to stdout; the IR stages build in count checks with
-/// `rc_checks`.
+/// `rc_checks`, and in `units` codegen units, one without it.
 fn emit(
     reporter: &mut Report,
     stage: &Stage,
     input: &Source,
     level: OptLevel,
     rc_checks: bool,
+    units: Option<usize>,
     timings: &mut Timings,
 ) -> ExitCode {
     let Some((path, source)) = read_source(reporter, input) else {
@@ -393,8 +403,8 @@ fn emit(
             }
             None => ExitCode::FAILURE,
         },
-        Stage::Ir => emit_ir(reporter, &path, &source, level, rc_checks, timings),
-        Stage::IrRaw => emit_ir_raw(reporter, &path, &source, rc_checks, timings),
+        Stage::Ir => emit_ir(reporter, &path, &source, level, rc_checks, units, timings),
+        Stage::IrRaw => emit_ir_raw(reporter, &path, &source, rc_checks, units, timings),
     }
 }
 
@@ -417,41 +427,161 @@ fn lex<'a>(
     }
 }
 
-/// Prints the module for `source` before and after the pipeline, once it passes the checker.
+/// What `each_unit` needs to build the units of one program.
+struct UnitInput<'src> {
+    program: &'src Program,
+    mir: &'src mir::Program,
+    /// The name of the source in panic messages.
+    path: &'src str,
+    source: &'src str,
+    level: OptLevel,
+    rc_checks: bool,
+}
+
+/// Builds each of `units` and runs `finish` on its index, its module and its target machine, and
+/// returns the results in unit order. With one unit, both run on the calling thread, and the
+/// module is `codegen::compile`'s. With several, each unit has its own context and target
+/// machine, and runs on a thread of `units::schedule`. `finish` runs on that thread, before the
+/// module goes. The time of each unit is `timings`' stage `Codegen`, with the stages that
+/// `finish` records, and the slowest unit counts (`Timings::merge_units`).
+///
+/// A unit that fails has an `Err`. The caller reports the lowest index.
+fn each_unit<T: Send>(
+    input: &UnitInput<'_>,
+    units: &[Unit],
+    timings: &mut Timings,
+    finish: impl Fn(usize, &Module<'_>, &TargetMachine, &mut Timings) -> Result<T, String> + Sync,
+) -> Vec<Result<T, String>> {
+    // Once, on this thread; the units only create target machines.
+    if let Err(message) = codegen::initialize_native_target() {
+        return units.iter().map(|_| Err(message.clone())).collect();
+    }
+    let analyses = (units.len() > 1).then(|| codegen::Analyses::new(input.program, input.source));
+    let parent = &*timings;
+    let built = codegen::units::schedule(
+        units.len(),
+        codegen::units::threads(units.len()),
+        codegen::units::Order::from_env(),
+        |at| {
+            let mut unit_timings = parent.for_unit();
+            let result = codegen::create_target_machine(input.level).and_then(|machine| {
+                let context = Context::create();
+                let module = unit_timings.time(timings::Stage::Codegen, || match &analyses {
+                    None => codegen::compile(
+                        &context,
+                        input.program,
+                        input.mir,
+                        input.path,
+                        input.source,
+                        &machine,
+                        input.rc_checks,
+                    ),
+                    Some(analyses) => codegen::compile_unit(
+                        &context,
+                        input.program,
+                        input.mir,
+                        analyses,
+                        &units[at],
+                        input.path,
+                        input.source,
+                        &machine,
+                        input.rc_checks,
+                    ),
+                });
+                let done = finish(at, &module, &machine, &mut unit_timings);
+                // The module goes before the context that owns it.
+                release(module);
+                release(context);
+                done
+            });
+            (result, unit_timings)
+        },
+    );
+    let (results, recorded): (Vec<_>, Vec<_>) = built.into_iter().unzip();
+    timings.merge_units(recorded);
+    results
+}
+
+/// Prints the module for `source` before and after the pipeline, once it passes the checker. With
+/// `units`, each codegen unit prints in turn (`join_units`).
 fn emit_ir(
     reporter: &mut Report,
     path: &str,
     source: &str,
     level: OptLevel,
     rc_checks: bool,
+    units: Option<usize>,
     timings: &mut Timings,
 ) -> ExitCode {
     let Some(program) = front_end(reporter, path, source, timings) else {
         return ExitCode::FAILURE;
     };
     let mir = timings.time(timings::Stage::Mir, || mir::build(&program));
-    let context = Context::create();
     let pipeline = codegen::pipeline(level);
-    let printed = codegen::target_machine(level).and_then(|machine| {
-        let module = timings.time(timings::Stage::Codegen, || {
-            codegen::compile(&context, &program, &mir, path, source, &machine, rc_checks)
-        });
-        // For the `o2-calls` check in the tests (`docs/development.md`); `--emit ir` only, so
-        // no executable is affected, and not in the usage text.
-        if let Ok(names) = std::env::var("SISU_KEEP_FUNCTIONS") {
-            codegen::keep_functions(&module, &names);
-        }
-        // `LLVMString`'s `Display` quotes and escapes the text; `to_string` does not.
-        let before = module.print_to_string().to_string();
-        timings.time(timings::Stage::Optimize, || {
-            codegen::optimize(&module, &machine, level)
-        })?;
-        Ok(format!(
-            "; before {pipeline}\n{before}\n; after {pipeline}\n{}",
-            module.print_to_string().to_string()
-        ))
-    });
+    let printed = each_ir_unit(
+        &UnitInput {
+            program: &program,
+            mir: &mir,
+            path,
+            source,
+            level,
+            rc_checks,
+        },
+        units,
+        timings,
+        |_, module, machine, timings| {
+            // For the `o2-calls` check in the tests (`docs/development.md`); `--emit ir` only, so
+            // no executable is affected, and not in the usage text.
+            if let Ok(names) = std::env::var("SISU_KEEP_FUNCTIONS") {
+                codegen::keep_functions(module, &names);
+            }
+            // `LLVMString`'s `Display` quotes and escapes the text; `to_string` does not.
+            let before = module.print_to_string().to_string();
+            timings.time(timings::Stage::Optimize, || {
+                codegen::optimize(module, machine, level)
+            })?;
+            Ok(format!(
+                "; before {pipeline}\n{before}\n; after {pipeline}\n{}",
+                module.print_to_string().to_string()
+            ))
+        },
+    );
     print_or_report(reporter, printed)
+}
+
+/// Builds the codegen units of `input`, `units` of them, or one without it, and gives the text
+/// that `print` makes of each unit's module. The text of one unit is the text of the unit
+/// alone. With several, each text follows the line `; codegen unit <k> of <n>`, from 0, and the
+/// texts are joined with one empty line. The error of the lowest unit that failed is the result.
+fn each_ir_unit(
+    input: &UnitInput<'_>,
+    units: Option<usize>,
+    timings: &mut Timings,
+    print: impl Fn(usize, &Module<'_>, &TargetMachine, &mut Timings) -> Result<String, String> + Sync,
+) -> Result<String, String> {
+    let parts = codegen::units::split(
+        input.mir,
+        input.program,
+        Some(units.unwrap_or(1)),
+        input.level,
+    );
+    each_unit(input, &parts, timings, print)
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .map(join_units)
+}
+
+/// The text of one unit alone, or the text of each of several units after its header, joined
+/// with one empty line.
+fn join_units(texts: Vec<String>) -> String {
+    let count = texts.len();
+    match <[String; 1]>::try_from(texts) {
+        Ok([text]) => text,
+        Err(texts) => (texts.iter().enumerate())
+            .map(|(at, text)| format!("; codegen unit {at} of {count}\n{text}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    }
 }
 
 /// Prints `text`, or reports the error.
@@ -471,23 +601,30 @@ fn emit_ir_raw(
     path: &str,
     source: &str,
     rc_checks: bool,
+    units: Option<usize>,
     timings: &mut Timings,
 ) -> ExitCode {
     let Some(program) = front_end(reporter, path, source, timings) else {
         return ExitCode::FAILURE;
     };
     let mir = timings.time(timings::Stage::Mir, || mir::build(&program));
-    let context = Context::create();
-    print_or_report(
-        reporter,
-        codegen::target_machine(OptLevel::O0).and_then(|machine| {
-            let module = timings.time(timings::Stage::Codegen, || {
-                codegen::compile(&context, &program, &mir, path, source, &machine, rc_checks)
-            });
+    let printed = each_ir_unit(
+        &UnitInput {
+            program: &program,
+            mir: &mir,
+            path,
+            source,
+            level: OptLevel::O0,
+            rc_checks,
+        },
+        units,
+        timings,
+        |_, module, _, _| {
             module.verify().map_err(|e| e.to_string())?;
             Ok(module.print_to_string().to_string())
-        }),
-    )
+        },
+    );
+    print_or_report(reporter, printed)
 }
 
 /// Lexes, parses and checks `input`; reports every diagnostic. Fails if any is an error.
@@ -646,7 +783,7 @@ fn front_end(
 }
 
 /// Compiles `program` into the executable `output`, linked with `runtime`, going through a
-/// temporary object file in `dir`.
+/// temporary object file in `dir` for each codegen unit.
 #[expect(
     clippy::too_many_arguments,
     reason = "the inputs of one compile; a struct would only rename them"
@@ -666,41 +803,86 @@ fn compile(
         rc_checks,
         ref linker,
         allocator: _,
+        units: wanted,
     } = *backend;
     let mir = timings.time(timings::Stage::Mir, || mir::build(program));
-    let context = Context::create();
-    let machine = codegen::target_machine(level)?;
-    let module = timings.time(timings::Stage::Codegen, || {
-        codegen::compile(&context, program, &mir, path, source, &machine, rc_checks)
-    });
-    timings.time(timings::Stage::Optimize, || {
-        codegen::optimize(&module, &machine, level)
-    })?;
-    let code = timings.time(timings::Stage::Object, || {
-        codegen::object_code(&module, &machine)
-    })?;
-    // The module goes before the context that owns it.
-    release(module);
-    release(context);
+    let units = codegen::units::split(&mir, program, wanted, level);
+    let results = each_unit(
+        &UnitInput {
+            program,
+            mir: &mir,
+            path,
+            source,
+            level,
+            rc_checks,
+        },
+        &units,
+        timings,
+        |at, module, machine, timings| {
+            timings.time(timings::Stage::Optimize, || {
+                codegen::optimize(module, machine, level)
+            })?;
+            let code = timings.time(timings::Stage::Object, || {
+                codegen::object_code(module, machine)
+            })?;
+            // A name of its own, so a user's `<output>.o` is left alone. A panic (an internal
+            // compiler error) ends `sisu` with no cleanup, under `panic = "abort"`, and can leave
+            // the object of another unit here.
+            create_object(dir, code.as_slice(), fresh_names(format!("-{at}.o")))
+        },
+    );
     release(mir);
-    // A name of its own, so a user's `<output>.o` is left alone.
-    let object = create_object(dir, code.as_slice(), fresh_names(".o"))?;
-    // Remove the object file whether or not the link worked; a link error wins.
+    let objects = written_objects(results)?;
+    // Remove the object files whether or not the link worked; a link error wins.
     let linking = link::Linking {
         runtime,
         output,
         linker: linker.as_deref(),
     };
-    let link_result = timings.time(timings::Stage::Link, || link::link(&object, &linking));
-    let removed =
-        fs::remove_file(&object).map_err(|e| format!("cannot remove {}: {e}", object.display()));
+    let link_result = timings.time(timings::Stage::Link, || link::link(&objects, &linking));
+    let removed = remove_objects(&objects);
     link_result.and(removed)
+}
+
+/// The object files of the units, in unit order, when every unit wrote one. Else the error of the
+/// lowest unit that failed, and the files that the other units wrote are removed.
+fn written_objects(results: Vec<Result<PathBuf, String>>) -> Result<Vec<PathBuf>, String> {
+    let mut objects = Vec::new();
+    let mut first_error = None;
+    for result in results {
+        match result {
+            Ok(object) => objects.push(object),
+            Err(message) => {
+                first_error.get_or_insert(message);
+            }
+        }
+    }
+    let Some(message) = first_error else {
+        return Ok(objects);
+    };
+    Err(match remove_objects(&objects) {
+        Ok(()) => message,
+        Err(removal) => format!("{message}; {removal}"),
+    })
+}
+
+/// Removes every file of `objects`; the error is the first that failed.
+fn remove_objects(objects: &[PathBuf]) -> Result<(), String> {
+    let failures: Vec<String> = (objects.iter())
+        .filter_map(|object| {
+            fs::remove_file(object)
+                .err()
+                .map(|e| format!("cannot remove {}: {e}", object.display()))
+        })
+        .collect();
+    failures.into_iter().next().map_or(Ok(()), Err)
 }
 
 /// Ten names for a new file or directory in the temp dir: `sisu-<pid>-<nanoseconds><suffix>`.
 /// The nanoseconds pick a fresh name when one is taken.
-fn fresh_names(suffix: &'static str) -> impl Iterator<Item = String> {
+fn fresh_names(suffix: impl Into<String>) -> impl Iterator<Item = String> {
     let pid = std::process::id();
+    let suffix = suffix.into();
     (0..10).map(move |_| {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -755,6 +937,38 @@ mod tests {
         let value = std::rc::Rc::new(());
         release(std::rc::Rc::clone(&value));
         assert_eq!(std::rc::Rc::strong_count(&value), 1);
+    }
+
+    #[test]
+    fn written_objects_should_remove_every_object_and_keep_the_first_error() {
+        let dir = std::env::temp_dir().join(format!("sisu-written-objects-{}", std::process::id()));
+        // It is absent unless an earlier run failed, so a failure here is expected and harmless.
+        drop(fs::remove_dir_all(&dir));
+        fs::create_dir(&dir).expect("creates the directory");
+        let [a, b] = ["a.o", "b.o"].map(|name| {
+            let path = dir.join(name);
+            fs::write(&path, "object").expect("writes");
+            path
+        });
+
+        // A failed unit removes the objects of the units that worked, and the lowest error wins.
+        let failed = written_objects(vec![
+            Ok(a.clone()),
+            Err("unit 1".to_string()),
+            Ok(b.clone()),
+            Err("unit 3".to_string()),
+        ]);
+        assert_eq!(failed, Err("unit 1".to_string()));
+        assert!(!a.exists() && !b.exists());
+
+        // Every unit worked: the paths come back in order, and the files stay.
+        for path in [&a, &b] {
+            fs::write(path, "object").expect("writes");
+        }
+        let written = written_objects(vec![Ok(a.clone()), Ok(b.clone())]);
+        assert_eq!(written, Ok(vec![a.clone(), b.clone()]));
+        assert!(a.exists() && b.exists());
+        fs::remove_dir_all(&dir).expect("removes the directory");
     }
 
     #[test]

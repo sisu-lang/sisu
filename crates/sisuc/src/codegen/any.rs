@@ -25,7 +25,7 @@ use inkwell::AddressSpace;
 use inkwell::module::Linkage;
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, StructType};
 use inkwell::values::{
-    BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, PointerValue,
+    BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, GlobalValue, PointerValue,
 };
 
 use super::layout::HeapBlock;
@@ -128,7 +128,8 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// The interfaces of the table of the `any` type `any`, as `mono` laid them out.
     fn any_layout(&self, any: Type) -> &[(InterfaceId, TypeArgs)] {
-        self.any_layouts
+        self.analyses
+            .any_layouts
             .get(&any)
             .expect("mono should give every `any` type that the program names a layout")
     }
@@ -166,64 +167,98 @@ impl<'ctx> Codegen<'ctx, '_> {
         )
     }
 
+    /// Declares the global of table `index` of `program.any_tables`: internal and constant, with
+    /// no slots until `define_any_table`.
+    fn declare_any_table(&self, index: usize) -> GlobalValue<'ctx> {
+        let table = &self.program.any_tables[index];
+        let global = self.module.add_global(
+            self.table_type(table.any),
+            None,
+            &self.table_name(table.ty, table.any),
+        );
+        global.set_linkage(Linkage::Internal);
+        global.set_constant(true);
+        self.any_tables
+            .borrow_mut()
+            .insert((table.ty, table.any), global);
+        global
+    }
+
     /// Declares the global of each table that `mono` made, so that a conversion can name it
-    /// before `define_any_tables` fills it.
+    /// before `define_any_tables` fills it. Only a build of one unit does: a split build declares
+    /// the tables that its functions use (`table_global`).
     pub(super) fn declare_any_tables(&self) {
-        for table in &self.program.any_tables {
-            let global = self.module.add_global(
-                self.table_type(table.any),
-                None,
-                &self.table_name(table.ty, table.any),
-            );
-            global.set_linkage(Linkage::Internal);
-            global.set_constant(true);
-            self.any_tables
-                .borrow_mut()
-                .insert((table.ty, table.any), global);
+        for index in 0..self.program.any_tables.len() {
+            self.declare_any_table(index);
         }
     }
 
-    /// The pointer to the table of the object type `ty` for the `any` type `any`.
+    /// The pointer to the table of the object type `ty` for the `any` type `any`. A split build
+    /// declares the table at its first use and queues it for `define_any_tables`, which can queue
+    /// the tables that it inherits. Each table is queued once, because the declaration is
+    /// remembered.
     fn table_global(&self, ty: Type, any: Type) -> PointerValue<'ctx> {
-        self.any_tables
-            .borrow()
+        if let Some(global) = self.any_tables.borrow().get(&(ty, any)) {
+            return global.as_pointer_value();
+        }
+        let index = *self
+            .analyses
+            .any_table_index
             .get(&(ty, any))
-            .expect("mono should make the table of each object type that converts to `any`")
-            .as_pointer_value()
+            .expect("mono should make the table of each object type that converts to `any`");
+        self.pending_tables.borrow_mut().push(index);
+        self.declare_any_table(index).as_pointer_value()
     }
 
     /// Gives each declared table its slots, and defines the entries and the show helpers that
-    /// they name.
+    /// they name. A build of one unit defines every table; a split build defines the queued ones
+    /// until none is left.
     pub(super) fn define_any_tables(&self) {
-        for table in &self.program.any_tables {
-            let layout = self.any_layout(table.any);
-            let as_pointer =
-                |function: FunctionValue<'ctx>| function.as_global_value().as_pointer_value();
-            let mut slots: Vec<PointerValue<'ctx>> = vec![
-                as_pointer(self.drop_glue(table.ty)),
-                as_pointer(self.show_glue(table.ty, Mode::Print)),
-                as_pointer(self.show_glue(table.ty, Mode::Dbg)),
-            ];
-            for methods in &table.methods {
-                for &method in methods {
-                    slots.push(as_pointer(self.entry_glue(table.ty, method)));
-                }
+        if self.unit.is_split() {
+            loop {
+                let next = self.pending_tables.borrow_mut().pop();
+                let Some(index) = next else {
+                    break;
+                };
+                self.define_any_table(index);
             }
-            for &(interface, args) in &layout[1..] {
-                let inner = Type::intern(TypeKind::Any(interface, args));
-                slots.push(self.table_global(table.ty, inner));
+        } else {
+            for index in 0..self.program.any_tables.len() {
+                self.define_any_table(index);
             }
-            let global = self.any_tables.borrow()[&(table.ty, table.any)];
-            global.set_initializer(&self.context.const_struct(
-                &slots.iter().map(|&slot| slot.into()).collect::<Vec<_>>(),
-                false,
-            ));
-            debug_assert_eq!(
-                slots.len(),
-                self.table_type(table.any).count_fields() as usize,
-                "a table should have a slot for each part of its layout"
-            );
         }
+    }
+
+    /// Gives table `index` of `program.any_tables` its slots.
+    fn define_any_table(&self, index: usize) {
+        let table = &self.program.any_tables[index];
+        let layout = self.any_layout(table.any);
+        let as_pointer =
+            |function: FunctionValue<'ctx>| function.as_global_value().as_pointer_value();
+        let mut slots: Vec<PointerValue<'ctx>> = vec![
+            as_pointer(self.drop_glue(table.ty)),
+            as_pointer(self.show_glue(table.ty, Mode::Print)),
+            as_pointer(self.show_glue(table.ty, Mode::Dbg)),
+        ];
+        for methods in &table.methods {
+            for &method in methods {
+                slots.push(as_pointer(self.entry_glue(table.ty, method)));
+            }
+        }
+        for &(interface, args) in &layout[1..] {
+            let inner = Type::intern(TypeKind::Any(interface, args));
+            slots.push(self.table_global(table.ty, inner));
+        }
+        let global = self.any_tables.borrow()[&(table.ty, table.any)];
+        global.set_initializer(&self.context.const_struct(
+            &slots.iter().map(|&slot| slot.into()).collect::<Vec<_>>(),
+            false,
+        ));
+        debug_assert_eq!(
+            slots.len(),
+            self.table_type(table.any).count_fields() as usize,
+            "a table should have a slot for each part of its layout"
+        );
     }
 
     /// `@sisu_any.show.<T>` or `@sisu_any.show.dbg.<T>(sink, data, quoted)`: the show helper of
