@@ -1,6 +1,6 @@
 //! Statements, blocks and scopes.
 
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::any::{AnyJoin, is_target, widen};
 use super::array::optional_array;
@@ -64,10 +64,7 @@ impl Checker<'_> {
         // Ranking an argument may have checked all but the block's value (see `tail_rank`).
         let (scope, so_far) = match self.kept(block.span, true) {
             Some((_, Ahead::Block(scope, so_far))) => (scope, so_far),
-            _ => (
-                self.spare_scopes.pop().unwrap_or_default(),
-                BlockSoFar::default(),
-            ),
+            _ => (FxHashMap::default(), BlockSoFar::default()),
         };
         self.body.scopes.push(scope);
         self.resume_block(block, expected, so_far)
@@ -1492,7 +1489,7 @@ impl Checker<'_> {
         block: &ast::Block,
         expected: Option<Type>,
     ) -> (tir::LocalId, CheckedBlock) {
-        self.push_scope();
+        self.body.scopes.push(FxHashMap::default());
         let bind = self.bind_unwrapped(keyword, name, ty);
         (bind, self.scoped_block(block, expected))
     }
@@ -1665,23 +1662,16 @@ impl Checker<'_> {
         local
     }
 
-    /// Opens a scope, with the map of a closed one when there is one.
-    pub(super) fn push_scope(&mut self) {
-        let scope = self.spare_scopes.pop().unwrap_or_default();
-        self.body.scopes.push(scope);
-    }
-
     /// Closes the innermost scope, and retires each of its bindings.
     pub(super) fn pop_scope(&mut self) {
-        let mut scope = self
+        let scope = self
             .body
             .scopes
             .pop()
             .expect("a scope should be open while a block is checked");
-        for (name, b) in scope.drain() {
+        for (name, b) in scope {
             self.retire(name, &b);
         }
-        self.spare_scopes.push(scope);
     }
 
     /// Judges `b`, which `name` can no longer reach. When nothing read it, its name does not

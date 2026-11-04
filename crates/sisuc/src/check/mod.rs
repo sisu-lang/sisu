@@ -706,9 +706,6 @@ struct Checker<'src> {
     uses: Vec<Use>,
     /// Each binding of a function or a method that nothing reads, in check order.
     pending: Vec<Pending>,
-    /// The empty maps of closed scopes, which `push_scope` uses again: a new map for each block
-    /// would allocate again as it grows.
-    spare_scopes: Vec<FxHashMap<Symbol, Binding>>,
     /// Whether a type argument was recorded: see `tir::Program::instantiates`.
     instantiates: bool,
     /// Each `dbg` call: the body that holds it, if any, the type of its operand, and its span.
@@ -1319,7 +1316,6 @@ impl<'src> Checker<'src> {
             signature_anys: None,
             uses: Vec::new(),
             pending: Vec::new(),
-            spare_scopes: Vec::new(),
             instantiates: false,
             dbg_shown: Vec::new(),
             prelude: tir::ItemCounts::default(),
@@ -2228,7 +2224,7 @@ impl Checker<'_> {
             for (interface, at) in anys {
                 c.record(Used::Interface(interface), at);
             }
-            c.push_scope();
+            c.body.scopes.push(FxHashMap::default());
             // `self` is a keyword, so it needs no binding: `ExprKind::SelfValue` reads local 0.
             let receiver = owner.map(|ty| {
                 c.body.locals.push(tir::Local {

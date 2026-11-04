@@ -3594,7 +3594,7 @@ impl Checker<'_> {
         if self.body.ranked.contains_key(&tail.span) {
             return self.rank_value(tail, fit);
         }
-        self.push_scope();
+        self.body.scopes.push(FxHashMap::default());
         // Neither a pattern's guard nor a statement is part of the chain that an index ends.
         let indexed = std::mem::take(&mut self.body.indexed);
         let mut so_far = BlockSoFar::default();
