@@ -137,7 +137,7 @@ pub(crate) fn generate(data: &[u8]) -> Generated {
     g.au = Unstructured::new(&rotated);
     g.cu = Unstructured::new(&mixed);
     g.mu = Unstructured::new(&places);
-    g.spare = spare.each_ref().map(|bytes| Unstructured::new(bytes));
+    g.spare = Spare::new(spare.each_ref().map(|bytes| Unstructured::new(bytes)));
     // One program in eight leaves with `let ... else` and `??`. The choice reads every byte, so
     // that it shares no bits with an early choice. The other programs are the same as they were.
     // The value 5 keeps the seeds that the tests pin outside the gate. The weight of the `??`
@@ -176,6 +176,25 @@ pub(crate) fn generate(data: &[u8]) -> Generated {
     }
 }
 
+/// What `Gen::swap_streams` swaps in: the streams that stand in for `u`, `ru`, `au` and `cu`, in
+/// that order; what the calls of the `mut` calls in `main` may still cost; and how many
+/// expressions the `mut` functions and `mut` calls have written.
+struct Spare<'a> {
+    streams: [Unstructured<'a>; 4],
+    budget: u64,
+    expressions: u64,
+}
+
+impl<'a> Spare<'a> {
+    fn new(streams: [Unstructured<'a>; 4]) -> Spare<'a> {
+        Spare {
+            streams,
+            budget: MUT_BUDGET,
+            expressions: 0,
+        }
+    }
+}
+
 /// The generator's state while it writes one program.
 #[expect(
     clippy::struct_excessive_bools,
@@ -203,10 +222,6 @@ struct Gen<'a> {
     /// What the calls `main` may still make may cost: the budget less what `main`'s own
     /// statements can cost.
     budget: u64,
-    /// What the calls of the `mut` calls in `main` may still cost.
-    mut_budget: u64,
-    /// How many expressions the `mut` functions and `mut` calls have written.
-    mut_expressions: u64,
     /// The jumps a statement may make here.
     jumps: stmt::Jumps,
     /// How many blocks are open around the point being written.
@@ -232,9 +247,12 @@ struct Gen<'a> {
     cu: Unstructured<'a>,
     /// What chooses where a `mut` function or a `mut` call goes, apart from the streams above.
     mu: Unstructured<'a>,
-    /// The streams that stand in for `u`, `ru`, `au` and `cu`, in that order, while a `mut`
+    /// What stands in for the streams, the budget and the count of expressions while a `mut`
     /// function or a `mut` call is written: no choice of any other rule moves for it.
-    spare: [Unstructured<'a>; 4],
+    spare: Spare<'a>,
+    /// How many statements have begun. A `mut` call reads it to see whether a statement ran in
+    /// one of its arguments.
+    statements: u64,
     /// Whether the function being written has a `mut` parameter, so its body holds `mut` calls.
     mut_fn: bool,
     /// Whether the program holds `let ... else`, and `return`, `break` and `continue` after `??`.
@@ -265,8 +283,6 @@ impl<'a> Gen<'a> {
             frozen: false,
             expressions: 0,
             budget: BUDGET - MUT_BUDGET - FUEL * STATEMENT_MOST,
-            mut_budget: MUT_BUDGET,
-            mut_expressions: 0,
             jumps: stmt::Jumps::default(),
             blocks: 0,
             #[cfg(test)]
@@ -278,7 +294,8 @@ impl<'a> Gen<'a> {
             au: Unstructured::new(&[]),
             cu: Unstructured::new(&[]),
             mu: Unstructured::new(&[]),
-            spare: [(); 4].map(|()| Unstructured::new(&[])),
+            spare: Spare::new([(); 4].map(|()| Unstructured::new(&[]))),
+            statements: 0,
             mut_fn: false,
             leaves: false,
             effect: false,
@@ -308,9 +325,10 @@ impl<'a> Gen<'a> {
     /// expressions with their own, and back. A `mut` function and a `mut` call are written
     /// between two swaps, so no other rule's choice moves for them.
     fn swap_streams(&mut self) {
-        std::mem::swap(&mut self.budget, &mut self.mut_budget);
-        std::mem::swap(&mut self.expressions, &mut self.mut_expressions);
-        let [u, ru, au, cu] = &mut self.spare;
+        let spare = &mut self.spare;
+        std::mem::swap(&mut self.budget, &mut spare.budget);
+        std::mem::swap(&mut self.expressions, &mut spare.expressions);
+        let [u, ru, au, cu] = &mut spare.streams;
         std::mem::swap(&mut self.u, u);
         std::mem::swap(&mut self.ru, ru);
         std::mem::swap(&mut self.au, au);

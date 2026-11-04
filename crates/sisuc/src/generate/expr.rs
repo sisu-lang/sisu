@@ -1731,7 +1731,7 @@ impl Gen<'_> {
             let mut infos = Vec::new();
             for ((ty, size), mutable) in params.iter().zip(muts) {
                 g.w.text(", ");
-                if mutable {
+                if mutable.is_some() {
                     let place = places
                         .next()
                         .expect("a `mut` parameter should have a place");

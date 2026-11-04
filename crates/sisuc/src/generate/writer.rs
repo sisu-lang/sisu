@@ -279,9 +279,9 @@ impl Writer {
         start: Mark,
         locals: &[(String, usize)],
         copy: bool,
-        _clean: bool,
+        clean: bool,
     ) {
-        if !copy || locals.is_empty() {
+        if !copy || !clean || locals.is_empty() {
             return;
         }
         let copies: Vec<String> = locals.iter().map(|_| self.fresh("w")).collect();
@@ -363,6 +363,23 @@ mod tests {
         assert_eq!(
             w.out.rewritten,
             "({ let mut w1 = x; let mut w2 = y; f(mut w1, mut o.g, mut w2); x = w1; y = w2 })"
+        );
+    }
+
+    /// GIVEN a clean call whose text holds the words `mut` and `mutable`, in a string and a name
+    /// WHEN the writer rewrites it
+    /// THEN it copies the local: the generator's word decides, not the text
+    #[test]
+    fn mut_block_should_not_read_the_text_of_the_call() {
+        let mut w = Writer::default();
+        let start = w.mark();
+        w.text("f(mut ");
+        let at = w.at();
+        w.text("x, \"mut\", mutable)");
+        w.mut_block(start, &[("x".to_string(), at)], true, true);
+        assert_eq!(
+            w.out.rewritten,
+            "({ let mut w1 = x; f(mut w1, \"mut\", mutable); x = w1 })"
         );
     }
 

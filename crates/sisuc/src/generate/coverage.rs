@@ -13,7 +13,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::item::{MAX_ALIASES, MAX_INTERFACES, MAX_KNOWN, MAX_REQUIREMENTS, MOST};
 use super::scope::{
-    Applied, Class, Const, Enum, Field, Func, Nodes, RESULT, Scope, Ty, Var, Variant,
+    Adds, Applied, Class, Const, Enum, Field, Func, MAX_MUT_LEN, Nodes, RESULT, Scope, Ty, Var,
+    Variant,
 };
 use super::stmt::MAX_BLOCKS;
 use super::writer::{Rewrite, Site, Writer, allowed};
@@ -1172,6 +1173,12 @@ impl Walk {
             self.mark(&format!("ast::Param.mutable = {}", param.mutable));
             self.type_expr(&param.ty);
             self.params.push(param.name.name.as_str().to_string());
+            // A `mut` array holds at least what its caller's place holds, which the text does not
+            // say: an index below `MAX_MUT_LEN` is in bounds, and the generator writes no other.
+            if param.mutable {
+                let len = i128::from(MAX_MUT_LEN);
+                self.lens.insert(param.name.name.as_str().to_string(), len);
+            }
         }
         if let Some(ret) = &f.ret {
             self.type_expr(ret);
@@ -4043,7 +4050,8 @@ fn mut_writes(program: &str) -> [bool; 3] {
             let var = format!("v{var}");
             let ty = ty.split([',', ')']).next().unwrap_or_default();
             let array = ty.starts_with('[');
-            found[0] |= called && array && function.contains(&format!("{var}[0] = "));
+            let element = (0..MAX_MUT_LEN).any(|at| function.contains(&format!("{var}[{at}] = ")));
+            found[0] |= called && array && element;
             found[1] |= called && array && function.contains(&format!("{var}.push("));
             found[2] |= called && ty == "string" && function.contains(&format!("{var} += "));
         }
@@ -4072,7 +4080,7 @@ fn some_seed_should_change_and_grow_what_a_mut_call_passes() {
 fn a_function_with_a_mut_parameter_should_be_no_callee_of_an_ordinary_call() {
     let mut g = with_funcs(&[]);
     g.scope.funcs[1].params.push((Ty::I64, 0));
-    g.scope.funcs[1].muts.push(true);
+    g.scope.funcs[1].muts.push(Some(Adds::default()));
     assert_eq!(g.callees_any(), [0, 2]);
     assert_eq!(g.callees(&Ty::Unit, 0), Vec::<usize>::new());
     assert_eq!(g.reachable(), [0, 1, 2]);

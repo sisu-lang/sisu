@@ -1,10 +1,13 @@
 //! The `mut` call rule (S21): a statement that passes places to the `mut` parameters of a
-//! generated function, or swaps a place with `exchange`. A `mut` parameter is stored back at
-//! most the smallest value of its type (`item::mut_param`), so a place never holds more than it
-//! did and no size bound moves.
+//! generated function, or swaps a place with `exchange`. A `mut` parameter stores back a plain
+//! write of at most the smallest value of its type (`item::mut_param`), and, for a local, what
+//! it adds (`Adds`), which the call takes from the room and the growth of the caller's local. So
+//! no bound of the value model moves. A field and an element take no addition: their bounds are
+//! caps and element sizes that no call may raise.
 
 use super::Gen;
-use super::scope::Ty;
+use super::scope::{Adds, Ty};
+use super::stmt::MUT_FUEL;
 
 /// What a place is, besides its local.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -28,6 +31,21 @@ pub(crate) struct Place {
     size: u64,
     /// The most size a plain write may store there.
     bound: u64,
+    /// For a local: how many elements it holds at least, the room and the growth it has at each
+    /// run of the loops since its declaration, and how many runs there are. Other places have
+    /// none, and one run.
+    len: u64,
+    room: u64,
+    grow: u64,
+    times: u64,
+}
+
+/// What a `mut` parameter takes: its type, the most its place may hold, and what it adds.
+#[derive(Clone)]
+pub(crate) struct Want {
+    pub(crate) ty: Ty,
+    pub(crate) size: u64,
+    pub(crate) adds: Adds,
 }
 
 impl Place {
@@ -37,35 +55,94 @@ impl Place {
         self.kind != Kind::Local || !matches!(self.ty, Ty::Array(_))
     }
 
-    /// Whether a `mut` parameter of type `want.0`, which takes at most `want.1`, accepts it.
-    fn fits(&self, want: &(Ty, u64)) -> bool {
-        self.ty == want.0 && self.size <= want.1
+    /// Whether a `mut` parameter accepts it. A parameter that adds needs a local with the room,
+    /// the growth and the length that it adds to.
+    fn fits(&self, want: &Want) -> bool {
+        let adds = want.adds;
+        self.ty == want.ty
+            && self.size <= want.size
+            && (adds.is_none()
+                || self.kind == Kind::Local
+                    && self.len >= adds.len
+                    && self.room >= adds.room
+                    && self.grow >= adds.grow)
     }
 }
 
 #[cfg(test)]
 thread_local! {
-    /// How many places `placeable` has looked at on this thread.
+    /// How many steps the matching of places to `mut` parameters has taken on this thread.
     static PLACE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// Whether each of `wants` can take a place of `places` that starts at a local no earlier one
-/// did, and none of `used` did (E0171: two `mut` arguments may not name one place or overlap).
-fn placeable(wants: &[(Ty, u64)], places: &[Place], used: &mut Vec<usize>) -> bool {
-    let Some((want, rest)) = wants.split_first() else {
-        return true;
-    };
-    places.iter().any(|place| {
-        #[cfg(test)]
-        PLACE_STEPS.set(PLACE_STEPS.get() + 1);
-        if !place.fits(want) || used.contains(&place.root) {
-            return false;
+fn tick() {
+    #[cfg(test)]
+    PLACE_STEPS.set(PLACE_STEPS.get() + 1);
+}
+
+/// The most locals that `mut_epilogue` declares for a parameter that adds.
+const MAX_LOCALS: usize = 3;
+
+/// The most `mut` parameters a function has, and so the slots of a match: its sets of slots are
+/// the subsets of `0..SLOTS`.
+const SLOTS: usize = 3;
+
+/// For each local, which slots (`wants`) it can serve with some place, as bits; 0 for a local of
+/// `used`. A call never gives two `mut` arguments places at one local (E0171).
+fn slot_masks(wants: &[Want], places: &[Place], used: &[usize]) -> Vec<u8> {
+    debug_assert!(
+        wants.len() <= SLOTS,
+        "a function has at most {SLOTS} parameters"
+    );
+    let roots = places.iter().map(|place| place.root + 1).max().unwrap_or(0);
+    let mut masks = vec![0; roots];
+    for place in places {
+        for (slot, want) in wants.iter().enumerate() {
+            tick();
+            if !used.contains(&place.root) && place.fits(want) {
+                masks[place.root] |= 1 << slot;
+            }
         }
-        used.push(place.root);
-        let found = placeable(rest, places, used);
-        used.pop();
-        found
+    }
+    masks
+}
+
+/// The sets of slots that locals of `masks` can fill, one slot each, as a bit set of the sets:
+/// bit `s` is set when the slots of `s` can be filled. Adds one local, which `mask` gives the
+/// slots of, to `reach`.
+fn add_local(reach: u8, mask: u8) -> u8 {
+    let mut next = reach;
+    for set in 0..1u8 << SLOTS {
+        for slot in 0..SLOTS {
+            tick();
+            if reach >> set & 1 == 1 && mask >> slot & 1 == 1 && set >> slot & 1 == 0 {
+                next |= 1 << (set | 1 << slot);
+            }
+        }
+    }
+    next
+}
+
+/// Whether `before` and `after`, sets of sets of slots, hold two sets that are apart and fill
+/// `rest` together.
+fn complete(before: u8, after: u8, rest: u8) -> bool {
+    (0..1u8 << SLOTS).any(|a| {
+        (0..1u8 << SLOTS).any(|b| {
+            tick();
+            before >> a & 1 == 1 && after >> b & 1 == 1 && a & b == 0 && a | b == rest
+        })
     })
+}
+
+/// Whether each of `wants` can take a place of `places` that starts at a local of its own, none
+/// of them one of `used` (E0171: two `mut` arguments may not name one place or overlap). It adds
+/// one local at a time to the sets of slots that are filled, so its work is in proportion to
+/// the places.
+fn placeable(wants: &[Want], places: &[Place], used: &[usize]) -> bool {
+    let masks = slot_masks(wants, places, used);
+    let full = (1u8 << wants.len()) - 1;
+    let reach = masks.iter().fold(1, |reach, &mask| add_local(reach, mask));
+    reach >> full & 1 == 1
 }
 
 impl Gen<'_> {
@@ -74,24 +151,36 @@ impl Gen<'_> {
     fn mut_places(&self) -> Vec<Place> {
         let mut places = Vec::new();
         for (root, var) in self.scope.vars.iter().enumerate() {
+            let times = self.cost.times_since(var.loops).max(1);
+            let whole = Place {
+                kind: Kind::Local,
+                root,
+                ty: var.ty.clone(),
+                size: var.size,
+                bound: var.base,
+                len: var.len,
+                room: var.room / times,
+                grow: var.grow / times,
+                times,
+            };
+            let other = Place {
+                len: 0,
+                room: 0,
+                grow: 0,
+                times: 1,
+                ..whole.clone()
+            };
             if var.assignable {
-                places.push(Place {
-                    kind: Kind::Local,
-                    root,
-                    ty: var.ty.clone(),
-                    size: var.size,
-                    bound: var.base,
-                });
+                places.push(whole);
             }
             if let Ty::Array(element) = &var.ty
                 && self.settable(var)
             {
                 places.push(Place {
                     kind: Kind::Element,
-                    root,
                     ty: (**element).clone(),
                     size: var.elem,
-                    bound: var.base,
+                    ..other
                 });
             }
         }
@@ -105,19 +194,28 @@ impl Gen<'_> {
                     ty: field.ty.clone(),
                     size: field.cap,
                     bound: field.cap,
+                    len: 0,
+                    room: 0,
+                    grow: 0,
+                    times: 1,
                 });
             }
         }
         places
     }
 
-    /// The type and size of each `mut` parameter of the function `callee`.
-    fn mut_wants(&self, callee: usize) -> Vec<(Ty, u64)> {
+    /// What each `mut` parameter of the function `callee` takes.
+    fn mut_wants(&self, callee: usize) -> Vec<Want> {
         let func = &self.scope.funcs[callee];
         let params = func.params.iter().zip(&func.muts);
         params
-            .filter(|&(_, &mutable)| mutable)
-            .map(|(param, _)| param.clone())
+            .filter_map(|((ty, size), adds)| {
+                adds.map(|adds| Want {
+                    ty: ty.clone(),
+                    size: *size,
+                    adds,
+                })
+            })
             .collect()
     }
 
@@ -125,7 +223,7 @@ impl Gen<'_> {
     fn mut_callees(&self, places: &[Place]) -> Vec<usize> {
         let mut callees = self.reachable();
         callees.retain(|&f| {
-            self.scope.funcs[f].has_mut() && placeable(&self.mut_wants(f), places, &mut Vec::new())
+            self.scope.funcs[f].has_mut() && placeable(&self.mut_wants(f), places, &[])
         });
         callees
     }
@@ -136,21 +234,39 @@ impl Gen<'_> {
         places.iter().any(Place::exchangeable) || !self.mut_callees(&places).is_empty()
     }
 
-    /// A place for each of `wants`, each at a local of its own, so that no two overlap.
-    fn choose_places(&mut self, wants: &[(Ty, u64)], places: &[Place]) -> Vec<Place> {
+    /// A place for each of `wants`, each at a local of its own, so that no two overlap and each
+    /// of the later ones still has one. For each slot it matches the locals that remain, once
+    /// from the front and once from the back, so that the places it considers cost work in
+    /// proportion to their number.
+    fn choose_places(&mut self, wants: &[Want], places: &[Place]) -> Vec<Place> {
         let mut chosen: Vec<Place> = Vec::new();
         let mut used = Vec::new();
-        for (at, want) in wants.iter().enumerate() {
+        for (slot, want) in wants.iter().enumerate() {
+            // The slots after this one.
+            let rest = ((1u8 << wants.len()) - 1) & !((2u8 << slot) - 1);
+            let masks: Vec<u8> = slot_masks(wants, places, &used)
+                .into_iter()
+                .map(|mask| mask & rest)
+                .collect();
+            let mut before = vec![1u8];
+            for &mask in &masks {
+                before.push(add_local(before[before.len() - 1], mask));
+            }
+            let mut after = vec![1u8];
+            for &mask in masks.iter().rev() {
+                after.push(add_local(after[after.len() - 1], mask));
+            }
             let fitting: Vec<&Place> = places
                 .iter()
                 .filter(|place| {
-                    if !place.fits(want) || used.contains(&place.root) {
-                        return false;
-                    }
-                    used.push(place.root);
-                    let found = placeable(&wants[at + 1..], places, &mut used);
-                    used.pop();
-                    found
+                    // The rest, without the locals before and after this one.
+                    !used.contains(&place.root)
+                        && place.fits(want)
+                        && complete(
+                            before[place.root],
+                            after[masks.len() - 1 - place.root],
+                            rest,
+                        )
                 })
                 .collect();
             let place = fitting[self.pick(fitting.len())].clone();
@@ -181,20 +297,78 @@ impl Gen<'_> {
         }
     }
 
+    /// Takes from each local that a `mut` argument names what its parameter adds, at each run:
+    /// the room of a `string`, the growth of an array. This comes before the other arguments,
+    /// so that a statement in one of them takes no more than what is left.
+    fn take_adds(&mut self, wants: &[Want], chosen: &[Place]) {
+        for (want, place) in wants.iter().zip(chosen) {
+            if place.kind == Kind::Local {
+                let var = &mut self.scope.vars[place.root];
+                var.room -= want.adds.room * place.times;
+                var.grow -= want.adds.grow * place.times;
+            }
+        }
+    }
+
+    /// After the statements of `main`, now and then, a `mut` call of each function with a `mut`
+    /// parameter that has places to take, so that every such function is called. It first
+    /// declares a local for each parameter that adds something. It is written as `mut_statement`
+    /// writes a call.
+    pub(crate) fn mut_epilogue(&mut self) {
+        for callee in 0..self.scope.funcs.len() {
+            if !self.scope.funcs[callee].has_mut() || self.mut_pick(4) == 0 {
+                continue;
+            }
+            let fuel = std::mem::replace(&mut self.fuel, MUT_FUEL);
+            self.swap_streams();
+            // A local for each parameter that adds something, so that a place for it is there.
+            for want in self.mut_wants(callee) {
+                // A local may not have the room that the parameter adds to, so up to 3 are tried.
+                for _ in 0..MAX_LOCALS {
+                    let wanted = [want.clone()];
+                    if want.adds.is_none() || placeable(&wanted, &self.mut_places(), &[]) {
+                        break;
+                    }
+                    self.w.line();
+                    self.cost.statement();
+                    self.statement(|g| g.let_typed(want.ty.clone(), true));
+                }
+            }
+            if placeable(&self.mut_wants(callee), &self.mut_places(), &[]) {
+                self.w.line();
+                self.cost.statement();
+                self.statement(|g| g.mut_call_of(Some(callee)));
+            }
+            self.swap_streams();
+            self.fuel = fuel;
+        }
+    }
+
     /// `f(depth, mut place, ...)`, or `let _ = f(...)` of a function with a result; or
     /// `let _ = exchange(mut place, e)`. Now and then, the rewritten copy copies each local
     /// in and out (decision 2).
     pub(crate) fn mut_call(&mut self) {
+        self.mut_call_of(None);
+    }
+
+    /// `mut_call`, of the function `forced` if it is one.
+    fn mut_call_of(&mut self, forced: Option<usize>) {
         let places = self.mut_places();
-        let callees = self.mut_callees(&places);
+        let callees = match forced {
+            Some(callee) => vec![callee],
+            None => self.mut_callees(&places),
+        };
         let swaps: Vec<usize> = (0..places.len())
             .filter(|&p| places[p].exchangeable())
             .collect();
         let start = self.w.mark();
+        let statements = self.statements;
         let mut locals = Vec::new();
         if !callees.is_empty() && (swaps.is_empty() || self.pick(3) != 0) {
             let callee = callees[self.pick(callees.len())];
-            let chosen = self.choose_places(&self.mut_wants(callee), &places);
+            let wants = self.mut_wants(callee);
+            let chosen = self.choose_places(&wants, &places);
+            self.take_adds(&wants, &chosen);
             if self.scope.funcs[callee].ret != Ty::Unit {
                 self.w.text("let _ = ");
             }
@@ -208,13 +382,15 @@ impl Gen<'_> {
             self.w.text(")");
         }
         let copy = self.rewrite_pick(2) == 0;
-        self.w.mut_block(start, &locals, copy, true);
+        // The other arguments leave the locals as they are, unless a statement ran in one.
+        let clean = self.statements == statements;
+        self.w.mut_block(start, &locals, copy, clean);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Kind, PLACE_STEPS, Place, Ty, placeable};
+    use super::{Adds, Kind, PLACE_STEPS, Place, Ty, Want, placeable};
 
     fn place(root: usize, ty: Ty, size: u64) -> Place {
         Place {
@@ -223,6 +399,18 @@ mod tests {
             ty,
             size,
             bound: 0,
+            len: 0,
+            room: 0,
+            grow: 0,
+            times: 1,
+        }
+    }
+
+    fn want(ty: Ty, size: u64) -> Want {
+        Want {
+            ty,
+            size,
+            adds: Adds::default(),
         }
     }
 
@@ -231,11 +419,11 @@ mod tests {
     /// THEN none can, because two arguments of a call may not overlap (E0171)
     #[test]
     fn placeable_should_refuse_two_places_of_one_local() {
-        let wants = [(Ty::I64, 0), (Ty::I64, 0)];
+        let wants = [want(Ty::I64, 0), want(Ty::I64, 0)];
         let one = [place(0, Ty::I64, 0), place(0, Ty::I64, 0)];
-        assert!(!placeable(&wants, &one, &mut Vec::new()));
+        assert!(!placeable(&wants, &one, &[]));
         let two = [place(0, Ty::I64, 0), place(1, Ty::I64, 0)];
-        assert!(placeable(&wants, &two, &mut Vec::new()));
+        assert!(placeable(&wants, &two, &[]));
     }
 
     /// GIVEN a `mut` parameter that takes at most 16, and places of the same type
@@ -243,17 +431,54 @@ mod tests {
     /// THEN only a place that holds at most 16 fits
     #[test]
     fn placeable_should_refuse_a_place_larger_than_the_parameter_takes() {
-        let wants = [(Ty::String, 16)];
-        assert!(!placeable(
-            &wants,
-            &[place(0, Ty::String, 17)],
-            &mut Vec::new()
-        ));
-        assert!(placeable(
-            &wants,
-            &[place(0, Ty::String, 16)],
-            &mut Vec::new()
-        ));
+        let wants = [want(Ty::String, 16)];
+        assert!(!placeable(&wants, &[place(0, Ty::String, 17)], &[]));
+        assert!(placeable(&wants, &[place(0, Ty::String, 16)], &[]));
+    }
+
+    /// GIVEN parameters of `i64` and `string`, a local that has a place of each type, and another
+    /// local that has one of `i64`
+    /// WHEN each parameter takes a place at a local of its own
+    /// THEN they can, the `string` at the first local and the `i64` at the other, and cannot when
+    /// the first local is used
+    #[test]
+    fn placeable_should_match_each_parameter_to_a_local_of_its_own() {
+        let wants = [want(Ty::I64, 0), want(Ty::String, 0)];
+        let places = [
+            place(0, Ty::I64, 0),
+            place(0, Ty::String, 0),
+            place(1, Ty::I64, 0),
+        ];
+        assert!(placeable(&wants, &places, &[]));
+        assert!(!placeable(&wants, &places, &[0]));
+    }
+
+    /// GIVEN a `mut` parameter that adds 16 chars to a `string`, and a local with room for 15
+    /// WHEN the parameter takes a place
+    /// THEN a local with room for 16, or the same room at the loops it runs in, takes it: not a
+    /// field, which has no room to give
+    #[test]
+    fn placeable_should_refuse_a_place_without_the_room_a_parameter_adds() {
+        let adds = Adds {
+            room: 16,
+            ..Adds::default()
+        };
+        let wants = [Want {
+            adds,
+            ..want(Ty::String, 100)
+        }];
+        let local = |room| Place {
+            room,
+            ..place(0, Ty::String, 0)
+        };
+        assert!(!placeable(&wants, &[local(15)], &[]));
+        assert!(placeable(&wants, &[local(16)], &[]));
+        let field = Place {
+            kind: Kind::Field(0, 0),
+            room: 16,
+            ..place(0, Ty::String, 0)
+        };
+        assert!(!placeable(&wants, &[field], &[]));
     }
 
     /// GIVEN `mut` parameters of `i64`, `i64` and `string`, and `n` places of `i64`, each at a
@@ -263,11 +488,11 @@ mod tests {
     /// over the places. The sizes are 10 times the 2 places that show the search.
     #[test]
     fn placeable_should_read_the_places_linearly() {
-        let wants = [(Ty::I64, 0), (Ty::I64, 0), (Ty::String, 0)];
+        let wants = [want(Ty::I64, 0), want(Ty::I64, 0), want(Ty::String, 0)];
         let reads = |n: usize| {
             let places: Vec<Place> = (0..n).map(|root| place(root, Ty::I64, 0)).collect();
             PLACE_STEPS.set(0);
-            assert!(!placeable(&wants, &places, &mut Vec::new()));
+            assert!(!placeable(&wants, &places, &[]));
             PLACE_STEPS.get()
         };
         crate::mir::tests::assert_near_linear(reads(20), reads(40), reads(60));

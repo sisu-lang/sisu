@@ -209,7 +209,8 @@ impl Gen<'_> {
     /// Writes a statement by `write`. Before it, the rewritten copy then holds the `let`s its
     /// expressions moved there, and now and then an `if false` with a copy of it (decision 2).
     /// Its expressions run unconditionally and after no effect, as far as the statement goes.
-    fn statement(&mut self, write: impl FnOnce(&mut Self)) {
+    pub(crate) fn statement(&mut self, write: impl FnOnce(&mut Self)) {
+        self.statements += 1;
         let conditional = std::mem::take(&mut self.scope.conditional);
         let effect = std::mem::take(&mut self.effect);
         let start = self.w.begin();
@@ -297,14 +298,7 @@ impl Gen<'_> {
                     .filter(|&v| self.settable(&self.scope.vars[v]))
                     .collect();
                 let pick = self.pick(vars.len());
-                let var = &self.scope.vars[vars[pick]];
-                let (name, len, base) = (var.name.clone(), var.len, var.base);
-                let Ty::Array(element) = var.ty.clone() else {
-                    unreachable!("only an array has elements")
-                };
-                let at = self.upto(len - 1);
-                self.w.text(&format!("{name}[{at}] = "));
-                self.expr(&element, base);
+                self.set_element(vars[pick]);
             }
             Rule::SetField => self.set_field(),
             Rule::Push => self.push_stmt(),
@@ -323,6 +317,56 @@ impl Gen<'_> {
         }
     }
 
+    /// `v[i] = e` of the local `v`, whose type is an array that `settable` says takes it.
+    fn set_element(&mut self, v: usize) {
+        let var = &self.scope.vars[v];
+        let (name, len, base) = (var.name.clone(), var.len, var.base);
+        let Ty::Array(element) = var.ty.clone() else {
+            unreachable!("only an array has elements")
+        };
+        let at = self.upto(len - 1);
+        self.w.text(&format!("{name}[{at}] = "));
+        self.expr(&element, base);
+    }
+
+    /// What a statement may do to the `mut` parameter `v`, which adds what `Adds` says: write an
+    /// element (0), `push` (1), or `+=` on a `string` (2).
+    pub(crate) fn mut_uses(&self, v: usize) -> Vec<u8> {
+        let var = &self.scope.vars[v];
+        let mut uses = Vec::new();
+        if self.settable(var) {
+            uses.push(0);
+        }
+        if self
+            .push_targets()
+            .iter()
+            .any(|target| matches!(target, Push::Local(w) if *w == v))
+        {
+            uses.push(1);
+        }
+        if var.ty == Ty::String && var.room > 0 {
+            uses.push(2);
+        }
+        uses
+    }
+
+    /// A statement that does `usage`, one of `mut_uses`, to the `mut` parameter `v`: the function
+    /// changes what its caller's place holds, within what it adds.
+    pub(crate) fn mut_use(&mut self, v: usize, usage: u8) {
+        match usage {
+            0 => self.set_element(v),
+            1 => {
+                let name = self.scope.vars[v].name.clone();
+                let Ty::Array(element) = self.scope.vars[v].ty.clone() else {
+                    unreachable!("only an array takes a push")
+                };
+                self.w.text(&format!("{name}.push("));
+                self.pushed(v, &element);
+            }
+            _ => self.compound_at(v, false),
+        }
+    }
+
     /// `let [mut] v[: T] = e`. A mutable `string` gets a size for its first value and plain
     /// assignments, and room for what `+=` adds; a mutable optional of a size, a size. Now and
     /// then a mutable `[T]` becomes `[[T]?]`, which `any_type` never gives.
@@ -338,6 +382,11 @@ impl Gen<'_> {
         {
             ty = Ty::Array(Box::new(Ty::Optional(Box::new(ty))));
         }
+        self.let_typed(ty, mutable);
+    }
+
+    /// `let [mut] v[: T] = e` of the type `ty`.
+    pub(crate) fn let_typed(&mut self, ty: Ty, mutable: bool) {
         let name = self.scope.local();
         let keyword = if mutable { "let mut" } else { "let" };
         self.w.text(&format!("{keyword} {name}"));
@@ -732,6 +781,11 @@ impl Gen<'_> {
     pub(crate) fn compound(&mut self) {
         let targets = self.compound_targets();
         let (v, element) = targets[self.pick(targets.len())];
+        self.compound_at(v, element);
+    }
+
+    /// `compound` of the local `v`, or of an element of it if `element`.
+    fn compound_at(&mut self, v: usize, element: bool) {
         let (mut name, mut ty, loops, len) = {
             let var = &self.scope.vars[v];
             (var.name.clone(), var.ty.clone(), var.loops, var.len)

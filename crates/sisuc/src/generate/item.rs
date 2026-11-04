@@ -5,8 +5,10 @@ use std::fmt::Write as _;
 use rustc_hash::FxHashMap;
 
 use super::expr::{CHARS, OPS, arithmetic_value};
-use super::scope::{Alias, Class, Const, Enum, Field, Func, Ty, Var, Variant, Wrap};
-use super::stmt::{Jumps, MUT_FUEL};
+use super::scope::{
+    Adds, Alias, Class, Const, Enum, Field, Func, MAX_MUT_LEN, Ty, Var, Variant, Wrap,
+};
+use super::stmt::{GROW, Jumps, MUT_FUEL};
 use super::writer::Piece;
 use super::{
     Answer, BoundSite, Cost, DEPTHS, Gen, Known, MAX_NESTING, MAX_SIZE, NO_BOUND, NOT_A_CLASS,
@@ -519,6 +521,7 @@ impl Gen<'_> {
             });
         }
         self.main_stmts();
+        self.mut_epilogue();
         // Whether `main` calls the function of the conformances that follows it. The choice is
         // made after the statements, so it moves none of theirs.
         let called = heads(self.pick(2));
@@ -716,10 +719,12 @@ impl Gen<'_> {
         };
         for _ in 0..count {
             let ty = self.any_type();
-            let size = self.size_for(&ty, &SIZES);
             // The first is, so that the function has one.
             let mutable = mut_params && (params.is_empty() || self.pick(2) == 0);
-            params.push((self.scope.fresh("v"), ty, size, mutable));
+            // A `mut` parameter takes the largest place that a local of a mutable value may hold.
+            let size = self.size_for(&ty, if mutable { &[SIZES[2]] } else { &SIZES });
+            let adds = mutable.then(|| self.mut_adds(&ty));
+            params.push((self.scope.fresh("v"), ty, size, adds));
         }
         let ret = if self.pick(Ty::VALUES.len() + 1) == 0 {
             Ty::Unit
@@ -729,9 +734,9 @@ impl Gen<'_> {
         let ret_size = self.size_for(&ret, &SIZES);
         let receiver = if owner.is_some() { "self, " } else { "" };
         self.w.text(&format!("fn {name}({receiver}depth: i64"));
-        for (param, ty, _, mutable) in &params {
+        for (param, ty, _, adds) in &params {
             let written = self.spelled_in(ty, owner.as_ref());
-            let keyword = if *mutable { "mut " } else { "" };
+            let keyword = if adds.is_some() { "mut " } else { "" };
             self.w.text(&format!(", {keyword}{param}: {written}"));
         }
         self.w.text(")");
@@ -747,7 +752,7 @@ impl Gen<'_> {
                 .iter()
                 .map(|(_, ty, size, _)| (ty.clone(), *size))
                 .collect(),
-            muts: params.iter().map(|&(.., mutable)| mutable).collect(),
+            muts: params.iter().map(|&(.., adds)| adds).collect(),
             ret: ret.clone(),
             ret_size,
             cost: [1; DEPTHS],
@@ -759,11 +764,10 @@ impl Gen<'_> {
             self.scope.vars.push(param("self".to_string(), class, size));
         }
         self.scope.vars.push(param("depth".to_string(), Ty::I64, 0));
-        for (name, ty, size, mutable) in params {
-            let var = if mutable {
-                mut_param(name, ty, size)
-            } else {
-                param(name, ty, size)
+        for (name, ty, size, adds) in params {
+            let var = match adds {
+                Some(adds) => mut_param(name, ty, size, adds),
+                None => param(name, ty, size),
             };
             self.scope.vars.push(var);
         }
@@ -778,6 +782,7 @@ impl Gen<'_> {
             self.w.text(&format!(" {value}"));
         }
         self.w.close();
+        self.mut_uses_first();
         self.stmts(false);
         if ret != Ty::Unit {
             self.w.line();
@@ -812,6 +817,48 @@ impl Gen<'_> {
             self.w.line();
             self.swap_streams();
             self.fuel = fuel;
+        }
+    }
+
+    /// A `mut` function changes what it gets: each parameter that adds something has a statement
+    /// for each thing it may do, before the others.
+    fn mut_uses_first(&mut self) {
+        for v in 0..self.scope.vars.len() {
+            let uses = if self.scope.vars[v].assignable {
+                self.mut_uses(v)
+            } else {
+                Vec::new()
+            };
+            for usage in uses {
+                self.w.line();
+                self.cost.statement();
+                self.statement(|g| g.mut_use(v, usage));
+            }
+        }
+    }
+
+    /// What a `mut` parameter of `ty` may add to its place: a `string` takes room for `+=`, and
+    /// an array a length from which an element may be written, growth for `push`, and, when its
+    /// elements are strings, room. A type that holds a class object adds nothing (decision 4).
+    fn mut_adds(&mut self, ty: &Ty) -> Adds {
+        if self.scope.contains_class(ty) {
+            return Adds::default();
+        }
+        match ty {
+            Ty::String => Adds {
+                room: [0, 16][self.pick(2)],
+                ..Adds::default()
+            },
+            Ty::Array(element) => Adds {
+                room: if **element == Ty::String {
+                    [0, 16][self.pick(2)]
+                } else {
+                    0
+                },
+                grow: [0, GROW][self.pick(2)],
+                len: self.upto(MAX_MUT_LEN),
+            },
+            _ => Adds::default(),
         }
     }
 
@@ -2046,12 +2093,20 @@ fn param(name: String, ty: Ty, size: u64) -> Var {
 }
 
 /// A `mut` parameter: a variable that the body may assign. It holds at most `size`, the most that
-/// a caller's place holds, and stores back at most the smallest value of its type, which fits
-/// every place of that type.
-fn mut_param(name: String, ty: Ty, size: u64) -> Var {
-    let least = least_size(&ty);
-    let mut var = Var::new(name, ty, true, least, 0, 0);
-    var.size = size;
+/// a caller's place holds, and what the body adds (`adds`). It stores back a plain write of at
+/// most the smallest value of its type, which fits every place of that type. An array has the
+/// length and the growth, and a `string` the room, that `adds` gives.
+fn mut_param(name: String, ty: Ty, size: u64, adds: Adds) -> Var {
+    let base = match &ty {
+        Ty::Array(element) => element.floor(),
+        _ => least_size(&ty),
+    };
+    let mut var = Var::new(name, ty, true, base, adds.room, 0);
+    // An element reaches that size too, as in a plain parameter.
+    var.size = size + adds.room + adds.grow;
+    var.elem = var.size;
+    var.grow = adds.grow;
+    var.len = adds.len;
     var
 }
 
@@ -2065,7 +2120,7 @@ mod tests {
     #[test]
     fn a_mut_array_parameter_should_hold_elements_of_the_size_it_takes() {
         let ty = Ty::Array(Box::new(Ty::I64));
-        let var = mut_param("v1".to_string(), ty.clone(), 100);
+        let var = mut_param("v1".to_string(), ty.clone(), 100, Adds::default());
         let plain = param("v1".to_string(), ty, 100);
         assert_eq!((var.size, var.elem), (100, plain.elem));
     }
