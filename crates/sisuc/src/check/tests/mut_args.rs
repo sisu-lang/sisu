@@ -1859,66 +1859,86 @@ fn optional_object_of_a_mut_argument_should_get_no_fix() {
 }
 
 /// GIVEN a call with an unmarked place at a `mut` parameter, whose result meets a context that
-///   expects an optional, an `any` type, or an empty array `[]` (`[] == take(ys)`,
-///   `zs = take(ys)` for `let mut zs = []`, and `[] ?? take(ys)`)
+///   expects an optional, an `any` type, an array or an optional of a hole (`T` of a generic
+///   call that its other arguments do not fix yet), or an unknown type (`[]`)
 /// WHEN the missing `mut` is reported
-/// THEN E0166 has the fix: the context asks for a type that the result can convert to, and
-///   `mut` does not change the result
+/// THEN E0166 has the fix, and the call gives the codes of its row besides: a context that is
+///   unknown, or that holds a hole, expects nothing, and the other contexts take a type that the
+///   result converts to, so `mut` does not change the result
 #[test]
 fn unmarked_place_in_an_optional_or_any_context_should_get_its_fix() {
     let get = "fn get<T>(mut x: T) -> T {\n    let old = x\n    x = old\n    old\n}\n";
     let named = "interface Named {\n    fn name(self) -> string\n}\n\
         class Cat: Named {\n    fn name(self) -> string {\n        \"cat\"\n    }\n}\n";
     let take = "fn take(mut xs: [i64]) -> [i64] {\n    xs[0] = 1\n    xs\n}\n";
-    for (row, decls, body, place) in [
+    // A row: its name, the declarations, the body of `main`, the place of E0166, and the codes
+    // that the program gives besides E0166.
+    let rows = [
         (
             "optional",
             get.to_string(),
             "let mut ys = [1]\n    let o: [i64]? = get(ys)\n    ys[0] = 2\n    print(o == None)",
             (8, 25),
+            vec![],
         ),
         (
             "any",
             format!("{named}{get}"),
             "let mut c = Cat()\n    let n: any Named = get(c)\n    print(n.name())",
             (16, 28),
+            vec![],
         ),
         (
             "optional any",
             format!("{named}{get}"),
             "let mut c = Cat()\n    let n: (any Named)? = get(c)\n    print(n == None)",
             (16, 31),
+            vec![],
         ),
         (
             "empty array",
             take.to_string(),
             "let mut ys = [1]\n    print([] == take(ys))",
             (7, 22),
+            vec![],
         ),
         (
             "assigned to an array of a hole",
             take.to_string(),
             "let mut zs = []\n    let mut ys = [1]\n    zs = take(ys)\n    print(zs)",
             (8, 15),
+            vec![Code::CannotInfer],
         ),
         (
             "coalesced with an empty array",
             take.to_string(),
             "let mut ys = [1]\n    let a = [] ?? take(ys)\n    print(a)",
             (7, 24),
+            vec![Code::CannotInfer],
         ),
-    ] {
+        (
+            "argument of a generic call: an array of a hole",
+            format!("{get}fn one<T>(a: [T]) -> T {{\n    a[0]\n}}\n"),
+            "let mut ys = [1]\n    print(one(get(ys)))",
+            (11, 19),
+            vec![],
+        ),
+        (
+            "argument of a generic call: an optional of a hole",
+            format!("{get}fn first<T>(a: T?) -> T {{\n    a ?? first(a)\n}}\n"),
+            "let mut o: i64? = 1\n    print(first(get(o)))",
+            (11, 21),
+            vec![],
+        ),
+    ];
+    for (row, decls, body, (line, col), rest) in rows {
         let src = format!("{decls}fn main() {{\n    {body}\n}}");
-        let (line, col) = place;
         let mut ds = diags(&src);
         ds.sort_by_key(|d| d.span().start());
-        // A `[]` with no type of its own is E0050 as well, which the fix does not change.
         let (missing, others): (Vec<_>, Vec<_>) =
             ds.iter().partition(|d| d.code() == Code::MutMarkerMissing);
-        assert!(
-            others.iter().all(|d| d.code() == Code::CannotInfer),
-            "row `{row}`: {others:?}"
-        );
+        let others: Vec<_> = others.iter().map(|d| d.code()).collect();
+        assert_eq!(others, rest, "row `{row}`");
         let missing: Vec<_> = (missing.iter())
             .map(|d| (at(&src, d.span()), !d.fixes().is_empty()))
             .collect();

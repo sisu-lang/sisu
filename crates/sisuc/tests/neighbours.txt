@@ -43,6 +43,7 @@ fn some<T>(v: T) -> T? { Some(v) }
 fn id<T>(v: T) -> T { v }
 fn take<T>(mut x: T?) { x = None }
 fn take2<T>(mut x: T?, n: i64) { x = None }
+fn keep<T>(mut x: T?) -> T? { x }
 fn generic<U: Named, V>(u: U, v: V, c: bool, d: bool, k: i64, n: any Named, p: any Pet, op: (any Pet)?, ob: Bx?) {
     let mut mq: (any Pet)? = op
     {stmt}
@@ -161,3 +162,8 @@ ob?.put(mut $, some(k) ?? return)
 (ob ?? return).put(mut $, some(k) ?? return)
 Bx.ste(mut $)
 id(mut $)
+# A `mut` call whose result meets a generic parameter that is only partly bound: the expected
+# type holds a hole, and the missing `mut` keeps its fix.
+id(keep($))
+some(keep($))
+id(some(keep($)))
