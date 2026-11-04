@@ -15,6 +15,7 @@ mod math;
 mod rc;
 mod show;
 mod string;
+pub(crate) mod units;
 
 use rustc_hash::FxHashMap;
 use std::cell::{Cell, RefCell};
