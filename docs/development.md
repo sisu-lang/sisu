@@ -201,20 +201,28 @@ passes. Pass 1 tests each mutant with the unit tests only (`cargo nextest run
 a 4,000-line diff, pass 1 did not catch 80 (54 missed, 26 timeouts); pass 2
 tested those 80 with the whole suite in more than one hour. When pass 1 misses a
 mutant or times out, pass 2 tests the mutants that pass 1 did not catch in two
-groups, chosen by the file in the name of each mutant. A mutant in a file of
-the `LIB_ONLY` list of `scripts/mutants.sh` (the fuzz modules and the program
-generator) is tested with the unit tests again, because no integration test
-reaches that code. In one run, 49 mutants of `generate/` took about 2.5 hours
-with the whole suite and 11 minutes with `--lib`, with the same results. Every
-other mutant is tested with the whole suite, so a mutant that only an
-end-to-end test kills counts as caught. Each group selects its mutants by name
-(one `--re` for each), and the script drops your own `--re`, `-F`, `--regex`,
-`--examine-re`, `--examine-regex` and `--iterate` from pass 2. A mutant of a
-`LIB_ONLY` file that only an integration test kills shows as missed, never as
-caught, so a wrong entry costs a false survivor and hides none. A test in
-`scripts/test_mutants.py` checks the list against `crates/sisuc/tests/architecture.rs`
-and the tests, binaries and `lib.rs`. The log prints one line before each group, and
-lists the caught mutants (`--caught`). The summary adds the counts of all the passes. Arguments after `--` choose
+groups. The file in the name of each mutant chooses the group. A mutant in a
+file of the `LIB_ONLY` list of `scripts/mutants.sh` (the fuzz modules and the
+program generator) is tested with the unit tests again, because no integration
+test reaches that code. In one run, 49 mutants of `generate/` took about 2.5
+hours with the whole suite and 11 minutes with `--lib`, with the same results.
+Every other mutant is tested with the whole suite, so a mutant that only an
+end-to-end test kills counts as caught.
+
+Each group selects its mutants by name, with one `--re` for each. The script
+drops your own `--re`, `-F`, `--regex`, `--examine-re`, `--examine-regex` and
+`--iterate` from pass 2. cargo-mutants 27.1.0 ignores `--re` for the "delete
+field" mutants, so each group also runs all of those in the diff. A group
+counts, and judges, only the names it was given. It fails the run when it
+tests fewer of them than it was given.
+
+A mutant of a `LIB_ONLY` file that only an integration test kills shows as
+missed, never as caught. So a wrong entry costs a false survivor and hides
+none. A test in `scripts/test_mutants.py` checks the list against
+`crates/sisuc/tests/architecture.rs` and against the tests, binaries and
+`lib.rs`. The log prints one line before each group, and lists the caught
+mutants (`--caught`). The summary adds the counts of all the passes.
+Arguments after `--` choose
 the tests yourself; the script then runs one pass with them. Each mutant still
 costs one build, so a large diff can take an hour or more. A diff of more
 than 300 mutants fails at once, before pass 1, with

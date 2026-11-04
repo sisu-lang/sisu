@@ -28,10 +28,12 @@ ENV = {k: v for k, v in os.environ.items()
 # generated names of the first pass. It exits with FAKE_EXIT. The whole-suite group takes
 # FAKE_PASS2_CAUGHT (0 by default), and FAKE_PASS2_MISSED, FAKE_PASS2_TIMEOUT and FAKE_PASS2_EXIT,
 # each the first pass's value by default. The lib-only group takes FAKE_LIB_CAUGHT, FAKE_LIB_MISSED,
-# FAKE_LIB_TIMEOUT and FAKE_LIB_EXIT, each the whole-suite group's value by default.
-# A run with --list prints FAKE_LIST mutants (0 by default), records nothing and exits with FAKE_EXIT.
+# FAKE_LIB_TIMEOUT and FAKE_LIB_EXIT, each the whole-suite group's value by default. A group run
+# also writes FAKE_OUTSIDE_CAUGHT and FAKE_OUTSIDE_MISSED names that no --re gave, as cargo mutants
+# does for its "delete field" mutants.
+# FAKE_GROUP_WRITE=0 makes a group run write nothing. A run with --list prints FAKE_LIST mutants (0 by default), records nothing and exits with FAKE_EXIT.
 # The sleep keeps lock.json strictly newer than the script's start mark.
-FAKE_CARGO = """#!/usr/bin/env bash
+FAKE_CARGO = r"""#!/usr/bin/env bash
 if [[ " $* " == *" --list "* ]]; then
   for ((i = 0; i < ${FAKE_LIST:-0}; i++)); do echo "mutant $i"; done
   exit "${FAKE_EXIT:-0}"
@@ -56,25 +58,42 @@ if [[ " $* " == *" ^"* ]]; then
     FAKE_LIB_EXIT=${FAKE_LIB_EXIT:-$FAKE_PASS2_EXIT}
   fi
   echo "$*" >$name
-  printf '%s\\n' "$@" >lines${name#args}
+  printf '%s\n' "$@" >lines${name#args}
 else
   echo "$*" >args
 fi
 exit_var=${prefix}_EXIT
 [[ -e mutants.out/missed.txt ]] && touch saw_old_out
 sleep 0.05
-[[ ${FAKE_WRITE:-1} == 0 ]] && exit "${!exit_var:-0}"
+write=${FAKE_WRITE:-1}
+[[ $prefix == FAKE ]] || write=${FAKE_GROUP_WRITE:-1}
+[[ $write == 0 ]] && exit "${!exit_var:-0}"
 rm -rf mutants.out.old
 [[ -e mutants.out ]] && mv mutants.out mutants.out.old
 mkdir -p mutants.out
 touch mutants.out/lock.json
-for kind in caught unviable missed timeout; do
-  var=${prefix}_${kind^^}
-  for ((i = 0; i < ${!var:-0}; i++)); do echo "mutant $i" >>mutants.out/$kind.txt; done
-done
 if [[ $prefix == FAKE ]]; then
+  for kind in caught unviable missed timeout; do
+    var=${prefix}_${kind^^}
+    for ((i = 0; i < ${!var:-0}; i++)); do echo "mutant $i" >>mutants.out/$kind.txt; done
+  done
   [[ -z ${FAKE_MISSED_NAMES:-} ]] || echo "$FAKE_MISSED_NAMES" >mutants.out/missed.txt
   [[ -z ${FAKE_TIMEOUT_NAMES:-} ]] || echo "$FAKE_TIMEOUT_NAMES" >mutants.out/timeout.txt
+else
+  # A group run writes the names it was given, as many as each count says, in the order caught,
+  # unviable, missed, timeout. Fewer names than the counts say are made up; more are not tested.
+  mapfile -t given < <(printf '%s\n' "$@" | grep '^\^' | sed 's/^\^//; s/\$$//; s/\\\(.\)/\1/g')
+  at=0
+  for kind in caught unviable missed timeout; do
+    var=${prefix}_${kind^^}
+    for ((i = 0; i < ${!var:-0}; i++)); do
+      if ((at < ${#given[@]})); then echo "${given[at]}"; else echo "made up $at"; fi >>mutants.out/$kind.txt
+      at=$((at + 1))
+    done
+  done
+  # The "delete field" mutants that cargo mutants runs in every group, whatever --re says.
+  for ((i = 0; i < ${FAKE_OUTSIDE_CAUGHT:-0}; i++)); do echo "crates/x/src/a.rs:$i:1: delete field f" >>mutants.out/caught.txt; done
+  for ((i = 0; i < ${FAKE_OUTSIDE_MISSED:-0}; i++)); do echo "crates/x/src/b.rs:$i:1: delete field g" >>mutants.out/missed.txt; done
 fi
 exit "${!exit_var:-0}"
 """
@@ -195,7 +214,7 @@ class Mutants(unittest.TestCase):
 
     def test_a_missed_mutant_should_fail_even_with_a_timeout(self):
         self.rust_commit()
-        run = self.mutate(caught=1, missed=2, timeout=1, exit=3)
+        run = self.mutate(caught=1, missed=2, timeout=1, exit=3, missed_names='a\nb', timeout_names='c')
         self.assertEqual(run.returncode, 1)
         self.assertEqual(self.last_line(),
                          f'mutation-test: FAIL: 1 caught, 0 unviable, 2 missed, 1 timeouts (HEAD {self.head()})')
@@ -341,7 +360,7 @@ class Mutants(unittest.TestCase):
 
     def two_groups(self, *args, **fake):
         self.rust_commit()
-        fake = dict(missed_names=f'{self.LIB}\n{self.SUITE}', missed=2, exit=2, **fake)
+        fake = {'missed_names': f'{self.LIB}\n{self.SUITE}', 'missed': 2, 'exit': 2, **fake}
         return self.mutate(*args, **fake)
 
     def test_a_missed_mutant_of_a_lib_only_file_should_be_tested_again_with_the_unit_tests_only(self):
@@ -387,11 +406,44 @@ class Mutants(unittest.TestCase):
         self.assertFalse(self.seen('args2'))
 
     def test_the_counts_of_three_passes_should_add_up(self):
-        run = self.two_groups(caught=3, unviable=1, lib_caught=2, lib_missed=0, lib_exit=0,
-                              pass2_caught=4, pass2_missed=1, pass2_exit=2)
+        run = self.two_groups(caught=3, unviable=1, lib_caught=1, lib_missed=0, lib_exit=0,
+                              pass2_caught=0, pass2_missed=1, pass2_exit=2)
         self.assertEqual(run.returncode, 1)
         self.assertEqual(self.last_line(),
-                         f'mutation-test: FAIL: 9 caught, 1 unviable, 1 missed, 0 timeouts (HEAD {self.head()})')
+                         f'mutation-test: FAIL: 4 caught, 1 unviable, 1 missed, 0 timeouts (HEAD {self.head()})')
+
+    def test_a_group_should_not_count_a_mutant_that_was_not_in_its_list(self):
+        # cargo mutants runs every "delete field" mutant of the diff in each group, whatever --re says.
+        run = self.two_groups(caught=3, lib_caught=1, lib_missed=0, lib_exit=0, pass2_caught=1, pass2_missed=0,
+                              pass2_exit=0, outside_caught=2)
+        self.assertEqual(run.returncode, 0)
+        self.assertEqual(self.last_line(),
+                         f'mutation-test: PASS: 5 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.head()})')
+
+    def test_a_group_should_ignore_a_missed_mutant_that_was_not_in_its_list_and_the_exit_status_it_gives(self):
+        run = self.two_groups(lib_caught=1, lib_missed=0, lib_exit=2, pass2_caught=1, pass2_missed=0, pass2_exit=2,
+                              outside_missed=1)
+        self.assertEqual(run.returncode, 0)
+        self.assertEqual(self.last_line(),
+                         f'mutation-test: PASS: 2 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.head()})')
+
+    def test_a_missed_mutant_in_the_list_should_still_fail_beside_a_mutant_that_was_not(self):
+        run = self.two_groups(lib_caught=0, lib_missed=1, lib_exit=2, pass2_caught=1, pass2_missed=0, pass2_exit=0,
+                              outside_caught=1)
+        self.assertEqual(run.returncode, 1)
+        self.assertEqual(self.last_line(),
+                         f'mutation-test: FAIL: 1 caught, 0 unviable, 1 missed, 0 timeouts (HEAD {self.head()})')
+
+    def test_a_group_that_tests_fewer_mutants_than_it_was_given_should_fail(self):
+        run = self.two_groups(lib_caught=0, lib_missed=0, lib_exit=0, pass2_caught=1, pass2_missed=0, pass2_exit=0)
+        self.assertEqual(run.returncode, 1)
+        self.assertEqual(self.last_line(), 'mutation-test: FAIL: 1 caught, 0 unviable, 0 missed, 0 timeouts '
+                                           f'(lib-only group tested 0 of 1 mutants) (HEAD {self.head()})')
+
+    def test_a_group_that_writes_no_result_should_fail_even_when_cargo_exits_zero(self):
+        run = self.two_groups(group_write=0, pass2_exit=0, lib_exit=0)
+        self.assertEqual(run.returncode, 1)
+        self.assertIn('lib-only group tested 0 of 1 mutants, whole-suite group tested 0 of 1 mutants', self.last_line())
 
     def test_a_missed_mutant_of_the_lib_only_group_should_fail_the_run(self):
         run = self.two_groups(lib_caught=0, lib_missed=1, lib_exit=2, pass2_caught=1, pass2_missed=0, pass2_exit=0)

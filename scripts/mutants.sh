@@ -9,14 +9,18 @@
 # "mutation-test: NOT RUN", never PASS.
 # Two passes keep it short. Pass 1 tests each mutant with the unit tests only (`--lib`,
 # about 6 s against 47 s for the whole suite). Pass 2 runs only when pass 1 missed a mutant
-# or timed out. It tests the mutants that pass 1 did not catch in two groups, chosen by the file
-# in the name of each mutant. A mutant in a LIB_ONLY file is tested with the unit tests again,
-# with the pass 2 wait: no integration test reaches that code, and the whole suite would cost
-# about 3 to 4 minutes for each mutant and give the same result. Every other mutant is tested
-# with the whole suite, so a mutant that only an end-to-end test kills is caught, not missed.
-# Each group selects its mutants by name with one --re for each mutant, not with --iterate, so
-# that the groups do not read each other's results. A --re, -F, --regex, --examine-re,
-# --examine-regex or --iterate of the caller is not passed to pass 2: it would widen the set.
+# or timed out. It tests the mutants that pass 1 did not catch in two groups. The file in the
+# name of each mutant chooses the group.
+# A mutant in a LIB_ONLY file is tested with the unit tests again, with the pass 2 wait. No
+# integration test reaches that code. The whole suite would cost about 3 to 4 minutes for each
+# mutant and give the same result.
+# Every other mutant is tested with the whole suite. So a mutant that only an end-to-end test
+# kills is caught, not missed.
+# Each group selects its mutants by name, with one --re for each mutant. It does not use
+# --iterate, so the groups do not read each other's results. A --re, -F, --regex, --examine-re,
+# --examine-regex or --iterate of the caller is not passed to pass 2, because it would widen the
+# set. cargo mutants ignores --re for the "delete field" mutants, so each group counts only the
+# names it was given (see run_group).
 # The summary adds the counts of all the passes.
 # Arguments after -- choose the tests yourself: the script then runs one pass with them.
 # Each mutant still costs one build, so a large diff takes an hour or more.
@@ -59,10 +63,10 @@ source scripts/heavy-run.sh
 heavy_lock make mutation-test
 [[ -z ${LOG:-} ]] || exec >"$LOG" 2>&1
 
-# The files whose code only the library's unit tests reach: no integration test, no binary and
+# The files whose code only the library's unit tests reach. No integration test, no binary and
 # no module outside this list reaches it. scripts/test_mutants.py checks that this list matches
 # the facts. The paths are prefixes of the file in the name of a mutant.
-# A wrong entry never hides a survivor: a mutant of a listed file that only an integration test
+# A wrong entry never hides a survivor. A mutant of a listed file that only an integration test
 # would kill shows as missed, not as caught. Then the entry is wrong, and the fix is to delete it.
 LIB_ONLY=(
   crates/sisuc/src/fuzz.rs
@@ -179,6 +183,7 @@ caught=0
 unviable=0
 missed=0
 timeouts=0
+notes=
 if [[ -n $tested ]]; then
   caught=$(count caught)
   unviable=$(count unviable)
@@ -186,8 +191,17 @@ if [[ -n $tested ]]; then
   timeouts=$(count timeout)
 fi
 
+# The lines of mutants.out/$1.txt that are names in the file $2, or 0 when there is no such file.
+count_in() {
+  if [[ -f mutants.out/$1.txt ]]; then grep -cxFf "$2" "mutants.out/$1.txt" || true; else echo 0; fi
+}
+
 # Pass 2 tests the group of the names in file $2 with the tests in $3 (the label is $1), and adds
 # the counts. The remaining arguments go last to cargo mutants. A group with no mutant does not run.
+# cargo mutants 27.1.0 does not apply --re to the "delete field" mutants (visit.rs:739-746 pushes
+# them without the filter), so every group also runs all of those in the diff. The group counts
+# and judges only the names it was given: it ignores the other lines of mutants.out and the exit
+# status of cargo mutants, which those other mutants can change.
 run_group() {
   local label=$1 names=$2 tests=$3 n re
   shift 3
@@ -198,13 +212,29 @@ run_group() {
   # A name holds regex characters, so each one is escaped and anchored.
   while IFS= read -r re; do args+=(--re "$re"); done < <(sed 's/[][\\.+*?()|{}^$]/\\&/g; s/^/^/; s/$/$/' "$names")
   pass "${args[@]}" "$@"
+  local g_caught=0 g_unviable=0 g_missed=0 g_timeouts=0
   if [[ -n $tested ]]; then
-    caught=$((caught + $(count caught)))
-    unviable=$((unviable + $(count unviable)))
-    missed=$((missed + $(count missed)))
-    timeouts=$((timeouts + $(count timeout)))
+    g_caught=$(count_in caught "$names")
+    g_unviable=$(count_in unviable "$names")
+    g_missed=$(count_in missed "$names")
+    g_timeouts=$(count_in timeout "$names")
   fi
-  # A missed mutant (2) or a timeout (3) is a result; any other code is a failure, which wins.
+  caught=$((caught + g_caught))
+  unviable=$((unviable + g_unviable))
+  missed=$((missed + g_missed))
+  timeouts=$((timeouts + g_timeouts))
+  # A group that did not test each name it was given hides survivors, so it fails the run.
+  local total=$((g_caught + g_unviable + g_missed + g_timeouts))
+  if ((total != n)); then
+    notes+="${notes:+, }$label group tested $total of $n mutants"
+  fi
+  # A status other than 0, 2 and 3 is a failure of cargo mutants, which wins. Otherwise the
+  # result is that of the group's own names: a missed mutant (2) or a timeout (3).
+  case $status in
+    0 | 2 | 3)
+      if ((g_missed > 0)); then status=2; elif ((g_timeouts > 0)); then status=3; else status=0; fi
+      ;;
+  esac
   case $status in
     0) ;;
     2 | 3) if [[ $group_status == 0 ]]; then group_status=$status; fi ;;
@@ -262,12 +292,13 @@ else
   # No new output: the diff holds no mutant, or cargo mutants stopped before the first test.
   counts="no mutant tested"
 fi
-if ((status == 0 && missed == 0)); then
+if ((status == 0 && missed == 0)) && [[ -z $notes ]]; then
   verdict="mutation-test: PASS: $counts"
 else
   verdict="mutation-test: FAIL: $counts"
   # A missed mutant explains the failure; any other exit status needs its own note.
-  ((missed > 0)) || verdict+=" (cargo mutants exit $status, see the output above)"
+  [[ -z $notes ]] || verdict+=" ($notes)"
+  if ((missed == 0 && status != 0)); then verdict+=" (cargo mutants exit $status, see the output above)"; fi
 fi
 echo "$verdict (HEAD $head)"
 [[ $verdict == "mutation-test: PASS:"* ]]
