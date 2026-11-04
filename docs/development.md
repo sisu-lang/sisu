@@ -548,7 +548,7 @@ small program. After a run, the script replays up to 3 new `crash-` inputs
 for up to 340 s each.
 
 Expect about 1 program a second per core when the machine is busy. Each input
-is built six times, the program's three builds and its copy's three, and
+is built eight times, the program's four builds and its copy's four, and
 most of that time is `cc` linking. Fork mode runs one job per core, so the
 rate scales with the cores: a runner with few cores fuzzes far fewer programs
 than a 32-core machine. Before `-len_control=0`, when the programs were

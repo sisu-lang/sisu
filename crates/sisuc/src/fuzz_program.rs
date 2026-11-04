@@ -130,8 +130,9 @@ struct Current {
 /// runs, and the panic hook only tries it.
 static CURRENT: Mutex<Option<Current>> = Mutex::new(None);
 
-/// Generates a program from `data`, builds it and its rewritten copy at O0, -O2 and with
-/// --rc-checks against `runtime`, runs each build and panics on a breach of a property.
+/// Generates a program from `data`, builds it and its rewritten copy four ways against
+/// `runtime`, runs each build and panics on a breach of a property. The four are O0, -O2 in one
+/// codegen unit, --rc-checks, and -O2 in four codegen units.
 /// The caller runs it on a `STACK_SIZE` thread, as for `fuzz_front_end`.
 #[cfg_attr(
     not(feature = "fuzz"),

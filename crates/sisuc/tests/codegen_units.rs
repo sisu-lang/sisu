@@ -302,6 +302,8 @@ fn main() {
         &["--emit", "ir", "-O2", "--codegen-units", "3"],
     );
     let before: Vec<&str> = units(&ir).into_iter().map(before_pipeline).collect();
+    // `even` and `odd` are at `SMALL`, the largest size that a unit copies. A lower `SMALL` must
+    // make them smaller, or this check must go.
     assert!(copies(before[home(&before, "even")], "odd"), "{ir}");
     assert!(copies(before[home(&before, "odd")], "even"), "{ir}");
     let outputs = ["1", "3"].map(|count| {

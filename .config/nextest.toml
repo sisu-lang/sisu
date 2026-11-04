@@ -36,6 +36,21 @@ slow-timeout = { period = "2s", terminate-after = 3 }
 filter = 'test(many_panic_sites_should_compile_in_linear_time)'
 slow-timeout = { period = "4s", terminate-after = 3 }
 
+# `units::copies` once could scan a unit's list of copies for a repeat in place of its mark, which
+# is quadratic, and no step counter sees it: each edge still takes one step. This test hangs
+# instead of failing. It runs in 0.04 s alone and takes 12.8 s with the scan (a load average of 8
+# to 9), so the kill is at 3 s: more than 5 times the run alone and less than half of the
+# regression.
+[[profile.default.overrides]]
+filter = 'test(copies_should_finish_a_long_chain_in_linear_time)'
+slow-timeout = { period = "1s", terminate-after = 3 }
+
+# A CI runner is about twice as slow, and coverage makes a test slower, so the kill is at 6 s: the
+# same ratios as above.
+[[profile.ci.overrides]]
+filter = 'test(copies_should_finish_a_long_chain_in_linear_time)'
+slow-timeout = { period = "2s", terminate-after = 3 }
+
 # Each render once cost the whole file, so many diagnostics in a large file were quadratic and
 # this test hangs instead of failing.
 [[profile.default.overrides]]

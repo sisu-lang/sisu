@@ -146,7 +146,8 @@ pub(crate) fn partition(
     let copied = if level == OptLevel::O0 {
         vec![Vec::new(); count]
     } else {
-        copies(sizes, &callees(mir), &owner, count)
+        let callees: Vec<Vec<usize>> = mir.functions.iter().map(mir::Function::callees).collect();
+        copies(sizes, &callees, &owner, count)
     };
     copied
         .into_iter()
@@ -173,39 +174,17 @@ pub(crate) fn partition(
         .collect()
 }
 
-/// For each function of `mir`, the sorted list, with no repeat, of the functions that its body
-/// calls.
-fn callees(mir: &mir::Program) -> Vec<Vec<usize>> {
-    mir.functions
-        .iter()
-        .map(|function| {
-            let mut callees: Vec<usize> = (function.blocks.iter())
-                .flat_map(|block| &block.stmts)
-                .filter_map(|stmt| match stmt {
-                    mir::Statement::Assign {
-                        value: mir::Rvalue::Call { func, .. },
-                        ..
-                    } => Some(func.0),
-                    _ => None,
-                })
-                .collect();
-            callees.sort_unstable();
-            callees.dedup();
-            callees
-        })
-        .collect()
-}
-
 #[cfg(test)]
 thread_local! {
     /// How many callee edges `copies` has visited on this thread.
     static COPY_STEPS: Cell<usize> = const { Cell::new(0) };
 }
 
-/// For each of the `count` units, the functions it copies (C6): the small functions (`sizes` at
-/// most `SMALL`) that its functions call, or that its copies call, and that it does not own.
-/// `callees[f]` is the sorted list of the functions that `f` calls, and `unit_of[f]` the unit
-/// that owns `f`. The result depends only on these, in function order, never on a hash map.
+/// For each of the `count` units, the functions it copies (C6). A unit copies a small function
+/// (`sizes` at most `SMALL`) that it does not own. It copies the ones that its functions call.
+/// It also copies the ones that its copies call. `callees[f]` lists the functions that `f` calls,
+/// in the order of its calls, and may repeat one. `unit_of[f]` is the unit that owns `f`. The
+/// copies of a unit depend only on these, never on a hash map.
 ///
 /// A function is marked when it is pushed on the unit's work list, so each is expanded at most
 /// once for each unit. One list of marks serves every unit and is cleared through the unit's own
@@ -718,6 +697,25 @@ fn main() { print(e(1)) }";
             copy_steps(&layers(400)),
             copy_steps(&layers(600)),
         );
+    }
+
+    /// A chain of 16,000 small functions in 64 units makes about a million steps. A step counter
+    /// does not see a scan of the unit's list for a repeat in place of its mark: each edge still
+    /// takes one step, and the scan makes the work quadratic. A chain of 1,600 already takes
+    /// 13 times longer with the scan (0.134 s against 0.010 s), so this input is 10 times that
+    /// size. Alone, the run takes 0.04 s. With the scan it takes 12.8 s. Both were measured at a
+    /// load average of 8 to 9, in the default profile.
+    #[test]
+    fn copies_should_finish_a_long_chain_in_linear_time() {
+        let n = 16_000;
+        let callees: Vec<Vec<usize>> = (0..n)
+            .map(|f| if f + 1 < n { vec![f + 1] } else { vec![] })
+            .collect();
+        let unit_of: Vec<usize> = (0..n).map(|function| function % 64).collect();
+        let copied = copies(&vec![S; n], &callees, &unit_of, 64);
+        // Unit 0 owns the functions 0, 64, 128 and so on, and copies all the others after 0.
+        let owned_after_0 = (n - 1) / 64;
+        assert_eq!(copied[0].len(), n - 1 - owned_after_0);
     }
 
     #[test]

@@ -283,8 +283,8 @@ pub(crate) fn compile_unit<'ctx>(
         }
     }
     // Declare every function first so that calls can refer to functions defined later.
-    for f in &mir.functions {
-        codegen.declare(f);
+    for (i, f) in mir.functions.iter().enumerate() {
+        codegen.declare(i, f);
     }
     for (i, f) in mir.functions.iter().enumerate() {
         if unit.placement[i] != Placement::Other {
@@ -608,7 +608,8 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.optional(ty, some, value)
     }
 
-    fn declare(&mut self, f: &mir::Function) {
+    /// Declares function `index`, `f`; a `Copy` of the unit gets a body for the optimizer only.
+    fn declare(&mut self, index: usize, f: &mir::Function) {
         let ptr_type = self.context.ptr_type(AddressSpace::default());
         let mut params: Vec<BasicMetadataTypeEnum<'_>> = f.locals[..f.params]
             .iter()
@@ -627,7 +628,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         // two blocks that each hold `name` get two symbols.
         let linkage = if !self.unit.is_split() {
             Linkage::Internal
-        } else if self.unit.placement[self.functions.len()] == Placement::Copy {
+        } else if self.unit.placement[index] == Placement::Copy {
             // A body for the optimizer only: LLVM drops it, and the owner's unit has the symbol.
             Linkage::AvailableExternally
         } else {

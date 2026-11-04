@@ -111,6 +111,27 @@ pub(crate) struct Function {
     pub(crate) owners: FxHashMap<LocalId, LocalId>,
 }
 
+impl Function {
+    /// The functions this one calls directly, in the order of its call sites, with a repeat for
+    /// each call. A call through a table (`DynCall`) names no function. This is the one place
+    /// that knows which statements call a function.
+    pub(crate) fn callees(&self) -> Vec<usize> {
+        let mut called = Vec::new();
+        for block in &self.blocks {
+            for stmt in &block.stmts {
+                if let Statement::Assign {
+                    value: Rvalue::Call { func, .. },
+                    ..
+                } = stmt
+                {
+                    called.push(func.0);
+                }
+            }
+        }
+        called
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct Local {
     /// `None` for a temporary, and for a local the checker made up.
