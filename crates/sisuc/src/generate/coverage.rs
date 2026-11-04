@@ -18,6 +18,7 @@ use super::scope::{
 use super::stmt::MAX_BLOCKS;
 use super::writer::{Rewrite, Site, Writer, allowed};
 use super::{Answer, BUDGET, Cost, DEPTHS, FUEL, Gen, MAX_BOUND, MAX_NESTING, MAX_SIZE, generate};
+use crate::check::prelude_function_names;
 use crate::conformance::holds_class;
 use crate::diagnostic::Severity;
 use crate::front_end::{PRELUDE_SOURCE, front_end, prelude_program};
@@ -66,14 +67,6 @@ const EXCLUDED: &[(&str, &str)] = &[
     (
         "ast::Part.bad_spec = true",
         "only a format spec with an error sets it",
-    ),
-    (
-        "ast::Param.mutable = true",
-        "Task 9 of the `mut` parameters plan generates it",
-    ),
-    (
-        "tir::ExprKind::MutCall",
-        "Task 9 of the `mut` parameters plan generates it",
     ),
     (
         "types::Step::Type",
@@ -513,6 +506,11 @@ fn universe() -> FxHashSet<String> {
         syn::parse_file(include_str!("../check/prelude.rs")).expect("prelude.rs should parse");
     for row in const_rows(&prelude, "PRELUDE") {
         universe.insert(format!("prelude {}", row[0]));
+    }
+    // The free functions of `prelude.sisu`, which the checker reserves as it does `PRELUDE`.
+    let items = &prelude_program(PRELUDE_SOURCE).program.items;
+    for name in prelude_function_names(items) {
+        universe.insert(format!("prelude {name}"));
     }
     for (variant, receivers) in RECEIVERS {
         for receiver in *receivers {

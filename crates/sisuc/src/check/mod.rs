@@ -1448,7 +1448,7 @@ impl Checker<'_> {
     /// enum's methods at its place.
     /// The first `user_items` of `items` are the user's: `self.prelude` is where the rest start.
     fn collect_names(&mut self, items: &[&ast::Item], user_items: usize, broken: &[ast::Broken]) {
-        self.prelude_functions = prelude_function_names(&items[user_items..]);
+        self.prelude_functions = prelude_function_names(items[user_items..].iter().copied());
         let mut first = FxHashMap::default();
         let mut next_function = 0;
         // Source order among the constants.
@@ -2658,8 +2658,11 @@ fn wrap_block(block: &mut CheckedBlock, ty: Type) {
 }
 
 /// The names of the free functions among the prelude's `items`.
-fn prelude_function_names(items: &[&ast::Item]) -> FxHashSet<Symbol> {
-    (items.iter())
+pub(crate) fn prelude_function_names<'a>(
+    items: impl IntoIterator<Item = &'a ast::Item>,
+) -> FxHashSet<Symbol> {
+    items
+        .into_iter()
         .filter_map(|item| match item {
             ast::Item::Function(f) => Some(f.name.name),
             _ => None,

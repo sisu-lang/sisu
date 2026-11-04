@@ -284,3 +284,26 @@ impl Writer {
         self.made(Rewrite::Swap);
     }
 }
+
+/// Whether the rewrite of a `mut` call keeps the meaning (decision 2). It reads `call`, the call's
+/// text, which holds `own` `mut` arguments. The rewrite copies a local in before the other
+/// arguments run, so an argument that is a `mut` call of its own could change the local first.
+#[cfg(test)]
+pub(crate) fn mut_rewrite_allowed(_call: &str, _own: usize) -> bool {
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mut_rewrite_allowed;
+
+    /// GIVEN S31's `f(mut xs, g(mut xs))`, where `g` changes `xs`, and `f(mut xs, 1)`
+    /// WHEN the writer decides whether the rewrite of decision 2 keeps the meaning
+    /// THEN it leaves the first call as it is, and rewrites the second
+    #[test]
+    fn mut_rewrite_should_skip_a_call_whose_arguments_can_change_the_place() {
+        assert!(!mut_rewrite_allowed("f(mut xs, g(mut xs))", 1));
+        assert!(mut_rewrite_allowed("f(mut xs, 1)", 1));
+        assert!(mut_rewrite_allowed("let _ = exchange(mut xs, [])", 1));
+    }
+}
