@@ -998,7 +998,8 @@ fn dot_push_on_optional_array_should_check_the_element() {
     );
 }
 
-/// The receiver is a call, which stores nothing: E0062, then E0021, and no check of the argument.
+/// The receiver is a call, which stores nothing: E0062, then E0021.
+/// The argument is checked with no expected element type.
 #[test]
 fn dot_push_on_optional_temporary_should_report_the_temporary() {
     codes(
@@ -1006,6 +1007,18 @@ fn dot_push_on_optional_temporary_should_report_the_temporary() {
         &[
             (Code::MayBeNone, (3, 5)),
             (Code::AssignToExpression, (3, 5)),
+        ],
+    );
+}
+
+/// A failed receiver of array type is still a temporary: E0021, then the argument error E0033.
+#[test]
+fn push_on_failed_array_receiver_should_report_the_temporary() {
+    codes(
+        "fn g(n: i64) -> [string] {\n    []\n}\nfn main() {\n    g(nope).push(\"a\")\n}",
+        &[
+            (Code::AssignToExpression, (5, 5)),
+            (Code::BindingNotFound, (5, 7)),
         ],
     );
 }
