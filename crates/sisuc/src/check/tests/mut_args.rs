@@ -1831,6 +1831,7 @@ fn place_at_a_mut_parameter_should_not_be_ranked() {
 /// AND the read `print(c.xs)` keeps its `?.` fix
 #[test]
 fn optional_object_of_a_mut_argument_should_get_no_fix() {
+    with_prelude();
     let head = "class C {\n    mut xs: [i64]\n    mut n: i64\n}\n\
         class A {\n    mut b: C?\n}\n\
         class O {\n    fn m(self, mut xs: [i64]) {\n        xs[0] = 1\n    }\n}\n\

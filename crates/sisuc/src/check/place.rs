@@ -852,10 +852,10 @@ impl Checker<'_> {
             ast::ExprKind::Field {
                 base, name, safe, ..
             } => {
-                let access = if change == Change::Push {
-                    Access::Push
-                } else {
-                    Access::Assign
+                let access = match change {
+                    Change::Push => Access::Push,
+                    Change::MutArg => Access::Mut,
+                    _ => Access::Assign,
                 };
                 if change != Change::Push {
                     self.stamp_root(base);

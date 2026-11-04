@@ -24,6 +24,8 @@ pub(super) enum Access {
     Assign,
     /// The receiver of a `.push`, which may be a class's own `push`.
     Push,
+    /// The place of a `mut` argument, which a `?.` cannot be.
+    Mut,
 }
 
 /// What a field lookup found: the field's class, its index, and its type, `None` for `Error`.
@@ -249,10 +251,11 @@ impl Checker<'_> {
         let found = self.find_field(Some(inner), receiver, name, access)?;
         let write = match access {
             Access::Read => false,
-            Access::Assign => true,
+            Access::Assign | Access::Mut => true,
             Access::Push => self.field_is_array(inner, name.name),
         };
-        let fix = payload_fix(payload, self.body.indexed);
+        // A `?.` makes a `mut` argument a value that is no place (E0170).
+        let fix = payload_fix(payload, self.body.indexed) && !matches!(access, Access::Mut);
         self.diagnostics
             .push(may_be_none(receiver, name, fix, write, UnwrapHelp::It));
         Some(found)
