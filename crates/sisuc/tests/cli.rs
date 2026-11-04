@@ -472,7 +472,7 @@ fn codegen_units_should_be_a_usage_error_out_of_range_or_without_codegen() {
     );
 }
 
-/// GIVEN two functions and `main`
+/// GIVEN a function `one` and a `main` that calls it
 /// WHEN `sisu run --codegen-units 2 -e <program>` runs it
 /// THEN the program's output is on stdout and the exit code is 0
 #[test]

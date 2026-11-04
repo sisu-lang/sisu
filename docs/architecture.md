@@ -487,8 +487,8 @@ emits object code for the machine `sisu` runs on, x86-64 or ARM64.
 **Codegen units** (`codegen/units.rs`, [ADR 0045](adr/0045-codegen-units-split-by-default.md)).
 A large program splits into codegen units: one LLVM module each, which codegen,
 the optimizer and the object writer handle on their own thread. The count comes
-only from the size of the program in `mir`, at most 8, and `--codegen-units`
-sets a maximum. A function with one call site joins the group of its caller, up to a cap.
+only from the size of the program in `mir`, at most 8 by default.
+`--codegen-units` replaces that maximum with a number from 1 to 64. A function with one call site joins the group of its caller, up to a cap.
 Then the largest group goes to the unit with the least size. At `-O2` and
 `-O3`, a unit gets an `available_externally` copy of each small function of
 another unit that it calls. A function is external, with hidden visibility,

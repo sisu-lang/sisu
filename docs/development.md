@@ -833,7 +833,7 @@ These flags run the pipeline up to one stage and stop there.
 | `sisu build --emit ir-raw file.sisu` | The LLVM IR before any pass, as one module that LLVM's `opt` reads |
 | `sisu build --rc-checks --emit ir-raw file.sisu` | The same, with the count checks of `--rc-checks` built in |
 | `sisu build --timings file.sisu` | The time of each stage, one `timings:` line each, on stderr after the diagnostics. It also works with `--emit <output>`, which times only the stages that make it, and on `sisu check` |
-| `sisu build --codegen-units 1 file.sisu` | One LLVM module, optimized as a whole, as before codegen units; the default splits a large program into at most 8 units ([ADR 0045](adr/0045-codegen-units-split-by-default.md)). With `--emit ir` or `--emit ir-raw`, the flag prints each unit under a `; codegen unit` header |
+| `sisu build --codegen-units 1 file.sisu` | One LLVM module, optimized as a whole, as before codegen units; the default splits a large program into at most 8 units ([ADR 0045](adr/0045-codegen-units-split-by-default.md)). With `--emit ir` or `--emit ir-raw` and more than one unit, `sisu` prints each unit under a `; codegen unit` header; one unit prints with no header |
 | `sisu check file.sisu` | Only diagnostics; exits with code 1 if any is an error |
 | `sisu explain E0001` | The explanation of a diagnostic code, in any case; unknown codes exit with code 1 |
 

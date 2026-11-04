@@ -343,8 +343,10 @@ about 19 minutes. Each time is the best of 5 runs of the command.
 
 `sisu` splits a large program into codegen units and builds them on several
 threads ([ADR 0045](adr/0045-codegen-units-split-by-default.md)). The script
-runs `sisu` with its default, so the size 100 program builds in 7 units and the
-size 1000 program in 8. Size 10 is one unit.
+runs `sisu` with its default, so the executable rows build the size 100 program
+in 7 units and the size 1000 program in 8. Size 10 is one unit. The `LLVM IR`
+row runs `--emit ir-raw` with no `--codegen-units`, so it makes one module at
+every size.
 
 - commit: 73860669
 - date: 2026-11-04
