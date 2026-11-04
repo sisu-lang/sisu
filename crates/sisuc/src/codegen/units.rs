@@ -1,14 +1,21 @@
 //! Codegen units: the size rule that picks how many units a program builds in, and the
 //! assignment of its functions to those units.
 
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
+
+use rustc_hash::FxHashSet;
+
 use crate::mir;
 
-/// The mir size of one unit. It matches 25k raw IR instructions.
+/// The mir size of one unit. It matches 25k raw IR instructions. The generated program of
+/// `make compile-speed` with 100 copies has 195,729 raw IR instructions in `--emit ir-raw` and a
+/// mir size of 38,903 in all: 25,000 * 38,903 / 195,729 is 4,969. That program gets 7 units.
 #[cfg_attr(
     not(test),
     expect(dead_code, reason = "Task 4 calls `count`, which reads it")
 )]
-pub(crate) const UNIT_SIZE: usize = 1000;
+pub(crate) const UNIT_SIZE: usize = 4969;
 
 /// The most units a program builds in when the flag is not given.
 #[cfg_attr(
@@ -35,8 +42,10 @@ pub(crate) fn size(function: &mir::Function) -> usize {
 /// `UNIT_SIZE`, from 1 to `MAX_UNITS`. A unit always holds a function, so the number is at most
 /// the function count.
 #[cfg_attr(not(test), expect(dead_code, reason = "Task 4 calls it"))]
-pub(crate) fn count(_sizes: &[usize], _flag: Option<usize>) -> usize {
-    0
+pub(crate) fn count(sizes: &[usize], flag: Option<usize>) -> usize {
+    let wanted =
+        flag.unwrap_or_else(|| (sizes.iter().sum::<usize>() / UNIT_SIZE).clamp(1, MAX_UNITS));
+    wanted.min(sizes.len()).max(1)
 }
 
 /// The unit of each function of `sizes`, indexed by the function's id. The largest function goes
@@ -45,8 +54,22 @@ pub(crate) fn count(_sizes: &[usize], _flag: Option<usize>) -> usize {
     not(test),
     expect(dead_code, reason = "Task 2 calls `partition`, which calls it")
 )]
-pub(crate) fn assign(sizes: &[usize], _count: usize) -> Vec<usize> {
-    vec![0; sizes.len()]
+pub(crate) fn assign(sizes: &[usize], count: usize) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..sizes.len()).collect();
+    // The sort is stable, so equal sizes stay in id order.
+    order.sort_by_key(|&function| Reverse(sizes[function]));
+    // The least loaded unit pops first; a tie pops the lower unit index.
+    let mut loads: BinaryHeap<Reverse<(usize, usize)>> =
+        (0..count).map(|unit| Reverse((0, unit))).collect();
+    let mut units = vec![0; sizes.len()];
+    for function in order {
+        let Some(Reverse((load, unit))) = loads.pop() else {
+            break;
+        };
+        units[function] = unit;
+        loads.push(Reverse((load + sizes[function], unit)));
+    }
+    units
 }
 
 /// What a unit does with a function.
@@ -94,8 +117,35 @@ impl Unit {
 ///
 /// With `count > 1`, if two functions have one name: a split build links by name.
 #[cfg_attr(not(test), expect(dead_code, reason = "Task 2 calls it"))]
-pub(crate) fn partition(_mir: &mir::Program, _count: usize) -> Vec<Unit> {
-    Vec::new()
+pub(crate) fn partition(mir: &mir::Program, count: usize) -> Vec<Unit> {
+    if count > 1 {
+        let mut names = FxHashSet::default();
+        for function in &mir.functions {
+            assert!(
+                names.insert(function.name.as_str()),
+                "two functions are named `{}`; a split build links by name",
+                function.name
+            );
+        }
+    }
+    let sizes: Vec<usize> = mir.functions.iter().map(size).collect();
+    let owner = assign(&sizes, count);
+    (0..count)
+        .map(|index| Unit {
+            index,
+            count,
+            placement: owner
+                .iter()
+                .map(|&unit| {
+                    if unit == index {
+                        Placement::Own
+                    } else {
+                        Placement::Other
+                    }
+                })
+                .collect(),
+        })
+        .collect()
 }
 
 #[cfg(test)]
