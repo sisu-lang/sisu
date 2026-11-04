@@ -30,10 +30,10 @@ threads. `sisu` links their objects into one executable.
    rule makes it for single functions. Then the largest group goes first,
    each one to the unit with the least total size, ties broken by function
    index and unit index. A function that joins the group of its caller stays
-   in that unit. Unless it is pinned, no other unit refers to it, so it is
-   internal to its unit and LLVM can inline it and use its constant
-   arguments. Whether a function is internal comes from the full analysis of
-   references, not from its one call site. With no such rule, `sieve` and
+   in that unit. It is internal unless another unit refers to it, through a
+   pin or through a copy of its caller at `-O2` (decision 5). Whether a
+   function is internal comes from the full analysis of references, not from
+   its one call site. With no such rule, `sieve` and
    `fannkuch_redux`, forced into 8 units, ran 14% and 23% slower than in one
    unit, because their hot function has one call site, in `main`, in another
    unit. A program with fewer groups than units gets one unit for each
