@@ -1,3 +1,7 @@
+// GIVEN a string's `get` with a range that has no bounds, called with a `?.` that fails
+// WHEN `sisu check` runs on it
+// THEN it reports E0049, E0062 or E0033 for each failed `?.` or unknown name
+// AND it reports E0023 for each call, with no help, because the call has no value to name
 fn g(n: i64) -> string {
     return "x"
 }

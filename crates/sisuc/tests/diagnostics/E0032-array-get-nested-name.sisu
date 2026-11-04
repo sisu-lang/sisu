@@ -1,3 +1,7 @@
+// GIVEN a `get` of a nested array with two arguments, the second one a range
+// WHEN `sisu check` runs on it
+// THEN it reports E0053 for the argument count
+// AND it reports E0032 with the help "use `xss[a..b]`", which names the receiver as written
 fn main() {
     let xss = [[1]]
     print(xss.get(0, ..1) ?? [0])

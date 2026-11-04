@@ -1,75 +1,75 @@
 error[E0049]: `s` is not optional
- --> E0023-string-get-failed-safe.sisu:8:11
-  |
-8 |     print(s?.get(..) ?? "")
-  |           ^
-  |
+  --> E0023-string-get-failed-safe.sisu:12:11
+   |
+12 |     print(s?.get(..) ?? "")
+   |           ^
+   |
 help: replace `?.` with `.`
-  |
-8 -     print(s?.get(..) ?? "")
-8 +     print(s.get(..) ?? "")
-  |
+   |
+12 -     print(s?.get(..) ?? "")
+12 +     print(s.get(..) ?? "")
+   |
 
 error[E0023]: `s?.get(..)` has no bounds
- --> E0023-string-get-failed-safe.sisu:8:18
-  |
-8 |     print(s?.get(..) ?? "")
-  |                  ^^ this range has no bounds
+  --> E0023-string-get-failed-safe.sisu:12:18
+   |
+12 |     print(s?.get(..) ?? "")
+   |                  ^^ this range has no bounds
 
 error[E0049]: `s` is not optional
- --> E0023-string-get-failed-safe.sisu:9:11
-  |
-9 |     print(s?.get(..=) ?? "")
-  |           ^
-  |
+  --> E0023-string-get-failed-safe.sisu:13:11
+   |
+13 |     print(s?.get(..=) ?? "")
+   |           ^
+   |
 help: replace `?.` with `.`
-  |
-9 -     print(s?.get(..=) ?? "")
-9 +     print(s.get(..=) ?? "")
-  |
+   |
+13 -     print(s?.get(..=) ?? "")
+13 +     print(s.get(..=) ?? "")
+   |
 
 error[E0023]: `s?.get(..=)` has no bounds
- --> E0023-string-get-failed-safe.sisu:9:18
-  |
-9 |     print(s?.get(..=) ?? "")
-  |                  ^^^ this range has no bounds
+  --> E0023-string-get-failed-safe.sisu:13:18
+   |
+13 |     print(s?.get(..=) ?? "")
+   |                  ^^^ this range has no bounds
 
 error[E0062]: `o?.` leaves a `string?`, which may be `None`
-  --> E0023-string-get-failed-safe.sisu:10:11
+  --> E0023-string-get-failed-safe.sisu:14:11
    |
-10 |     print(o?.get(..) ?? "")
+14 |     print(o?.get(..) ?? "")
    |           ^
    |
    = help: peel the other layer first: `(o ?? None)?.get`
 
 error[E0023]: `o?.get(..)` has no bounds
-  --> E0023-string-get-failed-safe.sisu:10:18
+  --> E0023-string-get-failed-safe.sisu:14:18
    |
-10 |     print(o?.get(..) ?? "")
+14 |     print(o?.get(..) ?? "")
    |                  ^^ this range has no bounds
 
 error[E0049]: this value is not optional
-  --> E0023-string-get-failed-safe.sisu:11:11
+  --> E0023-string-get-failed-safe.sisu:15:11
    |
-11 |     print(g(nope)?.get(..) ?? "")
+15 |     print(g(nope)?.get(..) ?? "")
    |           ^^^^^^^
    |
 help: replace `?.` with `.`
    |
-11 -     print(g(nope)?.get(..) ?? "")
-11 +     print(g(nope).get(..) ?? "")
+15 -     print(g(nope)?.get(..) ?? "")
+15 +     print(g(nope).get(..) ?? "")
    |
 
 error[E0033]: cannot find binding `nope`
-  --> E0023-string-get-failed-safe.sisu:11:13
+  --> E0023-string-get-failed-safe.sisu:15:13
    |
-11 |     print(g(nope)?.get(..) ?? "")
+15 |     print(g(nope)?.get(..) ?? "")
    |             ^^^^
 
 error[E0023]: `g(nope)?.get(..)` has no bounds
-  --> E0023-string-get-failed-safe.sisu:11:24
+  --> E0023-string-get-failed-safe.sisu:15:24
    |
-11 |     print(g(nope)?.get(..) ?? "")
+15 |     print(g(nope)?.get(..) ?? "")
    |                        ^^ this range has no bounds
 
 sisu: 9 errors

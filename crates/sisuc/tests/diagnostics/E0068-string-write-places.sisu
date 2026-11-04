@@ -1,3 +1,8 @@
+// GIVEN writes into an index of a string, in a field, an element, a range and a call
+// WHEN `sisu check` runs on it
+// THEN it reports E0068 for each index
+// AND the help of a write to the whole index names the base in `chars()` and `string(cs)`
+// AND the help of a deeper index or a push names the base in `bytes()` and `chars()`
 class Node {
     mut name: string
 }

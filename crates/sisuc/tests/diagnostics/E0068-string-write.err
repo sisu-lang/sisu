@@ -1,15 +1,15 @@
 error[E0068]: a string has no single index
- --> E0068-string-write.sisu:3:11
+ --> E0068-string-write.sisu:7:11
   |
-3 |     print(t[0])
+7 |     print(t[0])
   |           ^ this is a string
   |
   = help: for bytes, write `let bs = t.bytes()` once, then `bs[i]`; for characters, write `let cs = t.chars()` once, then `cs[i]`
 
 error[E0068]: a string has no single index
- --> E0068-string-write.sisu:4:5
+ --> E0068-string-write.sisu:8:5
   |
-4 |     t[0] = "x"
+8 |     t[0] = "x"
   |     ^ this is a string
   |
   = help: to change a character, write `let mut cs = t.chars()`, change `cs[i]`, then write `t = string(cs)`

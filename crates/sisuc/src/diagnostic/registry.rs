@@ -2235,8 +2235,7 @@ pub(crate) enum GetCall {
     Plain,
     /// `base?.get(..)` on an optional: it is `base`.
     Safe,
-    /// `base?.get(..)` where the `?.` failed (E0049 or E0062), so `base` is no optional and the
-    /// call is not `base`.
+    /// `base?.get(..)` where the `?.` failed (E0049 or E0062), so the call has no value to name.
     SafeFailed,
 }
 
@@ -4572,10 +4571,15 @@ impl From<DiagnosticKind> for Diagnostic {
                     .with_help(help)
             }
             DiagnosticKind::StringGetNeedsRange { at, base, call } => {
-                let dot = if call == GetCall::Plain { "." } else { "?." };
+                // A call after a failed `?.` fails again, so its help names the range only.
+                let example = match call {
+                    GetCall::Plain => format!("{base}.get(1..3)"),
+                    GetCall::Safe => format!("{base}?.get(1..3)"),
+                    GetCall::SafeFailed => "1..3".to_owned(),
+                };
                 Diagnostic::coded(code, at, "a string's `get` takes a range")
                     .with_label("this is not a range")
-                    .with_help(format!("write a range, such as `{base}{dot}get(1..3)`"))
+                    .with_help(format!("write a range, such as `{example}`"))
             }
             DiagnosticKind::ArrayGetTakesIndex { at, base } => {
                 // `base[a..b]` on an optional array is E0062, and Sisu has no `?[`.

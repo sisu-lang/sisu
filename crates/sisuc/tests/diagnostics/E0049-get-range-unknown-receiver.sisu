@@ -1,3 +1,7 @@
+// GIVEN a string's `get` with a range that has no bounds, after `?.` on a value that is plain
+// WHEN `sisu check` runs on it
+// THEN it reports E0049 for the `?.`
+// AND it reports no E0023, because the failed `?.` already explains the error
 class Node {
     name: string
 }

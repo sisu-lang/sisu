@@ -1,3 +1,7 @@
+// GIVEN an index of a string that is a call, and an index of a string that is a sum
+// WHEN `sisu check` runs on it
+// THEN it reports E0068 for each index
+// AND each help names the base as written, `f()` and `(t + "d")`, in `bytes()` and `chars()`
 fn f() -> string {
     return "x"
 }
