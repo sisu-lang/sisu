@@ -20,6 +20,7 @@ env:
 # The fuzz step decides the job's result: each later step runs only after it
 # failed, or tolerates failure. Worst case: 15 min of build, 30 of fuzzing,
 # 15 of tmin and 10 of cmin, under the 90-minute limit.
+# The report job comes last: it runs after the fuzz job, only for a failed nightly run.
 jobs:
   fuzz:
     name: Fuzz the front end
@@ -103,3 +104,33 @@ jobs:
         with:
           path: fuzz/corpus/front_end
           key: fuzz-corpus-${{ github.run_id }}-${{ github.run_attempt }}
+
+  # A failed nightly run opens a GitHub issue, or comments on the open one
+  # (scripts/fuzz_issue.sh), so a failure does not sit in a step summary that nobody reads. This is
+  # the only job with `issues: write`: the job that builds and runs the fuzzer has `contents: read`
+  # only. A run started by hand is read by the person who started it, so it opens no issue.
+  report:
+    name: Report a failed run
+    needs: fuzz
+    if: always() && needs.fuzz.result == 'failure' && github.event_name == 'schedule'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The summary is in the failure artifact. A run that failed before it wrote one has no
+      # artifact, and the script then says so in the issue.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true
+        with:
+          name: fuzz-failure
+          path: fuzz-failure
+      # The run's URL and the token reach the script through env, never through its text.
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: scripts/fuzz_issue.sh front_end fuzz-failure/summary.md
