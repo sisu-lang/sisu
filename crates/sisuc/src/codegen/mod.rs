@@ -433,17 +433,6 @@ impl<'ctx> Codegen<'ctx, '_> {
         object
     }
 
-    /// The parameters that `muts` (one flag for each parameter) gives a function after its value
-    /// parameters: one `ptr`, the out pointer, for each `mut` one. A function, a table entry and
-    /// an indirect call of one all take them in this order, before the location of a prelude
-    /// function.
-    fn out_param_types(&self, muts: &[bool]) -> impl Iterator<Item = BasicMetadataTypeEnum<'ctx>> {
-        let ptr = self.context.ptr_type(AddressSpace::default());
-        muts.iter()
-            .filter(|&&m| m)
-            .map(move |_| BasicMetadataTypeEnum::from(ptr))
-    }
-
     /// The out pointers of `function`, indexed by parameter: the parameters after its first
     /// `values` ones (`out_param_types`) go to the `mut` parameters of `muts`.
     fn out_pointers(
