@@ -392,8 +392,11 @@ impl Gen<'_> {
 mod tests {
     use super::{Adds, Gen, Kind, PLACE_STEPS, Place, Ty, Want, placeable};
     use crate::generate::DEPTHS;
+    use crate::generate::MAX_LOOPS;
     use crate::generate::coverage::seed;
     use crate::generate::scope::{Func, Var};
+    use crate::generate::stmt::{MAX_BLOCKS, MutUse};
+    use arbitrary::Unstructured;
 
     fn place(root: usize, ty: Ty, size: u64) -> Place {
         Place {
@@ -634,5 +637,287 @@ mod tests {
             PLACE_STEPS.get()
         };
         crate::mir::tests::assert_near_linear(reads(20), reads(40), reads(60));
+    }
+
+    /// GIVEN a local of `i64`, a local array, an element of it, and a `string` field
+    /// WHEN `exchange` may store into each
+    /// THEN it may into all but the array local, which no write may change
+    #[test]
+    fn exchangeable_should_refuse_only_an_array_local() {
+        let array = Ty::Array(Box::new(Ty::I64));
+        let of = |kind, ty| Place {
+            kind,
+            ..place(0, ty, 0)
+        };
+        assert!(of(Kind::Local, Ty::I64).exchangeable());
+        assert!(!of(Kind::Local, array.clone()).exchangeable());
+        assert!(of(Kind::Element, Ty::I64).exchangeable());
+        assert!(of(Kind::Field(0, 0), Ty::String).exchangeable());
+        // The kind decides, not the type: an element of an array of arrays, and an array field.
+        assert!(of(Kind::Element, array.clone()).exchangeable());
+        assert!(of(Kind::Field(0, 0), array).exchangeable());
+    }
+
+    /// GIVEN `mut` parameters of `i64` and `string`, and places whose only match leaves each
+    /// parameter a local of its own: the `string` can go to one local only, which is before the
+    /// local that the `i64` takes in the first row, between two in the second, and after in the
+    /// third
+    /// WHEN `choose_places` picks a place for each parameter, from many seeds
+    /// THEN a parameter never takes the local that a later one needs
+    #[test]
+    fn choose_places_should_leave_each_later_parameter_a_place() {
+        let int = |root| place(root, Ty::I64, 0);
+        let text = |root| place(root, Ty::String, 0);
+        let rows = [
+            // The `string` needs the local 0, so the first `i64` must take the local 1.
+            (vec![int(0), text(0), int(1)], vec![Ty::I64, Ty::String]),
+            // The `string` needs the local 1, so the `i64` must take the local 0.
+            (vec![int(0), int(1), text(1)], vec![Ty::I64, Ty::String]),
+            // The `string` needs the local 1, in the middle of three.
+            (
+                vec![int(0), int(1), text(1), int(2)],
+                vec![Ty::I64, Ty::I64, Ty::String],
+            ),
+            // The same, with the `string` first.
+            (
+                vec![int(0), int(1), text(1), int(2)],
+                vec![Ty::String, Ty::I64, Ty::I64],
+            ),
+            // Three locals that serve two parameters, and the `string` at the last.
+            (
+                vec![int(0), int(1), int(2), text(2)],
+                vec![Ty::I64, Ty::I64, Ty::String],
+            ),
+            (
+                vec![text(0), int(0), int(1), int(2)],
+                vec![Ty::I64, Ty::I64, Ty::String],
+            ),
+        ];
+        for (places, types) in rows {
+            let wants: Vec<Want> = types.iter().map(|ty| want(ty.clone(), 0)).collect();
+            let string_root = places
+                .iter()
+                .find(|place| place.ty == Ty::String)
+                .map(|place| place.root);
+            for n in 0..64 {
+                let data = seed(n);
+                let mut g = Gen::new(&data);
+                let chosen = g.choose_places(&wants, &places);
+                let roots: Vec<usize> = chosen.iter().map(|place| place.root).collect();
+                let got: Vec<&Ty> = chosen.iter().map(|place| &place.ty).collect();
+                assert_eq!(got, types.iter().collect::<Vec<_>>(), "seed {n}");
+                let mut apart = roots.clone();
+                apart.sort_unstable();
+                apart.dedup();
+                assert_eq!(apart.len(), roots.len(), "seed {n}: {roots:?}");
+                let at = types.iter().position(|ty| *ty == Ty::String);
+                assert_eq!(at.map(|at| roots[at]), string_root, "seed {n}: {roots:?}");
+            }
+        }
+    }
+
+    /// GIVEN a local `string` that sits in a loop of 2 runs, with room 16 and an array with
+    /// growth 64
+    /// WHEN the places of the point are listed
+    /// THEN the local's place has half of each, for each run, and says it runs twice
+    #[test]
+    fn mut_places_should_share_the_room_and_growth_between_the_runs_of_a_loop() {
+        let adds = Adds {
+            len: 1,
+            ..Adds::default()
+        };
+        let mut g = gen_with_local(&[], Ty::String, (16, 64), adds);
+        g.cost.enter_loop(2);
+        let places = g.mut_places();
+        let local = &places[0];
+        assert_eq!((local.room, local.grow, local.times), (8, 32, 2));
+    }
+
+    /// GIVEN a local array of `i64` that holds 2 elements, whose elements hold at most 7
+    /// WHEN the places of the point are listed
+    /// THEN there is a place of the array, then one of its elements: it has the type and the size
+    /// of an element, and starts at the same local
+    #[test]
+    fn mut_places_should_give_an_element_place_to_an_array_that_takes_a_write() {
+        let adds = Adds {
+            len: 2,
+            ..Adds::default()
+        };
+        let mut g = gen_with_local(&[], Ty::Array(Box::new(Ty::I64)), (0, 0), adds);
+        g.scope.vars[0].elem = 7;
+        let places = g.mut_places();
+        assert_eq!(places.len(), 2);
+        assert!(places[0].kind == Kind::Local && places[0].ty == Ty::Array(Box::new(Ty::I64)));
+        let element = &places[1];
+        assert!(element.kind == Kind::Element);
+        assert_eq!((&element.ty, element.size, element.root), (&Ty::I64, 7, 0));
+    }
+
+    /// GIVEN a local `i64` and a function whose `mut` parameter takes an `i64`
+    /// WHEN the callees of a `mut` call are listed for the places of the point
+    /// THEN the function is one, and none is when the place is a `string`
+    #[test]
+    fn mut_callees_should_list_the_functions_that_have_a_place_for_each_parameter() {
+        let g = gen_with_local(&[], Ty::I64, (0, 0), Adds::default());
+        assert_eq!(g.mut_callees(&g.mut_places()), [0]);
+        let strings = [place(0, Ty::String, 0)];
+        assert_eq!(g.mut_callees(&strings), Vec::<usize>::new());
+    }
+
+    /// GIVEN a local array of `i64` that holds 2 elements, and its element place
+    /// WHEN the place is written, from many seeds
+    /// THEN the index is 0 or 1, and each comes
+    #[test]
+    fn write_place_should_index_an_element_within_the_length() {
+        let adds = Adds {
+            len: 2,
+            ..Adds::default()
+        };
+        let mut seen = std::collections::BTreeSet::new();
+        for n in 0..64 {
+            let data = seed(n);
+            let mut g = gen_with_local(&data, Ty::Array(Box::new(Ty::I64)), (0, 0), adds);
+            let element = g.mut_places().remove(1);
+            g.write_place(&element, &mut Vec::new());
+            seen.insert(g.w.out.program);
+        }
+        let want: std::collections::BTreeSet<String> = ["v1[0]", "v1[1]"].map(String::from).into();
+        assert_eq!(seen, want);
+    }
+
+    /// GIVEN a local `string` with room 32 in a loop of 2 runs, and a function whose `mut`
+    /// parameter adds 16 of room at each run; and the same for the growth of an array
+    /// WHEN a `mut` call passes the local
+    /// THEN it takes 16 at each of the 2 runs, so nothing is left
+    #[test]
+    fn a_mut_call_should_take_what_its_parameter_adds_at_each_run_of_a_loop() {
+        let rows = [
+            (
+                Ty::String,
+                (32, 0),
+                Adds {
+                    room: 16,
+                    ..Adds::default()
+                },
+            ),
+            (
+                Ty::Array(Box::new(Ty::I64)),
+                (0, 64),
+                Adds {
+                    grow: 32,
+                    len: 1,
+                    ..Adds::default()
+                },
+            ),
+        ];
+        for (ty, (room, grow), adds) in rows {
+            let mut g = gen_with_local(&[], ty, (room, grow), adds);
+            g.cost.enter_loop(2);
+            g.statement(|g| g.mut_call_of(Some(0)));
+            assert_eq!(g.w.out.program, "f1(0, mut v1)");
+            assert_eq!((g.scope.vars[0].room, g.scope.vars[0].grow), (0, 0));
+        }
+    }
+
+    /// GIVEN a program whose function `f1` has a `mut` parameter, and one whose function `f2` has
+    /// none, and a local of `i64` for the first
+    /// WHEN the epilogue of `main` is written, from many seeds
+    /// THEN it never calls `f2`, and it calls `f1` for some seeds and not for others
+    #[test]
+    fn mut_epilogue_should_call_a_function_with_a_mut_parameter_now_and_then() {
+        let (mut called, mut skipped) = (0, 0);
+        for n in 0..64 {
+            let data = seed(n);
+            let mut g = gen_with_local(&data, Ty::I64, (0, 0), Adds::default());
+            g.mu = Unstructured::new(&data);
+            g.scope.funcs.push(Func {
+                name: "f2".to_string(),
+                owner: None,
+                params: vec![(Ty::I64, 0)],
+                muts: vec![None],
+                ret: Ty::Unit,
+                ret_size: 0,
+                cost: [1; DEPTHS],
+            });
+            g.mut_epilogue();
+            let program = &g.w.out.program;
+            assert!(!program.contains("f2("), "seed {n}: {program}");
+            if program.contains("f1(") {
+                called += 1;
+            } else {
+                skipped += 1;
+            }
+        }
+        assert!(called > skipped && skipped > 0, "{called} {skipped}");
+    }
+
+    /// GIVEN a function with a `mut` array parameter that adds growth, and a local array with
+    /// no element, which `exchange` may not store into and has no element place
+    /// WHEN a `mut` call is written, from many seeds
+    /// THEN it is the call every time
+    #[test]
+    fn a_mut_call_should_be_a_call_when_no_place_takes_exchange() {
+        let adds = Adds {
+            grow: 64,
+            ..Adds::default()
+        };
+        for n in 0..64 {
+            let data = seed(n);
+            let mut g = gen_with_local(&data, Ty::Array(Box::new(Ty::I64)), (0, 64), adds);
+            g.mut_call();
+            let program = &g.w.out.program;
+            // The depth is a draw: `f1(<depth>, mut v1)`.
+            assert!(
+                program.starts_with("f1(") && program.ends_with(", mut v1)"),
+                "seed {n}: {program}"
+            );
+        }
+    }
+
+    /// GIVEN a local `i64` and a function whose `mut` parameter takes an `i64`, with the spare
+    /// streams empty
+    /// WHEN `mut_statement` runs, from many seeds
+    /// THEN a `mut` call or an `exchange` follows for some seeds, and for fewer than half
+    #[test]
+    fn mut_statement_should_follow_about_one_statement_in_three() {
+        let (mut written, total) = (0_u64, 192);
+        for n in 0..total {
+            let data = seed(n);
+            let mut g = gen_with_local(&[], Ty::I64, (0, 0), Adds::default());
+            g.mu = Unstructured::new(&data);
+            g.mut_statement();
+            written += u64::from(!g.w.out.program.is_empty());
+        }
+        assert!(written > 0 && written * 2 < total, "{written} of {total}");
+    }
+
+    /// GIVEN a `mut` parameter `string` of `v1`
+    /// WHEN the statements that may use it are listed
+    /// THEN `+=` is one when it has room for 1 char, and not when it has none
+    #[test]
+    fn mut_uses_should_append_to_a_string_only_with_room() {
+        for (room, uses) in [(0, vec![]), (1, vec![MutUse::Append])] {
+            let g = gen_with_local(&[], Ty::String, (room, 0), Adds::default());
+            assert!(g.mut_uses(0) == uses, "room {room}");
+        }
+    }
+
+    /// GIVEN the body of a `mut` function that holds a local `i64` and calls a function with a
+    /// `mut` parameter, in blocks and loops so deep that no statement opens another
+    /// WHEN a statement is written, from many seeds
+    /// THEN a `mut` call is one of the rules now and then, and rarely: it is one rule in 4 draws
+    #[test]
+    fn a_statement_of_a_mut_function_should_rarely_be_a_mut_call() {
+        let (mut calls, total) = (0_u64, 2048);
+        for n in 0..total {
+            let data = seed(n);
+            let mut g = gen_with_local(&data, Ty::I64, (0, 0), Adds::default());
+            g.mut_fn = true;
+            g.blocks = MAX_BLOCKS;
+            (0..MAX_LOOPS).for_each(|_| g.cost.enter_loop(1));
+            g.stmt();
+            calls += u64::from(g.w.out.program.contains("f1("));
+        }
+        assert!(calls > 0 && calls * 16 < total, "{calls} of {total}");
     }
 }

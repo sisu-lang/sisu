@@ -2086,11 +2086,10 @@ pub(crate) fn payload(labels: &[String], values: &[String]) -> String {
     format!("({})", parts.join(", "))
 }
 
-/// The size of the smallest value of `ty` that a plain write may store (see `size_for`).
+/// The size of the smallest value of `ty` that a plain write may store (see `size_for`): the floor
+/// of the type, or of the payload of an optional, which holds `None` at no size.
 fn least_size(ty: &Ty) -> u64 {
     match ty {
-        Ty::Class { size, .. } => *size,
-        _ if !ty.sized() => 0,
         Ty::Optional(payload) => payload.floor(),
         _ => ty.floor(),
     }
@@ -2132,6 +2131,53 @@ mod tests {
         let var = mut_param("v1".to_string(), ty.clone(), 100, Adds::default());
         let plain = param("v1".to_string(), ty, 100);
         assert_eq!((var.size, var.elem), (100, plain.elem));
+    }
+
+    /// GIVEN a `mut` parameter of `string` that takes 100, adds 16 of room and 64 of growth
+    /// WHEN the parameter is a variable of the body
+    /// THEN it holds the sum of the three, and so does an element of it
+    #[test]
+    fn a_mut_parameter_should_hold_what_it_takes_and_what_it_adds() {
+        let adds = Adds {
+            room: 16,
+            grow: 64,
+            ..Adds::default()
+        };
+        let var = mut_param("v1".to_string(), Ty::String, 100, adds);
+        assert_eq!((var.size, var.elem), (180, 180));
+    }
+
+    /// GIVEN a class, an enum, an optional of each, and types with no size
+    /// WHEN a plain write stores the smallest value of the type
+    /// THEN its size is that of the class object or of the first variant, and 0 for the rest
+    #[test]
+    fn least_size_should_give_the_size_of_the_smallest_value() {
+        let class = Ty::Class {
+            id: 0,
+            size: 9,
+            applied: None,
+        };
+        let enumeration = Ty::Enum {
+            id: 0,
+            least: 5,
+            applied: None,
+        };
+        let optional = |ty: &Ty| Ty::Optional(Box::new(ty.clone()));
+        let rows = [
+            (class.clone(), 9),
+            (optional(&class), 9),
+            (enumeration.clone(), 5),
+            (optional(&enumeration), 5),
+            (Ty::String, 0),
+            (Ty::Array(Box::new(class.clone())), 0),
+            (optional(&Ty::String), 0),
+            (optional(&optional(&class)), 0),
+            (Ty::I64, 0),
+            (optional(&Ty::I64), 0),
+        ];
+        for (ty, size) in rows {
+            assert_eq!(least_size(&ty), size, "{ty}");
+        }
     }
 
     #[test]

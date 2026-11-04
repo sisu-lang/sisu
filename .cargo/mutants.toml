@@ -67,4 +67,9 @@ exclude_re = [
     # at `init.span` as its last act, and the literal has no part that could push after it. So
     # the last diagnostic has both the code and the span, and neither half is ever false alone.
     "replace \\|\\| with && in Checker<'_>::uninferred_of",
+    # `self.pick(3) != 0` in `Gen<'_>::mut_call_of`: it only swaps how often a `mut` call and an
+    # `exchange` are written, 2 in 3 and 1 in 3. Both still come, each form is right for every
+    # place it has, and no test reads the rate of the two forms. The pattern holds the column,
+    # because the `!=` of `ret != Ty::Unit` is a different mutant.
+    ":89: replace != with == in Gen<'_>::mut_call_of",
 ]

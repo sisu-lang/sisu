@@ -137,7 +137,7 @@ impl Gen<'_> {
 
     /// Now and then, a `mut` call after a statement of `main`, from the spare streams and with
     /// fuel of its own: the statements of `main` that follow are the same with or without it.
-    fn mut_statement(&mut self) {
+    pub(super) fn mut_statement(&mut self) {
         if self.mut_pick(MUT_CALL_ONE_IN) != 0 || !self.mut_call_possible() {
             return;
         }
