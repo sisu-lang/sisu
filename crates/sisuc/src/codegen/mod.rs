@@ -196,8 +196,9 @@ pub(crate) fn compile<'ctx>(
     )
 }
 
-/// What a whole program gives every codegen unit: the analyses of its types, the index of its
-/// `any` tables and the line starts of its source. A unit reads them and never changes them.
+/// What a whole program gives every codegen unit: the analyses of its types and the index of its
+/// `any` tables. It also gives the line starts of its source. A unit reads them and never changes
+/// them.
 pub(crate) struct Analyses {
     /// Whether each class, then each enum, reaches an `f64` or a written `eq` through its fields;
     /// see `rc::reaching_unreflexive`.
@@ -243,7 +244,7 @@ impl Analyses {
 
 /// The LLVM module of codegen unit `unit` of a program; see `compile`. With one unit, every
 /// function is internal and the module is the whole program. In a split build, every function has
-/// external linkage and hidden visibility, so that the units link by name: the unit defines the
+/// external linkage and hidden visibility, so that the units link by name. A unit defines the
 /// functions that it owns and declares the others. Unit 0 holds the C `main` and the drop-depth
 /// state (`sisu_rc.depth`, `sisu_rc.deferred`), which the other units declare. A unit makes the
 /// release helpers and the `any` tables that its functions use, and no other.
