@@ -800,15 +800,15 @@ fn candidate_results(rets: &[Option<Type>]) -> impl Iterator<Item = (usize, Opti
     })
 }
 
-/// "`node` may be `None`", at the optional `receiver` of a `.` before `name`. With `fix`, a
-/// `?.` may take the `.`'s place. `write` when `name` is the field that an assignment or a `push`
-/// changes, or the `push` itself. `unwrap` says which unwrap help fits.
 /// Whether E0062 for a `.` on `payload?` offers the `?.` fix. No index follows it in its chain.
 /// The `payload` is no optional: `?.` takes one layer only.
 fn payload_fix(payload: Type, indexed: bool) -> bool {
     !indexed && !matches!(payload.kind(), TypeKind::Optional(_))
 }
 
+/// "`node` may be `None`", at the optional `receiver` of a `.` before `name`. With `fix`, a
+/// `?.` may take the `.`'s place. `write` when `name` is the field that an assignment or a `push`
+/// changes, or the `push` itself. `unwrap` says which unwrap help fits.
 fn may_be_none(
     receiver: &ast::Expr,
     name: &ast::Ident,

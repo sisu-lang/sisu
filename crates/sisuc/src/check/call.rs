@@ -510,7 +510,7 @@ impl Checker<'_> {
             checked
         } else {
             // The receiver of a `push` is a place, checked once and held for the call.
-            let on_place = method.name.as_str() == "push" && self.is_push_place(receiver, safe);
+            let on_place = method.name.as_str() == "push" && self.is_push_place(receiver);
             let scrutinee = if on_place {
                 self.push_receiver(receiver)
             } else {
@@ -563,6 +563,12 @@ impl Checker<'_> {
                     Ok(array) => call(self, Ok(array)),
                     Err(value) => self.member_of(span, safe, value, receiver, method, call),
                 },
+                // A `.push` on a place that may be `None` reports its write rule first. The call
+                // then finds the array behind the optional, as `?.push` does.
+                scrutinee if on_place && self.pushed_may_be_none(&scrutinee) => {
+                    let value = self.pushed_value(receiver, scrutinee);
+                    call(self, value)
+                }
                 scrutinee => self.member_of(span, safe, scrutinee, receiver, method, call),
             }
         };

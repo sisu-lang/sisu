@@ -3448,13 +3448,10 @@ impl Checker<'_> {
         // shortcut: a method named `push` that a class writes with type parameters of its own, on
         // a field, is not ranked as a waiting call; upgrade if such a call needs the context.
         if let K::MethodCall {
-            receiver,
-            method,
-            safe,
-            ..
+            receiver, method, ..
         } = &e.kind
             && method.name.as_str() == "push"
-            && self.is_push_place(receiver, *safe)
+            && self.is_push_place(receiver)
         {
             return None;
         }
