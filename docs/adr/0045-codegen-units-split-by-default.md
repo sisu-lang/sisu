@@ -24,13 +24,18 @@ threads. `sisu` links their objects into one executable.
    variable that sets the count.
 4. **The assignment is greedy and reads only the program.** First, a
    function with exactly one direct call site goes to the group of its
-   caller, while the group stays at most one unit's share of the program.
-   Then the largest group goes first, each one to the unit with the least
-   total size, ties broken by function index and unit index. A function with
-   one caller stays in the unit of that caller, where LLVM sees both. With no
-   such rule, `sieve` and `fannkuch_redux`, forced into 8 units, ran 14% and
-   23% slower than in one unit, because their hot function has one call site,
-   in `main`, in another unit.
+   caller, while the group stays at most one unit's share of the program
+   plus the largest function. Then the largest group goes first, each one to
+   the unit with the least total size, ties broken by function index and unit
+   index. A function with one caller stays in the unit of that caller, and no
+   other unit refers to it, so it is internal to its unit and LLVM can inline
+   it and use its constant arguments. With no such rule, `sieve` and
+   `fannkuch_redux`, forced into 8 units, ran 14% and 23% slower than in one
+   unit, because their hot function has one call site, in `main`, in another
+   unit. The share plus the largest function is the worst load that the
+   greedy rule already gives a unit, so the groups do not make the balance
+   worse. A program with fewer groups than units gets one unit for each
+   group.
 5. **Small callees are copied at `-O2` and `-O3`.** A unit that calls a small
    function of another unit gets an `available_externally` copy of it, and of
    the small functions that the copy calls, so LLVM can inline it.
@@ -54,13 +59,17 @@ needs no new ADR:
 
 ## Consequences
 
-- **External linkage costs some speed in a split `-O2` build.** Each function
-  that a unit defines is external (with hidden visibility), so other units can
-  call it. LLVM cannot delete a function that it inlined into every caller,
-  and dead-argument elimination, IPSCCP and argument promotion no longer apply
-  to such a function. The copies of small callees get back most of the loss:
-  with them, the bench programs forced into 8 units ran at most 6% slower in
-  the spike, against up to 19% with no copies.
+- **External linkage costs some speed in a split `-O2` build.** A function
+  that another unit calls is external (with hidden visibility), so the
+  units link by name. LLVM cannot delete a function that it inlined into
+  every caller, and dead-argument elimination, IPSCCP and argument promotion
+  no longer apply to such a function. Only the functions that another unit
+  calls are external. The others are internal, as in a build of one unit.
+  The written `Eq` and `Display` methods and the methods in `any` tables are
+  external too, because the helpers of any unit may call them. The copies of
+  small callees get back most of the loss: with them, the bench programs
+  forced into 8 units ran at most 6% slower in the spike, against up to 19%
+  with no copies.
 - **Users must find it easy to change the unit count**, and LTO once it
   exists. When projects arrive, `sisu.toml` gets a setting for both
   (`docs/register.md`).

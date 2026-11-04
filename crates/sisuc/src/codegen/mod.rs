@@ -243,8 +243,9 @@ impl Analyses {
 }
 
 /// The LLVM module of codegen unit `unit` of a program; see `compile`. With one unit, every
-/// function is internal and the module is the whole program. In a split build, every function has
-/// external linkage and hidden visibility, so that the units link by name. A unit defines the
+/// function is internal and the module is the whole program. In a split build, a function that
+/// another unit refers to (see `units::exported`) has external linkage and hidden visibility, so
+/// that the units link by name, and every other function is internal. A unit defines the
 /// functions that it owns, defines an `available_externally` copy of each small function of
 /// another unit that it calls (see `units::copies`), and declares the others. Unit 0 holds the C
 /// `main` and the drop-depth state (`sisu_rc.depth`, `sisu_rc.deferred`), which the other units
@@ -626,18 +627,22 @@ impl<'ctx> Codegen<'ctx, '_> {
         };
         // `mono` names a method of a conformance block with its interface (`C.Label.name`), so
         // two blocks that each hold `name` get two symbols.
-        let linkage = if !self.unit.is_split() {
-            Linkage::Internal
-        } else if self.unit.placement[index] == Placement::Copy {
+        let placement = self.unit.placement[index];
+        // Only a function that another unit refers to is external; the others stay internal, so
+        // that LLVM can inline, specialize and delete them as in a build of one unit.
+        let exported = self.unit.is_split() && self.unit.exported[index];
+        let linkage = match placement {
+            Placement::Own if !exported => Linkage::Internal,
             // A body for the optimizer only: LLVM drops it, and the owner's unit has the symbol.
-            Linkage::AvailableExternally
-        } else {
-            Linkage::External
+            Placement::Copy => Linkage::AvailableExternally,
+            Placement::Own | Placement::Other => Linkage::External,
         };
         let function =
             self.module
                 .add_function(&format!("sisu.{}", f.name), fn_type, Some(linkage));
-        if self.unit.is_split() {
+        // A hidden declaration is a symbol that the object file lists as undefined, even when
+        // nothing uses it, so only an exported function gets one: its owner defines it.
+        if self.unit.is_split() && (placement == Placement::Copy || exported) {
             function
                 .as_global_value()
                 .set_visibility(GlobalVisibility::Hidden);

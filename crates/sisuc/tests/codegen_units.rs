@@ -123,7 +123,8 @@ fn run(exe: &Path) -> Output {
 }
 
 /// The source of `second` and a `main` that is larger than `second`: it prints ten lines and then
-/// runs `call`. So `--codegen-units 2` puts `main` in unit 0 and `second` in unit 1.
+/// runs `call`, which calls `second` twice, since a function with one call site would go to the
+/// unit of its caller. So `--codegen-units 2` puts `main` in unit 0 and `second` in unit 1.
 fn with_larger_main(second: &str, call: &str) -> String {
     let prints = "    print(0)\n".repeat(10);
     format!("{second}\n\nfn main() {{\n{prints}    {call}\n}}\n")
@@ -336,7 +337,7 @@ fn step(i: i64) -> i64 {
 fn main() {
     let mut sum = 0
     for i in 0..1000000 {
-        sum += step(i) % 7
+        sum += step(i) % 7 + step(0) % 1
     }
     print(sum)
 }
@@ -402,13 +403,11 @@ fn main() {{
 "
     );
     for pad in 0..8 {
-        {
-            let sum = (0..80)
-                .map(|k| format!("n + {k}"))
-                .collect::<Vec<_>>()
-                .join(" + ");
-            let _ = writeln!(source, "fn pad{pad}(n: i64) -> i64 {{ {sum} }}");
-        }
+        let sum = (0..80)
+            .map(|k| format!("n + {k}"))
+            .collect::<Vec<_>>()
+            .join(" + ");
+        let _ = writeln!(source, "fn pad{pad}(n: i64) -> i64 {{ {sum} }}");
     }
     source
 }
@@ -525,7 +524,10 @@ fn executable_should_not_depend_on_unit_order() {
 /// AND both runs exit with the same status and print the same panic line on stderr
 #[test]
 fn panic_in_another_unit_should_name_its_place() {
-    let source = with_larger_main("fn boom(n: i64) {\n    panic(\"bad {n}\")\n}", "boom(7)");
+    let source = with_larger_main(
+        "fn boom(n: i64) {\n    panic(\"bad {n}\")\n}",
+        "boom(7)\n    boom(8)",
+    );
     let dir = fixture(
         "panic_in_another_unit_should_name_its_place",
         &[("boom.sisu", &source)],
@@ -559,7 +561,7 @@ fn panic_in_another_unit_should_name_its_place() {
 fn rc_checks_should_see_a_leak_across_units() {
     let source = with_larger_main(
         "class Node {\n    mut _next: Node?\n}\n\nfn make() -> Node {\n    let a = Node(_next: None)\n    a._next = a\n    a\n}",
-        "let kept = make()",
+        "let kept = make()\n    if false {\n        let _extra = make()\n    }",
     );
     let dir = fixture(
         "rc_checks_should_see_a_leak_across_units",
@@ -601,7 +603,7 @@ fn rc_checks_should_see_a_leak_across_units() {
 fn drop_depth_state_should_have_one_home() {
     let source = with_larger_main(
         "class A {\n    _next: [A]\n}\n\nfn grow() -> i64 {\n    let a = A(_next: [])\n    let b = A(_next: [a])\n    b._next.len()\n}",
-        "print(grow())",
+        "print(grow() + grow())",
     );
     let dir = fixture(
         "drop_depth_state_should_have_one_home",
@@ -683,12 +685,12 @@ fn emit_ir_should_print_one_module_without_the_flag() {
     }
 }
 
-/// GIVEN a program of 3 functions
+/// GIVEN a program of 3 functions, where `main` calls each of the other two twice
 /// WHEN it is built with `--codegen-units 64 --timings`
 /// THEN it runs right and `sisu` reports 3 codegen units
 #[test]
 fn a_count_above_the_functions_should_build_and_run() {
-    let source = "fn one() -> i64 {\n    1\n}\n\nfn two() -> i64 {\n    2\n}\n\nfn main() {\n    print(one())\n    print(two())\n    print(3)\n}\n";
+    let source = "fn one() -> i64 {\n    1\n}\n\nfn two() -> i64 {\n    2\n}\n\nfn main() {\n    print(one() + one())\n    print(two() + two())\n    print(3)\n}\n";
     let dir = fixture(
         "a_count_above_the_functions_should_build_and_run",
         &[("few.sisu", source)],
@@ -700,10 +702,10 @@ fn a_count_above_the_functions_should_build_and_run() {
     );
     let out = run(&exe);
     assert_eq!(out.status.code(), Some(0));
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "1\n2\n3\n");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "2\n4\n3\n");
 }
 
-/// GIVEN a program of 3 functions
+/// GIVEN a program of 3 functions, where `main` calls each of the other two twice
 /// AND a `PATH` with only `cc`, which cannot find the linker `mold`, and an empty `TMPDIR`
 /// WHEN `sisu build --codegen-units 3 --linker mold` runs
 /// THEN it exits 1 and `TMPDIR` holds no object file, so the link error removed all three

@@ -85,11 +85,11 @@ fn root(parent: &mut [usize], mut function: usize) -> usize {
 
 /// The group of each function, as the lowest function id in the group. A function with exactly
 /// one direct call site, in another function `c`, joins the group of `c` when the two groups
-/// together are at most `cap` in size. LLVM can then inline it, and use its constant arguments,
-/// because both stay in one unit. `sizes[f]` is the size of `f`. `callees[f]` lists the functions
-/// that `f` calls, one entry for each call. Functions are visited in id order, and the result
-/// depends only on `sizes` and `callees`. The work is linear in the calls, apart from the path
-/// compression of the groups.
+/// together are at most `cap` in size. Both then stay in one unit, where LLVM can inline the
+/// function and use its constant arguments. `sizes[f]` is the size of `f`. `callees[f]` lists
+/// the functions that `f` calls, one entry for each call. Functions are visited in id order, and
+/// the result depends only on `sizes` and `callees`. The groups are joined by size, with path
+/// halving: the work is linear in the calls, apart from a logarithmic factor in the worst case.
 pub(crate) fn groups(sizes: &[usize], callees: &[Vec<usize>], cap: usize) -> Vec<usize> {
     // For each function, its number of call sites and the function of the last one.
     let mut calls = vec![(0_usize, 0_usize); sizes.len()];
@@ -98,21 +98,32 @@ pub(crate) fn groups(sizes: &[usize], callees: &[Vec<usize>], cap: usize) -> Vec
             calls[callee] = (calls[callee].0 + 1, caller);
         }
     }
+    // For each root: the functions in its group, its total size and its lowest function id.
     let mut parent: Vec<usize> = (0..sizes.len()).collect();
+    let mut members = vec![1_usize; sizes.len()];
     let mut total = sizes.to_vec();
+    let mut lowest: Vec<usize> = (0..sizes.len()).collect();
     for (function, &(count, caller)) in calls.iter().enumerate() {
         if count != 1 || caller == function {
             continue;
         }
         let (a, b) = (root(&mut parent, function), root(&mut parent, caller));
         if a != b && total[a] + total[b] <= cap {
-            // The lower id becomes the root.
-            let (low, high) = (a.min(b), a.max(b));
-            parent[high] = low;
-            total[low] += total[high];
+            // The smaller group joins the larger one.
+            let (small, large) = if members[a] < members[b] {
+                (a, b)
+            } else {
+                (b, a)
+            };
+            parent[small] = large;
+            members[large] += members[small];
+            total[large] += total[small];
+            lowest[large] = lowest[large].min(lowest[small]);
         }
     }
-    (0..sizes.len()).map(|f| root(&mut parent, f)).collect()
+    (0..sizes.len())
+        .map(|function| lowest[root(&mut parent, function)])
+        .collect()
 }
 
 /// What a unit does with a function.
@@ -138,10 +149,6 @@ pub(crate) struct Unit {
     pub(crate) placement: Vec<Placement>,
     /// For each function, indexed by its id: whether another unit refers to it, so that the unit
     /// that owns it must give it external linkage (see `exported`). One list serves every unit.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "`codegen::declare` reads it in this task")
-    )]
     pub(crate) exported: Arc<[bool]>,
 }
 
@@ -196,8 +203,29 @@ pub(crate) fn exported(
     pinned: &[bool],
     main: Option<usize>,
 ) -> Vec<bool> {
-    let _ = (copied, callees, pinned, main);
-    vec![true; unit_of.len()]
+    let mut exported: Vec<bool> = (0..unit_of.len())
+        .map(|function| pinned.get(function).copied().unwrap_or(false))
+        .collect();
+    if let Some(main) = main {
+        exported[main] |= unit_of[main] != 0;
+    }
+    // A function that a unit emits calls `callee`, which another unit owns.
+    let mut mark = |unit: usize, function: usize| {
+        for &callee in &callees[function] {
+            if unit_of[callee] != unit {
+                exported[callee] = true;
+            }
+        }
+    };
+    for (function, &unit) in unit_of.iter().enumerate() {
+        mark(unit, function);
+    }
+    for (unit, list) in copied.iter().enumerate() {
+        for &function in list {
+            mark(unit, function);
+        }
+    }
+    exported
 }
 
 /// The units of `mir` for the flag `flag` (see `count`) and the optimization level `level`. It
@@ -240,8 +268,15 @@ pub(crate) fn partition(
         );
     }
     let callees: Vec<Vec<usize>> = mir.functions.iter().map(mir::Function::callees).collect();
-    // A function with one call site goes with its caller, up to one unit's share of the program.
-    let group = groups(sizes, &callees, sizes.iter().sum::<usize>() / count);
+    // A function with one call site goes with its caller, up to one unit's share of the program
+    // and the largest function. The greedy rule below already gives a unit that much more than
+    // its share, so the balance is no worse.
+    let largest = sizes.iter().copied().max().unwrap_or(0);
+    let group = groups(
+        sizes,
+        &callees,
+        sizes.iter().sum::<usize>() / count + largest,
+    );
     // The groups are the items of the greedy assignment, each with its total size.
     let mut totals = vec![0; sizes.len()];
     for (function, &root) in group.iter().enumerate() {
@@ -844,12 +879,13 @@ fn main() { print(e(1)) }";
         );
     }
 
-    /// A `main` that calls the small function `step`.
+    /// A `main` that calls the small function `step` twice: a function with one call site would go
+    /// to the unit of its caller.
     const CALLS_STEP: &str = "fn step(i: i64) -> i64 { i * 3 + 1 }
 fn main() {
     let mut sum = 0
     for i in 0..10 {
-        sum += step(i) % 7
+        sum += step(i) % 7 + step(i + 1)
     }
     print(sum)
 }";
@@ -1003,7 +1039,7 @@ fn main() {
         assert_eq!(exported, [false, true]);
     }
 
-    /// A program of three functions: `big` of about 100 terms, `other` of about 80, and `main`,
+    /// A program of three functions: `big` of 101 steps, `other` of 100, and `main`,
     /// which calls both once. `big` is the largest, so the greedy rule puts `other` and `main`
     /// together, apart from `big`.
     fn big_and_main_program() -> String {
@@ -1014,8 +1050,8 @@ fn main() {
         };
         format!(
             "{}{}fn main() {{ print(big(1) + other(2)) }}\n",
-            function("big", 100),
-            function("other", 80)
+            function("big", 101),
+            function("other", 100)
         )
     }
 
@@ -1035,8 +1071,10 @@ fn main() {
             sizes[big] + sizes[main] <= total / 2 + sizes[big],
             "{sizes:?}"
         );
+        // All three together do not fit in it.
+        assert!(total > total / 2 + sizes[big], "{sizes:?}");
         let units = partition(&mir, &sizes, 2, OptLevel::O0, &[]);
-        assert_eq!(units.len(), 2);
+        assert_eq!(units.len(), 2, "{sizes:?}");
         let owner = |function: usize| {
             (units.iter())
                 .position(|unit| unit.placement[function] == Placement::Own)

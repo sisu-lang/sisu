@@ -6359,14 +6359,15 @@ fn one_unit_should_keep_every_function_internal() {
 }
 
 /// At `-O2` with 2 units, the unit of `main` has a hidden body of `step` that LLVM may drop
-/// after it inlines the call, and the unit of `step` has the function itself.
+/// after it inlines the call, and the unit of `step` has the function itself, external because
+/// `main` calls it. `step` has two call sites, so it does not go to the unit of `main`.
 #[test]
 fn copy_should_be_available_externally() {
     let src = "fn step(i: i64) -> i64 { i * 3 + 1 }
 fn main() {
     let mut sum = 0
     for i in 0..10 {
-        sum += step(i) % 7
+        sum += step(i) % 7 + step(0) % 1
     }
     print(sum)
 }";
