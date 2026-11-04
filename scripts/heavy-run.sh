@@ -29,7 +29,7 @@ heavy_lock() {
   exec {heavy_fd}>>"$lock"
   if ! flock -n "$heavy_fd"; then
     echo "heavy-run: waiting for this run to end: $(cat "$lock")" >&2
-    echo "heavy-run: to run now with no lock, set SISU_HEAVY_LOCK=skip" >&2
+    echo "heavy-run: the run starts when the lock is free" >&2
     flock "$heavy_fd"
   fi
   # The command inherits the open lock, so the lock lasts until it and its children end.
