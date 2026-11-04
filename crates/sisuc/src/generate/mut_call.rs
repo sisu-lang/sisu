@@ -163,13 +163,6 @@ impl Gen<'_> {
                 grow: var.grow / times,
                 times,
             };
-            let other = Place {
-                len: 0,
-                room: 0,
-                grow: 0,
-                times: 1,
-                ..whole.clone()
-            };
             if var.assignable {
                 places.push(whole);
             }
@@ -178,9 +171,14 @@ impl Gen<'_> {
             {
                 places.push(Place {
                     kind: Kind::Element,
+                    root,
                     ty: (**element).clone(),
                     size: var.elem,
-                    ..other
+                    bound: var.base,
+                    len: 0,
+                    room: 0,
+                    grow: 0,
+                    times: 1,
                 });
             }
         }
