@@ -753,7 +753,9 @@ impl Checker<'_> {
         (access, change): (Access, Change),
     ) -> Option<(FoundField, bool)> {
         let Some(TypeKind::Optional(payload)) = ty.map(Type::kind) else {
-            return (self.find_field(ty, base, name, access)).map(|found| (found, false));
+            return self
+                .find_field(ty, base, name, access)
+                .map(|found| (found, false));
         };
         let found = self.field_of_payload(payload, base, name, access)?;
         (change != Change::Push).then_some((found, true))

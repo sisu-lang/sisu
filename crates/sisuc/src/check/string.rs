@@ -356,7 +356,7 @@ impl Checker<'_> {
                     method,
                     METHODS.iter().map(|&(m, _)| m),
                 );
-                return self.rejected(d, args);
+                return self.rejected_lookup(d, method, args);
             }
         };
         if !args.is_empty() {

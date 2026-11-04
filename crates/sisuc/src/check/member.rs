@@ -235,8 +235,8 @@ impl Checker<'_> {
 
     /// The class, index and type of field `name` of the innermost payload of the optional
     /// `receiver`, whose type is `payload?`, as `find_field` finds them. A `.` checks the member
-    /// as `?.` does, on the payload with no value. E0062 follows only when the field is found: a
-    /// field that is missing, or of the wrong kind, is the error, and the `?.` fix would lead to
+    /// as `?.` does, on the payload with no value. E0062 follows only when the field is found.
+    /// A field that is missing, or of the wrong kind, is the error: the `?.` fix would lead to
     /// it. A `payload` that is optional too gets no `?.` fix: `?.` takes one layer only.
     pub(super) fn field_of_payload(
         &mut self,
@@ -252,7 +252,7 @@ impl Checker<'_> {
             Access::Assign => true,
             Access::Push => self.field_is_array(inner, name.name),
         };
-        let fix = !self.body.indexed && !matches!(payload.kind(), TypeKind::Optional(_));
+        let fix = payload_fix(payload, self.body.indexed);
         self.diagnostics
             .push(may_be_none(receiver, name, fix, write, UnwrapHelp::It));
         Some(found)
@@ -442,16 +442,38 @@ impl Checker<'_> {
             }
             _ => no_member(Definition::Method, self.type_name(ty), name, []),
         };
-        self.diagnostics.push(d);
+        self.report_lookup_failure(d, name);
         None
     }
 
+    /// Reports `d`, the failure to find the method `name`, and records it for E0062 on an
+    /// optional receiver (`Body::failed_lookups`). Each report of a lookup at `name` comes here.
+    pub(super) fn report_lookup_failure(&mut self, d: Diagnostic, name: &ast::Ident) {
+        self.body.failed_lookups.insert(name.span);
+        self.diagnostics.push(d);
+    }
+
+    /// `report_lookup_failure` for a method call that cannot be checked: the arguments report
+    /// their own errors, and the call is poisoned.
+    pub(super) fn rejected_lookup(
+        &mut self,
+        d: Diagnostic,
+        name: &ast::Ident,
+        args: &[ast::Arg],
+    ) -> Checked {
+        self.report_lookup_failure(d, name);
+        self.labels(args);
+        self.stray(args);
+        Err(Poisoned::error())
+    }
+
     /// `receiver.method(args)` on `value`, a value of type `payload?`, `receiver` its source. A `.`
-    /// checks the call as `?.` does: on the innermost payload, with no value, so that the method's
-    /// name and its arguments report their own mistakes. E0062 comes first, unless the name is
-    /// the error: a method that is missing, or a field, stands alone, and the `?.` fix would lead
-    /// to it. `indexed` is `Body::indexed` of the call: an index follows it in its chain. The
-    /// result is `Error`, so a chain checks its first `.` on an optional only.
+    /// checks the call as `?.` does: on the innermost payload, with no value. So the method's
+    /// name and its arguments report their own mistakes. E0062 comes first, unless the lookup
+    /// of the name failed (`Body::failed_lookups`). A method that is missing, or a field,
+    /// stands alone: the `?.` fix would lead to it. `indexed` is `Body::indexed` of the call:
+    /// an index follows it in its chain. The result is `Error`, so a chain checks its first `.`
+    /// on an optional only.
     pub(super) fn method_of_payload(
         &mut self,
         span: Span,
@@ -466,10 +488,7 @@ impl Checker<'_> {
         let checked = Err(Poisoned::typed(inner));
         drop(self.method_call(span, Dot::Payload, checked, receiver, site, args));
         let name = site.name;
-        if self.diagnostics[start..]
-            .iter()
-            .all(|d| d.span() != name.span)
-        {
+        if !self.body.failed_lookups.contains(&name.span) {
             // A `push` onto an optional array writes: the `?.` fix makes it do nothing.
             let write = name.name.as_str() == "push" && matches!(inner.kind(), TypeKind::Array(_));
             let unwrap = if write {
@@ -477,7 +496,7 @@ impl Checker<'_> {
             } else {
                 UnwrapHelp::It
             };
-            let fix = !indexed && !matches!(payload.kind(), TypeKind::Optional(_));
+            let fix = payload_fix(payload, indexed);
             let d = may_be_none(receiver, name, fix, write, unwrap);
             self.diagnostics.insert(start, d);
         }
@@ -784,6 +803,12 @@ fn candidate_results(rets: &[Option<Type>]) -> impl Iterator<Item = (usize, Opti
 /// "`node` may be `None`", at the optional `receiver` of a `.` before `name`. With `fix`, a
 /// `?.` may take the `.`'s place. `write` when `name` is the field that an assignment or a `push`
 /// changes, or the `push` itself. `unwrap` says which unwrap help fits.
+/// Whether E0062 for a `.` on `payload?` offers the `?.` fix. No index follows it in its chain.
+/// The `payload` is no optional: `?.` takes one layer only.
+fn payload_fix(payload: Type, indexed: bool) -> bool {
+    !indexed && !matches!(payload.kind(), TypeKind::Optional(_))
+}
+
 fn may_be_none(
     receiver: &ast::Expr,
     name: &ast::Ident,
