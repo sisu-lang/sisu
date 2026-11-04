@@ -22,9 +22,15 @@ threads. `sisu` links their objects into one executable.
    machine with fewer cores runs the same units on fewer threads, and the
    executable is the same bytes. There is no `auto` value and no environment
    variable that sets the count.
-4. **The assignment is greedy and reads only the program.** The largest
-   function goes first, each one to the unit with the least total size, ties
-   broken by function index and unit index.
+4. **The assignment is greedy and reads only the program.** First, a
+   function with exactly one direct call site goes to the group of its
+   caller, while the group stays at most one unit's share of the program.
+   Then the largest group goes first, each one to the unit with the least
+   total size, ties broken by function index and unit index. A function with
+   one caller stays in the unit of that caller, where LLVM sees both. With no
+   such rule, `sieve` and `fannkuch_redux`, forced into 8 units, ran 14% and
+   23% slower than in one unit, because their hot function has one call site,
+   in `main`, in another unit.
 5. **Small callees are copied at `-O2` and `-O3`.** A unit that calls a small
    function of another unit gets an `available_externally` copy of it, and of
    the small functions that the copy calls, so LLVM can inline it.

@@ -72,14 +72,45 @@ pub(crate) fn assign(sizes: &[usize], count: usize) -> Vec<usize> {
     units
 }
 
+/// The root of the group of `function` in `parent`, by path halving.
+fn root(parent: &mut [usize], mut function: usize) -> usize {
+    while parent[function] != function {
+        parent[function] = parent[parent[function]];
+        function = parent[function];
+    }
+    function
+}
+
 /// The group of each function, as the lowest function id in the group. A function with exactly
 /// one direct call site, in another function `c`, joins the group of `c` when the two groups
-/// together are at most `cap` in size. `sizes[f]` is the size of `f`. `callees[f]` lists the
-/// functions that `f` calls, one entry for each call.
-#[cfg_attr(not(test), expect(dead_code, reason = "Task 7 `partition` calls it"))]
+/// together are at most `cap` in size. LLVM can then inline it, and use its constant arguments,
+/// because both stay in one unit. `sizes[f]` is the size of `f`. `callees[f]` lists the functions
+/// that `f` calls, one entry for each call. Functions are visited in id order, and the result
+/// depends only on `sizes` and `callees`. The work is linear in the calls, apart from the path
+/// compression of the groups.
 pub(crate) fn groups(sizes: &[usize], callees: &[Vec<usize>], cap: usize) -> Vec<usize> {
-    let _ = (callees, cap);
-    (0..sizes.len()).collect()
+    // For each function, its number of call sites and the function of the last one.
+    let mut calls = vec![(0_usize, 0_usize); sizes.len()];
+    for (caller, list) in callees.iter().enumerate() {
+        for &callee in list {
+            calls[callee] = (calls[callee].0 + 1, caller);
+        }
+    }
+    let mut parent: Vec<usize> = (0..sizes.len()).collect();
+    let mut total = sizes.to_vec();
+    for (function, &(count, caller)) in calls.iter().enumerate() {
+        if count != 1 || caller == function {
+            continue;
+        }
+        let (a, b) = (root(&mut parent, function), root(&mut parent, caller));
+        if a != b && total[a] + total[b] <= cap {
+            // The lower id becomes the root.
+            let (low, high) = (a.min(b), a.max(b));
+            parent[high] = low;
+            total[low] += total[high];
+        }
+    }
+    (0..sizes.len()).map(|f| root(&mut parent, f)).collect()
 }
 
 /// What a unit does with a function.
@@ -152,11 +183,24 @@ pub(crate) fn partition(
             function.name
         );
     }
-    let owner = assign(sizes, count);
+    let callees: Vec<Vec<usize>> = mir.functions.iter().map(mir::Function::callees).collect();
+    // A function with one call site goes with its caller, up to one unit's share of the program.
+    let group = groups(sizes, &callees, sizes.iter().sum::<usize>() / count);
+    // The groups are the items of the greedy assignment, each with its total size.
+    let mut totals = vec![0; sizes.len()];
+    for (function, &root) in group.iter().enumerate() {
+        totals[root] += sizes[function];
+    }
+    // A unit is never empty: a program of fewer groups than `count` gets that many units.
+    let count = count.min(totals.iter().filter(|&&total| total > 0).count());
+    if count == 1 {
+        return vec![Unit::whole(mir.functions.len())];
+    }
+    let unit_of_group = assign(&totals, count);
+    let owner: Vec<usize> = group.iter().map(|&root| unit_of_group[root]).collect();
     let copied = if level == OptLevel::O0 {
         vec![Vec::new(); count]
     } else {
-        let callees: Vec<Vec<usize>> = mir.functions.iter().map(mir::Function::callees).collect();
         copies(sizes, &callees, &owner, count)
     };
     copied
