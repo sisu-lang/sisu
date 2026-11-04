@@ -1,0 +1,125 @@
+error[E0132]: Sisu has no negative index: count from `c.xs.len()`
+  --> E0132-colon-multiline.sisu:14:14
+   |
+14 |         .xs[:-1])
+   |              ^^
+
+error[E0132]: write `c.xs[0..2]`
+  --> E0132-colon-multiline.sisu:16:14
+   |
+16 |         .xs[0:2])
+   |              ^
+   |
+help: write `..`
+   |
+16 -         .xs[0:2])
+16 +         .xs[0..2])
+   |
+
+error[E0132]: write `c.xs[0..2]`
+  --> E0132-colon-multiline.sisu:18:14
+   |
+18 |         .xs[0:2])
+   |              ^
+   |
+help: write `..`
+   |
+18 -         .xs[0:2])
+18 +         .xs[0..2])
+   |
+
+error[E0132]: Sisu has no negative index: count from `c.xs.len()`
+  --> E0132-colon-multiline.sisu:20:14
+   |
+20 |         .xs[:-1])
+   |              ^^
+
+error[E0132]: write `[1, 2, 3][0..1]`
+  --> E0132-colon-multiline.sisu:22:13
+   |
+22 |         3][0:1])
+   |             ^
+   |
+help: write `..`
+   |
+22 -         3][0:1])
+22 +         3][0..1])
+   |
+
+error[E0132]: write `xs[1..2]`
+  --> E0132-colon-multiline.sisu:24:10
+   |
+24 |         1:2])
+   |          ^
+   |
+help: write `..`
+   |
+24 -         1:2])
+24 +         1..2])
+   |
+
+error[E0132]: write `["a // b", "c"][0..1]`
+  --> E0132-colon-multiline.sisu:26:15
+   |
+26 |         "c"][0:1])
+   |               ^
+   |
+help: write `..`
+   |
+26 -         "c"][0:1])
+26 +         "c"][0..1])
+   |
+
+error[E0132]: write `xs[f(1)..2]`
+  --> E0132-colon-multiline.sisu:28:11
+   |
+28 |         1):2])
+   |           ^
+   |
+help: write `..`
+   |
+28 -         1):2])
+28 +         1)..2])
+   |
+
+error[E0132]: write `xs[0..f(2)]`
+  --> E0132-colon-multiline.sisu:29:15
+   |
+29 |     print(xs[0:f(
+   |               ^
+   |
+help: write `..`
+   |
+29 -     print(xs[0:f(
+29 +     print(xs[0..f(
+   |
+
+error[E0132]: write `xs[f(1)..2]`
+  --> E0132-colon-multiline.sisu:32:9
+   |
+32 |         :2])
+   |         ^
+   |
+help: write `..`
+   |
+32 -         :2])
+32 +         ..2])
+   |
+
+error[E0132]: write `(if c2 {
+                      let y = xs
+                      y
+                  } else { xs })[0..1]`
+  --> E0132-colon-multiline.sisu:36:21
+   |
+36 |     } else { xs })[0:1])
+   |                     ^
+   |
+help: write `..`
+   |
+36 -     } else { xs })[0:1])
+36 +     } else { xs })[0..1])
+   |
+
+sisu: 11 errors
+sisu: for more on a code, run `sisu explain <code>`: E0132

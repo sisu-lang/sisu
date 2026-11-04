@@ -1,0 +1,62 @@
+enum E {
+    P(x: i64?, y: i64)
+}
+
+class R {
+    w: i64?
+    h: i64
+}
+
+fn labels() {
+    let e = E.P(x: 1, y: 2)
+    match e {
+        P(x: Some(
+            a), y: b) => print(b)
+        _ => print(0)
+    }
+}
+
+fn path() {
+    let e = E.P(x: 1, y: 2)
+    match e {
+        E
+          .P(x: a, y: b) => print(a)
+    }
+}
+
+fn path_braces() {
+    let e = E.P(x: 1, y: 2)
+    match e {
+        E
+          .P { x, y } => print(x)
+    }
+}
+
+fn braces() {
+    let r = R(w: 1, h: 2)
+    match r {
+        R { w,
+            h } => print(w)
+    }
+}
+
+fn braces_sub_pattern() {
+    let r = R(w: 1, h: 2)
+    match r {
+        R { w: Some(
+            a), h } => print(h)
+        _ => print(0)
+    }
+}
+
+fn braces_comment() {
+    let r = R(w: 1, h: 2)
+    match r {
+        R { w: Some( // keep me
+            a), h } => print(h)
+        _ => print(0)
+    }
+}
+
+fn main() {
+}

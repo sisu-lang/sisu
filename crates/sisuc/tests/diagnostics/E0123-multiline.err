@@ -1,0 +1,81 @@
+error[E0123]: a pattern binds by position: `P(Some(a), b)`
+  --> E0123-multiline.sisu:13:11
+   |
+13 |         P(x: Some(
+   |           ^
+   |
+help: remove the labels
+   |
+13 ~         P(Some(
+14 ~             a), b) => print(b)
+   |
+
+error[E0123]: a pattern binds by position: `E.P(a, b)`
+  --> E0123-multiline.sisu:23:14
+   |
+23 |           .P(x: a, y: b) => print(a)
+   |              ^
+   |
+help: remove the labels
+   |
+23 -           .P(x: a, y: b) => print(a)
+23 +           .P(a, b) => print(a)
+   |
+
+error[E0123]: write `E.P(x, y)`
+  --> E0123-multiline.sisu:31:14
+   |
+31 |           .P { x, y } => print(x)
+   |              ^^^^^^^^
+   |
+help: write `E.P(x, y)`
+   |
+31 -           .P { x, y } => print(x)
+31 +           .P(x, y) => print(x)
+   |
+
+error[E0123]: write `R(w, h)`
+  --> E0123-multiline.sisu:38:11
+   |
+38 |           R { w,
+   |  ___________^
+39 | |             h } => print(w)
+   | |_______________^
+   |
+help: write `R(w, h)`
+   |
+38 -         R { w,
+39 -             h } => print(w)
+38 +         R(w, h) => print(w)
+   |
+
+error[E0123]: write `R(Some(a), h)`
+  --> E0123-multiline.sisu:46:11
+   |
+46 |           R { w: Some(
+   |  ___________^
+47 | |             a), h } => print(h)
+   | |___________________^
+   |
+help: write `R(Some(a), h)`
+   |
+46 ~         R(Some(
+47 ~             a), h) => print(h)
+   |
+
+error[E0123]: write `R(Some(a), h)`
+  --> E0123-multiline.sisu:55:11
+   |
+55 |           R { w: Some( // keep me
+   |  ___________^
+56 | |             a), h } => print(h)
+   | |___________________^
+   |
+help: write `R(Some(a), h)`
+   |
+55 ~         R(Some( // keep me
+56 ~             a), h) => print(h)
+   |
+
+sisu: 6 errors
+sisu: for more on a code, run `sisu explain <code>`: E0123

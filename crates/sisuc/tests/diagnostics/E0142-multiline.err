@@ -1,0 +1,22 @@
+error[E0142]: `outer` is a loop label here, so `(` cannot call it
+ --> E0142-multiline.sisu:3:15
+  |
+2 |     outer: loop {
+  |     ----- loop label declared here
+3 |         break outer(
+  |               ^^^^^^
+  |
+  = help: to give a value in parentheses, put a space after the loop label: `break outer (1)`; if `outer` also names a function, rename the loop label
+
+error[E0142]: `outer` is a loop label here, so `[` cannot index it
+  --> E0142-multiline.sisu:10:15
+   |
+ 9 |     outer: loop {
+   |     ----- loop label declared here
+10 |         break outer[
+   |               ^^^^^^
+   |
+   = help: to give an array as the value, put a space after the loop label: `break outer [1, 2]`; if `outer` also names an array, rename the loop label
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0142
