@@ -535,8 +535,9 @@ fn failed_link_of_a_split_build_should_remove_every_object() {
 /// AND the executable prints the lines of the case
 /// AND `TMPDIR` holds no object file
 ///
-/// Each worker thread maps 64 MiB of stack, so the limit stops some of them from starting. At the
-/// 1 GiB of the first try, a machine with fewer cores starts all of its workers.
+/// Each worker thread maps 64 MiB of stack, so the limit stops some of them from starting, but
+/// only on a machine with 3 or more cores. With fewer cores, every worker starts and the test
+/// proves less.
 #[cfg(target_os = "linux")]
 #[test]
 fn split_build_should_succeed_when_threads_cannot_start() {
