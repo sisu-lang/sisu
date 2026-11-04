@@ -71,6 +71,10 @@ class FuzzSummary(unittest.TestCase):
         text = self.summary(r"panicked at a.rs:1:2:\nbad `code` \001here\n")
         self.assertIn('  Panic at `a.rs:1:2`: `bad code here`\n', text)
 
+    def test_binary_bytes_before_the_panic_on_the_same_line_should_not_reach_the_location(self):
+        text = self.summary(r"garbage \377\376 panicked at a.rs:1:2:\nhello\n")
+        self.assertIn('  Panic at `a.rs:1:2`: `hello`\n', text)
+
     def test_a_long_message_should_be_cut_in_whole_characters(self):
         text = self.summary(r"panicked at a.rs:1:2:\na" + r"\303\251" * 200 + r"\n")
         line = next(line for line in text.splitlines() if 'Panic at' in line)

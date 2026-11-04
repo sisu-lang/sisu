@@ -221,7 +221,8 @@ done < <(find "$found" -type f -newer "$marker" -print0 | sort -z)
 # printed in a code span, so a mention or a link in it does not work in an issue.
 panic_note() {
     local found location message
-    found=$(grep -a -m1 -A1 'panicked at ' "$1" | LC_ALL=C tr -d '\000-\010\013-\037\177`') || return 0
+    found=$(grep -a -m1 -A1 'panicked at ' "$1" | LC_ALL=C tr -d '\000-\010\013-\037\177`' |
+        iconv -f UTF-8 -t UTF-8 -c) || return 0
     [[ -n $found ]] || return 0
     location=$(sed -n '1s/.*panicked at //; 1s/:$//p' <<<"$found" | iconv -f UTF-8 -t UTF-8 -c)
     message=$(sed -n 2p <<<"$found" | cut -c1-300 | iconv -f UTF-8 -t UTF-8 -c)
