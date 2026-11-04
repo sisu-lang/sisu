@@ -429,12 +429,12 @@ fn register_field_counts_should_match_their_structs() {
     );
 }
 
-/// Each package that `cargo tree` reaches through normal dependencies with `args`, with the
-/// features that it resolves to.
+/// Each package that `cargo tree` reaches through normal dependencies with `args`, on any target,
+/// with the features that it resolves to.
 fn resolved_features(args: &[&str]) -> BTreeMap<String, String> {
     let out = Command::new(env!("CARGO"))
-        .args(["tree", "--offline", "--locked", "-e", "normal"])
-        .args(["--prefix", "none", "-f", "{p}|{f}"])
+        .args(["tree", "--offline", "--locked", "--target", "all"])
+        .args(["-e", "normal", "--prefix", "none", "-f", "{p}|{f}"])
         .args(args)
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
