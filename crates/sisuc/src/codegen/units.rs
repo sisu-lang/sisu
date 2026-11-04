@@ -3,6 +3,8 @@
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
+use std::num::NonZeroUsize;
+use std::thread;
 
 use rustc_hash::FxHashSet;
 
@@ -153,12 +155,64 @@ pub(crate) fn partition(mir: &mir::Program, count: usize) -> Vec<Unit> {
         .collect()
 }
 
+/// How the units of a build run. `Forward` and `Reverse` are for tests of the order of units (the
+/// `SISU_UNIT_ORDER` hook): they run every unit on one thread.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "Task 4 reads the order and gives it to `schedule`"
+    )
+)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Order {
+    /// On several threads.
+    Threads,
+    /// On one thread, unit 0 first.
+    Forward,
+    /// On one thread, the last unit first.
+    Reverse,
+}
+
+impl Order {
+    /// The order that `SISU_UNIT_ORDER` names: `forward` or `reverse`. Any other value, or none,
+    /// gives `Threads`.
+    #[expect(dead_code, reason = "Task 4 calls it")]
+    pub(crate) fn from_env() -> Order {
+        match std::env::var("SISU_UNIT_ORDER").as_deref() {
+            Ok("forward") => Order::Forward,
+            Ok("reverse") => Order::Reverse,
+            _ => Order::Threads,
+        }
+    }
+}
+
+/// The number of threads for `count` units: one for each unit, and at most one for each core.
+#[cfg_attr(not(test), expect(dead_code, reason = "Task 4 calls it"))]
+pub(crate) fn threads(count: usize) -> usize {
+    count.min(thread::available_parallelism().map_or(1, NonZeroUsize::get))
+}
+
+/// Runs `work` for each unit from 0 to `count`, and returns the results in unit order.
+#[cfg_attr(not(test), expect(dead_code, reason = "Task 4 calls it"))]
+pub(crate) fn schedule<T: Send>(
+    count: usize,
+    threads: usize,
+    order: Order,
+    work: impl Fn(usize) -> T + Sync,
+) -> Vec<T> {
+    let _ = (threads, order);
+    (0..count).map(work).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::front_end::{PRELUDE_SOURCE, prelude_program};
     use crate::parser::parse_ok;
     use std::fs;
+    use std::sync::{Condvar, Mutex};
+    use std::time::Duration;
 
     /// The mir of `source`, built as `codegen` builds it.
     fn mir_of(source: &str) -> mir::Program {
@@ -326,5 +380,75 @@ fn main() { print(e(1)) }";
         let unit = Unit::whole(4);
         assert_eq!((unit.index, unit.count, unit.is_split()), (0, 1, false));
         assert_eq!(unit.placement, [Placement::Own; 4]);
+    }
+
+    /// Adds the caller to those that arrived, and waits until two have. Returns whether two did
+    /// within `timeout`. The timeout is a guard against a hang, never a measure of speed.
+    fn rendezvous(arrived: &(Mutex<usize>, Condvar), timeout: Duration) -> bool {
+        let (lock, condvar) = arrived;
+        let mut count = lock.lock().expect("the lock should not be poisoned");
+        *count += 1;
+        condvar.notify_all();
+        let (count, _) = condvar
+            .wait_timeout_while(count, timeout, |count| *count < 2)
+            .expect("the lock should not be poisoned");
+        *count == 2
+    }
+
+    #[test]
+    fn units_should_run_at_the_same_time() {
+        let arrived = (Mutex::new(0), Condvar::new());
+        let met = schedule(2, 2, Order::Threads, |_| {
+            rendezvous(&arrived, Duration::from_secs(10))
+        });
+        assert_eq!(met, [true, true]);
+    }
+
+    #[test]
+    fn one_thread_should_not_meet_the_other_unit() {
+        let arrived = (Mutex::new(0), Condvar::new());
+        let met = schedule(2, 1, Order::Threads, |_| {
+            rendezvous(&arrived, Duration::from_millis(100))
+        });
+        assert_eq!(met, [false, true]);
+    }
+
+    #[test]
+    fn schedule_should_return_results_in_unit_order() {
+        for order in [Order::Threads, Order::Forward, Order::Reverse] {
+            let log = Mutex::new(Vec::new());
+            let results = schedule(9, 4, order, |unit| {
+                log.lock()
+                    .expect("the lock should not be poisoned")
+                    .push(unit);
+                unit
+            });
+            assert_eq!(results, (0..9).collect::<Vec<_>>(), "{order:?}");
+            let log = log.into_inner().expect("the lock should not be poisoned");
+            match order {
+                Order::Threads => {
+                    let mut sorted = log;
+                    sorted.sort_unstable();
+                    assert_eq!(sorted, (0..9).collect::<Vec<_>>(), "{order:?}");
+                }
+                Order::Forward => assert_eq!(log, (0..9).collect::<Vec<_>>(), "{order:?}"),
+                Order::Reverse => assert_eq!(log, (0..9).rev().collect::<Vec<_>>(), "{order:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn schedule_should_run_one_unit_on_the_calling_thread() {
+        let ids = schedule(1, 4, Order::Threads, |_| thread::current().id());
+        assert_eq!(ids, [thread::current().id()]);
+    }
+
+    #[test]
+    fn threads_should_be_at_most_the_unit_count_and_the_cores() {
+        assert_eq!(threads(1), 1);
+        assert_eq!(
+            threads(usize::MAX),
+            thread::available_parallelism().map_or(1, NonZeroUsize::get)
+        );
     }
 }
