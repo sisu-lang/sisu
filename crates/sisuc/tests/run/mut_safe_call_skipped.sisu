@@ -1,0 +1,19 @@
+// GIVEN `class C { fn m(self, mut xs: [i64]) { xs = [] } }`, `let c: C? = None`, `let d: C? = C()`
+// and `let mut xs = [1]`
+// WHEN `main` calls `c?.m(mut xs)` and prints `xs`, then calls `d?.m(mut xs)` and prints `xs`
+// THEN it prints "[1]", then "[]": a call that `?.` skips does no copy-in and no store-back
+class C {
+    fn m(self, mut xs: [i64]) {
+        xs = []
+    }
+}
+
+fn main() {
+    let c: C? = None
+    let d: C? = C()
+    let mut xs = [1]
+    c?.m(mut xs)
+    print(xs)
+    d?.m(mut xs)
+    print(xs)
+}

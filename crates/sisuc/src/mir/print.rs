@@ -229,6 +229,8 @@ impl Printer<'_> {
                 flagged(format!("interp({})", parts.join(", ")), *calls)
             }
             Rvalue::ReadLine => "call read_line()".to_owned(),
+            Rvalue::Out { index } => format!("out {index}"),
+            Rvalue::SetOut { index, value } => format!("set_out {index} {}", self.operand(value)),
             Rvalue::Chars(operand) => format!("chars {}", self.operand(operand)),
             Rvalue::Bytes(operand) => format!("bytes {}", self.operand(operand)),
             Rvalue::Words(operand) => format!("words {}", self.operand(operand)),

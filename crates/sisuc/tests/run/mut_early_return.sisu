@@ -1,0 +1,19 @@
+// GIVEN `fn f(mut xs: [i64], stop: bool) { xs[0] = 1; if stop { return }; xs[0] = 2 }`
+// WHEN `main` calls `f(mut xs, true)` on `let mut xs = [0]` and prints `xs`
+// THEN it prints "[1]": the store-back runs on the early return
+// AND `f(mut xs, false)` leaves "[2]"
+fn f(mut xs: [i64], stop: bool) {
+    xs[0] = 1
+    if stop {
+        return
+    }
+    xs[0] = 2
+}
+
+fn main() {
+    let mut xs = [0]
+    f(mut xs, true)
+    print(xs)
+    f(mut xs, false)
+    print(xs)
+}

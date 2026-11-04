@@ -284,12 +284,17 @@ impl Walk {
             Rvalue::Copy(place) if place.projections.is_empty() => {
                 self.barred.push(place.local);
             }
-            Rvalue::Copy(_) | Rvalue::CopyStr(_) | Rvalue::Borrow(_) | Rvalue::ReadLine => {}
+            Rvalue::Copy(_)
+            | Rvalue::CopyStr(_)
+            | Rvalue::Borrow(_)
+            | Rvalue::ReadLine
+            | Rvalue::Out { .. } => {}
             Rvalue::Use(operand)
             | Rvalue::Unwrap(operand)
             | Rvalue::Wrap(operand)
             | Rvalue::ToAny(operand)
             | Rvalue::Trim(operand)
+            | Rvalue::SetOut { value: operand, .. }
             | Rvalue::Chars(operand)
             | Rvalue::Bytes(operand)
             | Rvalue::Words(operand)

@@ -1,0 +1,19 @@
+// GIVEN `fn h(old: [i64], _n: i64) { print(old) }`, `fn g(mut xs: [i64]) -> i64 { xs[0] = 9; 0 }`
+// and `let mut xs = [1, 2, 3]`
+// WHEN `main` calls `h(xs, g(mut xs))` and prints `xs`
+// THEN it prints "[1, 2, 3]", then "[9, 2, 3]": `h` gets the old value, the call of `g` being a
+// later argument
+fn h(old: [i64], _n: i64) {
+    print(old)
+}
+
+fn g(mut xs: [i64]) -> i64 {
+    xs[0] = 9
+    0
+}
+
+fn main() {
+    let mut xs = [1, 2, 3]
+    h(xs, g(mut xs))
+    print(xs)
+}

@@ -259,6 +259,7 @@ impl<'a> Lowering<'a> {
             name: f.name.clone(),
             params: f.params.len(),
             borrowed: vec![false; f.params.len()],
+            muts: f.params.iter().map(|p| f.locals[p.0].mutable).collect(),
             ret: f.ret,
             prelude: f.prelude,
             quiet: false,

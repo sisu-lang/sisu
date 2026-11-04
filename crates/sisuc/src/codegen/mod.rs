@@ -856,6 +856,9 @@ impl<'ctx> Codegen<'ctx, '_> {
                 text
             }
             Rvalue::ReadLine => self.read_line(),
+            Rvalue::Out { .. } | Rvalue::SetOut { .. } => {
+                unreachable!("lowering emits no out slot before the copy-in lands")
+            }
             Rvalue::Chars(op) => self.chars(self.operand(op).0),
             Rvalue::Bytes(op) => self.bytes(self.operand(op).0),
             Rvalue::Words(op) => self.words(self.operand(op).0),

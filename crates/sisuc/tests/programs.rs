@@ -244,6 +244,8 @@ macro_rules! allocation_counts {
 allocation_counts! {
     // `big = fill(big, i, i % 2 + 1)` writes in place.
     (handover, "999\n", "0\n", 0),
+    // `set(mut big)` moves the only reference in and out of the call: no copy.
+    (mut_big_local, "999\n", "0\n", 0),
     // `saved` is live across each write, so each `fill` copies once.
     (copies, "499500\n1000\n", "0\n0\n", 1000),
     // `for` over an array copies nothing.

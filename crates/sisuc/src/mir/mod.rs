@@ -92,6 +92,17 @@ pub(crate) struct Function {
     /// Per parameter, whether it is borrowed: the caller keeps its reference, and the function
     /// reads the value in place and never consumes it. An uncounted parameter is never borrowed.
     pub(crate) borrowed: Vec<bool>,
+    /// Per parameter, whether it is `mut`: the caller passes one more pointer for it, after the
+    /// value parameters, and the function stores the parameter's final value there (`SetOut`).
+    /// A `mut` parameter is never borrowed.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "copy-in and copy-out for locals reads it in the next commit"
+        )
+    )]
+    pub(crate) muts: Vec<bool>,
     pub(crate) ret: Type,
     /// Whether the prelude writes the function. Codegen gives it two hidden last parameters, the
     /// location of its caller, which its panics report. They are no locals, so no pass sees them.
@@ -313,6 +324,29 @@ pub(crate) enum Rvalue {
         calls: bool,
     },
     ReadLine,
+    /// The final value of argument `index` of the nearest call before it in the same block: the
+    /// callee stored it with `SetOut`. No call stands between them; a `release` may (the
+    /// certifier checks this). The destination takes ownership of the value.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "copy-in and copy-out for locals builds it in the next commit"
+        )
+    )]
+    Out {
+        index: usize,
+    },
+    /// The final value of this function's `mut` parameter `index`, which `value` consumes. It has
+    /// no destination: the value goes to the caller's out slot.
+    #[expect(
+        dead_code,
+        reason = "copy-in and copy-out for locals builds it in the next commit"
+    )]
+    SetOut {
+        index: usize,
+        value: Operand,
+    },
     Chars(Operand),
     Bytes(Operand),
     Words(Operand),
@@ -407,6 +441,8 @@ impl Rvalue {
             | Rvalue::Wrap(_)
             | Rvalue::Concat { .. }
             | Rvalue::ReadLine
+            | Rvalue::Out { .. }
+            | Rvalue::SetOut { .. }
             | Rvalue::Chars(_)
             | Rvalue::Bytes(_)
             | Rvalue::Words(_)

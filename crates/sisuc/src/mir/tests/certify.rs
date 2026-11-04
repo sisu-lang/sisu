@@ -3961,3 +3961,112 @@ fn a_borrow_through_a_mut_field_should_end_at_a_call_through_a_table() {
     );
     rejects(&b.finish(), 0, x, Rule::Borrow);
 }
+
+// The `out` of a `mut` argument follows its call.
+
+/// `dest = out index`.
+fn out(dest: LocalId, index: usize) -> Statement {
+    assign(dest, Rvalue::Out { index })
+}
+
+/// GIVEN a block with an `out 0` and no call before it
+/// WHEN the function is certified
+/// THEN it is rejected for the `out`'s destination
+#[test]
+fn out_with_no_call_should_be_rejected() {
+    let mut b = Builder::new("f");
+    let t = b.local("t", Type::I64);
+    b.block(vec![out(t, 0)], ret());
+    rejects(&b.finish(), 0, t, Rule::Out);
+}
+
+/// GIVEN `call f(t)`, a second call, and then `t = out 0`
+/// WHEN the function is certified, once with a `Call` and once with a `DynCall` as the second
+/// THEN it is rejected: the nearest call before the `out` is the second, which does not take `t`
+#[test]
+fn out_after_a_second_call_should_be_rejected() {
+    let int = |n| Operand::Const(Const::Int(n, Type::I64));
+    for second in [
+        call(vec![int(1)], vec![false]),
+        dyn_call(vec![int(1), int(2)]),
+    ] {
+        let mut b = Builder::new("f");
+        let t = b.local("t", Type::I64);
+        b.block(
+            vec![
+                assign(t, Rvalue::Use(int(0))),
+                call(vec![read(t)], vec![false]),
+                second,
+                out(t, 0),
+            ],
+            ret(),
+        );
+        rejects(&b.finish(), 0, t, Rule::Out);
+    }
+}
+
+/// GIVEN `call f(move s)`, a `release r` and then `s = out 0`
+/// WHEN the function is certified
+/// THEN it is accepted: a release stands between a call and its `out`, where a moved temporary
+/// passed to a borrowed parameter is released after the call
+#[test]
+fn out_after_a_release_should_be_accepted() {
+    let mut b = Builder::new("f");
+    let s = b.local("s", Type::STRING);
+    let r = b.local("r", Type::STRING);
+    b.block(
+        vec![
+            literal(s),
+            literal(r),
+            call(vec![Operand::Move(s)], vec![false]),
+            Statement::Release(r),
+            out(s, 0),
+            Statement::Release(s),
+        ],
+        ret(),
+    );
+    assert_eq!(certify(&b.finish()), Ok(()));
+}
+
+/// GIVEN `call f(move s, move u)` and then `s = out 0`, `u = out 1`
+/// WHEN the function is certified
+/// THEN it is accepted: one `out` may follow another
+#[test]
+fn out_after_another_out_should_be_accepted() {
+    let mut b = Builder::new("f");
+    let s = b.local("s", Type::STRING);
+    let u = b.local("u", Type::STRING);
+    b.block(
+        vec![
+            literal(s),
+            literal(u),
+            call(vec![Operand::Move(s), Operand::Move(u)], vec![false, false]),
+            out(s, 0),
+            out(u, 1),
+            Statement::Release(s),
+            Statement::Release(u),
+        ],
+        ret(),
+    );
+    assert_eq!(certify(&b.finish()), Ok(()));
+}
+
+/// GIVEN `call f(move s)` and then `u = out 0`, where `u` is not the argument
+/// WHEN the function is certified
+/// THEN it is rejected for `u`
+#[test]
+fn out_for_another_local_should_be_rejected() {
+    let mut b = Builder::new("f");
+    let s = b.local("s", Type::STRING);
+    let u = b.local("u", Type::STRING);
+    b.block(
+        vec![
+            literal(s),
+            call(vec![Operand::Move(s)], vec![false]),
+            out(u, 0),
+            Statement::Release(u),
+        ],
+        ret(),
+    );
+    rejects(&b.finish(), 0, u, Rule::Out);
+}

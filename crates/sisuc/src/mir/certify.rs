@@ -84,6 +84,16 @@ pub(crate) enum Rule {
     /// A token is released, consumed or read, or freed where it may be ended or borrowed; or a
     /// local that is not a token is freed or built into.
     Token,
+    /// An `out` whose nearest call before it in the block, past only `release`s and other
+    /// `out`s, does not hand its destination on as the `mut` argument that the `out` names.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the certifier rule for `out` lands in the next commit"
+        )
+    )]
+    Out,
 }
 
 impl fmt::Display for Rule {
@@ -112,6 +122,10 @@ impl fmt::Display for Rule {
             Rule::Token => {
                 "a reuse token released, moved, read or freed twice, or a value that is not a \
                  token freed or built into"
+            }
+            Rule::Out => {
+                "an `out` that does not follow the call that took its destination as a `mut` \
+                 argument"
             }
         })
     }
@@ -333,6 +347,8 @@ impl Clobbers {
                         | Rvalue::Concat { .. }
                         | Rvalue::Interpolate { .. }
                         | Rvalue::ReadLine
+                        | Rvalue::Out { .. }
+                        | Rvalue::SetOut { .. }
                         | Rvalue::Chars(_)
                         | Rvalue::Bytes(_)
                         | Rvalue::Words(_)
@@ -762,7 +778,8 @@ fn rvalue<'a>(
         | Rvalue::Unwrap(op)
         | Rvalue::Wrap(op)
         | Rvalue::ToAny(op)
-        | Rvalue::Trim(op) => {
+        | Rvalue::Trim(op)
+        | Rvalue::SetOut { value: op, .. } => {
             consumed(op, lowered, f);
         }
         Rvalue::Chars(op)
@@ -777,7 +794,7 @@ fn rvalue<'a>(
         | Rvalue::Dbg { operand: op, .. } => operand(op, lowered, f),
         Rvalue::Copy(place) => self::place(place, Effect::Read, lowered, f),
         Rvalue::Borrow(place) => self::place(place, Effect::ReadInPlace, lowered, f),
-        Rvalue::CopyStr(_) | Rvalue::ReadLine => {}
+        Rvalue::CopyStr(_) | Rvalue::ReadLine | Rvalue::Out { .. } => {}
         // A borrowed argument is read in place, and a move into one hands on nothing: the
         // caller still owns the value after the call.
         Rvalue::Call { args, borrowed, .. } => {

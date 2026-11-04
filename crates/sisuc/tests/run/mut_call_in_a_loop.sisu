@@ -1,0 +1,24 @@
+// GIVEN `fn bump(mut n: i64) { n += 1 }` and `fn set(mut xs: [i64], i: i64) { xs[0] = i }`
+// WHEN `main` calls `bump(mut n)` on a `let mut n: i64` and `set(mut xs, i)` on a `[i64]` in a
+// loop of 1000 iterations, then prints both
+// THEN it prints "1000", then "[999, 0]"
+// AND Valgrind and `--rc-checks` find each iteration's value released once, and the out slots
+// do not grow the stack
+fn bump(mut n: i64) {
+    n += 1
+}
+
+fn set(mut xs: [i64], i: i64) {
+    xs[0] = i
+}
+
+fn main() {
+    let mut n = 0
+    let mut xs = [0, 0]
+    for i in 0..1000 {
+        bump(mut n)
+        set(mut xs, i)
+    }
+    print(n)
+    print(xs)
+}

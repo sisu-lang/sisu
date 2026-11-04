@@ -184,6 +184,16 @@ def comments(k):
     return f'fn f(o: i64?) -> i64 {{\n{rows}    0\n}}\n\nfn main() {{\n    print("{{f(1)}}")\n}}\n'
 
 
+def mut_parameters(k):
+    # Each function has two `mut` parameters and each call passes two `mut` arguments, so that the
+    # W0002 judgement of a parameter and the copy-in and copy-out of a call grow with `k`.
+    funs = ''.join(f'fn set{tag(i)}(mut xs: [i64], mut n: i64) {{\n    xs[0] = n\n    n += 1\n}}\n\n'
+                   for i in range(k))
+    calls = ''.join(f'    set{tag(i)}(mut xs, mut n)\n' for i in range(k))
+    return (funs + f'fn main() {{\n    let mut xs = [0]\n    let mut n = 0\n{calls}'
+            '    print("{xs[0]} {n}")\n}\n')
+
+
 # The name of a shape, its `n` and the program at a size. The sizes are 0, n, 2n, 4n and 8n.
 SHAPES = {
     'functions': (250, functions),
@@ -204,6 +214,7 @@ SHAPES = {
     'string left': (12, string_left),
     'string call depth': (12, string_call_depth),
     'comments': (250, comments),
+    'mut parameters': (250, mut_parameters),
 }
 
 

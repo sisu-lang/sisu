@@ -5994,3 +5994,39 @@ fn a_length_from_the_runtime_should_carry_the_facts_of_a_length() {
         "define i32 @main(",
     );
 }
+
+/// The out slot of a call is an `alloca` in the entry block, as every `alloca` is: one in a loop
+/// body would grow the stack on every iteration.
+///
+/// ```text
+/// GIVEN `set(mut xs)` of S1 called in a `while` loop of `main`
+/// WHEN the module is compiled, before optimization
+/// THEN the `alloca` of the out slot is in the entry block of `main`, and none is in the loop
+/// ```
+#[test]
+fn out_slot_should_be_in_the_entry_block() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "fn set(mut xs: [i64]) {\n    xs[0] = 9\n}\n\
+         fn main() {\n    let mut xs = [1, 2]\n    let mut i = 0\n    while i < 3 {\n        set(mut xs)\n        i += 1\n    }\n    print(xs)\n}",
+    )
+    .print_to_string()
+    .to_string();
+    let main = function_body(&ir, "define internal void @sisu.main()");
+    // A label is a line that does not start with a space.
+    let labels: Vec<usize> = (main.lines().enumerate())
+        .filter(|(_, line)| !line.starts_with(' ') && line.contains(':'))
+        .map(|(at, _)| at)
+        .collect();
+    let (entry_end, slots) = (labels[1], |range: std::ops::Range<usize>| {
+        main.lines()
+            .enumerate()
+            .filter(|(at, line)| {
+                range.contains(at) && line.contains("%out") && line.contains(" = alloca ")
+            })
+            .count()
+    });
+    assert_eq!(slots(0..entry_end), 1, "{main}");
+    assert_eq!(slots(entry_end..usize::MAX), 0, "{main}");
+}
