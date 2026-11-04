@@ -1031,46 +1031,33 @@ impl Checker<'_> {
         local(temp, ty, span)
     }
 
-    /// The base of a place, a chain of fields and indexes: a root that is no binding is hidden,
-    /// then each index from the root outwards. No object and no element is read yet.
-    fn bind_base(&mut self, e: tir::Expr, lets: &mut Vec<tir::Stmt>) -> tir::Expr {
-        if matches!(e.kind, ExprKind::Local(_)) {
-            return e;
-        }
-        let (ty, span) = (e.ty, e.span);
-        match e.kind {
-            ExprKind::Field { base, index } => {
-                let base = Box::new(self.bind_base(*base, lets));
-                tir::Expr::new(ExprKind::Field { base, index }, ty, span)
-            }
-            ExprKind::Index { base, index } => {
-                let base = Box::new(self.bind_base(*base, lets));
-                let index = Box::new(self.hide(*index, lets));
-                tir::Expr::new(ExprKind::Index { base, index }, ty, span)
-            }
-            kind => self.hide(tir::Expr::new(kind, ty, span), lets),
-        }
-    }
-
-    /// The class objects along the base `e` of a place, a chain of fields and indexes, from the
-    /// root outwards. Each one that is no binding is pushed to `keep` as a fresh local with the
-    /// read of the object, which starts at the local of the object before it. Gives the base as
-    /// the place reads it: the local of the last object, or the binding.
-    fn keep_objects(&mut self, e: tir::Expr, keep: &mut Vec<(LocalId, tir::Expr)>) -> tir::Expr {
+    /// The base of a place, a chain of fields and indexes, from the root outwards. A root that is
+    /// no binding is hidden in a `let`, and so is each index. Each class object along the chain
+    /// that is no binding goes to `keep`. It is a fresh local with the read of the object. That
+    /// read starts at the local of the object before it. No object and no element is read yet.
+    /// The result is the base as the place reads it: the local of the last object, or the
+    /// binding.
+    fn bind_base(
+        &mut self,
+        e: tir::Expr,
+        lets: &mut Vec<tir::Stmt>,
+        keep: &mut Vec<(LocalId, tir::Expr)>,
+    ) -> tir::Expr {
         if matches!(e.kind, ExprKind::Local(_)) {
             return e;
         }
         let (ty, span) = (e.ty, e.span);
         let e = match e.kind {
             ExprKind::Field { base, index } => {
-                let base = Box::new(self.keep_objects(*base, keep));
+                let base = Box::new(self.bind_base(*base, lets, keep));
                 tir::Expr::new(ExprKind::Field { base, index }, ty, span)
             }
             ExprKind::Index { base, index } => {
-                let base = Box::new(self.keep_objects(*base, keep));
+                let base = Box::new(self.bind_base(*base, lets, keep));
+                let index = Box::new(self.hide(*index, lets));
                 tir::Expr::new(ExprKind::Index { base, index }, ty, span)
             }
-            kind => return tir::Expr::new(kind, ty, span),
+            kind => return self.hide(tir::Expr::new(kind, ty, span), lets),
         };
         if !matches!(ty.kind(), TypeKind::Class(..)) {
             return e;
@@ -1080,33 +1067,66 @@ impl Checker<'_> {
         local(object, ty, span)
     }
 
-    /// Whether every index of `place` is in range, read now: `i < len(base)` for each index from
-    /// the root outwards, joined by `&&`, so that an index is read only after the ones before it
-    /// passed. `None` for a place with no index.
-    ///
-    /// shortcut: each test reads its own copy of the path before its index, so a place of `n`
-    /// indexes builds `n^2` nodes; upgrade when a place can be nested deep in real programs.
-    fn indexes_in_range(&self, place: &tir::Place, at: Span) -> Option<tir::Expr> {
-        let mut tests = Vec::new();
-        let mut walk = place;
-        while let tir::Place::Index { base, index } = walk {
-            let array = self.read((**base).clone(), at);
-            let len = tir::Expr::new(ExprKind::Len(Box::new(array)), Type::I64, at);
-            let test = ExprKind::Compare {
-                operands: vec![index.clone(), len],
-                ops: vec![ast::CompareOp::Lt],
-            };
-            tests.push(tir::Expr::new(test, Type::BOOL, at));
-            walk = base;
+    /// The test that every index of `place` is in range now, or `None` for a place with no index.
+    /// The test of an index is `index < len(array)`. The tests join with `&&`, from the root
+    /// outwards, so each array is read only after the indexes before it passed. Each array after
+    /// the first is a `let` of the block that holds the test of the next index, so the path is
+    /// read once, and the arrays are released before the store-back, which then finds them
+    /// unique.
+    fn indexes_in_range(&mut self, place: &tir::Place, at: Span) -> Option<tir::Expr> {
+        let mut indexes = Vec::new();
+        let mut root = place;
+        while let tir::Place::Index { base, index } = root {
+            indexes.push(index);
+            root = base;
         }
-        tests.into_iter().rev().reduce(|lhs, rhs| {
-            let and = ExprKind::Binary {
-                op: tir::BinaryOp::And,
-                lhs: Box::new(lhs),
-                rhs: Box::new(rhs),
+        indexes.reverse();
+        let first = self.read(root.clone(), at);
+        // `arrays[k]` is the array that `indexes[k]` indexes: the root's, then one `let` each.
+        let mut arrays = vec![first];
+        let mut lets = Vec::new();
+        for (k, index) in indexes
+            .iter()
+            .enumerate()
+            .take(indexes.len().saturating_sub(1))
+        {
+            let TypeKind::Array(element) = arrays[k].ty.kind() else {
+                panic!("an indexed place should hold an array, as `element` checked")
             };
-            tir::Expr::new(and, Type::BOOL, at)
-        })
+            let array = self.fresh(element);
+            let read = ExprKind::Index {
+                base: Box::new(arrays[k].clone()),
+                index: Box::new((*index).clone()),
+            };
+            lets.push(tir::Stmt::Let {
+                local: array,
+                init: tir::Expr::new(read, element, at),
+            });
+            arrays.push(local(array, element, at));
+        }
+        let mut tests: Vec<tir::Expr> = indexes
+            .iter()
+            .zip(arrays)
+            .map(|(index, array)| {
+                let len = tir::Expr::new(ExprKind::Len(Box::new(array)), Type::I64, at);
+                let test = ExprKind::Compare {
+                    operands: vec![(*index).clone(), len],
+                    ops: vec![ast::CompareOp::Lt],
+                };
+                tir::Expr::new(test, Type::BOOL, at)
+            })
+            .collect();
+        let mut guard = tests.pop()?;
+        while let (Some(test), Some(array)) = (tests.pop(), lets.pop()) {
+            let rest = block_expr(vec![array], Some(guard), Type::BOOL, at);
+            let both = ExprKind::Binary {
+                op: tir::BinaryOp::And,
+                lhs: Box::new(test),
+                rhs: Box::new(rest),
+            };
+            guard = tir::Expr::new(both, Type::BOOL, at);
+        }
+        Some(guard)
     }
 
     /// The call `call`, of a callee that has the `mut` parameters whose arguments are `parts`,
@@ -1146,8 +1166,7 @@ impl Checker<'_> {
                 let base = operands
                     .next()
                     .expect("a field root's base should be the first operand of its path");
-                let base = self.bind_base(base, &mut lets);
-                bound.push(self.keep_objects(base, &mut keep));
+                bound.push(self.bind_base(base, &mut lets, &mut keep));
             }
             for index in operands {
                 bound.push(self.hide(index, &mut lets));

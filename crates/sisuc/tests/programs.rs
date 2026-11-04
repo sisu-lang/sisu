@@ -246,6 +246,8 @@ allocation_counts! {
     (handover, "999\n", "0\n", 0),
     // `set(mut big)` moves the only reference in and out of the call: no copy.
     (mut_big_local, "999\n", "0\n", 0),
+    // The store-back of `g.rows[1][0]` finds both arrays unique: no copy of a row.
+    (mut_big_element, "999\n", "0\n", 0),
     // `saved` is live across each write, so each `fill` copies once.
     (copies, "499500\n1000\n", "0\n0\n", 1000),
     // `for` over an array copies nothing.
