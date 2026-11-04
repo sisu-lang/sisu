@@ -1857,3 +1857,46 @@ fn optional_object_of_a_mut_argument_should_get_no_fix() {
     let d = only(&read, Code::MayBeNone);
     assert_eq!(d.fixes().len(), 1, "a read keeps the `?.` fix");
 }
+
+/// GIVEN a call with an unmarked place at a `mut` parameter, whose result meets a context that
+///   expects an optional, an `any` type, or the empty array in `[] == take(ys)`
+/// WHEN the missing `mut` is reported
+/// THEN E0166 has the fix: the context asks for a type that the result can convert to, and
+///   `mut` does not change the result
+#[test]
+fn unmarked_place_in_an_optional_or_any_context_should_get_its_fix() {
+    let get = "fn get<T>(mut x: T) -> T {\n    let old = x\n    x = old\n    old\n}\n";
+    let named = "interface Named {\n    fn name(self) -> string\n}\n\
+        class Cat: Named {\n    fn name(self) -> string {\n        \"cat\"\n    }\n}\n";
+    let take = "fn take(mut xs: [i64]) -> [i64] {\n    xs[0] = 1\n    xs\n}\n";
+    for (row, decls, body, at) in [
+        (
+            "optional",
+            get.to_string(),
+            "let mut ys = [1]\n    let o: [i64]? = get(ys)\n    ys[0] = 2\n    print(o == None)",
+            (8, 25),
+        ),
+        (
+            "any",
+            format!("{named}{get}"),
+            "let mut c = Cat()\n    let n: any Named = get(c)\n    print(n.name())",
+            (16, 28),
+        ),
+        (
+            "optional any",
+            format!("{named}{get}"),
+            "let mut c = Cat()\n    let n: (any Named)? = get(c)\n    print(n == None)",
+            (16, 31),
+        ),
+        (
+            "empty array",
+            take.to_string(),
+            "let mut ys = [1]\n    print([] == take(ys))",
+            (7, 22),
+        ),
+    ] {
+        let src = format!("{decls}fn main() {{\n    {body}\n}}");
+        let (line, col) = at;
+        assert_eq!(marker_fixes(&src), [(line, col, true)], "row `{row}`");
+    }
+}
