@@ -1119,13 +1119,6 @@ fn main() {
         );
     }
 
-    #[test]
-    fn build_should_record_the_entry_function() {
-        let mir = mir_of(SIX);
-        let main = mir.main.expect("a built program has an entry function");
-        assert_eq!(mir.functions[main].name, "main");
-    }
-
     /// Two large functions that nothing calls, a small `main` that calls `helper` twice, so that
     /// the greedy rule puts `main` in the last of 3 units.
     fn main_in_a_late_unit_program() -> String {

@@ -1001,7 +1001,6 @@ fn interpolation_examines_each_format_once() {
     assert_eq!(printed.matches(", \">3\")").count(), parts);
 }
 
-/// The present value of an optional prints as a pattern would bind it.
 #[test]
 fn some_projection_should_print_as_a_pattern() {
     let program = checked("");
