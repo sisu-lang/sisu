@@ -9,7 +9,7 @@ use rustc_hash::{FxBuildHasher, FxHashMap};
 
 use super::expr::{fits, local};
 use super::generic::mark;
-use super::place::{Chain, Change, CheckedPlace, Path, Root, build};
+use super::place::{Chain, Change, CheckedPlace, Path, Root, build, place_root};
 use super::{Checked, Checker, Poisoned, UNKNOWN, block_expr, type_of};
 use crate::ast;
 use crate::diagnostic::{
@@ -373,11 +373,7 @@ impl Checker<'_> {
             );
             return Err((NotPlace::SelfValue { class }, None));
         }
-        let mut root = arg;
-        while let ast::ExprKind::Index { base, .. } | ast::ExprKind::Field { base, .. } = &root.kind
-        {
-            root = base;
-        }
+        let root = place_root(arg);
         if let ast::ExprKind::Name(name) = root.kind
             && self.lookup(name).is_none()
             && !self.constants.contains_key(&name)
@@ -587,12 +583,7 @@ impl Checker<'_> {
         let key = self.mut_key(&path);
         let temp = self.fresh(ty);
         let span = arg.value.span;
-        let mut root = &arg.value;
-        while let ast::ExprKind::Index { base, .. } | ast::ExprKind::Field { base, .. } = &root.kind
-        {
-            root = base;
-        }
-        let root = match root.kind {
+        let root = match place_root(&arg.value).kind {
             ast::ExprKind::Name(name) => Some(name),
             _ => None,
         };

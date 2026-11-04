@@ -675,26 +675,16 @@ impl Checker<'_> {
 
     /// Stamps the binding, or `self`, at the root of `base`, the base of a written field, which
     /// this follows to its root once. A root that is neither stamps nothing.
-    pub(super) fn stamp_root(&mut self, mut base: &ast::Expr) {
-        loop {
-            match &base.kind {
-                ast::ExprKind::Field { base: inner, .. }
-                | ast::ExprKind::Index { base: inner, .. } => {
-                    base = inner;
+    pub(super) fn stamp_root(&mut self, base: &ast::Expr) {
+        match &place_root(base).kind {
+            &ast::ExprKind::Name(name) => {
+                let stamp = self.write_stamp();
+                if let Some(b) = self.lookup(name) {
+                    b.written = stamp;
                 }
-                &ast::ExprKind::Name(name) => {
-                    let stamp = self.write_stamp();
-                    if let Some(b) = self.lookup(name) {
-                        b.written = stamp;
-                    }
-                    return;
-                }
-                ast::ExprKind::SelfValue => {
-                    self.body.self_written = self.write_stamp();
-                    return;
-                }
-                _ => return,
             }
+            ast::ExprKind::SelfValue => self.body.self_written = self.write_stamp(),
+            _ => {}
         }
     }
 
@@ -971,6 +961,14 @@ impl Checker<'_> {
 }
 
 /// Whether a `?.` sits anywhere in the chain of fields and indexes that makes up the place `e`.
+/// The expression at the root of the place `e`: `e` with each field and index taken off.
+pub(super) fn place_root(mut e: &ast::Expr) -> &ast::Expr {
+    while let ast::ExprKind::Index { base, .. } | ast::ExprKind::Field { base, .. } = &e.kind {
+        e = base;
+    }
+    e
+}
+
 fn goes_through_safe_access(e: &ast::Expr) -> bool {
     match &e.kind {
         ast::ExprKind::Field { base, safe, .. } => *safe || goes_through_safe_access(base),

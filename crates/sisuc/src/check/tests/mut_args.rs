@@ -454,8 +454,8 @@ fn let_mut_passed_mut_and_never_read_should_warn() {
     codes(&src, &[(Code::UnusedVariable, (5, 13))]);
 }
 
-/// GIVEN `fn take(mut n: i64) -> i64` that returns the value it was passed, and a local, an
-///   element or a field that is passed `mut` to it with no other read
+/// GIVEN `fn take(mut n: i64) -> i64` that returns the value it was passed, and a local or an
+///   element that is passed `mut` to it with no other read
 /// WHEN it is compiled with the warnings of unused names
 /// THEN there is no W0014: the copy-in reads the place, and the result carries the value out
 #[test]
