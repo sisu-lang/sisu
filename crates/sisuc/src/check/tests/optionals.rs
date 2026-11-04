@@ -129,6 +129,14 @@ fn push_through_an_optional_of_an_optional_should_be_peeled_first() {
     diagnostic(object, Code::MayBeNone, (4, 17, "aa"), &[]);
     let array = "fn g() {\n    let mut xs: [i64]?? = None\n    xs?.push(1)\n}\nfn main() {}";
     diagnostic(array, Code::MayBeNone, (3, 5, "xs"), &[]);
+    // A parameter cannot change, so the write is reported first.
+    codes(
+        "fn g(xs: [i64]??) { xs?.push(1) }\nfn main() {}",
+        &[
+            (Code::AssignToImmutable, (1, 21)),
+            (Code::MayBeNone, (1, 21)),
+        ],
+    );
 }
 
 /// `?.` and `is` on an optional of an optional ask for a layer to be peeled, with no fix.

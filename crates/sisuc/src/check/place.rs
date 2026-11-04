@@ -215,6 +215,15 @@ impl Checker<'_> {
         (at == receiver.span).then_some(place)
     }
 
+    /// Whether the `?.` of the root field of the place that `push_receiver` checked makes its
+    /// value optional.
+    fn pushed_guarded(&self) -> bool {
+        self.body
+            .pushed
+            .as_ref()
+            .is_some_and(|(_, place)| place.guard.is_some())
+    }
+
     /// The receiver of `receiver?.push(arg)`, which `push_receiver` checked as `read`. The place
     /// may hold an array that is optional, because its own type or a `?.` of its root field makes
     /// it so. Then the call writes the place. The result is `Ok` of the array, as `?.` hands it to
@@ -226,13 +235,7 @@ impl Checker<'_> {
         receiver: &ast::Expr,
         read: Checked,
     ) -> Result<tir::Expr, Checked> {
-        let guarded = self
-            .body
-            .pushed
-            .as_ref()
-            .is_some_and(|(_, place)| place.guard.is_some());
-        let held = type_of(&read).map(|ty| if guarded { as_optional(ty) } else { ty });
-        let in_place = held.is_some_and(is_optional_array);
+        let in_place = held_array_layers(&read, self.pushed_guarded()) == 1;
         match read {
             Ok(mut array) if in_place => {
                 // The array inside the optional that the place stores.
@@ -249,33 +252,20 @@ impl Checker<'_> {
     /// through `pushed_value`: the place holds an optional, or a `?.` of its root field makes it
     /// one.
     pub(super) fn pushed_may_be_none(&self, read: &Checked) -> bool {
-        let guarded = self
-            .body
-            .pushed
-            .as_ref()
-            .is_some_and(|(_, place)| place.guard.is_some());
-        guarded || type_of(read).is_some_and(|ty| matches!(ty.kind(), TypeKind::Optional(_)))
+        self.pushed_guarded()
+            || type_of(read).is_some_and(|ty| matches!(ty.kind(), TypeKind::Optional(_)))
     }
 
-    /// The place that `push_receiver` checked for `receiver`, taken, as the value `read` that a
-    /// call reads: a `?.` of its root field wraps `read` where its object is present. A place that
-    /// holds an optional array reports its E0001 now, before the call reports E0062. The place
-    /// is then no more: the call writes nothing.
+    /// Takes the place that `push_receiver` checked for `receiver`. Gives it as the value `read`
+    /// that a call reads. A `?.` of its root field wraps `read` where its object is present. A
+    /// place that holds an optional array, of any depth, reports its E0001 now, before the call
+    /// reports E0062. The place is then no more: the call writes nothing.
     pub(super) fn pushed_value(&mut self, receiver: &ast::Expr, read: Checked) -> Checked {
         let mut place = self
             .take_pushed(receiver)
             .expect("`push_receiver` should have kept the place of a receiver that is a place");
-        let held = type_of(&read).map(|ty| {
-            if place.guard.is_some() {
-                as_optional(ty)
-            } else {
-                ty
-            }
-        });
-        if held.is_some_and(|ty| {
-            matches!(ty.kind(), TypeKind::Optional(_))
-                && matches!(innermost(ty).kind(), TypeKind::Array(_))
-        }) && let Some(d) = place.held.take()
+        if held_array_layers(&read, place.guard.is_some()) > 0
+            && let Some(d) = place.held.take()
         {
             self.report(d);
         }
@@ -379,10 +369,10 @@ impl Checker<'_> {
             let range = self.push_range(receiver_expr, args);
             return not_pushed(self, Some(DiagnosticKind::PushToTemporary { at, range }));
         }
-        // Only a receiver checked ahead of its turn has no place: its call is an argument, whose
-        // `unit` is reported.
         let (read, mut place) = match (receiver, place) {
             (Ok(read), Some(place)) => (Some(read), Some(place)),
+            // Only a receiver checked ahead of its turn has no place: its call is an argument,
+            // whose `unit` is reported.
             (Ok(_), None) => return not_pushed(self, None),
             (Err(_), place) => (None, place),
         };
@@ -391,7 +381,12 @@ impl Checker<'_> {
         }
         let [arg] = args else {
             let d = DiagnosticKind::ArgumentCount {
-                name: self.method_name(array.expect("a pushed array should have a type"), "push"),
+                name: self.method_name(
+                    array.expect(
+                        "a receiver that is `Ok`, or `Err` with an element, should have a type",
+                    ),
+                    "push",
+                ),
                 want: 1,
                 found: args.len(),
                 at: span,
@@ -985,6 +980,29 @@ impl Checker<'_> {
             }
         };
         tir::Expr::new(kind, ty, span)
+    }
+}
+
+/// The layers of optional around the array that a `.push` receiver holds, or 0 when it holds no
+/// optional array. The receiver holds the type of `read`, made optional where a `?.` of the root
+/// field of its place `guarded` it. `?.push` takes the place as one array only when there is one
+/// layer. A place with any layer reports its held write before E0062.
+fn held_array_layers(read: &Checked, guarded: bool) -> usize {
+    let Some(mut ty) = type_of(read) else {
+        return 0;
+    };
+    if guarded {
+        ty = as_optional(ty);
+    }
+    let mut layers = 0;
+    while let TypeKind::Optional(payload) = ty.kind() {
+        layers += 1;
+        ty = payload;
+    }
+    if matches!(ty.kind(), TypeKind::Array(_)) {
+        layers
+    } else {
+        0
     }
 }
 

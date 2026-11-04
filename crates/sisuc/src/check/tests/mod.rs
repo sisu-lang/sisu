@@ -3689,80 +3689,104 @@ fn push_on_a_missing_field_of_an_optional_array_should_report_the_field_alone() 
 /// `E0062-push*` pin the text.
 #[test]
 fn push_onto_an_optional_array_should_offer_unwrap_help_only_for_a_stored_array() {
-    let rows = [
+    /// A row: its name, program, the position of E0062, whether it has help, and every wanted code.
+    /// No wanted code means E0062 alone.
+    type Row = (
+        &'static str,
+        &'static str,
+        (usize, usize, &'static str),
+        bool,
+        &'static [Wanted],
+    );
+    let rows: &[Row] = &[
         (
             "local",
             "fn main() {\n    let mut xs: [i64]? = [1]\n    xs.push(2)\n}",
             (3, 5, "xs"),
             false,
+            &[],
         ),
         (
             "parameter",
             "fn f(xs: [i64]?) {\n    xs.push(2)\n}\nfn main() {}",
             (2, 5, "xs"),
             false,
+            &[(Code::AssignToImmutable, (2, 5)), (Code::MayBeNone, (2, 5))],
         ),
         (
             "immutable local",
             "fn main() {\n    let xs: [i64]? = [1]\n    xs.push(2)\n}",
             (3, 5, "xs"),
             false,
+            &[(Code::AssignToImmutable, (3, 5)), (Code::MayBeNone, (3, 5))],
         ),
         (
             "field of optional array type",
             "class H {\n    mut xs: [i64]?\n}\nfn main() {\n    let h = H(xs: [1])\n    h.xs.push(2)\n}",
             (6, 5, "h.xs"),
             false,
+            &[],
         ),
         (
             "element",
             "fn main() {\n    let mut ys: [[i64]?] = [[1]]\n    ys[0].push(2)\n}",
             (3, 5, "ys[0]"),
             false,
+            &[],
         ),
         (
             "call",
             "fn g() -> [i64]? {\n    [1]\n}\nfn main() {\n    g().push(2)\n}",
             (5, 5, "g()"),
             false,
+            &[
+                (Code::MayBeNone, (5, 5)),
+                (Code::AssignToExpression, (5, 5)),
+            ],
         ),
         (
             "array stored by the object of a `?.`",
             "class Bag {\n    mut items: [i64]\n}\nfn add(bag: Bag?) {\n    bag?.items.push(4)\n}\nfn main() {}",
             (5, 5, "bag?.items"),
             true,
+            &[],
         ),
         (
             "array stored by an object that spans two lines",
             "class Bag {\n    mut items: [i64]\n}\nfn g(a: i64, b: i64) -> Bag? {\n    None\n}\nfn main() {\n    g(1,\n      2)?.items.push(4)\n}",
             (8, 5, "g(1,\n      2)?.items"),
             false,
+            &[],
         ),
         (
             "optional array stored by the object of a `?.`",
             "class H {\n    mut xs: [i64]?\n}\nfn add(h: H?) {\n    h?.xs.push(4)\n}\nfn main() {}",
             (5, 5, "h?.xs"),
             false,
+            &[],
         ),
         (
             "array stored by an optional object",
             "class H {\n    mut xs: [i64]\n}\nfn main() {\n    let h: H? = H(xs: [1])\n    h.xs.push(2)\n}",
             (6, 5, "h"),
             true,
+            &[],
         ),
     ];
-    for (row, src, pos, help) in rows {
-        // A write that is not allowed, or a temporary, comes beside E0062: `places.rs` holds them.
-        let (_, ds) = checked(src);
-        let mut found = ds.into_iter().filter(|d| d.code() == Code::MayBeNone);
-        let d = found.next().expect("each row should report E0062");
-        assert!(found.next().is_none(), "{row}: E0062 once");
-        let span = d.span();
-        assert_eq!(
-            (at(src, span), &src[span.range()]),
-            ((pos.0, pos.1), pos.2),
-            "{row}"
-        );
+    for &(row, src, pos, help, all) in rows {
+        // A write that is not allowed, or a temporary, comes beside E0062.
+        let d = if all.is_empty() {
+            diagnostic_row(row, src, Code::MayBeNone, pos, &[])
+        } else {
+            codes_row(row, src, all);
+            let (_, ds) = checked(src);
+            let d = ds
+                .into_iter()
+                .find(|d| d.code() == Code::MayBeNone)
+                .expect("each row should report E0062");
+            assert_eq!(&src[d.span().range()], pos.2, "{row}");
+            d
+        };
         assert_eq!(d.help().is_some(), help, "{row}");
         let fixes: Vec<_> = d.fixes().iter().map(Fix::safe).collect();
         assert_eq!(fixes, [false], "{row}: one unsafe fix");
