@@ -855,7 +855,7 @@ impl Checker<'_> {
                 let access = match change {
                     Change::Push => Access::Push,
                     Change::MutArg => Access::Mut,
-                    _ => Access::Assign,
+                    Change::Assign | Change::Element => Access::Assign,
                 };
                 if change != Change::Push {
                     self.stamp_root(base);

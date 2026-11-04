@@ -254,7 +254,7 @@ impl Checker<'_> {
             Access::Assign | Access::Mut => true,
             Access::Push => self.field_is_array(inner, name.name),
         };
-        // A `?.` makes a `mut` argument a value that is no place (E0170).
+        // A path through `?.` is a place that cannot be a `mut` argument (E0170).
         let fix = payload_fix(payload, self.body.indexed) && !matches!(access, Access::Mut);
         self.diagnostics
             .push(may_be_none(receiver, name, fix, write, UnwrapHelp::It));
