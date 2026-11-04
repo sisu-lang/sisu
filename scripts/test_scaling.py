@@ -573,7 +573,7 @@ class ScalingTest(unittest.TestCase):
                  ('live locals', 50), ('method chain', 24), ('float left', 12),
                  ('string left', 12), ('string call depth', 12), ('comments', 250),
                  ('mut parameters', 250), ('mut returns', 250),
-                 ('mut call width', 250)]
+                 ('mut call width', 1000)]
         self.assertEqual([(name, n) for name, (n, _) in sc.SHAPES.items()], sizes)
 
         def depth(text, opening, closing):

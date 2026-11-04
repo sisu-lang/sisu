@@ -246,7 +246,7 @@ SHAPES = {
     'comments': (250, comments),
     'mut parameters': (250, mut_parameters),
     'mut returns': (250, mut_returns),
-    'mut call width': (250, mut_call_width),
+    'mut call width': (1000, mut_call_width),
 }
 
 
