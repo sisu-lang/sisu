@@ -48,15 +48,25 @@ fn main() {
 }
 ```
 
-The rules:
+**Fields**
 
-- A field is `name: Type`, or `mut name: Type` for a field that can change. It has no `let` ([E0016](../diagnostics/E0016.md)).
-- A line break separates two fields. A `;` can separate them too, but a `,` cannot ([E0015](../diagnostics/E0015.md)). So `class A { v: i64 }` is valid.
+- A field is `name: Type`, or `mut name: Type` for a field that can change.
+- A field has no `let`. [E0016](../diagnostics/E0016.md)
+- A line break separates two fields. A `;` can separate them too. `class A { v: i64 }` is valid.
+- A `,` between two fields is an error. [E0015](../diagnostics/E0015.md)
+- Two fields, two methods, or a field and a method of one class cannot have the same name. [E0034](../diagnostics/E0034.md)
+
+**The class**
+
 - A class is declared at the top level. Its name follows the rules of a function name ([Functions](functions.md#declarations)).
-- Two fields, two methods, or a field and a method of one class cannot have the same name ([E0034](../diagnostics/E0034.md)).
 - A class cannot extend another class. Sisu has no inheritance.
-- A class that no live code builds builds with a warning ([W0012](../diagnostics/W0012.md)). A field that no live code reads builds with a warning ([W0013](../diagnostics/W0013.md)). A name that starts with `_` gets no warning.
 - A generic class also has type parameters after its name, such as `class Stack<T>` ([Generics](generics.md#type-parameters)).
+
+**Warnings**
+
+- A class that no live code builds builds with a warning. [W0012](../diagnostics/W0012.md)
+- A field that no live code reads builds with a warning. [W0013](../diagnostics/W0013.md)
+- A name that starts with `_` gets no warning.
 
 A field cannot need an object of its own class, directly or through other classes or enums, because no first object could exist ([E0027](../diagnostics/E0027.md)). An optional field, such as `next: Node?`, or an array field, such as `children: [Node]`, can be empty, so it is valid. An [enum](enums.md#declarations) with a variant that needs no object of the class, such as a variant with no payload, also ends the chain.
 
@@ -87,14 +97,20 @@ fn main() {
 }
 ```
 
-The rules:
+**What a constructor does**
 
 - A constructor names each field once, with its label, in the order of the declaration. A field has no default value.
-- A missing field is an error ([E0056](../diagnostics/E0056.md)). So is an argument after the last field ([E0064](../diagnostics/E0064.md)), and an argument without a label ([E0065](../diagnostics/E0065.md)).
-- Fields in a different order are an error ([E0066](../diagnostics/E0066.md)). A label that is not a field of the class is an error too ([E0063](../diagnostics/E0063.md)).
 - Each value must have the type of its field. For an optional field `T?`, a `T` becomes a `T?` ([Types](types.md#optionals)).
 - The program calculates the arguments from left to right, which is the order of the fields ([Order of evaluation](expressions.md#order-of-evaluation)).
 - Each call of a constructor makes a new object, also with the same values.
+
+**Errors**
+
+- A missing field is an error. [E0056](../diagnostics/E0056.md)
+- An argument after the last field is an error. [E0064](../diagnostics/E0064.md)
+- An argument without a label is an error. [E0065](../diagnostics/E0065.md)
+- Fields in a different order are an error. [E0066](../diagnostics/E0066.md)
+- A label that is not a field of the class is an error. [E0063](../diagnostics/E0063.md)
 
 ```sisu
 class Point {
@@ -125,14 +141,17 @@ fn main() {
 }
 ```
 
-The rules:
+**Writing a field**
 
-- An assignment to a field without `mut` is an error, also in a method ([E0001](../diagnostics/E0001.md)).
+- An assignment to a field without `mut` is an error, also in a method. [E0001](../diagnostics/E0001.md)
 - An assignment to a `mut` field changes the object. The binding that holds the object does not need `mut` ([Assignment](statements.md#assignment)).
 - The object can come from any expression, such as a parameter, an element of an array, a field of another object, or `self`.
 - An assignment can go through `?.`. It writes only when the object is there ([Optional chaining](operators.md#optional-chaining)).
-- A `let mut` binding of an object must change by an assignment to the binding itself. A change to a field of its object does not count ([W0002](../diagnostics/W0002.md)).
-- To write an element of an array in a field, the field must be `mut` ([E0001](../diagnostics/E0001.md), [Arrays](arrays.md#indexes)).
+- To write an element of an array in a field, the field must be `mut` ([Arrays](arrays.md#indexes)). [E0001](../diagnostics/E0001.md)
+- A `let mut` binding of an object must change by an assignment to the binding itself. A change to a field of its object does not count. [W0002](../diagnostics/W0002.md)
+
+**Reading a field**
+
 - For an optional object, read a field with `?.` ([Optional chaining](operators.md#optional-chaining)).
 
 ```sisu
@@ -188,15 +207,30 @@ fn main() {
 }
 ```
 
-The rules:
+**`self`**
 
-- `self` is the first parameter of each method ([E0017](../diagnostics/E0017.md), [E0020](../diagnostics/E0020.md)). It is `self`, never `mut self` ([E0018](../diagnostics/E0018.md)).
-- `self` is valid only in a method ([E0041](../diagnostics/E0041.md)). An assignment to `self` is an error ([E0073](../diagnostics/E0073.md)).
+- `self` is the first parameter of each method. [E0017](../diagnostics/E0017.md) [E0020](../diagnostics/E0020.md)
+- It is `self`, never `mut self`. [E0018](../diagnostics/E0018.md)
+- `self` is valid only in a method. [E0041](../diagnostics/E0041.md)
+- An assignment to `self` is an error. [E0073](../diagnostics/E0073.md)
 - A method can write the `mut` fields of `self`. The change shows through every reference to the object.
-- In a method, use `self` to reach the fields and the other methods: `self.x` and `self.m()`. A bare `x` or `m()` does not find a field or a method. A bare `x` finds a binding or a constant with that name. A bare `m(...)` finds a function, a class (its constructor) or a conversion, such as `f64(n)`. Else a bare `x` is an error ([E0033](../diagnostics/E0033.md)). A bare `m(...)` is also an error: [E0070](../diagnostics/E0070.md) when a method of the class has that name (write `self.m(...)`), or when the first argument has a method of that name. Else it is [E0052](../diagnostics/E0052.md).
+
+**Names in a method**
+
+In a method, use `self` to reach the fields and the other methods: `self.x` and `self.m()`. A bare `x` or `m()` does not find a field or a method.
+
+- A bare `x` finds a binding or a constant with that name. Else it is an error. [E0033](../diagnostics/E0033.md)
+- A bare `m(...)` finds a function, a class (its constructor) or a conversion, such as `f64(n)`.
+- A bare `m(...)` is an error when a method of the class has that name. Write `self.m(...)`. [E0070](../diagnostics/E0070.md)
+- It is the same error when the first argument has a method of that name. [E0070](../diagnostics/E0070.md)
+- Else a bare `m(...)` is an error. [E0052](../diagnostics/E0052.md)
+
+**Calling a method**
+
 - A method can call a method that is declared below it, and it can call itself.
 - A method can take the name of a function, such as `len` or `print`. A call `x.print()` finds the method, and `print(...)` finds the function.
-- A method is not a function. A call `name(x)` does not find the method `name`: write `x.name()` ([E0070](../diagnostics/E0070.md)). A call on the class, such as `Account.show()`, is an error ([E0105](../diagnostics/E0105.md)).
+- A method is not a function. A call `name(x)` does not find the method `name`: write `x.name()`. [E0070](../diagnostics/E0070.md)
+- A call on the class, such as `Account.show()`, is an error. [E0105](../diagnostics/E0105.md)
 - For an optional object, call a method with `?.` ([Optional chaining](operators.md#optional-chaining)).
 
 A method can return `self`, so that calls can follow one another.

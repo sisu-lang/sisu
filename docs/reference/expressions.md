@@ -81,12 +81,12 @@ fn main() {
 }
 ```
 
-The rules:
+**Rules**
 
 - A name that a statement in the block declares is in scope only to the end of the block.
-- A block that does not end in an expression has no value ([E0043](../diagnostics/E0043.md)).
+- A block that does not end in an expression has no value. [E0043](../diagnostics/E0043.md)
 - A block that reaches a [`return`](statements.md#return), [`break` or `continue`](statements.md#break-and-continue) has the type `never` ([Types](types.md#never)).
-- A statement cannot start with `{` ([E0081](../diagnostics/E0081.md)).
+- A statement cannot start with `{`. [E0081](../diagnostics/E0081.md)
 
 ```sisu
 fn main() {
@@ -110,11 +110,13 @@ fn main() {
 }
 ```
 
-The rules:
+**Rules**
 
-- The condition must be a `bool` ([E0032](../diagnostics/E0032.md)).
-- The values of the branches must have one type ([E0032](../diagnostics/E0032.md)). When one branch is a `T` and another a `T?`, the `if` is a `T?`. A branch of the type `never` takes the type of the others ([Types](types.md#never)).
-- An `if` without an `else` has no value ([E0043](../diagnostics/E0043.md)). It is a statement.
+- The condition must be a `bool`. [E0032](../diagnostics/E0032.md)
+- The values of the branches must have one type. [E0032](../diagnostics/E0032.md)
+- When one branch is a `T` and another a `T?`, the `if` is a `T?`.
+- A branch of the type `never` takes the type of the others ([Types](types.md#never)).
+- An `if` without an `else` has no value. It is a statement. [E0043](../diagnostics/E0043.md)
 - An `else if` is an `if` in the `else` branch.
 
 ```sisu
@@ -157,13 +159,16 @@ fn main() {
 }
 ```
 
-The rules:
+**Types**
 
-- The values of all the `break`s of a loop must have one type ([E0032](../diagnostics/E0032.md)).
+- The values of all the `break`s of a loop must have one type. [E0032](../diagnostics/E0032.md)
 - A `break` value of the type `never` takes the type of the other `break` values, as a branch of an `if` does.
 - The loop has the type `never` only when it has no `break`, or when each `break` has a value of the type `never` ([Types](types.md#never)).
-- A loop whose `break`s have no value has no value ([E0043](../diagnostics/E0043.md)). This applies also when the other `break`s have values of the type `never`.
-- A loop that has a `break` with no value and a `break` with a value is an error ([E0043](../diagnostics/E0043.md)).
+
+**Loops with no value**
+
+- A loop whose `break`s have no value has no value. This is also true when the other `break`s have values of the type `never`. [E0043](../diagnostics/E0043.md)
+- A loop that has a `break` with no value and a `break` with a value is an error. [E0043](../diagnostics/E0043.md)
 
 ```sisu
 fn wait(ready: bool) {
@@ -195,12 +200,17 @@ fn main() {
 }
 ```
 
-The rules:
+**Arguments**
 
-- The number of arguments must be the number of parameters ([E0053](../diagnostics/E0053.md)).
-- Each argument must have the type of its parameter ([E0032](../diagnostics/E0032.md)). Where the parameter is a `T?`, a `T` becomes a `T?` ([Types](types.md#optionals)). The argument for a `mut` parameter is the exception: it has exactly the type of the parameter, and it is never promoted ([`mut` parameters](functions.md#mut-parameters)).
-- A call of a function that does not exist is an error ([E0052](../diagnostics/E0052.md)).
-- A call of a function that has no return type has no value ([E0043](../diagnostics/E0043.md)).
+- The number of arguments must be the number of parameters. [E0053](../diagnostics/E0053.md)
+- Each argument must have the type of its parameter. [E0032](../diagnostics/E0032.md)
+- Where the parameter is a `T?`, a `T` becomes a `T?` ([Types](types.md#optionals)).
+- The argument for a `mut` parameter is the exception. It has exactly the type of the parameter, and it is never promoted ([`mut` parameters](functions.md#mut-parameters)).
+
+**Other rules**
+
+- A call of a function that does not exist is an error. [E0052](../diagnostics/E0052.md)
+- A call of a function that has no return type has no value. [E0043](../diagnostics/E0043.md)
 - A call written with the name of a type, such as `f64(n)`, is a conversion ([Types](types.md#conversions)).
 
 ```sisu
@@ -311,10 +321,12 @@ fn main() {
 }
 ```
 
-The rules:
+**What a jump takes**
 
 - A `return` at the end of a line takes no value. A value on the next line is a new statement.
-- Before a `{`, a `return` or a `break` with no value takes the block as its value. In the header of an `if`, a `while`, a `for` or a `match`, put the jump in `( )` to keep the block as the body, unless that leaves a `break` in a loop header or outside every loop ([E0011](../diagnostics/E0011.md)).
+- Before a `{`, a `return` or a `break` with no value takes the block as its value.
+- In the header of an `if`, a `while`, a `for` or a `match`, the jump then takes the body as its value, and the body is missing. [E0011](../diagnostics/E0011.md)
+- To keep the block as the body, put the jump in `( )`. This does not help a `break` in a loop header or outside every loop.
 
 ```sisu
 fn f(o: bool?) {
@@ -328,8 +340,11 @@ fn main() {
 }
 ```
 
-- A jump where a value must be used is an error ([E0043](../diagnostics/E0043.md)). The places that take a `never` value are the right side of `??`, a branch of an `if` and an arm of a `match`.
-- The rules of each jump do not change ([return](statements.md#return), [break and continue](statements.md#break-and-continue)). In the header of a loop, `break` and `continue` are an error ([E0082](../diagnostics/E0082.md)), also on the right of a `??`.
+**Where a jump is valid**
+
+- A jump where a value must be used is an error. The places that take a `never` value are the right side of `??`, a branch of an `if` and an arm of a `match`. [E0043](../diagnostics/E0043.md)
+- The rules of each jump do not change ([return](statements.md#return), [break and continue](statements.md#break-and-continue)).
+- In the header of a loop, `break` and `continue` are an error, also on the right of a `??`. [E0082](../diagnostics/E0082.md)
 
 ```sisu
 fn show(n: i64) {

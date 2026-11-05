@@ -27,13 +27,14 @@ fn main() {
 }
 ```
 
-The rules:
+**Rules**
 
 - A `let` always has a value. Without a type name, the binding gets the type of its value ([Types](types.md#type-names)).
-- With a type name, the value must have that type ([E0032](../diagnostics/E0032.md)). When the type name is a `T?`, a `T` value becomes a `T?` ([Types](types.md#optionals)).
-- The value must be an expression that has a value. [Expressions](expressions.md#expressions-as-statements) lists the expressions without one ([E0043](../diagnostics/E0043.md)).
-- The value cannot read the name that the `let` declares. That name starts after the `let` ([E0033](../diagnostics/E0033.md)).
-- An assignment to a binding of a `let` is an error ([E0001](../diagnostics/E0001.md)). To change it, declare it with `let mut`.
+- With a type name, the value must have that type. [E0032](../diagnostics/E0032.md)
+- When the type name is a `T?`, a `T` value becomes a `T?` ([Types](types.md#optionals)).
+- The value must be an expression that has a value. [Expressions](expressions.md#expressions-as-statements) lists the expressions without one. [E0043](../diagnostics/E0043.md)
+- The value cannot read the name that the `let` declares. That name starts after the `let`. [E0033](../diagnostics/E0033.md)
+- An assignment to a binding of a `let` is an error. To change it, declare it with `let mut`. [E0001](../diagnostics/E0001.md)
 
 ```sisu
 fn main() {
@@ -74,11 +75,11 @@ fn main() {
 }
 ```
 
-The rules:
+**Rules**
 
-- `_` is not a name, so `let mut _` is an error ([E0078](../diagnostics/E0078.md)).
-- `_` is not a value. Reading it, or an assignment `_ = value`, is an error ([E0079](../diagnostics/E0079.md)).
-- As for any `let`, the value must be an expression that has a value ([E0043](../diagnostics/E0043.md)).
+- `_` is not a name, so `let mut _` is an error. [E0078](../diagnostics/E0078.md)
+- `_` is not a value. Reading it, or an assignment `_ = value`, is an error. [E0079](../diagnostics/E0079.md)
+- As for any `let`, the value must be an expression that has a value. [E0043](../diagnostics/E0043.md)
 
 ### Shadowing
 
@@ -110,14 +111,17 @@ fn main() {
 }
 ```
 
-The rules:
+**How shadowing works**
 
 - The value of the new `let` reads the old binding, because the new name starts after the `let`.
 - A `let` can shadow a parameter.
-- A `let mut` must change before a later `let` in the same block shadows it ([W0002](../diagnostics/W0002.md)).
+- A `let mut` must change before a later `let` in the same block shadows it. [W0002](../diagnostics/W0002.md)
 - Each pass of a loop body runs its `let`s again, so each pass gets new bindings.
-- No binding or parameter can take the name `Option`, `Result`, `Some`, `Ok` or `Err` ([E0026](../diagnostics/E0026.md)). `None` is a keyword.
-- No binding or parameter can take the name of an enum ([E0116](../diagnostics/E0116.md)).
+
+**Names that a binding cannot take**
+
+- No binding or parameter can take the name `Option`, `Result`, `Some`, `Ok` or `Err`. `None` is a keyword. [E0026](../diagnostics/E0026.md)
+- No binding or parameter can take the name of an enum. [E0116](../diagnostics/E0116.md)
 
 ## let ... else
 
@@ -140,17 +144,26 @@ fn main() {
 }
 ```
 
-The rules:
+**The pattern**
 
-- The value is an optional or an enum, and the pattern is one that `if let` takes ([E0051](../diagnostics/E0051.md), [Patterns](enums.md#patterns), [`if let` and `while let`](enums.md#if-let-and-while-let)). On an optional, a plain name binds the value inside: `let v = o else { return }`.
-- A pattern that accepts every value is an error ([E0131](../diagnostics/E0131.md)). Use `match`, or a plain `let` for a name or `_`.
-- A `let` whose pattern is not a single name or `_` needs an `else` block ([E0174](../diagnostics/E0174.md)). When the pattern always matches, the error has the help "use `match`".
-- `let mut name = value else { ... }` makes a binding that can change. `mut` is allowed only before a single name. Before any other pattern, it is an error ([E0011](../diagnostics/E0011.md)).
-- A `let ... else` takes no type annotation: the value's type gives the names their types ([E0011](../diagnostics/E0011.md)).
-- The names of the pattern are not in scope in the `else` block ([E0033](../diagnostics/E0033.md)). A name that the pattern binds and that nothing reads builds with a warning ([W0014](../diagnostics/W0014.md)).
-- The block must not finish. It ends, for example, in `return`, `break`, `continue`, a call of `panic`, `todo`, or an `if` or a `match` whose branches do not finish. Any expression that does not finish is enough ([Reachability](#reachability)). A block that can reach its end is an error ([E0172](../diagnostics/E0172.md)).
+- The value is an optional or an enum, and the pattern is one that `if let` takes ([Patterns](enums.md#patterns), [`if let` and `while let`](enums.md#if-let-and-while-let)). [E0051](../diagnostics/E0051.md)
+- On an optional, a plain name binds the value inside: `let v = o else { return }`.
+- A pattern that accepts every value is an error. Use `match`, or a plain `let` for a name or `_`. [E0131](../diagnostics/E0131.md)
+- A `let` whose pattern is not a single name or `_` needs an `else` block. When the pattern always matches, the help says "use `match`". [E0174](../diagnostics/E0174.md)
+- `let mut name = value else { ... }` makes a binding that can change. `mut` is allowed only before a single name. Before any other pattern, it is an error. [E0011](../diagnostics/E0011.md)
+- A `let ... else` takes no type annotation: the value's type gives the names their types. [E0011](../diagnostics/E0011.md)
+
+**The `else` block**
+
+- The block must not finish. It ends, for example, in `return`, `break`, `continue`, a call of `panic`, `todo`, or an `if` or a `match` whose branches do not finish. Any expression that does not finish is enough ([Reachability](#reachability)).
+- A block that can reach its end is an error. [E0172](../diagnostics/E0172.md)
 - A `break` or a `continue` in the `else` block acts on the loops around the statement, with their loop labels ([break and continue](#break-and-continue), [Loop labels](#loop-labels)).
-- The value cannot end in `}`, because an `else` after a `}` reads as part of the expression that the `}` closes. Put the value in parentheses ([E0173](../diagnostics/E0173.md)).
+
+**Names and the value**
+
+- The names of the pattern are not in scope in the `else` block. [E0033](../diagnostics/E0033.md)
+- A name that the pattern binds and that nothing reads builds with a warning. [W0014](../diagnostics/W0014.md)
+- The value cannot end in `}`, because an `else` after a `}` reads as part of the expression that the `}` closes. Put the value in parentheses. [E0173](../diagnostics/E0173.md)
 
 ```sisu
 fn main() {
@@ -230,14 +243,18 @@ fn main() {
 }
 ```
 
-The rules:
+**The value**
 
-- The value must have the type of the place ([E0032](../diagnostics/E0032.md)). Where the place is a `T?`, a `T` becomes a `T?`.
-- As for a `let`, the value must be an expression that has a value. So `x = panic("stop")` is an error ([E0043](../diagnostics/E0043.md)).
-- A binding without `mut`, such as one of a `let` or a `for`, cannot change. Neither can a plain parameter, a field without `mut` or a constant ([E0001](../diagnostics/E0001.md)).
+- The value must have the type of the place. Where the place is a `T?`, a `T` becomes a `T?`. [E0032](../diagnostics/E0032.md)
+- As for a `let`, the value must be an expression that has a value. So `x = panic("stop")` is an error. [E0043](../diagnostics/E0043.md)
+
+**The place**
+
+- A binding without `mut`, such as one of a `let` or a `for`, cannot change. Neither can a plain parameter, a field without `mut` or a constant. [E0001](../diagnostics/E0001.md)
 - To write a `mut` field, the binding that holds the object does not need `mut`. To write an element, the array must be in a place that can change.
-- A place can go through `?.`: the assignment writes only when every `?.` step holds a value ([Optional chaining](operators.md#optional-chaining)). An expression that is not a place, such as `a + 1`, is an error ([E0021](../diagnostics/E0021.md)).
-- A function is not a place ([E0074](../diagnostics/E0074.md)).
+- A place can go through `?.`: the assignment writes only when every `?.` step holds a value ([Optional chaining](operators.md#optional-chaining)).
+- An expression that is not a place, such as `a + 1`, is an error. [E0021](../diagnostics/E0021.md)
+- A function is not a place. [E0074](../diagnostics/E0074.md)
 - An assignment is a statement. It has no value, so it cannot be part of an expression, and `a = b = 1` is an error.
 
 The program calculates the place first, then the value. It checks an index against the length of the array after it calculates the value.
@@ -276,14 +293,17 @@ fn main() {
 }
 ```
 
-The rules:
+**How it runs**
 
 - The operator follows the rules of its [arithmetic operator](operators.md#arithmetic). `+=` on a `string` joins two strings.
 - The program calculates the place once. So in `xs[next()] += 1`, `next` runs once.
 - It reads the place before it calculates the value. So an index that is out of bounds panics before the value is calculated.
 - An integer overflow or an integer division by zero stops the program with a panic, as the operator does ([Operators](operators.md#overflow)).
-- The place cannot be an optional, such as an `i64?` ([E0032](../diagnostics/E0032.md)).
-- A compound assignment to a `char` is an error, because arithmetic does not apply to a `char` ([E0094](../diagnostics/E0094.md)).
+
+**Errors**
+
+- The place cannot be an optional, such as an `i64?`. [E0032](../diagnostics/E0032.md)
+- A compound assignment to a `char` is an error, because arithmetic does not apply to a `char`. [E0094](../diagnostics/E0094.md)
 
 ```sisu
 fn main() {
@@ -308,18 +328,28 @@ fn main() {
 }
 ```
 
-The rules:
+**The type and the value**
 
-- A constant is an `i64`, a `u8`, an `f64`, a `bool`, a `char` or a `string` ([E0085](../diagnostics/E0085.md)).
-- Its value can use literals, operators, the conversions that cannot fail, the [constants of `f64`](types.md#constants) and the constants above it ([E0086](../diagnostics/E0086.md)).
-- A call, a binding, an array, an `if`, a block or an interpolation in the value is an error ([E0086](../diagnostics/E0086.md)). This applies also to a side of `&&` or `||` that the program would skip.
-- A constant can use only the constants that are declared above it, and not itself ([E0087](../diagnostics/E0087.md)).
-- A value that would panic, such as an integer overflow, is an error when the program builds ([Operators](operators.md#arithmetic-in-a-constant)). So is a conversion that can fail ([E0100](../diagnostics/E0100.md)).
+- A constant is an `i64`, a `u8`, an `f64`, a `bool`, a `char` or a `string`. [E0085](../diagnostics/E0085.md)
+- The value can use literals, operators, the conversions that cannot fail, the [constants of `f64`](types.md#constants) and the constants above it. [E0086](../diagnostics/E0086.md)
+- A call, a binding, an array, an `if`, a block or an interpolation in the value is an error. This applies also to a side of `&&` or `||` that the program would skip. [E0086](../diagnostics/E0086.md)
+- A constant can use only the constants that are declared above it, and not itself. [E0087](../diagnostics/E0087.md)
+- A value that would panic, such as an integer overflow, is an error when the program builds ([Operators](operators.md#arithmetic-in-a-constant)).
+- A conversion that can fail is an error in the value. [E0100](../diagnostics/E0100.md)
+
+**Where a constant is used**
+
 - A function can use a constant that is declared below it.
-- Functions, classes, enums and constants share one set of names ([E0034](../diagnostics/E0034.md)).
-- A constant cannot take the name of a built-in type, or `Option`, `Result`, `Some`, `Ok` or `Err` ([E0026](../diagnostics/E0026.md)).
-- A constant cannot take the name of a built-in function, such as `print` or `dbg` ([E0034](../diagnostics/E0034.md)). It cannot be named `_` ([E0080](../diagnostics/E0080.md)). The section [Files](errors.md#files) is in development, and it changes this rule.
-- A constant cannot change ([E0001](../diagnostics/E0001.md)), and a `const` in a function is an error ([E0084](../diagnostics/E0084.md)). Use `let` there.
+- A constant cannot change. [E0001](../diagnostics/E0001.md)
+- A `const` in a function is an error. Use `let` there. [E0084](../diagnostics/E0084.md)
+
+**Names**
+
+- Functions, classes, enums and constants share one set of names. [E0034](../diagnostics/E0034.md)
+- A constant cannot take the name of a built-in type, or `Option`, `Result`, `Some`, `Ok` or `Err`. [E0026](../diagnostics/E0026.md)
+- A constant cannot take the name of a built-in function, such as `print` or `dbg`. [E0034](../diagnostics/E0034.md)
+- A constant cannot be named `_`. [E0080](../diagnostics/E0080.md)
+- The section [Files](errors.md#files) is in development. It changes the rule for the names of built-in functions.
 
 ```sisu
 const TOTAL = PART + 1           // error[E0087]
@@ -346,13 +376,13 @@ fn main() {
 
 A `while let` loop tests a pattern in place of a condition ([Enums and patterns](enums.md#if-let-and-while-let)).
 
-The rules:
+**Rules**
 
-- The condition must be a `bool` ([E0032](../diagnostics/E0032.md)).
-- A `while` has no value. A `break` that ends a `while` cannot have a value ([E0141](../diagnostics/E0141.md)).
-- A `while` can warn when its condition reads locals that the loop does not change ([W0011](../diagnostics/W0011.md)). The diagnostic page tells when it warns.
-- When W0011 warns about a `let mut` that never changes, [W0002](../diagnostics/W0002.md) does not warn about it.
-- A `while` with the condition `true` builds with a warning ([W0009](../diagnostics/W0009.md)). Write `loop` for an endless loop.
+- The condition must be a `bool`. [E0032](../diagnostics/E0032.md)
+- A `while` has no value. A `break` that ends a `while` cannot have a value. [E0141](../diagnostics/E0141.md)
+- A `while` can warn when its condition reads locals that the loop does not change. The diagnostic page tells when it warns. [W0011](../diagnostics/W0011.md)
+- When W0011 warns about a `let mut` that never changes, W0002 does not warn about it. [W0011](../diagnostics/W0011.md) [W0002](../diagnostics/W0002.md)
+- A `while` with the condition `true` builds with a warning. Write `loop` for an endless loop. [W0009](../diagnostics/W0009.md)
 
 ```sisu
 fn main() {
@@ -407,16 +437,28 @@ Eero
 
 A *range* `start..end` holds the integers from `start` up to `end`, without `end`. A range `start..=end` holds `end` too.
 
-The rules:
+**The source**
 
-- The source of a `for` is an array or a range ([E0035](../diagnostics/E0035.md)). An optional array must be unwrapped first ([E0062](../diagnostics/E0062.md)). A range is valid only in a `for`, in a [pattern](enums.md#literals-and-ranges), as a [range index](arrays.md#range-indexes) and as the argument of a [string's `get`](strings.md#substrings) ([E0023](../diagnostics/E0023.md)), and a `for` needs both bounds: `for i in 0.. { }` is an error ([E0023](../diagnostics/E0023.md)). The section [Loops over iterables](#loops-over-iterables) is in development, and it changes the rules for the source and for a range.
-- The two ends of a range are `i64` ([E0032](../diagnostics/E0032.md)). When `start` is not less than `end`, `start..end` is empty. When `start` is more than `end`, `start..=end` is empty.
+- The source of a `for` is an array or a range. [E0035](../diagnostics/E0035.md)
+- An optional array must be unwrapped first. [E0062](../diagnostics/E0062.md)
+- A range is valid only in a `for`, in a [pattern](enums.md#literals-and-ranges), as a [range index](arrays.md#range-indexes) and as the argument of a [string's `get`](strings.md#substrings). [E0023](../diagnostics/E0023.md)
+- A `for` needs both bounds: `for i in 0.. { }` is an error. [E0023](../diagnostics/E0023.md)
+- The section [Loops over iterables](#loops-over-iterables) is in development. It changes the rules for the source and for a range.
+
+**The range**
+
+- The two ends of a range are `i64`. [E0032](../diagnostics/E0032.md)
+- When `start` is not less than `end`, `start..end` is empty. When `start` is more than `end`, `start..=end` is empty.
 - `start..=end` also works when `end` is the largest `i64`.
-- The program calculates the source once, before the first pass. For a range, it calculates `start`, then `end`.
+- For a range, the program calculates `start`, then `end`.
+
+**The loop**
+
+- The program calculates the source once, before the first pass.
 - The loop visits the elements that the array has when the loop starts. A change to the array in the body does not change them.
-- The name is a binding without `mut`, so an assignment to it is an error ([E0001](../diagnostics/E0001.md)). Its scope is the body.
+- The name is a binding without `mut`, so an assignment to it is an error. Its scope is the body. [E0001](../diagnostics/E0001.md)
 - `for _ in` runs the body and binds no name.
-- A `for` has no value. A `break` that ends a `for` cannot have a value ([E0141](../diagnostics/E0141.md)).
+- A `for` has no value. A `break` that ends a `for` cannot have a value. [E0141](../diagnostics/E0141.md)
 
 ```sisu
 fn main() {
@@ -507,13 +549,13 @@ fn main() {
 5
 ```
 
-The rules:
+**Rules**
 
 - Without a loop label, `break` and `continue` act on the innermost loop around them.
-- `break` and `continue` outside a loop are an error ([E0038](../diagnostics/E0038.md)). They never leave a function.
-- The header of a loop is the condition of a `while` or the source of a `for`. A jump in the header cannot act on that loop or on a loop around it ([E0082](../diagnostics/E0082.md)).
+- `break` and `continue` outside a loop are an error. They never leave a function. [E0038](../diagnostics/E0038.md)
+- The header of a loop is the condition of a `while` or the source of a `for`. A jump in the header cannot act on that loop or on a loop around it. [E0082](../diagnostics/E0082.md)
 - A loop inside a header has a body of its own, and its jumps can act on it.
-- Only a `break` that ends a `loop` can have a value ([E0141](../diagnostics/E0141.md)). `continue` never has a value.
+- Only a `break` that ends a `loop` can have a value. `continue` never has a value. [E0141](../diagnostics/E0141.md)
 
 ## Loop labels
 
@@ -541,13 +583,14 @@ fn main() {
 1 1
 ```
 
-The rules:
+**Rules**
 
-- A loop label can be before `loop`, `while` or `for`, and on a line of its own. Before an `if`, a `match` or a block, it is an error ([E0145](../diagnostics/E0145.md)). So is the loop label `_`.
-- A loop cannot take the loop label of a loop around it ([E0143](../diagnostics/E0143.md)). Two loops one after the other can have the same loop label.
-- At a jump that names a loop label, no binding, function, constant, class, enum or built-in type in scope can have that name ([E0142](../diagnostics/E0142.md)).
-- A `continue` that names no loop label around it is an error ([E0144](../diagnostics/E0144.md)).
-- A loop label that no `break` or `continue` names builds with a warning ([W0008](../diagnostics/W0008.md)).
+- A loop label can be before `loop`, `while` or `for`, and on a line of its own.
+- A loop label before an `if`, a `match` or a block is an error. So is the loop label `_`. [E0145](../diagnostics/E0145.md)
+- A loop cannot take the loop label of a loop around it. Two loops one after the other can have the same loop label. [E0143](../diagnostics/E0143.md)
+- At a jump that names a loop label, no binding, function, constant, class, enum or built-in type in scope can have that name. [E0142](../diagnostics/E0142.md)
+- A `continue` that names no loop label around it is an error. [E0144](../diagnostics/E0144.md)
+- A loop label that no `break` or `continue` names builds with a warning. [W0008](../diagnostics/W0008.md)
 
 After `break`, a name is a loop label when a loop around the `break` has that loop label. Then the rest of the statement is the value. Otherwise, the name starts the value.
 
@@ -587,11 +630,12 @@ fn main() {
 }
 ```
 
-The rules:
+**Rules**
 
-- In a function with a return type, each `return` has a value of that type ([E0036](../diagnostics/E0036.md), [E0032](../diagnostics/E0032.md)). Where the type is a `T?`, a `T` becomes a `T?`.
-- In a function without a return type, a `return` has no value ([E0037](../diagnostics/E0037.md)).
-- The value must be an expression that has a value, so `return panic("stop")` is an error ([E0043](../diagnostics/E0043.md)).
+- In a function with a return type, each `return` needs a value. [E0036](../diagnostics/E0036.md)
+- The value of a `return` must have the return type. Where the type is a `T?`, a `T` becomes a `T?`. [E0032](../diagnostics/E0032.md)
+- In a function without a return type, a `return` has no value. [E0037](../diagnostics/E0037.md)
+- The value must be an expression that has a value, so `return panic("stop")` is an error. [E0043](../diagnostics/E0043.md)
 - A `return` from the first call of `main` ends the program. Another call of `main` returns to its caller ([Functions](functions.md#main)).
 
 ## Reachability
@@ -630,14 +674,17 @@ fn main() {
 }
 ```
 
-The rules:
+**What can always finish**
 
 - A `for`, and a `while` with a condition that is not `true`, can always finish. This applies also when its body always returns.
 - An `if` without an `else` can always finish.
+- A function without a return type can reach the end of its body. Then it returns to its caller.
+
+**What never finishes**
+
 - The literal `true` is the only condition that makes a `while` never finish, also in parentheses. `while 1 == 1` and a constant that is `true` can finish.
 - A `break` in an inner loop ends only that loop, so it does not end the outer `loop` or `while true`. A `break` with the outer loop's label does.
 - Each `break` counts, also one that cannot run, such as a `break` after a `return`.
-- A function without a return type can reach the end of its body. Then it returns to its caller.
 
 ```sisu
 fn first_even(xs: [i64]) -> i64 {

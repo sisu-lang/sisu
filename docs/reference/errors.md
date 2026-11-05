@@ -54,16 +54,23 @@ fn main() {
 }
 ```
 
-The rules:
+**The two sides**
 
-- The left side is the success type. It can be any type, also `unit` and an error type. The right side is the error type.
-- The error type must conform to the interface `Error`. So `-> i64 | bool` is an error. The interface `Error` requires `Display`.
+- The left side is the success type. It can be any type, also `unit` and an error type.
+- The right side is the error type. It must conform to the interface `Error`, which requires `Display`.
+- `-> i64 | bool` is an error, because `bool` does not conform to `Error`. `Result<i64, bool>` is the same error.
+- A generic function that returns `T | E` needs the bound `E: Error`.
 - `string` conforms to `Error`. So `-> i64 | string` is a function that fails with a message.
 - A function that returns no value on success returns `unit | E`. There is no form `fn save(...) | IoError`.
+
+**Forms that are errors**
+
 - A result has one error type. `T | A | B` is an error.
-- `|` in a type never means "one of these types". `i64 | string` is an `i64` or a failure message, and `i64 | bool` does not build.
+- In a type, `|` does not mean a choice between two types. `i64 | string` is an `i64` or a failure message.
 - `i64 | E?` is `i64 | (E?)`, and its right side is not an error type. For an optional result, write `(i64 | E)?`.
-- A generic function that returns `T | E` needs the bound `E: Error`. `Result<i64, bool>` is the same error as `i64 | bool`.
+
+**Names**
+
 - An alias can name a result with a fixed error type: `type IoResult<T> = T | IoError`.
 - A program cannot declare its own top-level `Error`.
 
@@ -90,7 +97,7 @@ fn main() {
 }
 ```
 
-The rules:
+**Rules**
 
 - A value of the error type `E` does not become a failure. A failure comes from `fail`, or from `Err(e)` where a result is expected.
 - `Ok(x)` and `Err(e)` are valid expressions. Code needs them mostly in patterns.
@@ -135,17 +142,30 @@ fn main() -> unit | IoError {
 }
 ```
 
-The rules:
+**Where `?` works**
 
 - The return type of the enclosing function must be a result `U | F`. When `F` is `E`, the failure passes up as it is.
 - `read_file(path)?` also works in a function that returns a `T | string`.
-- On an optional `T?`, `x?` is the value when `x` holds one. When `x` is `None`, the enclosing function returns `None`. Its return type must be an optional.
-- `?` on a result in a function that returns an optional is an error. So is `?` on an optional in a function that returns a result. Write `x ?? fail ...` to turn an empty optional into a failure.
 - `?` works on a result or an optional only. `5?` is an error.
-- `?` is a postfix operator and binds as a call does. `x??` is the operator `??`. To apply `?` twice, write `(x?)?`.
-- On a result, `x?.name` passes a failure up, then reads the member: `read_file(p)?.len()` is `(read_file(p)?).len()`. On an optional, `?.` is still [optional chaining](operators.md#optional-chaining).
-- `x?` calculates `x` once. When it is a failure, nothing after it in the same statement runs.
+- `?` on a result in a function that returns an optional is an error.
+- `?` on an optional in a function that returns a result is an error. Write `x ?? fail ...` to turn an empty optional into a failure.
+
+**On an optional**
+
+- On an optional `T?`, `x?` is the value when `x` holds one.
+- When `x` is `None`, the enclosing function returns `None`. Its return type must be an optional.
+
+**Syntax**
+
+- `?` is a postfix operator and binds as a call does.
+- `x??` is the operator `??`. To apply `?` twice, write `(x?)?`.
+- On a result, `x?.name` passes a failure up, then reads the member. `read_file(p)?.len()` is `(read_file(p)?).len()`.
+- On an optional, `?.` is still [optional chaining](operators.md#optional-chaining).
 - A `?` followed by a `.`, with white space or a line break between them, means `?.`. So `opt? .len()` means `opt?.len()`.
+
+**Order**
+
+- `x?` calculates `x` once. When it is a failure, nothing after it in the same statement runs.
 
 ### In a closure
 
@@ -197,9 +217,10 @@ fn main() {
 }
 ```
 
-The rules:
+**Rules**
 
-- `if let` and `while let` on a result name `Ok(...)` or `Err(...)`: `if let Ok(config) = load(...)`. The pattern shows that the program lets a failure go. A short pattern, `if let config = load(...)`, is an error.
+- `if let` and `while let` on a result name `Ok(...)` or `Err(...)`, as in `if let Ok(config) = load(...)`. The pattern shows that the program lets a failure go.
+- A short pattern, `if let config = load(...)`, is an error on a result.
 - On an optional, the short form of `if let` stays.
 - A `match` on a result works as on any enum, with the check that it covers every value.
 - A `match` with the arms `Ok(Some(x))`, `Ok(None)` and `Err(e)` tells the end of the input from a failure.

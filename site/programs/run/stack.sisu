@@ -1,0 +1,30 @@
+class Stack<T> {
+    mut items: [T]
+
+    fn push(self, item: T) {
+        self.items.push(item)
+    }
+
+    fn pop(self) -> T? {
+        let top = self.items.last() else { return None }
+        self.items = self.items[..self.items.len() - 1]
+        top
+    }
+}
+
+fn largest<T: Ord>(xs: [T]) -> T? {
+    let mut best = xs.first() else { return None }
+    for x in xs {
+        if x > best { best = x }
+    }
+    best
+}
+
+fn main() {
+    let names = Stack<string>(items: [])
+    names.push("Aino")
+    names.push("Eino")
+    print(names.pop() ?? "empty")
+    print(largest([3, 9, 4]) ?? 0)
+    print(largest(["kuusi", "koivu", "mänty"]) ?? "")
+}

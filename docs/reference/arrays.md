@@ -28,11 +28,16 @@ fn main() {
 }
 ```
 
-The rules:
+**Element types**
 
-- All the elements have one type ([E0032](../diagnostics/E0032.md)). The other elements decide the type of an integer literal, so `[1, 2.5]` is an `[f64]` ([Literals](literals.md#the-type-of-an-integer-literal)).
+- All the elements have one type. [E0032](../diagnostics/E0032.md)
+- The other elements decide the type of an integer literal, so `[1, 2.5]` is an `[f64]` ([Literals](literals.md#the-type-of-an-integer-literal)).
 - A `None` element makes the type of the other elements optional. So `[4, None, 6]` is an `[i64?]`.
-- `[]` alone does not tell its type ([E0050](../diagnostics/E0050.md)). Where the context expects an array, such as a `let` with a type, a parameter or a field, `[]` gets that type.
+- `[]` alone does not tell its type. [E0050](../diagnostics/E0050.md)
+- Where the context expects an array, such as a `let` with a type, a parameter or a field, `[]` gets that type.
+
+**Layout**
+
 - An array literal can continue over many lines. A `,` after the last element is valid.
 
 ## Filled arrays
@@ -50,12 +55,20 @@ fn main() {
 }
 ```
 
-The rules:
+**Length and order**
 
 - The program calculates `value` once, then `length`.
-- `length` is an `i64` ([E0032](../diagnostics/E0032.md)). A length of 0 gives an empty array.
-- At run time, a negative length stops the program with a panic. The program also panics when the size of the array in bytes is more than an `i64` can hold.
-- When the type of `value` is a class or an optional class, every element would be the same object. This is an error ([E0067](../diagnostics/E0067.md)), even when a binding of an optional class type holds `None`. A value whose type is a type parameter, such as `T`, is also an error, because `T` can be a class ([Generics](generics.md#values-of-a-type-parameter)). The literal `None` is the one exception: `[None; length]` is valid where the context gives its type, such as `let slots: [Box?] = [None; 3]`. Without that context it is an error ([E0050](../diagnostics/E0050.md)).
+- `length` is an `i64`. [E0032](../diagnostics/E0032.md)
+- A length of 0 gives an empty array.
+- At run time, a negative length stops the program with a panic.
+- The program also panics when the size of the array in bytes is more than an `i64` can hold.
+
+**Which values can fill**
+
+- A class or an optional class is an error, because every element would be the same object. This is also true when a binding of an optional class type holds `None`. [E0067](../diagnostics/E0067.md)
+- A type parameter, such as `T`, is an error too, because `T` can be a class ([Generics](generics.md#values-of-a-type-parameter)). [E0067](../diagnostics/E0067.md)
+- The literal `None` is the one exception to the rule for an optional class. `[None; length]` is valid where the context gives its type, such as `let slots: [Box?] = [None; 3]`.
+- Without that context, `[None; length]` is an error. [E0050](../diagnostics/E0050.md)
 - When `value` holds objects, such as an array of objects, every element holds the same objects.
 
 ```sisu panics
@@ -118,11 +131,11 @@ sisu: panic at example.sisu:3:14: range end 9 is past length 5
 
 The base is evaluated first, then the start, then the end, and then the checks run. A range index on a value that is not an array or a string, such as an `i64`, is an error ([E0068](../diagnostics/E0068.md)). An optional array has no range index either ([E0062](../diagnostics/E0062.md)).
 
-The rules:
+**Rules**
 
-- A binding without `mut` cannot change its array, also not an element of an inner array ([E0001](../diagnostics/E0001.md)).
+- A binding without `mut` cannot change its array, also not an element of an inner array. [E0001](../diagnostics/E0001.md)
 - An object in an array stays shared, so its `mut` fields can change also when the array cannot ([Classes](classes.md#fields)).
-- An optional array has no index. Unwrap it first, for example with [`if let`](enums.md#if-let-and-while-let) ([E0062](../diagnostics/E0062.md)).
+- An optional array has no index. Unwrap it first, for example with [`if let`](enums.md#if-let-and-while-let). [E0062](../diagnostics/E0062.md)
 
 ```sisu
 fn main() {
@@ -180,24 +193,59 @@ fn main() {
 }
 ```
 
-The rules:
+**Basics**
 
-- `len` is a method, so write `xs.len()`. `xs.len` is an error ([E0057](../diagnostics/E0057.md)), and so is `len(xs)` ([E0070](../diagnostics/E0070.md)).
-- `sum` takes only an `[i64]` or an `[f64]` ([E0069](../diagnostics/E0069.md)). It adds the elements in order, and the sum of an empty array is zero.
-- The prelude writes `sum` in Sisu, in an `extend [i64]` block and an `extend [f64]` block. It writes `contains` in an `extend<T: Eq> [T]` block, and `first`, `last` and `get` in an `extend<T> [T]` block. The compiler writes `len`. A program cannot write an `extend` block for an array: only the prelude can.
-- On an `[i64]`, a sum outside the range of `i64` stops the program with a panic ([Overflow](operators.md#overflow)). The panic names the line of the `.sum()` call, not a line of the prelude.
-- The argument of `contains` has the element type ([E0032](../diagnostics/E0032.md)). So `None` is valid only when the elements are optional.
-- `contains` needs `==` on the element type, so an array of objects has it only when the class conforms to `Eq`, and an array of a type parameter `T` only with the bound `T: Eq` ([E0154](../diagnostics/E0154.md)). The error stands at the call, and no line of the prelude shows in it.
+- `len` is a method, so write `xs.len()`.
+- `xs.len` is an error. [E0057](../diagnostics/E0057.md)
+- `len(xs)` is an error. [E0070](../diagnostics/E0070.md)
+- An array also has `to_string` and, when its elements have `Eq`, `eq` ([Display, Eq and Ord](generics.md#display-eq-and-ord)).
+- Any other method name is an error. [E0063](../diagnostics/E0063.md)
+
+**Where the methods come from**
+
+- The prelude writes `sum` in Sisu, in an `extend [i64]` block and an `extend [f64]` block. It writes `contains` in an `extend<T: Eq> [T]` block, and `first`, `last` and `get` in an `extend<T> [T]` block.
+- The compiler writes `len`.
+- A program cannot write an `extend` block for an array. Only the prelude can.
+
+**sum**
+
+- `sum` takes only an `[i64]` or an `[f64]`. [E0069](../diagnostics/E0069.md)
+- It adds the elements in order. The sum of an empty array is zero.
+- On an `[i64]`, a sum outside the range of `i64` stops the program with a panic ([Overflow](operators.md#overflow)).
+- The panic names the line of the `.sum()` call, not a line of the prelude.
+
+**contains**
+
+- The argument of `contains` has the element type. So `None` is valid only when the elements are optional. [E0032](../diagnostics/E0032.md)
+- `contains` needs `==` on the element type. An array of objects has it only when the class conforms to `Eq`. An array of a type parameter `T` has it only with the bound `T: Eq`. [E0154](../diagnostics/E0154.md)
+- The error stands at the call, and no line of the prelude shows in it.
 - `contains` uses `==`, so `contains(f64.nan)` is always `false` ([Types](types.md#floating-point-numbers)).
-- `first`, `last` and `get` give `None` where `xs[i]` would stop the program. For `get(i)`, that is a negative `i` and an `i` from `xs.len()` on. For `first` and `last`, it is an empty array. They are the safe form of an index. On a slice they read the slice ([Range index](#range-indexes)).
-- `get` takes an `i64`, not a range. `xs.get(1..3)` is an error ([E0032](../diagnostics/E0032.md)): write `xs[1..3]`, which stops the program when the range is out of bounds.
-- `push` writes the array, as `xs[i] = x` does, so it needs a place that can change: a `let mut` variable, a `mut` parameter, a `mut` field, or an element of one. A `let` binding, a plain parameter and a field without `mut` are errors ([E0001](../diagnostics/E0001.md)). A value that is not stored, such as `f().push(1)`, is an error too ([E0021](../diagnostics/E0021.md)).
-- `push` has no value. The argument has the element type, so `push(1)` on an `[i64?]` adds `Some(1)` ([E0032](../diagnostics/E0032.md)), and `push` takes exactly one argument ([E0053](../diagnostics/E0053.md)).
+
+**first, last and get**
+
+- They are the safe form of an index. They give `None` where `xs[i]` would stop the program.
+- For `get(i)`, that is a negative `i` and an `i` from `xs.len()` on. For `first` and `last`, it is an empty array.
+- On a slice they read the slice ([Range index](#range-indexes)).
+- `get` takes an `i64`, not a range. `xs.get(1..3)` is an error: write `xs[1..3]`, which stops the program when the range is out of bounds. [E0032](../diagnostics/E0032.md)
+
+**push**
+
+- `push` writes the array, as `xs[i] = x` does. It needs a place that can change: a `let mut` variable, a `mut` parameter, a `mut` field, or an element of one.
+- A `let` binding, a plain parameter and a field without `mut` are errors. [E0001](../diagnostics/E0001.md)
+- A value that is not stored, such as `f().push(1)`, is an error. [E0021](../diagnostics/E0021.md)
+- `push` has no value.
+- The argument has the element type, so `push(1)` on an `[i64?]` adds `Some(1)`. [E0032](../diagnostics/E0032.md)
+- `push` takes exactly one argument. [E0053](../diagnostics/E0053.md)
 - A `push` onto an array that another variable holds does not change that variable. Arrays are values ([Arrays are values](#arrays-are-values)).
-- `xs?.push(x)` on an optional array adds `x` when `xs` holds an array. When `xs` is `None`, nothing happens and `x` is not computed. The call tests `xs` again after it computes `x`. When `x` made `xs` `None`, the call adds nothing. The place follows the rules above, so `xs` is a `let mut` variable. `bag?.items?.push(x)` goes through an optional object, and `items` is a `mut` field. `gs[i]?.push(x)` on an array `gs` of optional arrays checks `i` before it computes `x`, so a bad index stops the program before `x` runs.
-- An assignment can go through `?.` too: `bag?.items = []` writes only when `bag` holds an object ([Optional chaining](operators.md#optional-chaining)).
-- A name that is not one of these methods is an error ([E0063](../diagnostics/E0063.md)).
+
+**Optional arrays**
+
 - On an optional array, call a method with `?.` ([Optional chaining](operators.md#optional-chaining)).
+- `xs?.push(x)` adds `x` when `xs` holds an array. When `xs` is `None`, nothing happens and `x` is not computed.
+- The call tests `xs` again after it computes `x`. When `x` made `xs` `None`, the call adds nothing.
+- The place follows the rules above, so `xs` is a `let mut` variable. `bag?.items?.push(x)` goes through an optional object, and `items` is a `mut` field.
+- `gs[i]?.push(x)` on an array `gs` of optional arrays checks `i` before it computes `x`. So a bad index stops the program before `x` runs.
+- An assignment can go through `?.` too. `bag?.items = []` writes only when `bag` holds an object ([Optional chaining](operators.md#optional-chaining)).
 
 ```sisu
 fn main() {
@@ -273,11 +321,12 @@ fn main() {
 }
 ```
 
-The rules:
+**Rules**
 
 - An array that the program reads out of another array, or out of a field, is a value too. A write to it does not change the original.
 - A copy of an array holds the same objects as the original. A change to a `mut` field of such an object shows in both arrays.
-- A function cannot change an array that it gets as a plain argument. To change the array of the caller, the parameter is `mut` ([`mut` parameters](functions.md#mut-parameters)). A function can also return a changed array, and the caller writes `xs = change(xs)`.
+- A function cannot change an array that it gets as a plain argument. To change the array of the caller, the parameter is `mut` ([`mut` parameters](functions.md#mut-parameters)).
+- A function can also return a changed array, and the caller writes `xs = change(xs)`.
 
 ```sisu
 fn doubled(xs: [i64]) -> [i64] {
