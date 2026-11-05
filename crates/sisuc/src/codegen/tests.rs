@@ -1,6 +1,6 @@
 use super::*;
 use crate::check::check_alone;
-use crate::mir::tests::assert_near_linear;
+use crate::mir::tests::{assert_near_linear, assert_near_linear_for};
 use crate::parser::parse_ok;
 use crate::payload_limit;
 use crate::tir::{BinaryOp, LAYOUT_STEPS};
@@ -4433,8 +4433,14 @@ fn deep_optionals_should_take_linear_layout_steps() {
         let q = "?".repeat(n);
         format!("fn main() {{\n    let x: bool{q} = None\n    print(x == None)\n}}\n")
     };
-    assert_near_linear(steps(&held, 40), steps(&held, 80), steps(&held, 120));
-    assert_near_linear(
+    assert_near_linear_for(
+        "held: ",
+        steps(&held, 40),
+        steps(&held, 80),
+        steps(&held, 120),
+    );
+    assert_near_linear_for(
+        "bool: ",
         steps(&niche_chain, 40),
         steps(&niche_chain, 80),
         steps(&niche_chain, 120),
