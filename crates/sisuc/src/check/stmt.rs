@@ -19,7 +19,7 @@ use crate::diagnostic::{
     ClashForm, ClashKind, DiagnosticKind, MismatchSource, NeverReassignedForm, RangePlace, Unwrap,
     UnwrapHelp, closest,
 };
-use crate::source::Span;
+use crate::source::{Span, removal_end};
 use crate::symbol::Symbol;
 use crate::tir::{self, ExprKind, Type, TypeKind};
 use std::slice::SliceIndex;
@@ -952,7 +952,14 @@ impl Checker<'_> {
             self.report(DiagnosticKind::UnusedLabel {
                 name: label.name.to_string(),
                 at: label.span,
-                remove: Span::new(label.span.start(), frame.keyword.start()),
+                remove: Span::new(
+                    label.span.start(),
+                    removal_end(
+                        self.source.comments,
+                        label.span.end(),
+                        frame.keyword.start(),
+                    ),
+                ),
             });
         }
         (checked, frame)
@@ -1714,7 +1721,13 @@ impl Checker<'_> {
     /// reassigned gets W0002, and so does a `mut` parameter, unless a requirement spells its `mut`.
     fn retire(&mut self, name: Symbol, b: &Binding) {
         let never = !b.reassigned && !b.loop_named;
-        let keyword = b.keyword.filter(|_| never);
+        // The fix removes the `mut` and the white space up to the name, but not a comment.
+        let remove = b.keyword.filter(|_| never).map(|k| {
+            Span::new(
+                k.start(),
+                removal_end(self.source.comments, k.end(), b.span.start()),
+            )
+        });
         if let Some(Owner::Func(func)) = self.body.owner
             && !b.read
             && !b.mut_param
@@ -1737,12 +1750,12 @@ impl Checker<'_> {
                 name: name.to_string(),
                 at: b.span,
                 fix,
-                keyword,
+                remove,
             });
             return;
         }
-        let form = match keyword {
-            Some(keyword) => Some(NeverReassignedForm::Let { keyword }),
+        let form = match remove {
+            Some(remove) => Some(NeverReassignedForm::Let { remove }),
             None if never => self.never_reassigned_param(b),
             None => None,
         };

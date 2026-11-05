@@ -325,7 +325,7 @@ mod tests {
             name: "count".to_string(),
             at: Span::new(24, 29),
             form: NeverReassignedForm::Let {
-                keyword: Span::new(20, 23),
+                remove: Span::new(20, 24),
             },
         }
         .into();

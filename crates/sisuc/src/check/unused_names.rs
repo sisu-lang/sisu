@@ -74,15 +74,15 @@ pub(super) struct Use {
 
 /// A binding of the function `func` that nothing read, a parameter when `param`, named `name`
 /// and declared at `at`. `fix` holds each place that binds a `for` or pattern name, which `_`
-/// can replace, and is empty for any other. `keyword` is the `mut` of a `let mut` that W0002
-/// would warn about: it does when the pass does not judge the binding.
+/// can replace, and is empty for any other. `remove` is what the fix of W0002 removes for a
+/// `let mut` that W0002 would warn about: it does when the pass does not judge the binding.
 pub(super) struct Pending {
     pub(super) func: tir::FuncId,
     pub(super) param: bool,
     pub(super) name: String,
     pub(super) at: Span,
     pub(super) fix: Vec<Span>,
-    pub(super) keyword: Option<Span>,
+    pub(super) remove: Option<Span>,
 }
 
 impl Pending {
@@ -102,8 +102,8 @@ impl Pending {
                 .into(),
             );
         }
-        let keyword = self.keyword?;
-        let form = NeverReassignedForm::Let { keyword };
+        let remove = self.remove?;
+        let form = NeverReassignedForm::Let { remove };
         Some(DiagnosticKind::NeverReassigned { name, at, form }.into())
     }
 }

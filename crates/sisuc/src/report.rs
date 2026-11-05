@@ -173,7 +173,7 @@ mod tests {
             name: "m".to_string(),
             at: Span::new(48, 49),
             form: NeverReassignedForm::Let {
-                keyword: Span::new(44, 47),
+                remove: Span::new(44, 48),
             },
         }
         .into()
