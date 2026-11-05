@@ -432,6 +432,44 @@ def example_html(token, words, args, companions) -> str:
     return f'<figure class="code">{cap}<pre data-lang="sisu">{escape(token.content)}</pre>{panels}</figure>\n{lines}'
 
 
+SITE_CODE_LINK = re.compile(r'\.\./diagnostics/([EW]\d{4})\.html')
+
+
+def mark_rules(tokens) -> None:
+    """A paragraph that is only bold text, directly before a bullet list, labels a list of rules:
+    the paragraph gets the class rules-h and the list rules. In such a list, the diagnostic links
+    that end an item, each with its code as text, get the class tag."""
+    depth = 0
+    for i, token in enumerate(tokens):
+        if (token.type == 'paragraph_open' and token.level == 0
+                and (kids := [k for k in tokens[i + 1].children or [] if k.type != 'text' or k.content])
+                and kids[0].type == 'strong_open' and kids[-1].type == 'strong_close'
+                and sum(k.type == 'strong_open' for k in kids) == 1):
+            # One plain paragraph can stand between the label and its list, as a note.
+            note = i + 3 < len(tokens) and tokens[i + 3].type == 'paragraph_open'
+            at = i + 6 if note else i + 3
+            if at < len(tokens) and tokens[at].type == 'bullet_list_open':
+                token.attrSet('class', 'rules-h')
+                if note:
+                    tokens[i + 3].attrSet('class', 'rules-note')
+                tokens[at].attrSet('class', 'rules')
+        if token.type == 'bullet_list_open' and (depth or token.attrGet('class') == 'rules'):
+            depth += 1
+        elif token.type == 'bullet_list_close' and depth:
+            depth -= 1
+        elif token.type == 'inline' and depth:
+            kids = token.children or []
+            end = len(kids)
+            while end and kids[end - 1].type == 'text' and not kids[end - 1].content.strip():
+                end -= 1
+            while (end >= 3 and kids[end - 1].type == 'link_close' and kids[end - 2].type == 'text'
+                   and (m := SITE_CODE_LINK.fullmatch(str(kids[end - 3].attrGet('href')))) and kids[end - 2].content == m[1]):
+                kids[end - 3].attrSet('class', 'tag')
+                end -= 3
+                while end and kids[end - 1].type == 'text' and not kids[end - 1].content.strip():
+                    end -= 1
+
+
 def reference_html(markdown: str, path: Path) -> tuple[str, list[tuple[int, str, str, bool]], bool]:
     """A language reference page without its `#` title; its `##` and `###` headings as (level, id,
     inline HTML, tagged); and whether the page is tagged "In development".
@@ -467,6 +505,7 @@ def reference_html(markdown: str, path: Path) -> tuple[str, list[tuple[int, str,
             kinds.append(pending)
             if pending and current is not None:
                 headings[current][3] = True
+    mark_rules(tokens)
     for heading in headings:
         if heading[3]:
             heading[2].children.append(Token('html_inline', '', 0, content=IN_DEVELOPMENT))

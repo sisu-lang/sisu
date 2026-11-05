@@ -852,6 +852,17 @@ class Build(unittest.TestCase):
                 body = ref_html(self, f'# T\n\nSee [it]({href}).\n')[0]
                 self.assertEqual(re.findall(r'<a href="([^"]*)">it</a>', body), [want])
 
+    def test_bold_label_before_a_list_should_mark_a_rules_card(self):
+        body = ref_html(self, '# T\n\n**What needs a bound**\n\n'
+                              '- `==` needs `T: Eq`. [E0139](../diagnostics/E0139.md) [E0154](../diagnostics/E0154.md)\n'
+                              '- See [E0063](../diagnostics/E0063.md) here.\n\n'
+                              'Some **bold** text.\n\n- plain [E0001](../diagnostics/E0001.md)\n')[0]
+        self.assertIn('<p class="rules-h"><strong>What needs a bound</strong></p>\n<ul class="rules">', body)
+        self.assertEqual(re.findall(r'<a href="[^"]*" class="tag">(\w+)</a>', body), ['E0139', 'E0154'])
+        self.assertEqual(body.count('class="rules'), 2)
+        noted = ref_html(self, '# T\n\n**Label**\n\nA note.\n\n- a rule\n')[0]
+        self.assertIn('<p class="rules-h"><strong>Label</strong></p>\n<p class="rules-note">A note.</p>\n<ul class="rules">', noted)
+
     def test_overview_should_have_a_card_for_each_other_page(self):
         entries = build.reference_pages(reference_dir(self, REF_PAGES))
         page = build.reference_page(0, entries)

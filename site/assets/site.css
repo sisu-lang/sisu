@@ -255,6 +255,17 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 15px; }
 .code .panel .cap { border-bottom: 0; padding-bottom: 0; }
 .code .panel pre { padding-top: 6px; }
 .prose .marker { margin: -16px 0 20px; font-size: 13.5px; color: var(--mute); }
+/* a list of rules under a bold label: the label, then a card with one rule on each row */
+.prose .rules-h { margin: 28px 0 8px; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; color: var(--mute); }
+.prose .rules-h strong { color: var(--mute); }
+.prose .rules-h code { font-size: 1em; text-transform: none; letter-spacing: 0; }
+.prose .rules-note { margin: 0 0 10px; font-size: 15px; color: var(--mute); }
+.prose ul.rules { list-style: none; margin: 0 0 24px; padding: 4px 18px; border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); }
+.prose ul.rules > li { margin: 0; padding: 10px 0; border-top: 1px solid var(--rule); }
+.prose ul.rules > li:first-child { border-top: 0; }
+.prose ul.rules ul { margin: 6px 0 0; }
+.prose a.tag { display: inline-block; margin-left: 6px; padding: 0 7px; border: 1px solid var(--rule2); border-radius: 99px; font: 500 12px/1.6 "JetBrains Mono", monospace; color: var(--mute); text-decoration: none; vertical-align: 1px; white-space: nowrap; }
+.prose a.tag:hover { border-color: var(--accent); color: var(--accent-ink); }
 .prose .cards { list-style: none; margin: 24px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
 .prose .cards li { margin: 0; }
 .cards a { display: block; height: 100%; padding: 14px 16px; border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); color: var(--ink); text-decoration: none; }
