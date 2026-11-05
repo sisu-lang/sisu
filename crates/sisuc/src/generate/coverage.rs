@@ -3778,20 +3778,35 @@ fn generated_aliases_should_reach_every_shape() {
         FxHashSet::default(),
         FxHashSet::default(),
     );
-    let held = |most: usize,
-                plain: &FxHashSet<_>,
-                generic: &FxHashSet<String>,
-                used: &FxHashSet<String>| {
-        most == MAX_ALIASES
-            && ["no layer", "an array", "an optional", "two arrays"]
-                .iter()
-                .all(|layer| plain.iter().any(|&(l, _)| l == *layer))
-            && ["a value type", "a class or an enum", "a generic type"]
-                .iter()
-                .all(|kind| plain.iter().any(|&(_, k)| k == *kind))
-            && ["[T]", "T?", "[[T]]"]
-                .iter()
-                .all(|body| generic.contains(*body) && used.contains(*body))
+    // What no alias has yet: the search stops when it is empty, and the assertion prints it.
+    let absent = |most: usize,
+                  plain: &FxHashSet<(&str, &str)>,
+                  generic: &FxHashSet<String>,
+                  used: &FxHashSet<String>|
+     -> Vec<String> {
+        let mut absent = Vec::new();
+        if most != MAX_ALIASES {
+            absent.push(format!("{most} aliases, not {MAX_ALIASES}"));
+        }
+        for layer in ["no layer", "an array", "an optional", "two arrays"] {
+            if !plain.iter().any(|&(l, _)| l == layer) {
+                absent.push(format!("no alias has {layer}"));
+            }
+        }
+        for kind in ["a value type", "a class or an enum", "a generic type"] {
+            if !plain.iter().any(|&(_, k)| k == kind) {
+                absent.push(format!("no alias names {kind}"));
+            }
+        }
+        for body in ["[T]", "T?", "[[T]]"] {
+            if !generic.contains(body) {
+                absent.push(format!("no alias is `{body}`"));
+            }
+            if !used.contains(body) {
+                absent.push(format!("no type is written through `{body}`"));
+            }
+        }
+        absent
     };
     search_seeds(SEEDS, |n| {
         let g = generate(&seed(n));
@@ -3831,25 +3846,10 @@ fn generated_aliases_should_reach_every_shape() {
             };
             plain.insert((layer, kind));
         }
-        held(most, &plain, &generic, &used)
+        absent(most, &plain, &generic, &used).is_empty()
     });
-    assert_eq!(most, MAX_ALIASES);
-    for layer in ["no layer", "an array", "an optional", "two arrays"] {
-        assert!(
-            plain.iter().any(|&(l, _)| l == layer),
-            "no alias has {layer}"
-        );
-    }
-    for kind in ["a value type", "a class or an enum", "a generic type"] {
-        assert!(
-            plain.iter().any(|&(_, k)| k == kind),
-            "no alias names {kind}"
-        );
-    }
-    for body in ["[T]", "T?", "[[T]]"] {
-        assert!(generic.contains(body), "no alias is `{body}`");
-        assert!(used.contains(body), "no type is written through `{body}`");
-    }
+    let absent = absent(most, &plain, &generic, &used);
+    assert!(absent.is_empty(), "{absent:#?}");
 }
 
 #[test]
@@ -7638,6 +7638,16 @@ fn a_known_site_should_give_a_value_and_a_panic_of_each_type() {
     let mut kinds = FxHashSet::default();
     let kinds_wanted: [(&str, bool); 4] =
         [("i64", false), ("i64", true), ("u8", false), ("u8", true)];
+    // What no seed has yet: the search stops when it is empty, and the assertion prints it.
+    let absent = |kinds: &FxHashSet<(String, bool)>| -> Vec<String> {
+        (kinds_wanted.iter())
+            .filter(|&&(ty, panics)| !kinds.contains(&(ty.to_string(), panics)))
+            .map(|&(ty, panics)| {
+                let answer = if panics { "panics" } else { "gives a value" };
+                format!("no seed has a known site of `{ty}` that {answer}")
+            })
+            .collect()
+    };
     search_seeds(SEEDS * 3 / 2, |n| {
         let g = generate(&seed(n));
         for known in &g.known {
@@ -7653,18 +7663,10 @@ fn a_known_site_should_give_a_value_and_a_panic_of_each_type() {
             let panics = matches!(known.answer, Answer::Panic(_));
             kinds.insert((ty.to_string(), panics));
         }
-        kinds_wanted
-            .iter()
-            .all(|&(ty, panics)| kinds.contains(&(ty.to_string(), panics)))
+        absent(&kinds).is_empty()
     });
-    for kind in kinds_wanted {
-        assert!(
-            kinds.contains(&(kind.0.to_string(), kind.1)),
-            "no seed has a known site of `{}` that {}",
-            kind.0,
-            if kind.1 { "panics" } else { "gives a value" }
-        );
-    }
+    let absent = absent(&kinds);
+    assert!(absent.is_empty(), "{absent:#?}");
 }
 
 #[test]
@@ -7672,6 +7674,23 @@ fn known_sites_should_take_every_count_and_negative_arguments() {
     // Up to `MAX_KNOWN` sites, whose `i64` arguments include `-1`, the least `i64` and drawn
     // negatives, written `(-n)`.
     let (mut most, mut negatives) = (0, FxHashSet::default());
+    // What no seed has yet: the search stops when it is empty, and the assertion prints it.
+    let absent = |most: usize, negatives: &FxHashSet<i128>| -> Vec<String> {
+        let mut absent = Vec::new();
+        if most != MAX_KNOWN {
+            absent.push(format!("no seed has {MAX_KNOWN} known sites"));
+        }
+        if !negatives.contains(&-1) {
+            absent.push("no known call takes `(-1)`".to_string());
+        }
+        if !negatives.contains(&i128::from(i64::MIN)) {
+            absent.push("no known call takes the least `i64`".to_string());
+        }
+        if !negatives.iter().any(|n| (-1_000..-1).contains(n)) {
+            absent.push("no known call takes a drawn negative".to_string());
+        }
+        absent
+    };
     search_seeds(SEEDS, |n| {
         let g = generate(&seed(n));
         most = most.max(g.known.len());
@@ -7685,24 +7704,10 @@ fn known_sites_should_take_every_count_and_negative_arguments() {
                 negatives.extend(digits.parse::<i128>().map(|n| -n));
             }
         }
-        most == MAX_KNOWN
-            && negatives.contains(&-1)
-            && negatives.contains(&i128::from(i64::MIN))
-            && negatives.iter().any(|n| (-1_000..-1).contains(n))
+        absent(most, &negatives).is_empty()
     });
-    assert_eq!(most, MAX_KNOWN, "no seed has {MAX_KNOWN} known sites");
-    assert!(
-        negatives.contains(&-1),
-        "no known call takes `(-1)`: {negatives:?}"
-    );
-    assert!(
-        negatives.contains(&i128::from(i64::MIN)),
-        "no known call takes the least `i64`: {negatives:?}"
-    );
-    assert!(
-        negatives.iter().any(|n| (-1_000..-1).contains(n)),
-        "no known call takes a drawn negative: {negatives:?}"
-    );
+    let absent = absent(most, &negatives);
+    assert!(absent.is_empty(), "{absent:#?}\n{negatives:?}");
 }
 
 #[test]

@@ -750,7 +750,7 @@ mod tests {
     };
     use crate::diagnostic::Severity;
     use crate::fresh_names;
-    use crate::generate::coverage::search_seeds;
+    use crate::generate::coverage::{SEARCH_SEEDS, search_seeds};
     use crate::generate::{BoundSite, Generated, coverage, generate};
 
     /// A directory of the test's own, removed when dropped.
@@ -1410,7 +1410,7 @@ mod tests {
     /// The program of the first seed that holds `row` and whose text shows that it reaches
     /// every marked line of `shapes`, and the O0 run of it: the seed's `Generated`, and that run.
     /// The search reads the seeds up to `SEARCH_SEEDS`. A run that prints less than the expected
-    /// lines fails here, with the name of the row.
+    /// lines, or that crashes, fails here, with the name of the row.
     fn dispatch_of(row: &str) -> (Generated, Run) {
         let mut found = None;
         search_seeds(0, |n| {
@@ -1418,14 +1418,17 @@ mod tests {
             if holds(row, &g) && reaches_shapes(&g) {
                 let run = o0_run(&g);
                 // The text cannot show a panic before `shapes` on an overflow or an index
-                // (property 3), so only a run that exits 0 counts.
-                if run.exit == Exit::Code(0) {
+                // (property 3), so a run that exits 101 is skipped. Any other exit, such as a
+                // signal, is the bug that this test guards (#203): the count below reports it.
+                if run.exit != Exit::Code(101) {
                     found = Some((n, g, run));
                 }
             }
             found.is_some()
         });
-        let (at, g, run) = found.unwrap_or_else(|| panic!("no seed should hold {row}"));
+        let (at, g, run) = found.unwrap_or_else(|| {
+            panic!("some seed of the first {SEARCH_SEEDS} should hold {row} and run to `shapes`")
+        });
         let printed = String::from_utf8_lossy(&run.stdout)
             .lines()
             .filter(|line| is_marked(line))

@@ -2225,6 +2225,20 @@ mod tests {
     fn a_program_with_interfaces_should_call_later_with_the_forms_that_name_t() {
         let mut found = false;
         let mut pairs = std::collections::BTreeSet::new();
+        // What no seed has yet: the search stops when it is empty, and the assertion prints it.
+        let absent = |found: bool, pairs: &std::collections::BTreeSet<&str>| -> Vec<String> {
+            let mut absent = Vec::new();
+            if !found {
+                absent.push("no seed declares `later0`".to_string());
+            }
+            if pairs.len() != 2 {
+                absent.push(format!(
+                    "{} of the 2 pairs of `Two`: {pairs:?}",
+                    pairs.len()
+                ));
+            }
+            absent
+        };
         search_seeds(SEEDS, |n| {
             let g = crate::generate::generate(&seed(n));
             for pair in ["Two<[T], [U]>", "Two<[U], [T]>"] {
@@ -2233,7 +2247,7 @@ mod tests {
                 }
             }
             if !g.program.contains("fn later0<") {
-                return found && pairs.len() == 2;
+                return absent(found, &pairs).is_empty();
             }
             found = true;
             for part in [
@@ -2290,10 +2304,10 @@ mod tests {
                 };
                 assert_eq!(*arg, want, "the argument of {param} in {}", g.program);
             }
-            pairs.len() == 2
+            absent(found, &pairs).is_empty()
         });
-        assert!(found, "no seed declares `later0`");
-        assert_eq!(pairs.len(), 2, "{pairs:?}");
+        let absent = absent(found, &pairs);
+        assert!(absent.is_empty(), "{absent:#?}");
     }
 
     /// The draws that order the seven parameters after `_a` of `later<k>` reach many orders (the
