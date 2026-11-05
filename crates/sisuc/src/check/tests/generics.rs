@@ -716,11 +716,12 @@ fn parameter_chain(p: &str, n: usize) -> String {
 /// debug build. Each row has a walk that alone breaks the growth when it follows every path:
 /// `Buildable::buildable` in "class field" (`run`) and in "E0027 leaf" (`deps` and `needs`),
 /// `Buildable::reached` in "E0027 chain", `holds` in "W0011 on an array", and `inline_enums` and
-/// `names_itself` in "generic enum payload". `named` and `holds_table` break every row.
+/// `names_itself` in "generic enum payload". `named` and `holds_table` break every row. The
+/// wrapper chain breaks `holds_table` and `holds` alone, as they unwrap before they look up.
 #[test]
 fn declaration_type_walks_should_visit_each_distinct_type_once() {
     type Program = fn(usize) -> String;
-    let rows: [(&str, Program); 10] = [
+    let rows: [(&str, Program); 11] = [
         ("enum payload", |n| {
             alias_chain(ENUM_P, n) + &format!("enum E {{\n    V(A{n})\n    W\n}}\nfn main() {{}}")
         }),
@@ -765,6 +766,23 @@ fn declaration_type_walks_should_visit_each_distinct_type_once() {
         }),
         ("E0027 chain", |n| {
             alias_chain(CLASS_P, n) + &format!("class C {{\n    v: P<C, A{n}>\n}}\nfn main() {{}}")
+        }),
+        // `Ln` is `n` arrays of `i64` and `Rn` is `P<Rn-1, Ln>`: `n` types share the wrapper chain
+        // of `Ln`, so a walk that unwraps each use of it again does work in step with `n * n`.
+        ("wrapper chain", |n| {
+            let links = (1..=n)
+                .map(|i| {
+                    format!(
+                        "type L{i} = [L{}]\ntype R{i} = P<R{}, L{i}>\n",
+                        i - 1,
+                        i - 1
+                    )
+                })
+                .collect::<Vec<_>>()
+                .concat();
+            format!(
+                "{CLASS_P}\ntype L0 = i64\ntype R0 = i64\n{links}class C {{\n    v: R{n}\n}}\nfn main() {{}}"
+            )
         }),
     ];
     let steps = |program: Program, n: usize| {
