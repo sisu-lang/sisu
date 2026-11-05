@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use super::array::{innermost, is_optional_array, optional_array};
+use super::array::{innermost, is_optional_array, optional_array, optional_element};
 use super::expr::{if_some, literal_type, local, operator};
 use super::member::{Access, FoundField, safe_value};
 use super::operator::Operator;
@@ -813,7 +813,10 @@ impl Checker<'_> {
                 .map(|found| (found, false));
         };
         let found = self.field_of_payload(payload, base, name, access)?;
-        let array = matches!(found.2.map(Type::kind), Some(TypeKind::Array(_)));
+        // The field is an array or an optional array, which the `push` writes.
+        let array = found.2.is_some_and(|held| {
+            matches!(held.kind(), TypeKind::Array(_)) || is_optional_array(held)
+        });
         (change != Change::Push || array).then_some((found, true))
     }
 
@@ -837,7 +840,9 @@ impl Checker<'_> {
             }
             _ => UnwrapHelp::Nothing,
         };
-        self.diagnostics.push(optional_array(base, unwrap));
+        // Its E0062 comes before the E0001 that the place held.
+        let at = self.before_held(self.diagnostics.len(), base.span);
+        self.diagnostics.insert(at, optional_array(base, unwrap));
     }
 
     /// The place `target` names, which `span` changes as `change` says: `Element` when it is the
@@ -927,12 +932,14 @@ impl Checker<'_> {
                 };
                 let outer = std::mem::replace(&mut self.body.indexed, true);
                 let inner = self.place(span, base, inner_change);
-                let element = match inner.value_ty() {
-                    Some(ty) if is_optional_array(ty) => {
+                // The array of an optional array is no place, but its element has a type.
+                let optional = inner.value_ty().filter(|&ty| is_optional_array(ty));
+                let element = match optional {
+                    Some(ty) => {
                         self.optional_array_target(base, &inner);
-                        None
+                        optional_element(ty)
                     }
-                    ty => self.element(base, ty, change.index_usage()),
+                    None => self.element(base, inner.value_ty(), change.index_usage()),
                 };
                 // The index is not part of the chain that it ends.
                 self.body.indexed = false;
@@ -940,7 +947,7 @@ impl Checker<'_> {
                 self.body.indexed = outer;
                 let path = inner
                     .path
-                    .filter(|_| element.is_some())
+                    .filter(|_| element.is_some() && optional.is_none())
                     .zip(index.ok())
                     .map(|(mut path, index)| {
                         path.operands.push(index);

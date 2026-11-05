@@ -9,6 +9,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::alias::{Through, Via};
 use super::any;
+use super::array::innermost;
 use super::expr::{bare_hole, dbg_argument, option_written};
 use super::interface::{Bound, Required};
 use super::mut_args::{MutParts, MutSite, PlaceShape, marked};
@@ -1783,6 +1784,7 @@ pub(super) fn mark((checked, mismatched): (Checked, bool)) -> Checked {
             mismatch: true,
             found: None,
             kept: false,
+            unwrapped: false,
         })
     } else {
         checked
@@ -2521,6 +2523,7 @@ impl Checker<'_> {
                 mismatch: true,
                 found: None,
                 kept: false,
+                unwrapped: false,
             }));
             blamed = true;
         }
@@ -4453,7 +4456,8 @@ impl Checker<'_> {
         first: &ast::TypeExpr,
         angles: Span,
     ) -> Option<Poisoned> {
-        let ty = type_of(receiver)?;
+        // The members of an optional are those of its payload.
+        let ty = innermost(type_of(receiver)?);
         let field = match ty.kind() {
             TypeKind::Class(id, _) => self.classes[id.0].field(method.name).is_some(),
             TypeKind::Enum(..) => false,

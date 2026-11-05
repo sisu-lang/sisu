@@ -3,7 +3,9 @@
 use super::any::{AnyJoin, is_target, widen};
 use super::expr::{fits, literal_type, no_member, path, typed};
 use super::generic::{Rank, mark};
-use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, payload, type_of};
+use super::{
+    Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, is_unwrapped, payload, type_of,
+};
 use crate::ast;
 use crate::diagnostic::{
     Definition, Diagnostic, DiagnosticKind, Expected, IndexUsage, Literal, UnwrapHelp,
@@ -86,6 +88,7 @@ impl Checker<'_> {
                 mismatch: true,
                 found: None,
                 kept: false,
+                unwrapped: false,
             });
         }
         self.ranked(|c| c.joined(span, elements, quiet))
@@ -418,6 +421,7 @@ impl Checker<'_> {
                 mismatch: mismatched,
                 found: None,
                 kept: false,
+                unwrapped: false,
             }),
         }
     }
@@ -484,24 +488,31 @@ impl Checker<'_> {
         }
         let outer = std::mem::replace(&mut self.body.indexed, true);
         let checked = self.value(base, None);
+        let unwrapped = is_unwrapped(&checked);
+        // An optional array is reported, and its element goes on typed, but no code reads it.
+        let optional = type_of(&checked).is_some_and(is_optional_array);
         let element = self.element(base, type_of(&checked), IndexUsage::Read);
         // The index is not part of the chain that it ends.
         self.body.indexed = false;
         let (index, mismatched) = self.operand(index, Some(Type::I64));
         self.body.indexed = outer;
         match (checked, index, element) {
-            (Ok(base), Ok(index), Some(element)) => {
+            (Ok(base), Ok(index), Some(element)) if !optional => {
                 Ok(self.spilled(span, element, vec![base, index], |operands| {
                     let (base, index) = pair(operands);
                     tir::ExprKind::Index { base, index }
                 }))
             }
-            (.., element) => Err(Poisoned::of(element.filter(|_| !mismatched))),
+            (.., element) => Err(Poisoned {
+                unwrapped,
+                ..Poisoned::of(element.filter(|_| !mismatched))
+            }),
         }
     }
 
     /// The element type of `base`, which is indexed and has type `ty` (`None` is `Error`). An
-    /// optional array, a string, or a value that is no array, is reported and gives `Error`.
+    /// optional array is reported and gives the element of its payload. A string, or a value that
+    /// is no array, is reported and gives `Error`.
     pub(super) fn element(
         &mut self,
         base: &ast::Expr,
@@ -512,7 +523,8 @@ impl Checker<'_> {
         let d = match ty.kind() {
             TypeKind::Array(element) => return Some(element),
             TypeKind::Optional(payload) if matches!(payload.kind(), TypeKind::Array(_)) => {
-                optional_array(base, UnwrapHelp::It)
+                self.diagnostics.push(optional_array(base, UnwrapHelp::It));
+                return optional_element(ty);
             }
             _ if ty == Type::STRING => DiagnosticKind::StringIndex {
                 at: base.span,
@@ -662,7 +674,18 @@ pub(super) fn optional_array(base: &ast::Expr, unwrap: UnwrapHelp) -> Diagnostic
 
 /// Whether `ty` is `[T]?`.
 pub(super) fn is_optional_array(ty: Type) -> bool {
-    matches!(ty.kind(), TypeKind::Optional(payload) if matches!(payload.kind(), TypeKind::Array(_)))
+    optional_element(ty).is_some()
+}
+
+/// `T`, when `ty` is `[T]?`.
+pub(super) fn optional_element(ty: Type) -> Option<Type> {
+    let TypeKind::Optional(payload) = ty.kind() else {
+        return None;
+    };
+    match payload.kind() {
+        TypeKind::Array(element) => Some(element),
+        _ => None,
+    }
 }
 
 /// `E`, when `expected` is `[E]` or `[E]?`.

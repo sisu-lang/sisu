@@ -88,6 +88,12 @@ struct Poisoned {
     /// type, so it holds the code that uses it to nothing. That code adds no report for the
     /// default type of an operator.
     kept: bool,
+    /// The value is typed by the unwrap that the help of its E0062 names: it comes from a `.`
+    /// on an optional, and has the type that the member has on the payload. A check that fires
+    /// only because the value is not optional (E0044, E0048, E0049, E0051) skips it: the `?.` fix
+    /// of the E0062 would make the value optional. A `let` or a `for` binds `Error` for it, as its
+    /// optionality depends on the remedy.
+    unwrapped: bool,
 }
 
 /// The result type of a generic call that cannot meet its context (see `report_unbound`). The
@@ -117,6 +123,16 @@ impl Poisoned {
             mismatch: false,
             found: None,
             kept: false,
+            unwrapped: false,
+        }
+    }
+
+    /// A failed `.` on an optional, whose member has the type `ty` on the payload (see
+    /// `Poisoned::unwrapped`).
+    fn unwrapped(ty: Option<Type>) -> Self {
+        Self {
+            unwrapped: true,
+            ..Self::of(ty)
         }
     }
 
@@ -132,6 +148,17 @@ impl Poisoned {
 /// Whether a generic call in `checked` kept its E0050 (see `Poisoned::kept`).
 fn is_kept<T>(checked: &Result<T, Poisoned>) -> bool {
     matches!(checked, Err(Poisoned { kept: true, .. }))
+}
+
+/// Whether `checked` is typed by the unwrap of an E0062 (see `Poisoned::unwrapped`).
+fn is_unwrapped<T>(checked: &Result<T, Poisoned>) -> bool {
+    matches!(
+        checked,
+        Err(Poisoned {
+            unwrapped: true,
+            ..
+        })
+    )
 }
 
 type Checked = Result<tir::Expr, Poisoned>;

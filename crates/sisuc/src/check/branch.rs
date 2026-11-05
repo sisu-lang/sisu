@@ -270,6 +270,7 @@ impl Checker<'_> {
                 // A join that has no type is kept when a branch is: that call's E0050 is the one
                 // report.
                 kept: ty.is_none() && blocks.iter().any(is_kept),
+                unwrapped: false,
             }),
         };
         (blocks, ty)

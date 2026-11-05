@@ -12,8 +12,8 @@ use super::mut_args::{Callee, MutParts, MutSite, site_of};
 use super::prelude::PRELUDE;
 use super::unused_names::Used;
 use super::{
-    Checked, Checker, Declared, Lowered, Poisoned, UNKNOWN, block_expr, built_in_type, own_args,
-    type_of,
+    Checked, Checker, Declared, Lowered, Poisoned, UNKNOWN, block_expr, built_in_type,
+    is_unwrapped, own_args, type_of,
 };
 use super::{array, number, string};
 use crate::ast::{self, ExprKind};
@@ -525,7 +525,7 @@ impl Checker<'_> {
                     }
                     // A built-in's generated `to_string`, `eq` and `less` report their own list.
                     deferred = !matches!(method.name.as_str(), "to_string" | "eq" | "less")
-                        && type_of(&checked).is_some_and(|ty| {
+                        && type_of(&checked).map(array::innermost).is_some_and(|ty| {
                             matches!(
                                 ty.kind(),
                                 TypeKind::Array(_)
@@ -588,8 +588,30 @@ impl Checker<'_> {
     }
 
     /// `receiver.method(args)`, `receiver` checked from `receiver_expr`. `dot` says whether it
-    /// is `receiver?.method(args)`, or the check of a `.` call on an optional's payload.
+    /// is `receiver?.method(args)`, or the check of a `.` call on an optional's payload. The
+    /// result of a call on a value that an E0062 typed is typed by it too (see
+    /// `Poisoned::unwrapped`).
     pub(super) fn method_call(
+        &mut self,
+        span: Span,
+        dot: Dot,
+        receiver: Checked,
+        receiver_expr: &ast::Expr,
+        site: Site<'_>,
+        args: &[ast::Arg],
+    ) -> Checked {
+        let unwrapped = is_unwrapped(&receiver);
+        match self.method_on(span, dot, receiver, receiver_expr, site, args) {
+            Err(poisoned) if unwrapped => Err(Poisoned {
+                unwrapped,
+                ..poisoned
+            }),
+            checked => checked,
+        }
+    }
+
+    /// `method_call`, whatever the receiver is.
+    fn method_on(
         &mut self,
         span: Span,
         dot: Dot,

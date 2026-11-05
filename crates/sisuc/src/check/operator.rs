@@ -6,7 +6,7 @@ use super::generic::{Rank, mismatched};
 use super::interface::Operation;
 use super::{
     Checked, Checker, Lowered, Poisoned, UNKNOWN, as_optional, beyond_one_layer, block_expr,
-    is_kept, optional_of, payload, type_of, wrap,
+    is_kept, is_unwrapped, optional_of, payload, type_of, wrap,
 };
 use crate::ast::{self, CompareOp, ExprKind};
 use crate::diagnostic::{Diagnostic, DiagnosticKind, Expected, Literal, PeelIs, PeelLayers};
@@ -48,6 +48,7 @@ impl Checker<'_> {
                 mismatch: literal,
                 found: None,
                 kept: false,
+                unwrapped: false,
             });
         }
         let want = if type_of(&checked).map(payload) == Some(Type::F64) {
@@ -668,9 +669,11 @@ impl Checker<'_> {
             return Err(Poisoned::error());
         }
         // `second` is the `none_written`, if either is.
+        // A value that an E0062 typed is optional under its `?.` fix.
         if self.none_written(second)
             && let Some(ty) = type_of(&checked)
             && !matches!(ty.kind(), TypeKind::Optional(_))
+            && !is_unwrapped(&checked)
         {
             let value = path(first);
             self.diagnostics
@@ -984,7 +987,8 @@ impl Checker<'_> {
     ) -> Checked {
         let scrutinee = self.value(lhs, None);
         let Some(TypeKind::Optional(payload)) = type_of(&scrutinee).map(Type::kind) else {
-            if type_of(&scrutinee).is_some() {
+            // A value that an E0062 typed is optional under its `?.` fix.
+            if type_of(&scrutinee).is_some() && !is_unwrapped(&scrutinee) {
                 self.diagnostics
                     .push(DiagnosticKind::CoalesceNotOptional { at: lhs.span }.into());
             }

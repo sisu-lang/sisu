@@ -92,6 +92,7 @@ impl Checker<'_> {
                     mismatch: true,
                     found: None,
                     kept: false,
+                    unwrapped: false,
                 });
             }
             return Ok(tir::Expr::new(tir::ExprKind::Float(x), ty, at));
@@ -112,6 +113,7 @@ impl Checker<'_> {
                 mismatch: true,
                 found: None,
                 kept: false,
+                unwrapped: false,
             });
         }
         Ok(tir::Expr::new(tir::ExprKind::Int(value), ty, at))
@@ -519,6 +521,7 @@ impl Checker<'_> {
             mismatch: true,
             found: None,
             kept: false,
+            unwrapped: false,
         })
     }
 

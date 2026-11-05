@@ -11,7 +11,7 @@ use super::enums::reserved_name;
 use super::exhaust::{self, Neighbours, Report, Row};
 use super::generic::{Ahead, type_meets};
 use super::stmt::BlockSoFar;
-use super::{Checked, CheckedBlock, Checker, Declared, Poisoned, type_of};
+use super::{Checked, CheckedBlock, Checker, Declared, Poisoned, is_unwrapped, type_of};
 use crate::ast;
 use crate::diagnostic::{
     BadRange, Definition, DiagnosticKind, Expected, GuardHelp, MismatchSource, Plain, Unwrap,
@@ -442,7 +442,11 @@ impl Checker<'_> {
         value: &ast::Expr,
     ) -> (Checked, LetValue, bool) {
         let checked = self.value(value, None);
-        let ty = type_of(&checked);
+        // A value that an E0062 typed is no judge of `if let`: under the `?.` fix it is optional.
+        let ty = type_of(&checked).filter(|ty| {
+            !is_unwrapped(&checked)
+                || matches!(ty.kind(), TypeKind::Optional(_) | TypeKind::Enum(..))
+        });
         let name = match &pattern.kind {
             // A variant of the enum inside matches that value, as in `match`.
             ast::PatternKind::Name(name)
