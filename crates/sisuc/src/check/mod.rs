@@ -912,9 +912,9 @@ struct Body {
     /// Where each loop label is declared that a failed jump or a reused loop label names, which
     /// is not reported unused: its own error is.
     failed_labels: FxHashSet<Span>,
-    /// The bare name right after an unlabeled `break`, which may be a misspelled loop label:
-    /// only there does E0033 offer the open loop labels.
-    label_typo: Option<Span>,
+    /// The bare name right after an unlabeled `break`, which may be a misspelled loop label, and
+    /// the byte where that `break` starts: only there does E0033 offer the open loop labels.
+    label_typo: Option<(Span, usize)>,
     /// Where the value of the unlabeled `break` being checked starts: the parser reads an open
     /// loop label there as the `break`'s label, so a fix must not write one there.
     break_start: Option<usize>,
@@ -2542,7 +2542,7 @@ impl Checker<'_> {
             .filter(|(binding, _)| !(at_start && self.is_open_label(binding)));
         let labels = self
             .open_labels()
-            .filter(|_| self.body.label_typo == Some(span))
+            .filter(|_| self.body.label_typo.is_some_and(|(at, _)| at == span))
             .map(|label| (label.name.as_str(), Definition::LoopLabel));
         let suggestion = suggestion(name.as_str(), bindings.chain(labels));
         if let Some(found) = &suggestion
@@ -2552,12 +2552,32 @@ impl Checker<'_> {
             // mistake, which neither the loop label's warning nor its loop's type reports again.
             self.break_meant(&found.name);
         }
+        let wrap = match (&suggestion, self.body.label_typo) {
+            (Some(found), Some((_, start))) if found.kind == Definition::LoopLabel => {
+                self.wrap_break(span, start)
+            }
+            _ => None,
+        };
         DiagnosticKind::BindingNotFound {
             name: name.to_string(),
             at: span,
             suggestion,
+            wrap,
         }
         .into()
+    }
+
+    /// `break_start`, the start of the `break` whose label is at `label`, when the label ends the
+    /// head of an `if`, an `else if`, an `if let` or a `match`: a `{` follows it on its line. The
+    /// parser then takes the `{` as the value of the `break`, so a fix of the label must wrap the
+    /// `break` in parentheses.
+    pub(super) fn wrap_break(&self, label: Span, break_start: usize) -> Option<usize> {
+        // The lexer skips these characters between two tokens of a line.
+        self.source
+            .rest(label.end())
+            .trim_start_matches([' ', '\t', '\r'])
+            .starts_with('{')
+            .then_some(break_start)
     }
 
     /// Whether `e` is a call of a conversion that can fail: `u8(...)`, `char(...)`, or `i64(...)`,
