@@ -231,6 +231,21 @@ class Brief(Repo):
         self.assertIn('This is round 2.', section)
         self.assertNotIn('The previous version', section)
 
+    def test_an_earlier_rounds_mutation_log_should_pass_in_a_later_round(self):
+        prior = Path(self.repo) / 'sol.md'
+        prior.write_text('Verdict: changes needed\n')
+        log = Path(self.repo) / 'mutation.log'
+        log.write_text(f'mutation-test: PASS: 1 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.base})\n')
+        text = self.brief('HEAD~1..HEAD', '--round', '2', '--prior', str(prior), '--rulings', str(prior),
+                          '--mutation-log', str(log))
+        self.assertIn(f'Mutation-test log: {log}, measured at {self.base[:8]}, before this round', text)
+
+    def test_a_first_round_mutation_log_on_the_base_should_fail(self):
+        log = Path(self.repo) / 'mutation.log'
+        log.write_text(f'mutation-test: PASS: 1 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.base})\n')
+        with self.assertRaises(SystemExit):
+            self.brief('HEAD~1..HEAD', '--mutation-log', str(log))
+
     def test_a_second_round_without_rulings_should_fail(self):
         with self.assertRaises(SystemExit):
             self.brief('HEAD~1..HEAD', '--round', '2')

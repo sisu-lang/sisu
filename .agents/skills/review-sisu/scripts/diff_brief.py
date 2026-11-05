@@ -20,7 +20,9 @@ the main checkout's gitignored docs/superpowers/ is not in a worktree.
            at an earlier commit of the range is accepted, and Focus lists the commits after it,
            because later commits (such as a fix round's) are not mutated. A log
            measured before a rebase is accepted when a commit of the range has the same
-           `git patch-id` as the measured commit; Focus names both.
+           `git patch-id` as the measured commit; Focus names both. With --round above 1,
+           a log measured at the range's base or before it is accepted as an earlier round's
+           log, and Focus says so.
   --coverage  the output of `make coverage` for the diff; Focus names it. Fails when the file does
            not exist, or when its last `coverage:` line does not name the diff's head commit, or says
            the run measured uncommitted changes or saw HEAD change. Unlike a mutation log, coverage of an earlier
@@ -105,11 +107,16 @@ def in_range(repo, sha, base, head):
     return next((c for c in git(repo, 'rev-list', f'{base}..{head}').split() if want and patch_id(repo, c) == want), '')
 
 
-def log_mismatch(log, repo, base, head):
-    """Why the summary line of `log` does not describe a commit in `base`..`head` of `repo`, or None."""
+def log_mismatch(log, repo, base, head, earlier=False):
+    """Why the summary line of `log` does not describe a commit in `base`..`head` of `repo`, or None.
+
+    With `earlier`, a commit that `base` reaches is accepted too: an earlier round's log.
+    """
     found = summary(log)
     if not found:
         return f'no summary line ending "(HEAD <sha>)" in {log}'
+    if earlier and is_ancestor(repo, found[1], base):
+        return None
     if not in_range(repo, found[1], base, head):
         want = commit(repo, head)
         return f'{log} measured {found[1][:8]}, which is not in {base}..{head} ({want[:8] or "unknown"})'
@@ -205,9 +212,13 @@ def main():
         target = '..'.join(shas)
         for mutation_log in a.mutation_log:
             log = Path(mutation_log).resolve()
-            if why := log_mismatch(log, repo, shas[0], shas[1]):
+            if why := log_mismatch(log, repo, shas[0], shas[1], earlier=a.round > 1):
                 sys.exit(f'diff_brief: {why}')
             measured = summary(log)[1]
+            if a.round > 1 and is_ancestor(repo, measured, shas[0]):
+                focus_lines.append(f'Mutation-test log: {log}, measured at {measured[:8]}, '
+                                   'before this round: it covers the code of earlier rounds')
+                continue
             twin = in_range(repo, measured, *shas)
             later = git(repo, 'rev-list', '--reverse', f'{twin}..{shas[1]}').split()
             note = f', measured at {measured[:8]}' if later or twin != measured else ''
