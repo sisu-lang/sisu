@@ -1,0 +1,213 @@
+// GIVEN a `.` on an optional that starts a chain, in a function for each case
+// AND the rest of the chain has a mistake that it has with the same optional unwrapped
+// WHEN `sisu check` runs on it
+// THEN it reports E0062 first, with the help that it gave before
+// AND it reports each mistake of the rest of the chain after it, as the plain value gives it
+class Inner {
+    ys: [i64]
+    v: i64
+    fn get(self) -> Inner { self }
+    fn one(self) -> i64 { self.v }
+    fn gen<T>(self, t: T) -> T { t }
+}
+
+class Outer {
+    ns: [Inner]
+    inner: Inner
+    oa: [i64]?
+    fn mk(self) -> Inner { self.inner }
+}
+
+class H {
+    o: Inner?
+    fn push_it(self) {
+        self.o.ys.push("a")
+    }
+
+    fn read_it(self) {
+        let s: string = self.o.v
+    }
+}
+
+class Tally {
+    count: i64
+}
+
+class Holder {
+    tally: Tally
+}
+
+enum E {
+    A
+    fn m(self) -> i64 { 1 }
+}
+
+interface Named {
+    fn name(self) -> string
+}
+
+type M<T> = T?
+fn bump(mut n: i64) { n = n + 1 }
+fn takes_string(s: string) {}
+
+fn index_push(c: Outer?) {
+    c.ns[0].ys.push("a")
+}
+
+fn field_push(c: Outer?) {
+    c.inner.ys.push("a")
+}
+
+fn method_push(c: Outer?) {
+    c.mk().ys.push("a")
+}
+
+fn assign(c: Outer?) {
+    c.inner.v = "s"
+}
+
+fn compound(c: Outer?) {
+    c.inner.v += "s"
+}
+
+fn unknown_field(c: Outer?) {
+    print(c.inner.nope)
+}
+
+fn unknown_method(c: Outer?) {
+    print(c.inner.v.nope())
+}
+
+fn expected(c: Inner?) {
+    let s: string = c.v
+}
+
+fn expected_deep(c: Outer?) {
+    let s: string = c.inner.v
+}
+
+fn expected_method(c: Inner?) {
+    let s: string = c.one()
+}
+
+fn optional_array(c: Outer?) {
+    c.oa.push(1)
+}
+
+fn optional_array_plain(c: Outer) {
+    c.oa.push(1)
+}
+
+fn mut_arg(c: Holder?) {
+    bump(mut c.tally.count)
+}
+
+fn for_loop(c: Outer?) {
+    for n in c.inner.v { print(n) }
+}
+
+fn condition(c: Inner?) {
+    if c.v { print(1) }
+}
+
+fn type_args(c: Inner?) {
+    print(c.one<i64>())
+}
+
+fn type_args_deep(c: Outer?) {
+    print(c.inner.one<i64>())
+}
+
+fn type_args_enum(c: E?) {
+    print(c.m<i64>())
+}
+
+fn type_args_builtin(c: [i64]?) {
+    print(c.len<i64>())
+}
+
+fn type_args_string(c: string?) {
+    print(c.len<i64>())
+}
+
+fn type_args_generic(c: Inner?) {
+    print(c.gen<i64, i64>(1))
+}
+
+fn type_args_field(c: Inner?) {
+    print(c.v<i64>())
+}
+
+fn match_scrutinee(c: Outer?) {
+    match c.inner.v { "a" => print(1); _ => print(2) }
+}
+
+fn iflet_member(c: Outer?) {
+    if let x = c.inner.nope {}
+}
+
+fn coalesce_member(c: Outer?) {
+    print(c.inner.nope ?? 0)
+}
+
+fn interpolation(c: Outer?) {
+    print("{c.inner.nope}")
+}
+
+fn argument(c: Outer?) {
+    takes_string(c.inner.v)
+}
+
+fn return_value(c: Outer?) -> string {
+    return c.inner.v
+}
+
+fn element_sub(c: Outer?) {
+    c.ns[0].v -= "a"
+}
+
+fn method_on_method(c: Outer?) {
+    c.mk().one().nope()
+}
+
+fn method_into_let(c: Outer?) {
+    let s: string = c.mk().one()
+}
+
+fn alias_outer(c: M<Outer>) {
+    c.inner.ys.push("a")
+}
+
+fn alias_inner(c: M<Inner>) {
+    let s: string = c.v
+}
+
+fn peel_chain(c: Outer??) {
+    c.inner.ys.push("a")
+}
+
+fn peel_value(c: Inner??) {
+    let s: string = c.v
+}
+
+fn any_receiver(c: (any Named)?) {
+    let k: i64 = c.name()
+}
+
+fn any_member(c: (any Named)?) {
+    c.name().nope()
+}
+
+fn optional_field_value(c: Outer?) {
+    let s: string = c.oa
+}
+
+fn optional_field_len(c: Outer?) {
+    print(c.oa.len())
+}
+
+fn binary(c: Outer?) {
+    print(c.inner.v + "s")
+}
+
+fn main() {}

@@ -557,7 +557,7 @@ error[E0062]: `c` may be `None`
 154 |     print(c.v)
     |           ^
     |
-    = help: unwrap it with `if let`, `let ... else` or `?? return`
+    = help: peel the extra layer first: `(c ?? None)?.v`
 
 error[E0062]: `c` may be `None`
    --> E0062-member-on-payload.sisu:158:11
@@ -565,7 +565,7 @@ error[E0062]: `c` may be `None`
 158 |     print(c.get())
     |           ^
     |
-    = help: unwrap it with `if let`, `let ... else` or `?? return`
+    = help: peel the extra layer first: `(c ?? None)?.get`
 
 error[E0062]: `s` may be `None`
    --> E0062-member-on-payload.sisu:162:11
@@ -573,7 +573,7 @@ error[E0062]: `s` may be `None`
 162 |     print(s.len())
     |           ^
     |
-    = help: unwrap it with `if let`, `let ... else` or `?? return`
+    = help: peel the extra layer first: `(s ?? None)?.len`
 
 error[E0062]: `c` may be `None`
    --> E0062-member-on-payload.sisu:166:11
@@ -581,7 +581,7 @@ error[E0062]: `c` may be `None`
 166 |     print(c.get(1))
     |           ^
     |
-    = help: unwrap it with `if let`, `let ... else` or `?? return`
+    = help: peel the extra layer first: `(c ?? None)?.get`
 
 error[E0053]: `Node.get` takes 0 arguments, found 1
    --> E0062-member-on-payload.sisu:166:11
@@ -595,7 +595,7 @@ error[E0062]: `c` may be `None`
 170 |     c.w = 1
     |     ^
     |
-    = help: unwrap it with `if let`, `let ... else` or `?? return`
+    = help: peel the extra layer first: `(c ?? None)?.w`
 
 error[E0001]: cannot assign to `w`
    --> E0062-member-on-payload.sisu:170:5
@@ -611,6 +611,14 @@ help: mark the field `mut`
  10 |     mut w: i64
     |     +++
 
+error[E0062]: `xs` may be `None`
+   --> E0062-member-on-payload.sisu:174:5
+    |
+174 |     xs.push(1)
+    |     ^^
+    |
+    = help: peel the extra layer first: `(xs ?? None)?.push`
+
 error[E0001]: cannot change `xs`
    --> E0062-member-on-payload.sisu:174:5
     |
@@ -621,21 +629,13 @@ error[E0001]: cannot change `xs`
     |
     = help: copy it into a variable: `let mut xs = xs`
 
-error[E0062]: `xs` may be `None`
-   --> E0062-member-on-payload.sisu:174:5
-    |
-174 |     xs.push(1)
-    |     ^^
-    |
-    = help: unwrap it with `if let`, `let ... else` or `?? return`
-
 error[E0062]: `oo` may be `None`
    --> E0062-member-on-payload.sisu:178:11
     |
 178 |     print(oo.get(..) ?? 0)
     |           ^^
     |
-    = help: unwrap it with `if let`, `let ... else` or `?? return`
+    = help: peel the extra layer first: `(oo ?? None)?.get`
 
 error[E0032]: an array's `get` takes an `i64`, not a range
    --> E0062-member-on-payload.sisu:178:18
@@ -651,7 +651,7 @@ error[E0062]: `s` may be `None`
 182 |     s.get(0..1)
     |     ^
     |
-    = help: unwrap it with `if let`, `let ... else` or `?? return`
+    = help: peel the extra layer first: `(s ?? None)?.get`
 
 error[E0062]: `c` may be `None`
    --> E0062-member-on-payload.sisu:186:11
@@ -723,6 +723,18 @@ help: if a `None` result is fine, use `?.`
 214 |     print(b?.inner.q)
     |            +
 
+error[E0063]: `Node` has no field `q`
+   --> E0062-member-on-payload.sisu:214:19
+    |
+214 |     print(b.inner.q)
+    |                   ^
+    |
+help: a field with a similar name exists: `v`
+    |
+214 -     print(b.inner.q)
+214 +     print(b.inner.v)
+    |
+
 error[E0030]: cannot find type `Nope`
    --> E0062-member-on-payload.sisu:217:25
     |
@@ -772,5 +784,5 @@ error[E0023]: `"{nope}".get(..)` has no bounds
     |
     = help: `"{nope}".get(..)` is `Some("{nope}")`
 
-sisu: 82 errors
-sisu: for more on a code, run `sisu explain <code>`: E0001, E0023, E0030, E0032, E0033, E0050, E0053, E0055, E0062, E0154
+sisu: 83 errors
+sisu: for more on a code, run `sisu explain <code>`: E0001, E0023, E0030, E0032, E0033, E0050, E0053, E0055, E0062, E0063, E0154

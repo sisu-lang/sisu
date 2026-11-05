@@ -1,0 +1,49 @@
+// GIVEN a `.` on an optional that starts a chain, in a function for each case
+// AND the rest of the chain checks whether a value is optional, or binds a name to the value
+// WHEN `sisu check` runs on it
+// THEN it reports E0062 alone, as the `?.` fix of E0062 would make the value optional
+// AND it does not report that the value is not optional, and a name bound to it has no type
+class Inner {
+    ys: [i64]
+    v: i64
+}
+
+class Outer {
+    ns: [Inner]
+    inner: Inner
+}
+
+fn safe_after(c: Outer?) {
+    print(c.inner?.v)
+}
+
+fn coalesce(c: Outer?) {
+    print(c.inner.v ?? 0)
+}
+
+fn coalesce_len(o: [i64]?) {
+    print(o.len() ?? 0)
+}
+
+fn iflet_value(c: Outer?) {
+    if let x = c.inner.v { print(x) }
+}
+
+fn let_else(c: Outer?) {
+    let x = c.inner.v else { return }
+}
+
+fn eq_none(c: Outer?) {
+    print(c.inner.v == None)
+}
+
+fn local(c: Outer?) {
+    let x = c.inner
+    x.ys.push("a")
+}
+
+fn for_binding(c: Outer?) {
+    for n in c.ns { n.ys.push("a") }
+}
+
+fn main() {}

@@ -35,6 +35,7 @@ mod strings;
 mod u8;
 mod unused;
 mod unused_names;
+mod unwrapped;
 
 /// The `PARAM_STEPS` that checking the four language interfaces takes, which every test's count
 /// holds: `Self` and one more step for each.
@@ -3733,7 +3734,7 @@ fn optional_self_field_is_reported_at_its_path() {
 /// statement in a body where `m` is an `N?`.
 #[test]
 fn may_be_none_in_an_assignment_target_should_offer_the_fix() {
-    for stmt in ["m.v = 1", "m.v += 1", "m.get().v = 1", "m.o.v = 1"] {
+    for stmt in ["m.v = 1", "m.v += 1", "m.get().v = 1"] {
         let src = format!(
             "class N {{\n    mut v: i64\n    mut items: [i64]\n    o: N?\n    fn get(self) -> N {{\n        self\n    }}\n}}\nfn f(m: N?) {{\n    {stmt}\n}}\nfn main() {{}}"
         );
@@ -3746,6 +3747,33 @@ fn may_be_none_in_an_assignment_target_should_offer_the_fix() {
         // The fixed target must parse.
         applied(&src, &d);
     }
+}
+
+/// `m.o.v = 1` has a second E0062, at the optional field `m.o`, after the one at `m`. Each has
+/// its fix.
+#[test]
+fn may_be_none_in_an_assignment_target_should_offer_the_fix_at_each_optional() {
+    let src =
+        "class N {\n    mut v: i64\n    o: N?\n}\nfn f(m: N?) {\n    m.o.v = 1\n}\nfn main() {}";
+    let found: Vec<_> = diags(src)
+        .iter()
+        .map(|d| (d.code(), at(src, d.span()), fixes(src, d)))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            (
+                Code::MayBeNone,
+                (6, 5),
+                vec![(false, vec![(6, 6, ".", "?.".to_owned())])]
+            ),
+            (
+                Code::MayBeNone,
+                (6, 5),
+                vec![(false, vec![(6, 8, ".", "?.".to_owned())])]
+            ),
+        ]
+    );
 }
 
 /// An optional array has no field to hold an array. A `.` checks the field on the array, so the
@@ -3787,14 +3815,14 @@ fn push_onto_an_optional_array_should_offer_unwrap_help_only_for_a_stored_array(
             "fn f(xs: [i64]?) {\n    xs.push(2)\n}\nfn main() {}",
             (2, 5, "xs"),
             false,
-            &[(Code::AssignToImmutable, (2, 5)), (Code::MayBeNone, (2, 5))],
+            &[(Code::MayBeNone, (2, 5)), (Code::AssignToImmutable, (2, 5))],
         ),
         (
             "immutable local",
             "fn main() {\n    let xs: [i64]? = [1]\n    xs.push(2)\n}",
             (3, 5, "xs"),
             false,
-            &[(Code::AssignToImmutable, (3, 5)), (Code::MayBeNone, (3, 5))],
+            &[(Code::MayBeNone, (3, 5)), (Code::AssignToImmutable, (3, 5))],
         ),
         (
             "field of optional array type",
@@ -3895,7 +3923,6 @@ fn may_be_none_before_an_index_should_have_no_fix() {
         "m.items[0] = 1",
         "m.items[0] += 1",
         "m.get().items[0] = 1",
-        "m.o.items[0] = 1",
         "print(m.items[0])",
         "print(m.get().items[0])",
     ] {
@@ -3906,6 +3933,19 @@ fn may_be_none_before_an_index_should_have_no_fix() {
         let d = diagnostic(&src, Code::MayBeNone, (10, col, "m"), &[]);
         assert!(d.fixes().is_empty(), "{stmt}: {d:?}");
     }
+}
+
+/// `m.o.items[0] = 1` has a second E0062, at the optional field `m.o`. Neither has a fix.
+#[test]
+fn may_be_none_before_an_index_should_have_no_fix_at_each_optional() {
+    let src = "class N {\n    mut items: [i64]\n    o: N?\n}\nfn f(m: N?) {\n    m.o.items[0] = 1\n}\nfn main() {}";
+    let ds = diags(src);
+    let found: Vec<_> = ds.iter().map(|d| (d.code(), at(src, d.span()))).collect();
+    assert_eq!(
+        found,
+        [(Code::MayBeNone, (6, 5)), (Code::MayBeNone, (6, 5))]
+    );
+    assert!(ds.iter().all(|d| d.fixes().is_empty()), "{ds:?}");
 }
 
 /// Inside an assignment target, an argument or an index is an ordinary read, so its own
@@ -4010,6 +4050,11 @@ fn may_be_none_in_and_after_an_assignment_target_should_offer_the_fix() {
                 Code::MayBeNone,
                 (6, 5),
                 vec![(false, vec![(6, 11, ".", "?.".to_owned())])]
+            ),
+            (
+                Code::MayBeNone,
+                (6, 5),
+                vec![(false, vec![(6, 16, ".", "?.".to_owned())])]
             ),
             (
                 Code::MayBeNone,

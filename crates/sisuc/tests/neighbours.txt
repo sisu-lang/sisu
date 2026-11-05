@@ -170,3 +170,7 @@ id(keep($))
 some(keep($))
 id(some(keep($)))
 opt(keep($))
+# A chain on each value: a `.` on an optional goes on with the type of the member (E0062), and a
+# type argument on a method of an optional is checked.
+let _s: string = $.wrap(1)
+print($.none<i64, i64>())

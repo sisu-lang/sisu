@@ -1,0 +1,44 @@
+// GIVEN a `.` on an optional of an optional, in a function for each case
+// AND a `?.` on the same value, which has the same help
+// WHEN `sisu check` runs on it
+// THEN it reports E0062 with no fix, and a help that peels the layers that `?.` does not take
+// AND the `.` says "the extra layers", and the `?.` says "the other layers", with one `?? None` for each
+class Node {
+    v: i64
+    mut ys: [i64]
+    fn get(self) -> i64 { self.v }
+}
+
+fn f1(c: Node??) {
+    print(c.get())
+}
+
+fn f2(c: Node??) {
+    print(c?.get())
+}
+
+fn f3(c: Node??) {
+    c.ys.push(1)
+}
+
+fn f4(c: Node??) {
+    c?.ys.push(1)
+}
+
+fn f5(c: Node??) {
+    c.v = 2
+}
+
+fn f6(xs: [i64]??) {
+    print(xs.len())
+}
+
+fn f7(c: Node???) {
+    print(c?.v)
+}
+
+fn f8(c: Node???) {
+    print(c.v)
+}
+
+fn main() {}

@@ -4,7 +4,7 @@ error[E0062]: `s` may be `None`
 7 |     print(s.get(0..1) ?? "")
   |           ^
   |
-  = help: unwrap it with `if let`, `let ... else` or `?? return`
+  = help: peel the extra layer first: `(s ?? None)?.get`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0062

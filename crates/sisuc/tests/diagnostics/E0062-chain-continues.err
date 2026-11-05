@@ -1,0 +1,929 @@
+error[E0062]: `self.o` may be `None`
+  --> E0062-chain-continues.sisu:24:9
+   |
+24 |         self.o.ys.push("a")
+   |         ^^^^^^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: to do nothing when it is `None`, use `?.`
+   |
+24 |         self.o?.ys.push("a")
+   |               +
+
+error[E0001]: cannot change `ys`
+  --> E0062-chain-continues.sisu:24:9
+   |
+ 7 |     ys: [i64]
+   |     -- declared without `mut` here
+...
+24 |         self.o.ys.push("a")
+   |         ^^^^^^^^^ `push` changes `ys`
+   |
+help: mark the field `mut`
+   |
+ 7 |     mut ys: [i64]
+   |     +++
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-chain-continues.sisu:24:24
+   |
+24 |         self.o.ys.push("a")
+   |                        ^^^
+
+error[E0062]: `self.o` may be `None`
+  --> E0062-chain-continues.sisu:28:25
+   |
+28 |         let s: string = self.o.v
+   |                         ^^^^^^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+28 |         let s: string = self.o?.v
+   |                               +
+
+error[E0032]: expected `string`, found `i64`
+  --> E0062-chain-continues.sisu:28:25
+   |
+28 |         let s: string = self.o.v
+   |                         ^^^^^^^^
+
+error[E0062]: `c` may be `None`
+  --> E0062-chain-continues.sisu:54:5
+   |
+54 |     c.ns[0].ys.push("a")
+   |     ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0001]: cannot change `ys`
+  --> E0062-chain-continues.sisu:54:5
+   |
+ 7 |     ys: [i64]
+   |     -- declared without `mut` here
+...
+54 |     c.ns[0].ys.push("a")
+   |     ^^^^^^^^^^ `push` changes `ys`
+   |
+help: mark the field `mut`
+   |
+ 7 |     mut ys: [i64]
+   |     +++
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-chain-continues.sisu:54:21
+   |
+54 |     c.ns[0].ys.push("a")
+   |                     ^^^
+
+error[E0062]: `c` may be `None`
+  --> E0062-chain-continues.sisu:58:5
+   |
+58 |     c.inner.ys.push("a")
+   |     ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+58 |     c?.inner.ys.push("a")
+   |      +
+
+error[E0001]: cannot change `ys`
+  --> E0062-chain-continues.sisu:58:5
+   |
+ 7 |     ys: [i64]
+   |     -- declared without `mut` here
+...
+58 |     c.inner.ys.push("a")
+   |     ^^^^^^^^^^ `push` changes `ys`
+   |
+help: mark the field `mut`
+   |
+ 7 |     mut ys: [i64]
+   |     +++
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-chain-continues.sisu:58:21
+   |
+58 |     c.inner.ys.push("a")
+   |                     ^^^
+
+error[E0062]: `c` may be `None`
+  --> E0062-chain-continues.sisu:62:5
+   |
+62 |     c.mk().ys.push("a")
+   |     ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+62 |     c?.mk().ys.push("a")
+   |      +
+
+error[E0001]: cannot change `ys`
+  --> E0062-chain-continues.sisu:62:5
+   |
+ 7 |     ys: [i64]
+   |     -- declared without `mut` here
+...
+62 |     c.mk().ys.push("a")
+   |     ^^^^^^^^^ `push` changes `ys`
+   |
+help: mark the field `mut`
+   |
+ 7 |     mut ys: [i64]
+   |     +++
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-chain-continues.sisu:62:20
+   |
+62 |     c.mk().ys.push("a")
+   |                    ^^^
+
+error[E0062]: `c` may be `None`
+  --> E0062-chain-continues.sisu:66:5
+   |
+66 |     c.inner.v = "s"
+   |     ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+66 |     c?.inner.v = "s"
+   |      +
+
+error[E0001]: cannot assign to `v`
+  --> E0062-chain-continues.sisu:66:5
+   |
+ 8 |     v: i64
+   |     - declared without `mut` here
+...
+66 |     c.inner.v = "s"
+   |     ^^^^^^^^^^^^^^^
+   |
+help: mark the field `mut`
+   |
+ 8 |     mut v: i64
+   |     +++
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-chain-continues.sisu:66:17
+   |
+66 |     c.inner.v = "s"
+   |                 ^^^
+
+error[E0062]: `c` may be `None`
+  --> E0062-chain-continues.sisu:70:5
+   |
+70 |     c.inner.v += "s"
+   |     ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+70 |     c?.inner.v += "s"
+   |      +
+
+error[E0001]: cannot assign to `v`
+  --> E0062-chain-continues.sisu:70:5
+   |
+ 8 |     v: i64
+   |     - declared without `mut` here
+...
+70 |     c.inner.v += "s"
+   |     ^^^^^^^^^^^^^^^^
+   |
+help: mark the field `mut`
+   |
+ 8 |     mut v: i64
+   |     +++
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-chain-continues.sisu:70:18
+   |
+70 |     c.inner.v += "s"
+   |                  ^^^
+
+error[E0062]: `c` may be `None`
+  --> E0062-chain-continues.sisu:74:11
+   |
+74 |     print(c.inner.nope)
+   |           ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+74 |     print(c?.inner.nope)
+   |            +
+
+error[E0063]: `Inner` has no field `nope`
+  --> E0062-chain-continues.sisu:74:19
+   |
+74 |     print(c.inner.nope)
+   |                   ^^^^
+
+error[E0062]: `c` may be `None`
+  --> E0062-chain-continues.sisu:78:11
+   |
+78 |     print(c.inner.v.nope())
+   |           ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+78 |     print(c?.inner.v.nope())
+   |            +
+
+error[E0063]: `i64` has no method `nope`
+  --> E0062-chain-continues.sisu:78:21
+   |
+78 |     print(c.inner.v.nope())
+   |                     ^^^^
+
+error[E0062]: `c` may be `None`
+  --> E0062-chain-continues.sisu:82:21
+   |
+82 |     let s: string = c.v
+   |                     ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+82 |     let s: string = c?.v
+   |                      +
+
+error[E0032]: expected `string`, found `i64`
+  --> E0062-chain-continues.sisu:82:21
+   |
+82 |     let s: string = c.v
+   |                     ^^^
+
+error[E0062]: `c` may be `None`
+  --> E0062-chain-continues.sisu:86:21
+   |
+86 |     let s: string = c.inner.v
+   |                     ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+86 |     let s: string = c?.inner.v
+   |                      +
+
+error[E0032]: expected `string`, found `i64`
+  --> E0062-chain-continues.sisu:86:21
+   |
+86 |     let s: string = c.inner.v
+   |                     ^^^^^^^^^
+
+error[E0062]: `c` may be `None`
+  --> E0062-chain-continues.sisu:90:21
+   |
+90 |     let s: string = c.one()
+   |                     ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+90 |     let s: string = c?.one()
+   |                      +
+
+error[E0032]: expected `string`, found `i64`
+  --> E0062-chain-continues.sisu:90:21
+   |
+90 |     let s: string = c.one()
+   |                     ^^^^^^^
+
+error[E0062]: `c` may be `None`
+  --> E0062-chain-continues.sisu:94:5
+   |
+94 |     c.oa.push(1)
+   |     ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: to do nothing when it is `None`, use `?.`
+   |
+94 |     c?.oa.push(1)
+   |      +
+
+error[E0062]: `c.oa` may be `None`
+  --> E0062-chain-continues.sisu:94:5
+   |
+94 |     c.oa.push(1)
+   |     ^^^^
+   |
+help: to do nothing when it is `None`, use `?.`
+   |
+94 |     c.oa?.push(1)
+   |         +
+
+error[E0001]: cannot change `oa`
+  --> E0062-chain-continues.sisu:94:5
+   |
+17 |     oa: [i64]?
+   |     -- declared without `mut` here
+...
+94 |     c.oa.push(1)
+   |     ^^^^ `push` changes `oa`
+   |
+help: mark the field `mut`
+   |
+17 |     mut oa: [i64]?
+   |     +++
+
+error[E0062]: `c.oa` may be `None`
+  --> E0062-chain-continues.sisu:98:5
+   |
+98 |     c.oa.push(1)
+   |     ^^^^
+   |
+help: to do nothing when it is `None`, use `?.`
+   |
+98 |     c.oa?.push(1)
+   |         +
+
+error[E0001]: cannot change `oa`
+  --> E0062-chain-continues.sisu:98:5
+   |
+17 |     oa: [i64]?
+   |     -- declared without `mut` here
+...
+98 |     c.oa.push(1)
+   |     ^^^^ `push` changes `oa`
+   |
+help: mark the field `mut`
+   |
+17 |     mut oa: [i64]?
+   |     +++
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:102:14
+    |
+102 |     bump(mut c.tally.count)
+    |              ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+102 |     bump(mut c?.tally.count)
+    |               +
+
+error[E0169]: a `mut` argument must be a place: a variable, a `mut` field, or an element of one of these
+   --> E0062-chain-continues.sisu:102:14
+    |
+ 33 |     count: i64
+    |     ----- declared without `mut` here
+...
+102 |     bump(mut c.tally.count)
+    |              ^^^^^^^^^^^^^ not a place
+    |
+    = help: declare the field `count` as `mut`
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:106:14
+    |
+106 |     for n in c.inner.v { print(n) }
+    |              ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+106 |     for n in c?.inner.v { print(n) }
+    |               +
+
+error[E0035]: `for` needs an array or a range; this is `i64`
+   --> E0062-chain-continues.sisu:106:14
+    |
+106 |     for n in c.inner.v { print(n) }
+    |              ^^^^^^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:110:8
+    |
+110 |     if c.v { print(1) }
+    |        ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+110 |     if c?.v { print(1) }
+    |         +
+
+error[E0032]: expected `bool`, found `i64`
+   --> E0062-chain-continues.sisu:110:8
+    |
+110 |     if c.v { print(1) }
+    |        ^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:114:11
+    |
+114 |     print(c.one<i64>())
+    |           ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+114 |     print(c?.one<i64>())
+    |            +
+
+error[E0137]: `one` takes no type arguments
+   --> E0062-chain-continues.sisu:114:16
+    |
+114 |     print(c.one<i64>())
+    |                ^^^^^
+    |
+help: remove the type arguments
+    |
+114 -     print(c.one<i64>())
+114 +     print(c.one())
+    |
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:118:11
+    |
+118 |     print(c.inner.one<i64>())
+    |           ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+118 |     print(c?.inner.one<i64>())
+    |            +
+
+error[E0137]: `one` takes no type arguments
+   --> E0062-chain-continues.sisu:118:22
+    |
+118 |     print(c.inner.one<i64>())
+    |                      ^^^^^
+    |
+help: remove the type arguments
+    |
+118 -     print(c.inner.one<i64>())
+118 +     print(c.inner.one())
+    |
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:122:11
+    |
+122 |     print(c.m<i64>())
+    |           ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+122 |     print(c?.m<i64>())
+    |            +
+
+error[E0137]: `m` takes no type arguments
+   --> E0062-chain-continues.sisu:122:14
+    |
+122 |     print(c.m<i64>())
+    |              ^^^^^
+    |
+help: remove the type arguments
+    |
+122 -     print(c.m<i64>())
+122 +     print(c.m())
+    |
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:126:11
+    |
+126 |     print(c.len<i64>())
+    |           ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+126 |     print(c?.len<i64>())
+    |            +
+
+error[E0137]: `len` takes no type arguments
+   --> E0062-chain-continues.sisu:126:16
+    |
+126 |     print(c.len<i64>())
+    |                ^^^^^
+    |
+help: remove the type arguments
+    |
+126 -     print(c.len<i64>())
+126 +     print(c.len())
+    |
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:130:11
+    |
+130 |     print(c.len<i64>())
+    |           ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+130 |     print(c?.len<i64>())
+    |            +
+
+error[E0137]: `len` takes no type arguments
+   --> E0062-chain-continues.sisu:130:16
+    |
+130 |     print(c.len<i64>())
+    |                ^^^^^
+    |
+help: remove the type arguments
+    |
+130 -     print(c.len<i64>())
+130 +     print(c.len())
+    |
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:134:11
+    |
+134 |     print(c.gen<i64, i64>(1))
+    |           ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+134 |     print(c?.gen<i64, i64>(1))
+    |            +
+
+error[E0137]: `gen` takes 1 type argument, but 2 were given
+   --> E0062-chain-continues.sisu:134:16
+    |
+134 |     print(c.gen<i64, i64>(1))
+    |                ^^^^^^^^^^
+
+error[E0137]: `c.v` is not generic
+   --> E0062-chain-continues.sisu:138:11
+    |
+138 |     print(c.v<i64>())
+    |           ^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:142:11
+    |
+142 |     match c.inner.v { "a" => print(1); _ => print(2) }
+    |           ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+142 |     match c?.inner.v { "a" => print(1); _ => print(2) }
+    |            +
+
+error[E0032]: expected a pattern for `i64`, found `"a"`
+   --> E0062-chain-continues.sisu:142:23
+    |
+142 |     match c.inner.v { "a" => print(1); _ => print(2) }
+    |                       ^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:146:16
+    |
+146 |     if let x = c.inner.nope {}
+    |                ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+146 |     if let x = c?.inner.nope {}
+    |                 +
+
+error[E0063]: `Inner` has no field `nope`
+   --> E0062-chain-continues.sisu:146:24
+    |
+146 |     if let x = c.inner.nope {}
+    |                        ^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:150:11
+    |
+150 |     print(c.inner.nope ?? 0)
+    |           ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+150 |     print(c?.inner.nope ?? 0)
+    |            +
+
+error[E0063]: `Inner` has no field `nope`
+   --> E0062-chain-continues.sisu:150:19
+    |
+150 |     print(c.inner.nope ?? 0)
+    |                   ^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:154:13
+    |
+154 |     print("{c.inner.nope}")
+    |             ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+154 |     print("{c?.inner.nope}")
+    |              +
+
+error[E0063]: `Inner` has no field `nope`
+   --> E0062-chain-continues.sisu:154:21
+    |
+154 |     print("{c.inner.nope}")
+    |                     ^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:158:18
+    |
+158 |     takes_string(c.inner.v)
+    |                  ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+158 |     takes_string(c?.inner.v)
+    |                   +
+
+error[E0032]: expected `string`, found `i64`
+   --> E0062-chain-continues.sisu:158:18
+    |
+158 |     takes_string(c.inner.v)
+    |                  ^^^^^^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:162:12
+    |
+162 |     return c.inner.v
+    |            ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+162 |     return c?.inner.v
+    |             +
+
+error[E0032]: expected `string`, found `i64`
+   --> E0062-chain-continues.sisu:162:12
+    |
+162 |     return c.inner.v
+    |            ^^^^^^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:166:5
+    |
+166 |     c.ns[0].v -= "a"
+    |     ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0001]: cannot assign to `v`
+   --> E0062-chain-continues.sisu:166:5
+    |
+  8 |     v: i64
+    |     - declared without `mut` here
+...
+166 |     c.ns[0].v -= "a"
+    |     ^^^^^^^^^^^^^^^^
+    |
+help: mark the field `mut`
+    |
+  8 |     mut v: i64
+    |     +++
+
+error[E0032]: expected `i64`, found `string`
+   --> E0062-chain-continues.sisu:166:18
+    |
+166 |     c.ns[0].v -= "a"
+    |                  ^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:170:5
+    |
+170 |     c.mk().one().nope()
+    |     ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+170 |     c?.mk().one().nope()
+    |      +
+
+error[E0063]: `i64` has no method `nope`
+   --> E0062-chain-continues.sisu:170:18
+    |
+170 |     c.mk().one().nope()
+    |                  ^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:174:21
+    |
+174 |     let s: string = c.mk().one()
+    |                     ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+174 |     let s: string = c?.mk().one()
+    |                      +
+
+error[E0032]: expected `string`, found `i64`
+   --> E0062-chain-continues.sisu:174:21
+    |
+174 |     let s: string = c.mk().one()
+    |                     ^^^^^^^^^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:178:5
+    |
+178 |     c.inner.ys.push("a")
+    |     ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+178 |     c?.inner.ys.push("a")
+    |      +
+
+error[E0001]: cannot change `ys`
+   --> E0062-chain-continues.sisu:178:5
+    |
+  7 |     ys: [i64]
+    |     -- declared without `mut` here
+...
+178 |     c.inner.ys.push("a")
+    |     ^^^^^^^^^^ `push` changes `ys`
+    |
+help: mark the field `mut`
+    |
+  7 |     mut ys: [i64]
+    |     +++
+
+error[E0032]: expected `i64`, found `string`
+   --> E0062-chain-continues.sisu:178:21
+    |
+178 |     c.inner.ys.push("a")
+    |                     ^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:182:21
+    |
+182 |     let s: string = c.v
+    |                     ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+182 |     let s: string = c?.v
+    |                      +
+
+error[E0032]: expected `string`, found `i64`
+   --> E0062-chain-continues.sisu:182:21
+    |
+182 |     let s: string = c.v
+    |                     ^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:186:5
+    |
+186 |     c.inner.ys.push("a")
+    |     ^
+    |
+    = help: peel the extra layer first: `(c ?? None)?.inner`
+
+error[E0001]: cannot change `ys`
+   --> E0062-chain-continues.sisu:186:5
+    |
+  7 |     ys: [i64]
+    |     -- declared without `mut` here
+...
+186 |     c.inner.ys.push("a")
+    |     ^^^^^^^^^^ `push` changes `ys`
+    |
+help: mark the field `mut`
+    |
+  7 |     mut ys: [i64]
+    |     +++
+
+error[E0032]: expected `i64`, found `string`
+   --> E0062-chain-continues.sisu:186:21
+    |
+186 |     c.inner.ys.push("a")
+    |                     ^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:190:21
+    |
+190 |     let s: string = c.v
+    |                     ^
+    |
+    = help: peel the extra layer first: `(c ?? None)?.v`
+
+error[E0032]: expected `string`, found `i64`
+   --> E0062-chain-continues.sisu:190:21
+    |
+190 |     let s: string = c.v
+    |                     ^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:194:18
+    |
+194 |     let k: i64 = c.name()
+    |                  ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+194 |     let k: i64 = c?.name()
+    |                   +
+
+error[E0032]: expected `i64`, found `string`
+   --> E0062-chain-continues.sisu:194:18
+    |
+194 |     let k: i64 = c.name()
+    |                  ^^^^^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:198:5
+    |
+198 |     c.name().nope()
+    |     ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+198 |     c?.name().nope()
+    |      +
+
+error[E0063]: `string` has no method `nope`
+   --> E0062-chain-continues.sisu:198:14
+    |
+198 |     c.name().nope()
+    |              ^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:202:21
+    |
+202 |     let s: string = c.oa
+    |                     ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+202 |     let s: string = c?.oa
+    |                      +
+
+error[E0032]: expected `string`, found `[i64]?`
+   --> E0062-chain-continues.sisu:202:21
+    |
+202 |     let s: string = c.oa
+    |                     ^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:206:11
+    |
+206 |     print(c.oa.len())
+    |           ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+206 |     print(c?.oa.len())
+    |            +
+
+error[E0062]: `c.oa` may be `None`
+   --> E0062-chain-continues.sisu:206:11
+    |
+206 |     print(c.oa.len())
+    |           ^^^^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+206 |     print(c.oa?.len())
+    |               +
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:210:11
+    |
+210 |     print(c.inner.v + "s")
+    |           ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+210 |     print(c?.inner.v + "s")
+    |            +
+
+error[E0032]: expected `string`, found `i64`
+   --> E0062-chain-continues.sisu:210:11
+    |
+210 |     print(c.inner.v + "s")
+    |           ^^^^^^^^^   --- `+` joins this `string`
+    |
+help: use interpolation
+    |
+210 -     print(c.inner.v + "s")
+210 +     print("{c.inner.v}s")
+    |
+
+sisu: 93 errors
+sisu: for more on a code, run `sisu explain <code>`: E0001, E0032, E0035, E0062, E0063, E0137, E0169

@@ -1,0 +1,98 @@
+error[E0062]: `c` may be `None`
+  --> E0062-chain-no-cascade.sisu:17:11
+   |
+17 |     print(c.inner?.v)
+   |           ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+17 |     print(c?.inner?.v)
+   |            +
+
+error[E0062]: `c` may be `None`
+  --> E0062-chain-no-cascade.sisu:21:11
+   |
+21 |     print(c.inner.v ?? 0)
+   |           ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+21 |     print(c?.inner.v ?? 0)
+   |            +
+
+error[E0062]: `o` may be `None`
+  --> E0062-chain-no-cascade.sisu:25:11
+   |
+25 |     print(o.len() ?? 0)
+   |           ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+25 |     print(o?.len() ?? 0)
+   |            +
+
+error[E0062]: `c` may be `None`
+  --> E0062-chain-no-cascade.sisu:29:16
+   |
+29 |     if let x = c.inner.v { print(x) }
+   |                ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+29 |     if let x = c?.inner.v { print(x) }
+   |                 +
+
+error[E0062]: `c` may be `None`
+  --> E0062-chain-no-cascade.sisu:33:13
+   |
+33 |     let x = c.inner.v else { return }
+   |             ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+33 |     let x = c?.inner.v else { return }
+   |              +
+
+error[E0062]: `c` may be `None`
+  --> E0062-chain-no-cascade.sisu:37:11
+   |
+37 |     print(c.inner.v == None)
+   |           ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+37 |     print(c?.inner.v == None)
+   |            +
+
+error[E0062]: `c` may be `None`
+  --> E0062-chain-no-cascade.sisu:41:13
+   |
+41 |     let x = c.inner
+   |             ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+41 |     let x = c?.inner
+   |              +
+
+error[E0062]: `c` may be `None`
+  --> E0062-chain-no-cascade.sisu:46:14
+   |
+46 |     for n in c.ns { n.ys.push("a") }
+   |              ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+46 |     for n in c?.ns { n.ys.push("a") }
+   |               +
+
+sisu: 8 errors
+sisu: for more on a code, run `sisu explain <code>`: E0062

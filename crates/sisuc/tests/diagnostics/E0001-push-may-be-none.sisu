@@ -2,7 +2,7 @@
 // AND the array that it changes is in a field without `mut`
 // WHEN `sisu check` runs on it
 // THEN it reports E0001 for the write and E0062 for the `None`, as the `?.` form does
-// AND the E0001 of a `.` comes after its E0062, and the safe fix marks the field `mut`
+// AND each E0062 comes before the E0001 at its start, in the `.` and `?.` forms, and the safe fix marks the field `mut`
 class Node {
     mut v: i64
     w: i64
