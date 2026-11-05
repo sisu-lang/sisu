@@ -954,7 +954,9 @@ impl Gen<'_> {
         let size = self.loop_stmt(Some(Value {
             ty: ty.clone(),
             max,
-            synth,
+            // Below a later branch of an untyped `if`, the checker may give no expected type to a
+            // `break` of an optional: `break None` needs one, so the value is self-typed.
+            synth: synth || (self.untyped_branch && matches!(ty, Ty::Optional(_))),
         }));
         self.close_block();
         self.w.text(")");

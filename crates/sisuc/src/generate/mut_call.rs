@@ -391,7 +391,7 @@ mod tests {
     use super::{Adds, Gen, Kind, PLACE_STEPS, Place, Ty, Want, placeable};
     use crate::generate::DEPTHS;
     use crate::generate::MAX_LOOPS;
-    use crate::generate::coverage::seed;
+    use crate::generate::coverage::{search_seeds, seed};
     use crate::generate::scope::{Func, Var};
     use crate::generate::stmt::{MAX_BLOCKS, MutUse};
     use arbitrary::Unstructured;
@@ -579,7 +579,7 @@ mod tests {
     fn a_mut_call_should_not_copy_a_local_that_an_argument_assigns() {
         const ASSIGNS: [&str; 6] = [" = ", " += ", " -= ", " *= ", " /= ", " %= "];
         let (mut assigns, mut kept) = (0, 0);
-        for n in 0..256 {
+        search_seeds(256, |n| {
             let data = seed(n);
             let mut g = gen_with_local(&data, Ty::I64, (0, 0), Adds::default());
             g.scope.vars[0].name = "outer".to_string();
@@ -598,7 +598,8 @@ mod tests {
             } else if copied {
                 kept += 1;
             }
-        }
+            assigns > 0 && kept > 0
+        });
         assert!(assigns > 0 && kept > 0, "{assigns} assign, {kept} copied");
     }
 
@@ -826,8 +827,9 @@ mod tests {
     /// THEN it never calls `f2`, and it calls `f1` for some seeds and not for others
     #[test]
     fn mut_epilogue_should_call_a_function_with_a_mut_parameter_now_and_then() {
-        let (mut called, mut skipped) = (0, 0);
-        for n in 0..64 {
+        // The counts read the first 64 seeds. The search for a skipped epilogue reads on.
+        let (mut called, mut skipped, mut skipped_any) = (0, 0, false);
+        search_seeds(64, |n| {
             let data = seed(n);
             let mut g = gen_with_local(&data, Ty::I64, (0, 0), Adds::default());
             g.mu = Unstructured::new(&data);
@@ -844,12 +846,14 @@ mod tests {
             let program = &g.w.out.program;
             assert!(!program.contains("f2("), "seed {n}: {program}");
             if program.contains("f1(") {
-                called += 1;
+                called += u64::from(n < 64);
             } else {
-                skipped += 1;
+                skipped += u64::from(n < 64);
+                skipped_any = true;
             }
-        }
-        assert!(called > skipped && skipped > 0, "{called} {skipped}");
+            skipped_any
+        });
+        assert!(called > skipped && skipped_any, "{called} {skipped}");
     }
 
     /// GIVEN a function with a `mut` array parameter that adds growth, and a local array with
@@ -881,15 +885,19 @@ mod tests {
     /// THEN a `mut` call or an `exchange` follows for some seeds, and for fewer than half
     #[test]
     fn mut_statement_should_follow_about_one_statement_in_three() {
-        let (mut written, total) = (0_u64, 192);
-        for n in 0..total {
+        // The count reads the first `total` seeds. The search for a written statement reads on.
+        let (mut written, total, mut written_any) = (0_u64, 192, false);
+        search_seeds(total, |n| {
             let data = seed(n);
             let mut g = gen_with_local(&[], Ty::I64, (0, 0), Adds::default());
             g.mu = Unstructured::new(&data);
             g.mut_statement();
-            written += u64::from(!g.w.out.program.is_empty());
-        }
-        assert!(written > 0 && written * 2 < total, "{written} of {total}");
+            let is_written = !g.w.out.program.is_empty();
+            written += u64::from(is_written && n < total);
+            written_any |= is_written;
+            written_any
+        });
+        assert!(written_any && written * 2 < total, "{written} of {total}");
     }
 
     /// GIVEN a `mut` parameter `string` of `v1`
@@ -911,8 +919,9 @@ mod tests {
     /// mutant of the draw 157 and 139
     #[test]
     fn a_statement_of_a_mut_function_should_rarely_be_a_mut_call() {
+        // `least` is over `SEARCH_SEEDS`, so the search reads no seed past the counts.
         let (mut calls, mut prints) = (0_u64, 0_u64);
-        for n in 0..2048 {
+        search_seeds(2048, |n| {
             let data = seed(n);
             let mut g = gen_with_local(&data, Ty::I64, (0, 0), Adds::default());
             g.mut_fn = true;
@@ -921,7 +930,8 @@ mod tests {
             g.stmt();
             calls += u64::from(g.w.out.program.contains("f1("));
             prints += u64::from(g.w.out.program.trim_start().starts_with("print("));
-        }
+            calls > 0
+        });
         assert!(
             calls > 0 && calls * 2 < prints,
             "{calls} calls, {prints} prints"
