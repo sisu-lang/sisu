@@ -416,7 +416,8 @@ mod tests {
     }
 
     /// A safe fix that deletes up to a token is unsafe when a comment or a stray character lies in
-    /// what it deletes: the rule behind it sees only tokens.
+    /// what it deletes: the rule behind it sees only tokens. The fixes of the parser and of the
+    /// checker stop at a comment, so a comment does not make them unsafe; a stray character does.
     #[test]
     fn a_safe_fix_should_be_unsafe_when_it_deletes_a_comment_or_a_lexer_error() {
         for (src, code, safe) in [
@@ -427,11 +428,11 @@ mod tests {
                 Code::MutSelf,
                 true,
             ),
-            // The checker's fix of an extension method still reaches `self`.
+            // The checker's fix of an extension method stops at the comment too.
             (
                 "class C {}\n\nextend C {\n    fn f(mut // c\n        self) {}\n}\n",
                 Code::MutSelf,
-                false,
+                true,
             ),
             (
                 "class C {\n    fn f(mut $ self) {}\n}\n",
@@ -441,7 +442,12 @@ mod tests {
             (
                 "fn main() {\n    let mut // c\n        n = 0\n    print(n)\n}\n",
                 Code::NeverReassigned,
-                false,
+                true,
+            ),
+            (
+                "fn main() {\n    let mut // c\n    _ = 1\n}\n",
+                Code::MutOnUnderscore,
+                true,
             ),
             ("fn main() {\n    todo!$()\n}\n", Code::TodoForm, false),
         ] {
@@ -451,6 +457,315 @@ mod tests {
                 .find(|d| d.code() == code)
                 .expect("the diagnostic should be reported");
             assert_eq!(fix_edits(d).map(|(s, _)| s), Some(safe), "{src}");
+        }
+    }
+
+    /// The text of `src` after the one fix of the first diagnostic of `code`, and whether the fix
+    /// is safe once `sound_fixes` judged it.
+    fn fixed(src: &str, code: Code) -> (String, bool) {
+        let ds = sound_fixes(src, &front_end(src).1);
+        let d = ds
+            .iter()
+            .find(|d| d.code() == code)
+            .unwrap_or_else(|| panic!("{code:?} should be reported for:\n{src}"));
+        let (safe, _) = fix_edits(d).expect("the diagnostic should have a fix");
+        (apply_fix(src, d), safe)
+    }
+
+    /// `body` as the body of `main`.
+    fn in_main(body: &str) -> String {
+        format!("fn main() {{\n{body}\n}}\n")
+    }
+
+    /// `arms` after the arm `1 => print(1)` of a `match` on an `i64`, and before `_ => print(3)`.
+    fn in_match(arms: &str) -> String {
+        in_main(&format!(
+            "    let x = 1\n    match x {{\n        1 => print(1)\n{arms}\n        _ => print(3)\n    }}"
+        ))
+    }
+
+    /// `arms` as the arms of a `match` on an `i64?` in `f`, which `main` calls.
+    fn in_optional_match(arms: &str) -> String {
+        format!(
+            "fn f(o: i64?) {{\n    match o {{\n{arms}\n        _ => print(3)\n    }}\n}}\n\nfn main() {{\n    f(None)\n}}\n"
+        )
+    }
+
+    /// The program with an `extend` method `fn bump({params}) {{ self.n = 1 }}`.
+    fn in_extend(params: &str) -> String {
+        format!(
+            "class C {{\n    mut n: i64\n}}\n\nextend C {{\n    fn bump({params}) {{\n        self.n = 1\n    }}\n}}\n\nfn main() {{\n    let c = C(n: 0)\n    c.bump()\n    print(c.n)\n}}\n"
+        )
+    }
+
+    /// GIVEN each fix of the checker that removes a keyword, a label or an alternative, with a
+    /// comment in the gap before the next token
+    /// WHEN the fix is applied after `sound_fixes`
+    /// THEN the removal ends where the comment starts, so the fix keeps the comment and, but for
+    /// W0006, stays safe
+    #[test]
+    #[expect(clippy::too_many_lines, reason = "one row of the table for each case")]
+    fn a_checker_removal_should_keep_a_comment_in_its_gap() {
+        let rows = [
+            // W0002 of a `let mut`: the `Binding` path, then the `Pending` path of a body with an
+            // error, then a nested block, two comments, a touching `mut` and a `let ... else`.
+            (
+                in_main("    let mut // c\n    x = 1\n    print(x)"),
+                Code::NeverReassigned,
+                in_main("    let // c\n    x = 1\n    print(x)"),
+                true,
+            ),
+            (
+                in_main("    let mut // c\n    x = 1\n    let y: i64 = \"a\""),
+                Code::NeverReassigned,
+                in_main("    let // c\n    x = 1\n    let y: i64 = \"a\""),
+                true,
+            ),
+            (
+                in_main("    if true {\n        let mut // c\n        x = 1\n        print(x)\n    }"),
+                Code::NeverReassigned,
+                in_main("    if true {\n        let // c\n        x = 1\n        print(x)\n    }"),
+                true,
+            ),
+            (
+                in_main("    let mut // a\n    // b\n    x = 1\n    print(x)"),
+                Code::NeverReassigned,
+                in_main("    let // a\n    // b\n    x = 1\n    print(x)"),
+                true,
+            ),
+            (
+                in_main("    let mut// c\n    x = 1\n    print(x)"),
+                Code::NeverReassigned,
+                in_main("    let // c\n    x = 1\n    print(x)"),
+                true,
+            ),
+            (
+                "fn f(o: i64?) {\n    let mut // c\n    x = o else { return }\n    print(x)\n}\n\nfn main() {\n    f(1)\n}\n".to_string(),
+                Code::NeverReassigned,
+                "fn f(o: i64?) {\n    let // c\n    x = o else { return }\n    print(x)\n}\n\nfn main() {\n    f(1)\n}\n".to_string(),
+                true,
+            ),
+            // W0008 of a label, before each kind of loop, nested, with two comments and a
+            // touching `:`.
+            (
+                in_main("    outer: // c\n    loop {\n        break\n    }"),
+                Code::UnusedLabel,
+                in_main("    // c\n    loop {\n        break\n    }"),
+                true,
+            ),
+            (
+                in_main("    outer: // c\n    while true {\n        break\n    }"),
+                Code::UnusedLabel,
+                in_main("    // c\n    while true {\n        break\n    }"),
+                true,
+            ),
+            (
+                in_main("    let o: i64? = None\n    outer: // c\n    while let Some(x) = o {\n        print(x)\n    }"),
+                Code::UnusedLabel,
+                in_main("    let o: i64? = None\n    // c\n    while let Some(x) = o {\n        print(x)\n    }"),
+                true,
+            ),
+            (
+                in_main("    outer: // c\n    for i in 0..3 {\n        print(i)\n    }"),
+                Code::UnusedLabel,
+                in_main("    // c\n    for i in 0..3 {\n        print(i)\n    }"),
+                true,
+            ),
+            (
+                in_main("    loop {\n        inner: // c\n        loop {\n            break\n        }\n        break\n    }"),
+                Code::UnusedLabel,
+                in_main("    loop {\n        // c\n        loop {\n            break\n        }\n        break\n    }"),
+                true,
+            ),
+            (
+                in_main("    outer: // a\n    // b\n    loop {\n        break\n    }"),
+                Code::UnusedLabel,
+                in_main("    // a\n    // b\n    loop {\n        break\n    }"),
+                true,
+            ),
+            (
+                in_main("    outer:// c\n    loop {\n        break\n    }"),
+                Code::UnusedLabel,
+                in_main("    // c\n    loop {\n        break\n    }"),
+                true,
+            ),
+            // E0018 of an extension method: the receiver on the next line, touching, and with a
+            // second parameter.
+            (
+                in_extend("mut // c\n        self"),
+                Code::MutSelf,
+                in_extend("// c\n        self"),
+                true,
+            ),
+            (
+                in_extend("mut// c\n        self"),
+                Code::MutSelf,
+                in_extend("// c\n        self"),
+                true,
+            ),
+            (
+                in_extend("mut // c\n        self, k: i64"),
+                Code::MutSelf,
+                in_extend("// c\n        self, k: i64"),
+                true,
+            ),
+            // W0006 of an alternative stays unsafe. The first one removes forward and stops at the
+            // comment. A later one removes forward, when a comment lies before it and another
+            // alternative follows.
+            (
+                in_match("        1 | // c\n        2 => print(2)"),
+                Code::UnreachableArm,
+                in_match("        // c\n        2 => print(2)"),
+                false,
+            ),
+            (
+                in_match("        1 |// c\n        2 => print(2)"),
+                Code::UnreachableArm,
+                in_match("        // c\n        2 => print(2)"),
+                false,
+            ),
+            (
+                in_match("        1 | // a\n        // b\n        2 => print(2)"),
+                Code::UnreachableArm,
+                in_match("        // a\n        // b\n        2 => print(2)"),
+                false,
+            ),
+            (
+                in_match("        2 | // c\n        1 | 3 => print(2)"),
+                Code::UnreachableArm,
+                in_match("        2 | // c\n        3 => print(2)"),
+                false,
+            ),
+            (
+                in_optional_match("        Some(1) => print(1)\n        Some(1 | // c\n            2) => print(2)"),
+                Code::UnreachableArm,
+                in_optional_match("        Some(1) => print(1)\n        Some(// c\n            2) => print(2)"),
+                false,
+            ),
+        ];
+        for (src, code, want, safe) in rows {
+            assert_eq!(fixed(&src, code), (want, safe), "{src}");
+        }
+    }
+
+    /// GIVEN each site of the last test with no comment in the gap, a comment outside the gap, a
+    /// comment that W0006 cannot keep, and the alternatives and arms that the cut leaves alone
+    /// WHEN the fix is applied after `sound_fixes`
+    /// THEN the text and the safety are as before: the removal reaches the next token, and the
+    /// side of an alternative's removal does not change
+    #[test]
+    #[expect(clippy::too_many_lines, reason = "one row of the table for each case")]
+    fn a_checker_removal_with_no_comment_in_its_gap_should_reach_the_next_token() {
+        let rows = [
+            (
+                in_main("    let mut x = 1\n    print(x)"),
+                Code::NeverReassigned,
+                in_main("    let x = 1\n    print(x)"),
+                true,
+            ),
+            (
+                in_main("    let mut\n    x = 1\n    print(x)"),
+                Code::NeverReassigned,
+                in_main("    let x = 1\n    print(x)"),
+                true,
+            ),
+            (
+                in_main("    // before\n    let mut x = 1 // after\n    print(x)"),
+                Code::NeverReassigned,
+                in_main("    // before\n    let x = 1 // after\n    print(x)"),
+                true,
+            ),
+            (
+                in_main("    outer: loop {\n        break\n    }"),
+                Code::UnusedLabel,
+                in_main("    loop {\n        break\n    }"),
+                true,
+            ),
+            (
+                in_main("    // before\n    outer:\n    loop { // after\n        break\n    }"),
+                Code::UnusedLabel,
+                in_main("    // before\n    loop { // after\n        break\n    }"),
+                true,
+            ),
+            (
+                in_extend("mut\n        self"),
+                Code::MutSelf,
+                in_extend("self"),
+                true,
+            ),
+            (
+                in_extend("mut self"),
+                Code::MutSelf,
+                in_extend("self"),
+                true,
+            ),
+            // W0006: a later alternative removes backward, so `|` goes with it, whatever the white
+            // space is on its two sides.
+            (
+                in_match("        2 | 1 | 3 => print(2)"),
+                Code::UnreachableArm,
+                in_match("        2 | 3 => print(2)"),
+                false,
+            ),
+            (
+                in_match("        2 |1 | 3 => print(2)"),
+                Code::UnreachableArm,
+                in_match("        2 | 3 => print(2)"),
+                false,
+            ),
+            (
+                in_match("        2 | 1 |\n            3 => print(2)"),
+                Code::UnreachableArm,
+                in_match("        2 |\n            3 => print(2)"),
+                false,
+            ),
+            // A comment after the alternative, not before it, stays after a backward removal.
+            (
+                in_match("        2 | 1 | // c\n        3 => print(2)"),
+                Code::UnreachableArm,
+                in_match("        2 | // c\n        3 => print(2)"),
+                false,
+            ),
+            // The last alternative with a comment before it: no edit keeps the comment and
+            // parses, so the removal is backward, as it was, and the comment goes.
+            (
+                in_optional_match(
+                    "        None | // c\n        None => print(1)\n        Some(_) => print(2)",
+                ),
+                Code::UnreachableArm,
+                in_optional_match("        None => print(1)\n        Some(_) => print(2)"),
+                false,
+            ),
+            (
+                in_optional_match(
+                    "        Some(1) => print(1)\n        Some(2 | // c\n            1) => print(2)",
+                ),
+                Code::UnreachableArm,
+                in_optional_match("        Some(1) => print(1)\n        Some(2) => print(2)"),
+                false,
+            ),
+            // A whole arm is not cut at a comment.
+            (
+                in_main(
+                    "    let x = 1\n    match x {\n        1 => print(1)\n        1 => { // c\n            print(1)\n        }; _ => print(2)\n    }",
+                ),
+                Code::UnreachableArm,
+                in_main(
+                    "    let x = 1\n    match x {\n        1 => print(1)\n        _ => print(2)\n    }",
+                ),
+                false,
+            ),
+            (
+                in_main(
+                    "    let x = 1\n    match x {\n1 => print(1)\n1 => print(1) // c\n_ => print(2)\n    }",
+                ),
+                Code::UnreachableArm,
+                in_main("    let x = 1\n    match x {\n1 => print(1)\n_ => print(2)\n    }"),
+                false,
+            ),
+        ];
+        for (src, code, want, safe) in rows {
+            assert_eq!(fixed(&src, code), (want, safe), "{src}");
         }
     }
 

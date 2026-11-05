@@ -8125,7 +8125,8 @@ mod tests {
     /// THEN each edit ends where the comment starts, so the fix keeps the comment
     #[test]
     fn a_removal_should_keep_a_comment_in_its_gap() {
-        let rows: [(&str, &[&str]); 8] = [
+        let rows: [(&str, &[&str]); 9] = [
+            ("fn main() {\n    let mut // c\n    _ = 1\n}", &["mut "]),
             (
                 "fn main() {\n    match e {\n        E.P(x: // c\n            a, y: b) => print(a)\n    }\n}",
                 &["x: ", "y: "],
@@ -8163,7 +8164,11 @@ mod tests {
     /// nothing
     #[test]
     fn a_removal_with_no_comment_in_its_gap_should_reach_the_next_token() {
-        let rows: [(&str, &[&str]); 7] = [
+        let rows: [(&str, &[&str]); 8] = [
+            (
+                "fn main() {\n    // before\n    let mut\n    _ = 1 // later\n}",
+                &["mut\n    "],
+            ),
             (
                 "fn main() {\n    match e {\n        // before\n        E.P(x:\n            a, y: b) => print(a) // later\n    }\n}",
                 &["x:\n            ", "y: "],
