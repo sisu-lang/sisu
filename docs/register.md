@@ -57,6 +57,7 @@ are GitHub issues.
 | The fuzzer copies the checker's conversion rules by hand, and keeps its own list of prelude functions that have no effect and cannot panic. It passes its context in the `synth`, `typed`, `bare`, `leaves` and `untyped_branch` flags. | `generate::coverage` (`CONVERSIONS`, `PURE_PRELUDE`); `generate::Gen` | Number types |
 | The checker uses its five name maps directly in about 80 places, and no lookup function hides them. | `check` (`function_ids`, `class_ids`, `enum_ids`, `interface_ids`, `constants`) | Milestone 11, Task 0 |
 | A function's identity is its display name (`"main"`). | `mir::params`, `mir` (`f.name == "main"`) | Milestone 11 or the C FFI |
+| The checker's type walks keep their seen sets for one field, scan or declaration only. So `m` fields that each name one alias of `k` distinct types cost `m * k` steps. `k` aliases in a binary tree and `k` enums that each hold its root take 0.06 s at `k` = 1,000 and 1.0 s at `k` = 4,000 (`sisu check`, release build). One enum takes 6 ms at `k` = 4,000. Also, `Buildable` scans a nested field again for each level, so one field `And<E0, And<E1, .. End>>` of depth `n` costs `n * n` steps. The parser stops `n` at 256 (E0071), where one such field takes under 0.02 s. | `check::Checker::holds_table`; `check::enums::Buildable` (`Walk`); `check::cycle::named`; `check::enums::TYPE_WALK_STEPS` | Milestone 11 |
 
 Paths name Rust items in `crates/sisuc/src/`, not lines, so that a row stays
 true when the file changes.
