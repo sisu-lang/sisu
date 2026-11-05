@@ -2,6 +2,7 @@
 
 use std::collections::hash_map::Entry;
 use std::iter;
+use std::mem;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -11,7 +12,9 @@ use super::enums::reserved_name;
 use super::exhaust::{self, Neighbours, Report, Row};
 use super::generic::{Ahead, type_meets};
 use super::stmt::BlockSoFar;
-use super::{Checked, CheckedBlock, Checker, Declared, Poisoned, is_unwrapped, type_of};
+use super::{
+    Checked, CheckedBlock, Checker, Declared, Poisoned, has_remedy_flag, is_unwrapped, type_of,
+};
 use crate::ast;
 use crate::diagnostic::{
     BadRange, Definition, DiagnosticKind, Expected, GuardHelp, MismatchSource, Plain, Unwrap,
@@ -61,13 +64,14 @@ fn alternative_removal(
 struct Bound<'a> {
     top: Span,
     arm: Option<&'a ast::Arm>,
-    /// The value is typed by an E0062 (see `Poisoned::unwrapped`). A name that takes all of it
-    /// binds `Error`. A `Some` or `None` that takes all of a value that is not optional is no
-    /// mistake. Both depend on the remedy.
+    /// The value has the remedy flag (see `has_remedy_flag`): an E0062 typed it, and its type
+    /// depends on the remedy. Every name in the pattern binds `Error`. A `Some` or `None` that
+    /// takes all of a value that is not optional is no mistake, as the `?.` fix makes it optional.
     flagged: bool,
-    /// The spans of the patterns that take all of the value: the pattern, and each alternative
-    /// of an `|` that takes all of it.
-    takes_all: Vec<Span>,
+    /// The pattern about to be checked takes all of the value: it is the top pattern, or an
+    /// alternative of an `|` that takes all of it. `pattern` reads it, and clears it for the
+    /// patterns inside.
+    takes_all: bool,
     /// The `mut` of a `let mut` whose one name this pattern binds: it is a variable, not a
     /// name `keyword` unwrapped.
     mutable: Option<Span>,
@@ -118,7 +122,7 @@ impl LetValue {
     fn test(ty: Option<Type>, checked: &Checked) -> Self {
         Self::Match {
             ty,
-            flagged: is_unwrapped(checked),
+            flagged: has_remedy_flag(checked),
         }
     }
 }
@@ -462,7 +466,8 @@ impl Checker<'_> {
     ) -> (Checked, LetValue, bool) {
         let checked = self.value(value, None);
         // A value that an E0062 typed is no judge of `if let`: under the `?.` fix it is optional.
-        let flagged = is_unwrapped(&checked);
+        // A member of an optional type is optional under both remedies.
+        let flagged = has_remedy_flag(&checked);
         let ty = type_of(&checked).filter(|ty| {
             !flagged || matches!(ty.kind(), TypeKind::Optional(_) | TypeKind::Enum(..))
         });
@@ -662,7 +667,7 @@ impl Checker<'_> {
             top: pattern.span,
             arm,
             flagged,
-            takes_all: vec![pattern.span],
+            takes_all: true,
             mutable,
             names: FxHashMap::default(),
             order: Vec::new(),
@@ -683,15 +688,12 @@ impl Checker<'_> {
         bound: &mut Bound<'_>,
     ) -> Option<tir::Pattern> {
         let pattern = |kind| tir::Pattern { kind, span: p.span };
+        let takes_all = bound.flagged && mem::take(&mut bound.takes_all);
         // An `Error` position matches anything; its own error is reported.
         let Some(ty) = ty else {
             self.poison(p, keyword, bound);
             return None;
         };
-        let takes_all = bound.flagged && bound.takes_all.contains(&p.span);
-        if takes_all && let ast::PatternKind::Or(alternatives) = &p.kind {
-            bound.takes_all.extend(alternatives.iter().map(|a| a.span));
-        }
         if let TypeKind::Optional(payload) = ty.kind() {
             return self.optional_pattern(p, ty, payload, keyword, bound);
         }
@@ -729,7 +731,7 @@ impl Checker<'_> {
                 None
             }
             ast::PatternKind::Or(alternatives) => self
-                .alternatives(alternatives, ty, keyword, bound)
+                .alternatives(alternatives, (ty, takes_all), keyword, bound)
                 .map(pattern),
             ast::PatternKind::Wild => Some(pattern(tir::PatternKind::Wild)),
             ast::PatternKind::Name(name) => {
@@ -840,7 +842,7 @@ impl Checker<'_> {
                 self.name_pattern(name, ty, keyword, bound).map(pattern)
             }
             ast::PatternKind::Or(alternatives) => self
-                .alternatives(alternatives, ty, keyword, bound)
+                .alternatives(alternatives, (ty, false), keyword, bound)
                 .map(pattern),
             ast::PatternKind::Variant {
                 qualifier,
@@ -1012,8 +1014,8 @@ impl Checker<'_> {
                 return None;
             }
         }
-        // A name that takes all of a value that an E0062 typed binds `Error`.
-        let ty = (!bound.flagged || !bound.takes_all.contains(&name.span)).then_some(ty);
+        // A name in a pattern on a value with the remedy flag binds `Error`.
+        let ty = (!bound.flagged).then_some(ty);
         self.bind(name, ty, keyword, bound)
             .map(tir::PatternKind::Bind)
     }
@@ -1182,15 +1184,17 @@ impl Checker<'_> {
     /// The alternatives of an `|` at a position of type `ty`, which takes more than names. Each
     /// binds the names of the first, with the same types, so each name is one local, which
     /// every alternative binds. A name of the first that an alternative lacks is reported there;
-    /// a name only later alternatives bind is reported once, at the first.
+    /// a name only later alternatives bind is reported once, at the first. `takes_all` says that
+    /// the `|` takes all of the value, and so does each alternative.
     fn alternatives(
         &mut self,
         alternatives: &[ast::Pattern],
-        ty: Type,
+        (ty, takes_all): (Type, bool),
         keyword: &'static str,
         bound: &mut Bound<'_>,
     ) -> Option<tir::PatternKind> {
         let mark = bound.order.len();
+        bound.takes_all = takes_all;
         let first = self.pattern(&alternatives[0], Some(ty), keyword, bound);
         let named: Vec<_> = bound
             .order
@@ -1212,6 +1216,7 @@ impl Checker<'_> {
         // The names only a later alternative binds, each reported once, at the first.
         let mut later_only = FxHashSet::default();
         for alternative in &alternatives[1..] {
+            bound.takes_all = takes_all;
             checked.push(self.pattern(alternative, Some(ty), keyword, bound));
             let here: FxHashSet<_> = bound.order.drain(mark..).collect();
             for name in &here {

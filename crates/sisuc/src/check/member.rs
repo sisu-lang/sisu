@@ -9,7 +9,8 @@ use super::extend::{holder_of, method_holder};
 use super::generic::{Site, named_params};
 use super::unused_names::Used;
 use super::{
-    Checked, Checker, Declared, Holder, Poisoned, UNKNOWN, as_optional, is_unwrapped, type_of, wrap,
+    Checked, Checker, Declared, Holder, Poisoned, UNKNOWN, as_optional, is_unwrapped, spread,
+    type_of, wrap,
 };
 use crate::ast;
 use crate::diagnostic::{Annotate, Definition, Diagnostic, DiagnosticKind, Peel, UnwrapHelp};
@@ -160,10 +161,7 @@ impl Checker<'_> {
                 ty,
                 span,
             )),
-            (_, ty) => Err(Poisoned {
-                unwrapped,
-                ..Poisoned::of(ty)
-            }),
+            (_, ty) => spread(Err(Poisoned::of(ty)), unwrapped),
         }
     }
 
@@ -898,8 +896,10 @@ pub(super) fn safe_value(
             });
         }
     };
+    let flagged = is_unwrapped(&scrutinee);
     let (Ok(scrutinee), Ok(member)) = (scrutinee, member) else {
-        return Err(Poisoned::typed(ty));
+        // A `?.` after a `.` on an optional goes on, as the first `?.` does (see `Checker::place`).
+        return spread(Err(Poisoned::typed(ty)), flagged);
     };
     let none = (ty != Type::UNIT).then_some(tir::Expr::new(tir::ExprKind::None, ty, span));
     let value = if member.ty == ty {

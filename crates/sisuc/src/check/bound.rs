@@ -4,7 +4,7 @@
 use super::generic::{GenericSig, Site, mismatched, named_params};
 use super::interface::Required;
 use super::mut_args::{MutParts, MutSite, site_of};
-use super::{Checked, Checker, Poisoned};
+use super::{Checked, Checker, Poisoned, has_remedy_flag, spread};
 use crate::ast;
 use crate::diagnostic::{Definition, DiagnosticKind};
 use crate::source::Span;
@@ -53,6 +53,7 @@ impl Checker<'_> {
         let info = &self.interfaces[interface.0];
         let requirement = &info.requirements[method];
         let (params, ret) = (requirement.params.clone(), requirement.ret);
+        let returns_param = ret.is_some_and(Type::has_param);
         // Only a requirement with a `mut` parameter, or a call with a `mut` argument, pays for a
         // site.
         let (muts, names) = site_of(&requirement.muts, &requirement.param_names, args);
@@ -103,6 +104,9 @@ impl Checker<'_> {
         let (iargs, types) = (TypeArgs::intern(iargs), TypeArgs::intern(types));
         let parts = self.mut_overlaps(parts);
         let failed = labeled || checked.iter().any(mismatched);
+        // A result that names a type parameter may take the type of an argument. The `?.` fix of
+        // an E0062 in that argument would make it optional, unless it is optional already.
+        let flagged = returns_param && checked.iter().any(has_remedy_flag);
         let method =
             u32::try_from(method).expect("an interface should have fewer than 2^32 requirements");
         let call = move |args| tir::ExprKind::InterfaceCall {
@@ -120,7 +124,7 @@ impl Checker<'_> {
                 let call = tir::Expr::new(call(args), ret, span);
                 Ok(self.mut_call(call, parts))
             }
-            (_, ret) => Err(Poisoned::of(ret.filter(|_| !failed))),
+            (_, ret) => spread(Err(Poisoned::of(ret.filter(|_| !failed))), flagged),
         }
     }
 

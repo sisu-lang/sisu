@@ -17,8 +17,9 @@ use super::pattern::{LetPattern, LetValue, arm_key, matchable};
 use super::prelude::PRELUDE;
 use super::stmt::BlockSoFar;
 use super::{
-    Binding, Checked, Checker, Declared, Definition, DiagnosticKind, Misfit, Poisoned, UNKNOWN,
-    as_optional, built_in_type, is_kept, is_unwrapped, optional_of, own_args, payload, type_of,
+    Binding, Checked, Checker, Declared, Definition, DiagnosticKind, Flag, Misfit, Poisoned,
+    UNKNOWN, as_optional, built_in_type, has_remedy_flag, is_kept, optional_of, own_args, payload,
+    type_of,
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{ArgumentsForm, Diagnostic, Expected, MainForm, Unwrap};
@@ -1784,7 +1785,7 @@ pub(super) fn mark((checked, mismatched): (Checked, bool)) -> Checked {
             mismatch: true,
             found: None,
             kept: false,
-            unwrapped: false,
+            unwrapped: Flag::No,
         })
     } else {
         checked
@@ -2523,7 +2524,7 @@ impl Checker<'_> {
                 mismatch: true,
                 found: None,
                 kept: false,
-                unwrapped: false,
+                unwrapped: Flag::No,
             }));
             blamed = true;
         }
@@ -3985,7 +3986,7 @@ impl Checker<'_> {
     }
 
     /// The type of `e`, checked ahead of its turn and kept for it as `Ahead::Receiver`, and whether
-    /// an E0062 typed it.
+    /// an E0062 typed it, so that its type depends on the remedy (see `has_remedy_flag`).
     fn value_ahead(&mut self, e: &ast::Expr) -> (Option<Type>, bool) {
         let kept = self.body.ahead_at.get(&(e.span, false)).and_then(|&index| {
             #[cfg(test)]
@@ -3993,13 +3994,13 @@ impl Checker<'_> {
             self.body.ahead[index].1.as_ref()
         });
         if let Some(Ahead::Receiver(checked)) = kept {
-            return (type_of(checked), is_unwrapped(checked));
+            return (type_of(checked), has_remedy_flag(checked));
         }
         // An argument is not part of the chain that an index ends.
         let indexed = std::mem::take(&mut self.body.indexed);
         let (checked, jumped) = self.jumps(|c| c.value(e, None));
         self.body.indexed = indexed;
-        let (ty, flagged) = (type_of(&checked), is_unwrapped(&checked));
+        let (ty, flagged) = (type_of(&checked), has_remedy_flag(&checked));
         self.keep((e.span, false), Some(Ahead::Receiver(checked)), jumped);
         (ty, flagged)
     }

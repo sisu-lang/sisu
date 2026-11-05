@@ -6,7 +6,9 @@ use super::alias::Through;
 use super::any::is_target;
 use super::generic::{GenericSig, Site, mark, mismatched};
 use super::mut_args::Callee;
-use super::{Checked, Checker, DiagnosticKind, Poisoned, optional_of, type_of};
+use super::{
+    Checked, Checker, DiagnosticKind, Poisoned, has_remedy_flag, optional_of, spread, type_of,
+};
 use crate::ast;
 use crate::diagnostic::{Definition, suggestion};
 use crate::source::Span;
@@ -118,13 +120,16 @@ impl Checker<'_> {
             }
         };
         let failed = labeled || mismatched(&arg);
+        // The `?.` fix of an E0062 in the argument would make the payload, and so the `Some`, one
+        // optional deeper.
+        let flagged = has_remedy_flag(&arg);
         match arg {
             Ok(inner) if !failed => Ok(tir::Expr::new(
                 tir::ExprKind::Wrap(Box::new(inner)),
                 found,
                 span,
             )),
-            _ => Err(Poisoned::of((!failed).then_some(found))),
+            _ => spread(Err(Poisoned::of((!failed).then_some(found))), flagged),
         }
     }
 

@@ -13,7 +13,7 @@ use super::prelude::PRELUDE;
 use super::unused_names::Used;
 use super::{
     Checked, Checker, Declared, Lowered, Poisoned, UNKNOWN, block_expr, built_in_type,
-    is_unwrapped, own_args, spread, type_of,
+    has_remedy_flag, is_unwrapped, own_args, spread, type_of,
 };
 use super::{array, number, string};
 use crate::ast::{self, ExprKind};
@@ -601,13 +601,10 @@ impl Checker<'_> {
         args: &[ast::Arg],
     ) -> Checked {
         let unwrapped = is_unwrapped(&receiver);
-        match self.method_on(span, dot, receiver, receiver_expr, site, args) {
-            Err(poisoned) if unwrapped => Err(Poisoned {
-                unwrapped,
-                ..poisoned
-            }),
-            checked => checked,
-        }
+        spread(
+            self.method_on(span, dot, receiver, receiver_expr, site, args),
+            unwrapped,
+        )
     }
 
     /// `method_call`, whatever the receiver is.
@@ -985,8 +982,8 @@ impl Checker<'_> {
         let parts = self.mut_overlaps(parts);
         let failed = labeled || checked.iter().any(mismatched);
         // A result that names a type parameter may take the type of an argument. The `?.` fix of
-        // an E0062 in that argument would make it optional.
-        let flagged = returns_param && checked.iter().any(is_unwrapped);
+        // an E0062 in that argument would make it optional, unless it is optional already.
+        let flagged = returns_param && checked.iter().any(has_remedy_flag);
         match (receiver.into_iter().chain(checked).collect(), ret) {
             (Ok(args), Some(ret)) if !failed && parts.is_empty() => {
                 Ok(self.spilled(span, ret, args, |args| tir::ExprKind::Call {
@@ -1150,7 +1147,7 @@ impl Checker<'_> {
                 return Err(Poisoned::error());
             };
             let failed = args.iter().any(mismatched);
-            let flagged = args.iter().any(is_unwrapped);
+            let flagged = args.iter().any(has_remedy_flag);
             // The bounds that the alias's body puts on its parameters, on what they are bound to.
             let held = quiet
                 || through.is_none_or(|t| self.use_checks(&t.checks, list, span) == Some(true));

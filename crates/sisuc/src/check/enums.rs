@@ -10,7 +10,9 @@ use super::generic::{GenericSig, Site, mismatched};
 use super::interface::Slot;
 use super::mut_args::Callee;
 use super::unused_names::Used;
-use super::{Checked, Checker, Declared, Definition, DiagnosticKind, Poisoned, own_args};
+use super::{
+    Checked, Checker, Declared, Definition, DiagnosticKind, Poisoned, has_remedy_flag, own_args,
+};
 use crate::ast;
 use crate::diagnostic::{BuiltIn, Unbuilt, VariantLabels, suggestion};
 use crate::graph::components;
@@ -473,13 +475,16 @@ impl Checker<'_> {
             return Err(Poisoned::error());
         };
         let failed = labeled || args.iter().any(mismatched);
+        // A generic variant's result names the enum's parameters. The `?.` fix of an E0062 in an
+        // argument would make that argument, and so the result, optional.
+        let flagged = args.iter().any(has_remedy_flag);
         // The bounds that the alias's body puts on its parameters, on what they are bound to.
         let held = through.is_none_or(|t| self.use_checks(&t.checks, list, span) == Some(true));
         match args.into_iter().collect() {
             Ok(args) if !failed && held => Ok(self.spilled(span, ty, args, |args| {
                 tir::ExprKind::Variant { id, variant, args }
             })),
-            _ => Err(Poisoned::of((!failed && held).then_some(ty))),
+            _ => super::spread(Err(Poisoned::of((!failed && held).then_some(ty))), flagged),
         }
     }
 

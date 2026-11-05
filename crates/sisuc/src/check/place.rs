@@ -9,7 +9,7 @@ use super::operator::Operator;
 use super::unused_names::Used;
 use super::{
     BindingKind, Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, block_expr,
-    is_unwrapped, payload, type_of,
+    is_unwrapped, payload, spread, type_of,
 };
 use crate::ast;
 use crate::diagnostic::{DiagnosticKind, Immutable, IndexUsage, UnwrapHelp};
@@ -886,7 +886,7 @@ impl Checker<'_> {
                                 bind,
                                 scrutinee: Err(scrutinee),
                             });
-                            Err(Poisoned::typed(payload))
+                            spread(Err(Poisoned::typed(payload)), true)
                         }
                         (payload, _) => {
                             // As `?.` does, report the field and give no type.

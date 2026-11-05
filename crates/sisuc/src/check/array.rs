@@ -4,7 +4,8 @@ use super::any::{AnyJoin, is_target, widen};
 use super::expr::{fits, literal_type, no_member, path, typed};
 use super::generic::{Rank, mark};
 use super::{
-    Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, is_unwrapped, payload, type_of,
+    Checked, Checker, Declared, Flag, Poisoned, UNKNOWN, as_optional, is_unwrapped, payload,
+    spread, type_of,
 };
 use crate::ast;
 use crate::diagnostic::{
@@ -88,7 +89,7 @@ impl Checker<'_> {
                 mismatch: true,
                 found: None,
                 kept: false,
-                unwrapped: false,
+                unwrapped: Flag::No,
             });
         }
         self.ranked(|c| c.joined(span, elements, quiet))
@@ -421,7 +422,7 @@ impl Checker<'_> {
                 mismatch: mismatched,
                 found: None,
                 kept: false,
-                unwrapped: false,
+                unwrapped: Flag::No,
             }),
         }
     }
@@ -503,10 +504,10 @@ impl Checker<'_> {
                     tir::ExprKind::Index { base, index }
                 }))
             }
-            (.., element) => Err(Poisoned {
+            (.., element) => spread(
+                Err(Poisoned::of(element.filter(|_| !mismatched))),
                 unwrapped,
-                ..Poisoned::of(element.filter(|_| !mismatched))
-            }),
+            ),
         }
     }
 

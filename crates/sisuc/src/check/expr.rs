@@ -4,8 +4,8 @@ use std::ops::Range;
 
 use super::generic::Site;
 use super::{
-    Checked, Checker, Poisoned, UNKNOWN, Uninferred, is_kept, is_unwrapped, payload, spread, tail,
-    type_of, wrap,
+    Checked, Checker, Flag, Poisoned, UNKNOWN, Uninferred, is_kept, is_unwrapped, payload, spread,
+    tail, type_of, wrap,
 };
 use crate::ast::{self, ExprKind, UnaryOp};
 use crate::diagnostic::{
@@ -93,7 +93,7 @@ impl Checker<'_> {
                     mismatch: true,
                     found: None,
                     kept: false,
-                    unwrapped: false,
+                    unwrapped: Flag::No,
                 });
             }
             return Ok(tir::Expr::new(tir::ExprKind::Float(x), ty, at));
@@ -114,7 +114,7 @@ impl Checker<'_> {
                 mismatch: true,
                 found: None,
                 kept: false,
-                unwrapped: false,
+                unwrapped: Flag::No,
             });
         }
         Ok(tir::Expr::new(tir::ExprKind::Int(value), ty, at))
@@ -526,7 +526,7 @@ impl Checker<'_> {
             mismatch: true,
             found: None,
             kept: false,
-            unwrapped: false,
+            unwrapped: Flag::No,
         })
     }
 

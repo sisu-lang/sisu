@@ -5,7 +5,7 @@
 use super::array::pair;
 use super::expr::{path, typed};
 use super::mut_args::Callee;
-use super::{Checked, Checker, Poisoned, is_unwrapped, spread, type_of};
+use super::{Checked, Checker, Poisoned, has_remedy_flag, spread, type_of};
 use crate::ast;
 use crate::diagnostic::{DiagnosticKind, Expected, MismatchFix, PrintProblem};
 use crate::source::Span;
@@ -77,8 +77,9 @@ impl Checker<'_> {
             return Err(Poisoned::error());
         };
         self.dbg_shown.push((self.body.owner, ty, span));
-        // `dbg<T>(x: T) -> T` has the type of its argument. An E0062 in it would make it optional.
-        let flagged = is_unwrapped(&checked);
+        // `dbg<T>(x: T) -> T` has the type of its argument. An E0062 in it would make it optional,
+        // unless the argument is optional already.
+        let flagged = has_remedy_flag(&checked);
         let kind = checked
             .ok()
             .filter(|_| !labeled)

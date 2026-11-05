@@ -74,9 +74,16 @@ use unused_names::{Owner, Pending, Use, Used};
 /// A value in which a generic call kept its E0050 has `kept` set. A block, a branch, unary `-`,
 /// a number operator, and a call that fails on an unbound parameter, keep that field too.
 ///
-/// A value that an E0062 typed has `unwrapped` set. It spreads by `spread` where `kept` does not.
-/// Those places are `!`, each operator but `==` and `!=`, a generic call, a slice and the right
-/// side of `??`. A block and a join keep it too.
+/// A value that an E0062 typed has `unwrapped` set (see `Flag`). A value built from it has
+/// the flag too.
+///
+/// The flag spreads through `!`, unary `-`, each operator but `==` and `!=`, a block and a join.
+/// It spreads through an `if` condition and the right side of `??`. It spreads through a generic
+/// call, method, constructor, variant or interface call whose result names a type parameter. It
+/// spreads through `dbg` and a slice.
+///
+/// The remedy flag is `unwrapped` set, except for a member of an optional type. That member has
+/// the same type under the `if let` unwrap and under the `?.` fix.
 struct Poisoned {
     ty: Option<Type>,
     /// Whether the expected type passed down was rejected (a `None` that is not optional, a
@@ -97,7 +104,18 @@ struct Poisoned {
     /// E0062 would make the value optional. So a check that fires only because the value is not
     /// optional (E0044, E0048, E0049, E0051) skips it. A `let` or a `for` binds `Error` for it,
     /// as its optionality depends on the remedy.
-    unwrapped: bool,
+    unwrapped: Flag,
+}
+
+/// How a value got its `Poisoned::unwrapped` flag.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Flag {
+    /// Not typed by an E0062.
+    No,
+    /// The member itself, from the `.` that reported the E0062 (see `Poisoned::unwrapped`).
+    Member,
+    /// Built from a flagged value, as `spread` does.
+    Built,
 }
 
 /// The result type of a generic call that cannot meet its context (see `report_unbound`). The
@@ -127,7 +145,7 @@ impl Poisoned {
             mismatch: false,
             found: None,
             kept: false,
-            unwrapped: false,
+            unwrapped: Flag::No,
         }
     }
 
@@ -135,7 +153,7 @@ impl Poisoned {
     /// `Poisoned::unwrapped`).
     fn unwrapped(ty: Option<Type>) -> Self {
         Self {
-            unwrapped: true,
+            unwrapped: Flag::Member,
             ..Self::of(ty)
         }
     }
@@ -159,18 +177,41 @@ fn is_unwrapped<T>(checked: &Result<T, Poisoned>) -> bool {
     matches!(
         checked,
         Err(Poisoned {
-            unwrapped: true,
+            unwrapped: Flag::Member | Flag::Built,
             ..
         })
     )
 }
 
-/// `checked`, with `unwrapped` set when `from` is. Under the `?.` fix of an operand's E0062, the
-/// result of some rules is optional. Those rules pass the flag on, so their result gets no report
-/// that it is not optional. A result that both remedies give the same, such as `==`, does not.
+/// Whether `checked` is flagged, and not a member of an optional type. The type of such a value
+/// depends on the remedy: the `?.` fix would make it optional. A member of an optional type is
+/// the same under both remedies.
+fn has_remedy_flag<T>(checked: &Result<T, Poisoned>) -> bool {
+    match checked {
+        Err(Poisoned {
+            unwrapped: Flag::Built,
+            ..
+        }) => true,
+        Err(Poisoned {
+            unwrapped: Flag::Member,
+            ty,
+            ..
+        }) => !ty.is_some_and(|ty| matches!(ty.kind(), TypeKind::Optional(_))),
+        _ => false,
+    }
+}
+
+/// `checked`, built from a flagged value when `from` is. Under the `?.` fix of an operand's E0062,
+/// the result of some rules is optional. Those rules pass the flag on, so their result gets no
+/// report that it is not optional. A result that both remedies give the same, such as `==`, does
+/// not.
 fn spread<T>(checked: Result<T, Poisoned>, from: bool) -> Result<T, Poisoned> {
     checked.map_err(|poisoned| Poisoned {
-        unwrapped: poisoned.unwrapped || from,
+        unwrapped: if from && poisoned.unwrapped == Flag::No {
+            Flag::Built
+        } else {
+            poisoned.unwrapped
+        },
         ..poisoned
     })
 }

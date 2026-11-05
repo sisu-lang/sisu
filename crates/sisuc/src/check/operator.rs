@@ -5,7 +5,7 @@ use super::expr::{fits, if_some, literal_type, local, operator, path, typed};
 use super::generic::{Rank, mismatched};
 use super::interface::Operation;
 use super::{
-    Checked, Checker, Lowered, Poisoned, UNKNOWN, as_optional, beyond_one_layer, block_expr,
+    Checked, Checker, Flag, Lowered, Poisoned, UNKNOWN, as_optional, beyond_one_layer, block_expr,
     is_kept, is_unwrapped, optional_of, payload, spread, type_of, wrap,
 };
 use crate::ast::{self, CompareOp, ExprKind};
@@ -48,7 +48,7 @@ impl Checker<'_> {
                 mismatch: literal,
                 found: None,
                 kept: false,
-                unwrapped: false,
+                unwrapped: Flag::No,
             });
         }
         let want = if type_of(&checked).map(payload) == Some(Type::F64) {
