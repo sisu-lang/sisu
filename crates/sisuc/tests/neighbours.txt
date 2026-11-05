@@ -98,6 +98,10 @@ Some(Some(p))
 Some(Fox())
 some(p)
 id(Some(Some(p)))
+# Failed calls that keep their result type.
+Bx().none<Fox>(1)
+p.name(1)
+Fox(1)
 # Values that are no optional.
 p
 op

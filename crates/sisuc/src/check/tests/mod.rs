@@ -16,6 +16,7 @@ mod conformances;
 mod constants;
 mod enums;
 mod extend;
+mod failed_calls;
 mod floats;
 mod for_loops;
 mod generics;

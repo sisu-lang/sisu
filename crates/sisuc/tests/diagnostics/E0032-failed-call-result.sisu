@@ -1,0 +1,152 @@
+// GIVEN a call that fails, as the value of an annotated `let`, a condition, a `match`, a `??`
+// or the receiver of a method, in a function for each case
+// AND the callee fixes its result type: a function, a method, a method of a generic class, an
+// interface requirement, a constructor, a variant, a built-in method or a prelude function
+// WHEN `sisu check` runs on it
+// THEN it reports the call's own error, and the mismatch of the result type with its context
+// AND a callee whose result an argument decides (`gen`, `Option.Some`, `dbg`, `get`, `i64(x, 1)`),
+// and a call that fails its block bound, report no mismatch
+class Node {
+    v: i64
+    fn ys(self, n: i64) -> [string] { [] }
+}
+extend Node {
+    fn zs(self, n: i64) -> [string] { [] }
+}
+class Pair {
+    a: [string]
+}
+class Bx<T> {
+    v: T
+    fn get(self, n: i64) -> T { self.v }
+    fn n(self, k: i64) -> i64 { k }
+}
+class Cat: Named {
+    fn name(self) -> string { "cat" }
+}
+enum Opt {
+    Wrap([string])
+    Nope
+}
+enum Flag: Eq {
+    A
+    B
+}
+interface Named {
+    fn name(self) -> string
+}
+fn g(n: i64) -> [string] { [] }
+fn o(n: i64) -> i64? { None }
+fn b(n: i64) -> i64 { n }
+fn gen<T>(t: T) -> [T] { [t] }
+
+fn wrong_expected() {
+    let _n: i64 = g("s")
+}
+fn count_expected() {
+    let _n: i64 = g(1, 2)
+}
+fn ctor_count() {
+    let _n: i64 = Pair([], [])
+}
+fn ctor_wrong() {
+    let _n: i64 = Pair(a: 1)
+}
+fn variant_wrong() {
+    let _n: i64 = Opt.Wrap(1)
+}
+fn variant_count() {
+    let _n: i64 = Opt.Wrap([], [])
+}
+fn builtin_count(xs: [i64]) {
+    let _s: string = xs.len(1)
+}
+fn string_count(s: string) {
+    let _n: string = s.len(1)
+}
+fn prelude_count() {
+    let _n: i64 = read_line(1)
+}
+fn generic_class_count(x: Bx<i64>) {
+    let _s: string = x.get(1, 2)
+}
+fn generic_class_count_plain(x: Bx<i64>) {
+    let _s: string = x.n(1, 2)
+}
+fn generic_class_wrong(x: Bx<i64>) {
+    let _s: string = x.get("s")
+}
+fn interface_count(n: any Named) {
+    let _k: i64 = n.name(1)
+}
+fn interface_param_count<T: Named>(t: T) {
+    let _k: i64 = t.name(1)
+}
+fn interface_push(n: any Named) {
+    n.name(1).push("a")
+}
+fn block_bound(xs: [Node], a: Node) {
+    let _s: string = xs.contains(a, a)
+}
+fn print_count() {
+    let _s: string = print(1, 2)
+}
+fn panic_count() {
+    let _s: string = panic("a", "b")
+}
+fn todo_count() {
+    let _s: string = todo("a", "b")
+}
+fn dbg_count() {
+    let _s: string = dbg(1, 2)
+}
+fn to_string_count(k: Cat) {
+    let _n: i64 = k.to_string(1)
+}
+fn eq_count(a: Flag) {
+    let _s: string = a.eq(Flag.A, Flag.B)
+}
+fn number_count(f: f64) {
+    let _s: string = f.sqrt(1)
+}
+fn push_count() {
+    let mut xs = [1]
+    let _s: string = xs.push(1, 2)
+}
+fn get_count(xs: [i64], s: string, x: f64) {
+    let _a: string = xs.get(1, 2)
+    let _b: string = s.get(1, 2)
+    let _c: string = i64(x, 1)
+}
+fn written_count() {
+    let _s: string = gen<i64>(1, 2)
+}
+fn generic_ctor() {
+    let _a: string = Option.Some(1, 2)
+    let _b: string = Bx(v: 1, w: 2)
+}
+fn for_iter() {
+    for _x in g(1, 2) {}
+}
+fn match_scrutinee() {
+    match g(1, 2) { _ => {} }
+}
+fn match_int() {
+    match b(1, 2) { 0 => {} }
+}
+fn if_condition() {
+    if b(1, 2) {}
+}
+fn coalesce() {
+    let _s: string = o(1, 2) ?? 0
+}
+fn method_chain() {
+    let _s: string = g(1, 2).len()
+}
+fn field_after_ctor() {
+    let _n: i64 = Pair([], []).a
+}
+fn extension(c: Node) {
+    let _n: i64 = c.zs(1, 2)
+}
+fn main() {}
