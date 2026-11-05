@@ -1315,7 +1315,7 @@ mod tests {
 
     /// The dispatches of a call of a requirement that a program may hold, each a neighbour of
     /// #203: the call must reach the method of its own type.
-    const DISPATCHES: [&str; 8] = [
+    const DISPATCHES: [&str; 9] = [
         "a direct call on `Q<k>` and on `N<k>`",
         "a call through `via<k>` with `Q<k>`, `N<k>` and `R<k>`",
         "a requirement inherited from an earlier interface",
@@ -1324,6 +1324,7 @@ mod tests {
         "`pick<k>` with a bounded associated type",
         "a conformance in an `extend` block",
         "a conformance in the declaration list",
+        "a `mut` parameter written back",
     ];
 
     /// Whether `g` holds the dispatch `row` of `DISPATCHES`, as its text shows.
@@ -1396,8 +1397,28 @@ mod tests {
             "a conformance in the declaration list" => {
                 ["class Q", "enum N"].into_iter().any(conformances)
             }
+            "a `mut` parameter written back" => {
+                let in_a_body = |header: String| item(program, &header).is_some_and(writes_back);
+                writes_back(shapes)
+                    || interfaces.clone().any(|k| in_a_body(format!("fn via{k}<")))
+                    || in_a_body("fn both<".to_string())
+                    || interfaces
+                        .into_iter()
+                        .any(|k| in_a_body(format!("fn pick{k}<")))
+            }
             _ => unreachable!("{row} should be one of `DISPATCHES`"),
         }
+    }
+
+    /// Whether a line of `text` is `print("@d<n> {m<n>}")`: a call printed the place that it
+    /// passed to a `mut` parameter.
+    fn writes_back(text: &str) -> bool {
+        text.lines().any(|line| {
+            (line.trim().strip_prefix("print(\"@d")).is_some_and(|rest| {
+                rest.split_once(' ')
+                    .is_some_and(|(n, rest)| rest == format!("{{m{n}}}\")"))
+            })
+        })
     }
 
     /// Whether the text of `g` shows that its O0 run reaches every marked line of `shapes`: its
@@ -1490,6 +1511,11 @@ mod tests {
         dispatch_should_print_its_expected_lines(DISPATCHES[7]);
     }
 
+    #[test]
+    fn a_mut_write_back_should_print_the_value_of_the_method_that_dispatch_reaches() {
+        dispatch_should_print_its_expected_lines(DISPATCHES[8]);
+    }
+
     /// The codes of the diagnostics that `sisu check` gives for `source`, sorted.
     fn codes(source: &str) -> Vec<String> {
         let (_, diagnostics) = crate::front_end::checked(source);
@@ -1553,7 +1579,9 @@ mod tests {
     /// `program` with the values of two methods of one requirement swapped: two methods of the
     /// same name and result type.
     fn swapped(program: &str) -> String {
-        let methods = coverage::methods(program);
+        let methods: Vec<_> = (coverage::methods(program).into_iter())
+            .filter(|(_, method)| method.prints())
+            .collect();
         let ((a, first), (b, second)) = (methods.iter().enumerate())
             .find_map(|(at, (line, method))| {
                 (methods[at + 1..].iter())
@@ -1566,7 +1594,10 @@ mod tests {
             (a, first.value, second.value),
             (b, second.value, first.value),
         ] {
-            lines[at] = lines[at].replace(&format!("{{ {from} }}"), &format!("{{ {to} }}"));
+            // The value ends the body; a `mut` parameter is written before it.
+            lines[at] = lines[at]
+                .replace(&format!("{{ {from} }}"), &format!("{{ {to} }}"))
+                .replace(&format!("; {from} }}"), &format!("; {to} }}"));
         }
         lines.join("\n") + "\n"
     }
