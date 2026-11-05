@@ -1,0 +1,6 @@
+// GIVEN a `let` whose name is followed by `{ }`, which is no pattern
+// WHEN `sisu check` runs on it
+// THEN it reports E0011 at the `{` (5:11), expecting `=`, and offers no fix
+fn main() {
+    let a { }
+}

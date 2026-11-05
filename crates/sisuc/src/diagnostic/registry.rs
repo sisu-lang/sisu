@@ -390,12 +390,13 @@ pub(crate) enum DiagnosticKind {
     FieldLet { at: Span, rest: LetField },
     /// A method named at `at` with no `self`.
     MethodNeedsSelf { at: Span },
-    /// A `mut` at `keyword` in front of the `self` at `receiver`, in a method of `owner`. In a
-    /// class or an interface, removing it is `safe` when `self` is the whole parameter; in an enum
-    /// it never is.
+    /// A `mut` at `keyword` in front of the `self`, in a method of `owner`; the fix removes
+    /// `remove`, from the `mut` to the `self` or to a comment before it. In a class or an
+    /// interface, removing it is `safe` when `self` is the whole parameter; in an enum it never
+    /// is.
     MutSelf {
         keyword: Span,
-        receiver: Span,
+        remove: Span,
         safe: bool,
         owner: Owner,
     },
@@ -3248,11 +3249,10 @@ impl From<DiagnosticKind> for Diagnostic {
             }
             DiagnosticKind::MutSelf {
                 keyword,
-                receiver,
+                remove,
                 safe,
                 owner,
             } => {
-                let remove = Span::new(keyword.start(), receiver.start());
                 // The fix of a class or an interface method: safe when only `,` or `)` follows
                 // `self`.
                 let drop_mut = |d: Diagnostic| {
