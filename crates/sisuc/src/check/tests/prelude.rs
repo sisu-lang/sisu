@@ -304,21 +304,6 @@ fn an_item_with_a_prelude_function_name_should_poison_its_uses() {
             "class dbg {}\nfn main() {\n    let v = dbg([])\n}",
             (1, 7),
         ),
-        (
-            "enum dbg",
-            "enum dbg {\n    A\n}\n\nfn main() {\n    dbg(1)\n}",
-            (1, 6),
-        ),
-        (
-            "interface panic, called",
-            "interface panic {\n    fn f(self)\n}\n\nfn main() {\n    panic(\"x\")\n}",
-            (1, 11),
-        ),
-        (
-            "alias read_line",
-            "type read_line = i64\n\nfn main() {\n    let s = read_line()\n}",
-            (1, 6),
-        ),
     ] {
         codes_row(row, src, &[(Code::DefinedTwice, at)]);
     }

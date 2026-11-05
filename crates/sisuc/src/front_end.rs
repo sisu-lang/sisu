@@ -810,7 +810,7 @@ fn main() {
             ),
             (
                 "error in a body",
-                "fn total() {\n    let = 1\n}\nfn total() {}\nfn main() {}\n",
+                "fn total() {\n    let = 1\n}\nfn total() {}\nfn main() {\n    total()\n}\n",
                 &[(Expected, (2, 9)), (Twice, (4, 4))],
             ),
             (
