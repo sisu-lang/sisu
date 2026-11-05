@@ -26,8 +26,8 @@ use crate::tir::{self, Type, TypeKind};
 /// removes the alternative and the `|` after it, up to a comment, so that the comment stays. That
 /// cut works only when the `|` comes before the comment: `after_gap` is the text from the end of
 /// `at` to the start of the alternative after it. Else the removal runs to the next alternative,
-/// or starts at the end of the alternative before, and the comment goes: no edit keeps it and
-/// parses.
+/// or starts at the end of the alternative before, and each comment in the removed text goes: one
+/// span cannot remove the `|` and keep a comment that lies before it.
 fn alternative_removal(
     comments: &[usize],
     at: Span,

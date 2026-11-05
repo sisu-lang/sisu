@@ -497,22 +497,6 @@ mod tests {
         )
     }
 
-    /// `arms` as the arms of a `match` on an enum `E` with the variant `A(i64)`, after the arm
-    /// `A(1) => print(1)`.
-    fn in_variant_match(arms: &str) -> String {
-        format!(
-            "enum E {{\n    A(i64)\n    B\n}}\n\nfn f(e: E) {{\n    match e {{\n        A(1) => print(1)\n{arms}\n        _ => print(3)\n    }}\n}}\n\nfn main() {{\n    f(E.B)\n}}\n"
-        )
-    }
-
-    /// `arms` as the arms of a `match` on an enum `E` with the variant `A(i64?)`, after the arm
-    /// `A(Some(1)) => print(1)`.
-    fn in_variant_optional_match(arms: &str) -> String {
-        format!(
-            "enum E {{\n    A(i64?)\n    B\n}}\n\nfn f(e: E) {{\n    match e {{\n        A(Some(1)) => print(1)\n{arms}\n        _ => print(3)\n    }}\n}}\n\nfn main() {{\n    f(E.B)\n}}\n"
-        )
-    }
-
     /// The program with an `extend` method `fn bump({params}) {{ self.n = 1 }}`.
     fn in_extend(params: &str) -> String {
         format!(
@@ -664,11 +648,50 @@ mod tests {
                 in_optional_match("        Some(1) => print(1)\n        Some(// c\n            2) => print(2)"),
                 false,
             ),
+            // A later alternative with a comment in its backward gap and one after its own `|`:
+            // the removal keeps the second comment.
+            (
+                in_optional_match("        Some(1) => print(1)\n        Some(2 | // a\n            1 | // b\n            3) => print(2)"),
+                Code::UnreachableArm,
+                in_optional_match("        Some(1) => print(1)\n        Some(2 | // a\n            // b\n            3) => print(2)"),
+                false,
+            ),
+        ];
+        for (src, code, want, safe) in rows {
+            assert_eq!(fixed(&src, code), (want, safe), "{src}");
+        }
+    }
+
+    /// `arms` as the arms of a `match` on an enum `E` with the variant `A(i64)`, after the arm
+    /// `A(1) => print(1)`.
+    fn in_variant_match(arms: &str) -> String {
+        format!(
+            "enum E {{\n    A(i64)\n    B\n}}\n\nfn f(e: E) {{\n    match e {{\n        A(1) => print(1)\n{arms}\n        _ => print(3)\n    }}\n}}\n\nfn main() {{\n    f(E.B)\n}}\n"
+        )
+    }
+
+    /// `arms` as the arms of a `match` on an enum `E` with the variant `A(i64?)`, after the arm
+    /// `A(Some(1)) => print(1)`.
+    fn in_variant_optional_match(arms: &str) -> String {
+        format!(
+            "enum E {{\n    A(i64?)\n    B\n}}\n\nfn f(e: E) {{\n    match e {{\n        A(Some(1)) => print(1)\n{arms}\n        _ => print(3)\n    }}\n}}\n\nfn main() {{\n    f(E.B)\n}}\n"
+        )
+    }
+
+    /// GIVEN a fix of W0006 for an alternative in a nested pattern, with a comment in the gap
+    /// before the `|` that the removal takes
+    /// WHEN the fix is applied after `sound_fixes`
+    /// THEN the removal takes the `|` and the comment before it, and the fixed text parses
+    #[test]
+    fn a_forward_alternative_removal_should_take_the_bar_when_a_comment_lies_before_it() {
+        let rows = [
             // A comment lies before the `|` that the first alternative removes with itself: the
             // removal does not stop at it, or it would keep the `|`. The comment goes with the
             // alternative.
             (
-                in_optional_match("        Some(1) => print(1)\n        Some(1 // c\n            | 2) => print(2)"),
+                in_optional_match(
+                    "        Some(1) => print(1)\n        Some(1 // c\n            | 2) => print(2)",
+                ),
                 Code::UnreachableArm,
                 in_optional_match("        Some(1) => print(1)\n        Some(2) => print(2)"),
                 false,
@@ -676,9 +699,13 @@ mod tests {
             // The same for a later alternative whose backward gap holds a comment, and another
             // follows: the comment after the alternative lies before the `|`.
             (
-                in_optional_match("        Some(1) => print(1)\n        Some(2 | // a\n            1 // b\n            | 3) => print(2)"),
+                in_optional_match(
+                    "        Some(1) => print(1)\n        Some(2 | // a\n            1 // b\n            | 3) => print(2)",
+                ),
                 Code::UnreachableArm,
-                in_optional_match("        Some(1) => print(1)\n        Some(2 // b\n            | 3) => print(2)"),
+                in_optional_match(
+                    "        Some(1) => print(1)\n        Some(2 // b\n            | 3) => print(2)",
+                ),
                 false,
             ),
             (
@@ -688,35 +715,39 @@ mod tests {
                 false,
             ),
             (
-                in_variant_match("        A(2 | // a\n            1 // b\n            | 3) => print(2)"),
+                in_variant_match(
+                    "        A(2 | // a\n            1 // b\n            | 3) => print(2)",
+                ),
                 Code::UnreachableArm,
                 in_variant_match("        A(2 // b\n            | 3) => print(2)"),
                 false,
             ),
             (
-                in_optional_match("        Some(1) => print(1)\n        Some(5) | Some(1 // c\n            | 2) => print(2)"),
+                in_optional_match(
+                    "        Some(1) => print(1)\n        Some(5) | Some(1 // c\n            | 2) => print(2)",
+                ),
                 Code::UnreachableArm,
-                in_optional_match("        Some(1) => print(1)\n        Some(5) | Some(2) => print(2)"),
+                in_optional_match(
+                    "        Some(1) => print(1)\n        Some(5) | Some(2) => print(2)",
+                ),
                 false,
             ),
             (
-                in_variant_optional_match("        A(None | // a\n            Some(1) // b\n            | Some(2)) => print(2)"),
+                in_variant_optional_match(
+                    "        A(None | // a\n            Some(1) // b\n            | Some(2)) => print(2)",
+                ),
                 Code::UnreachableArm,
-                in_variant_optional_match("        A(None // b\n            | Some(2)) => print(2)"),
+                in_variant_optional_match(
+                    "        A(None // b\n            | Some(2)) => print(2)",
+                ),
                 false,
             ),
-            // Comments on both sides of a `|`, and a later alternative with a comment in its
-            // backward gap and one after its own `|`.
             (
-                in_optional_match("        Some(1) => print(1)\n        Some(1 // a\n            | // b\n            2) => print(2)"),
+                in_optional_match(
+                    "        Some(1) => print(1)\n        Some(1 // a\n            | // b\n            2) => print(2)",
+                ),
                 Code::UnreachableArm,
                 in_optional_match("        Some(1) => print(1)\n        Some(2) => print(2)"),
-                false,
-            ),
-            (
-                in_optional_match("        Some(1) => print(1)\n        Some(2 | // a\n            1 | // b\n            3) => print(2)"),
-                Code::UnreachableArm,
-                in_optional_match("        Some(1) => print(1)\n        Some(2 | // a\n            // b\n            3) => print(2)"),
                 false,
             ),
         ];
@@ -739,8 +770,9 @@ mod tests {
         }
     }
 
-    /// GIVEN each site of the last test with no comment in the gap, a comment outside the gap, a
-    /// comment that W0006 cannot keep, and the alternatives and arms that the cut leaves alone
+    /// GIVEN each site of the two tests above with no comment in the gap, a comment outside the
+    /// gap, a comment that W0006 cannot keep, and the alternatives and arms that the cut leaves
+    /// alone
     /// WHEN the fix is applied after `sound_fixes`
     /// THEN the text and the safety are as before: the removal reaches the next token, and the
     /// side of an alternative's removal does not change
