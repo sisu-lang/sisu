@@ -29,10 +29,11 @@ env:
 
 # Third-party actions are pinned to commit SHAs; Dependabot bumps them.
 # The fuzz step decides the job's result: each later step runs only after it
-# failed, or tolerates failure. Worst case, from the plan: 15 min of build, the
-# fuzzing, 17 of crash replays, 15 of tmin, 10 of cmin and 45 of coverage. Those 102
-# minutes leave little of the 105 that minutes() adds to the fuzzing for setup; the
-# first labeled run measures it.
+# failed, or tolerates failure. The fuzz step has its own limit (fuzz_minutes() in the
+# plan): 15 min of build, the fuzzing or the corpus pass, 17 of crash replays and 3 to
+# stop. A fuzz step that passes its limit fails, and the later steps still run, so its
+# log and the corpus are kept. Then the job has 15 min of tmin, 20 of cmin, 5 of setup
+# and the cache, and 45 of coverage (minutes() in the plan).
 # The report job comes last: it runs after the fuzz job, only for a failed nightly run.
 jobs:
   plan:
@@ -45,6 +46,7 @@ jobs:
     outputs:
       seconds: ${{ steps.plan.outputs.seconds }}
       coverage: ${{ steps.plan.outputs.coverage }}
+      fuzz_minutes: ${{ steps.plan.outputs.fuzz_minutes }}
       minutes: ${{ steps.plan.outputs.minutes }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -86,7 +88,21 @@ jobs:
           path: fuzz/corpus/program
           key: fuzz-program-corpus-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: fuzz-program-corpus-
+      # The fuzzer first runs each corpus input once, one at a time, at about 1 s each, and
+      # -max_total_time does not stop that pass. So a run keeps 1000 inputs at random and removes
+      # the others. cmin and the cache then see only those and the new finds, so the corpus never
+      # grows past about 1000. A removed input is lost; the fuzzer can find its coverage again.
+      # CORPUS_PASS_MINUTES in scripts/fuzz_program_plan.py is the time of this pass.
+      - name: Sample the corpus
+        run: |
+          before=$(find fuzz/corpus/program -type f 2>/dev/null | wc -l)
+          if [ -d fuzz/corpus/program ]; then
+            find fuzz/corpus/program -type f -print0 | shuf -z | tail -z -n +1001 | xargs -0r rm --
+          fi
+          after=$(find fuzz/corpus/program -type f 2>/dev/null | wc -l)
+          echo "Kept ${after} of ${before} corpus inputs."
       - id: fuzz
+        timeout-minutes: ${{ fromJSON(needs.plan.outputs.fuzz_minutes) }}
         env:
           SECONDS_TO_FUZZ: ${{ needs.plan.outputs.seconds }}
         run: scripts/fuzz.sh --target program "$SECONDS_TO_FUZZ"
@@ -145,15 +161,16 @@ jobs:
           else
             echo "The fuzzer failed before writing a summary; see the log of the fuzz step." >>"$GITHUB_STEP_SUMMARY"
           fi
-      # cmin runs last and bounded. A killed or failed cmin leaves the corpus as it was, and the
-      # corpus then grows from night to night: the summary's sizes and outcome show it.
+      # cmin runs last and bounded. A killed or failed cmin leaves the corpus as it was; the
+      # sample step caps it next run. The summary's sizes and outcome show it.
+      # CMIN_MINUTES in scripts/fuzz_program_plan.py; keep the two equal.
       - name: Minimize the corpus
         if: always() && steps.fuzz.outcome != 'skipped'
         continue-on-error: true
         run: |
           before=$(find fuzz/corpus/program -type f 2>/dev/null | wc -l)
           status=0
-          timeout -k 10 600 scripts/fuzz.sh --target program --cmin >cmin.txt 2>&1 || status=$?
+          timeout -k 10 1200 scripts/fuzz.sh --target program --cmin >cmin.txt 2>&1 || status=$?
           cat cmin.txt
           after=$(find fuzz/corpus/program -type f 2>/dev/null | wc -l)
           # cargo-fuzz 0.13.2 exits 0 after a failed merge, having printed this line.
@@ -163,8 +180,8 @@ jobs:
                else
                  outcome="finished"
                fi ;;
-            124) outcome="was stopped at its 600 s bound" ;;
-            137) outcome="was killed (600 s bound or out of memory)" ;;
+            124) outcome="was stopped at its 1200 s bound" ;;
+            137) outcome="was killed (1200 s bound or out of memory)" ;;
             *) outcome="failed with exit status ${status}" ;;
           esac
           {
