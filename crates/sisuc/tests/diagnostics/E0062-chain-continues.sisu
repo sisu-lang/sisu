@@ -46,6 +46,11 @@ interface Named {
     fn name(self) -> string
 }
 
+enum Bx2<T> {
+    Full(T)
+    Empty
+}
+
 type M<T> = T?
 fn bump(mut n: i64) { n = n + 1 }
 fn takes_string(s: string) {}
@@ -249,6 +254,38 @@ fn safe_place_push_mismatch(c: Cell?) {
 
 fn safe_place_element(c: Cell?) {
     c.n?.ys[0] = 1
+}
+
+fn name_optional_member(c: Cell?) {
+    if let x = c.n { x.nope() }
+}
+
+fn name_optional_coalesce(c: Cell?) {
+    if let x = c.n { print(x.v ?? 0) }
+}
+
+fn name_match_optional(c: Cell?) {
+    match c.n { x => print(x.v ?? 0) }
+}
+
+fn safe_place_twice(c: Cell?) {
+    c.n?.n?.w = "a"
+}
+
+fn safe_place_twice_push(c: Cell?) {
+    c.n?.n?.mys.push("a")
+}
+
+fn join_iflet_optional(c: Cell?) {
+    print((if let x = c.n { x.v } else { 0 }) ?? 0)
+}
+
+fn variant_optional(c: Cell?) {
+    print(Bx2.Full(c.n) ?? 0)
+}
+
+fn or_inside_some(c: Cell?) {
+    match c.v { Some(1 | None) => {}; _ => {} }
 }
 
 fn main() {}

@@ -168,10 +168,10 @@ fn e0062_should_come_before_e0001_for_an_element_assignment_through_safe_access(
 }
 
 /// `body` on line 14 of `fn r` over `c: C?`, `k: bool` and `p: E`. `C` holds an `E`, an optional
-/// of itself and an array, and `mut w`.
+/// of itself and an array, and `mut w`. `Bx2` follows `main`.
 fn with_cell(body: &str) -> String {
     format!(
-        "enum E {{\n    A\n    B\n}}\nclass C {{\n    v: i64\n    e: E\n    ys: [i64]\n    n: C?\n    mut w: i64\n}}\nfn id<T>(t: T) -> T {{ t }}\nfn r(c: C?, k: bool, p: E) {{\n    {body}\n}}\nfn main() {{}}"
+        "enum E {{\n    A\n    B\n}}\nclass C {{\n    v: i64\n    e: E\n    ys: [i64]\n    n: C?\n    mut w: i64\n}}\nfn id<T>(t: T) -> T {{ t }}\nfn r(c: C?, k: bool, p: E) {{\n    {body}\n}}\nfn main() {{}}\nenum Bx2<T> {{\n    Full(T)\n    Empty\n}}"
     )
 }
 
@@ -298,6 +298,59 @@ fn place_through_safe_access_after_e0062_should_go_on() {
         (
             "c.n?.w = \"a\"",
             &[(Code::MayBeNone, (14, 5)), (Code::Mismatch, (14, 14))],
+        ),
+    ]);
+}
+
+/// A generic variant and a call through an interface bound keep the flag of an argument, as a
+/// generic call does. A result that names a type parameter may take the type of the argument.
+#[test]
+fn unwrapped_flag_should_spread_through_a_generic_variant_and_an_interface_call() {
+    cell_rows(&[(
+        "match Bx2.Full(c.v) { Bx2.Full(x) => print(x ?? 0); Bx2.Empty => {} }",
+        &[(Code::MayBeNone, (14, 20))],
+    )]);
+    codes(
+        "interface Get {\n    fn get<T>(self, t: T) -> T\n}\nclass C {\n    v: i64\n}\nfn r<X: Get>(x: X, c: C?) {\n    print(x.get(c.v) ?? 0)\n}\nfn main() {}",
+        &[(Code::MayBeNone, (8, 17))],
+    );
+}
+
+/// A name inside a `Some` on a value that is not optional, and that E0062 typed, binds `Error`:
+/// the `Some` is a mistake without the `?.` fix, and its names have no type.
+#[test]
+fn name_inside_a_some_on_a_value_typed_by_e0062_should_have_no_type() {
+    cell_rows(&[
+        (
+            "match c.v { Some(x) => print(x ?? 0); None => {} }",
+            &[(Code::MayBeNone, (14, 11))],
+        ),
+        (
+            "match c.v { Some(x) => x.nope(); None => {} }",
+            &[(Code::MayBeNone, (14, 11))],
+        ),
+        (
+            "match Some(c.v) { Some(x) => print(x ?? 0); None => {} }",
+            &[(Code::MayBeNone, (14, 16))],
+        ),
+    ]);
+}
+
+/// A member whose own type is optional has that type under both remedies, so a name bound to it
+/// keeps its type and a mistake with it is reported.
+#[test]
+fn name_pattern_on_an_optional_typed_by_e0062_should_keep_its_type() {
+    cell_rows(&[
+        (
+            "if let x = c.n { x.nope() }",
+            &[(Code::MayBeNone, (14, 16)), (Code::NoMember, (14, 24))],
+        ),
+        (
+            "if let x = c.n { print(x.v ?? 0) }",
+            &[
+                (Code::MayBeNone, (14, 16)),
+                (Code::CoalesceNotOptional, (14, 28)),
+            ],
         ),
     ]);
 }

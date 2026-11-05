@@ -21,10 +21,25 @@ enum E {
     B
 }
 
+enum F {
+    A(string)
+    B
+}
+
+enum Bx2<T> {
+    Full(T)
+    Empty
+}
+
+interface Get {
+    fn get<T>(self, t: T) -> T
+}
+
 class C {
     v: i64
     b: bool
     e: E
+    f: F
     s: string
     ys: [i64]
     n: C?
@@ -273,6 +288,46 @@ fn debug_call(c: C?, k: bool, p: E) {
 
 fn or_pattern(c: C?, k: bool, p: E) {
     match c.v { Some(1) | None => {}; _ => {} }
+}
+
+fn variant_generic(c: C?, k: bool, p: E) {
+    match Bx2.Full(c.v) { Bx2.Full(x) => print(x ?? 0); Bx2.Empty => {} }
+}
+
+fn interface_call<X: Get>(x: X, c: C?) {
+    print(x.get(c.v) ?? 0)
+}
+
+fn some_name_coalesce(c: C?, k: bool, p: E) {
+    match c.v { Some(x) => print(x ?? 0); None => {} }
+}
+
+fn some_name_member(c: C?, k: bool, p: E) {
+    match c.v { Some(x) => x.nope(); None => {} }
+}
+
+fn some_name_iflet_member(c: C?, k: bool, p: E) {
+    if let Some(x) = c.v { x.nope() }
+}
+
+fn iflet_join(c: C?, k: bool, p: E) {
+    print((if let x = c.v { x } else { 0 }) ?? 0)
+}
+
+fn some_built(c: C?, k: bool, p: E) {
+    match Some(c.v) { Some(x) => print(x ?? 0); None => {} }
+}
+
+fn some_built_iflet(c: C?, k: bool, p: E) {
+    if let Some(x) = Some(c.v) { print(x ?? 0) }
+}
+
+fn some_guard(c: C?, k: bool, p: E) {
+    match c.v { Some(x) if (x ?? 0) > 1 => {}; _ => {} }
+}
+
+fn some_variant_name(c: C?, k: bool, p: E) {
+    match c.f { Some(F.A(x)) => x.nope(); _ => {} }
 }
 
 fn main() {}
