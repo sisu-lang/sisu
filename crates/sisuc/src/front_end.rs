@@ -463,10 +463,16 @@ mod tests {
     /// The text of `src` after the one fix of the first diagnostic of `code`, and whether the fix
     /// is safe once `sound_fixes` judged it.
     fn fixed(src: &str, code: Code) -> (String, bool) {
+        fixed_nth(src, code, 0)
+    }
+
+    /// Like `fixed`, for the diagnostic of `code` that is `n`th in the order of the report.
+    fn fixed_nth(src: &str, code: Code, n: usize) -> (String, bool) {
         let ds = sound_fixes(src, &front_end(src).1);
         let d = ds
             .iter()
-            .find(|d| d.code() == code)
+            .filter(|d| d.code() == code)
+            .nth(n)
             .unwrap_or_else(|| panic!("{code:?} should be reported for:\n{src}"));
         let (safe, _) = fix_edits(d).expect("the diagnostic should have a fix");
         (apply_fix(src, d), safe)
@@ -488,6 +494,22 @@ mod tests {
     fn in_optional_match(arms: &str) -> String {
         format!(
             "fn f(o: i64?) {{\n    match o {{\n{arms}\n        _ => print(3)\n    }}\n}}\n\nfn main() {{\n    f(None)\n}}\n"
+        )
+    }
+
+    /// `arms` as the arms of a `match` on an enum `E` with the variant `A(i64)`, after the arm
+    /// `A(1) => print(1)`.
+    fn in_variant_match(arms: &str) -> String {
+        format!(
+            "enum E {{\n    A(i64)\n    B\n}}\n\nfn f(e: E) {{\n    match e {{\n        A(1) => print(1)\n{arms}\n        _ => print(3)\n    }}\n}}\n\nfn main() {{\n    f(E.B)\n}}\n"
+        )
+    }
+
+    /// `arms` as the arms of a `match` on an enum `E` with the variant `A(i64?)`, after the arm
+    /// `A(Some(1)) => print(1)`.
+    fn in_variant_optional_match(arms: &str) -> String {
+        format!(
+            "enum E {{\n    A(i64?)\n    B\n}}\n\nfn f(e: E) {{\n    match e {{\n        A(Some(1)) => print(1)\n{arms}\n        _ => print(3)\n    }}\n}}\n\nfn main() {{\n    f(E.B)\n}}\n"
         )
     }
 
@@ -642,9 +664,78 @@ mod tests {
                 in_optional_match("        Some(1) => print(1)\n        Some(// c\n            2) => print(2)"),
                 false,
             ),
+            // A comment lies before the `|` that the first alternative removes with itself: the
+            // removal does not stop at it, or it would keep the `|`. The comment goes with the
+            // alternative.
+            (
+                in_optional_match("        Some(1) => print(1)\n        Some(1 // c\n            | 2) => print(2)"),
+                Code::UnreachableArm,
+                in_optional_match("        Some(1) => print(1)\n        Some(2) => print(2)"),
+                false,
+            ),
+            // The same for a later alternative whose backward gap holds a comment, and another
+            // follows: the comment after the alternative lies before the `|`.
+            (
+                in_optional_match("        Some(1) => print(1)\n        Some(2 | // a\n            1 // b\n            | 3) => print(2)"),
+                Code::UnreachableArm,
+                in_optional_match("        Some(1) => print(1)\n        Some(2 // b\n            | 3) => print(2)"),
+                false,
+            ),
+            (
+                in_variant_match("        A(1 // c\n            | 2) => print(2)"),
+                Code::UnreachableArm,
+                in_variant_match("        A(2) => print(2)"),
+                false,
+            ),
+            (
+                in_variant_match("        A(2 | // a\n            1 // b\n            | 3) => print(2)"),
+                Code::UnreachableArm,
+                in_variant_match("        A(2 // b\n            | 3) => print(2)"),
+                false,
+            ),
+            (
+                in_optional_match("        Some(1) => print(1)\n        Some(5) | Some(1 // c\n            | 2) => print(2)"),
+                Code::UnreachableArm,
+                in_optional_match("        Some(1) => print(1)\n        Some(5) | Some(2) => print(2)"),
+                false,
+            ),
+            (
+                in_variant_optional_match("        A(None | // a\n            Some(1) // b\n            | Some(2)) => print(2)"),
+                Code::UnreachableArm,
+                in_variant_optional_match("        A(None // b\n            | Some(2)) => print(2)"),
+                false,
+            ),
+            // Comments on both sides of a `|`, and a later alternative with a comment in its
+            // backward gap and one after its own `|`.
+            (
+                in_optional_match("        Some(1) => print(1)\n        Some(1 // a\n            | // b\n            2) => print(2)"),
+                Code::UnreachableArm,
+                in_optional_match("        Some(1) => print(1)\n        Some(2) => print(2)"),
+                false,
+            ),
+            (
+                in_optional_match("        Some(1) => print(1)\n        Some(2 | // a\n            1 | // b\n            3) => print(2)"),
+                Code::UnreachableArm,
+                in_optional_match("        Some(1) => print(1)\n        Some(2 | // a\n            // b\n            3) => print(2)"),
+                false,
+            ),
         ];
         for (src, code, want, safe) in rows {
             assert_eq!(fixed(&src, code), (want, safe), "{src}");
+        }
+        // Two unreachable alternatives next to each other, with a comment after each: each fix
+        // alone leaves the second comment and one `|`.
+        let src = in_optional_match(
+            "        Some(1) => print(1)\n        Some(1 // a\n            | 1 // b\n            | 2) => print(2)",
+        );
+        let want = in_optional_match(
+            "        Some(1) => print(1)\n        Some(1 // b\n            | 2) => print(2)",
+        );
+        for n in 0..2 {
+            assert_eq!(
+                fixed_nth(&src, Code::UnreachableArm, n),
+                (want.clone(), false)
+            );
         }
     }
 
