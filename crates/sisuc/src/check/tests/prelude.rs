@@ -355,7 +355,8 @@ fn an_item_named_option_or_result_should_leave_it_to_the_built_in() {
     }
     // `Ok` names the variant of the built-in `Result`, which has no context here.
     let src = format!("enum Result {{\n    A\n}}\n{}", body("", "let r = Ok(1)"));
-    codes(
+    codes_row(
+        "enum Result, an Ok with no context",
         &src,
         &[(Code::BuiltInName, (1, 6)), (Code::CannotInfer, (5, 13))],
     );
@@ -831,10 +832,10 @@ fn a_labeled_dbg_with_more_than_one_argument_should_keep_all_its_errors() {
     assert_eq!(found, [Code::LabeledArgument, Code::CannotInfer], "{src}");
 }
 
-/// A user's `class dbg` is rejected, but `dbg(...)` is still the prelude's call: the class
-/// does not add an `E0050` for the `[]` beside the `E0034`.
+/// A user's `class dbg` is rejected and poisons the name: `dbg(...)` reads neither the class nor
+/// the prelude's call, so the `[]` adds no `E0050` beside the `E0034`.
 #[test]
-fn dbg_should_stay_the_prelude_call_when_a_class_takes_its_name() {
+fn dbg_should_be_poisoned_when_a_class_takes_its_name() {
     with_prelude();
     let src = format!(
         "class dbg {{}}\n{}",
@@ -894,20 +895,13 @@ fn result_should_report_what_it_cannot_decide() {
     }
 }
 
-/// `Ok` and `Err` name the variants of a `Result` that declares them: with no prelude, or with
-/// a user's `Result` that has none (which E0026 reports), a call of either names nothing.
+/// `Ok` and `Err` name the variants of a `Result` that declares them: with no prelude, a call of
+/// either names nothing.
 #[test]
 fn ok_should_name_nothing_when_no_result_declares_it() {
-    let call = body("", "let r = Ok(1)");
-    codes(&call, &[(Code::FunctionNotFound, (2, 13))]);
-    with_prelude();
-    let src = format!("enum Result {{\n    A\n}}\n{call}");
     codes(
-        &src,
-        &[
-            (Code::BuiltInName, (1, 6)),
-            (Code::FunctionNotFound, (5, 13)),
-        ],
+        &body("", "let r = Ok(1)"),
+        &[(Code::FunctionNotFound, (2, 13))],
     );
 }
 

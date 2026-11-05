@@ -52,7 +52,7 @@ use crate::types::{Head, write_type};
 use alias::{AliasInfo, Aliases, FieldType, UseCheck};
 use assoc::{Choice, Choices, Named};
 use constant::{ConstInfo, ConstantSite};
-use enums::{EnumInfo, HoldsTable};
+use enums::{EnumInfo, HoldsTable, reserved_name};
 use extend::Extension;
 use interface::{Bound, InterfaceInfo, PendingBound, Required, Scope, Slot, Waiting};
 use prelude::PRELUDE;
@@ -1451,9 +1451,15 @@ impl Checker<'_> {
     /// any of them. They share a namespace. `FuncId`s run in source order, a class's or an
     /// enum's methods at its place.
     /// The first `user_items` of `items` are the user's: `self.prelude` is where the rest start.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per kind of item, so the names of all of them are collected in one place"
+    )]
     fn collect_names(&mut self, items: &[&ast::Item], user_items: usize, broken: &[ast::Broken]) {
         self.prelude_functions = prelude_function_names(items[user_items..].iter().copied());
         let mut first = FxHashMap::default();
+        // The top-level items that a prelude function's name rejected.
+        let mut rejected = Vec::new();
         let mut next_function = 0;
         // Source order among the constants.
         let mut order = 0;
@@ -1470,7 +1476,7 @@ impl Checker<'_> {
                         .push(ClassInfo::new(class.name.clone(), type_params, bounded));
                     let name = &class.name;
                     if !self.built_in(name)
-                        && self.first_callable(&mut first, Definition::Class, name)
+                        && self.first_callable(&mut first, &mut rejected, Definition::Class, name)
                     {
                         self.class_ids.insert(name.name, Declared::Known(id));
                     }
@@ -1482,7 +1488,12 @@ impl Checker<'_> {
                 }
                 ast::Item::Function(f) => {
                     if !self.built_in(&f.name)
-                        && self.first_callable(&mut first, Definition::Function, &f.name)
+                        && self.first_callable(
+                            &mut first,
+                            &mut rejected,
+                            Definition::Function,
+                            &f.name,
+                        )
                     {
                         self.function_ids
                             .insert(f.name.name, Declared::Known(tir::FuncId(next_function)));
@@ -1503,7 +1514,7 @@ impl Checker<'_> {
                         assoc: Rc::default(),
                     });
                     if !self.built_in(&e.name)
-                        && self.first_callable(&mut first, Definition::Enum, &e.name)
+                        && self.first_callable(&mut first, &mut rejected, Definition::Enum, &e.name)
                     {
                         self.enum_ids.insert(e.name.name, Declared::Known(id));
                     }
@@ -1511,7 +1522,12 @@ impl Checker<'_> {
                 }
                 ast::Item::Const(c) => {
                     if !self.built_in(&c.name)
-                        && self.first_callable(&mut first, Definition::Constant, &c.name)
+                        && self.first_callable(
+                            &mut first,
+                            &mut rejected,
+                            Definition::Constant,
+                            &c.name,
+                        )
                     {
                         self.constants.insert(
                             c.name.name,
@@ -1536,27 +1552,38 @@ impl Checker<'_> {
                     self.index_assoc(interface, id);
                     let name = &interface.name;
                     if !self.built_in(name)
-                        && self.first_callable(&mut first, Definition::Interface, name)
+                        && self.first_callable(
+                            &mut first,
+                            &mut rejected,
+                            Definition::Interface,
+                            name,
+                        )
                     {
                         self.interface_ids.insert(name.name, Declared::Known(id));
                     }
                 }
-                ast::Item::Alias(alias) => self.declare_alias(alias, &mut first),
+                ast::Item::Alias(alias) => self.declare_alias(alias, &mut first, &mut rejected),
                 ast::Item::Extend(extend) => next_function += extend.methods.len(),
             }
         }
         if user_items == items.len() {
             self.prelude = self.item_counts(next_function);
         }
-        self.poison_broken(broken);
+        // After the loop: the prelude's own items, which come last, would take the names back.
+        for (kind, name) in rejected {
+            self.poison_name(kind, name);
+        }
+        self.poison_broken(broken, &mut first);
     }
 
     /// Records the alias `alias`, and its name as the first function, class, enum, constant or
-    /// alias of that name, which `first` holds.
+    /// alias of that name, which `first` holds. `rejected` holds the names that a prelude function
+    /// takes.
     fn declare_alias(
         &mut self,
         alias: &ast::AliasDecl,
         first: &mut FxHashMap<Symbol, (Span, Definition)>,
+        rejected: &mut Vec<(Definition, Symbol)>,
     ) {
         let id = self.aliases.infos.len();
         self.aliases.infos.push(AliasInfo::new(alias));
@@ -1567,7 +1594,8 @@ impl Checker<'_> {
                 self.first_definition(&mut params, Definition::Type, None, param);
             }
         }
-        if !self.built_in(&alias.name) && self.first_callable(first, Definition::Alias, &alias.name)
+        if !self.built_in(&alias.name)
+            && self.first_callable(first, rejected, Definition::Alias, &alias.name)
         {
             self.aliases
                 .names
@@ -1590,78 +1618,137 @@ impl Checker<'_> {
     }
 
     /// Poisons the name of each broken item, and reports it as `collect_names` reports an intact
-    /// item's: a name that the language or the prelude takes.
-    fn poison_broken(&mut self, broken: &[ast::Broken]) {
+    /// item's: a name that the language or the prelude takes, and a name that another item has.
+    /// `first` holds the first item of each name. The broken items come in source order.
+    fn poison_broken(
+        &mut self,
+        broken: &[ast::Broken],
+        first: &mut FxHashMap<Symbol, (Span, Definition)>,
+    ) {
         for broken in broken {
-            let name = &broken.name.name;
-            // The prelude's code reads a language interface by its name, so no broken item takes
-            // it, as no intact item of the user's does.
-            let language = is_language_interface(name.as_str());
             let kind = match broken.kind {
-                ast::BrokenKind::Function => {
-                    self.function_ids.insert(*name, Declared::Broken);
-                    Definition::Function
-                }
-                ast::BrokenKind::Class => {
-                    self.class_ids.insert(*name, Declared::Broken);
-                    Definition::Class
-                }
-                ast::BrokenKind::Interface => {
-                    // A language interface keeps its name.
-                    if !language {
-                        self.interface_ids.insert(*name, Declared::Broken);
-                    }
-                    Definition::Interface
-                }
-                ast::BrokenKind::Enum => {
-                    self.enum_ids.insert(*name, Declared::Broken);
-                    Definition::Enum
-                }
-                ast::BrokenKind::Constant => {
-                    self.constants.insert(*name, Declared::Broken);
-                    Definition::Constant
-                }
-                ast::BrokenKind::Alias => {
-                    self.aliases.names.insert(*name, Declared::Broken);
-                    Definition::Alias
-                }
+                ast::BrokenKind::Function => Definition::Function,
+                ast::BrokenKind::Class => Definition::Class,
+                ast::BrokenKind::Interface => Definition::Interface,
+                ast::BrokenKind::Enum => Definition::Enum,
+                ast::BrokenKind::Constant => Definition::Constant,
+                ast::BrokenKind::Alias => Definition::Alias,
                 // Its target is intact, and its parse error already fails the program. A method
                 // call on the target that finds no method is poisoned.
                 ast::BrokenKind::Extend => {
-                    self.broken_extensions.insert(*name);
+                    self.broken_extensions.insert(broken.name.name);
                     continue;
                 }
             };
-            if !self.built_in(&broken.name) {
-                self.prelude_taken(kind, &broken.name);
+            if !(self.built_in(&broken.name) || self.prelude_taken(kind, &broken.name)) {
+                self.broken_duplicate(first, kind, &broken.name);
             }
-            // Functions, classes, enums, interfaces and constants share a namespace, so an intact
-            // item of another kind and this name is poisoned too.
-            if !language && let Some(interface) = self.interface_ids.get_mut(name) {
-                *interface = Declared::Broken;
+            self.poison_name(kind, broken.name.name);
+        }
+    }
+
+    /// Gives the broken item `name` of `kind` the duplicate check of an intact item. When a user's
+    /// item of the name starts before it, the broken item is reported against that one. When one
+    /// starts after it, that one is reported against the broken item, which takes its place in
+    /// `first`. Else the broken item joins `first`, also in the place of a prelude item.
+    fn broken_duplicate(
+        &mut self,
+        first: &mut FxHashMap<Symbol, (Span, Definition)>,
+        kind: Definition,
+        name: &ast::Ident,
+    ) {
+        match first.get(&name.name).copied() {
+            None => {
+                first.insert(name.name, (name.span, kind));
             }
-            if let Some(class) = self.class_ids.get_mut(name) {
-                *class = Declared::Broken;
+            // The prelude's item of a language interface's name is no item of the user's.
+            Some((span, _)) if span.in_prelude() => {
+                first.insert(name.name, (name.span, kind));
             }
-            if let Some(e) = self.enum_ids.get_mut(name) {
-                *e = Declared::Broken;
+            Some((span, earlier)) if span.start() < name.span.start() => {
+                let earlier = Earlier::At {
+                    span,
+                    kind: earlier,
+                    owner: None,
+                };
+                self.report(defined_twice(kind, name, earlier));
             }
-            if let Some(function) = self.function_ids.get_mut(name) {
-                *function = Declared::Broken;
-            }
-            if let Some(constant) = self.constants.get_mut(name) {
-                *constant = Declared::Broken;
-            }
-            if let Some(alias) = self.aliases.names.get_mut(name) {
-                *alias = Declared::Broken;
+            Some((span, later_kind)) => {
+                let later = ast::Ident {
+                    name: name.name,
+                    span,
+                };
+                let earlier = Earlier::At {
+                    span: name.span,
+                    kind,
+                    owner: None,
+                };
+                self.report(defined_twice(later_kind, &later, earlier));
+                first.insert(name.name, (name.span, kind));
             }
         }
     }
 
+    /// Poisons the top-level name `name` of an item of `kind` that is rejected or broken: its
+    /// uses give no more errors. Functions, classes, enums, interfaces, constants and aliases
+    /// share a namespace, so an item of another kind with this name is poisoned too.
+    fn poison_name(&mut self, kind: Definition, name: Symbol) {
+        // The prelude's code reads a language interface by its name, so no rejected or broken
+        // item takes it, as no intact item of the user's does.
+        let language = is_language_interface(name.as_str());
+        match kind {
+            Definition::Function => {
+                self.function_ids.insert(name, Declared::Broken);
+            }
+            Definition::Class => {
+                self.class_ids.insert(name, Declared::Broken);
+            }
+            Definition::Interface => {
+                if !language {
+                    self.interface_ids.insert(name, Declared::Broken);
+                }
+            }
+            Definition::Enum => {
+                self.enum_ids.insert(name, Declared::Broken);
+            }
+            Definition::Constant => {
+                self.constants.insert(name, Declared::Broken);
+            }
+            Definition::Alias => {
+                self.aliases.names.insert(name, Declared::Broken);
+            }
+            Definition::Field
+            | Definition::Method
+            | Definition::Binding
+            | Definition::Type
+            | Definition::Variant
+            | Definition::LoopLabel => {}
+        }
+        if !language && let Some(interface) = self.interface_ids.get_mut(&name) {
+            *interface = Declared::Broken;
+        }
+        if let Some(class) = self.class_ids.get_mut(&name) {
+            *class = Declared::Broken;
+        }
+        if let Some(e) = self.enum_ids.get_mut(&name) {
+            *e = Declared::Broken;
+        }
+        if let Some(function) = self.function_ids.get_mut(&name) {
+            *function = Declared::Broken;
+        }
+        if let Some(constant) = self.constants.get_mut(&name) {
+            *constant = Declared::Broken;
+        }
+        if let Some(alias) = self.aliases.names.get_mut(&name) {
+            *alias = Declared::Broken;
+        }
+    }
+
     /// Whether `name` is a built-in type's, which no class, function, enum, constant or interface
-    /// may take; reports it when it is. A language interface's name is reported too, and so is a
-    /// name milestone 8's prelude takes without declaring it, but the item still takes it, so
-    /// that its uses do not cascade. The prelude's own declarations take the language
+    /// may take; reports it when it is. A built-in type keeps its name, also when the prelude
+    /// declares it, as `Option` and `Result`. A language interface's name is reported too, and so
+    /// is a name of milestone 8's constructors (`Some`, `Ok`, `Err`), but the item still takes
+    /// it, so that its uses do not cascade. The prelude's own declarations take the language
     /// interfaces' names as well, in `interface_ids`.
     fn built_in(&mut self, name: &ast::Ident) -> bool {
         let kind = if built_in_type(name.name.as_str()).is_some() {
@@ -1677,21 +1764,24 @@ impl Checker<'_> {
                 at: name.span,
                 kind,
             });
-        } else {
-            self.reserved(name);
+        } else if self.reserved(name) {
+            return matches!(reserved_name(name.name), Some(BuiltIn::Type));
         }
         matches!(kind, Some(BuiltIn::Type))
     }
 
     /// Whether `name` is the first function, class, enum or constant of its name; reports it when
-    /// not.
+    /// not. A name that a prelude function takes is added to `rejected`, for `collect_names` to
+    /// poison.
     fn first_callable(
         &mut self,
         first: &mut FxHashMap<Symbol, (Span, Definition)>,
+        rejected: &mut Vec<(Definition, Symbol)>,
         kind: Definition,
         name: &ast::Ident,
     ) -> bool {
         if self.prelude_taken(kind, name) {
+            rejected.push((kind, name.name));
             return false;
         }
         self.first_definition(first, kind, None, name)
@@ -1719,10 +1809,10 @@ impl Checker<'_> {
         name: &ast::Ident,
     ) -> bool {
         if let Some(&(span, first_kind)) = first.get(&name.name) {
-            // A user's item took the prelude's name first. For a type or a constructor name,
-            // `BuiltInName` has said so. A language interface still takes its name, which only
-            // the prelude's code reads. A prelude function never gets here: `first_callable`
-            // keeps a user item of its name out of `first`.
+            // A user's item took the prelude's name first. For a constructor name, `BuiltInName`
+            // has said so. A language interface still takes its name, which only the prelude's
+            // code reads. A built-in type never gets here: `built_in` keeps a user item of its
+            // name out of `first`, as `first_callable` does for a prelude function.
             if name.span.in_prelude() && !span.in_prelude() {
                 return is_language_interface(name.name.as_str());
             }

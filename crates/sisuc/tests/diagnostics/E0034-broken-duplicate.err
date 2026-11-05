@@ -1,36 +1,28 @@
-error[E0063]: `S` has no method `next`
- --> E0034-broken-duplicate.sisu:6:13
-  |
-6 |     print(s.next())
-  |             ^^^^
-  |
-  = help: add a bound: `S: Source`
-
 error[E0034]: interface `Source` is defined twice
- --> E0034-broken-duplicate.sisu:9:11
+ --> E0034-broken-duplicate.sisu:5:11
   |
 1 | interface Source {
   |           ------ first defined here
 ...
-9 | interface Source
+5 | interface Source
   |           ^^^^^^
 
 error[E0004]: `{` must be on the same line as `fn`, `class`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`
-  --> E0034-broken-duplicate.sisu:10:1
-   |
-10 | {   fn get(self) -> i64
-   | ^
-   |
+ --> E0034-broken-duplicate.sisu:6:1
+  |
+6 | {   fn get(self) -> i64
+  | ^
+  |
 help: move `{` to the end of the line above
-   |
- 9 | interface Source {   fn get(self) -> i64
-   |                 +
+  |
+5 | interface Source {   fn get(self) -> i64
+  |                 +
 
 error[E0032]: expected `i64`, found `string`
-  --> E0034-broken-duplicate.sisu:14:18
+  --> E0034-broken-duplicate.sisu:10:18
    |
-14 |     let x: i64 = "s"
+10 |     let x: i64 = "s"
    |                  ^^^
 
-sisu: 4 errors
-sisu: for more on a code, run `sisu explain <code>`: E0004, E0032, E0034, E0063
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0004, E0032, E0034
