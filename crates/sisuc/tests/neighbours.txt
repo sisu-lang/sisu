@@ -38,6 +38,10 @@ type OP = (any Pet)??
 fn nothing<T>() -> T? { None }
 fn nn<T>() -> T?? { None }
 fn n3<T>() -> T??? { None }
+class Oa {
+    oa: [i64]?
+}
+fn oa_none() -> Oa? { None }
 fn mk<T>() -> T { loop {} }
 fn some<T>(v: T) -> T? { Some(v) }
 fn id<T>(v: T) -> T { v }
@@ -174,3 +178,13 @@ opt(keep($))
 # type argument on a method of an optional is checked.
 let _s: string = $.wrap(1)
 print($.none<i64, i64>())
+# A chain that goes on from a flagged value (E0062): a generic method on an optional receiver with
+# a flagged argument, `??` with a flagged left side, `?.` after a flagged optional or with a
+# flagged member, a `match` on a flagged value that is not matchable, and an index of a member
+# that is an optional array.
+let _s: string = $.wrap(ob.wrap(1))
+let _a = ob.wrap(1) ?? $
+let _a = ob.wrap(ob)?.wrap($)
+let _a = $?.wrap(ob.wrap(1))
+match ob.wrap($) { _ => {} }
+print(oa_none().oa[0] ?? $)

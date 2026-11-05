@@ -335,4 +335,14 @@ fn index_member_optional_array(c: Cell?) {
     print(c.oa[0] ?? 0)
 }
 
+class Link {
+    n: Link?
+    onn: i64?
+}
+
+fn let_if_let_join(c: Link?) {
+    let y = if let x = c.n { x.onn } else { c.onn }
+    y.nope()
+}
+
 fn main() {}

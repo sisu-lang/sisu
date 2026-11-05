@@ -1480,5 +1480,35 @@ error[E0048]: the left side of `??` is not optional
 335 |     print(c.oa[0] ?? 0)
     |           ^^^^^^^
 
-sisu: 151 errors
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:344:24
+    |
+344 |     let y = if let x = c.n { x.onn } else { c.onn }
+    |                        ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+344 |     let y = if let x = c?.n { x.onn } else { c.onn }
+    |                         +
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:344:45
+    |
+344 |     let y = if let x = c.n { x.onn } else { c.onn }
+    |                                             ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+344 |     let y = if let x = c.n { x.onn } else { c?.onn }
+    |                                              +
+
+error[E0063]: `i64` has no method `nope`
+   --> E0062-chain-continues.sisu:345:7
+    |
+345 |     y.nope()
+    |       ^^^^
+
+sisu: 154 errors
 sisu: for more on a code, run `sisu explain <code>`: E0001, E0032, E0033, E0035, E0048, E0062, E0063, E0137, E0169

@@ -84,9 +84,16 @@ use unused_names::{Owner, Pending, Use, Used};
 /// The flag spreads through `!`, unary `-`, each operator but `==` and `!=`, a block and a join.
 /// It spreads through an `if` condition, `Some`, and both sides of `??`. It spreads through a
 /// generic call, method, constructor, variant or interface call whose result names a type
-/// parameter. It spreads through `dbg` and a slice. A `.`, an index or a method call on a
-/// flagged base, and a `?.` after a flagged optional, keep it too. A `?.` is built from its
-/// member or its scrutinee when either has the remedy flag, else it is its scrutinee again.
+/// parameter. It spreads through `dbg` and a slice. A `.` or a method call on a flagged base,
+/// an index on a base with the remedy flag, and a `?.` after a flagged optional, keep it too.
+/// A `?.` is built from its member or its scrutinee when either has the remedy flag, else it is
+/// its scrutinee again.
+///
+/// A rule that fails on a member of an optional type under both remedies builds from any flag
+/// (`is_unwrapped`). These rules are an operator, `!`, unary `-`, a field, a method call, a
+/// slice and a place. A rule whose type depends on the remedy reads the remedy flag
+/// (`has_remedy_flag`). These rules are a `let`, a `for`, a join, `Some`, `??`, a pattern, an
+/// index, `?.` and E0124.
 ///
 /// The remedy flag is `unwrapped` set, except for a member of an optional type. That member has
 /// the same type under the `if let` unwrap and under the `?.` fix.
