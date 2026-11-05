@@ -200,9 +200,29 @@ passes. Pass 1 tests each mutant with the unit tests only (`cargo nextest run
 --lib`: about 6 s, against 47 s for the whole suite). Of the 657 mutants of
 a 4,000-line diff, pass 1 did not catch 80 (54 missed, 26 timeouts); pass 2
 tested those 80 with the whole suite in more than one hour. When pass 1 misses a
-mutant or times out, pass 2 tests the mutants that pass 1 did not catch (`--iterate`) with
-the whole suite, so a mutant that only an end-to-end test kills counts as
-caught. The summary adds the counts of both passes. Arguments after `--` choose
+mutant or times out, pass 2 tests the mutants that pass 1 did not catch in two
+groups. The file in the name of each mutant chooses the group. A mutant in a
+file of the `LIB_ONLY` list of `scripts/mutants.sh` (the fuzz modules and the
+program generator) is tested with the unit tests again, because no integration
+test reaches that code. In one run, 49 mutants of `generate/` took about 2.5
+hours with the whole suite and 11 minutes with `--lib`, with the same results.
+Every other mutant is tested with the whole suite, so a mutant that only an
+end-to-end test kills counts as caught.
+
+Each group selects its mutants by name, with one `--re` for each. The script
+drops your own `--re`, `-F`, `--regex`, `--examine-re`, `--examine-regex` and
+`--iterate` from pass 2. cargo-mutants 27.1.0 ignores `--re` for the "delete
+field" mutants, so each group also runs all of those in the diff. A group
+counts, and judges, only the names it was given. It fails the run when it
+tests fewer of them than it was given.
+
+A mutant of a `LIB_ONLY` file that only an integration test kills shows as
+missed, never as caught. So a wrong entry costs a false survivor and hides
+none. A test in `scripts/test_mutants.py` checks the list against
+`crates/sisuc/tests/architecture.rs` and against the tests, binaries and
+`lib.rs`. The log prints one line before each group, and lists the caught
+mutants (`--caught`). The summary adds the counts of all the passes.
+Arguments after `--` choose
 the tests yourself; the script then runs one pass with them. Each mutant still
 costs one build, so a large diff can take an hour or more. A diff of more
 than 300 mutants fails at once, before pass 1, with
@@ -428,7 +448,10 @@ Three limits of fork mode:
   output, with the panic message and backtrace, to `fuzz.log`. A run with
   more crashes says in the log and the summary how many it left out; replay
   those with `--replay`. The replays change neither the exit status nor
-  which inputs count.
+  which inputs count. The summary gives, under each replayed crash, the
+  panic location and the first line of the panic message. So you do not have
+  to search `fuzz.log`, which holds binary bytes (`grep -a`). The message is
+  cut to 300 bytes and shown in a code span.
 - A stack overflow leaves a `crash-` file only on a best-effort basis:
   libFuzzer's crash handler is not async-signal-safe. It dies by a fatal
   signal, with no panic message and no Rust backtrace. A crash with no panic
@@ -462,6 +485,15 @@ the job fails.
 The summary gives the seconds fuzzed, the executions in processed jobs and
 each failing input with its replay command. Its paths are those of the CI
 run's checkout.
+
+When the fuzz job of a scheduled run fails, the `report` job runs
+`scripts/fuzz_issue.sh`. It opens a GitHub issue with the title
+`Nightly fuzz failure: front_end` and the labels `needs-triage`, `bug` and
+`fuzz`, or, when an open issue with that label and title exists, adds a
+comment to it. The text is the summary and the run's URL. The script adds no
+severity label: the maintainer who triages the issue adds it, and writes the
+text again in the usual form. A run that you start by hand opens no issue.
+The `report` job is the only job with `issues: write`.
 
 GitHub disables a `schedule` trigger in a public repository after 60 days
 without activity in it. That stop sends no failure email: the only sign is a
@@ -585,8 +617,10 @@ every night at 03:53 UTC for 30 minutes. It works as
 `fuzz-program-corpus-`, and its own concurrency group per ref, so neither job
 waits for the other. On a failure it uploads `fuzz/artifacts/` as
 `fuzz-program-failure`, with the `.dump` directory of each replayed crash, and
-the minimized inputs as `fuzz-program-minimized`. Nothing files an issue or
-blocks a merge: watch the runs and act on a red one.
+the minimized inputs as `fuzz-program-minimized`. When a scheduled run fails,
+its `report` job opens an issue titled `Nightly fuzz failure: program`, or
+comments on the open one, as for the front end. A failed `plan` job opens one
+too. Nothing blocks a merge.
 
 Program inputs are slow, so watch the corpus as well. The job summary gives
 the corpus size before and after cmin and whether cmin finished within its

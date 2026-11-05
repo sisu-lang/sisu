@@ -9,10 +9,22 @@
 # "mutation-test: NOT RUN", never PASS.
 # Two passes keep it short. Pass 1 tests each mutant with the unit tests only (`--lib`,
 # about 6 s against 47 s for the whole suite). Pass 2 runs only when pass 1 missed a mutant
-# or timed out. It tests the mutants that pass 1 did not catch (--iterate) with the whole suite, so a
-# mutant that only an end-to-end test kills is caught, not missed. The summary adds the counts.
+# or timed out. It tests the mutants that pass 1 did not catch in two groups. The file in the
+# name of each mutant chooses the group.
+# A mutant in a LIB_ONLY file is tested with the unit tests again, with the pass 2 wait. No
+# integration test reaches that code. The whole suite would cost about 3 to 4 minutes for each
+# mutant and give the same result.
+# Every other mutant is tested with the whole suite. So a mutant that only an end-to-end test
+# kills is caught, not missed.
+# Each group selects its mutants by name, with one --re for each mutant. It does not use
+# --iterate, so the groups do not read each other's results. A --re, -F, --regex, --examine-re,
+# --examine-regex or --iterate of the caller is not passed to pass 2, because it would widen the
+# set. cargo mutants ignores --re for the "delete field" mutants, so each group counts only the
+# names it was given (see run_group).
+# The summary adds the counts of all the passes.
 # Arguments after -- choose the tests yourself: the script then runs one pass with them.
 # Each mutant still costs one build, so a large diff takes an hour or more.
+# Every pass passes --caught, so that the log lists each caught mutant, not only the misses.
 # It runs under nice -n 19 with 2 mutants at a time unless -j or CARGO_MUTANTS_JOBS says otherwise.
 # Each mutant runs 8 tests at a time unless NEXTEST_TEST_THREADS says otherwise.
 # Two whole suites at one test for each core link hundreds of programs at once. Then the disk stops.
@@ -51,13 +63,26 @@ source scripts/heavy-run.sh
 heavy_lock make mutation-test
 [[ -z ${LOG:-} ]] || exec >"$LOG" 2>&1
 
+# The files whose code only the library's unit tests reach. No integration test, no binary and
+# no module outside this list reaches it. scripts/test_mutants.py checks that this list matches
+# the facts. The paths are prefixes of the file in the name of a mutant.
+# A wrong entry never hides a survivor. A mutant of a listed file that only an integration test
+# would kill shows as missed, not as caught. Then the entry is wrong, and the fix is to delete it.
+LIB_ONLY=(
+  crates/sisuc/src/fuzz.rs
+  crates/sisuc/src/fuzz_program.rs
+  crates/sisuc/src/generate/
+)
+
 verdict=
 diff=
+lists=
 run=
 head=unknown
 # Any early exit, from set -e included, still prints a summary line.
 cleanup() {
   rm -f "$diff"
+  [[ -z $lists ]] || rm -rf "$lists"
   [[ -z $run ]] || rm -rf "$run" "$run.lock"
   [[ -n $verdict ]] || echo "mutation-test: FAIL: stopped early (see the error above) (HEAD $head)"
 }
@@ -70,7 +95,6 @@ base=${1:-$(git merge-base origin/main HEAD)}
 [[ $# -gt 0 ]] && shift
 not_run=
 test_args=
-iterate=
 caller_timeout=
 for arg in "$@"; do
   case $arg in
@@ -78,7 +102,6 @@ for arg in "$@"; do
       test_args=yes
       break
       ;;
-    --iterate) iterate=yes ;;
     -t* | --timeout | --timeout=* | --timeout-multiplier | --timeout-multiplier=*) caller_timeout=yes ;;
     -o* | --output | --output=* | -d* | --dir | --dir=* | --manifest-path | --manifest-path=*)
       verdict="mutation-test: FAIL: $arg moves mutants.out or the tree; the summary needs the default"
@@ -139,7 +162,7 @@ pass() {
   touch "$started"
   status=0
   TMPDIR=$run CARGO_MUTANTS_JOBS=${CARGO_MUTANTS_JOBS:-2} NEXTEST_TEST_THREADS=${NEXTEST_TEST_THREADS:-8} \
-    LLVM_SYS_231_PREFIX="$PWD/.llvm/23" nice -n 19 cargo mutants --in-diff "$diff" --output . "$@" || status=$?
+    LLVM_SYS_231_PREFIX="$PWD/.llvm/23" nice -n 19 cargo mutants --in-diff "$diff" --output . --caught "$@" || status=$?
   tested=
   [[ mutants.out/lock.json -nt $started ]] && tested=yes
   return 0
@@ -158,34 +181,124 @@ if [[ -n $not_run ]]; then
 fi
 caught=0
 unviable=0
-# Pass 2: exit 2 is a missed mutant and 3 a timeout; any other failure stops the run here.
-if [[ -z $test_args && -n $tested ]] && ((status == 2 || status == 3)) && (($(count missed) + $(count timeout) > 0)); then
+missed=0
+timeouts=0
+notes=
+if [[ -n $tested ]]; then
   caught=$(count caught)
   unviable=$(count unviable)
-  echo "mutation-test: pass 1 (unit tests) missed $(count missed) and timed out on $(count timeout); pass 2 tests them with the whole suite"
+  missed=$(count missed)
+  timeouts=$(count timeout)
+fi
+
+# The lines of mutants.out/$1.txt that are names in the file $2, or 0 when there is no such file.
+count_in() {
+  if [[ -f mutants.out/$1.txt ]]; then grep -cxFf "$2" "mutants.out/$1.txt" || true; else echo 0; fi
+}
+
+# Pass 2 tests the group of the names in file $2 with the tests in $3 (the label is $1), and adds
+# the counts. The remaining arguments go last to cargo mutants. A group with no mutant does not run.
+# cargo mutants 27.1.0 does not apply --re to the "delete field" mutants (visit.rs:739-746 pushes
+# them without the filter), so every group also runs all of those in the diff. The group counts
+# and judges only the names it was given: it ignores the other lines of mutants.out and the exit
+# status of cargo mutants, which those other mutants can change.
+run_group() {
+  local label=$1 names=$2 tests=$3 n re
+  shift 3
+  n=$(wc -l <"$names")
+  ((n > 0)) || return 0
+  echo "mutation-test: pass 2, $label group: $n mutants, tests: $tests"
+  local args=("${pass2_args[@]}")
+  # A name holds regex characters, so each one is escaped and anchored.
+  while IFS= read -r re; do args+=(--re "$re"); done < <(sed 's/[][\\.+*?()|{}^$]/\\&/g; s/^/^/; s/$/$/' "$names")
+  pass "${args[@]}" "$@"
+  local g_caught=0 g_unviable=0 g_missed=0 g_timeouts=0
+  if [[ -n $tested ]]; then
+    g_caught=$(count_in caught "$names")
+    g_unviable=$(count_in unviable "$names")
+    g_missed=$(count_in missed "$names")
+    g_timeouts=$(count_in timeout "$names")
+  fi
+  caught=$((caught + g_caught))
+  unviable=$((unviable + g_unviable))
+  missed=$((missed + g_missed))
+  timeouts=$((timeouts + g_timeouts))
+  # A group that did not test each name it was given hides survivors, so it fails the run.
+  local total=$((g_caught + g_unviable + g_missed + g_timeouts))
+  if ((total != n)); then
+    notes+="${notes:+, }$label group tested $total of $n mutants"
+  fi
+  # A status other than 0, 2 and 3 is a failure of cargo mutants, which wins. Otherwise the
+  # result is that of the group's own names: a missed mutant (2) or a timeout (3).
+  case $status in
+    0 | 2 | 3)
+      if ((g_missed > 0)); then status=2; elif ((g_timeouts > 0)); then status=3; else status=0; fi
+      ;;
+  esac
+  case $status in
+    0) ;;
+    2 | 3) if [[ $group_status == 0 ]]; then group_status=$status; fi ;;
+    *) group_status=$status ;;
+  esac
+  return 0
+}
+
+# Pass 2: exit 2 is a missed mutant and 3 a timeout; any other failure stops the run here.
+if [[ -z $test_args && -n $tested ]] && ((status == 2 || status == 3)) && ((missed + timeouts > 0)); then
+  echo "mutation-test: pass 1 (unit tests) missed $missed and timed out on $timeouts; pass 2 tests them in two groups"
+  # Each pass rotates mutants.out, so the names of pass 1 are saved first.
+  lists=$(mktemp -d)
+  survivors=$lists/survivors
+  lib_names=$lists/lib
+  suite_names=$lists/suite
+  for kind in missed timeout; do
+    if [[ -f mutants.out/$kind.txt ]]; then cat "mutants.out/$kind.txt"; fi
+  done | sort -u >"$survivors"
+  touch "$lib_names" "$suite_names"
+  while IFS= read -r name; do
+    group=$suite_names
+    for prefix in "${LIB_ONLY[@]}"; do [[ $name == "$prefix"* ]] && group=$lib_names; done
+    printf '%s\n' "$name" >>"$group"
+  done <"$survivors"
   # An explicit --timeout beats the baseline wait; cargo mutants reads a new baseline in each run.
   pass2_args=()
   [[ -n $caller_timeout ]] || pass2_args=(--timeout "${MUTANTS_PASS2_TIMEOUT:-600}")
-  [[ -n $iterate ]] || pass2_args+=(--iterate)
-  pass "${pass2_args[@]}" "$@"
+  # Only the script selects mutants in pass 2.
+  skip=
+  for arg in "$@"; do
+    if [[ -n $skip ]]; then
+      skip=
+      continue
+    fi
+    case $arg in
+      --re | -F | --regex | --examine-re | --examine-regex) skip=yes ;;
+      --re=* | -F* | --regex=* | --examine-re=* | --examine-regex=* | --iterate) ;;
+      *) pass2_args+=("$arg") ;;
+    esac
+  done
+  missed=0
+  timeouts=0
+  group_status=0
+  run_group lib-only "$lib_names" "the unit tests (--lib)" -- --lib
+  run_group whole-suite "$suite_names" "the whole suite"
+  status=$group_status
 fi
-missed=0
+# A mutant that hangs the tests is caught, but cargo mutants exits 3 for a timeout even
+# when another mutant was missed, so only the missed count can pass it.
+((status == 3 && missed == 0)) && status=0
 if [[ -n $tested ]]; then
-  missed=$(count missed)
-  # A mutant that hangs the tests is caught, but cargo mutants exits 3 for a timeout even
-  # when another mutant was missed, so only the missed count can pass it.
-  ((status == 3 && missed == 0)) && status=0
-  counts="$((caught + $(count caught))) caught, $((unviable + $(count unviable))) unviable, $missed missed, $(count timeout) timeouts"
+  counts="$caught caught, $unviable unviable, $missed missed, $timeouts timeouts"
 else
   # No new output: the diff holds no mutant, or cargo mutants stopped before the first test.
   counts="no mutant tested"
 fi
-if ((status == 0 && missed == 0)); then
+if ((status == 0 && missed == 0)) && [[ -z $notes ]]; then
   verdict="mutation-test: PASS: $counts"
 else
   verdict="mutation-test: FAIL: $counts"
   # A missed mutant explains the failure; any other exit status needs its own note.
-  ((missed > 0)) || verdict+=" (cargo mutants exit $status, see the output above)"
+  [[ -z $notes ]] || verdict+=" ($notes)"
+  if ((missed == 0 && status != 0)); then verdict+=" (cargo mutants exit $status, see the output above)"; fi
 fi
 echo "$verdict (HEAD $head)"
 [[ $verdict == "mutation-test: PASS:"* ]]

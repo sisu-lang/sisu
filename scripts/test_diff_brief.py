@@ -154,6 +154,30 @@ class Brief(Repo):
         text = self.brief('HEAD~3..HEAD', '--mutation-log', str(log))
         self.assertIn(f'measured at {side[:8]}, which a rebase made {twin[:8]}\n', text)
 
+    def test_each_of_two_mutation_logs_should_get_a_focus_line_with_its_own_note(self):
+        first, second = Path(self.repo) / 'mutation-1.log', Path(self.repo) / 'mutation-2.log'
+        first.write_text(f'mutation-test: PASS: 1 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.mid})\n')
+        second.write_text(f'mutation-test: PASS: 2 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.head})\n')
+        text = self.brief('HEAD~2..HEAD', '--mutation-log', str(first), '--mutation-log', str(second))
+        self.assertIn(f'Mutation-test log: {first}, measured at {self.mid[:8]}. Commits after it, not mutated: '
+                      f'{self.head[:8]}\n', text)
+        self.assertIn(f'Mutation-test log: {second}\n', text)
+
+    def test_a_second_mutation_log_that_names_a_commit_outside_the_range_should_fail(self):
+        good, bad = Path(self.repo) / 'good.log', Path(self.repo) / 'bad.log'
+        good.write_text(f'mutation-test: PASS: 1 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.head})\n')
+        bad.write_text(f'mutation-test: PASS: 1 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {"0" * 40})\n')
+        with self.assertRaises(SystemExit) as stop:
+            self.brief('HEAD~2..HEAD', '--mutation-log', str(good), '--mutation-log', str(bad))
+        self.assertIn(str(bad), str(stop.exception))
+
+    def test_a_missing_second_mutation_log_should_fail_before_writing(self):
+        good = Path(self.repo) / 'good.log'
+        good.write_text(f'mutation-test: PASS: 1 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.head})\n')
+        with self.assertRaises(SystemExit):
+            self.brief('HEAD~2..HEAD', '--mutation-log', str(good), '--mutation-log', str(good) + '.none')
+        self.assertEqual(list(self.run_dir.iterdir()), [])
+
     def test_a_coverage_result_should_be_named_in_focus(self):
         coverage = Path(self.repo) / 'coverage.txt'
         coverage.write_text(f'coverage: measured (HEAD {self.head})\nuncovered: none\n')
@@ -206,6 +230,21 @@ class Brief(Repo):
         section = text.split('# Re-review', 1)[1].split('\n# ', 1)[0]
         self.assertIn('This is round 2.', section)
         self.assertNotIn('The previous version', section)
+
+    def test_an_earlier_rounds_mutation_log_should_pass_in_a_later_round(self):
+        prior = Path(self.repo) / 'sol.md'
+        prior.write_text('Verdict: changes needed\n')
+        log = Path(self.repo) / 'mutation.log'
+        log.write_text(f'mutation-test: PASS: 1 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.base})\n')
+        text = self.brief('HEAD~1..HEAD', '--round', '2', '--prior', str(prior), '--rulings', str(prior),
+                          '--mutation-log', str(log))
+        self.assertIn(f'Mutation-test log: {log}, measured at {self.base[:8]}, before this round', text)
+
+    def test_a_first_round_mutation_log_on_the_base_should_fail(self):
+        log = Path(self.repo) / 'mutation.log'
+        log.write_text(f'mutation-test: PASS: 1 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.base})\n')
+        with self.assertRaises(SystemExit):
+            self.brief('HEAD~1..HEAD', '--mutation-log', str(log))
 
     def test_a_second_round_without_rulings_should_fail(self):
         with self.assertRaises(SystemExit):
