@@ -23,16 +23,34 @@ use crate::tir::{self, Type, TypeKind};
 
 /// What the fix of W0006 removes for the unreached alternative `at`. It removes the `|` before the
 /// alternative, unless a comment lies between them and another alternative follows: then it
-/// removes the alternative and the `|` after it, up to a comment, so that the comment stays. The
-/// last alternative with a comment before it loses the comment: no edit keeps it and parses.
-fn alternative_removal(comments: &[usize], at: Span, neighbours: Neighbours) -> Span {
+/// removes the alternative and the `|` after it, up to a comment, so that the comment stays. That
+/// cut works only when the `|` comes before the comment: `after_gap` is the text from the end of
+/// `at` to the start of the alternative after it. Else the removal runs to the next alternative,
+/// or starts at the end of the alternative before, and the comment goes: no edit keeps it and
+/// parses.
+fn alternative_removal(
+    comments: &[usize],
+    at: Span,
+    neighbours: Neighbours,
+    after_gap: &str,
+) -> Span {
     match (neighbours.before, neighbours.after) {
         (Some(before), after)
             if after.is_none() || removal_end(comments, before, at.start()) == at.start() =>
         {
             Span::new(before, at.end())
         }
-        (_, Some(after)) => Span::new(at.start(), removal_end(comments, at.end(), after)),
+        (before, Some(after)) => {
+            let end = removal_end(comments, at.end(), after);
+            if after_gap[..end - at.end()].contains('|') {
+                Span::new(at.start(), end)
+            } else {
+                match before {
+                    Some(before) => Span::new(before, at.end()),
+                    None => Span::new(at.start(), after),
+                }
+            }
+        }
         // An `|` joins two alternatives or more, so each one has a neighbour.
         (_, None) => at,
     }
@@ -362,8 +380,14 @@ impl Checker<'_> {
                     Span::new(line_start(start), (line_end + 1).min(source.end()))
                 }
             };
+            let end = found.at.end();
             let remove = match found.alternative {
-                Some(neighbours) => alternative_removal(self.source.comments, found.at, neighbours),
+                Some(neighbours) => alternative_removal(
+                    self.source.comments,
+                    found.at,
+                    neighbours,
+                    source.slice(end..neighbours.after.unwrap_or(end)),
+                ),
                 None => whole_arm(),
             };
             self.report(DiagnosticKind::UnreachableArm {
