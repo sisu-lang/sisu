@@ -463,7 +463,7 @@ mod tests {
     use crate::generate::DEPTHS;
     use crate::generate::MAX_LOOPS;
     use crate::generate::coverage::{search_seeds, seed};
-    use crate::generate::scope::{Func, Var};
+    use crate::generate::scope::{Class, Field, Func, Var};
     use crate::generate::stmt::{MAX_BLOCKS, MutUse};
     use arbitrary::Unstructured;
 
@@ -1063,5 +1063,54 @@ mod tests {
             seen
         });
         assert!(seen, "no seed writes a `mut` call in a block");
+    }
+
+    /// GIVEN the class `K0` with a `mut` field `g2: i64` and a field `g3: i64` that is not `mut`,
+    /// the class `K1` with a field `g1: K0` that is not `mut`, and the locals `v1` of `K1` and
+    /// `v2` of `K1?`
+    /// WHEN the places of the point are listed
+    /// THEN `v1` has one place of a field of a field, `v1.g1.g2`, which has the type and the cap
+    /// of `g2`; `v2`, which `?.` goes through, has none; and no place is `v1.g1.g3`
+    #[test]
+    fn mut_places_should_give_a_field_of_a_field_place_for_a_class_local() {
+        let field = |name: &str, ty, mutable, cap| Field {
+            name: name.to_string(),
+            ty,
+            mutable,
+            cap,
+        };
+        let class = |fields, size| Class {
+            fields,
+            size,
+            applied: None,
+            inferable: false,
+        };
+        let mut g = Gen::new(&[]);
+        g.scope.classes.push(class(
+            vec![
+                field("g2", Ty::I64, true, 0),
+                field("g3", Ty::I64, false, 0),
+            ],
+            1,
+        ));
+        g.scope
+            .classes
+            .push(class(vec![field("g1", Ty::class(0, 1), false, 1)], 2));
+        let class = Ty::class(1, 2);
+        let local = |name: &str, ty| Var::new(name.to_string(), ty, false, 0, 0, 0);
+        g.scope.vars.push(local("v1", class.clone()));
+        g.scope
+            .vars
+            .push(local("v2", Ty::Optional(Box::new(class))));
+        let nested: Vec<Place> = (g.mut_places().into_iter())
+            .filter(|place| matches!(place.kind, Kind::Nested(..)))
+            .collect();
+        assert_eq!(nested.len(), 1);
+        assert_eq!(
+            (nested[0].root, &nested[0].ty, nested[0].bound),
+            (0, &Ty::I64, 0)
+        );
+        g.write_place(&nested[0], &mut Vec::new());
+        assert_eq!(g.w.out.program, "v1.g1.g2");
     }
 }
