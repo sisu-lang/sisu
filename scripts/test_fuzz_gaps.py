@@ -314,7 +314,10 @@ class Gaps(unittest.TestCase):
         good = export(*ANCHORS)
         known_key = f'{FN_KEY}\n'
         floor = 'valid-program export reaches no function under '
-        valid_with = lambda *extra: Run(self, good, export(*ANCHORS, *extra))  # noqa: E731
+
+        def valid_with(*extra):
+            return Run(self, good, export(*ANCHORS, *extra))
+
         cases = [
             ('a missing valid export', lambda: Run(self, good, None), 'cannot read the export'),
             ('a missing seeds export', lambda: Run(self, None, good), 'cannot read the export'),

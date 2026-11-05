@@ -3,7 +3,9 @@ no fixed fuzz seed reaches. It compares two `llvm-cov export` files with a list 
 
 A function is (file, first line, name). The file is the part of its path after `crates/sisuc/src/`.
 The name is the `c++filt -s rust` name without crate hashes and generic arguments, so the
-instances of a generic function merge. A closure is not a function: its enclosing function counts.
+instances of a generic function merge. A closure folds into its enclosing function, so a name that
+ends in a closure is not a function. A closure in a `static` has no enclosing function, so the
+check does not measure it. Each export must reach a function under `check/`, `mir/` and `codegen/`.
 `generate/`, `fuzz.rs`, `fuzz_program.rs`, `report.rs`, `diagnostic/json.rs` and
 `diagnostic/render.rs` are out of scope. A function is reached when one of its records has a count
 above 0.
@@ -26,6 +28,10 @@ MARKER = '/crates/sisuc/src/'
 OUT_OF_SCOPE_FILES = {'fuzz.rs', 'fuzz_program.rs', 'report.rs', 'diagnostic/json.rs',
                       'diagnostic/render.rs'}
 CRATE_HASH = re.compile(r'(?<=\w)\[[0-9a-f]+\]')
+QUOTED_BRACKET = re.compile(r"'[<>]'")
+CLOSURE_END = re.compile(r'\{closure[^}]*\}$')
+MANGLED = re.compile(r'(^|\W)_(R|ZN)\w|::h[0-9a-f]{16}$')
+STAGES = ('check/', 'mir/', 'codegen/')
 HEADING = '## Generator gaps'
 
 
@@ -46,13 +52,14 @@ def matching_close(name: str, start: int) -> int:
     raise Broken(f'the name {name!r} has angle brackets that do not balance')
 
 
+# shortcut: a generic Self type such as <[T] as Tr> does not merge, upgrade when a new gap names such an impl.
 def strip_generics(name: str) -> str:
-    """Removes each `<...>` that follows an identifier character or `::`, with that `::`. A `<`
+    """Removes each `<...>` that follows an identifier character, `}` or `::`, with that `::`. A `<`
     at the start or after another `<` opens `<Type>` or `<T as Trait>`, and stays."""
     out: list[str] = []
     i = 0
     while i < len(name):
-        follows_name = bool(out) and (out[-1].isalnum() or out[-1] == '_' or out[-2:] == [':', ':'])
+        follows_name = bool(out) and (out[-1].isalnum() or out[-1] in '_}' or out[-2:] == [':', ':'])
         if name[i] == '<' and follows_name:
             if out[-2:] == [':', ':']:
                 del out[-2:]
@@ -64,10 +71,11 @@ def strip_generics(name: str) -> str:
 
 
 def normalize(name: str) -> str | None:
-    """The name without crate hashes and generic arguments, or None for a closure. The closure
-    test comes last: a generic argument can hold a closure, and the function is not one."""
-    name = strip_generics(CRATE_HASH.sub('', name))
-    return None if '{closure' in name else name
+    """The name without crate hashes and generic arguments, or None for a name that ends in a
+    closure. The test comes last: a generic argument can hold a closure, and the function is not
+    one. A named function inside a closure is a function."""
+    name = strip_generics(QUOTED_BRACKET.sub("''", CRATE_HASH.sub('', name)))
+    return None if CLOSURE_END.search(name) else name
 
 
 def demangle(names: list[str]) -> list[str]:
@@ -103,12 +111,15 @@ def load(path: str) -> list[dict]:
     return functions
 
 
-def in_scope(functions: list[dict]) -> list[tuple[str, int, str, bool]]:
-    """(file, first line, mangled name, reached) of each record in scope."""
+def in_scope(functions: list[dict], path: str) -> list[tuple[str, int, str, bool]]:
+    """(file, first line, mangled name, reached) of each record in scope. A record with no file
+    name is broken: it would read as out of scope."""
     found = []
     for record in functions:
         files = record.get('filenames')
-        if not files or MARKER not in files[0]:
+        if not (isinstance(files, list) and files and isinstance(files[0], str)):
+            raise Broken(f'a record of the export {path} has no file name')
+        if MARKER not in files[0]:
             continue
         file = files[0].rsplit(MARKER, 1)[1]
         if file.startswith('generate/') or file in OUT_OF_SCOPE_FILES:
@@ -154,16 +165,18 @@ def read_known(path: str) -> set[tuple[str, str]]:
     return keys
 
 
-def check_keys_are_unique(known: set[tuple[str, str]], seen: dict, label: str) -> None:
+def check_keys_are_unique(known: set[tuple[str, str]], *exports: dict) -> None:
     """A known key must name one definition. Two first lines under one key mean that the key
-    would hide the second definition too."""
+    would hide the second definition too. The lines of both exports count, reached or not."""
     lines = collections.defaultdict(set)
-    for file, line, name in seen:
-        lines[(file, name)].add(line)
+    for seen in exports:
+        for file, line, name in seen:
+            lines[(file, name)].add(line)
     for key in sorted(known):
         if len(lines[key]) > 1:
             raise Broken(f'the known key {key[0]} {key[1]} matches two definitions, on lines '
-                         + ' and '.join(map(str, sorted(lines[key]))) + f', in the {label} export')
+                         + ' and '.join(map(str, sorted(lines[key])))
+                         + '. A key cannot tell them apart, so remove it and add a generator rule')
 
 
 def fence(lines: list[str]) -> str:
@@ -175,21 +188,21 @@ def section(*parts: str) -> str:
 
 
 def compare(seeds_path: str, valid_path: str, known_path: str) -> tuple[int, str]:
-    exports = {'seeds': in_scope(load(seeds_path)), 'valid-program': in_scope(load(valid_path))}
+    exports = {'seeds': in_scope(load(seeds_path), seeds_path),
+               'valid-program': in_scope(load(valid_path), valid_path)}
     known = read_known(known_path)
     mangled = sorted({row[2] for rows in exports.values() for row in rows})
     names: dict[str, str | None] = {}
     for original, demangled in zip(mangled, demangle(mangled) if mangled else []):
-        if demangled.startswith('_R'):
-            raise Broken(f'the name {original} is still mangled after c++filt')
+        if MANGLED.search(demangled):
+            raise Broken(f'the name {original} is still mangled, or is a legacy Rust name, after c++filt')
         names[original] = normalize(demangled)
     seeds, valid = (identities(exports[label], names) for label in ('seeds', 'valid-program'))
-    if not any(valid.values()):
-        raise Broken('the export has no function that valid programs reach')
-    if not any(seeds.values()):
-        raise Broken('the export has no function that the seeds reach')
-    for label, seen in (('seeds', seeds), ('valid-program', valid)):
-        check_keys_are_unique(known, seen, label)
+    for label, seen in (('valid-program', valid), ('seeds', seeds)):
+        for stage in STAGES:
+            if not any(reached and file.startswith(stage) for (file, _, _), reached in seen.items()):
+                raise Broken(f'the {label} export reaches no function under {stage}')
+    check_keys_are_unique(known, seeds, valid)
 
     gaps = {key for key, reached in valid.items() if reached} - {k for k, r in seeds.items() if r}
     gap_keys = {(file, name) for file, _, name in gaps}
@@ -216,7 +229,7 @@ def main(argv: list[str]) -> int:
         code, text = compare(*argv[1:])
     except Broken as e:
         code, text = 2, f'{e}'
-    # shortcut: any other failure also exits 2; an uncaught one exits 1, which reads as a new gap.
+    # An uncaught failure exits 1, which reads as a new gap.
     except Exception as e:
         code, text = 2, f'an unexpected {type(e).__name__}: {e}'
     if code == 2:
