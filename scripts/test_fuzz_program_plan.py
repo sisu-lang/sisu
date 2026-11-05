@@ -52,9 +52,14 @@ class Labels(unittest.TestCase):
 
 
 class Events(unittest.TestCase):
-    def test_the_nightly_run_keeps_30_minutes_in_90(self):
+    def test_nightly_run_should_get_65_minutes_of_fuzz_step_in_105(self):
         self.assertEqual(fp.plan('schedule', {}, {}), (1800, False))
-        self.assertEqual(fp.minutes(1800, False), 90)
+        self.assertEqual(fp.fuzz_minutes(1800), 65)
+        self.assertEqual(fp.minutes(1800, False), 105)
+
+    def test_fuzz_step_should_have_time_for_the_corpus_pass_of_a_short_run(self):
+        # 15 of build, 20 of corpus pass, 17 of crash replays and 3 to stop.
+        self.assertEqual(fp.fuzz_minutes(60), 55)
 
     def test_the_longest_run_fits_the_6_hour_job_limit(self):
         self.assertLessEqual(fp.minutes(fp.MOST, True), 360)
@@ -82,7 +87,7 @@ class Events(unittest.TestCase):
 
     def test_main_writes_the_outputs(self):
         self.assertEqual(self.main(['fuzz-program 45m']),
-                         (0, 'seconds=2700\ncoverage=true\nminutes=150\n'))
+                         (0, 'seconds=2700\ncoverage=true\nfuzz_minutes=80\nminutes=165\n'))
 
     def test_main_plans_no_run_for_an_unlabeled_pull_request(self):
         self.assertEqual(self.main(['bug']), (0, ''))

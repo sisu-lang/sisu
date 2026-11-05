@@ -687,6 +687,187 @@ fn the_can_be_built_fixed_point_should_scan_linearly() {
     }
 }
 
+/// The text of `P` and the chain `A0 = P<i64, i64>` to `An = P<An-1, An-1>`. These are `n + 1`
+/// types that name each other twice. A walk that follows every path through `An` reads 2^n of them.
+fn alias_chain(p: &str, n: usize) -> String {
+    let links = (1..=n)
+        .map(|i| format!("type A{i} = P<A{}, A{}>\n", i - 1, i - 1))
+        .collect::<Vec<_>>()
+        .concat();
+    format!("{p}\ntype A0 = P<i64, i64>\n{links}")
+}
+
+const CLASS_P: &str = "class P<A, B> {\n    a: A\n    b: B\n}";
+const ENUM_P: &str = "enum P<A, B> {\n    X(A)\n    Y(B)\n}";
+
+/// The chain `B0<T> = P<T, T>` to `Bn<T> = P<Bn-1<T>, Bn-1<T>>`, with a parameter at the leaves.
+fn parameter_chain(p: &str, n: usize) -> String {
+    let links = (1..=n)
+        .map(|i| format!("type B{i}<T> = P<B{}<T>, B{}<T>>\n", i - 1, i - 1))
+        .collect::<Vec<_>>()
+        .concat();
+    format!("{p}\ntype B0<T> = P<T, T>\n{links}")
+}
+
+/// Each type walk of the checker visits each distinct type of its unit once. So the steps for
+/// a chain of `n` aliases grow in step with `n`. A walk that follows every path through a type
+/// visits the last alias 2^n times. The sizes are 4, 8 and 12. At the old walks the steps of
+/// "enum payload" are 139, 2059 and 32779, so a failure is clear. A size of 24 takes minutes in a
+/// debug build. Each row has a walk that alone breaks the growth when it follows every path.
+/// The walks are `Buildable::buildable` in "class field" (`run`) and in "E0027 leaf" (`deps` and
+/// `needs`), and `Buildable::reached` in "E0027 chain". They are also `holds` in "W0011 on an
+/// array", and `inline_enums` and `names_itself` in "generic enum payload". `named` and
+/// `holds_table` break every row whose chain is in a field or a payload. The row "wrapper chain"
+/// breaks `holds_table` alone and "wrapper chain under W0011" breaks `holds` alone, as each
+/// unwraps before it looks up.
+#[test]
+fn declaration_type_walks_should_visit_each_distinct_type_once() {
+    type Program = fn(usize) -> String;
+    let rows: [(&str, Program); 12] = [
+        ("enum payload", |n| {
+            alias_chain(ENUM_P, n) + &format!("enum E {{\n    V(A{n})\n    W\n}}\nfn main() {{}}")
+        }),
+        ("class field", |n| {
+            alias_chain(CLASS_P, n) + &format!("class C {{\n    v: A{n}\n}}\nfn main() {{}}")
+        }),
+        ("optional class field", |n| {
+            alias_chain(CLASS_P, n) + &format!("class C {{\n    v: A{n}?\n}}\nfn main() {{}}")
+        }),
+        ("array payload", |n| {
+            alias_chain(ENUM_P, n) + &format!("enum E {{\n    V([A{n}])\n    W\n}}\nfn main() {{}}")
+        }),
+        ("generic argument", |n| {
+            alias_chain(ENUM_P, n)
+                + &format!(
+                    "class W<T> {{\n    t: T?\n}}\nenum E {{\n    V(W<A{n}>)\n    U\n}}\nfn main() {{}}"
+                )
+        }),
+        ("parameter at the leaves", |n| {
+            parameter_chain(CLASS_P, n)
+                + &format!(
+                    "class C<T> {{\n    v: B{n}<T>\n}}\nclass D {{\n    c: C<D>?\n}}\nfn main() {{}}"
+                )
+        }),
+        ("generic enum payload", |n| {
+            parameter_chain(ENUM_P, n)
+                + &format!("enum C<T> {{\n    V(B{n}<T>)\n    W\n}}\nfn main() {{}}")
+        }),
+        ("W0011 on an array", |n| {
+            let eq = "extend<A: Eq, B: Eq> P<A, B>: Eq {\n    fn eq(self, other: P<A, B>) -> bool {\n        false\n    }\n}\n";
+            alias_chain(ENUM_P, n)
+                + eq
+                + &format!(
+                    "fn h(x: [A{n}], y: [A{n}]) -> bool {{\n    let mut i = 0\n    while x == y {{\n        i = i + 1\n    }}\n    i > 0\n}}\nfn main() {{}}"
+                )
+        }),
+        ("E0027 leaf", |n| {
+            let chain = alias_chain(CLASS_P, n).replace("P<i64, i64>", "P<Bad, Bad>");
+            format!(
+                "enum Bad {{\n    V(Bad)\n}}\n{chain}class C {{\n    v: A{n}\n}}\nfn main() {{}}"
+            )
+        }),
+        ("E0027 chain", |n| {
+            alias_chain(CLASS_P, n) + &format!("class C {{\n    v: P<C, A{n}>\n}}\nfn main() {{}}")
+        }),
+        // `Ln` is `n` arrays of `i64` and `Rn` is `P<Rn-1, Ln>`. `n` types share the wrapper chain
+        // of `Ln`. So a walk that unwraps each use of it again does work in step with `n * n`.
+        ("wrapper chain", |n| {
+            let links = (1..=n)
+                .map(|i| {
+                    format!(
+                        "type L{i} = [L{}]\ntype R{i} = P<R{}, L{i}>\n",
+                        i - 1,
+                        i - 1
+                    )
+                })
+                .collect::<Vec<_>>()
+                .concat();
+            format!(
+                "{CLASS_P}\ntype L0 = i64\ntype R0 = i64\n{links}class C {{\n    v: R{n}\n}}\nfn main() {{}}"
+            )
+        }),
+        // The same chains with `==` on arrays of `Rn`, so that `holds` reads the chain too.
+        ("wrapper chain under W0011", |n| {
+            let eq = "extend<A: Eq, B: Eq> P<A, B>: Eq {\n    fn eq(self, other: P<A, B>) -> bool {\n        false\n    }\n}\n";
+            let links = (1..=n)
+                .map(|i| {
+                    format!(
+                        "type L{i} = [L{}]\ntype R{i} = P<R{}, L{i}>\n",
+                        i - 1,
+                        i - 1
+                    )
+                })
+                .collect::<Vec<_>>()
+                .concat();
+            format!(
+                "{ENUM_P}\n{eq}type L0 = i64\ntype R0 = i64\n{links}fn h(x: [R{n}], y: [R{n}]) -> bool {{\n    let mut i = 0\n    while x == y {{\n        i = i + 1\n    }}\n    i > 0\n}}\nfn main() {{}}"
+            )
+        }),
+    ];
+    let steps = |program: Program, n: usize| {
+        crate::check::enums::TYPE_WALK_STEPS.set(0);
+        let src = program(n);
+        // The rows with a diagnostic read the count too: a program with an error or a warning
+        // still runs every walk.
+        diags(&src);
+        crate::check::enums::TYPE_WALK_STEPS.get()
+    };
+    for (row, program) in rows {
+        assert_near_linear_for(
+            &format!("{row}: "),
+            steps(program, 4),
+            steps(program, 8),
+            steps(program, 12),
+        );
+    }
+}
+
+/// The enum `Bad` has a payload of its own type, so no value of it exists. The class `C` holds
+/// `A4`, a chain of aliases of `P<Bad, Bad>`. Only `Bad` gets the error, at its name: the chain
+/// of aliases adds no other declaration to what `C` needs.
+#[test]
+fn never_constructed_should_be_reported_through_an_alias_chain() {
+    let src = alias_chain(CLASS_P, 4).replace("P<i64, i64>", "P<Bad, Bad>");
+    codes(
+        &format!("enum Bad {{\n    V(Bad)\n}}\n{src}class C {{\n    v: A4\n}}\nfn main() {{}}"),
+        &[(Code::NeverConstructed, (1, 6))],
+    );
+}
+
+/// `C` needs `Bad` only through `W<Bad>`, an application that can be built whatever its argument
+/// is. So `W<Bad>` adds no `Bad` to what `E` needs, and `E`, which needs only itself, is reported
+/// as well as `Bad`.
+#[test]
+fn never_constructed_should_ignore_arguments_of_an_application_that_can_be_built() {
+    codes(
+        "enum Bad {\n    V(Bad)\n}\nclass W<A> {\n    x: i64\n}\nenum E {\n    V(W<Bad>, E)\n}\nfn main() {}",
+        &[
+            (Code::NeverConstructed, (1, 6)),
+            (Code::NeverConstructed, (7, 6)),
+        ],
+    );
+}
+
+/// The array `[A4]` holds no class and no poison type. So `x == y` in a `while` that no statement
+/// changes gets W0011 at the condition. `judge_unused` keeps the two warnings for the enum that
+/// nothing builds and the function that nothing calls.
+#[test]
+fn an_unchanged_condition_should_be_reported_on_an_alias_chain_array() {
+    judge_unused();
+    let eq = "extend<A: Eq, B: Eq> P<A, B>: Eq {\n    fn eq(self, other: P<A, B>) -> bool {\n        false\n    }\n}\n";
+    let src = alias_chain(ENUM_P, 4)
+        + eq
+        + "fn h(x: [A4], y: [A4]) -> bool {\n    let mut i = 0\n    while x == y {\n        i = i + 1\n    }\n    i > 0\n}\nfn main() {}";
+    codes(
+        &src,
+        &[
+            (Code::UnusedItem, (1, 6)),
+            (Code::UnusedItem, (15, 4)),
+            (Code::UnchangedLoopCondition, (17, 11)),
+        ],
+    );
+}
+
 /// A list after a name that takes none is reported at the list in every expression form, and
 /// one after a value at the value.
 #[test]
