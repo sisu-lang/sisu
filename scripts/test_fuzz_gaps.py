@@ -2,9 +2,9 @@
 
 Each case runs the script as a subprocess on small `llvm-cov export` files. A fixture name is
 already demangled, in the form `c++filt -s rust` prints: `c++filt` passes such text through
-unchanged. Every case keeps the three reached ANCHORS in both exports, one under check/, one under
-mir/ and one under codegen/, so that a case that expects exit 0 cannot pass by exit 2 with a short
-export.
+unchanged. Every case that expects exit 0 or 1 keeps the three reached ANCHORS in both exports,
+one under check/, one under mir/ and one under codegen/, so that a case that expects exit 0 cannot
+pass by exit 2 with a short export.
 """
 import itertools
 import json
@@ -374,8 +374,7 @@ class Gaps(unittest.TestCase):
              lambda: Run(self, good, good, path=lambda tools: fake_tool(tools, 'echo one\necho two\n')),
              'wrong number of lines'),
         ]
-        if c_plus_plus_filt(LEGACY) == 'sisuc::f::h0123456789abcdef':
-            cases.append(('a legacy Rust name', lambda: valid_with(record('check/mod.rs', LEGACY, 1)), 'legacy'))
+        cases.append(('a legacy Rust name', lambda: valid_with(record('check/mod.rs', LEGACY, 1)), 'legacy'))
         for label, anchor in itertools.product(('seeds', 'valid-program'), zip(STAGES, ANCHORS)):
             stage, missing = anchor
             short = export(*(a for a in ANCHORS if a is not missing))
@@ -387,17 +386,19 @@ class Gaps(unittest.TestCase):
             gap = record('a.rs', 'sisuc[a]::real_gap', 1)
             gap = lacking(gap, 'filenames') if value is None else altered(gap, filenames=value)
             cases.append((f'a record whose filenames is {label}', lambda gap=gap: valid_with(gap), 'has no file name'))
-        cases.append(('an unreached record with no file, in seeds',
-                      lambda: Run(self, export(*ANCHORS, altered(record('a.rs', FN, 0), filenames=[])), good),
-                      'has no file name'))
         for label, make, reason in cases:
             with self.subTest(label):
+                if label == 'a legacy Rust name' and c_plus_plus_filt(LEGACY) != 'sisuc::f::h0123456789abcdef':
+                    self.skipTest('c++filt cannot read legacy Rust names here')
                 run = make()
                 self.assertEqual(run.code, 2, run.out)
                 self.assertIn(reason, run.out)
                 self.assertIn('did not finish', run.out)
-                if label.startswith('an unreached record with no file'):
-                    self.assertIn('seeds.json', run.out)
+        with self.subTest('an unreached record with no file, in seeds'):
+            run = Run(self, export(*ANCHORS, altered(record('a.rs', FN, 0), filenames=[])), export(*ANCHORS))
+            self.assertEqual(run.code, 2, run.out)
+            self.assertIn('has no file name', run.out)
+            self.assertIn('seeds.json', run.out)
 
     def test_real_names_should_normalize_to_their_keys(self):
         names = [
@@ -411,12 +412,7 @@ class Gaps(unittest.TestCase):
              '<sisuc::check::mut_args::RootKey as core::hash::Hash>::hash'),
         ]
         closure = '_RNCNvMs0_NtNtCs4giHZ0QWn4K_5sisuc5check5placeNtB9_7Checker14compound_value0Bb_'
-        try:
-            read = subprocess.run(['c++filt', '-s', 'rust'], input=names[0][0] + '\n',
-                                  capture_output=True, text=True, check=False).stdout.strip()
-        except OSError:
-            read = names[0][0]
-        if read == names[0][0]:
+        if c_plus_plus_filt(names[0][0]) == names[0][0]:
             self.skipTest('c++filt cannot read v0 names of Rust here')
         valid = [record(f'file{n}.rs', mangled, 1) for n, (mangled, _) in enumerate(names)]
         valid.append(record('closure.rs', closure, 1))

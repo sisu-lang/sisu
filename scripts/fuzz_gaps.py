@@ -4,8 +4,9 @@ no fixed fuzz seed reaches. It compares two `llvm-cov export` files with a list 
 A function is (file, first line, name). The file is the part of its path after `crates/sisuc/src/`.
 The name is the `c++filt -s rust` name without crate hashes and generic arguments, so the
 instances of a generic function merge. A closure folds into its enclosing function, so a name that
-ends in a closure is not a function. A closure in a `static` has no enclosing function, so the
-check does not measure it. Each export must reach a function under `check/`, `mir/` and `codegen/`.
+ends in a closure is not a function. A closure in a `static` or a `const` has no enclosing function,
+so the check does not measure it. Each export must reach a function under `check/`, `mir/` and
+`codegen/`.
 `generate/`, `fuzz.rs`, `fuzz_program.rs`, `report.rs`, `diagnostic/json.rs` and
 `diagnostic/render.rs` are out of scope. A function is reached when one of its records has a count
 above 0.
@@ -54,12 +55,12 @@ def matching_close(name: str, start: int) -> int:
 
 # shortcut: a generic Self type such as <[T] as Tr> does not merge, upgrade when a new gap names such an impl.
 def strip_generics(name: str) -> str:
-    """Removes each `<...>` that follows an identifier character, `}` or `::`, with that `::`. A `<`
+    """Removes each `<...>` that follows an identifier character or `::`, with that `::`. A `<`
     at the start or after another `<` opens `<Type>` or `<T as Trait>`, and stays."""
     out: list[str] = []
     i = 0
     while i < len(name):
-        follows_name = bool(out) and (out[-1].isalnum() or out[-1] in '_}' or out[-2:] == [':', ':'])
+        follows_name = bool(out) and (out[-1].isalnum() or out[-1] == '_' or out[-2:] == [':', ':'])
         if name[i] == '<' and follows_name:
             if out[-2:] == [':', ':']:
                 del out[-2:]
@@ -117,7 +118,7 @@ def in_scope(functions: list[dict], path: str) -> list[tuple[str, int, str, bool
     found = []
     for record in functions:
         files = record.get('filenames')
-        if not (isinstance(files, list) and files and isinstance(files[0], str)):
+        if not (isinstance(files, list) and files and isinstance(files[0], str) and files[0]):
             raise Broken(f'a record of the export {path} has no file name')
         if MARKER not in files[0]:
             continue
