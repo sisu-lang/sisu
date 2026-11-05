@@ -54,11 +54,12 @@ fn main() {
 }
 ```
 
-The rules:
+**Rules**
 
 - After `let mut b = a`, a change to `b` does not change `a`, and a change to `a` does not change `b`. The table tells which values this applies to.
 - A reference is a value too. A copy of a reference refers to the same object, so a write to a `mut` field shows through each reference.
-- For a value that behaves as a copy, the binding decides whether it can change: `let` or `let mut`. For an object, the `mut` of each field decides ([Classes](classes.md#fields)).
+- For a value that behaves as a copy, the binding decides whether it can change: `let` or `let mut`.
+- For an object, the `mut` of each field decides ([Classes](classes.md#fields)).
 - A `for` loop over an array of objects gets each object, not a copy of it.
 
 ## Calls
@@ -125,11 +126,11 @@ fn main() {
 }
 ```
 
-The rules:
+**Rules**
 
 - `is` applies only to objects and to optionals of objects. Two optionals that are both `None` are the same ([`is`](operators.md#is)).
-- `is` on a value that behaves as a copy, such as an array, is an error ([E0046](../diagnostics/E0046.md)). Use `==`.
-- To test an optional for `None`, use `== None`, not `is` ([E0045](../diagnostics/E0045.md)).
+- `is` on a value that behaves as a copy, such as an array, is an error. Use `==`. [E0046](../diagnostics/E0046.md)
+- To test an optional for `None`, use `== None`, not `is`. [E0045](../diagnostics/E0045.md)
 
 ## Object lifetime
 
@@ -156,17 +157,19 @@ fn main() {
 
 Here, `head = head?.next` replaces the reference to the node with the value 3. Nothing else refers to that node, so Sisu frees it. The node with the value 2 stays, because `head` refers to it.
 
-The rules:
+**When memory is freed**
 
 - Sisu frees the memory of an array or a string in the same way, when its last holder goes away.
-- No code of the program runs when Sisu frees an object. A program cannot see when it happens. The time changes only how much memory the program uses. The section [Weak fields](#weak-fields) is in development, and it changes this rule.
+- No code of the program runs when Sisu frees an object. A program cannot see when it happens. The time changes only how much memory the program uses.
+- The section [Weak fields](#weak-fields) is in development. It changes the rule that a program cannot see when Sisu frees an object.
 
-The order of drops:
+**The order of drops**
 
 - A drop adds a bounded amount of stack, however deep the value is. A long chain of objects through arrays or enums does not overflow the stack.
 - When a scope ends, the drop of one local is complete before the next local ends. This includes each part of its value that waited past the depth limit.
 - A program drops its values in the same order on each run.
-- Inside one value, Sisu releases the fields in declared order, and the elements of an array in index order. [ADR 0038](../adr/0038-deep-drops-defer-past-a-depth-limit.md) sets a depth limit. Past it, of two parts that do not hold each other, the first can drop after the second. Two elements of an array are an example.
+- Inside one value, Sisu releases the fields in declared order, and the elements of an array in index order.
+- [ADR 0038](../adr/0038-deep-drops-defer-past-a-depth-limit.md) sets a depth limit. Past it, of two parts that do not hold each other, the first can drop after the second. Two elements of an array are an example.
 
 ## Cycles
 
@@ -215,10 +218,16 @@ fn main() {
 
 Here, the local `parent` is the only strong reference to the first node. When `attach` returns, Sisu frees that node, and `child.parent` reads `None`.
 
-The rules:
+**Declaring a weak field**
 
-- `weak` comes before `mut`. A weak field must be a `mut` field. Its type must be an optional of a type that conforms to `AnyObject`. A class conforms, so `Node?` is valid.
+- `weak` comes before `mut`.
+- A weak field must be a `mut` field.
+- Its type must be an optional of a type that conforms to `AnyObject`. A class conforms, so `Node?` is valid.
 - A `T?` with `T: AnyObject` is valid too, and so is `(any I)?` for an interface `I` that only classes conform to ([Bounds](generics.md#bounds), [Interface values](generics.md#interface-values)).
-- A weak field reads like any optional, with `?.`, `??` and `if let`. A read never fails, and it never gives a freed object.
+
+**Reading a weak field**
+
+- A weak field reads like any optional, with `?.`, `??` and `if let`.
+- A read never fails, and it never gives a freed object.
 - A weak field makes the time of the free visible. A reference held by a local can go away at its last use. So a weak field can read `None` before the end of that block.
 - A weak field breaks a cycle. When a parent holds its child and the child holds its parent in a weak field, Sisu can free both.

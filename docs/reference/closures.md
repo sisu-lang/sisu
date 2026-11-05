@@ -39,16 +39,21 @@ fn main() {
 }
 ```
 
-The rules:
+**Function types as values**
 
 - A named function is a value of its function type. `add` has the type `(i64, i64) -> i64`.
-- A function type goes anywhere a type goes. It can be the type of a parameter, a local, a field, a payload, an array element or a type argument. It can be a return type or an optional.
-- `->` groups to the right. `(i64) -> (i64) -> i64` takes an `i64` and returns a function. An optional function type needs parentheses: `(() -> unit)?`.
-- A function type has no labels. A named function takes its arguments by position when a call goes through a value.
-- `unit` is a type name that a program can write. `-> unit` on a function declaration means the same as no return type.
-- Function types match exactly. A `(i64) -> i64` does not convert to a `(i64) -> i64?`. A closure fits, because `sisu` checks its body against the expected type.
-- For a named function that does not fit, wrap it in a closure: `x => f(x)`.
+- A function type goes anywhere a type goes: a parameter, a local, a field, a payload, an array element, a type argument, a return type or an optional.
+- `->` groups to the right. `(i64) -> (i64) -> i64` takes an `i64` and returns a function.
+- An optional function type needs parentheses: `(() -> unit)?`.
+- `unit` will be a type name that a program can write ([unit](types.md#unit) cannot be written yet). `-> unit` on a function declaration means the same as no return type.
 - A generic named function used as a value takes its type arguments from the expected type.
+
+**Matching and calling**
+
+- A function type has no labels. A named function takes its arguments by position when a call goes through a value.
+- Function types match exactly. A `(i64) -> i64` does not convert to a `(i64) -> i64?`.
+- A closure fits an expected type, because `sisu` checks its body against that type.
+- To use a named function that does not fit, wrap it in a closure: `x => f(x)`.
 - A function value has no `==`. `f == g` is an error.
 
 ```sisu pending
@@ -128,15 +133,26 @@ fn main() {
 }
 ```
 
-The rules:
+**Parameters**
 
-- The parameter types come from the expected type, so `apply(x => x + 1, 1)` needs no type for `x`. A parameter can also have a written type, as in `(x: i64) => x * 2`.
-- The return type always comes from the body. A closure has no syntax for it. Where an expected type exists, `sisu` checks the body against its return type.
+- The parameter types come from the expected type, so `apply(x => x + 1, 1)` needs no type for `x`.
+- A parameter can have a written type, as in `(x: i64) => x * 2`.
 - `_` as a parameter name binds nothing. A parameter list can have it more than once.
-- The body is one expression, one assignment or compound assignment, or a block. An assignment has the type `unit`, so `() => c.count += 1` is valid.
-- A `return` in a block body returns from the closure. So do `fail` and `?`, which act on the closure's own return type ([In a closure](errors.md#in-a-closure)). A `break` or `continue` cannot leave the closure for a loop around it.
-- A closure whose expected result type is `unit` gives no value. When its body has a value, the program builds with the warning for an unused value ([W0004](../diagnostics/W0004.md)).
-- A closure argument of a generic call is checked after the other arguments. Its body can fix a type argument that nothing else fixed. For a generic function such as `fold(init, f)`, the call `fold(0, (acc, x) => acc + x)` uses the `0` to fix the type of `acc`.
+
+**Body and result**
+
+- The return type comes from the body. A closure has no syntax for it.
+- Where an expected type exists, `sisu` checks the body against its return type.
+- The body is one expression, one assignment or compound assignment, or a block.
+- An assignment has the type `unit`, so `() => c.count += 1` is valid.
+- A closure whose expected result type is `unit` gives no value. When its body has a value, the program builds with a warning for an unused value. [W0004](../diagnostics/W0004.md)
+- A closure argument of a generic call is checked after the other arguments. Its body can fix a type argument that nothing else fixed. For `fold(init, f)`, the call `fold(0, (acc, x) => acc + x)` uses the `0` to fix the type of `acc`.
+
+**Jumps**
+
+- A `return` in a block body returns from the closure.
+- `fail` and `?` act on the return type of the closure ([In a closure](errors.md#in-a-closure)).
+- A `break` or `continue` cannot leave the closure for a loop around it.
 
 ## Captures
 
@@ -161,9 +177,9 @@ fn main() {
 }
 ```
 
-The rules:
+**Rules**
 
-- A closure made before a `let mut` binding changes keeps the old value, unless it shares the binding with `[mut name]` (below).
+- A closure keeps the value that a `let mut` binding had when the closure was made. A later change to the binding does not reach the closure, unless the closure shares the binding with `[mut name]` (below).
 - A captured array or string is copied as any binding of it is ([Values and memory](values.md#copied-and-shared)).
 - A closure that captures an object shares the object. It can write the `mut` fields of the object.
 - An assignment to a plain captured name is an error, also when the name is a `let mut`. The closure cannot change it.
@@ -221,14 +237,25 @@ fn main() {
 
 A *weak capture* does not keep the object alive. The way to write a weak capture is not final, so this page shows none.
 
-The rules:
+**Which names**
 
-- A name can be captured weakly when its type conforms to `AnyObject`, or is an optional of such a type. A class, and a class-only interface value, conform ([Bounds](generics.md#bounds), [Interface values](generics.md#interface-values)). Any other capture is an error.
-- Inside the closure, a name that is captured weakly is an optional. Read it with `?.`, `??` and `if let`, as a [weak field](values.md#weak-fields).
+- A name can be captured weakly when its type conforms to `AnyObject`, or is an optional of such a type.
+- A class and a class-only interface value conform ([Bounds](generics.md#bounds), [Interface values](generics.md#interface-values)).
+- Any other weak capture is an error.
+
+**Inside the closure**
+
+- A name that is captured weakly is an optional.
+- Read it with `?.`, `??` and `if let`, as a [weak field](values.md#weak-fields).
 - When the object is gone, the closure still runs. A call such as `self?.increment()` then does nothing.
-- A closure captures an object `x` strongly, and the program stores the closure in a place that starts at `x`, such as `x.button.on_click`. Then the object keeps itself alive, and the program builds with a warning. The fix is to capture `x` weakly.
+
+**Cycles**
+
+- A closure can capture an object `x` strongly, and the program can store the closure in a place that starts at `x`, such as `x.button.on_click`. Then the object keeps itself alive, and the program builds with a warning.
+- To fix it, capture `x` weakly.
 - A store is an assignment or a `push`, as in `self.handlers.push(() => self.go())`. The closure can be anywhere in the stored value, for example in a constructor, an array literal or an enum value.
-- A closure inside the body of another closure does not count. A closure that a call passes on, or that another object stores, can still make a cycle with no warning.
+- A closure inside the body of another closure does not count.
+- A closure that a call passes on, or that another object stores, can still make a cycle with no warning.
 
 ## Iterators
 
@@ -249,13 +276,19 @@ fn main() {
 
 An *iterable* is a value that can make an iterator. The interface `Iterable` has the associated types `Item` and `Iter`, and a method `iter`. A `for` loop takes an iterable.
 
-The rules:
+**What can be iterated**
 
-- `for x in e` with an array or a range works as [`for`](statements.md#for) tells. For any other `e`, the type of `e` must conform to `Iterable`. The loop calls `e.iter()` once, then `next()` until the result is `None`.
-- An array conforms to `Iterable`. `xs.iter()` gives the iterator of an array. It holds the array, so a change to the array during the loop copies the array, and the loop sees the old elements.
+- An array conforms to `Iterable`. `xs.iter()` gives the iterator of an array.
+- The iterator holds the array. A change to the array during the loop copies the array, and the loop sees the old elements.
 - Every iterator is an iterable. Its `iter()` gives a copy of the iterator itself.
 - A range is a value. `0..n` and `0..=n` can be stored, passed and returned, and they are iterators of `i64`.
-- A `for` loop copies its iterator. So after a `break`, the variable that held the iterator is where it was, and a second `for` over it starts again. An iterator that is an object is shared, so the loop advances it.
+
+**How `for` uses it**
+
+- `for x in e` with an array or a range works as [`for`](statements.md#for) tells.
+- For any other `e`, the type of `e` must conform to `Iterable`. The loop calls `e.iter()` once, then `next()` until the result is `None`.
+- A `for` loop copies an iterator that is a value. After a `break`, the variable that held the iterator is where it was, and a second `for` over it starts again.
+- An iterator that is an object is shared, so the loop advances it. A second `for` over it continues where the first stopped.
 - To continue where a loop stopped, call `next` in a `while let`.
 
 ## Iterator methods
@@ -280,7 +313,7 @@ fn main() {
 }
 ```
 
-The rules:
+**Rules**
 
 - A chain such as `.filter(...).map(...).sum()` builds no array between its steps.
 - A statement that only calls an adapter, such as `xs.map(f)`, builds with the warning for an unused value. A note tells that `map` does nothing until a method uses up the iterator.

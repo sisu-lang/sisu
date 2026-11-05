@@ -402,8 +402,12 @@ mod tests {
     /// Past `JUDGED` syntax fixes, a fix is dropped unjudged: each judgement parses the whole
     /// source again.
     #[test]
-    fn fixes_past_the_cap_are_dropped() {
-        let src = "fn f() {\n    print(0X1)\n}\n".repeat(JUDGED + 1) + "fn main() {}\n";
+    fn fixes_past_the_judged_cap_should_be_dropped() {
+        // Each function has its own name: a broken item is a duplicate of one with its name.
+        let src: String = (0..=JUDGED)
+            .map(|n| format!("fn g{n}() {{\n    print(0X1)\n}}\n"))
+            .chain(["fn main() {}\n".to_string()])
+            .collect();
         let ds = sound_fixes(&src, &front_end(&src).1);
         assert_eq!(ds.len(), JUDGED + 1);
         let mut fixed = ds.iter().map(|d| !d.fixes().is_empty());
@@ -743,6 +747,95 @@ fn main() {
         );
     }
 
+    /// A broken item gets the duplicate check of an intact item: it is reported against the first
+    /// item of its name, or the later item is reported against it, and it still poisons its
+    /// name. In each row: the program and the code and place of each diagnostic.
+    #[test]
+    fn a_broken_item_should_get_the_duplicate_check_of_an_intact_item() {
+        use Code::{
+            BraceOnNewLine as Brace, DefinedTwice as Twice, Expected, Mismatch, NoMember as NoNext,
+        };
+        let rows: &[(&str, &str, &[Found])] = &[
+            // The E0063 rows stay until the failed bound of a poisoned interface stops
+            // cascading (#506): `Source` is intact and poisoned, so the bound of `drain` fails.
+            (
+                "broken interface after an intact one, and a use",
+                "interface Source {\n    fn next(self) -> i64\n}\n\nfn drain<S: Source>(s: S) {\n    print(s.next())\n}\n\ninterface Source\n{   fn get(self) -> i64\n}\n\nfn main() {\n    let x: i64 = \"s\"\n}\n",
+                &[
+                    (NoNext, (6, 13)),
+                    (Twice, (9, 11)),
+                    (Brace, (10, 1)),
+                    (Mismatch, (14, 18)),
+                ],
+            ),
+            (
+                "broken interface after an intact one",
+                "interface Source {\n    fn next(self) -> i64\n}\n\nfn drain<S: Source>(s: S) {\n    print(s.next())\n}\n\ninterface Source\n{   fn get(self) -> i64\n}\n\nfn main() {}\n",
+                &[(NoNext, (6, 13)), (Twice, (9, 11)), (Brace, (10, 1))],
+            ),
+            (
+                "broken interface, no use",
+                "interface Source {\n    fn next(self) -> i64\n}\n\ninterface Source\n{   fn get(self) -> i64\n}\n\nfn main() {}\n",
+                &[(Twice, (5, 11)), (Brace, (6, 1))],
+            ),
+            (
+                "broken class",
+                "class A {\n    x: i64\n}\n\nclass A\n{   y: i64\n}\n\nfn main() {\n    let x: i64 = \"s\"\n}\n",
+                &[(Twice, (5, 7)), (Brace, (6, 1)), (Mismatch, (10, 18))],
+            ),
+            (
+                "broken enum",
+                "enum E {\n    A\n}\n\nfn f(e: E) {\n    match e { A => print(1) }\n}\n\nenum E\n{   B\n}\n\nfn main() {}\n",
+                &[(Twice, (9, 6)), (Brace, (10, 1))],
+            ),
+            (
+                "broken function",
+                "fn g() -> i64 {\n    1\n}\n\nfn f() {\n    print(g())\n}\n\nfn g() -> string\n{   \"a\"\n}\n\nfn main() {}\n",
+                &[(Twice, (9, 4)), (Brace, (10, 1))],
+            ),
+            (
+                "broken function after a class",
+                "class A {\n    x: i64\n}\n\nfn A()\n{\n}\n\nfn main() {}\n",
+                &[(Twice, (5, 4)), (Brace, (6, 1))],
+            ),
+            (
+                "two broken classes",
+                "class A\n{   x: i64\n}\n\nclass A\n{   y: i64\n}\n\nfn main() {}\n",
+                &[(Brace, (2, 1)), (Twice, (5, 7)), (Brace, (6, 1))],
+            ),
+            (
+                "broken interface before an intact one",
+                "interface Source\n{   fn get(self) -> i64\n}\n\nfn drain<S: Source>(s: S) {\n    print(s.next())\n}\n\ninterface Source {\n    fn next(self) -> i64\n}\n\nfn main() {}\n",
+                &[(Brace, (2, 1)), (NoNext, (6, 13)), (Twice, (9, 11))],
+            ),
+            (
+                "error in a body",
+                "fn total() {\n    let = 1\n}\nfn total() {}\nfn main() {\n    total()\n}\n",
+                &[(Expected, (2, 9)), (Twice, (4, 4))],
+            ),
+            (
+                "broken constant",
+                "const A = 1 2\nfn A() {}\nfn main() {}\n",
+                &[(Expected, (1, 13)), (Twice, (2, 4))],
+            ),
+            // The name of a prelude function keeps the report of the prelude: one error.
+            (
+                "broken function with a prelude function's name",
+                "fn print(x: i64)\n{\n}\n\nfn main() {}\n",
+                &[(Twice, (1, 4)), (Brace, (2, 1))],
+            ),
+            // An error inside a requirement leaves the interface intact, so the check was there.
+            (
+                "interface with an error in a requirement",
+                "interface Source {\n    fn next(self) -> i64\n}\n\ninterface Source {\n    fn get(self) -> \n}\n\nfn main() {}\n",
+                &[(Twice, (5, 11)), (Expected, (7, 1))],
+            ),
+        ];
+        for &(row, src, want) in rows {
+            assert_eq!(codes(src), want, "row `{row}`: {src}");
+        }
+    }
+
     /// A diagnostic's code and `(line, col)`.
     type Found = (Code, (usize, usize));
 
@@ -939,20 +1032,34 @@ fn main() {
     }
 
     /// Items of one name, a generic class and the uses of a broken name. The prelude keeps the
-    /// name of its interface, and the uses of a broken name stay poisoned.
+    /// name of its interface, the uses of a broken name stay poisoned, and an item of the same
+    /// name as a broken one is a duplicate.
     #[test]
     fn broken_items_should_get_the_name_errors_beside_items_of_the_same_name() {
-        use Code::{BraceOnNewLine as Brace, BuiltInName as Built, FunctionNotFound as NoFn};
+        use Code::{
+            BraceOnNewLine as Brace, BuiltInName as Built, DefinedTwice as Twice,
+            FunctionNotFound as NoFn,
+        };
         let rows: &[(&str, &str, &[Found])] = &[
             (
                 "broken then intact",
                 "interface Eq\n{}\ninterface Eq {}\n",
-                &[(Built, (1, 11)), (Brace, (2, 1)), (Built, (3, 11))],
+                &[
+                    (Built, (1, 11)),
+                    (Brace, (2, 1)),
+                    (Built, (3, 11)),
+                    (Twice, (3, 11)),
+                ],
             ),
             (
                 "intact then broken",
                 "interface Eq {}\ninterface Eq\n{}\n",
-                &[(Built, (1, 11)), (Built, (2, 11)), (Brace, (3, 1))],
+                &[
+                    (Built, (1, 11)),
+                    (Built, (2, 11)),
+                    (Twice, (2, 11)),
+                    (Brace, (3, 1)),
+                ],
             ),
             (
                 "two broken",
@@ -961,13 +1068,14 @@ fn main() {
                     (Built, (1, 11)),
                     (Brace, (2, 1)),
                     (Built, (3, 11)),
+                    (Twice, (3, 11)),
                     (Brace, (4, 1)),
                 ],
             ),
             (
                 "broken then intact, a user's name",
                 "interface Node\n{}\ninterface Node {}\n",
-                &[(Brace, (2, 1))],
+                &[(Brace, (2, 1)), (Twice, (3, 11))],
             ),
             (
                 "generic class",
@@ -1030,31 +1138,29 @@ fn main() {
     }
 
     /// A broken constant is declared, so its uses are poisoned; it poisons a function of the same
-    /// name, and a broken function poisons a constant of the same name.
+    /// name, and a broken function poisons a constant of the same name. Each pair is a duplicate.
     #[test]
-    fn broken_constant_poisons_its_uses() {
-        for (src, at) in [
+    fn a_broken_constant_should_poison_its_uses_and_get_the_duplicate_check() {
+        use Code::{DefinedTwice as Twice, Expected};
+        for (src, want) in [
             (
                 "const A = 1 2\nfn main() {\n    let b: bool = A\n    A = 2\n}\n",
-                (1, 13),
+                &[(Expected, (1, 13))][..],
             ),
             (
                 "const A = 1 2\nfn A() {}\nfn main() {\n    A(1)\n}\n",
-                (1, 13),
+                &[(Expected, (1, 13)), (Twice, (2, 4))],
             ),
             (
                 "fn A(x) {}\nconst A = 1\nfn main() {\n    let b: bool = A\n    A = 2\n}\n",
-                (1, 7),
+                &[(Expected, (1, 7)), (Twice, (2, 7))],
             ),
         ] {
-            assert_eq!(codes(src), [(Code::Expected, at)], "{src}");
+            assert_eq!(codes(src), want, "{src}");
         }
         // A line that starts with `const` ends the unnamed item before it.
         let src = "def f()\nconst A = 1 2\nfn main() {}\n";
-        assert_eq!(
-            codes(src),
-            [(Code::Expected, (1, 1)), (Code::Expected, (2, 13))]
-        );
+        assert_eq!(codes(src), [(Expected, (1, 1)), (Expected, (2, 13))]);
     }
 
     /// The fix of a `const` statement leaves a program that passes the whole front end.
@@ -1372,12 +1478,6 @@ fn main() {
     }
 
     #[test]
-    fn broken_item_is_never_a_duplicate() {
-        let src = "fn total() {\n    let = 1\n}\nfn total() {}\nfn main() {\n    total()\n}\n";
-        assert_eq!(codes(src), [(Code::Expected, (2, 9))]);
-    }
-
-    #[test]
     fn broken_item_is_a_candidate() {
         let src = "fn total(n: i64) {\n    let = 1\n}\nfn main() {\n    totl(1)\n}\n";
         assert_eq!(
@@ -1474,12 +1574,17 @@ fn main() {
     }
 
     #[test]
-    fn broken_name_poisons_an_enum_path() {
-        // The broken function `E` poisons the enum `E`: its paths report only their arguments.
+    fn a_broken_function_should_poison_an_enum_path_of_its_name() {
+        // The broken function `E` poisons the enum `E`: its paths report only their arguments,
+        // and the enum is a duplicate.
         let src = "fn E() {\n    let = 1\n}\nenum E { A }\nfn main() {\n    let _ = E.A(nope)\n}\n";
         assert_eq!(
             codes(src),
-            [(Code::Expected, (2, 9)), (Code::BindingNotFound, (6, 17))]
+            [
+                (Code::Expected, (2, 9)),
+                (Code::DefinedTwice, (4, 6)),
+                (Code::BindingNotFound, (6, 17))
+            ]
         );
     }
 
@@ -1647,20 +1752,20 @@ fn main() {
     }
 
     /// A broken interface poisons its name for every use, as a broken class does, and so does a
-    /// broken function of the name an intact interface has.
+    /// broken function of the name an intact interface has, which is a duplicate.
     #[test]
     fn a_broken_interface_should_poison_its_name() {
-        for (src, at) in [
+        for (src, want) in [
             (
                 "interface Shape: {}\nfn f<T: Shape>(x: T, y: Shape) { Shape(1) }\nfn main() {}\n",
-                (1, 18),
+                &[(Code::Expected, (1, 18))][..],
             ),
             (
                 "interface Shape {}\nfn Shape() {\n    let = 1\n}\nfn f(s: Shape) {}\nfn main() {}\n",
-                (3, 9),
+                &[(Code::DefinedTwice, (2, 4)), (Code::Expected, (3, 9))],
             ),
         ] {
-            assert_eq!(codes(src), [(Code::Expected, at)], "{src}");
+            assert_eq!(codes(src), want, "{src}");
         }
     }
 
@@ -1705,10 +1810,14 @@ fn main() {
     }
 
     #[test]
-    fn broken_name_poisons_the_other_kind() {
-        // Functions and classes share a namespace: the broken function `Tree` poisons the type.
+    fn a_broken_function_should_poison_the_type_of_its_name() {
+        // Functions and classes share a namespace: the broken function `Tree` poisons the type,
+        // and it is a duplicate.
         let src = "class Tree {\n    n: i64\n}\nfn Tree() {\n    let = 1\n}\nfn main() {\n    let t: Tree = 1\n}\n";
-        assert_eq!(codes(src), [(Code::Expected, (5, 9))]);
+        assert_eq!(
+            codes(src),
+            [(Code::DefinedTwice, (4, 4)), (Code::Expected, (5, 9))]
+        );
     }
 
     /// The names of `program`'s classes, enums and functions, in list order.

@@ -1,0 +1,8 @@
+error[E0026]: `Result` is a built-in type
+ --> E0026-result-uses.sisu:1:7
+  |
+1 | class Result {}
+  |       ^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0026
