@@ -32,6 +32,9 @@ pub(crate) const SEEDS: u64 = 64;
 /// How many seeds a test reads at most while it looks for a construct that no seed of its fixed
 /// set holds yet. A change to a cadence in the generator moves a construct to another seed.
 pub(crate) const SEARCH_SEEDS: u64 = 16 * SEEDS;
+/// How many seeds a fuzz run reads. `scripts/fuzz_seeds.py` writes them as files, and is a copy of
+/// `seed`: a shell step cannot call a test-only function.
+pub(crate) const FUZZ_SEEDS: u64 = 128;
 const SEED_LEN: usize = 4_096;
 
 /// What no generated program holds, and why.
@@ -9218,15 +9221,10 @@ fn the_programs_of_seeds_203_4534_and_5974_should_check_clean() {
 
 /// The XOR of the 64-bit words of `bytes`, which are little-endian.
 fn xor_of_words(bytes: &[u8]) -> u64 {
-    bytes
-        .chunks_exact(8)
-        .map(|word| {
-            u64::from_le_bytes(
-                word.try_into()
-                    .expect("a chunk of 8 bytes should convert to a u64"),
-            )
-        })
-        .fold(0, |acc, word| acc ^ word)
+    let (words, _) = bytes.as_chunks::<8>();
+    words
+        .iter()
+        .fold(0, |acc, word| acc ^ u64::from_le_bytes(*word))
 }
 
 /// `scripts/fuzz_seeds.py` copies `seed`, and `scripts/test_fuzz_seeds.py` pins the same values.

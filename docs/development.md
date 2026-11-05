@@ -600,8 +600,10 @@ $ SISU_FUZZ_SEED=72 cargo nextest run -p sisuc --lib seed_from_env --run-ignored
 The script first builds the runtime archive in release mode and points
 `SISU_RUNTIME` at it, since the builds link it. The target's corpus is
 `fuzz/corpus/program`, its failing inputs go to `fuzz/artifacts/program/`,
-and it starts from the corpus alone, with no seeds and no dictionary. Its
-limits are `-max_len=4096 -timeout=300 -len_control=0`: libFuzzer tries
+and it has no dictionary. It starts from the corpus and from 128 seeds, the
+inputs `seed(0)` to `seed(127)` of the unit tests, which `scripts/fuzz_seeds.py`
+writes as full-size inputs of 4096 bytes. At about one execution a second, the
+fuzzer cannot grow an input to that size by itself. Its limits are `-max_len=4096 -timeout=300 -len_control=0`: libFuzzer tries
 full-length inputs at once, since a short input runs out of bytes and gets a
 small program. After a run, the script replays up to 3 new `crash-` inputs
 for up to 340 s each.
@@ -626,11 +628,11 @@ diagnostics when you run `sisu check` on it. The replays after a fuzz run
 write the same directories.
 
 `--coverage` works for either target. It runs `cargo fuzz coverage` over the
-target's corpus, and for `front_end` its seeds too, then prints the line
-coverage of each compiler stage (lexer, parser, check, mir, codegen) and how
-many inputs reach codegen. `make fuzz-coverage [TARGET=program]` runs it, for
-`front_end` by default. A program input that the checker rejects is a crash,
-never a corpus entry, so every program input reaches codegen.
+target's corpus and seeds, then prints the line coverage of each compiler
+stage (lexer, parser, check, mir, codegen) and how many inputs reach codegen.
+`make fuzz-coverage [TARGET=program]` runs it, for `front_end` by default. A
+program input that the checker rejects is a crash, never a corpus entry, so
+every program input, seeds included, reaches codegen.
 
 ### The nightly program job
 

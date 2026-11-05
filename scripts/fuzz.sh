@@ -10,6 +10,9 @@
 #   scripts/fuzz.sh [--target <target>] --cmin   minimize fuzz/corpus/<target> in place
 #   scripts/fuzz.sh [--target <target>] --coverage   line coverage per compiler stage of the corpus
 #                                     and seeds, and how many inputs reach codegen
+# The seeds of front_end are the .sisu files of the test tree. The seeds of program are 128
+# full-size inputs from scripts/fuzz_seeds.py: a short input runs out of bytes, and the fuzzer
+# grows an input too slowly to reach full size.
 # <target> is front_end, the default, or program. program builds the runtime archive first and
 # points SISU_RUNTIME at it; a replay of a program input also writes its program, rewritten
 # copy, stdin and failure to fuzz/artifacts/program/<input name>.dump/ (the input itself is the
@@ -77,6 +80,8 @@ coverage() {
     host=$(rustc -vV | awk '/^host:/ { print $2 }')
     bin=$(rustc --print sysroot)/lib/rustlib/$host/bin/llvm-cov
     mkdir -p "$corpus"
+    # cargo-fuzz keeps earlier raw profiles and merges them (cargo-fuzz 0.13.2 src/project.rs, coverage_for).
+    rm -rf "fuzz/coverage/$target"
     cargo fuzz coverage --sanitizer none "$target" "$corpus" "$seeds"
     # `export`, not `report`: report shows names without their longest common directory, which
     # depends on which other files the binary has; export has absolute paths.
@@ -112,10 +117,10 @@ coverage() {
     if [[ $target == program ]]; then
         # An input that fails property 1 is a crash, never a corpus entry, and the coverage run
         # above passed over every one of them: each reached codegen.
-        for f in "$corpus"/*; do
+        for f in "$corpus"/* "$seeds"/*; do
             [[ -f $f ]] && inputs=$((inputs + 1))
         done
-        echo "inputs reaching codegen: all ${inputs} (a failing input is a crash, never a corpus entry)"
+        echo "inputs reaching codegen: all ${inputs} (corpus and seeds; a failing input is a crash, never a corpus entry)"
     else
         cargo build --quiet -p sisuc
         for f in "$corpus"/* "$seeds"/*; do
@@ -141,16 +146,21 @@ case ${1:-} in
 --cmin) exec cargo fuzz cmin --sanitizer none "$target" "$corpus" -- "${limits[@]}" ;;
 esac
 
-# Every .sisu file under the test tree, copied under a unique name into a temp directory.
+# The seeds go into a temp directory: for front_end every .sisu file under the test tree, copied
+# under a unique name, and for program the files of scripts/fuzz_seeds.py.
 seeds=$(mktemp -d)
 marker=$(mktemp)
 replay_out=$(mktemp)
 trap 'rm -rf "$seeds" "$marker" "$replay_out"' EXIT
-i=0
-while IFS= read -r -d '' f; do
-    i=$((i + 1))
-    cp "$f" "$seeds/$i-${f##*/}"
-done < <(if [[ $target == front_end ]]; then find crates/sisuc/tests -name '*.sisu' -print0; fi)
+if [[ $target == program ]]; then
+    python3 scripts/fuzz_seeds.py "$seeds"
+else
+    i=0
+    while IFS= read -r -d '' f; do
+        i=$((i + 1))
+        cp "$f" "$seeds/$i-${f##*/}"
+    done < <(find crates/sisuc/tests -name '*.sisu' -print0)
+fi
 
 if [[ ${1:-} == --coverage ]]; then
     coverage
