@@ -105,6 +105,19 @@ class Gaps(unittest.TestCase):
         with self.subTest('seeds reach one generic instance of f'):
             run = self.reached([record('emit.rs', GENERIC, 1)], [record('emit.rs', GENERIC_OTHER, 1)])
             self.no_gap(run, 'each_ir_unit')
+        with self.subTest('the > of an arrow inside generic arguments does not close them'):
+            arrow = 'sisuc[abc]::emit::g::<fn(i64) -> i64>'
+            run = self.reached([record('emit.rs', 'sisuc[abc]::emit::g', 1)], [record('emit.rs', arrow, 1)])
+            self.no_gap(run, 'emit::g')
+        with self.subTest('a slice type that looks like a crate hash stays'):
+            run = self.reached([], [record('slice.rs', '<[f32]>::first', 1)])
+            self.assertEqual(run.code, 1, run.out)
+            self.assertIn('slice.rs\t<[f32]>::first', run.lines)
+        with self.subTest('a generic argument that holds a closure is no closure record'):
+            holder = 'sisuc[abc]::emit::h::<sisuc[abc]::emit::k::{closure#0}>'
+            run = self.reached([], [record('emit.rs', holder, 1)])
+            self.assertEqual(run.code, 1, run.out)
+            self.assertIn('emit.rs\tsisuc::emit::h', run.lines)
         with self.subTest('seeds miss only a closure of f'):
             run = self.reached(
                 [record('check/place.rs', METHOD_OF_CLOSURE, 1, 5), record('check/place.rs', CLOSURE, 0, 6)],
