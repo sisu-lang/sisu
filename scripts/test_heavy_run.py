@@ -60,9 +60,10 @@ class HeavyRun(unittest.TestCase):
             fcntl.flock(held, fcntl.LOCK_EX)
             run = self.start('touch', 'ran')
             # The script writes the two lines with two `echo`s, so wait for the second one.
-            wait_for(lambda: 'SISU_HEAVY_LOCK=skip' in self.stderr(), 'the waiting message')
+            wait_for(lambda: 'when the lock is free' in self.stderr(), 'the waiting message')
             self.assertIn('heavy-run: waiting for this run to end: make test in /elsewhere', self.stderr())
-            self.assertIn('heavy-run: to run now with no lock, set SISU_HEAVY_LOCK=skip', self.stderr())
+            self.assertIn('heavy-run: the run starts when the lock is free', self.stderr())
+            self.assertNotIn('SISU_HEAVY_LOCK', self.stderr())
             self.assertIsNone(run.poll())
             self.assertFalse(os.path.exists(self.path('ran')))
         self.assertEqual(run.wait(timeout=20), 0)

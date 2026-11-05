@@ -209,6 +209,10 @@ than 300 mutants fails at once, before pass 1, with
 `mutation-test: FAIL: N mutants, more than 300`. Then test a part with
 `scripts/mutants.sh <base> --file <path>`, or set `MUTANTS_MAX=<n>` to test
 all of it.
+Run it only when the user or your instructions ask for it; it is not a
+default step. In a plan, the controller runs it once per stage, on the
+stage's final head after the task reviews. An executor never runs it, so it
+never blocks a task.
 The script mutates the
 diff from where the branch left `main`. On a branch stacked on another stage,
 pass that stage's tip as the base, so earlier stages stay out. Arguments after
@@ -951,6 +955,6 @@ must accept any syntax those programs use.
 | `.coderabbit.yaml`, `.greptile/` | The settings of the CodeRabbit and Greptile pull request reviews. Their findings are advice; CI is the merge gate. A `@coderabbitai review` or `@greptileai` comment starts a review again. |
 | `fuzz` | The fuzz targets, `front_end` and `program`, in their own Cargo workspace, run by `scripts/fuzz.sh`. |
 | `Makefile` | The entry point for the commands; `make help` lists its targets. |
-| `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `codspeed-prep.sh`, `fuzz.sh`, `fuzz_program_plan.py`, which plans each run of the program fuzz workflow, `diag_diff.py`, which compares the diagnostics of two `sisu` builds for a review, `golden_diff.py`, which checks that a re-bless only reworded expected files, `scaling.py`, which finds the shapes of program for which a compiler stage is superlinear, `merge_pr.py`, which squash-merges a pull request once its checks pass (`--cleanup` removes the worktree of one merged in the UI), and the scripts prek hooks run, such as `check-expect-messages.sh` and `slow_tests.py`. |
+| `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `codspeed-prep.sh`, `fuzz.sh`, `fuzz_program_plan.py`, which plans each run of the program fuzz workflow, `watch_pr.py`, which waits for the next review with text, comment from someone other than you, or check result of a pull request, `diag_diff.py`, which compares the diagnostics of two `sisu` builds for a review, `golden_diff.py`, which checks that a re-bless only reworded expected files, `scaling.py`, which finds the shapes of program for which a compiler stage is superlinear, `merge_pr.py`, which squash-merges a pull request once its checks pass (`--cleanup` removes the worktree of one merged in the UI), and the scripts prek hooks run, such as `check-expect-messages.sh` and `slow_tests.py`. |
 | `site` | The website's pages, data and build script (`make site`). |
 | `docs` | Architecture, roadmap, decisions (`adr/`) and agent guides (`agents/`). |
