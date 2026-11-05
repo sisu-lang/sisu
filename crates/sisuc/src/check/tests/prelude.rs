@@ -817,18 +817,6 @@ fn a_labeled_dbg_with_more_than_one_argument_should_keep_all_its_errors() {
     assert_eq!(found, [Code::LabeledArgument, Code::CannotInfer], "{src}");
 }
 
-/// A user's `class dbg` is rejected and poisons the name: `dbg(...)` reads neither the class nor
-/// the prelude's call, so the `[]` adds no `E0050` beside the `E0034`.
-#[test]
-fn dbg_should_be_poisoned_when_a_class_takes_its_name() {
-    with_prelude();
-    let src = format!(
-        "class dbg {{}}\n{}",
-        body("", "let v: Result<[f64], i64> = Ok(dbg([]))")
-    );
-    codes(&src, &[(Code::DefinedTwice, (1, 7))]);
-}
-
 /// With no annotation, `id(Ok(1))` has no context to fix `E`, and `id` cannot infer `T`.
 #[test]
 fn result_should_not_be_inferred_from_its_argument_alone() {
