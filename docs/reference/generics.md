@@ -184,7 +184,7 @@ The examples use `fn pick<T>(a: T, b: T) -> T`, `fn h<T>(a: T, b: T?) -> T` and 
 - So does a call that wraps an optional. For `fn wrap<T>(x: T) -> [T]`, `pick([1], wrap(Some(2)))` is a `[i64?]`. A call wraps an optional when its parameter and its return type name one type parameter.
 - An optional at a `T?` place fills that `?`, so the call does not hold an optional. `pick(h(1, Some(2)), Some(3))` is an `i64?`, and `let v: i64?? = h(1, Some(2))` is valid.
 - A call that waits never makes the outer call hold an optional. For `fn okv<T>(r: Result<T, string>) -> T`, `pick(1, okv(Ok(Some(2))))` is an error: `1` fixes `T` as `i64` first. Write `pick(Some(1), ...)`, or give the result a type. [E0032](../diagnostics/E0032.md)
-- In an optional context, a call that returns `T` binds `T` to the whole context type when an argument at a `T` or `[T]` place makes or holds an optional. For `first<T>(xs: [T]) -> T`, `let v: i64?? = first([None, Some(1)])` binds `T` to `i64??`, so `v` is the outer `None`.
+- A call that returns `T` can bind `T` to the whole optional context. It does so when an argument at a `T` or `[T]` place makes or holds an optional. For `first<T>(xs: [T]) -> T`, `let v: i64?? = first([None, Some(1)])` binds `T` to `i64??`, so `v` is the outer `None`.
 - A call that returns `T?` does the same when the context has no more optionals than the call makes. `let w: i64?? = opt(Some(2))` binds `T` to `i64?`.
 - When the context has more optionals, its payload meets `T?`. `let w: i64??? = opt(Some(2))` also binds `T` to `i64?`.
 - `Some(Some(2))` at a `T?` place fills the `?` and leaves one optional, so `T` is an optional. `let v: i64? = h(1, Some(Some(2)))` is valid, and a context `i64??` also binds `T` to `i64?`.
@@ -289,13 +289,13 @@ fn main() {
 
 **What needs a bound**
 
-When a bound fixes the error, the help names that bound ([Bounds](#bounds)).
+When the compiler can tell which bound fixes the error, the help names it ([Bounds](#bounds)).
 
 - `==` and `!=` need `T: Eq`. Two `T?` values need it too. [E0139](../diagnostics/E0139.md)
 - `<`, `<=`, `>` and `>=` need `T: Ord`. [E0139](../diagnostics/E0139.md)
 - `contains` on a `[T]` uses `==`, so it needs `T: Eq`. [E0154](../diagnostics/E0154.md)
 - `is` needs `T: AnyObject`, because `T` can be a type that is not a class. [E0046](../diagnostics/E0046.md)
-- A method other than `to_string()` needs a bound that gives it. The help names an interface that declares the method. [E0063](../diagnostics/E0063.md)
+- A method other than `to_string()` needs a bound that gives it. When one interface declares the method, the help names it. [E0063](../diagnostics/E0063.md)
 
 **What a `T` cannot do**
 
@@ -304,8 +304,8 @@ When a bound fixes the error, the help names that bound ([Bounds](#bounds)).
 - Have a field. [E0063](../diagnostics/E0063.md)
 - Fill an array with `[x; n]`, because `T` can be a class ([Filled arrays](arrays.md#filled-arrays)). `[None; n]` is valid. [E0067](../diagnostics/E0067.md)
 - Be the subject of a `match`. In a payload of the type `T`, a pattern is a name or `_` ([Variant patterns](enums.md#variants)). [E0124](../diagnostics/E0124.md)
-- Meet a value of another type. `a == b` with a `T` and a `U` cannot be compared, whatever the bounds are. [E0047](../diagnostics/E0047.md)
-- Meet a literal of another type. `a < 5` is a type mismatch. [E0032](../diagnostics/E0032.md)
+- Meet a value of another type in `==` or `!=`, whatever the bounds are. `a == 5` and `a == b` with a `U` cannot be compared. [E0047](../diagnostics/E0047.md)
+- Meet a value of another type in `<`, `<=`, `>` or `>=`. `a < 5` and `a < b` with a `U` are type mismatches. [E0032](../diagnostics/E0032.md)
 
 ```sisu
 fn smaller<T>(a: T, b: T) -> bool {
