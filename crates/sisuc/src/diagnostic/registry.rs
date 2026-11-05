@@ -6436,15 +6436,16 @@ fn similar(d: Diagnostic, at: Span, suggestion: Option<Suggestion>) -> Diagnosti
     let Some(Suggestion { kind, name }) = suggestion else {
         return d;
     };
-    d.with_fix(unsafe_fix(
-        &format!(
-            "{} {} with a similar name exists: `{name}`",
-            kind.article(),
-            kind.word()
-        ),
-        at,
-        &name,
-    ))
+    d.with_fix(unsafe_fix(&similar_message(kind, &name), at, &name))
+}
+
+/// The message of the fix that `similar` and `similar_label` give.
+fn similar_message(kind: Definition, name: &str) -> String {
+    format!(
+        "{} {} with a similar name exists: `{name}`",
+        kind.article(),
+        kind.word()
+    )
 }
 
 /// `similar`, except that with `wrap`, the start of the `break` that the name at `at` labels, the
@@ -6459,15 +6460,7 @@ fn similar_label(
     let (Some(Suggestion { kind, name }), Some(start)) = (&suggestion, wrap) else {
         return similar(d, at, suggestion);
     };
-    let mut fix = unsafe_fix(
-        &format!(
-            "{} {} with a similar name exists: `{name}`",
-            kind.article(),
-            kind.word()
-        ),
-        at,
-        &format!("{name})"),
-    );
+    let mut fix = unsafe_fix(&similar_message(*kind, name), at, &format!("{name})"));
     fix.edits.insert(
         0,
         Edit {

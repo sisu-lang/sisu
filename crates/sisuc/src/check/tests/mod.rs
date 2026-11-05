@@ -1587,6 +1587,7 @@ fn label_fix_at_the_end_of_a_head_should_wrap_the_break_in_parentheses() {
         "let v = if o ?? break outeb { 1 } else { 2 }",
         "match o ?? break outeb   { _ => print(1) }",
         "if o ?? break outeb\r{ print(1) }",
+        "if o ?? break outeb\t{ print(1) }",
     ] {
         let src = in_labeled_loop(body);
         assert_eq!(
