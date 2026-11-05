@@ -63,14 +63,14 @@ def from_labels(labels: list[str], added: str | None = None) -> int | None:
 
 
 def fuzz_minutes(seconds: int) -> int:
-    """The fuzz step's time limit: 15 minutes of build, the fuzzing or the corpus pass, whichever
-    is longer, 17 of crash replays and 3 for the fuzzer to stop its jobs."""
+    """The fuzz step's time limit. It has 15 minutes of build, then the fuzzing or the corpus
+    pass, whichever is longer. Then it has 17 minutes of crash replays and 3 to stop the jobs."""
     return 15 + max(math.ceil(seconds / 60), CORPUS_PASS_MINUTES) + 17 + 3
 
 
 def minutes(seconds: int, coverage: bool) -> int:
     """The job's time limit: the fuzz step, 15 minutes of tmin, cmin, 5 of setup and the cache,
-    and the coverage."""
+    and the coverage. The 5 minutes are an estimate, not a bound: no step limits them."""
     return (fuzz_minutes(seconds) + 15 + CMIN_MINUTES + 5
             + (COVERAGE_MINUTES if coverage else 0))
 

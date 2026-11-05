@@ -58,8 +58,8 @@ class Events(unittest.TestCase):
         self.assertEqual(fp.minutes(1800, False), 105)
 
     def test_fuzz_step_should_have_time_for_the_corpus_pass_of_a_short_run(self):
-        self.assertEqual(fp.fuzz_minutes(60), fp.fuzz_minutes(fp.CORPUS_PASS_MINUTES * 60))
-        self.assertLess(fp.fuzz_minutes(60), fp.minutes(60, False))
+        # 15 of build, 20 of corpus pass, 17 of crash replays and 3 to stop.
+        self.assertEqual(fp.fuzz_minutes(60), 55)
 
     def test_the_longest_run_fits_the_6_hour_job_limit(self):
         self.assertLessEqual(fp.minutes(fp.MOST, True), 360)

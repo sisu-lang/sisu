@@ -625,8 +625,9 @@ too. Nothing blocks a merge.
 Program inputs are slow: each takes about 1 s. Fork mode first runs each
 restored corpus input once, one at a time, and `-max_total_time` does not stop
 that pass. So after the restore, the "Sample the corpus" step keeps 1000
-inputs at random and removes the others, and the corpus never grows past about
-1000. A removed input is lost; the fuzzer can find its coverage again. The
+inputs at random and removes the others, so each run starts with at most 1000.
+The run saves those and its new finds, and the next run samples them again. A
+removed input is lost; the fuzzer can find its coverage again. The
 summary's executions count only the fuzzing after the first pass: few
 executions, or `unknown`, mean the run spent its time on its corpus. The job
 summary also gives the corpus size before and after cmin and whether cmin
@@ -635,7 +636,8 @@ finished within its 1200 s. A cmin that runs out leaves the corpus as it was.
 A first job, `scripts/fuzz_program_plan.py`, decides how long to fuzz and
 whether to measure coverage, and sets the time limits of the fuzz step and of
 the job from that. A fuzz step that passes its limit fails, and the later steps
-still run, so its log and the corpus are kept. A run
+still run, so its log and the corpus are kept. The run then fails, and a
+scheduled run opens or comments on the `Nightly fuzz failure: program` issue. A run
 by hand with `workflow_dispatch` takes the seconds to fuzz, 60 to 14,400, and
 whether to run `--coverage`. GitHub offers that only for a workflow already on
 `main`.

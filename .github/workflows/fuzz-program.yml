@@ -33,7 +33,8 @@ env:
 # plan): 15 min of build, the fuzzing or the corpus pass, 17 of crash replays and 3 to
 # stop. A fuzz step that passes its limit fails, and the later steps still run, so its
 # log and the corpus are kept. Then the job has 15 min of tmin, 20 of cmin, 5 of setup
-# and the cache, and 45 of coverage (minutes() in the plan).
+# and the cache, and 45 of coverage (minutes() in the plan). The 5 minutes are an
+# estimate; when they run over, the job loses only Coverage, which runs last.
 # The report job comes last: it runs after the fuzz job, only for a failed nightly run.
 jobs:
   plan:
@@ -90,8 +91,8 @@ jobs:
           restore-keys: fuzz-program-corpus-
       # The fuzzer first runs each corpus input once, one at a time, at about 1 s each, and
       # -max_total_time does not stop that pass. So a run keeps 1000 inputs at random and removes
-      # the others. cmin and the cache then see only those and the new finds, so the corpus never
-      # grows past about 1000. A removed input is lost; the fuzzer can find its coverage again.
+      # the others. cmin and the cache then see only those and the new finds, so each run starts
+      # with at most 1000. A removed input is lost; the fuzzer can find its coverage again.
       # CORPUS_PASS_MINUTES in scripts/fuzz_program_plan.py is the time of this pass.
       - name: Sample the corpus
         run: |
@@ -130,6 +131,10 @@ jobs:
           if [ -z "$input" ]; then
             echo "No failing input to minimize."
             exit 0
+          fi
+          # A fuzz step stopped by its limit writes no summary, so the line below would be all of it.
+          if [ ! -f fuzz/artifacts/summary.md ]; then
+            echo "The fuzzer failed before writing a summary; see the log of the fuzz step." >fuzz/artifacts/summary.md
           fi
           status=0
           timeout -k 10 900 scripts/fuzz.sh --target program --tmin "$input" || status=$?
