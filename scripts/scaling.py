@@ -224,6 +224,40 @@ def mut_call_width(k):
             f'    many({given})\n{shown}    print("{{total}}")\n}}\n')
 
 
+def alias_chain(k):
+    # A chain of k + 1 aliases, each of which names the one before it twice. Types are interned, so
+    # the chain has k + 1 distinct types, but it has 2^k paths. The checker walks that read a field
+    # type must visit each distinct type once. The chain `Ak` is in the field of a class and in
+    # the payloads of an enum, as a value, an optional and an array. The chain `Bk<T>` is the
+    # payload of the generic enum `G<T>`, which `lower_enums` reads. Main builds each variant of `P`
+    # and each type, and reads them, so that size 0 has no W0011, W0012, W0013 or W0014.
+    t = tag
+    a = [f'type A{t(0)} = P<i64, i64>'] + [f'type A{t(i)} = P<A{t(i - 1)}, A{t(i - 1)}>'
+                                          for i in range(1, k + 1)]
+    b = [f'type B{t(0)}<T> = P<T, T>'] + [f'type B{t(i)}<T> = P<B{t(i - 1)}<T>, B{t(i - 1)}<T>>'
+                                         for i in range(1, k + 1)]
+    lets = [f'    let a{t(0)}: A{t(0)} = P.Y(2)'] + [
+        f'    let a{t(i)}: A{t(i)} = P.X(a{t(i - 1)})' for i in range(1, k + 1)]
+    lets += [f'    let b{t(0)}: B{t(0)}<i64> = P.X(1)'] + [
+        f'    let b{t(i)}: B{t(i)}<i64> = P.X(b{t(i - 1)})' for i in range(1, k + 1)]
+    last, top = f'A{t(k)}', f'a{t(k)}'
+    return ('enum P<A, B> {\n    X(A)\n    Y(B)\n}\n\n'
+            + '\n'.join(a) + '\n' + '\n'.join(b) + '\n\n'
+            f'class C {{\n    v: {last}\n    o: {last}?\n}}\n\n'
+            f'enum E {{\n    V({last})\n    W([{last}])\n}}\n\n'
+            f'enum G<T> {{\n    V(B{t(k)}<T>)\n    W\n}}\n\n'
+            'fn main() {\n' + '\n'.join(lets) + '\n'
+            f'    let c = C(v: {top}, o: {top})\n    let es = [E.V({top}), E.W([{top}])]\n'
+            f'    let gs = [G.V(b{t(k)}), G.W]\n'
+            '    print(c.o == None)\n    print(shape(c.v))\n'
+            '    for e in es {\n        match e {\n            E.V(x) => print(shape(x))\n'
+            '            E.W(xs) => print(xs.len())\n        }\n    }\n'
+            '    for g in gs {\n        match g {\n            G.V(q) => print(shape(q))\n'
+            '            G.W => print(0)\n        }\n    }\n}\n\n'
+            'fn shape<A, B>(p: P<A, B>) -> i64 {\n    match p {\n        P.X(_) => 1\n'
+            '        P.Y(_) => 2\n    }\n}\n')
+
+
 # The name of a shape, its `n` and the program at a size. The sizes are 0, n, 2n, 4n and 8n.
 SHAPES = {
     'functions': (250, functions),
@@ -247,6 +281,7 @@ SHAPES = {
     'mut parameters': (250, mut_parameters),
     'mut returns': (250, mut_returns),
     'mut call width': (1000, mut_call_width),
+    'alias chain': (12, alias_chain),
 }
 
 
