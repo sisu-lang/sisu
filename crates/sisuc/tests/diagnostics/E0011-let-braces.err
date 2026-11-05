@@ -1,0 +1,8 @@
+error[E0011]: expected `=`, found `{`
+ --> E0011-let-braces.sisu:5:11
+  |
+5 |     let a { }
+  |           ^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0011

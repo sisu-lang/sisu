@@ -127,7 +127,7 @@ impl<'a> Checker<'_> {
                 let owner = method_owner(holder, &name);
                 self.report(DiagnosticKind::MutSelf {
                     keyword: mut_self.keyword,
-                    receiver: mut_self.receiver,
+                    remove: Span::new(mut_self.keyword.start(), mut_self.receiver.start()),
                     safe: mut_self.annotation.is_none(),
                     owner,
                 });

@@ -418,11 +418,18 @@ mod tests {
     /// A safe fix that deletes up to a token is unsafe when a comment or a stray character lies in
     /// what it deletes: the rule behind it sees only tokens.
     #[test]
-    fn a_fix_over_a_comment_or_a_lexer_error_is_unsafe() {
+    fn a_safe_fix_should_be_unsafe_when_it_deletes_a_comment_or_a_lexer_error() {
         for (src, code, safe) in [
             ("class C {\n    fn f(mut self) {}\n}\n", Code::MutSelf, true),
+            // The parser's fix stops at the comment, so it deletes no comment and stays safe.
             (
                 "class C {\n    fn f(mut // c\n        self) {}\n}\n",
+                Code::MutSelf,
+                true,
+            ),
+            // The checker's fix of an extension method still reaches `self`.
+            (
+                "class C {}\n\nextend C {\n    fn f(mut // c\n        self) {}\n}\n",
                 Code::MutSelf,
                 false,
             ),
