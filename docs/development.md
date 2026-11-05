@@ -105,6 +105,11 @@ and check that no span splits a character.
 A new diagnostic with a fix needs a program in `diagnostics/` that shows the fix.
 Use the shape that is most likely to go wrong, such as a typed `let` or a `(` before the token.
 
+The same binary checks every program that the website shows, under
+`site/programs/`. A `mir/` program there must print its `<name>.mir` under
+`sisu build --emit mir`, so a change to the mir that `sisu` prints can fail it.
+Bless it as below, and read the diff.
+
 To add a case, write the `.sisu` file and an empty expected file beside it,
 then fill the expected file with `make bless`. Read what it wrote before
 you commit it:
