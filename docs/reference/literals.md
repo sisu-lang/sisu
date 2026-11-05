@@ -122,16 +122,35 @@ fn main() {
 }
 ```
 
-The rules, in order:
+**Step 1: an expected type**
 
-- When the context expects a `u8` or a `u8?`, the literal is a `u8`. When the context expects an `f64` or an `f64?`, the literal is an `f64`.
-- In a group of operands, the operands that are not integer literals decide the type of its integer literals. If one of them is a `u8` or a `u8?`, the literals in the group are `u8`s. If one is an `f64`, an `f64?` or a float literal, they are `f64`s. These are the groups:
-  - the two operands of an [arithmetic operator](operators.md#arithmetic) or a comparison, such as `+`, `<` or `==`
-  - the operands of a [comparison chain](operators.md#comparison-chains)
-  - the elements of an [array literal](arrays.md#array-literals)
-  - the branches of an `if` or an `if let`, or the arms of a `match`
+- When the context expects a `u8` or a `u8?`, the literal is a `u8`.
+- When the context expects an `f64` or an `f64?`, the literal is an `f64`.
 
-  An integer literal under `dbg`, a block, an `if` or a `match` counts as an integer literal in its group. So does a generic call that gives back an integer literal argument. Each integer literal argument that gives the call its type must have the type that the call returns. An example is `id(2)` for `fn id<T>(x: T) -> T`. With an `x: u8`, `id(2) + x` is a `u8`. Only an argument at a place of the returned type parameter gives the call its type. So for `fn k2<T, U>(a: T, b: U) -> U` and an `x: u8`, `k2(1, 2) + x` is a `u8`, and its `1` stays an `i64`. These forms can nest, as in `id({ 2 })`. Other values keep their own types. So with an `x: u8`, `[Some(1), x]` is an error ([E0032](../diagnostics/E0032.md)).
+**Step 2: a group of operands**
+
+In a group of operands, the operands that are not integer literals decide the type of its integer literals.
+
+- If one of them is a `u8` or a `u8?`, the literals in the group are `u8`s.
+- If one is an `f64`, an `f64?` or a float literal, the literals in the group are `f64`s.
+
+**The groups of step 2**
+
+- The two operands of an [arithmetic operator](operators.md#arithmetic) or a comparison, such as `+`, `<` or `==`.
+- The operands of a [comparison chain](operators.md#comparison-chains).
+- The elements of an [array literal](arrays.md#array-literals).
+- The branches of an `if` or an `if let`, or the arms of a `match`.
+
+**What counts as an integer literal in a group**
+
+- An integer literal under `dbg`, a block, an `if` or a `match` counts as an integer literal in its group.
+- A generic call that gives back an integer literal argument counts too. Each integer literal argument that gives the call its type must have the type that the call returns. An example is `id(2)` for `fn id<T>(x: T) -> T`. With an `x: u8`, `id(2) + x` is a `u8`.
+- Only an argument at a place of the returned type parameter gives the call its type. So for `fn k2<T, U>(a: T, b: U) -> U` and an `x: u8`, `k2(1, 2) + x` is a `u8`, and its `1` stays an `i64`.
+- These forms can nest, as in `id({ 2 })`.
+- Other values keep their own types. So with an `x: u8`, `[Some(1), x]` is an error. [E0032](../diagnostics/E0032.md)
+
+**Step 3: nothing else applies**
+
 - When a literal has no expected type and is not in a group, it is an `i64`.
 
 These places give an expected type:
@@ -200,12 +219,17 @@ fn main() {
 }
 ```
 
-The rules:
+**Parts of a float literal**
 
-- A fraction is a `.` with at least one digit on each side. So `1.` and `.5` are errors ([E0101](../diagnostics/E0101.md)).
-- An exponent is `e` or `E`, an optional `+` or `-`, and at least one digit ([E0102](../diagnostics/E0102.md)).
+- A fraction is a `.` with at least one digit on each side. So `1.` and `.5` are errors. [E0101](../diagnostics/E0101.md)
+- An exponent is `e` or `E`, an optional `+` or `-`, and at least one digit. An exponent with no digit is an error. [E0102](../diagnostics/E0102.md)
 - A digit separator can go between two digits of the integer part, the fraction or the exponent.
-- The value is the `f64` nearest to the literal. A literal so large that it rounds to infinity is an error ([E0103](../diagnostics/E0103.md)). A literal too small for an `f64`, such as `1e-400`, becomes `0.0`.
+
+**The value**
+
+- The value is the `f64` nearest to the literal.
+- A literal so large that it rounds to infinity is an error. [E0103](../diagnostics/E0103.md)
+- A literal too small for an `f64`, such as `1e-400`, becomes `0.0`.
 
 ```sisu
 fn main() {
@@ -267,16 +291,25 @@ fn main() {
 }
 ```
 
-The rules:
+**The type of the expression**
 
-- The value of the expression can have any type except `unit` and `never` ([E0098](../diagnostics/E0098.md)). The text of an array, an object or an enum is in [Text of other types](strings.md#text-of-other-types). An optional builds with the warning [W0015](../diagnostics/W0015.md), because the text can be `None`.
+- The value of the expression can have any type except `unit` and `never`. [E0098](../diagnostics/E0098.md)
+- The text of an array, an object or an enum is in [Text of other types](strings.md#text-of-other-types).
+- An optional builds with a warning, because the text can be `None`. [W0015](../diagnostics/W0015.md)
+
+**The shape of the expression**
+
 - The expression can include a string literal of its own: `"{ "a" + "b" }"`.
 - The expression must be on the line of the string literal.
-- A `}` closes the interpolation only when every bracket opened in the interpolation is closed. A `{` or `}` in a string or character literal in the expression does not count, so `"{ c == '}' }"` is valid.
+- An empty interpolation, `"{}"` or `"{ }"`, is an error. [E0096](../diagnostics/E0096.md)
+- A comment cannot be in an interpolation. [E0097](../diagnostics/E0097.md)
+
+**Braces and format specs**
+
+- A `}` closes the interpolation only when every bracket opened in the interpolation is closed.
+- A `{` or `}` in a string or character literal in the expression does not count, so `"{ c == '}' }"` is valid.
 - A `:` after the expression starts a format spec, such as `"{x:.2}"` ([Format specs](strings.md#format-specs)).
-- An empty interpolation, `"{}"` or `"{ }"`, is an error ([E0096](../diagnostics/E0096.md)).
-- A comment cannot be in an interpolation ([E0097](../diagnostics/E0097.md)).
-- A `}` in the text, outside an interpolation, is an error ([E0095](../diagnostics/E0095.md)).
+- A `}` in the text, outside an interpolation, is an error. [E0095](../diagnostics/E0095.md)
 
 ```sisu
 fn main() {
@@ -322,11 +355,11 @@ fn main() {
 }
 ```
 
-The rules:
+**Rules**
 
-- Any other character after a `\` is an error ([E0089](../diagnostics/E0089.md)). There is no `\x` byte escape.
-- A `\u` escape has 1 to 6 hexadecimal digits between `{` and `}` ([E0090](../diagnostics/E0090.md)).
-- Its value must be a Unicode scalar value: 0 to 10FFFF, but not D800 to DFFF ([E0091](../diagnostics/E0091.md)).
+- Any other character after a `\` is an error. There is no `\x` byte escape. [E0089](../diagnostics/E0089.md)
+- A `\u` escape has 1 to 6 hexadecimal digits between `{` and `}`. [E0090](../diagnostics/E0090.md)
+- The value of a `\u` escape must be a Unicode scalar value: 0 to 10FFFF, but not D800 to DFFF. [E0091](../diagnostics/E0091.md)
 
 ```sisu
 fn main() {

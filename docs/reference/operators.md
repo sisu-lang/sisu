@@ -39,13 +39,14 @@ This table lists the operators from the highest precedence to the lowest:
 | `&&` | And | From left to right |
 | `\|\|` | Or | From left to right |
 
-The rules:
+**Rules**
 
 - A postfix operator applies before a unary operator. So `-2.5.floor()` is `-(2.5.floor())`.
 - A unary operator applies before a binary operator. So `-2 * 3` is `(-2) * 3`.
-- `??` applies after `+` and before a comparison. So `o ?? 1 + 2` is `o ?? (1 + 2)`, and `o ?? 0 < 5` is `(o ?? 0) < 5`.
+- `??` applies after `+`. So `o ?? 1 + 2` is `o ?? (1 + 2)`.
+- `??` applies before a comparison. So `o ?? 0 < 5` is `(o ?? 0) < 5`.
 - `a ?? b ?? c` is `a ?? (b ?? c)`.
-- A comparison and an equality do not group from left to right: see [Comparison chains](#comparison-chains) and [Equality](#equality).
+- A comparison and an equality do not group from left to right ([Comparison chains](#comparison-chains), [Equality](#equality)).
 
 ```sisu
 fn main() {
@@ -75,12 +76,14 @@ fn main() {
 }
 ```
 
-The rules:
+**Rules**
 
-- The two operands must have one type. Sisu does not convert an operand to the type of the other ([E0032](../diagnostics/E0032.md)). Integer literals are the exception ([Literals](literals.md#the-type-of-an-integer-literal)).
-- Arithmetic does not apply to a `char` ([E0094](../diagnostics/E0094.md)), a `bool`, an optional or an array.
-- A `+` with a `string` and another type is an error. Use interpolation, such as `"n = {n}"`.
-- Sisu has no `**` operator ([E0107](../diagnostics/E0107.md)). For a power, use the `f64` method `pow` ([Types](types.md#methods-on-numbers)).
+- The two operands must have one type. Sisu does not convert an operand to the type of the other. [E0032](../diagnostics/E0032.md)
+- An integer literal is the exception ([Literals](literals.md#the-type-of-an-integer-literal)).
+- Arithmetic does not apply to a `char`. [E0094](../diagnostics/E0094.md)
+- Arithmetic does not apply to a `bool`, an optional or an array. [E0032](../diagnostics/E0032.md)
+- A `+` with a `string` and another type is an error. Use interpolation, such as `"n = {n}"`. [E0032](../diagnostics/E0032.md)
+- Sisu has no `**` operator. For a power, use the `f64` method `pow` ([Types](types.md#methods-on-numbers)). [E0107](../diagnostics/E0107.md)
 
 ```sisu
 fn main() {
@@ -210,10 +213,10 @@ fn main() {
 }
 ```
 
-The rules:
+**Rules**
 
-- A unary `-` on a `u8` is an error, because a `u8` cannot be negative ([E0042](../diagnostics/E0042.md)).
-- `!` takes only a `bool` ([E0032](../diagnostics/E0032.md)).
+- A unary `-` on a `u8` is an error, because a `u8` cannot be negative. [E0042](../diagnostics/E0042.md)
+- `!` takes only a `bool`. [E0032](../diagnostics/E0032.md)
 - A `-` before an integer literal is a unary `-`, not part of the literal ([Literals](literals.md#integer-literals)).
 
 ## Comparison
@@ -229,12 +232,18 @@ fn main() {
 }
 ```
 
-The rules:
+**The order**
 
-- A `char` compares by its code point. A `string` compares byte by byte, which is the order of the code points. So the ASCII upper case letters come before the ASCII lower case letters, and a prefix comes before the longer string.
+- A `char` compares by its code point.
+- A `string` compares byte by byte, which is the order of the code points. So the ASCII upper case letters come before the ASCII lower case letters, and a prefix comes before the longer string.
 - An `f64` comparison follows IEEE 754: a comparison with NaN is false.
-- A `bool`, an array, a class or an enum has no `<` ([E0159](../diagnostics/E0159.md)), unless a class or an enum conforms to `Ord` ([Display, Eq and Ord](generics.md#display-eq-and-ord)). An optional cannot be compared with `<` ([E0032](../diagnostics/E0032.md)).
-- The two operands must have one type ([E0032](../diagnostics/E0032.md)).
+
+**Errors**
+
+- The two operands must have one type. [E0032](../diagnostics/E0032.md)
+- A `bool`, an array, a class or an enum has no `<`. [E0159](../diagnostics/E0159.md)
+- A class or an enum has `<` when it conforms to `Ord` ([Display, Eq and Ord](generics.md#display-eq-and-ord)).
+- An optional cannot be compared with `<`. [E0032](../diagnostics/E0032.md)
 
 ### Comparison chains
 
@@ -272,15 +281,22 @@ fn main() {
 }
 ```
 
-The rules:
+**When two values are equal**
 
-- Two [arrays](arrays.md#equality) are equal when they have the same length and their elements are equal, in order. Two [enum](enums.md#enum-values) values are equal when they are the same variant and their payloads are equal.
+- Two [arrays](arrays.md#equality) are equal when they have the same length and their elements are equal, in order.
+- Two [enum](enums.md#enum-values) values are equal when they are the same variant and their payloads are equal.
 - A `T` beside a `T?` becomes a `T?`. Two optionals are equal when both are `None`, or both hold equal values.
-- `x == None` and `x != None` test whether the optional `x` holds a value. When `x` is not optional, the test is an error ([E0044](../diagnostics/E0044.md)).
-- Values of two types cannot be compared ([E0047](../diagnostics/E0047.md), [E0032](../diagnostics/E0032.md)).
-- A class has no `==`, because objects compare by identity. Use `a is b` ([`is`](#is)), or make the class conform to `Eq` and write its `eq` method. Without it, `a == b` is an error ([E0159](../diagnostics/E0159.md)), and so is `==` on an array or an optional of that class ([Display, Eq and Ord](generics.md#display-eq-and-ord)).
+- `x == None` and `x != None` test whether the optional `x` holds a value.
 - An `f64` follows IEEE 754: NaN is not equal to itself, and `-0.0 == 0.0` is true. So an array that holds NaN is not equal to itself.
-- `==`, `!=` and `is` do not chain: `a == b == c` is an error ([E0024](../diagnostics/E0024.md)). Join two tests with `&&`.
+
+**Errors**
+
+- `x == None` is an error when `x` is not optional. [E0044](../diagnostics/E0044.md)
+- Values of two types cannot be compared. [E0047](../diagnostics/E0047.md) [E0032](../diagnostics/E0032.md)
+- A class has no `==`, because objects compare by identity. `a == b` is an error. [E0159](../diagnostics/E0159.md)
+- `==` on an array or an optional of such a class is an error too. [E0159](../diagnostics/E0159.md)
+- To compare objects, use `a is b` ([`is`](#is)). Or make the class conform to `Eq` and write its `eq` method ([Display, Eq and Ord](generics.md#display-eq-and-ord)).
+- `==`, `!=` and `is` do not chain: `a == b == c` is an error. Join two tests with `&&`. [E0024](../diagnostics/E0024.md)
 
 ```sisu
 fn main() {
@@ -362,13 +378,14 @@ fn main() {
 }
 ```
 
-The rules:
+**Rules**
 
-- The left operand must be an optional ([E0048](../diagnostics/E0048.md)).
+- The left operand must be an optional. [E0048](../diagnostics/E0048.md)
 - When `a` is a `T?` and `b` is a `T`, the result is a `T`.
 - When `b` is a `T?` too, the result is a `T?`. So `a ?? b ?? 0` tries `a`, then `b`, then gives `0`.
 - `b` can be an expression that never finishes, such as `panic("...")` ([Types](types.md#never)). Then the result is a `T`.
-- `b` can be a `return`, a `break` or a `continue`, with its value or loop label. Then `a ?? return b` gives the value of `a`, or leaves the function with `b` ([return, break and continue](expressions.md#return-break-and-continue)). It takes everything to its right.
+- `b` can be a `return`, a `break` or a `continue`, with its value or loop label. Then `a ?? return b` gives the value of `a`, or leaves the function with `b` ([return, break and continue](expressions.md#return-break-and-continue)).
+- `return`, `break` and `continue` take everything to their right.
 
 ```sisu
 fn main() {
@@ -409,14 +426,26 @@ fn main() {
 }
 ```
 
-The rules:
+**The result**
 
-- The result is an optional of the type of the field or the method's result. When that type is already an optional, the result is that optional, not an optional of an optional. So a chain such as `a?.b?.c` gives one optional.
-- `a?.b.c` is an error when `b` is not optional, because `a?.b` is an optional ([E0062](../diagnostics/E0062.md)). Write `a?.b?.c`.
-- A method that returns no value has no value through `?.` too ([E0043](../diagnostics/E0043.md)). When `a` is `None`, the method and its arguments do not run.
-- `?.` on a value that is not optional is an error ([E0049](../diagnostics/E0049.md)). Use `.`.
-- An assignment or a compound assignment can go through `?.`, as a `push` can ([ADR 0037](../adr/0037-assignment-through-optional-chaining.md)). It writes when every `?.` step holds a value. When one step is `None`, the right side does not run and nothing is written. `xs?.push(x)` follows the same rule ([Arrays](arrays.md#methods)). The place must still be one that can change ([Assignment](statements.md#assignment)).
+- The result is an optional of the type of the field or the method's result.
+- When that type is already an optional, the result is that optional, not an optional of an optional. So a chain such as `a?.b?.c` gives one optional.
 - A line that starts with `?.` continues the line above it ([Lexical structure](lexical.md#line-continuation)).
+
+**Assignment through `?.`**
+
+An assignment or a compound assignment can go through `?.`, as a `push` can ([ADR 0037](../adr/0037-assignment-through-optional-chaining.md)).
+
+- It writes when every `?.` step holds a value.
+- When one step is `None`, the right side does not run and nothing is written.
+- `xs?.push(x)` follows the same rule ([Arrays](arrays.md#methods)).
+- The place must still be one that can change ([Assignment](statements.md#assignment)).
+
+**Errors**
+
+- `a?.b.c` is an error when `b` is not optional, because `a?.b` is an optional. Write `a?.b?.c`. [E0062](../diagnostics/E0062.md)
+- A method that returns no value has no value through `?.` too. [E0043](../diagnostics/E0043.md)
+- `?.` on a value that is not optional is an error. Use `.`. [E0049](../diagnostics/E0049.md)
 
 ```sisu
 class Sauna {

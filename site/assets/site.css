@@ -73,6 +73,7 @@ header.site nav a[aria-current="page"] { color: var(--accent-ink); border-bottom
 
 /* home hero */
 .hero { padding: 80px 0 72px; display: grid; grid-template-columns: 1fr 1.4fr; gap: 56px; align-items: center; }
+.hero-code { min-width: 0; } .hero-code .code + .code { margin-top: 12px; }
 .pill { display: inline-block; font-size: 14px; font-weight: 600; color: var(--warn-ink); background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 99px; padding: 3px 12px; margin-bottom: 20px; }
 h1 { font-size: 54px; line-height: 1.07; letter-spacing: -.025em; margin: 0 0 22px; font-weight: 800; max-width: 13ch; }
 .lede { font-size: 19px; color: var(--body); margin: 0 0 30px; max-width: 60ch; }

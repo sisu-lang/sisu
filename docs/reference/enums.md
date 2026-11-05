@@ -53,18 +53,29 @@ fn main() {
 
 A variant is a name, and then a payload in `(` and `)` when it holds values. The payload lists the types of the values, with a `,` between them. A payload can give each type a label, such as `w: i64`.
 
-The rules:
+**Variants**
 
-- A variant name starts with an upper-case letter ([E0113](../diagnostics/E0113.md)).
-- A payload labels all its values or none ([E0114](../diagnostics/E0114.md)). A label helps to build the variant. A pattern does not use it.
-- A line break separates two variants. A `;` can separate them too, but a `,` cannot ([E0015](../diagnostics/E0015.md)).
-- An enum has at least one variant ([E0115](../diagnostics/E0115.md)).
-- The variants come before the methods ([E0112](../diagnostics/E0112.md)).
+- A variant name starts with an upper-case letter. [E0113](../diagnostics/E0113.md)
+- A payload labels all its values or none. [E0114](../diagnostics/E0114.md)
+- A label helps to build the variant. A pattern does not use it.
+- A line break separates two variants. A `;` can separate them too.
+- A `,` between two variants is an error. [E0015](../diagnostics/E0015.md)
+- An enum has at least one variant. [E0115](../diagnostics/E0115.md)
+- The variants come before the methods. [E0112](../diagnostics/E0112.md)
+
+**Names and type parameters**
+
 - An enum is declared at the top level. Its name follows the rules of a function name ([Functions](functions.md#declarations)).
-- Two variants, or a variant and a method, of one enum cannot have the same name ([E0034](../diagnostics/E0034.md)). A variant can have the name of a class or a function.
-- A variant cannot be named `Some`, `None`, `Ok` or `Err` ([E0026](../diagnostics/E0026.md)).
-- An enum that no live code builds builds with a warning ([W0012](../diagnostics/W0012.md)). A variant that no live code builds also builds with a warning ([W0013](../diagnostics/W0013.md)). A pattern that names a variant does not build it.
+- Two variants, or a variant and a method, of one enum cannot have the same name. [E0034](../diagnostics/E0034.md)
+- A variant can have the name of a class or a function.
+- A variant cannot be named `Some`, `None`, `Ok` or `Err`. [E0026](../diagnostics/E0026.md)
 - A generic enum also has type parameters after its name, such as `enum Maybe<T>` ([Generics](generics.md#type-parameters)).
+
+**Warnings**
+
+- An enum that no live code builds builds with a warning. [W0012](../diagnostics/W0012.md)
+- A variant that no live code builds also builds with a warning. [W0013](../diagnostics/W0013.md)
+- A pattern that names a variant does not build it.
 
 A method follows the rules of a [method of a class](classes.md#methods): it has `self` as its first parameter. `self` is the value of the enum. An enum has no method without `self` ([E0017](../diagnostics/E0017.md)).
 
@@ -119,16 +130,23 @@ fn main() {
 }
 ```
 
-The rules:
+**The payload**
 
-- A payload without labels takes one value for each type, in order, with no labels. A wrong number of values is an error ([E0053](../diagnostics/E0053.md)), and so is a label ([E0055](../diagnostics/E0055.md)).
-- A payload with labels takes each value with its label, in the order of the declaration. The rules are those of a [class constructor](classes.md#constructors) ([E0056](../diagnostics/E0056.md), [E0064](../diagnostics/E0064.md), [E0065](../diagnostics/E0065.md), [E0066](../diagnostics/E0066.md)).
-- Each value must have the type of its place ([E0032](../diagnostics/E0032.md)).
-- A variant that holds nothing is written with no parentheses, and a variant with a payload always has them ([E0119](../diagnostics/E0119.md)).
-- The enum must have the variant ([E0118](../diagnostics/E0118.md)).
-- The variant is not written alone, as `Circle(5)` ([E0117](../diagnostics/E0117.md)). Sisu has only the one access operator, `.`, so `Shape::Circle` is an error too ([E0122](../diagnostics/E0122.md)).
-- A variant is not a method. `x.Circle(5)` is an error, and so is `Shape.area(x)` ([E0120](../diagnostics/E0120.md)).
-- A local, a parameter or a binding cannot have the name of an enum ([E0116](../diagnostics/E0116.md)).
+- A payload without labels takes one value for each type, in order, with no labels.
+- A wrong number of values is an error. [E0053](../diagnostics/E0053.md)
+- A label on a payload without labels is an error. [E0055](../diagnostics/E0055.md)
+- A payload with labels takes each value with its label, in the order of the declaration.
+- The rules are those of a [class constructor](classes.md#constructors). [E0056](../diagnostics/E0056.md) [E0064](../diagnostics/E0064.md) [E0065](../diagnostics/E0065.md) [E0066](../diagnostics/E0066.md)
+- Each value must have the type of its place. [E0032](../diagnostics/E0032.md)
+
+**The variant**
+
+- A variant that holds nothing is written with no parentheses. A variant with a payload always has them. [E0119](../diagnostics/E0119.md)
+- The enum must have the variant. [E0118](../diagnostics/E0118.md)
+- The variant is not written alone, as `Circle(5)`. [E0117](../diagnostics/E0117.md)
+- Sisu has only the one access operator, `.`, so `Shape::Circle` is an error. [E0122](../diagnostics/E0122.md)
+- A variant is not a method. `x.Circle(5)` is an error, and so is `Shape.area(x)`. [E0120](../diagnostics/E0120.md)
+- A local, a parameter or a binding cannot have the name of an enum. [E0116](../diagnostics/E0116.md)
 
 ```sisu
 enum Shape {
@@ -165,13 +183,18 @@ fn main() {
 }
 ```
 
-The rules:
+**Using a value**
 
-- An enum value has no fields to read or write ([E0121](../diagnostics/E0121.md)). A `match` names the values of a payload.
-- Two values of an enum are equal when they are the same variant and their payloads are equal ([Operators](operators.md#equality)). `==` compares the payload fields in order, and stops at the first field that is not equal.
-- An enum has no order unless it conforms to `Ord`. Without it, `<` and the other comparison operators do not take it ([E0159](../diagnostics/E0159.md)). An enum has `==` only when all its payloads have it, so a payload that is an object needs a class that conforms to `Eq` ([E0159](../diagnostics/E0159.md)).
+- An enum value has no fields to read or write. A `match` names the values of a payload. [E0121](../diagnostics/E0121.md)
 - An object in a payload stays shared. Two copies of an enum value refer to the same object ([Values and memory](values.md#copied-and-shared)).
-- `is` does not take an enum ([E0046](../diagnostics/E0046.md)).
+- `is` does not take an enum. [E0046](../diagnostics/E0046.md)
+
+**Comparing values**
+
+- Two values of an enum are equal when they are the same variant and their payloads are equal ([Operators](operators.md#equality)).
+- `==` compares the payload fields in order, and stops at the first field that is not equal.
+- An enum has `==` only when all its payloads have it. A payload that is an object needs a class that conforms to `Eq`. [E0159](../diagnostics/E0159.md)
+- An enum has no order unless it conforms to `Ord`. Without it, `<` and the other comparison operators do not take it. [E0159](../diagnostics/E0159.md)
 
 ## match
 
@@ -222,13 +245,24 @@ fn main() {
 }
 ```
 
-The rules:
+**What a `match` takes**
 
-- `match` takes an enum, an optional, an `i64`, a `u8`, a `bool`, a `char` or a `string`. It does not take a class, an array or an `f64` ([E0124](../diagnostics/E0124.md)). [Patterns on an optional](#patterns-on-an-optional) tells how a pattern matches an optional.
-- A line break or a `;` ends an arm. A `,` is an error ([E0015](../diagnostics/E0015.md)). A line that ends with `|` or `=>` continues the arm. A line that starts with `|`, `=>` or `if` does not. When the arm above is not complete, that is an error ([E0133](../diagnostics/E0133.md)).
-- The values of the arms follow the rules of the branches of an `if` ([Expressions](expressions.md#match)). When every arm has the type `never`, so has the `match` ([Types](types.md#never)).
-- An arm with a value and an arm with no value cannot be in one `match` ([E0043](../diagnostics/E0043.md)). An arm of the type `never` goes with both. A `match` statement whose arms have no value is valid.
-- A `match` statement whose arms have a value gives a warning ([W0004](../diagnostics/W0004.md)).
+- `match` takes an enum, an optional, an `i64`, a `u8`, a `bool`, a `char` or a `string`.
+- `match` does not take a class, an array or an `f64`. [E0124](../diagnostics/E0124.md)
+- [Patterns on an optional](#patterns-on-an-optional) tells how a pattern matches an optional.
+
+**Where an arm ends**
+
+- A line break or a `;` ends an arm. A `,` is an error. [E0015](../diagnostics/E0015.md)
+- A line that ends with `|` or `=>` continues the arm. A line that starts with `|`, `=>` or `if` does not continue it. When the arm above is not complete, that is an error. [E0133](../diagnostics/E0133.md)
+
+**The values of the arms**
+
+- The values of the arms follow the rules of the branches of an `if` ([Expressions](expressions.md#match)).
+- When every arm has the type `never`, so has the `match` ([Types](types.md#never)).
+- An arm with a value and an arm with no value cannot be in one `match`. An arm of the type `never` goes with both. [E0043](../diagnostics/E0043.md)
+- A `match` statement whose arms have no value is valid.
+- A `match` statement whose arms have a value gives a warning. [W0004](../diagnostics/W0004.md)
 - Every value of the type must reach an arm ([Coverage](#coverage)).
 
 ```sisu
@@ -319,13 +353,18 @@ fn main() {
 
 A name that starts with an upper-case letter is a variant. The type of the value decides which enum has the variant, so a pattern needs no enum name. Two enums can have a variant of one name.
 
-The rules:
+**Variant names**
 
-- A variant that is not in the enum is an error ([E0118](../diagnostics/E0118.md)). An upper-case name for a value that is not an enum is an error ([E0125](../diagnostics/E0125.md)).
-- A pattern can write the enum, as in `Shape.Circle(r)`. It must be the enum of the value ([E0032](../diagnostics/E0032.md)).
-- A name that is a constant is an error, also as the bound of a range ([E0126](../diagnostics/E0126.md)). Compare with the constant in a guard.
-- A name that a pattern binds cannot change ([E0001](../diagnostics/E0001.md)). A pattern has no `mut` ([E0011](../diagnostics/E0011.md)).
-- A name appears once in a pattern. `Add(x, x)` does not compare two values ([E0129](../diagnostics/E0129.md)).
+- A variant that is not in the enum is an error. [E0118](../diagnostics/E0118.md)
+- An upper-case name for a value that is not an enum is an error. [E0125](../diagnostics/E0125.md)
+- A pattern can write the enum, as in `Shape.Circle(r)`. It must be the enum of the value. [E0032](../diagnostics/E0032.md)
+
+**Names that a pattern binds**
+
+- A name that is a constant is an error, also as the bound of a range. Compare with the constant in a guard. [E0126](../diagnostics/E0126.md)
+- A name that a pattern binds cannot change. [E0001](../diagnostics/E0001.md)
+- A pattern has no `mut`. [E0011](../diagnostics/E0011.md)
+- A name appears once in a pattern. `Add(x, x)` does not compare two values. [E0129](../diagnostics/E0129.md)
 
 ### Literals and ranges
 
@@ -370,14 +409,21 @@ fn main() {
 }
 ```
 
-The rules:
+**Sub-patterns**
 
-- A sub-pattern follows the type of its value. It is a variant pattern for an enum. It is a literal for an integer, a `char`, a `bool` or a `string`, and a range for an integer or a `char`. A name or `_` fits every type.
-- The number of sub-patterns must be the number of values in the payload ([E0128](../diagnostics/E0128.md)).
-- A pattern takes the payload by position. It has no labels and no braces ([E0123](../diagnostics/E0123.md)).
-- A pattern has no type arguments: write `Option.Some(v)`, not `Option<i64>.Some(v)`. The type of the matched value gives them ([E0123](../diagnostics/E0123.md)).
-- A payload of the type `f64`, an array or a class takes only a name or `_` as its pattern. So does a payload of a type parameter such as `T`, in generic code ([Generics](generics.md#values-of-a-type-parameter)).
-- In such a place, a bare upper-case name is an error ([E0125](../diagnostics/E0125.md)). So is a variant pattern, with parentheses or with the enum written ([E0127](../diagnostics/E0127.md)).
+- A sub-pattern follows the type of its value.
+- For an enum, a sub-pattern is a variant pattern. For an integer, a `char`, a `bool` or a `string`, it is a literal. For an integer or a `char`, it can be a range.
+- A name or `_` fits every type.
+- The number of sub-patterns must be the number of values in the payload. [E0128](../diagnostics/E0128.md)
+- A pattern takes the payload by position. It has no labels and no braces. [E0123](../diagnostics/E0123.md)
+- A pattern has no type arguments: write `Option.Some(v)`, not `Option<i64>.Some(v)`. The type of the matched value gives them. [E0123](../diagnostics/E0123.md)
+
+**A payload that takes only a name**
+
+- A payload of the type `f64`, an array or a class takes only a name or `_` as its pattern.
+- So does a payload of a type parameter such as `T`, in generic code ([Generics](generics.md#values-of-a-type-parameter)).
+- In such a place, a bare upper-case name is an error. [E0125](../diagnostics/E0125.md)
+- In such a place, a variant pattern is an error, with parentheses or with the enum written. [E0127](../diagnostics/E0127.md)
 
 ```sisu
 enum Shape {
@@ -449,14 +495,18 @@ check 13
 medium
 ```
 
-The rules:
+**The condition**
 
-- The condition is a `bool` ([E0032](../diagnostics/E0032.md)).
+- The condition is a `bool`. [E0032](../diagnostics/E0032.md)
 - The program calculates the condition only when the pattern accepts the value.
-- A guard belongs to the whole arm. When an alternative accepts the value and the guard is `false`, the program tries the next alternative. It calculates the guard again, with the names of that alternative.
+- A guarded arm covers no values, because its guard can be `false` ([Coverage](#coverage)).
+
+**A guard and alternatives**
+
+- A guard belongs to the whole arm.
+- When an alternative accepts the value and the guard is `false`, the program tries the next alternative. It calculates the guard again, with the names of that alternative.
 - With several sets of alternatives, the set nearest the end of the pattern changes first. A set in the arm pattern itself changes last.
 - When no alternative has a `true` guard, the `match` goes on with the next arm.
-- A guarded arm covers no values, because its guard can be `false` ([Coverage](#coverage)).
 
 ```sisu
 enum Pair {
@@ -537,7 +587,7 @@ fn main() {
 }
 ```
 
-The rules:
+**What covers a type**
 
 - An enum is covered when its arms accept every variant, and for each variant, every value of its payload.
 - A `bool` is covered by `true` and `false`.
@@ -624,13 +674,18 @@ fn main() {
 20
 ```
 
-The rules:
+**The value and the pattern**
 
-- The value is an enum or an optional ([E0051](../diagnostics/E0051.md)).
-- For an enum, the pattern is any pattern. When the pattern accepts every value of the enum, the test means nothing and the use is an error ([E0131](../diagnostics/E0131.md)). Use a `match`. For an `if let` whose pattern is a name or `_`, use a plain `let`.
+- The value is an enum or an optional. [E0051](../diagnostics/E0051.md)
+- For an enum, the pattern is any pattern.
+- When the pattern accepts every value of the enum, the test means nothing and the use is an error. Use a `match`. For an `if let` whose pattern is a name or `_`, use a plain `let`. [E0131](../diagnostics/E0131.md)
 - For an optional `T?`, the pattern follows the rules of [Patterns on an optional](#patterns-on-an-optional). At the top, a name is bound to the value inside the optional, and the block does not run for `None` ([Types](types.md#optionals)).
+
+**Scope and value**
+
 - The names of the pattern are in scope in the first block only, and not in the `else` block.
-- An `if let` with an `else` is an expression, as an `if` is. Without an `else`, it has no value ([E0043](../diagnostics/E0043.md)).
+- An `if let` with an `else` is an expression, as an `if` is.
+- An `if let` without an `else` has no value. [E0043](../diagnostics/E0043.md)
 
 ```sisu
 fn main() {

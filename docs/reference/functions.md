@@ -35,15 +35,21 @@ fn double(n: i64) -> i64 {
 }
 ```
 
-The rules:
+**Names**
+
+- Functions, classes, enums and constants share one set of names. Each name is declared once. [E0034](../diagnostics/E0034.md)
+- A function cannot take the name of a built-in type, such as `i64`, or `Option`, `Result`, `Some`, `Ok` or `Err`. [E0026](../diagnostics/E0026.md)
+- A function cannot take the name `print`, `eprint`, `panic`, `read_line`, `dbg` or `exchange`. [E0034](../diagnostics/E0034.md)
+- [Input and output](io.md) tells these functions. The section [Files](errors.md#files) is in development, and it changes this rule.
+- A function cannot be named `_`. [E0080](../diagnostics/E0080.md)
+- A binding or a parameter can take the name of a function or a class. A call still finds the function or the class, because a binding is never called ([Shadowing](statements.md#shadowing)).
+
+**Where a function goes**
 
 - A function can call a function that is declared below it.
-- Functions, classes, enums and constants share one set of names. Each name is declared once ([E0034](../diagnostics/E0034.md)).
-- A function cannot take the name of a built-in type, such as `i64`, or `Option`, `Result`, `Some`, `Ok` or `Err` ([E0026](../diagnostics/E0026.md)). It cannot take the name `print`, `eprint`, `panic`, `read_line`, `dbg` or `exchange` ([E0034](../diagnostics/E0034.md)). [Input and output](io.md) tells these functions. The section [Files](errors.md#files) is in development, and it changes this rule.
-- A function cannot be named `_` ([E0080](../diagnostics/E0080.md)).
 - A function cannot be declared in the body of another function.
-- A function that no live code calls builds with a warning ([W0012](../diagnostics/W0012.md)). Live code is `main`, each function, method and constant whose name starts with `_`, and all the code that live code calls or names.
-- A binding or a parameter can take the name of a function or a class. A call still finds the function or the class, because a binding is never called ([Shadowing](statements.md#shadowing)).
+- A function that no live code calls builds with a warning. [W0012](../diagnostics/W0012.md)
+- Live code is `main`, each function, method and constant whose name starts with `_`, and all the code that live code calls or names.
 
 ```sisu
 fn twice() {
@@ -73,14 +79,21 @@ fn main() {
 }
 ```
 
-The rules:
+**Changing a parameter**
 
-- A parameter cannot change, unless it is `mut` ([`mut` parameters](#mut-parameters)). An assignment to another parameter is an error ([E0001](../diagnostics/E0001.md)).
+- A parameter cannot change, unless it is `mut` ([`mut` parameters](#mut-parameters)). An assignment to another parameter is an error. [E0001](../diagnostics/E0001.md)
 - To change the value for the body only, copy it into a `let mut` binding. A `let` can shadow a parameter ([Shadowing](statements.md#shadowing)).
-- Two parameters of one function cannot have the same name ([E0039](../diagnostics/E0039.md)).
-- A parameter of live code that the body never reads builds with a warning ([W0014](../diagnostics/W0014.md)). A parameter named `_`, or with a name that starts with `_`, gets no warning.
+
+**Names and arguments**
+
+- Two parameters of one function cannot have the same name. [E0039](../diagnostics/E0039.md)
 - As a binding cannot, a parameter cannot take the name `Option`, `Result`, `Some`, `Ok`, `Err` or the name of an enum ([Shadowing](statements.md#shadowing)).
 - An argument must have the type of its parameter. Where the parameter is a `T?`, a `T` becomes a `T?` ([Calls](expressions.md#calls)).
+
+**Warning**
+
+- A parameter of live code that the body never reads builds with a warning. [W0014](../diagnostics/W0014.md)
+- A parameter named `_`, or with a name that starts with `_`, gets no warning.
 
 ```sisu
 fn countdown(n: i64) {
@@ -172,18 +185,33 @@ fn main() {
 }
 ```
 
-The rules:
+**Where a call writes `mut`**
 
-- A `mut` parameter needs `mut` before its argument. A call that leaves it out is an error ([E0166](../diagnostics/E0166.md)). So is `mut` before an argument for a parameter that is not `mut` ([E0167](../diagnostics/E0167.md)). This holds for each call: functions, methods, built-in functions, constructors and enum variants.
-- `mut` before an expression that is not an argument, such as `let y = mut x`, is an error ([E0168](../diagnostics/E0168.md)).
-- The argument must be a place that an assignment can write. A `let` binding, a field without `mut`, a call, a literal and a range index are not places ([E0169](../diagnostics/E0169.md)).
-- The place must have exactly the type of the parameter, and no conversion applies. An `i64` place is not an `i64?`, because the function could store `None` in it ([E0170](../diagnostics/E0170.md)).
-- A path through `?.`, such as `b?.cells`, reads as an optional and writes as the type of the field. No parameter type fits both, so it is an error too ([E0170](../diagnostics/E0170.md)).
-- Two `mut` arguments of one call cannot name the same place, or one place that holds the other, when the compiler can see it ([E0171](../diagnostics/E0171.md)). It sees the same variable with the same fields, and indexes that are the same literal or constant, or the same `let` binding or plain parameter. An index that is a `let mut` variable is never an error, because another argument can change it. `swap(mut xs[i], mut xs[j])` is valid, because `i` and `j` can differ.
+- A `mut` parameter needs `mut` before its argument. A call that leaves it out is an error. [E0166](../diagnostics/E0166.md)
+- `mut` before an argument for a parameter that is not `mut` is an error. [E0167](../diagnostics/E0167.md)
+- These two rules hold for each call: functions, methods, built-in functions, constructors and enum variants.
+- `mut` before an expression that is not an argument, such as `let y = mut x`, is an error. [E0168](../diagnostics/E0168.md)
+
+**What the place can be**
+
+- The argument must be a place that an assignment can write. A `let` binding, a field without `mut`, a call, a literal and a range index are not places. [E0169](../diagnostics/E0169.md)
+- The place must have exactly the type of the parameter, and no conversion applies. An `i64` place is not an `i64?`, because the function could store `None` in it. [E0170](../diagnostics/E0170.md)
+- A path through `?.`, such as `b?.cells`, reads as an optional and writes as the type of the field. No parameter type fits both, so it is an error too. [E0170](../diagnostics/E0170.md)
+
+**Two `mut` arguments**
+
+- Two `mut` arguments of one call cannot name the same place, or one place that holds the other, when the compiler can see it. [E0171](../diagnostics/E0171.md)
+- The compiler sees the same variable with the same fields, and indexes that are the same literal or constant, or the same `let` binding or plain parameter.
+- An index that is a `let mut` variable is never an error, because another argument can change it. `swap(mut xs[i], mut xs[j])` is valid, because `i` and `j` can differ.
 - When two places are one at run time, the call is valid, and the last store-back wins. This happens when two references name one object (`mut a.cells, mut b.cells` where `a` and `b` are the same object), and when two indexes are equal.
-- A method can have `mut` parameters. `self` is never `mut` ([E0018](../diagnostics/E0018.md)): a method changes the `mut` fields of its receiver through `self`.
-- A generic function can have `mut` parameters, and so can an interface requirement. A class that conforms to the interface must write `mut` in the same places ([E0152](../diagnostics/E0152.md)).
-- A `mut` parameter that the function never changes builds with a warning ([W0002](../diagnostics/W0002.md)), because its `mut` changes nothing for the caller.
+
+**Methods, interfaces and warnings**
+
+- A method can have `mut` parameters.
+- `self` is never `mut`: a method changes the `mut` fields of its receiver through `self`. [E0018](../diagnostics/E0018.md)
+- A generic function can have `mut` parameters, and so can an interface requirement.
+- A class that conforms to the interface must write `mut` in the same places. [E0152](../diagnostics/E0152.md)
+- A `mut` parameter that the function never changes builds with a warning, because its `mut` changes nothing for the caller. [W0002](../diagnostics/W0002.md)
 
 ```sisu
 fn bump(mut n: i64) {
@@ -298,12 +326,13 @@ fn main() {
 }
 ```
 
-The rules:
+**Rules**
 
-- Each path through the body must end in a value or in a statement that never finishes ([E0031](../diagnostics/E0031.md), [Reachability](statements.md#the-end-of-a-function)).
-- The value must have the type `T` ([E0032](../diagnostics/E0032.md)). When `T` is an optional `U?`, a `U` value becomes a `U?` ([Types](types.md#optionals)).
-- A function without a return type gives no value, so a call of it has no value ([E0043](../diagnostics/E0043.md)).
-- When the body of a function without a return type ends in a value, the program builds with a warning ([W0004](../diagnostics/W0004.md)).
+- Each path through the body must end in a value or in a statement that never finishes ([Reachability](statements.md#the-end-of-a-function)). [E0031](../diagnostics/E0031.md)
+- The value must have the type `T`. [E0032](../diagnostics/E0032.md)
+- When `T` is an optional `U?`, a `U` value becomes a `U?` ([Types](types.md#optionals)).
+- A function without a return type gives no value, so a call of it has no value. [E0043](../diagnostics/E0043.md)
+- When the body of a function without a return type ends in a value, the program builds with a warning. [W0004](../diagnostics/W0004.md)
 - For `return`, see [return](statements.md#return).
 
 ```sisu
@@ -387,11 +416,14 @@ fn main() {
 }
 ```
 
-The rules:
+**The signature**
 
-- `main` takes no parameters, or one `[string]`. It has no return type ([E0029](../diagnostics/E0029.md)).
+- `main` takes no parameters, or one `[string]`. It has no return type. [E0029](../diagnostics/E0029.md)
 - A `main` with a `[string]` parameter gets the arguments of the program, without the name of the program ([Input and output](io.md#program-arguments)).
-- A program without `main` is an error ([E0028](../diagnostics/E0028.md)).
+- A program without `main` is an error. [E0028](../diagnostics/E0028.md)
+
+**The run**
+
 - A `return` in the first call of `main` ends the program.
 - A program can call `main` again. That call returns to its caller, as any call does.
 - A panic ends the program with the exit code 101 ([panic](#panic)).
@@ -441,15 +473,18 @@ fn main() {
 sisu: panic at example.sisu:3:9: negative: -1
 ```
 
-The rules:
+**The message**
 
-- The message is a `string` ([E0032](../diagnostics/E0032.md)).
+- The message is a `string`. [E0032](../diagnostics/E0032.md)
 - Standard error gets `sisu: panic at`, then the file, line and column of `panic`, then the message.
 - The program writes all its output from before the panic first.
+
+**Where `panic` can go**
+
 - A call of `panic` has the type `never` ([Types](types.md#never)). So it can be a branch of an `if` or a `match`, or the right side of `??`.
 - It can also be the value of a `break`, or the end of a function body.
-- In other places, it is an error ([E0043](../diagnostics/E0043.md)). Such places are an argument, an operand, a condition, an index, and the value of a `let`, an assignment or a `return`.
-- As the argument of `print` or `eprint`, it is an error too ([E0061](../diagnostics/E0061.md)).
+- In other places, it is an error. Such places are an argument, an operand, a condition, an index, and the value of a `let`, an assignment or a `return`. [E0043](../diagnostics/E0043.md)
+- As the argument of `print` or `eprint`, it is an error too. [E0061](../diagnostics/E0061.md)
 
 ```sisu panics
 fn main() {
@@ -480,11 +515,11 @@ fn main() {
 sisu: panic at example.sisu:2:5: not yet implemented
 ```
 
-The rules:
+**Rules**
 
 - `todo` is a keyword. It has two forms: `todo`, and `todo("message")`. The message is one `string`.
 - With a message, the panic message is `not yet implemented: ` and then the message.
-- `todo()` and `todo!()` are errors ([E0099](../diagnostics/E0099.md)).
+- `todo()` and `todo!()` are errors. [E0099](../diagnostics/E0099.md)
 - `todo` has the type `never`, as a call of `panic` has. So it can be in the same places, such as the end of a function body.
 
 ```sisu panics

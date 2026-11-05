@@ -67,12 +67,20 @@ fn main() {
 }
 ```
 
-The rules:
+**Module names**
 
-- A module name is lowercase ASCII: a letter or `_`, then letters, digits and `_`. It is not a keyword. A file with another name, such as `My-Tool.sisu`, can be an entry file, but never a module.
-- An import must match the file name byte for byte, also on a file system that ignores case. `import report` does not find `Report.sisu`. Two names in one folder that differ only in case are an error when an import names either one.
-- A folder without `pkg.sisu` is not a module, but its files are: `import cli.flags` works without `cli/pkg.sisu`, and `import cli` is an error that lists the modules in `cli/`.
-- `import cli.pkg` is an error, because `cli/pkg.sisu` is the module `cli`. Only the file name `pkg.sisu` is reserved: a folder named `pkg` is an ordinary package, so `cli/pkg/pkg.sisu` is the module `cli.pkg`. When both `cli/pkg.sisu` and `cli/pkg/` exist, `import cli.pkg` is an error that names both.
+- A module name is lowercase ASCII: a letter or `_`, then letters, digits and `_`. It is not a keyword.
+- A file with another name, such as `My-Tool.sisu`, can be an entry file, but never a module.
+- An import must match the file name byte for byte, also on a file system that ignores case. `import report` does not find `Report.sisu`.
+- Two names in one folder that differ only in case are an error when an import names either one.
+
+**Packages**
+
+- A folder without `pkg.sisu` is not a module, but its files are: `import cli.flags` works without `cli/pkg.sisu`.
+- Without `cli/pkg.sisu`, `import cli` is an error that lists the modules in `cli/`.
+- `import cli.pkg` is an error, because `cli/pkg.sisu` is the module `cli`.
+- Only the file name `pkg.sisu` is reserved. A folder named `pkg` is an ordinary package, so `cli/pkg/pkg.sisu` is the module `cli.pkg`.
+- When both `cli/pkg.sisu` and `cli/pkg/` exist, `import cli.pkg` is an error that names both.
 - `cli.sisu` beside `cli/pkg.sisu` makes `import cli` an error that names both files.
 - A `pkg.sisu` in the root has no module name, and no import reaches it.
 
@@ -162,14 +170,28 @@ In `main.sisu`, `a.balance = 5` is an error, because the field `balance` is priv
 
 For a field that other modules read but only its module changes, write a private `mut` field and a `pub` method that returns it, as `balance` does above.
 
-The rules:
+**What is visible**
 
-- Enum variants and their payloads are as visible as their enum. Interface requirements are as visible as their interface. `pub` on one of them is an error.
+- Enum variants and their payloads are as visible as their enum. Interface requirements are as visible as their interface.
+- `pub` on a variant, a payload or an interface requirement is an error.
 - A conformance has no `pub`. Its methods are as visible as the interface.
-- A class or record with a private field cannot be built in another module. Another module also cannot change a copy of it with a record update, or take it apart in a pattern. A pattern that binds the whole value works. So the module decides which values exist: an *opaque type*.
-- A `pub` item cannot name a private type in its signature: a parameter, a result, a `pub` field, a payload of a `pub` enum, a type alias, a bound or an associated type. A private field can have a private type. The arguments of a conformance of a `pub` type to a `pub` interface follow the same rule.
 - A method can have the name of a private field when the field's type is not a function type, as `balance` does above.
-- In a program with a `main`, a `pub` item that nothing in the program uses gets the unused-name warning ([W0012](../diagnostics/W0012.md)), as a private one does.
+
+**Opaque types**
+
+- A class or record with a private field cannot be built in another module.
+- Another module also cannot change a copy of it with a record update, or take it apart in a pattern. A pattern that binds the whole value works.
+- So the module decides which values exist: an *opaque type*.
+
+**Signatures**
+
+- A `pub` item cannot name a private type in its signature: a parameter, a result, a `pub` field, a payload of a `pub` enum, a type alias, a bound or an associated type.
+- A private field can have a private type.
+- The arguments of a conformance of a `pub` type to a `pub` interface follow the same rule.
+
+**Unused items**
+
+- In a program with a `main`, a `pub` item that nothing in the program uses gets the unused-name warning, as a private one does. [W0012](../diagnostics/W0012.md)
 
 ## Names reached through a type
 
