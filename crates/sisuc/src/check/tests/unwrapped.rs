@@ -168,10 +168,10 @@ fn e0062_should_come_before_e0001_for_an_element_assignment_through_safe_access(
 }
 
 /// `body` on line 14 of `fn r` over `c: C?`, `k: bool` and `p: E`. `C` holds an `E`, an optional
-/// of itself and an array, and `mut w`. `Bx2` follows `main`.
+/// of itself and an array, `mut w`, and a generic method `opt`. `id` and `Bx2` follow `main`.
 fn with_cell(body: &str) -> String {
     format!(
-        "enum E {{\n    A\n    B\n}}\nclass C {{\n    v: i64\n    e: E\n    ys: [i64]\n    n: C?\n    mut w: i64\n}}\nfn id<T>(t: T) -> T {{ t }}\nfn r(c: C?, k: bool, p: E) {{\n    {body}\n}}\nfn main() {{}}\nenum Bx2<T> {{\n    Full(T)\n    Empty\n}}"
+        "enum E {{\n    A\n    B\n}}\nclass C {{\n    v: i64\n    e: E\n    ys: [i64]\n    n: C?\n    mut w: i64\n    fn opt<T>(self, t: T) -> T? {{ Some(t) }}\n}}\nfn r(c: C?, k: bool, p: E) {{\n    {body}\n}}\nfn main() {{}}\nfn id<T>(t: T) -> T {{ t }}\nenum Bx2<T> {{\n    Full(T)\n    Empty\n}}"
     )
 }
 
@@ -351,6 +351,89 @@ fn name_pattern_on_an_optional_typed_by_e0062_should_keep_its_type() {
                 (Code::MayBeNone, (14, 16)),
                 (Code::CoalesceNotOptional, (14, 28)),
             ],
+        ),
+    ]);
+}
+
+/// A generic method on an optional receiver keeps the flag of an argument: the result is built
+/// from it, so it is not a member, and `T?` is `T??` under the `?.` fix.
+#[test]
+fn generic_method_on_an_optional_should_keep_a_built_flag() {
+    cell_rows(&[
+        (
+            "if let x = c.opt(c.v) { print(x ?? 0) }",
+            &[(Code::MayBeNone, (14, 16)), (Code::MayBeNone, (14, 22))],
+        ),
+        (
+            "print((c.opt(c.v) ?? 0) ?? 0)",
+            &[(Code::MayBeNone, (14, 12)), (Code::MayBeNone, (14, 18))],
+        ),
+    ]);
+}
+
+/// A built optional on the left of `??` keeps the flag: it is `T??` under the `?.` fix. A member
+/// optional (`c.n?.v`) has the same type under both remedies, so its `??` reports.
+#[test]
+fn left_side_of_coalesce_should_spread_a_built_flag() {
+    cell_rows(&[
+        (
+            "print((Some(c.v) ?? 0) ?? 0)",
+            &[(Code::MayBeNone, (14, 17))],
+        ),
+        (
+            "print((c.n?.v ?? 0) ?? 0)",
+            &[
+                (Code::CoalesceNotOptional, (14, 11)),
+                (Code::MayBeNone, (14, 12)),
+            ],
+        ),
+    ]);
+}
+
+/// A `?.` keeps the state of its scrutinee or of its member, so the value after it keeps or
+/// loses the type that the remedy gives it.
+#[test]
+fn safe_access_after_a_flagged_optional_should_keep_its_state() {
+    cell_rows(&[
+        (
+            "if let x = c.n?.v { x.nope() }",
+            &[(Code::MayBeNone, (14, 16)), (Code::NoMember, (14, 27))],
+        ),
+        (
+            "if let x = c?.opt(c.v) { print(x ?? 0) }",
+            &[(Code::MayBeNone, (14, 23))],
+        ),
+    ]);
+}
+
+/// A `let` binds the type of a member that is optional itself, whichever way a join or a block
+/// carries it: the type is the same under both remedies.
+#[test]
+fn let_of_a_flagged_optional_should_keep_its_type() {
+    cell_rows(&[
+        (
+            "let y = c.n\n    y.nope()",
+            &[(Code::MayBeNone, (14, 13)), (Code::NoMember, (15, 7))],
+        ),
+        (
+            "let y = if k { c.n } else { None }\n    y.nope()",
+            &[(Code::MayBeNone, (14, 20)), (Code::NoMember, (15, 7))],
+        ),
+    ]);
+}
+
+/// Under the `?.` fix the scrutinee is optional, and `match` takes an optional, so E0124 does
+/// not report a value that E0062 typed.
+#[test]
+fn match_on_a_value_typed_by_e0062_should_not_report_e0124() {
+    cell_rows(&[
+        (
+            "match c.ys { xs => print(xs) }",
+            &[(Code::MayBeNone, (14, 11))],
+        ),
+        (
+            "match id(c.ys) { xs => print(xs) }",
+            &[(Code::MayBeNone, (14, 14))],
         ),
     ]);
 }

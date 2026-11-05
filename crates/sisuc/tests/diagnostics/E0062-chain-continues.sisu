@@ -222,6 +222,12 @@ class Cell {
     n: Cell?
     mut w: i64
     mut mys: [i64]
+    fn opt<T>(self, t: T) -> T? { Some(t) }
+}
+
+enum Pick {
+    First
+    Second
 }
 
 fn safe_rows_order(c: Cell?) {
@@ -286,6 +292,42 @@ fn variant_optional(c: Cell?) {
 
 fn or_inside_some(c: Cell?) {
     match c.v { Some(1 | None) => {}; _ => {} }
+}
+
+fn coalesce_left_safe_member(c: Cell?) {
+    print((c.n?.v ?? 0) ?? 0)
+}
+
+fn iflet_safe_member(c: Cell?) {
+    if let x = c.n?.v { x.nope() }
+}
+
+fn variant_safe_member(c: Cell?) {
+    print(Bx2.Full(c.n?.v) ?? 0)
+}
+
+fn let_member_optional(c: Cell?) {
+    let y = c.n
+    y.nope()
+}
+
+fn let_join_optional(c: Cell?, k: bool) {
+    let y = if k { c.n } else { None }
+    y.nope()
+}
+
+fn let_match_optional(c: Cell?, p: Pick) {
+    let y = match p { First => c.n; Second => None }
+    y.nope()
+}
+
+fn let_coalesce_optional(c: Cell?) {
+    let y = c.n ?? c.n
+    y.nope()
+}
+
+fn match_generic_optional(c: Cell?) {
+    match c.opt(c.n) { Some(x) => x.nope(); None => {} }
 }
 
 fn main() {}

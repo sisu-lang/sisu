@@ -44,6 +44,10 @@ class C {
     ys: [i64]
     n: C?
     mut w: i64
+    m: Inner
+    fn opt<T>(self, t: T) -> T? { Some(t) }
+    fn wrap<T>(self, t: T) -> T { t }
+    fn arr<T>(self, t: T) -> [T] { [t] }
 }
 
 class Bx {
@@ -328,6 +332,77 @@ fn some_guard(c: C?, k: bool, p: E) {
 
 fn some_variant_name(c: C?, k: bool, p: E) {
     match c.f { Some(F.A(x)) => x.nope(); _ => {} }
+}
+
+fn generic_method_iflet(c: C?, k: bool, p: E) {
+    if let x = c.opt(c.v) { print(x ?? 0) }
+}
+
+fn generic_method_match(c: C?, k: bool, p: E) {
+    match c.opt(c.v) { Some(x) => print(x ?? 0); None => {} }
+}
+
+fn generic_method_nested_some(c: C?, k: bool, p: E) {
+    if let x = c.wrap(Some(c.v)) { print(x ?? 0) }
+}
+
+fn coalesce_left_some(c: C?, k: bool, p: E) {
+    print((Some(c.v) ?? 0) ?? 0)
+}
+
+fn coalesce_left_method(c: C?, k: bool, p: E) {
+    print((c.opt(c.v) ?? 0) ?? 0)
+}
+
+fn safe_generic_iflet(c: C?, k: bool, p: E) {
+    if let x = c?.opt(c.v) { print(x ?? 0) }
+}
+
+fn safe_generic_match(c: C?, k: bool, p: E) {
+    match c?.opt(c.v) { Some(x) => print(x ?? 0); None => {} }
+}
+
+fn safe_generic_let(c: C?, k: bool, p: E) {
+    let y = c?.opt(c.v)
+    print((y ?? 0) ?? 0)
+}
+
+fn safe_after_member_optional(c: C?, k: bool, p: E) {
+    if let x = c.n?.opt(c.v) { print(x ?? 0) }
+}
+
+fn let_generic_method(c: C?, k: bool, p: E) {
+    let y = c.opt(c.v)
+    print((y ?? 0) ?? 0)
+}
+
+fn for_generic_default(c: C?, k: bool, p: E) {
+    for x in c.opt(c.ys) ?? [] { print(x ?? 0) }
+}
+
+fn match_array_name(c: C?, k: bool, p: E) {
+    match c.ys { xs => print(xs) }
+}
+
+fn match_class_name(c: C?, k: bool, p: E) {
+    match c.m { x => print(x.v) }
+}
+
+fn match_generic_call(c: C?, k: bool, p: E) {
+    match id(c.ys) { xs => print(xs) }
+}
+
+fn match_generic_method(c: C?, k: bool, p: E) {
+    match c.arr(c.v) { xs => print(xs) }
+}
+
+fn match_generic_method_member(c: C?, k: bool, p: E) {
+    match c.arr(c.v) { xs => xs.nope() }
+}
+
+fn let_some_member(c: C?, k: bool, p: E) {
+    let y = Some(c.v)
+    y.nope()
 }
 
 fn main() {}
