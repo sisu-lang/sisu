@@ -29,13 +29,13 @@ env:
 
 # Third-party actions are pinned to commit SHAs; Dependabot bumps them.
 # The fuzz step decides the job's result, with one exception: the nightly's Generator gaps
-# step fails the job when it finds a new gap. Each other later step runs only after the fuzz
-# step failed, or tolerates failure. The fuzz step has its own limit (fuzz_minutes() in the
-# plan): 15 min of build, the fuzzing or the corpus pass, 17 of crash replays and 3 to
-# stop. A fuzz step that passes its limit fails, and the later steps still run, so its
-# log and the corpus are kept. Then the job has 15 min of tmin, 20 of cmin, 5 of setup
-# and the cache, 30 of coverage and 15 of gaps (minutes() in the plan). The 5 minutes are an
-# estimate; when they run over, the job loses Generator gaps first and then Coverage, which
+# step fails the job when it finds a new gap or when it does not finish. Each other later step
+# runs only after the fuzz step failed, or tolerates failure. The fuzz step has its own limit
+# (fuzz_minutes() in the plan): 15 min of build, the fuzzing or the corpus pass, 17 of crash
+# replays and 3 to stop. A fuzz step that passes its limit fails, and the later steps still
+# run, so its log and the corpus are kept. Then the job has 15 min of tmin, 20 of cmin, 5 of
+# setup and the cache, 30 of coverage and 15 of gaps (minutes() in the plan). The 5 minutes are
+# an estimate; when they run over, the job loses Generator gaps first and then Coverage, which
 # run last.
 # The report job comes last: it runs after the fuzz job, only for a failed nightly run.
 jobs:
@@ -93,10 +93,12 @@ jobs:
           restore-keys: fuzz-program-corpus-
       # The fuzzer first runs each corpus input and each of the 128 seeds once, one at a time, and
       # -max_total_time does not stop that pass. On CI a corpus input takes about 1.25 s, and a seed
-      # takes about twice that by estimate. So a run keeps 500 inputs at random and removes the
-      # others. cmin and the cache then see only those and the new finds, so each run starts with
-      # at most 500 corpus inputs and the 128 seeds. A removed input is lost; the fuzzer can find
-      # its coverage again.
+      # takes about twice that by estimate. The 1.25 s holds for today's short corpus. New finds
+      # are mutants of the full-size seeds, so the corpus costs more as nights pass. At 500
+      # full-size inputs the first pass may take most of the 30 minutes (an estimate). So a run
+      # keeps 500 inputs at random and removes the others. cmin and the cache then see only those
+      # and the new finds, so each run starts with at most 500 corpus inputs and the 128 seeds. A
+      # removed input is lost; the fuzzer can find its coverage again.
       # CORPUS_PASS_MINUTES in scripts/fuzz_program_plan.py is the time of this pass.
       - name: Sample the corpus
         run: |

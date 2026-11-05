@@ -2,8 +2,8 @@
 
 Each case runs the script as a subprocess on small `llvm-cov export` files. A fixture name is
 already demangled, in the form `c++filt -s rust` prints: `c++filt` passes such text through
-unchanged. Every case that expects exit 0 or 1 keeps the three reached ANCHORS in both exports,
-one under check/, one under mir/ and one under codegen/, so that a case that expects exit 0 cannot
+unchanged. Every case that expects exit 0 or 1 keeps the three reached ANCHORS in both exports.
+One is under check/, one under mir/ and one under codegen/. So a case that expects exit 0 cannot
 pass by exit 2 with a short export.
 """
 import itertools

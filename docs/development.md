@@ -674,6 +674,10 @@ a section with an empty reason, gives exit 2. A key that matches no gap gives a
 warning, and you remove it. A key that matches two definitions gives exit 2:
 remove it and add a generator rule.
 
+After a change to the generator or to `tests/run`, run `make fuzz-gaps`, and
+remove each key that it warns about. A pull request runs the check only with a
+`fuzz-program` label, so a nightly tells you otherwise.
+
 The check has three limits:
 
 - It works for each function. A branch that is missed in a function that the
@@ -699,7 +703,10 @@ comments on the open one, as for the front end. A failed `plan` job opens one
 too. Nothing blocks a merge.
 
 Program inputs are slow: a corpus input takes about 1.25 s, and a seed about
-twice that by estimate. Fork mode first runs each
+twice that by estimate. The 1.25 s holds for today's short corpus. New finds
+are mutants of the full-size seeds, so the corpus costs more as nights pass. At
+500 full-size inputs the first pass may take most of the 30 minutes (an
+estimate). Fork mode first runs each
 restored corpus input and each of the 128 seeds once, one at a time, and
 `-max_total_time` does not stop that pass. The pass also counts toward the
 fuzz time. So after the restore, the "Sample the corpus" step keeps 500 inputs

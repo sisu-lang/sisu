@@ -37,7 +37,9 @@ CMIN_MINUTES = 20
 # -max_total_time does not stop that pass. The 500 inputs that the Sample the corpus step keeps
 # take about 10 minutes: run 42015848679 ran 990 inputs in 20.3 minutes. A seed costs more than a
 # corpus input. Locally a seed takes 1.24 s, against about 0.6 s for a corpus input. So expect
-# about 2.5 s on CI, or about 5 minutes for the 128 seeds.
+# about 2.5 s on CI, or about 5 minutes for the 128 seeds. The corpus time holds for today's
+# short corpus. New finds are mutants of the full-size seeds, so the corpus costs more as nights
+# pass. At 500 full-size inputs the first pass may take most of the 30 minutes (an estimate).
 CORPUS_PASS_MINUTES = 30
 
 
