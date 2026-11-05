@@ -2760,8 +2760,8 @@ fn o2_indirect_calls_marker_should_not_count_a_direct_call() {
     );
 }
 
-/// GIVEN a case where `total` makes its calls through a table
-/// WHEN the harness runs it with the owned `any` in `total`, and with the marker `total 4`
+/// GIVEN a case where `total` makes an owned `any Shape` at each level and calls `area` through it
+/// WHEN the harness runs it with the marker `total 4`
 /// THEN the run passes
 ///
 /// The count holds the release of an owned `any` too: 2 calls of `area` and 2 releases.
