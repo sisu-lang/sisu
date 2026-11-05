@@ -364,7 +364,7 @@ fn main() {
 
 - In the body, a `T` can use the methods of its bounds and the operators that they map to.
 - `Eq` gives `==` and `!=`. `Ord` gives `<`, `<=`, `>` and `>=`. `a.eq(b)` and `a.less(b)` work in the same way.
-- An array, an optional or an enum of `T` has `==` when `T` has `Eq`.
+- An array or an optional of `T` has `==` when `T` has `Eq`. An enum has `==` only when every payload type has it.
 
 **Where the error is**
 
@@ -465,7 +465,7 @@ fn main() {
 - `extend Type { ... }` adds methods that are not part of an interface.
 - A program cannot extend a built-in type, such as `string` or `[T]`.
 - One type can conform to a generic interface, such as `Transform<T>`, several times, with different type arguments.
-- When a call can use more than one conformance, the expected type picks one: `let f: Fahrenheit = c.transform()`. With no expected type, the call is an error.
+- When a call can use more than one conformance, the expected type picks the one that returns it: `let f: Fahrenheit = c.transform()`. With no expected type, or when two conformances return that type, the call is an error.
 
 ### Generic extensions
 
@@ -507,7 +507,7 @@ fn main() {
 
 - `extend<T: Eq> Stack<T>: Eq` makes `Stack<T>` conform to `Eq` only when `T` does.
 - Methods with the same name on different instantiations do not overlap.
-- Two extensions that both cover an instantiation cannot define the same method. `extend<T> Stack<T>` and `extend Stack<i64>` cannot both define `total`.
+- Two plain extensions, with no interface, that both cover an instantiation cannot define the same method. `extend<T> Stack<T>` and `extend Stack<i64>` cannot both define `total`.
 
 ### Associated types
 

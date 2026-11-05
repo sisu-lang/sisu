@@ -206,8 +206,8 @@ takes the array and returns it (ADR 0007), and recurses with
 `a = quicksort(a, lo, i - 1)`. Last use hands the array over, so each call
 holds the only reference and every element write happens in place. Peak
 memory shows it: Sisu holds 83.7 MiB, against C's 77.6 MiB for its one array
-of 10 000 000 `i64`. The extra 6 MiB is mimalloc's: `hello` holds 6.0 MiB
-where C's holds 1.4 MiB. A copy per call would add 80 MB.
+of 10 000 000 `i64`. The extra 6 MiB is what a Sisu process holds before it
+does any work: `hello` holds 6.0 MiB where C's holds 1.4 MiB. A copy per call would add 80 MB.
 
 Each element write checks the index against the bounds and the array's
 count against 1, and each addition checks for overflow. To find what each
@@ -305,8 +305,9 @@ runs (`taskset -c 2 hyperfine -N -w 5 -r 50 ...`):
 - The link through `cc`, which `sisu` runs as its last step, takes about
   22 of the 28 ms. A faster edit-to-output loop starts there, not in the
   compiler.
-- `scripts/bench.sh` does not pin or warm up its builds, so its Build column
-  reads higher.
+- The Build column does not compare directly with these figures. It comes from
+  a later commit and from `--codegen-units 1`, and `scripts/bench.sh` does not
+  pin or warm up its builds.
 
 ## Compile speed
 
