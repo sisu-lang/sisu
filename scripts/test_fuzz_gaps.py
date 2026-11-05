@@ -158,7 +158,7 @@ class Gaps(unittest.TestCase):
             with self.subTest(f'f in {file} is out of scope'):
                 run = self.reached([], [record(file, FN, 1)])
                 self.no_gap(run, 'conformance::f')
-        for file in ('check/fuzz.rs', 'check/report.rs', 'diagnostic/mod.rs'):
+        for file in ('check/fuzz.rs', 'check/report.rs', 'check/generate/x.rs', 'diagnostic/mod.rs'):
             with self.subTest(f'f in {file} is in scope'):
                 run = self.reached([], [record(file, FN, 1)])
                 self.assertEqual(run.code, 1, run.out)
@@ -192,8 +192,8 @@ class Gaps(unittest.TestCase):
             with self.subTest(f'{name} ends in a closure'):
                 self.no_gap(self.reached([], [record('emit.rs', name, 1)]), 'emit::f')
         with self.subTest('generic arguments after a closure merge'):
-            seeds = [record('emit.rs', '<sisuc[a]::f::{closure#0}<i32> as sisuc[a]::Tr>::m', 1, 7)]
-            valid = [record('emit.rs', '<sisuc[a]::f::{closure#0}<i64> as sisuc[a]::Tr>::m', 1, 7)]
+            seeds = [record('emit.rs', '<sisuc[a]::f<i32>::{closure#0} as sisuc[a]::Tr>::m', 1, 7)]
+            valid = [record('emit.rs', '<sisuc[a]::f<i64>::{closure#0} as sisuc[a]::Tr>::m', 1, 7)]
             self.no_gap(self.reached(seeds, valid), 'Tr')
 
     def guard_rows(self):
@@ -258,7 +258,7 @@ class Gaps(unittest.TestCase):
                 self.assertEqual(run.code, 0, run.out)
                 self.assertNotIn('Warning', run.out)
         with self.subTest('no gap, one stale key'):
-            run = self.reached([], [], f'## a reason\n{m_g}\n')
+            run = self.reached([], [record('a.rs', FN, 0)], f'## a reason\n{m_g}\n')
             self.assertEqual(run.code, 0, run.out)
             self.assertIn('measured 3 functions', run.out)
             self.assertIn('Known keys: 1', run.out)
@@ -382,7 +382,8 @@ class Gaps(unittest.TestCase):
             cases.append((f'{label} export misses {stage}',
                           lambda label=label, short=short: Run(self, *((short, good) if label == 'seeds' else (good, short))),
                           f'the {label} export reaches no function under {stage}'))
-        for label, value in (('absent', None), ('empty', []), ('a string', 'a.rs'), ('an integer item', [1])):
+        for label, value in (('absent', None), ('empty', []), ('a string', 'a.rs'), ('an integer item', [1]),
+                         ('an empty name', [''])):
             gap = record('a.rs', 'sisuc[a]::real_gap', 1)
             gap = lacking(gap, 'filenames') if value is None else altered(gap, filenames=value)
             cases.append((f'a record whose filenames is {label}', lambda gap=gap: valid_with(gap), 'has no file name'))
