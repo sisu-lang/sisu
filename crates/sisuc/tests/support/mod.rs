@@ -720,9 +720,11 @@ fn o2_ir(path: &Path, caller: Option<&str>) -> (String, String) {
         .current_dir(dir)
         .args(["build", "-O2", "--emit", "ir"])
         .arg(name);
-    if let Some(caller) = caller {
-        command.env("SISU_KEEP_FUNCTIONS", caller);
-    }
+    // With no caller, a value set in the test run's own environment must not keep a function.
+    match caller {
+        Some(caller) => command.env("SISU_KEEP_FUNCTIONS", caller),
+        None => command.env_remove("SISU_KEEP_FUNCTIONS"),
+    };
     let out = command.output().expect("sisu starts");
     assert_eq!(
         out.status.code(),
