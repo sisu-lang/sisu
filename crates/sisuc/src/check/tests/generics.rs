@@ -687,8 +687,8 @@ fn the_can_be_built_fixed_point_should_scan_linearly() {
     }
 }
 
-/// The text of `P` and the chain `A0 = P<i64, i64>` to `An = P<An-1, An-1>`: `n + 1` types
-/// that name each other twice, so a walk that follows every path through `An` reads 2^n of them.
+/// The text of `P` and the chain `A0 = P<i64, i64>` to `An = P<An-1, An-1>`. These are `n + 1`
+/// types that name each other twice. A walk that follows every path through `An` reads 2^n of them.
 fn alias_chain(p: &str, n: usize) -> String {
     let links = (1..=n)
         .map(|i| format!("type A{i} = P<A{}, A{}>\n", i - 1, i - 1))
@@ -709,16 +709,17 @@ fn parameter_chain(p: &str, n: usize) -> String {
     format!("{p}\ntype B0<T> = P<T, T>\n{links}")
 }
 
-/// Each type walk of the checker visits each distinct type of its unit once, so the steps for
+/// Each type walk of the checker visits each distinct type of its unit once. So the steps for
 /// a chain of `n` aliases grow in step with `n`. A walk that follows every path through a type
-/// visits the last alias 2^n times. The sizes are 4, 8 and 12: at the old walks the steps of
+/// visits the last alias 2^n times. The sizes are 4, 8 and 12. At the old walks the steps of
 /// "enum payload" are 139, 2059 and 32779, so a failure is clear. A size of 24 takes minutes in a
-/// debug build. Each row has a walk that alone breaks the growth when it follows every path:
-/// `Buildable::buildable` in "class field" (`run`) and in "E0027 leaf" (`deps` and `needs`),
-/// `Buildable::reached` in "E0027 chain", `holds` in "W0011 on an array", and `inline_enums` and
-/// `names_itself` in "generic enum payload". `named` and `holds_table` break every row. The row
-/// "wrapper chain" breaks `holds_table` alone and "wrapper chain under W0011" breaks `holds`
-/// alone, as each unwraps before it looks up.
+/// debug build. Each row has a walk that alone breaks the growth when it follows every path.
+/// The walks are `Buildable::buildable` in "class field" (`run`) and in "E0027 leaf" (`deps` and
+/// `needs`), and `Buildable::reached` in "E0027 chain". They are also `holds` in "W0011 on an
+/// array", and `inline_enums` and `names_itself` in "generic enum payload". `named` and
+/// `holds_table` break every row whose chain is in a field or a payload. The row "wrapper chain"
+/// breaks `holds_table` alone and "wrapper chain under W0011" breaks `holds` alone, as each
+/// unwraps before it looks up.
 #[test]
 fn declaration_type_walks_should_visit_each_distinct_type_once() {
     type Program = fn(usize) -> String;
@@ -768,8 +769,8 @@ fn declaration_type_walks_should_visit_each_distinct_type_once() {
         ("E0027 chain", |n| {
             alias_chain(CLASS_P, n) + &format!("class C {{\n    v: P<C, A{n}>\n}}\nfn main() {{}}")
         }),
-        // `Ln` is `n` arrays of `i64` and `Rn` is `P<Rn-1, Ln>`: `n` types share the wrapper chain
-        // of `Ln`, so a walk that unwraps each use of it again does work in step with `n * n`.
+        // `Ln` is `n` arrays of `i64` and `Rn` is `P<Rn-1, Ln>`. `n` types share the wrapper chain
+        // of `Ln`. So a walk that unwraps each use of it again does work in step with `n * n`.
         ("wrapper chain", |n| {
             let links = (1..=n)
                 .map(|i| {
@@ -847,7 +848,7 @@ fn never_constructed_should_ignore_arguments_of_an_application_that_can_be_built
     );
 }
 
-/// The array `[A4]` holds no class and no poison type, so `x == y` in a `while` that no statement
+/// The array `[A4]` holds no class and no poison type. So `x == y` in a `while` that no statement
 /// changes gets W0011 at the condition. `judge_unused` keeps the two warnings for the enum that
 /// nothing builds and the function that nothing calls.
 #[test]

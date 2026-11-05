@@ -60,7 +60,7 @@ pub(super) fn reserved_name(name: Symbol) -> Option<BuiltIn> {
 /// The enum declarations `ty` names where a value of it holds them inline: `ty` itself, or its
 /// optional's payload, and the type arguments of each enum it names, through optionals. With
 /// `open`, only those named with an argument that carries a parameter: `C<T>`, not `Wrap3<i64>`.
-/// A declaration comes once for each type that names it, in the order of the first visit; each
+/// A declaration comes once for each type that names it, in the order of the first visit. Each
 /// type is read once, whatever number of paths lead to it.
 fn inline_enums(ty: Type, open: bool) -> Vec<usize> {
     fn collect(ty: Type, open: bool, seen: &mut FxHashSet<Type>, named: &mut Vec<usize>) {
@@ -1121,8 +1121,8 @@ impl Buildable {
     /// Whether `ty` can be built, where a type parameter's argument can when `flags` says so.
     /// Each key `ty` needs that cannot be built yet is added to `walk.consulted`: an application's,
     /// and its arguments' only when the application cannot be built. `walk` is for one top-level
-    /// call, where the flags and the keys built do not change, so it reads each type once,
-    /// whatever number of paths lead to it, and adds each key once for each type.
+    /// call, where the flags and the keys built do not change. So it reads each type once,
+    /// whatever number of paths lead to it. It adds each key once for each type.
     fn buildable(&mut self, ty: Option<Type>, flags: &[bool], walk: &mut Walk) -> bool {
         let Some(ty) = ty else { return true };
         let built = self.verdict(ty, flags, &mut walk.verdicts);
@@ -1205,8 +1205,8 @@ impl Buildable {
     }
 }
 
-/// Adds to `consulted` the key of each application in `ty` that cannot be built, and is not
-/// under one that can, after the keys of its arguments. `seen` holds the types it has added.
+/// Adds to `consulted` the key of each application in `ty` that cannot be built and is not under
+/// one that can. The keys of its arguments come first. `seen` holds the types it has added.
 fn consult(
     ty: Type,
     verdicts: &FxHashMap<Type, (bool, usize, TypeArgs)>,
