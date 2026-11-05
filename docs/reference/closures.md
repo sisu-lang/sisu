@@ -287,8 +287,8 @@ An *iterable* is a value that can make an iterator. The interface `Iterable` has
 
 - `for x in e` with an array or a range works as [`for`](statements.md#for) tells.
 - For any other `e`, the type of `e` must conform to `Iterable`. The loop calls `e.iter()` once, then `next()` until the result is `None`.
-- A `for` loop copies its iterator. After a `break`, the variable that held the iterator is where it was, and a second `for` over it starts again.
-- An iterator that is an object is shared, so the loop advances it.
+- A `for` loop copies an iterator that is a value. After a `break`, the variable that held the iterator is where it was, and a second `for` over it starts again.
+- An iterator that is an object is shared, so the loop advances it. A second `for` over it continues where the first stopped.
 - To continue where a loop stopped, call `next` in a `while let`.
 
 ## Iterator methods

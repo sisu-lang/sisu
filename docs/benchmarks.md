@@ -8,8 +8,9 @@ with no per-language tuning.
 ## Results
 
 All ran at commit 8d96d34 on 2026-11-05, on an Intel Core i9-14900K under
-Linux 7.0 (Ubuntu 24.04, glibc 2.39). Each figure is the median of 9 runs,
-pinned to one CPU. Each table runs from fastest to slowest wall time, with Sisu
+Linux 7.0 (Ubuntu 24.04, glibc 2.39), with Sisu built at
+`-O2 --codegen-units 1` as `scripts/bench.sh` does now. Each figure is the
+median of 9 runs. The program runs are pinned to one CPU; the builds are not. Each table runs from fastest to slowest wall time, with Sisu
 in bold. The machine was quiet: its load average was below 2, on 32 CPUs, at
 the start and at the end of the run.
 

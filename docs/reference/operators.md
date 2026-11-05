@@ -241,8 +241,8 @@ fn main() {
 **Errors**
 
 - The two operands must have one type. [E0032](../diagnostics/E0032.md)
-- A `bool`, an array, a class or an enum has no `<`. [E0159](../diagnostics/E0159.md)
-- A class or an enum has `<` when it conforms to `Ord` ([Display, Eq and Ord](generics.md#display-eq-and-ord)).
+- A `bool` or an array has no `<`. [E0159](../diagnostics/E0159.md)
+- A class or an enum has `<` only when it conforms to `Ord` ([Display, Eq and Ord](generics.md#display-eq-and-ord)). [E0159](../diagnostics/E0159.md)
 - An optional cannot be compared with `<`. [E0032](../diagnostics/E0032.md)
 
 ### Comparison chains
@@ -294,7 +294,7 @@ fn main() {
 - `x == None` is an error when `x` is not optional. [E0044](../diagnostics/E0044.md)
 - Values of two types cannot be compared. `1 == "a"` is an error. [E0047](../diagnostics/E0047.md)
 - `<`, `<=`, `>` and `>=` report a type mismatch instead. `1 < "a"` is an error. [E0032](../diagnostics/E0032.md)
-- A class has no `==`, because objects compare by identity. `a == b` is an error. [E0159](../diagnostics/E0159.md)
+- A class has `==` only when it conforms to `Eq`, because objects compare by identity. Without it, `a == b` is an error. [E0159](../diagnostics/E0159.md)
 - `==` on an array or an optional of such a class is an error too. [E0159](../diagnostics/E0159.md)
 - To compare objects, use `a is b` ([`is`](#is)). Or make the class conform to `Eq` and write its `eq` method ([Display, Eq and Ord](generics.md#display-eq-and-ord)).
 - `==`, `!=` and `is` do not chain: `a == b == c` is an error. Join two tests with `&&`. [E0024](../diagnostics/E0024.md)
