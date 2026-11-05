@@ -104,6 +104,31 @@ fn while_should_not_warn_when_its_enum_holds_a_generic_enum_of_objects() {
     ));
 }
 
+/// The enum holds the class through an array, an optional or a class field, and `==` on the enum
+/// calls the written `eq` of the class, which a call in the body could change. The `holds_table`
+/// arm for arrays and optionals decides the first four rows; in the last row the enum holds `K`
+/// itself.
+#[test]
+fn an_enum_that_holds_a_class_through_a_wrapper_should_not_get_w0011() {
+    let node = "class Node: Eq {\n    v: i64\n    fn eq(self, other: Self) -> bool { self.v == other.v }\n}\n";
+    let tail = "fn f(a: E, b: E) {\n    while a == b { print(1) }\n}";
+    for (row, decls) in [
+        ("array payload", "enum E {\n    V([Node])\n}"),
+        ("optional payload", "enum E {\n    V(Node?)\n}"),
+        ("array of optionals", "enum E {\n    V([Node?])\n}"),
+        (
+            "enum in an enum",
+            "enum G {\n    V([Node])\n}\nenum E {\n    W(G)\n}",
+        ),
+        (
+            "class field array",
+            "class K: Eq {\n    ns: [Node]\n    fn eq(self, other: Self) -> bool { self.ns == other.ns }\n}\nenum E {\n    V(K)\n}",
+        ),
+    ] {
+        clean_row(row, &with_main(&format!("{node}{decls}\n{tail}")));
+    }
+}
+
 #[test]
 fn while_should_warn_when_it_compares_generic_enums_of_numbers() {
     warns(
