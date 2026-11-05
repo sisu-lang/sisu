@@ -647,6 +647,8 @@ the commit and not on what a night kept. The second run is `front_end` over the
 `tests/diagnostics` holds invalid programs and stays out. Then
 `scripts/fuzz_gaps.py` compares the two exports with `fuzz/known_gaps.txt`.
 `make fuzz-gaps` runs it. A run takes about 4 minutes when the builds are warm.
+The check reads function names with `c++filt -s rust` from GNU binutils. A
+`c++filt` that is missing, or that cannot read Rust names, gives exit 2.
 
 The check names a function by its file below `crates/sisuc/src/`, its first line
 and its name. The name has no crate hashes and no generic arguments, so the
@@ -696,7 +698,8 @@ or is stopped at its time limit, its `report` job opens an issue titled `Nightly
 comments on the open one, as for the front end. A failed `plan` job opens one
 too. Nothing blocks a merge.
 
-Program inputs are slow: each takes about 1.25 s. Fork mode first runs each
+Program inputs are slow: a corpus input takes about 1.25 s, and a seed about
+twice that by estimate. Fork mode first runs each
 restored corpus input and each of the 128 seeds once, one at a time, and
 `-max_total_time` does not stop that pass. The pass also counts toward the
 fuzz time. So after the restore, the "Sample the corpus" step keeps 500 inputs
