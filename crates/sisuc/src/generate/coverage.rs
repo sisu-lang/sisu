@@ -9215,3 +9215,34 @@ fn the_programs_of_seeds_203_4534_and_5974_should_check_clean() {
         checked(&generate(&seed(n)).program);
     }
 }
+
+/// The XOR of the 64-bit words of `bytes`, which are little-endian.
+fn xor_of_words(bytes: &[u8]) -> u64 {
+    bytes
+        .chunks_exact(8)
+        .map(|word| {
+            u64::from_le_bytes(
+                word.try_into()
+                    .expect("a chunk of 8 bytes should convert to a u64"),
+            )
+        })
+        .fold(0, |acc, word| acc ^ word)
+}
+
+/// `scripts/fuzz_seeds.py` copies `seed`, and `scripts/test_fuzz_seeds.py` pins the same values.
+#[test]
+fn fuzz_seeds_should_match_the_pinned_values() {
+    assert_eq!(FUZZ_SEEDS, 128);
+    for (n, xor) in [
+        (0, 0xa24f_ddd8_7292_55f9),
+        (FUZZ_SEEDS - 1, 0x3d7e_ca94_fe32_c652),
+    ] {
+        let bytes = seed(n);
+        assert_eq!(bytes.len(), 4096, "the length of seed {n}");
+        assert_eq!(
+            xor_of_words(&bytes),
+            xor,
+            "the XOR of the words of seed {n}"
+        );
+    }
+}

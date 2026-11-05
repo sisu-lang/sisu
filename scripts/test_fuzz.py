@@ -30,6 +30,22 @@ printf "$FAKE_REPLAY"
 exit 77
 """
 
+# The fake cargo of the program target. `cargo fuzz run` writes one line to $FAKE_SEEN for each
+# directory argument: its name, its file count and how many of its files hold 4096 bytes. It
+# does so while the directory exists, since fuzz.sh deletes its seeds on exit.
+PROGRAM_CARGO = """#!/usr/bin/env bash
+if [[ $1 == fuzz && $2 == run ]]; then
+  for arg in "$@"; do
+    if [[ -d $arg ]]; then
+      echo "${arg##*/} $(find "$arg" -type f | wc -l) $(find "$arg" -type f -size 4096c | wc -l)" >>"$FAKE_SEEN"
+    fi
+  done
+  exit 0
+fi
+[[ $1 == fuzz && $2 == --version ]] && echo "cargo-fuzz 0.0.0"
+exit 0
+"""
+
 
 class FuzzSummary(unittest.TestCase):
     def setUp(self):
@@ -93,6 +109,36 @@ class FuzzSummary(unittest.TestCase):
         text = self.summary(r"\377\000 AddressSanitizer: stack-overflow\n")
         self.assertNotIn('Panic at', text)
         self.assertIn('is a stack overflow or another fatal signal', text)
+
+
+class ProgramSeeds(unittest.TestCase):
+    def test_program_run_should_get_the_seeds(self):
+        with tempfile.TemporaryDirectory() as repo:
+            scripts = os.path.join(repo, 'scripts')
+            os.mkdir(scripts)
+            for name in ('fuzz.sh', 'fuzz_seeds.py'):
+                shutil.copy(os.path.join(os.path.dirname(SCRIPT), name), scripts)
+            os.makedirs(os.path.join(repo, 'fuzz'))
+            bin_dir = os.path.join(repo, 'bin')
+            os.mkdir(bin_dir)
+            cargo = os.path.join(bin_dir, 'cargo')
+            with open(cargo, 'w', encoding='utf-8') as f:
+                f.write(PROGRAM_CARGO)
+            os.chmod(cargo, os.stat(cargo).st_mode | stat.S_IXUSR)
+            git = ['git', '-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t']
+            subprocess.run(git + ['init', '-q'], check=True, env=ENV)
+            subprocess.run(git + ['commit', '-q', '--allow-empty', '-m', 'base'], check=True, env=ENV)
+            seen = os.path.join(repo, 'seen.txt')
+            env = dict(ENV, PATH=f'{bin_dir}:{ENV["PATH"]}', FAKE_SEEN=seen)
+            run = subprocess.run(['bash', 'scripts/fuzz.sh', '--target', 'program', '1'], cwd=repo,
+                                 capture_output=True, env=env, timeout=60)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            with open(seen, encoding='utf-8') as f:
+                lines = f.read().splitlines()
+            # The corpus is empty. The seeds directory comes second.
+            self.assertEqual(lines[0], 'program 0 0')
+            self.assertEqual(len(lines), 2, lines)
+            self.assertTrue(lines[1].endswith(' 128 128'), lines[1])
 
 
 if __name__ == '__main__':
