@@ -64,7 +64,7 @@ fuzz: ## Fuzz TARGET (front_end by default, or program) for SECS seconds (1800 b
 fuzz-coverage: ## Line coverage per compiler stage of TARGET's corpus and seeds; front_end by default
 	scripts/fuzz.sh --target "$(or $(TARGET),front_end)" --coverage
 
-fuzz-gaps: ## Generator gaps: functions that valid programs reach and no fixed seed reaches; exits 1 on a new one
+fuzz-gaps: ## Generator gaps: functions that valid programs reach and no fixed seed reaches; fails on a new one
 	scripts/fuzz.sh --target program --gaps
 
 bench: ## Time the benchmarks in bench/ (BENCH='fib sieve' picks some)

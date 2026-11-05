@@ -1,4 +1,6 @@
-"""Unit tests for the summary and the gap check of fuzz.sh: python3 -m unittest discover -s scripts -p 'test_*.py'.
+"""Unit tests for the summary and the gap check of fuzz.sh.
+
+Run them with: python3 -m unittest discover -s scripts -p 'test_*.py'
 
 Each test runs the script in a small repository with a fake `cargo` on PATH, so no fuzzer runs.
 """

@@ -91,11 +91,12 @@ jobs:
           path: fuzz/corpus/program
           key: fuzz-program-corpus-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: fuzz-program-corpus-
-      # The fuzzer first runs each corpus input and each of the 128 seeds once, one at a time, at
-      # about 1.25 s each, and -max_total_time does not stop that pass. So a run keeps 500 inputs
-      # at random and removes the others. cmin and the cache then see only those and the new
-      # finds, so each run starts with at most 500 corpus inputs and the 128 seeds. A removed
-      # input is lost; the fuzzer can find its coverage again.
+      # The fuzzer first runs each corpus input and each of the 128 seeds once, one at a time, and
+      # -max_total_time does not stop that pass. On CI a corpus input takes about 1.25 s, and a seed
+      # takes about twice that by estimate. So a run keeps 500 inputs at random and removes the
+      # others. cmin and the cache then see only those and the new finds, so each run starts with
+      # at most 500 corpus inputs and the 128 seeds. A removed input is lost; the fuzzer can find
+      # its coverage again.
       # CORPUS_PASS_MINUTES in scripts/fuzz_program_plan.py is the time of this pass.
       - name: Sample the corpus
         run: |

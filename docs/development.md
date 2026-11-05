@@ -641,7 +641,7 @@ every program input, seeds included, reaches codegen.
 `--gaps` works for the program target only. It finds the functions that a valid
 program reaches and the generator's fixed seeds do not: the generator gaps
 (`GLOSSARY.md`). It runs `cargo fuzz coverage` twice. The first run is
-`program` over the 128 seeds alone, with no corpus, so the result depends on
+`program` over the 128 seeds alone, with no corpus. So the result depends on
 the commit and not on what a night kept. The second run is `front_end` over the
 `.sisu` files of `crates/sisuc/tests/run` and `crates/sisuc/tests/run-fail`.
 `tests/diagnostics` holds invalid programs and stays out. Then
@@ -652,10 +652,14 @@ The check names a function by its file below `crates/sisuc/src/`, its first line
 and its name. The name has no crate hashes and no generic arguments, so the
 instances of a generic function merge. A closure counts for its enclosing
 function. The check leaves out `generate/`, `fuzz.rs`, `fuzz_program.rs`,
-`report.rs`, `diagnostic/json.rs` and `diagnostic/render.rs`. `--gaps` exits 0
-when no gap is new, 1 when a gap is new, and 2 when the check did not finish.
-It prints a section `## Generator gaps` and appends it to
-`fuzz/artifacts/summary.md`. A broken measurement is never a pass.
+`report.rs`, `diagnostic/json.rs` and `diagnostic/render.rs`. The comparison
+prints a section `## Generator gaps`, and `--gaps` appends it to
+`fuzz/artifacts/summary.md`. `--gaps` exits 0 when no gap is new, 1 when a gap
+is new, and 2 when it cannot trust a measurement. A directory with no program
+stops the script with exit 2. A failed `find`, build, `cargo fuzz coverage` or
+`llvm-cov` stops it with the status of that tool. In both cases it stops before
+the comparison and writes no section. On CI the step then writes a section that
+says the check did not finish. A broken measurement is never a pass.
 
 When a gap is new, do one of two things. Add a generator rule that makes the
 seeds reach the function
@@ -727,8 +731,9 @@ pushes from starting runs; cancel a run in progress from the Actions tab. Any
 `<n>m` or `<n>h` from 1 minute to 4 hours works, which leaves the job inside
 GitHub's 6-hour limit, and each label must first exist in the repository. A
 pull request with two such labels fails the plan, and adding any other label
-starts nothing. A labeled run always ends with `--coverage` and `--gaps`, and
-puts its stage lines and its gap section in the job summary. It restores the
+starts nothing. A labeled run always ends with `--coverage`, and with `--gaps` when the fuzz
+step passed. It puts its stage lines in the job summary, and its gap section
+when `--gaps` ran. It restores the
 newest corpus of its own earlier runs or of `main`, and the corpus it saves
 stays with the pull request. GitHub runs no workflow for a pull request with a merge conflict, so
 resolve it first.

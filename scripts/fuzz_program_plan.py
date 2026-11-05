@@ -36,7 +36,8 @@ CMIN_MINUTES = 20
 # The fuzzer first runs each corpus input and each of the 128 seeds once, one at a time, and
 # -max_total_time does not stop that pass. The 500 inputs that the Sample the corpus step keeps
 # take about 10 minutes: run 42015848679 ran 990 inputs in 20.3 minutes. A seed costs more than a
-# corpus input: 1.24 s each over the 128 seeds, 159 s in all.
+# corpus input. Locally a seed takes 1.24 s, against about 0.6 s for a corpus input. So expect
+# about 2.5 s on CI, or about 5 minutes for the 128 seeds.
 CORPUS_PASS_MINUTES = 30
 
 

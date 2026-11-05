@@ -12,7 +12,9 @@
 #                                     and seeds, and how many inputs reach codegen
 #   scripts/fuzz.sh --target program --gaps   the functions that a valid program reaches and no
 #                                     fixed seed reaches (scripts/fuzz_gaps.py); exits 1 on a new
-#                                     gap, and appends its section to fuzz/artifacts/summary.md
+#                                     gap and 2 on a broken measurement, each with its section
+#                                     appended to fuzz/artifacts/summary.md. A tool that fails
+#                                     gives its own status, with no section.
 # The seeds of front_end are the .sisu files of the test tree. The seeds of program are 128
 # full-size inputs from scripts/fuzz_seeds.py: a short input runs out of bytes, and the fuzzer
 # grows an input too slowly to reach full size.
@@ -146,14 +148,15 @@ coverage() {
 }
 
 # Copies each .sisu file under the directories $2 and after into the directory $1 under a unique
-# name: cargo-fuzz runs every regular file of a directory, and not the files below it.
+# name. cargo-fuzz runs every regular file of a directory, and not the files below it.
 copy_programs() {
     local to=$1 i=0 f
     shift
-    while IFS= read -r -d '' f; do
+    # A pipe, not `< <(find ...)`: pipefail sees the status of a pipe, and not of a substitution.
+    find "$@" -name '*.sisu' -print0 | while IFS= read -r -d '' f; do
         i=$((i + 1))
         cp "$f" "$to/$i-${f##*/}"
-    done < <(find "$@" -name '*.sisu' -print0)
+    done
 }
 
 # The generator gaps (scripts/fuzz_gaps.py): the functions that a valid program reaches and no
@@ -161,6 +164,16 @@ copy_programs() {
 # depends on the commit and not on what a night kept. The valid side is every program of tests/run
 # and tests/run-fail, and no other directory: tests/diagnostics holds invalid programs.
 gaps() {
+    local dir found
+    # A directory that holds no program, or is a symlink, reads as a reference without it. The
+    # stage floors of fuzz_gaps.py cannot see that, because the other directory still reaches them.
+    for dir in crates/sisuc/tests/run crates/sisuc/tests/run-fail; do
+        found=$(find "$dir" -name '*.sisu' -print -quit)
+        if [[ -z $found ]]; then
+            echo "scripts/fuzz.sh: ${dir} holds no .sisu program" >&2
+            exit 2
+        fi
+    done
     gaps_dir=$(mktemp -d)
     mkdir "$gaps_dir/programs"
     copy_programs "$gaps_dir/programs" crates/sisuc/tests/run crates/sisuc/tests/run-fail
