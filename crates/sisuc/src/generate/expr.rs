@@ -3007,7 +3007,9 @@ mod tests {
     /// Below a later branch of an untyped `if`, the `break` value of an optional is self-typed,
     /// and a self-typed value must fit `max` (the `debug_assert` in `Gen::expr`). An optional of
     /// an optional has no such value, so `loop_fits` writes no `loop` of it. Seed 1639 with
-    /// `string?` or `[string]?` once reached `no char?? fits 0`.
+    /// `string?` or `[string]?` writes `else { ({ ... let mut v17: char?? = ({ ... loop {`: a
+    /// `char??` `loop` value, the initial value of a local, in a block of the `else` branch. It
+    /// once reached `no char?? fits 0`.
     #[test]
     fn a_loop_value_below_an_untyped_branch_should_fit_its_max() {
         let data = crate::generate::coverage::seed(1639);
