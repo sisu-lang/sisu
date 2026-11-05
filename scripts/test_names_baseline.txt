@@ -680,7 +680,6 @@ crates/sisuc/src/diagnostic/suggest.rs::nearer_beats_alphabetical
 crates/sisuc/src/diagnostic/suggest.rs::no_candidates
 crates/sisuc/src/diagnostic/suggest.rs::the_name_itself_never
 crates/sisuc/src/diagnostic/suggest.rs::ties_go_alphabetically
-crates/sisuc/src/front_end.rs::a_fix_over_a_comment_or_a_lexer_error_is_unsafe
 crates/sisuc/src/front_end.rs::a_fix_that_breaks_the_syntax_is_dropped
 crates/sisuc/src/front_end.rs::block_value_survives_a_semicolon
 crates/sisuc/src/front_end.rs::bracket_error_is_alone

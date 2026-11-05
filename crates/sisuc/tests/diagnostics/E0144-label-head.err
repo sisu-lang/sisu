@@ -1,0 +1,14 @@
+error[E0144]: no loop label `outeb` around this `break`
+ --> E0144-label-head.sisu:3:39
+  |
+3 |         for i in 0..3 { if o ?? break outeb { print(i) } }
+  |                                       ^^^^^
+  |
+help: a loop label with a similar name exists: `outer`
+  |
+3 -         for i in 0..3 { if o ?? break outeb { print(i) } }
+3 +         for i in 0..3 { if o ?? (break outer) { print(i) } }
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0144
