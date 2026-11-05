@@ -280,7 +280,8 @@ struct Requirement {
     ret: Option<RequirementType>,
 }
 
-/// A parameter of a requirement. A `mut` parameter is an `i64`; a call does not read `ty` of it.
+/// A parameter of a requirement. A `mut` parameter is an `i64`, and its `ty.value` is a
+/// placeholder: a call passes a place to it, so nothing reads that value.
 struct Param {
     name: String,
     ty: RequirementType,
@@ -466,8 +467,8 @@ impl Requirement {
     /// The statements that call the requirement on the value `var`, and print an `i64` or a
     /// `string` result as `@d<n> {call}`; then, for a `mut` parameter, the one that prints its
     /// place as `@d<m> {m<m>}`. The statements come with their marks, in the order that they
-    /// print. The numbers `n` and `m` are `*next` and the number after it, which the statements
-    /// take; the place `m<m>` is declared before the call.
+    /// print. `n` is `*next`, and `m` is the next number after the one that the result takes,
+    /// if any; the place `m<m>` is declared before the call.
     fn call(
         &self,
         var: &str,

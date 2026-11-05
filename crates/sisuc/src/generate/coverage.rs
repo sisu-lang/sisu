@@ -8415,7 +8415,7 @@ fn a_conformance_should_write_its_own_value_to_a_mut_parameter() {
 
 /// The text of the item of `source` that starts with `header` at the margin, up to the line `}`
 /// that closes it.
-fn item_text<'a>(source: &'a str, header: &str) -> Option<&'a str> {
+pub(crate) fn item_text<'a>(source: &'a str, header: &str) -> Option<&'a str> {
     // A break put before `source` finds a header at its start too.
     let start = format!("\n{source}").find(&format!("\n{header}"))?;
     let rest = &source[start..];

@@ -4,11 +4,12 @@
 //! Properties 1 and 2 are that the program checks clean and compiles to a module LLVM verifies;
 //! property 3 is that every build exits 0 or 101, and all four the same way; property 4 is that
 //! the rewritten copy runs as the program does; property 5 is that the program prints the known
-//! integer answers, and that each call of an interface's requirement prints the value of the
-//! method it should reach, where the method has an `i64` or `string` result (or a `T` result, when
-//! the argument of the conformance is one of them) and the call is in `shapes` or in a generic
-//! function it calls; property 6 is that a copy of the program where one argument breaks the bound
-//! of its type parameter gets E0154 at that argument and no other error.
+//! integer answers, and that each call of an interface's requirement, in `shapes` or in a generic
+//! function it calls, prints the values of the method it should reach: its result, where the method
+//! has an `i64` or `string` result (or a `T` result, when the argument of the conformance is one of
+//! them), and the value that it writes to a `mut` parameter; property 6 is that a copy of the
+//! program where one argument breaks the bound of its type parameter gets E0154 at that argument
+//! and no other error.
 
 use std::fmt::Write as _;
 use std::fs::{self, File};
@@ -750,7 +751,7 @@ mod tests {
     };
     use crate::diagnostic::Severity;
     use crate::fresh_names;
-    use crate::generate::coverage::{SEARCH_SEEDS, search_seeds};
+    use crate::generate::coverage::{SEARCH_SEEDS, item_text, search_seeds};
     use crate::generate::{BoundSite, Generated, coverage, generate};
 
     /// A directory of the test's own, removed when dropped.
@@ -1291,16 +1292,6 @@ mod tests {
         assert!(failure.detail.contains("--rc-checks"), "{}", failure.detail);
     }
 
-    /// The text of the item of `program` that starts with `header` at the start of a line, up to
-    /// the line `}` that closes it.
-    fn item<'a>(program: &'a str, header: &str) -> Option<&'a str> {
-        // The header is found after a line break, so one at the start of `program` is too: a break
-        // put before `program` moves each position by one.
-        let start = format!("\n{program}").find(&format!("\n{header}"))?;
-        let rest = &program[start..];
-        Some(&rest[..rest.find("\n}\n")? + 2])
-    }
-
     /// Whether a line of `text` holds a marked statement and `part`.
     fn marks(text: &str, part: &str) -> bool {
         text.lines()
@@ -1330,13 +1321,13 @@ mod tests {
     /// Whether `g` holds the dispatch `row` of `DISPATCHES`, as its text shows.
     fn holds(row: &str, g: &Generated) -> bool {
         let program = g.program.as_str();
-        let shapes = item(program, "fn shapes()").unwrap_or_default();
+        let shapes = item_text(program, "fn shapes()").unwrap_or_default();
         // The most interfaces a program declares is three.
         let interfaces = 0..3;
         let conformances = |keyword: &str| {
             (program.lines())
                 .filter(|line| line.starts_with(keyword) && line.contains(": I"))
-                .filter_map(|line| item(program, line))
+                .filter_map(|line| item_text(program, line))
                 .any(has_method)
         };
         match row {
@@ -1350,16 +1341,17 @@ mod tests {
             }
             "a requirement inherited from an earlier interface" => {
                 interfaces.into_iter().any(|k| {
-                    let header = item(program, &format!("interface I{k}"))
+                    let header = item_text(program, &format!("interface I{k}"))
                         .and_then(|text| text.lines().next())
                         .unwrap_or_default();
                     let Some((_, list)) = header.trim_end_matches(" {").split_once(": ") else {
                         return false;
                     };
-                    let via = item(program, &format!("fn via{k}<")).unwrap_or_default();
+                    let via = item_text(program, &format!("fn via{k}<")).unwrap_or_default();
                     list.split(", ").any(|inherited| {
                         let name = inherited.split('<').next().unwrap_or_default();
-                        let body = item(program, &format!("interface {name}")).unwrap_or_default();
+                        let body =
+                            item_text(program, &format!("interface {name}")).unwrap_or_default();
                         (body.lines())
                             .filter_map(|line| line.trim().strip_prefix("fn "))
                             .filter_map(|line| line.split('(').next())
@@ -1386,10 +1378,10 @@ mod tests {
                     .any(|types| types.contains(&"i64") && types.contains(&"string"))
             }
             "`both` with two interfaces in one bound" => {
-                item(program, "fn both<").is_some_and(|body| marks(body, ""))
+                item_text(program, "fn both<").is_some_and(|body| marks(body, ""))
             }
             "`pick<k>` with a bounded associated type" => interfaces.into_iter().any(|k| {
-                item(program, &format!("fn pick{k}<")).is_some_and(|body| marks(body, ""))
+                item_text(program, &format!("fn pick{k}<")).is_some_and(|body| marks(body, ""))
             }),
             "a conformance in an `extend` block" => {
                 ["extend Q", "extend N"].into_iter().any(conformances)
@@ -1398,7 +1390,8 @@ mod tests {
                 ["class Q", "enum N"].into_iter().any(conformances)
             }
             "a `mut` parameter written back" => {
-                let in_a_body = |header: String| item(program, &header).is_some_and(writes_back);
+                let in_a_body =
+                    |header: String| item_text(program, &header).is_some_and(writes_back);
                 writes_back(shapes)
                     || interfaces.clone().any(|k| in_a_body(format!("fn via{k}<")))
                     || in_a_body("fn both<".to_string())
@@ -1424,7 +1417,7 @@ mod tests {
     /// Whether the text of `g` shows that its O0 run reaches every marked line of `shapes`: its
     /// `main` ends with the call of `shapes`, has no `return`, and the program has no panic site.
     fn reaches_shapes(g: &Generated) -> bool {
-        let main = item(&g.program, "fn main()").unwrap_or_default();
+        let main = item_text(&g.program, "fn main()").unwrap_or_default();
         main.ends_with("    shapes()\n}") && !main.contains("return") && panic_sites(g) == 0
     }
 
@@ -1541,7 +1534,7 @@ mod tests {
         let mut found = None;
         search_seeds(0, |n| {
             let mut g = generate(&seed(n));
-            let main = item(&g.program, "fn main()").unwrap_or_default();
+            let main = item_text(&g.program, "fn main()").unwrap_or_default();
             if !g.expected.is_empty() && main.ends_with(call) {
                 let at = (g
                     .program
