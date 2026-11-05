@@ -13,6 +13,15 @@ pub(crate) use crate::ast::{Align, CompareOp, UnaryOp};
 use crate::types::{Head, write_args, write_method, write_type};
 pub(crate) use crate::types::{Type, TypeArgs, TypeKind};
 
+#[cfg(test)]
+thread_local! {
+    /// How many calls of `Codegen::niche`, of the `Optional` arm of `Codegen::llvm_type`, and of
+    /// the `Optional` arm of `Type::is_counted` have happened on this thread. It counts each call,
+    /// also one that a cache answers. It lives here, not in `codegen`, because `is_counted` is
+    /// in this module and a lower layer may not use a higher one.
+    pub(crate) static LAYOUT_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct LocalId(pub(crate) usize);
 
@@ -905,7 +914,7 @@ impl Type {
             TypeKind::Enum(id, _) => enums[id.0].counted,
             TypeKind::Optional(payload) => {
                 #[cfg(test)]
-                crate::codegen::LAYOUT_STEPS.set(crate::codegen::LAYOUT_STEPS.get() + 1);
+                LAYOUT_STEPS.set(LAYOUT_STEPS.get() + 1);
                 payload.is_counted(enums)
             }
             TypeKind::I64

@@ -3,7 +3,7 @@ use crate::check::check_alone;
 use crate::mir::tests::assert_near_linear;
 use crate::parser::parse_ok;
 use crate::payload_limit;
-use crate::tir::BinaryOp;
+use crate::tir::{BinaryOp, LAYOUT_STEPS};
 use inkwell::GlobalVisibility;
 use inkwell::values::{AnyValue, CallSiteValue, InstructionOpcode, InstructionValue, Operand};
 use std::panic::{self, AssertUnwindSafe};

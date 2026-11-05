@@ -182,11 +182,18 @@ impl<'ctx> Codegen<'ctx, '_> {
             // whether it holds a value, then the value.
             TypeKind::Optional(payload) => {
                 #[cfg(test)]
-                super::LAYOUT_STEPS.set(super::LAYOUT_STEPS.get() + 1);
-                match self.niche(payload) {
-                    Some(niche) => Some(self.niche_type(niche.storage)),
-                    None => Some(self.optional_pair(payload).into()),
+                crate::tir::LAYOUT_STEPS.set(crate::tir::LAYOUT_STEPS.get() + 1);
+                // Each borrow ends before the recursive call, which borrows the cache again.
+                let known = self.optional_types.borrow().get(&ty).copied();
+                if known.is_some() {
+                    return known;
                 }
+                let laid_out: BasicTypeEnum<'ctx> = match self.niche(payload) {
+                    Some(niche) => self.niche_type(niche.storage),
+                    None => self.optional_pair(payload).into(),
+                };
+                self.optional_types.borrow_mut().insert(ty, laid_out);
+                Some(laid_out)
             }
         }
     }
@@ -196,9 +203,24 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// `bool` in an `i8`.
     /// For an enum, it is the enum's own niche (`EnumLayout::niche`). An optional with a niche
     /// gives the next value of its niche (`next_niche`).
+    ///
+    /// The answer for each type is kept: an optional of `n` layers asks for the niche of each
+    /// layer below it, so a walk with no memory reads the layers quadratically.
     pub(super) fn niche(&self, payload: Type) -> Option<Niche> {
         #[cfg(test)]
-        super::LAYOUT_STEPS.set(super::LAYOUT_STEPS.get() + 1);
+        crate::tir::LAYOUT_STEPS.set(crate::tir::LAYOUT_STEPS.get() + 1);
+        // Each borrow ends before the recursive call, which borrows the cache again.
+        let known = self.niches.borrow().get(&payload).copied();
+        if let Some(niche) = known {
+            return niche;
+        }
+        let niche = self.find_niche(payload);
+        self.niches.borrow_mut().insert(payload, niche);
+        niche
+    }
+
+    /// `niche`, with no memory.
+    fn find_niche(&self, payload: Type) -> Option<Niche> {
         let (storage, empty) = match payload.kind() {
             TypeKind::Class(..) => (Storage::Pointer, 0),
             TypeKind::String | TypeKind::Array(_) => (Storage::Value, 0),
