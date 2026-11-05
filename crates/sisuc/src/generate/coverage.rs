@@ -9221,7 +9221,8 @@ fn the_programs_of_seeds_203_4534_and_5974_should_check_clean() {
 
 /// The pin covers the bytes and the order of all 128 fuzz seeds: FNV-1a 64 over `seed(0)`, then
 /// `seed(1)`, up to `seed(127)`. `scripts/fuzz_seeds.py` copies `seed`. The test
-/// `scripts/test_fuzz_seeds.py` holds both files to this one value, so a change to one fails it.
+/// `scripts/test_fuzz_seeds.py` holds both files to this one value. A change to the rule in one
+/// place fails a test until the other follows.
 #[test]
 fn fuzz_seeds_should_match_the_pinned_values() {
     assert_eq!(FUZZ_SEEDS, 128);

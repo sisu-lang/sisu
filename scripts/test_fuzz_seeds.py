@@ -2,8 +2,8 @@
 
 The pin is FNV-1a 64 over the bytes of seed-0 to seed-127, in number order. It covers the bytes and
 the order of all 128 seeds. `fuzz_seeds_should_match_the_pinned_values` in
-crates/sisuc/src/generate/coverage.rs pins the same value. This test also reads that file, so a
-change to the pin on one side fails it until the other side follows.
+crates/sisuc/src/generate/coverage.rs pins the same value. This test also finds its own value in
+that file, so a change to the pin on one side fails it until the other side follows.
 """
 import os
 import subprocess
@@ -15,7 +15,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(HERE, 'fuzz_seeds.py')
 RUST = os.path.join(HERE, '..', 'crates', 'sisuc', 'src', 'generate', 'coverage.rs')
 PIN = 0x20e312f6e6aec322
-PIN_IN_RUST = '0x20e3_12f6_e6ae_c322'
+PIN_IN_RUST = f'{PIN:#_x}'
 
 
 def fnv1a64(hash_value: int, data: bytes) -> int:

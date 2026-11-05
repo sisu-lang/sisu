@@ -654,8 +654,8 @@ restored corpus input and each of the 128 seeds once, one at a time, and
 fuzz time. So after the restore, the "Sample the corpus" step keeps 500 inputs
 at random and removes the others. Each run then starts with at most 500
 corpus inputs and the seeds.
-The run saves those and its new finds, and the next run samples them again. A
-removed input is lost; the fuzzer can find its coverage again. The
+The run saves the corpus inputs and its new finds, and the next run samples
+them again. A removed input is lost; the fuzzer can find its coverage again. The
 summary's executions count only the fuzzing after the first pass: few
 executions, or `unknown`, mean the run spent its time on its corpus. The job
 summary also gives the corpus size before and after cmin and whether cmin

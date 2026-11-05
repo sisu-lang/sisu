@@ -6,7 +6,7 @@ because a shell step cannot call a test-only function. `FUZZ_SEEDS` there is the
 A seed is 512 outputs of splitmix64, with the seed's number as the start state, each written as
 a little-endian 64-bit word. One pin covers the bytes and the order of all 128 seeds: a hash of
 them, kept in the Rust test and in scripts/test_fuzz_seeds.py. The Python test holds the two
-sides to that one value, so a change to the rule in one place fails it until the other follows.
+sides to that one value. A change to the rule in one place fails a test until the other follows.
 
 Usage: python3 fuzz_seeds.py <directory>. The directory must exist.
 """
