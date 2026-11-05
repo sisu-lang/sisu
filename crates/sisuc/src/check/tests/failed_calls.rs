@@ -172,3 +172,20 @@ fn a_call_that_fails_its_block_bound_should_stay_error_when_the_count_is_wrong()
     let fixed = "class Node {}\nfn f(xs: [Node], a: Node) {\n    let s: string = xs.contains(a)\n}\nfn main() {}";
     codes(fixed, &[(NotConform, (3, 21))]);
 }
+
+#[test]
+fn an_interface_requirement_with_written_type_arguments_should_keep_the_result_they_fix() {
+    let decls = "interface Keep {\n    fn keep<U>(self, x: U) -> [U]\n}\nfn show<T: Keep>(t: T) {\n    let s: string = t.keep<i64>(true)\n}";
+    codes(
+        &format!("{decls}\nfn main() {{}}"),
+        &[(Mismatch, (5, 21)), (Mismatch, (5, 33))],
+    );
+}
+
+#[test]
+fn a_function_with_a_broken_result_type_should_stay_error_when_it_fails() {
+    let decls = "fn g(n: i64) -> Nope { panic(\"no\") }";
+    let src = program(decls, "let s: string = g(1, 2)");
+    let found: Vec<_> = diags(&src).iter().map(Diagnostic::code).collect();
+    assert_eq!(found, [Code::UnknownType, ArgumentCount]);
+}
