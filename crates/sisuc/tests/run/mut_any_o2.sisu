@@ -9,9 +9,10 @@ fn iterations() -> i64 { 1000 }
 // AND `-O2` keeps the call of `fill_all` in `main`, because the compiler cannot know the depth:
 // the marker below checks this
 // AND the receiver is chosen at run time, so `fill_all` keeps the call through the table. That
-// call passes the out pointer of an optimized function. No marker checks it, because the harness
-// counts only direct calls
+// call passes the out pointer of an optimized function. The second marker below checks it: it
+// counts the calls through a pointer in the body of `fill_all`
 // o2-calls: main fill_all 1
+// o2-indirect-calls: fill_all 1
 interface Filler {
     fn fill(self, mut xs: [i64], v: i64)
 }

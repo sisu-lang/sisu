@@ -2651,6 +2651,245 @@ fn o2_calls_marker_should_be_rejected_without_a_count() {
     );
 }
 
+/// A program whose `total` recurses to a run-time depth and calls `area` through a borrowed
+/// `any Shape`. `-O2` keeps `total` and its one call through the table.
+const ANY_TOTAL: &str = "interface Shape {\n    fn area(self) -> i64\n}\n\n\
+     class Sq: Shape {\n    fn area(self) -> i64 { 4 }\n}\n\n\
+     class Tri: Shape {\n    fn area(self) -> i64 { 3 }\n}\n\n\
+     fn total(s: any Shape, n: i64) -> i64 {\n    if n > 0 { total(s, n - 1) + s.area() } else { 0 }\n}\n\n\
+     fn main() {\n    let n = (read_line() ?? \"\").len() + 3\n    \
+     let s: any Shape = if n % 2 == 0 { Sq() } else { Tri() }\n    print(total(s, n))\n}\n";
+
+/// A program whose `once` has one call site and no recursion, so `-O2` inlines it.
+const ANY_ONCE: &str = "interface Shape {\n    fn area(self) -> i64\n}\n\n\
+     class Sq: Shape {\n    fn area(self) -> i64 { 4 }\n}\n\n\
+     fn once(s: any Shape) -> i64 {\n    s.area() + 1\n}\n\n\
+     fn main() {\n    let s: any Shape = Sq()\n    print(once(s))\n}\n";
+
+/// A program whose `total` makes an owned `any Shape` at each level: 2 calls of `area` and 2
+/// releases in `-O2`.
+const ANY_OWNED: &str = "interface Shape {\n    fn area(self) -> i64\n}\n\n\
+     class Sq: Shape {\n    fn area(self) -> i64 { 4 }\n}\n\n\
+     class Tri: Shape {\n    fn area(self) -> i64 { 3 }\n}\n\n\
+     fn total(pick: bool, n: i64) -> i64 {\n    let s: any Shape = if pick { Sq() } else { Tri() }\n    \
+     if n > 0 { total(pick, n - 1) + s.area() } else { s.area() }\n}\n\n\
+     fn main() {\n    let n = (read_line() ?? \"\").len() + 3\n    print(total(n % 2 == 0, n))\n}\n";
+
+/// `fixture` with the case `// o2-indirect-calls: <marker>` and `program`, whose run must print
+/// `out`.
+fn indirect_case(test: &str, marker: &str, program: &str, out: &str) -> PathBuf {
+    fixture(
+        test,
+        &[
+            (
+                "a.sisu",
+                &format!("// o2-indirect-calls: {marker}\n{program}"),
+            ),
+            ("a.out", out),
+        ],
+    )
+}
+
+/// GIVEN a case where `total` recurses to a run-time depth and calls `area` through a borrowed
+/// `any Shape`, so `-O2` keeps one call through the table in `total`
+/// WHEN the harness runs it with the marker `total 1` and then `total 2`
+/// THEN the first run passes
+/// AND the second run panics and says that `-O2` keeps 1 indirect calls in `total`
+#[test]
+fn o2_indirect_calls_marker_should_count_the_calls_through_a_table() {
+    let dir = indirect_case(
+        "o2_indirect_calls_marker_counts_the_table_calls_1",
+        "total 1",
+        ANY_TOTAL,
+        "9\n",
+    );
+    support::run(&dir.join("a.sisu"), false);
+    let dir = indirect_case(
+        "o2_indirect_calls_marker_counts_the_table_calls_2",
+        "total 2",
+        ANY_TOTAL,
+        "9\n",
+    );
+    let message = panic_message(|| support::run(&dir.join("a.sisu"), false));
+    assert!(
+        message.contains("-O2 keeps 1 indirect calls in `total`, not 2"),
+        "{message}"
+    );
+}
+
+/// GIVEN a case where `once` has one call site and no recursion, and calls `area` through an
+/// `any Shape`
+/// WHEN the harness runs it with the marker `once 1`
+/// THEN it panics and says that `-O2` inlined or specialized `once`
+#[test]
+fn o2_indirect_calls_marker_should_fail_when_the_inliner_removes_the_function() {
+    let dir = indirect_case(
+        "o2_indirect_calls_marker_fails_on_an_inlined_function",
+        "once 1",
+        ANY_ONCE,
+        "5\n",
+    );
+    let message = panic_message(|| support::run(&dir.join("a.sisu"), false));
+    assert!(
+        message.contains("-O2 inlined or specialized `once`, so its body is not its own"),
+        "{message}"
+    );
+}
+
+/// GIVEN a case where `down` recurses and makes only direct calls
+/// WHEN the harness runs it with the marker `down 1`
+/// THEN it panics and says that `-O2` keeps 0 indirect calls in `down`
+///
+/// A direct call is not an indirect call.
+#[test]
+fn o2_indirect_calls_marker_should_not_count_a_direct_call() {
+    let dir = fixture(
+        "o2_indirect_calls_marker_ignores_a_direct_call",
+        &[
+            (
+                "a.sisu",
+                &format!("// o2-indirect-calls: down 1\n{DOWN}{OUTER_CALLS_DOWN}"),
+            ),
+            ("a.out", "5\n5\n"),
+        ],
+    );
+    let message = panic_message(|| support::run(&dir.join("a.sisu"), false));
+    assert!(
+        message.contains("-O2 keeps 0 indirect calls in `down`, not 1"),
+        "{message}"
+    );
+}
+
+/// GIVEN a case where `total` makes an owned `any Shape` at each level and calls `area` through it
+/// WHEN the harness runs it with the marker `total 4`
+/// THEN the run passes
+///
+/// The count holds the release of an owned `any` too: 2 calls of `area` and 2 releases.
+#[test]
+fn o2_indirect_calls_marker_should_count_the_release_of_an_owned_any() {
+    let dir = indirect_case(
+        "o2_indirect_calls_marker_counts_the_release",
+        "total 4",
+        ANY_OWNED,
+        "12\n",
+    );
+    support::run(&dir.join("a.sisu"), false);
+}
+
+/// GIVEN a case with the marker `o2-indirect-calls: total 0`
+/// WHEN the harness runs it
+/// THEN it panics and says that the marker proves no indirect call
+#[test]
+fn o2_indirect_calls_marker_should_reject_a_count_of_zero() {
+    let dir = indirect_case(
+        "o2_indirect_calls_marker_rejects_a_count_of_zero",
+        "total 0",
+        ANY_TOTAL,
+        "9\n",
+    );
+    let message = panic_message(|| support::run(&dir.join("a.sisu"), false));
+    assert!(message.contains("proves no indirect call"), "{message}");
+}
+
+/// GIVEN a case with the marker `o2-indirect-calls: totl 1`, which names no function
+/// WHEN the harness runs it
+/// THEN it panics and says that there is no function named `totl`
+#[test]
+fn o2_indirect_calls_marker_should_name_a_function_that_does_not_exist() {
+    let dir = indirect_case(
+        "o2_indirect_calls_marker_names_a_missing_function",
+        "totl 1",
+        ANY_TOTAL,
+        "9\n",
+    );
+    let message = panic_message(|| support::run(&dir.join("a.sisu"), false));
+    assert!(message.contains("no function named `totl`"), "{message}");
+}
+
+/// GIVEN a case with the marker `o2-indirect-calls: total`, which has no count
+/// WHEN the harness runs it
+/// THEN it panics and says that the marker is not `<function> <count>`
+#[test]
+fn o2_indirect_calls_marker_should_be_rejected_without_a_count() {
+    let dir = indirect_case(
+        "o2_indirect_calls_marker_must_name_function_and_count",
+        "total",
+        ANY_TOTAL,
+        "9\n",
+    );
+    let message = panic_message(|| support::run(&dir.join("a.sisu"), false));
+    assert!(message.contains("is not `<function> <count>`"), "{message}");
+}
+
+/// GIVEN a case with the marker `o2-indirect-calls: total many`
+/// WHEN the harness runs it
+/// THEN it panics and says that the count is not a number
+#[test]
+fn o2_indirect_calls_marker_should_reject_a_count_that_is_not_a_number() {
+    let dir = indirect_case(
+        "o2_indirect_calls_marker_rejects_a_count_that_is_not_a_number",
+        "total many",
+        ANY_TOTAL,
+        "9\n",
+    );
+    let message = panic_message(|| support::run(&dir.join("a.sisu"), false));
+    assert!(message.contains("count is not a number"), "{message}");
+}
+
+/// GIVEN lines of LLVM IR, from `-O2` builds of Sisu programs
+/// WHEN the harness asks whether each line holds a call through a pointer
+/// THEN only a call whose target is a `%` value does
+///
+/// A direct call, an intrinsic, a `call` in a name, a label and a `br` do not.
+#[test]
+fn indirect_call_matcher_should_take_only_a_call_through_a_pointer() {
+    for (line, want) in [
+        ("  call void %pointer(ptr %a, ptr nonnull %out17)", true),
+        (
+            "  tail call void %pointer.i.i(ptr nonnull %object.i), !inline_history !7",
+            true,
+        ),
+        ("  %dyn = tail call i64 %pointer(ptr %x)", true),
+        ("  %r = tail call range(i64 0, 6) i64 %p(i64 1)", true),
+        (
+            "  %call = tail call fastcc i64 @sisu.total({ ptr, ptr } %0, i64 %checked)",
+            false,
+        ),
+        (
+            "  %call1.i.i = tail call fastcc range(i64 -9223372036854775806, \
+             -9223372036854775808) i64 @sisu.down(i64 5)",
+            false,
+        ),
+        (
+            "  %x = call { i64, i1 } @llvm.sadd.with.overflow.i64(i64 %a, i64 1)",
+            false,
+        ),
+        (
+            "call:                                             ; preds = %call",
+            false,
+        ),
+        ("  br label %call", false),
+    ] {
+        assert_eq!(support::is_indirect_call(line), want, "{line}");
+    }
+}
+
+/// GIVEN the IR of a module that defines `@sisu.walk.specialized.1`
+/// WHEN the harness asks whether `walk` has a specialized clone
+/// THEN it does, in a plain name and in a quoted name
+/// AND `walk2`, `other` and a call of the clone do not
+#[test]
+fn specialized_clone_check_should_find_a_definition_of_a_clone() {
+    let plain = "define internal i64 @sisu.walk.specialized.1(i64 %0) {\n  ret i64 %0\n}\n";
+    let quoted = "define internal i64 @\"sisu.walk.specialized.2\"(i64 %0) {\n  ret i64 %0\n}\n";
+    let call = "define i64 @sisu.main() {\n  %r = call i64 @sisu.walk.specialized.1(i64 1)\n}\n";
+    assert!(support::has_specialized_clone(plain, "walk"));
+    assert!(support::has_specialized_clone(quoted, "walk"));
+    assert!(!support::has_specialized_clone(plain, "walk2"));
+    assert!(!support::has_specialized_clone(plain, "other"));
+    assert!(!support::has_specialized_clone(call, "walk"));
+}
+
 /// GIVEN a `run` case that leaks a cycle, with a wrong `.out` file
 /// WHEN the harness runs it in bless mode
 /// THEN it panics with the Valgrind leak summary
