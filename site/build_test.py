@@ -69,7 +69,7 @@ state = "works"
 notes = []
 [[area.feature]]
 text = "Gamma"
-state = "planned"
+state = "next"
 notes = [["Roadmap", "docs/roadmap.md"]]
 
 [[area]]
@@ -457,8 +457,8 @@ class Build(unittest.TestCase):
         fake_site(self, {}, {'site/data/status.toml': STATUS, 'docs/diagnostics/E0001.md': ''})
         board = build.expand('{{status-board}}', {})
         counts = [re.sub('<[^>]*>', '', c) for c in re.findall(r'<span class="counts">(.*?)</span>', board)]
-        self.assertEqual(counts, ['2 work today · 1 planned', '1 work today · 1 planned'])
-        self.assertEqual(re.findall(r'style="flex:(\d+)"', board), ['2', '1', '1', '1'])
+        self.assertEqual(counts, ['2 work today · 1 next', '1 work today · 1 planned'])
+        self.assertEqual(re.findall(r'<i class="(\w+)" style="flex:(\d+)"', board), [('ok', '2'), ('next', '1'), ('ok', '1'), ('plan', '1')])
         self.assertEqual(re.findall(r'<details class="area"( open)?>', board), [' open', ''])
         self.assertEqual(re.findall(r'<span class="area-name">(.*?)</span>', board), ['One', 'Two'])
         self.assertEqual(re.findall(r'<p class="note">(.*?)</p>', board), ['Careful.'])
@@ -471,21 +471,21 @@ class Build(unittest.TestCase):
                          [('one', 'One', 'Intro <code>x</code>'), ('two', 'Two', 'Second.')])
         rows = re.findall(r'<tr><td>(.*?)</td><td><span class="st (\w+)">(.*?)</span></td><td>(.*?)</td></tr>', tables)
         self.assertEqual([row[:3] for row in rows], [
-            ('Alpha for 1 codes', 'ok', '✓ Works today'), ('Beta', 'ok', '✓ Works today'), ('Gamma', 'plan', '○ Planned'),
+            ('Alpha for 1 codes', 'ok', '✓ Works today'), ('Beta', 'ok', '✓ Works today'), ('Gamma', 'next', '● Coming next'),
             ('Delta', 'ok', '✓ Works today'), ('Epsilon', 'plan', '○ Planned')])
         self.assertEqual([re.findall(r'<a href="(.*?)">(.*?)</a>', row[3]) for row in rows[:3]], [
             [(build.BLOB + 'docs/adr/0001-first.md', 'ADR 1'), (build.BLOB + 'docs/roadmap.md#what-works-today', 'Roadmap: here')],
             [], [(build.BLOB + 'docs/roadmap.md', 'Roadmap')]])
 
     def test_status_state_must_be_known(self):
-        fake_site(self, {}, {'site/data/status.toml': STATUS.replace('"planned"', '"soon"', 1)})
+        fake_site(self, {}, {'site/data/status.toml': STATUS.replace('"next"', '"soon"', 1)})
         with self.assertRaisesRegex(build.BuildError, 'soon'):
             build.expand('{{status-tables}}', {})
 
     def test_status_data_must_be_complete(self):
         cases = [('area id', 'id = "one"\n', 'area 1'), ('area name', 'name = "One"\n', "'one'"), ('area intro', 'intro = "Second."\n', "'two'"),
                  ('area note', 'note = "Careful."\n', "'one'"), ('feature text', 'text = "Beta"\n', "'one'"),
-                 ('feature state', 'state = "planned"\n', "'one'"), ('feature notes', 'notes = []\n', "'Beta'")]
+                 ('feature state', 'state = "next"\n', "'one'"), ('feature notes', 'notes = []\n', "'Beta'")]
         for name, line, where in cases:
             with self.subTest(name):
                 fake_site(self, {}, {'site/data/status.toml': STATUS.replace(line, '', 1)})
@@ -567,7 +567,7 @@ class Build(unittest.TestCase):
         fake_site(self, {}, {'site/data/status.toml': STATUS})
         board = build.expand('{{status-board}}', {})
         self.assertNotRegex(board, r'<summary>(?:(?!</summary>).)*<h\d')
-        self.assertEqual(re.findall(r'<h(\d)>(.*?)</h', board), [('3', 'Works today'), ('3', 'Planned')] * 2)
+        self.assertEqual(re.findall(r'<h(\d)>(.*?)</h', board), [('3', 'Works today'), ('3', 'Coming next'), ('3', 'Works today'), ('3', 'Planned')])
         page = f'<h1>Home</h1><svg><symbol id="chev"></symbol></svg><section><h2>Where Sisu stands</h2>{board}</section>'
         self.assertEqual(problems(self, {'index.html': PAGE.replace('<h1>Page</h1>{}', '{}').format(page)}), [])
 

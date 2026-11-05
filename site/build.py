@@ -131,7 +131,7 @@ def diag_html(text: str) -> str:
 
 
 BLOB = 'https://github.com/sisu-lang/sisu/blob/main/'
-STATES = {'works': ('ok', '✓ Works today'), 'planned': ('plan', '○ Planned')}
+STATES = {'works': ('ok', '✓ Works today'), 'next': ('next', '● Coming next'), 'planned': ('plan', '○ Planned')}
 
 
 def adr_files() -> list[Path]:
@@ -163,12 +163,12 @@ def status_areas() -> list[dict]:
             if missing := {'text', 'state', 'notes'} - feature.keys():
                 raise BuildError(f'{where_feature} lacks {sorted(missing)}')
             if feature['state'] not in STATES:
-                raise BuildError(f'{where_feature} has state {feature["state"]!r}, not works or planned')
+                raise BuildError(f'{where_feature} has state {feature["state"]!r}, not works, next or planned')
     return areas
 
 
 def status_board() -> str:
-    """The Home page's board: a bar, counts and the two lists for each area, the first open."""
+    """The Home page's board: a bar, counts and the lists for each area, the first open. A state with no feature has no bar part and no count."""
     def items(area, state):
         return [expand(f['text'], {}) for f in area['feature'] if f['state'] == state]
 
@@ -177,16 +177,20 @@ def status_board() -> str:
 
     out = []
     for i, area in enumerate(status_areas()):
-        works, planned = items(area, 'works'), items(area, 'planned')
+        works, soon, planned = items(area, 'works'), items(area, 'next'), items(area, 'planned')
         note = f'\n    <p class="note">{expand(area["note"], {})}</p>' if area['note'] else ''
+        bar = ''.join(f'<i class="{cls}" style="flex:{len(group)}"></i>' for cls, group in (('ok', works), ('next', soon), ('plan', planned)) if group)
+        counts = ' · '.join(f'<b class="{cls}">{len(group)}</b> {word}'
+                            for cls, group, word in (('ok', works, 'work today'), ('next', soon, 'next'), ('plan', planned, 'planned')) if group)
+        later = (f'<h3>Coming next</h3><ul class="nx">{li(soon)}</ul>' if soon else '') + (f'<h3>Planned</h3><ul class="pl">{li(planned)}</ul>' if planned else '')
         out.append(f'''<details class="area"{' open' if i == 0 else ''}><summary>
   <span class="area-name">{escape(area['name'])}</span>
-  <div class="bar" aria-hidden="true"><i class="ok" style="flex:{len(works)}"></i><i class="plan" style="flex:{len(planned)}"></i></div>
-  <span class="counts"><b class="ok">{len(works)}</b> work today · <b class="plan">{len(planned)}</b> planned</span>
+  <div class="bar" aria-hidden="true">{bar}</div>
+  <span class="counts">{counts}</span>
   <svg class="chev" aria-hidden="true"><use href="#chev"/></svg></summary>
   <div class="detail">
     <div class="wl"><h3>Works today</h3><ul>{li(works)}</ul></div>
-    <div><h3>Planned</h3><ul class="pl">{li(planned)}</ul></div>{note}
+    <div>{later}</div>{note}
   </div></details>''')
     return '\n'.join(out)
 
