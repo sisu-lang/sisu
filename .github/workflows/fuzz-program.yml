@@ -230,7 +230,9 @@ jobs:
   report:
     name: Report a failed run
     needs: [plan, fuzz]
-    if: always() && (needs.fuzz.result == 'failure' || needs.plan.result == 'failure') && github.event_name == 'schedule'
+    # A job stopped at its timeout-minutes ends `cancelled`, as run 41981041579 did. The nightly
+    # never cancels for concurrency, so `cancelled` here is such a stop or a cancel by hand.
+    if: always() && (needs.fuzz.result == 'failure' || needs.fuzz.result == 'cancelled' || needs.plan.result == 'failure') && github.event_name == 'schedule'
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:

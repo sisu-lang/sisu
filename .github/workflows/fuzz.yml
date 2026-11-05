@@ -112,7 +112,8 @@ jobs:
   report:
     name: Report a failed run
     needs: fuzz
-    if: always() && needs.fuzz.result == 'failure' && github.event_name == 'schedule'
+    # A job stopped at its timeout-minutes ends `cancelled`; see fuzz-program.yml.
+    if: always() && (needs.fuzz.result == 'failure' || needs.fuzz.result == 'cancelled') && github.event_name == 'schedule'
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
