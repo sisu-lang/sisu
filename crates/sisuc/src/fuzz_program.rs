@@ -1511,31 +1511,35 @@ mod tests {
     /// property holds
     #[test]
     fn a_main_that_returns_before_shapes_should_print_no_marked_line() {
+        let call = "    shapes()\n}";
         let mut found = None;
         search_seeds(0, |n| {
-            let g = generate(&seed(n));
+            let mut g = generate(&seed(n));
             let main = item(&g.program, "fn main()").unwrap_or_default();
-            if !g.expected.is_empty() && main.ends_with("    shapes()\n}") {
-                found = Some(g);
+            if !g.expected.is_empty() && main.ends_with(call) {
+                let at = (g
+                    .program
+                    .find(main)
+                    .expect("`main` should be in the program")
+                    + main.len())
+                    - call.len();
+                let original = g.program.clone();
+                g.program.insert_str(at, "    return\n");
+                let run = o0_run(&g);
+                // A statement of `main` before the call can panic on an overflow or an index
+                // (property 3), so a run that exits 101 is skipped. Any other exit fails below.
+                if run.exit != Exit::Code(101) {
+                    found = Some((original, g, run));
+                }
             }
             found.is_some()
         });
-        let mut g = found.expect("some seed's `main` should end with a call of `shapes`");
-        let main = item(&g.program, "fn main()").expect("the program should have a `main`");
-        let call = "    shapes()\n}";
-        let at = g
-            .program
-            .find(main)
-            .expect("`main` should be in the program")
-            + main.len()
-            - call.len();
-        let before = codes(&g.program);
-        g.program.insert_str(at, "    return\n");
-        let mut expected_codes = before;
+        let (original, g, run) =
+            found.expect("some seed's `main` should end with a call of `shapes`");
+        let mut expected_codes = codes(&original);
         expected_codes.push("W0001".to_string());
         expected_codes.sort();
         assert_eq!(codes(&g.program), expected_codes, "{}", g.program);
-        let run = o0_run(&g);
         assert_eq!(run.exit, Exit::Code(0), "`main` should return");
         assert!(
             !String::from_utf8_lossy(&run.stdout)
