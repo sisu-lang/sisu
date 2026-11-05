@@ -132,7 +132,8 @@ jobs:
             echo "No failing input to minimize."
             exit 0
           fi
-          # A fuzz step stopped by its limit writes no summary, so the line below would be all of it.
+          # A fuzz step stopped by its limit writes no summary, so the line below
+          # would be all of it.
           if [ ! -f fuzz/artifacts/summary.md ]; then
             echo "The fuzzer failed before writing a summary; see the log of the fuzz step." >fuzz/artifacts/summary.md
           fi
