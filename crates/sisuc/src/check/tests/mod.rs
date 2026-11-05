@@ -491,14 +491,14 @@ fn if_with_failed_and_never_branches_is_error() {
     );
 }
 
-/// A rule that fails makes its expression `Error`. Each row binds the failed expression
-/// and uses it where a typed result would cascade into a second error.
+/// A rule that fails makes its expression `Error`. A call whose callee fixes its result type keeps
+/// it (see `failed_calls`). Each row binds the failed expression and uses it where a typed result
+/// would cascade into a second error.
 #[test]
 fn failed_rule_should_make_its_expression_error() {
     const MISMATCH: Code = Code::Mismatch;
-    const F: &str = "fn f(a: i64) -> i64 { a }\n";
     with_prelude();
-    let rows: [(&str, String, Code, (usize, usize)); 15] = [
+    let rows: [(&str, String, Code, (usize, usize)); 12] = [
         (
             "unary",
             "fn main() {\n    let x = -true\n    print(x == false)\n}".into(),
@@ -546,24 +546,6 @@ fn failed_rule_should_make_its_expression_error() {
             "class C {}\nfn main() {\n    let x = [C()].contains(C())\n    print(x + 1)\n}".into(),
             Code::NotConform,
             (3, 13),
-        ),
-        (
-            "call arity",
-            format!("{F}fn main() {{\n    let x = f()\n    print(x == false)\n}}"),
-            Code::ArgumentCount,
-            (3, 13),
-        ),
-        (
-            "call argument",
-            format!("{F}fn main() {{\n    let x = f(true)\n    print(x == false)\n}}"),
-            MISMATCH,
-            (3, 15),
-        ),
-        (
-            "print arity",
-            "fn main() {\n    let x = print(1, 2)\n    print(x)\n}".into(),
-            Code::PrintArgument,
-            (2, 13),
         ),
         (
             "print unit argument",
@@ -2789,23 +2771,23 @@ fn label_outside_constructor() {
     );
 }
 
-/// A labeled argument fails the call: it is `Error`, so a later use draws nothing.
+/// A labeled argument fails the call, which keeps its result type: a later use is checked.
 #[test]
-fn labeled_call_is_error() {
+fn a_labeled_call_should_keep_its_result_type() {
     codes(
         "fn f(a: i64) -> i64 { a }\nfn main() {\n    print(f(a: 1) + true)\n}",
-        &[(Code::LabeledArgument, (3, 13))],
+        &[(Code::LabeledArgument, (3, 13)), (Code::Mismatch, (3, 21))],
     );
 }
 
-/// A constructor whose own rule fails is `Error`; one with an `Error` argument keeps its
-/// class, so a later use is still checked.
+/// A constructor keeps its class when its own rule fails and when an argument fails, so a later
+/// use is still checked.
 #[test]
-fn constructor_is_error_only_when_its_rule_fails() {
+fn a_constructor_should_keep_its_class_when_it_fails() {
     let class = "class P {\n    x: i64\n    y: i64\n}\n";
     codes(
         &format!("{class}fn main() {{\n    print(P(x: 1).x + true)\n}}"),
-        &[(Code::MissingField, (6, 11))],
+        &[(Code::MissingField, (6, 11)), (Code::Mismatch, (6, 23))],
     );
     codes(
         &format!("{class}fn main() {{\n    print(P(x: nope, y: 1).x + true)\n}}"),
@@ -4137,9 +4119,9 @@ fn assign_while_let_binding() {
 }
 
 /// A `None` that its rule rejects fails that rule: what the rule makes is `Error`, so a
-/// later use draws nothing.
+/// later use draws nothing. A call that rejects it keeps its result type instead.
 #[test]
-fn rejected_none_reports_once() {
+fn a_rejected_none_should_be_reported_once() {
     let cases = [
         (
             "fn main() {\n    let x = !None\n    print(x + 1)\n}",
@@ -4150,10 +4132,6 @@ fn rejected_none_reports_once() {
             (2, 16),
         ),
         (
-            "fn f(x: i64) -> i64 { x }\nfn main() {\n    let r = f(None)\n    print(r && true)\n}",
-            (3, 15),
-        ),
-        (
             "fn main() {\n    let y = None + 1\n    print(y && true)\n}",
             (2, 13),
         ),
@@ -4161,6 +4139,10 @@ fn rejected_none_reports_once() {
     for (src, pos) in cases {
         codes(src, &[(Code::Mismatch, pos)]);
     }
+    codes(
+        "fn f(x: i64) -> i64 { x }\nfn main() {\n    let r = f(None)\n    print(r && true)\n}",
+        &[(Code::Mismatch, (3, 15)), (Code::Mismatch, (4, 11))],
+    );
     // Each `None` is its own mistake; the `if` that holds them fails the rule too.
     let nested = [
         (

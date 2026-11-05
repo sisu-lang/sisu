@@ -812,7 +812,7 @@ fn get_with_a_range_should_report_only_true_errors() {
             "wrong count",
             "fn f(n: i64) -> string {\n    return \"x\"\n}\n\nfn main() {\n    print(f(1, 2).get(..) ?? \"\")\n}"
                 .to_string(),
-            vec![(Code::ArgumentCount, (6, 11))],
+            vec![(Code::ArgumentCount, (6, 11)), (RANGE, (6, 23))],
         ),
         (
             "unknown receiver",

@@ -142,13 +142,14 @@ fn a_prelude_function_with_the_wrong_count_should_keep_its_result_type() {
     for (row, body) in [
         ("read_line", "let n: i64 = read_line(1)"),
         ("panic", "let s: string = panic(\"a\", \"b\")"),
+        ("print", "let s: string = print(1, 2)"),
     ] {
         let src = program("fn pad() {}", body);
         let found: Vec<_> = diags(&src).iter().map(Diagnostic::code).collect();
-        let want = if row == "panic" {
-            vec![ArgumentCount, Code::NoValue]
-        } else {
-            vec![ArgumentCount, Mismatch]
+        let want = match row {
+            "panic" => vec![ArgumentCount, Code::NoValue],
+            "print" => vec![Code::PrintArgument, Code::NoValue],
+            _ => vec![ArgumentCount, Mismatch],
         };
         assert_eq!(found, want, "row `{row}`");
     }

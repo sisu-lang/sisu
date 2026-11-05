@@ -2275,19 +2275,19 @@ fn a_call_through_a_bound_should_check_the_count_of_its_arguments() {
             "fn f<T: Same>(x: T) -> bool {\n    x.same(1)\n}",
             vec![(Code::Mismatch, (2, 12))],
         ),
-        // The call is `Error` when its argument fails, so the tail adds no mismatch of its own.
+        // The call keeps its result type when its argument fails: the tail adds its own mismatch.
         (
             "fn f<T: Same>(x: T) -> i64 {\n    x.same(1)\n}",
-            vec![(Code::Mismatch, (2, 12))],
+            vec![(Code::Mismatch, (2, 5)), (Code::Mismatch, (2, 12))],
         ),
         (
             "fn f<T: Keep>(x: T) -> i64 {\n    x.keep(v: 1)\n}",
             vec![(Code::LabeledArgument, (2, 12))],
         ),
-        // A call whose argument has a label is `Error`: its tail adds no mismatch.
+        // A call whose argument has a label keeps its result type: its tail adds its mismatch.
         (
             "fn f<T: Same>(x: T) -> string {\n    x.same(v: x)\n}",
-            vec![(Code::LabeledArgument, (2, 12))],
+            vec![(Code::Mismatch, (2, 5)), (Code::LabeledArgument, (2, 12))],
         ),
     ] {
         codes(&with_bounds(row), &expected);

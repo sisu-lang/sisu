@@ -113,10 +113,9 @@ fn push_count() {
     let mut xs = [1]
     let _s: string = xs.push(1, 2)
 }
-fn get_count(xs: [i64], s: string, x: f64) {
-    let _a: string = xs.get(1, 2)
-    let _b: string = s.get(1, 2)
-    let _c: string = i64(x, 1)
+fn get_count(s: string, x: f64) {
+    let _a: string = s.get(1, 2)
+    let _b: string = i64(x, 1)
 }
 fn written_count() {
     let _s: string = gen<i64>(1, 2)

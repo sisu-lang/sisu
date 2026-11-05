@@ -346,6 +346,10 @@ impl Checker<'_> {
             let d = no_member(Definition::Method, owner, method, names);
             return self.rejected_lookup(d, method, args);
         };
+        let result = match op {
+            MathOp::IsNan | MathOp::IsFinite | MathOp::IsInfinite => Type::BOOL,
+            _ => Type::F64,
+        };
         if args.len() != params {
             let d = DiagnosticKind::ArgumentCount {
                 name: self.method_name(ty, method.name.as_str()),
@@ -353,17 +357,13 @@ impl Checker<'_> {
                 found: args.len(),
                 at: span,
             };
-            return self.rejected(d.into(), args);
+            return self.rejected(d.into(), args, Some(result));
         }
         let labeled = self.labels(args);
         let (checked, mismatched): (Vec<_>, Vec<_>) = args
             .iter()
             .map(|arg| self.operand(&arg.value, Some(ty)))
             .unzip();
-        let result = match op {
-            MathOp::IsNan | MathOp::IsFinite | MathOp::IsInfinite => Type::BOOL,
-            _ => Type::F64,
-        };
         let failed = labeled || mismatched.contains(&true);
         let operands: Result<Vec<_>, Poisoned> = std::iter::once(receiver).chain(checked).collect();
         // Never an owned reference, so no operand needs `spill`.

@@ -69,6 +69,11 @@ use unused_names::{Owner, Pending, Use, Used};
 /// arguments are each checked against their own parameter, so one bad argument does not
 /// excuse another.
 ///
+/// A failed call keeps the result type that its callee fixes: a function, a method, a
+/// constructor, a variant, a built-in method or a prelude function, with the receiver's and the
+/// written type arguments substituted (`Checker::fixed_result`). A callee whose result names a
+/// parameter that only the arguments bind gives `Error`, as `dbg`, `get` and a conversion do.
+///
 /// A generic call that cannot meet its context is `Error` too, but it keeps the type it found
 /// in `found`. A block, a branch and a safe call keep that field for the code that uses the value.
 /// A value in which a generic call kept its E0050 has `kept` set. A block, a branch, unary `-`,

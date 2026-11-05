@@ -6327,7 +6327,6 @@ const PARITY_ROWS: &[ParityRow<'static>] = &[
     ("", "let y: i64? = if true { mk2() } else { None }"),
     ("", "let o = mko()\nlet y: i64? = o?.m()"),
     ("", "let o = mko()\nlet y: i64 = o?.m()"),
-    ("", "let o = mko()\nlet y: i64? = o?.w(o?.k())"),
     ("", "print(fi(mk2()))"),
     ("", "print(1 == fi(mk2()))"),
     ("fn f() -> i64 { mk2() }\n", "print(f())"),
@@ -6394,7 +6393,8 @@ const Q_DECL: &str = "class Q {\n    fn take(self, _x: i64?) -> i64 { 0 }\n}\n";
 /// A generic call whose result cannot meet its context hands the type it found to the code that
 /// uses the value. That code reports what it reports for a concrete callee. So the two programs
 /// give the same codes at the same places. Only the found type differs: `Two<X, bool>` for
-/// `Two<i64, bool>`.
+/// `Two<i64, bool>`. No row has a call whose own argument fails: a concrete callee keeps its
+/// result type then, and a generic one whose arguments bind its result does not.
 #[test]
 fn a_generic_call_that_cannot_meet_its_context_should_report_as_a_concrete_call_does() {
     with_prelude();

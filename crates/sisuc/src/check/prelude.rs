@@ -47,10 +47,11 @@ impl Checker<'_> {
 
     /// `print(x)` or `eprint(x)`, by `stream`.
     fn print(&mut self, span: Span, args: &[ast::Arg], stream: Stream) -> Checked {
-        let (arg, checked, labeled) = match self.shown(span, args, stream.name(), None) {
-            Ok(shown) => shown,
-            Err(failed) => return failed,
-        };
+        let (arg, checked, labeled) =
+            match self.shown(span, args, stream.name(), (None, Some(Type::UNIT))) {
+                Ok(shown) => shown,
+                Err(failed) => return failed,
+            };
         self.warn_if_optional(&arg.value, &checked);
         let kind = checked
             .ok()
@@ -67,7 +68,7 @@ impl Checker<'_> {
     /// `Body::quiet_at`), so is `x`.
     fn dbg(&mut self, span: Span, args: &[ast::Arg], expected: Option<Type>) -> Checked {
         let outer = self.pass_quiet(span, args.first().map(|a| a.value.span), expected);
-        let shown = self.shown(span, args, "dbg", expected);
+        let shown = self.shown(span, args, "dbg", (expected, None));
         self.body.quiet_at = outer;
         let (arg, checked, labeled) = match shown {
             Ok(shown) => shown,
@@ -94,13 +95,14 @@ impl Checker<'_> {
     /// The argument of a call of `function` (`print`, `eprint` or `dbg`) at `span`, checked with
     /// `expected`, with whether the arguments had a label. Every type shows through `Display` but
     /// `unit` and `never`. `Err` is the call's own result when its argument is wrong, which this
-    /// has reported.
+    /// has reported. `ret` is the type of the call when it has the wrong count: `dbg` has the
+    /// type of its argument, so it has none.
     fn shown<'a>(
         &mut self,
         span: Span,
         args: &'a [ast::Arg],
         function: &'static str,
-        expected: Option<Type>,
+        (expected, ret): (Option<Type>, Option<Type>),
     ) -> Result<(&'a ast::Arg, Checked, bool), Checked> {
         // Not `value()`: a `unit` argument needs this code, not "expression has no value".
         let wrong = |problem, at| {
@@ -115,7 +117,7 @@ impl Checker<'_> {
         let [arg] = args else {
             self.diagnostics.push(wrong(PrintProblem::Count, span));
             self.stray(args);
-            return Err(Err(Poisoned::error()));
+            return Err(Err(Poisoned::of(ret)));
         };
         self.refuse_mut(args, Callee::Unnamed(&function));
         let checked = self.expr(&arg.value, expected);
@@ -161,7 +163,7 @@ impl Checker<'_> {
         self.body.exits += 1;
         let labeled = self.labels(args);
         let [arg] = args else {
-            return self.argument_count("panic", 1, span, args);
+            return self.argument_count("panic", 1, span, args, Type::NEVER);
         };
         self.refuse_mut(args, Callee::Unnamed(&"panic"));
         let message = self.message(&arg.value);
@@ -191,7 +193,7 @@ impl Checker<'_> {
                     tir::ExprKind::Concat { lhs, rhs }
                 })
             }),
-            _ => return self.argument_count("todo", 1, span, args),
+            _ => return self.argument_count("todo", 1, span, args, Type::NEVER),
         };
         panics(keyword, labeled, message)
     }
@@ -199,19 +201,21 @@ impl Checker<'_> {
     /// `read_line()`, of type `string?`; it takes no arguments.
     fn read_line(&mut self, span: Span, args: &[ast::Arg]) -> Checked {
         if !args.is_empty() {
-            return self.argument_count("read_line", 0, span, args);
+            return self.argument_count("read_line", 0, span, args, Type::optional(Type::STRING));
         }
         let ty = Type::optional(Type::STRING);
         typed(span, ty, false, Some(tir::ExprKind::ReadLine))
     }
 
-    /// `name`'s count error: it takes `want` arguments, and `args` is not that many.
+    /// `name`'s count error: it takes `want` arguments, and `args` is not that many. The call has
+    /// the type `ret`.
     fn argument_count(
         &mut self,
         name: &str,
         want: usize,
         span: Span,
         args: &[ast::Arg],
+        ret: Type,
     ) -> Checked {
         self.report(DiagnosticKind::ArgumentCount {
             name: name.to_string(),
@@ -220,7 +224,7 @@ impl Checker<'_> {
             at: span,
         });
         self.stray(args);
-        Err(Poisoned::error())
+        Err(Poisoned::typed(ret))
     }
 
     /// A `panic` or `todo` message, an expression of type `string`. A value that interpolation

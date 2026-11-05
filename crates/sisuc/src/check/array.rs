@@ -591,7 +591,7 @@ impl Checker<'_> {
                 found: args.len(),
                 at: span,
             };
-            return self.rejected(d.into(), args);
+            return self.rejected(d.into(), args, Some(Type::I64));
         }
         let kind = receiver.ok().map(|r| tir::ExprKind::Len(Box::new(r)));
         typed(span, Type::I64, false, kind)
@@ -619,7 +619,7 @@ impl Checker<'_> {
         self.labels(args);
         if params.len() != args.len() {
             let name = self.method_name(ty, method.name.as_str());
-            return self.wrong_count(span, name, params.len(), args);
+            return self.wrong_count(span, name, params.len(), args, None);
         }
         let stands = self.owner_args(func, ty).get().to_vec();
         let mut own_mistake = false;
@@ -650,12 +650,18 @@ impl Checker<'_> {
         Err(Poisoned::error())
     }
 
-    /// Reports `d` for a method call that cannot be checked, and its arguments' own errors.
-    pub(super) fn rejected(&mut self, d: Diagnostic, args: &[ast::Arg]) -> Checked {
+    /// Reports `d` for a method call that cannot be checked, and its arguments' own errors. `ret`
+    /// is the type of the call when its method fixes it.
+    pub(super) fn rejected(
+        &mut self,
+        d: Diagnostic,
+        args: &[ast::Arg],
+        ret: Option<Type>,
+    ) -> Checked {
         self.diagnostics.push(d);
         self.labels(args);
         self.stray(args);
-        Err(Poisoned::error())
+        Err(Poisoned::of(ret))
     }
 }
 

@@ -785,7 +785,7 @@ impl Checker<'_> {
                 found: args.len(),
                 at: span,
             };
-            return self.rejected(d.into(), args);
+            return self.rejected(d.into(), args, Some(Type::STRING));
         }
         match receiver {
             Ok(receiver) => {
@@ -846,7 +846,7 @@ impl Checker<'_> {
                 found: args.len(),
                 at: span,
             };
-            return Ok(self.rejected(d.into(), args));
+            return Ok(self.rejected(d.into(), args, Some(Type::BOOL)));
         }
         let labeled = self.labels(args);
         let (other, mismatched) = self.operand(&args[0].value, Some(ty));
@@ -884,6 +884,10 @@ impl Checker<'_> {
 
     /// A call of `func`, which `site` writes. `receiver` is a method's `self`; `args` match the
     /// other parameters.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the steps share the call's signature, receiver and `mut` parts; a split passes each one"
+    )]
     fn invoke(
         &mut self,
         span: Span,
@@ -902,6 +906,7 @@ impl Checker<'_> {
         let labeled = self.labels(args);
         let sig = &self.signatures[func.0];
         let (name, params, ret) = (sig.name.clone(), sig.params.clone(), sig.ret);
+        let declared_ret = ret;
         let returns_param = ret.is_some_and(Type::has_param);
         let (muts, names) = site_of(&sig.muts, &sig.param_names, args);
         let mut_site = MutSite {
@@ -930,7 +935,8 @@ impl Checker<'_> {
                 Some(ty) => self.method_name(ty, site.name.name.as_str()),
                 None => name,
             };
-            return self.wrong_count(span, name, params.len(), args);
+            let ret = self.counted_result(declared_ret, &declared, owner, site);
+            return self.wrong_count(span, name, params.len(), args, ret);
         }
         let checked = if declared.is_empty() {
             let checked = args
@@ -996,8 +1002,54 @@ impl Checker<'_> {
                 let call = tir::Expr::new(tir::ExprKind::Call { func, types, args }, ret, span);
                 Ok(self.mut_call(call, parts))
             }
-            (_, ret) => spread(Err(Poisoned::of(ret.filter(|_| !failed))), flagged),
+            (_, ret) => {
+                let ret = if failed {
+                    // The arguments bind the rest of the result, and they may be the fault.
+                    let written = if site.written.is_empty() {
+                        &[]
+                    } else {
+                        types.get()
+                    };
+                    let written = written.get(owner.len()..).unwrap_or_default();
+                    self.fixed_result(declared_ret, declared.len(), owner, written)
+                } else {
+                    ret
+                };
+                spread(Err(Poisoned::of(ret)), flagged)
+            }
         }
+    }
+
+    /// The result type of a call of a callee with `declared` type parameters, of which `owner`
+    /// are the receiver's, that fails on its count. The type arguments that `site` writes fix
+    /// the parameters of the callee itself. `None` when the arguments bind a parameter of
+    /// `ret`.
+    pub(super) fn counted_result(
+        &mut self,
+        ret: Option<Type>,
+        declared: &[Symbol],
+        owner: &[Type],
+        site: Site<'_>,
+    ) -> Option<Type> {
+        let reads_written = ret.is_some_and(Type::has_param)
+            && !site.written.is_empty()
+            && declared.len() > owner.len();
+        let named = if reads_written {
+            self.type_args(
+                site.name,
+                &declared[owner.len()..],
+                site.written,
+                site.angles,
+            )
+        } else {
+            None
+        };
+        self.fixed_result(
+            ret,
+            declared.len(),
+            owner,
+            named.as_ref().map_or(&[], |n| n.get()),
+        )
     }
 
     /// What a count error calls the method `method` of a receiver of type `ty`: `[i64].len`.
@@ -1006,13 +1058,15 @@ impl Checker<'_> {
     }
 
     /// A call at `span` of the method `name` that wants `want` arguments and has the wrong count:
-    /// the count is the error, unless a comparison misread as a call explains it.
+    /// the count is the error, unless a comparison misread as a call explains it. `ret` is the
+    /// type of the call when its callee fixes it.
     pub(super) fn wrong_count(
         &mut self,
         span: Span,
         name: String,
         want: usize,
         args: &[ast::Arg],
+        ret: Option<Type>,
     ) -> Checked {
         self.stray(args);
         if !self.misread_in(args) {
@@ -1023,7 +1077,7 @@ impl Checker<'_> {
                 at: span,
             });
         }
-        Err(Poisoned::error())
+        Err(Poisoned::of(ret))
     }
 
     /// Whether one of `args`, checked, holds a comparison misread as a call, which took the
@@ -1172,8 +1226,10 @@ impl Checker<'_> {
             }
         }
         match self.construct(span, &name, &fields, args) {
-            Ok(args) => Ok(self.spilled(span, ty, args, |args| tir::ExprKind::New { class, args })),
-            Err(failed) => Err(Poisoned::of((!failed).then_some(ty))),
+            Some(args) => {
+                Ok(self.spilled(span, ty, args, |args| tir::ExprKind::New { class, args }))
+            }
+            None => Err(Poisoned::typed(ty)),
         }
     }
 
@@ -1212,15 +1268,15 @@ impl Checker<'_> {
 
     /// The arguments of `name(f: e, ...)`, a class's constructor or a variant with labels,
     /// which name every one of `fields` in declaration order. Only the first mistake is
-    /// reported; every argument is still checked for its own. `Err` holds whether a mistake was
-    /// reported here, rather than in an argument.
+    /// reported; every argument is still checked for its own. `None` when a mistake was reported,
+    /// here or in an argument.
     pub(super) fn construct(
         &mut self,
         span: Span,
         name: &dyn fmt::Display,
         fields: &[(Symbol, Option<Type>)],
         args: &[ast::Arg],
-    ) -> Result<Vec<tir::Expr>, bool> {
+    ) -> Option<Vec<tir::Expr>> {
         let names: Vec<_> = fields.iter().map(|(f, _)| *f).collect();
         let mut failed = false;
         let mut checked = Vec::with_capacity(args.len());
@@ -1247,10 +1303,11 @@ impl Checker<'_> {
             }
             failed = true;
         }
-        match checked.into_iter().collect() {
-            Ok(args) if !failed => Ok(args),
-            _ => Err(failed),
-        }
+        checked
+            .into_iter()
+            .collect::<Result<_, _>>()
+            .ok()
+            .filter(|_| !failed)
     }
 }
 

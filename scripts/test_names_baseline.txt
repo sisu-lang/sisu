@@ -140,7 +140,6 @@ crates/sisuc/src/check/tests/enums.rs::enum_methods
 crates/sisuc/src/check/tests/enums.rs::enum_name_shadowed
 crates/sisuc/src/check/tests/enums.rs::enum_named_local
 crates/sisuc/src/check/tests/enums.rs::enum_named_math
-crates/sisuc/src/check/tests/enums.rs::failed_construction_poisons
 crates/sisuc/src/check/tests/enums.rs::long_declaration_chain_checks
 crates/sisuc/src/check/tests/enums.rs::mixed_labels_poison_construction
 crates/sisuc/src/check/tests/enums.rs::never_built
@@ -235,7 +234,6 @@ crates/sisuc/src/check/tests/mod.rs::coalesce_with_optional_right
 crates/sisuc/src/check/tests/mod.rs::code_after_endless_loop_is_unreachable
 crates/sisuc/src/check/tests/mod.rs::constructor_extra_argument
 crates/sisuc/src/check/tests/mod.rs::constructor_field_type
-crates/sisuc/src/check/tests/mod.rs::constructor_is_error_only_when_its_rule_fails
 crates/sisuc/src/check/tests/mod.rs::constructor_missing_field
 crates/sisuc/src/check/tests/mod.rs::constructor_missing_label
 crates/sisuc/src/check/tests/mod.rs::constructor_out_of_order
@@ -303,7 +301,6 @@ crates/sisuc/src/check/tests/mod.rs::label_outside_constructor
 crates/sisuc/src/check/tests/mod.rs::labeled_break_counts_for_outer_never
 crates/sisuc/src/check/tests/mod.rs::labeled_break_targets_outer_loop
 crates/sisuc/src/check/tests/mod.rs::labeled_break_value_from_inner_loop
-crates/sisuc/src/check/tests/mod.rs::labeled_call_is_error
 crates/sisuc/src/check/tests/mod.rs::labeled_continue_depth
 crates/sisuc/src/check/tests/mod.rs::labeled_continue_outside_loop
 crates/sisuc/src/check/tests/mod.rs::labels_on_unknown_calls_are_not_reported
@@ -392,7 +389,6 @@ crates/sisuc/src/check/tests/mod.rs::poisoned_binding_reports_once
 crates/sisuc/src/check/tests/mod.rs::poisoned_operand_checks_siblings
 crates/sisuc/src/check/tests/mod.rs::poisoned_receiver_checks_args
 crates/sisuc/src/check/tests/mod.rs::rejected_if_let_scrutinee_reports_once
-crates/sisuc/src/check/tests/mod.rs::rejected_none_reports_once
 crates/sisuc/src/check/tests/mod.rs::repeated_param
 crates/sisuc/src/check/tests/mod.rs::repeated_param_is_poisoned
 crates/sisuc/src/check/tests/mod.rs::return_from_endless_loop
@@ -537,7 +533,6 @@ crates/sisuc/src/check/tests/prelude.rs::todo_in_parentheses
 crates/sisuc/src/check/tests/prelude.rs::todo_is_never
 crates/sisuc/src/check/tests/prelude.rs::todo_is_not_a_value
 crates/sisuc/src/check/tests/prelude.rs::todo_lowers
-crates/sisuc/src/check/tests/prelude.rs::todo_message_rules
 crates/sisuc/src/check/tests/prelude.rs::todo_with_a_label_is_an_error
 crates/sisuc/src/check/tests/shadowing.rs::if_let_binding_shadowed
 crates/sisuc/src/check/tests/shadowing.rs::let_mut_shadows_let

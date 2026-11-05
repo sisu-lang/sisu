@@ -2057,6 +2057,28 @@ impl Checker<'_> {
         self.ranked(|c| c.infer_call(span, sig, written, args, expected, parts))
     }
 
+    /// The result type `ret` of a failed call of a callee with `declared` type parameters, when
+    /// the call fixes it without its arguments: `owner` binds the first parameters, and `named`
+    /// the type arguments that the call writes, which come next. `None` when `ret` names a
+    /// parameter that only the arguments bind, and for a callee with no result type.
+    pub(super) fn fixed_result(
+        &self,
+        ret: Option<Type>,
+        declared: usize,
+        owner: &[Type],
+        named: &[Type],
+    ) -> Option<Type> {
+        let ret = ret?;
+        if !ret.has_param() {
+            return Some(ret);
+        }
+        let mut bindings = Bindings::new(declared, owner);
+        for (slot, &ty) in bindings.found[owner.len()..].iter_mut().zip(named) {
+            *slot = Some(ty);
+        }
+        self.known(&bindings, ret)
+    }
+
     /// `generic_call`, before what ranking kept is dropped.
     #[expect(
         clippy::too_many_lines,

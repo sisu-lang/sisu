@@ -409,7 +409,7 @@ impl Checker<'_> {
                 found: args.len(),
                 at: span,
             };
-            return self.rejected(d.into(), args);
+            return self.rejected(d.into(), args, element.map(|_| Type::UNIT));
         };
         // A label or a mismatch is reported, and an error withholds the `tir`.
         self.labels(args);

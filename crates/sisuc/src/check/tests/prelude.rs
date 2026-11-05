@@ -394,11 +394,11 @@ fn todo_lowers() {
     }
 }
 
-/// `todo`'s message follows `panic`'s rules, as a statement and as a value, where a broken
-/// `todo` is `Error` and so not also "no value". In each row, the body, the warning's position,
-/// the other diagnostic, and the body its fix makes, if it has one.
+/// `todo`'s message follows `panic`'s rules, as a statement and as a value. A broken `todo` keeps
+/// its type `never`, so as a value it is also "no value". In each row, the body, the warning's
+/// position, the other diagnostic, and the body its fix makes, if it has one.
 #[test]
-fn todo_message_rules() {
+fn a_todo_message_should_follow_the_rules_of_panic() {
     for (statements, warning, (code, pos), fixed) in [
         (
             "todo(1)",
@@ -425,12 +425,6 @@ fn todo_message_rules() {
             Some("let x = todo(\"{1}\")"),
         ),
         (
-            "let x = todo(\"a\", \"b\")",
-            (2, 13),
-            (Code::ArgumentCount, (2, 13)),
-            None,
-        ),
-        (
             "let xs = [1]\n    let x = todo(xs)",
             (3, 13),
             (Code::Mismatch, (3, 18)),
@@ -448,6 +442,15 @@ fn todo_message_rules() {
             None => assert_eq!(fixes(&src, d), [], "{src}"),
         }
     }
+    // As a value, the broken call keeps its type `never`, which a `let` cannot hold.
+    codes(
+        &body("", "let x = todo(\"a\", \"b\")"),
+        &[
+            (Code::TodoLeft, (2, 13)),
+            (Code::ArgumentCount, (2, 13)),
+            (Code::NoValue, (2, 13)),
+        ],
+    );
 }
 
 /// `todo` never finishes, as `panic` does: only the warning is reported.

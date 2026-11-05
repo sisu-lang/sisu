@@ -52,7 +52,8 @@ impl Checker<'_> {
         // does of a function.
         let info = &self.interfaces[interface.0];
         let requirement = &info.requirements[method];
-        let (params, ret) = (requirement.params.clone(), requirement.ret);
+        let (params, declared_ret) = (requirement.params.clone(), requirement.ret);
+        let ret = declared_ret;
         let returns_param = ret.is_some_and(Type::has_param);
         // Only a requirement with a `mut` parameter, or a call with a `mut` argument, pays for a
         // site.
@@ -64,16 +65,8 @@ impl Checker<'_> {
         let mut owner = vec![ty];
         owner.extend_from_slice(iargs.get());
         if params.len() != args.len() {
-            self.stray(args);
-            if !self.misread_in(args) {
-                self.report(DiagnosticKind::ArgumentCount {
-                    name,
-                    want: params.len(),
-                    found: args.len(),
-                    at: span,
-                });
-            }
-            return Err(Poisoned::error());
+            let ret = self.counted_result(declared_ret, &declared, &owner, site);
+            return self.wrong_count(span, name, params.len(), args, ret);
         }
         let mut_site = MutSite {
             callee: &name,
@@ -124,7 +117,21 @@ impl Checker<'_> {
                 let call = tir::Expr::new(call(args), ret, span);
                 Ok(self.mut_call(call, parts))
             }
-            (_, ret) => spread(Err(Poisoned::of(ret.filter(|_| !failed))), flagged),
+            (_, solved) => {
+                // A failed call keeps the result that the receiver and the written type
+                // arguments fix.
+                let ret = if failed {
+                    let written = if site.written.is_empty() {
+                        &[]
+                    } else {
+                        types.get()
+                    };
+                    self.fixed_result(declared_ret, declared.len(), &owner, written)
+                } else {
+                    solved
+                };
+                spread(Err(Poisoned::of(ret)), flagged)
+            }
         }
     }
 

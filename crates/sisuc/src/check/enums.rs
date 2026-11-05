@@ -335,12 +335,12 @@ impl Checker<'_> {
                 } else {
                     // Mixed labels are reported at the declaration.
                     self.stray(args);
-                    Err(true)
+                    return Err(Poisoned::error());
                 };
-                match built {
-                    Ok(args) => args,
-                    Err(failed) => return Err(Poisoned::of((!failed).then_some(ty))),
-                }
+                let Some(args) = built else {
+                    return Err(Poisoned::typed(ty));
+                };
+                args
             }
             Some((args, parens)) => {
                 // The fix deletes the parentheses, so what they hold (even a comment) makes it
@@ -533,28 +533,26 @@ impl Checker<'_> {
     }
 
     /// The arguments of `path(args)`, a variant whose payload declares no labels, checked
-    /// against its `fields` in order. `Err` holds whether a mistake was reported here, rather
-    /// than in an argument.
+    /// against its `fields` in order. `None` when a mistake was reported, here or in an argument.
     fn positional(
         &mut self,
         span: Span,
         path: &dyn fmt::Display,
         fields: &[Option<Type>],
         args: &[ast::Arg],
-    ) -> Result<Vec<tir::Expr>, bool> {
-        let Some(labeled) = self.positional_shape(span, path, fields.len(), args) else {
-            return Err(true);
-        };
+    ) -> Option<Vec<tir::Expr>> {
+        let labeled = self.positional_shape(span, path, fields.len(), args)?;
         let (checked, mismatched): (Vec<_>, Vec<_>) = args
             .iter()
             .zip(fields)
             .map(|(arg, field)| self.operand(&arg.value, *field))
             .unzip();
         let failed = labeled || mismatched.contains(&true);
-        match checked.into_iter().collect() {
-            Ok(args) if !failed => Ok(args),
-            _ => Err(failed),
-        }
+        checked
+            .into_iter()
+            .collect::<Result<_, _>>()
+            .ok()
+            .filter(|_| !failed)
     }
 
     /// The prelude's `Result` and the variant it declares for `name`, when `name` is `Ok` or
