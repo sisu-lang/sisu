@@ -895,6 +895,10 @@ pub(super) struct HoldsTable {
 /// `ty` without its array and optional wrappers.
 pub(super) fn unwrapped(mut ty: Type) -> Type {
     while let TypeKind::Array(inner) | TypeKind::Optional(inner) = ty.kind() {
+        // One step for each wrapper it removes, so a walk that unwraps before its seen set or
+        // cache shows the work.
+        #[cfg(test)]
+        TYPE_WALK_STEPS.set(TYPE_WALK_STEPS.get() + 1);
         ty = inner;
     }
     ty
