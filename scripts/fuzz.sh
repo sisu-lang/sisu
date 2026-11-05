@@ -12,9 +12,10 @@
 #                                     and seeds, and how many inputs reach codegen
 #   scripts/fuzz.sh --target program --gaps   the functions that a valid program reaches and no
 #                                     fixed seed reaches (scripts/fuzz_gaps.py); exits 1 on a new
-#                                     gap and 2 on a broken measurement, each with its section
-#                                     appended to fuzz/artifacts/summary.md. A tool that fails
-#                                     gives its own status, with no section.
+#                                     gap and 2 when the comparison cannot trust a measurement,
+#                                     each with its section appended to fuzz/artifacts/summary.md.
+#                                     A directory with no program exits 2, and a tool that fails
+#                                     gives its own status. Neither writes a section.
 # The seeds of front_end are the .sisu files of the test tree. The seeds of program are 128
 # full-size inputs from scripts/fuzz_seeds.py: a short input runs out of bytes, and the fuzzer
 # grows an input too slowly to reach full size.

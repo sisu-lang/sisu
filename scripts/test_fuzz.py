@@ -432,6 +432,13 @@ class GapsCheck(unittest.TestCase):
     def test_gaps_should_fail_when_tests_run_fail_has_no_program(self):
         self.check_directory_without_program('run-fail')
 
+    def test_gaps_should_fail_when_a_copy_fails(self):
+        write_executable(self.bin, 'cp', '#!/bin/sh\nexit 7\n')
+        run = self.gaps()
+        self.assertEqual(run.code, 7, run.stdout + run.stderr)
+        self.assertEqual([line for line in run.log if line.startswith('coverage')], [])
+        self.assertNotIn('## Generator gaps', run.summary)
+
 
 if __name__ == '__main__':
     unittest.main()
