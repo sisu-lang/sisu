@@ -61,7 +61,7 @@ mutation-test: ## Mutation-test the changes since BASE (unit tests, then the who
 fuzz: ## Fuzz TARGET (front_end by default, or program) for SECS seconds (1800 by default)
 	scripts/fuzz.sh --target "$(or $(TARGET),front_end)" "$(SECS)"
 
-fuzz-coverage: ## Line coverage per compiler stage of TARGET's corpus (and front_end's seeds); front_end by default
+fuzz-coverage: ## Line coverage per compiler stage of TARGET's corpus and seeds; front_end by default
 	scripts/fuzz.sh --target "$(or $(TARGET),front_end)" --coverage
 
 bench: ## Time the benchmarks in bench/ (BENCH='fib sieve' picks some)

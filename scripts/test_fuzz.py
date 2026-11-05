@@ -31,8 +31,9 @@ exit 77
 """
 
 # The fake cargo of the program target. `cargo fuzz run` writes one line to $FAKE_SEEN for each
-# directory argument with a slash (the subcommand `fuzz` names a directory too): its name, its file count and how many of its files hold 4096 bytes. It
-# does so while the directory exists, since fuzz.sh deletes its seeds on exit.
+# directory argument with a slash (the subcommand `fuzz` names a directory too). The line holds
+# the name of the directory, its file count and how many of its files hold 4096 bytes. It is
+# written while the directory exists, since fuzz.sh deletes its seeds on exit.
 PROGRAM_CARGO = """#!/usr/bin/env bash
 if [[ $1 == fuzz && $2 == run ]]; then
   for arg in "$@"; do

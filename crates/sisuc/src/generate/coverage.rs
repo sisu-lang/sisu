@@ -9219,28 +9219,19 @@ fn the_programs_of_seeds_203_4534_and_5974_should_check_clean() {
     }
 }
 
-/// The XOR of the 64-bit words of `bytes`, which are little-endian.
-fn xor_of_words(bytes: &[u8]) -> u64 {
-    let (words, _) = bytes.as_chunks::<8>();
-    words
-        .iter()
-        .fold(0, |acc, word| acc ^ u64::from_le_bytes(*word))
-}
-
-/// `scripts/fuzz_seeds.py` copies `seed`, and `scripts/test_fuzz_seeds.py` pins the same values.
+/// The pin covers the bytes and the order of all 128 fuzz seeds: FNV-1a 64 over `seed(0)`, then
+/// `seed(1)`, up to `seed(127)`. `scripts/fuzz_seeds.py` copies `seed`. The test
+/// `scripts/test_fuzz_seeds.py` holds both files to this one value, so a change to one fails it.
 #[test]
 fn fuzz_seeds_should_match_the_pinned_values() {
     assert_eq!(FUZZ_SEEDS, 128);
-    for (n, xor) in [
-        (0, 0xa24f_ddd8_7292_55f9),
-        (FUZZ_SEEDS - 1, 0x3d7e_ca94_fe32_c652),
-    ] {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for n in 0..FUZZ_SEEDS {
         let bytes = seed(n);
         assert_eq!(bytes.len(), 4096, "the length of seed {n}");
-        assert_eq!(
-            xor_of_words(&bytes),
-            xor,
-            "the XOR of the words of seed {n}"
-        );
+        for byte in bytes {
+            hash = (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3);
+        }
     }
+    assert_eq!(hash, 0x20e3_12f6_e6ae_c322);
 }

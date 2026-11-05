@@ -601,9 +601,10 @@ The script first builds the runtime archive in release mode and points
 `SISU_RUNTIME` at it, since the builds link it. The target's corpus is
 `fuzz/corpus/program`, its failing inputs go to `fuzz/artifacts/program/`,
 and it has no dictionary. It starts from the corpus and from 128 seeds, the
-inputs `seed(0)` to `seed(127)` of the unit tests, which `scripts/fuzz_seeds.py`
-writes as full-size inputs of 4096 bytes. At about one execution a second, the
-fuzzer cannot grow an input to that size by itself. Its limits are `-max_len=4096 -timeout=300 -len_control=0`: libFuzzer tries
+inputs `seed(0)` to `seed(127)` of the unit tests. `scripts/fuzz_seeds.py`
+writes them as full-size inputs of 4096 bytes. At about one execution a
+second, the fuzzer cannot grow an input to that size by itself. Its limits are
+`-max_len=4096 -timeout=300 -len_control=0`. With them, libFuzzer tries
 full-length inputs at once, since a short input runs out of bytes and gets a
 small program. After a run, the script replays up to 3 new `crash-` inputs
 for up to 340 s each.
@@ -648,10 +649,11 @@ comments on the open one, as for the front end. A failed `plan` job opens one
 too. Nothing blocks a merge.
 
 Program inputs are slow: each takes about 1.25 s. Fork mode first runs each
-restored corpus input once, one at a time, and `-max_total_time` does not stop
-that pass. The pass also counts toward the fuzz time. So after the restore,
-the "Sample the corpus" step keeps 500 inputs at random and removes the
-others, so each run starts with at most 500.
+restored corpus input and each of the 128 seeds once, one at a time, and
+`-max_total_time` does not stop that pass. The pass also counts toward the
+fuzz time. So after the restore, the "Sample the corpus" step keeps 500 inputs
+at random and removes the others. Each run then starts with at most 500
+corpus inputs and the seeds.
 The run saves those and its new finds, and the next run samples them again. A
 removed input is lost; the fuzzer can find its coverage again. The
 summary's executions count only the fuzzing after the first pass: few
