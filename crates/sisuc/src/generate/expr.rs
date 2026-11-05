@@ -387,6 +387,17 @@ impl Gen<'_> {
         }
     }
 
+    /// Whether a `loop` value of `ty` at most `max` may be written here. A `break` value must have
+    /// one (E0043), and the `loop` counts toward `MAX_LOOPS`. Below a later branch of an untyped
+    /// `if`, the `break` value of an optional is self-typed (`loop_value`), so it must fit `max`.
+    fn loop_fits(&self, ty: &Ty, max: u64) -> bool {
+        let self_typed = self.untyped_branch && matches!(ty, Ty::Optional(_));
+        *ty != Ty::Unit
+            && self.cost.depth() < MAX_LOOPS
+            && self.fuel >= 2
+            && !(self_typed && ty.least() > max)
+    }
+
     fn compound_rules(&self, ty: &Ty, max: u64, synth: bool, rules: &mut Vec<Rule>) {
         let own: &[Rule] = match ty {
             Ty::I64 => &[
@@ -482,8 +493,7 @@ impl Gen<'_> {
         rules.push(Rule::If);
         if !self.one_line && self.blocks < MAX_BLOCKS {
             rules.push(Rule::Block);
-            // A `break` value must have one (E0043), and the `loop` counts toward `MAX_LOOPS`.
-            if *ty != Ty::Unit && self.cost.depth() < MAX_LOOPS && self.fuel >= 2 {
+            if self.loop_fits(ty, max) {
                 rules.push(Rule::Loop);
             }
             // A `match` near the top only: its arms would otherwise take most of the fuel.
@@ -1366,7 +1376,11 @@ impl Gen<'_> {
         self.one_of(&[" == ", " != "]);
         #[cfg(test)]
         let right = self.w.at();
+        // After a left operand that a join types, the right one has no expected type.
+        let outer = self.untyped_branch;
+        self.untyped_branch |= operand.inferred();
         let rhs = self.expr(&operand, MAX_SIZE);
+        self.untyped_branch = outer;
         #[cfg(test)]
         {
             self.last_right = self.w.out.rewritten[right..].to_string();
@@ -1774,6 +1788,7 @@ impl Gen<'_> {
         let mut parts = vec![cond];
         let mut arms = Vec::new();
         let mut size = 0;
+        let untyped = synth && ty.inferred();
         self.conditionally(|g| {
             loop {
                 g.w.text(" { ");
@@ -1786,7 +1801,7 @@ impl Gen<'_> {
                     g.scope.vars.truncate(vars);
                     branch
                 } else {
-                    g.branch(ty, max)
+                    g.later_branch(ty, max, untyped)
                 };
                 size = size.max(branch.size);
                 parts.push(branch);
@@ -1800,7 +1815,7 @@ impl Gen<'_> {
             }
             g.w.text(" { ");
             let arm = g.w.at();
-            let branch = g.branch(ty, max);
+            let branch = g.later_branch(ty, max, untyped);
             size = size.max(branch.size);
             parts.push(branch);
             arms.push(arm..g.w.at());
@@ -1877,6 +1892,15 @@ impl Gen<'_> {
         let loops = self.cost.depth();
         let binding = name.map(|name| Var::new(name, payload, false, value.size, 0, loops));
         (value, binding)
+    }
+
+    /// `branch`, written below a later branch of an `if` that has no expected type if `untyped`.
+    fn later_branch(&mut self, ty: &Ty, max: u64, untyped: bool) -> Info {
+        let outer = self.untyped_branch;
+        self.untyped_branch |= untyped;
+        let branch = self.branch(ty, max);
+        self.untyped_branch = outer;
+        branch
     }
 
     /// A branch of an `if` after the first: a value, or now and then a panic: a call of

@@ -245,6 +245,10 @@ struct Gen<'a> {
     /// Whether the next expression is in a position with no expected type, where a `u8` must
     /// be one by its own type (`Gen::expr`).
     synth: bool,
+    /// Whether the point being written is below a later branch of an `if` that has no expected
+    /// type, or below the right operand of an equality whose left operand has none. The checker
+    /// may give a value there no expected type, though the generator gives it one.
+    untyped_branch: bool,
     /// Whether the next expression is the value of a `let` that writes its type, so that a
     /// `Result` may be built as `Ok(..)` or `Err(..)`, which take their type from it.
     typed: bool,
@@ -308,6 +312,7 @@ impl<'a> Gen<'a> {
             #[cfg(test)]
             last_right: String::new(),
             synth: false,
+            untyped_branch: false,
             typed: false,
             bare: false,
             ru: Unstructured::new(&[]),
