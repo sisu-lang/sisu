@@ -950,6 +950,8 @@ fn named(
     let declarations = classes + enums;
     stack.extend(fields);
     while let Some(ty) = stack.pop() {
+        #[cfg(test)]
+        super::enums::TYPE_WALK_STEPS.set(super::enums::TYPE_WALK_STEPS.get() + 1);
         let (node, args) = match ty.kind() {
             TypeKind::Array(inner) | TypeKind::Optional(inner) => {
                 stack.push(inner);

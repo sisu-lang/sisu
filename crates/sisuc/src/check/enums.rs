@@ -61,6 +61,8 @@ pub(super) fn reserved_name(name: Symbol) -> Option<BuiltIn> {
 /// optional's payload, and the type arguments of each enum it names, through optionals. With
 /// `open`, only those named with an argument that carries a parameter: `C<T>`, not `Wrap3<i64>`.
 fn inline_enums(ty: Type, open: bool) -> Vec<usize> {
+    #[cfg(test)]
+    TYPE_WALK_STEPS.set(TYPE_WALK_STEPS.get() + 1);
     match ty.kind() {
         TypeKind::Optional(payload) => inline_enums(payload, open),
         TypeKind::Enum(id, args) => {
@@ -75,6 +77,8 @@ fn inline_enums(ty: Type, open: bool) -> Vec<usize> {
 /// Whether `ty` names, where `inline_enums` looks, the enum `e` applied to its own `count`
 /// parameters in order: `Tree<T>` in `Tree`, or `G<T>` in `G`'s `Wrap2<G<T>>`.
 fn names_itself(ty: Type, e: usize, count: usize) -> bool {
+    #[cfg(test)]
+    TYPE_WALK_STEPS.set(TYPE_WALK_STEPS.get() + 1);
     match ty.kind() {
         TypeKind::Optional(payload) => names_itself(payload, e, count),
         TypeKind::Enum(id, args) => {
@@ -757,6 +761,8 @@ impl Checker<'_> {
             // A field holds its type's node and the nodes of its type arguments.
             let mut types = vec![ty];
             while let Some(ty) = types.pop() {
+                #[cfg(test)]
+                TYPE_WALK_STEPS.set(TYPE_WALK_STEPS.get() + 1);
                 match unwrapped(ty).kind() {
                     TypeKind::Class(id, args) => {
                         if let Some(c) = class.get_mut(holder) {
@@ -788,6 +794,8 @@ impl Checker<'_> {
 
     /// What a value of `ty` may hold, with its type arguments.
     pub(super) fn holds(&self, ty: Type) -> Holds {
+        #[cfg(test)]
+        TYPE_WALK_STEPS.set(TYPE_WALK_STEPS.get() + 1);
         let (own, args) = match unwrapped(ty).kind() {
             TypeKind::Enum(id, args) => (self.holds_table.enums[id.0], args),
             TypeKind::Class(id, args) => {
@@ -1004,6 +1012,8 @@ impl Buildable {
 
     /// Whether `ty` can be built, a type parameter's argument always.
     fn reached(&mut self, ty: Type) -> bool {
+        #[cfg(test)]
+        TYPE_WALK_STEPS.set(TYPE_WALK_STEPS.get() + 1);
         let (node, args) = match ty.kind() {
             TypeKind::Class(id, args) => (id.0, args),
             TypeKind::Enum(id, args) => (self.classes + id.0, args),
@@ -1039,6 +1049,8 @@ impl Buildable {
     /// and its arguments' only when the application cannot be built.
     fn buildable(&mut self, ty: Option<Type>, flags: &[bool], consulted: &mut Vec<usize>) -> bool {
         let Some(ty) = ty else { return true };
+        #[cfg(test)]
+        TYPE_WALK_STEPS.set(TYPE_WALK_STEPS.get() + 1);
         let (node, args) = match ty.kind() {
             TypeKind::Param(_, i) => return flags[i as usize],
             TypeKind::Class(id, args) => (id.0, args),
@@ -1122,4 +1134,8 @@ fn may_wait(ty: Option<Type>) -> bool {
 thread_local! {
     /// How many fields `Buildable::run` has scanned on this thread.
     pub(super) static SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many types the checker's type walks have visited on this thread: `Buildable`'s
+    /// `buildable` and `reached`, `holds_table`, `holds`, `inline_enums`, `names_itself` and
+    /// `cycle::named`. Each ticks once for each type it reads.
+    pub(super) static TYPE_WALK_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
