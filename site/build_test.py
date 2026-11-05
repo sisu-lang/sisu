@@ -459,7 +459,7 @@ class Build(unittest.TestCase):
         counts = [re.sub('<[^>]*>', '', c) for c in re.findall(r'<span class="counts">(.*?)</span>', board)]
         self.assertEqual(counts, ['2 work today · 1 next', '1 work today · 1 planned'])
         self.assertEqual(re.findall(r'<i class="(\w+)" style="flex:(\d+)"', board), [('ok', '2'), ('next', '1'), ('ok', '1'), ('plan', '1')])
-        self.assertEqual(re.findall(r'<details class="area"( open)?>', board), [' open', ''])
+        self.assertEqual(re.findall(r'<details class="area"( open)?>', board), ['', ''])
         self.assertEqual(re.findall(r'<span class="area-name">(.*?)</span>', board), ['One', 'Two'])
         self.assertEqual(re.findall(r'<p class="note">(.*?)</p>', board), ['Careful.'])
         self.assertIn('<li>Alpha for 1 codes</li>', board)
