@@ -85,7 +85,7 @@ fn main() {
 10
 ```
 
-The rules:
+**Rules**
 
 - A name cannot be a keyword or a reserved word.
 - `_` alone is not a name. It is a keyword that `let`, `for` and [`match`](enums.md#patterns) use to bind nothing.
@@ -273,11 +273,11 @@ fn main() {
 1
 ```
 
-The rules:
+**Rules**
 
 - After a top-level `const`, a `;` separates it from an item after it on the same line: `const X = 1; fn main() {}`.
-- Inside `(` and `[`, a `;` is an error ([E0011](../diagnostics/E0011.md)). The `;` in `[value; length]` is part of the [array syntax](arrays.md#filled-arrays).
-- When removing a `;` would join two lines into a different statement, the `;` is an error, not a warning ([E0011](../diagnostics/E0011.md)).
+- Inside `(` and `[`, a `;` is an error. The `;` in `[value; length]` is part of the [array syntax](arrays.md#filled-arrays). [E0011](../diagnostics/E0011.md)
+- When removing a `;` would join two lines into a different statement, the `;` is an error, not a warning. [E0011](../diagnostics/E0011.md)
 
 ## Line continuation
 

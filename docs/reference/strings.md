@@ -26,14 +26,21 @@ fn main() {
 }
 ```
 
-The rules:
+**What a string is**
 
 - A string is a value. Binding, passing and storing it behaves as a copy ([Values and memory](values.md#copied-and-shared)).
-- `+` joins two strings ([Arithmetic](operators.md#arithmetic)). `+=` joins a string to a place that can change ([Compound assignment](statements.md#compound-assignment)). Another type beside a string is an error. Use interpolation.
-- `==`, `!=`, `<` and the other comparison operators compare byte by byte, which is the order of the code points ([Comparison](operators.md#comparison)).
 - Sisu does not normalize text. `"é"` as one character and `"e"` with a combining accent are not equal.
-- A string has no single index ([E0068](../diagnostics/E0068.md)) and no fields. It has a range index ([Substrings](#substrings)). Use `chars()` or `bytes()` to get an array.
 - A string can hold the null character `\0`. It counts as one byte.
+- A string has no single index. [E0068](../diagnostics/E0068.md)
+- A string has no fields. [E0063](../diagnostics/E0063.md)
+- A string has a range index ([Substrings](#substrings)). Use `chars()` or `bytes()` to get an array.
+
+**Operators**
+
+- `+` joins two strings ([Arithmetic](operators.md#arithmetic)).
+- `+=` joins a string to a place that can change ([Compound assignment](statements.md#compound-assignment)).
+- A `+` with another type beside a string is an error. Use interpolation.
+- `==`, `!=`, `<` and the other comparison operators compare byte by byte, which is the order of the code points ([Comparison](operators.md#comparison)).
 
 ```sisu
 fn main() {
@@ -122,12 +129,16 @@ fn main() {
 }
 ```
 
-The rules:
+**Arrays and words**
 
 - `chars()`, `bytes()` and `words()` make a new array each time. A change to the array does not change the string.
 - A *word* is a run of characters that are not white space. White space is any character with the Unicode property `White_Space`, such as a space, a tab, a line break and a no-break space.
 - A string that is empty, or only white space, has no words. A word is never empty.
-- A string has no other methods ([E0063](../diagnostics/E0063.md)). A `char` has no methods either. Convert it with `i64(c)` ([Types](types.md#conversions)).
+
+**Limits**
+
+- A string has no other methods than `to_string`, `eq` and `less`, which come with `Display`, `Eq` and `Ord` ([Display, Eq and Ord](generics.md#display-eq-and-ord)). [E0063](../diagnostics/E0063.md)
+- A `char` has only those three methods. Convert it with `i64(c)` ([Types](types.md#conversions)).
 - A method of an optional string is called with `?.` ([Optional chaining](operators.md#optional-chaining)).
 
 ```sisu
@@ -259,17 +270,30 @@ A spec is `#`, or `[align][width][.precision]`. The next section explains `#`. A
 | width | 1 to 1000 | The least width of the text, in characters |
 | precision | `.` and 0 to 30 | The number of decimals of an `f64` |
 
-The rules:
+**Width and align**
 
 - A part that is shorter than its width gets spaces. A part that is longer is not cut.
-- Without an align, a number (`i64`, `u8` or `f64`) is on the right, with the spaces on its left. Every other type is on the left, with the spaces on its right.
+- Without an align, a number (`i64`, `u8` or `f64`) is on the right, with the spaces on its left.
+- Without an align, every other type is on the left, with the spaces on its right.
 - The width counts characters, not bytes. `ä` and `😀` are each one column.
 - `^` puts half of the spaces on each side. When the number of spaces is odd, the extra space is on the right.
-- A precision rounds half to even from the exact value of the `f64`, and never uses an exponent. A precision of 0 writes no point. `inf`, `-inf` and `nan` have no decimals.
-- A precision on a value that is not an `f64` is an error ([E0111](../diagnostics/E0111.md)).
-- A width above 1000, or a precision above 30, is an error ([E0110](../diagnostics/E0110.md)).
-- A spec that is not `#` must hold a width or a precision, and a `.` needs digits. If not, it is an error ([E0108](../diagnostics/E0108.md)).
-- Other parts, such as zero padding, a sign, a fill character, a type letter, or a width from a variable, are errors ([E0109](../diagnostics/E0109.md)).
+
+**Precision**
+
+- A precision rounds half to even from the exact value of the `f64`.
+- A precision never uses an exponent.
+- A precision of 0 writes no point.
+- `inf`, `-inf` and `nan` have no decimals.
+
+**Errors**
+
+- A precision on a value that is not an `f64` is an error. [E0111](../diagnostics/E0111.md)
+- A width above 1000, or a precision above 30, is an error. [E0110](../diagnostics/E0110.md)
+- A spec that is not `#` must hold a width or a precision, and a `.` needs digits. If not, it is an error. [E0108](../diagnostics/E0108.md)
+- Other parts, such as zero padding, a sign, a fill character, a type letter, or a width from a variable, are errors. [E0109](../diagnostics/E0109.md)
+
+**Where a spec starts**
+
 - A `:` inside a string or character literal in the expression does not start a spec.
 
 ```sisu
@@ -324,12 +348,16 @@ Add(
 )
 ```
 
-The rules:
+**The layout**
 
-- A hand-written `to_string` gives one piece of text that the layout does not break.
 - The layout starts at column 0. Text before the part on its line does not count, so a line can pass 80 columns.
-- A part is on one line when its text fits in 80 columns. A part that does not fit puts each element on its own line, four spaces further in. Its closing bracket goes on its own line.
+- A part is on one line when its text fits in 80 columns.
+- A part that does not fit puts each element on its own line, four spaces further in. Its closing bracket goes on its own line.
 - Each element is laid out the same way, from the column where it starts in the layout.
-- `#` does not combine with a width, an alignment or a precision. `{x:#>8}` is an error ([E0109](../diagnostics/E0109.md)).
+- A hand-written `to_string` gives one piece of text that the layout does not break.
+
+**Limits**
+
+- `#` does not combine with a width, an alignment or a precision. `{x:#>8}` is an error. [E0109](../diagnostics/E0109.md)
 - `#` on an `i64`, a `u8`, an `f64`, a `bool`, a `char` or a `string` changes nothing.
 - There is no function for it: `print("{x:#}")` is the one way.

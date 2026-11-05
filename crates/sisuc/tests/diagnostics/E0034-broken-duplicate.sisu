@@ -1,0 +1,11 @@
+interface Source {
+    fn next(self) -> i64
+}
+
+interface Source
+{   fn get(self) -> i64
+}
+
+fn main() {
+    let x: i64 = "s"
+}

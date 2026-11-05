@@ -1488,7 +1488,8 @@ stretch goals" with no date. Each gap gets a milestone once a definition of
   tutorial by example; a reference that shows each feature with an example
   the tests compile and run, linked to the rule it shows; and a specification
   with the exact rules and a list of what is still open and what was
-  resolved.
+  resolved. The first two layers exist: the Tour on the site, and
+  `docs/reference/`. The specification does not.
 - **A stability promise.** Nothing says which programs keep compiling from
   one version to the next, how a feature is deprecated, or whether Sisu has
   editions as Rust does. Sisu has no users yet, so this costs little now and

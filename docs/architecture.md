@@ -77,7 +77,8 @@ opener that were opened before the literal, and the run goes on.
 **Parser** (`parser.rs`, `ast.rs`). Turns tokens into a syntax tree, the AST.
 It reports one error per broken item, then resumes at the next item. The
 intact items go on to the checker, and a broken item keeps its name, so a use
-of it is not reported as missing. It parses a format spec's text into its alignment, width and precision, and
+of it is not reported as missing, and a second item of that name is reported
+as defined twice. It parses a format spec's text into its alignment, width and precision, and
 reports a malformed or unsupported one without breaking its item. An `enum` item parses into its variants, each with
 an optional payload of labeled or unlabeled fields, and its methods. A `match`
 parses into its scrutinee and its arms, one per line, each a pattern, an

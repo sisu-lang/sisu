@@ -75,10 +75,11 @@ fn main() {
 }
 ```
 
-The rules:
+**Rules**
 
-- When the result of integer arithmetic is outside the range of its type, the program stops with a panic ([Operators](operators.md#overflow)). In a [constant](statements.md#constants), this is an error when the program builds ([E0088](../diagnostics/E0088.md)).
-- A `u8` cannot be negative, so a unary `-` on a `u8` is an error ([E0042](../diagnostics/E0042.md)).
+- When the result of integer arithmetic is outside the range of its type, the program stops with a panic ([Operators](operators.md#overflow)).
+- In a [constant](statements.md#constants), this is an error when the program builds. [E0088](../diagnostics/E0088.md)
+- A `u8` cannot be negative, so a unary `-` on a `u8` is an error. [E0042](../diagnostics/E0042.md)
 - An `i64` and a `u8` do not mix in one operation. Convert one of them first ([Conversions](#conversions)).
 
 ```sisu
@@ -104,9 +105,14 @@ fn main() {
 }
 ```
 
-The rules:
+**NaN**
 
-- NaN is not equal to any value, also not to itself. To test for NaN, use `x.is_nan()`. `x == f64.nan` is always false, and `x != f64.nan` is always true. Both build with a warning ([W0005](../diagnostics/W0005.md)). `<`, `<=`, `>` and `>=` with NaN are always false.
+- NaN is not equal to any value, also not to itself. To test for NaN, use `x.is_nan()`.
+- `x == f64.nan` is always false, and `x != f64.nan` is always true. Both build with a warning. [W0005](../diagnostics/W0005.md)
+- `<`, `<=`, `>` and `>=` with NaN are always false.
+
+**Other rules**
+
 - `-0.0 == 0.0` is true, but `print` shows the sign: `-0.0`.
 - An `f64` and an integer do not mix in one operation. Convert one of them first ([Conversions](#conversions)).
 
@@ -175,10 +181,11 @@ fn main() {
 }
 ```
 
-The rules:
+**Rules**
 
 - When `lo` is larger than `hi`, `clamp` gives `hi`.
-- On `f64`, `min`, `max` and `clamp` order `-0.0` below `0.0`. When one operand of `min` or `max` is NaN, they give the other operand.
+- On `f64`, `min`, `max` and `clamp` order `-0.0` below `0.0`.
+- On `f64`, when one operand of `min` or `max` is NaN, they give the other operand.
 
 ```sisu
 fn main() {
@@ -264,14 +271,24 @@ fn main() {
 }
 ```
 
-The rules:
+**Where a `T` becomes a `T?`**
 
-- Where an optional `T?` is expected, a `T` becomes a `T?` that holds it. Some examples are a `let` with a type, an assignment, an argument and a `return` value. Others are a field, an array element, the other side of an `==` or `!=`, and the other branches of an `if` or a `match`.
-- `None` needs an expected optional type. Where the context expects a type that is not optional, `None` is an error ([E0032](../diagnostics/E0032.md)).
-- An optional is not its value. An arithmetic operator, a comparison, a field or a method of `T` does not apply to a `T?` ([E0032](../diagnostics/E0032.md), [E0062](../diagnostics/E0062.md)). Use `??`, `?.` ([Operators](operators.md#default-values)) or [`if let`](enums.md#if-let-and-while-let).
-- `x == None` and `x != None` test whether `x` holds a value. When `x` is not optional, the test is an error ([E0044](../diagnostics/E0044.md)).
+- Where an optional `T?` is expected, a `T` becomes a `T?` that holds it.
+- This holds for a `let` with a type, an assignment, an argument and a `return` value. It also holds for a field, an array element, the other side of an `==` or `!=`, and the other branches of an `if` or a `match`.
+- `None` needs an expected optional type. Where the context expects a type that is not optional, `None` is an error. [E0032](../diagnostics/E0032.md)
+
+**What an optional is not**
+
+- An optional is not its value.
+- An arithmetic operator or a comparison does not apply to a `T?`. [E0032](../diagnostics/E0032.md)
+- A field or a method of `T` does not apply to a `T?`. [E0062](../diagnostics/E0062.md)
+- To get the value, use `??`, `?.` ([Operators](operators.md#default-values)) or [`if let`](enums.md#if-let-and-while-let).
+- `x == None` and `x != None` test whether `x` holds a value. When `x` is not optional, the test is an error. [E0044](../diagnostics/E0044.md)
+
+**Nested and printed optionals**
+
 - An optional of an optional, such as `i64??`, is a type. A value becomes an optional through one `?` layer only, and `??`, `if let` and `?.` take off one layer at a time. See [Optionals of optionals](#optionals-of-optionals).
-- `print`, `eprint` and interpolation take an optional, with the warning [W0015](../diagnostics/W0015.md), because the text can be `None`. See [Option and Result](#option-and-result).
+- `print`, `eprint` and interpolation take an optional, with a warning, because the text can be `None`. See [Option and Result](#option-and-result). [W0015](../diagnostics/W0015.md)
 
 ```sisu
 fn half(n: i64) -> i64? {
@@ -328,13 +345,19 @@ fn main() {
 }
 ```
 
-The rules:
+**The enums**
 
 - `Option<T>` is the enum with the variants `None` and `Some(T)`. `Result<T, E>` is the enum with the variants `Ok(T)` and `Err(E)`. [Errors and Result](errors.md#results) tells how a result is used.
 - `Some`, `None`, `Ok` and `Err` are names in expressions and in patterns, without the name of the enum.
-- `Some(p)` and `None` match the optional itself. A variant, a literal or a range matches the value inside it, and a name or `_` matches the whole optional. Only the top of an `if let` or a `while let` takes off one layer. [Patterns on an optional](enums.md#patterns-on-an-optional) has the rules.
-- A `print`, `eprint` or interpolation of an optional builds with the warning [W0015](../diagnostics/W0015.md), because the text can be `None`. `x.to_string()` gives the same text with no warning, for a program that wants `None` in its output.
-- The warning is for the optional itself. An optional inside an array, a payload or another optional, and a value of a type parameter `T` that is an optional where the function is called, get no warning.
+- `Some(p)` and `None` match the optional itself. A variant, a literal or a range matches the value inside it, and a name or `_` matches the whole optional.
+- Only the top of an `if let` or a `while let` takes off one layer. [Patterns on an optional](enums.md#patterns-on-an-optional) has the rules.
+
+**The warning for printing**
+
+- A `print`, `eprint` or interpolation of an optional builds with a warning, because the text can be `None`. [W0015](../diagnostics/W0015.md)
+- `x.to_string()` gives the same text with no warning, for a program that wants `None` in its output.
+- The warning is for the optional itself. An optional inside an array, a payload or another optional gets no warning.
+- A value of a type parameter `T` that is an optional where the function is called gets no warning.
 
 ```sisu
 fn main() {
@@ -373,13 +396,21 @@ fn main() {
 }
 ```
 
-The rules:
+**Layers**
 
 - A plain value becomes an optional through one layer only. The middle state of an `i64??` is written `Some(None)`.
-- `??` and `if let` peel one layer. On an `i64??` named `x`, `x ?? 5` gives an `i64?`, and `(x ?? None) ?? 0` gives an `i64`. `if let y = x` binds `y` with the type `i64?`.
-- `?.` removes one layer, as it does now. If `a?.b` has a `b` of the type `i64?`, it gives an `i64?`, not an `i64??`.
+- `??` and `if let` peel one layer.
+- On an `i64??` named `x`, `x ?? 5` gives an `i64?`, and `(x ?? None) ?? 0` gives an `i64`.
+- `if let y = x` binds `y` with the type `i64?`.
+- `?.` removes one layer. If `a?.b` has a `b` of the type `i64?`, it gives an `i64?`, not an `i64??`.
 - A type argument can be an optional ([Type arguments](generics.md#type-arguments)).
-- `None` prints as `None` at every depth. A `T?` that holds `x` prints the text of `x`. When `x` is itself an optional that holds `None` at its innermost layer, the text is `Some(`, the text of `x`, and `)`. So every state of a nested optional prints in its own way. A `print` of an optional builds with the warning [W0015](../diagnostics/W0015.md); `to_string` does not.
+
+**Printing**
+
+- `None` prints as `None` at every depth.
+- A `T?` that holds `x` prints the text of `x`.
+- When `x` is itself an optional that holds `None` at its innermost layer, the text is `Some(`, the text of `x`, and `)`. So every state of a nested optional prints in its own way.
+- A `print` of an optional builds with the warning, but `to_string` does not. [W0015](../diagnostics/W0015.md)
 
 ```sisu
 fn main() {
@@ -421,10 +452,11 @@ fn main() {
 }
 ```
 
-The rules:
+**Rules**
 
-- An expression of the type `never` has no value, so a `let` cannot bind it ([E0043](../diagnostics/E0043.md)), and `print` cannot take it ([E0061](../diagnostics/E0061.md)).
-- Code after an expression of the type `never` cannot run, and the program builds with a warning ([W0001](../diagnostics/W0001.md)).
+- An expression of the type `never` has no value. A `let` cannot bind it. [E0043](../diagnostics/E0043.md)
+- `print` cannot take an expression of the type `never`. [E0061](../diagnostics/E0061.md)
+- Code after an expression of the type `never` cannot run, and the program builds with a warning. [W0001](../diagnostics/W0001.md)
 - A function body that ends in an expression of the type `never` needs no value at its end ([Statements](statements.md#the-end-of-a-function)).
 
 ```sisu
@@ -444,7 +476,7 @@ fn main() {
 
 ## unit
 
-`unit` is the type of an expression that gives no value, such as a call of `print`. It is an ordinary type. A program can write it, for example in `-> unit`.
+`unit` is the type of an expression that gives no value, such as a call of `print`. A program cannot write the name `unit` yet: `-> unit` is an error ([E0030](../diagnostics/E0030.md)).
 
 ```sisu
 fn main() {
@@ -453,11 +485,13 @@ fn main() {
 }
 ```
 
-The rules:
+**Rules**
 
 - `unit` cannot be a type argument, such as `[unit]`, `unit?` and `Stack<unit>`, as the rule in [Type arguments](generics.md#type-arguments) says.
 - `unit` has no literal. A `unit` value comes from a call, such as `print(...)`.
-- `unit` has no `Display`, no `Eq` and no `Ord`. A `unit` value cannot be printed ([E0059](../diagnostics/E0059.md)) or compared.
+- `unit` has no `Display`, no `Eq` and no `Ord`.
+- A `unit` value cannot be printed. [E0059](../diagnostics/E0059.md)
+- A `unit` value cannot be compared.
 
 ## Conversions
 
@@ -495,14 +529,17 @@ fn main() {
 }
 ```
 
-The rules:
+**What a conversion takes**
 
 - A conversion takes only the types in its row of the table. A `u8` converts to an `f64` or a `char` through an `i64`, such as `f64(i64(b))`.
 - The argument of `f64`, `i64`, `u8` or `char` has no expected type. So an integer literal in it is an `i64`: `f64(3)` is `3.0`, and `u8(300)` is `None`.
 - The argument of `string` expects a `[char]`, so `string([])` is the empty string.
+
+**Other rules**
+
 - `i64(-0.0)` is `0`.
-- A conversion to the type that the value already has is an error ([E0054](../diagnostics/E0054.md)).
-- In a constant, a conversion that can fail is an error ([E0100](../diagnostics/E0100.md)).
+- A conversion to the type that the value already has is an error. [E0054](../diagnostics/E0054.md)
+- In a constant, a conversion that can fail is an error. [E0100](../diagnostics/E0100.md)
 
 ```sisu
 fn main() {

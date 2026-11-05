@@ -15,7 +15,12 @@ notes = [["ADR 0011", "docs/adr/0011-let-mut-marks-what-can-change.md"]]
 [[area.feature]]
 text = "Functions, <code>if</code> as a value, loops"
 state = "works"
-notes = [["Roadmap: what works today", "docs/roadmap.md#what-works-today"]]
+notes = [["Roadmap: what works today", "docs/roadmap.md#what-works-today"], ["ADR 0034", "docs/adr/0034-loop-and-loop-labels.md"]]
+
+[[area.feature]]
+text = "<code>let ... else</code>, and <code>return</code>, <code>break</code> and <code>continue</code> as expressions"
+state = "works"
+notes = [["ADR 0044", "docs/adr/0044-let-else-and-jumps-are-expressions.md"], ["Reference: statements", "docs/reference/statements.md"]]
 
 [[area.feature]]
 text = "Classes with fields and methods"
@@ -98,37 +103,47 @@ state = "works"
 notes = [["ADR 0029", "docs/adr/0029-parameters-are-borrowed-unless-consumed.md"], ["Roadmap: what works today", "docs/roadmap.md#what-works-today"]]
 
 [[area.feature]]
-text = "Errors with <code>Result</code> and <code>?</code>"
+text = "<code>weak</code> fields, which do not keep an object alive"
+state = "next"
+notes = [["ADR 0008", "docs/adr/0008-weak-references.md"], ["Reference: weak fields", "docs/reference/values.md#weak-fields"]]
+
+[[area.feature]]
+text = "Closures and function types"
+state = "next"
+notes = [["Roadmap: proposed next steps", "docs/roadmap.md"], ["Reference: closures", "docs/reference/closures.md"]]
+
+[[area.feature]]
+text = "Lazy iterator methods, such as <code>map</code> and <code>filter</code>"
 state = "planned"
 notes = [["Roadmap: proposed next steps", "docs/roadmap.md"]]
 
 [[area.feature]]
-text = "<code>weak</code> references"
+text = "<code>mut self</code> methods, such as <code>obj.pos.move_by(1, 2)</code>"
 state = "planned"
-notes = [["ADR 0008", "docs/adr/0008-weak-references.md"]]
+notes = [["ADR 0043", "docs/adr/0043-mut-parameters-copy-in-and-out.md"]]
 
 [[area.feature]]
-text = "Closures and iterators"
-state = "planned"
-notes = [["Roadmap: proposed next steps", "docs/roadmap.md"]]
-
-[[area.feature]]
-text = "Records, named and default arguments"
+text = "Structs, named arguments and default arguments"
 state = "planned"
 notes = [["Roadmap: proposed next steps", "docs/roadmap.md"], ["ADR 0020", "docs/adr/0020-labels-belong-to-the-declaration.md"]]
 
 [[area.feature]]
-text = "Modules"
+text = "Modules and <code>pub</code>"
 state = "planned"
 notes = [["Roadmap: modules", "docs/roadmap.md"], ["ADR 0035", "docs/adr/0035-a-file-is-a-module-and-its-names-are-private-unless-pub.md"]]
 
 [[area.feature]]
-text = "Tests in the source file"
+text = "Errors with <code>Result</code> and <code>?</code>"
+state = "planned"
+notes = [["Roadmap: proposed next steps", "docs/roadmap.md"], ["Reference: errors", "docs/reference/errors.md"]]
+
+[[area.feature]]
+text = "Tests in the source file, marked <code>@test</code>"
 state = "planned"
 notes = [["Roadmap: what can start now", "docs/roadmap.md#what-can-start-now"]]
 
 [[area.feature]]
-text = "More number types"
+text = "More number types, such as <code>i32</code> and <code>f32</code>"
 state = "planned"
 notes = [["Roadmap: gaps before production", "docs/roadmap.md#gaps-before-production"]]
 
@@ -170,7 +185,7 @@ state = "works"
 notes = [["Roadmap: what works today", "docs/roadmap.md#what-works-today"]]
 
 [[area.feature]]
-text = "Lists and maps"
+text = "A <code>Map</code> type, in a standard library written in Sisu"
 state = "planned"
 notes = [["Roadmap: proposed next steps", "docs/roadmap.md"]]
 
@@ -202,6 +217,16 @@ state = "works"
 notes = [["ADR 0005", "docs/adr/0005-reference-counting.md"]]
 
 [[area.feature]]
+text = "MIR, a mid-level IR that places every reference-count update"
+state = "works"
+notes = [["Roadmap: mir", "docs/roadmap.md#mir"], ["ADR 0029", "docs/adr/0029-parameters-are-borrowed-unless-consumed.md"]]
+
+[[area.feature]]
+text = "Code generation split across threads"
+state = "works"
+notes = [["ADR 0045", "docs/adr/0045-codegen-units-split-by-default.md"]]
+
+[[area.feature]]
 text = "Panics that name the source line"
 state = "works"
 notes = [["ADR 0003", "docs/adr/0003-arithmetic-panics.md"], ["Roadmap: what panics", "docs/roadmap.md#what-panics"]]
@@ -211,10 +236,6 @@ text = "Front end fuzzed nightly"
 state = "works"
 notes = [["Roadmap: fuzzing", "docs/roadmap.md#fuzzing"], ["Developing Sisu", "docs/development.md#fuzz-the-front-end"]]
 
-[[area.feature]]
-text = "MIR, to remove reference-count updates that cancel out"
-state = "planned"
-notes = [["Roadmap: mir", "docs/roadmap.md#mir"]]
 
 [[area.feature]]
 text = "Debug info for <code>gdb</code>"
@@ -361,6 +382,11 @@ state = "planned"
 notes = [["Roadmap: later and stretch goals", "docs/roadmap.md#later-and-stretch-goals"]]
 
 [[area.feature]]
-text = "A language reference"
+text = "A language reference, with examples the tests run"
+state = "works"
+notes = [["Language reference", "docs/reference/README.md"]]
+
+[[area.feature]]
+text = "A specification with the exact rules"
 state = "planned"
 notes = [["Roadmap: gaps before production", "docs/roadmap.md#gaps-before-production"]]

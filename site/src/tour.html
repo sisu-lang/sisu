@@ -4,7 +4,7 @@ A tour of the Sisu language as it works today, one small program at a time.
   <section class="ph"><div class="w">
     <h1>A tour of Sisu</h1>
     <p class="lede">The language as it works today, one small program at a time, in about ten minutes of reading.</p>
-    <p class="meta">The working programs on this page compile with sisu today. Every output and error shown is what sisu really prints. Checked against the repository at commit 9c33f888.</p>
+    <p class="meta">The working programs on this page compile with sisu today. Every output and error shown is what sisu really prints. Checked against the repository at commit 8d96d34.</p>
   </div></section>
 
   <div class="w doc">
@@ -16,6 +16,7 @@ A tour of the Sisu language as it works today, one small program at a time.
       <li><a href="#optionals">Optionals instead of null</a></li>
       <li><a href="#classes">Classes</a></li>
       <li><a href="#enums">Enums and match</a></li>
+      <li><a href="#generics">Generics</a></li>
       <li><a href="#interfaces">Interfaces and any</a></li>
       <li><a href="#arrays">Arrays are values</a></li>
       <li><a href="#overflow">Integers panic on overflow</a></li>
@@ -111,8 +112,18 @@ A tour of the Sisu language as it works today, one small program at a time.
 {{text programs/run/describe.out}}</pre></figure>
       <!-- source: docs/roadmap.md ("What works today": enums, match, literal and range patterns, alternatives, guards, exhaustiveness), docs/adr/0019-enums-are-values-named-through-their-enum.md, docs/adr/0020-labels-belong-to-the-declaration.md, crates/sisuc/tests/run/match_alternatives.sisu, crates/sisuc/tests/run/match_ranges.sisu; diagnostic is real sisu output -->
 
+      <h2 id="generics">Generics</h2>
+      <p>A function, a class or an enum can take type parameters in angle brackets. <code>Stack&lt;T&gt;</code> holds values of any one type. The compiler makes one copy of the code for each type argument that the program uses, so a generic call costs the same as a plain one.</p>
+      <p>The body of a generic function is checked once, where it is written. So it can use only what every type has. A bound asks for more: <code>T: Ord</code> lets <code>largest</code> use <code>&gt;</code>, and a call with a type that has no order does not compile. <code>i64</code>, <code>string</code> and <code>char</code> have <code>Eq</code> and <code>Ord</code> with no declaration.</p>
+      <figure class="code"><figcaption class="cap">stack.sisu</figcaption><pre data-lang="sisu">
+{{text programs/run/stack.sisu}}</pre></figure>
+      <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
+{{text programs/run/stack.out}}</pre></figure>
+      <p>Most type arguments come from the call: <code>largest([3, 9, 4])</code> gives <code>i64</code> for <code>T</code>. An empty array tells nothing, so <code>Stack&lt;string&gt;(items: [])</code> writes the type argument.</p>
+      <!-- source: docs/reference/generics.md (Type parameters, Inference, Values of a type parameter, Bounds, Display Eq and Ord), docs/adr/0023-generics-are-monomorphized-and-checked-at-the-definition.md, site/programs/run/stack.sisu -->
+
       <h2 id="interfaces">Interfaces and any</h2>
-      <p>An interface lists method signatures. A class or an enum conforms to it after its name, and writes the methods. A function can take the interface as a bound on a type parameter, as in <code>T: Shape</code>. The compiler then makes one copy of the function for each type argument.</p>
+      <p>An interface lists method signatures. A class or an enum conforms to it after its name, and writes the methods. A type that conforms to several interfaces lists them with commas, as in <code>class Tree: Display, Eq</code>. A bound joins them with <code>&amp;</code>, as in <code>T: Shape &amp; Ord</code>.</p>
       <p><code>any Shape</code> is the type of a value of any type that conforms to <code>Shape</code>. One array can hold a <code>Circle</code> and a <code>Rect</code>, and a call on each element runs the method of the type that the value has. The value carries a table of its methods for this. An object is its own data. Any other value, such as the enum below, goes into a counted box first.</p>
       <figure class="code"><figcaption class="cap">shapes.sisu</figcaption><pre data-lang="sisu">
 {{text programs/run/shapes.sisu}}</pre></figure>
@@ -160,12 +171,15 @@ $ ./factorial
       <h2 id="not-yet">What is not here yet</h2>
       <p>Sisu is early, and much of an everyday language is still missing. Some of what is planned:</p>
       <ul>
-        <li>Closures and iterators <span class="soon">planned</span></li>
-        <li>Errors with <code>Result</code> and <code>?</code> <span class="soon">planned</span></li>
+        <li><code>weak</code> fields, which do not keep an object alive <span class="soon">next</span></li>
+        <li>Closures and function types <span class="soon">next</span></li>
+        <li>Iterator methods, such as <code>map</code> and <code>filter</code> <span class="soon">planned</span></li>
+        <li>Structs, named arguments and default arguments <span class="soon">planned</span></li>
         <li>Modules <span class="soon">planned</span></li>
+        <li>Errors with <code>Result</code> and <code>?</code> <span class="soon">planned</span></li>
       </ul>
-      <p>Planned work can change and has no promised date. The <a href="status.html">status page</a> lists what works today and what is planned.</p>
-      <!-- source: docs/roadmap.md ("Proposed milestones 9 to 12"), site/assets/site.js AREAS -->
+      <p>Planned work can change and has no promised date. The <a href="status.html">status page</a> lists what works today, what comes next and what is planned.</p>
+      <!-- source: site/data/status.toml (the next and planned features of the Language area) -->
     </article>
   </div>
 </main>

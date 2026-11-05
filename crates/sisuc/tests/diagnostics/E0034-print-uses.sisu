@@ -1,0 +1,7 @@
+fn print(x: i64, y: i64) -> i64 {
+    x
+}
+
+fn main() {
+    print(1, 2)
+}
