@@ -639,6 +639,16 @@ pub(crate) fn case_dir(source: &Path) -> PathBuf {
 /// calls it, with arguments known at run time.
 const O2_CALLS: &str = "// o2-calls:";
 
+/// Stub: the red commit compiles the tests; the fix replaces it.
+pub(crate) fn is_indirect_call(_line: &str) -> bool {
+    false
+}
+
+/// Stub: the red commit compiles the tests; the fix replaces it.
+pub(crate) fn has_specialized_clone(_ir: &str, _function: &str) -> bool {
+    false
+}
+
 /// How LLVM's text names the function `name`: `@sisu.name`, or `@"sisu.name"` when the name holds
 /// a character outside an identifier's, as an instantiation's `<` and `,` are.
 pub(crate) fn symbol(name: &str) -> String {
