@@ -29,6 +29,9 @@ use crate::{ast, lexer, parser, tir};
 
 /// How many seeds, and how many bytes each holds.
 pub(crate) const SEEDS: u64 = 64;
+/// How many seeds a test reads at most while it looks for a construct that no seed of its fixed
+/// set holds yet. A change to a cadence in the generator moves a construct to another seed.
+pub(crate) const SEARCH_SEEDS: u64 = 16 * SEEDS;
 const SEED_LEN: usize = 4_096;
 
 /// What no generated program holds, and why.
@@ -397,6 +400,22 @@ const TEXT: &[(&str, Holds)] = &[
 /// Fixed byte strings from a seeded splitmix64.
 pub(crate) fn seeds() -> impl Iterator<Item = Vec<u8>> {
     (0..SEEDS).map(seed)
+}
+
+/// Reads the seeds from 0 in order, and gives each to `visit`, which tells whether the existence
+/// part of the test holds now ("some seed holds X"). It reads at least `least` seeds, so that
+/// each for-all part of the test reads the seeds that it needs. After those it goes on only while
+/// the existence part does not hold, and stops at `max(least, SEARCH_SEEDS)`. It tells whether
+/// the existence part holds.
+pub(crate) fn search_seeds(least: u64, mut visit: impl FnMut(u64) -> bool) -> bool {
+    let mut holds = false;
+    for n in 0..least.max(SEARCH_SEEDS) {
+        holds = visit(n);
+        if holds && n + 1 >= least {
+            break;
+        }
+    }
+    holds
 }
 
 /// The data of seed `n`.
@@ -3359,16 +3378,23 @@ fn inexact(e: &tir::Expr) -> bool {
     matches!(&e.kind, tir::ExprKind::Math { op, .. } if kind(*op) == Parent::Libm)
 }
 
-/// What the programs of every seed hold.
-fn walk() -> Walk {
+/// What the programs of every seed hold. The walk reads the `least` seeds, and then more, up to
+/// `SEARCH_SEEDS`, while `done` is false.
+fn walk_until(least: u64, done: impl Fn(&Walk) -> bool) -> Walk {
     let mut walk = Walk::default();
-    // Twice the `SEEDS`: a bare `Ok(..)` is rare, and the seeds of the other tests shift it.
-    for data in (0..2 * SEEDS).map(seed) {
-        let generated = generate(&data);
+    search_seeds(least, |n| {
+        let generated = generate(&seed(n));
         walk.mut_lens = generated.mut_lens.into_iter().collect();
         walk.program(&generated.plain);
-    }
+        done(&walk)
+    });
     walk
+}
+
+/// What the programs of the first `2 * SEEDS` seeds hold. Twice the `SEEDS`: a bare `Ok(..)` is
+/// rare, and the seeds of the other tests shift it.
+fn walk() -> Walk {
+    walk_until(2 * SEEDS, |_| true)
 }
 
 /// Checks the programs of the seeds `from..from + 8` and instantiates them. One test for each
@@ -3470,24 +3496,63 @@ fn every_short_input_checks_clean() {
     }
 }
 
-#[test]
-fn read_line_past_the_input_checks_clean() {
-    // A program that calls `read_line` in more places than its stdin has lines can read past the
-    // end, where `read_line` gives `None` (Review Focus 4), here one that keeps the optional
-    // rather than replacing a `None` with `??` at once. Some seed writes one, and it checks.
-    let past = seeds().map(|data| generate(&data)).find(|g| {
-        let calls = g.program.matches("read_line()").count();
-        calls > g.stdin.lines().count() && calls > g.program.matches("read_line() ??").count()
+/// The seeds that `search_seeds` reads, in order, when the construct first holds at `holds_at`.
+fn searched(least: u64, holds_at: Option<u64>) -> (Vec<u64>, bool) {
+    let mut read = Vec::new();
+    let holds = search_seeds(least, |n| {
+        read.push(n);
+        holds_at.is_some_and(|at| n >= at)
     });
-    checked(
-        &past
-            .expect("some seed's program should read past its stdin")
-            .program,
-    );
+    (read, holds)
 }
 
 #[test]
-fn every_variant_is_generated() {
+fn the_seed_search_should_read_on_past_the_least_seeds_until_the_construct_holds() {
+    let (read, holds) = searched(64, Some(100));
+    assert_eq!(read, (0..=100).collect::<Vec<u64>>());
+    assert!(holds);
+}
+
+#[test]
+fn the_seed_search_should_read_the_least_seeds_when_the_first_seed_holds() {
+    let (read, holds) = searched(64, Some(0));
+    assert_eq!(read, (0..64).collect::<Vec<u64>>());
+    assert!(holds);
+}
+
+#[test]
+fn the_seed_search_should_stop_at_the_cap() {
+    let (read, holds) = searched(64, None);
+    assert_eq!(read, (0..SEARCH_SEEDS).collect::<Vec<u64>>());
+    assert!(!holds);
+}
+
+#[test]
+fn the_seed_search_should_read_all_least_seeds_when_least_passes_the_cap() {
+    let (read, holds) = searched(2_048, None);
+    assert_eq!(read, (0..2_048).collect::<Vec<u64>>());
+    assert!(!holds);
+}
+
+#[test]
+fn a_program_that_reads_past_its_input_should_check_clean() {
+    // A program that calls `read_line` in more places than its stdin has lines can read past the
+    // end, where `read_line` gives `None` (Review Focus 4), here one that keeps the optional
+    // rather than replacing a `None` with `??` at once. Some seed writes one, and it checks.
+    let mut past = None;
+    search_seeds(0, |n| {
+        let g = generate(&seed(n));
+        let calls = g.program.matches("read_line()").count();
+        if calls > g.stdin.lines().count() && calls > g.program.matches("read_line() ??").count() {
+            past = Some(g.program);
+        }
+        past.is_some()
+    });
+    checked(&past.expect("some seed's program should read past its stdin"));
+}
+
+#[test]
+fn every_variant_should_be_generated() {
     let universe = universe();
     let named: Vec<&str> = EXCLUDED.iter().map(|(key, _)| *key).collect();
     let unknown: Vec<&&str> = named
@@ -3498,11 +3563,13 @@ fn every_variant_is_generated() {
         unknown.is_empty(),
         "EXCLUDED names what does not exist: {unknown:?}"
     );
-    let seen = walk().seen;
-    let mut missing: Vec<&String> = universe
-        .iter()
-        .filter(|key| !seen.contains(*key) && !named.contains(&key.as_str()))
-        .collect();
+    let absent = |seen: &FxHashSet<String>| -> Vec<&String> {
+        (universe.iter())
+            .filter(|key| !seen.contains(*key) && !named.contains(&key.as_str()))
+            .collect()
+    };
+    let seen = walk_until(2 * SEEDS, |walk| absent(&walk.seen).is_empty()).seen;
+    let mut missing = absent(&seen);
     missing.sort();
     assert!(
         missing.is_empty(),
@@ -3673,8 +3740,8 @@ fn the_ast_walk_should_mark_what_interfaces_and_extend_blocks_hold() {
 #[test]
 fn generated_interfaces_should_reach_their_maxima() {
     let (mut most, mut requirements) = (0, 0);
-    for data in seeds() {
-        let program = parsed(&generate(&data).plain);
+    search_seeds(SEEDS, |n| {
+        let program = parsed(&generate(&seed(n)).plain);
         let interfaces: Vec<&ast::Interface> = program
             .items
             .iter()
@@ -3693,7 +3760,8 @@ fn generated_interfaces_should_reach_their_maxima() {
             .iter()
             .map(|interface| interface.methods.len())
             .fold(requirements, usize::max);
-    }
+        most == MAX_INTERFACES && requirements == MAX_REQUIREMENTS
+    });
     assert_eq!(most, MAX_INTERFACES);
     assert_eq!(requirements, MAX_REQUIREMENTS);
 }
@@ -3710,8 +3778,38 @@ fn generated_aliases_should_reach_every_shape() {
         FxHashSet::default(),
         FxHashSet::default(),
     );
-    for data in seeds() {
-        let g = generate(&data);
+    // What no alias has yet: the search stops when it is empty, and the assertion prints it.
+    let absent = |most: usize,
+                  plain: &FxHashSet<(&str, &str)>,
+                  generic: &FxHashSet<String>,
+                  used: &FxHashSet<String>|
+     -> Vec<String> {
+        let mut absent = Vec::new();
+        if most != MAX_ALIASES {
+            absent.push(format!("{most} aliases, not {MAX_ALIASES}"));
+        }
+        for layer in ["no layer", "an array", "an optional", "two arrays"] {
+            if !plain.iter().any(|&(l, _)| l == layer) {
+                absent.push(format!("no alias has {layer}"));
+            }
+        }
+        for kind in ["a value type", "a class or an enum", "a generic type"] {
+            if !plain.iter().any(|&(_, k)| k == kind) {
+                absent.push(format!("no alias names {kind}"));
+            }
+        }
+        for body in ["[T]", "T?", "[[T]]"] {
+            if !generic.contains(body) {
+                absent.push(format!("no alias is `{body}`"));
+            }
+            if !used.contains(body) {
+                absent.push(format!("no type is written through `{body}`"));
+            }
+        }
+        absent
+    };
+    search_seeds(SEEDS, |n| {
+        let g = generate(&seed(n));
         let aliases: Vec<_> = (parsed(&g.plain).items.into_iter())
             .filter_map(|item| match item {
                 ast::Item::Alias(alias) => Some(alias),
@@ -3748,24 +3846,10 @@ fn generated_aliases_should_reach_every_shape() {
             };
             plain.insert((layer, kind));
         }
-    }
-    assert_eq!(most, MAX_ALIASES);
-    for layer in ["no layer", "an array", "an optional", "two arrays"] {
-        assert!(
-            plain.iter().any(|&(l, _)| l == layer),
-            "no alias has {layer}"
-        );
-    }
-    for kind in ["a value type", "a class or an enum", "a generic type"] {
-        assert!(
-            plain.iter().any(|&(_, k)| k == kind),
-            "no alias names {kind}"
-        );
-    }
-    for body in ["[T]", "T?", "[[T]]"] {
-        assert!(generic.contains(body), "no alias is `{body}`");
-        assert!(used.contains(body), "no type is written through `{body}`");
-    }
+        absent(most, &plain, &generic, &used).is_empty()
+    });
+    let absent = absent(most, &plain, &generic, &used);
+    assert!(absent.is_empty(), "{absent:#?}");
 }
 
 #[test]
@@ -4073,10 +4157,11 @@ fn mut_writes(program: &str) -> [bool; 3] {
 #[test]
 fn some_seed_should_change_and_grow_what_a_mut_call_passes() {
     let mut found = [false; 3];
-    for data in seeds() {
-        let writes = mut_writes(&generate(&data).program);
+    search_seeds(SEEDS, |n| {
+        let writes = mut_writes(&generate(&seed(n)).program);
         found = [0, 1, 2].map(|i| found[i] || writes[i]);
-    }
+        found == [true; 3]
+    });
     assert_eq!(found, [true; 3], "element write, push, string append");
 }
 
@@ -5617,8 +5702,8 @@ fn an_array_without_growth_should_take_no_push() {
 #[test]
 fn a_push_should_reach_a_local_an_element_and_a_guarded_field() {
     let (mut local, mut element, mut field) = (false, false, false);
-    for data in seeds() {
-        let program = generate(&data).program;
+    search_seeds(SEEDS, |n| {
+        let program = generate(&seed(n)).program;
         let lines: Vec<&str> = program.lines().map(str::trim_start).collect();
         for (at, line) in lines.iter().enumerate() {
             let Some((place, _)) = line.split_once(".push(") else {
@@ -5642,7 +5727,8 @@ fn a_push_should_reach_a_local_an_element_and_a_guarded_field() {
                 local = true;
             }
         }
-    }
+        local && element && field
+    });
     assert!(
         local && element && field,
         "{local} {element} {field}: a local, an element and a field"
@@ -5737,10 +5823,10 @@ fn a_push_through_an_optional_should_take_the_place_of_its_local() {
 /// never gives a type of three layers. One program holds both.
 #[test]
 fn a_mutable_array_local_should_now_and_then_hold_optional_arrays() {
-    // The type is rare, and the compound parts moved the bytes: of the seeds below, only seed 64
-    // holds it now.
-    let held = (0..2 * SEEDS).map(seed).any(|data| {
-        let program = generate(&data).program;
+    // The type is rare, and the compound parts moved the bytes: seed 64 is the first that holds
+    // it now.
+    let held = search_seeds(0, |n| {
+        let program = generate(&seed(n)).program;
         program.contains("]?.push(")
             && program.lines().any(|line| {
                 line.trim_start().starts_with("let mut ")
@@ -5762,9 +5848,10 @@ fn a_mutable_array_local_should_now_and_then_hold_optional_arrays() {
 /// type. The rule `!= 0` instead of `== 0` gives 13 new and 26 old, and the right rule 3 and 47.
 #[test]
 fn a_mutable_array_local_should_rarely_hold_optional_arrays() {
-    let (mut new, mut old) = (0, 0);
-    for data in seeds() {
-        for line in generate(&data).program.lines() {
+    // The ratio reads the first `SEEDS` seeds. The search for a new type reads on.
+    let (mut new, mut old, mut seen_new) = (0, 0, false);
+    search_seeds(SEEDS, |n| {
+        for line in generate(&seed(n)).program.lines() {
             let Some(rest) = line.trim_start().strip_prefix("let mut ") else {
                 continue;
             };
@@ -5776,14 +5863,16 @@ fn a_mutable_array_local_should_rarely_hold_optional_arrays() {
                 continue;
             };
             if inner.ends_with("]?]") {
-                new += 1;
+                new += u64::from(n < SEEDS);
+                seen_new = true;
             } else if !inner.starts_with('[') && !inner.ends_with("?]") {
-                old += 1;
+                old += u64::from(n < SEEDS);
             }
         }
-    }
+        seen_new
+    });
     assert!(
-        new > 0 && new * 4 < old,
+        seen_new && new * 4 < old,
         "{new} new and {old} old array lets"
     );
 }
@@ -6662,7 +6751,8 @@ fn a_declared_type_leaves_arrays_among_the_types() {
 #[test]
 fn a_variant_should_be_recursive_when_it_holds_its_enum() {
     let (mut recursive, mut other) = (0, 0);
-    for data in seeds() {
+    search_seeds(SEEDS, |n| {
+        let data = seed(n);
         let mut g = Gen::new(&data);
         g.program();
         for (id, e) in g.scope.enums.iter().enumerate() {
@@ -6676,7 +6766,8 @@ fn a_variant_should_be_recursive_when_it_holds_its_enum() {
                 other += usize::from(!variant.recursive);
             }
         }
-    }
+        recursive > 0 && other > 0
+    });
     assert!(
         recursive > 0 && other > 0,
         "{recursive} recursive, {other} not"
@@ -6925,12 +7016,12 @@ fn every_rewritten_copy_checks_clean() {
 }
 
 #[test]
-fn no_message_breaks_a_line() {
+fn a_message_should_not_break_a_line() {
     // A panic's record is the last stderr line, which `judge_pair` reads as one line.
     let mut messages = Vec::new();
-    for data in seeds() {
+    search_seeds(SEEDS, |n| {
         // The rewritten copy writes the same messages.
-        let source = generate(&data).program;
+        let source = generate(&seed(n)).program;
         let (ast, _) = checked(&source);
         let mut walk = Walk {
             source,
@@ -6938,7 +7029,8 @@ fn no_message_breaks_a_line() {
         };
         walk.ast(&ast);
         messages.extend(walk.messages);
-    }
+        !messages.is_empty()
+    });
     assert!(!messages.is_empty(), "no seed writes a message");
     let broken: Vec<&String> = messages
         .iter()
@@ -6950,12 +7042,14 @@ fn no_message_breaks_a_line() {
 #[test]
 fn every_rewrite_should_be_made_by_some_seed() {
     let mut made = FxHashMap::default();
-    for data in seeds() {
-        for rewrite in generate(&data).made {
+    let rewrites: [&str; 6] = ["Block", "DeadIf", "Swap", "Let", "Const", "MutCopy"];
+    search_seeds(SEEDS, |n| {
+        for rewrite in generate(&seed(n)).made {
             *made.entry(format!("{rewrite:?}")).or_insert(0) += 1;
         }
-    }
-    let missing: Vec<&str> = ["Block", "DeadIf", "Swap", "Let", "Const", "MutCopy"]
+        rewrites.iter().all(|rewrite| made.contains_key(*rewrite))
+    });
+    let missing: Vec<&str> = rewrites
         .into_iter()
         .filter(|rewrite| !made.contains_key(*rewrite))
         .collect();
@@ -7410,8 +7504,8 @@ fn every_rewrite_should_meet_its_condition() {
     // generator chose it by. A `C<n>` that does not fold, or folds through an overflowing step,
     // fails to check (E0086, E0088), so checking clean covers the Const rewrite.
     let (mut lets_seen, mut broken, mut misplaced) = (0, Vec::new(), Vec::new());
-    for data in seeds() {
-        let g = generate(&data);
+    search_seeds(SEEDS, |n| {
+        let g = generate(&seed(n));
         let (ast, program) = checked(&g.rewritten);
         let mut walk = Walk {
             source: g.rewritten,
@@ -7426,7 +7520,8 @@ fn every_rewrite_should_meet_its_condition() {
             lets_seen += lets.checked;
             broken.extend(lets.broken.into_iter().map(|b| format!("{}: {b}", f.name)));
         }
-    }
+        lets_seen > 0
+    });
     assert!(lets_seen > 0, "no copy holds a `let r<n>`");
     assert!(broken.is_empty(), "{broken:#?}");
     assert!(misplaced.is_empty(), "{misplaced:#?}");
@@ -7537,12 +7632,24 @@ fn let_binding_keeps_the_type() {
 }
 
 #[test]
-fn known_answers_happen() {
+fn a_known_site_should_give_a_value_and_a_panic_of_each_type() {
     // Over the seeds, a known site of each type gives a value, and one panics (decision 3). A
     // `u8` site that panics is rare, so this test reads 50% more seeds than the others.
     let mut kinds = FxHashSet::default();
-    for data in (0..SEEDS * 3 / 2).map(seed) {
-        let g = generate(&data);
+    let kinds_wanted: [(&str, bool); 4] =
+        [("i64", false), ("i64", true), ("u8", false), ("u8", true)];
+    // What no seed has yet: the search stops when it is empty, and the assertion prints it.
+    let absent = |kinds: &FxHashSet<(String, bool)>| -> Vec<String> {
+        (kinds_wanted.iter())
+            .filter(|&&(ty, panics)| !kinds.contains(&(ty.to_string(), panics)))
+            .map(|&(ty, panics)| {
+                let answer = if panics { "panics" } else { "gives a value" };
+                format!("no seed has a known site of `{ty}` that {answer}")
+            })
+            .collect()
+    };
+    search_seeds(SEEDS * 3 / 2, |n| {
+        let g = generate(&seed(n));
         for known in &g.known {
             let head = format!("fn {}(a: ", known.marker);
             let at = g
@@ -7556,24 +7663,36 @@ fn known_answers_happen() {
             let panics = matches!(known.answer, Answer::Panic(_));
             kinds.insert((ty.to_string(), panics));
         }
-    }
-    for kind in [("i64", false), ("i64", true), ("u8", false), ("u8", true)] {
-        assert!(
-            kinds.contains(&(kind.0.to_string(), kind.1)),
-            "no seed has a known site of `{}` that {}",
-            kind.0,
-            if kind.1 { "panics" } else { "gives a value" }
-        );
-    }
+        absent(&kinds).is_empty()
+    });
+    let absent = absent(&kinds);
+    assert!(absent.is_empty(), "{absent:#?}");
 }
 
 #[test]
-fn known_sites_take_every_count_and_negative_arguments() {
+fn known_sites_should_take_every_count_and_negative_arguments() {
     // Up to `MAX_KNOWN` sites, whose `i64` arguments include `-1`, the least `i64` and drawn
     // negatives, written `(-n)`.
     let (mut most, mut negatives) = (0, FxHashSet::default());
-    for data in seeds() {
-        let g = generate(&data);
+    // What no seed has yet: the search stops when it is empty, and the assertion prints it.
+    let absent = |most: usize, negatives: &FxHashSet<i128>| -> Vec<String> {
+        let mut absent = Vec::new();
+        if most != MAX_KNOWN {
+            absent.push(format!("no seed has {MAX_KNOWN} known sites"));
+        }
+        if !negatives.contains(&-1) {
+            absent.push("no known call takes `(-1)`".to_string());
+        }
+        if !negatives.contains(&i128::from(i64::MIN)) {
+            absent.push("no known call takes the least `i64`".to_string());
+        }
+        if !negatives.iter().any(|n| (-1_000..-1).contains(n)) {
+            absent.push("no known call takes a drawn negative".to_string());
+        }
+        absent
+    };
+    search_seeds(SEEDS, |n| {
+        let g = generate(&seed(n));
         most = most.max(g.known.len());
         let main = g.program.split("\nfn k").next().unwrap_or_default();
         let calls = main
@@ -7585,29 +7704,19 @@ fn known_sites_take_every_count_and_negative_arguments() {
                 negatives.extend(digits.parse::<i128>().map(|n| -n));
             }
         }
-    }
-    assert_eq!(most, MAX_KNOWN, "no seed has {MAX_KNOWN} known sites");
-    assert!(
-        negatives.contains(&-1),
-        "no known call takes `(-1)`: {negatives:?}"
-    );
-    assert!(
-        negatives.contains(&i128::from(i64::MIN)),
-        "no known call takes the least `i64`: {negatives:?}"
-    );
-    assert!(
-        negatives.iter().any(|n| (-1_000..-1).contains(n)),
-        "no known call takes a drawn negative: {negatives:?}"
-    );
+        absent(most, &negatives).is_empty()
+    });
+    let absent = absent(most, &negatives);
+    assert!(absent.is_empty(), "{absent:#?}\n{negatives:?}");
 }
 
 #[test]
-fn no_panic_site_follows_a_return() {
+fn a_panic_site_should_not_follow_a_return() {
     // A `return` in `main` may end the run before the site's call, with no panic to show that
     // it was never reached (decision 3). Only about one seed in 50 both returns from `main` and
     // draws a panic site, so this takes 256.
     let mut returning = 0;
-    for n in 0..256 {
+    search_seeds(256, |n| {
         let g = generate(&seed(n));
         let main = g.program.split("fn main() ").nth(1).unwrap_or_default();
         let main = main.split("\nfn k").next().unwrap_or_default();
@@ -7616,7 +7725,8 @@ fn no_panic_site_follows_a_return() {
             let panics = g.known.iter().any(|k| matches!(k.answer, Answer::Panic(_)));
             assert!(!panics, "a panic site follows a `return`:\n{}", g.program);
         }
-    }
+        returning > 0
+    });
     assert!(returning > 0, "no seed's `main` returns");
 }
 
@@ -7646,8 +7756,8 @@ fn known_answers_should_be_integer() {
     // Decision 11: a known answer depends on no inexact value. A known function's parameters,
     // locals and result are integers, and each call of it takes integer literals.
     let mut calls = 0;
-    for data in seeds() {
-        let g = generate(&data);
+    search_seeds(SEEDS, |n| {
+        let g = generate(&seed(n));
         let (_, program) = checked(&g.program);
         let known: Vec<usize> = g
             .known
@@ -7715,7 +7825,8 @@ fn known_answers_should_be_integer() {
             "each known site should call its function once"
         );
         calls += sites;
-    }
+        calls > 0
+    });
     assert!(calls > 0, "no seed calls a known function");
 }
 
@@ -7724,8 +7835,8 @@ fn known_answers_should_be_integer() {
 #[test]
 fn generated_conformances_should_reach_every_form() {
     let mut forms = FxHashSet::default();
-    for data in seeds() {
-        let program = parsed(&generate(&data).plain);
+    search_seeds(SEEDS, |n| {
+        let program = parsed(&generate(&seed(n)).plain);
         let classes: FxHashSet<String> = (program.items.iter())
             .filter_map(|item| match item {
                 ast::Item::Class(c) => Some(c.name.name.to_string()),
@@ -7747,7 +7858,8 @@ fn generated_conformances_should_reach_every_form() {
             };
             forms.insert(form);
         }
-    }
+        forms.len() == 4
+    });
     assert_eq!(forms.len(), 4, "{forms:?}");
 }
 
@@ -7951,8 +8063,8 @@ fn the_walk_should_mark_what_extension_holds() {
 #[test]
 fn generated_interfaces_should_be_used() {
     let mut interfaces = 0;
-    for data in seeds() {
-        let source = generate(&data).plain;
+    search_seeds(SEEDS, |n| {
+        let source = generate(&seed(n)).plain;
         let (_, diagnostics) = crate::front_end::checked(&source);
         interfaces += source.matches("interface ").count();
         for d in &diagnostics {
@@ -7961,7 +8073,8 @@ fn generated_interfaces_should_be_used() {
                 d.code().as_str() == "W0012" && source[..d.span().start()].ends_with("interface ");
             assert!(!unused, "an interface is never used in\n{source}");
         }
-    }
+        interfaces > 0
+    });
     assert!(interfaces > 0, "no seed writes an interface");
 }
 
@@ -8089,8 +8202,8 @@ fn deleting_what_w0012_names_should_leave_a_program_that_checks_in_the_fourth_se
 #[test]
 fn generated_shapes_should_call_every_requirement_of_a_conformed_interface() {
     let mut calls = 0;
-    for data in seeds() {
-        let source = generate(&data).plain;
+    search_seeds(SEEDS, |n| {
+        let source = generate(&seed(n)).plain;
         let lexed = lexer::lex(&source).expect("a generated program should lex");
         let program = parser::parse(lexed, false).program;
         let shapes = (program.items.iter()).find_map(|item| match item {
@@ -8099,7 +8212,9 @@ fn generated_shapes_should_call_every_requirement_of_a_conformed_interface() {
             }
             _ => None,
         });
-        let Some(shapes) = shapes else { continue };
+        let Some(shapes) = shapes else {
+            return calls > 0;
+        };
         let conformed = program.items.iter().flat_map(|item| match item {
             ast::Item::Class(c) => c.conforms.iter().collect::<Vec<_>>(),
             ast::Item::Enum(e) => e.conforms.iter().collect(),
@@ -8124,7 +8239,8 @@ fn generated_shapes_should_call_every_requirement_of_a_conformed_interface() {
                 calls += 1;
             }
         }
-    }
+        calls > 0
+    });
     assert!(
         calls > 0,
         "some seed's types should conform to an interface"
@@ -8163,8 +8279,8 @@ pub(crate) fn methods(source: &str) -> Vec<(usize, Method<'_>)> {
 #[test]
 fn generated_methods_should_return_values_that_no_other_method_returns() {
     let mut counts = [0, 0];
-    for data in seeds() {
-        let source = generate(&data).program;
+    search_seeds(SEEDS, |n| {
+        let source = generate(&seed(n)).program;
         let mut values: [FxHashSet<&str>; 2] = Default::default();
         for (_, method) in methods(&source) {
             let kind = usize::from(method.result == "string");
@@ -8175,7 +8291,8 @@ fn generated_methods_should_return_values_that_no_other_method_returns() {
             );
             counts[kind] += 1;
         }
-    }
+        counts.iter().all(|&n| n > 0)
+    });
     assert!(
         counts.iter().all(|&n| n > 0),
         "methods of {SEEDS} seeds: {counts:?}"
@@ -8187,8 +8304,8 @@ fn generated_methods_should_return_values_that_no_other_method_returns() {
 #[test]
 fn generated_associated_types_should_reach_every_kind() {
     let mut kinds = FxHashSet::default();
-    for data in seeds() {
-        for line in generate(&data).plain.lines().map(str::trim) {
+    search_seeds(SEEDS, |n| {
+        for line in generate(&seed(n)).plain.lines().map(str::trim) {
             if line.starts_with("type A") {
                 if line.contains(": I") {
                     kinds.insert("bounded");
@@ -8201,7 +8318,8 @@ fn generated_associated_types_should_reach_every_kind() {
                 }
             }
         }
-    }
+        kinds.len() == 3
+    });
     assert_eq!(kinds.len(), 3, "{kinds:?}");
 }
 
@@ -8284,8 +8402,8 @@ fn the_walk_should_mark_what_generic_interfaces_hold() {
 #[test]
 fn generated_interfaces_should_inherit_each_interface_once() {
     let mut lists = 0;
-    for data in seeds() {
-        let source = generate(&data).plain;
+    search_seeds(SEEDS, |n| {
+        let source = generate(&seed(n)).plain;
         let lexed = lexer::lex(&source).expect("a generated program should lex");
         let program = parser::parse(lexed, false).program;
         for item in &program.items {
@@ -8297,7 +8415,8 @@ fn generated_interfaces_should_inherit_each_interface_once() {
             assert_eq!(names.len(), interface.inherits.len(), "{source}");
             lists += usize::from(interface.inherits.len() > 1);
         }
-    }
+        lists > 0
+    });
     assert!(lists > 0, "no seed writes an interface that inherits two");
 }
 
@@ -8355,8 +8474,18 @@ fn the_walk_should_mark_what_associated_types_hold() {
 #[test]
 fn generated_requirements_should_name_every_kind_of_type() {
     let mut kinds = FxHashSet::default();
-    for data in seeds() {
-        for line in generate(&data).plain.lines().map(str::trim) {
+    let wanted: [&str; 8] = [
+        "i64",
+        "string",
+        "Self",
+        "[Self]",
+        "Self?",
+        "T",
+        "an associated type",
+        "a class or an enum",
+    ];
+    search_seeds(SEEDS, |n| {
+        for line in generate(&seed(n)).plain.lines().map(str::trim) {
             let Some(signature) = line.strip_prefix("fn r").filter(|_| !line.contains('{')) else {
                 continue;
             };
@@ -8375,17 +8504,8 @@ fn generated_requirements_should_name_every_kind_of_type() {
                 kinds.insert(kind.to_string());
             }
         }
-    }
-    let wanted = [
-        "i64",
-        "string",
-        "Self",
-        "[Self]",
-        "Self?",
-        "T",
-        "an associated type",
-        "a class or an enum",
-    ];
+        wanted.iter().all(|kind| kinds.contains(*kind))
+    });
     for kind in wanted {
         assert!(
             kinds.contains(kind),
@@ -8408,8 +8528,8 @@ fn generated_programs_should_name_each_language_interface() {
         ("fn to_string(self) -> string", false),
     ]);
     let (mut class, mut enumeration) = (false, false);
-    for data in seeds() {
-        let text = generate(&data).plain;
+    search_seeds(SEEDS, |n| {
+        let text = generate(&seed(n)).plain;
         for (form, seen) in &mut wanted {
             *seen |= text.contains(form);
         }
@@ -8418,7 +8538,8 @@ fn generated_programs_should_name_each_language_interface() {
         enumeration |= lines().any(|l| {
             l.starts_with("enum E") && (l.contains(": Eq {") || l.contains(": Display {"))
         });
-    }
+        class && enumeration && wanted.values().all(|seen| *seen)
+    });
     for (form, seen) in wanted {
         assert!(seen, "no seed writes {form}");
     }
@@ -8433,11 +8554,11 @@ fn generated_programs_should_name_each_language_interface() {
 #[test]
 fn generated_programs_should_write_an_enum_with_an_associated_type_payload() {
     let (mut direct, mut optional, mut deepest) = (false, false, false);
-    for data in seeds() {
-        let text = generate(&data).plain;
+    search_seeds(SEEDS, |n| {
+        let text = generate(&seed(n)).plain;
         deepest |= text.contains("let v4: NestE<NestW<i64>> = NestE.A(v3)");
         if !text.contains("enum NestE<T: Nest>") {
-            continue;
+            return direct && optional && deepest;
         }
         direct |= text.contains("    A(T.Item)\n");
         optional |= text.contains("    A(T.Item?)\n");
@@ -8465,7 +8586,8 @@ fn generated_programs_should_write_an_enum_with_an_associated_type_payload() {
         assert!(lines().any(compared), "`nest` compares no values");
         let measured = |l: &str| l.starts_with("    nest_depth(v");
         assert!(lines().any(measured), "`nest` does not measure the value");
-    }
+        direct && optional && deepest
+    });
     assert!(direct, "no seed writes the payload T.Item");
     assert!(optional, "no seed writes the payload T.Item?");
     assert!(deepest, "no seed builds a value four levels deep");
@@ -8749,7 +8871,11 @@ fn main() {
 // writes an `if` at it is seed 14, so 256 seeds is over 10 times that.
 #[test]
 fn a_leaving_if_should_nest_no_deeper_than_the_block_bound() {
-    let deepest = (0..256).map(|n| generate(&seed(n)).leaving_if_depth).max();
+    let mut deepest = None;
+    search_seeds(256, |n| {
+        deepest = deepest.max(Some(generate(&seed(n)).leaving_if_depth));
+        deepest == Some(MAX_BLOCKS - 1)
+    });
     assert_eq!(deepest, Some(MAX_BLOCKS - 1));
 }
 
@@ -8760,10 +8886,20 @@ fn a_leaving_if_should_nest_no_deeper_than_the_block_bound() {
 ///   most that a callee asks for
 #[test]
 fn generated_mut_lens_should_record_the_length_of_a_mut_parameter() {
-    let lens: Vec<u64> = seeds()
-        .flat_map(|data| generate(&data).mut_lens)
-        .map(|(_, len)| len)
-        .collect();
+    let mut lens: Vec<u64> = Vec::new();
+    search_seeds(SEEDS, |n| {
+        lens.extend(generate(&seed(n)).mut_lens.into_iter().map(|(_, len)| len));
+        lens.iter().any(|&len| len < MAX_MUT_LEN)
+    });
     assert!(lens.iter().any(|&len| len < MAX_MUT_LEN), "{lens:?}");
     assert!(lens.iter().all(|&len| len <= MAX_MUT_LEN), "{lens:?}");
+}
+
+/// Seeds 203, 4534 and 5974 once wrote a `loop` value under a later branch of an untyped `if`
+/// whose `break None` had no type (E0050; #363, #425). Seed 5974 also gave E0048 around the loop.
+#[test]
+fn the_programs_of_seeds_203_4534_and_5974_should_check_clean() {
+    for n in [203, 4534, 5974] {
+        checked(&generate(&seed(n)).program);
+    }
 }

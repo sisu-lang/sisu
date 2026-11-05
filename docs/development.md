@@ -100,7 +100,6 @@ The end-to-end cases are files. The `cases` test binary runs one test per
 
 The in-process tests in `crates/sisuc/src/diagnostic/explanations.rs` also read these fixtures.
 They also run each program again with multi-byte comments put in (except the slow E0162 and E0163 programs),
-They also run each program again with multi-byte comments put in,
 and check that no span splits a character.
 A new diagnostic with a fix needs a program in `diagnostics/` that shows the fix.
 Use the shape that is most likely to go wrong, such as a typed `let` or a `(` before the token.
@@ -119,6 +118,11 @@ check, and only those. It never creates a file. Any other file in these
 directories fails the run: a `.out`, `.err`, `.in` or `.json` without its
 `.sisu`, an expected file that the directory's mode does not read, or a hidden
 file.
+
+The same binary checks every program that the website shows, under
+`site/programs/`. A program in `site/programs/mir/` must print its
+`<name>.mir` under `sisu build --emit mir`. So a change to the mir that `sisu`
+prints can fail it: bless the case, and read the diff.
 
 A `run/` or `run-fail/` case that reads standard input has a `<name>.in` beside
 it, which every run of the case gets on its standard input: plain, `-O2`, both

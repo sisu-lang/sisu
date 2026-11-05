@@ -809,12 +809,9 @@ crates/sisuc/src/generate/coverage.rs::every_loop_is_bounded
 crates/sisuc/src/generate/coverage.rs::every_match_checks_without_an_unreachable_arm
 crates/sisuc/src/generate/coverage.rs::every_rewritten_copy_checks_clean
 crates/sisuc/src/generate/coverage.rs::every_short_input_checks_clean
-crates/sisuc/src/generate/coverage.rs::every_variant_is_generated
 crates/sisuc/src/generate/coverage.rs::fuel_runs_out
 crates/sisuc/src/generate/coverage.rs::generated_programs_stay_in_budget
 crates/sisuc/src/generate/coverage.rs::generation_is_deterministic
-crates/sisuc/src/generate/coverage.rs::known_answers_happen
-crates/sisuc/src/generate/coverage.rs::known_sites_take_every_count_and_negative_arguments
 crates/sisuc/src/generate/coverage.rs::let_binding_keeps_the_type
 crates/sisuc/src/generate/coverage.rs::let_binding_skips_a_short_circuit
 crates/sisuc/src/generate/coverage.rs::no_block_as_a_place
@@ -822,10 +819,7 @@ crates/sisuc/src/generate/coverage.rs::no_block_in_a_const
 crates/sisuc/src/generate/coverage.rs::no_const_with_an_overflowing_step
 crates/sisuc/src/generate/coverage.rs::no_generated_program_assigns_a_class_into_the_heap
 crates/sisuc/src/generate/coverage.rs::no_inexact_value_reaches_output
-crates/sisuc/src/generate/coverage.rs::no_message_breaks_a_line
-crates/sisuc/src/generate/coverage.rs::no_panic_site_follows_a_return
 crates/sisuc/src/generate/coverage.rs::rare_constant_forms_check_clean
-crates/sisuc/src/generate/coverage.rs::read_line_past_the_input_checks_clean
 crates/sisuc/src/generate/coverage.rs::rewrites_are_rare
 crates/sisuc/src/generate/coverage.rs::the_costliest_statement_fits_the_reserve
 crates/sisuc/src/generate/coverage.rs::the_walker_bounds_a_while_let_only_on_a_chain_it_steps_down

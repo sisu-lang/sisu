@@ -168,7 +168,7 @@ def status_areas() -> list[dict]:
 
 
 def status_board() -> str:
-    """The Home page's board: a bar, counts and the lists for each area, the first open. A state with no feature has no bar part and no count."""
+    """The Home page's board: a bar, counts and the lists for each area, all closed. A state with no feature has no bar part and no count."""
     def items(area, state):
         return [expand(f['text'], {}) for f in area['feature'] if f['state'] == state]
 
@@ -176,14 +176,14 @@ def status_board() -> str:
         return ''.join(f'<li>{t}</li>' for t in texts)
 
     out = []
-    for i, area in enumerate(status_areas()):
+    for area in status_areas():
         works, soon, planned = items(area, 'works'), items(area, 'next'), items(area, 'planned')
         note = f'\n    <p class="note">{expand(area["note"], {})}</p>' if area['note'] else ''
         bar = ''.join(f'<i class="{cls}" style="flex:{len(group)}"></i>' for cls, group in (('ok', works), ('next', soon), ('plan', planned)) if group)
         counts = ' · '.join(f'<b class="{cls}">{len(group)}</b> {word}'
                             for cls, group, word in (('ok', works, 'work today'), ('next', soon, 'next'), ('plan', planned, 'planned')) if group)
         later = (f'<h3>Coming next</h3><ul class="nx">{li(soon)}</ul>' if soon else '') + (f'<h3>Planned</h3><ul class="pl">{li(planned)}</ul>' if planned else '')
-        out.append(f'''<details class="area"{' open' if i == 0 else ''}><summary>
+        out.append(f'''<details class="area"><summary>
   <span class="area-name">{escape(area['name'])}</span>
   <div class="bar" aria-hidden="true">{bar}</div>
   <span class="counts">{counts}</span>
@@ -776,9 +776,9 @@ def assemble(body: str, *, title: str, description: str, page: str, depth: int, 
     # 404.html is served at any depth, so its links start at the site root.
     root = '/sisu/' if page == '404.html' else '../' * depth
     link = f'<a href="{{{{root}}}}{page}">'
-    head = read('_head.html').replace(link, link[:-1] + ' aria-current="page">')
+    head, foot = (read(part).replace(link, link[:-1] + ' aria-current="page">') for part in ('_head.html', '_foot.html'))
     names = context | {'root': root, 'title': html.escape(title), 'description': html.escape(description)}
-    return expand(head + body + read('_foot.html'), names)
+    return expand(head + body + foot, names)
 
 
 COMMENT_LINE = re.compile(r' *<!--.*-->')

@@ -1,0 +1,15 @@
+fn main() -> unit {
+  bb0:
+    xs#0 = array[1, 2, 3]
+    ys#1 = copy xs#0
+    check ys#1[0]
+    make_unique ys#1
+    ys#1[0] = 9
+    _2 = move ys#1
+    call print(_2)
+    release _2
+    _3 = move xs#0
+    call print(_3)
+    release _3
+    return
+}

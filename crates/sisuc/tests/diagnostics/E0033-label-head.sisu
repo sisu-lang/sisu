@@ -1,0 +1,11 @@
+fn f(o: bool?) {
+    outer: loop {
+        match o ?? break outeb {
+            _ => print(1)
+        }
+    }
+}
+
+fn main() {
+    f(None)
+}

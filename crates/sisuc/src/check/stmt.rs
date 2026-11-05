@@ -1016,8 +1016,14 @@ impl Checker<'_> {
     }
 
     /// "no loop label `name`" for `name` after `keyword`, offering the closest open loop label,
-    /// which counts as named.
-    fn missing_label(&mut self, name: &ast::Ident, keyword: &'static str) {
+    /// which counts as named. `break_start` is the start of the `break`, for the parentheses that
+    /// its fix may need (see `wrap_break`); a `continue` takes no value, so it has none.
+    fn missing_label(
+        &mut self,
+        name: &ast::Ident,
+        keyword: &'static str,
+        break_start: Option<usize>,
+    ) {
         let suggestion = closest(
             name.name.as_str(),
             self.open_labels().map(|l| l.name.as_str()),
@@ -1030,11 +1036,17 @@ impl Checker<'_> {
                 self.named_by_failed_jump(Symbol::intern(label));
             }
         }
+        let wrap = break_start.and_then(|start| {
+            suggestion
+                .as_ref()
+                .and_then(|_| self.wrap_break(name.span, start))
+        });
         self.report(DiagnosticKind::MissingLabel {
             name: name.name.to_string(),
             keyword,
             at: name.span,
             suggestion,
+            wrap,
         });
     }
 
@@ -1202,7 +1214,7 @@ impl Checker<'_> {
             // jump is the error.
             _ => match label {
                 Some(label) if !self.body.loops.is_empty() => {
-                    self.missing_label(label, "continue");
+                    self.missing_label(label, "continue", None);
                     Err(Poisoned::error())
                 }
                 _ => {
@@ -1332,7 +1344,7 @@ impl Checker<'_> {
                 )
                 .is_some()
             {
-                self.missing_label(name, "break");
+                self.missing_label(name, "break", Some(span.start()));
             } else {
                 self.skip_value();
                 self.report(DiagnosticKind::BreakValueNotLoop {
@@ -1363,7 +1375,7 @@ impl Checker<'_> {
         if quiet {
             self.body.quiet_at = Some(v.span);
         }
-        self.body.label_typo = typo.map(|name| name.span);
+        self.body.label_typo = typo.map(|name| (name.span, span.start()));
         let outer_hint = self.pass_hint(Some(v.span), siblings);
         let checked = self.expr(v, hint.map(|(ty, _)| ty));
         self.body.hint_at = outer_hint;

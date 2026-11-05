@@ -1,0 +1,10 @@
+fn f(o: bool?) -> i64 {
+    outer: loop {
+        for i in 0..3 { if o ?? break outeb { print(i) } }
+    }
+    0
+}
+
+fn main() {
+    print(f(None))
+}

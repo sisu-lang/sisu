@@ -1,0 +1,14 @@
+error[E0033]: cannot find binding `outeb`
+ --> E0033-label-head.sisu:3:26
+  |
+3 |         match o ?? break outeb {
+  |                          ^^^^^
+  |
+help: a loop label with a similar name exists: `outer`
+  |
+3 -         match o ?? break outeb {
+3 +         match o ?? (break outer) {
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0033
