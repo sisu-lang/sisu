@@ -1,5 +1,6 @@
-//! Checks only the `cases` binary makes: the site's pending program, and the output of each
-//! explanation's Broken program, which the site's diagnostic pages show.
+//! Checks only the `cases` binary makes: the site's pending program, the mir of its `mir/`
+//! programs, and the output of each explanation's Broken program, which the site's diagnostic
+//! pages show.
 
 use std::ffi::OsStr;
 use std::fs;
@@ -97,18 +98,18 @@ pub(crate) fn pending(path: &Path) {
 }
 
 /// Checks the mir case at `path`, a program whose mir the site shows: `sisu build --emit mir`
-/// prints its `.mir`. With `bless`, rewrites the `.mir` instead.
+/// prints its `.mir`, and nothing on stderr. With `bless`, rewrites the `.mir` instead.
 pub(crate) fn mir(path: &Path, bless: bool) {
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
         .args(["build", "--emit", "mir"])
         .arg(path)
         .output()
         .expect("sisu starts");
-    assert_eq!(
-        out.status.code(),
-        Some(0),
-        "{}: {}",
+    assert!(
+        out.status.success() && out.stderr.is_empty(),
+        "{}: exits {:?} with stderr:\n{}",
         path.display(),
+        out.status,
         String::from_utf8_lossy(&out.stderr)
     );
     let mir = String::from_utf8_lossy(&out.stdout).into_owned();

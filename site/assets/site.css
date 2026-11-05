@@ -211,8 +211,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 15px; }
 .flow.cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 28px; border: 0; border-radius: 0; background: none; overflow: visible; }
 .flow.cards li { display: block; padding: 0; position: relative; }
 .flow.cards li + li { border-top: 0; }
-.flow.cards li::before { position: absolute; top: 16px; right: 16px; width: 26px; height: 26px; font-size: 13px; }
-.flow.cards li::after { content: "→"; position: absolute; right: -22px; top: 50%; transform: translateY(-50%); width: 16px; text-align: center; color: var(--mute); font-size: 18px; }
+.flow.cards li::before { pointer-events: none; position: absolute; top: 16px; right: 16px; width: 26px; height: 26px; font-size: 13px; }
+.flow.cards li::after { content: "→"; content: "→" / ""; position: absolute; right: -22px; top: 50%; transform: translateY(-50%); width: 16px; text-align: center; color: var(--mute); font-size: 18px; }
 .flow.cards li:nth-child(4n)::after, .flow.cards li:last-child::after { content: none; }
 .flow.cards a { display: flex; flex-direction: column; gap: 8px; height: 100%; padding: 18px; border: 1px solid var(--rule2); border-radius: 12px; background: var(--surface); color: inherit; text-decoration: none; }
 .flow.cards a:hover { border-color: var(--accent); }
@@ -326,7 +326,7 @@ footer nav a[aria-current] { color: var(--ink); font-weight: 700; }
   header.site nav { order: 3; width: 100%; margin: 0 0 0 -2px; overflow-x: auto; padding: 10px 2px 12px; scrollbar-width: none; }
   .theme { margin-left: auto; }
   .flow.cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .flow.cards li:nth-child(4n)::after { content: "→"; }
+  .flow.cards li:nth-child(4n)::after { content: "→"; content: "→" / ""; }
   .flow.cards li:nth-child(2n)::after { content: none; }
 }
 @media (max-width: 900px) {

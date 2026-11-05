@@ -55,7 +55,7 @@ Sisu is a small, statically typed language that compiles to native x86-64 and AR
   </div></section>
 
   <section class="s" aria-labelledby="h-errors"><div class="w">
-    <div class="s-h"><h2 id="h-errors">Errors that help you fix the code</h2><p>Each error has a stable code and points at the code that caused it. When the fix is clear, the error shows it, marked safe or unsafe.</p></div>
+    <div class="s-h"><h2 id="h-errors">Errors that help you fix the code</h2><p>Each error has a stable code and points at the code that caused it. When the fix is clear, the error shows it. With <code>--format json</code>, each fix also says if it is safe to apply.</p></div>
     <div class="errs">
       <figure class="code"><figcaption class="cap">A <code>match</code> that misses a variant</figcaption><pre>{{diag programs/diagnostics/area.err}}</pre></figure>
       <figure class="code"><figcaption class="cap">A change to a <code>let</code> binding</figcaption><pre>{{diag programs/diagnostics/rounds.err}}</pre></figure>
@@ -103,17 +103,17 @@ Sisu is a small, statically typed language that compiles to native x86-64 and AR
     </ol>
     <details class="mir">
       <summary>See the MIR: a last use moves the array, so the write needs no copy</summary>
-      <p>In MIR, each change to a reference count is a statement. <code>copy</code> adds 1 to the count, and <code>release</code> takes 1 away. <code>move</code> hands the reference over and does not change the count. <code>make_unique</code> writes in place when the count is 1, and copies the array first when the count is more.</p>
+      <p>In MIR, each change to a reference count is a statement. <code>copy</code> adds 1 to the count, and <code>release</code> takes 1 away. <code>move</code> hands the reference over and does not change the count. <code>make_unique</code> copies the array when the count is more than 1, and does nothing when the count is 1. The write after it then changes an array that only <code>ys</code> holds.</p>
       <div class="errs">
-        <div><p>Line 3 is the last use of <code>xs</code>, so <code>xs</code> moves into <code>ys</code>. The count stays at 1, and the write changes the array in place.</p>
+        <div><p><code>let mut ys = xs</code> is the last use of <code>xs</code>, so <code>xs</code> moves into <code>ys</code>. The count stays at 1, and the write changes the array in place.</p>
           <figure class="code"><figcaption class="cap">last_use.sisu</figcaption><pre data-lang="sisu">
 {{text programs/mir/last_use.sisu}}</pre></figure>
-          <figure class="code"><figcaption class="cap"><code>sisu build --emit mir</code></figcaption><pre data-lang="out">
+          <figure class="code"><figcaption class="cap"><code>sisu build --emit mir last_use.sisu</code></figcaption><pre data-lang="out">
 {{text programs/mir/last_use.mir}}</pre></figure></div>
-        <div><p>Here line 6 reads <code>xs</code> again, so line 3 is a <code>copy</code>. The count is 2, and <code>make_unique</code> copies the array before the write.</p>
+        <div><p>Here <code>print(xs)</code> reads <code>xs</code> again, so <code>let mut ys = xs</code> is a <code>copy</code>. The count is 2, and <code>make_unique</code> copies the array before the write.</p>
           <figure class="code"><figcaption class="cap">read_again.sisu</figcaption><pre data-lang="sisu">
 {{text programs/mir/read_again.sisu}}</pre></figure>
-          <figure class="code"><figcaption class="cap"><code>sisu build --emit mir</code></figcaption><pre data-lang="out">
+          <figure class="code"><figcaption class="cap"><code>sisu build --emit mir read_again.sisu</code></figcaption><pre data-lang="out">
 {{text programs/mir/read_again.mir}}</pre></figure></div>
       </div>
     </details>
@@ -142,7 +142,7 @@ $ ./fib
 
   <section class="s tint" aria-labelledby="h-open"><div class="w cta">
     <div style="max-width:60ch"><h2 id="h-open">Built in the open</h2><p>One person builds Sisu, in public, one reviewed pull request at a time. Every design choice is written down with its reasons.</p>
-      <p>You can help without knowing the compiler. A small program that gives a wrong answer or crashes <code>sisu</code> becomes a test case. An error message that misleads you, or a page that is wrong, is a bug to report. Start with an issue: <a href="contribute.html#help">what help fits</a>.</p></div>
+      <p>You can help without knowing the compiler. A small program that gives a wrong answer or crashes <code>sisu</code> can become a test case. An error message that misleads you, or a page that is wrong, is a bug to report. Start with an issue: <a href="contribute.html#help">what help fits</a>.</p></div>
     <div class="acts"><a class="btn go" href="contribute.html">How to contribute</a><a class="btn alt" href="decisions.html">Design decisions</a></div>
   </div><div class="w"><p class="after">The hand-written text on this page was checked against the repository at commit 2a7e73e.</p></div></section>
 </main>
