@@ -371,6 +371,22 @@ class GapsCheck(unittest.TestCase):
         self.assertEqual([len(content) for _, content in files], [4096] * 128)
         self.assertEqual(len(run.files('front_end-1')[0]), len(PROGRAMS))
 
+    def test_program_coverage_should_measure_the_corpus_and_the_seeds(self):
+        stages = ('lexer', 'parser', 'check', 'mir', 'codegen')
+        files = [{'filename': f'/r/crates/sisuc/src/{stage}/mod.rs',
+                  'summary': {'lines': {'count': 10, 'covered': 5}}} for stage in stages]
+        run = self.gaps(args=('--target', 'program', '--coverage'), seeds={'data': [{'files': files}]},
+                        old_profiles=True, corpus=True)
+        self.assertEqual(run.code, 0, run.stdout + run.stderr)
+        calls = run.calls('program')
+        self.assertEqual([old for old, _ in calls], [False], run.log)
+        self.assertEqual(len(calls[0][1]), 2, calls)
+        self.assertEqual(calls[0][1][0], 'fuzz/corpus/program')
+        self.assertEqual(len(run.files('program-2')[0]), 128)
+        self.assertIn('inputs reaching codegen: all 129 (corpus and seeds', run.stdout)
+        for stage in stages:
+            self.assertRegex(run.stdout, rf'(?m)^{stage} +50\.0% of 10 lines$')
+
     def test_a_broken_measurement_should_fail_with_its_reason(self):
         # The valid export reaches no function under check/.
         run = self.gaps(valid=export(ANCHORS[1], ANCHORS[2]))
