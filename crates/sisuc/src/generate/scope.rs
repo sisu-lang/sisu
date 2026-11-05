@@ -640,8 +640,8 @@ impl Scope {
         }
     }
 
-    /// Whether a `mut` call or an assignment may write `field`: it is `mut` and holds no class
-    /// object.
+    /// Whether a `mut` call, an assignment or a push may write `field`: it is `mut` and holds no
+    /// class object.
     pub(crate) fn target_field(&self, field: &Field) -> bool {
         field.mutable && !self.contains_class(&field.ty)
     }
