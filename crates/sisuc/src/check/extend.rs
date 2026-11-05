@@ -12,7 +12,7 @@ use crate::diagnostic::{
     BlockBound, BlockNeed, BoundLabel, CannotExtendForm, Earlier, Owner as MethodOwner,
 };
 use crate::lexer::{TokenKind, lex};
-use crate::source::Span;
+use crate::source::{Span, removal_end};
 use crate::tir::{self, Type, TypeKind};
 
 /// A definition of a method name, among those of a class or an enum: where its name is, its
@@ -127,7 +127,7 @@ impl<'a> Checker<'_> {
                 let owner = method_owner(holder, &name);
                 self.report(DiagnosticKind::MutSelf {
                     keyword: mut_self.keyword,
-                    remove: Span::new(mut_self.keyword.start(), mut_self.receiver.start()),
+                    remove: mut_self_removal(self.source.comments, mut_self),
                     safe: mut_self.annotation.is_none(),
                     owner,
                 });
@@ -528,6 +528,16 @@ pub(super) fn method_holder(ty: Type) -> Option<Holder> {
         TypeKind::I64 => Some(Holder::I64),
         _ => holder_of(ty),
     }
+}
+
+/// What the fix of E0018 removes for `mut_self`: the `mut` and the white space after it, up to
+/// a comment.
+fn mut_self_removal(comments: &[usize], mut_self: &ast::MutSelf) -> Span {
+    let (keyword, receiver) = (mut_self.keyword, mut_self.receiver);
+    Span::new(
+        keyword.start(),
+        removal_end(comments, keyword.end(), receiver.start()),
+    )
 }
 
 /// What owns the methods of `holder`, whose type is named `name`, in the report of a `mut self`.

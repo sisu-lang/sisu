@@ -998,8 +998,9 @@ pub(crate) enum DiagnosticKind {
     AssignToSelf { at: Span },
     /// An assignment to `name`, at `at`, which is a function.
     AssignToFunction { name: String, at: Span },
-    /// A `let` that binds the `_` at `at` and has the `mut` at `keyword`.
-    MutOnUnderscore { at: Span, keyword: Span },
+    /// A `let` that binds the `_` at `at`. The fix removes `remove`: the `mut` and the white
+    /// space after it, up to a comment.
+    MutOnUnderscore { at: Span, remove: Span },
     /// The `_` at `at` where a value belongs. `bind` is whether it starts the plain assignment
     /// `_ = e`, which `let ` in front of it turns into a binding.
     UnderscoreValue { at: Span, bind: bool },
@@ -2533,8 +2534,9 @@ pub(crate) struct MutDiffers {
 /// The binding that W0002 names.
 #[derive(Clone)]
 pub(crate) enum NeverReassignedForm {
-    /// A `let mut`, with its `mut`, which the fix removes.
-    Let { keyword: Span },
+    /// A `let mut`. The fix removes `remove`: the `mut` and the white space after it, up to a
+    /// comment.
+    Let { remove: Span },
     /// A `mut` parameter, of a class type when `class`. Removing its `mut` changes every caller,
     /// so there is no fix.
     Param { class: bool },
@@ -3005,12 +3007,12 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::NeverReassigned {
                 name,
                 at,
-                form: NeverReassignedForm::Let { keyword },
+                form: NeverReassignedForm::Let { remove },
             } => Diagnostic::coded(code, at, format!("`{name}` is never reassigned")).with_fix(Fix {
                 message: "declare it with `let`".to_string(),
                 safe: true,
                 edits: vec![Edit {
-                    span: Span::new(keyword.start(), at.start()),
+                    span: remove,
                     replacement: String::new(),
                 }],
             }),
@@ -5152,13 +5154,13 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::AssignToFunction { name, at } => {
                 Diagnostic::coded(code, at, format!("`{name}` is a function, not a variable"))
             }
-            DiagnosticKind::MutOnUnderscore { at, keyword } => {
+            DiagnosticKind::MutOnUnderscore { at, remove } => {
                 Diagnostic::coded(code, at, "`_` binds nothing, so it cannot be `mut`").with_fix(
                     Fix {
                         message: "use `let _`".to_string(),
                         safe: true,
                         edits: vec![Edit {
-                            span: Span::new(keyword.start(), at.start()),
+                            span: remove,
                             replacement: String::new(),
                         }],
                     },

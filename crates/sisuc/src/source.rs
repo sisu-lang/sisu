@@ -97,6 +97,16 @@ pub(crate) struct Source<'a> {
     base: usize,
 }
 
+/// The end of a removal whose code ends at byte `after`, when the next token starts at byte
+/// `next`: the start of the first comment in `after..next`, else `next`. `comments` are the
+/// sorted offsets where the comments start. The lexer drops comments, and the gap between two
+/// tokens holds only white space, line breaks and comments, so a removal that ran to `next`
+/// would delete the comment. A line break with no comment stays in the removal.
+pub(crate) fn removal_end(comments: &[usize], after: usize, next: usize) -> usize {
+    let first = comments.partition_point(|&start| start < after);
+    comments.get(first).map_or(next, |&start| start.min(next))
+}
+
 impl<'a> Source<'a> {
     /// `text`, whose first byte has offset `base`.
     pub(crate) fn new(text: &'a str, base: usize) -> Source<'a> {

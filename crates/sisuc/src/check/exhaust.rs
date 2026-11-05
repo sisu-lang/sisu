@@ -85,9 +85,18 @@ pub(super) struct Unreachable {
     /// The pattern of the row that takes every value of this one, when one other row takes them
     /// all.
     pub(super) covered_by: Option<Span>,
-    /// For an alternative, the alternative and the space to the alternative next to it, which
-    /// holds the `|` that joins them: the one before it, or after it when it is first.
-    pub(super) alternative: Option<Span>,
+    /// For an alternative, where its neighbours are, which the fix needs to remove it with a `|`.
+    pub(super) alternative: Option<Neighbours>,
+}
+
+/// The alternatives next to an alternative of an `|`: the checker removes the alternative and the
+/// `|` that joins it to one of them.
+#[derive(Clone, Copy)]
+pub(super) struct Neighbours {
+    /// The end of the alternative before it, if it is not first.
+    pub(super) before: Option<usize>,
+    /// The start of the alternative after it, if it is not last.
+    pub(super) after: Option<usize>,
 }
 
 /// Which `rows`, the arms of a `match` on `ty` in order, no value reaches, and a value that
@@ -108,7 +117,7 @@ pub(super) fn check(
             Reach::Reached => {
                 let mut found = Vec::new();
                 solver.unreached(row.pattern, pats[k], &mut found);
-                for (alternative, at, remove) in found {
+                for (alternative, at, neighbours) in found {
                     // The alternatives before it in its own arm cover none of it: a value they
                     // take would reach it, were it alone.
                     let covered_by = match takers.get(&alternative) {
@@ -120,7 +129,7 @@ pub(super) fn check(
                     unreachable.push(Unreachable {
                         at,
                         covered_by,
-                        alternative: Some(remove),
+                        alternative: Some(neighbours),
                     });
                 }
                 continue;
@@ -634,8 +643,13 @@ impl Solver<'_> {
     }
 
     /// Adds to `found` each alternative in `p`, interned as `pat`, that no leaf reached, but not
-    /// the alternatives inside it: the alternative, its span, and the span the fix removes.
-    fn unreached(&self, p: &tir::Pattern, pat: PatId, found: &mut Vec<(Alternative, Span, Span)>) {
+    /// the alternatives inside it: the alternative, its span, and its neighbours.
+    fn unreached(
+        &self,
+        p: &tir::Pattern,
+        pat: PatId,
+        found: &mut Vec<(Alternative, Span, Neighbours)>,
+    ) {
         match (&p.kind, &self.pats[pat]) {
             (tir::PatternKind::Variant { fields, .. }, Pat::Variant { fields: ids, .. }) => {
                 for (field, &id) in fields.iter().zip(ids.iter()) {
@@ -648,11 +662,11 @@ impl Solver<'_> {
                     if self.reached.contains(&(pat, a)) {
                         self.unreached(alt, id, found);
                     } else {
-                        let remove = match a.checked_sub(1) {
-                            Some(before) => Span::new(alts[before].span.end(), alt.span.end()),
-                            None => Span::new(alt.span.start(), alts[1].span.start()),
+                        let neighbours = Neighbours {
+                            before: a.checked_sub(1).map(|before| alts[before].span.end()),
+                            after: alts.get(a + 1).map(|after| after.span.start()),
                         };
-                        found.push(((pat, a), alt.span, remove));
+                        found.push(((pat, a), alt.span, neighbours));
                     }
                 }
             }

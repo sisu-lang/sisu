@@ -8,7 +8,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::alias::Via;
 use super::branch::Branch;
 use super::enums::reserved_name;
-use super::exhaust::{self, Report, Row};
+use super::exhaust::{self, Neighbours, Report, Row};
 use super::generic::{Ahead, type_meets};
 use super::stmt::BlockSoFar;
 use super::{Checked, CheckedBlock, Checker, Declared, Poisoned, type_of};
@@ -17,9 +17,44 @@ use crate::diagnostic::{
     BadRange, Definition, DiagnosticKind, Expected, GuardHelp, MismatchSource, Plain, Unwrap,
     suggestion,
 };
-use crate::source::Span;
+use crate::source::{Span, removal_end};
 use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeKind};
+
+/// What the fix of W0006 removes for the unreached alternative `at`. It removes the `|` before the
+/// alternative, unless a comment lies between them and another alternative follows: then it
+/// removes the alternative and the `|` after it, up to a comment, so that the comment stays. That
+/// cut works only when the `|` comes before the comment: `after_gap` is the text from the end of
+/// `at` to the start of the alternative after it. Else the removal runs to the next alternative,
+/// or starts at the end of the alternative before, and each comment in the removed text goes: one
+/// span cannot remove the `|` and keep a comment that lies before it.
+fn alternative_removal(
+    comments: &[usize],
+    at: Span,
+    neighbours: Neighbours,
+    after_gap: &str,
+) -> Span {
+    match (neighbours.before, neighbours.after) {
+        (Some(before), after)
+            if after.is_none() || removal_end(comments, before, at.start()) == at.start() =>
+        {
+            Span::new(before, at.end())
+        }
+        (before, Some(after)) => {
+            let end = removal_end(comments, at.end(), after);
+            if after_gap[..end - at.end()].contains('|') {
+                Span::new(at.start(), end)
+            } else {
+                match before {
+                    Some(before) => Span::new(before, at.end()),
+                    None => Span::new(at.start(), after),
+                }
+            }
+        }
+        // An `|` joins two alternatives or more, so each one has a neighbour.
+        (_, None) => at,
+    }
+}
 
 /// The names one pattern binds, at `top`, as its check goes; `arm` is the `match` arm it
 /// starts, if any.
@@ -315,7 +350,7 @@ impl Checker<'_> {
                 break;
             };
             reachable[index] &= found.alternative.is_some();
-            let remove = found.alternative.unwrap_or_else(|| {
+            let whole_arm = || {
                 // Arms are separated by a line break or a `;` (ADR 0028), so an arm may share
                 // its line. The first arm is always reached, so a previous arm exists.
                 let start = arm.pattern.span.start();
@@ -344,7 +379,17 @@ impl Checker<'_> {
                 } else {
                     Span::new(line_start(start), (line_end + 1).min(source.end()))
                 }
-            });
+            };
+            let end = found.at.end();
+            let remove = match found.alternative {
+                Some(neighbours) => alternative_removal(
+                    self.source.comments,
+                    found.at,
+                    neighbours,
+                    source.slice(end..neighbours.after.unwrap_or(end)),
+                ),
+                None => whole_arm(),
+            };
             self.report(DiagnosticKind::UnreachableArm {
                 at: found.at,
                 alternative: found.alternative.is_some(),

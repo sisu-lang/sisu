@@ -19,7 +19,7 @@ use crate::diagnostic::{
     Owner, PowerFix, SpecForm, SpecLimit,
 };
 use crate::lexer::{Lexed, MIN_MAGNITUDE, Token, TokenKind, literal_too_large};
-use crate::source::{Source, Span};
+use crate::source::{Source, Span, removal_end};
 use crate::symbol::Symbol;
 
 /// What the parser makes of a lexed source.
@@ -3301,16 +3301,11 @@ impl<'a> Parser<'a> {
     }
 
     /// The end of a removal whose code ends at byte `after`, when the next token starts at byte
-    /// `next`: the start of the first comment in `after..next`, else `next`. The lexer drops
-    /// comments, and the gap between two tokens holds only white space, line breaks and comments,
-    /// so a removal that ran to `next` would delete the comment. A line break with no comment
-    /// stays in the removal, unlike `mut_not_argument`, which removes spaces and tabs only. A
-    /// comment before the last removed token (`x // c`, then `: a`) is still lost.
+    /// `next`: see `source::removal_end`. Unlike `mut_not_argument`, which removes spaces and tabs
+    /// only, it keeps a line break in the removal. A comment before the last removed token
+    /// (`x // c`, then `: a`) is still lost.
     fn removal_end(&self, after: usize, next: usize) -> usize {
-        let first = self.comments.partition_point(|&start| start < after);
-        self.comments
-            .get(first)
-            .map_or(next, |&start| start.min(next))
+        removal_end(self.comments, after, next)
     }
 
     /// Skips a `label:` before a sub-pattern, and returns the label's span and the span from it
@@ -3644,7 +3639,10 @@ impl<'a> Parser<'a> {
         {
             return Err(DiagnosticKind::MutOnUnderscore {
                 at: name.span,
-                keyword,
+                remove: Span::new(
+                    keyword.start(),
+                    self.removal_end(keyword.end(), name.span.start()),
+                ),
             }
             .into());
         }
@@ -8125,7 +8123,8 @@ mod tests {
     /// THEN each edit ends where the comment starts, so the fix keeps the comment
     #[test]
     fn a_removal_should_keep_a_comment_in_its_gap() {
-        let rows: [(&str, &[&str]); 8] = [
+        let rows: [(&str, &[&str]); 9] = [
+            ("fn main() {\n    let mut // c\n    _ = 1\n}", &["mut "]),
             (
                 "fn main() {\n    match e {\n        E.P(x: // c\n            a, y: b) => print(a)\n    }\n}",
                 &["x: ", "y: "],
@@ -8163,7 +8162,11 @@ mod tests {
     /// nothing
     #[test]
     fn a_removal_with_no_comment_in_its_gap_should_reach_the_next_token() {
-        let rows: [(&str, &[&str]); 7] = [
+        let rows: [(&str, &[&str]); 8] = [
+            (
+                "fn main() {\n    // before\n    let mut\n    _ = 1 // later\n}",
+                &["mut\n    "],
+            ),
             (
                 "fn main() {\n    match e {\n        // before\n        E.P(x:\n            a, y: b) => print(a) // later\n    }\n}",
                 &["x:\n            ", "y: "],
