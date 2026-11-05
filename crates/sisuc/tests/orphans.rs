@@ -123,6 +123,14 @@ fn site_pending_directory_should_hold_only_cases() {
     assert_only_cases("../../site/programs/pending", &[]);
 }
 
+/// GIVEN the directory `site/programs/mir`
+/// WHEN it is listed once
+/// THEN every entry is a `.sisu` case or the `.mir` file of one
+#[test]
+fn site_mir_directory_should_hold_only_cases_and_their_files() {
+    assert_only_cases("../../site/programs/mir", &["mir"]);
+}
+
 /// GIVEN the directory `site/programs/explanations`
 /// WHEN it is listed once
 /// THEN every entry is the `.err` or `.json` file of an explanation in `docs/diagnostics`

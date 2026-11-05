@@ -103,6 +103,7 @@ A tour of the Sisu language as it works today, one small program at a time.
 {{text programs/run/area.sisu}}</pre></figure>
       <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
 {{text programs/run/area.out}}</pre></figure>
+      <p>A value is built through its enum, as in <code>Shape.Point</code>. A pattern uses the bare name, <code>Point</code>, because the type of the matched value tells which enum it is from. A qualified pattern works too.</p>
       <p>A <code>match</code> must cover every value. Leave out the <code>Point</code> arm and the program does not compile:</p>
       <figure class="code"><figcaption class="cap">sisu build area.sisu</figcaption><pre>{{diag programs/diagnostics/area.err}}</pre></figure>
       <p>Patterns can also be literals, alternatives joined with <code>|</code>, and ranges. An arm can add a guard with <code>if</code>.</p>

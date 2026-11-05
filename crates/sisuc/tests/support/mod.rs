@@ -782,7 +782,7 @@ fn agreed(path: &Path, what: &str, o0: &[u8], o2: &[u8]) -> String {
 /// Checks that each `(path, actual)` file holds `actual`. With `bless`, writes each `actual` to
 /// its file instead, but only if every file exists: bless never creates an expectation file, and
 /// writes all of them or none.
-fn expect_files(files: &[(PathBuf, String)], bless: bool) {
+pub(crate) fn expect_files(files: &[(PathBuf, String)], bless: bool) {
     if bless {
         for (path, _) in files {
             assert!(
