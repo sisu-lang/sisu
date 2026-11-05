@@ -1567,6 +1567,74 @@ fn unknown_name_after_break_should_not_offer_a_label_name() {
     assert!(fixes[0].contains("break m.len()"), "{fixes:?}");
 }
 
+/// A loop that holds `body`, where `o` is an optional `bool` and the loop label is `outer`.
+fn in_labeled_loop(body: &str) -> String {
+    format!(
+        "fn f(o: bool?) {{\n    outer: loop {{\n        {body}\n    }}\n}}\n\nfn main() {{\n    f(None)\n}}\n"
+    )
+}
+
+/// A `break` that ends the head of an `if`, an `else if`, an `if let` or a `match` would take the
+/// `{` after it as its value, so the fix of a misspelled loop label wraps the `break` in
+/// parentheses. That holds for E0033 and, in a `for` or a `while`, for E0144.
+#[test]
+fn label_fix_at_the_end_of_a_head_should_wrap_the_break_in_parentheses() {
+    for body in [
+        "match o ?? break outeb { _ => print(1) }",
+        "if o ?? break outeb { print(1) }",
+        "if let x = o ?? break outeb { print(x) }",
+        "if true { print(0) } else if o ?? break outeb { print(1) }",
+        "let v = if o ?? break outeb { 1 } else { 2 }",
+        "match o ?? break outeb   { _ => print(1) }",
+        "if o ?? break outeb\r{ print(1) }",
+    ] {
+        let src = in_labeled_loop(body);
+        assert_eq!(
+            fixed_sources(&src, Code::BindingNotFound),
+            vec![src.replace("break outeb", "(break outer)")],
+            "{body}"
+        );
+    }
+    for body in [
+        "for i in 0..3 { if o ?? break outeb { print(i) } }",
+        "while true { if o ?? break outeb { print(1) } }",
+    ] {
+        let src = in_labeled_loop(body);
+        assert_eq!(
+            fixed_sources(&src, Code::MissingLabel),
+            vec![src.replace("break outeb", "(break outer)")],
+            "{body}"
+        );
+    }
+}
+
+/// Where the name does not end a head, the `break` parses without parentheses, so the fix of a
+/// misspelled loop label only replaces the name. A `continue` takes no value.
+#[test]
+fn label_fix_outside_a_head_should_not_add_parentheses() {
+    for body in [
+        "let x = o ?? break outeb",
+        "match o { _ => break outeb }",
+        "match 1 { _ if o ?? break outeb => print(1); _ => print(2) }",
+        "match o ?? (break outeb) { _ => print(1) }",
+        "if !(o ?? break outeb) { print(1) }",
+        "if (if true { o ?? break outeb } else { true }) { print(1) }",
+        "let g = { o ?? break outeb }",
+    ] {
+        let src = in_labeled_loop(body);
+        assert_eq!(
+            fixed_sources(&src, Code::BindingNotFound),
+            vec![src.replace("outeb", "outer")],
+            "{body}"
+        );
+    }
+    let src = in_labeled_loop("if o ?? continue outeb { print(1) }");
+    assert_eq!(
+        fixed_sources(&src, Code::MissingLabel),
+        vec![src.replace("outeb", "outer")]
+    );
+}
+
 /// A labeled `break` and a parenthesized value read no loop label, so a name that is not a
 /// label stays offered.
 #[test]
