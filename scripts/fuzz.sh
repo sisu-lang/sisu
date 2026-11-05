@@ -219,13 +219,19 @@ done < <(find "$found" -type f -newer "$marker" -print0 | sort -z)
 # The output holds binary bytes, so grep reads it with -a. The message is cut to 300 bytes
 # first. Then it loses its control characters, its invalid UTF-8 and its backticks. It is
 # printed in a code span, so a mention or a link in it does not work in an issue.
+valid_utf8() {
+    iconv -f UTF-8 -t UTF-8 -c || true
+}
+
 panic_note() {
     local found location message
-    found=$(grep -a -m1 -A1 'panicked at ' "$1" | LC_ALL=C tr -d '\000-\010\013-\037\177`' |
-        iconv -f UTF-8 -t UTF-8 -c) || return 0
+    # `valid_utf8` drops invalid bytes; some iconv builds exit 1 when they do, so its status is not used.
+    found=$(grep -a -m1 -A1 'panicked at ' "$1" | LC_ALL=C tr -d '\000-\010\013-\037\177`' | valid_utf8) ||
+        return 0
     [[ -n $found ]] || return 0
-    location=$(sed -n '1s/.*panicked at //; 1s/:$//p' <<<"$found" | iconv -f UTF-8 -t UTF-8 -c)
-    message=$(sed -n 2p <<<"$found" | cut -c1-300 | iconv -f UTF-8 -t UTF-8 -c)
+    location=$(sed -n '1s/.*panicked at //; 1s/:$//p' <<<"$found" | valid_utf8)
+    # `head -c` counts bytes; `cut -c` counts characters in some coreutils (uutils on Ubuntu 26.04).
+    message=$(sed -n 2p <<<"$found" | head -c 300 | valid_utf8)
     if [[ -n $message ]]; then
         printf "\`%s\`: \`%s\`\n" "$location" "$message"
     else
