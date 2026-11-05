@@ -207,6 +207,7 @@ specialized" if `-O2` inlined it, or made a clone of it, and the body is then
 not its own. Make `<function>` recurse, and not to a depth that its call
 sites fix. A count of 0 is rejected, as for `o2-calls`. See
 `mut_any_o2.sisu`.
+
 `crates/sisuc/tests/programs` holds the few programs that the small-stack
 tests in `programs.rs` run.
 

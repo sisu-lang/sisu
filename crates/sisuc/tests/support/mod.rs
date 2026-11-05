@@ -680,9 +680,10 @@ pub(crate) fn is_indirect_call(line: &str) -> bool {
 /// `@sisu.<function>.specialized.<n>`, plain or quoted.
 pub(crate) fn has_specialized_clone(ir: &str, function: &str) -> bool {
     let clone = format!("sisu.{function}.specialized.");
+    let (plain, quoted) = (format!("@{clone}"), format!("@\"{clone}"));
     ir.lines()
         .filter(|line| line.starts_with("define "))
-        .any(|line| line.contains(&format!("@{clone}")) || line.contains(&format!("@\"{clone}")))
+        .any(|line| line.contains(&plain) || line.contains(&quoted))
 }
 
 /// How LLVM's text names the function `name`: `@sisu.name`, or `@"sisu.name"` when the name holds
