@@ -703,6 +703,9 @@ pub(crate) enum DiagnosticKind {
         name: String,
         at: Span,
         suggestion: Option<Suggestion>,
+        /// The start of the `break` whose label fix must wrap the jump in parentheses, as the
+        /// jump ends a head.
+        wrap: Option<usize>,
     },
     /// A `kind` definition named `name`, at `at`, after an earlier definition of that name,
     /// `first`.
@@ -1308,6 +1311,9 @@ pub(crate) enum DiagnosticKind {
         keyword: &'static str,
         at: Span,
         suggestion: Option<String>,
+        /// The start of the `break` whose label fix must wrap the jump in parentheses, as the
+        /// jump ends a head.
+        wrap: Option<usize>,
     },
     /// The loop label `name:` at `at`, before the token at `next`, which starts no loop.
     LabelNotOnLoop { at: Span, next: Span },
@@ -4448,10 +4454,12 @@ impl From<DiagnosticKind> for Diagnostic {
                 name,
                 at,
                 suggestion,
-            } => similar(
+                wrap,
+            } => similar_label(
                 Diagnostic::coded(code, at, format!("cannot find binding `{name}`")),
                 at,
                 suggestion,
+                wrap,
             ),
             DiagnosticKind::DefinedTwice {
                 kind,
@@ -6073,6 +6081,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 keyword,
                 at,
                 suggestion,
+                wrap,
             } => {
                 let d = Diagnostic::coded(
                     code,
@@ -6080,13 +6089,14 @@ impl From<DiagnosticKind> for Diagnostic {
                     format!("no loop label `{name}` around this `{keyword}`"),
                 );
                 match suggestion {
-                    Some(name) => similar(
+                    Some(name) => similar_label(
                         d,
                         at,
                         Some(Suggestion {
                             kind: Definition::LoopLabel,
                             name,
                         }),
+                        wrap,
                     ),
                     None => d.with_help("`continue` takes no value"),
                 }
@@ -6435,6 +6445,37 @@ fn similar(d: Diagnostic, at: Span, suggestion: Option<Suggestion>) -> Diagnosti
         at,
         &name,
     ))
+}
+
+/// `similar`, except that with `wrap`, the start of the `break` that the name at `at` labels, the
+/// fix also writes `(` there and `)` after the name: the `break` ends a head, so without the
+/// parentheses it would take the `{` after it as its value.
+fn similar_label(
+    d: Diagnostic,
+    at: Span,
+    suggestion: Option<Suggestion>,
+    wrap: Option<usize>,
+) -> Diagnostic {
+    let (Some(Suggestion { kind, name }), Some(start)) = (&suggestion, wrap) else {
+        return similar(d, at, suggestion);
+    };
+    let mut fix = unsafe_fix(
+        &format!(
+            "{} {} with a similar name exists: `{name}`",
+            kind.article(),
+            kind.word()
+        ),
+        at,
+        &format!("{name})"),
+    );
+    fix.edits.insert(
+        0,
+        Edit {
+            span: Span::new(start, start),
+            replacement: "(".to_string(),
+        },
+    );
+    d.with_fix(fix)
 }
 
 /// Whether `c` is a character the user cannot see.
