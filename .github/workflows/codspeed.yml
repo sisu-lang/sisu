@@ -54,7 +54,7 @@ jobs:
       - id: toolchain
         continue-on-error: true
         if: steps.checkout.outcome == 'success'
-        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
       - id: llvm
         continue-on-error: true
         if: steps.toolchain.outcome == 'success'
@@ -72,7 +72,7 @@ jobs:
         continue-on-error: true
         timeout-minutes: 60
         if: steps.prep.outcome == 'success'
-        uses: CodSpeedHQ/action@78102a468f96d8e0ccb92d0ec49425753fc42062 # v5.6.0
+        uses: CodSpeedHQ/action@61efe07e57e55bedeab750c434504de272a56e8c # v5.6.1
         with:
           mode: simulation
           config: ${{ github.event_name == 'push' && '.codspeed-main-merged.yml' || 'codspeed.yml' }}
