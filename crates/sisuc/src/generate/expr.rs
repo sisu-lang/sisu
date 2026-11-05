@@ -3004,6 +3004,19 @@ mod tests {
         (text, part, lines)
     }
 
+    /// Below a later branch of an untyped `if`, the `break` value of an optional is self-typed,
+    /// and a self-typed value must fit `max` (the `debug_assert` in `Gen::expr`). An optional of
+    /// an optional has no such value, so `loop_fits` writes no `loop` of it. Seed 1639 with
+    /// `string?` or `[string]?` once reached `no char?? fits 0`.
+    #[test]
+    fn a_loop_value_below_an_untyped_branch_should_fit_its_max() {
+        let data = crate::generate::coverage::seed(1639);
+        for payload in [Ty::String, Ty::Array(Box::new(Ty::String))] {
+            let ty = Ty::Optional(Box::new(payload));
+            Gen::new(&data).rule(Rule::If, &ty, 3, true);
+        }
+    }
+
     /// GIVEN an `if` with no expected type, of an optional type
     /// WHEN a later arm holds a `loop` value
     /// THEN no `break` of it is an untyped `None`: the checker may type the `if` by a join, and
@@ -3034,8 +3047,11 @@ mod tests {
     fn the_right_operand_of_an_equality_should_give_typed_breaks() {
         let mut loops = 0;
         // No seed below 256 gives the error at the base. Seed 667 is the first with a `loop` in
-        // the right operand that gives it: `break Option.None` in a `match` arm.
-        for n in std::iter::once(667).chain(0..256) {
+        // the right operand that gives it: `break Option.None` in a `match` arm, under a later
+        // branch of an untyped `if`, which the flag of `if_expr` covers. Seed 11768 is the first
+        // whose `break` is typed only because `equal` sets the flag: the `loop` is the right
+        // operand, and the left operand is a joined `if`.
+        for n in [667, 11768].into_iter().chain(0..256) {
             let right = |g: &Gen<'_>| g.last_right.clone();
             let (text, right, untyped) = untyped_breaks(Rule::Equal, &Ty::Bool, n, right);
             assert!(
