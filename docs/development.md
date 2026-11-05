@@ -586,6 +586,7 @@ $ scripts/fuzz.sh --target program --replay <input>
 $ scripts/fuzz.sh --target program --tmin <input>
 $ scripts/fuzz.sh --target program --cmin
 $ scripts/fuzz.sh --target program --coverage
+$ make fuzz-gaps                     # scripts/fuzz.sh --target program --gaps
 ```
 
 To check one seed of the series that the unit tests generate from, with
@@ -635,10 +636,53 @@ stage (lexer, parser, check, mir, codegen) and how many inputs reach codegen.
 program input that the checker rejects is a crash, never a corpus entry, so
 every program input, seeds included, reaches codegen.
 
+### The generator gaps
+
+`--gaps` works for the program target only. It finds the functions that a valid
+program reaches and the generator's fixed seeds do not: the generator gaps
+(`GLOSSARY.md`). It runs `cargo fuzz coverage` twice. The first run is
+`program` over the 128 seeds alone, with no corpus, so the result depends on
+the commit and not on what a night kept. The second run is `front_end` over the
+`.sisu` files of `crates/sisuc/tests/run` and `crates/sisuc/tests/run-fail`.
+`tests/diagnostics` holds invalid programs and stays out. Then
+`scripts/fuzz_gaps.py` compares the two exports with `fuzz/known_gaps.txt`.
+`make fuzz-gaps` runs it. A run takes about 4 minutes when the builds are warm.
+
+The check names a function by its file below `crates/sisuc/src/`, its first line
+and its name. The name has no crate hashes and no generic arguments, so the
+instances of a generic function merge. A closure counts for its enclosing
+function. The check leaves out `generate/`, `fuzz.rs`, `fuzz_program.rs`,
+`report.rs`, `diagnostic/json.rs` and `diagnostic/render.rs`. `--gaps` exits 0
+when no gap is new, 1 when a gap is new, and 2 when the check did not finish.
+It prints a section `## Generator gaps` and appends it to
+`fuzz/artifacts/summary.md`. A broken measurement is never a pass.
+
+When a gap is new, do one of two things. Add a generator rule that makes the
+seeds reach the function
+([ADR 0033](adr/0033-every-language-feature-has-a-generator-rule.md)), or add
+its key to `fuzz/known_gaps.txt` under a reason. The list has sections. A
+section is a line `## <reason>`, and then one key on each line: the file, a
+TAB, and the name, as the check prints it. A key has no line number, so an edit
+above a function does not change it. A key before the first section, or
+a section with an empty reason, gives exit 2. A key that matches no gap gives a
+warning, and you remove it. A key that matches two definitions gives exit 2:
+remove it and add a generator rule.
+
+The check has three limits:
+
+- It works for each function. A branch that is missed in a function that the
+  seeds reach stays hidden.
+- Only what `tests/run` and `tests/run-fail` reach can be a gap. A valid
+  construct with no case in those directories is invisible.
+- The reference compiles at O0 through whole-module IR. Code that only the O2
+  and multi-unit builds reach is outside the check, and every run of the
+  program target still reaches it.
+
 ### The nightly program job
 
 The `Fuzz programs` workflow (`.github/workflows/fuzz-program.yml`) runs
-every night at 03:53 UTC for 30 minutes. It works as
+every night at 03:53 UTC for 30 minutes, and then measures `--coverage` (30
+minutes at most) and `--gaps` (15 minutes at most). It works as
 [the front-end job](#the-nightly-job) does, with its own corpus cache,
 `fuzz-program-corpus-`, and its own concurrency group per ref, so neither job
 waits for the other. On a failure it uploads `fuzz/artifacts/` as
@@ -665,10 +709,15 @@ A first job, `scripts/fuzz_program_plan.py`, decides how long to fuzz and
 whether to measure coverage, and sets the time limits of the fuzz step and of
 the job from that. A fuzz step that passes its limit fails, and the later steps
 still run, so its log and the corpus are kept. The run then fails, and a
-scheduled run opens or comments on the `Nightly fuzz failure: program` issue. A run
+scheduled run opens or comments on the `Nightly fuzz failure: program` issue.
+The `Generator gaps` step runs only after a fuzz step that passed. On the
+nightly, a new gap fails the step and so the run, and a check that did not
+finish does too. The step appends its section to the job summary and uploads
+`fuzz/artifacts/summary.md` as `fuzz-program-failure`, so the issue holds the
+gap list or the reason. In any other run the step cannot fail the job. A run
 by hand with `workflow_dispatch` takes the seconds to fuzz, 60 to 14,400, and
-whether to run `--coverage`. GitHub offers that only for a workflow already on
-`main`.
+whether to run `--coverage` and `--gaps`. GitHub offers that only for a
+workflow already on `main`.
 
 To fuzz a branch, open a pull request and add one label `fuzz-program`
 (2 hours), `fuzz-program <n>m` or `fuzz-program <n>h`, such as
@@ -678,10 +727,10 @@ pushes from starting runs; cancel a run in progress from the Actions tab. Any
 `<n>m` or `<n>h` from 1 minute to 4 hours works, which leaves the job inside
 GitHub's 6-hour limit, and each label must first exist in the repository. A
 pull request with two such labels fails the plan, and adding any other label
-starts nothing. A labeled run always ends with `--coverage` and puts its
-stage lines in the job summary. It restores the newest corpus of its own
-earlier runs or of `main`, and the corpus it saves stays with the pull
-request. GitHub runs no workflow for a pull request with a merge conflict, so
+starts nothing. A labeled run always ends with `--coverage` and `--gaps`, and
+puts its stage lines and its gap section in the job summary. It restores the
+newest corpus of its own earlier runs or of `main`, and the corpus it saves
+stays with the pull request. GitHub runs no workflow for a pull request with a merge conflict, so
 resolve it first.
 
 ### Fix a program fuzz failure
@@ -1024,6 +1073,6 @@ must accept any syntax those programs use.
 | `.coderabbit.yaml`, `.greptile/` | The settings of the CodeRabbit and Greptile pull request reviews. Their findings are advice; CI is the merge gate. A `@coderabbitai review` or `@greptileai` comment starts a review again. |
 | `fuzz` | The fuzz targets, `front_end` and `program`, in their own Cargo workspace, run by `scripts/fuzz.sh`. |
 | `Makefile` | The entry point for the commands; `make help` lists its targets. |
-| `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `codspeed-prep.sh`, `fuzz.sh`, `fuzz_program_plan.py`, which plans each run of the program fuzz workflow, `watch_pr.py`, which waits for the next review with text, comment from someone other than you, or check result of a pull request, `diag_diff.py`, which compares the diagnostics of two `sisu` builds for a review, `golden_diff.py`, which checks that a re-bless only reworded expected files, `scaling.py`, which finds the shapes of program for which a compiler stage is superlinear, `merge_pr.py`, which squash-merges a pull request once its checks pass (`--cleanup` removes the worktree of one merged in the UI), and the scripts prek hooks run, such as `check-expect-messages.sh` and `slow_tests.py`. |
+| `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `codspeed-prep.sh`, `fuzz.sh`, `fuzz_program_plan.py`, which plans each run of the program fuzz workflow, `fuzz_seeds.py`, which writes the program fuzzer's 128 seeds, `fuzz_gaps.py`, which finds the generator gaps, `watch_pr.py`, which waits for the next review with text, comment from someone other than you, or check result of a pull request, `diag_diff.py`, which compares the diagnostics of two `sisu` builds for a review, `golden_diff.py`, which checks that a re-bless only reworded expected files, `scaling.py`, which finds the shapes of program for which a compiler stage is superlinear, `merge_pr.py`, which squash-merges a pull request once its checks pass (`--cleanup` removes the worktree of one merged in the UI), and the scripts prek hooks run, such as `check-expect-messages.sh` and `slow_tests.py`. |
 | `site` | The website's pages, data and build script (`make site`). |
 | `docs` | Architecture, roadmap, decisions (`adr/`) and agent guides (`agents/`). |
