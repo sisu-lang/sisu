@@ -9129,6 +9129,187 @@ fn generated_mut_lens_should_record_the_length_of_a_mut_parameter() {
     assert!(lens.iter().all(|&len| len <= MAX_MUT_LEN), "{lens:?}");
 }
 
+/// Whether `c` may be in a name.
+fn is_name_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// The names of the functions and methods of `source`, `f<n>` and `m<n>`, that have a `mut`
+/// parameter.
+fn mut_function_names(source: &str) -> Vec<&str> {
+    (source.lines().map(str::trim_start))
+        .filter_map(|line| {
+            let (name, params) = line.strip_prefix("fn ")?.split_once('(')?;
+            let digits = name.get(1..).filter(|d| !d.is_empty())?;
+            let named = name.starts_with(['f', 'm']) && digits.bytes().all(|b| b.is_ascii_digit());
+            (named && params.contains("mut v")).then_some(name)
+        })
+        .collect()
+}
+
+/// Where each call of a function of `names` starts in `line`.
+fn call_starts(line: &str, names: &[&str]) -> Vec<usize> {
+    let mut starts = Vec::new();
+    for name in names {
+        for (at, _) in line.match_indices(&format!("{name}(")) {
+            if !line[..at].chars().next_back().is_some_and(is_name_char) {
+                starts.push(at);
+            }
+        }
+    }
+    starts.sort_unstable();
+    starts
+}
+
+/// The places that `line` passes after `mut `, as an argument: a name, with fields and indices.
+fn mut_arguments(line: &str) -> Vec<&str> {
+    (line.match_indices("mut "))
+        .filter_map(|(at, _)| {
+            if line[..at].chars().next_back().is_some_and(is_name_char) {
+                return None;
+            }
+            let rest = &line[at + 4..];
+            let end = rest
+                .find(|c: char| !is_name_char(c) && !".[]".contains(c))
+                .unwrap_or(rest.len());
+            rest[end..].starts_with([',', ')']).then_some(&rest[..end])
+        })
+        .collect()
+}
+
+/// Whether `place` is `<name>.g<a>.g<b>`.
+fn is_field_of_field(place: &str) -> bool {
+    let Some((_, fields)) = place.split_once('.') else {
+        return false;
+    };
+    let fields: Vec<&str> = fields.split('.').collect();
+    fields.len() == 2
+        && (fields.iter()).all(|f| {
+            (f.strip_prefix('g'))
+                .is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
+        })
+}
+
+/// The name of the method that the line `line` declares, `m<n>`, when it takes `mut v<n>`
+/// after `depth`.
+fn mut_method_name(line: &str) -> Option<&str> {
+    let (name, params) = line.strip_prefix("fn ")?.split_once("(self, depth: i64")?;
+    let digits = name.strip_prefix('m').filter(|d| !d.is_empty())?;
+    (digits.bytes().all(|b| b.is_ascii_digit()) && params.contains(", mut v")).then_some(name)
+}
+
+/// GIVEN the programs of the first seeds
+/// WHEN the plain `extend K<n> {` blocks and the lines outside them are read
+/// THEN some seed has a block with `fn m<k>(self, depth: i64, ` and `mut v<j>: ` in its
+/// parameters, and a line outside the block calls `.m<k>(` with a `mut ` argument
+#[test]
+fn a_mut_method_should_be_declared_in_an_extension_and_called_with_a_place() {
+    let seen = search_seeds(SEEDS, |n| {
+        let source = generate(&seed(n)).program;
+        (source.lines())
+            .filter(|l| l.starts_with("extend K") && l.ends_with(" {") && !l.contains(['<', ':']))
+            .any(|header| {
+                let Some(block) = item_text(&source, header) else {
+                    return false;
+                };
+                let outside = source.replacen(block, "", 1);
+                (block.lines().map(str::trim_start))
+                    .filter_map(mut_method_name)
+                    .any(|name| {
+                        (outside.lines()).any(|line| {
+                            line.contains(&format!(".{name}(")) && !mut_arguments(line).is_empty()
+                        })
+                    })
+            })
+    });
+    assert!(
+        seen,
+        "no `mut` method in an `extend` block is called with a place"
+    );
+}
+
+/// GIVEN the programs of the first seeds
+/// WHEN the calls and the `exchange` calls that pass a `mut` place are read
+/// THEN some seed has a call of a function or a method that passes `mut <name>.g<a>.g<b>`, and
+/// some seed has `exchange(mut <name>.g<a>.g<b>, `
+#[test]
+fn a_mut_call_should_pass_a_field_of_a_field() {
+    let (mut called, mut swapped) = (false, false);
+    search_seeds(SEEDS, |n| {
+        let source = generate(&seed(n)).program;
+        let names = mut_function_names(&source);
+        for line in source
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.starts_with("fn "))
+        {
+            for place in mut_arguments(line)
+                .into_iter()
+                .filter(|p| is_field_of_field(p))
+            {
+                called |= !call_starts(line, &names).is_empty();
+                swapped |= line.contains(&format!("exchange(mut {place}, "));
+            }
+        }
+        called && swapped
+    });
+    assert!(called, "no call passes a field of a field");
+    assert!(swapped, "no `exchange` swaps a field of a field");
+}
+
+/// GIVEN the programs of the first seeds
+/// WHEN the lines that hold no block `({` are read
+/// THEN some seed has a line with a call of a function or a method with a `mut` parameter, whose
+/// argument is a call of one that passes a `mut` place; and some seed has such a line whose two
+/// calls pass places that start at one local
+#[test]
+fn a_mut_call_should_take_a_mut_call_as_a_plain_argument() {
+    let (mut nested, mut same) = (false, false);
+    search_seeds(SEEDS, |n| {
+        let source = generate(&seed(n)).program;
+        let names = mut_function_names(&source);
+        for line in source.lines().map(str::trim) {
+            let starts = call_starts(line, &names);
+            if line.starts_with("fn ") || line.contains("({") || starts.len() < 2 {
+                continue;
+            }
+            if mut_arguments(&line[starts[1]..]).is_empty() {
+                continue;
+            }
+            nested = true;
+            let roots: Vec<&str> = (mut_arguments(line).into_iter())
+                .map(|place| place.split(['.', '[']).next().unwrap_or(place))
+                .collect();
+            same |= (0..roots.len()).any(|a| roots[..a].contains(&roots[a]));
+        }
+        nested && same
+    });
+    assert!(nested, "no `mut` call is the argument of another");
+    assert!(
+        same,
+        "no nested `mut` call names the local of its outer call"
+    );
+}
+
+/// GIVEN the programs of the first seeds
+/// WHEN a function or a method takes `mut v<n>: [` and its body is read
+/// THEN some seed passes an element of it, `mut v<n>[`, to a `mut` call
+#[test]
+fn a_mut_call_should_pass_an_element_of_a_mut_parameter() {
+    let seen = search_seeds(SEEDS, |n| {
+        let source = generate(&seed(n)).program;
+        (source.lines().map(str::trim_start))
+            .filter(|line| line.starts_with("fn "))
+            .flat_map(|line| line.split("mut v").skip(1))
+            .filter_map(|param| {
+                let (name, ty) = param.split_once(": ")?;
+                ty.starts_with('[').then(|| format!("mut v{name}["))
+            })
+            .any(|element| source.contains(&element))
+    });
+    assert!(seen, "no `mut` call passes an element of a `mut` parameter");
+}
+
 /// Seeds 203, 4534 and 5974 once wrote a `loop` value under a later branch of an untyped `if`
 /// whose `break None` had no type (E0050; #363, #425). Seed 5974 also gave E0048 around the loop.
 #[test]

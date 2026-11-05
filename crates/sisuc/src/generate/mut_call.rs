@@ -937,4 +937,60 @@ mod tests {
             "{calls} calls, {prints} prints"
         );
     }
+
+    /// GIVEN `f1`, with a `mut` parameter and a plain `i64` parameter, and `f2`, which has a
+    /// `mut` parameter and an `i64` result
+    /// WHEN a `mut` call of `f1` is written, from many seeds
+    /// THEN a call that holds `f2` as the plain argument has no copy in the rewritten program:
+    /// the call of `f2` may change a local that the copy of `f1` takes in
+    /// AND some seed writes such a call, and some seed without one is copied
+    #[test]
+    fn a_nested_mut_call_should_keep_its_statement_uncopied() {
+        let (mut nested, mut copied) = (0, 0);
+        search_seeds(256, |n| {
+            let data = seed(n);
+            let mut g = gen_with_local(&data, Ty::I64, (0, 0), Adds::default());
+            g.scope.funcs[0].params.push((Ty::I64, 0));
+            g.scope.funcs[0].muts.push(None);
+            g.scope.funcs.push(Func {
+                name: "f2".to_string(),
+                owner: None,
+                params: vec![(Ty::I64, 100)],
+                muts: vec![Some(Adds::default())],
+                ret: Ty::I64,
+                ret_size: 0,
+                cost: [1; DEPTHS],
+            });
+            g.statement(|g| g.mut_call_of(Some(0)));
+            let has_copy = g.w.out.rewritten.contains("let mut w");
+            if g.w.out.program.contains(", f2(") {
+                assert!(!has_copy, "{}", g.w.out.rewritten);
+                nested += 1;
+            } else if has_copy {
+                copied += 1;
+            }
+            nested > 0 && copied > 0
+        });
+        assert!(nested > 0 && copied > 0, "{nested} nested, {copied} copied");
+    }
+
+    /// GIVEN a `mut` function whose `mut` call passes a plain argument that a block may hold
+    /// WHEN the call is written, from many seeds
+    /// THEN some seed writes a block `({ ... })` as that argument, and a `mut` call in it
+    #[test]
+    fn a_mut_call_should_run_in_a_block_in_an_argument_of_a_mut_call() {
+        let mut seen = false;
+        search_seeds(256, |n| {
+            let data = seed(n);
+            let mut g = gen_with_local(&data, Ty::I64, (0, 0), Adds::default());
+            g.scope.funcs[0].params.push((Ty::I64, 0));
+            g.scope.funcs[0].muts.push(None);
+            g.mut_fn = true;
+            g.statement(|g| g.mut_call_of(Some(0)));
+            let (_, block) = g.w.out.program.split_once("({").unwrap_or_default();
+            seen |= (block.split_once("f1(")).is_some_and(|(_, args)| args.contains("mut v1"));
+            seen
+        });
+        assert!(seen, "no seed writes a `mut` call in a block");
+    }
 }
