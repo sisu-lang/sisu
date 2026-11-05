@@ -941,8 +941,8 @@ impl Strands {
 /// the base is a type of its own then, which nests the parameter at the growth of the associated
 /// types in it.
 ///
-/// `stack` and `seen` are scratch space for the call: each type is read once, whatever number of
-/// paths lead to it, so `names` and `changed` hold a declaration once for each type that names it.
+/// `stack` and `seen` are scratch space for the call. Each type is read once, whatever number of
+/// paths lead to it. So `names` and `changed` hold a declaration once for each type that names it.
 fn named(
     stack: &mut Vec<Type>,
     seen: &mut FxHashSet<Type>,

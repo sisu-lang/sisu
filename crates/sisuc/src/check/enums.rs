@@ -1255,9 +1255,11 @@ thread_local! {
     /// How many fields `Buildable::run` has scanned on this thread.
     pub(super) static SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many types the checker's type walks have visited on this thread: `Buildable`'s
-    /// `verdict`, `consult` and `reached`, `holds_table`, `holds`, `inline_enums`, `names_itself`
-    /// and `cycle::named`. Each ticks once for each type it reads. A walk visits each distinct
-    /// type of its unit once. A field that names a chain again starts a new unit: `m` fields
-    /// that name one alias of `k` distinct types still cost `m * k`.
+    /// `verdict`, `consult` and `reached`, `holds_table`, `holds`, `inline_enums`, `names_itself`,
+    /// `unwrapped` and `cycle::named`. Each ticks once for each type it reads. `unwrapped` ticks
+    /// once for each wrapper it removes, so that a walk that unwraps before its seen set or cache
+    /// shows the work. A walk visits each distinct type of its unit once. A field that names a
+    /// chain again starts a new unit: `m` fields that name one alias of `k` distinct types still
+    /// cost `m * k`.
     pub(super) static TYPE_WALK_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
