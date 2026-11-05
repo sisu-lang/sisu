@@ -716,12 +716,13 @@ fn parameter_chain(p: &str, n: usize) -> String {
 /// debug build. Each row has a walk that alone breaks the growth when it follows every path:
 /// `Buildable::buildable` in "class field" (`run`) and in "E0027 leaf" (`deps` and `needs`),
 /// `Buildable::reached` in "E0027 chain", `holds` in "W0011 on an array", and `inline_enums` and
-/// `names_itself` in "generic enum payload". `named` and `holds_table` break every row. The
-/// wrapper chain breaks `holds_table` and `holds` alone, as they unwrap before they look up.
+/// `names_itself` in "generic enum payload". `named` and `holds_table` break every row. The row
+/// "wrapper chain" breaks `holds_table` alone and "wrapper chain under W0011" breaks `holds`
+/// alone, as each unwraps before it looks up.
 #[test]
 fn declaration_type_walks_should_visit_each_distinct_type_once() {
     type Program = fn(usize) -> String;
-    let rows: [(&str, Program); 11] = [
+    let rows: [(&str, Program); 12] = [
         ("enum payload", |n| {
             alias_chain(ENUM_P, n) + &format!("enum E {{\n    V(A{n})\n    W\n}}\nfn main() {{}}")
         }),
@@ -782,6 +783,23 @@ fn declaration_type_walks_should_visit_each_distinct_type_once() {
                 .concat();
             format!(
                 "{CLASS_P}\ntype L0 = i64\ntype R0 = i64\n{links}class C {{\n    v: R{n}\n}}\nfn main() {{}}"
+            )
+        }),
+        // The same chains with `==` on arrays of `Rn`, so that `holds` reads the chain too.
+        ("wrapper chain under W0011", |n| {
+            let eq = "extend<A: Eq, B: Eq> P<A, B>: Eq {\n    fn eq(self, other: P<A, B>) -> bool {\n        false\n    }\n}\n";
+            let links = (1..=n)
+                .map(|i| {
+                    format!(
+                        "type L{i} = [L{}]\ntype R{i} = P<R{}, L{i}>\n",
+                        i - 1,
+                        i - 1
+                    )
+                })
+                .collect::<Vec<_>>()
+                .concat();
+            format!(
+                "{ENUM_P}\n{eq}type L0 = i64\ntype R0 = i64\n{links}fn h(x: [R{n}], y: [R{n}]) -> bool {{\n    let mut i = 0\n    while x == y {{\n        i = i + 1\n    }}\n    i > 0\n}}\nfn main() {{}}"
             )
         }),
     ];
