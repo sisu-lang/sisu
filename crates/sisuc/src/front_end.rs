@@ -743,6 +743,95 @@ fn main() {
         );
     }
 
+    /// A broken item gets the duplicate check of an intact item: it is reported against the first
+    /// item of its name, or the later item is reported against it, and it still poisons its
+    /// name. In each row: the program and the code and place of each diagnostic.
+    #[test]
+    fn a_broken_item_should_get_the_duplicate_check_of_an_intact_item() {
+        use Code::{
+            BraceOnNewLine as Brace, DefinedTwice as Twice, Expected, Mismatch, NoMember as NoNext,
+        };
+        let rows: &[(&str, &str, &[Found])] = &[
+            // The E0063 rows stay until the failed bound of a poisoned interface stops
+            // cascading (#506): `Source` is intact and poisoned, so the bound of `drain` fails.
+            (
+                "broken interface after an intact one, and a use",
+                "interface Source {\n    fn next(self) -> i64\n}\n\nfn drain<S: Source>(s: S) {\n    print(s.next())\n}\n\ninterface Source\n{   fn get(self) -> i64\n}\n\nfn main() {\n    let x: i64 = \"s\"\n}\n",
+                &[
+                    (NoNext, (6, 13)),
+                    (Twice, (9, 11)),
+                    (Brace, (10, 1)),
+                    (Mismatch, (14, 18)),
+                ],
+            ),
+            (
+                "broken interface after an intact one",
+                "interface Source {\n    fn next(self) -> i64\n}\n\nfn drain<S: Source>(s: S) {\n    print(s.next())\n}\n\ninterface Source\n{   fn get(self) -> i64\n}\n\nfn main() {}\n",
+                &[(NoNext, (6, 13)), (Twice, (9, 11)), (Brace, (10, 1))],
+            ),
+            (
+                "broken interface, no use",
+                "interface Source {\n    fn next(self) -> i64\n}\n\ninterface Source\n{   fn get(self) -> i64\n}\n\nfn main() {}\n",
+                &[(Twice, (5, 11)), (Brace, (6, 1))],
+            ),
+            (
+                "broken class",
+                "class A {\n    x: i64\n}\n\nclass A\n{   y: i64\n}\n\nfn main() {\n    let x: i64 = \"s\"\n}\n",
+                &[(Twice, (5, 7)), (Brace, (6, 1)), (Mismatch, (10, 18))],
+            ),
+            (
+                "broken enum",
+                "enum E {\n    A\n}\n\nfn f(e: E) {\n    match e { A => print(1) }\n}\n\nenum E\n{   B\n}\n\nfn main() {}\n",
+                &[(Twice, (9, 6)), (Brace, (10, 1))],
+            ),
+            (
+                "broken function",
+                "fn g() -> i64 {\n    1\n}\n\nfn f() {\n    print(g())\n}\n\nfn g() -> string\n{   \"a\"\n}\n\nfn main() {}\n",
+                &[(Twice, (9, 4)), (Brace, (10, 1))],
+            ),
+            (
+                "broken function after a class",
+                "class A {\n    x: i64\n}\n\nfn A()\n{\n}\n\nfn main() {}\n",
+                &[(Twice, (5, 4)), (Brace, (6, 1))],
+            ),
+            (
+                "two broken classes",
+                "class A\n{   x: i64\n}\n\nclass A\n{   y: i64\n}\n\nfn main() {}\n",
+                &[(Brace, (2, 1)), (Twice, (5, 7)), (Brace, (6, 1))],
+            ),
+            (
+                "broken interface before an intact one",
+                "interface Source\n{   fn get(self) -> i64\n}\n\nfn drain<S: Source>(s: S) {\n    print(s.next())\n}\n\ninterface Source {\n    fn next(self) -> i64\n}\n\nfn main() {}\n",
+                &[(Brace, (2, 1)), (NoNext, (6, 13)), (Twice, (9, 11))],
+            ),
+            (
+                "error in a body",
+                "fn total() {\n    let = 1\n}\nfn total() {}\nfn main() {}\n",
+                &[(Expected, (2, 9)), (Twice, (4, 4))],
+            ),
+            (
+                "broken constant",
+                "const A = 1 2\nfn A() {}\nfn main() {}\n",
+                &[(Expected, (1, 13)), (Twice, (2, 4))],
+            ),
+            // The name of a prelude function keeps the report of the prelude: one error.
+            (
+                "broken function with a prelude function's name",
+                "fn print(x: i64)\n{\n}\n\nfn main() {}\n",
+                &[(Twice, (1, 4)), (Brace, (2, 1))],
+            ),
+            // An error inside a requirement leaves the interface intact, so the check was there.
+            (
+                "interface with an error in a requirement",
+                "interface Source {\n    fn next(self) -> i64\n}\n\ninterface Source {\n    fn get(self) -> \n}\n\nfn main() {}\n",
+                &[(Twice, (5, 11)), (Expected, (7, 1))],
+            ),
+        ];
+        for &(row, src, want) in rows {
+            assert_eq!(codes(src), want, "row `{row}`: {src}");
+        }
+    }
+
     /// A diagnostic's code and `(line, col)`.
     type Found = (Code, (usize, usize));
 

@@ -1,0 +1,9 @@
+class Result {}
+
+fn f() -> Result<i64, string> {
+    Ok(1)
+}
+
+fn main() {
+    print(1)
+}

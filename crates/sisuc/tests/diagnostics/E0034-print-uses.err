@@ -1,0 +1,8 @@
+error[E0034]: `print` is a built-in function
+ --> E0034-print-uses.sisu:1:4
+  |
+1 | fn print(x: i64, y: i64) -> i64 {
+  |    ^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0034

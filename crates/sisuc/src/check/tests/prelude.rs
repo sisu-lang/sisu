@@ -247,6 +247,120 @@ fn exchange_should_be_a_prelude_name_for_top_level_items() {
     );
 }
 
+/// A top-level item that a prelude function's name rejects poisons the name: its uses read neither
+/// the built-in nor the item, so they add no error beside the rejection. In each row: the program
+/// and the place of the rejection, the only error.
+#[test]
+fn an_item_with_a_prelude_function_name_should_poison_its_uses() {
+    with_prelude();
+    for (row, src, at) in [
+        (
+            "function print",
+            "fn print(x: i64, y: i64) -> i64 {\n    x\n}\n\nfn main() {\n    print(1, 2)\n}",
+            (1, 4),
+        ),
+        (
+            "class print",
+            "class print {\n    x: i64\n}\n\nfn main() {\n    print(x: 1)\n}",
+            (1, 7),
+        ),
+        (
+            "class exchange",
+            "class exchange {\n    x: i64\n}\n\nfn main() {\n    let e = exchange(x: 1)\n    print(e.x)\n}",
+            (1, 7),
+        ),
+        (
+            "constant print",
+            "const print = 1\n\nfn main() {\n    print(print)\n}",
+            (1, 7),
+        ),
+        (
+            "function exchange",
+            "fn exchange(a: i64) -> i64 {\n    a\n}\n\nfn main() {\n    print(exchange(1))\n}",
+            (1, 4),
+        ),
+        (
+            "class print as a type",
+            "class print {\n    x: i64\n}\n\nfn f(p: print) {}\nfn main() {}",
+            (1, 7),
+        ),
+        (
+            "enum dbg as a type",
+            "enum dbg {\n    A\n}\n\nfn f(d: dbg) {}\nfn main() {}",
+            (1, 6),
+        ),
+        (
+            "alias read_line as a type",
+            "type read_line = i64\n\nfn main() {\n    let x: read_line = 1\n}",
+            (1, 6),
+        ),
+        (
+            "interface panic",
+            "interface panic {\n    fn f(self)\n}\n\nfn main() {\n    panic(1, 2)\n}",
+            (1, 11),
+        ),
+        (
+            "class dbg",
+            "class dbg {}\nfn main() {\n    let v = dbg([])\n}",
+            (1, 7),
+        ),
+        (
+            "enum dbg",
+            "enum dbg {\n    A\n}\n\nfn main() {\n    dbg(1)\n}",
+            (1, 6),
+        ),
+        (
+            "interface panic, called",
+            "interface panic {\n    fn f(self)\n}\n\nfn main() {\n    panic(\"x\")\n}",
+            (1, 11),
+        ),
+        (
+            "alias read_line",
+            "type read_line = i64\n\nfn main() {\n    let s = read_line()\n}",
+            (1, 6),
+        ),
+    ] {
+        codes_row(row, src, &[(Code::DefinedTwice, at)]);
+    }
+}
+
+/// A user's item named `Option` or `Result` leaves the name to the built-in type, as an item
+/// named `i64` does: the built-in type and its constructors keep their meaning, so the uses of the
+/// name add no error beside `E0026`. In each row: the program and the place of `E0026`.
+#[test]
+fn an_item_named_option_or_result_should_leave_it_to_the_built_in() {
+    with_prelude();
+    let uses = "\n\nfn f() -> Result<i64, string> {\n    Ok(1)\n}\n\nfn main() {\n    print(1)\n}";
+    for (row, src, at) in [
+        ("class Result", format!("class Result {{}}{uses}"), (1, 7)),
+        (
+            "enum Result",
+            format!("enum Result {{\n    A\n}}{uses}"),
+            (1, 6),
+        ),
+        (
+            "interface Result",
+            format!("interface Result {{}}{uses}"),
+            (1, 11),
+        ),
+        ("constant Result", format!("const Result = 1{uses}"), (1, 7)),
+        (
+            "class Option",
+            "class Option {}\n\nfn f() -> i64? {\n    None\n}\n\nfn main() {\n    let o: Option<i64> = Some(1)\n}"
+                .to_string(),
+            (1, 7),
+        ),
+    ] {
+        codes_row(row, &src, &[(Code::BuiltInName, at)]);
+    }
+    // `Ok` names the variant of the built-in `Result`, which has no context here.
+    let src = format!("enum Result {{\n    A\n}}\n{}", body("", "let r = Ok(1)"));
+    codes(
+        &src,
+        &[(Code::BuiltInName, (1, 6)), (Code::CannotInfer, (5, 13))],
+    );
+}
+
 /// Every free function of the prelude's source is a prelude name, whatever its name: the check
 /// reads the names from the prelude, not from a list. The prelude here is `fn
 /// reserved_by_prelude() {}`.

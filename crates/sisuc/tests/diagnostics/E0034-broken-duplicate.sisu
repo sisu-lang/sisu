@@ -1,0 +1,15 @@
+interface Source {
+    fn next(self) -> i64
+}
+
+fn drain<S: Source>(s: S) {
+    print(s.next())
+}
+
+interface Source
+{   fn get(self) -> i64
+}
+
+fn main() {
+    let x: i64 = "s"
+}
