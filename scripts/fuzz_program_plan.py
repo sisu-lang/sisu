@@ -30,7 +30,8 @@ COVERAGE_MINUTES = 45
 # The bound of the Minimize the corpus step in fuzz-program.yml; keep the two equal.
 CMIN_MINUTES = 20
 # The fuzzer first runs each corpus input once, one at a time, and -max_total_time does not stop
-# that pass. The 1000 inputs that the Sample the corpus step keeps take about 17 minutes.
+# that pass. The 500 inputs that the Sample the corpus step keeps take about 10 minutes: run
+# 42015848679 ran 990 inputs in 20.3 minutes.
 CORPUS_PASS_MINUTES = 20
 
 

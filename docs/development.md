@@ -623,10 +623,11 @@ or is stopped at its time limit, its `report` job opens an issue titled `Nightly
 comments on the open one, as for the front end. A failed `plan` job opens one
 too. Nothing blocks a merge.
 
-Program inputs are slow: each takes about 1 s. Fork mode first runs each
+Program inputs are slow: each takes about 1.25 s. Fork mode first runs each
 restored corpus input once, one at a time, and `-max_total_time` does not stop
-that pass. So after the restore, the "Sample the corpus" step keeps 1000
-inputs at random and removes the others, so each run starts with at most 1000.
+that pass. The pass also counts toward the fuzz time. So after the restore,
+the "Sample the corpus" step keeps 500 inputs at random and removes the
+others, so each run starts with at most 500.
 The run saves those and its new finds, and the next run samples them again. A
 removed input is lost; the fuzzer can find its coverage again. The
 summary's executions count only the fuzzing after the first pass: few

@@ -89,16 +89,16 @@ jobs:
           path: fuzz/corpus/program
           key: fuzz-program-corpus-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: fuzz-program-corpus-
-      # The fuzzer first runs each corpus input once, one at a time, at about 1 s each, and
-      # -max_total_time does not stop that pass. So a run keeps 1000 inputs at random and removes
+      # The fuzzer first runs each corpus input once, one at a time, at about 1.25 s each, and
+      # -max_total_time does not stop that pass. So a run keeps 500 inputs at random and removes
       # the others. cmin and the cache then see only those and the new finds, so each run starts
-      # with at most 1000. A removed input is lost; the fuzzer can find its coverage again.
+      # with at most 500. A removed input is lost; the fuzzer can find its coverage again.
       # CORPUS_PASS_MINUTES in scripts/fuzz_program_plan.py is the time of this pass.
       - name: Sample the corpus
         run: |
           before=$(find fuzz/corpus/program -type f 2>/dev/null | wc -l)
           if [ -d fuzz/corpus/program ]; then
-            find fuzz/corpus/program -type f -print0 | shuf -z | tail -z -n +1001 | xargs -0r rm --
+            find fuzz/corpus/program -type f -print0 | shuf -z | tail -z -n +501 | xargs -0r rm --
           fi
           after=$(find fuzz/corpus/program -type f 2>/dev/null | wc -l)
           echo "Kept ${after} of ${before} corpus inputs."
