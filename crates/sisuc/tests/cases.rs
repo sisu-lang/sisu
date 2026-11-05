@@ -9,7 +9,8 @@
 //! mode reads, and that none is hidden.
 //!
 //! A `site_pending` case is a program the site shows before it compiles: `sisu check` reports
-//! an error, until the day it compiles. An `explanation` case is the Broken program of a
+//! an error, until the day it compiles. A `site_mir` case makes `sisu build --emit mir` print its
+//! `.mir`. An `explanation` case is the Broken program of a
 //! `docs/diagnostics` explanation, whose `sisu` output is under `site/programs/explanations/`.
 //! A `selfhost_lexer` case is a Sisu file of the tests, of `selfhost/` or of the compiler's own
 //! Sisu sources. The lexer in Sisu must print the tokens that `sisu build --emit tokens` prints for
@@ -17,8 +18,8 @@
 //! An `every_program_certifies` case builds the mir of a program in `tests/run`, `tests/run-fail`,
 //! `tests/programs`, `bench` or `selfhost`, which a debug build certifies.
 //!
-//! `SISU_BLESS=1` rewrites the `.out`, `.err` and `.json` files of passing cases. It never creates
-//! one.
+//! `SISU_BLESS=1` rewrites the `.out`, `.err`, `.json` and `.mir` files of passing cases. It never
+//! creates one.
 
 use std::path::Path;
 use std::process::Command;
@@ -95,6 +96,15 @@ fn site_diagnostics(path: &Path) -> datatest_stable::Result<()> {
 )]
 fn site_pending(path: &Path) -> datatest_stable::Result<()> {
     site::pending(path);
+    Ok(())
+}
+
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "datatest-stable accepts only test functions that return a `Result`"
+)]
+fn site_mir(path: &Path) -> datatest_stable::Result<()> {
+    site::mir(path, bless());
     Ok(())
 }
 
@@ -189,6 +199,7 @@ datatest_stable::harness! {
     { test = site_run_fail, root = "../../site/programs/run-fail", pattern = r"\.sisu$" },
     { test = site_diagnostics, root = "../../site/programs/diagnostics", pattern = r"\.sisu$" },
     { test = site_pending, root = "../../site/programs/pending", pattern = r"\.sisu$" },
+    { test = site_mir, root = "../../site/programs/mir", pattern = r"\.sisu$" },
     { test = explanation, root = "../../docs/diagnostics", pattern = r"[EW]\d{4}\.md$" },
     { test = every_program_certifies, root = "tests", pattern = r"^(run|run-fail|programs)/[^/]+\.sisu$" },
     { test = every_program_certifies, root = "../../bench", pattern = r"main\.sisu$" },

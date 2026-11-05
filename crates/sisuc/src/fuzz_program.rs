@@ -748,7 +748,9 @@ mod tests {
         judge, judge_bounds, judge_builds, judge_known, judge_marked, judge_pair, judge_source,
         program, program_in, run, runtime,
     };
+    use crate::diagnostic::Severity;
     use crate::fresh_names;
+    use crate::generate::coverage::{SEARCH_SEEDS, search_seeds};
     use crate::generate::{BoundSite, Generated, coverage, generate};
 
     /// A directory of the test's own, removed when dropped.
@@ -1312,20 +1314,16 @@ mod tests {
     }
 
     /// The dispatches of a call of a requirement that a program may hold, each a neighbour of
-    /// #203: the call must reach the method of its own type. Each comes with the first seed of the
-    /// series whose program holds it and prints every marked line.
-    const DISPATCHES: [(&str, u64); 8] = [
-        ("a direct call on `Q<k>` and on `N<k>`", 0),
-        ("a call through `via<k>` with `Q<k>`, `N<k>` and `R<k>`", 0),
-        ("a requirement inherited from an earlier interface", 60),
-        (
-            "a result `T` picked by the expected type, `i64` and `string`",
-            18,
-        ),
-        ("`both` with two interfaces in one bound", 0),
-        ("`pick<k>` with a bounded associated type", 55),
-        ("a conformance in an `extend` block", 18),
-        ("a conformance in the declaration list", 0),
+    /// #203: the call must reach the method of its own type.
+    const DISPATCHES: [&str; 8] = [
+        "a direct call on `Q<k>` and on `N<k>`",
+        "a call through `via<k>` with `Q<k>`, `N<k>` and `R<k>`",
+        "a requirement inherited from an earlier interface",
+        "a result `T` picked by the expected type, `i64` and `string`",
+        "`both` with two interfaces in one bound",
+        "`pick<k>` with a bounded associated type",
+        "a conformance in an `extend` block",
+        "a conformance in the declaration list",
     ];
 
     /// Whether `g` holds the dispatch `row` of `DISPATCHES`, as its text shows.
@@ -1402,13 +1400,35 @@ mod tests {
         }
     }
 
-    /// The program of the seed `at` of the series, which holds `row` and whose O0 run prints every
-    /// line that `shapes` should: the seed's `Generated`, and that run. A change of the generator
-    /// that moves the seed's bytes fails here, with the name of the row.
-    fn dispatch_of((row, at): (&str, u64)) -> (Generated, Run) {
-        let g = generate(&seed(at));
-        assert!(holds(row, &g), "seed {at} should hold {row}\n{}", g.program);
-        let run = o0_run(&g);
+    /// Whether the text of `g` shows that its O0 run reaches every marked line of `shapes`: its
+    /// `main` ends with the call of `shapes`, has no `return`, and the program has no panic site.
+    fn reaches_shapes(g: &Generated) -> bool {
+        let main = item(&g.program, "fn main()").unwrap_or_default();
+        main.ends_with("    shapes()\n}") && !main.contains("return") && panic_sites(g) == 0
+    }
+
+    /// The program of the first seed that holds `row` and whose text shows that it reaches
+    /// every marked line of `shapes`, and the O0 run of it: the seed's `Generated`, and that run.
+    /// The search reads the seeds up to `SEARCH_SEEDS`. A run that prints less than the expected
+    /// lines, or that crashes, fails here, with the name of the row.
+    fn dispatch_of(row: &str) -> (Generated, Run) {
+        let mut found = None;
+        search_seeds(0, |n| {
+            let g = generate(&seed(n));
+            if holds(row, &g) && reaches_shapes(&g) {
+                let run = o0_run(&g);
+                // The text cannot show a panic before `shapes` on an overflow or an index
+                // (property 3), so a run that exits 101 is skipped. Any other exit, such as a
+                // signal, is the bug that this test guards (#203): the count below reports it.
+                if run.exit != Exit::Code(101) {
+                    found = Some((n, g, run));
+                }
+            }
+            found.is_some()
+        });
+        let (at, g, run) = found.unwrap_or_else(|| {
+            panic!("some seed of the first {SEARCH_SEEDS} should hold {row} and run to `shapes`")
+        });
         let printed = String::from_utf8_lossy(&run.stdout)
             .lines()
             .filter(|line| is_marked(line))
@@ -1423,11 +1443,11 @@ mod tests {
 
     /// The seed's program holds the dispatch, and its O0 run prints the expected lines, which are
     /// not none.
-    fn dispatch_should_print_its_expected_lines(dispatch: (&str, u64)) {
+    fn dispatch_should_print_its_expected_lines(dispatch: &str) {
         let (g, run) = dispatch_of(dispatch);
-        assert!(!g.expected.is_empty(), "{}", dispatch.0);
+        assert!(!g.expected.is_empty(), "{dispatch}");
         judge_marked(&[run], &g.expected)
-            .unwrap_or_else(|f| panic!("{}: {}\n{}", dispatch.0, f.detail, g.program));
+            .unwrap_or_else(|f| panic!("{dispatch}: {}\n{}", f.detail, g.program));
     }
 
     #[test]
@@ -1470,21 +1490,56 @@ mod tests {
         dispatch_should_print_its_expected_lines(DISPATCHES[7]);
     }
 
-    /// Seed 1188's `main` returns before it calls `shapes`, which the program holds, so the run
-    /// prints no marked line, and the property holds.
+    /// The codes of the diagnostics that `sisu check` gives for `source`, sorted.
+    fn codes(source: &str) -> Vec<String> {
+        let (_, diagnostics) = crate::front_end::checked(source);
+        assert!(
+            diagnostics.iter().all(|d| d.severity() != Severity::Error),
+            "{source}"
+        );
+        let mut codes: Vec<String> = (diagnostics.iter())
+            .map(|d| d.code().as_str().to_string())
+            .collect();
+        codes.sort();
+        codes
+    }
+
+    /// GIVEN the first seed whose `shapes` holds marked statements, and whose `main` ends with the
+    /// call of `shapes`
+    /// WHEN a `return` is written before that call
+    /// THEN the edit adds one W0001 and no error, and the run prints no marked line, so the
+    /// property holds
     #[test]
     fn a_main_that_returns_before_shapes_should_print_no_marked_line() {
-        let g = generate(&seed(1188));
-        let main = item(&g.program, "fn main()").expect("the program should have a `main`");
-        assert!(
-            main.contains("return\n") && main.ends_with("    shapes()\n}"),
-            "{main}"
-        );
-        assert!(
-            !g.expected.is_empty(),
-            "`shapes` should hold marked statements"
-        );
-        let run = o0_run(&g);
+        let call = "    shapes()\n}";
+        let mut found = None;
+        search_seeds(0, |n| {
+            let mut g = generate(&seed(n));
+            let main = item(&g.program, "fn main()").unwrap_or_default();
+            if !g.expected.is_empty() && main.ends_with(call) {
+                let at = (g
+                    .program
+                    .find(main)
+                    .expect("`main` should be in the program")
+                    + main.len())
+                    - call.len();
+                let original = g.program.clone();
+                g.program.insert_str(at, "    return\n");
+                let run = o0_run(&g);
+                // A statement of `main` before the call can panic on an overflow or an index
+                // (property 3), so a run that exits 101 is skipped. Any other exit fails below.
+                if run.exit != Exit::Code(101) {
+                    found = Some((original, g, run));
+                }
+            }
+            found.is_some()
+        });
+        let (original, g, run) =
+            found.expect("some seed's `main` should end with a call of `shapes`");
+        let mut expected_codes = codes(&original);
+        expected_codes.push("W0001".to_string());
+        expected_codes.sort();
+        assert_eq!(codes(&g.program), expected_codes, "{}", g.program);
         assert_eq!(run.exit, Exit::Code(0), "`main` should return");
         assert!(
             !String::from_utf8_lossy(&run.stdout)
@@ -1739,28 +1794,34 @@ mod tests {
         );
     }
 
-    /// Seed 2950's program runs `dbg` eight times, and a rewrite moves some of its lines. The
-    /// lines of the two runs differ as written. Property 4 holds when `unlocated` takes the
-    /// `<file>:<line>:<col>: ` off each. The text and the value of each line are the same, since
-    /// no rewrite changes the argument of a `dbg`.
+    /// GIVEN the first seed whose O0 run exits 0 and prints a `dbg` line, and whose rewritten copy
+    /// moves a line, so that the stderr of the two runs differs as written
+    /// WHEN property 4 compares the two runs
+    /// THEN it holds, since `unlocated` takes the `<file>:<line>:<col>: ` off each line: the text
+    /// and the value of each line are the same, as no rewrite changes the argument of a `dbg`
     #[test]
     fn a_seed_with_dbg_should_keep_property_4_across_its_rewrites() {
-        let g = generate(&seed(2950));
-        let copy = Generated {
-            program: g.rewritten.clone(),
-            ..generate(&seed(2950))
-        };
-        let (program, rewritten) = (o0_run(&g), o0_run(&copy));
-        let lines = program
-            .stderr
-            .split(|&b| b == b'\n')
-            .filter(|line| dbg_location(line) > 0)
-            .count();
-        assert_eq!(lines, 8, "{}", g.program);
-        assert_ne!(
-            program.stderr, rewritten.stderr,
-            "a rewrite should move a line"
-        );
+        let mut found = None;
+        search_seeds(0, |n| {
+            let g = generate(&seed(n));
+            if g.program.contains("dbg(") {
+                let copy = Generated {
+                    program: g.rewritten.clone(),
+                    ..generate(&seed(n))
+                };
+                let (program, rewritten) = (o0_run(&g), o0_run(&copy));
+                let lines = (program.stderr.split(|&b| b == b'\n'))
+                    .filter(|line| dbg_location(line) > 0)
+                    .count();
+                if program.exit == Exit::Code(0) && lines > 0 && program.stderr != rewritten.stderr
+                {
+                    found = Some((program, rewritten));
+                }
+            }
+            found.is_some()
+        });
+        let (program, rewritten) =
+            found.expect("some seed should run `dbg` and have a rewrite that moves a line");
         assert_eq!(pair(&program, &rewritten), 0);
     }
 
