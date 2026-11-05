@@ -222,6 +222,7 @@ class Cell {
     n: Cell?
     mut w: i64
     mut mys: [i64]
+    oa: [i64]?
     fn opt<T>(self, t: T) -> T? { Some(t) }
 }
 
@@ -328,6 +329,10 @@ fn let_coalesce_optional(c: Cell?) {
 
 fn match_generic_optional(c: Cell?) {
     match c.opt(c.n) { Some(x) => x.nope(); None => {} }
+}
+
+fn index_member_optional_array(c: Cell?) {
+    print(c.oa[0] ?? 0)
 }
 
 fn main() {}

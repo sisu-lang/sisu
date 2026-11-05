@@ -437,3 +437,17 @@ fn match_on_a_value_typed_by_e0062_should_not_report_e0124() {
         ),
     ]);
 }
+
+/// An index of an optional array that is a member has the same element type under both remedies,
+/// so a `??` on the element is reported when it is not optional.
+#[test]
+fn index_of_a_member_optional_array_should_keep_the_element_type() {
+    rows(&[(
+        "print(c.oys[0][0] ?? 0)",
+        &[
+            (Code::MayBeNone, (11, 11)),
+            (Code::MayBeNone, (11, 11)),
+            (Code::CoalesceNotOptional, (11, 11)),
+        ],
+    )]);
+}
