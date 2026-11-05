@@ -125,6 +125,7 @@ class Events(unittest.TestCase):
         self.assertEqual(field(coverage, 'timeout-minutes'), str(fp.COVERAGE_MINUTES))
         self.assertEqual(field(gaps, 'timeout-minutes'), str(fp.GAPS_MINUTES))
         self.assertEqual(field(gaps, 'continue-on-error'), "${{ github.event_name != 'schedule' }}")
+        self.assertEqual(field(gaps, 'if'), "${{ !cancelled() && steps.fuzz.outcome == 'success' && needs.plan.outputs.coverage == 'true' }}")
         self.assertRegex(run_block(gaps), rf'timeout -k 10 {(fp.GAPS_MINUTES - 1) * 60} scripts/fuzz.sh '
                          r'--target program --gaps')
         self.assertIn("steps.gaps.outcome == 'failure'", field(upload, 'if'))

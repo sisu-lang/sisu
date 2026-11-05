@@ -389,6 +389,47 @@ class GapsCheck(unittest.TestCase):
                 self.assertIn('--gaps', run.stderr)
                 self.assertEqual([line for line in run.log if line.startswith('coverage')], [])
 
+    def check_missing_directory(self, name):
+        """Removes the directory tests/<name>, runs --gaps, and checks that it measures nothing."""
+        shutil.rmtree(os.path.join(self.repo, 'crates', 'sisuc', 'tests', name))
+        run = self.gaps()
+        self.assertNotEqual(run.code, 0, run.stdout + run.stderr)
+        self.assertEqual([line for line in run.log if line.startswith(('coverage front_end', 'coverage program'))], [])
+        self.assertNotIn('## Generator gaps', run.summary)
+
+    def test_gaps_should_fail_without_tests_run(self):
+        self.check_missing_directory('run')
+
+    def test_gaps_should_fail_without_tests_run_fail(self):
+        self.check_missing_directory('run-fail')
+
+    def test_front_end_seeds_should_fail_on_a_missing_test_tree(self):
+        shutil.rmtree(os.path.join(self.repo, 'crates', 'sisuc', 'tests'))
+        run = self.gaps(args=('--target', 'front_end', '--coverage'))
+        self.assertNotEqual(run.code, 0, run.stdout + run.stderr)
+        self.assertEqual([line for line in run.log if line.startswith('coverage front_end')], [])
+
+    def check_directory_without_program(self, name):
+        """Keeps one other file in tests/<name> and no program, as the real run-fail keeps its .out files."""
+        root = os.path.join(self.repo, 'crates', 'sisuc', 'tests', name)
+        for directory, _, names in os.walk(root):
+            for file in names:
+                if file.endswith('.sisu'):
+                    os.remove(os.path.join(directory, file))
+        with open(os.path.join(root, 'other.out'), 'w', encoding='utf-8') as f:
+            f.write('output')
+        run = self.gaps()
+        self.assertEqual(run.code, 2, run.stdout + run.stderr)
+        self.assertIn(f'crates/sisuc/tests/{name}', run.stderr)
+        self.assertEqual([line for line in run.log if line.startswith('coverage')], [])
+        self.assertNotIn('## Generator gaps', run.summary)
+
+    def test_gaps_should_fail_when_tests_run_has_no_program(self):
+        self.check_directory_without_program('run')
+
+    def test_gaps_should_fail_when_tests_run_fail_has_no_program(self):
+        self.check_directory_without_program('run-fail')
+
 
 if __name__ == '__main__':
     unittest.main()
