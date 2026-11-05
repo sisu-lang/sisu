@@ -292,7 +292,8 @@ fn main() {
 **Errors**
 
 - `x == None` is an error when `x` is not optional. [E0044](../diagnostics/E0044.md)
-- Values of two types cannot be compared. [E0047](../diagnostics/E0047.md) [E0032](../diagnostics/E0032.md)
+- Values of two types cannot be compared. `1 == "a"` is an error. [E0047](../diagnostics/E0047.md)
+- `<`, `<=`, `>` and `>=` report a type mismatch instead. `1 < "a"` is an error. [E0032](../diagnostics/E0032.md)
 - A class has no `==`, because objects compare by identity. `a == b` is an error. [E0159](../diagnostics/E0159.md)
 - `==` on an array or an optional of such a class is an error too. [E0159](../diagnostics/E0159.md)
 - To compare objects, use `a is b` ([`is`](#is)). Or make the class conform to `Eq` and write its `eq` method ([Display, Eq and Ord](generics.md#display-eq-and-ord)).

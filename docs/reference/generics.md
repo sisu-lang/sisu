@@ -182,12 +182,12 @@ The examples use `fn pick<T>(a: T, b: T) -> T`, `fn h<T>(a: T, b: T?) -> T` and 
 - An argument that makes an optional fixes `T` before a plain literal. `pick(1, Some(2))` is an `i64?`.
 - An argument that holds an optional also comes first. `pick([1], [Some(2)])` is a `[i64?]`.
 - So does a call that wraps an optional. For `fn wrap<T>(x: T) -> [T]`, `pick([1], wrap(Some(2)))` is a `[i64?]`. A call wraps an optional when its parameter and its return type name one type parameter.
-- An optional at a `T?` place fills that `?`, so the call does not hold an optional. `pick(h(1, Some(2)), Some(3))` is an `i64?`.
+- An optional at a `T?` place fills that `?`, so the call does not hold an optional. `pick(h(1, Some(2)), Some(3))` is an `i64?`, and `let v: i64?? = h(1, Some(2))` is valid.
 - A call that waits never makes the outer call hold an optional. For `fn okv<T>(r: Result<T, string>) -> T`, `pick(1, okv(Ok(Some(2))))` is an error: `1` fixes `T` as `i64` first. Write `pick(Some(1), ...)`, or give the result a type. [E0032](../diagnostics/E0032.md)
-- In an optional context, a call that returns `T` binds `T` to the whole context type when an argument makes or holds an optional. For `first<T>(xs: [T]) -> T`, `let v: i64?? = first([None, Some(1)])` binds `T` to `i64??`, so `v` is the outer `None`.
+- In an optional context, a call that returns `T` binds `T` to the whole context type when an argument at a `T` or `[T]` place makes or holds an optional. For `first<T>(xs: [T]) -> T`, `let v: i64?? = first([None, Some(1)])` binds `T` to `i64??`, so `v` is the outer `None`.
 - A call that returns `T?` does the same when the context has no more optionals than the call makes. `let w: i64?? = opt(Some(2))` binds `T` to `i64?`.
 - When the context has more optionals, its payload meets `T?`. `let w: i64??? = opt(Some(2))` also binds `T` to `i64?`.
-- `let v: i64?? = h(1, Some(2))` is valid. `Some(Some(2))` makes an optional inside its optional, so `let v: i64? = h(1, Some(Some(2)))` is valid too.
+- `Some(Some(2))` at a `T?` place fills the `?` and leaves one optional, so `T` is an optional. `let v: i64? = h(1, Some(Some(2)))` is valid, and a context `i64??` also binds `T` to `i64?`.
 - Inference counts only the optionals that the arguments show. A later argument with more optionals does not widen `T`, so the order can change the result. `pick(Some(Some(1)), Some(2))` is an `i64??`, but `pick(Some(2), Some(Some(1)))` is an error. [E0032](../diagnostics/E0032.md)
 - A `None` at a `T?` place shows no optional. `let w: i64?? = h(1, None)` is an error: expected `i64??`, found `i64`.
 - A call that returns `T?` does the same with more optionals. For `fn opt2<T>(x: T, _y: T) -> T?`, `let w: i64??? = opt2(Some(2), Some(Some(3)))` is an error: expected `i64`, found `i64?`.
@@ -289,21 +289,23 @@ fn main() {
 
 **What needs a bound**
 
-The help of each of these errors names the bound to add ([Bounds](#bounds)).
+When a bound fixes the error, the help names that bound ([Bounds](#bounds)).
 
 - `==` and `!=` need `T: Eq`. Two `T?` values need it too. [E0139](../diagnostics/E0139.md)
 - `<`, `<=`, `>` and `>=` need `T: Ord`. [E0139](../diagnostics/E0139.md)
-- Any other operator, such as `+`, is an error on a `T`. [E0139](../diagnostics/E0139.md)
 - `contains` on a `[T]` uses `==`, so it needs `T: Eq`. [E0154](../diagnostics/E0154.md)
 - `is` needs `T: AnyObject`, because `T` can be a type that is not a class. [E0046](../diagnostics/E0046.md)
-- A method other than `to_string()` needs a bound that gives it. A `T` has no fields. [E0063](../diagnostics/E0063.md)
+- A method other than `to_string()` needs a bound that gives it. The help names an interface that declares the method. [E0063](../diagnostics/E0063.md)
 
 **What a `T` cannot do**
 
+- Be an operand of `+` or of any other operator that computes, whatever the bounds are. [E0139](../diagnostics/E0139.md)
 - Be an operand of `!`, `&&` or `||`. They take only a `bool`. [E0032](../diagnostics/E0032.md)
+- Have a field. [E0063](../diagnostics/E0063.md)
 - Fill an array with `[x; n]`, because `T` can be a class ([Filled arrays](arrays.md#filled-arrays)). `[None; n]` is valid. [E0067](../diagnostics/E0067.md)
 - Be the subject of a `match`. In a payload of the type `T`, a pattern is a name or `_` ([Variant patterns](enums.md#variants)). [E0124](../diagnostics/E0124.md)
-- Meet a value of another type in an operator, whatever the bounds are. `a == b` with a `T` and a `U`, and `a < 5`, are type mismatches. [E0047](../diagnostics/E0047.md) [E0032](../diagnostics/E0032.md)
+- Meet a value of another type. `a == b` with a `T` and a `U` cannot be compared, whatever the bounds are. [E0047](../diagnostics/E0047.md)
+- Meet a literal of another type. `a < 5` is a type mismatch. [E0032](../diagnostics/E0032.md)
 
 ```sisu
 fn smaller<T>(a: T, b: T) -> bool {
@@ -363,7 +365,6 @@ fn main() {
 - In the body, a `T` can use the methods of its bounds and the operators that they map to.
 - `Eq` gives `==` and `!=`. `Ord` gives `<`, `<=`, `>` and `>=`. `a.eq(b)` and `a.less(b)` work in the same way.
 - An array, an optional or an enum of `T` has `==` when `T` has `Eq`.
-- Every `T` can print with no bound: `print(x)`, `"{x}"` and `x.to_string()`.
 
 **Where the error is**
 

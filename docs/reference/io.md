@@ -36,7 +36,7 @@ fn main() {
 a warning
 ```
 
-**The argument**
+**The call**
 
 - The argument is one value of any type except `unit` and `never` ([Text of other types](strings.md#text-of-other-types)).
 - A call that returns nothing is an error. So are no argument and more than one argument. [E0059](../diagnostics/E0059.md)

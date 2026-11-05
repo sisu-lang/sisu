@@ -463,6 +463,7 @@ class Build(unittest.TestCase):
         self.assertEqual(re.findall(r'<span class="area-name">(.*?)</span>', board), ['One', 'Two'])
         self.assertEqual(re.findall(r'<p class="note">(.*?)</p>', board), ['Careful.'])
         self.assertIn('<li>Alpha for 1 codes</li>', board)
+        self.assertRegex(board, r'<h3>Coming next</h3><ul class="nx"><li>Gamma')
 
     def test_status_tables(self):
         fake_site(self, {}, {'site/data/status.toml': STATUS, 'docs/diagnostics/E0001.md': ''})
@@ -855,10 +856,12 @@ class Build(unittest.TestCase):
     def test_bold_label_before_a_list_should_mark_a_rules_card(self):
         body = ref_html(self, '# T\n\n**What needs a bound**\n\n'
                               '- `==` needs `T: Eq`. [E0139](../diagnostics/E0139.md) [E0154](../diagnostics/E0154.md)\n'
-                              '- See [E0063](../diagnostics/E0063.md) here.\n\n'
+                              '- See [E0063](../diagnostics/E0063.md) here.\n'
+                              '- Ends in [the error](../diagnostics/E0001.md)\n\n'
                               'Some **bold** text.\n\n- plain [E0001](../diagnostics/E0001.md)\n')[0]
         self.assertIn('<p class="rules-h"><strong>What needs a bound</strong></p>\n<ul class="rules">', body)
         self.assertEqual(re.findall(r'<a href="[^"]*" class="tag">(\w+)</a>', body), ['E0139', 'E0154'])
+        self.assertRegex(body, r'<a href="[^"]*E0001[^"]*">the error</a>')
         self.assertEqual(body.count('class="rules'), 2)
         noted = ref_html(self, '# T\n\n**Label**\n\nA note.\n\n- a rule\n')[0]
         self.assertIn('<p class="rules-h"><strong>Label</strong></p>\n<p class="rules-note">A note.</p>\n<ul class="rules">', noted)

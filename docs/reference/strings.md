@@ -31,7 +31,8 @@ fn main() {
 - A string is a value. Binding, passing and storing it behaves as a copy ([Values and memory](values.md#copied-and-shared)).
 - Sisu does not normalize text. `"é"` as one character and `"e"` with a combining accent are not equal.
 - A string can hold the null character `\0`. It counts as one byte.
-- A string has no single index and no fields. [E0068](../diagnostics/E0068.md)
+- A string has no single index. [E0068](../diagnostics/E0068.md)
+- A string has no fields. [E0063](../diagnostics/E0063.md)
 - A string has a range index ([Substrings](#substrings)). Use `chars()` or `bytes()` to get an array.
 
 **Operators**
@@ -136,8 +137,8 @@ fn main() {
 
 **Limits**
 
-- A string has no other methods. [E0063](../diagnostics/E0063.md)
-- A `char` has no methods either. Convert it with `i64(c)` ([Types](types.md#conversions)).
+- A string has no other methods than `to_string`, `eq` and `less`, which come with `Display`, `Eq` and `Ord` ([Display, Eq and Ord](generics.md#display-eq-and-ord)). [E0063](../diagnostics/E0063.md)
+- A `char` has only those three methods. Convert it with `i64(c)` ([Types](types.md#conversions)).
 - A method of an optional string is called with `?.` ([Optional chaining](operators.md#optional-chaining)).
 
 ```sisu

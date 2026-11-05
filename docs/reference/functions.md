@@ -39,8 +39,7 @@ fn double(n: i64) -> i64 {
 
 - Functions, classes, enums and constants share one set of names. Each name is declared once. [E0034](../diagnostics/E0034.md)
 - A function cannot take the name of a built-in type, such as `i64`, or `Option`, `Result`, `Some`, `Ok` or `Err`. [E0026](../diagnostics/E0026.md)
-- A function cannot take the name `print`, `eprint`, `panic`, `read_line`, `dbg` or `exchange`. [E0034](../diagnostics/E0034.md)
-- [Input and output](io.md) tells these functions. The section [Files](errors.md#files) is in development, and it changes this rule.
+- A function cannot take the name `print`, `eprint`, `panic`, `read_line`, `dbg` or `exchange` ([Input and output](io.md)). The section [Files](errors.md#files) is in development, and it changes this rule. [E0034](../diagnostics/E0034.md)
 - A function cannot be named `_`. [E0080](../diagnostics/E0080.md)
 - A binding or a parameter can take the name of a function or a class. A call still finds the function or the class, because a binding is never called ([Shadowing](statements.md#shadowing)).
 
@@ -48,6 +47,9 @@ fn double(n: i64) -> i64 {
 
 - A function can call a function that is declared below it.
 - A function cannot be declared in the body of another function.
+
+**Warning**
+
 - A function that no live code calls builds with a warning. [W0012](../diagnostics/W0012.md)
 - Live code is `main`, each function, method and constant whose name starts with `_`, and all the code that live code calls or names.
 
@@ -201,7 +203,8 @@ fn main() {
 **Two `mut` arguments**
 
 - Two `mut` arguments of one call cannot name the same place, or one place that holds the other, when the compiler can see it. [E0171](../diagnostics/E0171.md)
-- The compiler sees the same variable with the same fields, and indexes that are the same literal or constant, or the same `let` binding or plain parameter.
+- The compiler sees one place when the variable and the fields are the same.
+- Two indexes are the same when they are the same literal or constant, or the same `let` binding or plain parameter.
 - An index that is a `let mut` variable is never an error, because another argument can change it. `swap(mut xs[i], mut xs[j])` is valid, because `i` and `j` can differ.
 - When two places are one at run time, the call is valid, and the last store-back wins. This happens when two references name one object (`mut a.cells, mut b.cells` where `a` and `b` are the same object), and when two indexes are equal.
 

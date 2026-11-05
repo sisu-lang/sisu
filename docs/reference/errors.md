@@ -58,16 +58,16 @@ fn main() {
 
 - The left side is the success type. It can be any type, also `unit` and an error type.
 - The right side is the error type. It must conform to the interface `Error`, which requires `Display`.
-- `-> i64 | bool` is an error, because `bool` does not conform to `Error`.
+- `-> i64 | bool` is an error, because `bool` does not conform to `Error`. `Result<i64, bool>` is the same error.
+- A generic function that returns `T | E` needs the bound `E: Error`.
 - `string` conforms to `Error`. So `-> i64 | string` is a function that fails with a message.
 - A function that returns no value on success returns `unit | E`. There is no form `fn save(...) | IoError`.
 
 **Forms that are errors**
 
 - A result has one error type. `T | A | B` is an error.
-- In a type, `|` does not mean a choice between two types. `i64 | string` is an `i64` or a failure message. `i64 | bool` does not build.
+- In a type, `|` does not mean a choice between two types. `i64 | string` is an `i64` or a failure message.
 - `i64 | E?` is `i64 | (E?)`, and its right side is not an error type. For an optional result, write `(i64 | E)?`.
-- A generic function that returns `T | E` needs the bound `E: Error`. `Result<i64, bool>` is the same error as `i64 | bool`.
 
 **Names**
 

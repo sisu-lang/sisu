@@ -164,10 +164,10 @@ bullet names the state it measured.
   runtime's `sisu_alloc` and `sisu_free`, 102 for each allocation and free
   together. Outside the allocator, Sisu runs 4.2 billion instructions to C's
   3.8. A Sisu node is 24 bytes, its count and two fields, against C's 16.
-  Peak memory is about twice C's: 65.8 MiB against 33.7 MiB. The larger node
+  Peak memory is about twice C's: 65.8 MiB against 33.6 MiB. The larger node
   explains at most 1.5 times. The rest has not been measured; mimalloc is the
-  likely cause, because it holds 4.4 MiB more than glibc even in `hello`
-  (5.8 MiB against 1.4 MiB).
+  likely cause, because it holds 4.6 MiB more than glibc even in `hello`
+  (6.0 MiB against 1.4 MiB).
 - **A locked live count, now gone.** The runtime counted live objects for
   `--rc-checks` with an atomic add and subtract. On x86-64 each is a locked
   instruction and a full memory barrier, paid on every allocation and free.
@@ -180,7 +180,7 @@ bullet names the state it measured.
   instead of 0.84 s. Skipping the add is safe here because `left` and `right` are not `mut`:
   the node holds its children for as long as the caller holds the node.
   [ADR 0029](adr/0029-parameters-are-borrowed-unless-consumed.md) borrows it,
-  and binary_trees took 0.72 s with glibc's allocator. It takes 0.55 s now.
+  and binary_trees took 0.72 s with glibc's allocator. It takes 0.49 s at 8d96d34.
 - **`?.` and `??` build an optional.** `self.left?.check() ?? 0` makes an
   `i64?` and then picks from it, where C branches once. With the counting
   removed, `check` still runs 1.8 times C's instructions, but they are

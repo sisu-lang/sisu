@@ -67,7 +67,7 @@ fn main() {
 
 - A class or an optional class is an error, because every element would be the same object. This is also true when a binding of an optional class type holds `None`. [E0067](../diagnostics/E0067.md)
 - A type parameter, such as `T`, is an error too, because `T` can be a class ([Generics](generics.md#values-of-a-type-parameter)). [E0067](../diagnostics/E0067.md)
-- The literal `None` is the one exception. `[None; length]` is valid where the context gives its type, such as `let slots: [Box?] = [None; 3]`.
+- The literal `None` is the one exception to the rule for an optional class. `[None; length]` is valid where the context gives its type, such as `let slots: [Box?] = [None; 3]`.
 - Without that context, `[None; length]` is an error. [E0050](../diagnostics/E0050.md)
 - When `value` holds objects, such as an array of objects, every element holds the same objects.
 
@@ -198,7 +198,8 @@ fn main() {
 - `len` is a method, so write `xs.len()`.
 - `xs.len` is an error. [E0057](../diagnostics/E0057.md)
 - `len(xs)` is an error. [E0070](../diagnostics/E0070.md)
-- A name that is not one of these methods is an error. [E0063](../diagnostics/E0063.md)
+- An array also has `to_string` and, when its elements have `Eq`, `eq` ([Display, Eq and Ord](generics.md#display-eq-and-ord)).
+- Any other method name is an error. [E0063](../diagnostics/E0063.md)
 
 **Where the methods come from**
 

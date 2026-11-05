@@ -45,7 +45,7 @@ fn main() {
 - A function type goes anywhere a type goes: a parameter, a local, a field, a payload, an array element, a type argument, a return type or an optional.
 - `->` groups to the right. `(i64) -> (i64) -> i64` takes an `i64` and returns a function.
 - An optional function type needs parentheses: `(() -> unit)?`.
-- `unit` is a type name that a program can write. `-> unit` on a function declaration means the same as no return type.
+- `unit` will be a type name that a program can write ([unit](types.md#unit) cannot be written yet). `-> unit` on a function declaration means the same as no return type.
 - A generic named function used as a value takes its type arguments from the expected type.
 
 **Matching and calling**

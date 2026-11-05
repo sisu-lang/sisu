@@ -464,14 +464,15 @@ def mark_rules(tokens) -> None:
         elif token.type == 'inline' and depth:
             kids = token.children or []
             end = len(kids)
-            while end and kids[end - 1].type == 'text' and not kids[end - 1].content.strip():
-                end -= 1
-            while (end >= 3 and kids[end - 1].type == 'link_close' and kids[end - 2].type == 'text'
-                   and (m := SITE_CODE_LINK.fullmatch(str(kids[end - 3].attrGet('href')))) and kids[end - 2].content == m[1]):
-                kids[end - 3].attrSet('class', 'tag')
-                end -= 3
-                while end and kids[end - 1].type == 'text' and not kids[end - 1].content.strip():
+            while end:
+                if kids[end - 1].type == 'text' and not kids[end - 1].content.strip():
                     end -= 1
+                elif (end >= 3 and kids[end - 1].type == 'link_close' and kids[end - 2].type == 'text'
+                      and (m := SITE_CODE_LINK.fullmatch(str(kids[end - 3].attrGet('href')))) and kids[end - 2].content == m[1]):
+                    kids[end - 3].attrSet('class', 'tag')
+                    end -= 3
+                else:
+                    break
 
 
 def reference_html(markdown: str, path: Path) -> tuple[str, list[tuple[int, str, str, bool]], bool]:
