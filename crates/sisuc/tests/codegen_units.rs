@@ -607,7 +607,8 @@ fn main() {{
 
 /// GIVEN the case program built at `-O2` with `--codegen-units 4`
 /// WHEN `sisu` builds it three times, each in its own process: with `SISU_UNIT_ORDER=forward`,
-/// with `SISU_UNIT_ORDER=reverse`, and with no such variable
+/// with `SISU_UNIT_ORDER=reverse`, and with no such variable, each to the same file name in its
+/// own directory
 /// THEN the three executables are the same bytes
 #[test]
 fn executable_should_not_depend_on_unit_order() {
@@ -615,8 +616,11 @@ fn executable_should_not_depend_on_unit_order() {
         "executable_should_not_depend_on_unit_order",
         &[("codegen_units.sisu", CASE)],
     );
+    // One file name in three directories: macOS's linker signs each executable under its name.
     let [forward, reverse, threads] = [Some("forward"), Some("reverse"), None].map(|order| {
-        let exe = dir.join(format!("order-{}", order.unwrap_or("threads")));
+        let build = dir.join(format!("order-{}", order.unwrap_or("threads")));
+        fs::create_dir_all(&build).expect("creates the build directory");
+        let exe = build.join("codegen_units");
         let mut command = support::sisu(
             &dir,
             "codegen_units.sisu",
