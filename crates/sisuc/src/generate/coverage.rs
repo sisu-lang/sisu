@@ -3470,6 +3470,44 @@ fn every_short_input_checks_clean() {
     }
 }
 
+/// The seeds that `search_seeds` reads, in order, when the construct first holds at `holds_at`.
+fn searched(least: u64, holds_at: Option<u64>) -> (Vec<u64>, bool) {
+    let mut read = Vec::new();
+    let holds = search_seeds(least, |n| {
+        read.push(n);
+        holds_at.is_some_and(|at| n >= at)
+    });
+    (read, holds)
+}
+
+#[test]
+fn the_seed_search_should_read_on_past_the_least_seeds_until_the_construct_holds() {
+    let (read, holds) = searched(64, Some(100));
+    assert_eq!(read, (0..=100).collect::<Vec<u64>>());
+    assert!(holds);
+}
+
+#[test]
+fn the_seed_search_should_read_the_least_seeds_when_the_first_seed_holds() {
+    let (read, holds) = searched(64, Some(0));
+    assert_eq!(read, (0..64).collect::<Vec<u64>>());
+    assert!(holds);
+}
+
+#[test]
+fn the_seed_search_should_stop_at_the_cap() {
+    let (read, holds) = searched(64, None);
+    assert_eq!(read, (0..SEARCH_SEEDS).collect::<Vec<u64>>());
+    assert!(!holds);
+}
+
+#[test]
+fn the_seed_search_should_read_all_least_seeds_when_least_passes_the_cap() {
+    let (read, holds) = searched(2_048, None);
+    assert_eq!(read, (0..2_048).collect::<Vec<u64>>());
+    assert!(!holds);
+}
+
 #[test]
 fn read_line_past_the_input_checks_clean() {
     // A program that calls `read_line` in more places than its stdin has lines can read past the
