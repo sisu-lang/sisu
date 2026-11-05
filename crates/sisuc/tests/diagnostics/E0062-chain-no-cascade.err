@@ -733,5 +733,29 @@ help: if a `None` result is fine, use `?.`
 267 |     match c?.e { Some(A) => {}; _ => {} }
     |            +
 
-sisu: 64 errors
+error[E0062]: `c` may be `None`
+   --> E0062-chain-no-cascade.sisu:271:15
+    |
+271 |     print(dbg(c.v) ?? 0)
+    |               ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+271 |     print(dbg(c?.v) ?? 0)
+    |                +
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-no-cascade.sisu:275:11
+    |
+275 |     match c.v { Some(1) | None => {}; _ => {} }
+    |           ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+275 |     match c?.v { Some(1) | None => {}; _ => {} }
+    |            +
+
+sisu: 66 errors
 sisu: for more on a code, run `sisu explain <code>`: E0032, E0048, E0062, E0130

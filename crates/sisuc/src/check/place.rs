@@ -8,8 +8,8 @@ use super::member::{Access, FoundField, safe_value};
 use super::operator::Operator;
 use super::unused_names::Used;
 use super::{
-    BindingKind, Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, block_expr, payload,
-    type_of,
+    BindingKind, Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, block_expr,
+    is_unwrapped, payload, type_of,
 };
 use crate::ast;
 use crate::diagnostic::{DiagnosticKind, Immutable, IndexUsage, UnwrapHelp};
@@ -75,10 +75,10 @@ pub(super) enum Root {
 
 /// The object that the `?.` of a place's root field takes out of an optional. `bind` holds it
 /// where `scrutinee` has one, and the place starts there. A write or a `push` of the place runs
-/// only there.
+/// only there. The `scrutinee` of an object that an E0062 typed is `Err`: its place has no path.
 pub(super) struct Guard {
     bind: tir::LocalId,
-    scrutinee: tir::Expr,
+    scrutinee: Checked,
 }
 
 pub(super) struct CheckedPlace {
@@ -291,7 +291,7 @@ impl Checker<'_> {
             self.read_pushed(read, receiver);
         }
         match place.guard {
-            Some(Guard { bind, scrutinee }) => safe_value(receiver.span, bind, Ok(scrutinee), read),
+            Some(Guard { bind, scrutinee }) => safe_value(receiver.span, bind, scrutinee, read),
             None => read,
         }
     }
@@ -840,9 +840,7 @@ impl Checker<'_> {
             }
             _ => UnwrapHelp::Nothing,
         };
-        // Its E0062 comes before the E0001 that the place held.
-        let at = self.before_held(self.diagnostics.len(), base.span);
-        self.diagnostics.insert(at, optional_array(base, unwrap));
+        self.diagnostics.push(optional_array(base, unwrap));
     }
 
     /// The place `target` names, which `span` changes as `change` says: `Element` when it is the
@@ -869,12 +867,26 @@ impl Checker<'_> {
                 let mut guard = None;
                 // `?.` takes the object out of its optional, where the place starts. The write
                 // of the place is the branch where the object is present.
+                let flagged = is_unwrapped(&checked);
                 let checked = if *safe {
                     match (self.safe_payload(&checked, base, name), checked) {
                         (Ok(payload), Ok(scrutinee)) => {
                             let bind = self.fresh(payload);
-                            guard = Some(Guard { bind, scrutinee });
+                            guard = Some(Guard {
+                                bind,
+                                scrutinee: Ok(scrutinee),
+                            });
                             Ok(local(bind, payload, base.span))
+                        }
+                        // An E0062 typed the object: its chain goes on with the payload's type,
+                        // as the `?.` makes the place optional.
+                        (Ok(payload), Err(scrutinee)) if flagged => {
+                            let bind = self.fresh(payload);
+                            guard = Some(Guard {
+                                bind,
+                                scrutinee: Err(scrutinee),
+                            });
+                            Err(Poisoned::typed(payload))
                         }
                         (payload, _) => {
                             // As `?.` does, report the field and give no type.
@@ -1064,8 +1076,11 @@ fn held_array_layers(read: &Checked, guarded: bool) -> usize {
 /// present: the right side runs there only. Without a `guard`, `block` as it is.
 fn guarded(guard: Option<Guard>, block: tir::Expr, span: Span) -> tir::Expr {
     match guard {
-        Some(Guard { bind, scrutinee }) => if_some(bind, scrutinee, block, None, span),
-        None => block,
+        Some(Guard {
+            bind,
+            scrutinee: Ok(scrutinee),
+        }) => if_some(bind, scrutinee, block, None, span),
+        _ => block,
     }
 }
 

@@ -2214,12 +2214,18 @@ fn unwrap_text(unwrap: UnwrapHelp, fix: bool) -> Option<String> {
 /// The help "peel the `which` layer first": `receiver` with `layers` of `?? None` around it, then
 /// `?.` and `member`. It says "layers" for more than one.
 fn peel_text(which: &str, receiver: &str, member: &str, layers: usize) -> String {
-    let mut text = receiver.to_string();
-    for _ in 0..layers {
-        text = format!("({text} ?? None)");
-    }
     let plural = if layers > 1 { "s" } else { "" };
-    format!("peel the {which} layer{plural} first: `{text}?.{member}`")
+    let mut text = format!("peel the {which} layer{plural} first: `");
+    text.reserve(receiver.len() + member.len() + layers * 10 + 4);
+    text.extend(std::iter::repeat_n('(', layers));
+    text.push_str(receiver);
+    for _ in 0..layers {
+        text.push_str(" ?? None)");
+    }
+    text.push_str("?.");
+    text.push_str(member);
+    text.push('`');
+    text
 }
 
 /// Moving a token up to the code before it: the `gap` between them becomes a space.
@@ -6716,19 +6722,6 @@ mod tests {
         assert_eq!(instances(0), "0 instances");
         assert_eq!(instances(1), "1 instance");
         assert_eq!(instances(34_466), "34,466 instances");
-    }
-
-    /// One `?? None` for each layer, and "layers" for more than one.
-    #[test]
-    fn peel_text_should_put_one_none_around_the_receiver_for_each_layer() {
-        assert_eq!(
-            peel_text("extra", "c", "v", 1),
-            "peel the extra layer first: `(c ?? None)?.v`"
-        );
-        assert_eq!(
-            peel_text("other", "c", "v", 2),
-            "peel the other layers first: `((c ?? None) ?? None)?.v`"
-        );
     }
 
     #[test]

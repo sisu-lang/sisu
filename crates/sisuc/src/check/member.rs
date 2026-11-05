@@ -12,7 +12,7 @@ use super::{
     Checked, Checker, Declared, Holder, Poisoned, UNKNOWN, as_optional, is_unwrapped, type_of, wrap,
 };
 use crate::ast;
-use crate::diagnostic::{Annotate, Code, Definition, Diagnostic, DiagnosticKind, Peel, UnwrapHelp};
+use crate::diagnostic::{Annotate, Definition, Diagnostic, DiagnosticKind, Peel, UnwrapHelp};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, InterfaceId, Type, TypeArgs, TypeKind};
@@ -501,7 +501,6 @@ impl Checker<'_> {
         args: &[ast::Arg],
         indexed: bool,
     ) -> Checked {
-        let start = self.diagnostics.len();
         let inner = innermost(payload);
         let checked = Err(Poisoned::typed(inner));
         let result = self.method_call(span, Dot::Payload, checked, receiver, site, args);
@@ -517,24 +516,9 @@ impl Checker<'_> {
             let unwrap = self.peel_or(payload, (receiver, name), unwrap);
             let fix = payload_fix(payload, indexed);
             let d = may_be_none(receiver, name, fix, write, unwrap);
-            let at = self.before_held(start, receiver.span);
-            self.diagnostics.insert(at, d);
+            self.diagnostics.push(d);
         }
         Err(Poisoned::unwrapped(type_of(&result)))
-    }
-
-    /// Where among the diagnostics an E0062 for the optional `receiver` goes, when `at` is the end
-    /// of them: before each E0001 at the end that starts where `receiver` does. At one start, each
-    /// E0062 comes before each E0001.
-    pub(super) fn before_held(&self, mut at: usize, receiver: Span) -> usize {
-        while at > 0
-            && let held = &self.diagnostics[at - 1]
-            && held.code() == Code::AssignToImmutable
-            && held.span().start() == receiver.start()
-        {
-            at -= 1;
-        }
-        at
     }
 
     /// The help of an E0062 for a `.` after `receiver`, an optional of the `payload?`, before

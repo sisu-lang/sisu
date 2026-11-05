@@ -109,7 +109,7 @@ impl Checker<'_> {
                     mismatch: value.mismatch && none,
                     found: value.found.filter(|_| none),
                     kept: value.kept && none,
-                    unwrapped: false,
+                    unwrapped: value.unwrapped,
                 });
             }
         };

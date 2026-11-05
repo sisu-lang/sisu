@@ -6,7 +6,7 @@ use super::generic::{Rank, mismatched};
 use super::interface::Operation;
 use super::{
     Checked, Checker, Lowered, Poisoned, UNKNOWN, as_optional, beyond_one_layer, block_expr,
-    is_kept, is_unwrapped, optional_of, payload, type_of, wrap,
+    is_kept, is_unwrapped, optional_of, payload, spread, type_of, wrap,
 };
 use crate::ast::{self, CompareOp, ExprKind};
 use crate::diagnostic::{Diagnostic, DiagnosticKind, Expected, Literal, PeelIs, PeelLayers};
@@ -79,8 +79,9 @@ impl Checker<'_> {
         let op = |i: usize| ops[i.saturating_sub(1)].to_string();
         let (checked, ty, mismatched) =
             self.ranked(|c| c.integers(&operands, None, Operator::Compare, &op));
+        let flagged = checked.iter().any(is_unwrapped);
         let operands = checked.into_iter().collect::<Result<Vec<_>, _>>().ok();
-        match (operands, ty) {
+        let chain = match (operands, ty) {
             (Some(operands), Some(Type::STRING)) => Ok(self.string_chain(span, operands, ops)),
             (Some(operands), Some(ty)) => self.ordered_chain(span, ty, operands, ops),
             (operands, _) => typed(
@@ -92,7 +93,8 @@ impl Checker<'_> {
                     ops: ops.to_vec(),
                 }),
             ),
-        }
+        };
+        spread(chain, flagged)
     }
 
     /// A comparison chain over `operands` of the type `ty`, a class, an enum or a type parameter
@@ -181,12 +183,13 @@ impl Checker<'_> {
             return Err(Poisoned::error());
         }
         let kept = checked.iter().any(is_kept);
+        let flagged = checked.iter().any(is_unwrapped);
         let [l, r]: [Checked; 2] = checked
             .try_into()
             .unwrap_or_else(|_| panic!("`integers` should return one result per operand"));
         if ty == Some(Type::STRING) {
             self.label_join_literals(start, [lhs, rhs]);
-            return self.concat(span, l, r, mismatched);
+            return spread(self.concat(span, l, r, mismatched), flagged);
         }
         if kept {
             return Err(Poisoned::kept_error());
@@ -197,7 +200,7 @@ impl Checker<'_> {
             rhs: Box::new(r),
         });
         match ty {
-            Some(ty) => typed(span, ty, mismatched, kind),
+            Some(ty) => spread(typed(span, ty, mismatched, kind), flagged),
             None => Err(Poisoned::error()),
         }
     }
@@ -584,6 +587,7 @@ impl Checker<'_> {
     ) -> Checked {
         let expected = type_of(&l).and(Some(want));
         let checked = self.value(rhs, Some(expected.unwrap_or(UNKNOWN)));
+        let flagged = is_unwrapped(&l) || is_unwrapped(&checked);
         // Only a compound assignment's number gets here with a `char` to its right.
         if want != Type::BOOL && type_of(&checked) == Some(Type::CHAR) {
             self.report(DiagnosticKind::ArithmeticOnChar { at: op_span });
@@ -596,7 +600,10 @@ impl Checker<'_> {
             lhs: Box::new(l),
             rhs: Box::new(r),
         });
-        typed(span, want, l_mismatched || r_mismatched, kind)
+        spread(
+            typed(span, want, l_mismatched || r_mismatched, kind),
+            flagged,
+        )
     }
 
     /// `settled`, except that a `checked` of a type that is none of `takes`, if given, is
@@ -1041,6 +1048,8 @@ impl Checker<'_> {
                 other
             }
         };
+        // Under the `?.` fix of an E0062 in the default, the result is optional.
+        let flagged = is_unwrapped(&other);
         // A value converts to an `any` payload, unless it is a wider `any` type, which the
         // payload converts to.
         let other = match type_of(&other) {
@@ -1100,7 +1109,7 @@ impl Checker<'_> {
         let value = if read.ty == ty { read } else { widen(read, ty) };
         match (scrutinee, other) {
             (Ok(scrutinee), Ok(other)) => Ok(if_some(bind, scrutinee, value, Some(other), span)),
-            _ => Err(Poisoned::typed(ty)),
+            _ => spread(Err(Poisoned::typed(ty)), flagged),
         }
     }
 }

@@ -18,7 +18,7 @@ use super::prelude::PRELUDE;
 use super::stmt::BlockSoFar;
 use super::{
     Binding, Checked, Checker, Declared, Definition, DiagnosticKind, Misfit, Poisoned, UNKNOWN,
-    as_optional, built_in_type, is_kept, optional_of, own_args, payload, type_of,
+    as_optional, built_in_type, is_kept, is_unwrapped, optional_of, own_args, payload, type_of,
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{ArgumentsForm, Diagnostic, Expected, MainForm, Unwrap};
@@ -3439,8 +3439,10 @@ impl Checker<'_> {
             K::Match {
                 scrutinee, arms, ..
             } => {
+                let (ty, flagged) = self.value_ahead(scrutinee);
                 let form = LetValue::Match {
-                    ty: self.value_ahead(scrutinee).filter(|&ty| matchable(ty)),
+                    ty: ty.filter(|&ty| matchable(ty)),
+                    flagged,
                 };
                 combine_branches(arms.iter().map(|arm| {
                     let bind =
@@ -3970,7 +3972,7 @@ impl Checker<'_> {
             ast::ExprKind::Applied { .. } => return None,
             _ => {}
         }
-        self.value_ahead(receiver)
+        self.value_ahead(receiver).0
     }
 
     /// `e` checked as a value: as ranking checked it ahead, a method's receiver or a `match`'s
@@ -3982,23 +3984,24 @@ impl Checker<'_> {
         }
     }
 
-    /// The type of `e`, checked ahead of its turn and kept for it as `Ahead::Receiver`.
-    fn value_ahead(&mut self, e: &ast::Expr) -> Option<Type> {
+    /// The type of `e`, checked ahead of its turn and kept for it as `Ahead::Receiver`, and whether
+    /// an E0062 typed it.
+    fn value_ahead(&mut self, e: &ast::Expr) -> (Option<Type>, bool) {
         let kept = self.body.ahead_at.get(&(e.span, false)).and_then(|&index| {
             #[cfg(test)]
             INSPECTED.set(INSPECTED.get() + 1);
             self.body.ahead[index].1.as_ref()
         });
         if let Some(Ahead::Receiver(checked)) = kept {
-            return type_of(checked);
+            return (type_of(checked), is_unwrapped(checked));
         }
         // An argument is not part of the chain that an index ends.
         let indexed = std::mem::take(&mut self.body.indexed);
         let (checked, jumped) = self.jumps(|c| c.value(e, None));
         self.body.indexed = indexed;
-        let ty = type_of(&checked);
+        let (ty, flagged) = (type_of(&checked), is_unwrapped(&checked));
         self.keep((e.span, false), Some(Ahead::Receiver(checked)), jumped);
-        ty
+        (ty, flagged)
     }
 
     /// The shape of a call of `name` with `args` that calls a generic function, constructs a

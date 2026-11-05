@@ -4,7 +4,8 @@ use std::ops::Range;
 
 use super::generic::Site;
 use super::{
-    Checked, Checker, Poisoned, UNKNOWN, Uninferred, is_kept, payload, tail, type_of, wrap,
+    Checked, Checker, Poisoned, UNKNOWN, Uninferred, is_kept, is_unwrapped, payload, spread, tail,
+    type_of, wrap,
 };
 use crate::ast::{self, ExprKind, UnaryOp};
 use crate::diagnostic::{
@@ -226,18 +227,22 @@ impl Checker<'_> {
                 if *op == UnaryOp::Neg && is_kept(&operand) {
                     return Err(Poisoned::kept_error());
                 }
-                typed(
-                    e.span,
-                    want,
-                    mismatched,
-                    operand.ok().map(|operand| match operand.kind {
-                        // `-1.5` is one literal, as it reads.
-                        tir::ExprKind::Float(x) => tir::ExprKind::Float(-x),
-                        _ => tir::ExprKind::Unary {
-                            op: *op,
-                            operand: Box::new(operand),
-                        },
-                    }),
+                let flagged = is_unwrapped(&operand);
+                spread(
+                    typed(
+                        e.span,
+                        want,
+                        mismatched,
+                        operand.ok().map(|operand| match operand.kind {
+                            // `-1.5` is one literal, as it reads.
+                            tir::ExprKind::Float(x) => tir::ExprKind::Float(-x),
+                            _ => tir::ExprKind::Unary {
+                                op: *op,
+                                operand: Box::new(operand),
+                            },
+                        }),
+                    ),
+                    flagged,
                 )
             }
             ExprKind::Binary {

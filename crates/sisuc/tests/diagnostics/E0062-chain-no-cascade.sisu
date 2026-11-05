@@ -267,4 +267,12 @@ fn enum_some_arm(c: C?, k: bool, p: E) {
     match c.e { Some(A) => {}; _ => {} }
 }
 
+fn debug_call(c: C?, k: bool, p: E) {
+    print(dbg(c.v) ?? 0)
+}
+
+fn or_pattern(c: C?, k: bool, p: E) {
+    match c.v { Some(1) | None => {}; _ => {} }
+}
+
 fn main() {}

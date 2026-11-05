@@ -13,7 +13,7 @@ use super::prelude::PRELUDE;
 use super::unused_names::Used;
 use super::{
     Checked, Checker, Declared, Lowered, Poisoned, UNKNOWN, block_expr, built_in_type,
-    is_unwrapped, own_args, type_of,
+    is_unwrapped, own_args, spread, type_of,
 };
 use super::{array, number, string};
 use crate::ast::{self, ExprKind};
@@ -905,6 +905,7 @@ impl Checker<'_> {
         let labeled = self.labels(args);
         let sig = &self.signatures[func.0];
         let (name, params, ret) = (sig.name.clone(), sig.params.clone(), sig.ret);
+        let returns_param = ret.is_some_and(Type::has_param);
         let (muts, names) = site_of(&sig.muts, &sig.param_names, args);
         let mut_site = MutSite {
             callee: &name,
@@ -983,6 +984,9 @@ impl Checker<'_> {
         let (checked, types, ret) = checked?;
         let parts = self.mut_overlaps(parts);
         let failed = labeled || checked.iter().any(mismatched);
+        // A result that names a type parameter may take the type of an argument. The `?.` fix of
+        // an E0062 in that argument would make it optional.
+        let flagged = returns_param && checked.iter().any(is_unwrapped);
         match (receiver.into_iter().chain(checked).collect(), ret) {
             (Ok(args), Some(ret)) if !failed && parts.is_empty() => {
                 Ok(self.spilled(span, ret, args, |args| tir::ExprKind::Call {
@@ -995,7 +999,7 @@ impl Checker<'_> {
                 let call = tir::Expr::new(tir::ExprKind::Call { func, types, args }, ret, span);
                 Ok(self.mut_call(call, parts))
             }
-            (_, ret) => Err(Poisoned::of(ret.filter(|_| !failed))),
+            (_, ret) => spread(Err(Poisoned::of(ret.filter(|_| !failed))), flagged),
         }
     }
 
@@ -1146,6 +1150,7 @@ impl Checker<'_> {
                 return Err(Poisoned::error());
             };
             let failed = args.iter().any(mismatched);
+            let flagged = args.iter().any(is_unwrapped);
             // The bounds that the alias's body puts on its parameters, on what they are bound to.
             let held = quiet
                 || through.is_none_or(|t| self.use_checks(&t.checks, list, span) == Some(true));
@@ -1154,7 +1159,7 @@ impl Checker<'_> {
                     Ok(self.spilled(span, ty, args, |args| tir::ExprKind::New { class, args }))
                 }
                 Ok(_) => Err(Poisoned::error()),
-                Err(_) => Err(Poisoned::of((!failed).then_some(ty))),
+                Err(_) => spread(Err(Poisoned::of((!failed).then_some(ty))), flagged),
             };
         }
         let ty = ret;

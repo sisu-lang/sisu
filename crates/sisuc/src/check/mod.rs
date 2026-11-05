@@ -40,7 +40,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::ast;
 use crate::conformance::{self, StuckChoices};
 use crate::diagnostic::{
-    BuiltIn, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, Expected, Literal,
+    BuiltIn, Code, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, Expected, Literal,
     MainForm, MismatchFix, MismatchSource, Severity, Unbuilt, UnknownForm, suggestion,
 };
 use crate::front_end::PreludeProgram;
@@ -73,6 +73,10 @@ use unused_names::{Owner, Pending, Use, Used};
 /// in `found`. A block, a branch and a safe call keep that field for the code that uses the value.
 /// A value in which a generic call kept its E0050 has `kept` set. A block, a branch, unary `-`,
 /// a number operator, and a call that fails on an unbound parameter, keep that field too.
+///
+/// A value that an E0062 typed has `unwrapped` set. It spreads by `spread` where `kept` does not.
+/// Those places are `!`, each operator but `==` and `!=`, a generic call, a slice and the right
+/// side of `??`. A block and a join keep it too.
 struct Poisoned {
     ty: Option<Type>,
     /// Whether the expected type passed down was rejected (a `None` that is not optional, a
@@ -88,11 +92,11 @@ struct Poisoned {
     /// type, so it holds the code that uses it to nothing. That code adds no report for the
     /// default type of an operator.
     kept: bool,
-    /// The value is typed by the unwrap that the help of its E0062 names: it comes from a `.`
-    /// on an optional, and has the type that the member has on the payload. A check that fires
-    /// only because the value is not optional (E0044, E0048, E0049, E0051) skips it: the `?.` fix
-    /// of the E0062 would make the value optional. A `let` or a `for` binds `Error` for it, as its
-    /// optionality depends on the remedy.
+    /// The value is typed by the unwrap that the help of its E0062 names. It comes from a `.` on
+    /// an optional, and has the type that the member has on the payload. The `?.` fix of the
+    /// E0062 would make the value optional. So a check that fires only because the value is not
+    /// optional (E0044, E0048, E0049, E0051) skips it. A `let` or a `for` binds `Error` for it,
+    /// as its optionality depends on the remedy.
     unwrapped: bool,
 }
 
@@ -159,6 +163,16 @@ fn is_unwrapped<T>(checked: &Result<T, Poisoned>) -> bool {
             ..
         })
     )
+}
+
+/// `checked`, with `unwrapped` set when `from` is. Under the `?.` fix of an operand's E0062, the
+/// result of some rules is optional. Those rules pass the flag on, so their result gets no report
+/// that it is not optional. A result that both remedies give the same, such as `==`, does not.
+fn spread<T>(checked: Result<T, Poisoned>, from: bool) -> Result<T, Poisoned> {
+    checked.map_err(|poisoned| Poisoned {
+        unwrapped: poisoned.unwrapped || from,
+        ..poisoned
+    })
 }
 
 type Checked = Result<tir::Expr, Poisoned>;
@@ -1123,7 +1137,7 @@ pub(crate) fn check<'src>(
     checker.report_loops();
     let classes = checker.classes.iter().map(lower_class).collect();
     let mut diagnostics = std::mem::take(&mut checker.diagnostics).into_vec();
-    diagnostics.sort_by_key(|d| d.span().start());
+    diagnostics.sort_by_key(order);
     let errors = error_spans(&diagnostics);
     // A function with an error of its own is skipped, so that its errors stand alone.
     let warnings: Vec<Diagnostic> = functions
@@ -1153,7 +1167,7 @@ pub(crate) fn check<'src>(
         })
         .collect();
     diagnostics.extend(warnings);
-    diagnostics.sort_by_key(|d| d.span().start());
+    diagnostics.sort_by_key(order);
     let failed = diagnostics.iter().any(|d| d.severity() == Severity::Error);
     // A use in a failed expression may not be recorded, so an error stops the pass. Only the
     // parser sees an item that fails to parse.
@@ -1162,7 +1176,7 @@ pub(crate) fn check<'src>(
     } else {
         diagnostics.extend(checker.unjudged());
     }
-    diagnostics.sort_by_key(|d| d.span().start());
+    diagnostics.sort_by_key(order);
     let broken = !program.broken.is_empty()
         || items.iter().any(|item| match item {
             ast::Item::Class(class) => !class.broken_methods.is_empty(),
@@ -1222,6 +1236,15 @@ pub(crate) fn check_alone(
         &crate::front_end::prelude_program(""),
         source,
         parsed,
+    )
+}
+
+/// The key that orders diagnostics: where each starts, and at one start each E0062 before the
+/// rest, whichever check ran first.
+fn order(diagnostic: &Diagnostic) -> (usize, bool) {
+    (
+        diagnostic.span().start(),
+        diagnostic.code() != Code::MayBeNone,
     )
 }
 
