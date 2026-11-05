@@ -10,7 +10,7 @@ on:
         type: number
         default: 1800
       coverage:
-        description: Also measure line coverage per compiler stage
+        description: Also measure line coverage per compiler stage, and check the generator gaps
         type: boolean
         default: false
   # A pull request that carries one label `fuzz-program`, `fuzz-program <n>m` or
@@ -28,13 +28,15 @@ env:
   CARGO_TERM_COLOR: always
 
 # Third-party actions are pinned to commit SHAs; Dependabot bumps them.
-# The fuzz step decides the job's result: each later step runs only after it
-# failed, or tolerates failure. The fuzz step has its own limit (fuzz_minutes() in the
+# The fuzz step decides the job's result, with one exception: the nightly's Generator gaps
+# step fails the job when it finds a new gap. Each other later step runs only after the fuzz
+# step failed, or tolerates failure. The fuzz step has its own limit (fuzz_minutes() in the
 # plan): 15 min of build, the fuzzing or the corpus pass, 17 of crash replays and 3 to
 # stop. A fuzz step that passes its limit fails, and the later steps still run, so its
 # log and the corpus are kept. Then the job has 15 min of tmin, 20 of cmin, 5 of setup
-# and the cache, and 45 of coverage (minutes() in the plan). The 5 minutes are an
-# estimate; when they run over, the job loses only Coverage, which runs last.
+# and the cache, 30 of coverage and 15 of gaps (minutes() in the plan). The 5 minutes are an
+# estimate; when they run over, the job loses Generator gaps first and then Coverage, which
+# run last.
 # The report job comes last: it runs after the fuzz job, only for a failed nightly run.
 jobs:
   plan:
@@ -89,10 +91,11 @@ jobs:
           path: fuzz/corpus/program
           key: fuzz-program-corpus-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: fuzz-program-corpus-
-      # The fuzzer first runs each corpus input once, one at a time, at about 1.25 s each, and
-      # -max_total_time does not stop that pass. So a run keeps 500 inputs at random and removes
-      # the others. cmin and the cache then see only those and the new finds, so each run starts
-      # with at most 500. A removed input is lost; the fuzzer can find its coverage again.
+      # The fuzzer first runs each corpus input and each of the 128 seeds once, one at a time, at
+      # about 1.25 s each, and -max_total_time does not stop that pass. So a run keeps 500 inputs
+      # at random and removes the others. cmin and the cache then see only those and the new
+      # finds, so each run starts with at most 500 corpus inputs and the 128 seeds. A removed
+      # input is lost; the fuzzer can find its coverage again.
       # CORPUS_PASS_MINUTES in scripts/fuzz_program_plan.py is the time of this pass.
       - name: Sample the corpus
         run: |
@@ -202,18 +205,18 @@ jobs:
         with:
           path: fuzz/corpus/program
           key: fuzz-program-corpus-${{ github.run_id }}-${{ github.run_attempt }}
-      # Last, after the corpus is saved, and bounded, so a slow measurement loses nothing.
+      # After the corpus is saved, and bounded, so a slow measurement loses nothing.
       - name: Coverage
         if: always() && steps.fuzz.outcome != 'skipped' && needs.plan.outputs.coverage == 'true'
         continue-on-error: true
         # COVERAGE_MINUTES in scripts/fuzz_program_plan.py; keep the two equal.
-        timeout-minutes: 45
+        timeout-minutes: 30
         run: |
           status=0
           scripts/fuzz.sh --target program --coverage >coverage.txt 2>&1 || status=$?
           cat coverage.txt
           {
-            echo "## Coverage of the corpus"
+            echo "## Coverage of the corpus and seeds"
             echo
             echo '```'
             grep -E '^(lexer|parser|check|mir|codegen) |^inputs reaching codegen' coverage.txt ||
@@ -221,6 +224,27 @@ jobs:
             echo '```'
           } >>"$GITHUB_STEP_SUMMARY"
           exit "$status"
+      # Only after a passed fuzz step, so a night has one failure path and one upload.
+      # GAPS_MINUTES in scripts/fuzz_program_plan.py; keep the two equal.
+      - name: Generator gaps
+        id: gaps
+        if: ${{ !cancelled() && steps.fuzz.outcome == 'success' && needs.plan.outputs.coverage == 'true' }}
+        continue-on-error: ${{ github.event_name != 'schedule' }}
+        timeout-minutes: 15
+        run: |
+          status=0
+          timeout -k 10 840 scripts/fuzz.sh --target program --gaps || status=$?
+          # A run that stopped early wrote no section, so the issue must say so itself.
+          if [ "$status" -ne 0 ] && ! grep -q '^## Generator gaps' fuzz/artifacts/summary.md 2>/dev/null; then
+            { echo; echo "## Generator gaps"; echo; echo "The check did not finish: exit status ${status}. See the step's log."; } >>fuzz/artifacts/summary.md
+          fi
+          sed -n '/^## Generator gaps/,$p' fuzz/artifacts/summary.md >>"$GITHUB_STEP_SUMMARY"
+          exit "$status"
+      - if: always() && steps.gaps.outcome == 'failure'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-program-failure
+          path: fuzz/artifacts/summary.md
 
   # A failed nightly run opens a GitHub issue, or comments on the open one
   # (scripts/fuzz_issue.sh), so a failure does not sit in a step summary that nobody reads. This is

@@ -191,7 +191,7 @@ class Gaps(unittest.TestCase):
                      'sisuc[a]::emit::f<i64>::{closure#0}', 'sisuc[a]::emit::f::{closure#0}::<i64>'):
             with self.subTest(f'{name} ends in a closure'):
                 self.no_gap(self.reached([], [record('emit.rs', name, 1)]), 'emit::f')
-        with self.subTest('generic arguments after a closure merge'):
+        with self.subTest('generic arguments on the parent of a closure merge'):
             seeds = [record('emit.rs', '<sisuc[a]::f<i32>::{closure#0} as sisuc[a]::Tr>::m', 1, 7)]
             valid = [record('emit.rs', '<sisuc[a]::f<i64>::{closure#0} as sisuc[a]::Tr>::m', 1, 7)]
             self.no_gap(self.reached(seeds, valid), 'Tr')
@@ -382,7 +382,7 @@ class Gaps(unittest.TestCase):
                           lambda label=label, short=short: Run(self, *((short, good) if label == 'seeds' else (good, short))),
                           f'the {label} export reaches no function under {stage}'))
         for label, value in (('absent', None), ('empty', []), ('a string', 'a.rs'), ('an integer item', [1]),
-                         ('an empty name', [''])):
+                             ('an empty name', [''])):
             gap = record('a.rs', 'sisuc[a]::real_gap', 1)
             gap = lacking(gap, 'filenames') if value is None else altered(gap, filenames=value)
             cases.append((f'a record whose filenames is {label}', lambda gap=gap: valid_with(gap), 'has no file name'))

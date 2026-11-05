@@ -2,7 +2,7 @@
 coverage, and the time limits of the fuzz step and of the job. Writes `seconds=`, `coverage=`,
 `fuzz_minutes=` and `minutes=` to $GITHUB_OUTPUT, or nothing when the event asks for no run.
 
-- schedule: 1800 s, no coverage.
+- schedule: 1800 s, and coverage.
 - workflow_dispatch: the inputs, passed in FUZZ_SECONDS and FUZZ_COVERAGE.
 - pull_request: the pull request's one label `fuzz-program` (2 h), `fuzz-program <n>m` or
   `fuzz-program <n>h`, and coverage always. A `labeled` event runs only when the label it added
@@ -23,16 +23,21 @@ BARE_LABEL = 2 * 3600
 NIGHTLY = 1800
 LEAST = 60
 # GitHub-hosted jobs stop after 6 hours. 4 hours of fuzzing leaves 75 minutes for the build,
-# crash replays, tmin, cmin, setup and the cache, and 45 for --coverage: 360 of 360.
+# crash replays, tmin, cmin, setup and the cache, and 45 for --coverage and --gaps: 360 of 360.
 MOST = 4 * 3600
-# The Coverage step's timeout-minutes in fuzz-program.yml; keep the two equal.
-COVERAGE_MINUTES = 45
+# The Coverage step's timeout-minutes in fuzz-program.yml; keep the two equal. Coverage measured
+# 7.5 minutes on 654 inputs.
+COVERAGE_MINUTES = 30
+# The Generator gaps step's timeout-minutes in fuzz-program.yml; keep the two equal. The value is
+# not yet measured: read the step's first real duration against it.
+GAPS_MINUTES = 15
 # The bound of the Minimize the corpus step in fuzz-program.yml; keep the two equal.
 CMIN_MINUTES = 20
-# The fuzzer first runs each corpus input once, one at a time, and -max_total_time does not stop
-# that pass. The 500 inputs that the Sample the corpus step keeps take about 10 minutes: run
-# 42015848679 ran 990 inputs in 20.3 minutes.
-CORPUS_PASS_MINUTES = 20
+# The fuzzer first runs each corpus input and each of the 128 seeds once, one at a time, and
+# -max_total_time does not stop that pass. The 500 inputs that the Sample the corpus step keeps
+# take about 10 minutes: run 42015848679 ran 990 inputs in 20.3 minutes. A seed costs more than a
+# corpus input: 1.24 s each over the 128 seeds, 159 s in all.
+CORPUS_PASS_MINUTES = 30
 
 
 def label_seconds(name: str) -> int | None:
@@ -71,14 +76,15 @@ def fuzz_minutes(seconds: int) -> int:
 
 def minutes(seconds: int, coverage: bool) -> int:
     """The job's time limit: the fuzz step, 15 minutes of tmin, cmin, 5 of setup and the cache,
-    and the coverage. The 5 minutes are an estimate, not a bound: no step limits them."""
+    and the coverage and the gap check. The 5 minutes are an estimate, not a bound: no step
+    limits them."""
     return (fuzz_minutes(seconds) + 15 + CMIN_MINUTES + 5
-            + (COVERAGE_MINUTES if coverage else 0))
+            + (COVERAGE_MINUTES + GAPS_MINUTES if coverage else 0))
 
 
 def plan(event: str, payload: dict, env: dict) -> tuple[int, bool] | None:
     if event == 'schedule':
-        return NIGHTLY, False
+        return NIGHTLY, True
     if event == 'workflow_dispatch':
         return in_range(int(env['FUZZ_SECONDS'])), env.get('FUZZ_COVERAGE') == 'true'
     if event == 'pull_request':

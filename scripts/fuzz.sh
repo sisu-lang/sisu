@@ -10,6 +10,9 @@
 #   scripts/fuzz.sh [--target <target>] --cmin   minimize fuzz/corpus/<target> in place
 #   scripts/fuzz.sh [--target <target>] --coverage   line coverage per compiler stage of the corpus
 #                                     and seeds, and how many inputs reach codegen
+#   scripts/fuzz.sh --target program --gaps   the functions that a valid program reaches and no
+#                                     fixed seed reaches (scripts/fuzz_gaps.py); exits 1 on a new
+#                                     gap, and appends its section to fuzz/artifacts/summary.md
 # The seeds of front_end are the .sisu files of the test tree. The seeds of program are 128
 # full-size inputs from scripts/fuzz_seeds.py: a short input runs out of bytes, and the fuzzer
 # grows an input too slowly to reach full size.
@@ -24,7 +27,7 @@
 # and the first line of the panic message of each replayed crash.
 set -euo pipefail
 
-usage="usage: scripts/fuzz.sh [--target front_end|program] [seconds] | --replay <input> | --tmin <input> | --cmin | --coverage"
+usage="usage: scripts/fuzz.sh [--target front_end|program] [seconds] | --replay <input> | --tmin <input> | --cmin | --coverage | --target program --gaps"
 target=front_end
 if [[ ${1:-} == --target ]]; then
     if (($# < 2)); then
@@ -53,6 +56,12 @@ program)
     ;;
 esac
 
+# The gap check compares the generator with the valid programs, so only the program target has it.
+if [[ ${1:-} == --gaps && $target != program ]]; then
+    echo "$usage" >&2
+    exit 2
+fi
+
 # Resolve the input before the cd, so a path relative to the caller's directory works.
 case ${1:-} in
 --replay | --tmin) input=$(realpath "${2:?$1 needs an input}") ;;
@@ -73,23 +82,27 @@ found=fuzz/artifacts/$target
 # Where a replay of the input at $1 leaves the program fuzzer's record of it; front_end ignores it.
 dump_dir() { echo "$PWD/$found/${1##*/}.dump"; }
 
+# The coverage of the profile that `cargo fuzz coverage` left for the target $1, as llvm-cov's
+# JSON on stdout. Other arguments go to llvm-cov. `export`, not `report`: report shows names
+# without their longest common directory, which depends on which other files the binary has;
+# export has absolute paths.
+export_coverage() {
+    local host
+    host=$(rustc -vV | awk '/^host:/ { print $2 }')
+    "$(rustc --print sysroot)/lib/rustlib/$host/bin/llvm-cov" export "target/$host/coverage/$host/release/$1" \
+        -instr-profile="fuzz/coverage/$1/coverage.profdata" \
+        -ignore-filename-regex='(\.cargo|\.rustup|/rustc/|/fuzz/|/tests/|tests\.rs)' "${@:2}"
+}
+
 # Line coverage of the corpus and seeds, summed per stage, then how many of those inputs reach
 # codegen. Run `cargo fuzz coverage` over the corpus first; its profile feeds llvm-cov.
 coverage() {
-    local host bin
-    host=$(rustc -vV | awk '/^host:/ { print $2 }')
-    bin=$(rustc --print sysroot)/lib/rustlib/$host/bin/llvm-cov
     mkdir -p "$corpus"
     # cargo-fuzz keeps earlier raw profiles and merges them (cargo-fuzz 0.13.2 src/project.rs, coverage_for).
     rm -rf "fuzz/coverage/$target"
     cargo fuzz coverage --sanitizer none "$target" "$corpus" "$seeds"
-    # `export`, not `report`: report shows names without their longest common directory, which
-    # depends on which other files the binary has; export has absolute paths.
     local lines
-    lines=$("$bin" export "target/$host/coverage/$host/release/$target" \
-        -instr-profile="fuzz/coverage/$target/coverage.profdata" \
-        -ignore-filename-regex='(\.cargo|\.rustup|/rustc/|/fuzz/|/tests/|tests\.rs)' \
-        -summary-only |
+    lines=$(export_coverage "$target" -summary-only |
         jq -r '
             [.data[0].files[]
              | select(.filename | test("/crates/sisuc/src/"))
@@ -132,6 +145,39 @@ coverage() {
     fi
 }
 
+# Copies each .sisu file under the directories $2 and after into the directory $1 under a unique
+# name: cargo-fuzz runs every regular file of a directory, and not the files below it.
+copy_programs() {
+    local to=$1 i=0 f
+    shift
+    while IFS= read -r -d '' f; do
+        i=$((i + 1))
+        cp "$f" "$to/$i-${f##*/}"
+    done < <(find "$@" -name '*.sisu' -print0)
+}
+
+# The generator gaps (scripts/fuzz_gaps.py): the functions that a valid program reaches and no
+# fixed seed reaches. The seeds alone are the generator's side, with no corpus, so the result
+# depends on the commit and not on what a night kept. The valid side is every program of tests/run
+# and tests/run-fail, and no other directory: tests/diagnostics holds invalid programs.
+gaps() {
+    gaps_dir=$(mktemp -d)
+    mkdir "$gaps_dir/programs"
+    copy_programs "$gaps_dir/programs" crates/sisuc/tests/run crates/sisuc/tests/run-fail
+    # cargo-fuzz merges old raw profiles, so a stale profile could hide a gap.
+    rm -rf fuzz/coverage/program fuzz/coverage/front_end
+    cargo fuzz coverage --sanitizer none program "$seeds"
+    export_coverage program >"$gaps_dir/seeds.json"
+    cargo fuzz coverage --sanitizer none front_end "$gaps_dir/programs"
+    export_coverage front_end >"$gaps_dir/valid.json"
+    local status=0 output
+    output=$(python3 scripts/fuzz_gaps.py "$gaps_dir/seeds.json" "$gaps_dir/valid.json" fuzz/known_gaps.txt) || status=$?
+    echo "$output"
+    mkdir -p fuzz/artifacts
+    { echo; echo "$output"; } >>fuzz/artifacts/summary.md
+    exit "$status"
+}
+
 # These exec cargo, so the trap below would never run: they come before the seeds exist.
 case ${1:-} in
 --replay) SISU_FUZZ_DUMP=$(dump_dir "$input") exec cargo fuzz run --sanitizer none "$target" "$input" -- "${limits[@]}" ;;
@@ -151,21 +197,19 @@ esac
 seeds=$(mktemp -d)
 marker=$(mktemp)
 replay_out=$(mktemp)
-trap 'rm -rf "$seeds" "$marker" "$replay_out"' EXIT
+gaps_dir=
+trap 'rm -rf "$seeds" "$marker" "$replay_out" "$gaps_dir"' EXIT
 if [[ $target == program ]]; then
     python3 scripts/fuzz_seeds.py "$seeds"
 else
-    i=0
-    while IFS= read -r -d '' f; do
-        i=$((i + 1))
-        cp "$f" "$seeds/$i-${f##*/}"
-    done < <(find crates/sisuc/tests -name '*.sisu' -print0)
+    copy_programs "$seeds" crates/sisuc/tests
 fi
 
 if [[ ${1:-} == --coverage ]]; then
     coverage
     exit 0
 fi
+if [[ ${1:-} == --gaps ]]; then gaps; fi
 
 seconds=${1:-1800}
 if [[ ! $seconds =~ ^[0-9]+$ ]]; then
