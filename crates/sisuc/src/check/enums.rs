@@ -780,18 +780,19 @@ impl Checker<'_> {
                 poison[holder] = true;
                 continue;
             };
-            // A field holds its type's node and the nodes of its type arguments. It reads each
-            // type once, whatever number of paths lead to it.
+            // A field holds its type's node and the nodes of its type arguments, through array
+            // and optional wrappers. It reads each type once, a wrapper too, whatever number of
+            // paths lead to it.
             seen.clear();
             let mut types = vec![ty];
             while let Some(ty) = types.pop() {
-                let ty = unwrapped(ty);
                 if !seen.insert(ty) {
                     continue;
                 }
                 #[cfg(test)]
                 TYPE_WALK_STEPS.set(TYPE_WALK_STEPS.get() + 1);
                 match ty.kind() {
+                    TypeKind::Array(inner) | TypeKind::Optional(inner) => types.push(inner),
                     TypeKind::Class(id, args) => {
                         if let Some(c) = class.get_mut(holder) {
                             *c = true;
@@ -821,15 +822,35 @@ impl Checker<'_> {
         }
     }
 
-    /// What a value of `ty` may hold, with its type arguments. Each type is decided once for the
-    /// whole check: `holds_table` is set before the first body is checked and never changes.
-    pub(super) fn holds(&self, ty: Type) -> Holds {
-        let ty = unwrapped(ty);
-        if let Some(&held) = self.holds_table.cache.borrow().get(&ty) {
-            return held;
-        }
-        #[cfg(test)]
-        TYPE_WALK_STEPS.set(TYPE_WALK_STEPS.get() + 1);
+    /// What a value of `ty` may hold, with its type arguments, through array and optional
+    /// wrappers. Each type is decided once for the whole check, a wrapper too: `holds_table` is
+    /// set before the first body is checked and never changes.
+    pub(super) fn holds(&self, mut ty: Type) -> Holds {
+        let mut wrappers = Vec::new();
+        let held = loop {
+            if let Some(&held) = self.holds_table.cache.borrow().get(&ty) {
+                break held;
+            }
+            #[cfg(test)]
+            TYPE_WALK_STEPS.set(TYPE_WALK_STEPS.get() + 1);
+            if let TypeKind::Array(inner) | TypeKind::Optional(inner) = ty.kind() {
+                wrappers.push(ty);
+                ty = inner;
+                continue;
+            }
+            let held = self.holds_of(ty);
+            wrappers.push(ty);
+            break held;
+        };
+        self.holds_table
+            .cache
+            .borrow_mut()
+            .extend(wrappers.into_iter().map(|wrapper| (wrapper, held)));
+        held
+    }
+
+    /// `holds` for a type that is no array or optional.
+    fn holds_of(&self, ty: Type) -> Holds {
         let (own, args) = match ty.kind() {
             TypeKind::Enum(id, args) => (self.holds_table.enums[id.0], args),
             TypeKind::Class(id, args) => {
@@ -844,15 +865,13 @@ impl Checker<'_> {
             }
             _ => return Holds::default(),
         };
-        let held = args.get().iter().fold(own, |held, &arg| {
+        args.get().iter().fold(own, |held, &arg| {
             let arg = self.holds(arg);
             Holds {
                 class: held.class || arg.class,
                 poison: held.poison || arg.poison,
             }
-        });
-        self.holds_table.cache.borrow_mut().insert(ty, held);
-        held
+        })
     }
 }
 
@@ -869,15 +888,13 @@ pub(super) struct Holds {
 pub(super) struct HoldsTable {
     enums: Vec<Holds>,
     classes: Vec<bool>,
-    /// What `Checker::holds` has decided, by the type without its array and optional wrappers.
+    /// What `Checker::holds` has decided, by type.
     cache: std::cell::RefCell<FxHashMap<Type, Holds>>,
 }
 
 /// `ty` without its array and optional wrappers.
 pub(super) fn unwrapped(mut ty: Type) -> Type {
     while let TypeKind::Array(inner) | TypeKind::Optional(inner) = ty.kind() {
-        #[cfg(test)]
-        TYPE_WALK_STEPS.set(TYPE_WALK_STEPS.get() + 1);
         ty = inner;
     }
     ty
