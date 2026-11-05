@@ -1,8 +1,11 @@
 // GIVEN a `.` on an optional that starts a chain, in a function for each case
 // AND the rest of the chain checks whether a value is optional, or binds a name to the value
+// AND a value built from the typed one by an operator, a block, a join, a generic call or a slice
 // WHEN `sisu check` runs on it
 // THEN it reports E0062 alone, as the `?.` fix of E0062 would make the value optional
 // AND it does not report that the value is not optional, and a name bound to it has no type
+// AND where both remedies give the same report, such as `==` or an enum that misses a variant,
+// it reports that too
 class Inner {
     ys: [i64]
     v: i64
@@ -12,6 +15,27 @@ class Outer {
     ns: [Inner]
     inner: Inner
 }
+
+enum E {
+    A
+    B
+}
+
+class C {
+    v: i64
+    b: bool
+    e: E
+    s: string
+    ys: [i64]
+    n: C?
+    mut w: i64
+}
+
+class Bx {
+    fn wrap<T>(self, t: T) -> T { t }
+}
+
+fn id<T>(t: T) -> T { t }
 
 fn safe_after(c: Outer?) {
     print(c.inner?.v)
@@ -44,6 +68,203 @@ fn local(c: Outer?) {
 
 fn for_binding(c: Outer?) {
     for n in c.ns { n.ys.push("a") }
+}
+
+fn add_left(c: C?, k: bool, p: E) {
+    print((c.v + 1) ?? 0)
+}
+
+fn add_right(c: C?, k: bool, p: E) {
+    print((1 + c.v) ?? 0)
+}
+
+fn add_eq_none(c: C?, k: bool, p: E) {
+    print((c.v + 1) == None)
+}
+
+fn add_if_let(c: C?, k: bool, p: E) {
+    if let x = c.v + 1 { print(x) }
+}
+
+fn add_safe_call(c: C?, k: bool, p: E) {
+    print((c.v + 1)?.to_string())
+}
+
+fn add_local(c: C?, k: bool, p: E) {
+    let x = c.v + 1
+    x.nope()
+}
+
+fn join_string(c: C?, k: bool, p: E) {
+    print((c.s + "x") ?? "")
+}
+
+fn less(c: C?, k: bool, p: E) {
+    print((c.v < 1) ?? false)
+}
+
+fn negate(c: C?, k: bool, p: E) {
+    print((-c.v) ?? 0)
+}
+
+fn not(c: C?, k: bool, p: E) {
+    print((!c.b) ?? false)
+}
+
+fn and(c: C?, k: bool, p: E) {
+    print((c.b && k) ?? false)
+}
+
+fn block(c: C?, k: bool, p: E) {
+    print({ c.v } ?? 0)
+}
+
+fn block_local(c: C?, k: bool, p: E) {
+    let x = { c.v }
+    print(x ?? 0)
+}
+
+fn block_for(c: C?, k: bool, p: E) {
+    for n in { c.ys } { n.nope() }
+}
+
+fn join_both(c: C?, k: bool, p: E) {
+    print((if k { c.v } else { c.v }) ?? 0)
+}
+
+fn join_one(c: C?, k: bool, p: E) {
+    print((if k { c.v } else { 1 }) ?? 0)
+}
+
+fn join_match(c: C?, k: bool, p: E) {
+    print((match p { A => c.v; B => 1 }) ?? 0)
+}
+
+fn join_nested(c: C?, k: bool, p: E) {
+    print((if k { if k { c.v } else { 1 } } else { 1 }) ?? 0)
+}
+
+fn join_else_if(c: C?, k: bool, p: E) {
+    print((if k { 1 } else if k { c.v } else { 1 }) ?? 0)
+}
+
+fn join_in_match(c: C?, k: bool, p: E) {
+    print((match p { A => if k { c.v } else { 1 }; B => 1 }) ?? 0)
+}
+
+fn join_condition(c: C?, k: bool, p: E) {
+    print((if c.b { 1 } else { 2 }) ?? 0)
+}
+
+fn join_for(c: C?, k: bool, p: E) {
+    for n in if k { c.ys } else { c.ys } { n.nope() }
+}
+
+fn generic(c: C?, k: bool, p: E) {
+    print(id(c.v) ?? 0)
+}
+
+fn generic_local(c: C?, k: bool, p: E) {
+    let x = id(c.v)
+    print(x ?? 0)
+}
+
+fn generic_safe_call(c: C?, k: bool, p: E) {
+    print(id(c.v)?.to_string())
+}
+
+fn generic_method(c: C?, k: bool, p: E) {
+    print(Bx().wrap(c.v) ?? 0)
+}
+
+fn slice(c: C?, k: bool, p: E) {
+    let x = c.ys[0..1]
+    x.nope()
+}
+
+fn coalesce_right(c: C?, k: bool, p: E) {
+    let o: i64? = None
+    print((o ?? c.v) ?? 0)
+}
+
+fn equal(c: C?, k: bool, p: E) {
+    print((c.v == 1) ?? false)
+}
+
+fn interpolation(c: C?, k: bool, p: E) {
+    print("{c.v}" ?? "")
+}
+
+fn array_literal(c: C?, k: bool, p: E) {
+    print([c.v] ?? [1])
+}
+
+fn coalesce_left(c: C?, k: bool, p: E) {
+    print((c.v ?? 0) ?? 0)
+}
+
+fn name_iflet_enum(c: C?, k: bool, p: E) {
+    if let x = c.e { print(x) }
+}
+
+fn name_while_enum(c: C?, k: bool, p: E) {
+    while let x = c.e { print(x) }
+}
+
+fn name_let_else_enum(c: C?, k: bool, p: E) {
+    let x = c.e else { return }
+}
+
+fn some_none_arms(c: C?, k: bool, p: E) {
+    match c.v { Some(x) => print(x); None => {} }
+}
+
+fn none_arm(c: C?, k: bool, p: E) {
+    match c.v { None => {}; _ => {} }
+}
+
+fn some_arm(c: C?, k: bool, p: E) {
+    match c.v { Some(x) => print(x) }
+}
+
+fn some_iflet(c: C?, k: bool, p: E) {
+    if let Some(x) = c.v { print(x) }
+}
+
+fn some_string_literal(c: C?, k: bool, p: E) {
+    match c.v { Some("a") => {}; _ => {} }
+}
+
+fn some_some(c: C?, k: bool, p: E) {
+    match c.v { Some(Some(x)) => {}; _ => {} }
+}
+
+fn name_arm(c: C?, k: bool, p: E) {
+    match c.v { x => print(x ?? 0) }
+}
+
+fn some_arm_optional(c: C?, k: bool, p: E) {
+    match c.n { Some(m) => print(m.v); None => {} }
+}
+
+fn some_iflet_optional(c: C?, k: bool, p: E) {
+    if let Some(m) = c.n { print(m.v) }
+}
+
+fn enum_missing(c: C?, k: bool, p: E) {
+    match c.e { A => {} }
+}
+
+fn enum_covered(c: C?, k: bool, p: E) {
+    match c.e { A => {}; B => {} }
+}
+
+fn enum_none_arm(c: C?, k: bool, p: E) {
+    match c.e { A => {}; None => {} }
+}
+
+fn enum_some_arm(c: C?, k: bool, p: E) {
+    match c.e { Some(A) => {}; _ => {} }
 }
 
 fn main() {}

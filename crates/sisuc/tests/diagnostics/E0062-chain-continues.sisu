@@ -210,4 +210,45 @@ fn binary(c: Outer?) {
     print(c.inner.v + "s")
 }
 
+class Cell {
+    rows: [[i64]?]
+    v: i64
+    ys: [i64]
+    n: Cell?
+    mut w: i64
+    mut mys: [i64]
+}
+
+fn safe_rows_order(c: Cell?) {
+    c?.rows[nope][0] = 1
+}
+
+fn safe_place_push(c: Cell?) {
+    c.n?.ys.push(1)
+}
+
+fn safe_place_assign(c: Cell?) {
+    c.n?.v = 1
+}
+
+fn safe_place_write_mismatch(c: Cell?) {
+    c.n?.w = "a"
+}
+
+fn safe_place_write(c: Cell?) {
+    c.n?.w = 1
+}
+
+fn safe_place_compound(c: Cell?) {
+    c.n?.w += "a"
+}
+
+fn safe_place_push_mismatch(c: Cell?) {
+    c.n?.mys.push("a")
+}
+
+fn safe_place_element(c: Cell?) {
+    c.n?.ys[0] = 1
+}
+
 fn main() {}

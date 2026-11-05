@@ -166,3 +166,134 @@ fn e0062_should_come_before_e0001_for_an_element_assignment_through_safe_access(
         ],
     )]);
 }
+
+/// `body` on line 14 of `fn r` over `c: C?`, `k: bool` and `p: E`. `C` holds an `E`, an optional
+/// of itself and an array, and `mut w`.
+fn with_cell(body: &str) -> String {
+    format!(
+        "enum E {{\n    A\n    B\n}}\nclass C {{\n    v: i64\n    e: E\n    ys: [i64]\n    n: C?\n    mut w: i64\n}}\nfn id<T>(t: T) -> T {{ t }}\nfn r(c: C?, k: bool, p: E) {{\n    {body}\n}}\nfn main() {{}}"
+    )
+}
+
+/// `rows` over `with_cell`: each row is a body and the codes that it reports.
+fn cell_rows(rows: &[(&str, &[Wanted])]) {
+    for &(body, wanted) in rows {
+        codes_row(body, &with_cell(body), wanted);
+    }
+}
+
+/// An operator keeps the flag of its operands, so its result gets no report that it is not
+/// optional. The right side of `??` keeps it; the left side does not need to.
+#[test]
+fn unwrapped_flag_should_spread_through_an_operator() {
+    cell_rows(&[
+        ("print((c.v + 1) ?? 0)", &[(Code::MayBeNone, (14, 12))]),
+        ("print((c.v + 1) == None)", &[(Code::MayBeNone, (14, 12))]),
+        (
+            "print((c.v + 1)?.to_string())",
+            &[(Code::MayBeNone, (14, 12))],
+        ),
+        (
+            "let o: i64? = None\n    print((o ?? c.v) ?? 0)",
+            &[(Code::MayBeNone, (15, 17))],
+        ),
+    ]);
+}
+
+/// A block and a join keep the flag of the value they end in.
+#[test]
+fn unwrapped_flag_should_spread_through_a_block_and_a_join() {
+    cell_rows(&[
+        ("print({ c.v } ?? 0)", &[(Code::MayBeNone, (14, 13))]),
+        (
+            "print((if k { c.v } else { c.v }) ?? 0)",
+            &[(Code::MayBeNone, (14, 19)), (Code::MayBeNone, (14, 32))],
+        ),
+        (
+            "print((if k { c.v } else { 1 }) ?? 0)",
+            &[(Code::MayBeNone, (14, 19))],
+        ),
+    ]);
+}
+
+/// A generic call that returns a type parameter keeps the flag of its arguments. So does a slice
+/// of a flagged array.
+#[test]
+fn unwrapped_flag_should_spread_through_a_generic_call_and_a_slice() {
+    cell_rows(&[
+        ("print(id(c.v) ?? 0)", &[(Code::MayBeNone, (14, 14))]),
+        (
+            "let x = c.ys[0..1]\n    x.nope()",
+            &[(Code::MayBeNone, (14, 13))],
+        ),
+    ]);
+}
+
+/// `==` gives the same answer under both remedies, so its operand's flag stays behind: the
+/// `bool` that it gives is not optional.
+#[test]
+fn unwrapped_flag_should_not_spread_through_equality() {
+    cell_rows(&[(
+        "print((c.v == 1) ?? false)",
+        &[
+            (Code::CoalesceNotOptional, (14, 11)),
+            (Code::MayBeNone, (14, 12)),
+        ],
+    )]);
+}
+
+/// A name that takes all of a value that E0062 typed binds `Error`: under the `?.` fix the
+/// pattern can fail, so `if let` and `let ... else` do not report that it always matches.
+#[test]
+fn name_pattern_on_a_value_typed_by_e0062_should_not_always_match() {
+    cell_rows(&[
+        (
+            "if let x = c.e { print(x) }",
+            &[(Code::MayBeNone, (14, 16))],
+        ),
+        (
+            "let x = c.e else { return }",
+            &[(Code::MayBeNone, (14, 13))],
+        ),
+    ]);
+}
+
+/// Under the `?.` fix the value is optional, so `Some` and `None` patterns on it are no mistake,
+/// and a name that takes all of it has no type.
+#[test]
+fn some_and_none_patterns_on_a_value_typed_by_e0062_should_be_accepted() {
+    cell_rows(&[
+        (
+            "match c.v { Some(x) => print(x); None => {} }",
+            &[(Code::MayBeNone, (14, 11))],
+        ),
+        (
+            "match c.v { None => {}; _ => {} }",
+            &[(Code::MayBeNone, (14, 11))],
+        ),
+        (
+            "match c.v { x => print(x ?? 0) }",
+            &[(Code::MayBeNone, (14, 11))],
+        ),
+    ]);
+}
+
+/// A place through `?.` after a `.` on an optional goes on with the payload's type: the write is
+/// checked, and the `?.` of the field makes the place optional.
+#[test]
+fn place_through_safe_access_after_e0062_should_go_on() {
+    cell_rows(&[
+        (
+            "c.n?.ys.push(1)",
+            &[
+                (Code::MayBeNone, (14, 5)),
+                (Code::MayBeNone, (14, 5)),
+                (Code::AssignToImmutable, (14, 5)),
+            ],
+        ),
+        (
+            "c.n?.w = \"a\"",
+            &[(Code::MayBeNone, (14, 5)), (Code::Mismatch, (14, 14))],
+        ),
+    ]);
+}

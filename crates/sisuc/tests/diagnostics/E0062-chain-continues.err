@@ -925,5 +925,209 @@ help: use interpolation
 210 +     print("{c.inner.v}s")
     |
 
-sisu: 93 errors
-sisu: for more on a code, run `sisu explain <code>`: E0001, E0032, E0035, E0062, E0063, E0137, E0169
+error[E0062]: `c?.rows` may be `None`
+   --> E0062-chain-continues.sisu:223:5
+    |
+223 |     c?.rows[nope][0] = 1
+    |     ^^^^^^^
+    |
+    = help: unwrap `c` with `if let`, `let ... else` or `?? return`
+
+error[E0062]: this value may be `None`
+   --> E0062-chain-continues.sisu:223:5
+    |
+223 |     c?.rows[nope][0] = 1
+    |     ^^^^^^^^^^^^^
+
+error[E0001]: cannot assign to an element of `rows`
+   --> E0062-chain-continues.sisu:223:5
+    |
+214 |     rows: [[i64]?]
+    |     ---- declared without `mut` here
+...
+223 |     c?.rows[nope][0] = 1
+    |     ^^^^^^^^^^^^^^^^^^^^
+    |
+help: mark the field `mut`
+    |
+214 |     mut rows: [[i64]?]
+    |     +++
+
+error[E0033]: cannot find binding `nope`
+   --> E0062-chain-continues.sisu:223:13
+    |
+223 |     c?.rows[nope][0] = 1
+    |             ^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:227:5
+    |
+227 |     c.n?.ys.push(1)
+    |     ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+227 |     c?.n?.ys.push(1)
+    |      +
+
+error[E0062]: `c.n?.ys` may be `None`
+   --> E0062-chain-continues.sisu:227:5
+    |
+227 |     c.n?.ys.push(1)
+    |     ^^^^^^^
+    |
+help: to do nothing when it is `None`, use `?.`
+    |
+227 |     c.n?.ys?.push(1)
+    |            +
+
+error[E0001]: cannot change `ys`
+   --> E0062-chain-continues.sisu:227:5
+    |
+216 |     ys: [i64]
+    |     -- declared without `mut` here
+...
+227 |     c.n?.ys.push(1)
+    |     ^^^^^^^ `push` changes `ys`
+    |
+help: mark the field `mut`
+    |
+216 |     mut ys: [i64]
+    |     +++
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:231:5
+    |
+231 |     c.n?.v = 1
+    |     ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+231 |     c?.n?.v = 1
+    |      +
+
+error[E0001]: cannot assign to `v`
+   --> E0062-chain-continues.sisu:231:5
+    |
+215 |     v: i64
+    |     - declared without `mut` here
+...
+231 |     c.n?.v = 1
+    |     ^^^^^^^^^^
+    |
+help: mark the field `mut`
+    |
+215 |     mut v: i64
+    |     +++
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:235:5
+    |
+235 |     c.n?.w = "a"
+    |     ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+235 |     c?.n?.w = "a"
+    |      +
+
+error[E0032]: expected `i64`, found `string`
+   --> E0062-chain-continues.sisu:235:14
+    |
+235 |     c.n?.w = "a"
+    |              ^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:239:5
+    |
+239 |     c.n?.w = 1
+    |     ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+239 |     c?.n?.w = 1
+    |      +
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:243:5
+    |
+243 |     c.n?.w += "a"
+    |     ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+243 |     c?.n?.w += "a"
+    |      +
+
+error[E0032]: expected `i64`, found `string`
+   --> E0062-chain-continues.sisu:243:15
+    |
+243 |     c.n?.w += "a"
+    |               ^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:247:5
+    |
+247 |     c.n?.mys.push("a")
+    |     ^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+    |
+247 |     c?.n?.mys.push("a")
+    |      +
+
+error[E0062]: `c.n?.mys` may be `None`
+   --> E0062-chain-continues.sisu:247:5
+    |
+247 |     c.n?.mys.push("a")
+    |     ^^^^^^^^
+    |
+help: to do nothing when it is `None`, use `?.`
+    |
+247 |     c.n?.mys?.push("a")
+    |             +
+
+error[E0032]: expected `i64`, found `string`
+   --> E0062-chain-continues.sisu:247:19
+    |
+247 |     c.n?.mys.push("a")
+    |                   ^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-chain-continues.sisu:251:5
+    |
+251 |     c.n?.ys[0] = 1
+    |     ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `c.n?.ys` may be `None`
+   --> E0062-chain-continues.sisu:251:5
+    |
+251 |     c.n?.ys[0] = 1
+    |     ^^^^^^^
+    |
+    = help: unwrap `c.n` with `if let`, `let ... else` or `?? return`
+
+error[E0001]: cannot assign to an element of `ys`
+   --> E0062-chain-continues.sisu:251:5
+    |
+216 |     ys: [i64]
+    |     -- declared without `mut` here
+...
+251 |     c.n?.ys[0] = 1
+    |     ^^^^^^^^^^^^^^
+    |
+help: mark the field `mut`
+    |
+216 |     mut ys: [i64]
+    |     +++
+
+sisu: 113 errors
+sisu: for more on a code, run `sisu explain <code>`: E0001, E0032, E0033, E0035, E0062, E0063, E0137, E0169
