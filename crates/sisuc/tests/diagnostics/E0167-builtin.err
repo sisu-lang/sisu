@@ -1,0 +1,14 @@
+error[E0167]: argument 1 of `print` is not `mut`
+ --> E0167-builtin.sisu:7:11
+  |
+7 |     print(mut xs)
+  |           ^^^ not a `mut` parameter
+  |
+help: remove `mut`
+  |
+7 -     print(mut xs)
+7 +     print(xs)
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0167

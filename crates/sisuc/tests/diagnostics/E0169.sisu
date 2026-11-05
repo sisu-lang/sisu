@@ -1,0 +1,10 @@
+// GIVEN a call `set(mut [1, 2])`, whose `mut` argument is a literal
+// WHEN `sisu check` runs on it
+// THEN it reports E0169 on the argument, labelled "not a place", with no help
+fn set(mut xs: [i64]) {
+    xs[0] = 9
+}
+
+fn main() {
+    set(mut [1, 2])
+}

@@ -1,0 +1,8 @@
+// GIVEN `("a" + "b").get(mut 0..1)` with the receiver on two lines
+// WHEN `sisu check` runs on it
+// THEN it reports E0167 on the `mut`, and the message names the method by its type, `string.get`
+fn main() {
+    let t = ("a" +
+        "b").get(mut 0..1)
+    print(t ?? "")
+}

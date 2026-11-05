@@ -1,0 +1,8 @@
+warning[W0002]: `xs` is never reassigned, so its `mut` changes nothing for the caller
+ --> W0002-param-array.sisu:5:13
+  |
+5 | fn show(mut xs: [i64]) {
+  |             ^^ never reassigned
+
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0002

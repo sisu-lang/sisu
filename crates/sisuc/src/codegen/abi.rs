@@ -521,6 +521,7 @@ pub(super) const RANGE_STRING: u64 = 16;
 /// through these three, so a change to the layout of a value is a change here. An array or a
 /// string, or the optional of one, crosses as three scalar parameters: its block, its data and
 /// its length. LLVM puts `range` only on an integer, so it is never one struct parameter.
+/// The out pointers of the `mut` parameters follow the value parameters (`out_param_types`).
 impl<'ctx> Codegen<'ctx, '_> {
     /// The LLVM types of the parameters that one value of type `ty` takes, in order.
     pub(super) fn param_types(&self, ty: Type) -> Vec<BasicMetadataTypeEnum<'ctx>> {
@@ -533,6 +534,20 @@ impl<'ctx> Codegen<'ctx, '_> {
             .llvm_type(ty)
             .expect("the checker should reject a `unit` or `never` parameter, so each parameter has a value type");
         vec![part.into()]
+    }
+
+    /// The parameters that `muts` (one flag for each parameter) gives a function after its value
+    /// parameters: one `ptr`, the out pointer, for each `mut` one. A function, a table entry and
+    /// an indirect call of one all take them in this order, before the location of a prelude
+    /// function.
+    pub(super) fn out_param_types(
+        &self,
+        muts: &[bool],
+    ) -> impl Iterator<Item = BasicMetadataTypeEnum<'ctx>> {
+        let ptr = self.context.ptr_type(AddressSpace::default());
+        muts.iter()
+            .filter(|&&m| m)
+            .map(move |_| BasicMetadataTypeEnum::from(ptr))
     }
 
     /// The arguments that pass `value`, of type `ty`, at a call: one for each of `param_types`.

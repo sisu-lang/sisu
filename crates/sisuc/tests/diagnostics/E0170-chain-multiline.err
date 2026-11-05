@@ -1,0 +1,13 @@
+error[E0170]: a path through `?.` can be missing, so it cannot be a `mut` argument
+  --> E0170-chain-multiline.sisu:17:14
+   |
+12 |   fn fill(mut xs: [i64], n: i64) {
+   |               -- declared `[i64]` here
+...
+17 |       fill(mut mk(
+   |  ______________^
+18 | |     )?.cells, 3)
+   | |____________^ this reads as `[i64]?`, but `fill` reads and writes back `[i64]`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0170

@@ -1,0 +1,21 @@
+// GIVEN a generic `fn swap<T>(mut a: T, mut b: T) { let t = a; a = b; b = t }`, `let mut xs = [[1], [2]]`
+// and `fn go(mut xs: [[i64]], i: i64, j: i64) { swap(mut xs[i], mut xs[j]) }`
+// WHEN `main` calls `go(mut xs, 0, 1)`, then `go(mut xs, 0, 0)`
+// THEN `xs` is "[[2], [1]]" after the first and unchanged by the second
+fn swap<T>(mut a: T, mut b: T) {
+    let t = a
+    a = b
+    b = t
+}
+
+fn go(mut xs: [[i64]], i: i64, j: i64) {
+    swap(mut xs[i], mut xs[j])
+}
+
+fn main() {
+    let mut xs = [[1], [2]]
+    go(mut xs, 0, 1)
+    print(xs)
+    go(mut xs, 0, 0)
+    print(xs)
+}

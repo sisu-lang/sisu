@@ -1,0 +1,10 @@
+error[E0171]: `xs[i]` is passed `mut` twice: each `mut` argument needs its own place
+  --> E0171-index.sisu:13:25
+   |
+13 |     swap(mut xs[i], mut xs[i])
+   |              -----      ^^^^^ passed again here
+   |              |
+   |              first passed here
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0171

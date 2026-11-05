@@ -1,0 +1,17 @@
+// GIVEN `fill3(mut b?.cells)`, where `fill3` takes a `mut` `i64`
+// WHEN `sisu check` runs on it
+// THEN it reports E0170 on the argument, with the label that names the type `i64`
+// AND it gives no help
+class Board {
+    mut cells: [i64]
+}
+
+fn fill3(mut n: i64) {
+    n += 1
+}
+
+fn main() {
+    let b: Board? = Board(cells: [1])
+    fill3(mut b?.cells)
+    print(b == None)
+}

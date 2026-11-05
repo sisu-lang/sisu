@@ -479,3 +479,36 @@ fn let_else_should_warn_only_for_a_call_in_its_value() {
         &[(2, 13)],
     );
 }
+
+/// `fn f(n: i64, mut xs: [i64]) -> i64` with `lines` as its body, then an empty `main`.
+fn with_mut_param(lines: &[&str]) -> String {
+    let body: Vec<_> = lines.iter().map(|line| format!("    {line}")).collect();
+    format!(
+        "fn f(n: i64, mut xs: [i64]) -> i64 {{\n    xs[0] = n\n{}\n}}\nfn main() {{}}",
+        body.join("\n")
+    )
+}
+
+/// GIVEN a function with a `mut` parameter whose body is a call of itself with a `mut` argument
+/// WHEN it is checked
+/// THEN the function warns, and the call is the call it names
+#[test]
+fn function_should_warn_when_it_calls_itself_with_a_mut_argument() {
+    warns(
+        &with_mut_param(&["f(n - 1, mut xs)"]),
+        (1, 4, "f"),
+        &[(3, 5)],
+    );
+}
+
+/// GIVEN a call of the function itself with a `mut` argument as a statement, then a second one
+/// WHEN the function is checked
+/// THEN the warning names the first call only: the path already recurses before the second
+#[test]
+fn function_should_name_the_first_self_call_before_a_mut_call() {
+    warns(
+        &with_mut_param(&["let _ = f(n - 1, mut xs)", "f(n - 2, mut xs)"]),
+        (1, 4, "f"),
+        &[(3, 13)],
+    );
+}

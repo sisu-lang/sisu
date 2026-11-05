@@ -1,0 +1,17 @@
+// GIVEN `hold(mut u)`, where `u` is an `Umbrella` and the parameter is an `Umbrella?`
+// WHEN `sisu check` runs on it
+// THEN it reports E0170 on the argument, with the note that an `Umbrella` cannot hold `None`
+// AND the note says "an `Umbrella`": only `u8` and the like are said as "you"
+class Umbrella {
+    n: i64
+}
+
+fn hold(mut u: Umbrella?) {
+    u = None
+}
+
+fn main() {
+    let mut u = Umbrella(n: 1)
+    hold(mut u)
+    print(u.n)
+}

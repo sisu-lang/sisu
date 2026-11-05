@@ -1,0 +1,13 @@
+error[E0170]: `self.b?.next` can be missing, so it cannot be a `mut` argument
+  --> E0170-chain-self.sisu:13:20
+   |
+13 |         relink(mut self.b?.next)
+   |                    ^^^^^^^^^^^^ `self.b` can be `None`, and then there is no place to store back to
+...
+17 | fn relink(mut n: Node?) {
+   |               - declared `Node?` here
+   |
+   = help: unwrap `self.b` with `if let`, and pass the field of the unwrapped object
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0170

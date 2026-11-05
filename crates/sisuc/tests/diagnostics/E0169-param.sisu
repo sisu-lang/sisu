@@ -1,0 +1,16 @@
+// GIVEN a function that passes its plain parameter `xs` as a `mut` argument
+// WHEN `sisu check` runs on it
+// THEN it reports E0169 on the argument, with the help to copy it into a `let mut` local
+// AND the secondary label is on the parameter
+fn set(mut xs: [i64]) {
+    xs[0] = 9
+}
+
+fn pass_on(xs: [i64]) {
+    set(mut xs)
+    print(xs)
+}
+
+fn main() {
+    pass_on([1, 2])
+}

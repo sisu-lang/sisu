@@ -1,0 +1,15 @@
+// GIVEN `swap(mut a, mut a)`
+// WHEN `sisu check` runs on it
+// THEN it reports E0171 on the second argument, labelled "passed again here"
+// AND the secondary label is on the first argument, "first passed here"
+fn swap(mut a: i64, mut b: i64) {
+    let t = a
+    a = b
+    b = t
+}
+
+fn main() {
+    let mut a = 1
+    swap(mut a, mut a)
+    print(a)
+}

@@ -1,0 +1,10 @@
+// GIVEN a call `set(mut self)` in a function that is no method
+// WHEN `sisu check` runs on it
+// THEN it reports E0041 only: `self` is only available in a method
+fn set(mut x: i64) {
+    x = 1
+}
+
+fn main() {
+    set(mut self)
+}

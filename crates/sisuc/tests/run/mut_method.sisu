@@ -1,0 +1,30 @@
+// GIVEN `class Filler { fn fill(self, mut xs: [i64], v: i64) }` that sets every element to `v`,
+// and `fn fill_to(mut ys: [i64], n: i64)` that passes its `mut` parameter on to itself
+// WHEN `main` calls `f.fill(mut xs, 7)` on `let mut xs = [0, 0, 0]`, then `fill_to(mut zs, 2)`
+// on `let mut zs = [5, 6, 7]`, and prints `xs` and `zs`
+// THEN it prints "[7, 7, 7]", then "[0, 0, 7]"
+class Filler {
+    fn fill(self, mut xs: [i64], v: i64) {
+        for i in 0..xs.len() {
+            xs[i] = v
+        }
+    }
+}
+
+fn fill_to(mut ys: [i64], n: i64) {
+    if n == 0 {
+        return
+    }
+    ys[n - 1] = 0
+    fill_to(mut ys, n - 1)
+}
+
+fn main() {
+    let f = Filler()
+    let mut xs = [0, 0, 0]
+    f.fill(mut xs, 7)
+    print(xs)
+    let mut zs = [5, 6, 7]
+    fill_to(mut zs, 2)
+    print(zs)
+}

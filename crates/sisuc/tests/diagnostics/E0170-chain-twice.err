@@ -1,0 +1,11 @@
+error[E0170]: `b?.inner?.cells` can be missing, so it cannot be a `mut` argument
+  --> E0170-chain-twice.sisu:19:14
+   |
+13 | fn fill(mut xs: [i64]) {
+   |             -- declared `[i64]` here
+...
+19 |     fill(mut b?.inner?.cells)
+   |              ^^^^^^^^^^^^^^^ this reads as `[i64]?`, but `fill` reads and writes back `[i64]`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0170

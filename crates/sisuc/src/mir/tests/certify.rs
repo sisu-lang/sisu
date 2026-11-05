@@ -3876,12 +3876,19 @@ fn any_value() -> Type {
 /// `call_through(args)`: the call of the first requirement of interface 0 through a table, with
 /// a `unit` result.
 fn dyn_call(args: Vec<Operand>) -> Statement {
+    let muts = vec![false; args.len()];
+    dyn_call_muts(args, muts)
+}
+
+/// `dyn_call` with the given `mut` flags, one for each of `args`.
+fn dyn_call_muts(args: Vec<Operand>, muts: Vec<bool>) -> Statement {
     Statement::Assign {
         dest: None,
         value: Rvalue::DynCall {
             interface: tir::InterfaceId(0),
             iargs: TypeArgs::NONE,
             method: 0,
+            muts,
             args,
         },
     }
@@ -3960,4 +3967,167 @@ fn a_borrow_through_a_mut_field_should_end_at_a_call_through_a_table() {
         ret(),
     );
     rejects(&b.finish(), 0, x, Rule::Borrow);
+}
+
+// The `out` of a `mut` argument follows its call.
+
+/// `dest = out index`.
+fn out(dest: LocalId, index: usize) -> Statement {
+    assign(dest, Rvalue::Out { index })
+}
+
+/// GIVEN a block with an `out 0` and no call before it
+/// WHEN the function is certified
+/// THEN it is rejected for the `out`'s destination
+#[test]
+fn out_with_no_call_should_be_rejected() {
+    let mut b = Builder::new("f");
+    let t = b.local("t", Type::I64);
+    b.block(vec![out(t, 0)], ret());
+    rejects(&b.finish(), 0, t, Rule::Out);
+}
+
+/// GIVEN `call f(t)`, a second call, and then `t = out 0`
+/// WHEN the function is certified, once with a `Call` and once with a `DynCall` as the second
+/// THEN it is rejected: the nearest call before the `out` is the second, which does not take `t`
+#[test]
+fn out_after_a_second_call_should_be_rejected() {
+    let int = |n| Operand::Const(Const::Int(n, Type::I64));
+    for second in [
+        call(vec![int(1)], vec![false]),
+        dyn_call(vec![int(1), int(2)]),
+    ] {
+        let mut b = Builder::new("f");
+        let t = b.local("t", Type::I64);
+        b.block(
+            vec![
+                assign(t, Rvalue::Use(int(0))),
+                call(vec![read(t)], vec![false]),
+                second,
+                out(t, 0),
+            ],
+            ret(),
+        );
+        rejects(&b.finish(), 0, t, Rule::Out);
+    }
+}
+
+/// GIVEN `dyn_call s(t)` and then `t = out 1`, whose `DynCall` flags the index 1 as `mut`, or
+/// does not
+/// WHEN the function is certified
+/// THEN it is accepted with the flag, and rejected without it: codegen gives an out slot only to
+/// a flagged argument, so an `out` of an unflagged one would read a slot that does not exist
+#[test]
+fn out_of_a_dyn_call_argument_should_need_its_flag() {
+    for (flagged, accepted) in [(true, true), (false, false)] {
+        let mut b = Builder::new("f");
+        let s = b.param("s", any_value());
+        let t = b.local("t", Type::I64);
+        b.block(
+            vec![
+                assign(t, Rvalue::Use(Operand::Const(Const::Int(0, Type::I64)))),
+                dyn_call_muts(vec![read(s), read(t)], vec![false, flagged]),
+                out(t, 1),
+                Statement::Release(s),
+            ],
+            ret(),
+        );
+        if accepted {
+            assert_eq!(certify(&b.finish()), Ok(()), "flagged: {flagged}");
+        } else {
+            rejects(&b.finish(), 0, t, Rule::Out);
+        }
+    }
+}
+
+/// GIVEN `call f(move s)`, a `release r` and then `s = out 0`
+/// WHEN the function is certified
+/// THEN it is accepted: a release stands between a call and its `out`, where a moved temporary
+/// passed to a borrowed parameter is released after the call
+#[test]
+fn out_after_a_release_should_be_accepted() {
+    let mut b = Builder::new("f");
+    let s = b.local("s", Type::STRING);
+    let r = b.local("r", Type::STRING);
+    b.block(
+        vec![
+            literal(s),
+            literal(r),
+            call(vec![Operand::Move(s)], vec![false]),
+            Statement::Release(r),
+            out(s, 0),
+            Statement::Release(s),
+        ],
+        ret(),
+    );
+    assert_eq!(certify(&b.finish()), Ok(()));
+}
+
+/// GIVEN `call f(move s, move u)` and then `s = out 0`, `u = out 1`
+/// WHEN the function is certified
+/// THEN it is accepted: one `out` may follow another
+#[test]
+fn out_after_another_out_should_be_accepted() {
+    let mut b = Builder::new("f");
+    let s = b.local("s", Type::STRING);
+    let u = b.local("u", Type::STRING);
+    b.block(
+        vec![
+            literal(s),
+            literal(u),
+            call(vec![Operand::Move(s), Operand::Move(u)], vec![false, false]),
+            out(s, 0),
+            out(u, 1),
+            Statement::Release(s),
+            Statement::Release(u),
+        ],
+        ret(),
+    );
+    assert_eq!(certify(&b.finish()), Ok(()));
+}
+
+/// GIVEN `call f(move s)` and then `u = out 0`, where `u` is not the argument
+/// WHEN the function is certified
+/// THEN it is rejected for `u`
+#[test]
+fn out_for_another_local_should_be_rejected() {
+    let mut b = Builder::new("f");
+    let s = b.local("s", Type::STRING);
+    let u = b.local("u", Type::STRING);
+    b.block(
+        vec![
+            literal(s),
+            call(vec![Operand::Move(s)], vec![false]),
+            out(u, 0),
+            Statement::Release(u),
+        ],
+        ret(),
+    );
+    rejects(&b.finish(), 0, u, Rule::Out);
+}
+
+/// GIVEN `b = borrow r`, `call f(move s)`, `end b` and then `s = out 0`
+/// WHEN the function is certified
+/// THEN it is accepted: pair removal turns the `release` after a call into an `end`
+#[test]
+fn out_after_an_end_should_be_accepted() {
+    let mut b = Builder::new("f");
+    let s = b.local("s", Type::STRING);
+    let r = b.local("r", Type::STRING);
+    let alias = b.local("alias", Type::STRING);
+    b.owner(alias, r);
+    b.block(
+        vec![
+            literal(s),
+            literal(r),
+            assign(alias, Rvalue::Borrow(whole(r))),
+            call(vec![Operand::Move(s)], vec![false]),
+            Statement::End(alias),
+            out(s, 0),
+            Statement::Release(s),
+            Statement::Release(r),
+        ],
+        ret(),
+    );
+    assert_eq!(certify(&b.finish()), Ok(()));
 }

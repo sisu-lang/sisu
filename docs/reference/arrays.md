@@ -191,7 +191,7 @@ The rules:
 - `contains` uses `==`, so `contains(f64.nan)` is always `false` ([Types](types.md#floating-point-numbers)).
 - `first`, `last` and `get` give `None` where `xs[i]` would stop the program. For `get(i)`, that is a negative `i` and an `i` from `xs.len()` on. For `first` and `last`, it is an empty array. They are the safe form of an index. On a slice they read the slice ([Range index](#range-indexes)).
 - `get` takes an `i64`, not a range. `xs.get(1..3)` is an error ([E0032](../diagnostics/E0032.md)): write `xs[1..3]`, which stops the program when the range is out of bounds.
-- `push` writes the array, as `xs[i] = x` does, so it needs a place that can change: a `let mut` variable, a `mut` field, or an element of one. A `let` variable, a parameter and a field without `mut` are errors ([E0001](../diagnostics/E0001.md)). A value that is not stored, such as `f().push(1)`, is an error too ([E0021](../diagnostics/E0021.md)).
+- `push` writes the array, as `xs[i] = x` does, so it needs a place that can change: a `let mut` variable, a `mut` parameter, a `mut` field, or an element of one. A `let` binding, a plain parameter and a field without `mut` are errors ([E0001](../diagnostics/E0001.md)). A value that is not stored, such as `f().push(1)`, is an error too ([E0021](../diagnostics/E0021.md)).
 - `push` has no value. The argument has the element type, so `push(1)` on an `[i64?]` adds `Some(1)` ([E0032](../diagnostics/E0032.md)), and `push` takes exactly one argument ([E0053](../diagnostics/E0053.md)).
 - A `push` onto an array that another variable holds does not change that variable. Arrays are values ([Arrays are values](#arrays-are-values)).
 - `xs?.push(x)` on an optional array adds `x` when `xs` holds an array. When `xs` is `None`, nothing happens and `x` is not computed. The call tests `xs` again after it computes `x`. When `x` made `xs` `None`, the call adds nothing. The place follows the rules above, so `xs` is a `let mut` variable. `bag?.items?.push(x)` goes through an optional object, and `items` is a `mut` field. `gs[i]?.push(x)` on an array `gs` of optional arrays checks `i` before it computes `x`, so a bad index stops the program before `x` runs.
@@ -277,7 +277,7 @@ The rules:
 
 - An array that the program reads out of another array, or out of a field, is a value too. A write to it does not change the original.
 - A copy of an array holds the same objects as the original. A change to a `mut` field of such an object shows in both arrays.
-- A function cannot change an array that it gets as an argument. A function that makes a changed array returns it, and the caller writes `xs = change(xs)`.
+- A function cannot change an array that it gets as a plain argument. To change the array of the caller, the parameter is `mut` ([`mut` parameters](functions.md#mut-parameters)). A function can also return a changed array, and the caller writes `xs = change(xs)`.
 
 ```sisu
 fn doubled(xs: [i64]) -> [i64] {
@@ -298,3 +298,33 @@ fn main() {
 ```
 
 Sisu does not copy the elements when the program binds or passes an array. A small slice, such as `xs[1..3]` of a long array, can go into a class field, an enum payload, an array or an `any I`. That store copies the slice. So the slice does not keep the long array alive ([ADR 0042](../adr/0042-a-slice-shares-its-block.md)). Other stores do not copy the elements. The holders share the elements until a write to one of them. That write copies the elements first, and a loop that writes the array can copy them before it starts. A program cannot see when the copy occurs.
+
+## When an array is copied
+
+Binding, passing, storing or returning an array copies no element. Only a small slice is copied, when a field, an enum payload, an array or an `any I` stores it ([ADR 0042](../adr/0042-a-slice-shares-its-block.md)). The holders share the elements. A write to an array copies the elements first when another holder shares them. Then the writer has elements of its own, and its next writes do not copy. A program cannot see the copy, but it costs time.
+
+The cases:
+
+- A write to an array that no other holder shares does not copy.
+- A write to a copy that the program made with `let mut b = a` copies at the first write, while `a` still holds the elements.
+- A plain parameter cannot be written. A function that needs a changed array copies it into a `let mut` binding. The first write copies the elements only when another holder still shares them. When the caller does not read the array again, the call hands it over, and the first write does not copy.
+- A `mut` argument that is a local variable moves the array into the parameter. A write by the function does not copy, unless another holder shares the elements. When the call ends, the array goes back into the variable.
+- A `mut` argument that is a field or an element copies the value in. The field keeps its array during the call, because code that reads the field sees the old value. So the first write by the function copies the elements once. The next writes do not copy.
+
+```sisu
+fn fill(mut xs: [i64], n: i64) {
+    for i in 0..xs.len() {
+        xs[i] = n
+    }
+}
+
+fn main() {
+    let mut xs = [0; 1000]
+    for n in 1..=3 {
+        fill(mut xs, n)
+    }
+    print(xs[999])               // 3
+}
+```
+
+Here, each call moves `xs` into the parameter and back, so no call copies the 1000 elements.

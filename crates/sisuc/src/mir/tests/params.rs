@@ -939,6 +939,7 @@ fn quiet_should_judge_each_kind_of_statement() {
                         iargs: TypeArgs::NONE,
                         method: 0,
                         args: vec![Operand::Read(whole(LocalId(1)))],
+                        muts: vec![false],
                     },
                 }],
             )],

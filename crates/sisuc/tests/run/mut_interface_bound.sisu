@@ -1,0 +1,23 @@
+// GIVEN `interface Filler { fn fill(self, mut xs: [i64]) }`, a class `Nines` whose `fill` writes
+// `xs[0] = 9`, and `fn run<F: Filler>(f: F, mut xs: [i64]) { f.fill(mut xs) }`
+// WHEN `main` calls `run(Nines(), mut xs)` on `let mut xs = [0, 0]` and prints `xs`
+// THEN it prints "[9, 0]": a call through the bound changes the caller's array
+interface Filler {
+    fn fill(self, mut xs: [i64])
+}
+
+class Nines: Filler {
+    fn fill(self, mut xs: [i64]) {
+        xs[0] = 9
+    }
+}
+
+fn run<F: Filler>(f: F, mut xs: [i64]) {
+    f.fill(mut xs)
+}
+
+fn main() {
+    let mut xs = [0, 0]
+    run(Nines(), mut xs)
+    print(xs)
+}

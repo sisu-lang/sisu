@@ -228,6 +228,50 @@ fn prelude_defined_twice() {
     }
 }
 
+/// A prelude function that `prelude.sisu` writes, such as `exchange`, takes a name from every
+/// top-level item in the same way as `print`: the item gets "is a built-in function". A local, a
+/// parameter and a method may take the name still.
+#[test]
+fn exchange_should_be_a_prelude_name_for_top_level_items() {
+    with_prelude();
+    for (item, col) in [
+        ("fn exchange() {}", 4),
+        ("class exchange {}", 7),
+        ("const exchange = 1", 7),
+    ] {
+        let src = format!("{item}\nfn main() {{}}");
+        diagnostic_row(item, &src, Code::DefinedTwice, (1, col, "exchange"), &[]);
+    }
+    clean(
+        "class P {\n    fn exchange(self) {}\n}\nfn f(exchange: i64) {\n    let exchange = 1\n}\nfn main() {}",
+    );
+}
+
+/// Every free function of the prelude's source is a prelude name, whatever its name: the check
+/// reads the names from the prelude, not from a list. The prelude here is `fn
+/// reserved_by_prelude() {}`.
+#[test]
+fn a_free_function_of_the_prelude_should_be_a_prelude_name_for_top_level_items() {
+    with_prelude_text("fn reserved_by_prelude() {}\n");
+    for (item, col) in [
+        ("fn reserved_by_prelude() {}", 4),
+        ("class reserved_by_prelude {}", 7),
+        ("const reserved_by_prelude = 1", 7),
+    ] {
+        let src = format!("{item}\nfn main() {{}}");
+        diagnostic_row(
+            item,
+            &src,
+            Code::DefinedTwice,
+            (1, col, "reserved_by_prelude"),
+            &[],
+        );
+    }
+    clean(
+        "fn f(reserved_by_prelude: i64) {\n    let x = reserved_by_prelude\n    print(x)\n}\nfn main() {}",
+    );
+}
+
 /// A local, a parameter and a method may take a prelude name.
 #[test]
 fn prelude_names_free_elsewhere() {

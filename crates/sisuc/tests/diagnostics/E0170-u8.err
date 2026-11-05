@@ -1,0 +1,13 @@
+error[E0170]: the `mut` argument `ys` has type `u8`, but the parameter `n` of `clear` has type `u8?`
+  --> E0170-u8.sisu:11:15
+   |
+ 5 | fn clear(mut n: u8?) {
+   |              - declared `u8?` here
+...
+11 |     clear(mut ys)
+   |               ^^ has type `u8`
+   |
+   = help: a `mut` argument must have exactly the parameter's type: the callee can store `None`, which a `u8` cannot hold
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0170

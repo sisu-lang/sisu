@@ -1,0 +1,20 @@
+// GIVEN a method of a class that passes `self` as a `mut` argument
+// WHEN `sisu check` runs on it
+// THEN it reports E0169 on `self`, with the help that an object is shared
+class Counter {
+    mut n: i64
+
+    fn run(self) {
+        bump(mut self)
+    }
+}
+
+fn bump(mut c: Counter) {
+    c = Counter(n: c.n + 1)
+}
+
+fn main() {
+    let c = Counter(n: 0)
+    c.run()
+    print(c.n)
+}

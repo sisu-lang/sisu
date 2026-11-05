@@ -1,0 +1,17 @@
+// GIVEN `g(mut b?.cells)`, where `g<T>` takes a `mut` `T` that nothing else binds
+// WHEN `sisu check` runs on it
+// THEN it reports E0170 on the argument, with the label for the write type, and `[i64]` in it
+class Board {
+    mut cells: [i64]
+}
+
+fn g<T>(mut x: T) {
+    let y = x
+    x = y
+}
+
+fn main() {
+    let b: Board? = Board(cells: [1])
+    g(mut b?.cells)
+    print(b == None)
+}

@@ -1,0 +1,17 @@
+// GIVEN `set(opt?.cells)`, where `opt` is a `Board?` and the parameter of `set` is `mut`
+// WHEN `sisu check` runs on it
+// THEN it reports E0166 on the argument and nothing else
+// AND there is no fix and no help: `mut opt?.cells` would be E0170
+class Board {
+    mut cells: [i64]
+}
+
+fn set(mut xs: [i64]) {
+    xs[0] = 9
+}
+
+fn main() {
+    let opt: Board? = Board(cells: [1, 2])
+    set(opt?.cells)
+    print(opt == None)
+}

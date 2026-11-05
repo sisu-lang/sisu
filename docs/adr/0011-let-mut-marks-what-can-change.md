@@ -3,6 +3,11 @@
 Status: accepted, 2026-10-11. It replaces ADR 0002. The rename lands in
 milestone 4; records come in milestone 10.
 
+Superseded in part by [ADR 0043](0043-mut-parameters-copy-in-and-out.md).
+"There is no `inout`" no longer holds, because a `mut` parameter changes the
+caller's place. The exclusivity rule for a `mut self` call on a field is gone
+too: the call copies in and out. The decisions below stay as written.
+
 One word, `mut`, marks everything that can change, wherever it is written:
 
 - **Bindings**: `let x` cannot be reassigned, `let mut x` can. `var` is gone.

@@ -1,0 +1,13 @@
+// GIVEN `show`, whose `mut` parameter `xs` is an array that the function only reads
+// WHEN `sisu check` runs on it
+// THEN it warns W0002 on `xs`: its `mut` changes nothing for the caller
+// AND there is no class help and no fix
+fn show(mut xs: [i64]) {
+    print(xs)
+}
+
+fn main() {
+    let mut xs = [1]
+    show(mut xs)
+    print(xs)
+}

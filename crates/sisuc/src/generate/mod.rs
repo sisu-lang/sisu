@@ -7,6 +7,7 @@
 mod expr;
 mod generic;
 mod item;
+mod mut_call;
 mod scope;
 mod stmt;
 mod writer;
@@ -43,6 +44,10 @@ pub(crate) struct Generated {
     /// The most blocks open around an `if` of which every branch jumps.
     #[cfg(test)]
     pub(crate) leaving_if_depth: u32,
+    /// For each `mut` parameter of `program`: its name, and how many elements its place holds at
+    /// least (`Adds::len`), which the text does not say.
+    #[cfg(test)]
+    pub(crate) mut_lens: Vec<(String, u64)>,
 }
 
 /// An argument of a call of a bounded generic function or class, whose parameter is a bare type
@@ -94,7 +99,9 @@ pub(crate) enum Answer {
 }
 
 /// The most work a program may do, counted by `Cost` (decision 5).
-const BUDGET: u64 = 1_000_000;
+const BUDGET: u64 = 1_000_000 + MUT_BUDGET;
+/// The part of it that the calls of `mut` calls in `main` may take, apart from `main`'s own.
+const MUT_BUDGET: u64 = 100_000;
 /// The most elements or nodes of a value the program builds, chars for a `string` (decision 5).
 const MAX_SIZE: u64 = 1_000;
 /// The most iterations of a loop.
@@ -125,10 +132,16 @@ pub(crate) fn generate(data: &[u8]) -> Generated {
     let rotated: Vec<u8> = data.iter().map(|b| b.rotate_left(3)).collect();
     // So do the compound parts of an interpolation: a program with none is the same as it was.
     let mixed: Vec<u8> = data.iter().map(|b| b.rotate_left(5)).collect();
+    // The `mut` functions and the `mut` calls choose by their own streams, which stand in for
+    // the four above while they are written (`Gen::swap_streams`).
+    let places: Vec<u8> = data.iter().map(|b| b.rotate_left(7)).collect();
+    let spare: [Vec<u8>; 4] = [1, 2, 4, 6].map(|n| data.iter().map(|b| b.rotate_left(n)).collect());
     let mut g = Gen::new(data);
     g.ru = Unstructured::new(&reversed);
     g.au = Unstructured::new(&rotated);
     g.cu = Unstructured::new(&mixed);
+    g.mu = Unstructured::new(&places);
+    g.spare = Spare::new(spare.each_ref().map(|bytes| Unstructured::new(bytes)));
     // One program in eight leaves with `let ... else` and `??`. The choice reads every byte, so
     // that it shares no bits with an early choice. The other programs are the same as they were.
     // The value 5 keeps the seeds that the tests pin outside the gate. The weight of the `??`
@@ -164,6 +177,27 @@ pub(crate) fn generate(data: &[u8]) -> Generated {
         made: g.w.made,
         #[cfg(test)]
         leaving_if_depth: g.leaving_if_depth,
+        #[cfg(test)]
+        mut_lens: g.mut_lens,
+    }
+}
+
+/// What `Gen::swap_streams` swaps in: the streams that stand in for `u`, `ru`, `au` and `cu`, in
+/// that order; what the calls of the `mut` calls in `main` may still cost; and how many
+/// expressions the `mut` functions and `mut` calls have written.
+struct Spare<'a> {
+    streams: [Unstructured<'a>; 4],
+    budget: u64,
+    expressions: u64,
+}
+
+impl<'a> Spare<'a> {
+    fn new(streams: [Unstructured<'a>; 4]) -> Spare<'a> {
+        Spare {
+            streams,
+            budget: MUT_BUDGET,
+            expressions: 0,
+        }
     }
 }
 
@@ -217,6 +251,16 @@ struct Gen<'a> {
     /// What chooses whether a part of an interpolation is a compound value, apart from `u`,
     /// `ru` and `au`, so that a part that is not one draws what it drew before.
     cu: Unstructured<'a>,
+    /// What chooses where a `mut` function or a `mut` call goes, apart from the streams above.
+    mu: Unstructured<'a>,
+    /// What stands in for the streams, the budget and the count of expressions while a `mut`
+    /// function or a `mut` call is written: no choice of any other rule moves for it.
+    spare: Spare<'a>,
+    /// How many statements have begun. A `mut` call reads it to see whether a statement ran in
+    /// one of its arguments.
+    statements: u64,
+    /// Whether the function being written has a `mut` parameter, so its body holds `mut` calls.
+    mut_fn: bool,
     /// Whether the program holds `let ... else`, and `return`, `break` and `continue` after `??`.
     leaves: bool,
     /// Whether an expression of the statement being written so far has an effect or may
@@ -229,6 +273,9 @@ struct Gen<'a> {
     /// Where `program` holds the known sites' text, in order.
     #[cfg(test)]
     known_text: Vec<std::ops::Range<usize>>,
+    /// See `Generated::mut_lens`.
+    #[cfg(test)]
+    mut_lens: Vec<(String, u64)>,
 }
 
 impl<'a> Gen<'a> {
@@ -244,7 +291,7 @@ impl<'a> Gen<'a> {
             one_line: false,
             frozen: false,
             expressions: 0,
-            budget: BUDGET - FUEL * STATEMENT_MOST,
+            budget: BUDGET - MUT_BUDGET - FUEL * STATEMENT_MOST,
             jumps: stmt::Jumps::default(),
             blocks: 0,
             #[cfg(test)]
@@ -255,12 +302,18 @@ impl<'a> Gen<'a> {
             ru: Unstructured::new(&[]),
             au: Unstructured::new(&[]),
             cu: Unstructured::new(&[]),
+            mu: Unstructured::new(&[]),
+            spare: Spare::new([(); 4].map(|()| Unstructured::new(&[]))),
+            statements: 0,
+            mut_fn: false,
             leaves: false,
             effect: false,
             returns: false,
             bound_sites: Vec::new(),
             #[cfg(test)]
             known_text: Vec::new(),
+            #[cfg(test)]
+            mut_lens: Vec::new(),
         }
     }
 
@@ -272,6 +325,25 @@ impl<'a> Gen<'a> {
     /// One of `0..n`, `n > 0`.
     fn pick(&mut self, n: usize) -> usize {
         self.u.choose_index(n).unwrap_or(0)
+    }
+
+    /// One of `0..n`, `n > 0`, for where a `mut` function or a `mut` call goes.
+    fn mut_pick(&mut self, n: usize) -> usize {
+        self.mu.choose_index(n).unwrap_or(0)
+    }
+
+    /// Swaps `u`, `ru`, `au` and `cu` with the spare streams, and the budget and the count of
+    /// expressions with their own, and back. A `mut` function and a `mut` call are written
+    /// between two swaps, so no other rule's choice moves for them.
+    fn swap_streams(&mut self) {
+        let spare = &mut self.spare;
+        std::mem::swap(&mut self.budget, &mut spare.budget);
+        std::mem::swap(&mut self.expressions, &mut spare.expressions);
+        let [u, ru, au, cu] = &mut spare.streams;
+        std::mem::swap(&mut self.u, u);
+        std::mem::swap(&mut self.ru, ru);
+        std::mem::swap(&mut self.au, au);
+        std::mem::swap(&mut self.cu, cu);
     }
 
     /// One of `0..n`, `n > 0`, for a type alias.

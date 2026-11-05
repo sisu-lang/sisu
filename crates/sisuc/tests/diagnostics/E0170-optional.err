@@ -1,0 +1,13 @@
+error[E0170]: the `mut` argument `n` has type `i64?`, but the parameter `n` of `clear` has type `i64??`
+  --> E0170-optional.sisu:10:15
+   |
+ 4 | fn clear(mut n: i64??) {
+   |              - declared `i64??` here
+...
+10 |     clear(mut n)
+   |               ^ has type `i64?`
+   |
+   = help: a `mut` argument must have exactly the parameter's type: the callee stores an `i64??` back into the place
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0170

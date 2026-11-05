@@ -1,0 +1,14 @@
+error[E0168]: `mut` marks an argument for a `mut` parameter
+ --> E0168-let-mut.sisu:7:17
+  |
+7 |     let mut y = mut x
+  |                 ^^^ not an argument
+  |
+help: remove `mut`
+  |
+7 -     let mut y = mut x
+7 +     let mut y = x
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0168

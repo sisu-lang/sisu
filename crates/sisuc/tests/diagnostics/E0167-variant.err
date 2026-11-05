@@ -1,0 +1,15 @@
+error[E0167]: `Some(…)` takes no `mut` argument: it copies each value into its field
+ --> E0167-variant.sisu:7:18
+  |
+7 |     let s = Some(mut x)
+  |                  ^^^ no `mut` here
+  |
+  = help: an enum value never changes after it is built
+help: remove `mut`
+  |
+7 -     let s = Some(mut x)
+7 +     let s = Some(x)
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0167

@@ -1,0 +1,17 @@
+// GIVEN `fn boom(mut xs: [i64])` that writes `xs[0] = 1` and then reads `xs[5]`, and
+// `let mut xs = [0, 0]`
+// WHEN `main` prints "before", calls `boom(mut xs)`, and would print `xs` after it
+// THEN the program panics in `boom` with the index message, and prints nothing more: the
+// store-back never runs, and the out slot of the call that never returned is never read
+fn boom(mut xs: [i64]) {
+    xs[0] = 1
+    let i = 5
+    print(xs[i])
+}
+
+fn main() {
+    let mut xs = [0, 0]
+    print("before")
+    boom(mut xs)
+    print(xs)
+}

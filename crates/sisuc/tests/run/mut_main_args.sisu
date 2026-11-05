@@ -1,0 +1,10 @@
+// GIVEN `fn main(mut args: [string])` that assigns `args` and pushes onto it
+// WHEN the program runs
+// THEN it prints "1": the C entry point gives `main` an out slot for `args`, and releases the
+// final value that `main` hands back
+// AND Valgrind and `--rc-checks` find every array released once
+fn main(mut args: [string]) {
+    args = []
+    args.push("x")
+    print(args.len())
+}

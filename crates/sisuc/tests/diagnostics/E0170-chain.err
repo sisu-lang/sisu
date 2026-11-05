@@ -1,0 +1,13 @@
+error[E0170]: `b?.cells` can be missing, so it cannot be a `mut` argument
+  --> E0170-chain.sisu:14:14
+   |
+ 8 | fn fill(mut xs: [i64], n: i64) {
+   |             -- declared `[i64]` here
+...
+14 |     fill(mut b?.cells, 3)
+   |              ^^^^^^^^ this reads as `[i64]?`, but `fill` reads and writes back `[i64]`
+   |
+   = help: unwrap `b` with `if let`, and pass the field of the unwrapped object
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0170

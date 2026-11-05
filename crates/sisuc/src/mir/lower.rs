@@ -98,6 +98,8 @@ struct Lowering<'a> {
     written: &'a mut Written,
     /// Per parameter, whether lowering takes it as borrowed.
     borrowed: &'a [bool],
+    /// The indexes of the `mut` parameters, in order: each return hands on their final values.
+    mut_params: Vec<usize>,
     /// Per parameter, whether its flag decided the form of a `match` or an `if let`.
     consulted: Vec<bool>,
     /// Per parameter, whether a `match` on it has an arm that would take a box of some enum `F`
@@ -215,6 +217,9 @@ impl<'a> Lowering<'a> {
             declared: &f.locals,
             written,
             borrowed,
+            mut_params: (0..f.params.len())
+                .filter(|&i| f.locals[i].mutable)
+                .collect(),
             consulted: vec![false; f.params.len()],
             reuses: vec![false; f.params.len()],
             built: FxHashMap::default(),
@@ -248,6 +253,7 @@ impl<'a> Lowering<'a> {
                 lowering.discard(value);
                 None
             };
+            lowering.set_outs();
             lowering.release_scope(0);
             let value = value.map(|value| lowering.owned(value));
             lowering.terminate(Terminator::Return(value));
@@ -256,6 +262,7 @@ impl<'a> Lowering<'a> {
             name: f.name.clone(),
             params: f.params.len(),
             borrowed: vec![false; f.params.len()],
+            muts: f.params.iter().map(|p| f.locals[p.0].mutable).collect(),
             ret: f.ret,
             prelude: f.prelude,
             quiet: false,
@@ -458,6 +465,76 @@ impl<'a> Lowering<'a> {
         for i in mark..self.guard.len() {
             self.push(Statement::End(self.guard[i]));
         }
+    }
+
+    /// Hands on the final value of each `mut` parameter, just before a return.
+    fn set_outs(&mut self) {
+        for i in 0..self.mut_params.len() {
+            let index = self.mut_params[i];
+            #[cfg(test)]
+            SET_OUT_STEPS.set(SET_OUT_STEPS.get() + 1);
+            let value = self.read(LocalId(index));
+            self.push(Statement::Assign {
+                dest: None,
+                value: Rvalue::SetOut { index, value },
+            });
+        }
+    }
+
+    /// `call` with its `mut` arguments: each one copied in (`read` into its temporary, which the
+    /// call then moves in), the call, the final value of each temporary (`out`), then `back`,
+    /// the store-backs.
+    fn mut_call(
+        &mut self,
+        call: &Expr,
+        muts: &[tir::MutArg],
+        back: &Block,
+        dest: Option<LocalId>,
+    ) -> Lowered {
+        let (ExprKind::Call { args, .. } | ExprKind::DynCall { args, .. }) = &call.kind else {
+            panic!(
+                "the call of a `mut` argument should be a call of a function or through a table"
+            );
+        };
+        for m in muts {
+            for (object, read) in &m.keep {
+                self.locals[object.0].scope = self.here();
+                self.into(read, Some(*object))?;
+            }
+            self.locals[m.temp.0].scope = self.here();
+            let temp = valued(self.locals[m.temp.0].ty).then_some(m.temp);
+            self.into(&m.read, temp)?;
+        }
+        // No temporary joins the scope: no exit comes between a copy-in and its store-back, and a
+        // call in the branch of an `&&` has no block of its own to release in.
+        let value = self.into(call, dest)?;
+        // The temporaries stand in the arguments in the order of `muts`: one pass finds them.
+        let mut rest = muts.iter().peekable();
+        for (index, arg) in args.iter().enumerate() {
+            #[cfg(test)]
+            OUT_STEPS.set(OUT_STEPS.get() + 1);
+            if let Some(m) = rest.next_if(|m| local_of(arg) == Some(m.temp)) {
+                self.push(Statement::Assign {
+                    dest: Some(m.temp),
+                    value: Rvalue::Out { index },
+                });
+            }
+        }
+        assert!(
+            rest.next().is_none(),
+            "each `mut` argument of the call should be its temporary, in order"
+        );
+        self.block(back, None)?;
+        // A store-back that its index test skipped leaves the temporary owned: the lost write. The
+        // kept objects live until here.
+        for m in muts.iter().rev() {
+            for local in once(m.temp).chain(m.keep.iter().rev().map(|k| k.0)) {
+                if self.locals[local.0].counted {
+                    self.push(Statement::ScopeRelease(local));
+                }
+            }
+        }
+        Some(value)
     }
 
     /// Releases `local`, a temporary that owns its value, when there is one.
@@ -746,6 +823,7 @@ impl<'a> Lowering<'a> {
                 iargs,
                 method,
                 args,
+                muts,
             } => {
                 // The receiver is read in place, as `is` reads its operands, and the other
                 // arguments are consumed.
@@ -762,6 +840,7 @@ impl<'a> Lowering<'a> {
                         iargs: *iargs,
                         method: *method,
                         args: operands,
+                        muts: muts.clone(),
                     },
                 );
                 for temp in temps {
@@ -1024,11 +1103,13 @@ impl<'a> Lowering<'a> {
                     None => None,
                 };
                 self.end_guards(0);
+                self.set_outs();
                 self.release_scope(0);
                 self.terminate(Terminator::Return(value));
                 return None;
             }
             ExprKind::Block(block) => return self.block(block, dest),
+            ExprKind::MutCall { call, muts, back } => return self.mut_call(call, muts, back, dest),
         };
         Some(self.assign(e.ty, dest, value))
     }
@@ -1513,7 +1594,8 @@ fn leaves_locals(expr: &Expr) -> bool {
         | ExprKind::Break { .. }
         | ExprKind::Continue { .. }
         | ExprKind::Return(_)
-        | ExprKind::Block(_) => false,
+        | ExprKind::Block(_)
+        | ExprKind::MutCall { .. } => false,
     }
 }
 
@@ -1599,6 +1681,12 @@ thread_local! {
     pub(super) static WALKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many arms of an `if`, an `if let` or a `match` lowering has lowered on this thread.
     pub(super) static ARM_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many parameters `set_outs` has read on this thread, one for each `mut` parameter at
+    /// each return.
+    pub(super) static SET_OUT_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many arguments `mut_call` has compared with a temporary on this thread, to find the
+    /// argument that each `mut` argument stands in.
+    pub(super) static OUT_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many guard-membership records `is_guarded` has read on this thread: one flag per
     /// question about a source local.
     pub(super) static PROBED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -1615,6 +1703,10 @@ thread_local! {
 }
 
 /// `mentions` of `e`'s own node and its children.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one arm per node kind, with no `_` arm, so a new node fails the build here"
+)]
 fn expr_mentions(e: &Expr, found: &mut Mentions) {
     match &e.kind {
         ExprKind::Int(_)
@@ -1711,6 +1803,18 @@ fn expr_mentions(e: &Expr, found: &mut Mentions) {
             }
         }
         ExprKind::Loop(block) | ExprKind::Block(block) => block_mentions(block, found),
+        ExprKind::MutCall { call, muts, back } => {
+            for m in muts {
+                for (local, object) in &m.keep {
+                    found.found.push(local.0);
+                    mentions(object, found);
+                }
+                found.found.push(m.temp.0);
+                mentions(&m.read, found);
+            }
+            mentions(call, found);
+            block_mentions(back, found);
+        }
     }
 }
 

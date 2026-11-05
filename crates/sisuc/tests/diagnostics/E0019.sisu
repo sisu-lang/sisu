@@ -1,8 +1,0 @@
-fn add_one(mut n: i64) -> i64 {
-    n += 1
-    n
-}
-
-fn main() {
-    print(add_one(1))
-}

@@ -39,7 +39,7 @@ The rules:
 
 - A function can call a function that is declared below it.
 - Functions, classes, enums and constants share one set of names. Each name is declared once ([E0034](../diagnostics/E0034.md)).
-- A function cannot take the name of a built-in type, such as `i64`, or `Option`, `Result`, `Some`, `Ok` or `Err` ([E0026](../diagnostics/E0026.md)). It cannot take the name `print`, `eprint`, `panic`, `read_line` or `dbg` ([E0034](../diagnostics/E0034.md)). [Input and output](io.md) tells these functions. The section [Files](errors.md#files) is in development, and it changes this rule.
+- A function cannot take the name of a built-in type, such as `i64`, or `Option`, `Result`, `Some`, `Ok` or `Err` ([E0026](../diagnostics/E0026.md)). It cannot take the name `print`, `eprint`, `panic`, `read_line`, `dbg` or `exchange` ([E0034](../diagnostics/E0034.md)). [Input and output](io.md) tells these functions. The section [Files](errors.md#files) is in development, and it changes this rule.
 - A function cannot be named `_` ([E0080](../diagnostics/E0080.md)).
 - A function cannot be declared in the body of another function.
 - A function that no live code calls builds with a warning ([W0012](../diagnostics/W0012.md)). Live code is `main`, each function, method and constant whose name starts with `_`, and all the code that live code calls or names.
@@ -75,8 +75,8 @@ fn main() {
 
 The rules:
 
-- A parameter cannot change. An assignment to it is an error ([E0001](../diagnostics/E0001.md)), and a parameter cannot be `mut` ([E0019](../diagnostics/E0019.md)).
-- To change the value, copy it into a `let mut` binding. A `let` can shadow a parameter ([Shadowing](statements.md#shadowing)).
+- A parameter cannot change, unless it is `mut` ([`mut` parameters](#mut-parameters)). An assignment to another parameter is an error ([E0001](../diagnostics/E0001.md)).
+- To change the value for the body only, copy it into a `let mut` binding. A `let` can shadow a parameter ([Shadowing](statements.md#shadowing)).
 - Two parameters of one function cannot have the same name ([E0039](../diagnostics/E0039.md)).
 - A parameter of live code that the body never reads builds with a warning ([W0014](../diagnostics/W0014.md)). A parameter named `_`, or with a name that starts with `_`, gets no warning.
 - As a binding cannot, a parameter cannot take the name `Option`, `Result`, `Some`, `Ok`, `Err` or the name of an enum ([Shadowing](statements.md#shadowing)).
@@ -126,6 +126,157 @@ fn first(x: i64, _: i64) -> i64 {
 
 fn main() {
     print(first(1, 2))                 // 1
+}
+```
+
+## mut parameters
+
+A `mut` parameter lets the function change a place of its caller: a variable, a field or an element. The call writes `mut` before that place too. When the call ends, the place holds the last value of the parameter.
+
+```sisu
+fn set(mut cells: [i64], i: i64) {
+    cells[i] = 9
+}
+
+fn main() {
+    let mut xs = [1, 2]
+    set(mut xs, 0)
+    print(xs)                    // [9, 2]
+}
+```
+
+In the body, a `mut` parameter is a variable. The body can read it, assign it, write one of its elements or fields, and pass it on as a `mut` argument or as a plain argument. `return cells`, or `cells` as the last expression, gives the value to the caller, and the place still gets the same value.
+
+The place of a `mut` argument can be any of these:
+
+- a `let mut` variable, or a `mut` parameter
+- a `mut` field of an object, such as `b.cells`
+- an element of a place, such as `grid[i]` or `b.rows[i][j]`
+
+```sisu
+class Board {
+    mut cells: [i64]
+}
+
+fn set(mut cells: [i64], i: i64) {
+    cells[i] = 9
+}
+
+fn main() {
+    let b = Board(cells: [1, 2])
+    set(mut b.cells, 1)
+    print(b.cells)               // [1, 9]
+    let mut grid = [[1], [2]]
+    set(mut grid[1], 0)
+    print(grid)                  // [[1], [9]]
+}
+```
+
+The rules:
+
+- A `mut` parameter needs `mut` before its argument. A call that leaves it out is an error ([E0166](../diagnostics/E0166.md)). So is `mut` before an argument for a parameter that is not `mut` ([E0167](../diagnostics/E0167.md)). This holds for each call: functions, methods, built-in functions, constructors and enum variants.
+- `mut` before an expression that is not an argument, such as `let y = mut x`, is an error ([E0168](../diagnostics/E0168.md)).
+- The argument must be a place that an assignment can write. A `let` binding, a field without `mut`, a call, a literal and a range index are not places ([E0169](../diagnostics/E0169.md)).
+- The place must have exactly the type of the parameter, and no conversion applies. An `i64` place is not an `i64?`, because the function could store `None` in it ([E0170](../diagnostics/E0170.md)).
+- A path through `?.`, such as `b?.cells`, reads as an optional and writes as the type of the field. No parameter type fits both, so it is an error too ([E0170](../diagnostics/E0170.md)).
+- Two `mut` arguments of one call cannot name the same place, or one place that holds the other, when the compiler can see it ([E0171](../diagnostics/E0171.md)). It sees the same variable with the same fields, and indexes that are the same literal or constant, or the same `let` binding or plain parameter. An index that is a `let mut` variable is never an error, because another argument can change it. `swap(mut xs[i], mut xs[j])` is valid, because `i` and `j` can differ.
+- When two places are one at run time, the call is valid, and the last store-back wins. This happens when two references name one object (`mut a.cells, mut b.cells` where `a` and `b` are the same object), and when two indexes are equal.
+- A method can have `mut` parameters. `self` is never `mut` ([E0018](../diagnostics/E0018.md)): a method changes the `mut` fields of its receiver through `self`.
+- A generic function can have `mut` parameters, and so can an interface requirement. A class that conforms to the interface must write `mut` in the same places ([E0152](../diagnostics/E0152.md)).
+- A `mut` parameter that the function never changes builds with a warning ([W0002](../diagnostics/W0002.md)), because its `mut` changes nothing for the caller.
+
+```sisu
+fn bump(mut n: i64) {
+    n += 1
+}
+
+fn main() {
+    let n = 1
+    bump(n)                      // error[E0166]
+    bump(mut n)                  // error[E0169]
+}
+```
+
+### What a call does
+
+A call with `mut` arguments runs in this order:
+
+1. It calculates the arguments from left to right. For a `mut` argument, it calculates the root of the place when the root is not a binding, such as `mk()` in `mut mk().cells`. It also calculates each index along the place, once, and keeps the values. It reads no object and no element of the place yet.
+2. It copies in each `mut` argument, in order. It follows the place from its root, reads each object along it, keeps each of these objects until the store-back, and reads the value of the place. An index that is out of range stops the program with a panic, as `xs[i]` does.
+3. It runs the function. Code that reads the place during the call sees the value from step 2.
+4. It stores back the last value of each `mut` parameter, in order. Each store-back writes the value into the place, on the objects that step 2 kept, with the indexes from step 1. It runs on each way out of the function, `return` included. When two places are one, the last store-back wins.
+
+So the other arguments run before the copy-in, and a call in one of them can change the place. The copy-in then reads the objects that these calls left: when one of them replaces an object along the place, the function gets the value from the new object.
+
+```sisu
+fn g(mut xs: [i64]) -> i64 {
+    xs[0] = 5
+    return 0
+}
+
+fn f(mut xs: [i64], n: i64) {
+    xs[1] = 6 + n
+}
+
+fn main() {
+    let mut xs = [0, 0]
+    f(mut xs, g(mut xs))
+    print(xs)                    // [5, 6]
+}
+```
+
+A class object is shared. A write by other code during the call to the place that a `mut` argument names is lost: the store-back replaces it.
+
+```sisu
+class Board {
+    mut cells: [i64]
+}
+
+fn grow(mut cells: [i64], b: Board) {
+    b.cells = [9]
+    cells[0] = 1
+}
+
+fn main() {
+    let b = Board(cells: [0, 0])
+    grow(mut b.cells, b)
+    print(b.cells)               // [1, 0]
+}
+```
+
+When the function removes the element that the place names, the store-back has no element to write. It drops the value, and the program goes on.
+
+```sisu
+class Board {
+    mut cells: [i64]
+}
+
+fn set(mut n: i64, b: Board) {
+    b.cells = []
+    n = 9
+}
+
+fn main() {
+    let b = Board(cells: [0])
+    set(mut b.cells[0], b)
+    print(b.cells)               // []
+}
+```
+
+### exchange
+
+`exchange(mut place, with)` stores `with` in the place, and gives the value that the place held. It is a function of the prelude, so a program cannot declare a top-level item with its name ([E0034](../diagnostics/E0034.md)).
+
+```sisu
+class Board {
+    mut cells: [i64]
+}
+
+fn main() {
+    let b = Board(cells: [1])
+    let old = exchange(mut b.cells, [])
+    print(old)                   // [1]
+    print(b.cells)               // []
 }
 ```
 

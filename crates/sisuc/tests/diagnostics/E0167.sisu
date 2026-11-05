@@ -1,0 +1,13 @@
+// GIVEN `plain(mut xs)`, where the parameter of `plain` is not `mut`
+// WHEN `sisu check` runs on it
+// THEN it reports E0167 on the `mut`, with the secondary label on the parameter
+// AND the safe fix removes `mut `
+fn plain(xs: [i64]) {
+    print(xs)
+}
+
+fn main() {
+    let xs = [1, 2]
+    plain(mut xs)
+    print(xs)
+}

@@ -1,0 +1,45 @@
+// GIVEN places of one, two and three steps: an index that is an element read (`xs[ys[0]]`), a
+// field between two indexes (`g.items[0].cells[1][0]`), a class element in the middle, and a call
+// that `?.` skips
+// WHEN `main` passes them `mut`, and one callee shrinks the array that the place indexes
+// THEN each store-back lands in its place, the store-back of the shrunk array is lost, and the
+// skipped call stores nothing
+// AND Valgrind and `--rc-checks` find every array of the in-range test released once
+class Item {
+    mut cells: [[i64]]
+}
+
+class Grid {
+    mut items: [Item]
+}
+
+class Probe {
+    fn run(self, mut n: i64) {
+        n = 9
+    }
+}
+
+fn bump(mut n: i64) {
+    n += 1
+}
+
+fn shrink(mut n: i64, g: Grid) {
+    g.items[0].cells = [[7]]
+    n = 5
+}
+
+fn main() {
+    let g = Grid(items: [Item(cells: [[0, 0], [0, 0]]), Item(cells: [[0]])])
+    let mut xs = [10, 20, 30]
+    let ys = [2]
+    bump(mut xs[ys[0]])
+    bump(mut xs[0])
+    bump(mut g.items[0].cells[1][0])
+    bump(mut g.items[1].cells[0][0])
+    shrink(mut g.items[0].cells[1][0], g)
+    let p: Probe? = if xs[0] < 0 { Probe() } else { None }
+    p?.run(mut xs[1])
+    print(xs)
+    print(g.items[0].cells)
+    print(g.items[1].cells)
+}

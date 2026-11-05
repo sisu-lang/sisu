@@ -1,0 +1,14 @@
+// GIVEN `fn f(mut x: i64, n: i64) { x += n }` and `let mut x = 1`
+// WHEN `main` calls `f(mut x, ({ x = 5; 2 }))` and prints `x`
+// THEN it prints "7": the other arguments run before the copy-in, so `f` adds 2 to the 5 that
+// the block stored. A copy of `x` before the call, `({ let mut w = x; f(mut w, ...); x = w })`,
+// would give 3, so the program fuzzer copies only where no statement runs in another argument
+fn f(mut x: i64, n: i64) {
+    x += n
+}
+
+fn main() {
+    let mut x = 1
+    f(mut x, ({ x = 5; 2 }))
+    print(x)
+}

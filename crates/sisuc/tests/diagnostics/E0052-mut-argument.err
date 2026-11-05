@@ -1,0 +1,8 @@
+error[E0052]: cannot find function `ste`
+ --> E0052-mut-argument.sisu:9:5
+  |
+9 |     ste(mut n)
+  |     ^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0052

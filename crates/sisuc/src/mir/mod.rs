@@ -24,6 +24,13 @@
 //! the concrete method's own flags (ADR 0029). A conversion to `any` (`ToAny`) consumes its
 //! operand. Each may run any written method, so each is a clobber (`may_call_written`).
 //!
+//! A `mut` parameter (ADR 0043) has an out slot: the caller passes one more pointer for it, and
+//! the function stores the parameter's final value there with `SetOut`, before each `return`.
+//! A call with a `mut` argument moves the argument's value into a temporary, calls, reads each
+//! final value with `Out`, and stores it back. A `mut` parameter is owned, never borrowed.
+//! A `DynCall` flags its `mut` arguments (`muts`), as the callee is not known: its table entry has
+//! the out pointers after its value parameters and passes them on to the method.
+//!
 //! The reuse pass (`reuse.rs`) then gives each boxed field of a construction a token of its
 //! enum that every path into it holds, so the box is built into the token's block.
 //!
@@ -94,6 +101,10 @@ pub(crate) struct Function {
     /// Per parameter, whether it is borrowed: the caller keeps its reference, and the function
     /// reads the value in place and never consumes it. An uncounted parameter is never borrowed.
     pub(crate) borrowed: Vec<bool>,
+    /// Per parameter, whether it is `mut`: the caller passes one more pointer for it, after the
+    /// value parameters, and the function stores the parameter's final value there (`SetOut`).
+    /// A `mut` parameter is never borrowed.
+    pub(crate) muts: Vec<bool>,
     pub(crate) ret: Type,
     /// Whether the prelude writes the function. Codegen gives it two hidden last parameters, the
     /// location of its caller, which its panics report. They are no locals, so no pass sees them.
@@ -318,12 +329,14 @@ pub(crate) enum Rvalue {
     /// requirement `method` of `interface`, with `iargs` as its type arguments (the receiver's
     /// type first). Its convention is fixed, not inferred: the receiver is read in place, and the
     /// callee holds no reference to it that the caller keeps; every other argument is owned, so
-    /// the table's entry adapts to the concrete method's flags.
+    /// the table's entry adapts to the concrete method's flags. `muts` has one flag for each of
+    /// `args`: whether it is a `mut` argument, which the call gives an out slot after its values.
     DynCall {
         interface: tir::InterfaceId,
         iargs: tir::TypeArgs,
         method: u32,
         args: Vec<Operand>,
+        muts: Vec<bool>,
     },
     Concat {
         lhs: Operand,
@@ -336,6 +349,18 @@ pub(crate) enum Rvalue {
         calls: bool,
     },
     ReadLine,
+    /// The final value of argument `index` of the nearest call before it in the same block: the
+    /// callee stored it with `SetOut`. No call stands between them; a `release` or an `end` may
+    /// (the certifier checks this). The destination takes ownership of the value.
+    Out {
+        index: usize,
+    },
+    /// The final value of this function's `mut` parameter `index`, which `value` consumes. It has
+    /// no destination: the value goes to the caller's out slot.
+    SetOut {
+        index: usize,
+        value: Operand,
+    },
     Chars(Operand),
     Bytes(Operand),
     Words(Operand),
@@ -430,6 +455,8 @@ impl Rvalue {
             | Rvalue::Wrap(_)
             | Rvalue::Concat { .. }
             | Rvalue::ReadLine
+            | Rvalue::Out { .. }
+            | Rvalue::SetOut { .. }
             | Rvalue::Chars(_)
             | Rvalue::Bytes(_)
             | Rvalue::Words(_)

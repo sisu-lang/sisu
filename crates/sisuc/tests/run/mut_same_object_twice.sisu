@@ -1,0 +1,19 @@
+// GIVEN `fn two(mut a: [i64], mut b: [i64]) { a[0] = 1; b[0] = 2 }`, `let b1 = Board(cells: [0])` and
+// `let c = b1`
+// WHEN `main` calls `two(mut b1.cells, mut c.cells)` and prints `b1.cells`
+// THEN it prints "[2]": two places that are one, and the last store-back wins
+class Board {
+    mut cells: [i64]
+}
+
+fn two(mut a: [i64], mut b: [i64]) {
+    a[0] = 1
+    b[0] = 2
+}
+
+fn main() {
+    let b1 = Board(cells: [0])
+    let c = b1
+    two(mut b1.cells, mut c.cells)
+    print(b1.cells)
+}

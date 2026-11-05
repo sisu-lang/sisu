@@ -1,0 +1,14 @@
+// GIVEN `rw<i64, i64>(x, 5)`, where `rw` has one type parameter, and `x` is a `let mut` local
+// WHEN `sisu check` runs on it
+// THEN it reports E0137 for the type arguments, then E0166 on `x`
+// AND the E0166 has no help: the call failed before its arguments were checked
+fn rw<T>(mut x: T, v: T) {
+    x = v
+}
+
+fn main() {
+    let mut x = 1
+    rw<i64, i64>(x, 5)
+    x = 2
+    print(x)
+}

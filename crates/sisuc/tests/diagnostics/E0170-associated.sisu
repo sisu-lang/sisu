@@ -1,0 +1,25 @@
+// GIVEN `set(C(n: 2), mut x)`, where `x` is a `string` and the parameter has the type `T.Item`
+// WHEN `sisu check` runs on it
+// THEN it reports E0170 on the argument: `T.Item` is `i64` for `C`
+interface I {
+    type Item
+    fn get(self) -> Self.Item
+}
+
+class C: I {
+    n: i64
+    type Item = i64
+    fn get(self) -> i64 {
+        self.n
+    }
+}
+
+fn set<T: I>(c: T, mut x: T.Item) {
+    x = c.get()
+}
+
+fn main() {
+    let mut x = "wrong"
+    set(C(n: 2), mut x)
+    print(x)
+}

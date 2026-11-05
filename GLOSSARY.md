@@ -7,18 +7,42 @@ the terms its spec, compiler and docs use.
 
 **Binding**:
 A name introduced by `let`, `let mut` or a function parameter.
-_Avoid_: variable (for a `let` or a parameter)
+_Avoid_: variable (for a `let` or a plain parameter)
 
 **Variable**:
-A binding declared with `let mut`, the only kind that can be reassigned.
+A binding declared with `let mut`, or a `mut` parameter: the kinds that can
+be reassigned.
 _Avoid_: mutable binding, `var` (the keyword before milestone 4)
 
 **Place**:
-An expression that names storage and can stand on the left of `=`: a
+An expression that names storage and can stand on the left of `=`. It is a
 variable, a `mut` field, or an element of an array held in a place, such as
-`grid[i][j]`. In mir, a place can also name a payload field under a known
-variant, which only `match` reads.
+`grid[i][j]`. A `mut` argument is any place except a path through `?.`: if
+`x = v` compiles and `x` has no `?.`, `f(mut x)` does. A path through `?.` is a
+place, but it is not a `mut` argument (the error E0170). In mir, a place can
+also name a payload field under a known variant, which only `match` reads.
 _Avoid_: lvalue
+
+**`mut` parameter**:
+A parameter written `mut name: T`. The function can change it, and the change
+goes back to the caller's place. Inside the function it is a variable. A
+`mut` parameter lives for one call: a closure cannot share it, and the
+function cannot return it as a place.
+
+**`mut` argument**:
+The argument for a `mut` parameter, written `mut place`, as in
+`set(mut b.cells, i)`. The `mut` is required at every call, and the argument
+must be a place of exactly the parameter's type.
+
+**Copy-in/copy-out**:
+The meaning of a `mut` argument. Before the call, the value of the place goes
+to the function. After the call, the final value of the parameter is stored
+back into the place.
+_Avoid_: pass by reference, `inout` (Swift's keyword)
+
+**Store-back**:
+The write after a call that puts the final value of a `mut` parameter into the
+place of its `mut` argument. It runs on every return path of the function.
 
 **Block value**:
 The value of a block's last statement when that statement is an expression;
@@ -230,9 +254,11 @@ whose first parameter is `self`, called as `receiver.name(args)`.
 _Avoid_: member function
 
 **Mutating method**:
-A method of a record or an array that takes `mut self`, such as `push`, and
+A method of a struct or an array that takes `mut self`, such as `push`, and
 changes the value in the place it was called on. That place must be able to
-change.
+change. Its receiver is copied in and out like a `mut` argument. This is for
+milestone 9: in step 1 of ADR 0043, a built-in receiver call such as
+`xs.push(y)` stays as it was.
 _Avoid_: `inout`, `mutating`
 
 **Receiver**:
@@ -627,6 +653,15 @@ The block of a box that a `match` took apart while it held the box's only
 reference. The arm builds a new box of the same enum into it, or frees it.
 _Avoid_: reset, hole
 
+**Out slot**:
+The place where a function leaves the final value of a `mut` parameter. The
+caller passes a pointer to it for each `mut` parameter, after the values of
+the call. The function stores the final value there before each return, and
+the caller reads it back after the call, then stores it into the `mut`
+argument's place. The slot lives in the caller's frame, made once at the start
+of the caller, so a call in a loop does not grow the stack.
+_Avoid_: out parameter, return slot
+
 **Borrowed read**:
 A read of a local that uses its value without a reference of its own,
 because nothing can release or replace the local before the use ends: the
@@ -648,6 +683,25 @@ holds its reference for the whole call, and neither side counts it. The
 compiler decides this for each parameter; one that the function stores,
 returns or hands on to a function that keeps it is owned instead.
 _Avoid_: reference parameter, `&` parameter
+
+**Lost write**:
+A write to the place of a `mut` argument by other code during the call, which
+does not survive the store-back. The store-back replaces it. A store-back that
+is dropped, because its array element is gone, is also a lost write. This is
+defined behavior. Step 2 of the `mut` parameters work adds a warning where the
+compiler can see one.
+
+**Take**:
+The speed-up for a `mut` argument that is a class field or an array element.
+The compiler moves the value out of the place for the call, instead of sharing
+it. It does this only when nothing else reaches the place during the call. The
+first write of the function then does not copy. No program spells a take.
+_Avoid_: move out (that is `move x`), in-place call
+
+**Reach**:
+Code reaches a place when it can read or write the place by another path than
+the `mut` argument. An example is a shared class object. A take needs that no
+code of the call reaches the place.
 
 **Symbol**:
 A name as the parser and checker hold it: a small integer that stands for the

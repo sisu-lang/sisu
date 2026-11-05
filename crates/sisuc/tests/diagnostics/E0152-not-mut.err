@@ -1,0 +1,13 @@
+error[E0152]: `fill` does not match `Filler`'s requirement
+  --> E0152-not-mut.sisu:12:8
+   |
+ 6 |     fn fill(self, xs: [i64])
+   |                   -- the requirement's parameter `xs` is not `mut`
+...
+12 |     fn fill(self, mut xs: [i64]) {
+   |        ^^^^ found `fn fill(self, mut xs: [i64])`
+   |
+   = help: `Filler` requires `fn fill(self, xs: [i64])`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0152

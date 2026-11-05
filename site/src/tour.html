@@ -128,10 +128,14 @@ A tour of the Sisu language as it works today, one small program at a time.
 {{text programs/run/arrays.sisu}}</pre></figure>
       <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
 {{text programs/run/arrays.out}}</pre></figure>
-      <p>A function that changes an array returns the new one. Shared data that changes in place belongs in a class.</p>
+      <p>A function cannot change an array that it gets, but a <code>mut</code> parameter lets it change the array of its caller. The call writes <code>mut</code> too, so a reader sees which arguments change. A function can also return a new array. Shared data that changes in place belongs in a class.</p>
+      <figure class="code"><figcaption class="cap">mut_param.sisu</figcaption><pre data-lang="sisu">
+{{text programs/run/mut_param.sisu}}</pre></figure>
+      <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
+{{text programs/run/mut_param.out}}</pre></figure>
       <p>An array grows with <code>push</code>. After <code>let mut xs = [1, 2]</code>, <code>xs.push(3)</code> makes <code>xs</code> hold three elements. Another holder of the old array keeps its two.</p>
       <p>A range index takes part of an array: <code>xs[1..3]</code> is the elements at 1 and 2, <code>xs[2..]</code> runs to the end, and <code>xs[1..=3]</code> includes the element at 3. The result is an ordinary array that shares the elements of <code>xs</code>, so the index copies nothing. A write to either array copies first, as for any shared array. A range that is out of bounds stops the program. <code>xs.get(i)</code>, <code>xs.first()</code> and <code>xs.last()</code> give an optional instead.</p>
-      <!-- source: docs/adr/0007-arrays-are-values.md, docs/adr/0042-a-slice-shares-its-block.md, docs/roadmap.md ("What works today": copy-on-write arrays, slices), crates/sisuc/tests/run/copies.sisu, docs/reference/arrays.md (Methods, Range indexes) -->
+      <!-- source: docs/adr/0007-arrays-are-values.md, docs/adr/0042-a-slice-shares-its-block.md, docs/roadmap.md ("What works today": copy-on-write arrays, slices), crates/sisuc/tests/run/copies.sisu, docs/adr/0043-mut-parameters-copy-in-and-out.md, crates/sisuc/tests/run/mut_local.sisu, docs/reference/arrays.md (Methods, Range indexes), docs/reference/functions.md (mut parameters) -->
 
       <h2 id="overflow">Integers panic on overflow</h2>
       <p>Integer arithmetic that overflows stops the program with a panic that names the line. A wrong answer is never silent. Division by zero panics the same way, and every panic exits with status 101.</p>

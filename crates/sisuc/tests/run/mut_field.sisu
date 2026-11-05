@@ -1,0 +1,17 @@
+// GIVEN `fn set(mut xs: [i64]) { xs[0] = 9 }` and `let b = Board(cells: [1, 2])`, with
+// `class Board { mut cells: [i64] }`
+// WHEN `main` calls `set(mut b.cells)` and prints `b.cells`
+// THEN it prints "[9, 2]"
+class Board {
+    mut cells: [i64]
+}
+
+fn set(mut xs: [i64]) {
+    xs[0] = 9
+}
+
+fn main() {
+    let b = Board(cells: [1, 2])
+    set(mut b.cells)
+    print(b.cells)
+}

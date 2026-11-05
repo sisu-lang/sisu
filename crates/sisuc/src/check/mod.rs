@@ -18,6 +18,7 @@ mod extend;
 mod generic;
 mod interface;
 mod member;
+mod mut_args;
 mod number;
 mod operator;
 mod optional;
@@ -165,6 +166,10 @@ struct Signature {
     bounds: Vec<Vec<Bound>>,
     /// Without a method's `self`.
     params: Vec<Option<Type>>,
+    /// Whether each of `params` is `mut`.
+    muts: Vec<bool>,
+    /// The name of each of `params`.
+    param_names: Vec<ast::Ident>,
     ret: Option<Type>,
     /// The interface of each `any` type that the parameter and return types write, with the
     /// span as written: the function records them as uses.
@@ -287,6 +292,8 @@ struct Binding {
     loop_named: bool,
     /// Whether an expression reads the binding's value.
     read: bool,
+    /// Whether the binding is a `mut` parameter, whose store-back reads it.
+    mut_param: bool,
     /// Where each later alternative of an or-pattern binds the name again.
     also: Vec<Span>,
     /// The type of the annotation as written, when it names an alias.
@@ -554,6 +561,9 @@ struct Checker<'src> {
     source: Source<'src>,
     /// The first function of each name, and every broken one.
     function_ids: FxHashMap<Symbol, Declared<tir::FuncId>>,
+    /// The names of the prelude's free functions, which no item of the user's may take
+    /// (`collect_names`).
+    prelude_functions: FxHashSet<Symbol>,
     /// Indexed by `FuncId`, so a duplicate function has a signature of its own.
     signatures: Vec<Signature>,
     /// Indexed by `ClassId`, so a duplicate class has fields and methods of its own.
@@ -568,6 +578,9 @@ struct Checker<'src> {
     interfaces: Vec<InterfaceInfo>,
     /// For each method that meets a requirement, its interfaces: a call of it uses them.
     meets: FxHashMap<tir::FuncId, Vec<tir::InterfaceId>>,
+    /// The methods that a conformance names for a requirement, also those that do not meet it. A
+    /// `mut` parameter of one is the requirement's, or E0152 reports it: W0002 leaves it alone.
+    named_for_requirement: FxHashSet<tir::FuncId>,
     /// For each method name, the interfaces that declare a requirement of it.
     declaring: FxHashMap<Symbol, Vec<tir::InterfaceId>>,
     /// For each name of an associated type, the interfaces that declare one of it, with its place
@@ -1261,6 +1274,7 @@ impl<'src> Checker<'src> {
                 newlines: &program.newlines,
             },
             function_ids: FxHashMap::default(),
+            prelude_functions: FxHashSet::default(),
             signatures: Vec::new(),
             classes: Vec::new(),
             class_ids: FxHashMap::default(),
@@ -1268,6 +1282,7 @@ impl<'src> Checker<'src> {
             enum_ids: FxHashMap::default(),
             interfaces: Vec::new(),
             meets: FxHashMap::default(),
+            named_for_requirement: FxHashSet::default(),
             declaring: FxHashMap::default(),
             declaring_assoc: FxHashMap::default(),
             assoc_at: FxHashMap::default(),
@@ -1437,6 +1452,7 @@ impl Checker<'_> {
     /// enum's methods at its place.
     /// The first `user_items` of `items` are the user's: `self.prelude` is where the rest start.
     fn collect_names(&mut self, items: &[&ast::Item], user_items: usize, broken: &[ast::Broken]) {
+        self.prelude_functions = prelude_function_names(items[user_items..].iter().copied());
         let mut first = FxHashMap::default();
         let mut next_function = 0;
         // Source order among the constants.
@@ -1684,7 +1700,9 @@ impl Checker<'_> {
     /// Whether `name` is a prelude function's, which no top-level item of `kind` may take;
     /// reports it when it is.
     fn prelude_taken(&mut self, kind: Definition, name: &ast::Ident) -> bool {
-        let taken = PRELUDE.contains(&name.name.as_str());
+        // A function the prelude's code writes is taken too, but not in the prelude's own code.
+        let written = !name.span.in_prelude() && self.prelude_functions.contains(&name.name);
+        let taken = written || PRELUDE.contains(&name.name.as_str());
         if taken {
             self.report(defined_twice(kind, name, Earlier::BuiltIn));
         }
@@ -1701,8 +1719,10 @@ impl Checker<'_> {
         name: &ast::Ident,
     ) -> bool {
         if let Some(&(span, first_kind)) = first.get(&name.name) {
-            // A user's item took the prelude's name first, and its `BuiltInName` has said so. A
-            // language interface still takes its name, which only the prelude's code reads.
+            // A user's item took the prelude's name first. For a type or a constructor name,
+            // `BuiltInName` has said so. A language interface still takes its name, which only
+            // the prelude's code reads. A prelude function never gets here: `first_callable`
+            // keeps a user item of its name out of `first`.
             if name.span.in_prelude() && !span.in_prelude() {
                 return is_language_interface(name.name.as_str());
             }
@@ -1883,6 +1903,8 @@ impl Checker<'_> {
             own: f.type_params.len(),
             bounds,
             params,
+            muts: f.params.iter().map(|p| p.mutable).collect(),
+            param_names: f.params.iter().map(|p| p.name.clone()).collect(),
             ret,
             anys,
             param_shown,
@@ -2240,12 +2262,13 @@ impl Checker<'_> {
             });
             let params = receiver
                 .into_iter()
-                .chain(
-                    f.params
-                        .iter()
-                        .zip(param_types)
-                        .map(|(p, ty)| c.declare(&p.name, ty, BindingKind::Param, None)),
-                )
+                .chain(f.params.iter().zip(param_types).map(|(p, ty)| {
+                    if p.mutable {
+                        c.declare_mut_param(&p.name, ty)
+                    } else {
+                        c.declare(&p.name, ty, BindingKind::Param, None)
+                    }
+                }))
                 .collect();
             // A `unit` function discards its body's value, so it expects none.
             let expected = match ret {
@@ -2662,6 +2685,19 @@ fn wrap_block(block: &mut CheckedBlock, ty: Type) {
         }
         Err(poisoned) => poisoned.ty = Some(ty),
     }
+}
+
+/// The names of the free functions among the prelude's `items`.
+pub(crate) fn prelude_function_names<'a>(
+    items: impl IntoIterator<Item = &'a ast::Item>,
+) -> FxHashSet<Symbol> {
+    items
+        .into_iter()
+        .filter_map(|item| match item {
+            ast::Item::Function(f) => Some(f.name.name),
+            _ => None,
+        })
+        .collect()
 }
 
 /// `kind` is the second definition's; `first` is the earlier one.

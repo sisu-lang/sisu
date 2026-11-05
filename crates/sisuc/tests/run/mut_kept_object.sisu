@@ -1,0 +1,26 @@
+// GIVEN `class Inner { mut cells: [i64] }`, `class Holder { mut inner: Inner }` and
+// `fn f(mut cells: [i64], o: Holder) { o.inner = Inner(cells: [0]); cells[0] = 7 }`
+// AND `let o = Holder(inner: Inner(cells: [1]))` and `let old = o.inner`
+// WHEN `main` calls `f(mut o.inner.cells, o)` and prints `old.cells`, then `o.inner.cells`
+// THEN it prints "[7]", then "[0]": the store-back goes to the `Inner` that `o.inner` held at the
+// copy-in
+class Inner {
+    mut cells: [i64]
+}
+
+class Holder {
+    mut inner: Inner
+}
+
+fn f(mut cells: [i64], o: Holder) {
+    o.inner = Inner(cells: [0])
+    cells[0] = 7
+}
+
+fn main() {
+    let o = Holder(inner: Inner(cells: [1]))
+    let old = o.inner
+    f(mut o.inner.cells, o)
+    print(old.cells)
+    print(o.inner.cells)
+}

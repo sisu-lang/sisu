@@ -1,0 +1,33 @@
+// GIVEN `fn set(mut xs: [i64], i: i64) { xs[0] = i }`, `class Board { mut cells: [i64] }` and
+// `fn put(mut n: i64)` that adds 1
+// WHEN `main` calls `set(mut b.cells, i)` and `put(mut g.rows[1][0])` in a loop of 1000
+// iterations, then prints both
+// THEN it prints "[999, 0]", then "[[0, 0], [1000, 0]]"
+// AND Valgrind and `--rc-checks` find each iteration's kept objects and values released once, and
+// the out slots do not grow the stack
+class Board {
+    mut cells: [i64]
+}
+
+class Grid {
+    mut rows: [[i64]]
+}
+
+fn set(mut xs: [i64], i: i64) {
+    xs[0] = i
+}
+
+fn put(mut n: i64) {
+    n += 1
+}
+
+fn main() {
+    let b = Board(cells: [0, 0])
+    let g = Grid(rows: [[0, 0], [0, 0]])
+    for i in 0..1000 {
+        set(mut b.cells, i)
+        put(mut g.rows[1][0])
+    }
+    print(b.cells)
+    print(g.rows)
+}

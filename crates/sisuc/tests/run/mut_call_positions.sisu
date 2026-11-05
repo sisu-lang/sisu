@@ -1,0 +1,59 @@
+// GIVEN `step(mut xs)`, a function that pushes onto its `mut` parameter and returns its length,
+// and `stepn(mut n)` that adds 1 to a `mut` integer
+// WHEN `main` calls them in a `while` condition, in the right side of `&&` and `||`, in the
+// condition of an `if` and an `else if`, in the scrutinee of a `match`, and in a `loop` and its
+// `break` value
+// THEN each call runs once where the program reaches it, and a call that `&&` or `||` skips does
+// no copy-in and no store-back
+// AND Valgrind and `--rc-checks` find every array released once
+fn step(mut xs: [i64]) -> i64 {
+    xs.push(xs.len())
+    xs.len()
+}
+
+fn stepn(mut n: i64) -> bool {
+    n += 1
+    n < 5
+}
+
+fn main() {
+    let mut xs: [i64] = []
+    while step(mut xs) < 4 {
+    }
+    print(xs)
+    let mut n = 0
+    let mut hits = 0
+    while stepn(mut n) {
+        hits += 1
+    }
+    print("{n} {hits}")
+    let mut ys: [i64] = []
+    let flag = false
+    if flag && step(mut ys) > 0 {
+        print("no")
+    }
+    print(ys)
+    if !flag || step(mut ys) > 0 {
+        print("short")
+    }
+    print(ys)
+    if step(mut ys) == 1 {
+        print("one")
+    } else if step(mut ys) == 2 {
+        print("two")
+    }
+    print(ys)
+    let v = match step(mut ys) {
+        3 => "three"
+        _ => "other"
+    }
+    print(v)
+    print(ys)
+    let r = loop {
+        if step(mut ys) > 6 {
+            break step(mut ys)
+        }
+    }
+    print(r)
+    print(ys)
+}

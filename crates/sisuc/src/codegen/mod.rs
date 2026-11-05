@@ -158,6 +158,8 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
             enums: Vec::new(),
             functions: Vec::new(),
             slots: Vec::new(),
+            outs: Vec::new(),
+            last_outs: RefCell::new(Vec::new()),
             flagged: Vec::new(),
             types: Vec::new(),
             caller: Cell::new(None),
@@ -420,6 +422,12 @@ struct Codegen<'ctx, 'src> {
     /// The current function's locals, indexed by `LocalId`: each one's `alloca` and its LLVM
     /// type, `None` for `unit`.
     slots: Vec<Option<(PointerValue<'ctx>, BasicTypeEnum<'ctx>)>>,
+    /// The out pointers of the current function, indexed by parameter: `Some` for a `mut`
+    /// parameter, whose final value `SetOut` stores there.
+    outs: Vec<Option<PointerValue<'ctx>>>,
+    /// The out slots of the last call that passed any, indexed by the callee's parameter: `Some`
+    /// for a `mut` parameter. `Out` loads from them. Each slot is an `alloca` in the entry block.
+    last_outs: RefCell<Vec<Option<PointerValue<'ctx>>>>,
     /// The current function's flagged locals, indexed by `LocalId`: a `Move` of one leaves the
     /// zero value in its slot (every local is flagged under the RC checks, which test it).
     flagged: Vec<bool>,
@@ -517,6 +525,54 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.store(field, arg);
         }
         object
+    }
+
+    /// The out pointers of `function`, indexed by parameter: the parameters after its first
+    /// `values` ones (`out_param_types`) go to the `mut` parameters of `muts`.
+    fn out_pointers(
+        function: FunctionValue<'ctx>,
+        values: usize,
+        muts: &[bool],
+    ) -> Vec<Option<PointerValue<'ctx>>> {
+        let mut pointers = function.get_param_iter().skip(values);
+        (muts.iter())
+            .map(|&m| {
+                m.then(|| {
+                    pointers
+                        .next()
+                        .expect("a `mut` parameter should have an out pointer")
+                        .into_pointer_value()
+                })
+            })
+            .collect()
+    }
+
+    /// The out slots of a call whose parameters `muts` flags: one `alloca` in the entry block for
+    /// each `mut` parameter, indexed by parameter, of the type `ty` gives. Their pointers go onto
+    /// `args` after the value arguments and before the location of a prelude callee
+    /// (`out_param_types`).
+    fn push_out_slots(
+        &self,
+        muts: &[bool],
+        ty: impl Fn(usize) -> Type,
+        args: &mut Vec<BasicMetadataValueEnum<'ctx>>,
+    ) -> Vec<Option<PointerValue<'ctx>>> {
+        let slots: Vec<_> = (muts.iter().enumerate())
+            .map(|(index, &m)| {
+                m.then(|| {
+                    let ty = (self.llvm_type(ty(index)))
+                        .expect("a `mut` parameter should have a value type");
+                    self.entry_alloca(ty, "out")
+                })
+            })
+            .collect();
+        args.extend(
+            slots
+                .iter()
+                .flatten()
+                .map(|&slot| BasicMetadataValueEnum::from(slot)),
+        );
+        slots
     }
 
     /// `Call`: `func` applied to the evaluated `args`; `None` for a `unit` result. The caller
@@ -631,6 +687,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             .iter()
             .flat_map(|p| self.param_types(p.ty))
             .collect();
+        params.extend(self.out_param_types(&f.muts));
         // A prelude function takes its caller's location: a pointer and a length.
         if f.prelude {
             params.push(ptr_type.into());
@@ -697,6 +754,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             .collect();
         self.builder.position_at_end(self.blocks[0]);
         self.types = f.locals.iter().map(|local| local.ty).collect();
+        self.last_outs.get_mut().clear();
         self.flagged = if self.rc_fault.is_some() {
             vec![true; f.locals.len()]
         } else {
@@ -722,6 +780,8 @@ impl<'ctx> Codegen<'ctx, '_> {
         {
             self.store(self.slot(local).0, param);
         }
+        let values: usize = tys.iter().map(|&ty| self.param_types(ty).len()).sum();
+        self.outs = Self::out_pointers(function, values, &f.muts);
         self.caller.set(f.prelude.then(|| {
             // The location follows the Sisu parameters, so it is the last two.
             let hidden = |from_end| function.get_nth_param(function.count_params() - from_end);
@@ -905,7 +965,12 @@ impl<'ctx> Codegen<'ctx, '_> {
                         self.split(ty, value)
                     })
                     .collect();
-                if self.mir.functions[func.0].prelude {
+                let callee = &self.mir.functions[func.0];
+                if callee.muts.contains(&true) {
+                    *self.last_outs.borrow_mut() =
+                        self.push_out_slots(&callee.muts, |i| callee.locals[i].ty, &mut args);
+                }
+                if callee.prelude {
                     // The caller's own location when the caller is the prelude's too, and the
                     // call's when it is the user's.
                     let (at, at_len) = self.report_site(*span);
@@ -956,11 +1021,18 @@ impl<'ctx> Codegen<'ctx, '_> {
                 iargs,
                 method,
                 args,
+                muts,
             } => {
                 let (receiver, any) = self.operand(&args[0]);
                 let owned: Vec<_> = args[1..].iter().map(|arg| self.operand(arg)).collect();
                 let rest = TypeArgs::intern(&iargs.get()[1..]);
-                return self.dyn_call(any, (*interface, rest, *method), receiver, &owned, dest_ty);
+                return self.dyn_call(
+                    any,
+                    (*interface, rest, *method),
+                    receiver,
+                    (&owned, muts),
+                    dest_ty,
+                );
             }
             Rvalue::Concat { lhs, rhs } => {
                 let lhs = self.operand(lhs).0;
@@ -981,6 +1053,20 @@ impl<'ctx> Codegen<'ctx, '_> {
                 text
             }
             Rvalue::ReadLine => self.read_line(),
+            Rvalue::Out { index } => {
+                let slot = self.last_outs.borrow()[*index]
+                    .expect("`out` should follow a call that has that `mut` parameter");
+                let ty = self
+                    .llvm_type(ty())
+                    .expect("a `mut` parameter should have a value type");
+                self.load(ty, slot)
+            }
+            Rvalue::SetOut { index, value } => {
+                let (value, _) = self.operand(value);
+                let slot = self.outs[*index].expect("`set_out` should name a `mut` parameter");
+                self.store(slot, value);
+                return None;
+            }
             Rvalue::Chars(op) => self.chars(self.operand(op).0),
             Rvalue::Bytes(op) => self.bytes(self.operand(op).0),
             Rvalue::Words(op) => self.words(self.operand(op).0),
@@ -1295,15 +1381,27 @@ impl<'ctx> Codegen<'ctx, '_> {
             param.set_name(name);
             param
         });
-        let passed = if sisu_main.count_params() == 0 {
+        let args_type = Type::intern(TypeKind::Array(Type::STRING));
+        let mut passed = if sisu_main.count_params() == 0 {
             Vec::new()
         } else {
             let args = self.args(count.into_int_value(), strings.into_pointer_value());
-            self.split(Type::intern(TypeKind::Array(Type::STRING)), args)
+            self.split(args_type, args)
         };
+        // A `mut` parameter of `main` has an out slot too. Nothing reads the final value, so it
+        // is released after the call.
+        let entry = (self.functions.iter().position(|&f| f == sisu_main))
+            .map(|id| &self.mir.functions[id])
+            .expect("`sisu.main` should be one of the program's functions");
+        let slots = self.push_out_slots(&entry.muts, |i| entry.locals[i].ty, &mut passed);
         self.builder
             .build_call(sisu_main, &passed, "")
             .expect(POSITIONED);
+        for slot in slots.into_iter().flatten() {
+            let ty = (self.llvm_type(args_type))
+                .expect("the arguments of `main` should have a value type");
+            self.release(self.load(ty, slot), args_type);
+        }
         // `print` buffers; this delivers what is left, or panics if standard output fails.
         self.call(self.runtime("sisu_flush_stdout"), &[]);
         if self.rc_fault.is_some() {

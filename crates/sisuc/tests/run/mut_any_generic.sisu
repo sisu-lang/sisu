@@ -1,0 +1,24 @@
+// GIVEN `interface Putter { fn put(self, mut xs: [i64], x: i64) }` and a generic class
+// `Stack<T>` that conforms to it
+// WHEN `main` converts a `Stack<string>` and a `Stack<bool>` to `any Putter`, calls `put` on each
+// and prints the array
+// THEN it prints "[1]", then "[1, 2]": each instance has its own entry with its out pointer
+interface Putter {
+    fn put(self, mut xs: [i64], x: i64)
+}
+
+class Stack<T>: Putter {
+    fn put(self, mut xs: [i64], x: i64) {
+        xs.push(x)
+    }
+}
+
+fn main() {
+    let a: any Putter = Stack<string>()
+    let b: any Putter = Stack<bool>()
+    let mut xs: [i64] = []
+    a.put(mut xs, 1)
+    print(xs)
+    b.put(mut xs, 2)
+    print(xs)
+}

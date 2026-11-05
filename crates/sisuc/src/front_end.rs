@@ -272,7 +272,8 @@ mod tests {
                 "[T].contains",
                 "[T].first",
                 "[T].last",
-                "[T].get"
+                "[T].get",
+                "exchange"
             ]
         );
         assert_eq!(names(front_end(src).0), ["main", "id<i64>"]);

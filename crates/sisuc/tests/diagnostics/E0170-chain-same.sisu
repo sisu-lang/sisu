@@ -1,0 +1,16 @@
+// GIVEN `relink(mut list?.next)`, where `next` is a `Node?` field and `relink` takes a `Node?`
+// WHEN `sisu check` runs on it
+// THEN it reports E0170 on the argument, with the label that `list` can be `None`, and the help
+class Node {
+    mut next: Node?
+}
+
+fn relink(mut n: Node?) {
+    n = None
+}
+
+fn main() {
+    let list: Node? = Node(next: None)
+    relink(mut list?.next)
+    print(list == None)
+}

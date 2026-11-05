@@ -1,0 +1,13 @@
+// GIVEN `set(ys)`, where `ys` is a `let` `[string]` and the parameter of `set` is a `mut` `[i64]`
+// WHEN `sisu check` runs on it
+// THEN it reports E0166 on the argument and nothing else
+// AND there is no help: declaring `ys` with `let mut` and passing `mut ys` would be E0170
+fn set(mut xs: [i64]) {
+    xs[0] = 9
+}
+
+fn main() {
+    let ys = ["a"]
+    set(ys)
+    print(ys)
+}

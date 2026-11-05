@@ -206,6 +206,15 @@ impl Walk {
             | ExprKind::Continue { .. }
             | ExprKind::Return(None) => Flow::ESCAPE,
             ExprKind::Block(block) => self.block(block, open, calls),
+            // The copy-ins, the call, then the store-backs.
+            ExprKind::MutCall { call, muts, back } => {
+                let reads = muts
+                    .iter()
+                    .flat_map(|m| m.keep.iter().map(|(_, object)| object).chain([&m.read]));
+                let flow = self.all(reads, open, calls);
+                let flow = flow.then(self.walk(call, open && !flow.recurses, calls));
+                flow.then(self.block(back, open && !flow.recurses, calls))
+            }
         }
     }
 

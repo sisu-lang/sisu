@@ -1,0 +1,54 @@
+// GIVEN `fn set(mut xs: [i64]) { xs[0] = 9 }` and `let mut xs = [1, 2]`
+// WHEN `main` calls `set(mut xs)` and prints `xs`
+// THEN it prints "[9, 2]"
+// AND a `mut` parameter of a string, an integer, a `bool` and an optional changes the caller's
+// local the same way, and a `mut` parameter that the function only reads leaves it as it was
+fn set(mut xs: [i64]) {
+    xs[0] = 9
+}
+
+fn shout(mut s: string) {
+    s += "!"
+}
+
+fn bump(mut n: i64) {
+    n += 1
+}
+
+fn flip(mut b: bool) {
+    b = !b
+}
+
+fn clear(mut o: i64?) {
+    o = None
+}
+
+fn fill(mut o: i64?) {
+    o = 7
+}
+
+fn look(mut xs: [i64]) {
+    print(xs.len())
+}
+
+fn main() {
+    let mut xs = [1, 2]
+    set(mut xs)
+    print(xs)
+    let mut s = "hi"
+    shout(mut s)
+    print(s)
+    let mut n = 41
+    bump(mut n)
+    print(n)
+    let mut b = false
+    flip(mut b)
+    print(b)
+    let mut o: i64? = 3
+    clear(mut o)
+    print(o ?? -1)
+    fill(mut o)
+    print(o ?? -1)
+    look(mut xs)
+    print(xs)
+}

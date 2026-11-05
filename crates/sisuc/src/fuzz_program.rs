@@ -977,6 +977,7 @@ mod tests {
                 plain: String::new(),
                 made: Vec::new(),
                 leaving_if_depth: 0,
+                mut_lens: Vec::new(),
             };
             let scratch = Scratch::new();
             let (failure, builds) =
@@ -1578,6 +1579,7 @@ mod tests {
             plain: String::new(),
             made: Vec::new(),
             leaving_if_depth: 0,
+            mut_lens: Vec::new(),
         }
     }
 
@@ -1779,6 +1781,7 @@ mod tests {
             plain: String::new(),
             made: Vec::new(),
             leaving_if_depth: 0,
+            mut_lens: Vec::new(),
         }
     }
 

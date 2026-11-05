@@ -1,0 +1,14 @@
+error[E0167]: argument 1 of `xs.push` is not `mut`
+ --> E0167-builtin-method.sisu:9:13
+  |
+9 |     xs.push(mut y)
+  |             ^^^ not a `mut` parameter
+  |
+help: remove `mut`
+  |
+9 -     xs.push(mut y)
+9 +     xs.push(y)
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0167

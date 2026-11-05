@@ -333,6 +333,7 @@ fn unreachable_blocks_should_find_a_disconnected_cycle() {
         name: "f".to_owned(),
         params: 0,
         borrowed: Vec::new(),
+        muts: Vec::new(),
         ret: Type::UNIT,
         prelude: false,
         quiet: false,

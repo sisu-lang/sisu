@@ -1,0 +1,17 @@
+// GIVEN `fill(mut b?.cells, 3)`, where `fill<T>` takes a `mut` `[T]?` and `T` is inferred as `i64`
+// WHEN `sisu check` runs on it
+// THEN it reports E0170 on the argument, with the label that `fill` can write `None` back
+// AND it gives no help
+class Board {
+    mut cells: [i64]
+}
+
+fn fill<T>(mut xs: [T]?, value: T) {
+    xs = None
+}
+
+fn main() {
+    let b: Board? = Board(cells: [1])
+    fill(mut b?.cells, 3)
+    print(b == None)
+}

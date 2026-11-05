@@ -184,6 +184,46 @@ def comments(k):
     return f'fn f(o: i64?) -> i64 {{\n{rows}    0\n}}\n\nfn main() {{\n    print("{{f(1)}}")\n}}\n'
 
 
+def mut_parameters(k):
+    # Each function has two `mut` parameters and each call passes two `mut` arguments, so that the
+    # W0002 judgement of a parameter and the copy-in and copy-out of a call grow with `k`.
+    funs = ''.join(f'fn set{tag(i)}(mut xs: [i64], mut n: i64) {{\n    xs[0] = n\n    n += 1\n}}\n\n'
+                   for i in range(k))
+    calls = ''.join(f'    set{tag(i)}(mut xs, mut n)\n' for i in range(k))
+    # Main writes both locals itself, so that the program at size 0 has no W0002.
+    return (funs + f'fn main() {{\n    let mut xs = [0]\n    let mut n = 0\n    xs[0] = 1\n    n = 1\n{calls}'
+            '    print("{xs[0]} {n}")\n}\n')
+
+
+def mut_returns(k):
+    # `wide` has k plain parameters, one `mut` parameter and k early returns, each of which stores
+    # the final value of the `mut` parameter. A pass that scans every parameter at each return is
+    # quadratic in k. `main` adds to `total` once, so that size 0 has no W0002.
+    plain = ''.join(f'p{tag(i)}: i64, ' for i in range(k))
+    returns = ''.join(f'    if p{tag(i)} == 1 {{\n        return\n    }}\n' for i in range(k))
+    zeros = '0, ' * k
+    return (f'fn wide({plain}mut xs: [i64]) {{\n{returns}    xs[0] = 1\n}}\n\n'
+            'fn main() {\n    let mut xs = [0]\n    let mut total = 0\n'
+            f'    wide({zeros}mut xs)\n    total += xs[0]\n    print("{{total}}")\n}}\n')
+
+
+def mut_call_width(k):
+    # `many` has k `mut` parameters of a class and k of `i64`. `main` calls it with the k `mut`
+    # roots `mut v`, and then with a field of each: `mut v.x`. A search of all the arguments for
+    # each `mut` argument, or of all the roots for each field, is quadratic in k. `main` adds to
+    # `total` once, and reads a `Cell` once, so that size 0 has no W0002 or W0012.
+    params = ', '.join([f'mut a{tag(i)}: Cell' for i in range(k)] +
+                       [f'mut c{tag(i)}: i64' for i in range(k)])
+    bumps = ''.join(f'    a{tag(i)} = Cell(x: 0)\n    c{tag(i)} += 1\n' for i in range(k))
+    locals_ = ''.join(f'    let mut v{tag(i)} = Cell(x: 0)\n' for i in range(k))
+    given = ', '.join([f'mut v{tag(i)}' for i in range(k)] + [f'mut v{tag(i)}.x' for i in range(k)])
+    shown = ''.join(f'    total += v{tag(i)}.x\n' for i in range(k))
+    return ('class Cell {\n    mut x: i64\n}\n\n'
+            f'fn many({params}) {{\n{bumps}}}\n\n'
+            'fn main() {\n    let mut total = 0\n    let base = Cell(x: 1)\n    total += base.x\n' + locals_ +
+            f'    many({given})\n{shown}    print("{{total}}")\n}}\n')
+
+
 # The name of a shape, its `n` and the program at a size. The sizes are 0, n, 2n, 4n and 8n.
 SHAPES = {
     'functions': (250, functions),
@@ -204,6 +244,9 @@ SHAPES = {
     'string left': (12, string_left),
     'string call depth': (12, string_call_depth),
     'comments': (250, comments),
+    'mut parameters': (250, mut_parameters),
+    'mut returns': (250, mut_returns),
+    'mut call width': (1000, mut_call_width),
 }
 
 

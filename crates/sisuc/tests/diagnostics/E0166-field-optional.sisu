@@ -1,0 +1,17 @@
+// GIVEN `set(c?.cells)`, where `c` is a `Board?` and the field `cells` is not `mut`
+// WHEN `sisu check` runs on it
+// THEN it reports E0166 on the argument and nothing else
+// AND there is no help: a `mut` field passed `mut` through `?.` would be E0170
+class Board {
+    cells: [i64]
+}
+
+fn set(mut xs: [i64]) {
+    xs[0] = 9
+}
+
+fn main() {
+    let c: Board? = Board(cells: [1])
+    set(c?.cells)
+    print(c == None)
+}

@@ -226,6 +226,7 @@ fn rvalue(value: &Rvalue, read: &mut impl FnMut(LocalId)) {
         | Rvalue::Wrap(op)
         | Rvalue::ToAny(op)
         | Rvalue::Trim(op)
+        | Rvalue::SetOut { value: op, .. }
         | Rvalue::Chars(op)
         | Rvalue::Bytes(op)
         | Rvalue::Words(op)
@@ -237,7 +238,7 @@ fn rvalue(value: &Rvalue, read: &mut impl FnMut(LocalId)) {
         | Rvalue::Print { operand: op, .. }
         | Rvalue::Dbg { operand: op, .. } => operand(op, read),
         Rvalue::Copy(place) | Rvalue::Borrow(place) => self::place(place, read),
-        Rvalue::CopyStr(_) | Rvalue::ReadLine => {}
+        Rvalue::CopyStr(_) | Rvalue::ReadLine | Rvalue::Out { .. } => {}
         // A construction consumes each token it builds into, so it reads it.
         Rvalue::Variant { args, reuse, .. } => {
             for op in args {

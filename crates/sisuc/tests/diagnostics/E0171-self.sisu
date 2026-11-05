@@ -1,0 +1,22 @@
+// GIVEN `swap(mut self.a, mut self.a)` in a method
+// WHEN `sisu check` runs on it
+// THEN it reports E0171 on the second argument, with the message "`self.a` is passed `mut` twice"
+class Pair {
+    mut a: i64
+
+    fn run(self) {
+        swap(mut self.a, mut self.a)
+    }
+}
+
+fn swap(mut a: i64, mut b: i64) {
+    let t = a
+    a = b
+    b = t
+}
+
+fn main() {
+    let p = Pair(a: 1)
+    p.run()
+    print(p.a)
+}

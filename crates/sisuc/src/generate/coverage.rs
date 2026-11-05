@@ -13,11 +13,13 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::item::{MAX_ALIASES, MAX_INTERFACES, MAX_KNOWN, MAX_REQUIREMENTS, MOST};
 use super::scope::{
-    Applied, Class, Const, Enum, Field, Func, Nodes, RESULT, Scope, Ty, Var, Variant,
+    Adds, Applied, Class, Const, Enum, Field, Func, MAX_MUT_LEN, Nodes, RESULT, Scope, Ty, Var,
+    Variant,
 };
 use super::stmt::MAX_BLOCKS;
 use super::writer::{Rewrite, Site, Writer, allowed};
 use super::{Answer, BUDGET, Cost, DEPTHS, FUEL, Gen, MAX_BOUND, MAX_NESTING, MAX_SIZE, generate};
+use crate::check::prelude_function_names;
 use crate::conformance::holds_class;
 use crate::diagnostic::Severity;
 use crate::front_end::{PRELUDE_SOURCE, front_end, prelude_program};
@@ -506,6 +508,11 @@ fn universe() -> FxHashSet<String> {
     for row in const_rows(&prelude, "PRELUDE") {
         universe.insert(format!("prelude {}", row[0]));
     }
+    // The free functions of `prelude.sisu`, which the checker reserves as it does `PRELUDE`.
+    let items = &prelude_program(PRELUDE_SOURCE).program.items;
+    for name in prelude_function_names(items) {
+        universe.insert(format!("prelude {name}"));
+    }
     for (variant, receivers) in RECEIVERS {
         for receiver in *receivers {
             universe.insert(format!("{variant} on {receiver}"));
@@ -606,6 +613,9 @@ struct Walk {
     source: String,
     /// The length of each array local whose `let` writes it as a literal or a fill.
     lens: FxHashMap<String, i128>,
+    /// For each `mut` parameter of the generated program: how many elements its place holds at
+    /// least, which the text does not say (`Generated::mut_lens`).
+    mut_lens: FxHashMap<String, u64>,
     /// The value of each `let` whose init is a sum, difference or remainder of integer literals,
     /// other such locals and `xs.len()`, for an array of 0, 1, ... `SAMPLE_LENS - 1` elements.
     offsets: FxHashMap<String, Vec<i128>>,
@@ -1081,6 +1091,7 @@ impl Walk {
             }
             self.bounds(&requirement.type_params);
             for param in &requirement.params {
+                self.mark(&format!("ast::Param.mutable = {}", param.mutable));
                 self.type_expr(&param.ty);
             }
             if let Some(ret) = &requirement.ret {
@@ -1162,8 +1173,17 @@ impl Walk {
         }
         self.params.clear();
         for param in &f.params {
+            self.mark(&format!("ast::Param.mutable = {}", param.mutable));
             self.type_expr(&param.ty);
             self.params.push(param.name.name.as_str().to_string());
+            // A `mut` array holds at least what its caller's place holds, which the generator
+            // tells (`Generated::mut_lens`).
+            if param.mutable
+                && let Some(&len) = self.mut_lens.get(param.name.name.as_str())
+            {
+                self.lens
+                    .insert(param.name.name.as_str().to_string(), i128::from(len));
+            }
         }
         if let Some(ret) = &f.ret {
             self.type_expr(ret);
@@ -3031,6 +3051,17 @@ impl Walk {
                 self.mark("tir::ExprKind::Block");
                 self.tir_block(block);
             }
+            tir::ExprKind::MutCall { call, muts, back } => {
+                self.mark("tir::ExprKind::MutCall");
+                for m in muts {
+                    for (_, object) in &m.keep {
+                        self.tir_expr(object, Parent::Other);
+                    }
+                    self.tir_expr(&m.read, Parent::Other);
+                }
+                self.tir_expr(call, Parent::Other);
+                self.tir_block(back);
+            }
         }
     }
 
@@ -3333,7 +3364,9 @@ fn walk() -> Walk {
     let mut walk = Walk::default();
     // Twice the `SEEDS`: a bare `Ok(..)` is rare, and the seeds of the other tests shift it.
     for data in (0..2 * SEEDS).map(seed) {
-        walk.program(&generate(&data).plain);
+        let generated = generate(&data);
+        walk.mut_lens = generated.mut_lens.into_iter().collect();
+        walk.program(&generated.plain);
     }
     walk
 }
@@ -3918,7 +3951,7 @@ fn the_costliest_statement_fits_the_reserve() {
 }
 
 #[test]
-fn main_calls_fit_the_budget_left() {
+fn main_calls_should_fit_the_budget_left() {
     // `f1` costs 300,000 at depth 2, 354,201 at depth 3 and 100,000 at depth 1. Called twice in
     // a loop of 2, out of the 1,000,000 budget less 400 statements of 729 runs each: 708,400.
     // The first call fits depths 0 to 2 (2 * 354,201 is 708,402) and takes depth 2, leaving
@@ -3929,6 +3962,7 @@ fn main_calls_fit_the_budget_left() {
         name: "f1".to_string(),
         owner: None,
         params: Vec::new(),
+        muts: Vec::new(),
         ret: Ty::Unit,
         ret_size: 0,
         cost: [1, 100_000, 300_000, 354_201, 1_000_000],
@@ -3952,6 +3986,7 @@ fn with_funcs(data: &[u8]) -> Gen<'_> {
             name: name.to_string(),
             owner: None,
             params: Vec::new(),
+            muts: Vec::new(),
             ret,
             ret_size: 0,
             cost: [1; DEPTHS],
@@ -3989,18 +4024,109 @@ fn main_should_print_what_a_call_returns_but_unit() {
 }
 
 #[test]
-fn a_call_statement_names_any_function_the_budget_lets_it() {
+fn a_call_statement_should_name_any_function_the_budget_lets_it() {
     // In `main`, every function, of any type, while the loops around the call run no more
     // times than the budget left, so that a call at depth 0 fits; in a function, itself and
     // the earlier ones, whatever the loops.
     let mut g = with_funcs(&[]);
     g.budget = 8;
     g.cost.enter_loop(8);
-    assert_eq!(g.callees_any(), 3);
+    assert_eq!(g.callees_any().len(), 3);
     g.cost.enter_loop(2);
-    assert_eq!(g.callees_any(), 0);
+    assert_eq!(g.callees_any().len(), 0);
     g.scope.func = Some(1);
-    assert_eq!(g.callees_any(), 2);
+    assert_eq!(g.callees_any().len(), 2);
+}
+
+/// What the functions of `program` do to a `mut` parameter, when some `mut` call passes it a
+/// place: whether one writes an element of a `mut` array, whether one pushes to a `mut` array,
+/// and whether one appends to a `mut` string.
+fn mut_writes(program: &str) -> [bool; 3] {
+    let mut found = [false; 3];
+    let mut rest = program;
+    while let Some(at) = rest.find("\nfn ") {
+        rest = &rest[at + 1..];
+        let function = &rest[..rest.find("\n}\n").unwrap_or(rest.len())];
+        let header = function.lines().next().unwrap_or_default();
+        let name = header[3..].split('(').next().unwrap_or_default();
+        let call = format!("{name}(");
+        let called = (program.lines())
+            .any(|l| !l.starts_with("fn ") && l.contains(&call) && l.contains("mut "));
+        for param in header.split("mut v").skip(1) {
+            let (var, ty) = param.split_once(": ").unwrap_or_default();
+            let var = format!("v{var}");
+            let ty = ty.split([',', ')']).next().unwrap_or_default();
+            let array = ty.starts_with('[');
+            let element = (0..MAX_MUT_LEN).any(|at| function.contains(&format!("{var}[{at}] = ")));
+            found[0] |= called && array && element;
+            found[1] |= called && array && function.contains(&format!("{var}.push("));
+            found[2] |= called && ty == "string" && function.contains(&format!("{var} += "));
+        }
+    }
+    found
+}
+
+/// GIVEN the generated programs
+/// WHEN a function takes a `mut` array or a `mut` string, and a `mut` call passes it a place
+/// THEN some seed writes an element of the array, some pushes to it, and some appends to the
+/// string: the caller's place gets what the function made of it
+#[test]
+fn some_seed_should_change_and_grow_what_a_mut_call_passes() {
+    let mut found = [false; 3];
+    for data in seeds() {
+        let writes = mut_writes(&generate(&data).program);
+        found = [0, 1, 2].map(|i| found[i] || writes[i]);
+    }
+    assert_eq!(found, [true; 3], "element write, push, string append");
+}
+
+/// GIVEN a function whose `mut` array parameter holds 1 element at least, as its callers give it
+/// WHEN it writes the element at 0, and at 1
+/// THEN the walk finds the second index out of bounds: it knows the parameter's real length
+#[test]
+fn the_walk_should_read_the_length_of_a_mut_array_parameter() {
+    for (at, in_bounds) in [(0, true), (1, false)] {
+        let source = format!(
+            "fn f(depth: i64, mut v1: [i64]) {{\n    v1[{at}] = 0\n}}\nfn main() {{\n    let mut xs = [1]\n    f(0, mut xs)\n}}\n"
+        );
+        let mut walk = Walk::default();
+        walk.mut_lens.insert("v1".to_string(), 1);
+        walk.program(&source);
+        assert_eq!(walk.out_of_bounds.is_empty(), in_bounds, "index {at}");
+    }
+}
+
+/// GIVEN the bytes of fuzz input crash-e973ec3e, where a block in the first statement of a
+/// `mut` function takes the growth that its next statement, a `push`, needs
+/// WHEN the generator writes the program
+/// THEN it finishes: the `push` checks again that the parameter has the growth
+#[test]
+fn a_leading_push_should_wait_for_the_growth_that_a_block_left() {
+    const INPUT: &[u8] = &[
+        10, 39, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215,
+        215, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 17, 17, 17, 17, 17, 17, 17, 17, 17,
+        17, 17, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+        255, 255, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58,
+        58, 58, 58, 58, 58, 58, 58, 58, 255, 215, 215, 215, 215, 215, 215, 126, 215, 215, 215, 215,
+        215, 215, 215, 215, 215, 17, 215, 26, 17, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215,
+        215, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215, 39, 215, 215,
+        215, 215, 215, 215, 215, 215, 10, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215,
+    ];
+    let program = generate(INPUT).program;
+    assert!(program.contains("fn main()"), "{program}");
+}
+
+/// GIVEN `f1`, `f2` and `f3`, of which `f2` has a `mut` parameter
+/// WHEN a call may name a function
+/// THEN `f2` is no callee: only a `mut` call names it
+#[test]
+fn a_function_with_a_mut_parameter_should_be_no_callee_of_an_ordinary_call() {
+    let mut g = with_funcs(&[]);
+    g.scope.funcs[1].params.push((Ty::I64, 0));
+    g.scope.funcs[1].muts.push(Some(Adds::default()));
+    assert_eq!(g.callees_any(), [0, 2]);
+    assert_eq!(g.callees(&Ty::Unit, 0), Vec::<usize>::new());
+    assert_eq!(g.reachable(), [0, 1, 2]);
 }
 
 #[test]
@@ -6822,14 +6948,14 @@ fn no_message_breaks_a_line() {
 }
 
 #[test]
-fn rewrites_happen() {
+fn every_rewrite_should_be_made_by_some_seed() {
     let mut made = FxHashMap::default();
     for data in seeds() {
         for rewrite in generate(&data).made {
             *made.entry(format!("{rewrite:?}")).or_insert(0) += 1;
         }
     }
-    let missing: Vec<&str> = ["Block", "DeadIf", "Swap", "Let", "Const"]
+    let missing: Vec<&str> = ["Block", "DeadIf", "Swap", "Let", "Const", "MutCopy"]
         .into_iter()
         .filter(|rewrite| !made.contains_key(*rewrite))
         .collect();
@@ -7127,6 +7253,16 @@ impl<'f> Lets<'f> {
                 }
             }
             tir::ExprKind::Block(block) => self.block(block),
+            tir::ExprKind::MutCall { call, muts, back } => {
+                for m in muts {
+                    for (_, object) in &m.keep {
+                        self.expr(object);
+                    }
+                    self.expr(&m.read);
+                }
+                self.expr(call);
+                self.block(back);
+            }
         }
         if !self.pure(e, true) {
             self.effect = true;
@@ -7159,7 +7295,8 @@ impl<'f> Lets<'f> {
             | tir::ExprKind::Loop(_)
             | tir::ExprKind::Break { .. }
             | tir::ExprKind::Continue { .. }
-            | tir::ExprKind::Return(_) => false,
+            | tir::ExprKind::Return(_)
+            | tir::ExprKind::MutCall { .. } => false,
             // An `i64` negation or arithmetic whose value is not known may overflow.
             tir::ExprKind::Unary { op, operand } => {
                 (!int || *op == tir::UnaryOp::Not || self.value(e).is_some())
@@ -8614,4 +8751,19 @@ fn main() {
 fn a_leaving_if_should_nest_no_deeper_than_the_block_bound() {
     let deepest = (0..256).map(|n| generate(&seed(n)).leaving_if_depth).max();
     assert_eq!(deepest, Some(MAX_BLOCKS - 1));
+}
+
+/// GIVEN the generated programs of the seeds
+/// WHEN the generator records the lengths of their `mut` parameters
+/// THEN `Generated::mut_lens` holds, for some parameter, a length below `MAX_MUT_LEN`, and for no
+///   parameter more than `MAX_MUT_LEN`: it records the length that `Adds::len` drew, and not the
+///   most that a callee asks for
+#[test]
+fn generated_mut_lens_should_record_the_length_of_a_mut_parameter() {
+    let lens: Vec<u64> = seeds()
+        .flat_map(|data| generate(&data).mut_lens)
+        .map(|(_, len)| len)
+        .collect();
+    assert!(lens.iter().any(|&len| len < MAX_MUT_LEN), "{lens:?}");
+    assert!(lens.iter().all(|&len| len <= MAX_MUT_LEN), "{lens:?}");
 }

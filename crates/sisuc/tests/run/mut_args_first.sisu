@@ -1,0 +1,18 @@
+// GIVEN `fn g(mut xs: [i64]) -> i64 { xs[0] = 5; 0 }`, `fn f(mut xs: [i64], _n: i64) { xs[1] = 6 }`
+// and `let mut xs = [0, 0]`
+// WHEN `main` calls `f(mut xs, g(mut xs))` and prints `xs`
+// THEN it prints "[5, 6]": the other arguments run before the copy-in, so `f` sees the change of `g`
+fn g(mut xs: [i64]) -> i64 {
+    xs[0] = 5
+    0
+}
+
+fn f(mut xs: [i64], _n: i64) {
+    xs[1] = 6
+}
+
+fn main() {
+    let mut xs = [0, 0]
+    f(mut xs, g(mut xs))
+    print(xs)
+}

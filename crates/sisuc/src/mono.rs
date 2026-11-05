@@ -1105,6 +1105,7 @@ impl Mono {
                         interface: *interface,
                         iargs: TypeArgs::intern(&called),
                         method: *method,
+                        muts: vec![false; operands.len()],
                         args: operands,
                     };
                     return;
@@ -1247,6 +1248,30 @@ impl Mono {
                 }
             }
             K::Loop(block) | K::Block(block) => self.block(block, args),
+            K::MutCall { call, muts, back } => {
+                for m in muts.iter_mut() {
+                    for (_, object) in &mut m.keep {
+                        self.expr(object, args);
+                    }
+                    self.expr(&mut m.read, args);
+                }
+                self.expr(call, args);
+                // A call through a table does not know its callee: it flags the temporaries.
+                if let K::DynCall {
+                    args: operands,
+                    muts: flags,
+                    ..
+                } = &mut call.kind
+                {
+                    let mut rest = muts.iter().peekable();
+                    for (flag, operand) in flags.iter_mut().zip(operands.iter()) {
+                        *flag = rest
+                            .next_if(|m| matches!(operand.kind, K::Local(l) if l == m.temp))
+                            .is_some();
+                    }
+                }
+                self.block(back, args);
+            }
         }
     }
 
@@ -1418,6 +1443,7 @@ fn assert_concrete(program: &Program) {
                 ),
                 ExprKind::Match { arms, .. } => blocks.extend(arms.iter().map(|arm| &arm.body)),
                 ExprKind::Loop(block) | ExprKind::Block(block) => blocks.push(block),
+                ExprKind::MutCall { back, .. } => blocks.push(back),
                 _ => {}
             }
         }

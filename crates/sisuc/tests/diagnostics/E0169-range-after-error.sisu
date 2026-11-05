@@ -1,0 +1,13 @@
+// GIVEN `let mut s: string = "ab"`, the assignment `s = nope`, and `set(mut s[0..1])`
+// WHEN `sisu check` runs on it
+// THEN it reports E0033 for `nope`, then E0169 on the range, which says it gives a new string
+// AND the failed assignment does not make the type of `s` unknown
+fn set(mut x: string) {
+    x = "a"
+}
+
+fn main() {
+    let mut s: string = "ab"
+    s = nope
+    set(mut s[0..1])
+}

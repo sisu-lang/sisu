@@ -84,6 +84,9 @@ pub(crate) enum Rule {
     /// A token is released, consumed or read, or freed where it may be ended or borrowed; or a
     /// local that is not a token is freed or built into.
     Token,
+    /// An `out` whose nearest call before it in the block, past only `release`s, `end`s and other
+    /// `out`s, does not take its destination as the argument that the `out` names.
+    Out,
 }
 
 impl fmt::Display for Rule {
@@ -113,6 +116,10 @@ impl fmt::Display for Rule {
                 "a reuse token released, moved, read or freed twice, or a value that is not a \
                  token freed or built into"
             }
+            Rule::Out => {
+                "an `out` that does not follow the call that took its destination as a `mut` \
+                 argument"
+            }
         })
     }
 }
@@ -134,12 +141,59 @@ const NONE: usize = usize::MAX;
 /// first, then the statements that read a root in place and then kill it, then each counted
 /// local in order.
 pub(crate) fn certify(function: &Function) -> Result<(), Violation> {
+    outs(function)?;
     regions(
         function,
         |_| true,
         true,
         |region, scratch| region.check(scratch, &mut |_, _| {}),
     )
+}
+
+/// Each `out` takes the final value of an argument of the call just before it. The nearest call in
+/// its block must pass the `out`'s destination at the index that the `out` names. Only `release`s,
+/// `end`s and other `out`s may come between them. Codegen reads the out slots of that call, so no
+/// other call may come between. A `DynCall` must also flag that index: codegen gives an out slot
+/// to a flagged argument only.
+fn outs(function: &Function) -> Result<(), Violation> {
+    for (b, block) in function.blocks.iter().enumerate() {
+        // The arguments of the nearest call, and the flags of a call through a table.
+        let mut call: Option<(&[Operand], Option<&[bool]>)> = None;
+        for stmt in &block.stmts {
+            match stmt {
+                Statement::Assign {
+                    value: Rvalue::Call { args: passed, .. },
+                    ..
+                } => call = Some((passed, None)),
+                Statement::Assign {
+                    value:
+                        Rvalue::DynCall {
+                            args: passed, muts, ..
+                        },
+                    ..
+                } => call = Some((passed, Some(muts))),
+                Statement::Assign {
+                    dest: Some(dest),
+                    value: Rvalue::Out { index },
+                } => {
+                    let passed = call
+                        .filter(|(_, muts)| muts.is_none_or(|muts| muts.get(*index) == Some(&true)))
+                        .and_then(|(args, _)| args.get(*index))
+                        .and_then(operand_place);
+                    if passed != Some((*dest, &[])) {
+                        return Err(Violation {
+                            block: BlockId(b),
+                            local: *dest,
+                            rule: Rule::Out,
+                        });
+                    }
+                }
+                Statement::Release(_) | Statement::End(_) => {}
+                _ => call = None,
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The set that reaches each scope release of a `named` local (one a `release?` names), keyed by
@@ -333,6 +387,8 @@ impl Clobbers {
                         | Rvalue::Concat { .. }
                         | Rvalue::Interpolate { .. }
                         | Rvalue::ReadLine
+                        | Rvalue::Out { .. }
+                        | Rvalue::SetOut { .. }
                         | Rvalue::Chars(_)
                         | Rvalue::Bytes(_)
                         | Rvalue::Words(_)
@@ -762,7 +818,8 @@ fn rvalue<'a>(
         | Rvalue::Unwrap(op)
         | Rvalue::Wrap(op)
         | Rvalue::ToAny(op)
-        | Rvalue::Trim(op) => {
+        | Rvalue::Trim(op)
+        | Rvalue::SetOut { value: op, .. } => {
             consumed(op, lowered, f);
         }
         Rvalue::Chars(op)
@@ -777,7 +834,7 @@ fn rvalue<'a>(
         | Rvalue::Dbg { operand: op, .. } => operand(op, lowered, f),
         Rvalue::Copy(place) => self::place(place, Effect::Read, lowered, f),
         Rvalue::Borrow(place) => self::place(place, Effect::ReadInPlace, lowered, f),
-        Rvalue::CopyStr(_) | Rvalue::ReadLine => {}
+        Rvalue::CopyStr(_) | Rvalue::ReadLine | Rvalue::Out { .. } => {}
         // A borrowed argument is read in place, and a move into one hands on nothing: the
         // caller still owns the value after the call.
         Rvalue::Call { args, borrowed, .. } => {

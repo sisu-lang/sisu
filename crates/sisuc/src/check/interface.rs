@@ -132,6 +132,10 @@ pub(super) struct RequirementInfo {
     pub(super) bounds: Vec<Vec<Bound>>,
     /// Without `self`; `None` is `Error`.
     pub(super) params: Vec<Option<Type>>,
+    /// Whether each of `params` is `mut`.
+    pub(super) muts: Vec<bool>,
+    /// The name of each of `params`.
+    pub(super) param_names: Vec<ast::Ident>,
     /// Where the type of each of `params` is written.
     pub(super) params_at: Vec<Span>,
     /// `None` is `Error`; no return type is `unit`.
@@ -331,6 +335,10 @@ impl Checker<'_> {
     }
 
     /// Resolves the bounds, inheritance and requirements of `interface`, whose id is `id`.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the requirements share the interface's scope, and a split passes each part of it"
+    )]
     fn interface_signature(&mut self, interface: &ast::Interface, id: InterfaceId) {
         let params = self.interfaces[id.0].type_params.clone();
         self.body.set_type_params(&params);
@@ -425,6 +433,8 @@ impl Checker<'_> {
                         .collect(),
                     bounds,
                     params,
+                    muts: requirement.params.iter().map(|p| p.mutable).collect(),
+                    param_names: requirement.params.iter().map(|p| p.name.clone()).collect(),
                     params_at: requirement.params.iter().map(|p| p.ty.span).collect(),
                     ret,
                     ret_at: requirement.ret.as_ref().map(|ret| ret.span),
@@ -1050,8 +1060,9 @@ impl Checker<'_> {
 
     /// Whether the method `func` meets `requirement`: after `Self`, the interface's arguments
     /// and the method's own type parameters stand in for the requirement's (`base` holds the
-    /// first two), it has the same parameter types and return type, and the same number of type
-    /// parameters of its own, with the same bounds. A type that is `Error` matches any.
+    /// first two), it has the same parameter types, the same `mut` on each parameter and the same
+    /// return type, and the same number of type parameters of its own, with the same bounds. A
+    /// type that is `Error` matches any.
     pub(super) fn meets(&self, requirement: &RequirementInfo, func: FuncId, base: &[Type]) -> bool {
         let sig = &self.signatures[func.0];
         if requirement.own.len() != sig.own || requirement.params.len() != sig.params.len() {
@@ -1069,7 +1080,9 @@ impl Checker<'_> {
             (Some(want), Some(found)) => self.subst(want, &with).is_some_and(|want| want != found),
             _ => false,
         };
-        if (requirement.params.iter().zip(&sig.params)).any(|(&want, &found)| differs(want, found))
+        if requirement.muts != sig.muts
+            || (requirement.params.iter().zip(&sig.params))
+                .any(|(&want, &found)| differs(want, found))
             || differs(requirement.ret, sig.ret)
         {
             return false;

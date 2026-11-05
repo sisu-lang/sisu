@@ -1,0 +1,14 @@
+error[E0033]: cannot find binding `nope`
+  --> E0169-range-after-error.sisu:11:9
+   |
+11 |     s = nope
+   |         ^^^^
+
+error[E0169]: a `mut` argument must be a place: a variable, a `mut` field, or an element of one of these
+  --> E0169-range-after-error.sisu:12:13
+   |
+12 |     set(mut s[0..1])
+   |             ^^^^^^^ a range index gives a new string, not a place
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0033, E0169

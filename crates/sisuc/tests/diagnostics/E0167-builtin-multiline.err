@@ -1,0 +1,14 @@
+error[E0167]: argument 1 of `string.get` is not `mut`
+ --> E0167-builtin-multiline.sisu:6:18
+  |
+6 |         "b").get(mut 0..1)
+  |                  ^^^ not a `mut` parameter
+  |
+help: remove `mut`
+  |
+6 -         "b").get(mut 0..1)
+6 +         "b").get(0..1)
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0167

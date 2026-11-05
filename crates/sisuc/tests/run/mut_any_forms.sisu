@@ -1,0 +1,79 @@
+// GIVEN `interface Shaper` with a requirement of two `mut` parameters, one with a `mut` parameter
+// between value parameters, one that returns a value, and one without a `mut` parameter; a class
+// `Impl` that conforms to `Shaper` and to `Bumper`, whose `bump` has a `mut i64`; and a class
+// `Board` with a `mut` field
+// WHEN `main` calls each requirement through `any Shaper` and `any Bumper`, with locals, a field
+// and an element as the `mut` arguments, once in a loop, and prints the arguments and results
+// THEN every final value of a `mut` argument is stored back, and every result is right
+interface Shaper {
+    fn two(self, mut a: [i64], mut b: [i64])
+    fn middle(self, x: i64, mut xs: [i64], y: string)
+    fn total(self, mut xs: [i64], n: i64) -> i64
+    fn plain(self, n: i64) -> i64
+}
+
+interface Bumper {
+    fn bump(self, mut n: i64)
+}
+
+class Impl: Shaper, Bumper {
+    fn two(self, mut a: [i64], mut b: [i64]) {
+        a[0] = b[0] + 10
+        b[0] = 7
+    }
+
+    fn middle(self, x: i64, mut xs: [i64], y: string) {
+        xs.push(x)
+        xs.push(y.len())
+    }
+
+    fn total(self, mut xs: [i64], n: i64) -> i64 {
+        xs[0] = xs[0] + n
+        xs[0]
+    }
+
+    fn plain(self, n: i64) -> i64 {
+        n * 2
+    }
+
+    fn bump(self, mut n: i64) {
+        n += 1
+    }
+}
+
+class Board {
+    mut cells: [i64]
+}
+
+fn main() {
+    let s: any Shaper = Impl()
+    let mut a = [1, 1]
+    let mut b = [2, 2]
+    s.two(mut a, mut b)
+    print(a)
+    print(b)
+    let mut xs = [1]
+    s.middle(5, mut xs, "abc")
+    print(xs)
+    let mut ys = [10]
+    let r = s.total(mut ys, 5)
+    print(r)
+    print(ys)
+    print(s.plain(4))
+    for i in 0..3 {
+        print(s.total(mut ys, i))
+    }
+    print(ys)
+    let board = Board(cells: [3, 3])
+    s.middle(1, mut board.cells, "z")
+    print(board.cells)
+    let mut grid = [[1], [2]]
+    s.two(mut grid[0], mut b)
+    print(grid)
+    print(b)
+    let k: any Bumper = Impl()
+    let mut n = 1
+    k.bump(mut n)
+    k.bump(mut n)
+    print(n)
+}

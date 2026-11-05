@@ -1,0 +1,22 @@
+// GIVEN `class Grid { mut rows: [[i64]] }`, `fn f(mut x: i64, g: Grid) { g.rows = [[5]]; x = 1 }`
+// and `let g = Grid(rows: [[0, 0], [0, 0]])`
+// WHEN `main` calls `f(mut g.rows[0][1], g)` and prints `g.rows`
+// THEN it prints "[[5]]": index 0 is in range after the call, index 1 of that row is gone, and the
+// write is lost; the later tests read only what the earlier ones passed
+// AND a call on an index that stays in range stores into the new array, as `[[1]]` shows
+class Grid {
+    mut rows: [[i64]]
+}
+
+fn f(mut x: i64, g: Grid) {
+    g.rows = [[5]]
+    x = 1
+}
+
+fn main() {
+    let g = Grid(rows: [[0, 0], [0, 0]])
+    f(mut g.rows[0][1], g)
+    print(g.rows)
+    f(mut g.rows[0][0], g)
+    print(g.rows)
+}

@@ -1,0 +1,23 @@
+// GIVEN `interface Filler { fn fill(self, mut xs: [i64]) }` and a class `Boom` whose `fill` writes
+// `xs[0] = 1` and then reads `xs[5]`; `let mut xs = [0, 0]`
+// WHEN `main` prints "before", calls `fill` through `any Filler`, and would print `xs` after it
+// THEN the program panics in `fill` with the index message, and prints nothing more
+interface Filler {
+    fn fill(self, mut xs: [i64])
+}
+
+class Boom: Filler {
+    fn fill(self, mut xs: [i64]) {
+        xs[0] = 1
+        let i = 5
+        print(xs[i])
+    }
+}
+
+fn main() {
+    let f: any Filler = Boom()
+    let mut xs = [0, 0]
+    print("before")
+    f.fill(mut xs)
+    print(xs)
+}

@@ -178,6 +178,15 @@ before milestone 9.
   a slice that holds a quarter or less of a block of 256 bytes or more is
   copied into a block of its own when a field, an enum payload or an array
   stores it ([ADR 0042](adr/0042-a-slice-shares-its-block.md))
+- `mut` parameters: `fn set(mut cells: [i64], i: i64)` lets a function change
+  the caller's variable, `mut` field or array element, and the call writes
+  `mut` too: `set(mut b.cells, i)`. The call copies the place in and stores the
+  last value back, in the order of the arguments, on each way out of the
+  function; `exchange(mut place, with)` is a prelude function. A missing,
+  extra or misplaced `mut`, a place that cannot be written, a type that is not
+  exactly the parameter's, and two places that overlap where the compiler
+  sees it are errors (`E0166` to `E0171`)
+  ([ADR 0043](adr/0043-mut-parameters-copy-in-and-out.md))
 - `char`, one Unicode scalar value such as `'ä'`, compared by code point and
   converted with `i64(c)` and `char(n)`, a `char?` that is `None` for a
   surrogate or a value above `0x10FFFF`, with no panic
@@ -1007,9 +1016,9 @@ Each is small once its milestone's main feature exists:
   callback can then count or collect without a class to hold the result.
   A closure can reach the cell, so the rules treat it as a field of a
   class object. A borrowed argument from it is retained first (ADR 0029).
-  A `mut self` method written in Sisu cannot be called on it
-  (exclusivity). A callback given to a changing method on it cannot
-  write a field or a counted cell. A class that stores a closure
+  A `mut self` method written in Sisu can be called on it: the call copies
+  the value in and out, as for a `mut` argument
+  ([ADR 0043](adr/0043-mut-parameters-copy-in-and-out.md)). A class that stores a closure
   capturing that same object is a
   cycle, so the closure needs a way to capture weakly, as Swift's
   `[weak self]` does (ADR 0008; see "Weak captures" in "Open decisions").
@@ -1364,14 +1373,14 @@ These do not make code nicer to write, so they wait:
 - Handing over an array held in a field or an element. The last-use rule
   moves only locals, so `self.cells = step(self.cells)` and
   `grid[i] = f(grid[i])` share the array with the call, and the first write
-  inside it copies the whole array. The compiler could take the array out of
-  the place for the call and store the result back, with no new syntax, so
-  ADR 0007 still holds. While the place is empty, the call must not reach it
-  another way, for example through a shared object: that needs an
-  exclusivity check, as Swift enforces for `inout`. A `mut self` method
-  called on a field, `obj.pos.move_by(1, 2)`, needs the same check
-  (ADR 0011). Until then, `self.cells.exchange(with: [])` takes the array
-  out and leaves `[]` (decided 2026-10-29). `inout` parameters stay out (ADR 0007).
+  inside it copies the whole array. Step 2 of the `mut` parameters work does
+  it ([ADR 0043](adr/0043-mut-parameters-copy-in-and-out.md)). A `mut`
+  argument, `step(mut self.cells)`, is copied in and out. The compiler takes
+  the array out of the place for the call when nothing else reaches it during
+  the call. A `mut self` method called on a field,
+  `obj.pos.move_by(1, 2)`, has the same meaning (ADR 0011). Until step 2,
+  `exchange(mut self.cells, [])` takes the array out and leaves `[]` (decided
+  2026-10-29).
 - Proving uniqueness at compile time. Roc's Morphic analysis follows each
   array through the whole program to prove that a write holds the only
   reference, so the write needs no count check. A loop now makes its written
@@ -1759,8 +1768,9 @@ accepted.
   - A payload cannot change in place. A pattern such as `Circle(r)` binds a
     copy, not a reference, so `let mut e` changes only by a new value:
     `e = Circle(2.0)`. Payloads have no place to assign to, because the
-    variant is known only at run time, and Sisu has no references (ADR 0007
-    keeps `inout` out). The copy is shallow: a string, an array or a class in
+    variant is known only at run time, so a payload is not a place and cannot
+    be a `mut` argument ([ADR 0043](adr/0043-mut-parameters-copy-in-and-out.md)).
+    The copy is shallow: a string, an array or a class in
     a payload is a pointer and a count. To change one field without
     restating the others, milestone 10's update syntax covers labeled
     variants as well as records.
@@ -1777,20 +1787,22 @@ accepted.
     share it and arrays of them release their elements.
   - That `None` of an optional class reference stays a null pointer, in an
     array too, so milestone 8's `Option<T>` changes no layout.
-- **Exclusivity.** A `mut self` method called on a field of an object,
-  `obj.pos.move_by(1, 2)`, and handing an array field to a call (see "Later
-  and stretch goals") both take a value out of a place for the length of a
-  call. The call must not reach that place another way, such as through a
-  shared object. Swift checks this at run time and panics. The other choice
-  is to leave the place empty or stale during the call, which needs no check
-  but lets such a read see the wrong value. Decide in milestone 10. Decided
-  2026-10-29 for moving a value out of a place: the built-in method
-  `x.exchange(with: v)`, as C++'s `std::exchange`, which shows at the call
-  what the place holds meanwhile. `move x` (drop blocks) takes a local
-  only. `self.cells = step(self.cells.exchange(with: []))` then needs no
-  check, and `step` copies nothing when the field held the only
-  reference. The handover with no syntax (see "Later and
-  stretch goals") waits for a proof of concept.
+- **Exclusivity.** Decided 2026-10-30, as copy-in/copy-out
+  ([ADR 0043](adr/0043-mut-parameters-copy-in-and-out.md)). A `mut self`
+  method called on a field of an object, `obj.pos.move_by(1, 2)`, is a `mut`
+  argument. So is handing an array field to a call (see "Later and stretch
+  goals"). The call gets the value of the place and stores its final value
+  back. There is no exclusivity check and no panic, and a write to the place
+  by other code during the call is lost. Moving a value out of a place is the
+  prelude function `exchange(mut x, v)`, as C++'s `std::exchange`. It shows at
+  the call what the place holds meanwhile. `move x` (drop blocks)
+  takes a local only. `self.cells = step(exchange(mut self.cells, []))` needs
+  no check, and `step` copies nothing when the field held the only reference.
+- **A conditional call through `?.` in a `mut` argument.** `fill(mut b?.cells)`
+  runs only when `b` holds an object, as `xs?.push(x)` does. Its result is
+  optional, a skipped call skips its later arguments, and the store-back is an
+  [ADR 0037](adr/0037-assignment-through-optional-chaining.md) assignment.
+  Until then the argument is a type error (E0170). Decide when a program needs it.
 - **Names and namespaces.** Resolved for enums in milestone 7
   ([ADR 0019](adr/0019-enums-are-values-named-through-their-enum.md)): a
   variant is built as `Shape.Circle`, a pattern uses the bare name, and the

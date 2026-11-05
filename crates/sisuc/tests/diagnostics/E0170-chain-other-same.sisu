@@ -1,0 +1,17 @@
+// GIVEN `relink3(mut list?.next)`, where `relink3` takes a `mut` `Node`
+// WHEN `sisu check` runs on it
+// THEN it reports E0170 on the argument, with the label that names the type `Node`
+// AND it gives no help
+class Node {
+    mut next: Node?
+}
+
+fn relink3(mut n: Node) {
+    n = Node(next: None)
+}
+
+fn main() {
+    let list: Node? = Node(next: None)
+    relink3(mut list?.next)
+    print(list == None)
+}

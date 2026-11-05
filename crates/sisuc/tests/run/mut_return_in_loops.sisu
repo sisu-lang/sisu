@@ -1,0 +1,48 @@
+// GIVEN `find`, whose `mut` parameters an array and an integer change inside two nested loops
+// and that returns from the inner loop, and `mix`, whose `mut` parameters are an integer, a
+// string, an array, a `f64` and a `char`
+// WHEN `main` calls `find(mut xs, mut hits, "23")`, and `outer` calls `mix` twice on its own `mut`
+// parameters and its locals
+// THEN each final value reaches the caller's local, on the `return` out of the loops and at the
+// end of a body
+// AND Valgrind and `--rc-checks` find every array and string released once
+fn find(mut xs: [string], mut hits: i64, want: string) -> i64 {
+    for i in 0..10 {
+        for j in 0..10 {
+            hits += 1
+            xs.push("{i}{j}")
+            if "{i}{j}" == want {
+                return i * 10 + j
+            }
+        }
+    }
+    -1
+}
+
+fn mix(mut a: i64, mut s: string, mut xs: [string], mut f: f64, mut c: char) {
+    a += 1
+    s += "!"
+    xs.push(s)
+    f *= 2.0
+    c = 'z'
+}
+
+fn outer(mut a: i64, mut s: string) {
+    let mut xs: [string] = []
+    let mut f = 1.5
+    let mut c = 'a'
+    mix(mut a, mut s, mut xs, mut f, mut c)
+    mix(mut a, mut s, mut xs, mut f, mut c)
+    print("{a} {s} {xs} {f} {c}")
+}
+
+fn main() {
+    let mut xs: [string] = []
+    let mut hits = 0
+    let got = find(mut xs, mut hits, "23")
+    print("{got} {hits} {xs.len()}")
+    let mut a = 1
+    let mut s = "s"
+    outer(mut a, mut s)
+    print("{a} {s}")
+}

@@ -18,7 +18,9 @@ same reason.
   compiler builds into every program (`dbg` stays built in). The prelude takes
   `AnyObject` rather than `Object`, so that programs keep `Object` for their
   own classes. Reading a line stays in the prelude for good, as Python's
-  `input()`, Swift's `readLine()` and Kotlin's `readln()` do.
+  `input()`, Swift's `readLine()` and Kotlin's `readln()` do. The `mut`
+  parameters work adds `exchange`, the function `exchange(mut place, with)`
+  ([ADR 0043](0043-mut-parameters-copy-in-and-out.md)).
 - **A top-level function, class or constant may not take a prelude name.**
   It is the existing "defined twice" error with its "is a built-in function"
   message, as for `print` today. Milestone 4 already takes `print` from

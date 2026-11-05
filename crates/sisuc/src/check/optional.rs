@@ -5,6 +5,7 @@
 use super::alias::Through;
 use super::any::is_target;
 use super::generic::{GenericSig, Site, mark, mismatched};
+use super::mut_args::Callee;
 use super::{Checked, Checker, DiagnosticKind, Poisoned, optional_of, type_of};
 use crate::ast;
 use crate::diagnostic::{Definition, suggestion};
@@ -30,6 +31,14 @@ impl Checker<'_> {
         } else {
             format_args!("{}", site.name.name)
         };
+        self.refuse_mut(
+            args,
+            Callee::Construct {
+                shown: &path,
+                class: false,
+                labeled: false,
+            },
+        );
         let Some(labeled) = self.positional_shape(span, &path, 1, args) else {
             return Err(Poisoned::error());
         };
@@ -90,6 +99,7 @@ impl Checker<'_> {
                     params: &[Some(payload)],
                     ret: Some(ret),
                     bounds: &[],
+                    mut_site: None,
                 };
                 let written = (site.written, site.angles);
                 let (args, list, found) =
@@ -140,6 +150,7 @@ impl Checker<'_> {
                     params: &[],
                     ret: Some(t.ty),
                     bounds: &[],
+                    mut_site: None,
                 };
                 let written = (site.written, site.angles);
                 let (_, list, found) =

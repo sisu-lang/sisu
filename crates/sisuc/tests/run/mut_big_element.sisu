@@ -1,0 +1,28 @@
+fn iterations() -> i64 { 1000 }
+
+// GIVEN a loop of `iterations()` calls `set(mut g.rows[1][0], ...)` on a `Grid` of two rows of 1 000 000
+// elements each
+// WHEN the allocation count of k = 1000 and k = 0 is compared
+// THEN the difference is 0: the test that the indexes are in range releases its arrays before
+// the store-back, so the store writes in place and copies no row
+// `set` recurses, with depth 1 or 2, so that neither the inliner nor constant propagation across
+// functions can fold the call into `main` at `-O2`.
+// o2-calls: main set 1
+class Grid {
+    mut rows: [[i64]]
+}
+
+fn set(mut n: i64, i: i64, depth: i64) {
+    if depth > 0 {
+        set(mut n, i, depth - 1)
+    }
+    n = i
+}
+
+fn main() {
+    let g = Grid(rows: [[0; 1_000_000], [0; 1_000_000]])
+    for i in 0..iterations() {
+        set(mut g.rows[1][0], i, i % 2 + 1)
+    }
+    print(g.rows[1][0]) // the last i: 999 (0 with no iterations)
+}

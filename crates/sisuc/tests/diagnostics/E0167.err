@@ -1,0 +1,17 @@
+error[E0167]: the parameter `xs` of `plain` is not `mut`
+  --> E0167.sisu:11:11
+   |
+ 5 | fn plain(xs: [i64]) {
+   |          -- declared without `mut` here
+...
+11 |     plain(mut xs)
+   |           ^^^ not a `mut` parameter
+   |
+help: remove `mut`
+   |
+11 -     plain(mut xs)
+11 +     plain(xs)
+   |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0167

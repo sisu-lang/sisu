@@ -1,0 +1,14 @@
+// GIVEN `fn f(old: [i64], mut cells: [i64]) { cells[0] = 9; print(old) }` and `let mut xs = [1, 2, 3]`
+// WHEN `main` calls `f(xs, mut xs)` and prints `xs`
+// THEN it prints "[1, 2, 3]", then "[9, 2, 3]": the local is retained for the borrowed
+// argument, though it is moved in
+fn f(old: [i64], mut cells: [i64]) {
+    cells[0] = 9
+    print(old)
+}
+
+fn main() {
+    let mut xs = [1, 2, 3]
+    f(xs, mut xs)
+    print(xs)
+}

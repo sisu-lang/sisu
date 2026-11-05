@@ -1,0 +1,80 @@
+// GIVEN `step(mut xs)`, which pushes onto its `mut` parameter and returns its length, a generic
+// class `Stack<T>` and a class `Slot` whose field holds an optional object
+// WHEN `main` passes an element or a field `mut` in a `while` condition, in the right side of
+// `&&` and `||`, in an `if` and an `else if`, in a `match` scrutinee, in a `loop` and its `break`
+// value, through a generic class, and as the element of an array of optional objects
+// THEN each call runs once where the program reaches it, a call that `&&` or `||` skips does no
+// copy-in and no store-back, and each store-back lands in its place
+// AND Valgrind and `--rc-checks` find every kept object and array released once
+class Stack<T> {
+    mut items: [T]
+
+    fn add(self, x: T) {
+        push_to(mut self.items, x)
+    }
+}
+
+class Slot {
+    mut label: string
+}
+
+class Rack {
+    mut rows: [[i64]]
+    mut slots: [Slot?]
+}
+
+fn push_to<T>(mut xs: [T], x: T) {
+    xs.push(x)
+}
+
+fn step(mut xs: [i64]) -> i64 {
+    xs.push(xs.len())
+    xs.len()
+}
+
+fn relabel(mut s: Slot?) {
+    s = Slot(label: "new")
+}
+
+fn main() {
+    let r = Rack(rows: [[], []], slots: [None, Slot(label: "old")])
+    while step(mut r.rows[0]) < 4 {
+    }
+    print(r.rows)
+    let flag = false
+    if flag && step(mut r.rows[1]) > 0 {
+        print("no")
+    }
+    print(r.rows)
+    if !flag || step(mut r.rows[1]) > 0 {
+        print("short")
+    }
+    print(r.rows)
+    if step(mut r.rows[1]) == 5 {
+        print("five")
+    } else if step(mut r.rows[1]) == 2 {
+        print("two")
+    }
+    print(r.rows)
+    let v = match step(mut r.rows[1]) {
+        2 => "two"
+        _ => "other"
+    }
+    print(v)
+    let found = loop {
+        if step(mut r.rows[1]) > 4 {
+            break step(mut r.rows[1])
+        }
+    }
+    print(found)
+    print(r.rows)
+    let s = Stack(items: [1])
+    s.add(2)
+    push_to(mut s.items, 3)
+    print(s.items)
+    relabel(mut r.slots[0])
+    relabel(mut r.slots[1])
+    for slot in r.slots {
+        print(slot?.label ?? "none")
+    }
+}

@@ -1,0 +1,16 @@
+error[E0166]: the parameter `xs` of `set` is `mut`, so its argument needs `mut`
+  --> E0166.sisu:11:9
+   |
+ 5 | fn set(mut xs: [i64]) {
+   |            -- declared `mut` here
+...
+11 |     set(xs)
+   |         ^^ needs `mut`
+   |
+help: add `mut`
+   |
+11 |     set(mut xs)
+   |         +++
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0166

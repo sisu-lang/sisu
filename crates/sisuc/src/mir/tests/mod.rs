@@ -4,6 +4,7 @@ mod certify;
 mod elaborate;
 pub(crate) mod hoist;
 mod lower;
+mod mut_call;
 mod ownership;
 mod pairs;
 mod params;
@@ -161,6 +162,7 @@ impl Builder {
                 name: name.to_owned(),
                 params: 0,
                 borrowed: Vec::new(),
+                muts: Vec::new(),
                 ret: Type::UNIT,
                 prelude: false,
                 quiet: false,
@@ -186,6 +188,7 @@ impl Builder {
         );
         self.function.params += 1;
         self.function.borrowed.push(false);
+        self.function.muts.push(false);
         self.local(name, ty)
     }
 

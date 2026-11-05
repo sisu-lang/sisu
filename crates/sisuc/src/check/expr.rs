@@ -147,6 +147,7 @@ impl Checker<'_> {
                 angles,
                 args,
             } => {
+                self.stamp_marked(args);
                 if let Some(value) = self.named_args(callee, types, *angles, true) {
                     self.stray(args);
                     return Err(value);
@@ -195,6 +196,7 @@ impl Checker<'_> {
                 parens,
                 safe,
             } => {
+                self.stamp_marked(args);
                 let site = Site {
                     name: method,
                     written: types,

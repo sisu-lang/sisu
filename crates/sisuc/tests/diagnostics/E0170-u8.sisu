@@ -1,0 +1,13 @@
+// GIVEN `clear(mut ys)`, where `ys` is a `u8` and the parameter is a `u8?`
+// WHEN `sisu check` runs on it
+// THEN it reports E0170 on the argument, with the note that a `u8` cannot hold `None`
+// AND the note says "a `u8`", not "an `u8`"
+fn clear(mut n: u8?) {
+    n = None
+}
+
+fn main() {
+    let mut ys: u8 = 1
+    clear(mut ys)
+    print(ys)
+}

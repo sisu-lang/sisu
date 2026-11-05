@@ -1,0 +1,11 @@
+// GIVEN a `main` with `let mut x = 0` and an `if` whose line 7 is `mut x = 1`, with `mut` at 7:9
+// WHEN `sisu check` runs on it
+// THEN it reports E0011 at 7:9, and no fix, because `x = 1` would assign the outer `x`
+fn main() {
+    let mut x = 0
+    if true {
+        mut x = 1
+        print(x)
+    }
+    print(x)
+}

@@ -1,0 +1,10 @@
+error[E0171]: `xs[0]` is inside `xs`, which this call also passes `mut`
+  --> E0171-inside.sisu:11:19
+   |
+11 |     f(mut xs, mut xs[0])
+   |           --      ^^^^^ passed again here
+   |           |
+   |           first passed here
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0171

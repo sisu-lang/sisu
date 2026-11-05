@@ -1,0 +1,16 @@
+// GIVEN `c: C?` and `set(mut xs: [i64])`
+// WHEN `main` calls `set(mut c.xs)` and `sisu check` runs on it
+// THEN it reports E0062 on `c` with the unwrap help and no `?.` fix: `c?.xs` cannot be a `mut`
+// argument (E0170)
+class C {
+    mut xs: [i64]
+}
+
+fn set(mut xs: [i64]) {
+    xs[0] = 1
+}
+
+fn main() {
+    let c: C? = C(xs: [0])
+    set(mut c.xs)
+}

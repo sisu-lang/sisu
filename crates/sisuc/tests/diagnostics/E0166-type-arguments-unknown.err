@@ -1,0 +1,19 @@
+error[E0030]: cannot find type `Nope`
+  --> E0166-type-arguments-unknown.sisu:11:8
+   |
+11 |     rw<Nope>(x, 5)
+   |        ^^^^
+   |
+   = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums and arrays such as `[i64]`
+
+error[E0166]: the parameter `x` of `rw` is `mut`, so its argument needs `mut`
+  --> E0166-type-arguments-unknown.sisu:11:14
+   |
+ 5 | fn rw<T>(mut x: T, v: T) {
+   |              - declared `mut` here
+...
+11 |     rw<Nope>(x, 5)
+   |              ^ needs `mut`
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0030, E0166

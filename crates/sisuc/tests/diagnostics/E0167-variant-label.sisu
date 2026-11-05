@@ -1,0 +1,14 @@
+// GIVEN `Shape.Circle(r: mut x)`, a variant whose payload has a label
+// WHEN `sisu check` runs on it
+// THEN it reports E0167 on the `mut` after the label, in the form for a variant
+// AND the safe fix removes `mut ` and gives `Shape.Circle(r: x)`
+enum Shape {
+    Circle(r: f64)
+    Dot
+}
+
+fn main() {
+    let x = 1.0
+    let s = Shape.Circle(r: mut x)
+    print(s)
+}

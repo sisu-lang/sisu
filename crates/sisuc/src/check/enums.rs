@@ -8,6 +8,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::alias::Through;
 use super::generic::{GenericSig, Site, mismatched};
 use super::interface::Slot;
+use super::mut_args::Callee;
 use super::unused_names::Used;
 use super::{Checked, Checker, Declared, Definition, DiagnosticKind, Poisoned, own_args};
 use crate::ast;
@@ -271,6 +272,9 @@ impl Checker<'_> {
             return Err(Poisoned::error());
         };
         self.record(Used::Variant(id, variant), span);
+        if let Some((args, _)) = call {
+            self.refuse_variant_mut((id, variant), member, site, args);
+        }
         let info = &self.enums[id.0];
         // Built only for a diagnostic.
         let path = format_args!(
@@ -340,6 +344,32 @@ impl Checker<'_> {
         }))
     }
 
+    /// E0167 for each `mut` argument of `Enum.member(args)`, a variant of the enum `id`.
+    fn refuse_variant_mut(
+        &mut self,
+        (id, variant): (EnumId, usize),
+        member: &ast::Ident,
+        site: Site<'_>,
+        args: &[ast::Arg],
+    ) {
+        if args.iter().any(|arg| arg.mut_keyword.is_some()) {
+            let info = &self.enums[id.0];
+            let shown = format!(
+                "{}.{}",
+                qualifier(site, member, info.name.name),
+                member.name
+            );
+            let labels = &info.variants[variant].labels;
+            let labeled = !labels.is_empty() && labels.iter().all(Option::is_some);
+            let callee = Callee::Construct {
+                shown: &shown,
+                class: false,
+                labeled,
+            };
+            self.refuse_mut(args, callee);
+        }
+    }
+
     /// `Enum.member` or `Enum.member(args)`, the variant `variant` of the generic enum `id`
     /// written in its form, `call` holding the arguments when it has a payload: the variant
     /// built with the type arguments its arguments and `site` bind, or an error.
@@ -406,6 +436,7 @@ impl Checker<'_> {
             params: &fields,
             ret: Some(ret),
             bounds: &bounds,
+            mut_site: None,
         };
         // An alias's type arguments, when the call wrote them, are applied already.
         let written = (
@@ -797,7 +828,7 @@ pub(super) struct HoldsTable {
 }
 
 /// `ty` without its array and optional wrappers.
-fn unwrapped(mut ty: Type) -> Type {
+pub(super) fn unwrapped(mut ty: Type) -> Type {
     while let TypeKind::Array(inner) | TypeKind::Optional(inner) = ty.kind() {
         ty = inner;
     }

@@ -1,0 +1,20 @@
+// GIVEN `let n: i64 = b.pick(ys)`, where `ys` is a `let` `[string]` and `pick` has a `mut` `[T]`
+// WHEN `sisu check` runs on it
+// THEN it reports E0032 for the result, then E0166 on `ys`
+// AND the E0166 has no help: declaring `ys` with `let mut` would leave the E0032
+class Names {
+    cells: [string]
+
+    fn pick<T>(self, mut xs: [T]) -> T {
+        let x = xs[0]
+        xs[0] = x
+        x
+    }
+}
+
+fn main() {
+    let b = Names(cells: ["a"])
+    let ys = ["a"]
+    let n: i64 = b.pick(ys)
+    print(n)
+}

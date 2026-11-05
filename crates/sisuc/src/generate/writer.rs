@@ -27,6 +27,9 @@ pub(crate) enum Rewrite {
     Let,
     /// `e` becomes a fresh `C<n>`, and `const C<n>: T = e` goes after everything else.
     Const,
+    /// A statement that passes a local as a `mut` argument runs on a copy of it: `({ let mut w<n>
+    /// = x; f(mut w<n>); x = w<n> })`.
+    MutCopy,
 }
 
 /// What a rewrite's condition reads of the point it would rewrite (decision 2).
@@ -62,7 +65,8 @@ pub(crate) fn allowed(rewrite: Rewrite, site: &Site) -> bool {
         Rewrite::Block => !site.in_const && !site.place,
         // After a block's last expression, it would take the block's value (E0031).
         Rewrite::DeadIf => !site.last,
-        Rewrite::Swap => true,
+        // The condition of `MutCopy` is on the call, not on a point: see `mut_rewrite_allowed`.
+        Rewrite::Swap | Rewrite::MutCopy => true,
         Rewrite::Let => site.pure && site.unconditional && !site.in_const && !site.place,
         Rewrite::Const => site.folds && !site.place,
     }
@@ -266,6 +270,39 @@ impl Writer {
         self.made(Rewrite::Const);
     }
 
+    /// Writes the statement from `start` on, in the rewritten copy, on copies of the `locals` it
+    /// passes as `mut` arguments, if `copy` and `clean`: each local, with where the rewritten copy
+    /// holds its text, goes into a fresh `w<n>` before the call and comes back after it. The
+    /// generator says `clean` when no other argument can change a local (S31).
+    pub(crate) fn mut_block(
+        &mut self,
+        start: Mark,
+        locals: &[(String, usize)],
+        copy: bool,
+        clean: bool,
+    ) {
+        if !copy || !clean || locals.is_empty() {
+            return;
+        }
+        let copies: Vec<String> = locals.iter().map(|_| self.fresh("w")).collect();
+        // From the last, so that the offsets before it still hold.
+        for ((local, at), copy) in locals.iter().zip(&copies).rev() {
+            self.out
+                .rewritten
+                .replace_range(*at..*at + local.len(), copy);
+        }
+        let (mut before, mut after) = (String::from("({ "), String::new());
+        for ((local, _), copy) in locals.iter().zip(&copies) {
+            write!(before, "let mut {copy} = {local}; ")
+                .expect("writing to a `String` should succeed");
+            write!(after, "; {local} = {copy}").expect("writing to a `String` should succeed");
+        }
+        self.out.rewritten.insert_str(start.rewritten, &before);
+        self.out.rewritten.push_str(&after);
+        self.out.rewritten.push_str(" })");
+        self.made(Rewrite::MutCopy);
+    }
+
     /// Writes `if c { a } else { b }`, from the condition `cond` on in the rewritten copy, as
     /// `if !(c) { b } else { a }`, where `a` and `b` are the arms' text.
     pub(crate) fn swap_arms(&mut self, cond: Range<usize>, a: Range<usize>, b: Range<usize>) {
@@ -282,5 +319,88 @@ impl Writer {
         self.out.rewritten.truncate(cond.start);
         self.out.rewritten.push_str(&swapped);
         self.made(Rewrite::Swap);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Writer;
+
+    /// GIVEN S31's `f(mut xs, g(mut xs))`, whose other argument can change `xs`, and
+    /// `f(mut xs, 1)`, whose other argument cannot
+    /// WHEN the writer is told which, and asked to copy
+    /// THEN it leaves the first call as it is, and rewrites the second
+    #[test]
+    fn mut_rewrite_should_skip_a_call_whose_arguments_can_change_the_place() {
+        for (call, clean) in [("f(mut xs, g(mut xs))", false), ("f(mut xs, 1)", true)] {
+            let mut w = Writer::default();
+            let start = w.mark();
+            w.text("f(mut ");
+            let at = w.at();
+            w.text(&call["f(mut ".len()..]);
+            w.mut_block(start, &[("xs".to_string(), at)], true, clean);
+            assert_eq!(w.out.program, call);
+            assert_eq!(w.out.rewritten != call, clean, "{call}");
+        }
+    }
+
+    /// GIVEN a call `f(mut x, mut o.g, 1)` of which two arguments are `mut`, and `x` is a local
+    /// WHEN the writer rewrites it
+    /// THEN the rewritten copy runs the call on a copy of `x`, and the program is as it was
+    #[test]
+    fn mut_block_should_copy_each_local_in_and_out() {
+        let mut w = Writer::default();
+        let start = w.mark();
+        w.text("f(mut ");
+        let first = w.at();
+        w.text("x");
+        w.text(", mut o.g, mut ");
+        let second = w.at();
+        w.text("y)");
+        let locals = [("x".to_string(), first), ("y".to_string(), second)];
+        w.mut_block(start, &locals, true, true);
+        assert_eq!(w.out.program, "f(mut x, mut o.g, mut y)");
+        assert_eq!(
+            w.out.rewritten,
+            "({ let mut w1 = x; let mut w2 = y; f(mut w1, mut o.g, mut w2); x = w1; y = w2 })"
+        );
+    }
+
+    /// GIVEN a clean call whose text holds the words `mut` and `mutable`, in a string and a name
+    /// WHEN the writer rewrites it
+    /// THEN it copies the local: the generator's word decides, not the text
+    #[test]
+    fn mut_block_should_not_read_the_text_of_the_call() {
+        let mut w = Writer::default();
+        let start = w.mark();
+        w.text("f(mut ");
+        let at = w.at();
+        w.text("x, \"mut\", mutable)");
+        w.mut_block(start, &[("x".to_string(), at)], true, true);
+        assert_eq!(
+            w.out.rewritten,
+            "({ let mut w1 = x; f(mut w1, \"mut\", mutable); x = w1 })"
+        );
+    }
+
+    /// GIVEN a call that the writer may rewrite
+    /// WHEN the choice is not to copy, or the call holds no local
+    /// THEN the rewritten copy is as the program is
+    #[test]
+    fn mut_block_should_leave_a_call_that_is_not_copied() {
+        for (copy, locals) in [(false, true), (true, false)] {
+            let mut w = Writer::default();
+            let start = w.mark();
+            w.text("f(mut ");
+            let at = w.at();
+            w.text("x)");
+            let locals = if locals {
+                vec![("x".to_string(), at)]
+            } else {
+                Vec::new()
+            };
+            w.mut_block(start, &locals, copy, true);
+            assert_eq!(w.out.rewritten, "f(mut x)");
+        }
     }
 }

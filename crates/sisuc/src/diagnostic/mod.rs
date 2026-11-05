@@ -9,15 +9,16 @@ mod suggest;
 
 pub(crate) use registry::{
     AddBound, Annotate, AnyFormKind, ArgumentsForm, BadRange, BlockBound, BlockNeed, BoundLabel,
-    BoundSite, BuiltIn, CannotExtendForm, ClashForm, ClashKind, Code, ColonBound, ConformanceForm,
-    Conversion, Definition, DiagnosticKind, Earlier, ElseOf, Expected, ForeignPattern,
-    ForeignRange, GetCall, GuardHelp, Hop, Immutable, Implied, IndexUsage, InterfaceBodyForm, Join,
-    LetField, Literal, LiteralKind, MainForm, Make, MatchIdiomForm, MathFix, Member,
-    MethodReceiver, MismatchFix, MismatchSource, MissingBound, NanFix, NestingForm, NoOperatorForm,
-    NotAny, NotConformForm, NotInterface, Operand, Owner, Panic, Peel, PeelIs, PeelLayers, Plain,
+    BoundSite, BuiltIn, CannotExtendForm, ChainForm, ChainLabel, ClashForm, ClashKind, Code,
+    ColonBound, ConformanceForm, Conversion, Definition, DiagnosticKind, Earlier, ElseOf, Expected,
+    ForeignPattern, ForeignRange, GetCall, GuardHelp, Hop, Immutable, Implied, IndexUsage,
+    InterfaceBodyForm, Join, LetField, Literal, LiteralKind, MainForm, Make, MatchIdiomForm,
+    MathFix, Member, MethodReceiver, MismatchFix, MismatchSource, MissingBound, MissingFix,
+    MutDiffers, NanFix, NestingForm, NeverReassignedForm, NoOperatorForm, NotAny, NotConformForm,
+    NotInterface, NotMutForm, NotPlace, Operand, Owner, Panic, Peel, PeelIs, PeelLayers, Plain,
     PowerFix, PrecisionHelp, PrintProblem, RETIRED, RangeForm, RangePlace, RangePush, RangeTarget,
-    RangeWrite, ReceiverArgument, SpecForm, SpecLimit, Spelled, TypedLiteral, Unbuilt, Ungenerated,
-    UnknownForm, Unwrap, UnwrapHelp, UsedBy, VariantLabels, WideKind, invisible,
+    RangeWrite, ReceiverArgument, SliceOf, SpecForm, SpecLimit, Spelled, TypedLiteral, Unbuilt,
+    Ungenerated, UnknownForm, Unwrap, UnwrapHelp, UsedBy, VariantLabels, WideKind, invisible,
 };
 pub(crate) use suggest::{Suggestion, alias, closest, suggestion};
 

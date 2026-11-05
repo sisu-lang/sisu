@@ -150,7 +150,7 @@ pub(crate) fn use_color(stderr_is_terminal: bool, no_color: Option<&OsStr>) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diagnostic::{DiagnosticKind, Immutable};
+    use crate::diagnostic::{DiagnosticKind, Immutable, NeverReassignedForm};
     use crate::source::Span;
 
     const SOURCE: &str = "fn main() {\n    let n = 0\n    n = 1\n    let mut m = 0\n}\n";
@@ -172,7 +172,9 @@ mod tests {
         DiagnosticKind::NeverReassigned {
             name: "m".to_string(),
             at: Span::new(48, 49),
-            keyword: Span::new(44, 47),
+            form: NeverReassignedForm::Let {
+                keyword: Span::new(44, 47),
+            },
         }
         .into()
     }

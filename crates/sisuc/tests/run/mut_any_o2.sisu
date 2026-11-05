@@ -1,0 +1,47 @@
+fn iterations() -> i64 { 1000 }
+
+// GIVEN `interface Filler { fn fill(self, mut xs: [i64], v: i64) }`, two classes that conform to
+// it and add different amounts to `xs[0]`, and `fill_all`, which recurses to a depth that the
+// program reads at run time, and calls `fill` through `any Filler` with `mut xs` at each level
+// WHEN `main` chooses the class of the receiver at run time, calls `fill_all` 1000 times with
+// `mut xs`, and prints `xs`
+// THEN it prints "[9000]": 500 calls add 7 + 0 and 7 + 1, and 500 calls add 1 + 0 and 1 + 1
+// AND `-O2` keeps the call of `fill_all` in `main`, because the compiler cannot know the depth:
+// the marker below checks this
+// AND the receiver is chosen at run time, so `fill_all` keeps the call through the table. That
+// call passes the out pointer of an optimized function. No marker checks it, because the harness
+// counts only direct calls
+// o2-calls: main fill_all 1
+interface Filler {
+    fn fill(self, mut xs: [i64], v: i64)
+}
+
+class Sevens: Filler {
+    fn fill(self, mut xs: [i64], v: i64) {
+        xs[0] = xs[0] + 7 + v
+    }
+}
+
+class Ones: Filler {
+    fn fill(self, mut xs: [i64], v: i64) {
+        xs[0] = xs[0] + 1 + v
+    }
+}
+
+fn fill_all(f: any Filler, mut xs: [i64], depth: i64) {
+    if depth > 0 {
+        fill_all(f, mut xs, depth - 1)
+    }
+    f.fill(mut xs, depth)
+}
+
+fn main() {
+    // Standard input is empty, so the depth is 1, but the compiler cannot know it.
+    let depth = (read_line() ?? "").len() + 1
+    let mut xs = [0]
+    for i in 0..iterations() {
+        let f: any Filler = if i % 2 == 0 { Sevens() } else { Ones() }
+        fill_all(f, mut xs, depth)
+    }
+    print(xs)
+}

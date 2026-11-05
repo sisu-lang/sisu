@@ -1,0 +1,10 @@
+warning[W0002]: `b` is never reassigned, so its `mut` changes nothing for the caller
+  --> W0002-param.sisu:10:15
+   |
+10 | fn rename(mut b: Named, name: string) {
+   |               ^ never reassigned
+   |
+   = help: the fields of a class object change without `mut`
+
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0002

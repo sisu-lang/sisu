@@ -1,0 +1,21 @@
+// GIVEN `fill(mut b?.inner?.cells)`, a path with two `?.` steps
+// WHEN `sisu check` runs on it
+// THEN it reports E0170 on the argument, with the label for the write type
+// AND it gives no help
+class Inner {
+    mut cells: [i64]
+}
+
+class Board {
+    mut inner: Inner?
+}
+
+fn fill(mut xs: [i64]) {
+    xs[0] = 1
+}
+
+fn main() {
+    let b: Board? = Board(inner: Inner(cells: [1]))
+    fill(mut b?.inner?.cells)
+    print(b == None)
+}

@@ -67,4 +67,23 @@ exclude_re = [
     # at `init.span` as its last act, and the literal has no part that could push after it. So
     # the last diagnostic has both the code and the span, and neither half is ever false alone.
     "replace \\|\\| with && in Checker<'_>::uninferred_of",
+    # `self.pick(3) != 0` in `Gen<'_>::mut_call_of`: it only swaps how often a `mut` call and an
+    # `exchange` are written, 2 in 3 and 1 in 3. Both still come, each form is right for every
+    # place it has, and no test reads the rate of the two forms. The pattern holds the column,
+    # because the `!=` of `ret != Ty::Unit` is a different mutant.
+    ":89: replace != with == in Gen<'_>::mut_call_of",
+    # `set >> slot` in `add_local`: for `slot > 0`, `set << slot & 1` is 0, so the guard admits a
+    # slot that `set` already holds. Then `set | 1 << slot == set`, and that set is one that
+    # `reach` has, because the guard needs `reach >> set & 1 == 1`. So `next` is the same. For
+    # `slot == 0` both forms are equal. The pattern holds the column, because the other shifts of
+    # the guard give a wrong set.
+    ":70: replace >> with << in add_local",
+    # `set | 1 << slot` in `add_local`: the guard holds only when `set` lacks `slot`, where `|`
+    # and `^` give the same value. The pattern holds the column and the operator, because the
+    # `|` to `&` mutant at that column gives a wrong set.
+    ":35: replace \\| with \\^ in add_local",
+    # `a | b == rest` in `complete`: `a & b == 0` comes first, and for disjoint sets `|` and `^`
+    # give the same value. The pattern holds the column, because the other operators give a wrong
+    # answer.
+    ":76: replace \\| with \\^ in complete",
 ]

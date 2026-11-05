@@ -1,0 +1,15 @@
+// GIVEN `swap(a, a)`, where `a` is a `let mut` local and both parameters of `swap` are `mut`
+// WHEN `sisu check` runs on it
+// THEN it reports E0166 on each argument
+// AND there is no fix on either: both fixes together would be E0171
+fn swap(mut x: i64, mut y: i64) {
+    let t = x
+    x = y
+    y = t
+}
+
+fn main() {
+    let mut a = 1
+    swap(a, a)
+    print(a)
+}

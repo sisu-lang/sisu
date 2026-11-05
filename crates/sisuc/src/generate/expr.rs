@@ -3,6 +3,7 @@
 
 use std::ops::Range;
 
+use super::mut_call::Place;
 use super::scope::{Nodes, RESULT, Scope, Ty, Var};
 use super::stmt::MAX_BLOCKS;
 use super::writer::{Mark, Rewrite, Site, allowed};
@@ -380,7 +381,9 @@ impl Gen<'_> {
             Rewrite::Block => self.w.block(start),
             Rewrite::Let => self.w.bind(start, ty),
             Rewrite::Const => self.w.constant(start, ty),
-            Rewrite::DeadIf | Rewrite::Swap => unreachable!("only a statement or an `if` takes it"),
+            Rewrite::DeadIf | Rewrite::Swap | Rewrite::MutCopy => {
+                unreachable!("only a statement or an `if` takes it")
+            }
         }
     }
 
@@ -1646,25 +1649,31 @@ impl Gen<'_> {
 
     /// The functions and methods a call here may name that return `ty` within `max` chars: in
     /// `main`, every one a call at depth 0 fits the budget for; in a function, itself and the
-    /// earlier ones.
+    /// earlier ones. A function with a `mut` parameter is no callee: only a `mut` call names it.
     pub(crate) fn callees(&self, ty: &Ty, max: u64) -> Vec<usize> {
-        let last = self.scope.func.map_or(self.scope.funcs.len(), |f| f + 1);
-        (0..last)
-            .filter(|&f| {
-                let func = &self.scope.funcs[f];
-                func.ret == *ty
-                    && func.ret_size <= max
-                    && (self.scope.func.is_some() || self.cost.times() <= self.budget)
-            })
-            .collect()
+        let mut callees = self.callees_any();
+        callees.retain(|&f| {
+            let func = &self.scope.funcs[f];
+            func.ret == *ty && func.ret_size <= max
+        });
+        callees
     }
 
-    /// How many functions and methods, the first ones, a call statement may name, of any type.
-    pub(crate) fn callees_any(&self) -> usize {
+    /// The functions and methods a call statement may name, of any type, but those with a `mut`
+    /// parameter.
+    pub(crate) fn callees_any(&self) -> Vec<usize> {
+        let mut callees = self.reachable();
+        callees.retain(|&f| !self.scope.funcs[f].has_mut());
+        callees
+    }
+
+    /// The functions and methods a call here may name: in `main`, all of them while a call at
+    /// depth 0 fits the budget; in a function, itself and the earlier ones.
+    pub(crate) fn reachable(&self) -> Vec<usize> {
         if self.scope.func.is_none() && self.cost.times() > self.budget {
-            return 0;
+            return Vec::new();
         }
-        self.scope.func.map_or(self.scope.funcs.len(), |f| f + 1)
+        (0..self.scope.func.map_or(self.scope.funcs.len(), |f| f + 1)).collect()
     }
 
     /// A call of a function or a method that returns `ty`, `unit` for a statement.
@@ -1677,6 +1686,18 @@ impl Gen<'_> {
     /// `f(depth, args)`, or of a method `((e).m(depth, args))`, or `((o)?.m(depth, args))` if
     /// `safe`, whose arguments may not run.
     pub(crate) fn invoke(&mut self, callee: usize, safe: bool) -> Info {
+        self.invoke_with(callee, safe, &[], &mut Vec::new())
+    }
+
+    /// `invoke`, where `places` are the arguments of the `mut` parameters, in order; `locals`
+    /// takes the text of each one that is a bare local, and where the rewritten copy holds it.
+    pub(crate) fn invoke_with(
+        &mut self,
+        callee: usize,
+        safe: bool,
+        places: &[Place],
+        locals: &mut Vec<(String, usize)>,
+    ) -> Info {
         // The depth first: the budget it takes is gone before the receiver's calls take theirs.
         let depth = if self.scope.func.is_some() {
             self.cost.call(callee, None);
@@ -1704,14 +1725,23 @@ impl Gen<'_> {
         // `depth - 1` is arithmetic the generator does not know the value of (decision 2).
         self.effect |= self.scope.func.is_some();
         let params = self.scope.funcs[callee].params.clone();
+        let muts = self.scope.funcs[callee].muts.clone();
+        let mut places = places.iter();
         let args = |g: &mut Self| -> Vec<Info> {
-            params
-                .iter()
-                .map(|(ty, size)| {
-                    g.w.text(", ");
-                    g.expr(ty, *size)
-                })
-                .collect()
+            let mut infos = Vec::new();
+            for ((ty, size), mutable) in params.iter().zip(muts) {
+                g.w.text(", ");
+                if mutable.is_some() {
+                    let place = places
+                        .next()
+                        .expect("a `mut` parameter should have a place");
+                    g.w.text("mut ");
+                    g.write_place(place, locals);
+                } else {
+                    infos.push(g.expr(ty, *size));
+                }
+            }
+            infos
         };
         parts.extend(if safe {
             self.conditionally(args)

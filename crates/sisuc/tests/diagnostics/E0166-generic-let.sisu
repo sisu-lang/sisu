@@ -1,0 +1,17 @@
+// GIVEN `swap(x, y)`, where `x` and `y` are `let` locals and both parameters of `swap` are `mut`
+//   with the type parameter `T`
+// WHEN `sisu check` runs on it
+// THEN it reports E0166 on each argument, with the help to declare it with `let mut`
+// AND the places bind `T`, so the help is offered: following it gives a valid call
+fn swap<T>(mut a: T, mut b: T) {
+    let t = a
+    a = b
+    b = t
+}
+
+fn main() {
+    let x = 1
+    let y = 2
+    swap(x, y)
+    print(x + y)
+}

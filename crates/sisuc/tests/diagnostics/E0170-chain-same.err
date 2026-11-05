@@ -1,0 +1,13 @@
+error[E0170]: `list?.next` can be missing, so it cannot be a `mut` argument
+  --> E0170-chain-same.sisu:14:16
+   |
+ 8 | fn relink(mut n: Node?) {
+   |               - declared `Node?` here
+...
+14 |     relink(mut list?.next)
+   |                ^^^^^^^^^^ `list` can be `None`, and then there is no place to store back to
+   |
+   = help: unwrap `list` with `if let`, and pass the field of the unwrapped object
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0170

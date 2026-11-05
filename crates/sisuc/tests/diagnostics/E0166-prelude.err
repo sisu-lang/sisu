@@ -1,0 +1,8 @@
+error[E0166]: the parameter `place` of `exchange` is `mut`, so its argument needs `mut`
+ --> E0166-prelude.sisu:6:20
+  |
+6 |     print(exchange(5, 3))
+  |                    ^ needs `mut`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0166

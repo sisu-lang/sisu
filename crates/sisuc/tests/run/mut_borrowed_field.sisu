@@ -1,0 +1,18 @@
+// GIVEN `fn f(old: [i64], mut cells: [i64]) { cells[0] = 9; print(old) }` and
+// `let b = Board(cells: [1, 2, 3])`
+// WHEN `main` calls `f(b.cells, mut b.cells)` and prints `b.cells`
+// THEN it prints "[1, 2, 3]", then "[9, 2, 3]": the borrowed field is retained
+class Board {
+    mut cells: [i64]
+}
+
+fn f(old: [i64], mut cells: [i64]) {
+    cells[0] = 9
+    print(old)
+}
+
+fn main() {
+    let b = Board(cells: [1, 2, 3])
+    f(b.cells, mut b.cells)
+    print(b.cells)
+}

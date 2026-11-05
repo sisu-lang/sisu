@@ -74,7 +74,6 @@ codes! {
     FieldLet = "E0016",
     MethodNeedsSelf = "E0017",
     MutSelf = "E0018",
-    MutParameter = "E0019",
     SelfNotFirst = "E0020",
     AssignToExpression | PushToTemporary = "E0021",
     RangeOutsideFor = "E0023",
@@ -219,6 +218,12 @@ codes! {
     TooManyInstances = "E0163",
     CannotBeAny = "E0164",
     AnyForm = "E0165",
+    MutMarkerMissing = "E0166",
+    MutMarkerNotMut = "E0167",
+    MutNotArgument = "E0168",
+    MutArgumentNotPlace = "E0169",
+    MutArgumentType = "E0170",
+    MutPlaceTwice = "E0171",
     LetElseCanFinish = "E0172",
     LetElseValueEndsInBrace = "E0173",
     RefutablePattern = "E0174",
@@ -245,6 +250,10 @@ pub(crate) const RETIRED: &[(&str, &str)] = &[
     (
         "E0014",
         include_str!("../../../../docs/diagnostics/E0014.md"),
+    ),
+    (
+        "E0019",
+        include_str!("../../../../docs/diagnostics/E0019.md"),
     ),
     (
         "E0022",
@@ -292,11 +301,12 @@ pub(crate) enum DiagnosticKind {
     },
     /// A statement at `at` after one that never finishes.
     UnreachableCode { at: Span },
-    /// The `let mut` binding `name`, at `at`, which nothing reassigns; `keyword` is its `mut`.
+    /// The binding `name`, at `at`, which is a `let mut` or a `mut` parameter, and which nothing
+    /// reassigns.
     NeverReassigned {
         name: String,
         at: Span,
-        keyword: Span,
+        form: NeverReassignedForm,
     },
     /// A binary `-` at `at` that starts a line.
     LeadingBinaryMinus { at: Span },
@@ -441,6 +451,65 @@ pub(crate) enum DiagnosticKind {
     },
     /// `any` at `at`, written in a way that it does not take.
     AnyForm { at: Span, form: AnyFormKind },
+    /// The argument at `at` of a call, whose parameter `name` is `mut`, and that has no `mut`.
+    /// `declared` is where the parameter is declared.
+    MutMarkerMissing {
+        at: Span,
+        name: String,
+        callee: String,
+        declared: Option<Span>,
+        fix: MissingFix,
+    },
+    /// The `mut` at `at` before an argument whose parameter is not `mut`. `fix_end` is the end of
+    /// the spaces and tabs after the keyword, for the fix that removes them with it.
+    MutMarkerNotMut {
+        at: Span,
+        fix_end: usize,
+        form: NotMutForm,
+    },
+    /// A `mut` at `at` before an expression that is no argument. `binding` is whether the
+    /// expression is the value of a `let` that has no `mut`. `fix_end` is the end of the spaces
+    /// and tabs after the keyword, for the fix that removes them with it.
+    MutNotArgument {
+        at: Span,
+        binding: bool,
+        fix_end: usize,
+    },
+    /// The argument at `at`, passed `mut`, that `cause` says is no place. `name` is the root
+    /// binding or the field that `cause` is about.
+    MutArgumentNotPlace {
+        at: Span,
+        name: String,
+        cause: NotPlace,
+    },
+    /// The `mut` argument at `at`, written `arg`, whose type `found` is not the type `want` of
+    /// the parameter. `name` is the parameter's, and `position` its place, from 1, when it has
+    /// no name; `declared` is where it is declared. `promotes` when the place is no optional
+    /// and `want` is the optional of its type. `chain` when the place goes through a `?.`.
+    MutArgumentType {
+        at: Span,
+        arg: String,
+        name: Option<String>,
+        position: usize,
+        callee: String,
+        found: String,
+        want: String,
+        declared: Option<Span>,
+        /// The parameter's type as it is declared: it names a type parameter where `want` is
+        /// the type that inference fixed.
+        declared_as: String,
+        promotes: bool,
+        chain: Option<ChainForm>,
+    },
+    /// The second `mut` argument of a call, at `second`, that is the place of the first, at
+    /// `first`, or holds it, or is held by it. `shown` is the text of the place that is inside
+    /// the other, and `inside` the text of the other, for the second form.
+    MutPlaceTwice {
+        first: Span,
+        second: Span,
+        shown: String,
+        inside: Option<String>,
+    },
     /// The `else` block of a `let ... else`, whose `}` is at `at`, which can reach its end.
     LetElseCanFinish { at: Span },
     /// The value at `at` of a `let ... else`, which ends in `}`.
@@ -567,8 +636,6 @@ pub(crate) enum DiagnosticKind {
         at: Span,
         annotate: Option<Annotate>,
     },
-    /// A `mut` at `at` in front of the parameter `name`.
-    MutParameter { name: String, at: Span },
     /// A `self` at `at` that is not a method's first parameter.
     SelfNotFirst { at: Span },
     /// An assignment at `at` to something that is not a place. `range` is the range index that
@@ -2445,6 +2512,27 @@ pub(crate) enum BadRange {
     Empty,
 }
 
+/// A parameter of a requirement whose `mut` the method does not share.
+#[derive(Clone)]
+pub(crate) struct MutDiffers {
+    /// Where the requirement's parameter is named.
+    pub(crate) at: Span,
+    /// Its name.
+    pub(crate) name: String,
+    /// Whether the requirement's parameter is `mut`.
+    pub(crate) mutable: bool,
+}
+
+/// The binding that W0002 names.
+#[derive(Clone)]
+pub(crate) enum NeverReassignedForm {
+    /// A `let mut`, with its `mut`, which the fix removes.
+    Let { keyword: Span },
+    /// A `mut` parameter, of a class type when `class`. Removing its `mut` changes every caller,
+    /// so there is no fix.
+    Param { class: bool },
+}
+
 /// What owns a method.
 #[derive(Clone)]
 pub(crate) enum Owner {
@@ -2468,6 +2556,7 @@ pub(crate) enum ConformanceForm {
         method: String,
         found: String,
         want: String,
+        mut_differs: Option<MutDiffers>,
     },
     /// The method `method` of an `extend` block, which is no requirement; `target` is the type
     /// that its own block would extend.
@@ -2775,6 +2864,78 @@ pub(crate) enum Unbuilt {
     Chain(Vec<(String, String)>),
 }
 
+/// What the report of a missing `mut` offers for the argument.
+pub(crate) enum MissingFix {
+    /// The place fits the parameter: the safe fix that adds `mut `.
+    Add,
+    /// A place that `mut` would still make an error (E0170 or E0171), or that is not known: no
+    /// fix and no help.
+    NoFix,
+    /// A `let` local `name`, passed as `arg`.
+    Let { name: String, arg: String },
+    /// A field `name` that is not `mut`.
+    Field { name: String },
+    /// Anything else: only a local copy can change.
+    Copy,
+}
+
+/// How a `mut` argument at a parameter that is not `mut` names its callee.
+pub(crate) enum NotMutForm {
+    /// A callee that the program writes, by the parameter `name` of `callee`.
+    Written {
+        name: String,
+        callee: String,
+        declared: Option<Span>,
+    },
+    /// A built-in, by the `position` of the argument, from 1, and the `callee` as written.
+    Unnamed { position: usize, callee: String },
+    /// The constructor of a class, written `shown`.
+    Class { shown: String },
+    /// A variant, written `shown`.
+    Variant { shown: String },
+}
+
+/// Why an argument cannot be passed `mut`.
+pub(crate) enum NotPlace {
+    /// A binding or a field that cannot change.
+    Immutable(Immutable),
+    /// `self`, where `class` says that its type is a class.
+    SelfValue { class: bool },
+    /// A value that is no place: a call, a literal.
+    Temporary,
+    /// A range index of the kind of value `SliceOf` says.
+    Range(SliceOf),
+}
+
+/// What a range index gives: a new `string` or a new array.
+#[derive(Clone, Copy)]
+pub(crate) enum SliceOf {
+    String,
+    Array,
+}
+
+/// The `?.` form of `MutArgumentType`: the place reads as an optional and is written as what
+/// the field stores.
+pub(crate) struct ChainForm {
+    /// The place as written, when it is on one line.
+    pub(crate) shown: Option<String>,
+    pub(crate) label: ChainLabel,
+    /// A sentence for the help, when unwrapping the object gives a place that fits.
+    pub(crate) help: Option<String>,
+}
+
+/// Which type of a `?.` place the parameter's type misses.
+pub(crate) enum ChainLabel {
+    /// The parameter has the type that the place is written as.
+    WriteType,
+    /// The parameter has the type that the place reads as, and the field `field` cannot hold it.
+    WritesNone { field: String },
+    /// The place reads as what it is written as: no place exists when `head` is `None`.
+    NoPlace { head: Option<String> },
+    /// Any other type.
+    Other,
+}
+
 /// What follows the `let` in front of a field.
 pub(crate) enum LetField {
     /// A field that ends the line: deleting `remove`, from the `let` to the next token, fixes it.
@@ -2834,15 +2995,34 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::UnreachableCode { at } => {
                 Diagnostic::coded(code, at, "unreachable code")
             }
-            DiagnosticKind::NeverReassigned { name, at, keyword } => {
-                Diagnostic::coded(code, at, format!("`{name}` is never reassigned")).with_fix(Fix {
-                    message: "declare it with `let`".to_string(),
-                    safe: true,
-                    edits: vec![Edit {
-                        span: Span::new(keyword.start(), at.start()),
-                        replacement: String::new(),
-                    }],
-                })
+            DiagnosticKind::NeverReassigned {
+                name,
+                at,
+                form: NeverReassignedForm::Let { keyword },
+            } => Diagnostic::coded(code, at, format!("`{name}` is never reassigned")).with_fix(Fix {
+                message: "declare it with `let`".to_string(),
+                safe: true,
+                edits: vec![Edit {
+                    span: Span::new(keyword.start(), at.start()),
+                    replacement: String::new(),
+                }],
+            }),
+            DiagnosticKind::NeverReassigned {
+                name,
+                at,
+                form: NeverReassignedForm::Param { class },
+            } => {
+                let d = Diagnostic::coded(
+                    code,
+                    at,
+                    format!("`{name}` is never reassigned, so its `mut` changes nothing for the caller"),
+                )
+                .with_label("never reassigned");
+                if class {
+                    d.with_help("the fields of a class object change without `mut`")
+                } else {
+                    d
+                }
             }
             DiagnosticKind::LeadingBinaryMinus { at } => {
                 Diagnostic::coded(code, at, "a line cannot start with a binary `-`").with_help(
@@ -3192,13 +3372,26 @@ impl From<DiagnosticKind> for Diagnostic {
                     method,
                     found,
                     want,
-                } => Diagnostic::coded(
-                    code,
-                    at,
-                    format!("`{method}` does not match `{interface}`'s requirement"),
-                )
-                .with_label(format!("found `{found}`"))
-                .with_help(format!("`{interface}` requires `{want}`")),
+                    mut_differs,
+                } => {
+                    let d = Diagnostic::coded(
+                        code,
+                        at,
+                        format!("`{method}` does not match `{interface}`'s requirement"),
+                    )
+                    .with_label(format!("found `{found}`"))
+                    .with_help(format!("`{interface}` requires `{want}`"));
+                    match mut_differs {
+                        Some(MutDiffers { at, name, mutable }) => {
+                            let not = if mutable { "" } else { "not " };
+                            d.with_secondary(
+                                at,
+                                format!("the requirement's parameter `{name}` is {not}`mut`"),
+                            )
+                        }
+                        None => d,
+                    }
+                }
                 ConformanceForm::NotRequirement { method, target } => Diagnostic::coded(
                     code,
                     at,
@@ -3589,6 +3782,229 @@ impl From<DiagnosticKind> for Diagnostic {
                     ))
                 }
             },
+            DiagnosticKind::MutMarkerMissing {
+                at,
+                name,
+                callee,
+                declared,
+                fix,
+            } => {
+                let message = format!(
+                    "the parameter `{name}` of `{callee}` is `mut`, so its argument needs `mut`"
+                );
+                let d = Diagnostic::coded(code, at, message).with_label("needs `mut`");
+                let d = match declared {
+                    Some(declared) => d.with_secondary(declared, "declared `mut` here"),
+                    None => d,
+                };
+                match fix {
+                    MissingFix::Add => d.with_fix(insert_mut("add `mut`", at)),
+                    MissingFix::Let { name, arg } => d.with_help(format!(
+                        "declare `{name}` with `let mut`, and pass `mut {arg}`"
+                    )),
+                    MissingFix::Field { name } => d.with_help(format!(
+                        "declare the field `{name}` as `mut`, and pass it `mut`"
+                    )),
+                    MissingFix::Copy if declared.is_some() => d.with_help(format!(
+                        "to change only a local copy, remove `mut` here and write \
+                         `let mut {name} = {name}` in the body"
+                    )),
+                    MissingFix::NoFix | MissingFix::Copy => d,
+                }
+            }
+            DiagnosticKind::MutMarkerNotMut { at, fix_end, form } => {
+                let fix = Fix {
+                    message: "remove `mut`".to_string(),
+                    safe: true,
+                    edits: vec![Edit {
+                        span: Span::new(at.start(), fix_end),
+                        replacement: String::new(),
+                    }],
+                };
+                let d = match form {
+                    NotMutForm::Written {
+                        name,
+                        callee,
+                        declared,
+                    } => {
+                        let d = Diagnostic::coded(
+                            code,
+                            at,
+                            format!("the parameter `{name}` of `{callee}` is not `mut`"),
+                        )
+                        .with_label("not a `mut` parameter");
+                        match declared {
+                            Some(declared) => {
+                                d.with_secondary(declared, "declared without `mut` here")
+                            }
+                            None => d,
+                        }
+                    }
+                    NotMutForm::Unnamed { position, callee } => Diagnostic::coded(
+                        code,
+                        at,
+                        format!("argument {position} of `{callee}` is not `mut`"),
+                    )
+                    .with_label("not a `mut` parameter"),
+                    NotMutForm::Class { shown } => Diagnostic::coded(
+                        code,
+                        at,
+                        format!(
+                            "`{shown}(…)` takes no `mut` argument: it copies each value into its \
+                             field"
+                        ),
+                    )
+                    .with_label("no `mut` here")
+                    .with_help("a `mut` field can change after the object is made"),
+                    NotMutForm::Variant { shown } => Diagnostic::coded(
+                        code,
+                        at,
+                        format!(
+                            "`{shown}(…)` takes no `mut` argument: it copies each value into its \
+                             field"
+                        ),
+                    )
+                    .with_label("no `mut` here")
+                    .with_help("an enum value never changes after it is built"),
+                };
+                d.with_fix(fix)
+            }
+            DiagnosticKind::MutNotArgument {
+                at,
+                binding,
+                fix_end,
+            } => {
+                let d = Diagnostic::coded(code, at, "`mut` marks an argument for a `mut` parameter")
+                    .with_label("not an argument");
+                let d = if binding {
+                    d.with_help(
+                        "a value is copied when it is bound; to change it, bind it with `let mut`",
+                    )
+                } else {
+                    d
+                };
+                d.with_fix(Fix {
+                    message: "remove `mut`".to_string(),
+                    safe: true,
+                    edits: vec![Edit {
+                        span: Span::new(at.start(), fix_end),
+                        replacement: String::new(),
+                    }],
+                })
+            }
+            DiagnosticKind::MutArgumentNotPlace { at, name, cause } => {
+                let d = Diagnostic::coded(
+                    code,
+                    at,
+                    "a `mut` argument must be a place: a variable, a `mut` field, or an element \
+                     of one of these",
+                );
+                mut_not_place(d, &name, &cause)
+            }
+            DiagnosticKind::MutArgumentType {
+                at,
+                arg,
+                name,
+                position,
+                callee,
+                found,
+                want,
+                declared,
+                declared_as,
+                promotes,
+                chain,
+            } => {
+                let param = match &name {
+                    Some(name) => format!("the parameter `{name}` of `{callee}`"),
+                    None => format!("argument {position} of `{callee}`"),
+                };
+                let (d, help) = if let Some(ChainForm { shown, label, help }) = chain {
+                    let label = match label {
+                        ChainLabel::WriteType | ChainLabel::Other => format!(
+                            "this reads as `{found}`, but `{callee}` reads and writes back \
+                             `{want}`"
+                        ),
+                        ChainLabel::WritesNone { field } => format!(
+                            "`{callee}` can write `None` back, and the field `{field}` cannot \
+                             hold `None`"
+                        ),
+                        ChainLabel::NoPlace { head } => {
+                            let head = head.map_or_else(
+                                || "the object".to_string(),
+                                |head| format!("`{head}`"),
+                            );
+                            format!(
+                                "{head} can be `None`, and then there is no place to store back to"
+                            )
+                        }
+                    };
+                    let message = match shown {
+                        Some(shown) => {
+                            format!("`{shown}` can be missing, so it cannot be a `mut` argument")
+                        }
+                        None => {
+                            "a path through `?.` can be missing, so it cannot be a `mut` argument"
+                                .to_string()
+                        }
+                    };
+                    (Diagnostic::coded(code, at, message).with_label(label), help)
+                } else {
+                    let message = match name {
+                        Some(_) => format!(
+                            "the `mut` argument `{arg}` has type `{found}`, but {param} has \
+                             type `{want}`"
+                        ),
+                        None => format!(
+                            "{param} has type `{want}`, but its `mut` argument has type \
+                             `{found}`"
+                        ),
+                    };
+                    let note = if promotes {
+                        format!(
+                            "a `mut` argument must have exactly the parameter's type: the \
+                             callee can store `None`, which {} `{found}` cannot hold",
+                            indefinite(&found)
+                        )
+                    } else {
+                        format!(
+                            "a `mut` argument must have exactly the parameter's type: the \
+                             callee stores {} `{want}` back into the place",
+                            indefinite(&want)
+                        )
+                    };
+                    let d = Diagnostic::coded(code, at, message)
+                        .with_label(format!("has type `{found}`"));
+                    (d, Some(note))
+                };
+                let d = match declared {
+                    Some(declared) => {
+                        d.with_secondary(declared, format!("declared `{declared_as}` here"))
+                    }
+                    None => d,
+                };
+                match help {
+                    Some(help) => d.with_help(help),
+                    None => d,
+                }
+            }
+            DiagnosticKind::MutPlaceTwice {
+                first,
+                second,
+                shown,
+                inside,
+            } => {
+                let message = match inside {
+                    Some(outer) => {
+                        format!("`{shown}` is inside `{outer}`, which this call also passes `mut`")
+                    }
+                    None => format!(
+                        "`{shown}` is passed `mut` twice: each `mut` argument needs its own place"
+                    ),
+                };
+                Diagnostic::coded(code, second, message)
+                    .with_label("passed again here")
+                    .with_secondary(first, "first passed here")
+            }
             DiagnosticKind::LetElseCanFinish { at } => Diagnostic::coded(
                 code,
                 at,
@@ -3727,11 +4143,6 @@ impl From<DiagnosticKind> for Diagnostic {
                 ),
             )
             .with_secondary(first, "first declared here"),
-            DiagnosticKind::MutParameter { name, at } => {
-                Diagnostic::coded(code, at, "a parameter cannot be `mut`").with_help(format!(
-                    "copy it into a variable: `let mut {name} = {name}`"
-                ))
-            }
             DiagnosticKind::SelfNotFirst { at } => {
                 Diagnostic::coded(code, at, "`self` is only the first parameter of a method")
             }
@@ -6117,6 +6528,68 @@ fn immutable_cause(d: Diagnostic, name: &str, element: bool, cause: &Immutable) 
             d.with_label("cannot assign")
         }
         .with_secondary(declared, "declared with `const` here"),
+    }
+}
+
+/// The indefinite article before the type `ty`: "an" before a vowel letter, except the types
+/// `u8` and the like, which say "you".
+fn indefinite(ty: &str) -> &'static str {
+    let unsigned = ty
+        .strip_prefix('u')
+        .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()));
+    if !unsigned && ty.starts_with(['a', 'e', 'i', 'o', 'u', 'A', 'E', 'I', 'O', 'U']) {
+        "an"
+    } else {
+        "a"
+    }
+}
+
+/// `d`, an E0169 about the root or field `name`, with the label, the secondary label and the help
+/// of its `cause`.
+fn mut_not_place(d: Diagnostic, name: &str, cause: &NotPlace) -> Diagnostic {
+    let copy = "copy it into a `let mut` local";
+    let label = match *cause {
+        NotPlace::Range(slice) => format!(
+            "a range index gives a new {}, not a place",
+            match slice {
+                SliceOf::String => "string",
+                SliceOf::Array => "array",
+            }
+        ),
+        _ => "not a place".to_string(),
+    };
+    let d = d.with_label(label);
+    match *cause {
+        NotPlace::Range(_) | NotPlace::Temporary => d,
+        NotPlace::SelfValue { class: true } => {
+            d.with_help("an object is shared: `self` can already write every `mut` field")
+        }
+        NotPlace::SelfValue { class: false } => d.with_help(copy),
+        NotPlace::Immutable(Immutable::Let {
+            declared,
+            redeclared,
+        }) => d
+            .with_secondary(
+                declared,
+                if redeclared {
+                    format!("`{name}` is redeclared here with `let`")
+                } else {
+                    "declared with `let` here".to_string()
+                },
+            )
+            .with_help(format!("declare `{name}` with `let mut`")),
+        NotPlace::Immutable(Immutable::Param { declared }) => d
+            .with_secondary(declared, "declared as a parameter here")
+            .with_help(copy),
+        NotPlace::Immutable(Immutable::Unwrapped { keyword, declared }) => d
+            .with_secondary(declared, format!("bound by `{keyword}` here"))
+            .with_help(copy),
+        NotPlace::Immutable(Immutable::Field { declared }) => d
+            .with_secondary(declared, "declared without `mut` here")
+            .with_help(format!("declare the field `{name}` as `mut`")),
+        NotPlace::Immutable(Immutable::Constant { declared }) => {
+            d.with_secondary(declared, "declared with `const` here")
+        }
     }
 }
 

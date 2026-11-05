@@ -210,7 +210,7 @@ nothing
 
 An assignment `place = value` stores a value in a place. These are the places:
 
-- a binding of a `let mut`
+- a binding of a `let mut`, or a `mut` parameter ([`mut` parameters](functions.md#mut-parameters))
 - a `mut` field of an object ([Classes](classes.md#fields))
 - an element of an array in one of these places, such as `xs[i]` or `grid[i][j]` ([Arrays](arrays.md#indexes))
 
@@ -234,7 +234,7 @@ The rules:
 
 - The value must have the type of the place ([E0032](../diagnostics/E0032.md)). Where the place is a `T?`, a `T` becomes a `T?`.
 - As for a `let`, the value must be an expression that has a value. So `x = panic("stop")` is an error ([E0043](../diagnostics/E0043.md)).
-- A binding without `mut`, such as one of a `let` or a `for`, cannot change. Neither can a parameter, a field without `mut` or a constant ([E0001](../diagnostics/E0001.md)).
+- A binding without `mut`, such as one of a `let` or a `for`, cannot change. Neither can a plain parameter, a field without `mut` or a constant ([E0001](../diagnostics/E0001.md)).
 - To write a `mut` field, the binding that holds the object does not need `mut`. To write an element, the array must be in a place that can change.
 - A place can go through `?.`: the assignment writes only when every `?.` step holds a value ([Optional chaining](operators.md#optional-chaining)). An expression that is not a place, such as `a + 1`, is an error ([E0021](../diagnostics/E0021.md)).
 - A function is not a place ([E0074](../diagnostics/E0074.md)).

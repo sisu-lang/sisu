@@ -57,7 +57,6 @@ crates/runtime/src/text.rs::write_bool_words
 crates/runtime/src/text.rs::write_char_widths
 crates/runtime/src/text.rs::write_int_extremes
 crates/sisuc/src/ast.rs::display_float
-crates/sisuc/src/ast.rs::display_formats
 crates/sisuc/src/check/string.rs::a_match_is_one_term_only_in_parentheses
 crates/sisuc/src/check/tests/arrays.rs::array_of_t_is_not_array_of_optional_t
 crates/sisuc/src/check/tests/arrays.rs::declared_len_is_called
@@ -670,7 +669,6 @@ crates/sisuc/src/diagnostic/render.rs::fix_renders_as_a_patch
 crates/sisuc/src/diagnostic/render.rs::header_carries_the_code
 crates/sisuc/src/diagnostic/render.rs::rendering_many_diagnostics_in_a_large_file_is_linear
 crates/sisuc/src/diagnostic/render.rs::renders_error_with_secondary_and_help
-crates/sisuc/src/diagnostic/render.rs::renders_warning
 crates/sisuc/src/diagnostic/render.rs::span_over_a_line_break_is_rejected
 crates/sisuc/src/diagnostic/render.rs::styled_render_has_escapes
 crates/sisuc/src/diagnostic/render.rs::windowed_fix_rendering_matches_rendering_the_whole_source
@@ -773,7 +771,6 @@ crates/sisuc/src/fuzz_program.rs::seed_2_rewritten_passes
 crates/sisuc/src/fuzz_program.rs::seed_3_program_passes
 crates/sisuc/src/fuzz_program.rs::seed_3_rewritten_passes
 crates/sisuc/src/fuzz_program.rs::unreached_panic_site_needs_a_panic
-crates/sisuc/src/generate/coverage.rs::a_call_statement_names_any_function_the_budget_lets_it
 crates/sisuc/src/generate/coverage.rs::a_cap_holds_the_least_value_of_its_field
 crates/sisuc/src/generate/coverage.rs::a_chain_counts_each_node_within_its_room
 crates/sisuc/src/generate/coverage.rs::a_chain_ends_in_a_variant_within_its_room
@@ -827,7 +824,6 @@ crates/sisuc/src/generate/coverage.rs::known_answers_happen
 crates/sisuc/src/generate/coverage.rs::known_sites_take_every_count_and_negative_arguments
 crates/sisuc/src/generate/coverage.rs::let_binding_keeps_the_type
 crates/sisuc/src/generate/coverage.rs::let_binding_skips_a_short_circuit
-crates/sisuc/src/generate/coverage.rs::main_calls_fit_the_budget_left
 crates/sisuc/src/generate/coverage.rs::no_block_as_a_place
 crates/sisuc/src/generate/coverage.rs::no_block_in_a_const
 crates/sisuc/src/generate/coverage.rs::no_const_with_an_overflowing_step
@@ -838,7 +834,6 @@ crates/sisuc/src/generate/coverage.rs::no_panic_site_follows_a_return
 crates/sisuc/src/generate/coverage.rs::rare_constant_forms_check_clean
 crates/sisuc/src/generate/coverage.rs::read_line_past_the_input_checks_clean
 crates/sisuc/src/generate/coverage.rs::rewrites_are_rare
-crates/sisuc/src/generate/coverage.rs::rewrites_happen
 crates/sisuc/src/generate/coverage.rs::the_costliest_statement_fits_the_reserve
 crates/sisuc/src/generate/coverage.rs::the_walker_bounds_a_while_let_only_on_a_chain_it_steps_down
 crates/sisuc/src/generate/coverage.rs::the_walker_lists_each_class_object_stored_in_a_field_or_an_element
@@ -1337,11 +1332,8 @@ crates/sisuc/src/parser.rs::mixed_chain_directions_report_at_the_second_operator
 crates/sisuc/src/parser.rs::mixed_equality_operators_do_not_chain
 crates/sisuc/src/parser.rs::mixed_is_and_equality_do_not_chain
 crates/sisuc/src/parser.rs::multiline_call_args
-crates/sisuc/src/parser.rs::mut_before_a_reserved_word_is_still_reported
-crates/sisuc/src/parser.rs::mut_before_neither_self_nor_a_name
 crates/sisuc/src/parser.rs::mut_is_a_keyword
 crates/sisuc/src/parser.rs::mut_on_underscore_fix_leaves_a_let_that_parses
-crates/sisuc/src/parser.rs::mut_parameter
 crates/sisuc/src/parser.rs::mut_self_fix
 crates/sisuc/src/parser.rs::mut_self_in_an_enum_is_an_unsafe_fix
 crates/sisuc/src/parser.rs::mut_self_outside_the_receiver_position

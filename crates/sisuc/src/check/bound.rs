@@ -3,6 +3,7 @@
 
 use super::generic::{GenericSig, Site, mismatched, named_params};
 use super::interface::Required;
+use super::mut_args::{MutParts, MutSite, site_of};
 use super::{Checked, Checker, Poisoned};
 use crate::ast;
 use crate::diagnostic::{Definition, DiagnosticKind};
@@ -52,6 +53,9 @@ impl Checker<'_> {
         let info = &self.interfaces[interface.0];
         let requirement = &info.requirements[method];
         let (params, ret) = (requirement.params.clone(), requirement.ret);
+        // Only a requirement with a `mut` parameter, or a call with a `mut` argument, pays for a
+        // site.
+        let (muts, names) = site_of(&requirement.muts, &requirement.param_names, args);
         let name = format!("{}.{}", info.name.name, requirement.name.name);
         let mut declared = info.type_params.clone();
         declared.extend_from_slice(&requirement.own);
@@ -70,6 +74,11 @@ impl Checker<'_> {
             }
             return Err(Poisoned::error());
         }
+        let mut_site = MutSite {
+            callee: &name,
+            muts: &muts,
+            names: &names,
+        };
         let sig = GenericSig {
             name: site.name,
             variant: None,
@@ -78,24 +87,38 @@ impl Checker<'_> {
             params: &params,
             ret,
             bounds: &bounds,
+            mut_site: (!muts.is_empty()).then_some(&mut_site),
         };
-        let (checked, list, ret) =
-            self.generic_call(span, &sig, (site.written, site.angles), args, site.expected)?;
+        let mut parts = MutParts::default();
+        let written = (site.written, site.angles);
+        let result = self.generic_call_mut(span, &sig, written, args, site.expected, &mut parts);
+        let list = result.as_ref().ok().map(|(_, list, _)| *list);
+        let met = (
+            site.expected,
+            result.as_ref().ok().and_then(|(_, _, ret)| *ret),
+        );
+        self.marks(args, &mut parts, &mut_site, (&params, list), met);
+        let (checked, list, ret) = result?;
         let (iargs, types) = list.get().split_at(owner.len());
         let (iargs, types) = (TypeArgs::intern(iargs), TypeArgs::intern(types));
+        let parts = self.mut_overlaps(parts);
         let failed = labeled || checked.iter().any(mismatched);
+        let method =
+            u32::try_from(method).expect("an interface should have fewer than 2^32 requirements");
+        let call = move |args| tir::ExprKind::InterfaceCall {
+            interface,
+            iargs,
+            method,
+            types,
+            args,
+        };
         match (std::iter::once(receiver).chain(checked).collect(), ret) {
+            (Ok(args), Some(ret)) if !failed && parts.is_empty() => {
+                Ok(self.spilled(span, ret, args, call))
+            }
             (Ok(args), Some(ret)) if !failed => {
-                Ok(
-                    self.spilled(span, ret, args, |args| tir::ExprKind::InterfaceCall {
-                        interface,
-                        iargs,
-                        method: u32::try_from(method)
-                            .expect("an interface should have fewer than 2^32 requirements"),
-                        types,
-                        args,
-                    }),
-                )
+                let call = tir::Expr::new(call(args), ret, span);
+                Ok(self.mut_call(call, parts))
             }
             (_, ret) => Err(Poisoned::of(ret.filter(|_| !failed))),
         }

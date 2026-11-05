@@ -1,0 +1,17 @@
+// GIVEN `fill2(mut b?.cells)`, where `fill2` takes a `mut` `[i64]?`
+// WHEN `sisu check` runs on it
+// THEN it reports E0170 on the argument, with the label that `fill2` can write `None` back
+// AND it gives no help
+class Board {
+    mut cells: [i64]
+}
+
+fn fill2(mut xs: [i64]?) {
+    xs = None
+}
+
+fn main() {
+    let b: Board? = Board(cells: [1])
+    fill2(mut b?.cells)
+    print(b == None)
+}

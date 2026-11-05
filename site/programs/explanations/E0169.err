@@ -1,0 +1,12 @@
+error[E0169]: a `mut` argument must be a place: a variable, a `mut` field, or an element of one of these
+ --> E0169.sisu:7:13
+  |
+6 |     let xs = [1, 2]
+  |         -- declared with `let` here
+7 |     set(mut xs)
+  |             ^^ not a place
+  |
+  = help: declare `xs` with `let mut`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0169

@@ -1,0 +1,22 @@
+// GIVEN `interface Filler { fn fill(self, mut xs: [i64]) }`, a class `Nines` that conforms to it,
+// and `fn count(_f: any Filler) -> i64` that never calls `fill`
+// WHEN `main` converts a `Nines` to `any Filler` by passing it to `count` and prints the result
+// THEN it prints "1": the table of the conversion has an entry for `fill`, and a program that
+// never calls it still builds
+interface Filler {
+    fn fill(self, mut xs: [i64])
+}
+
+class Nines: Filler {
+    fn fill(self, mut xs: [i64]) {
+        xs[0] = 9
+    }
+}
+
+fn count(_f: any Filler) -> i64 {
+    1
+}
+
+fn main() {
+    print(count(Nines()))
+}

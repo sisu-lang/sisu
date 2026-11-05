@@ -6044,6 +6044,225 @@ fn a_length_from_the_runtime_should_carry_the_facts_of_a_length() {
     );
 }
 
+/// The out slot of a call is an `alloca` in the entry block, as every `alloca` is: one in a loop
+/// body would grow the stack on every iteration. The test follows the pointer that the call
+/// passes as its out argument to its `alloca`, so it does not depend on the name of the slot.
+///
+/// ```text
+/// GIVEN `set(mut xs)` of S1 called in a `while` loop of `main`
+/// WHEN the module is compiled, before optimization
+/// THEN the call is not in the entry block of `main`
+/// AND the pointer that it passes last is an `alloca` in the entry block
+/// ```
+#[test]
+fn out_slot_should_be_in_the_entry_block() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "fn set(mut xs: [i64]) {\n    xs[0] = 9\n}\n\
+         fn main() {\n    let mut xs = [1, 2]\n    let mut i = 0\n    while i < 3 {\n        set(mut xs)\n        i += 1\n    }\n    print(xs)\n}",
+    )
+    .print_to_string()
+    .to_string();
+    let main = function_body(&ir, "define internal void @sisu.main()");
+    let lines: Vec<&str> = main.lines().collect();
+    // A label is a line that does not start with a space; the first block ends at the second.
+    let entry_end = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| !line.starts_with(' ') && line.contains(':'))
+        .nth(1)
+        .unwrap_or_else(|| panic!("the loop is in blocks after the entry block:\n{main}"))
+        .0;
+    let (call, line) = lines
+        .iter()
+        .enumerate()
+        .find(|(_, line)| line.contains("call void @sisu.set("))
+        .unwrap_or_else(|| panic!("no call of `set` in\n{main}"));
+    assert!(call >= entry_end, "the call should be in the loop:\n{main}");
+    let out = line
+        .trim_end_matches(')')
+        .rsplit(", ")
+        .next()
+        .and_then(|last| last.split_whitespace().last())
+        .unwrap_or_else(|| panic!("no out argument in {line}"));
+    let slot = lines
+        .iter()
+        .position(|line| line.trim_start().starts_with(&format!("{out} = alloca ")))
+        .unwrap_or_else(|| {
+            panic!("the out argument {out} should be an `alloca` of `main`:\n{main}")
+        });
+    assert!(
+        slot < entry_end,
+        "the out slot should be in the entry block:\n{main}"
+    );
+}
+
+/// The parameters of the function that starts with `header` in `ir`, as `<type> <name>` texts,
+/// without the `range` attribute of an array's length.
+fn header_params(ir: &str, header: &str) -> Vec<String> {
+    let (_, rest) = ir
+        .split_once(header)
+        .unwrap_or_else(|| panic!("no {header} in\n{ir}"));
+    let rest = rest.replace(" range(i64 0, -9223372036854775808)", "");
+    let (params, _) = rest.split_once(')').expect("the header should close");
+    params.split(", ").map(str::to_string).collect()
+}
+
+/// A prelude function with a `mut` parameter takes its out pointers after its value parameters
+/// and before the two parameters of its caller's location. The call passes them in that order,
+/// and the function reads the location at the moved indexes.
+#[test]
+fn prelude_mut_call_should_pass_the_out_pointer_before_the_report_site() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "fn main() {\n    let mut x = 3\n    let old = exchange(mut x, 5)\n    print(old + x)\n}",
+    )
+    .print_to_string()
+    .to_string();
+    // The value arguments, then the out pointer, then the location of the call.
+    let main = function_body(&ir, "define internal void @sisu.main()");
+    let call = main
+        .lines()
+        .find(|line| line.contains("call i64 @\"sisu.exchange<i64>\"("))
+        .unwrap_or_else(|| panic!("no call of `exchange` in\n{main}"));
+    let (_, args) = call.split_once("exchange<i64>\"(").expect("the call opens");
+    let args: Vec<&str> = args.trim_end_matches(')').split(", ").collect();
+    let kinds: Vec<&str> = args
+        .iter()
+        .map(|arg| arg.split_whitespace().next().unwrap_or_default())
+        .collect();
+    assert_eq!(kinds, ["i64", "i64", "ptr", "ptr", "i64"], "{call}");
+    let out = args[2].trim_start_matches("ptr ");
+    assert!(
+        main.lines()
+            .any(|line| line.trim_start().starts_with(&format!("{out} = alloca "))),
+        "the out pointer {out} should be an `alloca` of `main`:\n{main}"
+    );
+    assert!(args[3].starts_with("ptr @report.text"), "{call}");
+    // The call starts at `exchange`, on line 3, column 15 of the source.
+    let location = "test.sisu:3:15";
+    assert!(ir.contains(&format!("c\"{location}\\00\"")), "{ir}");
+    assert_eq!(args[4], format!("i64 {}", location.len()), "{call}");
+    // The function declares the same order, and stores the new value through its out pointer.
+    let header = "define internal i64 @\"sisu.exchange<i64>\"(";
+    let params = header_params(&ir, header);
+    let kinds: Vec<&str> = params
+        .iter()
+        .map(|param| param.split_whitespace().next().unwrap_or_default())
+        .collect();
+    assert_eq!(kinds, ["i64", "i64", "ptr", "ptr", "i64"], "{params:?}");
+    let out = params[2]
+        .rsplit(' ')
+        .next()
+        .expect("a parameter has a name");
+    let body = function_body(&ir, header);
+    assert!(
+        body.lines().any(|line| line
+            .trim_start()
+            .ends_with(&format!(", ptr {out}, align 8"))),
+        "`exchange` should store through its out pointer {out}:\n{body}"
+    );
+}
+
+/// The body of a prelude function with a `mut` parameter reads its caller's location from the
+/// last two parameters, which come after the out pointer, and not from the out pointer.
+#[test]
+fn prelude_mut_function_should_report_the_location_that_follows_its_out_pointer() {
+    let context = Context::create();
+    let ir = compiled_over(
+        &context,
+        "fn zero(mut xs: [i64]) {\n    xs[0] = 0\n}\n",
+        "fn main() {\n    let mut xs = [1]\n    zero(mut xs)\n    print(xs)\n}",
+        false,
+        |_| {},
+    )
+    .print_to_string()
+    .to_string();
+    let header = "define internal void @sisu.zero(";
+    let params = header_params(&ir, header);
+    // The array is three parameters, then the out pointer, then the location.
+    let [.., out, at, at_len] = &params[..] else {
+        panic!("`zero` should take its array, an out pointer and the location: {params:?}");
+    };
+    assert_eq!(params.len(), 6, "{params:?}");
+    let name = |param: &String| param.rsplit(' ').next().unwrap_or_default().to_string();
+    let (out, at, at_len) = (name(out), name(at), name(at_len));
+    let body = function_body(&ir, header);
+    let bounds = format!("call void @sisu_panic_bounds(ptr {at}, i64 {at_len}, i64 ");
+    assert!(body.contains(&bounds), "{bounds} in\n{body}");
+    assert!(!body.contains(&format!("ptr {out}, i64")), "{body}");
+}
+
+/// The table entry of a requirement with a `mut` parameter takes the out pointer after its value
+/// parameters and passes it on, last, to the method. The call through the table passes an out
+/// slot that is an `alloca`, last, and the indirect function type has the `ptr` for it.
+///
+/// ```text
+/// GIVEN `interface Filler { fn fill(self, mut xs: [i64]) }`, a class `Nines` whose `fill` has the
+///   `mut` parameter, and a `main` that calls `fill` on an `any Filler` with `mut xs`
+/// WHEN the module is compiled, before optimization
+/// THEN the entry glue of `Nines.fill` has a `ptr` parameter after its value parameters
+/// AND it passes that parameter as the last argument of the call to the method
+/// AND the call through the table in `main` passes an `alloca` of `main` as its last argument
+/// ```
+#[test]
+fn entry_glue_should_pass_the_out_pointer() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "interface Filler {\n    fn fill(self, mut xs: [i64])\n}\n\
+         class Nines: Filler {\n    fn fill(self, mut xs: [i64]) {\n        xs[0] = 9\n    }\n}\n\
+         fn main() {\n    let mut xs = [0]\n    let f: any Filler = Nines()\n    f.fill(mut xs)\n    print(xs)\n}",
+    )
+    .print_to_string()
+    .to_string();
+    let header = ir
+        .lines()
+        .find(|line| line.starts_with("define ") && line.contains("@sisu_any.entry.Nines"))
+        .unwrap_or_else(|| panic!("no entry glue of `Nines.fill` in\n{ir}"));
+    let params = header
+        .split_once('(')
+        .and_then(|(_, rest)| rest.rsplit_once(')'))
+        .map_or("", |(params, _)| params);
+    let last = params
+        .rsplit(", ")
+        .next()
+        .unwrap_or_else(|| panic!("no parameters in {header}"));
+    let (kind, out) = last.split_once(' ').unwrap_or((last, ""));
+    assert_eq!(
+        kind, "ptr",
+        "the last parameter should be the out pointer: {header}"
+    );
+    let out = out.rsplit(' ').next().unwrap_or(out);
+    let glue = function_body(&ir, header);
+    let call = glue
+        .lines()
+        .find(|line| line.contains("call ") && line.contains("@sisu.Nines"))
+        .unwrap_or_else(|| panic!("no call of the method in\n{glue}"));
+    assert!(
+        call.trim_end().ends_with(&format!("ptr {out})")),
+        "the glue should pass {out} last: {call}\n{glue}"
+    );
+    let main = function_body(&ir, "define internal void @sisu.main()");
+    let dyn_call = main
+        .lines()
+        .find(|line| line.contains("call void %"))
+        .unwrap_or_else(|| panic!("no call through the table in\n{main}"));
+    let slot = dyn_call
+        .trim_end_matches(')')
+        .rsplit(", ")
+        .next()
+        .and_then(|last| last.strip_prefix("ptr "))
+        .unwrap_or_else(|| panic!("the call should pass a pointer last: {dyn_call}"));
+    assert!(
+        main.lines()
+            .any(|line| line.trim_start().starts_with(&format!("{slot} = alloca "))),
+        "{slot} should be an `alloca` of `main`:\n{main}"
+    );
+}
+
 /// A program of more than four functions with a class, a generic function and an `any` value.
 /// `Idle` is a class that no function uses; `Lone` is a class that only `use_lone` uses. `Shape`
 /// inherits `Named`, so the table of `Circle` for `Shape` has inherited tables.

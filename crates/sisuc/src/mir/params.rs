@@ -51,7 +51,11 @@ pub(super) fn assumed(program: &tir::Program) -> Vec<Vec<bool>> {
         .map(|f| {
             f.params
                 .iter()
-                .map(|param| f.name != "main" && f.locals[param.0].ty.is_counted(&program.enums))
+                .map(|param| {
+                    f.name != "main"
+                        && !f.locals[param.0].mutable
+                        && f.locals[param.0].ty.is_counted(&program.enums)
+                })
                 .collect()
         })
         .collect()
@@ -78,6 +82,12 @@ pub(super) fn infer(functions: &[Function], main: FuncId, reuses: &[Vec<bool>]) 
     }
     for (id, marks) in reuses.iter().enumerate() {
         for (param, _) in marks.iter().enumerate().filter(|&(_, &marked)| marked) {
+            graph.seed(first[id] + param);
+        }
+    }
+    // A `mut` parameter hands its value back (`SetOut`), so the function owns it.
+    for (id, function) in functions.iter().enumerate() {
+        for (param, _) in function.muts.iter().enumerate().filter(|&(_, &m)| m) {
             graph.seed(first[id] + param);
         }
     }

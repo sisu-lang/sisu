@@ -1,0 +1,20 @@
+// GIVEN `class Stack<T> { fn put(self, mut xs: [T], x: T) { xs.push(x) } }`
+// WHEN `main` calls `s.put(mut ys, 1)` on a `Stack<i64>` and `let mut ys: [i64] = []`, then
+// `t.put(mut names, "b")` on a `Stack<string>` and `let mut names = ["a"]`
+// THEN it prints "[1]", then "[\"a\", \"b\"]": the instance of each type has its out slot
+class Stack<T> {
+    fn put(self, mut xs: [T], x: T) {
+        xs.push(x)
+    }
+}
+
+fn main() {
+    let s = Stack<i64>()
+    let mut ys: [i64] = []
+    s.put(mut ys, 1)
+    print(ys)
+    let t = Stack<string>()
+    let mut names = ["a"]
+    t.put(mut names, "b")
+    print(names)
+}

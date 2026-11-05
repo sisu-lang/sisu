@@ -1,0 +1,9 @@
+// GIVEN a `main` whose line 7 is `let y = mut x`, with `mut` at 7:13
+// WHEN `sisu check` runs on it
+// THEN it reports E0168 at 7:13, with the help that says to bind with `let mut`
+// AND the fix removes the `mut`, and the fixed program checks clean
+fn main() {
+    let x = 1
+    let y = mut x
+    print(y)
+}

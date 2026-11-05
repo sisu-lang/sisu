@@ -8,6 +8,7 @@ use super::expr::{fits, no_member, option_written, path, postfix};
 use super::generic::{GenericSig, Site, mark, mismatched};
 use super::interface::LangPath;
 use super::member::Found;
+use super::mut_args::{Callee, MutParts, MutSite, site_of};
 use super::prelude::PRELUDE;
 use super::unused_names::Used;
 use super::{
@@ -616,10 +617,15 @@ impl Checker<'_> {
             // `base[a..b]` is the help for a `.` call only: through `?.`, or on an optional's
             // payload, it would be E0062.
             let base = (dot == Dot::Plain).then_some(receiver_expr);
+            self.refuse_method(receiver_expr, (type_of(&receiver), method), args, Some(1));
             return self.array_get_range((span, array), base, args);
         }
+        let receiver_ty = type_of(&receiver);
         let receiver = match self.generated_operator(span, receiver, site, args) {
-            Ok(checked) => return checked,
+            Ok(checked) => {
+                self.refuse_method(receiver_expr, (receiver_ty, method), args, Some(1));
+                return checked;
+            }
             Err(receiver) => receiver,
         };
         // A `push` onto an array writes its place, so it is not a method of the prelude's.
@@ -633,7 +639,10 @@ impl Checker<'_> {
                         self.read_pushed(read, receiver_expr);
                     }
                 }
-                _ => return self.push(span, safe, (receiver, place), receiver_expr, args),
+                _ => {
+                    self.refuse_method(receiver_expr, (receiver_ty, method), args, Some(1));
+                    return self.push(span, safe, (receiver, place), receiver_expr, args);
+                }
             }
         }
         match type_of(&receiver) {
@@ -648,12 +657,15 @@ impl Checker<'_> {
                 return self.invoke(span, func, Some(receiver), site, args);
             }
             Some(ty) if matches!(ty.kind(), TypeKind::Array(_)) => {
+                self.refuse_builtin(receiver_expr, ty, method, args);
                 return self.array_method(span, receiver, ty, method, args);
             }
             Some(Type::STRING) => {
+                self.refuse_builtin(receiver_expr, Type::STRING, method, args);
                 return self.string_method(span, dot, (receiver, receiver_expr), method, args);
             }
             Some(ty @ (Type::I64 | Type::F64)) => {
+                self.refuse_builtin(receiver_expr, ty, method, args);
                 return self.number_method(span, receiver, ty, method, args);
             }
             Some(ty)
@@ -685,6 +697,49 @@ impl Checker<'_> {
                 Err(Poisoned::error())
             }
         }
+    }
+
+    /// E0167 for each `mut` argument of the call `receiver.method(args)` of a method of the
+    /// built-in type `ty`. A method that the type lacks has no parameter to refuse.
+    fn refuse_builtin(
+        &mut self,
+        receiver: &ast::Expr,
+        ty: Type,
+        method: &ast::Ident,
+        args: &[ast::Arg],
+    ) {
+        let name = method.name.as_str();
+        let arity = match ty.kind() {
+            // `len` takes no argument, and the caller refuses `push` before this runs.
+            TypeKind::Array(_) => array::METHODS.iter().find(|(m, _)| *m == name),
+            TypeKind::String => string::METHODS.iter().find(|(m, _)| *m == name),
+            _ => None,
+        };
+        let arity = arity
+            .map(|&(_, arity)| arity)
+            .or_else(|| number::method(ty, name).map(|(_, arity)| arity));
+        self.refuse_method(receiver, (Some(ty), method), args, arity);
+    }
+
+    /// E0167 for each `mut` argument of the call `receiver.method(args)` of a built-in method that
+    /// takes `arity` arguments, when it has that many. `ty` is the type of the receiver, which
+    /// names the method when the receiver is on many lines.
+    fn refuse_method(
+        &mut self,
+        receiver: &ast::Expr,
+        (ty, method): (Option<Type>, &ast::Ident),
+        args: &[ast::Arg],
+        arity: Option<usize>,
+    ) {
+        if arity != Some(args.len()) || args.iter().all(|arg| arg.mut_keyword.is_none()) {
+            return;
+        }
+        let text = self.source.text(receiver.span);
+        let name = match ty {
+            Some(ty) if !self.one_line(receiver.span) => self.method_name(ty, method.name.as_str()),
+            _ => format!("{text}.{}", method.name),
+        };
+        self.refuse_mut(args, Callee::Unnamed(&name));
     }
 
     /// `receiver.to_string()` on a value whose `Display` the compiler writes: the text that
@@ -828,6 +883,13 @@ impl Checker<'_> {
         let labeled = self.labels(args);
         let sig = &self.signatures[func.0];
         let (name, params, ret) = (sig.name.clone(), sig.params.clone(), sig.ret);
+        let (muts, names) = site_of(&sig.muts, &sig.param_names, args);
+        let mut_site = MutSite {
+            callee: &name,
+            muts: &muts,
+            names: &names,
+        };
+        let mut parts = MutParts::default();
         let shown = sig.param_shown.clone();
         let declared = sig.type_params.clone();
         let bounds = sig.bounds.clone();
@@ -850,19 +912,26 @@ impl Checker<'_> {
             };
             return self.wrong_count(span, name, params.len(), args);
         }
-        let (checked, types, ret) = if declared.is_empty() {
+        let checked = if declared.is_empty() {
             let checked = args
                 .iter()
                 .zip(&params)
                 .zip(&shown)
-                .map(|((arg, &param), text)| {
+                .enumerate()
+                .map(|(i, ((arg, &param), text))| {
+                    if muts.get(i) == Some(&true)
+                        && let Some(checked) =
+                            self.mut_argument(arg, i, param, (&mut_site, &mut parts))
+                    {
+                        return checked;
+                    }
                     if let (Some(want), Some(text)) = (param, text) {
                         self.show(arg.value.span, want, text);
                     }
                     mark(self.operand(&arg.value, param))
                 })
                 .collect();
-            (checked, TypeArgs::NONE, ret)
+            Ok((checked, TypeArgs::NONE, ret))
         } else {
             // A list on a method that takes none of its own is reported already.
             let written = if declared.len() > owner.len() {
@@ -878,14 +947,32 @@ impl Checker<'_> {
                 params: &params,
                 ret,
                 bounds: &bounds,
+                mut_site: (!muts.is_empty()).then_some(&mut_site),
             };
-            self.generic_call(span, &sig, (written, site.angles), args, site.expected)?
+            let written = (written, site.angles);
+            self.generic_call_mut(span, &sig, written, args, site.expected, &mut parts)
         };
+        let list = checked.as_ref().ok().map(|(_, types, _)| *types);
+        let result = (
+            site.expected,
+            checked.as_ref().ok().and_then(|(_, _, ret)| *ret),
+        );
+        self.marks(args, &mut parts, &mut_site, (&params, list), result);
+        let (checked, types, ret) = checked?;
+        let parts = self.mut_overlaps(parts);
         let failed = labeled || checked.iter().any(mismatched);
         match (receiver.into_iter().chain(checked).collect(), ret) {
-            (Ok(args), Some(ret)) if !failed => Ok(self.spilled(span, ret, args, |args| {
-                tir::ExprKind::Call { func, types, args }
-            })),
+            (Ok(args), Some(ret)) if !failed && parts.is_empty() => {
+                Ok(self.spilled(span, ret, args, |args| tir::ExprKind::Call {
+                    func,
+                    types,
+                    args,
+                }))
+            }
+            (Ok(args), Some(ret)) if !failed => {
+                let call = tir::Expr::new(tir::ExprKind::Call { func, types, args }, ret, span);
+                Ok(self.mut_call(call, parts))
+            }
             (_, ret) => Err(Poisoned::of(ret.filter(|_| !failed))),
         }
     }
@@ -978,6 +1065,14 @@ impl Checker<'_> {
         through: Option<&Through>,
     ) -> Checked {
         self.record(Used::Class(class), span);
+        self.refuse_mut(
+            args,
+            Callee::Construct {
+                shown: &site.name.name,
+                class: true,
+                labeled: true,
+            },
+        );
         let quiet = self.body.failed_let == Some(span);
         let info = &self.classes[class.0];
         let name = info.name.name.as_str();
@@ -1017,6 +1112,7 @@ impl Checker<'_> {
                 ret: Some(ret),
                 // An annotation that failed its bound reported it: the value is quiet.
                 bounds: if quiet { &[] } else { &bounds },
+                mut_site: None,
             };
             // An alias's type arguments, when the call wrote them, are applied already.
             let written = (

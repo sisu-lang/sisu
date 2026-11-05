@@ -1,0 +1,12 @@
+// GIVEN `clear(mut n)`, where `n` is an `i64` and `clear<T>` takes a `mut` `T?`
+// WHEN `sisu check` runs on it
+// THEN it reports E0170 on the argument, as for a parameter that is not generic
+fn clear<T>(mut n: T?) {
+    n = None
+}
+
+fn main() {
+    let mut n = 1
+    clear(mut n)
+    print(n)
+}

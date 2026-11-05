@@ -1,0 +1,16 @@
+// GIVEN `let s: [i64] = gget(ys)`, where `ys` is a `let mut` `[i64]` and `gget` has a `mut` `T`
+// WHEN `sisu check` runs on it
+// THEN it reports E0166 on `ys`, and the result meets its type
+// AND the safe fix adds `mut`
+fn gget<T>(mut x: T) -> T {
+    let y = x
+    x = y
+    y
+}
+
+fn main() {
+    let mut ys = [1]
+    let s: [i64] = gget(ys)
+    ys[0] = 2
+    print(s)
+}

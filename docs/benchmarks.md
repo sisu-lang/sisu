@@ -200,8 +200,8 @@ store when it is released. ADR 0005 accepts that cost.
 
 ## quicksort on an array value
 
-A Sisu function cannot change its caller's array (ADR 0007), so `quicksort`
-takes the array and returns it, and recurses with
+The `quicksort` benchmark does not use a `mut` parameter (ADR 0043). It
+takes the array and returns it (ADR 0007), and recurses with
 `a = quicksort(a, lo, i - 1)`. Last use hands the array over, so each call
 holds the only reference and every element write happens in place. Peak
 memory shows it: Sisu holds 83.8 MiB, against C's 77.6 MiB for its one array
@@ -507,7 +507,7 @@ check when its tool is not on `PATH`. It needs `perf` for the last column.
 `make scaling` finds the programs for which a compiler stage costs more than
 a fixed amount for each unit of input. A shape is a kind of program that
 grows in one direction, such as more functions, deeper nesting or more match
-arms. `scripts/scaling.py` compiles each of 18 shapes at size 0 and at four
+arms. `scripts/scaling.py` compiles each of 21 shapes at size 0 and at four
 sizes that double: n, 2n, 4n and 8n. It counts the instructions of each stage
 under callgrind: `lex`, `parse`, `check`, `mono`, `mir` and `codegen`. The
 count does not depend on the load of the machine. It also changes a little with

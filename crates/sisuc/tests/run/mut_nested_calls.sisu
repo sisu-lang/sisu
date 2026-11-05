@@ -1,0 +1,66 @@
+// GIVEN functions with `mut` parameters that return an array or an integer, that call themselves
+// and each other in tail position, and that pass their own `mut` parameter on, also with `return`
+// WHEN `main` nests such calls as arguments of each other, uses a result in an expression, and
+// drops a result
+// THEN each local ends with the value the callees gave it, and each result is right
+// AND Valgrind and `--rc-checks` find every array released once
+fn push2(mut xs: [string], s: string) -> [string] {
+    xs.push(s)
+    xs.push(s)
+    xs
+}
+
+fn count(mut n: i64, mut m: i64) -> i64 {
+    n += 1
+    m += 10
+    n + m
+}
+
+fn tail(mut xs: [string], depth: i64) -> i64 {
+    if depth == 0 {
+        return xs.len()
+    }
+    xs.push("t")
+    tail(mut xs, depth - 1)
+}
+
+fn even(mut xs: [string], n: i64) -> bool {
+    xs.push("e")
+    if n == 0 { true } else { odd(mut xs, n - 1) }
+}
+
+fn odd(mut xs: [string], n: i64) -> bool {
+    xs.push("o")
+    if n == 0 { false } else { even(mut xs, n - 1) }
+}
+
+fn relay(mut xs: [string]) -> [string] {
+    return push2(mut xs, "r")
+}
+
+fn main() {
+    let mut a = ["a"]
+    let mut b = ["b"]
+    let got = push2(mut a, push2(mut b, "q")[0])
+    print(a)
+    print(b)
+    print(got)
+    push2(mut a, "z")
+    print(a)
+    let mut n = 0
+    let mut m = 0
+    let total = count(mut n, mut m) + count(mut n, mut m)
+    print("{n} {m} {total}")
+    let mut ws: [string] = []
+    print(tail(mut ws, 3))
+    print(ws)
+    let mut es: [string] = []
+    print(even(mut es, 4))
+    print(es)
+    let mut rs = ["x"]
+    let again = relay(mut rs)
+    print(rs)
+    print(again)
+    print(push2(mut rs, "w").len())
+    print(rs.len())
+}

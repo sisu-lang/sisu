@@ -1,0 +1,12 @@
+// GIVEN a function whose line 7 is `return mut x`, with `mut` at 7:12
+// WHEN `sisu check` runs on it
+// THEN it reports E0168 at 7:12, with no help
+// AND the fix removes the `mut`, and the fixed program checks clean
+fn one() -> i64 {
+    let x = 1
+    return mut x
+}
+
+fn main() {
+    print(one())
+}

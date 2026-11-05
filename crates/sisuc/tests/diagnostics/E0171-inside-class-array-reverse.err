@@ -1,0 +1,10 @@
+error[E0171]: `ps[0]` is inside `ps`, which this call also passes `mut`
+  --> E0171-inside-class-array-reverse.sisu:15:22
+   |
+15 |     f(mut ps[0], mut ps)
+   |           -----      ^^ passed again here
+   |           |
+   |           first passed here
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0171

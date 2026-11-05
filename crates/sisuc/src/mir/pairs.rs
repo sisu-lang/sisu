@@ -289,6 +289,8 @@ fn kind<'a>(function: &Function, stmt: &'a Statement) -> Kind<'a> {
                 | Rvalue::Concat { .. }
                 | Rvalue::Interpolate { .. }
                 | Rvalue::ReadLine
+                | Rvalue::Out { .. }
+                | Rvalue::SetOut { .. }
                 | Rvalue::Chars(_)
                 | Rvalue::Bytes(_)
                 | Rvalue::Words(_)
@@ -349,6 +351,8 @@ fn borrowed(stmt: Statement) -> Statement {
                 | Rvalue::Concat { .. }
                 | Rvalue::Interpolate { .. }
                 | Rvalue::ReadLine
+                | Rvalue::Out { .. }
+                | Rvalue::SetOut { .. }
                 | Rvalue::Chars(_)
                 | Rvalue::Bytes(_)
                 | Rvalue::Words(_)

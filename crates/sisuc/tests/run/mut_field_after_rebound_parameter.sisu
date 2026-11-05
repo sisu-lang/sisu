@@ -1,0 +1,25 @@
+// GIVEN `class Box { mut x: [i64] }`, `fn f(mut b: Box, mut x: [i64])` that sets `b` to a new
+// `Box(x: [20])` and `x` to `[30]`, and `fn g(mut b: Box)` that calls `f(mut b, mut b.x)`
+// WHEN `main` calls `g(mut b)` on `let mut b = Box(x: [10])` and prints `old.x`, where `old` is
+// the first object, then `b.x`
+// THEN it prints "[30]", then "[20]": a root that is a `mut` parameter acts as a `let mut` root
+class Box {
+    mut x: [i64]
+}
+
+fn f(mut b: Box, mut x: [i64]) {
+    b = Box(x: [20])
+    x = [30]
+}
+
+fn g(mut b: Box) {
+    f(mut b, mut b.x)
+}
+
+fn main() {
+    let mut b = Box(x: [10])
+    let old = b
+    g(mut b)
+    print(old.x)
+    print(b.x)
+}

@@ -1,0 +1,15 @@
+// GIVEN `gset(c.cells)`, where the field `cells` is not `mut` and `gset` has a `mut` parameter `T`
+// WHEN `sisu check` runs on it
+// THEN it reports E0166 on the argument, with the help to declare the field `cells` as `mut`
+class C {
+    cells: [i64]
+}
+
+fn gset<T>(mut x: T) {
+    x = x
+}
+
+fn main() {
+    let c = C(cells: [1])
+    gset(c.cells)
+}

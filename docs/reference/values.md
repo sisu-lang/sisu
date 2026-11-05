@@ -63,9 +63,11 @@ The rules:
 
 ## Calls
 
-A call does not copy its arguments. A parameter cannot change ([Parameters](functions.md#parameters)), so a function cannot change a value that it gets as an argument and that behaves as a copy.
+A call does not copy its arguments. A plain parameter cannot change ([Parameters](functions.md#parameters)), so a function cannot change a value that it gets as an argument and that behaves as a copy.
 
 A function can write the `mut` fields of an object that it gets, because the object is shared.
+
+A `mut` parameter is different. The call copies the value of the caller's place in, and stores the last value of the parameter back into that place ([`mut` parameters](functions.md#mut-parameters)). For an array, a string or an enum value, the caller sees the change, and no other holder of the old value does. A class object in such a value is not copied, so a change to the fields of the object shows through each holder. For an object of a class, the value in the place is the reference. The call copies the reference in and out, and never copies the object.
 
 ```sisu
 class Box {
@@ -87,6 +89,17 @@ fn main() {
     print(xs[0])                 // 1
 }
 ```
+
+A call that passes a place `mut` copies the value in the place, as this table tells:
+
+| Place of the `mut` argument | What the parameter gets | When the memory of an array or a string copies |
+| --- | --- | --- |
+| A `let mut` variable or a `mut` parameter | The value moves into the parameter | At the first write, only when another holder shares the memory |
+| A `mut` field of an object, or an element of an array | The value of the place | At the first write, because the place still holds the value during the call. `b.cells = f(b.cells)` costs the same |
+
+An object of a class is never copied, also when an array or an enum value holds it. In each row, the parameter gets the value of the place: the array, or the reference to the object.
+
+The store-back replaces a change to the place itself. If a function assigns `b.cells` while `b.cells` is a `mut` argument, the store-back replaces that assignment ([What a call does](functions.md#what-a-call-does)). A write through a shared object to its other fields is not undone.
 
 ## Copy-on-write
 

@@ -696,12 +696,14 @@ pub(crate) enum ExprKind {
     ToAny(Box<Expr>),
     /// A call through the table of the receiver, an `any` value that `args` hold first, of the
     /// requirement `method` of `interface` with the arguments `iargs`. `mono` makes it from an
-    /// `InterfaceCall` whose receiver is an `any` value.
+    /// `InterfaceCall` whose receiver is an `any` value. `muts` says, for each of `args`, whether
+    /// it is the temporary of a `mut` argument of the `MutCall` around the call.
     DynCall {
         interface: InterfaceId,
         iargs: TypeArgs,
         method: u32,
         args: Vec<Expr>,
+        muts: Vec<bool>,
     },
     /// `u8(e)`, `i64(e)` or `char(e)`: `e` converted to the node's own type, a `u8?` or a
     /// `char?` for a conversion that can fail.
@@ -828,6 +830,25 @@ pub(crate) enum ExprKind {
     },
     Return(Option<Box<Expr>>),
     Block(Block),
+    /// A call with `mut` arguments (ADR 0043). The block around it binds, in hidden `let`s, the
+    /// values of step 1. `muts` are the copy-ins, in argument order; `call` reads each temp at
+    /// its `mut` position; `back` stores each temp back, in argument order.
+    MutCall {
+        call: Box<Expr>,
+        muts: Vec<MutArg>,
+        back: Block,
+    },
+}
+
+/// The copy-in of one `mut` argument of a `MutCall`.
+#[derive(Clone, Debug)]
+pub(crate) struct MutArg {
+    /// The class objects along the place, read and kept at the copy-in, in path order.
+    pub(crate) keep: Vec<(LocalId, Expr)>,
+    /// The value during the call.
+    pub(crate) temp: LocalId,
+    /// The place's value, read from the last kept object, or from the root.
+    pub(crate) read: Expr,
 }
 
 /// One arm of a `Match`. `bindings` holds each local its pattern binds, once, which every
@@ -1109,12 +1130,23 @@ impl ExprKind {
                 base, start, end, ..
             } => base.exits() || start.iter().chain(end).any(|bound| bound.exits()),
             ExprKind::Loop(block) | ExprKind::Block(block) => block.exits(),
+            ExprKind::MutCall { call, muts, back } => {
+                call.exits()
+                    || back.exits()
+                    || muts.iter().any(|m| {
+                        m.read.exits() || m.keep.iter().any(|(_, object)| object.exits())
+                    })
+            }
         }
     }
 }
 
 impl Expr {
     /// Calls `f` on each expression directly inside this one, through its blocks and places.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per node kind, so the walk reads in one place"
+    )]
     pub(crate) fn each_child_mut(&mut self, f: &mut impl FnMut(&mut Expr)) {
         match &mut self.kind {
             ExprKind::Int(_)
@@ -1207,6 +1239,16 @@ impl Expr {
                 }
             }
             ExprKind::Loop(block) | ExprKind::Block(block) => block.each_expr_mut(f),
+            ExprKind::MutCall { call, muts, back } => {
+                for m in muts {
+                    for (_, object) in &mut m.keep {
+                        f(object);
+                    }
+                    f(&mut m.read);
+                }
+                f(call);
+                back.each_expr_mut(f);
+            }
         }
     }
 }
@@ -1394,6 +1436,14 @@ impl Expr {
                 }
             }
             K::Loop(block) | K::Block(block) => block.exprs(out),
+            K::MutCall { call, muts, back } => {
+                for m in muts {
+                    m.keep.iter().for_each(|(_, object)| object.exprs(out));
+                    m.read.exprs(out);
+                }
+                call.exprs(out);
+                back.exprs(out);
+            }
         }
     }
 }
@@ -1604,6 +1654,7 @@ impl Printer<'_> {
                 iargs,
                 method,
                 args,
+                ..
             } => {
                 let info = &self.program.interfaces[interface.0];
                 let name = format!(
@@ -1731,6 +1782,28 @@ impl Printer<'_> {
             ExprKind::Return(None) => f.write_str("(return)"),
             ExprKind::Return(Some(value)) => self.unary(f, "return", value),
             ExprKind::Block(block) => self.block(f, block),
+            ExprKind::MutCall { call, muts, back } => {
+                f.write_str("(mut_call ")?;
+                self.expr(f, call)?;
+                for m in muts {
+                    f.write_str(" (mut")?;
+                    for (local, object) in &m.keep {
+                        f.write_str(" (keep ")?;
+                        self.local(f, *local)?;
+                        f.write_str(" ")?;
+                        self.expr(f, object)?;
+                        f.write_str(")")?;
+                    }
+                    f.write_str(" ")?;
+                    self.local(f, m.temp)?;
+                    f.write_str(" ")?;
+                    self.expr(f, &m.read)?;
+                    f.write_str(")")?;
+                }
+                f.write_str(" ")?;
+                self.block(f, back)?;
+                f.write_str(")")
+            }
         }
     }
 
@@ -2020,7 +2093,11 @@ impl fmt::Display for Program {
                 if j > 0 {
                     f.write_str(" ")?;
                 }
-                f.write_str("(")?;
+                f.write_str(if function.locals[param.0].mutable {
+                    "(mut "
+                } else {
+                    "("
+                })?;
                 printer.local(f, *param)?;
                 write!(f, " {})", self.type_name(function.locals[param.0].ty))?;
             }
@@ -3323,6 +3400,43 @@ mod tests {
         assert!(!block_expr(vec![Stmt::Expr(if_stmt)], Some(int(1))).exits());
     }
 
+    /// A jump in the call, in the store-backs, in the read of a place or in an object that a
+    /// `MutCall` keeps makes the `MutCall` exit, and no jump makes it stay.
+    #[test]
+    fn mut_call_should_exit_when_a_part_of_it_exits() {
+        let jump = || expr(ExprKind::Return(None), Type::NEVER);
+        // The call, the store-backs, the read and the kept object.
+        let mut_call = |call: Expr, back: Block, read: Expr, kept: Expr| {
+            expr(
+                ExprKind::MutCall {
+                    call: Box::new(call),
+                    muts: vec![MutArg {
+                        keep: vec![(LocalId(0), kept)],
+                        temp: LocalId(1),
+                        read,
+                    }],
+                    back,
+                },
+                Type::UNIT,
+            )
+        };
+        assert!(!mut_call(int(1), block(vec![]), int(2), int(3)).exits());
+        assert!(
+            mut_call(jump(), block(vec![]), int(2), int(3)).exits(),
+            "call"
+        );
+        let back = block(vec![Stmt::Expr(jump())]);
+        assert!(mut_call(int(1), back, int(2), int(3)).exits(), "store-back");
+        assert!(
+            mut_call(int(1), block(vec![]), jump(), int(3)).exits(),
+            "read"
+        );
+        assert!(
+            mut_call(int(1), block(vec![]), int(2), jump()).exits(),
+            "kept object"
+        );
+    }
+
     /// `each_child_mut` reaches each expression directly inside every kind, in order: through
     /// its blocks, statements and places, and no further.
     #[test]
@@ -3456,6 +3570,7 @@ mod tests {
                     iargs: TypeArgs::NONE,
                     method: 0,
                     args: ints([1, 2]),
+                    muts: vec![false; 2],
                 },
                 2,
             ),
@@ -3600,6 +3715,18 @@ mod tests {
             ),
             (ExprKind::Loop(body), 9),
             (ExprKind::Block(valued(1)), 1),
+            (
+                ExprKind::MutCall {
+                    call: n(3),
+                    muts: vec![MutArg {
+                        keep: vec![(LocalId(0), int(1))],
+                        temp: LocalId(1),
+                        read: int(2),
+                    }],
+                    back: valued(4),
+                },
+                4,
+            ),
         ];
         for (kind, children) in cases {
             let mut e = expr(kind, Type::I64);

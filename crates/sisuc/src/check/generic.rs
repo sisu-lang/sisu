@@ -11,6 +11,7 @@ use super::alias::{Through, Via};
 use super::any;
 use super::expr::{bare_hole, dbg_argument, option_written};
 use super::interface::{Bound, Required};
+use super::mut_args::{MutParts, MutSite, PlaceShape, marked};
 use super::pattern::{LetPattern, LetValue, arm_key, matchable};
 use super::prelude::PRELUDE;
 use super::stmt::BlockSoFar;
@@ -21,6 +22,7 @@ use super::{
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{ArgumentsForm, Diagnostic, Expected, MainForm, Unwrap};
 use crate::lexer::{TokenKind, lex};
+use crate::parser::is_place;
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
@@ -667,6 +669,9 @@ struct CallShape {
     makes: Makes,
     /// The places whose arguments give the call its type (see `Places`).
     places: Places,
+    /// The places of the callee's `mut` parameters, as bits. A `mut` argument is a place, whose
+    /// type is known without checking it ahead.
+    muts: u64,
     /// What an outer call needs to decide if this call waits for a later argument: set for an
     /// open call of a function, a construction, `Ok` or `Err`, or a generic enum's variant.
     // shortcut: a method call, `Some(...)` and `dbg(...)` do not wait for a later argument, so
@@ -935,6 +940,15 @@ fn names_marked_in(
         seen.put(ty, ());
     }
     names
+}
+
+/// The places of the `mut` parameters among `muts`, as bits.
+fn mut_places(muts: &[bool]) -> u64 {
+    muts.iter()
+        .take(u64::BITS as usize)
+        .enumerate()
+        .filter(|&(_, &m)| m)
+        .fold(0, |bits, (i, _)| bits | 1 << i)
 }
 
 /// The places among `params` whose type names a type parameter that `marked` marks, as
@@ -1594,6 +1608,9 @@ pub(super) struct GenericSig<'a> {
     /// none. The call checks each as soon as its parameter is bound, and at no other time (see
     /// `Early`).
     pub(super) bounds: &'a [Vec<Bound>],
+    /// The callee's `mut` parameters, when it has any: an argument at one is a place, checked
+    /// before the others.
+    pub(super) mut_site: Option<&'a MutSite<'a>>,
 }
 
 /// The shape of a variant that a call of a generic enum builds: the type that it builds, its
@@ -1628,13 +1645,13 @@ pub(super) struct ContextHint {
 }
 
 /// A generic call while its arguments bind its callee's parameters.
-struct Inference<'s> {
+pub(super) struct Inference<'s> {
     /// The call's span.
     at: Span,
     /// Whether the call is the hinted value when it starts (see `Body::hint_at`). The arguments
     /// change the hint, so this is set once.
     hinted: bool,
-    bindings: Bindings,
+    pub(super) bindings: Bindings,
     /// Each argument once checked, in source order.
     slots: Vec<Option<Checked>>,
     /// The arguments of type `unit` or `never`, which bind only what no other argument does.
@@ -1656,6 +1673,9 @@ struct Inference<'s> {
     /// The parameters bound since `sweep_waiting` took the list last, which wake the arguments
     /// that wait for them.
     bound: Vec<usize>,
+    /// The place of each `mut` argument that checked, by its place among the arguments, until
+    /// `mut_final` compares it with the parameter's final type.
+    pub(super) mut_shapes: Vec<(usize, PlaceShape)>,
 }
 
 mod origins {
@@ -1978,7 +1998,7 @@ impl Checker<'_> {
     }
 
     /// `bindings.printed(ty)`, with the associated types of known types replaced.
-    fn printed(&self, bindings: &Bindings, ty: Type) -> Type {
+    pub(super) fn printed(&self, bindings: &Bindings, ty: Type) -> Type {
         let printed = bindings.printed(ty);
         self.normalize(printed).unwrap_or(printed)
     }
@@ -2016,9 +2036,22 @@ impl Checker<'_> {
         args: &[ast::Arg],
         expected: Option<Type>,
     ) -> Result<(Vec<Checked>, TypeArgs, Option<Type>), Poisoned> {
+        self.generic_call_mut(span, sig, written, args, expected, &mut MutParts::default())
+    }
+
+    /// `generic_call`, which gives the parts of the `mut` arguments to `parts`.
+    pub(super) fn generic_call_mut(
+        &mut self,
+        span: Span,
+        sig: &GenericSig<'_>,
+        written: (&[ast::TypeExpr], Span),
+        args: &[ast::Arg],
+        expected: Option<Type>,
+        parts: &mut MutParts,
+    ) -> Result<(Vec<Checked>, TypeArgs, Option<Type>), Poisoned> {
         // The context of the quiet value failed, as an `UNKNOWN` one did.
         let expected = expected.or_else(|| self.quiet(span, expected).then_some(UNKNOWN));
-        self.ranked(|c| c.infer_call(span, sig, written, args, expected))
+        self.ranked(|c| c.infer_call(span, sig, written, args, expected, parts))
     }
 
     /// `generic_call`, before what ranking kept is dropped.
@@ -2033,6 +2066,7 @@ impl Checker<'_> {
         (written, angles): (&[ast::TypeExpr], Span),
         args: &[ast::Arg],
         expected: Option<Type>,
+        parts: &mut MutParts,
     ) -> Result<(Vec<Checked>, TypeArgs, Option<Type>), Poisoned> {
         let owned = sig.owner.len();
         let mut call = Inference {
@@ -2046,6 +2080,7 @@ impl Checker<'_> {
             origin: Origins::new(sig.declared.len()),
             early: Early::of(sig),
             bound: Vec::new(),
+            mut_shapes: Vec::new(),
         };
         if !written.is_empty() {
             let Some(list) = self.type_args(sig.name, &sig.declared[owned..], written, angles)
@@ -2060,6 +2095,23 @@ impl Checker<'_> {
             }
             let bound: Vec<usize> = (owned..sig.declared.len()).collect();
             self.check_early(&mut call, &bound, span);
+        }
+        // An argument at a `mut` parameter is a place. It binds the parameters that its
+        // parameter names first, so that the other arguments convert to them.
+        if let Some(site) = sig.mut_site {
+            for (i, arg) in args.iter().enumerate() {
+                if !site.muts[i] {
+                    continue;
+                }
+                let slot = if marked(arg) {
+                    Some(self.infer_mut_arg(&mut call, arg, i, (sig.params[i], site), parts))
+                } else {
+                    // No `mut`: E0166 is the report, and the place still binds, so that the
+                    // other arguments are no cascade.
+                    self.unmarked_place(arg, i, parts, Some((&mut call, sig.params[i])))
+                };
+                call.slots[i] = slot;
+            }
         }
         // Whether every call in an argument fits its declaration.
         let mut fit = vec![true; args.len()];
@@ -2150,6 +2202,7 @@ impl Checker<'_> {
                 None
             }
         };
+        self.mut_final(&mut call, sig, args, list);
         let Some(list) = list else {
             // What waited for context and has none is checked against a failed one, so it
             // reports only its own mistakes, and uses what ranking kept for it.
@@ -2181,6 +2234,39 @@ impl Checker<'_> {
             .collect();
         let ret = sig.ret.and_then(|ret| self.subst(ret, list.get()));
         Ok((checked, list, ret))
+    }
+
+    /// Compares each `mut` argument's place with its parameter's type once inference is done,
+    /// associated types resolved: the types must be the same, as no conversion applies to a
+    /// `mut` argument, and the unification of the argument took a payload for an optional. A
+    /// place that goes through `?.` is reported here too: its label is picked from the final
+    /// type. `list` is the type arguments, when the call inferred them all.
+    fn mut_final(
+        &mut self,
+        call: &mut Inference<'_>,
+        sig: &GenericSig<'_>,
+        args: &[ast::Arg],
+        list: Option<TypeArgs>,
+    ) {
+        let Some(site) = sig.mut_site else { return };
+        for (i, shape) in std::mem::take(&mut call.mut_shapes) {
+            let pattern = sig.params[i].expect("a `mut` argument should have a parameter type");
+            let want = match list {
+                Some(list) => self
+                    .subst(pattern, list.get())
+                    .and_then(|ty| self.normalize(ty)),
+                None => Some(self.printed(&call.bindings, pattern)),
+            };
+            let Some(want) = want else { continue };
+            let chain = shape.has_chain();
+            if !chain && (list.is_none() || shape.writes(want)) {
+                continue;
+            }
+            self.report_mut_type(&args[i].value, &shape, (site, i), (want, pattern));
+            if !chain {
+                call.slots[i] = Some(mark((Err(Poisoned::error()), true)));
+            }
+        }
     }
 
     /// Whether the call, which is the hinted value, has a parameter that an argument names and
@@ -2241,6 +2327,11 @@ impl Checker<'_> {
         let (ranks, holds) = iter::zip(args, fit)
             .enumerate()
             .map(|(i, (arg, fit))| {
+                // An argument at a `mut` parameter is never checked ahead. A place is
+                // checked already, and ranked 3. A value is ranked as any other.
+                if sig.mut_site.is_some_and(|site| site.muts[i]) && call.slots[i].is_some() {
+                    return (3, false);
+                }
                 let writes_assoc =
                     sig.params[i].is_some_and(|param| waits_for_assoc(&call.bindings, param));
                 if writes_assoc {
@@ -3060,7 +3151,7 @@ impl Checker<'_> {
 
     /// `Bindings::unify`, reporting at `at` each parameter it binds to a type that no type
     /// parameter takes.
-    fn bind_param(
+    pub(super) fn bind_param(
         &mut self,
         call: &mut Inference<'_>,
         pattern: Type,
@@ -3403,6 +3494,7 @@ impl Checker<'_> {
             open,
             makes,
             places,
+            muts,
             ..
         } = shape;
         // The arguments of a call with no carried place do not give it its type. If it is not
@@ -3421,7 +3513,11 @@ impl Checker<'_> {
         } else {
             let carried = |&(i, _): &(usize, _)| has_place(places.carried, i);
             combine(args.iter().enumerate().filter(carried).map(|(i, arg)| {
-                let ranked = self.rank_value(&arg.value, fit);
+                let ranked = if has_place(muts, i) && is_place(&arg.value) {
+                    Ranked::CONCRETE
+                } else {
+                    self.rank_value(&arg.value, fit)
+                };
                 through |= makes.makes_optional(i, ranked);
                 nests |= makes.passes_nested(i, ranked);
                 holds |= ranked.holds_optional && has_place(places.plain, i);
@@ -3512,6 +3608,7 @@ impl Checker<'_> {
                         some: true,
                         makes: Makes::some(),
                         places: Places::FIRST,
+                        muts: 0,
                         wait: None,
                     }
                 } else {
@@ -3966,6 +4063,7 @@ impl Checker<'_> {
                         sig.type_params.len(),
                         0,
                     ),
+                    muts: mut_places(&sig.muts),
                     wait: open_call(open, ret, sig.type_params.len()),
                     ..CallShape::default()
                 }
@@ -3979,6 +4077,7 @@ impl Checker<'_> {
                 some: true,
                 makes: Makes::some(),
                 places: Places::FIRST,
+                muts: 0,
                 wait: None,
             },
             // An alias of a generic class, whose parameters its uses bind.

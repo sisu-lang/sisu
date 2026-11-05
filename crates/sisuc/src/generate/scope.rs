@@ -472,11 +472,43 @@ pub(crate) struct Func {
     pub(crate) owner: Option<Ty>,
     /// Each parameter's type, and for a `string` the most chars an argument may hold.
     pub(crate) params: Vec<(Ty, u64)>,
+    /// For each parameter: `Some` if it is `mut`, and what it may add to the caller's place. A
+    /// `mut` parameter's size is the most that the caller's place may hold.
+    pub(crate) muts: Vec<Option<Adds>>,
     pub(crate) ret: Ty,
     /// For a `string` result: the most chars it holds.
     pub(crate) ret_size: u64,
     /// What a call costs at each `depth` it can pass (decision 5); set once the body is written.
     pub(crate) cost: [u64; DEPTHS],
+}
+
+impl Func {
+    /// Whether it has a `mut` parameter.
+    pub(crate) fn has_mut(&self) -> bool {
+        self.muts.iter().any(Option::is_some)
+    }
+}
+
+/// The most elements that a `mut` array parameter is sure to hold (`Adds::len`).
+pub(crate) const MAX_MUT_LEN: u64 = 2;
+
+/// What a `mut` parameter of a `string` or an array may add to its place in one call, as `Var`
+/// counts the same for a local: the chars that `+=` adds, the size that `push` adds, and the
+/// length from which an element may be written. The call takes the first two from the room and
+/// the growth of the caller's local, so the caller's bounds stay exact. Only a local has them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Adds {
+    pub(crate) room: u64,
+    pub(crate) grow: u64,
+    /// How many elements the place holds at least, so an index below it is in bounds.
+    pub(crate) len: u64,
+}
+
+impl Adds {
+    /// Whether it adds nothing and needs no length: any place of the type takes it.
+    pub(crate) fn is_none(self) -> bool {
+        self == Adds::default()
+    }
 }
 
 /// A field of a class.

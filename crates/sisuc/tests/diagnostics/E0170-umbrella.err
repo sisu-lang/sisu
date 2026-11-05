@@ -1,0 +1,13 @@
+error[E0170]: the `mut` argument `u` has type `Umbrella`, but the parameter `u` of `hold` has type `Umbrella?`
+  --> E0170-umbrella.sisu:15:14
+   |
+ 9 | fn hold(mut u: Umbrella?) {
+   |             - declared `Umbrella?` here
+...
+15 |     hold(mut u)
+   |              ^ has type `Umbrella`
+   |
+   = help: a `mut` argument must have exactly the parameter's type: the callee can store `None`, which an `Umbrella` cannot hold
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0170

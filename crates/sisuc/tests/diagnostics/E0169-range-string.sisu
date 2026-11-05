@@ -1,0 +1,12 @@
+// GIVEN a call `f(mut s[0..1])`, whose `mut` argument is a range index of a `string`
+// WHEN `sisu check` runs on it
+// THEN it reports E0169 on the argument, labelled "a range index gives a new string, not a place"
+fn f(mut s: string) {
+    s += "!"
+}
+
+fn main() {
+    let mut s = "hello"
+    f(mut s[0..1])
+    print(s)
+}

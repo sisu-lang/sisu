@@ -27,10 +27,23 @@ struct Target {
     size: u64,
 }
 
+/// What a statement may do to a `mut` parameter: write an element, `push`, or `+=` on a `string`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MutUse {
+    Element,
+    Push,
+    Append,
+}
+
 /// The most statements in a block, before its jump.
 const MAX_STATEMENTS: usize = 8;
 /// The most blocks nest, statements' and values' alike.
 pub(crate) const MAX_BLOCKS: u32 = 4;
+/// A statement of `main` is followed by a `mut` call where a draw of its own gives 0 out of this
+/// many, and one can be written.
+const MUT_CALL_ONE_IN: usize = 3;
+/// The fuel of a `mut` call, and of each `mut` function: it takes none of the program's.
+pub(crate) const MUT_FUEL: u64 = 40;
 
 /// The jumps a statement may make at the point being written.
 #[derive(Default)]
@@ -66,6 +79,8 @@ enum Rule {
     For,
     ForArray,
     Call,
+    /// A call that passes places to `mut` parameters, or `exchange` of a place.
+    MutCall,
 }
 
 impl Gen<'_> {
@@ -108,7 +123,7 @@ impl Gen<'_> {
             let share = self.fuel / (MAX_STATEMENTS - count) as u64;
             let rest = self.fuel - share;
             self.fuel = share;
-            if self.callees_any() > 0 && self.pick(2) == 1 {
+            if !self.callees_any().is_empty() && self.pick(2) == 1 {
                 self.w.line();
                 self.cost.statement();
                 self.statement(Self::call_stmt);
@@ -116,12 +131,29 @@ impl Gen<'_> {
                 self.stmt();
             }
             self.fuel += rest;
+            self.mut_statement();
         }
+    }
+
+    /// Now and then, a `mut` call after a statement of `main`, from the spare streams and with
+    /// fuel of its own: the statements of `main` that follow are the same with or without it.
+    pub(super) fn mut_statement(&mut self) {
+        if self.mut_pick(MUT_CALL_ONE_IN) != 0 || !self.mut_call_possible() {
+            return;
+        }
+        let fuel = std::mem::replace(&mut self.fuel, MUT_FUEL);
+        self.swap_streams();
+        self.w.line();
+        self.cost.statement();
+        self.statement(Self::mut_call);
+        self.swap_streams();
+        self.fuel = fuel;
     }
 
     /// A call of a function or a method as a statement, printing what it returns where it can.
     fn call_stmt(&mut self) {
-        let callee = self.pick(self.callees_any());
+        let callees = self.callees_any();
+        let callee = callees[self.pick(callees.len())];
         let ret = &self.scope.funcs[callee].ret;
         // Every type prints but `unit`; an optional warns (W0015), then prints.
         let print = *ret != Ty::Unit;
@@ -167,8 +199,12 @@ impl Gen<'_> {
                 }
             }
         }
-        if self.callees_any() > 0 {
+        if !self.callees_any().is_empty() {
             rules.push(Rule::Call);
+        }
+        // Only in a `mut` function, whose streams are its own.
+        if self.mut_fn && self.pick(4) == 0 && self.mut_call_possible() {
+            rules.push(Rule::MutCall);
         }
         self.w.line();
         self.cost.statement();
@@ -181,7 +217,8 @@ impl Gen<'_> {
     /// Writes a statement by `write`. Before it, the rewritten copy then holds the `let`s its
     /// expressions moved there, and now and then an `if false` with a copy of it (decision 2).
     /// Its expressions run unconditionally and after no effect, as far as the statement goes.
-    fn statement(&mut self, write: impl FnOnce(&mut Self)) {
+    pub(crate) fn statement(&mut self, write: impl FnOnce(&mut Self)) {
+        self.statements += 1;
         let conditional = std::mem::take(&mut self.scope.conditional);
         let effect = std::mem::take(&mut self.effect);
         let start = self.w.begin();
@@ -269,14 +306,7 @@ impl Gen<'_> {
                     .filter(|&v| self.settable(&self.scope.vars[v]))
                     .collect();
                 let pick = self.pick(vars.len());
-                let var = &self.scope.vars[vars[pick]];
-                let (name, len, base) = (var.name.clone(), var.len, var.base);
-                let Ty::Array(element) = var.ty.clone() else {
-                    unreachable!("only an array has elements")
-                };
-                let at = self.upto(len - 1);
-                self.w.text(&format!("{name}[{at}] = "));
-                self.expr(&element, base);
+                self.set_element(vars[pick]);
             }
             Rule::SetField => self.set_field(),
             Rule::Push => self.push_stmt(),
@@ -291,6 +321,56 @@ impl Gen<'_> {
             Rule::For => self.for_stmt(),
             Rule::ForArray => self.for_array(),
             Rule::Call => self.call_stmt(),
+            Rule::MutCall => self.mut_call(),
+        }
+    }
+
+    /// `v[i] = e` of the local `v`, whose type is an array that `settable` says takes it.
+    fn set_element(&mut self, v: usize) {
+        let var = &self.scope.vars[v];
+        let (name, len, base) = (var.name.clone(), var.len, var.base);
+        let Ty::Array(element) = var.ty.clone() else {
+            unreachable!("only an array has elements")
+        };
+        let at = self.upto(len - 1);
+        self.w.text(&format!("{name}[{at}] = "));
+        self.expr(&element, base);
+    }
+
+    /// What a statement may do to the `mut` parameter `v`, which adds what `Adds` says.
+    pub(crate) fn mut_uses(&self, v: usize) -> Vec<MutUse> {
+        let var = &self.scope.vars[v];
+        let mut uses = Vec::new();
+        if self.settable(var) {
+            uses.push(MutUse::Element);
+        }
+        if self
+            .push_targets()
+            .iter()
+            .any(|target| matches!(target, Push::Local(w) if *w == v))
+        {
+            uses.push(MutUse::Push);
+        }
+        if var.ty == Ty::String && var.room > 0 {
+            uses.push(MutUse::Append);
+        }
+        uses
+    }
+
+    /// A statement that does `usage` to the `mut` parameter `v`: the function changes what its
+    /// caller's place holds, within what it adds.
+    pub(crate) fn mut_use(&mut self, v: usize, usage: MutUse) {
+        match usage {
+            MutUse::Element => self.set_element(v),
+            MutUse::Push => {
+                let name = self.scope.vars[v].name.clone();
+                let Ty::Array(element) = self.scope.vars[v].ty.clone() else {
+                    unreachable!("only an array takes a push")
+                };
+                self.w.text(&format!("{name}.push("));
+                self.pushed(v, &element);
+            }
+            MutUse::Append => self.compound_at(v, false),
         }
     }
 
@@ -309,6 +389,11 @@ impl Gen<'_> {
         {
             ty = Ty::Array(Box::new(Ty::Optional(Box::new(ty))));
         }
+        self.let_typed(ty, mutable);
+    }
+
+    /// `let [mut] v[: T] = e` of the type `ty`.
+    pub(crate) fn let_typed(&mut self, ty: Ty, mutable: bool) {
         let name = self.scope.local();
         let keyword = if mutable { "let mut" } else { "let" };
         self.w.text(&format!("{keyword} {name}"));
@@ -424,7 +509,7 @@ impl Gen<'_> {
 
     /// Whether an element of `var` may take an assignment: a mutable array with an element,
     /// of a type that holds no class object (decision 4).
-    fn settable(&self, var: &Var) -> bool {
+    pub(crate) fn settable(&self, var: &Var) -> bool {
         has_elements(var)
             && matches!(&var.ty, Ty::Array(element) if !self.scope.contains_class(element))
     }
@@ -703,6 +788,11 @@ impl Gen<'_> {
     pub(crate) fn compound(&mut self) {
         let targets = self.compound_targets();
         let (v, element) = targets[self.pick(targets.len())];
+        self.compound_at(v, element);
+    }
+
+    /// `compound` of the local `v`, or of an element of it if `element`.
+    fn compound_at(&mut self, v: usize, element: bool) {
         let (mut name, mut ty, loops, len) = {
             let var = &self.scope.vars[v];
             (var.name.clone(), var.ty.clone(), var.loops, var.len)
