@@ -8247,26 +8247,51 @@ fn generated_shapes_should_call_every_requirement_of_a_conformed_interface() {
     );
 }
 
-/// A method that meets a requirement with an `i64` or `string` result, as `Requirement::method`
-/// writes it: `fn r<n>(self, ...) -> <result> { <value> }`.
+/// A method that meets a requirement, as `Requirement::method` writes it:
+/// `fn r<n>(self, ...) -> <result> { <value> }`, and for a `mut` parameter `p<k>` a first
+/// statement `p<k> = <number>;`.
 pub(crate) struct Method<'a> {
     pub(crate) name: &'a str,
+    /// The type of the result, or `""` when the method has none.
     pub(crate) result: &'a str,
+    /// What the method returns, without the write to its `mut` parameter.
     pub(crate) value: &'a str,
+    /// The number that the method writes to its `mut` parameter, when it has one.
+    pub(crate) written: Option<&'a str>,
 }
 
-/// The methods of `source` with an `i64` or `string` result that meet a requirement, each with the
-/// number of its line.
+impl Method<'_> {
+    /// Whether the result is an `i64` or a `string`: a call prints it.
+    pub(crate) fn prints(&self) -> bool {
+        ["i64", "string"].contains(&self.result)
+    }
+}
+
+/// The methods of `source` that meet a requirement, each with the number of its line.
 pub(crate) fn methods(source: &str) -> Vec<(usize, Method<'_>)> {
     fn method(line: &str) -> Option<Method<'_>> {
         let (name, rest) = line.trim_start().strip_prefix("fn r")?.split_once('(')?;
-        let (_, rest) = rest.split_once(") -> ")?;
-        let (result, value) = rest.split_once(" { ")?;
-        let named = name.bytes().all(|b| b.is_ascii_digit());
-        (named && ["i64", "string"].contains(&result)).then(|| Method {
+        let (head, body) = rest.split_once(" {")?;
+        let (params, result) = (head.split_once(") -> "))
+            .unwrap_or_else(|| (head.strip_suffix(')').unwrap_or(head), ""));
+        let named = !name.is_empty() && name.bytes().all(|b| b.is_ascii_digit());
+        let body = body.trim_end_matches('}').trim();
+        let param = params
+            .split_once("mut ")
+            .and_then(|(_, rest)| rest.split(':').next());
+        let write = param.and_then(|param| body.strip_prefix(&format!("{param} = ")));
+        let (written, value) = match write {
+            Some(write) => {
+                let (number, value) = write.split_once("; ").unwrap_or((write, ""));
+                (Some(number), value)
+            }
+            None => (None, body),
+        };
+        named.then_some(Method {
             name,
             result,
-            value: value.trim_end_matches(" }"),
+            value,
+            written,
         })
     }
     (source.lines().enumerate())
@@ -8282,7 +8307,7 @@ fn generated_methods_should_return_values_that_no_other_method_returns() {
     search_seeds(SEEDS, |n| {
         let source = generate(&seed(n)).program;
         let mut values: [FxHashSet<&str>; 2] = Default::default();
-        for (_, method) in methods(&source) {
+        for (_, method) in methods(&source).iter().filter(|(_, m)| m.prints()) {
             let kind = usize::from(method.result == "string");
             assert!(
                 values[kind].insert(method.value),
@@ -8296,6 +8321,215 @@ fn generated_methods_should_return_values_that_no_other_method_returns() {
     assert!(
         counts.iter().all(|&n| n > 0),
         "methods of {SEEDS} seeds: {counts:?}"
+    );
+}
+
+/// The requirements of the interfaces of `source`: a line that starts with `fn r` and holds no
+/// brace.
+fn requirement_lines(source: &str) -> impl Iterator<Item = &str> {
+    (source.lines().map(str::trim)).filter(|line| line.starts_with("fn r") && !line.contains('{'))
+}
+
+/// GIVEN the programs of the first seeds
+/// WHEN the requirements of their interfaces are read
+/// THEN some requirement has `mut p<n>: i64` first with a parameter after it, some has it after
+/// another parameter, some has a result and some has none
+#[test]
+fn a_requirement_should_take_a_mut_parameter() {
+    let mut seen = FxHashSet::default();
+    search_seeds(SEEDS, |n| {
+        for line in requirement_lines(&generate(&seed(n)).program) {
+            let Some((before, after)) = line.split_once("mut p") else {
+                continue;
+            };
+            let digits = after.bytes().take_while(u8::is_ascii_digit).count();
+            let rest = after[digits..]
+                .strip_prefix(": i64")
+                .unwrap_or_else(|| panic!("`mut` should be on an `i64`: {line}"));
+            if before.ends_with("(self, ") && rest.starts_with(", ") {
+                seen.insert("first, with a parameter after it");
+            }
+            if !before.ends_with("(self, ") {
+                seen.insert("after another parameter");
+            }
+            seen.insert(if line.contains(") -> ") {
+                "with a result"
+            } else {
+                "with no result"
+            });
+        }
+        seen.len() == 4
+    });
+    assert_eq!(seen.len(), 4, "{seen:?}");
+}
+
+/// The header of the item that holds line `at` of `source`: the last line up to it that starts at
+/// the margin.
+fn header_of(source: &str, at: usize) -> &str {
+    (source.lines().take(at + 1))
+        .filter(|line| !line.starts_with(' '))
+        .last()
+        .unwrap_or_default()
+}
+
+/// GIVEN the programs of the fixed seeds
+/// WHEN the methods that meet a requirement are read
+/// THEN some seed has a method with `mut p<n>: i64` and the first statement `p<n> = <number>` in
+/// a declaration list, in an `extend` block and in a generic `extend<T: ..>` block; and no two
+/// methods of one program write the same number, or a number that a method returns
+#[test]
+fn a_conformance_should_write_its_own_value_to_a_mut_parameter() {
+    let mut seen = FxHashSet::default();
+    search_seeds(SEEDS, |n| {
+        let source = generate(&seed(n)).program;
+        let mut numbers = FxHashSet::default();
+        for (at, method) in methods(&source) {
+            if method.result == "i64" {
+                assert!(
+                    numbers.insert(method.value),
+                    "{} twice in {source}",
+                    method.value
+                );
+            }
+            let Some(number) = method.written else {
+                continue;
+            };
+            assert!(
+                number.bytes().all(|b| b.is_ascii_digit()),
+                "{number} in {source}"
+            );
+            assert!(numbers.insert(number), "{number} twice in {source}");
+            let header = header_of(&source, at);
+            seen.insert(if header.starts_with("extend<T: ") {
+                "generic extend"
+            } else if header.starts_with("extend ") {
+                "extend"
+            } else {
+                "declaration list"
+            });
+        }
+        seen.len() == 3
+    });
+    assert_eq!(seen.len(), 3, "{seen:?}");
+}
+
+/// The text of the item of `source` that starts with `header` at the margin, up to the line `}`
+/// that closes it.
+pub(crate) fn item_text<'a>(source: &'a str, header: &str) -> Option<&'a str> {
+    // A break put before `source` finds a header at its start too.
+    let start = format!("\n{source}").find(&format!("\n{header}"))?;
+    let rest = &source[start..];
+    Some(&rest[..rest.find("\n}\n")? + 2])
+}
+
+/// Whether `text` holds, in order, `let mut m<n> = 0`, a call that passes `mut m<n>`, and
+/// `print("@d<n> {m<n>}")`.
+fn passes_a_place(text: &str) -> bool {
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    lines.iter().enumerate().any(|(at, line)| {
+        let Some(n) = (line.strip_prefix("let mut m")).and_then(|l| l.strip_suffix(" = 0")) else {
+            return false;
+        };
+        let (call, print) = (format!("mut m{n}"), format!("print(\"@d{n} {{m{n}}}\")"));
+        let after = &lines[at + 1..];
+        let called = after
+            .iter()
+            .position(|l| l.contains(&format!("{call})")) || l.contains(&format!("{call},")));
+        called.is_some_and(|call_at| after[call_at + 1..].contains(&print.as_str()))
+    })
+}
+
+/// GIVEN the programs of the first seeds
+/// WHEN `shapes` and the generic functions `via<k>` are read
+/// THEN some `shapes` and some `via<k>` has `let mut m<n> = 0`, a call that passes `mut m<n>`,
+/// and then `print("@d<n> {m<n>}")`
+#[test]
+fn a_mut_requirement_should_be_called_with_a_place_and_printed() {
+    let mut seen = FxHashSet::default();
+    search_seeds(SEEDS, |n| {
+        let source = generate(&seed(n)).program;
+        if item_text(&source, "fn shapes()").is_some_and(passes_a_place) {
+            seen.insert("shapes");
+        }
+        if (0..3).any(|k| item_text(&source, &format!("fn via{k}<")).is_some_and(passes_a_place)) {
+            seen.insert("via");
+        }
+        seen.len() == 2
+    });
+    assert_eq!(seen.len(), 2, "{seen:?}");
+}
+
+/// GIVEN a program that the generator writes, whose `main` calls `shapes`
+/// WHEN its declarations, `shapes` and its expected lines are read
+/// THEN `Seen` has `put`, `any_put`, `any_fill` and `any_swap` are declared, `shapes` calls `put`
+/// through an array element, through `??`, through `any_fill` and through `any_swap`, with a class
+/// and an enum, and the expected lines end with the eight `any` lines in order, with the values 9,
+/// 4, 12, 13, 15, 15, 17 and 17
+#[test]
+fn any_values_should_call_a_mut_requirement_through_any_and_generic_functions() {
+    let g = (0..SEARCH_SEEDS)
+        .map(|n| generate(&seed(n)))
+        .find(|g| g.program.contains("    shapes()\n}"))
+        .expect("some seed's `main` should call `shapes`");
+    for declaration in [
+        "    fn put(self, mut n: i64)\n",
+        "fn any_put(x: any Seen, mut n: i64) { x.put(mut n) }",
+        "fn any_fill<S: Seen>(s: S, mut n: i64) { s.put(mut n) }",
+        "fn any_swap<S: Seen>(mut s: S, u: S) -> i64 {\n    let _ = exchange(mut s, u)\n    s.seen()\n}",
+    ] {
+        assert!(
+            g.program.contains(declaration),
+            "{declaration} in {}",
+            g.program
+        );
+    }
+    let values = ["9", "4", "12", "13", "15", "15", "17", "17"];
+    let at = g
+        .expected
+        .len()
+        .checked_sub(values.len())
+        .expect("`shapes` should print the `any` lines");
+    let first: usize = g.expected[at]
+        .strip_prefix("@d")
+        .and_then(|rest| rest.split(' ').next())
+        .and_then(|n| n.parse().ok())
+        .expect("a marked line should start with `@d` and a number");
+    for (i, (line, value)) in g.expected[at..].iter().zip(values).enumerate() {
+        assert_eq!(*line, format!("@d{} {value}", first + i));
+    }
+    let d = |i: usize| first + i;
+    let want = [
+        "let mut put0 = 0".to_string(),
+        "beams[1].put(mut put0)".to_string(),
+        format!("print(\"@d{} {{put0}}\")", d(0)),
+        "any_put(eye ?? any_make(), mut put0)".to_string(),
+        format!("print(\"@d{} {{put0}}\")", d(1)),
+        "any_fill(Beam.Wide(12), mut put0)".to_string(),
+        format!("print(\"@d{} {{put0}}\")", d(2)),
+        "any_fill(Eye(v: 13), mut put0)".to_string(),
+        format!("print(\"@d{} {{put0}}\")", d(3)),
+        "let mut swapped = Eye(v: 14)".to_string(),
+        format!(
+            "print(\"@d{} {{any_swap(mut swapped, Eye(v: 15))}}\")",
+            d(4)
+        ),
+        format!("print(\"@d{} {{swapped.seen()}}\")", d(5)),
+        "let mut wide = Beam.Wide(16)".to_string(),
+        format!(
+            "print(\"@d{} {{any_swap(mut wide, Beam.Wide(17))}}\")",
+            d(6)
+        ),
+        format!("print(\"@d{} {{wide.seen()}}\")", d(7)),
+    ];
+    let shapes: Vec<&str> = item_text(&g.program, "fn shapes()")
+        .expect("the program should hold `shapes`")
+        .lines()
+        .map(str::trim)
+        .collect();
+    assert!(
+        shapes.windows(want.len()).any(|w| w == want),
+        "{}",
+        g.program
     );
 }
 
@@ -8893,6 +9127,84 @@ fn generated_mut_lens_should_record_the_length_of_a_mut_parameter() {
     });
     assert!(lens.iter().any(|&len| len < MAX_MUT_LEN), "{lens:?}");
     assert!(lens.iter().all(|&len| len <= MAX_MUT_LEN), "{lens:?}");
+}
+
+/// Whether `c` may be in a name.
+fn is_name_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// The places that `line` passes after `mut `, as an argument: a name, with fields and indices.
+fn mut_arguments(line: &str) -> Vec<&str> {
+    (line.match_indices("mut "))
+        .filter_map(|(at, _)| {
+            if line[..at].chars().next_back().is_some_and(is_name_char) {
+                return None;
+            }
+            let rest = &line[at + 4..];
+            let end = rest
+                .find(|c: char| !is_name_char(c) && !".[]".contains(c))
+                .unwrap_or(rest.len());
+            rest[end..].starts_with([',', ')']).then_some(&rest[..end])
+        })
+        .collect()
+}
+
+/// The name of the method that the line `line` declares, `m<n>`, when it takes `mut v<n>`
+/// after `depth`.
+fn mut_method_name(line: &str) -> Option<&str> {
+    let (name, params) = line.strip_prefix("fn ")?.split_once("(self, depth: i64")?;
+    let digits = name.strip_prefix('m').filter(|d| !d.is_empty())?;
+    (digits.bytes().all(|b| b.is_ascii_digit()) && params.contains(", mut v")).then_some(name)
+}
+
+/// GIVEN the programs of the first seeds
+/// WHEN the plain `extend K<n> {` blocks and the lines outside them are read
+/// THEN some seed has a block with `fn m<k>(self, depth: i64, ` and `mut v<j>: ` in its
+/// parameters, and a line outside the block calls `.m<k>(` with a `mut ` argument
+#[test]
+fn a_mut_method_should_be_declared_in_an_extension_and_called_with_a_place() {
+    let seen = search_seeds(SEEDS, |n| {
+        let source = generate(&seed(n)).program;
+        (source.lines())
+            .filter(|l| l.starts_with("extend K") && l.ends_with(" {") && !l.contains(['<', ':']))
+            .any(|header| {
+                let Some(block) = item_text(&source, header) else {
+                    return false;
+                };
+                let outside = source.replacen(block, "", 1);
+                (block.lines().map(str::trim_start))
+                    .filter_map(mut_method_name)
+                    .any(|name| {
+                        (outside.lines()).any(|line| {
+                            line.contains(&format!(".{name}(")) && !mut_arguments(line).is_empty()
+                        })
+                    })
+            })
+    });
+    assert!(
+        seen,
+        "no `mut` method in an `extend` block is called with a place"
+    );
+}
+
+/// GIVEN the programs of the first seeds
+/// WHEN a function or a method takes `mut v<n>: [` and its body is read
+/// THEN some seed passes an element of it, `mut v<n>[`, to a `mut` call
+#[test]
+fn a_mut_call_should_pass_an_element_of_a_mut_parameter() {
+    let seen = search_seeds(SEEDS, |n| {
+        let source = generate(&seed(n)).program;
+        (source.lines().map(str::trim_start))
+            .filter(|line| line.starts_with("fn "))
+            .flat_map(|line| line.split("mut v").skip(1))
+            .filter_map(|param| {
+                let (name, ty) = param.split_once(": ")?;
+                ty.starts_with('[').then(|| format!("mut v{name}["))
+            })
+            .any(|element| source.contains(&element))
+    });
+    assert!(seen, "no `mut` call passes an element of a `mut` parameter");
 }
 
 /// Seeds 203, 4534 and 5974 once wrote a `loop` value under a later branch of an untyped `if`

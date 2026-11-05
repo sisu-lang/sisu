@@ -561,9 +561,14 @@ must pass six properties:
    a `T` result, when the argument of the conformance is one of them) returns
    a value that no other method returns. Each call of such a method in
    `shapes`, or in a generic function that it calls, prints a line
-   `@d<n> <value>`. These lines are, in order, a prefix of the values of the methods
-   that a correct dispatch reaches; a `main` that returns before the calls
-   prints none.
+   `@d<n> <value>`. An interface can also hold a requirement with a `mut`
+   parameter of `i64`. Each method that meets it writes a value of its own to
+   that parameter, and each such call in `shapes`, or in a generic function that
+   it calls, passes a place and prints it after the call as `@d<n> <value>`.
+   The calls through `any` and through generic functions that take a `mut`
+   parameter print their lines in the same way. These lines are, in order, a
+   prefix of the values that a correct dispatch reaches; a `main` that returns
+   before the calls prints none.
 6. A broken bound gives E0154 and nothing else. For each bound site, an
    argument of a call of a bounded generic function or class whose parameter
    is the bare type parameter that no earlier argument names, a copy of the
