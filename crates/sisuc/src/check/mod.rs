@@ -70,9 +70,16 @@ use unused_names::{Owner, Pending, Use, Used};
 /// excuse another.
 ///
 /// A failed call keeps the result type that its callee fixes: a function, a method, a
-/// constructor, a variant, a built-in method or a prelude function, with the receiver's and the
-/// written type arguments substituted (`Checker::fixed_result`). A callee whose result names a
-/// parameter that only the arguments bind gives `Error`, as `dbg`, `get` and a conversion do.
+/// constructor, a variant, a built-in method or a prelude function. The receiver's type
+/// arguments and the written ones are put in the result (`Checker::fixed_result`).
+///
+/// A callee whose result names a parameter that only the arguments bind gives `Error`, as `dbg`,
+/// `get` and a conversion do. So does a call whose written type arguments fail, and a call that
+/// gives a bound to its own parameter when that bound fails or no list is written: the corrected
+/// call is `Error` then (`Checker::counted_result`).
+///
+/// A construction of a generic class or variant keeps the type that its written list, or its
+/// alias, fixes. It is `Error` when that list fails, or fails a bound.
 ///
 /// A generic call that cannot meet its context is `Error` too, but it keeps the type it found
 /// in `found`. A block, a branch and a safe call keep that field for the code that uses the value.

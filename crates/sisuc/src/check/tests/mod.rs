@@ -498,7 +498,7 @@ fn if_with_failed_and_never_branches_is_error() {
 fn failed_rule_should_make_its_expression_error() {
     const MISMATCH: Code = Code::Mismatch;
     with_prelude();
-    let rows: [(&str, String, Code, (usize, usize)); 12] = [
+    let rows: [(&str, String, Code, (usize, usize)); 11] = [
         (
             "unary",
             "fn main() {\n    let x = -true\n    print(x == false)\n}".into(),
@@ -546,12 +546,6 @@ fn failed_rule_should_make_its_expression_error() {
             "class C {}\nfn main() {\n    let x = [C()].contains(C())\n    print(x + 1)\n}".into(),
             Code::NotConform,
             (3, 13),
-        ),
-        (
-            "print unit argument",
-            "fn main() {\n    let x = print(print(1))\n    print(x)\n}".into(),
-            Code::PrintArgument,
-            (2, 19),
         ),
         (
             "if branches",
@@ -762,8 +756,12 @@ fn a_never_value_that_failed_should_give_e0043_after_the_other_error() {
         ("let x = return \"a\"", None, &[Code::Mismatch]),
         ("let x = id(return \"a\")", None, &[Code::Mismatch]),
         ("let x = [return \"a\"]", None, &[Code::Mismatch]),
-        // Unchanged: a call with a mismatched argument is untyped, so its block is not `never`.
-        ("let x = { panic(5) }", None, &[Code::Mismatch]),
+        // A call with a mismatched argument keeps its type, so its block is `never`.
+        (
+            "let x = { panic(5) }",
+            Some("{ panic(5) }"),
+            &[Code::NoValue, Code::Mismatch],
+        ),
         // Unchanged: a `break` or `continue` outside a loop is the one report of its block.
         ("let x = { break }", None, &[Code::JumpOutsideLoop]),
         ("let x = { continue }", None, &[Code::JumpOutsideLoop]),

@@ -1,7 +1,7 @@
 //! Methods on a type parameter: a call on a value of type `T` names a requirement of the
 //! interfaces that `T`'s bounds give, and is an `InterfaceCall` that `mono` resolves.
 
-use super::generic::{GenericSig, Site, mismatched, named_params};
+use super::generic::{GenericSig, Site, mismatched, named_params, written_args};
 use super::interface::Required;
 use super::mut_args::{MutParts, MutSite, site_of};
 use super::{Checked, Checker, Poisoned, has_remedy_flag, spread};
@@ -52,8 +52,7 @@ impl Checker<'_> {
         // does of a function.
         let info = &self.interfaces[interface.0];
         let requirement = &info.requirements[method];
-        let (params, declared_ret) = (requirement.params.clone(), requirement.ret);
-        let ret = declared_ret;
+        let (params, ret) = (requirement.params.clone(), requirement.ret);
         let returns_param = ret.is_some_and(Type::has_param);
         // Only a requirement with a `mut` parameter, or a call with a `mut` argument, pays for a
         // site.
@@ -65,8 +64,8 @@ impl Checker<'_> {
         let mut owner = vec![ty];
         owner.extend_from_slice(iargs.get());
         if params.len() != args.len() {
-            let ret = self.counted_result(declared_ret, &declared, &owner, site);
-            return self.wrong_count(span, name, params.len(), args, ret);
+            let fixed = self.counted_result(ret, (&declared, &owner, &bounds), site);
+            return self.wrong_count(span, name, params.len(), args, fixed);
         }
         let mut_site = MutSite {
             callee: &name,
@@ -92,7 +91,7 @@ impl Checker<'_> {
             result.as_ref().ok().and_then(|(_, _, ret)| *ret),
         );
         self.marks(args, &mut parts, &mut_site, (&params, list), met);
-        let (checked, list, ret) = result?;
+        let (checked, list, solved) = result?;
         let (iargs, types) = list.get().split_at(owner.len());
         let (iargs, types) = (TypeArgs::intern(iargs), TypeArgs::intern(types));
         let parts = self.mut_overlaps(parts);
@@ -109,24 +108,19 @@ impl Checker<'_> {
             types,
             args,
         };
-        match (std::iter::once(receiver).chain(checked).collect(), ret) {
-            (Ok(args), Some(ret)) if !failed && parts.is_empty() => {
-                Ok(self.spilled(span, ret, args, call))
+        match (std::iter::once(receiver).chain(checked).collect(), solved) {
+            (Ok(args), Some(solved)) if !failed && parts.is_empty() => {
+                Ok(self.spilled(span, solved, args, call))
             }
-            (Ok(args), Some(ret)) if !failed => {
-                let call = tir::Expr::new(call(args), ret, span);
+            (Ok(args), Some(solved)) if !failed => {
+                let call = tir::Expr::new(call(args), solved, span);
                 Ok(self.mut_call(call, parts))
             }
             (_, solved) => {
-                // A failed call keeps the result that the receiver and the written type
-                // arguments fix.
+                // The arguments bind the rest of the result, and they may be the fault.
                 let ret = if failed {
-                    let written = if site.written.is_empty() {
-                        &[]
-                    } else {
-                        types.get()
-                    };
-                    self.fixed_result(declared_ret, declared.len(), &owner, written)
+                    let written = written_args(site, list.get(), owner.len());
+                    self.fixed_result(ret, declared.len(), &owner, &[], written)
                 } else {
                     solved
                 };

@@ -1634,6 +1634,16 @@ pub(super) struct Site<'a> {
     pub(super) expected: Option<Type>,
 }
 
+/// The type arguments after the first `owner` of `found`, which inference found for a callee,
+/// when `site` writes them. Else none: the arguments bind them, and they may be the fault.
+pub(super) fn written_args<'t>(site: Site<'_>, found: &'t [Type], owner: usize) -> &'t [Type] {
+    if site.written.is_empty() {
+        &[]
+    } else {
+        found.get(owner..).unwrap_or_default()
+    }
+}
+
 /// A waiting generic call that an outer call checks as an argument (see `Checker::infer_waiting`).
 /// The call reports a result that cannot meet the context as a mismatch with `want`.
 #[derive(Clone, Copy)]
@@ -2058,25 +2068,41 @@ impl Checker<'_> {
     }
 
     /// The result type `ret` of a failed call of a callee with `declared` type parameters, when
-    /// the call fixes it without its arguments: `owner` binds the first parameters, and `named`
-    /// the type arguments that the call writes, which come next. `None` when `ret` names a
-    /// parameter that only the arguments bind, and for a callee with no result type.
+    /// the call fixes it without its arguments. `owner` binds the first parameters. `named` is
+    /// the type arguments that the call writes, and binds the next ones.
+    ///
+    /// `None` when `ret` names a parameter that only the arguments bind, and for a callee with
+    /// no result type.
+    ///
+    /// `None` also when `bounds` holds a bound of the callee's own parameters, and a bound fails
+    /// for `named`. `None` too when such a bound exists and `named` is empty: the arguments would
+    /// bind it. The corrected call is `Error` in both cases. This reports nothing. A call that
+    /// inference checked passes no `bounds`.
     pub(super) fn fixed_result(
-        &self,
+        &mut self,
         ret: Option<Type>,
         declared: usize,
         owner: &[Type],
+        bounds: &[Vec<Bound>],
         named: &[Type],
     ) -> Option<Type> {
         let ret = ret?;
-        if !ret.has_param() {
+        let bounded = bounds.iter().any(|b| !b.is_empty());
+        if !bounded && !ret.has_param() {
             return Some(ret);
         }
         let mut bindings = Bindings::new(declared, owner);
         for (slot, &ty) in bindings.found[owner.len()..].iter_mut().zip(named) {
             *slot = Some(ty);
         }
-        self.known(&bindings, ret)
+        if bounded && (named.is_empty() || !self.meets_bounds(bounds, owner.len(), &bindings)) {
+            return None;
+        }
+        if ret.has_param() {
+            self.known(&bindings, ret)
+        } else {
+            Some(ret)
+        }
     }
 
     /// `generic_call`, before what ranking kept is dropped.
@@ -2518,7 +2544,7 @@ impl Checker<'_> {
         }
         // A context that fails a bound is not a type that the parameter can have: no argument is
         // to blame for not being it, and the bound check would report the types that it set.
-        if !self.meets_bounds(sig, &context) {
+        if !self.meets_bounds(sig.bounds, sig.owner.len(), &context) {
             return;
         }
         let mut blamed = false;
@@ -2563,10 +2589,9 @@ impl Checker<'_> {
     /// reports only a query that is too deep). A bound whose arguments name a parameter that
     /// `context` leaves unbound is not decided yet, as in `check_early`, and holds here. The work
     /// is one query for each bound of the callee.
-    fn meets_bounds(&mut self, sig: &GenericSig<'_>, context: &Bindings) -> bool {
+    fn meets_bounds(&mut self, all: &[Vec<Bound>], owned: usize, context: &Bindings) -> bool {
         let with: Vec<Type> = context.found.iter().map(|&t| listed(t)).collect();
-        let owned = sig.owner.len();
-        for (k, bounds) in sig.bounds.iter().enumerate() {
+        for (k, bounds) in all.iter().enumerate() {
             let Some(ty) = context.found[owned + k].filter(|&t| t != *REJECTED) else {
                 continue;
             };

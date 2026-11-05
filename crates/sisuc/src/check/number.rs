@@ -371,6 +371,6 @@ impl Checker<'_> {
             .ok()
             .filter(|_| !failed)
             .map(|operands| tir::ExprKind::Math { op, operands });
-        typed(span, result, failed, kind)
+        typed(span, result, false, kind)
     }
 }

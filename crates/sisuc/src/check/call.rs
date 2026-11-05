@@ -5,8 +5,8 @@ use std::fmt;
 
 use super::alias::{Through, Via};
 use super::expr::{fits, no_member, option_written, path, postfix};
-use super::generic::{GenericSig, Site, mark, mismatched};
-use super::interface::LangPath;
+use super::generic::{GenericSig, Site, mark, mismatched, written_args};
+use super::interface::{Bound, LangPath};
 use super::member::Found;
 use super::mut_args::{Callee, MutParts, MutSite, site_of};
 use super::prelude::PRELUDE;
@@ -849,7 +849,7 @@ impl Checker<'_> {
             return Ok(self.rejected(d.into(), args, Some(Type::BOOL)));
         }
         let labeled = self.labels(args);
-        let (other, mismatched) = self.operand(&args[0].value, Some(ty));
+        let (other, _) = self.operand(&args[0].value, Some(ty));
         Ok(match (receiver, other) {
             (Ok(lhs), Ok(rhs)) if !labeled => {
                 let eq = interface == self.lang.eq;
@@ -876,9 +876,7 @@ impl Checker<'_> {
                     }
                 }))
             }
-            _ => Err(Poisoned::of(
-                (!mismatched && !labeled).then_some(Type::BOOL),
-            )),
+            _ => Err(Poisoned::typed(Type::BOOL)),
         })
     }
 
@@ -906,7 +904,6 @@ impl Checker<'_> {
         let labeled = self.labels(args);
         let sig = &self.signatures[func.0];
         let (name, params, ret) = (sig.name.clone(), sig.params.clone(), sig.ret);
-        let declared_ret = ret;
         let returns_param = ret.is_some_and(Type::has_param);
         let (muts, names) = site_of(&sig.muts, &sig.param_names, args);
         let mut_site = MutSite {
@@ -935,8 +932,8 @@ impl Checker<'_> {
                 Some(ty) => self.method_name(ty, site.name.name.as_str()),
                 None => name,
             };
-            let ret = self.counted_result(declared_ret, &declared, owner, site);
-            return self.wrong_count(span, name, params.len(), args, ret);
+            let fixed = self.counted_result(ret, (&declared, owner, &bounds), site);
+            return self.wrong_count(span, name, params.len(), args, fixed);
         }
         let checked = if declared.is_empty() {
             let checked = args
@@ -984,72 +981,56 @@ impl Checker<'_> {
             checked.as_ref().ok().and_then(|(_, _, ret)| *ret),
         );
         self.marks(args, &mut parts, &mut_site, (&params, list), result);
-        let (checked, types, ret) = checked?;
+        let (checked, types, solved) = checked?;
         let parts = self.mut_overlaps(parts);
         let failed = labeled || checked.iter().any(mismatched);
         // A result that names a type parameter may take the type of an argument. The `?.` fix of
         // an E0062 in that argument would make it optional, unless it is optional already.
         let flagged = returns_param && checked.iter().any(has_remedy_flag);
-        match (receiver.into_iter().chain(checked).collect(), ret) {
-            (Ok(args), Some(ret)) if !failed && parts.is_empty() => {
-                Ok(self.spilled(span, ret, args, |args| tir::ExprKind::Call {
-                    func,
-                    types,
-                    args,
-                }))
-            }
-            (Ok(args), Some(ret)) if !failed => {
-                let call = tir::Expr::new(tir::ExprKind::Call { func, types, args }, ret, span);
+        match (receiver.into_iter().chain(checked).collect(), solved) {
+            (Ok(args), Some(solved)) if !failed && parts.is_empty() => Ok(self.spilled(
+                span,
+                solved,
+                args,
+                |args| tir::ExprKind::Call { func, types, args },
+            )),
+            (Ok(args), Some(solved)) if !failed => {
+                let call = tir::Expr::new(tir::ExprKind::Call { func, types, args }, solved, span);
                 Ok(self.mut_call(call, parts))
             }
-            (_, ret) => {
+            (_, solved) => {
+                // The arguments bind the rest of the result, and they may be the fault.
                 let ret = if failed {
-                    // The arguments bind the rest of the result, and they may be the fault.
-                    let written = if site.written.is_empty() {
-                        &[]
-                    } else {
-                        types.get()
-                    };
-                    let written = written.get(owner.len()..).unwrap_or_default();
-                    self.fixed_result(declared_ret, declared.len(), owner, written)
+                    let written = written_args(site, types.get(), owner.len());
+                    self.fixed_result(ret, declared.len(), owner, &[], written)
                 } else {
-                    ret
+                    solved
                 };
                 spread(Err(Poisoned::of(ret)), flagged)
             }
         }
     }
 
-    /// The result type of a call of a callee with `declared` type parameters, of which `owner`
-    /// are the receiver's, that fails on its count. The type arguments that `site` writes fix
-    /// the parameters of the callee itself. `None` when the arguments bind a parameter of
-    /// `ret`.
+    /// The result type of a call at `site` that fails on its count, of a callee with the type
+    /// parameters `declared`, of which `owner` are the receiver's. `ret` is its result type, and
+    /// `bounds` those of its own parameters. The type arguments that `site` writes fix them.
+    ///
+    /// The errors of that list are reported, as the corrected call reports them. `None` when the
+    /// list fails. `None` also for the cases of `fixed_result`.
     pub(super) fn counted_result(
         &mut self,
         ret: Option<Type>,
-        declared: &[Symbol],
-        owner: &[Type],
+        (declared, owner, bounds): (&[Symbol], &[Type], &[Vec<Bound>]),
         site: Site<'_>,
     ) -> Option<Type> {
-        let reads_written = ret.is_some_and(Type::has_param)
-            && !site.written.is_empty()
-            && declared.len() > owner.len();
-        let named = if reads_written {
-            self.type_args(
-                site.name,
-                &declared[owner.len()..],
-                site.written,
-                site.angles,
-            )
+        let own = declared.get(owner.len()..).unwrap_or_default();
+        // A list on a callee with no parameter of its own is reported elsewhere.
+        let named = if site.written.is_empty() || own.is_empty() {
+            TypeArgs::NONE
         } else {
-            None
+            self.type_args(site.name, own, site.written, site.angles)?
         };
-        self.fixed_result(
-            ret,
-            declared.len(),
-            owner,
-            named.as_ref().map_or(&[], |n| n.get()),
-        )
+        self.fixed_result(ret, declared.len(), owner, bounds, named.get())
     }
 
     /// What a count error calls the method `method` of a receiver of type `ty`: `[i64].len`.
@@ -1176,8 +1157,11 @@ impl Checker<'_> {
         };
         if !declared.is_empty() {
             let names: Vec<_> = fields.iter().map(|(f, _)| *f).collect();
+            // An annotation that failed its bound reported it: the value is quiet.
+            let bounds = if quiet { &[] } else { &bounds[..] };
             if !self.shaped(span, &name, &names, args) {
-                return Err(Poisoned::error());
+                let fixed = self.counted_result(Some(ret), (&declared, &[], bounds), site);
+                return Err(Poisoned::of(fixed));
             }
             let params: Vec<_> = fields.iter().map(|(_, ty)| *ty).collect();
             let sig = GenericSig {
@@ -1187,8 +1171,7 @@ impl Checker<'_> {
                 owner: &[],
                 params: &params,
                 ret: Some(ret),
-                // An annotation that failed its bound reported it: the value is quiet.
-                bounds: if quiet { &[] } else { &bounds },
+                bounds,
                 mut_site: None,
             };
             // An alias's type arguments, when the call wrote them, are applied already.
@@ -1210,7 +1193,18 @@ impl Checker<'_> {
                     Ok(self.spilled(span, ty, args, |args| tir::ExprKind::New { class, args }))
                 }
                 Ok(_) => Err(Poisoned::error()),
-                Err(_) => spread(Err(Poisoned::of((!failed).then_some(ty))), flagged),
+                Err(_) => {
+                    // The arguments bind the rest of the type, and they may be the fault.
+                    let ty = if !failed {
+                        Some(ty)
+                    } else if held {
+                        let written = written_args(site, list.get(), 0);
+                        self.fixed_result(Some(ret), declared.len(), &[], &[], written)
+                    } else {
+                        None
+                    };
+                    spread(Err(Poisoned::of(ty)), flagged)
+                }
             };
         }
         let ty = ret;

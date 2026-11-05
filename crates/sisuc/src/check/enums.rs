@@ -6,7 +6,7 @@ use std::{fmt, mem};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::alias::Through;
-use super::generic::{GenericSig, Site, mismatched};
+use super::generic::{GenericSig, Site, mismatched, written_args};
 use super::interface::Slot;
 use super::mut_args::Callee;
 use super::unused_names::Used;
@@ -443,14 +443,16 @@ impl Checker<'_> {
         let labeled = if labels.iter().all(Option::is_some) && !labels.is_empty() {
             let names: Vec<_> = labels.iter().flatten().copied().collect();
             if !self.shaped(span, &path, &names, args) {
-                return Err(Poisoned::error());
+                let fixed = self.counted_result(Some(ret), (&declared, &[], &bounds), site);
+                return Err(Poisoned::of(fixed));
             }
             false
         } else if labels.iter().all(Option::is_none) {
-            match self.positional_shape(span, &path, fields.len(), args) {
-                Some(labeled) => labeled,
-                None => return Err(Poisoned::error()),
-            }
+            let Some(labeled) = self.positional_shape(span, &path, fields.len(), args) else {
+                let fixed = self.counted_result(Some(ret), (&declared, &[], &bounds), site);
+                return Err(Poisoned::of(fixed));
+            };
+            labeled
         } else {
             // Mixed labels are reported at the declaration.
             self.stray(args);
@@ -485,7 +487,18 @@ impl Checker<'_> {
             Ok(args) if !failed && held => Ok(self.spilled(span, ty, args, |args| {
                 tir::ExprKind::Variant { id, variant, args }
             })),
-            _ => spread(Err(Poisoned::of((!failed && held).then_some(ty))), flagged),
+            _ => {
+                // The arguments bind the rest of the type, and they may be the fault.
+                let ty = if !held {
+                    None
+                } else if failed {
+                    let written = written_args(site, list.get(), 0);
+                    self.fixed_result(Some(ret), declared.len(), &[], &[], written)
+                } else {
+                    Some(ty)
+                };
+                spread(Err(Poisoned::of(ty)), flagged)
+            }
         }
     }
 

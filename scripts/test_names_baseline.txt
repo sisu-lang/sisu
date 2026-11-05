@@ -158,7 +158,6 @@ crates/sisuc/src/check/tests/floats.rs::int_to_float
 crates/sisuc/src/check/tests/floats.rs::literal_typing
 crates/sisuc/src/check/tests/floats.rs::math_is_a_name_like_any_other
 crates/sisuc/src/check/tests/floats.rs::math_prints
-crates/sisuc/src/check/tests/floats.rs::method_errors
 crates/sisuc/src/check/tests/floats.rs::mixing
 crates/sisuc/src/check/tests/floats.rs::mixing_under_an_integer
 crates/sisuc/src/check/tests/floats.rs::mixing_under_an_integer_nested
@@ -522,7 +521,6 @@ crates/sisuc/src/check/tests/prelude.rs::panic_is_never
 crates/sisuc/src/check/tests/prelude.rs::panic_is_not_a_value
 crates/sisuc/src/check/tests/prelude.rs::panic_lowers
 crates/sisuc/src/check/tests/prelude.rs::panic_message_must_be_string
-crates/sisuc/src/check/tests/prelude.rs::panic_with_a_broken_message_is_an_error
 crates/sisuc/src/check/tests/prelude.rs::prelude_defined_twice
 crates/sisuc/src/check/tests/prelude.rs::prelude_names_free_elsewhere
 crates/sisuc/src/check/tests/prelude.rs::read_line_argument_count
@@ -533,7 +531,6 @@ crates/sisuc/src/check/tests/prelude.rs::todo_in_parentheses
 crates/sisuc/src/check/tests/prelude.rs::todo_is_never
 crates/sisuc/src/check/tests/prelude.rs::todo_is_not_a_value
 crates/sisuc/src/check/tests/prelude.rs::todo_lowers
-crates/sisuc/src/check/tests/prelude.rs::todo_with_a_label_is_an_error
 crates/sisuc/src/check/tests/shadowing.rs::if_let_binding_shadowed
 crates/sisuc/src/check/tests/shadowing.rs::let_mut_shadows_let
 crates/sisuc/src/check/tests/shadowing.rs::rhs_sees_old_binding

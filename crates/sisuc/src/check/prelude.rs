@@ -60,7 +60,7 @@ impl Checker<'_> {
                 stream,
                 operand: Box::new(operand),
             });
-        typed(span, Type::UNIT, labeled, kind)
+        typed(span, Type::UNIT, false, kind)
     }
 
     /// `dbg(x)`, of the type of `x`, which it checks against `expected`. It does not warn when
@@ -95,8 +95,9 @@ impl Checker<'_> {
     /// The argument of a call of `function` (`print`, `eprint` or `dbg`) at `span`, checked with
     /// `expected`, with whether the arguments had a label. Every type shows through `Display` but
     /// `unit` and `never`. `Err` is the call's own result when its argument is wrong, which this
-    /// has reported. `ret` is the type of the call when it has the wrong count: `dbg` has the
-    /// type of its argument, so it has none.
+    /// has reported. `context` holds two parts: the type `expected` that the argument must have,
+    /// and the type `ret` of the call when it fails. `dbg` has the type of its argument, so its
+    /// `ret` is none.
     fn shown<'a>(
         &mut self,
         span: Span,
@@ -131,7 +132,7 @@ impl Checker<'_> {
             _ => return Ok((arg, checked, labeled)),
         };
         self.diagnostics.push(error);
-        Err(Err(Poisoned::error()))
+        Err(Err(Poisoned::of(ret)))
     }
 
     /// Warns when `checked`, the check of the printed `value`, is an optional: the text may be
@@ -256,11 +257,9 @@ impl Checker<'_> {
 /// The panic with `message`, which reports at the start of `span`; `labeled` when its
 /// arguments had a label.
 fn panics(span: Span, labeled: bool, message: Checked) -> Checked {
-    // A message that failed is the failure of this rule, so the call is `Error`.
-    let failed = labeled || message.is_err();
     let kind = message
         .ok()
         .filter(|_| !labeled)
         .map(|message| tir::ExprKind::Panic(Box::new(message)));
-    typed(span, Type::NEVER, failed, kind)
+    typed(span, Type::NEVER, false, kind)
 }

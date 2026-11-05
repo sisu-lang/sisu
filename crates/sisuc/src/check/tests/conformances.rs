@@ -3994,12 +3994,6 @@ fn eq_and_less_calls_should_check_their_receiver_and_argument() {
             Code::Mismatch,
         ),
         (
-            "an argument that fails leaves no type to check",
-            "fn f() {\n    let x: i64 = 5.eq(\"a\")\n}\nfn main() {}",
-            "\"a\"",
-            Code::Mismatch,
-        ),
-        (
             "a receiver that is unknown",
             "fn f() -> bool { missing.eq(1) }\nfn main() {}",
             "missing",
@@ -4033,6 +4027,17 @@ fn eq_and_less_calls_should_check_their_receiver_and_argument() {
     for (row, src, at, code) in rows {
         codes_row(row, src, &[(code, where_is(src, at))]);
     }
+    // An argument that fails leaves the call its type, so the `let` reports it too.
+    let src = "fn f() {\n    let x: i64 = 5.eq(\"a\")\n}\nfn main() {}";
+    let wanted = [
+        (Code::Mismatch, where_is(src, "5.eq")),
+        (Code::Mismatch, where_is(src, "\"a\"")),
+    ];
+    codes_row(
+        "an argument that fails keeps the type of the call",
+        src,
+        &wanted,
+    );
 }
 
 #[test]
