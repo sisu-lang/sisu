@@ -8894,3 +8894,12 @@ fn generated_mut_lens_should_record_the_length_of_a_mut_parameter() {
     assert!(lens.iter().any(|&len| len < MAX_MUT_LEN), "{lens:?}");
     assert!(lens.iter().all(|&len| len <= MAX_MUT_LEN), "{lens:?}");
 }
+
+/// Seeds 203, 4534 and 5974 once wrote a `loop` value under a later branch of an untyped `if`
+/// whose `break None` had no type (E0050; #363, #425). Seed 5974 also gave E0048 around the loop.
+#[test]
+fn the_programs_of_seeds_203_4534_and_5974_should_check_clean() {
+    for n in [203, 4534, 5974] {
+        checked(&generate(&seed(n)).program);
+    }
+}

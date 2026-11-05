@@ -235,6 +235,13 @@ struct Gen<'a> {
     /// The most blocks open around an `if` of which every branch jumps (`Gen::if_stmt`).
     #[cfg(test)]
     leaving_if_depth: u32,
+    /// The arms of the `if` that `Gen::if_expr` wrote last, as text: the outermost `if` of a
+    /// rule, since it ends last.
+    #[cfg(test)]
+    last_arms: Vec<String>,
+    /// The right operand of the equality that `Rule::Equal` wrote last, as text.
+    #[cfg(test)]
+    last_right: String,
     /// Whether the next expression is in a position with no expected type, where a `u8` must
     /// be one by its own type (`Gen::expr`).
     synth: bool,
@@ -296,6 +303,10 @@ impl<'a> Gen<'a> {
             blocks: 0,
             #[cfg(test)]
             leaving_if_depth: 0,
+            #[cfg(test)]
+            last_arms: Vec::new(),
+            #[cfg(test)]
+            last_right: String::new(),
             synth: false,
             typed: false,
             bare: false,

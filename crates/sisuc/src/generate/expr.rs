@@ -523,16 +523,7 @@ impl Gen<'_> {
                 self.w.text(")");
                 Info::folding(&[lhs, rhs], 0, true)
             }
-            Rule::Equal => {
-                let operand = self.eq_type();
-                self.w.text("(");
-                self.synth = true;
-                let lhs = self.expr(&operand, MAX_SIZE);
-                self.one_of(&[" == ", " != "]);
-                let rhs = self.expr(&operand, MAX_SIZE);
-                self.w.text(")");
-                Info::folding(&[lhs, rhs], 0, true)
-            }
+            Rule::Equal => self.equal(),
             Rule::Order => self.order(),
             Rule::Convert => self.convert(ty),
             Rule::Fallible => self.fallible(ty),
@@ -1366,6 +1357,24 @@ impl Gen<'_> {
             .collect()
     }
 
+    /// `(a == b)` or `(a != b)`: the left operand has no expected type.
+    fn equal(&mut self) -> Info {
+        let operand = self.eq_type();
+        self.w.text("(");
+        self.synth = true;
+        let lhs = self.expr(&operand, MAX_SIZE);
+        self.one_of(&[" == ", " != "]);
+        #[cfg(test)]
+        let right = self.w.at();
+        let rhs = self.expr(&operand, MAX_SIZE);
+        #[cfg(test)]
+        {
+            self.last_right = self.w.out.rewritten[right..].to_string();
+        }
+        self.w.text(")");
+        Info::folding(&[lhs, rhs], 0, true)
+    }
+
     fn arithmetic(&mut self, ty: &Ty, synth: bool) -> Info {
         self.w.text("(");
         // `a op b` of `a` in `10..=28` and `b` in `1..=9` fits a `u8` and divides by no zero.
@@ -1797,6 +1806,13 @@ impl Gen<'_> {
             arms.push(arm..g.w.at());
             g.w.text(" })");
         });
+        #[cfg(test)]
+        {
+            self.last_arms = arms
+                .iter()
+                .map(|arm| self.w.out.rewritten[arm.clone()].to_string())
+                .collect();
+        }
         // With no expected type, the first branch types the `if`, so a `[]`, `None` or `7`
         // there would not be the `ty` it should.
         if !(synth && ty.inferred()) {
@@ -2938,6 +2954,73 @@ mod tests {
                 g.w.out.rewritten
             );
         }
+    }
+
+    /// The text `rule` writes for `ty` from the seed `n`, with `part` of it, as the value of a
+    /// `let` in a program, and the lines of the errors of E0050 that sit right after a `break `,
+    /// the place of an untyped `break None`. Other errors do not count.
+    fn untyped_breaks(
+        rule: Rule,
+        ty: &Ty,
+        n: u64,
+        part: impl Fn(&Gen<'_>) -> String,
+    ) -> (String, String, Vec<usize>) {
+        let data = crate::generate::coverage::seed(n);
+        let mut g = Gen::new(&data);
+        g.rule(rule, ty, MAX_SIZE, true);
+        let (text, part) = (g.w.out.program.clone(), part(&g));
+        let source = format!("fn main() {{\n    let _ = {text}\n}}\n");
+        let (_, diagnostics) = crate::front_end::checked(&source);
+        let lines = diagnostics
+            .iter()
+            .filter(|d| d.code().as_str() == "E0050")
+            .filter(|d| source[..d.span().start()].ends_with("break "))
+            .map(|d| 1 + source[..d.span().start()].matches('\n').count())
+            .collect();
+        (text, part, lines)
+    }
+
+    /// GIVEN an `if` with no expected type, of an optional type
+    /// WHEN a later arm holds a `loop` value
+    /// THEN no `break` of it is an untyped `None`: the checker may type the `if` by a join, and
+    ///   then gives the later arms no expected type
+    #[test]
+    fn a_loop_value_under_a_later_branch_of_an_untyped_if_should_give_typed_breaks() {
+        // Seed 1224 once wrote `else if (!(true)) { ({ let mut v6 = 5 loop { ... break None ...`.
+        let ty = Ty::Optional(Box::new(Ty::I64));
+        let mut loops = 0;
+        for n in std::iter::once(1224).chain(0..64) {
+            // The first arm and the conditions do not count.
+            let later = |g: &Gen<'_>| g.last_arms[1..].concat();
+            let (text, later, untyped) = untyped_breaks(Rule::If, &ty, n, later);
+            assert!(
+                untyped.is_empty(),
+                "seed {n}: untyped breaks at {untyped:?} in {text}"
+            );
+            loops += usize::from(later.contains("loop "));
+        }
+        assert!(loops > 0, "no seed writes a loop in a later arm");
+    }
+
+    /// GIVEN an equality of two operands, the first with no expected type
+    /// WHEN the right operand holds a `loop` value
+    /// THEN no `break` of it is an untyped `None`: the left operand may be typed by a join, and
+    ///   then the right one has no expected type
+    #[test]
+    fn the_right_operand_of_an_equality_should_give_typed_breaks() {
+        let mut loops = 0;
+        // No seed below 256 gives the error at the base. Seed 667 is the first with a `loop` in
+        // the right operand that gives it: `break Option.None` in a `match` arm.
+        for n in std::iter::once(667).chain(0..256) {
+            let right = |g: &Gen<'_>| g.last_right.clone();
+            let (text, right, untyped) = untyped_breaks(Rule::Equal, &Ty::Bool, n, right);
+            assert!(
+                untyped.is_empty(),
+                "seed {n}: untyped breaks at {untyped:?} in {text}"
+            );
+            loops += usize::from(right.contains("loop "));
+        }
+        assert!(loops > 0, "no seed writes a loop in a right operand");
     }
 
     #[test]
