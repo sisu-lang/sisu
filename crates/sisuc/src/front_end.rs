@@ -771,13 +771,11 @@ mod tests {
     }
 
     /// GIVEN each site of the two tests above with no comment in the gap, a comment outside the
-    /// gap, a comment that W0006 cannot keep, and the alternatives and arms that the cut leaves
-    /// alone
+    /// gap, and the alternatives and arms that the cut leaves alone
     /// WHEN the fix is applied after `sound_fixes`
     /// THEN the text and the safety are as before: the removal reaches the next token, and the
     /// side of an alternative's removal does not change
     #[test]
-    #[expect(clippy::too_many_lines, reason = "one row of the table for each case")]
     fn a_checker_removal_with_no_comment_in_its_gap_should_reach_the_next_token() {
         let rows = [
             (
@@ -849,24 +847,6 @@ mod tests {
                 in_match("        2 | // c\n        3 => print(2)"),
                 false,
             ),
-            // The last alternative with a comment before it: no edit keeps the comment and
-            // parses, so the removal is backward, as it was, and the comment goes.
-            (
-                in_optional_match(
-                    "        None | // c\n        None => print(1)\n        Some(_) => print(2)",
-                ),
-                Code::UnreachableArm,
-                in_optional_match("        None => print(1)\n        Some(_) => print(2)"),
-                false,
-            ),
-            (
-                in_optional_match(
-                    "        Some(1) => print(1)\n        Some(2 | // c\n            1) => print(2)",
-                ),
-                Code::UnreachableArm,
-                in_optional_match("        Some(1) => print(1)\n        Some(2) => print(2)"),
-                false,
-            ),
             // A whole arm is not cut at a comment.
             (
                 in_main(
@@ -889,6 +869,31 @@ mod tests {
         ];
         for (src, code, want, safe) in rows {
             assert_eq!(fixed(&src, code), (want, safe), "{src}");
+        }
+    }
+
+    /// GIVEN an unreached last alternative with a comment between it and its `|`, at the top of an
+    /// arm and in a payload
+    /// WHEN the W0006 fix is applied after `sound_fixes`
+    /// THEN the removal is backward, as on main, and the comment goes: no other alternative
+    /// follows, so no edit keeps it and parses
+    #[test]
+    fn a_last_alternative_removal_should_drop_a_comment_before_it() {
+        for (src, want) in [
+            (
+                in_optional_match(
+                    "        None | // c\n        None => print(1)\n        Some(_) => print(2)",
+                ),
+                in_optional_match("        None => print(1)\n        Some(_) => print(2)"),
+            ),
+            (
+                in_optional_match(
+                    "        Some(1) => print(1)\n        Some(2 | // c\n            1) => print(2)",
+                ),
+                in_optional_match("        Some(1) => print(1)\n        Some(2) => print(2)"),
+            ),
+        ] {
+            assert_eq!(fixed(&src, Code::UnreachableArm), (want, false), "{src}");
         }
     }
 

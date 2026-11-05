@@ -3301,9 +3301,9 @@ impl<'a> Parser<'a> {
     }
 
     /// The end of a removal whose code ends at byte `after`, when the next token starts at byte
-    /// `next`: see `source::removal_end`. A line break with no comment stays in the removal,
-    /// unlike `mut_not_argument`, which removes spaces and tabs only. A comment before the last
-    /// removed token (`x // c`, then `: a`) is still lost.
+    /// `next`: see `source::removal_end`. Unlike `mut_not_argument`, which removes spaces and tabs
+    /// only, it keeps a line break in the removal. A comment before the last removed token
+    /// (`x // c`, then `: a`) is still lost.
     fn removal_end(&self, after: usize, next: usize) -> usize {
         removal_end(self.comments, after, next)
     }
