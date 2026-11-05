@@ -402,7 +402,7 @@ fn a_generic_construction_with_a_written_list_should_keep_its_type_when_it_fails
 
 #[test]
 fn a_failed_construction_should_not_type_a_call_whose_bound_or_written_list_fails() {
-    let decls = "class Node {}\nclass B<T> {\n    v: T\n}\nclass Bq<T: Eq> {\n    v: T\n}\nenum Eq2<T: Eq> {\n    V(T)\n}";
+    let decls = "class Node {}\nclass B<T> {\n    v: T\n}\nclass Bq<T: Eq> {\n    v: T\n}\nenum Eq2<T: Eq> {\n    V(T)\n}\nclass Bq2<T: Eq> {\n    a: T\n    b: i64\n}\ntype A<T> = Bq2<T>";
     rows(
         decls,
         "f()",
@@ -418,6 +418,12 @@ fn a_failed_construction_should_not_type_a_call_whose_bound_or_written_list_fail
                 "d15",
                 "let s: string = B<Nope>()",
                 &[(MissingField, CALL), (UnknownType, CALL + 2)],
+            ),
+            // The bound that the alias's body puts on `T` fails, and an argument fails too.
+            (
+                "d16",
+                "let s: string = A(a: Node(), b: \"x\")",
+                &[(NotConform, CALL), (Mismatch, CALL + 16)],
             ),
         ],
     );
