@@ -105,8 +105,11 @@ fn enum_declaration_errors() {
     }
 }
 
+/// A reserved name is reported wherever it is declared. A constructor name or a binding is still
+/// declared, so its uses do not cascade. A built-in type's name stays with the built-in, so a use
+/// of a user's `Result` reads it: with no prelude here, it finds no type.
 #[test]
-fn reserved_names() {
+fn reserved_names_should_be_reported_where_they_are_declared() {
     let rows: [Row<'_>; 8] = [
         ("class Result {}", &[(Code::BuiltInName, (1, 7))]),
         ("fn Option() {}", &[(Code::BuiltInName, (1, 4))]),
@@ -117,10 +120,9 @@ fn reserved_names() {
         ),
         ("fn f(Err: i64) {}", &[(Code::BuiltInName, (1, 6))]),
         ("class C {\n    Ok: i64\n    fn Some(self) {}\n}", &[]),
-        // The item and the binding are still declared, so their uses do not cascade.
         (
             "class Result {}\nfn f(r: Result) {}",
-            &[(Code::BuiltInName, (1, 7))],
+            &[(Code::BuiltInName, (1, 7)), (Code::UnknownType, (2, 9))],
         ),
         (
             "fn g() {\n    let Err = 1\n    print(Err)\n}",
