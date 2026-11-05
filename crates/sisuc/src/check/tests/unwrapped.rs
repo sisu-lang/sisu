@@ -255,6 +255,10 @@ fn name_pattern_on_a_value_typed_by_e0062_should_not_always_match() {
             "let x = c.e else { return }",
             &[(Code::MayBeNone, (14, 13))],
         ),
+        (
+            "if let _ = c.e { print(1) }",
+            &[(Code::MayBeNone, (14, 16))],
+        ),
     ]);
 }
 
