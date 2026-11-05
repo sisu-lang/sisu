@@ -1,6 +1,6 @@
 """Plans a run of .github/workflows/fuzz-program.yml: how long to fuzz, whether to measure
-coverage, and the job's time limit. Writes `seconds=`, `coverage=` and `minutes=` to
-$GITHUB_OUTPUT, or nothing when the event asks for no run.
+coverage, and the time limits of the fuzz step and of the job. Writes `seconds=`, `coverage=`,
+`fuzz_minutes=` and `minutes=` to $GITHUB_OUTPUT, or nothing when the event asks for no run.
 
 - schedule: 1800 s, no coverage.
 - workflow_dispatch: the inputs, passed in FUZZ_SECONDS and FUZZ_COVERAGE.
@@ -22,11 +22,17 @@ LABEL = re.compile(r'fuzz-program(?: ([0-9]+)([mh]))?')
 BARE_LABEL = 2 * 3600
 NIGHTLY = 1800
 LEAST = 60
-# GitHub-hosted jobs stop after 6 hours. 4 hours of fuzzing leaves 60 minutes for the build,
-# crash replays, tmin and cmin, and 45 for --coverage: 345 of 360.
+# GitHub-hosted jobs stop after 6 hours. 4 hours of fuzzing leaves 75 minutes for the build,
+# crash replays, tmin, cmin, setup and the cache, and 45 for --coverage: 360 of 360.
 MOST = 4 * 3600
 # The Coverage step's timeout-minutes in fuzz-program.yml; keep the two equal.
 COVERAGE_MINUTES = 45
+# The bound of the Minimize the corpus step in fuzz-program.yml; keep the two equal.
+CMIN_MINUTES = 20
+# The fuzzer first runs each corpus input once, one at a time, and -max_total_time does not stop
+# that pass. The 500 inputs that the Sample the corpus step keeps take about 10 minutes: run
+# 42015848679 ran 990 inputs in 20.3 minutes.
+CORPUS_PASS_MINUTES = 20
 
 
 def label_seconds(name: str) -> int | None:
@@ -57,11 +63,17 @@ def from_labels(labels: list[str], added: str | None = None) -> int | None:
     return in_range(label_seconds(matching[0]))
 
 
+def fuzz_minutes(seconds: int) -> int:
+    """The fuzz step's time limit. It has 15 minutes of build, then the fuzzing or the corpus
+    pass, whichever is longer. Then it has 17 minutes of crash replays and 3 to stop the jobs."""
+    return 15 + max(math.ceil(seconds / 60), CORPUS_PASS_MINUTES) + 17 + 3
+
+
 def minutes(seconds: int, coverage: bool) -> int:
-    """The job's time limit: 1800 s without coverage gives fuzz.yml's 90 minutes."""
-    # The non-fuzz steps' worst case, 102 of the 105 minutes (the workflow's header), leaves
-    # little margin for setup; the first labeled run measures it.
-    return 60 + math.ceil(seconds / 60) + (COVERAGE_MINUTES if coverage else 0)
+    """The job's time limit: the fuzz step, 15 minutes of tmin, cmin, 5 of setup and the cache,
+    and the coverage. The 5 minutes are an estimate, not a bound: no step limits them."""
+    return (fuzz_minutes(seconds) + 15 + CMIN_MINUTES + 5
+            + (COVERAGE_MINUTES if coverage else 0))
 
 
 def plan(event: str, payload: dict, env: dict) -> tuple[int, bool] | None:
@@ -91,7 +103,7 @@ def main() -> int:
     seconds, coverage = got
     with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as out:
         out.write(f'seconds={seconds}\ncoverage={str(coverage).lower()}\n'
-                  f'minutes={minutes(seconds, coverage)}\n')
+                  f'fuzz_minutes={fuzz_minutes(seconds)}\nminutes={minutes(seconds, coverage)}\n')
     print(f'Fuzz for {seconds} s, coverage {coverage}.')
     return 0
 
