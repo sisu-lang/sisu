@@ -1,11 +1,15 @@
 //! The `mut` call rule (S21): a statement that passes places to the `mut` parameters of a
-//! generated function, or swaps a place with `exchange`. A `mut` parameter stores back a plain
-//! write of at most the smallest value of its type (`item::mut_param`), and, for a local, what
-//! it adds (`Adds`), which the call takes from the room and the growth of the caller's local. So
-//! no bound of the value model moves. A field and an element take no addition: their bounds are
-//! caps and element sizes that no call may raise.
+//! generated function or method, or swaps a place with `exchange`. A place is a local, an element
+//! of an array local, a `mut` field of a class object that a local holds, or such a field of a
+//! field of the object. A call may hold one more `mut` call, as a plain argument
+//! (`Gen::nested_mut_call`). A `mut` parameter stores back a plain write of at most the smallest
+//! value of its type (`item::mut_param`), and, for a local, what it adds (`Adds`), which the call
+//! takes from the room and the growth of the caller's local. So no bound of the value model
+//! moves. A field and an element take no addition: their bounds are caps and element sizes that
+//! no call may raise.
 
 use super::Gen;
+use super::expr::Info;
 use super::scope::{Adds, Ty};
 use super::stmt::MUT_FUEL;
 
@@ -16,6 +20,9 @@ enum Kind {
     Local,
     /// A `mut` field of the object that the local holds: the class and the field.
     Field(usize, usize),
+    /// A `mut` field of a field of the object that the local holds: the class and the field of
+    /// the object, then the class and the field of that field's object.
+    Nested((usize, usize), (usize, usize)),
     /// An element of the array that the local holds.
     Element,
 }
@@ -147,7 +154,9 @@ fn placeable(wants: &[Want], places: &[Place], used: &[usize]) -> bool {
 
 impl Gen<'_> {
     /// The places of the point being written: the locals that a plain write may change, the
-    /// elements of their arrays, and the `mut` fields of the class objects that locals hold.
+    /// elements of their arrays, the `mut` fields of the class objects that locals hold, and the
+    /// `mut` fields of the class objects that those objects hold in a field. A field of a field
+    /// is one level deep, and its object's field may be `mut` or not.
     fn mut_places(&self) -> Vec<Place> {
         let mut places = Vec::new();
         for (root, var) in self.scope.vars.iter().enumerate() {
@@ -197,6 +206,31 @@ impl Gen<'_> {
                     grow: 0,
                     times: 1,
                 });
+            }
+        }
+        for (root, var) in self.scope.vars.iter().enumerate() {
+            let Ty::Class { id, .. } = var.ty else {
+                continue;
+            };
+            for (g, outer) in self.scope.classes[id].fields.iter().enumerate() {
+                let Ty::Class { id: inner, .. } = outer.ty else {
+                    continue;
+                };
+                for (h, field) in self.scope.classes[inner].fields.iter().enumerate() {
+                    if field.mutable && !self.scope.contains_class(&field.ty) {
+                        places.push(Place {
+                            kind: Kind::Nested((id, g), (inner, h)),
+                            root,
+                            ty: field.ty.clone(),
+                            size: field.cap,
+                            bound: field.cap,
+                            len: 0,
+                            room: 0,
+                            grow: 0,
+                            times: 1,
+                        });
+                    }
+                }
             }
         }
         places
@@ -274,7 +308,8 @@ impl Gen<'_> {
         chosen
     }
 
-    /// Writes `place`. A local goes into `locals`, with where the rewritten copy holds it.
+    /// Writes `place`: a local, `local[i]`, `local.f` or `local.f.g`. A local goes into `locals`,
+    /// with where the rewritten copy holds it.
     pub(crate) fn write_place(&mut self, place: &Place, locals: &mut Vec<(String, usize)>) {
         let var = &self.scope.vars[place.root];
         let (name, len) = (var.name.clone(), var.len);
@@ -287,6 +322,11 @@ impl Gen<'_> {
                 let field = &self.scope.classes[class].fields[f].name;
                 let text = format!("{name}.{field}");
                 self.w.text(&text);
+            }
+            Kind::Nested((class, g), (inner, h)) => {
+                let outer = &self.scope.classes[class].fields[g].name;
+                let field = &self.scope.classes[inner].fields[h].name;
+                self.w.text(&format!("{name}.{outer}.{field}"));
             }
             Kind::Element => {
                 let at = self.upto(len - 1);
@@ -342,11 +382,41 @@ impl Gen<'_> {
         }
     }
 
-    /// `f(depth, mut place, ...)`, or `let _ = f(...)` of a function with a result; or
-    /// `let _ = exchange(mut place, e)`. Now and then, the rewritten copy copies each local
-    /// in and out (decision 2).
+    /// `f(depth, mut place, ...)`, or `let _ = f(...)` of a function with a result, or the same
+    /// of a method, `((o)).m(depth, mut place, ...)`; or `let _ = exchange(mut place, e)`. A
+    /// plain argument may be a `mut` call too. Now and then, the rewritten copy copies each local
+    /// in and out (decision 2), but not that of a call with a `mut` call in an argument.
     pub(crate) fn mut_call(&mut self) {
         self.mut_call_of(None);
+    }
+
+    /// A `mut` call as the plain argument of another, one level deep: now and then, when a
+    /// function with a `mut` parameter returns `ty` within `max` chars and has places that are
+    /// left after the outer call took what its parameters add. It runs first, so the outer call
+    /// takes in what it left (`docs/reference/expressions.md`), and its places may start at
+    /// the outer call's locals. It counts as a statement that ran, so the call that holds it is
+    /// not copied: the copy would take in the local before the nested call changes it.
+    pub(crate) fn nested_mut_call(&mut self, ty: &Ty, max: u64) -> Option<Info> {
+        let places = self.mut_places();
+        let mut callees = self.mut_callees(&places);
+        callees.retain(|&f| {
+            let func = &self.scope.funcs[f];
+            func.ret == *ty && func.ret_size <= max
+        });
+        if callees.is_empty() || self.pick(3) != 0 {
+            return None;
+        }
+        let callee = callees[self.pick(callees.len())];
+        let wants = self.mut_wants(callee);
+        let chosen = self.choose_places(&wants, &places);
+        self.take_adds(&wants, &chosen);
+        self.nested = true;
+        let info = self.invoke_with(callee, false, &chosen, &mut Vec::new());
+        self.nested = false;
+        self.statements += 1;
+        // A later argument runs after the effect of this call (decision 2).
+        self.effect = true;
+        Some(info)
     }
 
     /// `mut_call`, of the function `forced` if it is one: it is a call, never an `exchange`.
@@ -380,7 +450,8 @@ impl Gen<'_> {
             self.w.text(")");
         }
         let copy = self.rewrite_pick(2) == 0;
-        // The other arguments leave the locals as they are, unless a statement ran in one.
+        // The other arguments leave the locals as they are, unless a statement or a `mut` call ran
+        // in one.
         let clean = self.statements == statements;
         self.w.mut_block(start, &locals, copy, clean);
     }

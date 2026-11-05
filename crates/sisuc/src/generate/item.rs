@@ -788,7 +788,8 @@ impl Gen<'_> {
     }
 
     /// `fn f(depth: i64, params) -> R { if depth <= 0 { return default } ... value }`, or a
-    /// method `fn m(self, depth: i64, ...)` of the class `owner`.
+    /// method `fn m(self, depth: i64, ...)` of the class `owner`. With `mut_params`, either has
+    /// `mut` parameters.
     fn function(&mut self, owner: Option<Ty>, mut_params: bool) {
         let name = self.scope.fresh(if owner.is_some() { "m" } else { "f" });
         let mut params = Vec::new();
@@ -889,15 +890,29 @@ impl Gen<'_> {
             .cost = cost;
     }
 
-    /// Now and then, up to two functions with `mut` parameters, after the others. They are written
-    /// from the spare streams with fuel of their own, so no other function or item moves for them,
-    /// and no ordinary call names them (`callees`): only a `mut` call does.
+    /// Now and then, up to two functions with `mut` parameters, after the others. Each is a
+    /// function, or, as often, a method in an `extend K<n>` block of a class that is no instance of
+    /// a generic class. They are written from the spare streams with fuel of their own, so no
+    /// other function or item moves for them, and no ordinary call names them (`callees`): only a
+    /// `mut` call does.
     fn mut_functions(&mut self) {
         for _ in 0..self.mut_pick(MAX_MUT_FUNCTIONS + 1) {
             let fuel = std::mem::replace(&mut self.fuel, MUT_FUEL);
             self.swap_streams();
             self.mut_fn = true;
-            self.function(None, true);
+            let plain: Vec<usize> = (0..self.scope.classes.len())
+                .filter(|&id| self.scope.classes[id].applied.is_none())
+                .collect();
+            if self.pick(2) == 1 && !plain.is_empty() {
+                let id = plain[self.pick(plain.len())];
+                self.w.text(&format!("extend K{id} "));
+                self.w.open();
+                self.w.line();
+                self.function(Some(self.scope.class_ty(id)), true);
+                self.w.close();
+            } else {
+                self.function(None, true);
+            }
             self.mut_fn = false;
             self.w.line();
             self.swap_streams();
