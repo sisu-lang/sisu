@@ -640,6 +640,12 @@ impl Scope {
         }
     }
 
+    /// Whether a `mut` call, an assignment or a push may write `field`: it is `mut` and holds no
+    /// class object.
+    pub(crate) fn target_field(&self, field: &Field) -> bool {
+        field.mutable && !self.contains_class(&field.ty)
+    }
+
     /// Takes `variant` of an enum into `nodes`. A node of an enum value counts 1, and so does
     /// each unit of its fields' sizes: a value of size `n` is one node and fields of `n - 1`
     /// units. A field of `e` units writes at most `per_unit * e + fixed` chars, and `lines * e +

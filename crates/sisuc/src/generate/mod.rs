@@ -267,9 +267,13 @@ struct Gen<'a> {
     /// What stands in for the streams, the budget and the count of expressions while a `mut`
     /// function or a `mut` call is written: no choice of any other rule moves for it.
     spare: Spare<'a>,
-    /// How many statements have begun. A `mut` call reads it to see whether a statement ran in
-    /// one of its arguments.
+    /// How many statements have begun, and how many `mut` calls ran as an argument of another.
+    /// A `mut` call reads it to see whether a statement or a `mut` call ran in one of its
+    /// arguments: either may change a local that the call passes.
     statements: u64,
+    /// Whether a `mut` call that is the argument of another is being written, so no call in it
+    /// holds another one.
+    nested: bool,
     /// Whether the function being written has a `mut` parameter, so its body holds `mut` calls.
     mut_fn: bool,
     /// Whether the program holds `let ... else`, and `return`, `break` and `continue` after `??`.
@@ -321,6 +325,7 @@ impl<'a> Gen<'a> {
             mu: Unstructured::new(&[]),
             spare: Spare::new([(); 4].map(|()| Unstructured::new(&[]))),
             statements: 0,
+            nested: false,
             mut_fn: false,
             leaves: false,
             effect: false,

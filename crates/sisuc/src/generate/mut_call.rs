@@ -1,11 +1,15 @@
 //! The `mut` call rule (S21): a statement that passes places to the `mut` parameters of a
-//! generated function, or swaps a place with `exchange`. A `mut` parameter stores back a plain
-//! write of at most the smallest value of its type (`item::mut_param`), and, for a local, what
-//! it adds (`Adds`), which the call takes from the room and the growth of the caller's local. So
-//! no bound of the value model moves. A field and an element take no addition: their bounds are
-//! caps and element sizes that no call may raise.
+//! generated function or method, or swaps a place with `exchange`. A place is a local, an element
+//! of an array local, a `mut` field of a class object that a local holds, or such a field of a
+//! field of the object. A call may hold one more `mut` call, as a plain argument
+//! (`Gen::nested_mut_call`). A `mut` parameter stores back a plain write of at most the smallest
+//! value of its type (`item::mut_param`), and, for a local, what it adds (`Adds`), which the call
+//! takes from the room and the growth of the caller's local. So no bound of the value model
+//! moves. A field and an element take no addition: their bounds are caps and element sizes that
+//! no call may raise.
 
 use super::Gen;
+use super::expr::Info;
 use super::scope::{Adds, Ty};
 use super::stmt::MUT_FUEL;
 
@@ -16,6 +20,9 @@ enum Kind {
     Local,
     /// A `mut` field of the object that the local holds: the class and the field.
     Field(usize, usize),
+    /// A `mut` field of a field of the object that the local holds: the class and the field of
+    /// the object, then the class and the field of that field's object.
+    FieldOfField((usize, usize), (usize, usize)),
     /// An element of the array that the local holds.
     Element,
 }
@@ -147,7 +154,9 @@ fn placeable(wants: &[Want], places: &[Place], used: &[usize]) -> bool {
 
 impl Gen<'_> {
     /// The places of the point being written: the locals that a plain write may change, the
-    /// elements of their arrays, and the `mut` fields of the class objects that locals hold.
+    /// elements of their arrays, the `mut` fields of the class objects that locals hold, and the
+    /// `mut` fields of the class objects that those objects hold in a field. A field of a field
+    /// is one level deep, and its object's field may be `mut` or not.
     fn mut_places(&self) -> Vec<Place> {
         let mut places = Vec::new();
         for (root, var) in self.scope.vars.iter().enumerate() {
@@ -197,6 +206,31 @@ impl Gen<'_> {
                     grow: 0,
                     times: 1,
                 });
+            }
+        }
+        for (root, var) in self.scope.vars.iter().enumerate() {
+            let Ty::Class { id, .. } = var.ty else {
+                continue;
+            };
+            for (g, outer) in self.scope.classes[id].fields.iter().enumerate() {
+                let Ty::Class { id: inner, .. } = outer.ty else {
+                    continue;
+                };
+                for (h, field) in self.scope.classes[inner].fields.iter().enumerate() {
+                    if self.scope.target_field(field) {
+                        places.push(Place {
+                            kind: Kind::FieldOfField((id, g), (inner, h)),
+                            root,
+                            ty: field.ty.clone(),
+                            size: field.cap,
+                            bound: field.cap,
+                            len: 0,
+                            room: 0,
+                            grow: 0,
+                            times: 1,
+                        });
+                    }
+                }
             }
         }
         places
@@ -274,7 +308,8 @@ impl Gen<'_> {
         chosen
     }
 
-    /// Writes `place`. A local goes into `locals`, with where the rewritten copy holds it.
+    /// Writes `place`: a local, `local[i]`, `local.f` or `local.f.g`. A local goes into `locals`,
+    /// with where the rewritten copy holds it.
     pub(crate) fn write_place(&mut self, place: &Place, locals: &mut Vec<(String, usize)>) {
         let var = &self.scope.vars[place.root];
         let (name, len) = (var.name.clone(), var.len);
@@ -287,6 +322,11 @@ impl Gen<'_> {
                 let field = &self.scope.classes[class].fields[f].name;
                 let text = format!("{name}.{field}");
                 self.w.text(&text);
+            }
+            Kind::FieldOfField((class, g), (inner, h)) => {
+                let outer = &self.scope.classes[class].fields[g].name;
+                let field = &self.scope.classes[inner].fields[h].name;
+                self.w.text(&format!("{name}.{outer}.{field}"));
             }
             Kind::Element => {
                 let at = self.upto(len - 1);
@@ -342,11 +382,41 @@ impl Gen<'_> {
         }
     }
 
-    /// `f(depth, mut place, ...)`, or `let _ = f(...)` of a function with a result; or
-    /// `let _ = exchange(mut place, e)`. Now and then, the rewritten copy copies each local
-    /// in and out (decision 2).
+    /// `f(depth, mut place, ...)`, or `let _ = f(...)` of a function with a result, or the same
+    /// of a method, `((o)).m(depth, mut place, ...)`; or `let _ = exchange(mut place, e)`. A
+    /// plain argument may be a `mut` call too. Now and then, the rewritten copy copies each local
+    /// in and out (decision 2), but not that of a call with a `mut` call in an argument.
     pub(crate) fn mut_call(&mut self) {
         self.mut_call_of(None);
+    }
+
+    /// A `mut` call as the plain argument of another, one level deep: now and then, when a
+    /// function with a `mut` parameter returns `ty` within `max` chars and has places that are
+    /// left after the outer call took what its parameters add. It runs first, so the outer call
+    /// takes in what it left (`docs/reference/expressions.md`), and its places may start at
+    /// the outer call's locals. It counts as a statement that ran, so the call that holds it is
+    /// not copied: the copy would take in the local before the nested call changes it.
+    pub(crate) fn nested_mut_call(&mut self, ty: &Ty, max: u64) -> Option<Info> {
+        let places = self.mut_places();
+        let mut callees = self.mut_callees(&places);
+        callees.retain(|&f| {
+            let func = &self.scope.funcs[f];
+            func.ret == *ty && func.ret_size <= max
+        });
+        if callees.is_empty() || self.pick(3) != 0 {
+            return None;
+        }
+        let callee = callees[self.pick(callees.len())];
+        let wants = self.mut_wants(callee);
+        let chosen = self.choose_places(&wants, &places);
+        self.take_adds(&wants, &chosen);
+        self.nested = true;
+        let info = self.invoke_with(callee, false, &chosen, &mut Vec::new());
+        self.nested = false;
+        self.statements += 1;
+        // This call does not go through `Gen::expr`, which records the effect of an impure value.
+        self.effect = true;
+        Some(info)
     }
 
     /// `mut_call`, of the function `forced` if it is one: it is a call, never an `exchange`.
@@ -380,7 +450,8 @@ impl Gen<'_> {
             self.w.text(")");
         }
         let copy = self.rewrite_pick(2) == 0;
-        // The other arguments leave the locals as they are, unless a statement ran in one.
+        // The other arguments leave the locals as they are, unless a statement or a `mut` call ran
+        // in one.
         let clean = self.statements == statements;
         self.w.mut_block(start, &locals, copy, clean);
     }
@@ -392,7 +463,7 @@ mod tests {
     use crate::generate::DEPTHS;
     use crate::generate::MAX_LOOPS;
     use crate::generate::coverage::{search_seeds, seed};
-    use crate::generate::scope::{Func, Var};
+    use crate::generate::scope::{Class, Field, Func, Var};
     use crate::generate::stmt::{MAX_BLOCKS, MutUse};
     use arbitrary::Unstructured;
 
@@ -936,5 +1007,194 @@ mod tests {
             calls > 0 && calls * 2 < prints,
             "{calls} calls, {prints} prints"
         );
+    }
+
+    /// `gen_with_local` of an `i64` local `v1`, with `f1`, which has a `mut` parameter and a plain
+    /// `i64` parameter, and `f2`, which has a `mut` parameter and an `i64` result.
+    fn gen_with_nested_callees(data: &[u8]) -> Gen<'_> {
+        let mut g = gen_with_local(data, Ty::I64, (0, 0), Adds::default());
+        g.scope.funcs[0].params.push((Ty::I64, 0));
+        g.scope.funcs[0].muts.push(None);
+        g.scope.funcs.push(Func {
+            name: "f2".to_string(),
+            owner: None,
+            params: vec![(Ty::I64, 100)],
+            muts: vec![Some(Adds::default())],
+            ret: Ty::I64,
+            ret_size: 0,
+            cost: [1; DEPTHS],
+        });
+        g
+    }
+
+    /// GIVEN `f1`, with a `mut` parameter and a plain `i64` parameter, and `f2`, which has a
+    /// `mut` parameter and an `i64` result
+    /// WHEN a `mut` call of `f1` is written, from many seeds
+    /// THEN a call that holds `f2` as the plain argument has no copy in the rewritten program:
+    /// the call of `f2` may change a local that the copy of `f1` takes in
+    /// AND some seed writes such a call, and some seed without one is copied
+    #[test]
+    fn a_nested_mut_call_should_keep_its_statement_uncopied() {
+        let (mut nested, mut copied) = (0, 0);
+        search_seeds(256, |n| {
+            let data = seed(n);
+            let mut g = gen_with_nested_callees(&data);
+            g.statement(|g| g.mut_call_of(Some(0)));
+            let has_copy = g.w.out.rewritten.contains("let mut w");
+            if g.w.out.program.contains(", f2(") {
+                assert!(!has_copy, "{}", g.w.out.rewritten);
+                nested += 1;
+            } else if has_copy {
+                copied += 1;
+            }
+            nested > 0 && copied > 0
+        });
+        assert!(nested > 0 && copied > 0, "{nested} nested, {copied} copied");
+    }
+
+    /// GIVEN a `mut` function whose `mut` call passes a plain argument that a block may hold
+    /// WHEN the call is written, from many seeds
+    /// THEN some seed writes a block `({ ... })` as that argument, and a `mut` call in it
+    #[test]
+    fn a_mut_call_should_run_in_a_block_in_an_argument_of_a_mut_call() {
+        let mut seen = false;
+        search_seeds(256, |n| {
+            let data = seed(n);
+            let mut g = gen_with_local(&data, Ty::I64, (0, 0), Adds::default());
+            g.scope.funcs[0].params.push((Ty::I64, 0));
+            g.scope.funcs[0].muts.push(None);
+            g.mut_fn = true;
+            g.statement(|g| g.mut_call_of(Some(0)));
+            let (_, block) = g.w.out.program.split_once("({").unwrap_or_default();
+            seen |= (block.split_once("f1(")).is_some_and(|(_, args)| args.contains("mut v1"));
+            seen
+        });
+        assert!(seen, "no seed writes a `mut` call in a block");
+    }
+
+    /// A generator with the class `K0`, which has a `mut` field `g2: i64` and a field `g3: i64`
+    /// that is not `mut`, the class `K1`, which has a field `g1: K0` that is not `mut`, and the
+    /// locals `v1` of `K1`, `v2` of `K1?` and `v3` of `bool`, which is assignable. No call of
+    /// `f1` can take `v3`.
+    fn gen_with_field_of_field(data: &[u8]) -> Gen<'_> {
+        let field = |name: &str, ty, mutable, cap| Field {
+            name: name.to_string(),
+            ty,
+            mutable,
+            cap,
+        };
+        let class = |fields, size| Class {
+            fields,
+            size,
+            applied: None,
+            inferable: false,
+        };
+        let mut g = Gen::new(data);
+        g.scope.classes.push(class(
+            vec![
+                field("g2", Ty::I64, true, 0),
+                field("g3", Ty::I64, false, 0),
+            ],
+            1,
+        ));
+        g.scope
+            .classes
+            .push(class(vec![field("g1", Ty::class(0, 1), false, 1)], 2));
+        let class = Ty::class(1, 2);
+        let local = |name: &str, ty| Var::new(name.to_string(), ty, false, 0, 0, 0);
+        g.scope.vars.push(local("v1", class.clone()));
+        g.scope
+            .vars
+            .push(local("v2", Ty::Optional(Box::new(class))));
+        // The only place that an assignment may change: the other locals have no `mut` field.
+        g.scope
+            .vars
+            .push(Var::new("v3".to_string(), Ty::Bool, true, 0, 0, 0));
+        g
+    }
+
+    /// GIVEN the class `K0` with a `mut` field `g2: i64` and a field `g3: i64` that is not `mut`,
+    /// the class `K1` with a field `g1: K0` that is not `mut`, and the locals `v1` of `K1`,
+    /// `v2` of `K1?` and `v3` of `bool`
+    /// WHEN the places of the point are listed
+    /// THEN `v1` has one place of a field of a field, `v1.g1.g2`, which has the type and the cap
+    /// of `g2`; `v2`, which `?.` goes through, has none; and no place is `v1.g1.g3`
+    #[test]
+    fn mut_places_should_give_a_field_of_a_field_place_for_a_class_local() {
+        let mut g = gen_with_field_of_field(&[]);
+        let nested: Vec<Place> = (g.mut_places().into_iter())
+            .filter(|place| matches!(place.kind, Kind::FieldOfField(..)))
+            .collect();
+        assert_eq!(nested.len(), 1);
+        assert_eq!(
+            (nested[0].root, &nested[0].ty, nested[0].bound),
+            (0, &Ty::I64, 0)
+        );
+        g.write_place(&nested[0], &mut Vec::new());
+        assert_eq!(g.w.out.program, "v1.g1.g2");
+    }
+
+    /// GIVEN the classes and the locals of `gen_with_field_of_field`, where `v3` of `bool` is a
+    /// place that no call of `f1` can take, and `f1`, which has a `mut` parameter of `i64`
+    /// WHEN a `mut` call or an `exchange` is written for the point, from many seeds
+    /// THEN some seed writes a call of `f1` that passes `mut v1.g1.g2`
+    /// AND some seed writes `exchange(mut v1.g1.g2, `
+    #[test]
+    fn a_mut_call_should_pass_a_field_of_a_field() {
+        let (mut called, mut swapped) = (false, false);
+        search_seeds(256, |n| {
+            let data = seed(n);
+            let mut g = gen_with_field_of_field(&data);
+            g.scope.funcs.push(Func {
+                name: "f1".to_string(),
+                owner: None,
+                params: vec![(Ty::I64, 100)],
+                muts: vec![Some(Adds::default())],
+                ret: Ty::Unit,
+                ret_size: 0,
+                cost: [1; DEPTHS],
+            });
+            g.statement(|g| g.mut_call_of(None));
+            let program = &g.w.out.program;
+            called |= program
+                .split_once("f1(")
+                .is_some_and(|(_, args)| args.contains("mut v1.g1.g2"));
+            swapped |= program.contains("exchange(mut v1.g1.g2, ");
+            called && swapped
+        });
+        assert!(called, "no call passes a field of a field");
+        assert!(swapped, "no `exchange` swaps a field of a field");
+    }
+
+    /// GIVEN the locals `v1` and `v2` of `i64`, `f1`, which has a `mut` parameter and a plain `i64`
+    /// parameter, and `f2`, which has a `mut` parameter and an `i64` result
+    /// WHEN a `mut` call of `f1` is written, from many seeds
+    /// THEN some seed writes `f2(` with a `mut` place as the plain argument of `f1`
+    /// AND some seed passes one local to both calls, and some seed passes two locals
+    #[test]
+    fn a_mut_call_should_take_a_mut_call_as_a_plain_argument() {
+        let (mut same, mut different) = (false, false);
+        search_seeds(256, |n| {
+            let data = seed(n);
+            let mut g = gen_with_nested_callees(&data);
+            g.scope
+                .vars
+                .push(Var::new("v2".to_string(), Ty::I64, true, 0, 0, 0));
+            g.statement(|g| g.mut_call_of(Some(0)));
+            let program = &g.w.out.program;
+            if let Some((outer, inner)) = program.split_once(", f2(")
+                && let (Some(a), Some(b)) = (outer.rfind("mut v"), inner.find("mut v"))
+            {
+                let (a, b) = (outer[a + 5..].chars().next(), inner[b + 5..].chars().next());
+                same |= a == b;
+                different |= a != b;
+            }
+            same && different
+        });
+        assert!(
+            same,
+            "no nested `mut` call names the local of its outer call"
+        );
+        assert!(different, "no nested `mut` call names another local");
     }
 }

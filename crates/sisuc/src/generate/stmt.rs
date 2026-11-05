@@ -576,8 +576,7 @@ impl Gen<'_> {
                     ty => ty,
                 };
                 matches!(array, Ty::Array(element) if !element.sized())
-                    && field.mutable
-                    && !self.scope.contains_class(&field.ty)
+                    && self.scope.target_field(field)
             })
             .map(|(f, _)| {
                 if through {
@@ -758,7 +757,7 @@ impl Gen<'_> {
                 _ => continue,
             };
             for (f, field) in self.scope.classes[id].fields.iter().enumerate() {
-                if field.mutable && !self.scope.contains_class(&field.ty) {
+                if self.scope.target_field(field) {
                     targets.push((v, id, f));
                 }
             }

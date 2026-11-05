@@ -1714,6 +1714,8 @@ impl Gen<'_> {
 
     /// `invoke`, where `places` are the arguments of the `mut` parameters, in order; `locals`
     /// takes the text of each one that is a bare local, and where the rewritten copy holds it.
+    /// A call with `places` now and then has a `mut` call as a plain argument (`nested_mut_call`),
+    /// one level deep.
     pub(crate) fn invoke_with(
         &mut self,
         callee: usize,
@@ -1749,6 +1751,7 @@ impl Gen<'_> {
         self.effect |= self.scope.func.is_some();
         let params = self.scope.funcs[callee].params.clone();
         let muts = self.scope.funcs[callee].muts.clone();
+        let nests = !places.is_empty() && !self.nested;
         let mut places = places.iter();
         let args = |g: &mut Self| -> Vec<Info> {
             let mut infos = Vec::new();
@@ -1760,6 +1763,8 @@ impl Gen<'_> {
                         .expect("a `mut` parameter should have a place");
                     g.w.text("mut ");
                     g.write_place(place, locals);
+                } else if let Some(info) = nests.then(|| g.nested_mut_call(ty, *size)).flatten() {
+                    infos.push(info);
                 } else {
                     infos.push(g.expr(ty, *size));
                 }

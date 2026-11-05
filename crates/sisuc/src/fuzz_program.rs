@@ -4,11 +4,12 @@
 //! Properties 1 and 2 are that the program checks clean and compiles to a module LLVM verifies;
 //! property 3 is that every build exits 0 or 101, and all four the same way; property 4 is that
 //! the rewritten copy runs as the program does; property 5 is that the program prints the known
-//! integer answers, and that each call of an interface's requirement prints the value of the
-//! method it should reach, where the method has an `i64` or `string` result (or a `T` result, when
-//! the argument of the conformance is one of them) and the call is in `shapes` or in a generic
-//! function it calls; property 6 is that a copy of the program where one argument breaks the bound
-//! of its type parameter gets E0154 at that argument and no other error.
+//! integer answers, and that each call of an interface's requirement, in `shapes` or in a generic
+//! function it calls, prints the values of the method it should reach: its result, where the method
+//! has an `i64` or `string` result (or a `T` result, when the argument of the conformance is one of
+//! them), and the value that it writes to a `mut` parameter; property 6 is that a copy of the
+//! program where one argument breaks the bound of its type parameter gets E0154 at that argument
+//! and no other error.
 
 use std::fmt::Write as _;
 use std::fs::{self, File};
@@ -750,7 +751,7 @@ mod tests {
     };
     use crate::diagnostic::Severity;
     use crate::fresh_names;
-    use crate::generate::coverage::{SEARCH_SEEDS, search_seeds};
+    use crate::generate::coverage::{SEARCH_SEEDS, item_text, search_seeds};
     use crate::generate::{BoundSite, Generated, coverage, generate};
 
     /// A directory of the test's own, removed when dropped.
@@ -1291,16 +1292,6 @@ mod tests {
         assert!(failure.detail.contains("--rc-checks"), "{}", failure.detail);
     }
 
-    /// The text of the item of `program` that starts with `header` at the start of a line, up to
-    /// the line `}` that closes it.
-    fn item<'a>(program: &'a str, header: &str) -> Option<&'a str> {
-        // The header is found after a line break, so one at the start of `program` is too: a break
-        // put before `program` moves each position by one.
-        let start = format!("\n{program}").find(&format!("\n{header}"))?;
-        let rest = &program[start..];
-        Some(&rest[..rest.find("\n}\n")? + 2])
-    }
-
     /// Whether a line of `text` holds a marked statement and `part`.
     fn marks(text: &str, part: &str) -> bool {
         text.lines()
@@ -1315,7 +1306,7 @@ mod tests {
 
     /// The dispatches of a call of a requirement that a program may hold, each a neighbour of
     /// #203: the call must reach the method of its own type.
-    const DISPATCHES: [&str; 8] = [
+    const DISPATCHES: [&str; 9] = [
         "a direct call on `Q<k>` and on `N<k>`",
         "a call through `via<k>` with `Q<k>`, `N<k>` and `R<k>`",
         "a requirement inherited from an earlier interface",
@@ -1324,18 +1315,19 @@ mod tests {
         "`pick<k>` with a bounded associated type",
         "a conformance in an `extend` block",
         "a conformance in the declaration list",
+        "a `mut` parameter written back",
     ];
 
     /// Whether `g` holds the dispatch `row` of `DISPATCHES`, as its text shows.
     fn holds(row: &str, g: &Generated) -> bool {
         let program = g.program.as_str();
-        let shapes = item(program, "fn shapes()").unwrap_or_default();
+        let shapes = item_text(program, "fn shapes()").unwrap_or_default();
         // The most interfaces a program declares is three.
         let interfaces = 0..3;
         let conformances = |keyword: &str| {
             (program.lines())
                 .filter(|line| line.starts_with(keyword) && line.contains(": I"))
-                .filter_map(|line| item(program, line))
+                .filter_map(|line| item_text(program, line))
                 .any(has_method)
         };
         match row {
@@ -1349,16 +1341,17 @@ mod tests {
             }
             "a requirement inherited from an earlier interface" => {
                 interfaces.into_iter().any(|k| {
-                    let header = item(program, &format!("interface I{k}"))
+                    let header = item_text(program, &format!("interface I{k}"))
                         .and_then(|text| text.lines().next())
                         .unwrap_or_default();
                     let Some((_, list)) = header.trim_end_matches(" {").split_once(": ") else {
                         return false;
                     };
-                    let via = item(program, &format!("fn via{k}<")).unwrap_or_default();
+                    let via = item_text(program, &format!("fn via{k}<")).unwrap_or_default();
                     list.split(", ").any(|inherited| {
                         let name = inherited.split('<').next().unwrap_or_default();
-                        let body = item(program, &format!("interface {name}")).unwrap_or_default();
+                        let body =
+                            item_text(program, &format!("interface {name}")).unwrap_or_default();
                         (body.lines())
                             .filter_map(|line| line.trim().strip_prefix("fn "))
                             .filter_map(|line| line.split('(').next())
@@ -1385,10 +1378,10 @@ mod tests {
                     .any(|types| types.contains(&"i64") && types.contains(&"string"))
             }
             "`both` with two interfaces in one bound" => {
-                item(program, "fn both<").is_some_and(|body| marks(body, ""))
+                item_text(program, "fn both<").is_some_and(|body| marks(body, ""))
             }
             "`pick<k>` with a bounded associated type" => interfaces.into_iter().any(|k| {
-                item(program, &format!("fn pick{k}<")).is_some_and(|body| marks(body, ""))
+                item_text(program, &format!("fn pick{k}<")).is_some_and(|body| marks(body, ""))
             }),
             "a conformance in an `extend` block" => {
                 ["extend Q", "extend N"].into_iter().any(conformances)
@@ -1396,14 +1389,35 @@ mod tests {
             "a conformance in the declaration list" => {
                 ["class Q", "enum N"].into_iter().any(conformances)
             }
+            "a `mut` parameter written back" => {
+                let in_a_body =
+                    |header: String| item_text(program, &header).is_some_and(writes_back);
+                writes_back(shapes)
+                    || interfaces.clone().any(|k| in_a_body(format!("fn via{k}<")))
+                    || in_a_body("fn both<".to_string())
+                    || interfaces
+                        .into_iter()
+                        .any(|k| in_a_body(format!("fn pick{k}<")))
+            }
             _ => unreachable!("{row} should be one of `DISPATCHES`"),
         }
+    }
+
+    /// Whether a line of `text` is `print("@d<n> {m<n>}")`: a call printed the place that it
+    /// passed to a `mut` parameter.
+    fn writes_back(text: &str) -> bool {
+        text.lines().any(|line| {
+            (line.trim().strip_prefix("print(\"@d")).is_some_and(|rest| {
+                rest.split_once(' ')
+                    .is_some_and(|(n, rest)| rest == format!("{{m{n}}}\")"))
+            })
+        })
     }
 
     /// Whether the text of `g` shows that its O0 run reaches every marked line of `shapes`: its
     /// `main` ends with the call of `shapes`, has no `return`, and the program has no panic site.
     fn reaches_shapes(g: &Generated) -> bool {
-        let main = item(&g.program, "fn main()").unwrap_or_default();
+        let main = item_text(&g.program, "fn main()").unwrap_or_default();
         main.ends_with("    shapes()\n}") && !main.contains("return") && panic_sites(g) == 0
     }
 
@@ -1490,6 +1504,11 @@ mod tests {
         dispatch_should_print_its_expected_lines(DISPATCHES[7]);
     }
 
+    #[test]
+    fn a_mut_write_back_should_print_the_value_of_the_method_that_dispatch_reaches() {
+        dispatch_should_print_its_expected_lines(DISPATCHES[8]);
+    }
+
     /// The codes of the diagnostics that `sisu check` gives for `source`, sorted.
     fn codes(source: &str) -> Vec<String> {
         let (_, diagnostics) = crate::front_end::checked(source);
@@ -1515,7 +1534,7 @@ mod tests {
         let mut found = None;
         search_seeds(0, |n| {
             let mut g = generate(&seed(n));
-            let main = item(&g.program, "fn main()").unwrap_or_default();
+            let main = item_text(&g.program, "fn main()").unwrap_or_default();
             if !g.expected.is_empty() && main.ends_with(call) {
                 let at = (g
                     .program
@@ -1553,7 +1572,9 @@ mod tests {
     /// `program` with the values of two methods of one requirement swapped: two methods of the
     /// same name and result type.
     fn swapped(program: &str) -> String {
-        let methods = coverage::methods(program);
+        let methods: Vec<_> = (coverage::methods(program).into_iter())
+            .filter(|(_, method)| method.prints())
+            .collect();
         let ((a, first), (b, second)) = (methods.iter().enumerate())
             .find_map(|(at, (line, method))| {
                 (methods[at + 1..].iter())
@@ -1566,7 +1587,10 @@ mod tests {
             (a, first.value, second.value),
             (b, second.value, first.value),
         ] {
-            lines[at] = lines[at].replace(&format!("{{ {from} }}"), &format!("{{ {to} }}"));
+            // The value ends the body; a `mut` parameter is written before it.
+            lines[at] = lines[at]
+                .replace(&format!("{{ {from} }}"), &format!("{{ {to} }}"))
+                .replace(&format!("; {from} }}"), &format!("; {to} }}"));
         }
         lines.join("\n") + "\n"
     }
@@ -2138,12 +2162,13 @@ mod tests {
         ]);
         let Run { exit, stdout, .. } = o0_run(&g);
         assert_eq!(exit, Exit::Code(0), "{}", g.program);
-        // One line from each pass of the innermost loop: every loop ran to its bound. The eight
+        // One line from each pass of the innermost loop: every loop ran to its bound. The sixteen
         // more lines are the two that `lang_both` prints, the two that print an `any` value, the
-        // three that `nest` prints and the one that prints its result.
+        // eight that print what `put` wrote through `any`, the three that `nest` prints and the
+        // one that prints its result.
         assert_eq!(
             String::from_utf8_lossy(&stdout).lines().count(),
-            8 * 8 * 8 + 8
+            8 * 8 * 8 + 16
         );
     }
 
@@ -2207,11 +2232,11 @@ mod tests {
         let builds = [
             stderr.find("==> stdin\n"),
             // Output without a final line break gets one. The empty input's program prints the
-            // two lines of `lang_both`, the two of the `any` values, the three of `nest` and the
-            // one that prints its result.
+            // two lines of `lang_both`, the two of the `any` values, the eight of `put` through
+            // `any`, the three of `nest` and the one that prints its result.
             stderr.find("==> program -O2 stdout\nforced\n==> program -O2 stderr\n"),
             stderr.find(
-                "==> program --rc-checks stdout\nRanked\n[1, 2]\nEye\n[\"s\", 'c', 5, Wide(1)]\nA(A(End))\ntrue\nfalse\n2\n==> program --rc-checks stderr\n",
+                "==> program --rc-checks stdout\nRanked\n[1, 2]\nEye\n[\"s\", 'c', 5, Wide(1)]\n@d0 9\n@d1 4\n@d2 12\n@d3 13\n@d4 15\n@d5 15\n@d6 17\n@d7 17\nA(A(End))\ntrue\nfalse\n2\n==> program --rc-checks stderr\n",
             ),
             stderr.find("program fuzzer: property 3 failed"),
         ];

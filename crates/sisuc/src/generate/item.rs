@@ -262,9 +262,9 @@ impl Values {
     }
 }
 
-/// A statement `print("@d<n> ...")` that prints the result of a call of a requirement, with the
-/// requirement and the argument that it calls through. The check of the output finds the line by
-/// its marker.
+/// A statement `print("@d<n> ...")` that prints the result of a call of a requirement, or the
+/// `mut` parameter that the call wrote to, with the requirement (and the parameter) and the
+/// argument that it calls through. The check of the output finds the line by its marker.
 struct Marked {
     n: usize,
     requirement: String,
@@ -272,11 +272,20 @@ struct Marked {
     kind: Kind,
 }
 
-/// A requirement `fn name(self, p: T, ...) -> R`.
+/// A requirement `fn name(self, p: T, ...) -> R`. It may take one more parameter `mut p: i64`:
+/// each method writes a value of its own to it, and each call passes a place and prints it.
 struct Requirement {
     name: String,
-    params: Vec<(String, RequirementType)>,
+    params: Vec<Param>,
     ret: Option<RequirementType>,
+}
+
+/// A parameter of a requirement. A `mut` parameter is an `i64`, and its `ty.value` is a
+/// placeholder: a call passes a place to it, so nothing reads that value.
+struct Param {
+    name: String,
+    ty: RequirementType,
+    mutable: bool,
 }
 
 /// A type that a requirement names, as written, and a value of it where `$` stands for a value of
@@ -350,14 +359,27 @@ fn repeats(entries: &[Conformed]) -> bool {
 impl Requirement {
     /// A method of `ty` that meets the requirement of the interface with `arg` for its parameter:
     /// `fn r(self, _p: T) -> R { value }`. A result `i64` or `string` has the value of `values`
-    /// for the method.
+    /// for the method. A `mut` parameter `p` is written first, with a value of its own:
+    /// `fn r(self, mut p: i64) -> R { p = 10; value }`.
     fn method(&self, arg: Option<&'static str>, ty: &str, values: &mut Values) -> String {
         let mut method = format!("fn {}(self", self.name);
-        for (name, ty) in &self.params {
-            write!(method, ", _{name}: {}", ty.written(arg))
-                .expect("writing to a `String` should succeed");
+        for param in &self.params {
+            if param.mutable {
+                write!(method, ", mut {}: i64", param.name)
+            } else {
+                write!(method, ", _{}: {}", param.name, param.ty.written(arg))
+            }
+            .expect("writing to a `String` should succeed");
         }
         method += ")";
+        let write_back = self.mut_param().map(|param| {
+            let number = values.value(ty, &self.written_key(param), arg, Kind::Integer);
+            format!("{} = {number}", param.name)
+        });
+        let body = |value: String| match &write_back {
+            Some(write) => format!("{write}; {value}"),
+            None => value,
+        };
         match (&self.ret, self.kind(arg)) {
             (Some(ret), Some(kind)) => {
                 let value = values.value(ty, &self.name, arg, kind);
@@ -365,7 +387,7 @@ impl Requirement {
                     Kind::Integer => value,
                     Kind::Text => format!("\"{value}\""),
                 };
-                write!(method, " -> {} {{ {value} }}", ret.written(arg))
+                write!(method, " -> {} {{ {} }}", ret.written(arg), body(value))
                     .expect("writing to a `String` should succeed");
             }
             (Some(ret), None) => {
@@ -373,13 +395,27 @@ impl Requirement {
                     method,
                     " -> {} {{ {} }}",
                     ret.written(arg),
-                    ret.value(arg, "self")
+                    body(ret.value(arg, "self"))
                 )
                 .expect("writing to a `String` should succeed");
             }
-            (None, _) => method += " {}",
+            (None, _) => {
+                let body = write_back.map_or_else(String::new, |write| format!(" {write} "));
+                write!(method, " {{{body}}}").expect("writing to a `String` should succeed");
+            }
         }
         method
+    }
+
+    /// The `mut` parameter, if the requirement has one.
+    fn mut_param(&self) -> Option<&Param> {
+        self.params.iter().find(|param| param.mutable)
+    }
+
+    /// The key of the number that a method writes to the `mut` parameter `param`: not that of the
+    /// result, so each write-back has a number of its own.
+    fn written_key(&self, param: &Param) -> String {
+        format!("{}.{}", self.name, param.name)
     }
 
     /// The result that a call through the interface with `arg` prints, when it is an `i64` or a
@@ -392,33 +428,72 @@ impl Requirement {
         }
     }
 
-    /// The call of the requirement on the value `var`.
-    fn invocation(&self, var: &str, arg: Option<&str>) -> String {
+    /// The call of the requirement on the value `var`, where `place` is the number `m` of the
+    /// variable `m<m>` that the `mut` parameter takes.
+    fn invocation(&self, var: &str, arg: Option<&str>, place: Option<usize>) -> String {
         let args: Vec<String> = (self.params.iter())
-            .map(|(_, ty)| ty.value(arg, var))
+            .map(|param| match place {
+                Some(m) if param.mutable => format!("mut m{m}"),
+                _ => param.ty.value(arg, var),
+            })
             .collect();
         format!("{var}.{}({})", self.name, args.join(", "))
     }
 
-    /// A statement that calls the requirement on the value `var`, and prints an `i64` or a
-    /// `string` result as `@d<n> {call}`, which the statement gives as marked. The number `n` is
-    /// `*next`, which the statement takes.
+    /// The place for the `mut` parameter, if there is one: the number `m` of `m<m>`, which is
+    /// `*next`, and the statement `let mut m<m> = 0`.
+    fn place(&self, next: &mut usize) -> Option<(usize, String)> {
+        self.mut_param().map(|_| {
+            let m = take(next);
+            (m, format!("let mut m{m} = 0"))
+        })
+    }
+
+    /// The statement `print("@d<m> {m<m>}")` that prints the place of the `mut` parameter after a
+    /// call, and the mark that it gives.
+    fn written(&self, m: usize, arg: Option<&'static str>) -> (String, Marked) {
+        let param = self
+            .mut_param()
+            .expect("a requirement with a place should have a `mut` parameter");
+        let mark = Marked {
+            n: m,
+            requirement: self.written_key(param),
+            arg,
+            kind: Kind::Integer,
+        };
+        (format!("print(\"@d{m} {{m{m}}}\")"), mark)
+    }
+
+    /// The statements that call the requirement on the value `var`, and print an `i64` or a
+    /// `string` result as `@d<n> {call}`; then, for a `mut` parameter, the one that prints its
+    /// place as `@d<m> {m<m>}`. The statements come with their marks, in the order that they
+    /// print. `n` is `*next`, and `m` is the next number after the one that the result takes,
+    /// if any; the place `m<m>` is declared before the call.
     fn call(
         &self,
         var: &str,
         arg: Option<&'static str>,
         next: &mut usize,
-    ) -> (String, Option<Marked>) {
-        let call = self.invocation(var, arg);
-        match (&self.ret, self.kind(arg)) {
-            (None, _) => (call, None),
-            (Some(_), None) => (format!("let _ = {call}"), None),
-            (Some(_), Some(kind)) => {
-                let n = take(next);
-                let mark = self.marked(n, arg, kind);
-                (format!("print(\"@d{n} {{{call}}}\")"), Some(mark))
+    ) -> (Vec<String>, Vec<Marked>) {
+        let printed = self.kind(arg).map(|kind| (take(next), kind));
+        let place = self.place(next);
+        let call = self.invocation(var, arg, place.as_ref().map(|&(m, _)| m));
+        let (mut lines, mut marks) = (Vec::new(), Vec::new());
+        lines.extend(place.as_ref().map(|(_, declaration)| declaration.clone()));
+        match (&self.ret, printed) {
+            (None, _) => lines.push(call),
+            (Some(_), None) => lines.push(format!("let _ = {call}")),
+            (Some(_), Some((n, kind))) => {
+                lines.push(format!("print(\"@d{n} {{{call}}}\")"));
+                marks.push(self.marked(n, arg, kind));
             }
         }
+        if let Some((m, _)) = place {
+            let (line, mark) = self.written(m, arg);
+            lines.push(line);
+            marks.push(mark);
+        }
+        (lines, marks)
     }
 
     fn marked(&self, n: usize, arg: Option<&'static str>, kind: Kind) -> Marked {
@@ -435,27 +510,32 @@ impl Requirement {
     /// conformance, so the result is bound to a `let` of its type; a requirement with another
     /// result gives none.
     /// The result is printed as `call` prints it: the `let` is `d<n>`, and the `print` after it
-    /// writes `@d<n> {d<n>}`.
+    /// writes `@d<n> {d<n>}`. A `mut` parameter takes a place, and `call` shows the statements
+    /// that declare and print it.
     fn picked_call(
         &self,
         var: &str,
         arg: Option<&'static str>,
         next: &mut usize,
-    ) -> Option<([String; 2], Marked)> {
+    ) -> Option<(Vec<String>, Vec<Marked>)> {
         let ret = self.ret.as_ref().filter(|ty| ty.written == "T")?;
         let kind = self
             .kind(arg)
             .expect("a conformance that two arguments pick between should have `i64` or `string`");
         let n = take(next);
-        let lines = [
-            format!(
-                "let d{n}: {} = {}",
-                ret.written(arg),
-                self.invocation(var, arg)
-            ),
-            format!("print(\"@d{n} {{d{n}}}\")"),
-        ];
-        Some((lines, self.marked(n, arg, kind)))
+        let place = self.place(next);
+        let call = self.invocation(var, arg, place.as_ref().map(|&(m, _)| m));
+        let (mut lines, mut marks) = (Vec::new(), Vec::new());
+        lines.extend(place.as_ref().map(|(_, declaration)| declaration.clone()));
+        lines.push(format!("let d{n}: {} = {call}", ret.written(arg)));
+        lines.push(format!("print(\"@d{n} {{d{n}}}\")"));
+        marks.push(self.marked(n, arg, kind));
+        if let Some((m, _)) = place {
+            let (line, mark) = self.written(m, arg);
+            lines.push(line);
+            marks.push(mark);
+        }
+        Some((lines, marks))
     }
 }
 
@@ -708,7 +788,8 @@ impl Gen<'_> {
     }
 
     /// `fn f(depth: i64, params) -> R { if depth <= 0 { return default } ... value }`, or a
-    /// method `fn m(self, depth: i64, ...)` of the class `owner`.
+    /// method `fn m(self, depth: i64, ...)` of the class `owner`. With `mut_params`, either has
+    /// `mut` parameters.
     fn function(&mut self, owner: Option<Ty>, mut_params: bool) {
         let name = self.scope.fresh(if owner.is_some() { "m" } else { "f" });
         let mut params = Vec::new();
@@ -809,15 +890,29 @@ impl Gen<'_> {
             .cost = cost;
     }
 
-    /// Now and then, up to two functions with `mut` parameters, after the others. They are written
-    /// from the spare streams with fuel of their own, so no other function or item moves for them,
-    /// and no ordinary call names them (`callees`): only a `mut` call does.
+    /// Now and then, up to two functions with `mut` parameters, after the others. Each is a
+    /// function, or, as often, a method in an `extend K<n>` block of a class that is no instance of
+    /// a generic class. They are written from the spare streams with fuel of their own, so no
+    /// other function or item moves for them, and no ordinary call names them (`callees`): only a
+    /// `mut` call does.
     fn mut_functions(&mut self) {
         for _ in 0..self.mut_pick(MAX_MUT_FUNCTIONS + 1) {
             let fuel = std::mem::replace(&mut self.fuel, MUT_FUEL);
             self.swap_streams();
             self.mut_fn = true;
-            self.function(None, true);
+            let plain: Vec<usize> = (0..self.scope.classes.len())
+                .filter(|&id| self.scope.classes[id].applied.is_none())
+                .collect();
+            if self.pick(2) == 1 && !plain.is_empty() {
+                let id = plain[self.pick(plain.len())];
+                self.w.text(&format!("extend K{id} "));
+                self.w.open();
+                self.w.line();
+                self.function(Some(self.scope.class_ty(id)), true);
+                self.w.close();
+            } else {
+                self.function(None, true);
+            }
             self.mut_fn = false;
             self.w.line();
             self.swap_streams();
@@ -937,11 +1032,33 @@ impl Gen<'_> {
                 let mut signature = format!("fn {name}(self");
                 let mut params = Vec::new();
                 for _ in 0..self.pick(3) {
-                    let param = self.scope.fresh("p");
+                    let name = self.scope.fresh("p");
                     let ty = self.requirement_type(takes, None);
-                    write!(signature, ", {param}: {}", ty.written)
+                    params.push(Param {
+                        name,
+                        ty,
+                        mutable: false,
+                    });
+                }
+                // The spare stream draws the `mut` parameter, so no other choice moves.
+                if self.mut_pick(2) == 1 {
+                    let at = self.mut_pick(params.len() + 1);
+                    params.insert(
+                        at,
+                        Param {
+                            name: self.scope.fresh("p"),
+                            ty: RequirementType {
+                                written: "i64".to_string(),
+                                value: "0".to_string(),
+                            },
+                            mutable: true,
+                        },
+                    );
+                }
+                for param in &params {
+                    let mutable = if param.mutable { "mut " } else { "" };
+                    write!(signature, ", {mutable}{}: {}", param.name, param.ty.written)
                         .expect("writing to a `String` should succeed");
-                    params.push((param, ty));
                 }
                 signature += ")";
                 let ret =
@@ -1031,7 +1148,9 @@ impl Gen<'_> {
     /// call on a type with two conformances to one interface is picked by the type of its result.
     /// A method with an `i64` or `string` result holds a value of its own (`Values`), and each call
     /// that prints a result writes `@d<n> <value>`: the calls in `shapes`, and in the generic
-    /// functions it calls. Gives the lines that `shapes` prints (property 5). The other methods
+    /// functions it calls. A requirement with a `mut` parameter writes a value of its own to it,
+    /// and each call of it passes a place and prints the place after the call as `@d<n> <value>`
+    /// as well. Gives the lines that `shapes` prints (property 5). The other methods
     /// hold the smallest value of their result. Each interface is used, so none is reported.
     /// Records the bound sites of its calls (property 6).
     fn shapes(&mut self, declared: &[Shape]) -> Vec<String> {
@@ -1156,14 +1275,14 @@ impl Gen<'_> {
             for requirement in &declared[entry.interface].requirements {
                 if again {
                     let picked = requirement.picked_call(var, entry.arg, &mut calls.marks);
-                    if let Some((lines, mark)) = picked {
+                    if let Some((lines, marks)) = picked {
                         calls.extend(lines);
-                        calls.runs(&[mark], ty);
+                        calls.runs(&marks, ty);
                     }
                 } else {
-                    let (line, mark) = requirement.call(var, entry.arg, &mut calls.marks);
-                    calls.push(line);
-                    calls.runs(mark.as_slice(), ty);
+                    let (lines, marks) = requirement.call(var, entry.arg, &mut calls.marks);
+                    calls.extend(lines);
+                    calls.runs(&marks, ty);
                 }
             }
         }
@@ -1351,10 +1470,13 @@ impl Gen<'_> {
     /// `char` convert too, each into a box, to `any Seen` and to `any Display`. The interfaces
     /// have no `Self` and no generic method, so they can be `any`. `any_never<S: Seen>() -> S`
     /// takes `S` only from its context, `any Seen` and `(any Seen)?`, in a branch that does not
-    /// run: the call meets the bound with the payload of the optional. None of it takes a byte.
+    /// run: the call meets the bound with the payload of the optional. `Seen` has a requirement
+    /// `put` with a `mut` parameter, and `shapes` calls it through an array element, through `??`,
+    /// through `any_fill<S: Seen>` and, with `exchange`, through `any_swap<S: Seen>`, each with a
+    /// class and an enum; each call prints the value that it wrote. None of it takes a byte.
     fn any_values(&mut self, calls: &mut Calls) {
         self.w.text(
-            "interface Seen {\n    fn seen(self) -> i64\n}\ninterface Heard: AnyObject {\n    fn echo(self, n: i64) -> i64\n}\nclass Eye: Seen {\n    v: i64\n    fn seen(self) -> i64 { self.v }\n}\nclass Ear: Heard {\n    fn echo(self, n: i64) -> i64 { n }\n}\nenum Beam: Seen {\n    Wide(i64)\n    fn seen(self) -> i64 {\n        match self {\n            Beam.Wide(n) => n\n        }\n    }\n}\nfn any_see(x: any Seen) -> i64 { x.seen() }\nfn any_make() -> any Seen { Eye(v: 5) }\nfn any_never<S: Seen>() -> S { panic(\"any_never runs only in a branch that is not taken\") }\nfn any_hear(x: any Heard, y: any Heard) -> i64 {\n    if x is y { x.echo(1) } else { x.echo(2) }\n}",
+            "interface Seen {\n    fn seen(self) -> i64\n    fn put(self, mut n: i64)\n}\ninterface Heard: AnyObject {\n    fn echo(self, n: i64) -> i64\n}\nclass Eye: Seen {\n    v: i64\n    fn seen(self) -> i64 { self.v }\n    fn put(self, mut n: i64) { n = self.v }\n}\nclass Ear: Heard {\n    fn echo(self, n: i64) -> i64 { n }\n}\nenum Beam: Seen {\n    Wide(i64)\n    fn seen(self) -> i64 {\n        match self {\n            Beam.Wide(n) => n\n        }\n    }\n    fn put(self, mut n: i64) {\n        match self {\n            Beam.Wide(k) => { n = k }\n        }\n    }\n}\nfn any_see(x: any Seen) -> i64 { x.seen() }\nfn any_make() -> any Seen { Eye(v: 5) }\nfn any_put(x: any Seen, mut n: i64) { x.put(mut n) }\nfn any_fill<S: Seen>(s: S, mut n: i64) { s.put(mut n) }\nfn any_swap<S: Seen>(mut s: S, u: S) -> i64 {\n    let _ = exchange(mut s, u)\n    s.seen()\n}\nfn any_never<S: Seen>() -> S { panic(\"any_never runs only in a branch that is not taken\") }\nfn any_hear(x: any Heard, y: any Heard) -> i64 {\n    if x is y { x.echo(1) } else { x.echo(2) }\n}",
         );
         self.w.line();
         for line in [
@@ -1374,6 +1496,34 @@ impl Gen<'_> {
             "print(shown)",
         ] {
             calls.push(line);
+        }
+        // `put` writes the value of its receiver. A printed text comes with the value it prints:
+        // the objects that `beams`, `eye`, `any_fill` and `any_swap` reach.
+        for (line, printed) in [
+            ("let mut put0 = 0", None),
+            ("beams[1].put(mut put0)", None),
+            ("{put0}", Some("9")),
+            ("any_put(eye ?? any_make(), mut put0)", None),
+            ("{put0}", Some("4")),
+            ("any_fill(Beam.Wide(12), mut put0)", None),
+            ("{put0}", Some("12")),
+            ("any_fill(Eye(v: 13), mut put0)", None),
+            ("{put0}", Some("13")),
+            ("let mut swapped = Eye(v: 14)", None),
+            ("{any_swap(mut swapped, Eye(v: 15))}", Some("15")),
+            ("{swapped.seen()}", Some("15")),
+            ("let mut wide = Beam.Wide(16)", None),
+            ("{any_swap(mut wide, Beam.Wide(17))}", Some("17")),
+            ("{wide.seen()}", Some("17")),
+        ] {
+            match printed {
+                Some(value) => {
+                    let n = take(&mut calls.marks);
+                    calls.push(format!("print(\"@d{n} {line}\")"));
+                    calls.expected.push(format!("@d{n} {value}"));
+                }
+                None => calls.push(line),
+            }
         }
     }
 
@@ -1590,10 +1740,12 @@ impl Gen<'_> {
         let mut marks = Vec::new();
         if assoc.bounded {
             for requirement in &declared[k].requirements {
-                self.w.line();
-                let (line, mark) = requirement.call("y", bound.arg, &mut calls.marks);
-                self.w.text(&line);
-                marks.extend(mark);
+                let (lines, called) = requirement.call("y", bound.arg, &mut calls.marks);
+                for line in lines {
+                    self.w.line();
+                    self.w.text(&line);
+                }
+                marks.extend(called);
             }
         }
         self.w.line();
@@ -1617,10 +1769,12 @@ impl Gen<'_> {
         self.w.open();
         let mut marks = Vec::new();
         for (requirement, arg) in requirements {
-            self.w.line();
-            let (line, mark) = requirement.call("x", *arg, &mut calls.marks);
-            self.w.text(&line);
-            marks.extend(mark);
+            let (lines, called) = requirement.call("x", *arg, &mut calls.marks);
+            for line in lines {
+                self.w.line();
+                self.w.text(&line);
+            }
+            marks.extend(called);
         }
         self.w.close();
         self.w.line();
