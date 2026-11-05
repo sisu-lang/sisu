@@ -5823,8 +5823,8 @@ fn a_push_through_an_optional_should_take_the_place_of_its_local() {
 /// never gives a type of three layers. One program holds both.
 #[test]
 fn a_mutable_array_local_should_now_and_then_hold_optional_arrays() {
-    // The type is rare, and the compound parts moved the bytes: of the seeds below, only seed 64
-    // holds it now.
+    // The type is rare, and the compound parts moved the bytes: seed 64 is the first that holds
+    // it now.
     let held = search_seeds(0, |n| {
         let program = generate(&seed(n)).program;
         program.contains("]?.push(")
