@@ -2121,6 +2121,7 @@ fn mut_param(name: String, ty: Ty, size: u64, adds: Adds) -> Var {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::generate::coverage::{SEEDS, search_seeds, seed};
 
     /// GIVEN a `mut` parameter of `[i64]` that a caller's place holds at most 100 of
     /// WHEN the parameter is a variable of the body
@@ -2224,15 +2225,15 @@ mod tests {
     fn a_program_with_interfaces_should_call_later_with_the_forms_that_name_t() {
         let mut found = false;
         let mut pairs = std::collections::BTreeSet::new();
-        for data in crate::generate::coverage::seeds() {
-            let g = crate::generate::generate(&data);
+        search_seeds(SEEDS, |n| {
+            let g = crate::generate::generate(&seed(n));
             for pair in ["Two<[T], [U]>", "Two<[U], [T]>"] {
                 if g.program.contains(&format!("_h: {pair}")) {
                     pairs.insert(pair);
                 }
             }
             if !g.program.contains("fn later0<") {
-                continue;
+                return found && pairs.len() == 2;
             }
             found = true;
             for part in [
@@ -2289,7 +2290,8 @@ mod tests {
                 };
                 assert_eq!(*arg, want, "the argument of {param} in {}", g.program);
             }
-        }
+            pairs.len() == 2
+        });
         assert!(found, "no seed declares `later0`");
         assert_eq!(pairs.len(), 2, "{pairs:?}");
     }
@@ -2325,8 +2327,19 @@ mod tests {
     #[test]
     fn the_seeds_should_hold_a_bound_site_for_each_replacement() {
         let mut rows = std::collections::BTreeSet::new();
-        for data in crate::generate::coverage::seeds() {
-            let g = crate::generate::generate(&data);
+        let expected = [
+            ("AnyObject", "true"),
+            ("Display & Eq", "NoBound()"),
+            ("Eq", "NoBound()"),
+            ("Ord", "NoBound()"),
+            ("Pinned", "true"),
+            ("generic interface", "NoBound()"),
+            ("interface", "NoBound()"),
+            ("two interfaces", "NoBound()"),
+        ]
+        .map(|(row, broken)| (row.to_string(), broken));
+        search_seeds(SEEDS, |n| {
+            let g = crate::generate::generate(&seed(n));
             for site in &g.bound_sites {
                 let (before, after) = (&g.program[..site.at.start], &g.program[site.at.end..]);
                 assert!(before.ends_with('(') || before.ends_with("v: "), "{before}");
@@ -2340,19 +2353,14 @@ mod tests {
                 };
                 rows.insert((row.to_string(), site.broken));
             }
-        }
-        let rows: Vec<(String, &str)> = rows.into_iter().collect();
-        let expected = [
-            ("AnyObject", "true"),
-            ("Display & Eq", "NoBound()"),
-            ("Eq", "NoBound()"),
-            ("Ord", "NoBound()"),
-            ("Pinned", "true"),
-            ("generic interface", "NoBound()"),
-            ("interface", "NoBound()"),
-            ("two interfaces", "NoBound()"),
-        ]
-        .map(|(row, broken)| (row.to_string(), broken));
-        assert_eq!(rows, expected);
+            expected.iter().all(|row| rows.contains(row))
+        });
+        let unexpected: Vec<_> = rows.iter().filter(|row| !expected.contains(row)).collect();
+        assert!(
+            unexpected.is_empty(),
+            "rows not in the table: {unexpected:?}"
+        );
+        let missing: Vec<_> = expected.iter().filter(|row| !rows.contains(row)).collect();
+        assert!(missing.is_empty(), "rows with no site: {missing:?}");
     }
 }
