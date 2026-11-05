@@ -77,10 +77,16 @@ use unused_names::{Owner, Pending, Use, Used};
 /// A value that an E0062 typed has `unwrapped` set (see `Flag`). A value built from it has
 /// the flag too.
 ///
+/// A place that makes a new `Poisoned` from a value with the remedy flag keeps the right state.
+/// A new value that is the same value copies the state. A new value built from it sets `Built`.
+/// Only the `.` that reports E0062 sets `Member`, and only when its value has no remedy flag.
+///
 /// The flag spreads through `!`, unary `-`, each operator but `==` and `!=`, a block and a join.
-/// It spreads through an `if` condition and the right side of `??`. It spreads through a generic
-/// call, method, constructor, variant or interface call whose result names a type parameter. It
-/// spreads through `dbg` and a slice.
+/// It spreads through an `if` condition, `Some`, and both sides of `??`. It spreads through a
+/// generic call, method, constructor, variant or interface call whose result names a type
+/// parameter. It spreads through `dbg` and a slice. A `.`, an index or a method call on a
+/// flagged base, and a `?.` after a flagged optional, keep it too. A `?.` is built from its
+/// member or its scrutinee when either has the remedy flag, else it is its scrutinee again.
 ///
 /// The remedy flag is `unwrapped` set, except for a member of an optional type. That member has
 /// the same type under the `if let` unwrap and under the `?.` fix.
@@ -102,8 +108,8 @@ struct Poisoned {
     /// The value is typed by the unwrap that the help of its E0062 names. It comes from a `.` on
     /// an optional, and has the type that the member has on the payload. The `?.` fix of the
     /// E0062 would make the value optional. So a check that fires only because the value is not
-    /// optional (E0044, E0048, E0049, E0051) skips it. A `let` or a `for` binds `Error` for it,
-    /// as its optionality depends on the remedy.
+    /// optional (E0044, E0048, E0049, E0051) or not matchable (E0124) skips it. A `let` or a
+    /// `for` binds `Error` for it, as its optionality depends on the remedy.
     unwrapped: Flag,
 }
 

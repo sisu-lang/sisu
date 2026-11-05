@@ -9,8 +9,8 @@ use super::extend::{holder_of, method_holder};
 use super::generic::{Site, named_params};
 use super::unused_names::Used;
 use super::{
-    Checked, Checker, Declared, Holder, Poisoned, UNKNOWN, as_optional, is_unwrapped, spread,
-    type_of, wrap,
+    Checked, Checker, Declared, Flag, Holder, Poisoned, UNKNOWN, as_optional, has_remedy_flag,
+    is_unwrapped, spread, type_of, wrap,
 };
 use crate::ast;
 use crate::diagnostic::{Annotate, Definition, Diagnostic, DiagnosticKind, Peel, UnwrapHelp};
@@ -516,6 +516,10 @@ impl Checker<'_> {
             let d = may_be_none(receiver, name, fix, write, unwrap);
             self.diagnostics.push(d);
         }
+        // The call of a generic method may be built from a flagged argument: it keeps that state.
+        if has_remedy_flag(&result) {
+            return spread(Err(Poisoned::of(type_of(&result))), true);
+        }
         Err(Poisoned::unwrapped(type_of(&result)))
     }
 
@@ -896,10 +900,16 @@ pub(super) fn safe_value(
             });
         }
     };
-    let flagged = is_unwrapped(&scrutinee);
+    // The result is built from the member or the scrutinee when either has the remedy flag. Else
+    // it is the scrutinee again: `c.n?.v` is `i64?` under both remedies.
+    let built = has_remedy_flag(&scrutinee) || has_remedy_flag(&member);
+    let state = scrutinee.as_ref().err().map_or(Flag::No, |p| p.unwrapped);
     let (Ok(scrutinee), Ok(member)) = (scrutinee, member) else {
         // A `?.` after a `.` on an optional goes on, as the first `?.` does (see `Checker::place`).
-        return spread(Err(Poisoned::typed(ty)), flagged);
+        return Err(Poisoned {
+            unwrapped: if built { Flag::Built } else { state },
+            ..Poisoned::typed(ty)
+        });
     };
     let none = (ty != Type::UNIT).then_some(tir::Expr::new(tir::ExprKind::None, ty, span));
     let value = if member.ty == ty {

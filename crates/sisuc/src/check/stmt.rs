@@ -12,7 +12,8 @@ use super::prelude::PRELUDE;
 use super::unused_names::{Owner, Pending};
 use super::{
     Binding, BindingKind, Checked, CheckedBlock, Checker, Declared, LoopContext, LoopFrame,
-    LoopKind, Poisoned, UNKNOWN, block_expr, built_in_type, is_unwrapped, starts_in, tail, type_of,
+    LoopKind, Poisoned, UNKNOWN, block_expr, built_in_type, has_remedy_flag, starts_in, tail,
+    type_of,
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{
@@ -372,7 +373,7 @@ impl Checker<'_> {
                     (Some(None), _) => None,
                     (Some(Some(declared)), Err(_)) => Some(declared),
                     // The type of a value that an E0062 typed depends on the remedy.
-                    _ => type_of(&init).filter(|_| !is_unwrapped(&init)),
+                    _ => type_of(&init).filter(|_| !has_remedy_flag(&init)),
                 };
                 let kind = if mutable.is_some() {
                     BindingKind::Var
@@ -757,7 +758,7 @@ impl Checker<'_> {
         let (element, d) = match type_of(&checked).map(|ty| (ty, ty.kind())) {
             // The elements of a value that an E0062 typed depend on the remedy.
             Some((_, TypeKind::Array(element))) => {
-                ((!is_unwrapped(&checked)).then_some(element), None)
+                ((!has_remedy_flag(&checked)).then_some(element), None)
             }
             Some((_, TypeKind::Optional(payload)))
                 if matches!(payload.kind(), TypeKind::Array(_)) =>

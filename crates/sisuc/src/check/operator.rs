@@ -6,7 +6,7 @@ use super::generic::{Rank, mismatched};
 use super::interface::Operation;
 use super::{
     Checked, Checker, Flag, Lowered, Poisoned, UNKNOWN, as_optional, beyond_one_layer, block_expr,
-    is_kept, is_unwrapped, optional_of, payload, spread, type_of, wrap,
+    has_remedy_flag, is_kept, is_unwrapped, optional_of, payload, spread, type_of, wrap,
 };
 use crate::ast::{self, CompareOp, ExprKind};
 use crate::diagnostic::{Diagnostic, DiagnosticKind, Expected, Literal, PeelIs, PeelLayers};
@@ -1048,8 +1048,8 @@ impl Checker<'_> {
                 other
             }
         };
-        // Under the `?.` fix of an E0062 in the default, the result is optional.
-        let flagged = is_unwrapped(&other);
+        // Under the `?.` fix of an E0062 in either side, the result is optional.
+        let flagged = has_remedy_flag(&scrutinee) || has_remedy_flag(&other);
         // A value converts to an `any` payload, unless it is a wider `any` type, which the
         // payload converts to.
         let other = match type_of(&other) {

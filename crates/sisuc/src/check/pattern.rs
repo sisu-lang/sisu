@@ -12,9 +12,7 @@ use super::enums::reserved_name;
 use super::exhaust::{self, Neighbours, Report, Row};
 use super::generic::{Ahead, type_meets};
 use super::stmt::BlockSoFar;
-use super::{
-    Checked, CheckedBlock, Checker, Declared, Poisoned, has_remedy_flag, is_unwrapped, type_of,
-};
+use super::{Checked, CheckedBlock, Checker, Declared, Poisoned, has_remedy_flag, type_of};
 use crate::ast;
 use crate::diagnostic::{
     BadRange, Definition, DiagnosticKind, Expected, GuardHelp, MismatchSource, Plain, Unwrap,
@@ -241,7 +239,10 @@ impl Checker<'_> {
         let checked = self.value_kept(scrutinee);
         let mut position = type_of(&checked);
         let cannot = position.take_if(|&mut ty| !matchable(ty));
-        if let Some(ty) = cannot {
+        // Under the `?.` fix a value that an E0062 typed is optional, which `match` takes.
+        if let Some(ty) = cannot
+            && !has_remedy_flag(&checked)
+        {
             let ty = self.type_name(ty);
             self.report(DiagnosticKind::CannotMatch {
                 ty,
@@ -304,7 +305,7 @@ impl Checker<'_> {
                 self.report_coverage(keyword, close, arms, report, &mut reachable);
             }
         }
-        let flagged = blocks.iter().any(is_unwrapped);
+        let flagged = blocks.iter().any(has_remedy_flag);
         let arms: Option<Vec<_>> = patterns
             .into_iter()
             .zip(guards)

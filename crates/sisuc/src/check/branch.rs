@@ -6,7 +6,7 @@ use super::generic::{Ahead, Rank};
 use super::pattern::{LetPattern, arm_key};
 use super::{
     Checked, CheckedBlock, Checker, Flag, Misfit, Poisoned, UNKNOWN, as_optional, block_type,
-    has_remedy_flag, is_kept, is_unwrapped, payload, spread, tail, value_span, wrap_block,
+    has_remedy_flag, is_kept, payload, spread, tail, value_span, wrap_block,
 };
 use crate::ast;
 use crate::diagnostic::{Diagnostic, DiagnosticKind, Unwrap};
@@ -49,8 +49,9 @@ impl Checker<'_> {
             ty => ty,
         };
         // A flagged condition is a `bool?` under the `?.` fix, which fails the `if`.
-        let flagged =
-            is_unwrapped(&cond) || is_unwrapped(&then) || other.as_ref().is_some_and(is_unwrapped);
+        let flagged = has_remedy_flag(&cond)
+            || has_remedy_flag(&then)
+            || other.as_ref().is_some_and(has_remedy_flag);
         match (cond, then, other.transpose(), ty) {
             (Ok(cond), Ok(then_block), Ok(else_block), Ok(ty)) => Ok(tir::Expr::new(
                 tir::ExprKind::If {
@@ -107,8 +108,8 @@ impl Checker<'_> {
         let ty = ty?;
         // Under the unwrap the `if let` fails with E0051. Under the `?.` fix its value is optional.
         let flagged = has_remedy_flag(&scrutinee)
-            || is_unwrapped(&then)
-            || other.as_ref().is_some_and(is_unwrapped);
+            || has_remedy_flag(&then)
+            || other.as_ref().is_some_and(has_remedy_flag);
         let kind = match (scrutinee, then, other.transpose(), bound) {
             (Ok(scrutinee), Ok(then_block), Ok(else_block), LetPattern::Some { bind }) => {
                 tir::ExprKind::IfSome {

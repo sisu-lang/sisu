@@ -4,7 +4,7 @@ use super::any::{AnyJoin, is_target, widen};
 use super::expr::{fits, literal_type, no_member, path, typed};
 use super::generic::{Rank, mark};
 use super::{
-    Checked, Checker, Declared, Flag, Poisoned, UNKNOWN, as_optional, is_unwrapped, payload,
+    Checked, Checker, Declared, Flag, Poisoned, UNKNOWN, as_optional, has_remedy_flag, payload,
     spread, type_of,
 };
 use crate::ast;
@@ -489,7 +489,7 @@ impl Checker<'_> {
         }
         let outer = std::mem::replace(&mut self.body.indexed, true);
         let checked = self.value(base, None);
-        let unwrapped = is_unwrapped(&checked);
+        let unwrapped = has_remedy_flag(&checked);
         // An optional array is reported, and its element goes on typed, but no code reads it.
         let optional = type_of(&checked).is_some_and(is_optional_array);
         let element = self.element(base, type_of(&checked), IndexUsage::Read);

@@ -12,6 +12,7 @@ use super::mut_args::Callee;
 use super::unused_names::Used;
 use super::{
     Checked, Checker, Declared, Definition, DiagnosticKind, Poisoned, has_remedy_flag, own_args,
+    spread,
 };
 use crate::ast;
 use crate::diagnostic::{BuiltIn, Unbuilt, VariantLabels, suggestion};
@@ -484,7 +485,7 @@ impl Checker<'_> {
             Ok(args) if !failed && held => Ok(self.spilled(span, ty, args, |args| {
                 tir::ExprKind::Variant { id, variant, args }
             })),
-            _ => super::spread(Err(Poisoned::of((!failed && held).then_some(ty))), flagged),
+            _ => spread(Err(Poisoned::of((!failed && held).then_some(ty))), flagged),
         }
     }
 
@@ -813,8 +814,8 @@ impl Checker<'_> {
                 }
             }
         }
-        spread(&mut poison, &holders);
-        spread(&mut class, &holders);
+        mark_holders(&mut poison, &holders);
+        mark_holders(&mut class, &holders);
         HoldsTable {
             enums: (0..enums)
                 .map(|i| Holds {
@@ -911,7 +912,7 @@ pub(super) fn unwrapped(mut ty: Type) -> Type {
 
 /// Marks every node that holds a marked one, through `holders`; a holder past the end of
 /// `marked` is not a node of its fact.
-fn spread(marked: &mut [bool], holders: &[Vec<usize>]) {
+fn mark_holders(marked: &mut [bool], holders: &[Vec<usize>]) {
     let mut work: Vec<usize> = (0..marked.len()).filter(|&i| marked[i]).collect();
     while let Some(held) = work.pop() {
         for &holder in &holders[held] {
