@@ -797,6 +797,20 @@ fn never_constructed_should_be_reported_through_an_alias_chain() {
     );
 }
 
+/// `C` needs `Bad` only through `W<Bad>`, an application that can be built whatever its argument
+/// is. So `W<Bad>` adds no `Bad` to what `E` needs, and `E`, which needs only itself, is reported
+/// as well as `Bad`.
+#[test]
+fn never_constructed_should_ignore_arguments_of_an_application_that_can_be_built() {
+    codes(
+        "enum Bad {\n    V(Bad)\n}\nclass W<A> {\n    x: i64\n}\nenum E {\n    V(W<Bad>, E)\n}\nfn main() {}",
+        &[
+            (Code::NeverConstructed, (1, 6)),
+            (Code::NeverConstructed, (7, 6)),
+        ],
+    );
+}
+
 /// The array `[A4]` holds no class and no poison type, so `x == y` in a `while` that no statement
 /// changes gets W0011 at the condition. `judge_unused` keeps the two warnings for the enum that
 /// nothing builds and the function that nothing calls.

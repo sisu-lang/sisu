@@ -940,16 +940,24 @@ impl Strands {
 /// after the choices), and gives it a changed argument when its base is not a parameter itself:
 /// the base is a type of its own then, which nests the parameter at the growth of the associated
 /// types in it.
+///
+/// `stack` and `seen` are scratch space for the call: each type is read once, whatever number of
+/// paths lead to it, so `names` and `changed` hold a declaration once for each type that names it.
 fn named(
     stack: &mut Vec<Type>,
+    seen: &mut FxHashSet<Type>,
     (classes, enums): (usize, usize),
     assocs: &Assocs,
     fields: impl Iterator<Item = Type>,
 ) -> (Vec<usize>, Vec<usize>) {
     let (mut names, mut changed) = (Vec::new(), Vec::new());
     let declarations = classes + enums;
+    seen.clear();
     stack.extend(fields);
     while let Some(ty) = stack.pop() {
+        if !seen.insert(ty) {
+            continue;
+        }
         #[cfg(test)]
         super::enums::TYPE_WALK_STEPS.set(super::enums::TYPE_WALK_STEPS.get() + 1);
         let (node, args) = match ty.kind() {
@@ -1894,7 +1902,7 @@ impl Checker<'_> {
     /// has weight 0. An associated type names the type of each choice of it, a declaration of its
     /// own, which names in turn. Each field and payload type is read once, with its arguments.
     fn growable_declarations(&self, assocs: &Assocs) -> Vec<bool> {
-        let mut stack = Vec::new();
+        let (mut stack, mut seen) = (Vec::new(), FxHashSet::default());
         let declared = (self.classes.len(), self.enums.len());
         let nodes =
             self.classes.len() + self.enums.len() + assocs.choices.len() + assocs.hubs.len();
@@ -1907,6 +1915,7 @@ impl Checker<'_> {
         for class in &self.classes {
             read(named(
                 &mut stack,
+                &mut seen,
                 declared,
                 assocs,
                 class.fields.iter().filter_map(|f| f.ty),
@@ -1914,11 +1923,12 @@ impl Checker<'_> {
         }
         for info in &self.enums {
             let payloads = (info.variants.iter()).flat_map(|v| v.fields.iter().copied().flatten());
-            read(named(&mut stack, declared, assocs, payloads));
+            read(named(&mut stack, &mut seen, declared, assocs, payloads));
         }
         for choice in &assocs.choices {
             read(named(
                 &mut stack,
+                &mut seen,
                 declared,
                 assocs,
                 std::iter::once(choice.ty),

@@ -60,35 +60,56 @@ pub(super) fn reserved_name(name: Symbol) -> Option<BuiltIn> {
 /// The enum declarations `ty` names where a value of it holds them inline: `ty` itself, or its
 /// optional's payload, and the type arguments of each enum it names, through optionals. With
 /// `open`, only those named with an argument that carries a parameter: `C<T>`, not `Wrap3<i64>`.
+/// A declaration comes once for each type that names it, in the order of the first visit; each
+/// type is read once, whatever number of paths lead to it.
 fn inline_enums(ty: Type, open: bool) -> Vec<usize> {
-    #[cfg(test)]
-    TYPE_WALK_STEPS.set(TYPE_WALK_STEPS.get() + 1);
-    match ty.kind() {
-        TypeKind::Optional(payload) => inline_enums(payload, open),
-        TypeKind::Enum(id, args) => {
-            let named = (!open || ty.has_param()).then_some(id.0);
-            let args = args.get().iter().flat_map(|&arg| inline_enums(arg, open));
-            named.into_iter().chain(args).collect()
+    fn collect(ty: Type, open: bool, seen: &mut FxHashSet<Type>, named: &mut Vec<usize>) {
+        if !seen.insert(ty) {
+            return;
         }
-        _ => Vec::new(),
+        #[cfg(test)]
+        TYPE_WALK_STEPS.set(TYPE_WALK_STEPS.get() + 1);
+        match ty.kind() {
+            TypeKind::Optional(payload) => collect(payload, open, seen, named),
+            TypeKind::Enum(id, args) => {
+                if !open || ty.has_param() {
+                    named.push(id.0);
+                }
+                for &arg in args.get() {
+                    collect(arg, open, seen, named);
+                }
+            }
+            _ => {}
+        }
     }
+    let mut named = Vec::new();
+    collect(ty, open, &mut FxHashSet::default(), &mut named);
+    named
 }
 
 /// Whether `ty` names, where `inline_enums` looks, the enum `e` applied to its own `count`
-/// parameters in order: `Tree<T>` in `Tree`, or `G<T>` in `G`'s `Wrap2<G<T>>`.
+/// parameters in order: `Tree<T>` in `Tree`, or `G<T>` in `G`'s `Wrap2<G<T>>`. Each type is read
+/// once.
 fn names_itself(ty: Type, e: usize, count: usize) -> bool {
-    #[cfg(test)]
-    TYPE_WALK_STEPS.set(TYPE_WALK_STEPS.get() + 1);
-    match ty.kind() {
-        TypeKind::Optional(payload) => names_itself(payload, e, count),
-        TypeKind::Enum(id, args) => {
-            let args = args.get();
-            let own = |(i, arg): (usize, &Type)| matches!(arg.kind(), TypeKind::Param(_, j) if j as usize == i);
-            (id.0 == e && args.len() == count && args.iter().enumerate().all(own))
-                || args.iter().any(|&arg| names_itself(arg, e, count))
+    fn find(ty: Type, e: usize, count: usize, seen: &mut FxHashSet<Type>) -> bool {
+        // A type seen before gave `false`: a `true` ends the whole search.
+        if !seen.insert(ty) {
+            return false;
         }
-        _ => false,
+        #[cfg(test)]
+        TYPE_WALK_STEPS.set(TYPE_WALK_STEPS.get() + 1);
+        match ty.kind() {
+            TypeKind::Optional(payload) => find(payload, e, count, seen),
+            TypeKind::Enum(id, args) => {
+                let args = args.get();
+                let own = |(i, arg): (usize, &Type)| matches!(arg.kind(), TypeKind::Param(_, j) if j as usize == i);
+                (id.0 == e && args.len() == count && args.iter().enumerate().all(own))
+                    || args.iter().any(|&arg| find(arg, e, count, seen))
+            }
+            _ => false,
+        }
     }
+    find(ty, e, count, &mut FxHashSet::default())
 }
 
 /// What a message calls the enum of the variant `member`, which `site` writes: the qualifier as
@@ -753,17 +774,24 @@ impl Checker<'_> {
             .iter()
             .enumerate()
             .flat_map(|(i, c)| c.fields.iter().map(move |f| (enums + i, f.ty)));
+        let mut seen = FxHashSet::default();
         for (holder, ty) in enum_fields.chain(class_fields) {
             let Some(ty) = ty else {
                 poison[holder] = true;
                 continue;
             };
-            // A field holds its type's node and the nodes of its type arguments.
+            // A field holds its type's node and the nodes of its type arguments. It reads each
+            // type once, whatever number of paths lead to it.
+            seen.clear();
             let mut types = vec![ty];
             while let Some(ty) = types.pop() {
+                let ty = unwrapped(ty);
+                if !seen.insert(ty) {
+                    continue;
+                }
                 #[cfg(test)]
                 TYPE_WALK_STEPS.set(TYPE_WALK_STEPS.get() + 1);
-                match unwrapped(ty).kind() {
+                match ty.kind() {
                     TypeKind::Class(id, args) => {
                         if let Some(c) = class.get_mut(holder) {
                             *c = true;
@@ -789,14 +817,20 @@ impl Checker<'_> {
                 })
                 .collect(),
             classes: poison.split_off(enums),
+            cache: std::cell::RefCell::default(),
         }
     }
 
-    /// What a value of `ty` may hold, with its type arguments.
+    /// What a value of `ty` may hold, with its type arguments. Each type is decided once for the
+    /// whole check: `holds_table` is set before the first body is checked and never changes.
     pub(super) fn holds(&self, ty: Type) -> Holds {
+        let ty = unwrapped(ty);
+        if let Some(&held) = self.holds_table.cache.borrow().get(&ty) {
+            return held;
+        }
         #[cfg(test)]
         TYPE_WALK_STEPS.set(TYPE_WALK_STEPS.get() + 1);
-        let (own, args) = match unwrapped(ty).kind() {
+        let (own, args) = match ty.kind() {
             TypeKind::Enum(id, args) => (self.holds_table.enums[id.0], args),
             TypeKind::Class(id, args) => {
                 let poison = self.holds_table.classes[id.0];
@@ -810,13 +844,15 @@ impl Checker<'_> {
             }
             _ => return Holds::default(),
         };
-        args.get().iter().fold(own, |held, &arg| {
+        let held = args.get().iter().fold(own, |held, &arg| {
             let arg = self.holds(arg);
             Holds {
                 class: held.class || arg.class,
                 poison: held.poison || arg.poison,
             }
-        })
+        });
+        self.holds_table.cache.borrow_mut().insert(ty, held);
+        held
     }
 }
 
@@ -833,6 +869,8 @@ pub(super) struct Holds {
 pub(super) struct HoldsTable {
     enums: Vec<Holds>,
     classes: Vec<bool>,
+    /// What `Checker::holds` has decided, by the type without its array and optional wrappers.
+    cache: std::cell::RefCell<FxHashMap<Type, Holds>>,
 }
 
 /// `ty` without its array and optional wrappers.
@@ -1006,12 +1044,23 @@ impl Buildable {
     /// The key `node` has when given `args`. A type parameter in `args` is a chain's start's,
     /// whose arguments are all buildable.
     fn key_of(&mut self, node: usize, args: TypeArgs) -> usize {
-        let flags = args.get().iter().map(|&arg| self.reached(arg)).collect();
+        self.key_in(node, args, &mut FxHashMap::default())
+    }
+
+    /// `key_of`, where `known` holds whether each type read so far can be built: each type is
+    /// read once, whatever number of paths lead to it.
+    fn key_in(&mut self, node: usize, args: TypeArgs, known: &mut FxHashMap<Type, bool>) -> usize {
+        let flags = (args.get().iter())
+            .map(|&arg| self.reached(arg, known))
+            .collect();
         self.key(node, flags)
     }
 
     /// Whether `ty` can be built, a type parameter's argument always.
-    fn reached(&mut self, ty: Type) -> bool {
+    fn reached(&mut self, ty: Type, known: &mut FxHashMap<Type, bool>) -> bool {
+        if let Some(&built) = known.get(&ty) {
+            return built;
+        }
         #[cfg(test)]
         TYPE_WALK_STEPS.set(TYPE_WALK_STEPS.get() + 1);
         let (node, args) = match ty.kind() {
@@ -1019,8 +1068,10 @@ impl Buildable {
             TypeKind::Enum(id, args) => (self.classes + id.0, args),
             _ => return true,
         };
-        let key = self.key_of(node, args);
-        self.built[key]
+        let key = self.key_in(node, args, known);
+        let built = self.built[key];
+        known.insert(ty, built);
+        built
     }
 
     /// The declarations no value can be built of that the slots of `key` need, once the fixed
@@ -1037,18 +1088,35 @@ impl Buildable {
     /// The keys, none of them built, that the slots of `key` need.
     fn deps(&mut self, key: usize) -> Vec<usize> {
         let (node, flags) = self.keys[key].clone();
-        let mut deps = Vec::new();
+        let mut walk = Walk::default();
         for ty in self.slots[node].clone().into_iter().flatten() {
-            self.buildable(ty, &flags, &mut deps);
+            self.buildable(ty, &flags, &mut walk);
         }
-        deps
+        walk.consulted
     }
 
     /// Whether `ty` can be built, where a type parameter's argument can when `flags` says so.
-    /// Each key `ty` needs that cannot be built yet is added to `consulted`: an application's,
-    /// and its arguments' only when the application cannot be built.
-    fn buildable(&mut self, ty: Option<Type>, flags: &[bool], consulted: &mut Vec<usize>) -> bool {
+    /// Each key `ty` needs that cannot be built yet is added to `walk.consulted`: an application's,
+    /// and its arguments' only when the application cannot be built. `walk` is for one top-level
+    /// call, where the flags and the keys built do not change, so it reads each type once,
+    /// whatever number of paths lead to it, and adds each key once for each type.
+    fn buildable(&mut self, ty: Option<Type>, flags: &[bool], walk: &mut Walk) -> bool {
         let Some(ty) = ty else { return true };
+        let built = self.verdict(ty, flags, &mut walk.verdicts);
+        consult(ty, &walk.verdicts, &mut walk.seen, &mut walk.consulted);
+        built
+    }
+
+    /// Whether `ty` can be built, as `buildable` says it, with the key of each application read.
+    fn verdict(
+        &mut self,
+        ty: Type,
+        flags: &[bool],
+        verdicts: &mut FxHashMap<Type, (bool, usize, TypeArgs)>,
+    ) -> bool {
+        if let Some(&(built, ..)) = verdicts.get(&ty) {
+            return built;
+        }
         #[cfg(test)]
         TYPE_WALK_STEPS.set(TYPE_WALK_STEPS.get() + 1);
         let (node, args) = match ty.kind() {
@@ -1057,25 +1125,20 @@ impl Buildable {
             TypeKind::Enum(id, args) => (self.classes + id.0, args),
             _ => return true,
         };
-        let mark = consulted.len();
-        let args = args
-            .get()
-            .iter()
-            .map(|&arg| self.buildable(Some(arg), flags, consulted))
+        let given = (args.get().iter())
+            .map(|&arg| self.verdict(arg, flags, verdicts))
             .collect();
-        let key = self.key(node, args);
-        if self.built[key] {
-            consulted.truncate(mark);
-        } else {
-            consulted.push(key);
-        }
-        self.built[key]
+        let key = self.key(node, given);
+        let built = self.built[key];
+        verdicts.insert(ty, (built, key, args));
+        built
     }
 
     /// Scans queued fields until none is left. A field that cannot be built yet waits for the
     /// keys it consulted: its own, and its arguments', whose building changes which key it
     /// holds. The first of them built queues it once more, so a field is scanned at most once
-    /// for each key built that it consulted.
+    /// for each key built that it consulted. A key that two of its types share waits twice,
+    /// and the first wait that is live queues the field.
     fn run(&mut self) {
         self.scanning = true;
         while let Some((key, s, f)) = self.queue.pop() {
@@ -1087,8 +1150,8 @@ impl Buildable {
             SCANS.set(SCANS.get() + 1);
             // Taken, not cloned, for the scan: `buildable` reads no key's flags.
             let (node, flags) = (self.keys[key].0, mem::take(&mut self.keys[key].1));
-            let mut consulted = Vec::new();
-            let buildable = self.buildable(self.slots[node][s][f], &flags, &mut consulted);
+            let mut walk = Walk::default();
+            let buildable = self.buildable(self.slots[node][s][f], &flags, &mut walk);
             self.keys[key].1 = flags;
             if buildable {
                 let remaining = &mut self.pending[key][s].0;
@@ -1098,7 +1161,7 @@ impl Buildable {
                 }
             } else {
                 self.pending[key][s].1[f] = self.scans;
-                for d in consulted {
+                for d in walk.consulted {
                     self.waiting[d].push((key, s, f, self.scans));
                 }
             }
@@ -1119,6 +1182,40 @@ impl Buildable {
     }
 }
 
+/// Adds to `consulted` the key of each application in `ty` that cannot be built, and is not
+/// under one that can, after the keys of its arguments. `seen` holds the types it has added.
+fn consult(
+    ty: Type,
+    verdicts: &FxHashMap<Type, (bool, usize, TypeArgs)>,
+    seen: &mut FxHashSet<Type>,
+    consulted: &mut Vec<usize>,
+) {
+    let Some(&(built, key, args)) = verdicts.get(&ty) else {
+        return;
+    };
+    if built || !seen.insert(ty) {
+        return;
+    }
+    #[cfg(test)]
+    TYPE_WALK_STEPS.set(TYPE_WALK_STEPS.get() + 1);
+    for &arg in args.get() {
+        consult(arg, verdicts, seen, consulted);
+    }
+    consulted.push(key);
+}
+
+/// What one top-level call of `Buildable::buildable` has read: the scan of a field, or the fields
+/// of a key's slots.
+#[derive(Default)]
+struct Walk {
+    /// By type, whether it can be built and the key of its application.
+    verdicts: FxHashMap<Type, (bool, usize, TypeArgs)>,
+    /// The applications whose keys are in `consulted`.
+    seen: FxHashSet<Type>,
+    /// The keys, none of them built, that the types read need.
+    consulted: Vec<usize>,
+}
+
 /// Whether a field of type `ty` can wait to be built: only a class, an enum or a type parameter
 /// can. `Buildable::buildable` finds any other type, and an error type, always buildable.
 fn may_wait(ty: Option<Type>) -> bool {
@@ -1135,7 +1232,9 @@ thread_local! {
     /// How many fields `Buildable::run` has scanned on this thread.
     pub(super) static SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many types the checker's type walks have visited on this thread: `Buildable`'s
-    /// `buildable` and `reached`, `holds_table`, `holds`, `inline_enums`, `names_itself` and
-    /// `cycle::named`. Each ticks once for each type it reads.
+    /// `verdict`, `consult` and `reached`, `holds_table`, `holds`, `inline_enums`, `names_itself`
+    /// and `cycle::named`. Each ticks once for each type it reads. A walk visits each distinct
+    /// type of its unit once. A field that names a chain again starts a new unit: `m` fields
+    /// that name one alias of `k` distinct types still cost `m * k`.
     pub(super) static TYPE_WALK_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
