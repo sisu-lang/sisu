@@ -95,3 +95,22 @@ pub(crate) fn pending(path: &Path) {
         out.status
     );
 }
+
+/// Checks the mir case at `path`, a program whose mir the site shows: `sisu build --emit mir`
+/// prints its `.mir`. With `bless`, rewrites the `.mir` instead.
+pub(crate) fn mir(path: &Path, bless: bool) {
+    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
+        .args(["build", "--emit", "mir"])
+        .arg(path)
+        .output()
+        .expect("sisu starts");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}: {}",
+        path.display(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let mir = String::from_utf8_lossy(&out.stdout).into_owned();
+    support::expect_files(&[(path.with_extension("mir"), mir)], bless);
+}
