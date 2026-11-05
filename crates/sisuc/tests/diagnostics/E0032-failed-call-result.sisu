@@ -6,6 +6,23 @@
 // THEN it reports the call's own error, and the mismatch of the result type with its context
 // AND a callee whose result an argument decides (`gen`, `Option.Some`, `dbg`, `get`, `i64(x, 1)`),
 // and a call that fails its block bound, report no mismatch
+//
+// GIVEN a call whose count is wrong, and that gives a bound to its own type parameter, or a
+// written type argument list that fails
+// WHEN `sisu check` runs on it
+// THEN it reports the count, and the list when the list fails, and no mismatch: the corrected call
+// is `Error` when a bound fails or its list fails, and it has no type when the bound has no list
+// AND a bound that holds, with a written list, keeps the type that the list fixes
+//
+// GIVEN a built-in method or a prelude function with a label or an argument that fails
+// WHEN `sisu check` runs on it
+// THEN it reports the mismatch of its result type, and the error of the label or of the argument
+//
+// GIVEN a generic class or variant whose written list, or alias, fixes its type, and that fails
+// on its fields, its labels or its count
+// WHEN `sisu check` runs on it
+// THEN it reports the mismatch of that type
+// AND when a bound of the list fails, or the list fails, it reports no mismatch
 class Node {
     v: i64
     fn ys(self, n: i64) -> [string] { [] }
@@ -20,6 +37,7 @@ class Bx<T> {
     v: T
     fn get(self, n: i64) -> T { self.v }
     fn n(self, k: i64) -> i64 { k }
+    fn mk<U: Eq>(self, u: U) -> T { self.v }
 }
 class Cat: Named {
     fn name(self) -> string { "cat" }
@@ -39,6 +57,32 @@ fn g(n: i64) -> [string] { [] }
 fn o(n: i64) -> i64? { None }
 fn b(n: i64) -> i64 { n }
 fn gen<T>(t: T) -> [T] { [t] }
+
+class N {}
+class B<T> {
+    v: T
+    fn g<U>(self, n: U) -> T { self.v }
+}
+class Bq<T: Eq> {
+    v: T
+}
+enum E<T> {
+    V(T)
+}
+enum Eq2<T: Eq> {
+    V(T)
+}
+type C = E<i64>
+interface Keep {
+    fn keep<U: Eq>(self, x: U) -> [U]
+}
+fn bq<T: Eq>(t: T) -> [T] { [t] }
+fn hb<T: Eq>(t: T) -> [string] { [] }
+fn ge<T: Eq>(n: T) -> T { n }
+fn h<T: Eq>(n: T) -> [string] { [] }
+fn h2<T>(t: T) -> [string] { [] }
+fn k() -> [string] { [] }
+fn u() {}
 
 fn wrong_expected() {
     let _n: i64 = g("s")
@@ -147,5 +191,119 @@ fn field_after_ctor() {
 }
 fn extension(c: Node) {
     let _n: i64 = c.zs(1, 2)
+}
+fn a1_bound_fails() {
+    let _s: string = bq<N>(N(), 2)
+}
+fn a2_bound_fails_no_list() {
+    let _s: string = hb(N(), 1)
+}
+fn a3_bound_fails_method() {
+    let _s: string = Bx(v: 1).mk<N>(N(), 2)
+}
+fn a4_bound_fails_requirement<T: Keep>(t: T) {
+    let _s: string = t.keep<N>(N(), 1)
+}
+fn a5_bound_fails_no_argument() {
+    let _s: string = ge<N>()
+}
+fn a6_bound_no_list_method() {
+    let _s: string = Bx(v: 1).mk(1, 2)
+}
+fn a7_bound_holds() {
+    let _s: string = ge<i64>(1, 2)
+}
+fn a8_bound_holds_result_fixed() {
+    let _s: string = h<i64>(1, 2)
+}
+fn a9_bound_no_list() {
+    let _s: string = hb(1, 2)
+}
+fn b1_list_count() {
+    let _s: string = h2<i64, i64>(1, 2)
+}
+fn b2_list_unknown_type() {
+    let _s: string = B(v: 1).g<Nope>()
+}
+fn b3_list_count_method() {
+    let _s: string = B(v: 1).g<i64, bool>()
+}
+fn b4_list_unit() {
+    let _s: string = B(v: 1).g<unit>()
+}
+fn b5_list_unknown_type_function() {
+    let _s: string = h2<Nope>(1, 2)
+}
+fn b6_list_count_generic_result() {
+    let _s: string = gen<i64, i64>(1, 2)
+}
+fn b7_list_on_function_without_parameters() {
+    let _s: string = k<i64>(1)
+}
+fn c1_number_label(b: f64) {
+    let _s: string = b.pow(n: 1.0)
+}
+fn c2_number_argument(b: f64) {
+    let _s: string = b.pow("x")
+}
+fn c3_eq_argument(e: Flag) {
+    let _s: string = e.eq(1)
+}
+fn c4_print_label() {
+    let _s: string = print(n: 1)
+}
+fn c5_panic_label() {
+    let _s: string = panic(n: "x")
+}
+fn c6_todo_label() {
+    let _s: string = todo(n: "x")
+}
+fn c7_print_no_value() {
+    let _s: string = print(u())
+}
+fn d1_class_missing_field() {
+    let _s: string = B<i64>()
+}
+fn d2_class_unknown_field() {
+    let _s: string = B<i64>(w: 1)
+}
+fn d3_class_wrong_field() {
+    let _s: string = B<i64>(v: "x")
+}
+fn d4_variant_count() {
+    let _s: string = E<i64>.V()
+}
+fn d5_variant_label() {
+    let _s: string = E<i64>.V(n: 1)
+}
+fn d6_variant_wrong_argument() {
+    let _s: string = E<i64>.V("x")
+}
+fn d7_some_count() {
+    let _s: string = Some<i64>(1, 2)
+}
+fn d8_some_wrong_argument() {
+    let _s: string = Some<i64>("x")
+}
+fn d9_ok_count() {
+    let _s: string = Ok<i64, string>(1, 2)
+}
+fn d10_alias_variant_count() {
+    let _s: string = C.V()
+}
+fn d11_some_count_unwritten() {
+    let _s: string = Some(1, 2)
+}
+fn d12_class_missing_field_unwritten() {
+    let _s: string = B()
+}
+fn d13_class_bound_fails() {
+    let _s: string = Bq<Node>()
+}
+fn d14_variant_bound_fails() {
+    let _s: string = Eq2<Node>.V()
+}
+fn d15_class_list_fails() {
+    let _s: string = B<Nope>()
 }
 fn main() {}
