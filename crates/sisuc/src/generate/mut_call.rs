@@ -22,7 +22,7 @@ enum Kind {
     Field(usize, usize),
     /// A `mut` field of a field of the object that the local holds: the class and the field of
     /// the object, then the class and the field of that field's object.
-    Nested((usize, usize), (usize, usize)),
+    FieldOfField((usize, usize), (usize, usize)),
     /// An element of the array that the local holds.
     Element,
 }
@@ -217,9 +217,9 @@ impl Gen<'_> {
                     continue;
                 };
                 for (h, field) in self.scope.classes[inner].fields.iter().enumerate() {
-                    if field.mutable && !self.scope.contains_class(&field.ty) {
+                    if self.scope.target_field(field) {
                         places.push(Place {
-                            kind: Kind::Nested((id, g), (inner, h)),
+                            kind: Kind::FieldOfField((id, g), (inner, h)),
                             root,
                             ty: field.ty.clone(),
                             size: field.cap,
@@ -323,7 +323,7 @@ impl Gen<'_> {
                 let text = format!("{name}.{field}");
                 self.w.text(&text);
             }
-            Kind::Nested((class, g), (inner, h)) => {
+            Kind::FieldOfField((class, g), (inner, h)) => {
                 let outer = &self.scope.classes[class].fields[g].name;
                 let field = &self.scope.classes[inner].fields[h].name;
                 self.w.text(&format!("{name}.{outer}.{field}"));
@@ -414,7 +414,7 @@ impl Gen<'_> {
         let info = self.invoke_with(callee, false, &chosen, &mut Vec::new());
         self.nested = false;
         self.statements += 1;
-        // A later argument runs after the effect of this call (decision 2).
+        // This call does not go through `Gen::expr`, which records the effect of an impure value.
         self.effect = true;
         Some(info)
     }
@@ -1074,7 +1074,8 @@ mod tests {
 
     /// A generator with the class `K0`, which has a `mut` field `g2: i64` and a field `g3: i64`
     /// that is not `mut`, the class `K1`, which has a field `g1: K0` that is not `mut`, and the
-    /// locals `v1` of `K1` and `v2` of `K1?`.
+    /// locals `v1` of `K1`, `v2` of `K1?` and `v3` of `bool`, which is assignable. No call of
+    /// `f1` can take `v3`.
     fn gen_with_field_of_field(data: &[u8]) -> Gen<'_> {
         let field = |name: &str, ty, mutable, cap| Field {
             name: name.to_string(),
@@ -1105,12 +1106,16 @@ mod tests {
         g.scope
             .vars
             .push(local("v2", Ty::Optional(Box::new(class))));
+        // The only place that an assignment may change: the other locals have no `mut` field.
+        g.scope
+            .vars
+            .push(Var::new("v3".to_string(), Ty::Bool, true, 0, 0, 0));
         g
     }
 
     /// GIVEN the class `K0` with a `mut` field `g2: i64` and a field `g3: i64` that is not `mut`,
-    /// the class `K1` with a field `g1: K0` that is not `mut`, and the locals `v1` of `K1` and
-    /// `v2` of `K1?`
+    /// the class `K1` with a field `g1: K0` that is not `mut`, and the locals `v1` of `K1`,
+    /// `v2` of `K1?` and `v3` of `bool`
     /// WHEN the places of the point are listed
     /// THEN `v1` has one place of a field of a field, `v1.g1.g2`, which has the type and the cap
     /// of `g2`; `v2`, which `?.` goes through, has none; and no place is `v1.g1.g3`
@@ -1118,7 +1123,7 @@ mod tests {
     fn mut_places_should_give_a_field_of_a_field_place_for_a_class_local() {
         let mut g = gen_with_field_of_field(&[]);
         let nested: Vec<Place> = (g.mut_places().into_iter())
-            .filter(|place| matches!(place.kind, Kind::Nested(..)))
+            .filter(|place| matches!(place.kind, Kind::FieldOfField(..)))
             .collect();
         assert_eq!(nested.len(), 1);
         assert_eq!(
@@ -1129,8 +1134,8 @@ mod tests {
         assert_eq!(g.w.out.program, "v1.g1.g2");
     }
 
-    /// GIVEN the classes and the locals of `gen_with_field_of_field`, and `f1`, which has a `mut`
-    /// parameter of `i64`
+    /// GIVEN the classes and the locals of `gen_with_field_of_field`, where `v3` of `bool` is a
+    /// place that no call of `f1` can take, and `f1`, which has a `mut` parameter of `i64`
     /// WHEN a `mut` call or an `exchange` is written for the point, from many seeds
     /// THEN some seed writes a call of `f1` that passes `mut v1.g1.g2`
     /// AND some seed writes `exchange(mut v1.g1.g2, `

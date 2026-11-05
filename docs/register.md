@@ -54,7 +54,7 @@ are GitHub issues.
 | The walk over the parts that a helper visits is written twice. Mono checks the conformances that apply; `calls_written` takes a wider set on purpose. | `Mono::walk`; `conformance::calls_written` | Milestone 9 part 2 |
 | The lexer's layout tracker restates parser positions, and `selfhost/lexer.sisu` copies it. | `lexer` (`Statements`, `continues_params`, `check_line_start`); `selfhost/lexer.sisu` | Milestone 9 function-type syntax |
 | Number behaviour comes from `ty != Type::U8`, and about 20 hand-written lists name the number types. | `codegen::arith`; `check` | Number types, task 1 |
-| The fuzzer copies the checker's conversion rules by hand, and keeps its own list of prelude functions that have no effect and cannot panic. It passes its context in the `synth`, `typed`, `bare`, `leaves` and `untyped_branch` flags. | `generate::coverage` (`CONVERSIONS`, `PURE_PRELUDE`); `generate::Gen` | Number types |
+| The fuzzer copies the checker's conversion rules by hand, and keeps its own list of prelude functions that have no effect and cannot panic. It passes its context in the `synth`, `typed`, `bare`, `leaves`, `untyped_branch` and `nested` flags. | `generate::coverage` (`CONVERSIONS`, `PURE_PRELUDE`); `generate::Gen` | Number types |
 | The checker uses its five name maps directly in about 80 places, and no lookup function hides them. | `check` (`function_ids`, `class_ids`, `enum_ids`, `interface_ids`, `constants`) | Milestone 11, Task 0 |
 | A function's identity is its display name (`"main"`). | `mir::params`, `mir` (`f.name == "main"`) | Milestone 11 or the C FFI |
 
