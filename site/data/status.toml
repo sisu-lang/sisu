@@ -382,6 +382,11 @@ state = "planned"
 notes = [["Roadmap: later and stretch goals", "docs/roadmap.md#later-and-stretch-goals"]]
 
 [[area.feature]]
-text = "A language reference"
+text = "A language reference, with examples the tests run"
 state = "works"
 notes = [["Language reference", "docs/reference/README.md"]]
+
+[[area.feature]]
+text = "A specification with the exact rules"
+state = "planned"
+notes = [["Roadmap: gaps before production", "docs/roadmap.md#gaps-before-production"]]

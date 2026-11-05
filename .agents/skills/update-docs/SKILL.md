@@ -57,7 +57,7 @@ Read each target below before you decide it needs no edit.
 | `docs/roadmap.md` | `site/data/status.toml` |
 | A diagnostic code added or removed | `site/data/categories.toml` |
 | An ADR added | A row on `site/src/decisions.html` |
-| Closures landing | Move `site/programs/pending/orders.sisu` to `site/programs/run/`; the pending case says so |
+| Closures landing | Move `site/programs/pending/orders.sisu` to `site/programs/run/`, in place of the `orders.sisu` that Home shows today, and write its `.out`; the pending case says so |
 | A stage, the runtime (`crates/runtime`) or `docs/architecture.md` | The Architecture page, `site/src/architecture.html`, and the page's hand-kept commit |
 | A command, a prerequisite, CI (`.github/workflows/`), `CONTRIBUTING.md`, `AGENTS.md` or `CODING_STANDARDS.md` | The Contribute page, `site/src/contribute.html`, and "Build it" on Home, and the page's hand-kept commit |
 | A language feature added or changed | The Tour's prose and its "What is not here yet" list in `site/src/tour.html`, and the page's hand-kept commit |
