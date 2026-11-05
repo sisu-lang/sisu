@@ -195,6 +195,18 @@ old external-linkage check measured the standalone caller the same way.
 Interprocedural constant propagation also runs on internal functions, so a
 callee that keeps its calls recurses to a depth that the call sites do not
 fix; see `handover.sisu`.
+
+A call through an `any` table has no symbol to name, so `o2-calls` cannot
+count it. A second marker, `// o2-indirect-calls: <function> <count>`, counts
+the calls through a pointer in the `-O2` body of `<function>`, the release
+of an owned `any` too. The check runs `sisu build -O2 --emit ir` once, and
+only for a case that has the marker. It sets no `SISU_KEEP_FUNCTIONS`, so the
+body is the real one, and it has no rule on parameters. `<function>` must
+still be a function of its own after `-O2`. The check fails with "inlined or
+specialized" if `-O2` inlined it, or made a clone of it, and the body is then
+not its own. Make `<function>` recurse, and not to a depth that its call
+sites fix. A count of 0 is rejected, as for `o2-calls`. See
+`mut_any_o2.sisu`.
 `crates/sisuc/tests/programs` holds the few programs that the small-stack
 tests in `programs.rs` run.
 

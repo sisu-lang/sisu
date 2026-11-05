@@ -231,7 +231,8 @@ fn output_with_stdin(command: &mut Command, stdin: &[u8]) -> Output {
 /// is never compared.
 /// Every run reads `<name>.in` on its standard input, or empty input without one, and gets the
 /// arguments of the case's `// args:` line.
-/// Each `// o2-calls:` marker in the case must hold in the `-O2` IR (see `O2_CALLS`).
+/// Each `// o2-calls:` and `// o2-indirect-calls:` marker in the case must hold in the `-O2` IR
+/// (see `O2_CALLS` and `O2_INDIRECT_CALLS`).
 /// With `bless`, rewrites `<name>.out`, and `<name>.err` when it exists, instead, after every
 /// other check passed.
 pub(crate) fn run(path: &Path, bless: bool) {
@@ -254,6 +255,7 @@ pub(crate) fn run(path: &Path, bless: bool) {
         path.display()
     );
     o2_calls(path);
+    o2_indirect_calls(path);
     let invocation = Invocation::of(path);
     let err_path = path.with_extension("err");
     let expects_stderr = err_path.exists();
@@ -639,14 +641,48 @@ pub(crate) fn case_dir(source: &Path) -> PathBuf {
 /// calls it, with arguments known at run time.
 const O2_CALLS: &str = "// o2-calls:";
 
-/// Stub: the red commit compiles the tests; the fix replaces it.
-pub(crate) fn is_indirect_call(_line: &str) -> bool {
-    false
+/// The marker a `tests/run` case puts on its own line to prove a call through a table:
+/// with `// o2-indirect-calls: <function> <count>`, the body of `<function>` in the `-O2` IR
+/// holds exactly `<count>` calls through a pointer, so the case keeps the call that it relies
+/// on. The count holds every call through a pointer in the body, the release of an owned `any`
+/// too. A count of 0 is rejected, because it holds when every such call is gone. A call through
+/// a table has no symbol to name, so `O2_CALLS` cannot count it.
+/// The check builds the case once with `sisu build -O2 --emit ir` and no `SISU_KEEP_FUNCTIONS`,
+/// so the body is the real one, and no rule on parameters is needed. `<function>` must still be a
+/// function of its own after the pipeline. It is not when `-O2` inlined it, and its body is then
+/// not its own, or when `-O2` made a clone of it (`<function>.specialized.<n>`), because the
+/// original can keep its call while the clones run without it. Make `<function>` recurse, and
+/// not to a depth that its call sites fix, so that `-O2` keeps it.
+const O2_INDIRECT_CALLS: &str = "// o2-indirect-calls:";
+
+/// Whether the IR `line` holds a call through a pointer: a `call` whose target is a `%` value.
+/// `call` is a whole word: not after `%`, `@`, `.`, `-`, `$` or a word character, and followed by
+/// a space, so `%call = tail call` matches at the second `call` only, and `br label %call` not at
+/// all. The target is the first token that starts with `%` or `@` and holds `(`, so a return
+/// type such as `{ i64, i1 }`, a named type, `fastcc` and `range(i64 0, 6)` are skipped. A
+/// target in a quoted name that holds a space is not found. A line of a function body holds no
+/// string, so a `call` in a string is not a case here.
+pub(crate) fn is_indirect_call(line: &str) -> bool {
+    line.match_indices("call ").any(|(at, word)| {
+        let after_a_name = line[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || "%@._-$".contains(c));
+        !after_a_name
+            && line[at + word.len()..]
+                .split_whitespace()
+                .find(|token| token.starts_with(['%', '@']) && token.contains('('))
+                .is_some_and(|target| target.starts_with('%'))
+    })
 }
 
-/// Stub: the red commit compiles the tests; the fix replaces it.
-pub(crate) fn has_specialized_clone(_ir: &str, _function: &str) -> bool {
-    false
+/// Whether `ir` defines a clone of `function` that the optimizer made:
+/// `@sisu.<function>.specialized.<n>`, plain or quoted.
+pub(crate) fn has_specialized_clone(ir: &str, function: &str) -> bool {
+    let clone = format!("sisu.{function}.specialized.");
+    ir.lines()
+        .filter(|line| line.starts_with("define "))
+        .any(|line| line.contains(&format!("@{clone}")) || line.contains(&format!("@\"{clone}")))
 }
 
 /// How LLVM's text names the function `name`: `@sisu.name`, or `@"sisu.name"` when the name holds
@@ -675,16 +711,18 @@ pub(crate) fn function_text<'a>(ir: &'a str, name: &str) -> Option<&'a str> {
 
 /// `sisu build -O2 --emit ir` on the case `path` with `SISU_KEEP_FUNCTIONS=caller`, as the module
 /// before and the module after the pipeline.
-fn o2_ir(path: &Path, caller: &str) -> (String, String) {
+fn o2_ir(path: &Path, caller: Option<&str>) -> (String, String) {
     let dir = path.parent().expect("a case should sit in a directory");
     let name = path.file_name().expect("a case should have a file name");
-    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_sisu"));
+    command
         .current_dir(dir)
-        .env("SISU_KEEP_FUNCTIONS", caller)
         .args(["build", "-O2", "--emit", "ir"])
-        .arg(name)
-        .output()
-        .expect("sisu starts");
+        .arg(name);
+    if let Some(caller) = caller {
+        command.env("SISU_KEEP_FUNCTIONS", caller);
+    }
+    let out = command.output().expect("sisu starts");
     assert_eq!(
         out.status.code(),
         Some(0),
@@ -699,6 +737,29 @@ fn o2_ir(path: &Path, caller: &str) -> (String, String) {
     (before.to_string(), after.to_string())
 }
 
+/// The words of each line of `source` that starts with `marker`, where `shape` names the `N`
+/// words that a marker line holds.
+fn marker_words<'a, const N: usize>(
+    path: &Path,
+    source: &'a str,
+    marker: &str,
+    shape: &str,
+) -> Vec<[&'a str; N]> {
+    source
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix(marker))
+        .map(|words| {
+            words
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap_or_else(|_| {
+                    panic!("{}: `{marker}{words}` is not `{shape}`", path.display())
+                })
+        })
+        .collect()
+}
+
 /// Checks each `O2_CALLS` marker in `path` against `sisu build -O2 --emit ir`, built once per
 /// caller.
 /// The marked caller is measured as a standalone function. In a real build it is inlined, and a
@@ -706,22 +767,8 @@ fn o2_ir(path: &Path, caller: &str) -> (String, String) {
 /// identical call at the call site. So mark calls to callees that write memory.
 fn o2_calls(path: &Path) {
     let source = fs::read_to_string(path).expect("reads the case");
-    let markers: Vec<[&str; 3]> = source
-        .lines()
-        .filter_map(|line| line.trim().strip_prefix(O2_CALLS))
-        .map(|marker| {
-            marker
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .try_into()
-                .unwrap_or_else(|_| {
-                    panic!(
-                        "{}: `{O2_CALLS}{marker}` is not `<caller> <callee> <count>`",
-                        path.display()
-                    )
-                })
-        })
-        .collect();
+    let markers: Vec<[&str; 3]> =
+        marker_words(path, &source, O2_CALLS, "<caller> <callee> <count>");
     let mut built: Vec<(&str, (String, String))> = Vec::new();
     for [outer, callee, count] in markers {
         let count: usize = count.parse().unwrap_or_else(|_| {
@@ -738,7 +785,7 @@ fn o2_calls(path: &Path) {
             path.display()
         );
         if !built.iter().any(|(caller, _)| *caller == outer) {
-            built.push((outer, o2_ir(path, outer)));
+            built.push((outer, o2_ir(path, Some(outer))));
         }
         let (_, (before, optimized)) = built
             .iter()
@@ -773,6 +820,54 @@ fn o2_calls(path: &Path) {
             count,
             "{}: -O2 keeps {kept} calls to `{callee}` in `{outer}`, not {count}; make `{callee}` \
              recurse, and not to a depth the call sites fix, so the optimizer keeps it\n{body}",
+            path.display()
+        );
+    }
+}
+
+/// Checks each `O2_INDIRECT_CALLS` marker in `path` against one `sisu build -O2 --emit ir`, built
+/// only when the case has a marker.
+fn o2_indirect_calls(path: &Path) {
+    let source = fs::read_to_string(path).expect("reads the case");
+    let markers: Vec<[&str; 2]> =
+        marker_words(path, &source, O2_INDIRECT_CALLS, "<function> <count>");
+    if markers.is_empty() {
+        return;
+    }
+    let (before, optimized) = o2_ir(path, None);
+    for [function, count] in markers {
+        let count: usize = count.parse().unwrap_or_else(|_| {
+            panic!(
+                "{}: `{O2_INDIRECT_CALLS} {function} {count}` count is not a number",
+                path.display()
+            )
+        });
+        // A count of 0 holds when the optimizer removed every call, so it proves no call.
+        assert!(
+            count > 0,
+            "{}: `{O2_INDIRECT_CALLS} {function} 0` proves no indirect call; change the case so \
+             -O2 keeps one, and count it",
+            path.display()
+        );
+        assert!(
+            function_text(&before, function).is_some(),
+            "{}: no function named `{function}`",
+            path.display()
+        );
+        let body = function_text(&optimized, function)
+            .filter(|_| !has_specialized_clone(&optimized, function))
+            .unwrap_or_else(|| {
+                panic!(
+                    "{}: -O2 inlined or specialized `{function}`, so its body is not its own; \
+                     make it recurse, and not to a depth its call sites fix",
+                    path.display()
+                )
+            });
+        let kept = body.lines().filter(|line| is_indirect_call(line)).count();
+        assert_eq!(
+            kept,
+            count,
+            "{}: -O2 keeps {kept} indirect calls in `{function}`, not {count}\n{body}",
             path.display()
         );
     }
