@@ -903,7 +903,11 @@ impl Type {
             // An `any` is counted through its data pointer, an object or a box.
             TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_) | TypeKind::Any(..) => true,
             TypeKind::Enum(id, _) => enums[id.0].counted,
-            TypeKind::Optional(payload) => payload.is_counted(enums),
+            TypeKind::Optional(payload) => {
+                #[cfg(test)]
+                crate::codegen::LAYOUT_STEPS.set(crate::codegen::LAYOUT_STEPS.get() + 1);
+                payload.is_counted(enums)
+            }
             TypeKind::I64
             | TypeKind::U8
             | TypeKind::F64

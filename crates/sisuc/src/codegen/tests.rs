@@ -4408,6 +4408,39 @@ fn show_of_a_component_should_find_each_member_in_linear_steps() {
     assert_near_linear(scans(100), scans(200), scans(300));
 }
 
+/// The layout of an optional of `n` layers is worked out once for each layer, not once for each
+/// walk over the layers: `niche` and the `Optional` arm of `llvm_type` keep their answer for each
+/// type, and `retain_or_release` asks `is_counted` once. A walk down the layers in each of them
+/// reads the layers quadratically, and the walks that call them again for each layer read them
+/// cubically (#461).
+#[test]
+fn deep_optionals_should_take_linear_layout_steps() {
+    let steps = |program: &dyn Fn(usize) -> String, n: usize| {
+        LAYOUT_STEPS.set(0);
+        let context = Context::create();
+        compiled(&context, &program(n));
+        LAYOUT_STEPS.get()
+    };
+    // A field and a parameter of an array optional, which has a niche for one layer only.
+    let held = |n: usize| {
+        let q = "?".repeat(n);
+        format!(
+            "class Holder {{\n    mut xs: [i64]{q}\n}}\n\nfn store(h: Holder, xs: [i64]{q}) {{\n    h.xs = xs\n}}\n\nfn main() {{\n    let h = Holder(xs: None)\n    store(h, None)\n    print(h.xs == None)\n}}\n"
+        )
+    };
+    // A `bool` has a niche for each layer until the `i8` has no spare value.
+    let niche_chain = |n: usize| {
+        let q = "?".repeat(n);
+        format!("fn main() {{\n    let x: bool{q} = None\n    print(x == None)\n}}\n")
+    };
+    assert_near_linear(steps(&held, 40), steps(&held, 80), steps(&held, 120));
+    assert_near_linear(
+        steps(&niche_chain, 40),
+        steps(&niche_chain, 80),
+        steps(&niche_chain, 120),
+    );
+}
+
 /// The ring of `n` enums of #245. Each enum links to the next. `main` compares every `End` with
 /// itself, so each enum gets its `walk`, `release` and `eq` helpers.
 fn enum_ring(n: usize) -> String {

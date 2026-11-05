@@ -69,6 +69,10 @@ thread_local! {
     /// the enums that `components` builds the table from. It also counts each call of the one
     /// lookup helper, `member_position`, and not the steps inside it.
     static MEMBER_SCANS: Cell<usize> = const { Cell::new(0) };
+    /// How many calls of `niche`, of the `Optional` arm of `llvm_type`, and of the `Optional` arm
+    /// of `Type::is_counted` have happened on this thread. It counts each call, also one that a
+    /// cache answers.
+    pub(crate) static LAYOUT_STEPS: Cell<usize> = const { Cell::new(0) };
 }
 
 impl<'ctx, 'src> Codegen<'ctx, 'src> {

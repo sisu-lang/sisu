@@ -180,10 +180,14 @@ impl<'ctx> Codegen<'ctx, '_> {
             }
             // An optional with a niche is its payload's storage, and any other is `{ i1, T }`:
             // whether it holds a value, then the value.
-            TypeKind::Optional(payload) => match self.niche(payload) {
-                Some(niche) => Some(self.niche_type(niche.storage)),
-                None => Some(self.optional_pair(payload).into()),
-            },
+            TypeKind::Optional(payload) => {
+                #[cfg(test)]
+                super::LAYOUT_STEPS.set(super::LAYOUT_STEPS.get() + 1);
+                match self.niche(payload) {
+                    Some(niche) => Some(self.niche_type(niche.storage)),
+                    None => Some(self.optional_pair(payload).into()),
+                }
+            }
         }
     }
 
@@ -193,6 +197,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// For an enum, it is the enum's own niche (`EnumLayout::niche`). An optional with a niche
     /// gives the next value of its niche (`next_niche`).
     pub(super) fn niche(&self, payload: Type) -> Option<Niche> {
+        #[cfg(test)]
+        super::LAYOUT_STEPS.set(super::LAYOUT_STEPS.get() + 1);
         let (storage, empty) = match payload.kind() {
             TypeKind::Class(..) => (Storage::Pointer, 0),
             TypeKind::String | TypeKind::Array(_) => (Storage::Value, 0),
