@@ -1795,7 +1795,10 @@ impl<'a> Parser<'a> {
             return Err(DiagnosticKind::MatchIdiom {
                 form: MatchIdiomForm::EnumClass {
                     name: self.source.text(next.span).to_string(),
-                    remove: Span::new(class.start(), next.span.start()),
+                    remove: Span::new(
+                        class.start(),
+                        self.removal_end(class.end(), next.span.start()),
+                    ),
                 },
                 at: class,
             }
@@ -1951,7 +1954,10 @@ impl<'a> Parser<'a> {
                 LetField::Whole {
                     remove: Span::new(
                         self.peek().span.start(),
-                        self.tokens[self.pos + 1].span.start(),
+                        self.removal_end(
+                            self.peek().span.end(),
+                            self.tokens[self.pos + 1].span.start(),
+                        ),
                     ),
                 }
             }
@@ -2064,9 +2070,14 @@ impl<'a> Parser<'a> {
                         (TokenKind::SelfKw, Receiver::Of(owner)) => {
                             // `self` is not `Eof`, so the token after it exists.
                             let after = &self.tokens[self.pos + 2].kind;
+                            let keyword = self.peek().span;
+                            let receiver = self.tokens[self.pos + 1].span;
                             return Err(DiagnosticKind::MutSelf {
-                                keyword: self.peek().span,
-                                receiver: self.tokens[self.pos + 1].span,
+                                keyword,
+                                remove: Span::new(
+                                    keyword.start(),
+                                    self.removal_end(keyword.end(), receiver.start()),
+                                ),
                                 safe: matches!(after, TokenKind::Comma | TokenKind::RParen),
                                 owner: owner.clone(),
                             }
@@ -2470,7 +2481,7 @@ impl<'a> Parser<'a> {
             (TokenKind::Underscore, TokenKind::Loop | TokenKind::While | TokenKind::For) => Some(
                 DiagnosticKind::UnnamedLabel {
                     at,
-                    remove: Span::new(at.start(), next.span.start()),
+                    remove: Span::new(at.start(), self.removal_end(at.end(), next.span.start())),
                 }
                 .into(),
             ),
@@ -2977,22 +2988,10 @@ impl<'a> Parser<'a> {
                         parens: Some(parens),
                     };
                     (kind, span)
-                } else if self.at(&TokenKind::LBrace) {
-                    // Rust's `Rect { w, h }`, or with labels, `Rect { w: x, h: y }`.
-                    let (patterns, _, braces) =
-                        self.sub_patterns(base, &mut reach, &TokenKind::RBrace)?;
-                    // The message goes on one line, but the fix replaces the source as written.
-                    let fields =
-                        Self::listed(&patterns, |span| Cow::Borrowed(self.source.text(span)));
-                    return Err(DiagnosticKind::PatternForm {
-                        form: ForeignPattern::Braces {
-                            form: self.one_line_form(path, &patterns),
-                            replace: Span::new(path.end(), braces.end()),
-                            fields,
-                        },
-                        at: braces,
-                    }
-                    .into());
+                } else if self.at(&TokenKind::LBrace)
+                    && let Some(error) = self.braced_pattern(path, base, &mut reach)?
+                {
+                    return Err(error);
                 } else if qualifier.is_some() {
                     let span = token.span.to(name.span);
                     let kind = PatternKind::Variant {
@@ -3017,6 +3016,62 @@ impl<'a> Parser<'a> {
         }
         self.depth = reach;
         Ok(Pattern { kind, span })
+    }
+
+    /// Rust's `Rect { w, h }`, or with labels, `Rect { w: x, h: y }`, at the next token, after the
+    /// pattern `path`: its error, when a pattern can end at the `}`. Else the `{` is not part of a
+    /// pattern: it stays the next token, `path` is the whole pattern, and the caller reports the
+    /// `{`.
+    fn braced_pattern(
+        &mut self,
+        path: Span,
+        base: Height,
+        reach: &mut Height,
+    ) -> Result<Option<Diagnostic>, Diagnostic> {
+        let open = self.pos;
+        let (patterns, _, braces) = self.sub_patterns(base, reach, &TokenKind::RBrace)?;
+        if !self.pattern_ends() {
+            self.pos = open;
+            *reach = base;
+            return Ok(None);
+        }
+        // The message goes on one line, but the fix replaces the source as written.
+        let fields = Self::listed(&patterns, |span| Cow::Borrowed(self.source.text(span)));
+        Ok(Some(
+            DiagnosticKind::PatternForm {
+                form: ForeignPattern::Braces {
+                    form: self.one_line_form(path, &patterns),
+                    replace: Span::new(path.end(), braces.end()),
+                    fields,
+                },
+                at: braces,
+            }
+            .into(),
+        ))
+    }
+
+    /// Whether a pattern can end before the next token. The token is `=` (a `let`, an `if let` or
+    /// a `while let`), `:` (the type of a `let` pattern), `=>`, `->`, `if` or `|` (a match arm),
+    /// or `,`, `)` or `}` (a sub-pattern; a `|` also joins the alternatives of a sub-pattern). A
+    /// line break and then `=>` or `|` also ends an arm's pattern, because neither can start a
+    /// statement. An `if` after a line break starts a statement, so it is no end.
+    fn pattern_ends(&self) -> bool {
+        match self.peek().kind {
+            TokenKind::Eq
+            | TokenKind::FatArrow
+            | TokenKind::Arrow
+            | TokenKind::If
+            | TokenKind::Pipe
+            | TokenKind::Comma
+            | TokenKind::RParen
+            | TokenKind::RBrace
+            | TokenKind::Colon => true,
+            TokenKind::Newline => self.tokens[self.pos..]
+                .iter()
+                .find(|t| t.kind != TokenKind::Newline)
+                .is_some_and(|t| matches!(t.kind, TokenKind::FatArrow | TokenKind::Pipe)),
+            _ => false,
+        }
     }
 
     /// The error for a string pattern with an interpolation, at the next token, the string's
@@ -3245,6 +3300,19 @@ impl<'a> Parser<'a> {
         Ok((fields, labels, open.to(close)))
     }
 
+    /// The end of a removal whose code ends at byte `after`, when the next token starts at byte
+    /// `next`: the start of the first comment in `after..next`, else `next`. The lexer drops
+    /// comments, and the gap between two tokens holds only white space, line breaks and comments,
+    /// so a removal that ran to `next` would delete the comment. A line break with no comment
+    /// stays in the removal, unlike `mut_not_argument`, which removes spaces and tabs only. A
+    /// comment before the last removed token (`x // c`, then `: a`) is still lost.
+    fn removal_end(&self, after: usize, next: usize) -> usize {
+        let first = self.comments.partition_point(|&start| start < after);
+        self.comments
+            .get(first)
+            .map_or(next, |&start| start.min(next))
+    }
+
     /// Skips a `label:` before a sub-pattern, and returns the label's span and the span from it
     /// to the sub-pattern. `Name::` is no label: `pattern` reports the path.
     fn pattern_label(&mut self) -> Option<(Span, Span)> {
@@ -3260,7 +3328,8 @@ impl<'a> Parser<'a> {
             return None;
         }
         self.pos += 2;
-        Some((label.span, Span::new(label.span.start(), next.span.start())))
+        let end = self.removal_end(colon.span.end(), next.span.start());
+        Some((label.span, Span::new(label.span.start(), end)))
     }
 
     /// `patterns` in parentheses, each as `text` gives it: `(x, y)`.
@@ -3353,11 +3422,13 @@ impl<'a> Parser<'a> {
             (TokenKind::Ident(_), kind) if text == "case" && *kind != TokenKind::FatArrow => {
                 // Swift's `case let .some(x)` also loses its `let` and its `.`. A `let` is not
                 // `Eof`, so the token after it exists.
-                let mut remove = vec![Span::new(token.span.start(), next.span.start())];
+                let end = self.removal_end(token.span.end(), next.span.start());
+                let mut remove = vec![Span::new(token.span.start(), end)];
                 let mut after = next;
                 if next.kind == TokenKind::Let {
                     after = &self.tokens[self.pos + 2];
-                    remove.push(Span::new(next.span.start(), after.span.start()));
+                    let end = self.removal_end(next.span.end(), after.span.start());
+                    remove.push(Span::new(next.span.start(), end));
                 }
                 if after.kind == TokenKind::Dot {
                     remove.push(after.span);
@@ -7957,6 +8028,174 @@ mod tests {
             expr_err("let mut Rect { w, h } = s else { return }"),
             (Code::Expected, 1, 17)
         );
+    }
+
+    /// GIVEN a name followed by `{ ... }` in each place where a pattern stands
+    /// WHEN the parser reads it
+    /// THEN it reports the braced pattern (E0123) only when a pattern can end at the `}`: the next
+    /// token is `=`, `=>`, `->`, `if`, `|`, `,`, `)`, `}` or `:`, or a line break and then `=>`
+    /// or `|`
+    /// AND otherwise it reports the `{` as a stray token (E0011) with no fix, as `let a { }` does
+    #[test]
+    fn a_braced_name_should_be_a_pattern_only_when_a_pattern_can_end_at_its_brace() {
+        let arm = |pattern: &str| format!("    match e {{\n        {pattern}\n    }}");
+        // (statement, code, line, column of the error)
+        let rows: Vec<(String, Code, usize, usize)> =
+            vec![
+            // A stray `{`: the pattern cannot end at the `}`.
+            ("    let a { }".into(), Code::Expected, 2, 11),
+            ("    let a { x }".into(), Code::Expected, 2, 11),
+            ("    let a {\n    }".into(), Code::Expected, 2, 11),
+            ("    let a { w: 1 }".into(), Code::Expected, 2, 11),
+            ("    let Shape.Re { }".into(), Code::Expected, 2, 18),
+            ("    if let a { } {\n    }".into(), Code::Expected, 2, 14),
+            ("    while let a { } {\n    }".into(), Code::Expected, 2, 17),
+            ("    if let a { print(a) }".into(), Code::Expected, 2, 14),
+            // An `if` after a line break starts a statement, not a guard.
+            ("    let a { }\n    if true { }".into(), Code::Expected, 2, 11),
+            // A guard on the next line: the `{` is the mistake.
+            (arm("E.P { x }\n        if x > 0 => print(x)"), Code::Expected, 3, 13),
+            // A pattern ends at the `}`: one row for each token of the rule.
+            ("    let a { } = s".into(), Code::PatternForm, 2, 11),
+            ("    let a { } = s else { return }".into(), Code::PatternForm, 2, 11),
+            ("    let a {} = 1".into(), Code::PatternForm, 2, 11),
+            ("    let R { w }: R = r".into(), Code::PatternForm, 2, 11),
+            (arm("E.P { x } => print(x)"), Code::PatternForm, 3, 13),
+            (arm("E.P { x } -> print(x)"), Code::PatternForm, 3, 13),
+            (arm("E.P { x } if x > 0 => print(x)"), Code::PatternForm, 3, 13),
+            (arm("E.P { x } | E.Q => print(1)"), Code::PatternForm, 3, 13),
+            (arm("E.Q | E.P { x } => print(1)"), Code::PatternForm, 3, 19),
+            (arm("Some(R { w }) => print(w)"), Code::PatternForm, 3, 16),
+            (arm("Some(R { w }, 1) => print(w)"), Code::PatternForm, 3, 16),
+            // The inner pattern is the first one that ends at its `}`.
+            (arm("E.P { x: R { w } } => print(1)"), Code::PatternForm, 3, 20),
+            ("    match e { E.P { x } }".into(), Code::PatternForm, 2, 19),
+            // A line break and then `=>` or `|`: neither can start a statement.
+            (arm("E.P { x }\n        => print(x)"), Code::PatternForm, 3, 13),
+            (arm("E.P { x }\n        | E.Q => print(1)"), Code::PatternForm, 3, 13),
+            (
+                "    match o {\n        Some(\n            R { w }\n        ) => print(w)\n    }"
+                    .into(),
+                Code::PatternForm,
+                4,
+                15,
+            ),
+        ];
+        for (stmt, code, line, column) in rows {
+            let src = format!("fn main() {{\n{stmt}\n}}");
+            let d = parse_diagnostic(&src);
+            let (got_line, got_column) = line_col(&src, d.span().start());
+            assert_eq!(
+                (d.code(), got_line, got_column),
+                (code, line, column),
+                "{src}"
+            );
+            if code == Code::Expected {
+                assert_eq!(&src[d.span().range()], "{", "{src}");
+                assert!(d.fixes().is_empty(), "{src}");
+            }
+        }
+        // `let mut` is left as it is: E0011 at the `mut`.
+        let src = "fn main() {\n    let mut a { }\n}";
+        let d = parse_diagnostic(src);
+        assert_eq!(
+            (d.code(), line_col(src, d.span().start())),
+            (Code::Expected, (2, 9))
+        );
+        assert_eq!(&src[d.span().range()], "mut");
+    }
+
+    /// The text that each edit of each fix of the one error of `src` removes, with the check that
+    /// no edit replaces it with text.
+    fn removed_text(src: &str) -> Vec<String> {
+        let d = parse_diagnostic(src);
+        let mut removed = Vec::new();
+        for fix in d.fixes() {
+            for edit in fix.edits() {
+                assert_eq!(edit.replacement(), "", "{src}");
+                removed.push(src[edit.span().range()].to_string());
+            }
+        }
+        removed
+    }
+
+    /// GIVEN each fix that removes a keyword, a label or a `mut` up to the next token, with a
+    /// comment in the gap before that token
+    /// WHEN the parser makes the edits of the fix
+    /// THEN each edit ends where the comment starts, so the fix keeps the comment
+    #[test]
+    fn a_removal_should_keep_a_comment_in_its_gap() {
+        let rows: [(&str, &[&str]); 8] = [
+            (
+                "fn main() {\n    match e {\n        E.P(x: // c\n            a, y: b) => print(a)\n    }\n}",
+                &["x: ", "y: "],
+            ),
+            (
+                // The comment touches the `:`.
+                "fn main() {\n    match e {\n        E.P(x:// c\n            a, y: b) => print(a)\n    }\n}",
+                &["x:", "y: "],
+            ),
+            ("enum class // c\nFoo {\n    A\n}", &["class "]),
+            ("class A {\n    let // c\n    x: i64\n}", &["let "]),
+            ("fn main() {\n    _: // c\n    loop {\n    }\n}", &["_: "]),
+            (
+                "fn main() {\n    match o {\n        case // c\n        Some(x) => print(x)\n    }\n}",
+                &["case "],
+            ),
+            (
+                "fn main() {\n    match o {\n        case let // c\n        .Some(x) => print(x)\n    }\n}",
+                &["case ", "let ", "."],
+            ),
+            (
+                "class A {\n    fn get(mut // c\n        self) -> i64 { 1 }\n}",
+                &["mut "],
+            ),
+        ];
+        for (src, want) in rows {
+            assert_eq!(removed_text(src), want, "{src}");
+        }
+    }
+
+    /// GIVEN each fix of the last test, with no comment in the gap, a comment on the line before
+    /// the removed token, and a comment after the next token on its line
+    /// WHEN the parser makes the edits of the fix
+    /// THEN each edit reaches the next token, as it did before: a comment outside the gap changes
+    /// nothing
+    #[test]
+    fn a_removal_with_no_comment_in_its_gap_should_reach_the_next_token() {
+        let rows: [(&str, &[&str]); 7] = [
+            (
+                "fn main() {\n    match e {\n        // before\n        E.P(x:\n            a, y: b) => print(a) // later\n    }\n}",
+                &["x:\n            ", "y: "],
+            ),
+            (
+                "// before\nenum class\nFoo { // later\n    A\n}",
+                &["class\n"],
+            ),
+            (
+                "class A {\n    // before\n    let\n    x: i64 // later\n}",
+                &["let\n    "],
+            ),
+            (
+                "fn main() {\n    // before\n    _:\n    loop { // later\n    }\n}",
+                &["_:\n    "],
+            ),
+            (
+                "fn main() {\n    match o {\n        // before\n        case\n        Some(x) => print(x) // later\n    }\n}",
+                &["case"],
+            ),
+            (
+                "fn main() {\n    match o {\n        // before\n        case let\n        .Some(x) => print(x) // later\n    }\n}",
+                &["case ", "let\n        ", "."],
+            ),
+            (
+                "class A {\n    // before\n    fn get(mut\n        self) -> i64 { 1 } // later\n}",
+                &["mut\n        "],
+            ),
+        ];
+        for (src, want) in rows {
+            assert_eq!(removed_text(src), want, "{src}");
+        }
     }
 
     /// GIVEN a `let` pattern with a `:` and no type after it
