@@ -505,6 +505,12 @@ fn a_some_through_an_alias_should_keep_the_alias_type_when_it_fails() {
                 "let s: string = MM<i64>.Some(n: Some(1))",
                 &[(Mismatch, CALL), (LabeledArgument, CALL + 13)],
             ),
+            // A guard: an open alias with no list stays `Error`, as its arguments bind `T`.
+            (
+                "s11",
+                "let s: string = P.Some(n: 1)",
+                &[(LabeledArgument, CALL + 7), (Mismatch, CALL + 10)],
+            ),
         ],
     );
 }
