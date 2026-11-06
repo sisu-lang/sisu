@@ -273,12 +273,17 @@ impl Checker<'_> {
         let enum_name = enum_name.as_str();
         let Some(&variant) = info.index.get(&member.name) else {
             match info.methods.get(&member.name) {
-                Some(Declared::Known(_)) => self.report(DiagnosticKind::MemberKind {
-                    name: member.name.to_string(),
-                    enum_name: enum_name.to_string(),
-                    method: true,
-                    at: member.span,
-                }),
+                Some(&Declared::Known(func)) => {
+                    // An argument at a `mut` parameter gets the help of a place.
+                    let muts = self.signatures[func.0].muts.clone();
+                    self.stamp_mut_params(call.map_or(&[], |(args, _)| args), &muts);
+                    self.report(DiagnosticKind::MemberKind {
+                        name: member.name.to_string(),
+                        enum_name: enum_name.to_string(),
+                        method: true,
+                        at: member.span,
+                    });
+                }
                 // The method's own error is reported.
                 Some(Declared::Broken) => {}
                 None => {

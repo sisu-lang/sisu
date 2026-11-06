@@ -915,6 +915,7 @@ impl Checker<'_> {
         let declared = sig.type_params.clone();
         let bounds = sig.bounds.clone();
         let conforming = sig.conformance.is_some();
+        self.stamp_mut_params(args, &muts);
         // A method's receiver binds its owner's parameters.
         let owner = match receiver.as_ref().and_then(type_of) {
             Some(ty) => self.owner_args(func, ty).get(),
@@ -941,14 +942,11 @@ impl Checker<'_> {
                 .zip(&shown)
                 .enumerate()
                 .map(|(i, ((arg, &param), text))| {
-                    if muts.get(i) == Some(&true) {
-                        if let Some(checked) =
+                    if muts.get(i) == Some(&true)
+                        && let Some(checked) =
                             self.mut_argument(arg, i, param, (&mut_site, &mut parts))
-                        {
-                            return checked;
-                        }
-                        // A value at a `mut` parameter: its help is the one of a place.
-                        self.body.mut_values.insert(arg.value.span);
+                    {
+                        return checked;
                     }
                     if let (Some(want), Some(text)) = (param, text) {
                         self.show(arg.value.span, want, text);

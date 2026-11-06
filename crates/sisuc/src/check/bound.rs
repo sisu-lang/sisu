@@ -38,6 +38,7 @@ impl Checker<'_> {
             return self.call_of_rejected_method(site.name, args);
         }
         let Some(picked) = self.pick_required(ty, site, span, &found) else {
+            self.stamp_candidates(&found, args);
             self.labels(args);
             self.stray(args);
             return Err(Poisoned::error());
@@ -62,6 +63,7 @@ impl Checker<'_> {
         let bounds = requirement.bounds.clone();
         let mut owner = vec![ty];
         owner.extend_from_slice(iargs.get());
+        self.stamp_mut_params(args, &muts);
         if params.len() != args.len() {
             let fixed = self.counted_result(ret, &declared, &owner, &bounds, site);
             return self.wrong_count(span, name, params.len(), args, fixed);
@@ -127,6 +129,17 @@ impl Checker<'_> {
                 let result = if failed { fixed } else { solved };
                 spread(Err(Poisoned::of(result)), flagged && fixed.is_none())
             }
+        }
+    }
+
+    /// Stamps the arguments that sit at a `mut` parameter of any of the `found` candidates, when
+    /// the call picks none of them: each gets the help of a place.
+    fn stamp_candidates(&mut self, found: &[Required], args: &[ast::Arg]) {
+        for one in found {
+            let muts = self.interfaces[one.interface.0].requirements[one.method]
+                .muts
+                .clone();
+            self.stamp_mut_params(args, &muts);
         }
     }
 

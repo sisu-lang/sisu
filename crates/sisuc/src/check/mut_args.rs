@@ -337,6 +337,16 @@ impl Checker<'_> {
         }
     }
 
+    /// Stamps each argument of `args` at a `mut` parameter of `muts`, for every call whose callee
+    /// is known: a value at a `mut` parameter gets the help of a place. A call that fails early
+    /// checks its arguments as values, so this runs before the count and the types are tested.
+    /// `muts` can be shorter than `args`, when the count is wrong.
+    pub(super) fn stamp_mut_params(&mut self, args: &[ast::Arg], muts: &[bool]) {
+        for (arg, _) in args.iter().zip(muts).filter(|&(_, &mutable)| mutable) {
+            self.body.mut_values.insert(arg.value.span);
+        }
+    }
+
     /// The place that the `mut` argument `arg` names: a `let mut` local or `mut` parameter, a
     /// `mut` field of a class object, or an element of one. Why it is none otherwise, with no
     /// report: the caller reports E0169. The range index of a slice comes first. The place

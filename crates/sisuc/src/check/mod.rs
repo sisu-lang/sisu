@@ -1075,9 +1075,9 @@ struct Body {
     /// The span of each `Some` that gave an error: it is never `None`, whatever type the error
     /// gives it, so printing it gets no W0015 (`warn_if_optional`).
     failed_some_spans: FxHashSet<Span>,
-    /// The span of each argument value that is written with `mut`, or that a call checks as a
-    /// value at a `mut` parameter. The value is checked as the base of an index is (`indexed`):
-    /// the `?.` fix of an E0062 in it leads to a path that is no place (E0170).
+    /// The span of each argument value that is written with `mut`, or is at a `mut` parameter of
+    /// a callee that the call knows. `expr` checks such a value as the base of an index
+    /// (`indexed`). The `?.` fix of an E0062 in it leads to a path that is no place (E0170).
     mut_values: FxHashSet<Span>,
     /// The target of the compound assignment being checked, whose reads are not reads: they
     /// only give the value back to the target.
