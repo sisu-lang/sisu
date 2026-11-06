@@ -1250,6 +1250,7 @@ impl Gen<'_> {
         }
         self.language_bounds(!declared.is_empty(), &mut calls);
         self.any_values(&mut calls);
+        self.gap_forms(&mut calls);
         calls.extend(self.associated_cycle());
         let expected = std::mem::take(&mut calls.expected);
         self.write_shapes(calls);
@@ -1524,6 +1525,58 @@ impl Gen<'_> {
                 }
                 None => calls.push(line),
             }
+        }
+    }
+
+    /// Declares the classes `PushTally`, `PushHolder` and `AppendField` and the function
+    /// `twice_set`, and writes the statements of `shapes` that reach the checks no other rule
+    /// reaches (`known_gaps.txt` lists the rest). Each form has a fixed text and makes no draw, so
+    /// it moves nothing that a later seed writes:
+    /// - `push` of a class, called on a local, a local that holds an optional, an element and a
+    ///   field, and through `?.` on a field that holds an optional;
+    /// - a `loop` that gives a `u8?` and then a literal, in a `let` with no written type;
+    /// - a `loop` whose `break` of `T` widens to the `T?` of the loop, and one where a `break` in
+    ///   an inner loop gives the outer loop `None`;
+    /// - a call with two `mut` arguments that are elements of one array;
+    /// - a `string` field that appends to itself with `+=` and with `a.f = a.f + e`;
+    /// - a `match` with an arm that no value reaches (W0006), and a statement with a `;` that
+    ///   follows its block (W0007). The checker accepts a warning in a generated program.
+    ///
+    /// The loops count down from one, as `every_loop_is_bounded` needs. An index is a literal.
+    fn gap_forms(&mut self, calls: &mut Calls) {
+        self.w.text(
+            "class PushTally {\n    mut total: i64\n    fn push(self, x: i64) -> i64 {\n        self.total += x\n        self.total\n    }\n}\nclass PushHolder {\n    mut held: PushTally?\n    kept: PushTally\n}\nclass AppendField {\n    mut text: string\n}\nfn twice_set(mut a: i64, _b: i64, mut c: i64) {\n    a += 10\n    c += 20\n}",
+        );
+        self.w.line();
+        for line in [
+            "let tally = PushTally(total: 3)",
+            "print(tally.push(1))",
+            "let maybe: PushTally? = tally",
+            "print(maybe?.push(1) ?? 9)",
+            "let tallies = [tally]",
+            "print(tallies[0].push(1))",
+            "let holder = PushHolder(held: PushTally(total: 0), kept: PushTally(total: 0))",
+            "print(holder.kept.push(1))",
+            "print(holder.held?.push(1) ?? 9)",
+            "let opt_byte: u8? = 200",
+            "let joined = ({\n        let mut left = 1\n        loop {\n            if left == 0 { break opt_byte }\n            left -= 1\n            break 6\n        }\n    })",
+            "print(joined ?? 0)",
+            "let widened: i64? = ({\n        let mut left = 1\n        loop {\n            if left == 0 { break 3 }\n            left -= 1\n            break None\n        }\n    })",
+            "print(widened ?? 4)",
+            "let crossed: string? = ({\n        let mut left = 1\n        outer: loop {\n            if left == 0 { break \"a\" }\n            left -= 1\n            let mut inner = 1\n            loop {\n                if inner == 0 { break }\n                inner -= 1\n                break outer None\n            }\n        }\n    })",
+            "print(crossed ?? \"b\")",
+            "let mut slots = [1, 2]",
+            "twice_set(mut slots[0], 0, mut slots[1])",
+            "print(slots)",
+            "let appended = AppendField(text: \"a\")",
+            "appended.text += \"b\"",
+            "appended.text = appended.text + \"c\"",
+            "print(appended.text)",
+            "let arm = slots.len()",
+            "let dead = match arm {\n        _ => 1\n        2 => 2\n    }",
+            "print(dead);",
+        ] {
+            calls.push(line);
         }
     }
 
