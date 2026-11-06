@@ -2037,11 +2037,10 @@ fn main() {
     fn a_use_that_nothing_poisons_should_keep_its_error() {
         use Code::{
             AssignToFunction as Assign, BindingNotFound as NoBind, BraceOnNewLine as Brace,
-            BuiltInName as Built, CannotBeAny as CannotAny, CannotInfer as Infer,
-            ConformanceBody as ConfBody, DefinedTwice as Twice, FunctionNotFound as NoFn,
-            InterfaceAsType as IfaceType, Mismatch, NotAnInterface as NotIface,
-            PrintArgument as Print, TypeAsValue as AsValue, UnknownType as NoType,
-            VariantForm as Variant,
+            BuiltInName as Built, CannotInfer as Infer, DefinedTwice as Twice,
+            FunctionNotFound as NoFn, InterfaceAsType as IfaceType, Mismatch,
+            NotAnInterface as NotIface, PrintArgument as Print, TypeAsValue as AsValue,
+            UnknownType as NoType, VariantForm as Variant,
         };
         let rows: &[(&str, &str, &[Found])] = &[
             (
@@ -2205,13 +2204,26 @@ fn main() {
                 "interface Eq\n{}\nfn g<T: Eq?>(x: T) {}\nfn main() {}\n",
                 &[(Built, (1, 11)), (Brace, (2, 1)), (NotIface, (3, 9))],
             ),
+        ];
+        assert_rows(rows);
+    }
+
+    /// The prelude's code reads a language interface by its name, so a bound on that name stays
+    /// the interface after a broken item of the name.
+    #[test]
+    fn a_language_interface_should_stay_a_bound_after_a_broken_item_of_its_name() {
+        use Code::{
+            BraceOnNewLine as Brace, BuiltInName as Built, CannotBeAny as CannotAny,
+            ConformanceBody as ConfBody,
+        };
+        let rows: &[(&str, &str, &[Found])] = &[
             (
-                "the language interface stays, conformance",
+                "conformance",
                 "fn Eq()\n{}\nclass C: Eq {}\nfn main() {}\n",
                 &[(Built, (1, 4)), (Brace, (2, 1)), (ConfBody, (3, 10))],
             ),
             (
-                "the language interface stays, any",
+                "any",
                 "fn Eq()\n{}\nfn g(x: any Eq) {}\nfn main() {}\n",
                 &[(Built, (1, 4)), (Brace, (2, 1)), (CannotAny, (3, 13))],
             ),

@@ -896,14 +896,16 @@ impl Checker<'_> {
         });
     }
 
-    /// Whether `ty` is the name of a declared interface, with no `?` and no array around it.
+    /// Whether `ty` is the name of a declared interface that no rejected or broken item poisons,
+    /// with no `?` and no array around it.
     pub(super) fn is_interface_name(&self, ty: &ast::TypeExpr) -> bool {
         ty.optional == 0
             && matches!(ty.kind, ast::TypeKind::Name(_) | ast::TypeKind::Applied(_))
             && self.names_interface(ty)
     }
 
-    /// Whether the element of `ty`, past its arrays and its `?`, names a declared interface.
+    /// Whether the element of `ty`, past its arrays and its `?`, names a declared interface that
+    /// no rejected or broken item poisons.
     fn names_interface(&self, ty: &ast::TypeExpr) -> bool {
         let name = match &ty.kind {
             ast::TypeKind::Array(element) => return self.names_interface(element),
