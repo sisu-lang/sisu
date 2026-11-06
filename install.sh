@@ -65,11 +65,12 @@ detect() {
   esac
 }
 
+# Reads the file on stdin: sha256sum puts a backslash before the hash for a name with a backslash.
 sha256() {
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1"
+    sha256sum <"$1"
   else
-    shasum -a 256 "$1"
+    shasum -a 256 <"$1"
   fi
 }
 
@@ -77,8 +78,8 @@ sha256() {
 setup() {
   sisu=$HOME/.sisu
   tmp=$sisu/tmp
-  rm -rf "$tmp" || die "cannot write to $sisu."
-  mkdir -p "$tmp" || die "cannot write to $sisu."
+  rm -rf "$tmp" 2>/dev/null || die "cannot write to $sisu."
+  mkdir -p "$tmp" 2>/dev/null || die "cannot write to $sisu."
   # dash does not run an EXIT trap on a signal.
   trap 'rm -rf "$tmp"' EXIT
   trap 'exit 130' INT
@@ -101,7 +102,8 @@ fetch() {
 }
 
 verify() {
-  want=$(grep "[ *]$tarball\$" "$tmp/SHA256SUMS" | cut -d ' ' -f 1 | head -n 1)
+  dotted=$(printf '%s' "$tarball" | sed 's/[.]/[.]/g')
+  want=$(grep "[ *]$dotted\$" "$tmp/SHA256SUMS" | cut -d ' ' -f 1 | head -n 1)
   got=$(sha256 "$tmp/$tarball" | cut -d ' ' -f 1)
   if [ -z "$want" ] || [ "$got" != "$want" ]; then
     die "the checksum of $tarball does not match SHA256SUMS. Run the install line again."
@@ -109,7 +111,8 @@ verify() {
 }
 
 unpack() {
-  tar -xzf "$tmp/$tarball" -C "$tmp"
+  # GNU tar reads a backslash in the argument of -C as an escape, so go into the directory.
+  (cd "$tmp" && tar -xzf "$tarball")
   for file in sisu libsisu_runtime_mimalloc.a libsisu_runtime_system.a; do
     [ -f "$tmp/sisu/$file" ] || die "the tarball has no $file."
   done
@@ -122,16 +125,16 @@ swap() {
   old=$sisu/bin.old
   # With no bin and a bin.old, a killed run left the earlier install in bin.old: keep it.
   if [ -e "$bin" ]; then
-    rm -rf "$old" || die "cannot write to $sisu."
-    mv "$bin" "$old" || die "cannot write to $sisu."
+    rm -rf "$old" 2>/dev/null || die "cannot write to $sisu."
+    mv "$bin" "$old" 2>/dev/null || die "cannot write to $sisu."
   fi
-  if ! mv "$tmp/sisu" "$bin"; then
+  if ! mv "$tmp/sisu" "$bin" 2>/dev/null; then
     if [ -e "$old" ]; then
-      mv "$old" "$bin"
+      mv "$old" "$bin" 2>/dev/null || die "cannot write to $sisu."
     fi
     die "cannot write to $sisu."
   fi
-  rm -rf "$old"
+  rm -rf "$old" 2>/dev/null || die "cannot write to $sisu."
 }
 
 compiler_hint() {

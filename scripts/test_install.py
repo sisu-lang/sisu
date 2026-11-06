@@ -474,9 +474,11 @@ class InstallTest(unittest.TestCase):
     def test_failed_rename_of_bin_should_keep_the_earlier_install(self):
         m = self.machine()
         m.earlier_install()
-        self.fake_mv(m, '*.sisu/bin')
+        log = self.fake_mv(m, '*.sisu/bin')
         r = m.run()
         self.one_line(m, r)
+        with open(log) as f:
+            self.assertEqual(len(f.readlines()), 1)
         self.assertEqual(m.builds(), ALL_OLD)
         self.assertFalse(os.path.exists(os.path.join(m.sisu, 'bin.old')))
         self.assertFalse(m.tmp_exists())
