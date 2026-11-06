@@ -26,6 +26,23 @@ fn failed_jump(checked: Checked) -> Checked {
     })
 }
 
+/// A `never` that only a failed jump gives is `Error` where a value is read: the rule of
+/// `failed_jump`, for a value that the jump ends. The jump has its own report, and a `never` would
+/// also fail the place that needs a value with E0043, E0138 or E0061.
+pub(super) fn read_jump(checked: Checked) -> Checked {
+    checked.map_err(|poisoned| {
+        if poisoned.jumped {
+            Poisoned {
+                ty: None,
+                jumped: false,
+                ..poisoned
+            }
+        } else {
+            poisoned
+        }
+    })
+}
+
 impl Checker<'_> {
     /// `expected` is the type the context wants, `None` when it wants none. It only types a
     /// `None`, a `[]` and an integer literal, and flows into `if` and `if let` branches, a
@@ -96,6 +113,7 @@ impl Checker<'_> {
                     found: None,
                     kept: false,
                     unwrapped: Flag::No,
+                    jumped: false,
                 });
             }
             return Ok(tir::Expr::new(tir::ExprKind::Float(x), ty, at));
@@ -117,6 +135,7 @@ impl Checker<'_> {
                 found: None,
                 kept: false,
                 unwrapped: Flag::No,
+                jumped: false,
             });
         }
         Ok(tir::Expr::new(tir::ExprKind::Int(value), ty, at))
@@ -359,20 +378,25 @@ impl Checker<'_> {
         (result, invalid_jump)
     }
 
+    /// Where a `never` value at `span` is reported: at the first part of a string literal that is
+    /// `never` because of a part, else at `span`.
+    pub(super) fn never_at(&self, span: Span) -> Span {
+        self.body
+            .never_part
+            .filter(|&(literal, _)| literal == span)
+            .map_or(span, |(_, at)| at)
+    }
+
     /// An expression whose value is used: not `unit` or `never`.
     pub(super) fn value(&mut self, e: &ast::Expr, expected: Option<Type>) -> Checked {
-        let (checked, invalid_jump) = self.jumps(|c| c.expr(e, expected));
+        let checked = read_jump(self.expr(e, expected));
         match type_of(&checked) {
-            // A `never` value with a `break` or `continue` outside a loop in it has that report,
-            // and no second one. A `never` that failed for another reason is still a `never`.
-            Some(Type::NEVER) if checked.is_err() && invalid_jump => Err(Poisoned::error()),
             Some(ty @ (Type::UNIT | Type::NEVER)) => {
-                // A literal that is `never` because of a part is underlined at that part.
-                let at = self
-                    .body
-                    .never_part
-                    .filter(|&(literal, _)| ty == Type::NEVER && literal == e.span)
-                    .map_or(e.span, |(_, at)| at);
+                let at = if ty == Type::NEVER {
+                    self.never_at(e.span)
+                } else {
+                    e.span
+                };
                 self.no_value(at, ty);
                 Err(Poisoned::error())
             }
@@ -529,6 +553,7 @@ impl Checker<'_> {
             found: None,
             kept: false,
             unwrapped: Flag::No,
+            jumped: false,
         })
     }
 

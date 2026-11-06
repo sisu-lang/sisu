@@ -130,6 +130,10 @@ struct Poisoned {
     /// optional (E0044, E0048, E0049, E0051) or not matchable (E0124) skips it. A `let` or a
     /// `for` binds `Error` for it, as its optionality depends on the remedy.
     unwrapped: Flag,
+    /// The value is `never` only by a `break` or `continue` outside a loop, which has its own
+    /// report. No `return`, `panic` or valid jump makes it `never`. The flow keeps the `never`,
+    /// as a jump statement does; a place that reads the value takes it as `Error` (`read_jump`).
+    jumped: bool,
 }
 
 /// How a value got its `Poisoned::unwrapped` flag.
@@ -171,6 +175,7 @@ impl Poisoned {
             found: None,
             kept: false,
             unwrapped: Flag::No,
+            jumped: false,
         }
     }
 
@@ -195,6 +200,11 @@ impl Poisoned {
 /// Whether a generic call in `checked` kept its E0050 (see `Poisoned::kept`).
 fn is_kept<T>(checked: &Result<T, Poisoned>) -> bool {
     matches!(checked, Err(Poisoned { kept: true, .. }))
+}
+
+/// Whether only a failed `break` or `continue` makes `checked` `never` (see `Poisoned::jumped`).
+fn is_jumped<T>(checked: &Result<T, Poisoned>) -> bool {
+    matches!(checked, Err(Poisoned { jumped: true, .. }))
 }
 
 /// Whether `checked` is typed by the unwrap of an E0062 (see `Poisoned::unwrapped`).
@@ -1014,7 +1024,7 @@ struct Body {
     /// Set by a `break` or `continue` outside a loop; `scoped_block` reads it per statement.
     invalid_jump: bool,
     /// The last string literal that is `never` because a part is: its span, and the span of the
-    /// first such part, which E0043 underlines (see `Checker::interpolate`).
+    /// first such part, which E0043, E0138 and E0061 underline (see `Checker::never_at`).
     never_part: Option<(Span, Span)>,
     /// Where each loop label is declared that a failed jump or a reused loop label names, which
     /// is not reported unused: its own error is.
