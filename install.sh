@@ -74,16 +74,54 @@ sha256() {
   fi
 }
 
-# Sets sisu and tmp. A tmp that a killed run left goes away first.
+busy() {
+  die "another install is running. Wait for it to end, and run the install line again. If no install is running, remove $lock."
+}
+
+# Takes the lock: a second run at the same time would remove the tmp and the backup of this run.
+# The lock is a symlink, because `ln -s` fails when the name exists and macOS has no flock.
+# Its target is this run's PID, so a lock that a killed run left does not stop the next run.
+# shortcut: a run that removes a dead lock can remove the lock of a run that took it in the short
+# time after the second read, and then two runs share tmp. One more install repairs the result.
+# Use a real lock primitive if users report this.
+take_lock() {
+  lock=$sisu/install.lock
+  mkdir -p "$sisu" 2>/dev/null || die "cannot write to $sisu."
+  # A PID target does not exist as a file. `ln -s` into a directory, or through a symlink to
+  # one, would succeed and take no lock.
+  if [ -e "$lock" ]; then die "cannot write to $sisu."; fi
+  for _ in 1 2 3 4 5; do
+    ln -s "$$" "$lock" 2>/dev/null && return 0
+    # The holder can end between these lines, so a missing lock means try again.
+    [ -L "$lock" ] || continue
+    holder=$(readlink "$lock" 2>/dev/null || true)
+    case $holder in
+      '') continue ;;
+      # This run cannot hold the lock yet, so its own PID is a stale value. `kill -0 0` always
+      # succeeds, because 0 is the process group.
+      "$$" | 0 | *[!0-9]*) ;;
+      *) if kill -0 "$holder" 2>/dev/null; then busy; fi ;;
+    esac
+    [ "$(readlink "$lock" 2>/dev/null || true)" = "$holder" ] || continue
+    rm -f "$lock" 2>/dev/null || die "cannot write to $sisu."
+  done
+  if [ -L "$lock" ]; then busy; fi
+  die "cannot write to $sisu."
+}
+
+# Sets sisu, lock and tmp. A tmp that a killed run left goes away first.
 setup() {
   sisu=$HOME/.sisu
   tmp=$sisu/tmp
-  rm -rf "$tmp" 2>/dev/null || die "cannot write to $sisu."
-  mkdir -p "$tmp" 2>/dev/null || die "cannot write to $sisu."
-  # dash does not run an EXIT trap on a signal.
-  trap 'rm -rf "$tmp" 2>/dev/null' EXIT
+  take_lock
+  # The trap comes right after the lock, because the next line can stop the run. A run that the
+  # lock refused must not remove the lock, so no trap comes before. dash does not run an EXIT
+  # trap on a signal.
+  trap 'rm -rf "$tmp" 2>/dev/null || true; rm -f "$lock" 2>/dev/null || true' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
+  rm -rf "$tmp" 2>/dev/null || die "cannot write to $sisu."
+  mkdir -p "$tmp" 2>/dev/null || die "cannot write to $sisu."
 }
 
 fetch() {

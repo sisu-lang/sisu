@@ -20,7 +20,7 @@ import unittest
 INSTALL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'install.sh')
 BASE = 'https://github.com/sisu-lang/sisu/releases/latest/download/'
 FILES = ('sisu', 'libsisu_runtime_mimalloc.a', 'libsisu_runtime_system.a')
-TOOLS = 'mkdir rm mv cp tar gzip grep sed cut head cat'.split()
+TOOLS = 'mkdir rm mv cp tar gzip grep sed cut head cat ln readlink'.split()
 # What a fake command that fails runs: a real one prints its own error.
 FAIL = 'echo "fake: failed" >&2; exit 1'
 GNU_LDD = 'ldd (GNU libc) 2.39'
@@ -59,6 +59,7 @@ class Machine:
             os.makedirs(d)
         self.path = self.fake + os.pathsep + self.tools
         self.sisu = os.path.join(self.home, '.sisu')
+        self.lock = os.path.join(self.sisu, 'install.lock')
         for tool in TOOLS + [shutil.which('sha256sum') and 'sha256sum' or 'shasum']:
             os.symlink(shutil.which(tool), os.path.join(self.tools, tool))
         self._fake_commands(profile, cc, apt, clt)
@@ -204,6 +205,15 @@ class Machine:
                 m = re.search(r'echo "sisu (\w+)"', text)
                 found[f] = m.group(1) if f == 'sisu' and m else text.strip()
         return found
+
+    def hold(self, target):
+        """Makes install.lock a symlink to `target`, as an install does with its PID."""
+        os.makedirs(self.sisu, exist_ok=True)
+        os.symlink(str(target), self.lock)
+
+    def lock_exists(self):
+        # A PID lock dangles, so os.path.exists says False while it is there.
+        return os.path.lexists(self.lock)
 
     def tmp_exists(self):
         return os.path.exists(os.path.join(self.sisu, 'tmp'))
@@ -583,27 +593,32 @@ class InstallTest(unittest.TestCase):
         self.assertNotIn('PATH=', r.stdout)
         self.assertNotIn('fish_add_path', r.stdout)
 
-    def test_signal_should_remove_tmp(self):
+    def kill_during_curl(self, m, sig):
+        """Runs the install, sends `sig` while the fake curl sleeps, and returns the exit code."""
         def default_int():
             signal.signal(signal.SIGINT, signal.SIG_DFL)
 
+        marker = os.path.join(m.root, 'marker')
+        m.fake_curl(': > %s\n%s 0.3' % (shlex.quote(marker), shlex.quote(SLEEP)))
+        p = m.start(env={'SISU_DOWNLOAD_DIR': None}, preexec_fn=default_int)
+        deadline = time.time() + 5
+        while not os.path.exists(marker) and time.time() < deadline:
+            time.sleep(0.01)
+        if not os.path.exists(marker):
+            p.kill()
+            p.communicate()
+            self.fail('curl did not start within 5 s')
+        p.send_signal(sig)
+        # communicate, not wait: the fake curl outlives a killed run and holds its pipes.
+        p.communicate(timeout=30)
+        return p.returncode
+
+    def test_signal_should_remove_tmp(self):
         for sig, code in ((signal.SIGTERM, 143), (signal.SIGINT, 130)):
             with self.subTest(sig.name):
                 m = self.machine()
                 m.earlier_install()
-                marker = os.path.join(m.root, 'marker')
-                m.fake_curl(': > %s\n%s 0.3' % (shlex.quote(marker), shlex.quote(SLEEP)))
-                p = m.start(env={'SISU_DOWNLOAD_DIR': None}, preexec_fn=default_int)
-                deadline = time.time() + 5
-                while not os.path.exists(marker) and time.time() < deadline:
-                    time.sleep(0.01)
-                if not os.path.exists(marker):
-                    p.kill()
-                    p.communicate()
-                    self.fail('curl did not start within 5 s')
-                p.send_signal(sig)
-                p.communicate(timeout=30)
-                self.assertEqual(p.returncode, code)
+                self.assertEqual(self.kill_during_curl(m, sig), code)
                 self.assertEqual(m.builds(), ALL_OLD)
                 self.assertFalse(m.tmp_exists())
 
@@ -680,6 +695,201 @@ class InstallTest(unittest.TestCase):
         self.assertInstalled(m, r)
         self.assertFalse(os.path.exists(os.path.join(m.sisu, 'bin', 'junk')))
         self.assertFalse(m.tmp_exists())
+
+    def live_process(self):
+        p = subprocess.Popen([SLEEP, '60'])
+        self.addCleanup(p.wait)
+        self.addCleanup(p.kill)
+        return p.pid
+
+    def dead_pid(self):
+        p = subprocess.Popen([shutil.which('true')])
+        p.wait()
+        return p.pid
+
+    def one_line_with(self, r, *texts):
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(len(r.stderr.splitlines()), 1, r.stderr)
+        for text in texts:
+            self.assertIn(text, r.stderr)
+
+    def test_second_install_should_stop_while_a_first_install_runs(self):
+        m = self.machine()
+        m.earlier_install()
+        pid = self.live_process()
+        m.hold(pid)
+        os.makedirs(os.path.join(m.sisu, 'tmp'))
+        mark = os.path.join(m.sisu, 'tmp', 'first-run')
+        with open(mark, 'w') as f:
+            f.write('x\n')
+        m.fake_curl()
+        r = m.run(env={'SISU_DOWNLOAD_DIR': None})
+        self.one_line_with(r, 'another install is running', m.lock)
+        self.assertEqual(m.builds(), ALL_OLD)
+        self.assertEqual(os.readlink(m.lock), str(pid))
+        self.assertTrue(os.path.exists(mark))
+        self.assertEqual(m.curl_calls(), [])
+
+    def test_lock_of_a_dead_process_should_not_stop_the_install(self):
+        own = ('mkdir -p "$HOME/.sisu"; ln -s $$ "$HOME/.sisu/install.lock"; exec "$@"')
+        rows = [('a reaped child', self.dead_pid(), ''), ('not-a-pid', 'not-a-pid', ''),
+                ('a PID that does not exist', 99999999, ''), ('zero', 0, ''),
+                ('a space in HOME', self.dead_pid(), 'a b/'), ('its own PID', None, '')]
+        for name, target, prefix in rows:
+            with self.subTest(name):
+                m = self.machine(prefix=prefix)
+                if target is None:
+                    r = subprocess.run(SH + ['-c', own, 'sh'] + SH + [INSTALL],
+                                       env=m._env(None), stdin=subprocess.DEVNULL,
+                                       capture_output=True, text=True, timeout=120)
+                else:
+                    m.hold(target)
+                    r = m.run()
+                self.assertInstalled(m, r)
+                self.assertFalse(m.lock_exists())
+
+    def test_install_should_remove_its_lock_at_the_end(self):
+        for name in ('success', 'checksum mismatch', 'TERM', 'INT', 'failed rm of tmp'):
+            with self.subTest(name):
+                m = self.machine()
+                m.earlier_install()
+                if name == 'success':
+                    self.assertInstalled(m, m.run())
+                elif name == 'checksum mismatch':
+                    m.sums('%s  %s\n' % ('0' * 64, m.tarball_name))
+                    r = m.run()
+                    self.assertKept(m, r)
+                    self.assertEqual(r.returncode, 1)
+                elif name == 'failed rm of tmp':
+                    m.fake_command('rm', 'case "$2" in *.sisu/tmp) %s;; esac\nexec %s "$@"\n'
+                                   % (FAIL, shlex.quote(shutil.which('rm'))))
+                    self.one_line(m, m.run())
+                else:
+                    sig, code = (signal.SIGTERM, 143) if name == 'TERM' else (signal.SIGINT, 130)
+                    self.assertEqual(self.kill_during_curl(m, sig), code)
+                self.assertFalse(m.lock_exists())
+
+    def test_killed_install_should_not_stop_the_next_install(self):
+        m = self.machine()
+        m.earlier_install()
+        self.assertEqual(self.kill_during_curl(m, signal.SIGKILL), -signal.SIGKILL)
+        self.assertTrue(m.lock_exists())
+        self.assertInstalled(m, m.run())
+        self.assertFalse(m.lock_exists())
+
+    def test_lock_path_that_is_not_a_pid_lock_should_stop_with_one_sentence(self):
+        for kind in ('a regular file', 'a directory', 'a symlink to a directory'):
+            with self.subTest(kind):
+                m = self.machine()
+                m.earlier_install()
+                outside = os.path.join(m.root, 'outside')
+                if kind == 'a regular file':
+                    with open(m.lock, 'w') as f:
+                        f.write('x\n')
+                elif kind == 'a directory':
+                    os.mkdir(m.lock)
+                else:
+                    os.mkdir(outside)
+                    os.symlink(outside, m.lock)
+                r = m.run()
+                self.one_line(m, r)
+                self.assertEqual(m.builds(), ALL_OLD)
+                self.assertTrue(m.lock_exists())
+                if kind == 'a regular file':
+                    self.assertTrue(os.path.isfile(m.lock))
+                elif kind == 'a directory':
+                    self.assertEqual(os.listdir(m.lock), [])
+                else:
+                    self.assertEqual(os.readlink(m.lock), outside)
+                    self.assertEqual(os.listdir(outside), [])
+
+    def test_installs_at_the_same_time_should_leave_one_whole_build(self):
+        # Each run spins on the gate, so that the four runs start within a few milliseconds.
+        wait = 'while [ ! -e "$1" ]; do :; done; shift; exec "$@"'
+        for earlier in (True, False):
+            with self.subTest('earlier install' if earlier else 'no earlier install'):
+                m = self.machine()
+                gate = os.path.join(m.root, 'gate')
+                for n in range(25):
+                    shutil.rmtree(m.sisu, ignore_errors=True)
+                    if os.path.exists(gate):
+                        os.remove(gate)
+                    if earlier:
+                        m.earlier_install()
+                    runs = [subprocess.Popen(SH + ['-c', wait, 'sh', gate] + SH + [INSTALL],
+                                             env=m._env(None), stdin=subprocess.DEVNULL,
+                                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                             text=True) for _ in range(4)]
+                    open(gate, 'w').close()
+                    done = [(p.communicate(timeout=120), p.returncode) for p in runs]
+                    where = 'round %d: %r' % (n, done)
+                    for (out, err), code in done:
+                        if code != 0:
+                            self.assertEqual(code, 1, where)
+                            self.assertEqual(len(err.splitlines()), 1, where)
+                            self.assertIn('another install is running', err, where)
+                    self.assertIn(0, [code for _, code in done], where)
+                    self.assertEqual(m.builds(), ALL_NEW, where)
+                    self.assertFalse(os.path.exists(os.path.join(m.sisu, 'bin.old')), where)
+                    self.assertFalse(m.tmp_exists(), where)
+                    self.assertFalse(m.lock_exists(), where)
+
+    def test_failed_lock_should_stop_with_one_sentence(self):
+        m = self.machine()
+        m.earlier_install()
+        m.fake_command('ln', FAIL + '\n')
+        r = m.run()
+        self.one_line(m, r)
+        self.assertEqual(m.builds(), ALL_OLD)
+
+    def test_lock_that_cannot_be_removed_should_stop_with_one_sentence(self):
+        m = self.machine()
+        m.earlier_install()
+        m.hold(self.dead_pid())
+        m.fake_command('rm', FAIL + '\n')
+        r = m.run()
+        self.one_line(m, r)
+        self.assertEqual(m.builds(), ALL_OLD)
+
+    def once(self, m, name, body):
+        """A fake `name` that runs `body` on its first call, and is the real command after."""
+        flag = os.path.join(m.root, name + '.flag')
+        m.fake_command(name, 'if [ ! -e %s ]; then\n: > %s\n%s\nfi\nexec %s "$@"\n'
+                       % (shlex.quote(flag), shlex.quote(flag), body,
+                          shlex.quote(shutil.which(name))))
+
+    def test_holder_that_ends_during_the_lock_check_should_not_give_a_write_error(self):
+        m = self.machine()
+        m.hold(self.live_process())
+        self.once(m, 'ln', '%s -f %s\n%s' % (shlex.quote(shutil.which('rm')),
+                                              shlex.quote(m.lock), FAIL))
+        r = m.run()
+        self.assertInstalled(m, r)
+        self.assertNotIn('cannot write', r.stderr)
+        self.assertFalse(m.lock_exists())
+
+    def test_lock_taken_after_the_first_read_should_stay(self):
+        m = self.machine()
+        live = self.live_process()
+        dead = self.dead_pid()
+        m.hold(dead)
+        self.once(m, 'readlink', '%s -f %s\n%s -s %d %s\necho %d\nexit 0'
+                  % (shlex.quote(shutil.which('rm')), shlex.quote(m.lock),
+                     shlex.quote(shutil.which('ln')), live, shlex.quote(m.lock), dead))
+        r = m.run()
+        self.one_line_with(r, 'another install is running')
+        self.assertEqual(os.readlink(m.lock), str(live))
+
+    def test_failed_lock_read_should_not_remove_the_lock(self):
+        m = self.machine()
+        m.earlier_install()
+        live = self.live_process()
+        m.hold(live)
+        m.fake_command('readlink', FAIL + '\n')
+        r = m.run()
+        self.one_line_with(r)
+        self.assertEqual(os.readlink(m.lock), str(live))
+        self.assertEqual(m.builds(), ALL_OLD)
 
 
 if __name__ == '__main__':

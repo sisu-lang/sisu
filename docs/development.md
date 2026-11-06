@@ -956,6 +956,16 @@ published file would differ from the file that `clean-machine` ran. `fetch` in
 `install.sh` holds a `shortcut:` comment for the gap. If users report this
 mismatch, write the tag into the installer.
 
+### Two installs at the same time
+
+`install.sh` takes the lock `~/.sisu/install.lock` before it changes anything.
+The lock is a symbolic link, and its target is the PID of the run. A second run
+that starts while the first run is alive stops at once. It prints that another
+install is running, and it changes nothing. The lock of a run that was killed
+does not stop the next run: the next run sees that the PID is not alive, removes
+the lock and goes on. Without the lock, two runs would share `~/.sisu/tmp` and
+could delete the compiler.
+
 ### Pruning
 
 `prune` keeps the 14 newest nightly builds. It counts every published release
