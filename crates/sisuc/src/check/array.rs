@@ -102,6 +102,8 @@ impl Checker<'_> {
     /// An array does not widen: the join must go into `element`, or the first element that does
     /// not is the mistake, named by its own type.
     fn hinted_elements(&mut self, span: Span, elements: &[ast::Expr], element: Type) -> Checked {
+        #[cfg(test)]
+        super::reached("hinted_elements");
         let fits_element =
             |c: &mut Self, ty: Type| fits(element, ty) || c.converts_to_any(ty, element);
         // The type of each element as written: a `Some` that converted its value is the
@@ -334,6 +336,8 @@ impl Checker<'_> {
     /// a hint (see `Body::hint_at`), as the branch of an `if` after an `any` branch is. So the
     /// payload of a `Some` converts to `any`.
     fn value_beside(&mut self, e: &ast::Expr, any: Type) -> Checked {
+        #[cfg(test)]
+        super::reached("value_beside");
         let outer = self.pass_hint(Some(e.span), Some(any));
         let checked = self.value(e, Some(as_optional(any)));
         self.body.hint_at = outer;

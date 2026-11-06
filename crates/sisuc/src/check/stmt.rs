@@ -1305,7 +1305,12 @@ impl Checker<'_> {
         let join = match self.any_join_all(&members) {
             joined @ AnyJoin::Joined { .. } => joined,
             failed => match self.seeded_join(frame.siblings, &members) {
-                seeded @ (AnyJoin::Joined { .. } | AnyJoin::Leaves { .. }) => seeded,
+                seeded @ AnyJoin::Joined { .. } => {
+                    #[cfg(test)]
+                    super::reached("seeded_join for a loop");
+                    seeded
+                }
+                leaves @ AnyJoin::Leaves { .. } => leaves,
                 AnyJoin::NoAny | AnyJoin::Fails { .. } => failed,
             },
         };

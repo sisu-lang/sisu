@@ -36,6 +36,10 @@ impl Checker<'_> {
     }
 
     /// `some`, before it records a `Some` that gave an error.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one match on the hint and the payload, so the cases of a `Some` read in one place"
+    )]
     fn some_of(
         &mut self,
         span: Span,
@@ -98,6 +102,8 @@ impl Checker<'_> {
                                 && is_target(payload))
                             && !self.converts_to_any(got, payload) =>
                     {
+                        #[cfg(test)]
+                        super::reached("a hinted Some keeps its type");
                         (checked, optional_of(got), TypeArgs::NONE)
                     }
                     _ => (
