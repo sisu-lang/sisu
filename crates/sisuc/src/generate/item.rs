@@ -75,6 +75,8 @@ struct Calls {
     sites: Vec<(usize, BoundSite)>,
     /// The lines that the marked statements print when `shapes` runs to its end, in order.
     expected: Vec<String>,
+    /// The lines that `gap_forms` wrote. They hold no bound site.
+    gap: std::ops::Range<usize>,
     /// How many marked statements the interface calls have so far: the next is `@d<marks>`.
     marks: usize,
     /// The values of the methods that meet the requirements of the interfaces.
@@ -709,7 +711,8 @@ impl Gen<'_> {
         }
     }
 
-    /// Writes a known site's text by `write`, which the coverage test leaves out.
+    /// Writes the text of a known site or of the forms of `gap_forms` by `write`, which the
+    /// coverage test leaves out.
     fn known_text(&mut self, write: impl FnOnce(&mut Self)) {
         #[cfg(test)]
         let start = self.w.out.program.len();
@@ -1292,13 +1295,32 @@ impl Gen<'_> {
     /// `fn shapes()`, which runs `calls`. Records where `program` holds each bound site. The sites
     /// of `calls` come in the order of their lines.
     fn write_shapes(&mut self, calls: Calls) {
-        let mut sites = calls.sites.into_iter().peekable();
+        let Calls {
+            lines, sites, gap, ..
+        } = calls;
+        let mut sites = sites.into_iter().peekable();
         self.w.text("fn shapes() ");
         self.w.open();
-        for (line, call) in calls.lines.iter().enumerate() {
+        // The lines of `gap_forms` are one block of known text between the other lines.
+        self.shape_lines(&lines, 0..gap.start, &mut sites);
+        let (before, after) = (gap.start, gap.end);
+        self.known_text(|g| g.shape_lines(&lines, before..after, &mut sites));
+        self.shape_lines(&lines, after..lines.len(), &mut sites);
+        self.w.close();
+        self.w.line();
+    }
+
+    /// The lines `range` of `lines`, each on a line of its own in `shapes`.
+    fn shape_lines(
+        &mut self,
+        lines: &[String],
+        range: std::ops::Range<usize>,
+        sites: &mut std::iter::Peekable<std::vec::IntoIter<(usize, BoundSite)>>,
+    ) {
+        for line in range {
             self.w.line();
             let start = self.w.out.program.len();
-            self.w.text(call);
+            self.w.text(&lines[line]);
             while let Some((_, site)) = sites.next_if(|(at, _)| *at == line) {
                 self.bound_sites.push(BoundSite {
                     at: start + site.at.start..start + site.at.end,
@@ -1306,8 +1328,6 @@ impl Gen<'_> {
                 });
             }
         }
-        self.w.close();
-        self.w.line();
     }
 
     /// `fn later<k><T: bound, U>(_a: T, ...)`, whose other seven parameters are `[T]`, `T?`,
@@ -1528,12 +1548,15 @@ impl Gen<'_> {
         }
     }
 
-    /// Declares the classes `PushTally`, `PushHolder` and `AppendField` and the function
-    /// `twice_set`, and writes the statements of `shapes` that reach the checks no other rule
-    /// reaches (`known_gaps.txt` lists the rest). Each form has a fixed text and makes no draw, so
-    /// it moves nothing that a later seed writes:
+    /// Declares the classes `PushTally`, `PushHolder` and `AppendField`, the enum `PushKind` and
+    /// the function `twice_set`. It writes the statements of `shapes` that reach the checks no
+    /// other rule reaches (`known_gaps.txt` lists the rest). Each form has a fixed text and makes
+    /// no draw, so it moves nothing that a later seed writes. `Generated::plain` leaves out the
+    /// declarations and the statements, so the older keys still show that the random rules run.
+    /// The forms are:
     /// - `push` of a class, called on a local, a local that holds an optional, an element and a
     ///   field, and through `?.` on a field that holds an optional;
+    /// - `push` of an enum variant, a method of the enum;
     /// - a `loop` that gives a `u8?` and then a literal, in a `let` with no written type;
     /// - a `loop` whose `break` of `T` widens to the `T?` of the loop, and one where a `break` in
     ///   an inner loop gives the outer loop `None`;
@@ -1542,12 +1565,16 @@ impl Gen<'_> {
     /// - a `match` with an arm that no value reaches (W0006), and a statement with an
     ///   unnecessary `;` (W0007). The checker accepts a warning in a generated program.
     ///
-    /// The loops count down from one, as `every_loop_is_bounded` needs. An index is a literal.
+    /// Each loop counts down from one and ends with a `break`, so it ends in at most two passes.
+    /// An index is a literal.
     fn gap_forms(&mut self, calls: &mut Calls) {
-        self.w.text(
-            "class PushTally {\n    mut total: i64\n    fn push(self, x: i64) -> i64 {\n        self.total += x\n        self.total\n    }\n}\nclass PushHolder {\n    mut held: PushTally?\n    kept: PushTally\n}\nclass AppendField {\n    mut text: string\n}\nfn twice_set(mut a: i64, _b: i64, mut c: i64) {\n    a += 10\n    c += 20\n}",
-        );
-        self.w.line();
+        self.known_text(|g| {
+            g.w.text(
+                "class PushTally {\n    mut total: i64\n    fn push(self, x: i64) -> i64 {\n        self.total += x\n        self.total\n    }\n}\nclass PushHolder {\n    mut held: PushTally?\n    kept: PushTally\n}\nclass AppendField {\n    mut text: string\n}\nenum PushKind {\n    One\n    fn push(self, x: i64) -> i64 { x }\n}\nfn twice_set(mut a: i64, _b: i64, mut c: i64) {\n    a += 10\n    c += 20\n}",
+            );
+            g.w.line();
+        });
+        let first = calls.lines.len();
         for line in [
             "let tally = PushTally(total: 3)",
             "print(tally.push(1))",
@@ -1558,6 +1585,7 @@ impl Gen<'_> {
             "let holder = PushHolder(held: PushTally(total: 0), kept: PushTally(total: 0))",
             "print(holder.kept.push(1))",
             "print(holder.held?.push(1) ?? 9)",
+            "print(PushKind.One.push(2))",
             "let opt_byte: u8? = 200",
             "let joined = ({\n        let mut left = 1\n        loop {\n            if left == 0 { break opt_byte }\n            left -= 1\n            break 6\n        }\n    })",
             "print(joined ?? 0)",
@@ -1578,6 +1606,7 @@ impl Gen<'_> {
         ] {
             calls.push(line);
         }
+        calls.gap = first..calls.lines.len();
     }
 
     /// Declares the interface `Nest`, the class `NestW<T>` and the enum `NestE<T: Nest>`. The

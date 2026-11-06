@@ -292,9 +292,9 @@ const REACH: &[&str] = &[
     "reach: an assignment goes through `?.`",
 ];
 
-/// What `Gen::gap_forms` writes, and the key that each form marks. The nightly reads the seeds
-/// `0..FUZZ_SEEDS` and no others, so `generated_programs_should_reach_each_gap_rule` reads only
-/// those. They are in the universe as the `REACH` keys are.
+/// The keys that the forms of `Gen::gap_forms` mark. `Generated::plain` leaves the forms out, so
+/// the universe has no `GAP_RULES` key. The nightly reads the seeds `0..FUZZ_SEEDS` and no others,
+/// so `generated_programs_should_reach_each_gap_rule` reads the `program` of those.
 const WIDENS: &str = "reach: a `break` value converts to the type that its loop grew to";
 const CROSSES: &str = "reach: the widening of a `break` crosses a nested loop";
 const OBJECT_IN_SOME: &str = "reach: the checker runs `object_in_some`";
@@ -573,7 +573,7 @@ fn universe() -> FxHashSet<String> {
     for (from, to) in CONVERSIONS {
         universe.insert(format!("tir::ExprKind::Convert from {from} to {to}"));
     }
-    for key in REACH.iter().chain(JUMPS).chain(GAP_RULES) {
+    for key in REACH.iter().chain(JUMPS) {
         universe.insert(key.to_string());
     }
     for (feature, _) in TEXT {
@@ -5783,14 +5783,9 @@ fn an_array_without_growth_should_take_no_push() {
 fn a_push_should_reach_a_local_an_element_and_a_guarded_field() {
     let (mut local, mut element, mut field) = (false, false, false);
     search_seeds(SEEDS, |n| {
-        let program = generate(&seed(n)).program;
+        let program = generate(&seed(n)).plain;
         let lines: Vec<&str> = program.lines().map(str::trim_start).collect();
         for (at, line) in lines.iter().enumerate() {
-            // An array's `push` gives no value to print, and the generator writes it as a
-            // statement. A `print(` line holds a class's own `push`, from `Gen::gap_forms`.
-            if line.starts_with("print(") {
-                continue;
-            }
             let Some((place, _)) = line.split_once(".push(") else {
                 continue;
             };
@@ -6052,7 +6047,7 @@ fn generated_programs_should_reach_each_gap_rule() {
     for n in 0..FUZZ_SEEDS {
         let generated = generate(&seed(n));
         walk.mut_lens = generated.mut_lens.into_iter().collect();
-        walk.program(&generated.plain);
+        walk.program(&generated.program);
         if missing(&walk).is_empty() {
             break;
         }
@@ -6061,6 +6056,30 @@ fn generated_programs_should_reach_each_gap_rule() {
     assert!(
         missing.is_empty(),
         "no program of the seeds 0..{FUZZ_SEEDS} holds: {missing:#?}"
+    );
+}
+
+/// GIVEN the programs of the seeds `0..FUZZ_SEEDS`
+/// WHEN a program holds `fn shapes()`
+/// THEN its `program` holds `PushTally` and `twice_set(mut slots[0]`, and its `plain` holds
+/// neither, and at least one seed holds them
+#[test]
+fn plain_text_should_leave_out_the_gap_forms() {
+    let mut seen = false;
+    for n in 0..FUZZ_SEEDS {
+        let generated = generate(&seed(n));
+        if !generated.program.contains("fn shapes()") {
+            continue;
+        }
+        seen = true;
+        for form in ["PushTally", "twice_set(mut slots[0]"] {
+            assert!(generated.program.contains(form), "seed {n}: `{form}`");
+            assert!(!generated.plain.contains(form), "seed {n}: `{form}`");
+        }
+    }
+    assert!(
+        seen,
+        "no program of the seeds 0..{FUZZ_SEEDS} holds `shapes`"
     );
 }
 
