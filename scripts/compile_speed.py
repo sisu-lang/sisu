@@ -840,6 +840,8 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     if args.runs < 1:
         parser.error("--runs is 1 or more")
+    if args.time_bound is not None and not 0 < args.time_bound < float("inf"):
+        parser.error("--time-bound is a number above 0")
     deadline = Deadline(args.time_bound or (600 if args.check_only else 7200))
     try:
         units = read_units(args.units)

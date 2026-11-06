@@ -94,6 +94,32 @@ class SlowTests(unittest.TestCase):
                     run.stdout.startswith("slow_tests: cannot read"), text is not None, name
                 )
 
+    def run_with_bad_diff(self, env: dict[str, str]) -> list[str]:
+        with git_fixture.repo({"a.rs": "fn other() {}\n"}) as tmp:
+            report = Path(tmp, "junit.xml")
+            report.write_text(REPORT, encoding="utf-8")
+            run = subprocess.run(
+                [sys.executable, SCRIPT, report, "--diff", "no-such-ref"],
+                capture_output=True,
+                text=True,
+                cwd=tmp,
+                env={**git_fixture.env(), **env},
+                check=False,
+            )
+        self.assertEqual((run.returncode, run.stderr), (0, ""))
+        return run.stdout.splitlines()
+
+    def test_a_failed_git_diff_should_say_so_and_list_every_slow_test(self) -> None:
+        lines = self.run_with_bad_diff({})
+        self.assertRegex(lines[0], r"^slow_tests: `git diff no-such-ref` failed: fatal: ")
+        self.assertNotIn("outside", "\n".join(lines))
+        self.assertEqual([line.split()[-1] for line in lines[2:]], ["run::big.sisu", "slow"])
+
+    def test_a_missing_git_should_say_so_and_list_every_slow_test(self) -> None:
+        lines = self.run_with_bad_diff({"PATH": ""})
+        self.assertRegex(lines[0], r"^slow_tests: cannot run `git diff no-such-ref`: ")
+        self.assertEqual([line.split()[-1] for line in lines[2:]], ["run::big.sisu", "slow"])
+
 
 if __name__ == "__main__":
     unittest.main()
