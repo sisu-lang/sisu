@@ -744,7 +744,8 @@ A function, class, enum, interface, constant, type alias or method that
 contains a syntax error. Its body is not checked, and a use of it is never
 reported as unknown or mistyped. It still takes its name: a second item of
 that name is defined twice (E0034). A language interface's name is the exception:
-it stays the language's, so a use of it is checked against that interface.
+it stays the language's, so a bound on it, and each use after a broken interface
+of that name, is checked against that interface.
 
 **Cascade**:
 A diagnostic that exists only because of another one. Sisu never reports
