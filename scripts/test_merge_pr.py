@@ -153,6 +153,19 @@ class MergePr(unittest.TestCase):
         self.assertIn('does not contain main', result.stdout)
         self.assertEqual(self.merges(), [])
 
+    def test_main_that_moves_while_a_check_runs_should_stop_before_the_checks_end(self):
+        running = {'name': 'Test', 'status': 'in_progress', 'conclusion': None}
+        done = dict(running, status='completed', conclusion='success')
+        result = self.run_script(**{
+            f'compare/main...{self.sha}': [{'behind_by': 0}, {'behind_by': 1}],
+            f'commits/{self.sha}/check-runs': [self.checks(running), self.checks(done)],
+        })
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('does not contain main', result.stdout)
+        self.assertEqual(self.merges(), [])
+        calls = self.log.read_text().splitlines()
+        self.assertEqual(sum('check-runs' in line for line in calls), 1)
+
     def test_cleanup_of_an_open_pull_request_should_stop_and_keep_the_worktree(self):
         result = self.run_script('--cleanup', '7', **{'pulls/7': {'state': 'open', 'merged': False,
                                                                   'head': {'sha': self.sha, 'ref': 'fix/x'}}})
