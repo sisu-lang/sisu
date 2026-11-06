@@ -43,8 +43,9 @@ def gh(*args):
     return json.loads(out) if out.strip() else None
 
 
-def wait_for_checks(sha):
-    """Returns the checks that did not pass, after every check ends; stops at the time limit."""
+def wait_for_checks(pr, sha):
+    """Returns the checks that did not pass, after every check ends. Stops at the time limit, and
+    when main moves while a check runs: the head must then merge main and run its checks again."""
     start = time.monotonic()
     while True:
         page = gh(f"{REPO}/commits/{sha}/check-runs?per_page=100")
@@ -58,6 +59,7 @@ def wait_for_checks(sha):
             raise Stop("the head has no checks")
         if waited >= CHECKS_LIMIT:
             raise Stop("the checks did not end in time")
+        check_base(pr, sha)
         time.sleep(POLL)
 
 
@@ -114,7 +116,7 @@ def merge(number, root):
         pr = gh(f"{REPO}/pulls/{number}")
         sha = pr["head"]["sha"]
         check_base(pr, sha)
-    failed = wait_for_checks(sha)
+    failed = wait_for_checks(pr, sha)
     if failed:
         raise Stop("; ".join(failed))
     # main can move during the wait.
