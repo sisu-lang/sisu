@@ -1,6 +1,8 @@
-"""Writes a reviewer's brief from origin/main's brief.md: fills every slot above "# Report",
-keeps the sections for the target's kind and drops the others. Fails, writing nothing, when
-a slot above "# Report" is left unfilled, so a template change cannot slip past it.
+"""Write a reviewer's brief from origin/main's brief.md.
+
+The script fills every slot above "# Report", keeps the sections for the target's kind and drops
+the others. It fails, writing nothing, when a slot above "# Report" is left unfilled, so a
+template change cannot slip past it.
 
 Usage: python3 diff_brief.py REPO TARGET OUT [--kind spec|plan|diff] [--doc PATH]... [--focus FILE]
            [--mutation-log LOG]... [--coverage FILE] [--round N --prior REPORT... --rulings FILE]
@@ -24,9 +26,9 @@ the main checkout's gitignored docs/superpowers/ is not in a worktree.
            a log measured at the range's base or before it is accepted as an earlier round's
            log, and Focus says so.
   --coverage  the output of `make coverage` for the diff; Focus names it. Fails when the file does
-           not exist, or when its last `coverage:` line does not name the diff's head commit, or says
-           the run measured uncommitted changes or saw HEAD change. Unlike a mutation log, coverage of an earlier
-           commit is refused: it is cheap to run again at the head
+           not exist, or when its last `coverage:` line does not name the diff's head commit, or
+           says the run measured uncommitted changes or saw HEAD change. Unlike a mutation log,
+           coverage of an earlier commit is refused: it is cheap to run again at the head
 For a diff, Focus also lists each line the diff removes from the tests with no identical line
 added back, and each test file it deletes, and each sisu build in OUT's bin/<sha>/ that
 build_sisu.sh wrote.
@@ -51,7 +53,7 @@ KINDS = ("spec", "plan", "diff")
 
 
 def plugin_skill(plugin: str, skill: str) -> Path | None:
-    """The SKILL.md of an installed Claude Code plugin, at its installPath, or None."""
+    """Return the SKILL.md of an installed Claude Code plugin, at its installPath, or None."""
     try:
         installed = json.loads((Path.home() / ".claude/plugins/installed_plugins.json").read_text())
         return Path(installed["plugins"][plugin][0]["installPath"]) / "skills" / skill / "SKILL.md"
@@ -69,9 +71,10 @@ SKILLS: dict[str, Path | None] = {
 
 
 def git(repo: Path | str, *args: str) -> str:
-    """The stripped stdout of a git command in `repo`, or '' when it fails. A byte that is not UTF-8,
-    as some test fixtures hold, reads as U+FFFD, so the brief can still be written. GIT_DIFF_OPTS
-    would beat `--unified=0`.
+    """Return the stripped stdout of a git command in `repo`, or '' when it fails.
+
+    A byte that is not UTF-8, as some test fixtures hold, reads as U+FFFD, so the brief can still
+    be written. GIT_DIFF_OPTS would beat `--unified=0`.
     """
     env = {key: value for key, value in os.environ.items() if key != "GIT_DIFF_OPTS"}
     return subprocess.run(
@@ -81,37 +84,47 @@ def git(repo: Path | str, *args: str) -> str:
         encoding="utf-8",
         errors="replace",
         env=env,
+        check=False,
     ).stdout.strip()
 
 
 def commit(repo: Path | str, ref: str) -> str:
-    """The full SHA of `ref` in `repo`, or ''."""
+    """Return the full SHA of `ref` in `repo`, or ''."""
     return git(repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
 
 
 def is_ancestor(repo: Path | str, a: str, b: str) -> bool:
+    """Tell whether the commit `a` is an ancestor of the commit `b` in `repo`."""
     return (
         subprocess.run(
-            ["git", "-C", str(repo), "merge-base", "--is-ancestor", a, b], capture_output=True
+            ["git", "-C", str(repo), "merge-base", "--is-ancestor", a, b],
+            capture_output=True,
+            check=False,
         ).returncode
         == 0
     )
 
 
 def summary(log: Path) -> re.Match[str] | None:
-    """The match of the last `mutation-test:` summary line of `log`, whose group 1 is the measured SHA,
-    or None.
+    """Return the match of the last `mutation-test:` summary line of `log`, or None.
+
+    Group 1 of the match is the measured SHA.
     """
     lines = [line for line in log.read_text().splitlines() if line.startswith("mutation-test: ")]
     return re.search(r"\(HEAD ([0-9a-f]{40})\)$", lines[-1]) if lines else None
 
 
 def patch_id(repo: Path | str, sha: str) -> str:
-    """The stable `git patch-id` of the commit `sha`, or '' for a commit that changes nothing."""
-    shown = subprocess.run(["git", "-C", str(repo), "show", sha], capture_output=True).stdout
+    """Return the stable `git patch-id` of the commit `sha`, or '' for an empty commit."""
+    shown = subprocess.run(
+        ["git", "-C", str(repo), "show", sha], capture_output=True, check=False
+    ).stdout
     return (
         subprocess.run(
-            ["git", "-C", str(repo), "patch-id", "--stable"], input=shown, capture_output=True
+            ["git", "-C", str(repo), "patch-id", "--stable"],
+            input=shown,
+            capture_output=True,
+            check=False,
         )
         .stdout.decode()
         .partition(" ")[0]
@@ -119,8 +132,12 @@ def patch_id(repo: Path | str, sha: str) -> str:
 
 
 def in_range(repo: Path | str, sha: str, base: str, head: str) -> str:
-    """The commit of `base`..`head` that is `sha`, or that a rebase made of it (the same patch-id), or ''."""
-    # In the range means reachable from head and not from base; base need not precede it after a merge of main.
+    """Return the commit of `base`..`head` that is `sha`, or that a rebase made of it, or ''.
+
+    A rebase keeps the patch-id of a commit.
+    """
+    # In the range means reachable from head and not from base; base need not precede it after a
+    # merge of main.
     if sha == commit(repo, head) or (
         not is_ancestor(repo, sha, base) and is_ancestor(repo, sha, head)
     ):
@@ -137,9 +154,9 @@ def in_range(repo: Path | str, sha: str, base: str, head: str) -> str:
 
 
 def log_mismatch(
-    log: Path, repo: Path | str, base: str, head: str, earlier: bool = False
+    log: Path, repo: Path | str, base: str, head: str, *, earlier: bool = False
 ) -> str | None:
-    """Why the summary line of `log` does not describe a commit in `base`..`head` of `repo`, or None.
+    """Return why the summary line of `log` does not describe a commit in `base`..`head`, or None.
 
     With `earlier`, a commit that `base` reaches is accepted too: an earlier round's log.
     """
@@ -150,12 +167,15 @@ def log_mismatch(
         return None
     if not in_range(repo, found[1], base, head):
         want = commit(repo, head)
-        return f"{log} measured {found[1][:8]}, which is not in {base}..{head} ({want[:8] or 'unknown'})"
+        return (
+            f"{log} measured {found[1][:8]}, which is not in {base}..{head} "
+            f"({want[:8] or 'unknown'})"
+        )
     return None
 
 
 def coverage_mismatch(path: Path, repo: Path | str, head: str) -> str | None:
-    """Why the last `coverage:` line of `path` does not describe the commit `head` of `repo`, or None."""
+    """Return why the last `coverage:` line of `path` does not describe `head`, or None."""
     lines = [line for line in path.read_text().splitlines() if line.startswith("coverage: ")]
     found = (
         re.search(r"\(HEAD ([0-9a-f]{40})( with uncommitted changes)?\)$", lines[-1])
@@ -166,21 +186,30 @@ def coverage_mismatch(path: Path, repo: Path | str, head: str) -> str | None:
         return f'no coverage line ending "(HEAD <sha>)" in {path}'
     measured, want = found[1], commit(repo, head)
     if found[2]:
-        return f"{path} measured uncommitted changes on {measured[:8]}, or HEAD changed during the run; run make coverage again at the head on a clean tree"
+        return (
+            f"{path} measured uncommitted changes on {measured[:8]}, or HEAD changed during the "
+            "run; run make coverage again at the head on a clean tree"
+        )
     if measured != want:
-        return f"{path} measured {measured[:8]}, not the head {want[:8] or 'unknown'}; run make coverage again at the head"
+        return (
+            f"{path} measured {measured[:8]}, not the head {want[:8] or 'unknown'}; "
+            "run make coverage again at the head"
+        )
     return None
 
 
-# Test files whose removed lines Focus lists. Blessed output is left out: golden_diff.py checks a rewording.
+# Test files whose removed lines Focus lists. Blessed output is left out: golden_diff.py checks
+# a rewording.
 TESTS = [":(glob)**/tests/**", ":(glob)**/tests.rs", ":(glob)scripts/test_*.py"]
 EXPECTED = [":(exclude,glob)**/*.err", ":(exclude,glob)**/*.json", ":(exclude,glob)**/*.out"]
 SHOWN = 40
 
 
 def removed_tests(repo: Path | str, base: str, head: str) -> list[str]:
-    """Each line that base..head removes from a test file with no identical line added back to any
-    test file, as "path:line: text", then each deleted test file. Blank lines and comments are left out.
+    """Return each line that base..head removes from a test file, then each deleted test file.
+
+    A line counts when no identical line is added back to any test file. A line reads
+    "path:line: text". Blank lines and comments are left out.
     """
     deleted = git(
         repo, "diff", "--name-only", "--diff-filter=D", base, head, "--", *TESTS
@@ -205,7 +234,8 @@ def removed_tests(repo: Path | str, base: str, head: str) -> list[str]:
         *TESTS,
         *EXPECTED,
     )
-    # A removed line is named by its base path and line, so a renamed file reads as the base has it.
+    # A removed line is named by its base path and line, so a renamed file reads as the base has
+    # it.
     removed: list[tuple[str | None, str, int, str]] = []
     added: set[str] = set()
     old: str | None = None
@@ -239,11 +269,15 @@ def removed_tests(repo: Path | str, base: str, head: str) -> list[str]:
 
 
 def drop_line(t: str, start: str) -> str:
-    """`t` without the "- " list item that begins with `start`, up to the next item or blank line."""
+    """Return `t` without the "- " list item that begins with `start`.
+
+    The item ends at the next item or blank line.
+    """
     return re.sub(rf"- {re.escape(start)}.*?(?=\n- |\n\n)\n?", "", t, flags=re.DOTALL)
 
 
-def main() -> None:
+def main() -> None:  # noqa: C901, PLR0912, PLR0915  one linear pass: a step reads what the step before it set
+    """Write the brief that the command line asks for, and print its path."""
     p = argparse.ArgumentParser()
     p.add_argument("repo")
     p.add_argument("target")
@@ -317,7 +351,8 @@ def main() -> None:
             focus_lines.append(
                 "Prebuilt sisu, one for each commit:\n"
                 + "\n".join(
-                    f"- {b.parent.name[:8]} {git(repo, 'log', '-1', '--format=%s', b.parent.name)}: {b}"
+                    f"- {b.parent.name[:8]} "
+                    f"{git(repo, 'log', '-1', '--format=%s', b.parent.name)}: {b}"
                     for b in builds
                 )
             )
@@ -325,7 +360,7 @@ def main() -> None:
         target = out.parent / f"target-{a.round}{Path(a.target).suffix}"
 
     shown = subprocess.run(
-        ["git", "-C", str(repo), "show", MAIN_TEMPLATE], capture_output=True, text=True
+        ["git", "-C", str(repo), "show", MAIN_TEMPLATE], capture_output=True, text=True, check=False
     )
     if shown.returncode == 0:
         t = shown.stdout

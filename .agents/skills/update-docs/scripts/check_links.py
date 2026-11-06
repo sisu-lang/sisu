@@ -1,7 +1,9 @@
-"""Checks that relative links and image sources in Markdown files resolve, anchors included, that
-each repository path written as code in prose, such as `crates/sisuc/src/main.rs`, is tracked by
-git or ignored on purpose, and that each Rust file named by its last parts, such as `lexer.rs` or
-`check/mod.rs`, ends a tracked path.
+"""Check the links and paths in Markdown files.
+
+A relative link or image source must resolve, anchors included. Each repository path written as
+code in prose, such as `crates/sisuc/src/main.rs`, must be tracked by git or ignored on purpose.
+Each Rust file named by its last parts, such as `lexer.rs` or `check/mod.rs`, must end a tracked
+path.
 
 Usage: python3 check_links.py FILE.md... Prints each broken link or path and exits 1 if any.
 """
@@ -28,7 +30,10 @@ ROOT = Path(__file__).resolve().parents[4]
 
 
 def git(*args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True)
+    """Run git in the repository root, and return the finished process."""
+    return subprocess.run(
+        ["git", "-C", str(ROOT), *args], capture_output=True, text=True, check=False
+    )
 
 
 # What a clean checkout holds: each tracked file and each directory above one. Checking the
@@ -40,14 +45,15 @@ for name in git("ls-files", "-z").stdout.split("\0"):
 
 
 def in_repo(path: str) -> bool:
-    """Tracked, or ignored on purpose, like the local-only `docs/superpowers/`."""
+    """Tell whether `path` is tracked, or ignored on purpose like `docs/superpowers/`."""
     return path.rstrip("/") in TRACKED or git("check-ignore", "-q", path).returncode == 0
 
 
 def fence_after(line: str, fence: str | None) -> str | None:
-    """The fence that is open after `line`, when `fence` is open before it (None: no fence). A fence
-    closes only on a line of its character, at least as long, with only spaces or tabs after it,
-    so a ```` fence can show a ``` one.
+    """Return the fence that is open after `line`, when `fence` is open before it (None: no fence).
+
+    A fence closes only on a line of its character, at least as long, with only spaces or tabs
+    after it, so a ```` fence can show a ``` one.
     """
     run = FENCE.match(line)
     if fence is None:
@@ -62,7 +68,7 @@ def fence_after(line: str, fence: str | None) -> str | None:
 
 
 def prose(path: Path) -> str:
-    """The file's text with fenced code blocks removed, each line read once."""
+    """Return the file's text with fenced code blocks removed, each line read once."""
     kept: list[str] = []
     fence: str | None = None
     for line in path.read_text().split("\n"):
@@ -73,7 +79,7 @@ def prose(path: Path) -> str:
 
 
 def anchors(path: Path) -> Iterator[str]:
-    """GitHub's heading slugs: link text kept, punctuation dropped, duplicates numbered."""
+    """Yield GitHub's heading slugs: link text kept, punctuation dropped, duplicates numbered."""
     seen: dict[str, int] = {}
     for heading in re.findall(r"^#{1,6}\s+(.*?)\s*#*\s*$", prose(path), re.MULTILINE):
         text = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", heading).replace("`", "")
@@ -84,6 +90,7 @@ def anchors(path: Path) -> Iterator[str]:
 
 
 def targets(text: str) -> Iterator[str]:
+    """Yield each link target in `text`: inline links, reference definitions and attributes."""
     for m in INLINE.finditer(text):
         yield m.group(1)
     for m in REF_DEF.finditer(text):
@@ -96,6 +103,7 @@ def targets(text: str) -> Iterator[str]:
 
 
 def main() -> None:
+    """Check each file named on the command line, print each broken link and exit."""
     bad = 0
     for md in map(Path, sys.argv[1:]):
         for target in targets(prose(md)):
