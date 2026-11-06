@@ -53,6 +53,12 @@ use crate::tir::{
     PatternKind, Type, TypeKind,
 };
 
+#[cfg(test)]
+thread_local! {
+    /// How many times `copied_under` has run on this thread: a counted binding under a boxed `F?`.
+    pub(crate) static COPIED_UNDER: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// An index into `Lowering::targets`: a failure target that has no block until an edge needs it.
 #[derive(Clone, Copy)]
 pub(super) struct Target(usize);
@@ -711,6 +717,8 @@ impl Lowering<'_> {
         seen: &mut FxHashSet<LocalId>,
         copied: &mut Vec<LocalId>,
     ) {
+        #[cfg(test)]
+        COPIED_UNDER.set(COPIED_UNDER.get() + 1);
         match &pattern.kind {
             PatternKind::Bind(binding) => {
                 if self.locals[binding.0].counted && seen.insert(*binding) {

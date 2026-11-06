@@ -66,10 +66,10 @@ mod certify;
 mod elaborate;
 mod hoist;
 mod liveness;
-mod lower;
+pub(crate) mod lower;
 mod ownership;
 mod pairs;
-mod params;
+pub(crate) mod params;
 mod print;
 mod reuse;
 

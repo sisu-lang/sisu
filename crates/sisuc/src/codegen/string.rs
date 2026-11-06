@@ -23,6 +23,13 @@ use super::{Codegen, POSITIONED, zeroext};
 use crate::source::Span;
 use crate::tir::{Align, Format, Pad, Stream, Type};
 
+#[cfg(test)]
+thread_local! {
+    /// How many times `len_words` has run on this thread. `words` counts words too, so the
+    /// runtime call is no mark.
+    pub(crate) static LEN_WORDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl<'ctx> Codegen<'ctx, '_> {
     /// The `i64` header field `index` of `string`.
     fn load_string_field(&self, string: PointerValue<'ctx>, index: u32) -> IntValue<'ctx> {
@@ -444,6 +451,8 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// The number of words in `string`.
     pub(super) fn len_words(&self, string: BasicValueEnum<'ctx>) -> IntValue<'ctx> {
+        #[cfg(test)]
+        LEN_WORDS.set(LEN_WORDS.get() + 1);
         let (bytes, len) = (self.value_data(string), self.value_len(string));
         self.call_word_function("sisu_words_count", &[bytes.into(), len.into()])
     }

@@ -14,7 +14,7 @@ mod matching;
 mod math;
 mod rc;
 mod show;
-mod string;
+pub(crate) mod string;
 pub(crate) mod units;
 
 use rustc_hash::FxHashMap;
