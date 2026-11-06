@@ -1,0 +1,18 @@
+error[E0062]: `c` may be `None`
+  --> E0062-for-subject.sisu:19:14
+   |
+19 |     for y in c.ys {
+   |              ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `c` may be `None`
+  --> E0062-for-subject.sisu:25:14
+   |
+25 |     bump(mut c.m.v)
+   |              ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0062

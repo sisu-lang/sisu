@@ -1,0 +1,28 @@
+// GIVEN an optional object whose field is the subject of a `for`, or whose field has a field that a `mut` argument names
+// WHEN `sisu check` runs on it
+// THEN it reports E0062 with the `if let` help and no `?.` fix
+// AND the `?.` fix would lead to a `for` on an optional, and to a `mut` argument that is no place
+class Leaf {
+    mut v: i64
+}
+
+class Node {
+    mut ys: [i64]
+    mut m: Leaf
+}
+
+fn bump(mut x: i64) {
+    x += 1
+}
+
+fn o1(c: Node?) {
+    for y in c.ys {
+        print(y)
+    }
+}
+
+fn o2(c: Node?) {
+    bump(mut c.m.v)
+}
+
+fn main() {}

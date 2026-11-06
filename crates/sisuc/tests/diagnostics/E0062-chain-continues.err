@@ -362,11 +362,7 @@ error[E0062]: `c` may be `None`
 107 |     bump(mut c.tally.count)
     |              ^
     |
-    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
-help: if a `None` result is fine, use `?.`
-    |
-107 |     bump(mut c?.tally.count)
-    |               +
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
 
 error[E0169]: a `mut` argument must be a place: a variable, a `mut` field, or an element of one of these
    --> E0062-chain-continues.sisu:107:14
@@ -385,11 +381,7 @@ error[E0062]: `c` may be `None`
 111 |     for n in c.inner.v { print(n) }
     |              ^
     |
-    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
-help: if a `None` result is fine, use `?.`
-    |
-111 |     for n in c?.inner.v { print(n) }
-    |               +
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
 
 error[E0035]: `for` needs an array or a range; this is `i64`
    --> E0062-chain-continues.sisu:111:14

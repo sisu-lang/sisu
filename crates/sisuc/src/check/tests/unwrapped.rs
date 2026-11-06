@@ -451,3 +451,152 @@ fn index_of_a_member_optional_array_should_keep_the_element_type() {
         ],
     )]);
 }
+
+/// The declarations of `flag_rows`, then `fn f(c: C?)` whose body is the row's statements.
+const FLAG_DECLS: &str = "class C {\n    v: i64\n}\nclass Bx<T> {\n    v: T\n    fn put(self, x: i64) -> T { self.v }\n}\nclass B<T> {\n    v: T\n}\nenum E<T> {\n    V(T)\n}\ntype O = i64?\nfn id<T>(t: T) -> T { t }\nfn pair<T>(x: T, y: string) -> [T] { [x] }\nfn g<T>(n: i64, t: T) -> T { t }\nfn main() {}";
+
+/// A row of `flag_rows`: its name, its statements, and each diagnostic wanted. A line of a
+/// diagnostic counts from the first line of the statements, which is 0.
+type FlagRow<'a> = (&'a str, &'a str, &'a [Wanted]);
+
+/// Asserts the diagnostics of each row over `FLAG_DECLS`.
+fn flag_rows(table: &[FlagRow<'_>]) {
+    let first = FLAG_DECLS.lines().count() + 2;
+    for &(row, body, wanted) in table {
+        let src = format!("{FLAG_DECLS}\nfn f(c: C?) {{\n    {body}\n}}");
+        let want: Vec<Wanted> = wanted
+            .iter()
+            .map(|&(code, (line, col))| (code, (first + line, col)))
+            .collect();
+        codes_row(row, &src, &want);
+    }
+}
+
+/// A result that the receiver or a written type list fixes does not depend on the remedy of an
+/// E0062 in an argument, so it keeps no flag: both remedies report the `??` on a value that is
+/// not optional. A guard: the arguments alone bind the result, so the flag stays and `??` is quiet.
+#[test]
+fn flag_should_spread_only_when_the_arguments_bind_the_result() {
+    flag_rows(&[
+        (
+            "b1",
+            "let b = Bx(v: 1)\n    print(b.put(c.v) ?? 0)",
+            &[
+                (Code::CoalesceNotOptional, (1, 11)),
+                (Code::MayBeNone, (1, 17)),
+            ],
+        ),
+        (
+            "b2",
+            "print(pair<i64>(c.v, \"s\") ?? [0])",
+            &[
+                (Code::CoalesceNotOptional, (0, 11)),
+                (Code::MayBeNone, (0, 21)),
+            ],
+        ),
+        (
+            "b3",
+            "print(id<i64>(n: c.v) ?? 0)",
+            &[
+                (Code::CoalesceNotOptional, (0, 11)),
+                (Code::LabeledArgument, (0, 19)),
+                (Code::MayBeNone, (0, 22)),
+            ],
+        ),
+        (
+            "b4",
+            "let y = g<i64>(c.v, 0)\n    print(y ?? 0)",
+            &[
+                (Code::MayBeNone, (0, 20)),
+                (Code::CoalesceNotOptional, (1, 11)),
+            ],
+        ),
+        (
+            "b5",
+            "let y = B<i64>(v: c.v)\n    print(y.nope())",
+            &[(Code::MayBeNone, (0, 23)), (Code::NoMember, (1, 13))],
+        ),
+        (
+            "b6",
+            "let y = E<i64>.V(c.v)\n    let s: string = y",
+            &[(Code::MayBeNone, (0, 22)), (Code::Mismatch, (1, 21))],
+        ),
+        ("g1", "print(id(c.v) ?? 0)", &[(Code::MayBeNone, (0, 14))]),
+        (
+            "g2",
+            "let s: string = O.Some(c.v)",
+            &[(Code::Mismatch, (0, 21)), (Code::MayBeNone, (0, 28))],
+        ),
+        (
+            "g3",
+            "let s: string = Some<i64>(c.v)",
+            &[(Code::Mismatch, (0, 21)), (Code::MayBeNone, (0, 31))],
+        ),
+        (
+            "g4",
+            "let s: string = E.V(c.v)",
+            &[(Code::Mismatch, (0, 21)), (Code::MayBeNone, (0, 25))],
+        ),
+        // The receiver's `T` is fixed, and the second E0062 stays: the flag of the argument
+        // `x` is no different from the receiver's.
+        (
+            "b7",
+            "print(Bx(v: c.v).put(x: c.v) ?? 0)",
+            &[
+                (Code::MayBeNone, (0, 17)),
+                (Code::LabeledArgument, (0, 26)),
+                (Code::MayBeNone, (0, 29)),
+            ],
+        ),
+    ]);
+}
+
+/// A call through an interface bound fixes its result by the requirement's own type, so the flag
+/// of an argument follows only when the arguments bind it.
+#[test]
+fn flag_should_not_spread_through_a_bound_method_whose_result_the_bound_fixes() {
+    codes(
+        "interface Same {\n    fn same(self, x: i64) -> i64\n    fn back(self, x: i64) -> Self\n}\nclass C {\n    v: i64\n}\nfn f<T: Same>(t: T, c: C?) {\n    print(t.same(c.v) ?? 0)\n}\nfn g<T: Same>(t: T) {\n    let k = t.back(1)\n    let s: string = k\n}\nfn main() {}",
+        &[
+            (Code::CoalesceNotOptional, (9, 11)),
+            (Code::MayBeNone, (9, 18)),
+            (Code::Mismatch, (13, 21)),
+        ],
+    );
+}
+
+/// The type of a join in an `if let` takes the flag of its branch value: the `??` after it is
+/// quiet.
+#[test]
+fn flag_should_spread_through_an_if_let_branch() {
+    codes(
+        "class C {\n    v: i64\n}\nfn f(c: C?, k: i64?) {\n    print((if let x = k { c.v } else { 0 }) ?? 0)\n}\nfn main() {}",
+        &[(Code::MayBeNone, (5, 27))],
+    );
+}
+
+/// A name pattern of `match` over a value that E0062 typed does not match everything: an `Ok`
+/// pattern is wrong for an `i64`, with or without the optional.
+#[test]
+fn constructor_pattern_on_a_value_typed_by_e0062_should_be_reported() {
+    codes(
+        "class C {\n    v: i64\n}\nfn f(c: C?) {\n    match c.v {\n        Ok(x) => print(x)\n        _ => print(0)\n    }\n}\nfn main() {}",
+        &[(Code::MayBeNone, (5, 11)), (Code::Mismatch, (6, 9))],
+    );
+}
+
+/// A call whose result names a parameter that its arguments bind, and whose one argument is an
+/// error with no E0062, keeps no flag: its `??` is still reported. A call through a function and
+/// through a bound each have the rule.
+#[test]
+fn flag_should_not_spread_through_a_call_when_no_argument_has_it() {
+    codes(
+        "interface Two {\n    fn two<U>(self, a: U, b: U) -> U\n}\nfn two<U>(a: U, b: U) -> U { a }\nfn f<T: Two>(t: T) {\n    print(t.two(1, nope) ?? 0)\n}\nfn g() {\n    print(two(1, nope) ?? 0)\n}\nfn main() {}",
+        &[
+            (Code::CoalesceNotOptional, (6, 11)),
+            (Code::BindingNotFound, (6, 20)),
+            (Code::CoalesceNotOptional, (9, 11)),
+            (Code::BindingNotFound, (9, 18)),
+        ],
+    );
+}

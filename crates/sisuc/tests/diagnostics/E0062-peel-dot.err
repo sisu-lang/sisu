@@ -1,80 +1,236 @@
 error[E0062]: `c` may be `None`
-  --> E0062-peel-dot.sisu:13:11
+  --> E0062-peel-dot.sisu:15:11
    |
-13 |     print(c.get())
+15 |     print(c.get())
    |           ^
    |
    = help: peel the extra layer first: `(c ?? None)?.get`
 
 error[E0062]: `c?.` leaves a `Node?`, which may be `None`
-  --> E0062-peel-dot.sisu:17:11
+  --> E0062-peel-dot.sisu:19:11
    |
-17 |     print(c?.get())
+19 |     print(c?.get())
    |           ^
    |
    = help: peel the other layer first: `(c ?? None)?.get`
 
 error[E0062]: `c` may be `None`
-  --> E0062-peel-dot.sisu:21:5
+  --> E0062-peel-dot.sisu:23:5
    |
-21 |     c.ys.push(1)
+23 |     c.ys.push(1)
    |     ^
    |
    = help: peel the extra layer first: `(c ?? None)?.ys`
 
 error[E0062]: `c?.` leaves a `Node?`, which may be `None`
-  --> E0062-peel-dot.sisu:25:5
+  --> E0062-peel-dot.sisu:27:5
    |
-25 |     c?.ys.push(1)
+27 |     c?.ys.push(1)
    |     ^
    |
    = help: peel the other layer first: `(c ?? None)?.ys`
 
 error[E0062]: `c` may be `None`
-  --> E0062-peel-dot.sisu:29:5
+  --> E0062-peel-dot.sisu:31:5
    |
-29 |     c.v = 2
+31 |     c.v = 2
    |     ^
    |
    = help: peel the extra layer first: `(c ?? None)?.v`
 
 error[E0001]: cannot assign to `v`
-  --> E0062-peel-dot.sisu:29:5
+  --> E0062-peel-dot.sisu:31:5
    |
- 7 |     v: i64
+ 9 |     v: i64
    |     - declared without `mut` here
 ...
-29 |     c.v = 2
+31 |     c.v = 2
    |     ^^^^^^^
    |
 help: mark the field `mut`
    |
- 7 |     mut v: i64
+ 9 |     mut v: i64
    |     +++
 
 error[E0062]: `xs` may be `None`
-  --> E0062-peel-dot.sisu:33:11
+  --> E0062-peel-dot.sisu:35:11
    |
-33 |     print(xs.len())
+35 |     print(xs.len())
    |           ^^
    |
    = help: peel the extra layer first: `(xs ?? None)?.len`
 
 error[E0062]: `c?.` leaves a `Node??`, which may be `None`
-  --> E0062-peel-dot.sisu:37:11
+  --> E0062-peel-dot.sisu:39:11
    |
-37 |     print(c?.v)
+39 |     print(c?.v)
    |           ^
    |
    = help: peel the other layers first: `((c ?? None) ?? None)?.v`
 
 error[E0062]: `c` may be `None`
-  --> E0062-peel-dot.sisu:41:11
+  --> E0062-peel-dot.sisu:43:11
    |
-41 |     print(c.v)
+43 |     print(c.v)
    |           ^
    |
    = help: peel the extra layers first: `((c ?? None) ?? None)?.v`
 
-sisu: 9 errors
+error[E0062]: `c` may be `None`
+  --> E0062-peel-dot.sisu:71:11
+   |
+71 |     print(c.v)
+   |           ^
+   |
+   = help: peel the extra layer first: `(c ?? None)?.v`
+
+error[E0062]: `c` may be `None`
+  --> E0062-peel-dot.sisu:75:11
+   |
+75 |     print(c.get())
+   |           ^
+   |
+   = help: peel the extra layer first: `(c ?? None)?.get`
+
+error[E0062]: `c` may be `None`
+  --> E0062-peel-dot.sisu:79:11
+   |
+79 |     print(c.ys[0])
+   |           ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `c` may be `None`
+  --> E0062-peel-dot.sisu:83:14
+   |
+83 |     for y in c.ys {
+   |              ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `c` may be `None`
+  --> E0062-peel-dot.sisu:89:11
+   |
+89 |     print(c.all()[0])
+   |           ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `c` may be `None`
+  --> E0062-peel-dot.sisu:93:14
+   |
+93 |     for y in c.all() {
+   |              ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `c` may be `None`
+  --> E0062-peel-dot.sisu:99:11
+   |
+99 |     print(c.ys[0..1])
+   |           ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:103:5
+    |
+103 |     c.v = 1
+    |     ^
+    |
+    = help: peel the extra layer first: `(c ?? None)?.v`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:107:5
+    |
+107 |     c.v += 1
+    |     ^
+    |
+    = help: peel the extra layer first: `(c ?? None)?.v`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:111:5
+    |
+111 |     c.ys[0] = 1
+    |     ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:115:5
+    |
+115 |     c.ys.push(1)
+    |     ^
+    |
+    = help: peel the extra layer first: `(c ?? None)?.ys`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:119:14
+    |
+119 |     bump(mut c.v)
+    |              ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `xs` may be `None`
+   --> E0062-peel-dot.sisu:123:5
+    |
+123 |     xs.push(1)
+    |     ^^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:127:5
+    |
+127 |     c.n.v = 1
+    |     ^
+    |
+    = help: peel the extra layer first: `(c ?? None)?.n`
+
+error[E0062]: `c.n` may be `None`
+   --> E0062-peel-dot.sisu:127:5
+    |
+127 |     c.n.v = 1
+    |     ^^^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: to do nothing when it is `None`, use `?.`
+    |
+127 |     c.n?.v = 1
+    |        +
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:131:14
+    |
+131 |     bump(mut c.m.v)
+    |              ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:135:5
+    |
+135 |     c.q.push(1)
+    |     ^
+    |
+    = help: peel the extra layer first: `(c ?? None)?.q`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:139:14
+    |
+139 |     print(xs[c.v])
+    |              ^
+    |
+    = help: peel the extra layer first: `(c ?? None)?.v`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:143:5
+    |
+143 |     c.m.ys.push(1)
+    |     ^
+    |
+    = help: peel the extra layer first: `(c ?? None)?.m`
+
+sisu: 28 errors
 sisu: for more on a code, run `sisu explain <code>`: E0001, E0062

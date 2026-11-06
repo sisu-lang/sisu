@@ -5,8 +5,8 @@
 use super::*;
 use Code::{
     ArgumentCount, ArgumentNeedsLabel, AssignToExpression, BindingNotFound, LabeledArgument,
-    MayBeNone, Mismatch, MissingField, NoValue, NotConform, PrintArgument, TypeArgument,
-    TypeArguments, UnknownType,
+    MayBeNone, Mismatch, MissingField, NoValue, NotConform, PrintArgument, PrintsOptional,
+    TypeArgument, TypeArguments, UnknownType,
 };
 
 /// The declarations `decls`, then a function `f` whose body is the statement `body`, then `main`.
@@ -512,5 +512,65 @@ fn a_some_through_an_alias_should_keep_the_alias_type_when_it_fails() {
                 &[(LabeledArgument, CALL + 7), (Mismatch, CALL + 10)],
             ),
         ],
+    );
+}
+
+/// A `Some` is never `None`, so a `Some` that fails gets no W0015, whatever type the failure gives
+/// it. The span of the printed value is the span of the `Some`, also through parentheses.
+#[test]
+fn a_failed_some_should_get_no_warning_that_it_can_be_none() {
+    let decls =
+        "class C {\n    v: i64\n}\ntype O = i64?\ntype P<T> = T?\nfn mk(a: i64) -> i64? { None }";
+    rows(
+        decls,
+        "f(c: C?)",
+        &[
+            ("c1", "print(Some<i64>(n: 1))", &[(LabeledArgument, 21)]),
+            ("c2", "print(Some<i64>(1, 2))", &[(ArgumentCount, 11)]),
+            ("c3", "print(Some<i64>(\"a\"))", &[(Mismatch, 21)]),
+            ("c4", "print(O.Some(n: 1))", &[(LabeledArgument, 18)]),
+            (
+                "c5",
+                "print(\"x {Some<i64>(n: 1)}\")",
+                &[(LabeledArgument, 25)],
+            ),
+            ("c6", "print(Some(c.v))", &[(MayBeNone, 16)]),
+            ("c7", "print(\"x {Some(c.v)}\")", &[(MayBeNone, 20)]),
+            ("c8", "print(P<i64>.Some(1, 2))", &[(ArgumentCount, 11)]),
+            ("c10", "print(Option.Some(c.v))", &[(MayBeNone, 23)]),
+            ("c11", "print(Some<i64>(c.v))", &[(MayBeNone, 21)]),
+            ("c12", "print((Some<i64>(n: 1)))", &[(LabeledArgument, 22)]),
+            // Guards: a call that is no `Some` keeps the warning, and so does a block that
+            // ends in a `Some`, whose corrected form is an optional.
+            (
+                "c9",
+                "print(mk(1, 2))",
+                &[(ArgumentCount, 11), (PrintsOptional, 11)],
+            ),
+            (
+                "c13",
+                "print({ Some<i64>(n: 1) })",
+                &[(PrintsOptional, 11), (LabeledArgument, 23)],
+            ),
+            (
+                "c14",
+                "print(\"x {mk(1, 2)}\")",
+                &[(ArgumentCount, 15), (PrintsOptional, 15)],
+            ),
+        ],
+    );
+}
+
+/// A call with a label on a `mut` argument keeps no type when its arguments bind the result:
+/// `keep(v: mut n)` gives E0055 alone, through a function and through a bound.
+#[test]
+fn a_labeled_mut_argument_should_leave_the_result_to_the_arguments() {
+    codes(
+        "fn keep<U>(mut x: U) -> U { x }\nfn f() {\n    let mut n = 1\n    let s = keep(v: mut n)\n    let t: string = s\n}\nfn main() {}",
+        &[(Code::NeverReassigned, (1, 16)), (LabeledArgument, (4, 18))],
+    );
+    codes(
+        "interface Keep {\n    fn keep<U>(self, mut x: U) -> U\n}\nfn g<T: Keep>(t: T) {\n    let mut n = 1\n    let s = t.keep(v: mut n)\n    let u: string = s\n}\nfn main() {}",
+        &[(LabeledArgument, (6, 20))],
     );
 }

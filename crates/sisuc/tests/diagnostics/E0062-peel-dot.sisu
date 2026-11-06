@@ -3,6 +3,8 @@
 // WHEN `sisu check` runs on it
 // THEN it reports E0062 with no fix, and a help that peels the layers that `?.` does not take
 // AND the `.` says "the extra layers", and the `?.` says "the other layers", with one `?? None` for each
+// AND an index, a slice, a `for` subject or a `mut` argument after the `.` gets the `if let` help instead
+// AND a `push` onto `[i64]??` gets the `if let` help and no fix: an unwrapped array is a copy, and the peeled `push` gives E0021
 class Node {
     v: i64
     mut ys: [i64]
@@ -39,6 +41,106 @@ fn f7(c: Node???) {
 
 fn f8(c: Node???) {
     print(c.v)
+}
+
+class Pusher {
+    mut count: i64
+    fn push(self, x: i64) {}
+}
+
+class Leaf {
+    mut v: i64
+    mut ys: [i64]
+}
+
+class Tree {
+    mut v: i64
+    mut ys: [i64]
+    mut n: Tree?
+    mut m: Leaf
+    mut q: Pusher
+    fn all(self) -> [i64] { self.ys }
+    fn get(self) -> i64 { self.v }
+}
+
+fn bump(mut x: i64) {
+    x += 1
+}
+
+fn r1(c: Tree??) {
+    print(c.v)
+}
+
+fn r2(c: Tree??) {
+    print(c.get())
+}
+
+fn r3(c: Tree??) {
+    print(c.ys[0])
+}
+
+fn r4(c: Tree??) {
+    for y in c.ys {
+        print(y)
+    }
+}
+
+fn r5(c: Tree??) {
+    print(c.all()[0])
+}
+
+fn r6(c: Tree??) {
+    for y in c.all() {
+        print(y)
+    }
+}
+
+fn s1(c: Tree??) {
+    print(c.ys[0..1])
+}
+
+fn w1(c: Tree??) {
+    c.v = 1
+}
+
+fn w2(c: Tree??) {
+    c.v += 1
+}
+
+fn w3(c: Tree??) {
+    c.ys[0] = 1
+}
+
+fn w4(c: Tree??) {
+    c.ys.push(1)
+}
+
+fn w5(c: Tree??) {
+    bump(mut c.v)
+}
+
+fn w6(mut xs: [i64]??) {
+    xs.push(1)
+}
+
+fn w7(c: Tree??) {
+    c.n.v = 1
+}
+
+fn w8(c: Tree??) {
+    bump(mut c.m.v)
+}
+
+fn g5(c: Tree??) {
+    c.q.push(1)
+}
+
+fn g6(c: Tree??, xs: [i64]) {
+    print(xs[c.v])
+}
+
+fn g7(c: Tree??) {
+    c.m.ys.push(1)
 }
 
 fn main() {}

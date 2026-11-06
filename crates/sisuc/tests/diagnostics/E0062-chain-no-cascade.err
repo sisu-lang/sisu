@@ -88,11 +88,7 @@ error[E0062]: `c` may be `None`
 89 |     for n in c.ns { n.ys.push("a") }
    |              ^
    |
-   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
-help: if a `None` result is fine, use `?.`
-   |
-89 |     for n in c?.ns { n.ys.push("a") }
-   |               +
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
 
 error[E0062]: `c` may be `None`
   --> E0062-chain-no-cascade.sisu:93:12
