@@ -18,6 +18,8 @@ import math
 import os
 import re
 import sys
+from collections.abc import Mapping
+from typing import Any
 
 LABEL = re.compile(r"fuzz-program(?: ([0-9]+)([mh]))?")
 BARE_LABEL = 2 * 3600
@@ -69,6 +71,7 @@ def from_labels(labels: list[str], added: str | None = None) -> int | None:
         return None
     if len(matching) > 1:
         raise ValueError("more than one fuzz-program label: " + ", ".join(matching))
+    # pyrefly: ignore[bad-argument-type]  `matching` holds only names with a fuzz time
     return in_range(label_seconds(matching[0]))
 
 
@@ -93,7 +96,7 @@ def minutes(seconds: int, coverage: bool) -> int:
     )
 
 
-def plan(event: str, payload: dict, env: dict) -> tuple[int, bool] | None:
+def plan(event: str, payload: dict[str, Any], env: Mapping[str, str]) -> tuple[int, bool] | None:
     if event == "schedule":
         return NIGHTLY, True
     if event == "workflow_dispatch":

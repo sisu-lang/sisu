@@ -25,6 +25,7 @@ import json
 import re
 import subprocess
 import sys
+from typing import Any
 
 MARKER = "/crates/sisuc/src/"
 OUT_OF_SCOPE_FILES = {
@@ -109,7 +110,7 @@ def demangle(names: list[str]) -> list[str]:
     return lines
 
 
-def load(path: str) -> list[dict]:
+def load(path: str) -> list[dict[str, Any]]:
     """The `data[0].functions` records of an export."""
     try:
         with open(path, encoding="utf-8") as f:
@@ -127,7 +128,7 @@ def load(path: str) -> list[dict]:
     return functions
 
 
-def in_scope(functions: list[dict], path: str) -> list[tuple[str, int, str, bool]]:
+def in_scope(functions: list[dict[str, Any]], path: str) -> list[tuple[str, int, str, bool]]:
     """(file, first line, mangled name, reached) of each record in scope. A record with no file
     name is broken: it would read as out of scope.
     """
@@ -145,7 +146,9 @@ def in_scope(functions: list[dict], path: str) -> list[tuple[str, int, str, bool
     return found
 
 
-def identities(rows: list[tuple[str, int, str, bool]], names: dict[str, str | None]) -> dict:
+def identities(
+    rows: list[tuple[str, int, str, bool]], names: dict[str, str | None]
+) -> dict[tuple[str, int, str], bool]:
     """Maps (file, first line, name) to whether any record of that function was reached."""
     seen: dict[tuple[str, int, str], bool] = {}
     for file, line, mangled, reached in rows:
@@ -182,7 +185,9 @@ def read_known(path: str) -> set[tuple[str, str]]:
     return keys
 
 
-def check_keys_are_unique(known: set[tuple[str, str]], *exports: dict) -> None:
+def check_keys_are_unique(
+    known: set[tuple[str, str]], *exports: dict[tuple[str, int, str], bool]
+) -> None:
     """A known key must name one definition. Two first lines under one key mean that the key
     would hide the second definition too. The lines of both exports count, reached or not.
     """

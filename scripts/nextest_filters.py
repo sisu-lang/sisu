@@ -13,6 +13,7 @@ import json
 import re
 import sys
 import tomllib
+from typing import Any
 
 # nextest allows whitespace, a newline too, before `(`. A leaf runs to the first `)`; a regex leaf
 # runs to its closing `/`, so that the message shows all of it.
@@ -23,14 +24,14 @@ TOKEN = re.compile(
 )
 
 
-def leaves(config: dict) -> list[str]:
+def leaves(config: dict[str, Any]) -> list[str]:
     """The argument of each `test(...)` leaf of each override and script filter, once each, as the
     parsed TOML holds it. nextest trims the space before an argument, not the space after it.
 
     shortcut: the check runs on the Linux list only, so an override with a `platform` key is
     skipped. Upgrade when a platform override is added, to one list for each platform.
     """
-    found = []
+    found: list[str] = []
     for profile in config.get("profile", {}).values():
         for table in ("overrides", "scripts"):
             for entry in profile.get(table, []):

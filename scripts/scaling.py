@@ -30,8 +30,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from fractions import Fraction
 from pathlib import Path
+from typing import Any
 
 from compile_speed import Deadline, Fail
 
@@ -65,45 +67,45 @@ ROOT = Path(__file__).resolve().parent.parent
 WIDTH = 4
 
 
-def tag(i) -> str:
+def tag(i: int) -> str:
     """The number `i` of a copy, with the width of the largest size."""
     return f"{i:0{WIDTH}d}"
 
 
-def nest(k, wrap, core):
+def nest(k: int, wrap: Callable[[str], str], core: str) -> str:
     """`core` inside `k` layers: each layer is `wrap(inner)`."""
     for _ in range(k):
         core = wrap(core)
     return core
 
 
-def functions(k):
+def functions(k: int) -> str:
     funs = [f"fn step{tag(0)}() -> i64 {{\n    1\n}}\n"] if k else []
     funs += [f"fn step{tag(i)}() -> i64 {{\n    step{tag(i - 1)}() + 1\n}}\n" for i in range(1, k)]
     shown = f'"{{step{tag(k - 1)}()}}"' if k else '"none"'
     return "\n".join(funs) + f"\nfn main() {{\n    print({shown})\n}}\n"
 
 
-def statements(k) -> str:
+def statements(k: int) -> str:
     lets = "".join(f"    let a{tag(i)} = a{tag(i - 1)} + 1\n" for i in range(1, k + 1))
     return f'fn main() {{\n    let a{tag(0)} = 0\n{lets}    print("{{a{tag(k)}}}")\n}}\n'
 
 
-def expression_depth(k) -> str:
+def expression_depth(k: int) -> str:
     return f'fn main() {{\n    let x = {nest(k, lambda s: f"1 + ({s})", "1")}\n    print("{{x}}")\n}}\n'
 
 
-def float_left(k) -> str:
+def float_left(k: int) -> str:
     chain = nest(k, lambda s: f"({s}) + 1.1", "1.1")
     return f'fn main() {{\n    let x = {chain}\n    print("{{x}}")\n}}\n'
 
 
-def string_left(k) -> str:
+def string_left(k: int) -> str:
     chain = nest(k, lambda s: f'({s}) + "a"', '"a"')
     return f'fn main() {{\n    let x = {chain}\n    print("{{x}}")\n}}\n'
 
 
-def string_call_depth(k) -> str:
+def string_call_depth(k: int) -> str:
     call = nest(k, lambda s: f'_g("a", {s})', '"a"')
     return (
         "fn _g(_a: string, b: string) -> string {\n    b\n}\n\n"
@@ -111,13 +113,13 @@ def string_call_depth(k) -> str:
     )
 
 
-def block_depth(k) -> str:
+def block_depth(k: int) -> str:
     # No indentation: it would make the text grow with the square of the depth, and so the lexer.
     body = nest(k, lambda s: f"if c {{\n{s}\n}}", 'print("in")')
     return f'fn main() {{\n    let c = true\n    print("{{c}}")\n{body}\n}}\n'
 
 
-def generic_call_depth(k) -> str:
+def generic_call_depth(k: int) -> str:
     call = nest(k + 1, lambda s: f"id({s})", "1")
     return (
         "fn id<T>(x: T) -> T {\n    x\n}\n\n"
@@ -125,20 +127,20 @@ def generic_call_depth(k) -> str:
     )
 
 
-def array_literal_depth(k) -> str:
+def array_literal_depth(k: int) -> str:
     return (
         f"fn main() {{\n    let a = {nest(k + 1, lambda s: f'[{s}]', '1')}\n"
         '    print("{a.len()}")\n}\n'
     )
 
 
-def array_literal_width(k) -> str:
+def array_literal_width(k: int) -> str:
     return (
         f'fn main() {{\n    let a: [i64] = [{", ".join(["7"] * k)}]\n    print("{{a.len()}}")\n}}\n'
     )
 
 
-def match_arms(k) -> str:
+def match_arms(k: int) -> str:
     names = ["First"] + [f"V{tag(i)}" for i in range(k)]
     variants = "".join(f"    {name}\n" for name in names)
     arms = "".join(f"        {name} => 1\n" for name in names)
@@ -150,7 +152,7 @@ def match_arms(k) -> str:
     )
 
 
-def fields(k) -> str:
+def fields(k: int) -> str:
     declared = "".join(f"    f{tag(i)}: i64\n" for i in range(k))
     given = "".join(f", f{tag(i)}: 1" for i in range(k))
     shown = "".join(f'    print("{{r.f{tag(i)}}}")\n' for i in range(k))
@@ -160,7 +162,7 @@ def fields(k) -> str:
     )
 
 
-def conformers(k):
+def conformers(k: int) -> str:
     classes = "".join(
         f"class C{tag(i)}: Speak {{\n    fn say(self) -> i64 {{\n        1\n    }}\n}}\n\n"
         for i in range(k)
@@ -175,7 +177,7 @@ def conformers(k):
     )
 
 
-def type_depth(k) -> str:
+def type_depth(k: int) -> str:
     pair = nest(k + 1, lambda s: f"Pair(a: {s}, b: 1)", "1")
     return (
         "class Pair<A, B> {\n    a: A\n    b: B\n}\n\n"
@@ -183,11 +185,11 @@ def type_depth(k) -> str:
     )
 
 
-def interpolations(k) -> str:
+def interpolations(k: int) -> str:
     return f'fn main() {{\n    let x = 1\n    let s = "{"{x}" * (k + 1)}"\n    print(s)\n}}\n'
 
 
-def live_locals(k):
+def live_locals(k: int) -> str:
     locals_ = "".join(f'    let live{tag(i)} = "v"\n' for i in range(k))
     uses = "".join(f"    total += live{tag(i)}.len()\n" for i in range(k))
     return (
@@ -198,7 +200,7 @@ def live_locals(k):
     )
 
 
-def method_chain(k) -> str:
+def method_chain(k: int) -> str:
     chain = "c" + ".next()" * (k + 1)
     return (
         "class Chain {\n    n: i64\n\n    fn next(self) -> Chain {\n        self\n    }\n}\n\n"
@@ -206,7 +208,7 @@ def method_chain(k) -> str:
     )
 
 
-def comments(k) -> str:
+def comments(k: int) -> str:
     # Each row is a comment and a `let ... else` whose block is one plain exit: the checker looks
     # for a comment in the text that the fix of E0131 would remove, once per row. Row 0 is the base.
     rows = "".join(
@@ -216,7 +218,7 @@ def comments(k) -> str:
     return f'fn f(o: i64?) -> i64 {{\n{rows}    0\n}}\n\nfn main() {{\n    print("{{f(1)}}")\n}}\n'
 
 
-def mut_parameters(k):
+def mut_parameters(k: int) -> str:
     # Each function has two `mut` parameters and each call passes two `mut` arguments, so that the
     # W0002 judgement of a parameter and the copy-in and copy-out of a call grow with `k`.
     funs = "".join(
@@ -232,7 +234,7 @@ def mut_parameters(k):
     )
 
 
-def mut_returns(k) -> str:
+def mut_returns(k: int) -> str:
     # `wide` has k plain parameters, one `mut` parameter and k early returns, each of which stores
     # the final value of the `mut` parameter. A pass that scans every parameter at each return is
     # quadratic in k. `main` adds to `total` once, so that size 0 has no W0002.
@@ -246,7 +248,7 @@ def mut_returns(k) -> str:
     )
 
 
-def mut_call_width(k):
+def mut_call_width(k: int) -> str:
     # `many` has k `mut` parameters of a class and k of `i64`. `main` calls it with the k `mut`
     # roots `mut v`, and then with a field of each: `mut v.x`. A search of all the arguments for
     # each `mut` argument, or of all the roots for each field, is quadratic in k. `main` adds to
@@ -267,7 +269,7 @@ def mut_call_width(k):
     )
 
 
-def mut_exits(k) -> str:
+def mut_exits(k: int) -> str:
     # `many` has k `mut` parameters and k early returns, and each return stores every `mut`
     # parameter, so `mir` and `codegen` grow with k squared (#502). `main` reads each local, so that
     # no size has a W0014, and adds to `total` once, so that size 0 has no W0002.
@@ -284,7 +286,7 @@ def mut_exits(k) -> str:
     )
 
 
-def owned_exits(k) -> str:
+def owned_exits(k: int) -> str:
     # `owned` has k owned locals and an early return after each, and each return releases every
     # local in scope, so `mir` and `codegen` grow with k squared (#502).
     body = "".join(
@@ -294,7 +296,7 @@ def owned_exits(k) -> str:
     return f"fn owned(stop: i64) -> i64 {{\n{body}    return stop\n}}\n\nfn main() {{\n    print(owned(1))\n}}\n"
 
 
-def optional_depth(k) -> str:
+def optional_depth(k: int) -> str:
     # An optional of k + 1 layers, in the field of a class and in a parameter. An array has a niche
     # for one layer only, so each layer past the first is a `{ flag, value }` pair, which codegen
     # lays out and counts one layer at a time (#461).
@@ -307,7 +309,7 @@ def optional_depth(k) -> str:
     )
 
 
-def alias_chain(k):
+def alias_chain(k: int) -> str:
     # A chain of k + 1 aliases, each of which names the one before it twice. Types are interned, so
     # the chain has k + 1 distinct types, but it has 2^k paths. The checker walks that read a field
     # type must visit each distinct type once. The chain `Ak` is in the field of a class and in
@@ -386,7 +388,7 @@ KEPT_R3 = Fraction("2.15")
 FALL_FIXED = Fraction("0.15")
 
 
-def judge(growth, total_8n):
+def judge(growth: list[int], total_8n: int) -> tuple[str, list[Fraction | None]]:
     """The verdict for one stage, and its three ratios as exact fractions.
 
     `growth` is the growth at n, 2n, 4n and 8n. `total_8n` is the sum of the growth at 8n of the
@@ -401,12 +403,13 @@ def judge(growth, total_8n):
     if None in ratios:
         return "no ratio", ratios
     r1, r2, r3 = ratios
+    # pyrefly: ignore[unsupported-operation]  `None in ratios` has returned: no ratio is None here
     if r3 > SUPERLINEAR_R3 and r2 >= SUPERLINEAR_R2 and (r3 >= r1 - FALL_ALLOWED or r3 >= STEEP):
         return "superlinear", ratios
     return "linear", ratios
 
 
-def looks_fixed(verdict, ratios):
+def looks_fixed(verdict: str, ratios: list[Fraction | None]) -> bool:
     """True when the stage of a known row is not superlinear any more, and not in the gap.
 
     The gap keeps a row from flapping when a change to the linear part moves a ratio a little.
@@ -414,20 +417,26 @@ def looks_fixed(verdict, ratios):
     if verdict in ("not judged", "no ratio"):
         return True
     r1, _, r3 = ratios
+    # pyrefly: ignore[unsupported-operation]  only the verdict "no ratio" has a None ratio
     return r3 < KEPT_R3 or (r3 < STEEP and r3 < r1 - FALL_FIXED)
 
 
 KNOWN_PREFIX = "known case: "
 
 
-def compare(verdicts, known, measured):
+def compare(
+    verdicts: dict[tuple[str, str], tuple[str, list[Fraction | None]]],
+    known: list[tuple[str, str, int]],
+    measured: set[str],
+) -> tuple[list[str], list[str], int]:
     """Compares the verdicts with the known list.
 
     Returns the lines for known cases, the lines for failures and the exit code. A row of `known`
     whose shape is not in `measured` is skipped.
     """
     rows = {(shape, stage): issue for shape, stage, issue in known}
-    lines, failures = [], []
+    lines: list[str] = []
+    failures: list[str] = []
     for (shape, stage), (verdict, _) in verdicts.items():
         if verdict == "superlinear" and (shape, stage) not in rows:
             failures.append(f"{shape}, {stage} is superlinear: open an issue and add a row")
@@ -446,7 +455,7 @@ ANNOTATE_LINE = re.compile(r"^\s*([\d,]+) \(\s*[\d.]+%\)\s+(.*)$")
 OBJECT_FIELD = re.compile(r" \[[^\]]*\]$")
 
 
-def stage_counts(annotate):
+def stage_counts(annotate: str) -> dict[str, int]:
     """The count of each stage, from the output of `callgrind_annotate`.
 
     A line is `<count> (<percent>)  <file>:<function> [<object>]`. A line without the object field
@@ -465,7 +474,7 @@ def stage_counts(annotate):
         if field is not None:
             where = match[2][: field.start()]
             rows.append((where, where.split(":", 1)[1], int(match[1].replace(",", ""))))
-    counts = {}
+    counts: dict[str, int] = {}
     for stage, function in STAGES:
         found = [
             (where, count)
@@ -481,12 +490,12 @@ def stage_counts(annotate):
     return counts
 
 
-def is_count(value):
+def is_count(value: object) -> bool:
     """True for an integer. A boolean is not a count."""
     return type(value) is int
 
 
-def invalid(data) -> str | None:
+def invalid(data: object) -> str | None:
     """What is wrong with the structure of a counts file, or None."""
     shapes = data.get("shapes") if isinstance(data, dict) else None
     if not isinstance(shapes, dict):
@@ -511,7 +520,7 @@ def invalid(data) -> str | None:
     return None
 
 
-def load(path):
+def load(path: Path) -> dict[str, Any]:
     """The counts of an earlier run (`counts.json`). It raises Fail when the file is not valid."""
     try:
         data = json.loads(path.read_text())
@@ -523,9 +532,9 @@ def load(path):
     return data
 
 
-def verdicts(counts):
+def verdicts(counts: dict[str, Any]) -> dict[tuple[str, str], tuple[str, list[Fraction | None]]]:
     """`judge` for each shape and stage of `counts`: {(shape, stage): (verdict, ratios)}."""
-    result = {}
+    result: dict[tuple[str, str], tuple[str, list[Fraction | None]]] = {}
     for shape, data in counts["shapes"].items():
         growth = {
             stage: [c - data["counts"][stage][0] for c in data["counts"][stage][1:]]
@@ -537,7 +546,9 @@ def verdicts(counts):
     return result
 
 
-def table(counts, verdicts):
+def table(
+    counts: dict[str, Any], verdicts: dict[tuple[str, str], tuple[str, list[Fraction | None]]]
+) -> str:
     """The markdown table of the run: the growths, the ratios and the verdict of each stage."""
     lines = ["# Scaling sweep", ""]
     for key in ("commit", "cpu", "valgrind", "glibc"):
@@ -562,7 +573,7 @@ def table(counts, verdicts):
     return "\n".join(lines) + "\n"
 
 
-def glibc():
+def glibc() -> str:
     """The version of the C library, or `unknown`."""
     try:
         return os.confstr("CS_GNU_LIBC_VERSION") or "unknown"
@@ -570,7 +581,7 @@ def glibc():
         return "unknown"
 
 
-def cpu_model():
+def cpu_model() -> str:
     """The model name of the first CPU, or `unknown`."""
     try:
         for line in Path("/proc/cpuinfo").read_text().splitlines():
@@ -581,7 +592,7 @@ def cpu_model():
     return "unknown"
 
 
-def commit():
+def commit() -> str:
     """The short hash of HEAD in this repository, or `unknown`."""
     try:
         done = subprocess.run(
@@ -592,7 +603,7 @@ def commit():
     return done.stdout.strip() if done.returncode == 0 and done.stdout.strip() else "unknown"
 
 
-def check_clean(deadline, sisu, path, what) -> None:
+def check_clean(deadline: Deadline, sisu: str, path: Path, what: str) -> None:
     """Runs `sisu check`. A failed command, or a diagnostic on stderr, raises Fail."""
     for line in deadline.run([sisu, "check", path], what).stderr.splitlines():
         match = DIAGNOSTIC.match(line)
@@ -600,7 +611,7 @@ def check_clean(deadline, sisu, path, what) -> None:
             raise Fail(f"{what}: {match[2]}")
 
 
-def measure(args, counts) -> None:
+def measure(args: argparse.Namespace, counts: dict[str, Any]) -> None:
     """Measures the shapes of `args` and puts each into `counts['shapes']` when it is done."""
     if shutil.which("valgrind") is None:
         raise Fail("valgrind is not on PATH")
@@ -619,7 +630,7 @@ def measure(args, counts) -> None:
             path.write_text(make(k))
         for k, path in ((sizes[0], files[0]), (sizes[-1], files[-1])):
             check_clean(deadline, args.sisu, path, f"{name}, size {k}")
-        per_stage = {stage: [] for stage, _ in STAGES}
+        per_stage: dict[str, list[int]] = {stage: [] for stage, _ in STAGES}
         with tempfile.TemporaryDirectory() as tmp:
             profile = os.path.join(tmp, "callgrind.out")
             for k, path in zip(sizes, files, strict=False):
@@ -644,7 +655,7 @@ def measure(args, counts) -> None:
         counts["shapes"][name] = {"sizes": sizes, "counts": per_stage}
 
 
-def shape_list(text):
+def shape_list(text: str) -> list[str]:
     """The shapes of a `--shapes` value."""
     names = text.split(",")
     for name in names:
@@ -653,7 +664,7 @@ def shape_list(text):
     return names
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         description="Find the shapes for which a stage is superlinear."
     )
@@ -669,7 +680,7 @@ def main(argv):
     parser.add_argument("--sisu", default=DEFAULT_SISU, help="the compiler")
     parser.add_argument("--time-bound", type=float, default=1800, help="seconds for the whole run")
     args = parser.parse_args(argv)
-    counts = {
+    counts: dict[str, Any] = {
         "commit": "unknown",
         "cpu": "unknown",
         "valgrind": "unknown",

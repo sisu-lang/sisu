@@ -39,6 +39,7 @@ import sys
 import tempfile
 import zipfile
 from datetime import UTC, datetime
+from typing import Any
 
 NO_NEW = "no new green commit"
 DIFFER = "the newest green commit has other workflow files than `main`"
@@ -56,7 +57,7 @@ ASSETS = [
 ]
 
 
-def gh(*args: str, stdin: str | None = None) -> object:
+def gh(*args: str, stdin: str | None = None) -> Any:  # noqa: ANN401  gh answers with JSON of any shape
     out = subprocess.run(
         ["gh", "api", *args], capture_output=True, text=True, check=True, input=stdin
     ).stdout
@@ -67,12 +68,12 @@ def gh_release(*args: str) -> None:
     subprocess.run(["gh", "release", *args], capture_output=True, text=True, check=True)
 
 
-def releases(repo: str) -> list[dict]:
+def releases(repo: str) -> list[dict[str, Any]]:
     # `prune` needs every release, and gh gives one array of all pages when its output is a pipe.
     return gh("--paginate", f"repos/{repo}/releases?per_page=100")
 
 
-def nightly_releases(repo: str) -> list[dict]:
+def nightly_releases(repo: str) -> list[dict[str, Any]]:
     """The published `nightly-*` releases, the largest `published_at` first. A draft has none."""
     found = [
         r

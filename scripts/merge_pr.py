@@ -17,6 +17,7 @@ import re
 import subprocess
 import sys
 import time
+from typing import Any
 
 REPO = "repos/sisu-lang/sisu"
 POLL = float(os.environ.get("MERGE_PR_POLL", "30"))
@@ -31,19 +32,20 @@ class Stop(Exception):
     pass
 
 
-def run(args):
+def run(args: list[str]) -> str:
     try:
         return subprocess.run(args, capture_output=True, text=True, check=True).stdout
     except subprocess.CalledProcessError as e:
         raise Stop(f"{' '.join(args[:4])}: {e.stderr.strip() or e}") from None
 
 
-def gh(*args):
+def gh(*args: str) -> dict[str, Any]:
     out = run(["gh", "api", *args])
+    # pyrefly: ignore[bad-return]  an empty answer gives None, and no caller reads an empty answer
     return json.loads(out) if out.strip() else None
 
 
-def wait_for_checks(pr, sha):
+def wait_for_checks(pr: dict[str, Any], sha: str) -> list[str]:
     """Returns the checks that did not pass, after every check ends. Stops at the time limit, and
     when main moves while a check runs: the head must then merge main and run its checks again.
     """
@@ -66,14 +68,14 @@ def wait_for_checks(pr, sha):
         time.sleep(POLL)
 
 
-def check_base(pr, sha) -> None:
+def check_base(pr: dict[str, Any], sha: str) -> None:
     if gh(f"{REPO}/compare/{pr['base']['ref']}...{sha}")["behind_by"]:
         raise Stop(
             f"{pr['head']['ref']} does not contain {pr['base']['ref']}: merge it, run make test"
         )
 
 
-def wait_for_issues(numbers):
+def wait_for_issues(numbers: list[str]) -> list[str]:
     """Returns `#N state` for each issue, after all close or the time limit."""
     start = time.monotonic()
     while True:
@@ -83,11 +85,11 @@ def wait_for_issues(numbers):
         time.sleep(min(POLL, 5))
 
 
-def git(root, *args):
+def git(root: str, *args: str) -> str:
     return run(["git", "-C", root, *args])
 
 
-def remove_worktree(root, branch, sha) -> str:
+def remove_worktree(root: str, branch: str, sha: str) -> str:
     """Removes the worktree of `branch` and the branch, only when it is clean and at `sha`."""
     path = None
     for block in git(root, "worktree", "list", "--porcelain").split("\n\n"):
@@ -108,7 +110,7 @@ def remove_worktree(root, branch, sha) -> str:
     return f"removed {path} and branch {branch}"
 
 
-def merge(number, root) -> None:
+def merge(number: str, root: str) -> None:
     pr = gh(f"{REPO}/pulls/{number}")
     if pr["state"] != "open":
         raise Stop(f"#{number} is {pr['state']}")
@@ -144,14 +146,14 @@ def merge(number, root) -> None:
     print(remove_worktree(root, pr["head"]["ref"], sha))
 
 
-def cleanup(number, root) -> None:
+def cleanup(number: str, root: str) -> None:
     pr = gh(f"{REPO}/pulls/{number}")
     if not pr["merged"]:
         raise Stop(f"#{number} is not merged")
     print(remove_worktree(root, pr["head"]["ref"], pr["head"]["sha"]))
 
 
-def main(argv) -> int:
+def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Squash-merges a pull request of sisu-lang/sisu.")
     parser.add_argument("pr")
     parser.add_argument("root", nargs="?", default=".")

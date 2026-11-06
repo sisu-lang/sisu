@@ -27,15 +27,17 @@ HELLO_PROGRAM = 'fn main() {\n    print("hello")\n}\n'
 HINT = "sudo apt install build-essential"
 
 
-def environment(home, path=None):
-    env = dict(os.environ, HOME=home, SISU_DOWNLOAD_DIR=ARTIFACTS)
+def environment(home: str, path: str | None = None) -> dict[str, str]:
+    # pyrefly: ignore[bad-assignment]  the `__main__` block exits when ARTIFACTS is unset
+    env: dict[str, str] = dict(os.environ, HOME=home, SISU_DOWNLOAD_DIR=ARTIFACTS)
     if path:
         env["PATH"] = path
     return env
 
 
-def install(home, path=None):
+def install(home: str, path: str | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
+        # pyrefly: ignore[no-matching-overload]  the `__main__` block exits when ARTIFACTS is unset
         ["sh", os.path.join(ARTIFACTS, "install.sh")],
         env=environment(home, path),
         capture_output=True,
@@ -45,7 +47,7 @@ def install(home, path=None):
     )
 
 
-def docker(image, command):
+def docker(image: str, command: str) -> subprocess.CompletedProcess[str]:
     """Runs `sh -c command` in the image with ARTIFACTS at /dl. The pull is quiet, so that its
     progress does not reach the stderr of the test. A timeout kills the docker client, not the
     container, so the container has a name and `docker rm -f` removes it at the end.
@@ -82,30 +84,30 @@ def docker(image, command):
             )
 
 
-def write(path, text, mode=0o644) -> None:
+def write(path: str, text: str, mode: int = 0o644) -> None:
     with open(path, "w", encoding="utf-8") as f:
         f.write(text)
     os.chmod(path, mode)
 
 
 class InstallerRealTest(unittest.TestCase):
-    def home(self):
+    def home(self) -> str:
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         return directory.name
 
-    def sisu(self, home):
+    def sisu(self, home: str) -> str:
         return os.path.join(home, ".sisu", "bin", "sisu")
 
     @staticmethod
-    def stop(proc) -> None:
+    def stop(proc: subprocess.Popen[bytes]) -> None:
         proc.kill()
         proc.wait()
         for pipe in (proc.stdin, proc.stdout, proc.stderr):
             if pipe:
                 pipe.close()
 
-    def wait_for_ready(self, proc) -> None:
+    def wait_for_ready(self, proc: subprocess.Popen[bytes]) -> None:
         """Reads the stderr of the process until it holds `ready`, for at most READY_SECONDS."""
         seen = b""
         deadline = time.monotonic() + READY_SECONDS
@@ -113,13 +115,15 @@ class InstallerRealTest(unittest.TestCase):
             left = deadline - time.monotonic()
             if left <= 0:
                 self.fail(f"the program printed no `ready` in {READY_SECONDS} s; stderr: {seen!r}")
+            # pyrefly: ignore[bad-specialization]  the caller starts the process with stderr=PIPE
             if select.select([proc.stderr], [], [], left)[0]:
+                # pyrefly: ignore[missing-attribute]  as above
                 chunk = os.read(proc.stderr.fileno(), 4096)
                 if not chunk:
                     self.fail(f"the program ended before it printed `ready`; stderr: {seen!r}")
                 seen += chunk
 
-    def assert_one_sentence(self, result, words) -> None:
+    def assert_one_sentence(self, result: subprocess.CompletedProcess[str], words: str) -> None:
         """The installer stopped: exit 125 means that Docker did not start the container, and the
         line must start with the prefix of `die` in install.sh, so that no Docker error passes.
         """

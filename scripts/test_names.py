@@ -71,7 +71,9 @@ def has_given_when_then(comment: list[str]) -> bool:
     return all(want in words for want in ("GIVEN", "WHEN", "THEN"))
 
 
-def main(paths: list[str], baseline: str = BASELINE, changed: frozenset = frozenset()) -> int:
+def main(
+    paths: list[str], baseline: str = BASELINE, changed: frozenset[tuple[str, str]] = frozenset()
+) -> int:
     # A count, so a new test that reuses an old name in another module of the file is checked.
     with open(baseline, encoding="utf-8") as f:
         old = collections.Counter(l.strip() for l in f if l.strip() and not l.startswith("#"))
@@ -107,8 +109,8 @@ def main(paths: list[str], baseline: str = BASELINE, changed: frozenset = frozen
 
 def check_baseline(baseline: str = BASELINE, root: str = ROOT) -> int:
     """Prints each line of `baseline` whose file, under `root`, has no test of that name."""
-    have: dict[str, collections.Counter] = {}
-    seen: collections.Counter = collections.Counter()
+    have: dict[str, collections.Counter[str]] = {}
+    seen: collections.Counter[str] = collections.Counter()
     bad = 0
     with open(baseline, encoding="utf-8") as f:
         entries = f.read().splitlines()

@@ -9,6 +9,7 @@ Usage: python3 check_links.py FILE.md... Prints each broken link or path and exi
 import re
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 INLINE = re.compile(r'\]\(<?([^)\s>]+)>?(?:\s+"[^"]*")?\)')
@@ -26,24 +27,24 @@ RUST_FILE = re.compile(
 ROOT = Path(__file__).resolve().parents[4]
 
 
-def git(*args):
+def git(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True)
 
 
 # What a clean checkout holds: each tracked file and each directory above one. Checking the
 # working tree instead would pass on local files that CI's checkout lacks.
-TRACKED = set()
+TRACKED: set[str] = set()
 for name in git("ls-files", "-z").stdout.split("\0"):
     parts = name.split("/")
     TRACKED.update("/".join(parts[:i]) for i in range(1, len(parts) + 1))
 
 
-def in_repo(path):
+def in_repo(path: str) -> bool:
     """Tracked, or ignored on purpose, like the local-only `docs/superpowers/`."""
     return path.rstrip("/") in TRACKED or git("check-ignore", "-q", path).returncode == 0
 
 
-def fence_after(line, fence):
+def fence_after(line: str, fence: str | None) -> str | None:
     """The fence that is open after `line`, when `fence` is open before it (None: no fence). A fence
     closes only on a line of its character, at least as long, with only spaces or tabs after it,
     so a ```` fence can show a ``` one.
@@ -60,9 +61,10 @@ def fence_after(line, fence):
     return None if closes else fence
 
 
-def prose(path):
+def prose(path: Path) -> str:
     """The file's text with fenced code blocks removed, each line read once."""
-    kept, fence = [], None
+    kept: list[str] = []
+    fence: str | None = None
     for line in path.read_text().split("\n"):
         before, fence = fence, fence_after(line, fence)
         if before is None and fence is None:
@@ -70,9 +72,9 @@ def prose(path):
     return "\n".join(kept)
 
 
-def anchors(path):
+def anchors(path: Path) -> Iterator[str]:
     """GitHub's heading slugs: link text kept, punctuation dropped, duplicates numbered."""
-    seen = {}
+    seen: dict[str, int] = {}
     for heading in re.findall(r"^#{1,6}\s+(.*?)\s*#*\s*$", prose(path), re.MULTILINE):
         text = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", heading).replace("`", "")
         slug = re.sub(r"[^\w\- ]", "", text.lower()).replace(" ", "-")
@@ -81,7 +83,7 @@ def anchors(path):
         yield slug if count == 0 else f"{slug}-{count}"
 
 
-def targets(text):
+def targets(text: str) -> Iterator[str]:
     for m in INLINE.finditer(text):
         yield m.group(1)
     for m in REF_DEF.finditer(text):

@@ -10,7 +10,7 @@ import re
 import subprocess
 import sys
 from collections.abc import Callable
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 # Integration tests, and unit-test modules in their own file (src/**/tests.rs, src/**/tests/).
 TEST_DIR = re.compile(r"^crates/[^/]+/(?:tests/|src/(?:.+/)?tests(?:\.rs$|/))")
@@ -64,11 +64,13 @@ def relative(path: str, root: str) -> str | None:
     return path[len(root) + 1 :] if path.startswith(root + "/") else None
 
 
-def uncovered(export: dict, root: str) -> dict[str, list[Region]]:
+def uncovered(export: dict[str, Any], root: str) -> dict[str, list[Region]]:
     """Zero-count regions per file; a function that never ran is one never_run region."""
     # A source function is its file plus the span of its first region; its instantiations
     # have different mangled names, so they are grouped by that key and merged span by span.
-    functions: dict[tuple, tuple[int, dict[tuple, int]]] = {}
+    functions: dict[
+        tuple[str, tuple[int, ...]], tuple[int, dict[tuple[str, int, int, int, int], int]]
+    ] = {}
     for record in export["data"][0]["functions"]:
         regions = [r for r in record["regions"] if r[7] == 0]
         if not regions:
@@ -95,7 +97,7 @@ def uncovered(export: dict, root: str) -> dict[str, list[Region]]:
             continue
         for (file, *span), n in spans.items():
             if n == 0 and (path := relative(file, root)) is not None:
-                result.setdefault(path, []).append(Region(*span, False))
+                result.setdefault(path, []).append(Region(*span, never_run=False))
     return {p: sorted(rs) for p, rs in result.items()}
 
 
@@ -113,7 +115,7 @@ def line_hits(lcov: str, root: str) -> dict[str, dict[int, int]]:
 
 
 def report(
-    export: dict, lcov: str, diff: str, root: str, read_line: Callable[[str, int], str]
+    export: dict[str, Any], lcov: str, diff: str, root: str, read_line: Callable[[str, int], str]
 ) -> str:
     totals = export["data"][0]["totals"]
     changed = changed_lines(diff)
@@ -126,7 +128,8 @@ def report(
         pct = "changed lines: none"
     head = f"Coverage: lines {totals['lines']['percent']:.1f}%, regions {totals['regions']['percent']:.1f}%, {pct}."
 
-    touching, other = [], []
+    touching: list[str] = []
+    other: list[str] = []
     for path, regions in sorted(uncovered(export, root).items()):
         if path not in changed:
             continue

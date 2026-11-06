@@ -4,10 +4,11 @@ import contextlib
 import os
 import subprocess
 import tempfile
+from collections.abc import Iterator
 from unittest import mock
 
 
-def env() -> dict:
+def env() -> dict[str, str]:
     """The environment without `GIT_*` and `GITHUB_ACTIONS`. A pre-commit hook exports GIT_DIR and
     GIT_INDEX_FILE, which would point git at the hooked repository, and in CI GITHUB_ACTIONS adds
     a workflow warning line per slow test.
@@ -38,7 +39,7 @@ def write(path: str, name: str, content: str | bytes) -> None:
 
 
 @contextlib.contextmanager
-def repo(files: dict[str, str]):
+def repo(files: dict[str, str]) -> Iterator[str]:
     """The path of a temporary repository with one commit of `files`. It is removed at exit.
     While it exists, `os.environ` has no `GIT_*` variable, so code under test that runs git
     without its own environment reaches this repository.

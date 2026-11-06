@@ -20,11 +20,14 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+# (code, severity, line, column, secondaries, text), as `diagnostics` documents.
+Diagnostic = tuple[str, str, int, int, tuple[tuple[int, int], ...], str]
+
 # The fields of a diagnostic that the default compares, besides its code and positions.
 TEXT = ("message", "help", "fixes")
 
 
-def diagnostics(sisu, path, full=True):
+def diagnostics(sisu: str, path: Path, full: bool = True) -> list[Diagnostic]:
     """Each diagnostic sisu reports on `path`: (code, severity, line, column, secondaries, text).
 
     `text` is '' unless `full`; then it is the JSON of the diagnostic's text and fixes.
@@ -34,7 +37,7 @@ def diagnostics(sisu, path, full=True):
     )
     if run.returncode not in (0, 1):
         return [("crash", "error", run.returncode, 0, (), "")]
-    found = []
+    found: list[Diagnostic] = []
     for line in run.stderr.splitlines():
         d = json.loads(line)
         if d["kind"] == "diagnostic":
@@ -56,19 +59,20 @@ def diagnostics(sisu, path, full=True):
     return found
 
 
-def kind(base, head):
+def kind(base: list[Diagnostic], head: list[Diagnostic]) -> str | None:
     """How the head's diagnostics differ from the base's, or None when they are the same."""
     if any(d[0] == "crash" for d in head):
         return "crash"
     if base == head:
         return None
     rejects = [any(d[1] == "error" for d in ds) for ds in (base, head)]
+    # pyrefly: ignore[no-matching-overload]  `rejects` always holds two items, as the keys do
     return {(True, False): "newly accepted", (False, True): "newly rejected"}.get(
         tuple(rejects), "changed"
     )
 
 
-def show(ds):
+def show(ds: list[Diagnostic]) -> str:
     return (
         ", ".join(
             f"{c} {line}:{col}" + "".join(f" +{a}:{b}" for a, b in s) + (f" {t}" if t else "")
@@ -78,10 +82,12 @@ def show(ds):
     )
 
 
-def main(base_sisu, head_sisu, *roots, full=True, jobs=2) -> int:
+def main(base_sisu: str, head_sisu: str, *roots: str, full: bool = True, jobs: int = 2) -> int:
     paths = sorted({p for root in roots for p in Path(root).rglob("*.sisu")})
     with ThreadPoolExecutor(max_workers=jobs) as pool:
+        # pyrefly: ignore[implicit-any-lambda]  `pool.map` gives the lambda its type only after `paths`
         bases = pool.map(lambda p: diagnostics(base_sisu, p, full), paths)
+        # pyrefly: ignore[implicit-any-lambda]  as for `bases`
         heads = pool.map(lambda p: diagnostics(head_sisu, p, full), paths)
         rows = list(zip(paths, bases, heads, strict=False))
     counts = {}

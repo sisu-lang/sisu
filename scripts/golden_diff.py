@@ -15,7 +15,7 @@ SUFFIXES = (".err", ".out", ".json")
 CASES = (":(glob)crates/*/tests/**", ":(glob)site/programs/**")
 
 
-def git(*args):
+def git(*args: str) -> str:
     # An `.out` file holds the program's raw bytes, so a byte that is not UTF-8 is kept as a surrogate.
     return subprocess.run(
         ["git", *args],
@@ -27,7 +27,7 @@ def git(*args):
     ).stdout
 
 
-def main(span, subs) -> int:
+def main(span: str, subs: list[tuple[str, str]]) -> int:
     base, head = span.split("..")
     changed = git("diff", "--name-only", "--diff-filter=M", base, head, "--", *CASES)
     files = [f for f in changed.split() if f.endswith(SUFFIXES)]

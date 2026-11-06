@@ -28,8 +28,9 @@ import signal
 import subprocess
 import sys
 import time
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 LANGS = ("sisu", "rust", "cpp", "go")
 NAMES = {"sisu": "Sisu", "rust": "Rust", "cpp": "C++", "go": "Go"}
@@ -59,11 +60,13 @@ class Fail(Exception):
 class Deadline:
     """A total time bound that every command of the run shares."""
 
-    def __init__(self, seconds, clock=time.monotonic) -> None:
+    def __init__(self, seconds: float, clock: Callable[[], float] = time.monotonic) -> None:
         self.clock = clock
         self.end = clock() + seconds
 
-    def run(self, cmd, what, **kwargs):
+    def run(
+        self, cmd: Sequence[str | Path], what: str, **kwargs: object
+    ) -> subprocess.CompletedProcess[Any]:
         """Runs `cmd` with the time that is left as its timeout.
 
         It captures each of stdout and stderr as text, unless `kwargs` gives that stream. After
@@ -82,6 +85,7 @@ class Deadline:
             kwargs.setdefault("errors", "replace")
         shown = shlex.join(str(a) for a in cmd)
         try:
+            # pyrefly: ignore[no-matching-overload]  the caller picks the Popen options in `kwargs`
             proc = subprocess.Popen(cmd, start_new_session=True, **kwargs)
         except FileNotFoundError:
             raise Fail(f"{what}: {shown}: the program is not found") from None
@@ -101,7 +105,7 @@ class Deadline:
         return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
 
-def exit_text(code) -> str | None:
+def exit_text(code: int) -> str | None:
     """Says how a command ended: its exit code, or the signal that stopped it."""
     if code >= 0:
         return f"exited with code {code}"
@@ -111,14 +115,14 @@ def exit_text(code) -> str | None:
         return f"was stopped by signal {-code}"
 
 
-def kill_group(proc) -> None:
+def kill_group(proc: subprocess.Popen[Any]) -> None:
     """Kills the process group of `proc`, and waits for `proc` and its pipes."""
     with contextlib.suppress(ProcessLookupError):
         os.killpg(proc.pid, signal.SIGKILL)
     proc.communicate()
 
 
-def generate(lang, unit, copies):
+def generate(lang: str, unit: str, copies: int) -> str:
     """The input for `lang`: the header of the unit once, `copies` copies, and a `main`.
 
     The header is every line before the first line that has `XX`. Each copy has its number in
@@ -133,7 +137,7 @@ def generate(lang, unit, copies):
     return ("// run\n" if lang == "go" else "") + text + "\n" + main_of(lang, copies)
 
 
-def main_of(lang, copies):
+def main_of(lang: str, copies: int) -> str:
     """The `main` that adds the result of each copy in one statement and prints the sum.
 
     Each statement calls its copy twice. In Sisu and Rust, `runN` has internal linkage. LLVM gives
@@ -173,7 +177,7 @@ def main_of(lang, copies):
     )
 
 
-def empty_program(lang):
+def empty_program(lang: str) -> str:
     """A program with a `main` that returns."""
     return {
         "sisu": "fn main() {}\n",
@@ -183,7 +187,14 @@ def empty_program(lang):
     }[lang]
 
 
-def command(row, lang, src, out, lld, sisu=DEFAULT_SISU):
+def command(
+    row: str,
+    lang: str,
+    src: Path | str,
+    out: Path | str,
+    lld: bool,
+    sisu: str = DEFAULT_SISU,
+) -> list[str] | None:
     """The command of `row` for `lang`, or None when the language has no such row.
 
     Every command runs on one thread. `lld` says that the linker is LLD, which gets one thread.
@@ -227,7 +238,7 @@ def command(row, lang, src, out, lld, sisu=DEFAULT_SISU):
     return [*base, f"-gcflags={flags}", "-o", out, src]
 
 
-def environment(lang):
+def environment(lang: str | None) -> dict[str, str]:
     """The environment of a command: Go runs on one thread, and ccache is off.
 
     A ccache in front of clang++ would make each run after the first a cache hit.
@@ -235,12 +246,14 @@ def environment(lang):
     return {**os.environ, "CCACHE_DISABLE": "1", **({"GOMAXPROCS": "1"} if lang == "go" else {})}
 
 
-def warnings(stderr):
+def warnings(stderr: str) -> list[str]:
     """The lines of a build's stderr that have `warning`, in any case."""
     return [line for line in stderr.splitlines() if "warning" in line.lower()]
 
 
-def build(deadline, cmd, what, **kwargs):
+def build(
+    deadline: Deadline, cmd: Sequence[str | Path], what: str, **kwargs: object
+) -> subprocess.CompletedProcess[Any]:
     """Runs a compile command, and stops when it gives a warning.
 
     A warning adds the time to print it. Every compile of the script goes through here, except the
@@ -253,7 +266,7 @@ def build(deadline, cmd, what, **kwargs):
     return result
 
 
-def check_no_include(path, text) -> None:
+def check_no_include(path: Path | str, text: str) -> None:
     """Stops when the C++ unit has an `#include`, `#include_next` or `#import` directive.
 
     A `%:` digraph in place of `#` counts too.
@@ -284,8 +297,8 @@ def check_no_include(path, text) -> None:
         first, joined = 0, ""
 
 
-def read_units(units_dir):
-    units = {}
+def read_units(units_dir: Path) -> dict[str, str]:
+    units: dict[str, str] = {}
     for lang in LANGS:
         path = units_dir / f"unit.{EXTENSIONS[lang]}"
         try:
@@ -295,7 +308,7 @@ def read_units(units_dir):
     return units
 
 
-def check_style(units_dir, deadline) -> None:
+def check_style(units_dir: Path, deadline: Deadline) -> None:
     """Runs the check mode of each formatter that is on PATH, and says which ones it skips."""
     for lang, cmd in FORMATTERS.items():
         path = units_dir / f"unit.{EXTENSIONS[lang]}"
@@ -309,7 +322,9 @@ def check_style(units_dir, deadline) -> None:
             raise Fail(f"{NAMES[lang]}: {path} is not in the style of {cmd[0]}")
 
 
-def check_sizes(args, units, sizes, deadline) -> None:
+def check_sizes(
+    args: argparse.Namespace, units: dict[str, str], sizes: list[int], deadline: Deadline
+) -> None:
     """Builds and runs each input, and compares its output with the output of Sisu."""
     for size in sizes:
         reference = None
@@ -327,6 +342,7 @@ def check_sizes(args, units, sizes, deadline) -> None:
             except OSError as e:
                 raise Fail(f"{what}: {e.filename or work}: {e.strerror}") from None
             cmd = command(ROWS[3], lang, src, exe, False, sisu=args.sisu)
+            # pyrefly: ignore[bad-argument-type]  only the Go row ROWS[2] has no command
             build(deadline, cmd, what, env=environment(lang))
             printed = deadline.run([str(exe)], what, text=False).stdout
             if lang == "sisu":
@@ -375,7 +391,7 @@ TOKEN = re.compile(
 )
 
 
-def tokens(text, path):
+def tokens(text: str, path: str) -> int:
     """The number of tokens in `text`, the same way for every language.
 
     A word or a number is one token. A string literal is one token with its interpolations, and
@@ -385,6 +401,7 @@ def tokens(text, path):
     count, pos = 0, 0
     while pos < len(text):
         m = TOKEN.match(text, pos)
+        # pyrefly: ignore[missing-attribute]  the last alternative of TOKEN matches any character
         kind = m.lastgroup
         if kind == "bad":
             raise Fail(f"{path}:{line_of(text, pos)}: a character literal has no close on its line")
@@ -393,15 +410,16 @@ def tokens(text, path):
             count += 1
             continue
         count += kind != "skip"
+        # pyrefly: ignore[missing-attribute]  as for `m.lastgroup`
         pos = m.end()
     return count
 
 
-def line_of(text, pos):
+def line_of(text: str, pos: int) -> int:
     return text.count("\n", 0, pos) + 1
 
 
-def skip_string(text, pos, path, interpolate):
+def skip_string(text: str, pos: int, path: str, interpolate: bool) -> int:
     """The position after the string whose text starts at `pos`, after its opening quote."""
     i = pos
     while i < len(text):
@@ -417,7 +435,7 @@ def skip_string(text, pos, path, interpolate):
     raise Fail(f"{path}:{line_of(text, pos)}: a string has no close")
 
 
-def skip_braces(text, pos, path):
+def skip_braces(text: str, pos: int, path: str) -> int:
     """The position after the `}` that closes the `{` before `pos`, over braces and strings."""
     i, depth = pos, 1
     while i < len(text):
@@ -436,7 +454,7 @@ def skip_braces(text, pos, path):
     raise Fail(f"{path}:{line_of(text, pos)}: an interpolation has no close")
 
 
-def go_fe_parse(text, what="Go"):
+def go_fe_parse(text: str, what: str = "Go") -> float:
     """The `fe:parse` time, in seconds, of the `-bench` file of one Go compile.
 
     The file must have one `commit:` line and one `fe:parse` line. A cached build writes none.
@@ -453,7 +471,7 @@ def go_fe_parse(text, what="Go"):
     return float(times[0]) / 1e9
 
 
-def rate(count, seconds):
+def rate(count: float, seconds: float) -> str:
     """`count` per second as part A prints it: no suffix below 1000, then k, M and G."""
     if count == 0 or seconds <= 0:
         return "-"
@@ -469,18 +487,18 @@ def rate(count, seconds):
     return f"{per_second / 1e9:.1f}G"
 
 
-def past_empty(tokens, time, empty):
+def past_empty(tokens: int, time: float, empty: float) -> str:
     """The tokens per second after the time of the empty program, or a dash if nothing is left."""
     return rate(tokens, time - empty)
 
 
-def instructions(stderr):
+def instructions(stderr: str | None) -> int | None:
     """The instructions that `perf stat -x,` counted in `stderr`, or None when it gave no number.
 
     A hybrid CPU has one line for each core type, such as `cpu_core/instructions/u`. The result
     is their sum. A line with no number, such as `<not counted>`, counts as nothing.
     """
-    counts = []
+    counts: list[int] = []
     for line in (stderr or "").splitlines():
         fields = line.split(",")
         if len(fields) > 2 and "instructions" in fields[2] and fields[0].isdigit():
@@ -488,11 +506,13 @@ def instructions(stderr):
     return sum(counts) if counts else None
 
 
-def first_line(text):
+def first_line(text: str | None) -> str:
     return next((line.strip() for line in (text or "").splitlines() if line.strip()), "")
 
 
-def try_run(deadline, cmd, what, lang=None):
+def try_run(
+    deadline: Deadline, cmd: list[str], what: str, lang: str | None = None
+) -> subprocess.CompletedProcess[Any] | None:
     """Runs an optional tool. A program that is not on PATH or fails gives None."""
     if shutil.which(cmd[0]) is None:
         return None
@@ -500,7 +520,7 @@ def try_run(deadline, cmd, what, lang=None):
     return r if r.returncode == 0 else None
 
 
-def find_linker(lang, args, deadline):
+def find_linker(lang: str, args: argparse.Namespace, deadline: Deadline) -> tuple[str, bool]:
     """The linker line of `lang` and whether the linker is LLD.
 
     The linker prints its version, because the compiler passes it `--version`.
@@ -545,14 +565,16 @@ def find_linker(lang, args, deadline):
     if lld:
         return lld.removeprefix(shown), True
     warned = next((line.removeprefix(shown) for line in lines if line.startswith(shown)), None)
+    # pyrefly: ignore[bad-return]  `or` drops None and False; `r` is a result when it is true
     return warned or (r and r.returncode == 0 and first_line(r.stdout)) or "unknown", False
 
 
-def available(lang):
+def available(lang: str) -> bool:
+    # pyrefly: ignore[no-matching-overload]  the first test of the `or` has ruled out None
     return COMPILERS[lang] is None or shutil.which(COMPILERS[lang]) is not None
 
 
-def tool_line(deadline, cmd, lang=None):
+def tool_line(deadline: Deadline, cmd: list[str], lang: str | None = None) -> str:
     """The version line of a tool."""
     if shutil.which(cmd[0]) is None:
         return "not on PATH"
@@ -561,7 +583,7 @@ def tool_line(deadline, cmd, lang=None):
     return (ok and (first_line(r.stdout) or first_line(r.stderr))) or "unknown"
 
 
-def cpu_model():
+def cpu_model() -> str:
     try:
         for line in Path("/proc/cpuinfo").read_text().splitlines():
             if line.startswith("model name"):
@@ -571,7 +593,9 @@ def cpu_model():
     return platform.machine() or "unknown"
 
 
-def header_lines(args, deadline, linkers):
+def header_lines(
+    args: argparse.Namespace, deadline: Deadline, linkers: dict[str, str]
+) -> list[str]:
     """The lines that go with the table: the machine, the tools and the linkers."""
     git = try_run(deadline, ["git", "rev-parse", "--short", "HEAD"], "git")
     go_version = tool_line(deadline, ["go", "version"], "go")
@@ -594,11 +618,20 @@ def header_lines(args, deadline, linkers):
 class Measurer:
     """Runs a command several times and keeps the best time."""
 
-    def __init__(self, args, deadline, perf) -> None:
+    def __init__(self, args: argparse.Namespace, deadline: Deadline, perf: bool) -> None:
         self.args, self.deadline, self.perf = args, deadline, perf
         self.serial = itertools.count()
 
-    def run(self, cmd, what, lang, src, text, bench, wrap=False):
+    def run(
+        self,
+        cmd: list[str],
+        what: str,
+        lang: str,
+        src: Path,
+        text: str,
+        bench: Path | None,
+        wrap: bool = False,
+    ) -> tuple[float, str | None]:
         """One run of `cmd`: its time in seconds (the `fe:parse` time when `bench` is a file),
         and its stderr. Before a Go command, the first line of the input changes.
         """
@@ -624,7 +657,16 @@ class Measurer:
             elapsed = go_fe_parse(content, what)
         return elapsed, r.stderr
 
-    def cell(self, cmd, what, lang, src, text, bench, count_instructions):
+    def cell(
+        self,
+        cmd: list[str],
+        what: str,
+        lang: str,
+        src: Path,
+        text: str,
+        bench: Path | None,
+        count_instructions: bool,
+    ) -> tuple[float, int | None]:
         """The best time of `--runs` runs, and the instructions of one more run under perf."""
         best = min(self.run(cmd, what, lang, src, text, bench)[0] for _ in range(self.args.runs))
         counted = None
@@ -633,7 +675,9 @@ class Measurer:
         return best, counted
 
 
-def measure(args, units, sizes, deadline):
+def measure(
+    args: argparse.Namespace, units: dict[str, str], sizes: list[int], deadline: Deadline
+) -> tuple[list[str], list[Result]]:
     """Times each row, size and language. Returns the header lines and the list of Result."""
     if available("go") and "'" in str(args.out):
         # The Go `-bench` flag has the path, and Go reads a quote in its flags as a quote.
@@ -645,7 +689,9 @@ def measure(args, units, sizes, deadline):
     # The perf test is the one of the spec: it fails on a machine that denies the counters.
     perf = try_run(deadline, ["perf", "stat", "-e", "instructions:u", "true"], "perf") is not None
     runner = Measurer(args, deadline, perf)
-    done, empties, results = {}, {}, []
+    done: dict[tuple[str, tuple[str, ...]], tuple[float, int | None]] = {}
+    empties: dict[tuple[str, tuple[str, ...]], float] = {}
+    results: list[Result] = []
     for size in sizes:
         for lang in LANGS:
             ext = EXTENSIONS[lang]
@@ -680,10 +726,12 @@ def measure(args, units, sizes, deadline):
                 if key not in done:
                     done[key] = runner.cell(cmd, what, lang, src, text, bench, True)
                 empty_cmd = command(row, lang, empty_src, empty_exe, lld[lang], sisu=args.sisu)
+                # pyrefly: ignore[bad-argument-type]  the empty program has a command wherever `cmd` has
                 empty_key = (lang, tuple(empty_cmd))
                 if empty_key not in empties:
                     empty_bench = Path(f"{empty_exe}.bench") if bench else None
                     empties[empty_key] = runner.cell(
+                        # pyrefly: ignore[bad-argument-type]  as for `empty_key`
                         empty_cmd,
                         f"{NAMES[lang]}, empty program, {row}",
                         lang,
@@ -713,11 +761,11 @@ TABLE_HEADERS = (
 )
 
 
-def duration(seconds) -> str:
+def duration(seconds: float) -> str:
     return f"{seconds * 1000:.1f} ms" if seconds < 1 else f"{seconds:.2f} s"
 
 
-def table(header, results):
+def table(header: list[str], results: list[Result]) -> str:
     """The header lines as a list, then a markdown table with a line for each Result."""
     lines = [f"- {line}" for line in header] + [""]
     lines.append("| " + " | ".join(TABLE_HEADERS) + " |")
@@ -739,7 +787,7 @@ def table(header, results):
     return "\n".join(lines)
 
 
-def parse_sizes(text):
+def parse_sizes(text: str) -> list[int]:
     try:
         sizes = sorted({int(part) for part in text.split(",")})
     except ValueError:
@@ -749,7 +797,7 @@ def parse_sizes(text):
     return sizes
 
 
-def main(argv) -> int:
+def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--sisu", default=DEFAULT_SISU, help="the sisu executable")
     parser.add_argument("--units", type=Path, default=Path("bench/compile"))

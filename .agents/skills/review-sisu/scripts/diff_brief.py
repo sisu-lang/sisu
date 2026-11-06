@@ -50,7 +50,7 @@ MAIN_TEMPLATE = "origin/main:.agents/skills/review-sisu/brief.md"
 KINDS = ("spec", "plan", "diff")
 
 
-def plugin_skill(plugin, skill):
+def plugin_skill(plugin: str, skill: str) -> Path | None:
     """The SKILL.md of an installed Claude Code plugin, at its installPath, or None."""
     try:
         installed = json.loads((Path.home() / ".claude/plugins/installed_plugins.json").read_text())
@@ -59,7 +59,7 @@ def plugin_skill(plugin, skill):
         return None
 
 
-SKILLS = {
+SKILLS: dict[str, Path | None] = {
     "<test-audit SKILL.md path>": Path.home() / ".claude/skills/test-audit/SKILL.md",
     "<codebase-design SKILL.md path>": Path.home() / ".agents/skills/codebase-design/SKILL.md",
     "<rust-best-practices SKILL.md path>": plugin_skill(
@@ -68,7 +68,7 @@ SKILLS = {
 }
 
 
-def git(repo, *args):
+def git(repo: Path | str, *args: str) -> str:
     """The stripped stdout of a git command in `repo`, or '' when it fails. A byte that is not UTF-8,
     as some test fixtures hold, reads as U+FFFD, so the brief can still be written. GIT_DIFF_OPTS
     would beat `--unified=0`.
@@ -84,12 +84,12 @@ def git(repo, *args):
     ).stdout.strip()
 
 
-def commit(repo, ref):
+def commit(repo: Path | str, ref: str) -> str:
     """The full SHA of `ref` in `repo`, or ''."""
     return git(repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
 
 
-def is_ancestor(repo, a, b):
+def is_ancestor(repo: Path | str, a: str, b: str) -> bool:
     return (
         subprocess.run(
             ["git", "-C", str(repo), "merge-base", "--is-ancestor", a, b], capture_output=True
@@ -98,7 +98,7 @@ def is_ancestor(repo, a, b):
     )
 
 
-def summary(log):
+def summary(log: Path) -> re.Match[str] | None:
     """The match of the last `mutation-test:` summary line of `log`, whose group 1 is the measured SHA,
     or None.
     """
@@ -106,7 +106,7 @@ def summary(log):
     return re.search(r"\(HEAD ([0-9a-f]{40})\)$", lines[-1]) if lines else None
 
 
-def patch_id(repo, sha):
+def patch_id(repo: Path | str, sha: str) -> str:
     """The stable `git patch-id` of the commit `sha`, or '' for a commit that changes nothing."""
     shown = subprocess.run(["git", "-C", str(repo), "show", sha], capture_output=True).stdout
     return (
@@ -118,7 +118,7 @@ def patch_id(repo, sha):
     )
 
 
-def in_range(repo, sha, base, head):
+def in_range(repo: Path | str, sha: str, base: str, head: str) -> str:
     """The commit of `base`..`head` that is `sha`, or that a rebase made of it (the same patch-id), or ''."""
     # In the range means reachable from head and not from base; base need not precede it after a merge of main.
     if sha == commit(repo, head) or (
@@ -136,7 +136,9 @@ def in_range(repo, sha, base, head):
     )
 
 
-def log_mismatch(log, repo, base, head, earlier=False) -> str | None:
+def log_mismatch(
+    log: Path, repo: Path | str, base: str, head: str, earlier: bool = False
+) -> str | None:
     """Why the summary line of `log` does not describe a commit in `base`..`head` of `repo`, or None.
 
     With `earlier`, a commit that `base` reaches is accepted too: an earlier round's log.
@@ -152,7 +154,7 @@ def log_mismatch(log, repo, base, head, earlier=False) -> str | None:
     return None
 
 
-def coverage_mismatch(path, repo, head) -> str | None:
+def coverage_mismatch(path: Path, repo: Path | str, head: str) -> str | None:
     """Why the last `coverage:` line of `path` does not describe the commit `head` of `repo`, or None."""
     lines = [line for line in path.read_text().splitlines() if line.startswith("coverage: ")]
     found = (
@@ -176,7 +178,7 @@ EXPECTED = [":(exclude,glob)**/*.err", ":(exclude,glob)**/*.json", ":(exclude,gl
 SHOWN = 40
 
 
-def removed_tests(repo, base, head):
+def removed_tests(repo: Path | str, base: str, head: str) -> list[str]:
     """Each line that base..head removes from a test file with no identical line added back to any
     test file, as "path:line: text", then each deleted test file. Blank lines and comments are left out.
     """
@@ -204,7 +206,11 @@ def removed_tests(repo, base, head):
         *EXPECTED,
     )
     # A removed line is named by its base path and line, so a renamed file reads as the base has it.
-    removed, added, old, new, number = [], set(), None, None, 0
+    removed: list[tuple[str | None, str | None, int, str]] = []
+    added: set[str] = set()
+    old: str | None = None
+    new: str | None = None
+    number = 0
     for line in diff.splitlines():
         if line.startswith("diff --git"):
             new = None
@@ -214,6 +220,7 @@ def removed_tests(repo, base, head):
             elif line.startswith("+++ b/"):
                 new = line[6:]
         elif line.startswith("@@"):
+            # pyrefly: ignore[unsupported-operation]  every hunk header starts with "@@ -N"
             number = int(re.match(r"@@ -(\d+)", line)[1])
         elif line.startswith("-"):
             removed.append((old, new, number, line[1:].strip()))
@@ -226,12 +233,13 @@ def removed_tests(repo, base, head):
         if re.search(r"\w", text)
         and text not in added
         and not text.startswith("//")
+        # pyrefly: ignore[missing-attribute]  a removed line comes after its "+++ b/" header
         and not (p.endswith(".py") and text.startswith("#"))
     ]
     return lines + [f"{p}: deleted" for p in deleted]
 
 
-def drop_line(t, start):
+def drop_line(t: str, start: str) -> str:
     """`t` without the "- " list item that begins with `start`, up to the next item or blank line."""
     return re.sub(rf"- {re.escape(start)}.*?(?=\n- |\n\n)\n?", "", t, flags=re.DOTALL)
 
@@ -276,6 +284,7 @@ def main() -> None:
             log = Path(mutation_log).resolve()
             if why := log_mismatch(log, repo, shas[0], shas[1], earlier=a.round > 1):
                 sys.exit(f"diff_brief: {why}")
+            # pyrefly: ignore[unsupported-operation]  `log_mismatch` has found the summary line
             measured = summary(log)[1]
             if a.round > 1 and is_ancestor(repo, measured, shas[0]):
                 focus_lines.append(

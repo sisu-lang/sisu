@@ -19,6 +19,7 @@ import re
 import subprocess
 import sys
 import time
+from typing import Any, overload
 
 REPO = "repos/sisu-lang/sisu"
 POLL = float(os.environ.get("WATCH_PR_POLL", "60"))
@@ -27,7 +28,15 @@ IN_PROGRESS = "<!-- This is an auto-generated comment: review in progress"
 PASSED = {"success", "skipped", "neutral"}
 
 
-def gh(path, key=None):
+@overload
+def gh(path: str, key: None = None) -> dict[str, Any]: ...
+
+
+@overload
+def gh(path: str, key: str) -> list[dict[str, Any]]: ...
+
+
+def gh(path: str, key: str | None = None) -> dict[str, Any] | list[dict[str, Any]]:
     """The answer to one request. With `key`, every page of a list, joined: `key` names the list
     in each page, or is "" when the page is the list.
     """
@@ -41,15 +50,15 @@ def gh(path, key=None):
     return [item for page in json.loads(out) for item in (page[key] if key else page)]
 
 
-def text(body, width=300):
+def text(body: str | None, width: int = 300) -> str:
     """The body as one line, with HTML tags and comments taken out."""
     body = re.sub(r"<!--.*?-->|<[^>]+>", " ", body or "", flags=re.DOTALL)
     return " ".join(body.split())[:width]
 
 
-def events(pr, me):
+def events(pr: str, me: str) -> list[tuple[str, str]]:
     """Each event now on the pull request, as (key, line). An edit gives a new key."""
-    found = []
+    found: list[tuple[str, str]] = []
     for review in gh(f"{REPO}/pulls/{pr}/reviews?per_page=100", ""):
         if review["user"]["login"] != me and review["body"]:
             # A review has no edit time: a hash of its body makes an edit a new key.
@@ -121,7 +130,7 @@ def main() -> int | None:
         else os.path.join(os.environ.get("TMPDIR", "/tmp"), f"watch-pr-{pr}.json")
     )
     seen = set(json.load(open(state))) if os.path.exists(state) else set()
-    me = None
+    me: str | None = None
     start = time.monotonic()
     while True:
         try:
@@ -132,7 +141,7 @@ def main() -> int | None:
             print(
                 f"gh api failed, trying again: {str(e.stderr or e).strip()[:200]}", file=sys.stderr
             )
-            new = []
+            new: list[tuple[str, str]] = []
         if new:
             for _, line in new:
                 print(line)
