@@ -19,7 +19,10 @@ use super::scope::{
 };
 use super::stmt::MAX_BLOCKS;
 use super::writer::{Rewrite, Site, Writer, allowed};
-use super::{Answer, BUDGET, Cost, DEPTHS, FUEL, Gen, MAX_BOUND, MAX_NESTING, MAX_SIZE, generate};
+use super::{
+    Answer, BUDGET, Cost, DEPTHS, FUEL, Gen, MAIN_ARGS_GATE, MAX_BOUND, MAX_NESTING, MAX_SIZE,
+    generate,
+};
 use crate::check::{self, prelude_function_names};
 use crate::codegen::string::LEN_WORDS;
 use crate::codegen::{OptLevel, compile, target_machine};
@@ -6581,6 +6584,11 @@ const LOWERING_POINTS: &[&str] = &[
     "copied under",
 ];
 
+/// The key that marks `point` of `LOWERING_POINTS`.
+fn lowering_key(point: &str) -> String {
+    format!("reach: the compiler reaches `{point}`")
+}
+
 /// The points of `LOWERING_POINTS` that the build of `source` marks. It builds the module as
 /// `codegen::tests::compiled` does. Each IR needle is a line that only that function writes.
 fn lowered(source: &str) -> FxHashSet<&'static str> {
@@ -6876,10 +6884,57 @@ fn generated_programs_should_reach_each_gap_rule() {
     );
 }
 
+/// GIVEN the programs of the seeds `0..FUZZ_SEEDS`, which the nightly reads and no others
+/// WHEN the build reads them in order
+/// THEN each point of `LOWERING_POINTS` is marked, and the walk stops once all are
+#[test]
+fn generated_programs_should_reach_each_lowering_rule() {
+    let mut seen: FxHashSet<&str> = FxHashSet::default();
+    for n in 0..FUZZ_SEEDS {
+        seen.extend(lowered(&generate(&seed(n)).program));
+        if seen.len() == LOWERING_POINTS.len() {
+            break;
+        }
+    }
+    let missing: Vec<String> = (LOWERING_POINTS.iter())
+        .filter(|point| !seen.contains(*point))
+        .map(|point| lowering_key(point))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "no program of the seeds 0..{FUZZ_SEEDS} holds: {missing:#?}"
+    );
+}
+
+/// GIVEN the programs of the seeds `0..FUZZ_SEEDS`
+/// WHEN the fold of the bytes of a seed, modulo 8, is `MAIN_ARGS_GATE`
+/// THEN its `program` holds `fn main(gap_args: [string])`, and no other `program` does; every
+/// `plain` holds `fn main() ` and no `gap_args`; and at least one seed holds the form
+#[test]
+fn main_should_take_args_only_in_the_gated_programs() {
+    let mut gated = false;
+    for n in 0..FUZZ_SEEDS {
+        let data = seed(n);
+        let generated = generate(&data);
+        let fold = data.iter().fold(0, |fold, byte| fold ^ byte);
+        let holds = fold % 8 == MAIN_ARGS_GATE;
+        assert_eq!(
+            generated.program.contains("fn main(gap_args: [string])"),
+            holds,
+            "seed {n}"
+        );
+        assert!(generated.plain.contains("fn main() "), "seed {n}");
+        assert!(!generated.plain.contains("gap_args"), "seed {n}");
+        gated |= holds;
+    }
+    assert!(gated, "no seed of 0..{FUZZ_SEEDS} is gated");
+}
+
 /// GIVEN the programs of the seeds `0..FUZZ_SEEDS`
 /// WHEN a program holds `fn shapes()`
-/// THEN its `program` holds `PushTally`, `twice_set(mut slots[0]`, `gap_chain(`, `GapBound` and
-/// `gap_boxed(`, and its `plain` holds none of them, and at least one seed holds them
+/// THEN its `program` holds `PushTally`, `twice_set(mut slots[0]`, `gap_chain(`, `GapBound`,
+/// `gap_boxed(`, `GapTerm`, `GapLayered`, `GapHen`, `GapRun`, `gap_sorted(` and `gap_tail(`.
+/// Its `plain` holds none of them. At least one seed holds them
 #[test]
 fn plain_text_should_leave_out_the_gap_forms() {
     let mut seen = false;
@@ -6895,6 +6950,12 @@ fn plain_text_should_leave_out_the_gap_forms() {
             "gap_chain(",
             "GapBound",
             "gap_boxed(",
+            "GapTerm",
+            "GapLayered",
+            "GapHen",
+            "GapRun",
+            "gap_sorted(",
+            "gap_tail(",
         ] {
             assert!(generated.program.contains(form), "seed {n}: `{form}`");
             assert!(!generated.plain.contains(form), "seed {n}: `{form}`");
