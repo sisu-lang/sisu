@@ -10,7 +10,7 @@ use super::array::pair;
 use super::call::Dot;
 use super::expr::{local, no_member, path, postfix, typed};
 use super::mut_args::Callee;
-use super::{Checked, Checker, Poisoned, block_expr, type_of};
+use super::{Checked, Checker, Poisoned, block_expr, is_jumped, type_of};
 use crate::ast::{self, CompareOp, ExprKind};
 use crate::conformance::makes_group;
 use crate::diagnostic::{
@@ -61,6 +61,7 @@ impl Checker<'_> {
         let mut checked = Vec::with_capacity(parts.len());
         let mut formats = Vec::new();
         let mut never_at = None;
+        let mut jumped = false;
         for (
             i,
             ast::Part {
@@ -77,12 +78,8 @@ impl Checker<'_> {
                 Some(TypeKind::Never) => {
                     if ty != Type::NEVER {
                         // A part that is a never literal gives the part inside it.
-                        never_at = Some(
-                            self.body
-                                .never_part
-                                .filter(|&(literal, _)| literal == part.span)
-                                .map_or(part.span, |(_, at)| at),
-                        );
+                        never_at = Some(self.never_at(part.span));
+                        jumped = is_jumped(&value);
                     }
                     ty = Type::NEVER;
                     checked.push(value);
@@ -123,7 +120,12 @@ impl Checker<'_> {
                     formats,
                 }),
             ),
-            Err(_) => Err(Poisoned::typed(ty)),
+            // The literal is `never` by its first `never` part, so it is by a failed jump when
+            // that part is.
+            Err(_) => Err(Poisoned {
+                jumped,
+                ..Poisoned::typed(ty)
+            }),
         }
     }
 

@@ -90,6 +90,7 @@ impl Checker<'_> {
                 found: None,
                 kept: false,
                 unwrapped: Flag::No,
+                jumped: false,
             });
         }
         self.ranked(|c| c.joined(span, elements, quiet))
@@ -423,6 +424,7 @@ impl Checker<'_> {
                 found: None,
                 kept: false,
                 unwrapped: Flag::No,
+                jumped: false,
             }),
         }
     }

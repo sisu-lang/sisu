@@ -146,6 +146,11 @@ Rock()
 # A function name with no call, bare and indexed: no value, no place.
 nothing
 nothing[0]
+# A literal with a part that never finishes, and a block that a `break` outside a loop ends: the
+# report goes to the part or the jump, whatever call or context holds the value.
+"a{return}b"
+{ break; 1 }
+{ if c { break }; return }
 # A field whose chain ends in a name that holds no value: an unbound name, a type, or an enum
 # variant with a method. Each is no place.
 zz.x

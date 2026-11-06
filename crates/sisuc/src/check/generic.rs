@@ -10,7 +10,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::alias::{Through, Via};
 use super::any;
 use super::array::innermost;
-use super::expr::{bare_hole, dbg_argument, option_written};
+use super::expr::{bare_hole, dbg_argument, option_written, read_jump};
 use super::interface::{Bound, Required};
 use super::mut_args::{MutParts, MutSite, PlaceShape, marked};
 use super::pattern::{LetPattern, LetValue, arm_key, matchable};
@@ -1666,8 +1666,9 @@ pub(super) struct Inference<'s> {
     pub(super) bindings: Bindings,
     /// Each argument once checked, in source order.
     slots: Vec<Option<Checked>>,
-    /// The arguments of type `unit` or `never`, which bind only what no other argument does.
-    last: Vec<(usize, Type)>,
+    /// The arguments of type `unit` or `never`, which bind only what no other argument does, each
+    /// with the span to report it at: the argument, or the part of a literal that never finishes.
+    last: Vec<(usize, Type, Span)>,
     /// Whether a parameter was bound to a type that no parameter takes, or its bound failed: the
     /// call reported it.
     failed: bool,
@@ -1796,6 +1797,7 @@ pub(super) fn mark((checked, mismatched): (Checked, bool)) -> Checked {
             found: None,
             kept: false,
             unwrapped: Flag::No,
+            jumped: false,
         })
     } else {
         checked
@@ -2264,15 +2266,15 @@ impl Checker<'_> {
             self.report_fresh(&mut call, span);
         }
         self.sweep_waiting(&mut call, sig, args, &ranks, &fit);
-        for (i, ty) in std::mem::take(&mut call.last) {
-            let (e, param) = (&args[i].value, sig.params[i]);
+        for (i, ty, at) in std::mem::take(&mut call.last) {
+            let param = sig.params[i];
             if let Some(param) = param
                 && self.known_in(&call, param).is_none()
-                && self.bind_param(&mut call, param, ty, e.span)
+                && self.bind_param(&mut call, param, ty, at)
             {
                 continue;
             }
-            self.no_value(e.span, ty);
+            self.no_value(at, ty);
             call.slots[i] = Some(Err(Poisoned::error()));
         }
         let broken = poison_broken_params(&mut call.bindings, sig.declared);
@@ -2640,6 +2642,7 @@ impl Checker<'_> {
                 found: None,
                 kept: false,
                 unwrapped: Flag::No,
+                jumped: false,
             }));
             blamed = true;
         }
@@ -2998,9 +3001,10 @@ impl Checker<'_> {
                 .then(|| self.call_context(call, e, pattern))
                 .flatten()
         });
-        let checked = self.infer_value(call, e, pattern, context);
+        let checked = read_jump(self.infer_value(call, e, pattern, context));
         if unbound && let Some(ty @ (Type::UNIT | Type::NEVER)) = type_of(&checked) {
-            call.last.push((i, ty));
+            let at = self.never_at(e.span);
+            call.last.push((i, ty, at));
         }
         call.slots[i] = Some(checked);
     }
@@ -3245,9 +3249,11 @@ impl Checker<'_> {
                 };
                 // An element has a value: `infer_value` leaves `unit` and `never` for
                 // `infer_arg`, which an element has not.
+                let checked = read_jump(checked);
                 slots[i] = Some(match type_of(&checked) {
                     Some(ty @ (Type::UNIT | Type::NEVER)) => {
-                        self.no_value(e.span, ty);
+                        let at = self.never_at(e.span);
+                        self.no_value(at, ty);
                         Err(Poisoned::error())
                     }
                     _ => checked,
