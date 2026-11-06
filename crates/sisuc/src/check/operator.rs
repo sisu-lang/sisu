@@ -928,8 +928,12 @@ impl Checker<'_> {
                     (l.map(|e| wrap(e, rt)), r)
                 } else if self.converts_to_any(rt, lt) {
                     // A class beside an `any` converts to it first.
+                    #[cfg(test)]
+                    super::reached("make_any on the right");
                     (l, r.map(|e| self.make_any(e, lt)))
                 } else if self.converts_to_any(lt, rt) {
+                    #[cfg(test)]
+                    super::reached("make_any on the left");
                     (l.map(|e| self.make_any(e, rt)), r)
                 } else {
                     let kind = DiagnosticKind::CannotCompare {

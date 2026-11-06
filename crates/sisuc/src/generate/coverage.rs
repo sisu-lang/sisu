@@ -6370,20 +6370,47 @@ fn main() { let a: any Heard = Ear(); print(a is a) }",
             &[],
         ),
         (
-            "a `Some` of an object joins an `any` branch",
+            "a `Some` of an object before an `any` branch",
+            r"interface Seen { fn seen(self) -> i64 }
+class Eye: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+class Lid: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = if c { Some(Eye(v: 2)) } else { a }; print((j ?? a).seen()) }",
+            &["unwrap_some_object of a Some"],
+        ),
+        (
+            "a `Some` of an object after an `any` branch",
             r"interface Seen { fn seen(self) -> i64 }
 class Eye: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 class Lid: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = if c { a } else { Some(Eye(v: 2)) }; print((j ?? a).seen()) }",
-            &["unwrap_some_object of a Some"],
+            &[],
         ),
         (
-            "a `None` joins an `any` branch",
+            "a `None` between a `Some` of an object and an `any` branch",
+            r"interface Seen { fn seen(self) -> i64 }
+class Eye: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+class Lid: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+fn main() {
+    let a: any Seen = Eye(v: 1)
+    let j = match [1].len() {
+        0 => Some(Eye(v: 2))
+        1 => None
+        _ => a
+    }
+    print((j ?? a).seen())
+}",
+            &[
+                "unwrap_some_object of a None",
+                "unwrap_some_object of a Some",
+            ],
+        ),
+        (
+            "a `None` after an `any` branch",
             r"interface Seen { fn seen(self) -> i64 }
 class Eye: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 class Lid: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = if c { a } else { None }; print((j ?? a).seen()) }",
-            &["unwrap_some_object of a None"],
+            &[],
         ),
         (
             "an object joins an `any` branch",
@@ -6399,7 +6426,10 @@ fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = if c { 
 class Eye: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 class Lid: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = if c { Some(Eye(v: 2)) } else { if c { Some(Lid(v: 3)) } else { a } }; print((j ?? a).seen()) }",
-            &["a hinted Some keeps its type"],
+            &[
+                "a hinted Some keeps its type",
+                "unwrap_some_object of a Some",
+            ],
         ),
         (
             "branches of two objects beside an `any` branch",
@@ -6442,7 +6472,7 @@ print(j.seen())
 class Eye: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 class Lid: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = if c { [a] } else { [Eye(v: 2), Lid(v: 3)] }; print(j[0].seen()) }",
-            &["hinted_elements"],
+            &["hinted_elements", "seeded_join for a branch"],
         ),
         (
             "an array of integers beside an array of integers",
