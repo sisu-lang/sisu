@@ -3,7 +3,8 @@
 // WHEN `sisu check` runs on it
 // THEN it reports E0062 with no fix, and a help that peels the layers that `?.` does not take
 // AND the `.` says "the extra layers", and the `?.` says "the other layers", with one `?? None` for each
-// AND an index, a slice, a `for` subject, or a `mut` argument or an argument at a `mut` parameter after the `.` gets the `if let` help instead, also in a call that fails
+// AND an index, a slice or a `for` subject after the `.` gets the `if let` help instead
+// AND so does an argument with `mut`, or at a `mut` parameter, also in a call that fails
 // AND a `push` onto `[i64]??` gets the `if let` help and no fix: the peeled `push` gives E0021
 class Node {
     v: i64
@@ -244,6 +245,101 @@ fn f13(t: Bumper?, c: Tree??) {
 
 fn f15(b: Box<i64>, c: Tree??) {
     b.put(x: mut c.m.v)
+}
+
+interface Bq {
+    fn bp(self, mut x: i64)
+}
+
+enum Sh {
+    Dot
+    fn grow(self, mut x: i64) {
+        x += 1
+    }
+}
+
+class Bx {
+    fn put<T>(self, mut x: T?, n: i64) {
+        x = None
+    }
+}
+
+fn take<T>(mut x: T?) {
+    x = None
+}
+
+fn x1(c: Tree??) {
+    bump(c.m.v, 1)
+}
+
+fn x2(t: Bumper, c: Tree??) {
+    t.bumpm(c.m.v, 1)
+}
+
+fn x3(c: Tree??) {
+    take(c.m.v, 1)
+}
+
+fn x4(c: Tree??) {
+    take<i64, i64>(c.m.v)
+}
+
+fn x5<U: Bp>(u: U, c: Tree??) {
+    u.bp(c.m.v, 1)
+}
+
+fn x6(b: Box<i64>, c: Tree??) {
+    b.put(c.m.v, 1)
+}
+
+fn x7(c: Tree??) {
+    take(x: c.m.v)
+}
+
+fn x9(u: any Bp, c: Tree??) {
+    u.bp(c.m.v, 1)
+}
+
+fn x10(t: Bumper?, c: Tree??) {
+    t?.bumpm(c.m.v, 1)
+}
+
+fn x11(c: Tree???) {
+    bump(c.m.v, 1)
+}
+
+fn x13(c: Tree??) {
+    Bx().put<i64, i64>(c.m.v, 1)
+}
+
+fn x14(c: Tree??) {
+    let y = exchange(c.m.v, 1, 2)
+}
+
+fn x15(c: Tree??) {
+    bump(y: c.m.v, 1)
+}
+
+fn y4<U: Bp & Bq>(u: U, c: Tree??) {
+    u.bp(c.m.v)
+}
+
+fn n13(c: Tree??) {
+    Sh.grow(c.m.v)
+}
+
+// Each argument below keeps the peel help: no `mut` parameter is known for it.
+fn z1(c: Tree??) {
+    bump(c.m.v, c.m.v)
+}
+
+fn z2(c: Tree??) {
+    bump(c.m.v + 1, 2)
+}
+
+fn z3(c: Tree??) {
+    let f = bump
+    f(c.m.v, 1)
 }
 
 fn main() {}

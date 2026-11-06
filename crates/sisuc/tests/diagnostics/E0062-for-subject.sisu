@@ -51,4 +51,16 @@ fn n1(c: Tree?) {
     bump(mut c.v, 1)
 }
 
+fn take<T>(mut x: T?) {
+    x = None
+}
+
+fn x8(c: Tree?) {
+    bump(c.v, 1)
+}
+
+fn x12(c: Tree?) {
+    take<i64, i64>(c.v)
+}
+
 fn main() {}
