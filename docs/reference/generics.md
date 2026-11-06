@@ -174,7 +174,7 @@ fn main() {
 
 - An integer literal argument takes the type that the expected type gives. This is also true under `dbg`, a block, an `if`, a `match` or another generic call: `let d: u8 = id({ 250 })` is valid.
 - A concrete argument fixes a type parameter before a literal does. In `pick(1, x)` with an `x: u8`, `T` is `u8`.
-- A `loop` argument takes the type that an expected type gives, when that type is not optional and not `any`: `let r: Result<u8, i64> = Ok(loop { break 1 })` is valid. An earlier argument can also give it. With a `v: u8`, `pick(v, loop { break 1 })` is valid, and `pick(loop { break 1 }, v)` is an error. With neither, the first `break` value gives the type: `id(loop { break 1 })` is an `i64`, and `let x: u8? = id(loop { break 1 })` is an error. Under a generic call, the left side of `??`, the other side of `==`, another branch and an earlier `break` value give the `loop` no type: `o ?? id(loop { break 1 })` is an error.
+- A `loop` argument takes the type that an expected type gives, when that type is not optional and not `any`: `let r: Result<u8, i64> = Ok(loop { break 1 })` is valid. An earlier argument, a `mut` place, the receiver or a written type argument can also give it. With a `v: u8`, `pick(v, loop { break 1 })` is valid, and `pick(loop { break 1 }, v)` is an error. With none of these, the first `break` value gives the type: `id(loop { break 1 })` is an `i64`, and `let x: u8? = id(loop { break 1 })` is an error. Under a generic call, the left side of `??`, the other side of `==`, another branch and an earlier `break` value give the `loop` no type: with an `o: u8?`, `o ?? id(loop { break 1 })` is an error.
 
 **Optionals**
 

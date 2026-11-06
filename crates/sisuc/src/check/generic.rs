@@ -1901,8 +1901,9 @@ pub(super) struct Ranked {
     /// not ranked. The `1` of `Bx(v: 1)` is not passed on. An array, or a call that returns
     /// `Some(...)` or a class, is not.
     scalar: bool,
-    /// For a `Concrete` value: whether it ends in a `loop`, whose `break` values take a type that
-    /// the call's context binds first (see `infer_call`). Ranking does not read `break` values.
+    /// For a `Concrete` value: whether its type comes from a `loop`, whose `break` values take a
+    /// type that the call's context binds first (see `infer_call`). Ranking does not read `break`
+    /// values.
     holds_loop: bool,
 }
 
@@ -1955,7 +1956,8 @@ impl Ranked {
 /// `Waits` when every part waits, `Literal` when no part is `Concrete` and one is `Literal`,
 /// else `Concrete`. It is `optional`, `holds_optional` or `nested` when a part is, and `scalar`
 /// when each `Literal` part is.
-/// It stops at the first `Concrete` part, so the parts after it are not ranked.
+/// It stops at the first `Concrete` part and takes `holds_loop` from it. The parts after it are
+/// not ranked.
 fn combine(parts: impl IntoIterator<Item = Ranked>) -> Ranked {
     let mut found = Ranked::WAITS;
     let mut scalar = true;

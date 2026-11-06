@@ -68,8 +68,10 @@ fn main() {
     // A loop with no generic call around it has its written type.
     let g: u8 = loop { if c == 0 { break 7 }; break v }
     print(g)                                                     // 200
+    // `Some` gives its loop the payload of its written type.
     let h: u8? = Some(loop { if c == 1 { break 8 }; break v })
     print(h ?? 0)                                                // 8
+    // An array gives its loop the element of its written type.
     let i: [u8] = [loop { if c == 1 { break 9 }; break v }]
     print(i[0])                                                  // 9
 

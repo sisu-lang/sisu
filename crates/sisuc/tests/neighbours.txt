@@ -171,7 +171,8 @@ let _l = $ else { return }
 let 1 = $ else { return }
 if let _l = $ {}
 # A `loop` argument of a generic call: a written type that is not optional, an optional one, and
-# none. The `break` values take the written type in the first, and the first `break` in the others.
+# none. The `break` values take the written type in the first, and the type of the first `break` in
+# the others.
 let x: Result<i64, string> = Ok(loop { break $ })
 let x: i64? = id(loop { break $ })
 let x = id(loop { break $ })
