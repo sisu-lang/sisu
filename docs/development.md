@@ -665,9 +665,9 @@ stops the script with exit 2. A failed `find`, build, `cargo fuzz coverage` or
 the comparison and writes no section. On CI the step then writes a section that
 says the check did not finish. A broken measurement is never a pass.
 
-When a gap is new, do one of two things. Add a generator rule that makes the
-seeds reach the function
-([ADR 0033](adr/0033-every-language-feature-has-a-generator-rule.md)), or add
+When a gap is new, do one of two things. Add a generator rule or a fixed form
+that makes the seeds reach the function
+([ADR 0033](adr/0033-every-language-feature-has-a-generator-rule.md)). Or add
 its key to `fuzz/known_gaps.txt` under a reason. The list has sections. A
 section is a line `## <reason>`, and then one key on each line: the file, a
 TAB, and the name, as the check prints it. A key has no line number, so an edit
@@ -691,9 +691,35 @@ The check has three limits:
   and multi-unit builds reach is outside the check, and every run of the
   program target still reaches it.
 
-### Add a generator rule
+### Add a rule for a new language feature
 
-A rule makes the fixed seeds reach a function. Do these steps in this order:
+A language feature is an AST, `tir` or type variant, an operator, a prelude
+function or a built-in method. It needs a drawn rule: the bytes of the input
+choose it, so it combines with the other rules and can find bugs.
+`every_variant_should_be_generated` fails `make test` until a seed's program
+holds the feature. That test reads `plain`, which has no form of `gap_forms`,
+so a fixed form cannot pass it. Do these steps in this order:
+
+1. Add a case that holds the feature to `crates/sisuc/tests/run`.
+2. Write the rule in `crates/sisuc/src/generate/`. Use `expr.rs` for an
+   expression of a wanted type, `stmt.rs` for a statement and `item.rs` for an
+   item. Use `generic.rs` for a generic form and `mut_call.rs` for a `mut` call.
+3. Keep choice 0 the smallest valid choice, because every choice is 0 when the
+   bytes run out.
+4. A draw moves what each later part of a seed writes. When a pinned test must
+   stay on its seed, draw from another stream, as `mut_pick` does. Or gate on
+   the whole input, as `leaves` does. Do not loosen a test to fit a moved seed.
+5. When the feature adds a capability that no variant shows, add a key to
+   `REACH` (`generate/coverage.rs`) and mark it in `Walk`. A variant that no
+   valid program holds goes into `EXCLUDED`, with its reason.
+6. Run `make test` and `make fuzz-gaps`. When a gap stays, because no drawn rule
+   reaches the function within the seeds, use the steps in the next section.
+
+### Add a fixed form for a generator gap
+
+A fixed form makes the seeds reach a function. It always writes the same text,
+so it finds fewer bugs than a drawn rule. Use it only for a gap. Do these steps
+in this order:
 
 1. Add a case that holds the construct to `crates/sisuc/tests/run`. The
    reference then reaches the function, so the check can see a gap.
@@ -725,6 +751,12 @@ A rule makes the fixed seeds reach a function. Do these steps in this order:
    `a_budget_program_should_finish_within_the_limit`, and the stdout in
    `a_failure_should_print_the_program`. Update the counts in their comments too.
 7. Remove the key from `fuzz/known_gaps.txt`. `make fuzz-gaps` must exit 0.
+
+A mark must be something that only that function writes, and a near program
+must not set it. A near program also tests that the form takes the path you
+expect. For example, `"a" < "b" < "c"` goes to `check::string_chain` and never
+reaches `lang::compare`, so that chain needs a generic function. And
+`sisu_words_count` is no mark for `len_words`, because `words` calls it too.
 
 When the form finds a compiler bug, fix the bug in the same work, with its own
 case in `tests/run`.
