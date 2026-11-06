@@ -10,6 +10,15 @@
 #   scripts/fuzz.sh [--target <target>] --cmin   minimize fuzz/corpus/<target> in place
 #   scripts/fuzz.sh [--target <target>] --coverage   line coverage per compiler stage of the corpus
 #                                     and seeds, and how many inputs reach codegen
+#   scripts/fuzz.sh --target program --gaps   the functions that a valid program reaches and no
+#                                     fixed seed reaches (scripts/fuzz_gaps.py); exits 1 on a new
+#                                     gap and 2 when the comparison cannot trust a measurement,
+#                                     each with its section appended to fuzz/artifacts/summary.md.
+#                                     A directory with no program exits 2, and a tool that fails
+#                                     gives its own status. Neither writes a section.
+# The seeds of front_end are the .sisu files of the test tree. The seeds of program are 128
+# full-size inputs from scripts/fuzz_seeds.py: a short input runs out of bytes, and the fuzzer
+# grows an input too slowly to reach full size.
 # <target> is front_end, the default, or program. program builds the runtime archive first and
 # points SISU_RUNTIME at it; a replay of a program input also writes its program, rewritten
 # copy, stdin and failure to fuzz/artifacts/program/<input name>.dump/ (the input itself is the
@@ -21,7 +30,7 @@
 # and the first line of the panic message of each replayed crash.
 set -euo pipefail
 
-usage="usage: scripts/fuzz.sh [--target front_end|program] [seconds] | --replay <input> | --tmin <input> | --cmin | --coverage"
+usage="usage: scripts/fuzz.sh [--target front_end|program] [seconds] | --replay <input> | --tmin <input> | --cmin | --coverage | --target program --gaps"
 target=front_end
 if [[ ${1:-} == --target ]]; then
     if (($# < 2)); then
@@ -50,6 +59,12 @@ program)
     ;;
 esac
 
+# The gap check compares the generator with the valid programs, so only the program target has it.
+if [[ ${1:-} == --gaps && $target != program ]]; then
+    echo "$usage" >&2
+    exit 2
+fi
+
 # Resolve the input before the cd, so a path relative to the caller's directory works.
 case ${1:-} in
 --replay | --tmin) input=$(realpath "${2:?$1 needs an input}") ;;
@@ -70,21 +85,27 @@ found=fuzz/artifacts/$target
 # Where a replay of the input at $1 leaves the program fuzzer's record of it; front_end ignores it.
 dump_dir() { echo "$PWD/$found/${1##*/}.dump"; }
 
+# The coverage of the profile that `cargo fuzz coverage` left for the target $1, as llvm-cov's
+# JSON on stdout. Other arguments go to llvm-cov. `export`, not `report`: report shows names
+# without their longest common directory, which depends on which other files the binary has;
+# export has absolute paths.
+export_coverage() {
+    local host
+    host=$(rustc -vV | awk '/^host:/ { print $2 }')
+    "$(rustc --print sysroot)/lib/rustlib/$host/bin/llvm-cov" export "target/$host/coverage/$host/release/$1" \
+        -instr-profile="fuzz/coverage/$1/coverage.profdata" \
+        -ignore-filename-regex='(\.cargo|\.rustup|/rustc/|/fuzz/|/tests/|tests\.rs)' "${@:2}"
+}
+
 # Line coverage of the corpus and seeds, summed per stage, then how many of those inputs reach
 # codegen. Run `cargo fuzz coverage` over the corpus first; its profile feeds llvm-cov.
 coverage() {
-    local host bin
-    host=$(rustc -vV | awk '/^host:/ { print $2 }')
-    bin=$(rustc --print sysroot)/lib/rustlib/$host/bin/llvm-cov
     mkdir -p "$corpus"
+    # cargo-fuzz keeps earlier raw profiles and merges them (cargo-fuzz 0.13.2 src/project.rs, coverage_for).
+    rm -rf "fuzz/coverage/$target"
     cargo fuzz coverage --sanitizer none "$target" "$corpus" "$seeds"
-    # `export`, not `report`: report shows names without their longest common directory, which
-    # depends on which other files the binary has; export has absolute paths.
     local lines
-    lines=$("$bin" export "target/$host/coverage/$host/release/$target" \
-        -instr-profile="fuzz/coverage/$target/coverage.profdata" \
-        -ignore-filename-regex='(\.cargo|\.rustup|/rustc/|/fuzz/|/tests/|tests\.rs)' \
-        -summary-only |
+    lines=$(export_coverage "$target" -summary-only |
         jq -r '
             [.data[0].files[]
              | select(.filename | test("/crates/sisuc/src/"))
@@ -112,10 +133,10 @@ coverage() {
     if [[ $target == program ]]; then
         # An input that fails property 1 is a crash, never a corpus entry, and the coverage run
         # above passed over every one of them: each reached codegen.
-        for f in "$corpus"/*; do
+        for f in "$corpus"/* "$seeds"/*; do
             [[ -f $f ]] && inputs=$((inputs + 1))
         done
-        echo "inputs reaching codegen: all ${inputs} (a failing input is a crash, never a corpus entry)"
+        echo "inputs reaching codegen: all ${inputs} (corpus and seeds; a failing input is a crash, never a corpus entry)"
     else
         cargo build --quiet -p sisuc
         for f in "$corpus"/* "$seeds"/*; do
@@ -125,6 +146,50 @@ coverage() {
         done
         echo "inputs reaching codegen: ${reached} of ${inputs}"
     fi
+}
+
+# Copies each .sisu file under the directories $2 and after into the directory $1 under a unique
+# name. cargo-fuzz runs every regular file of a directory, and not the files below it.
+copy_programs() {
+    local to=$1 i=0 f
+    shift
+    # A pipe, not `< <(find ...)`: pipefail sees the status of a pipe, and not of a substitution.
+    find "$@" -name '*.sisu' -print0 | while IFS= read -r -d '' f; do
+        i=$((i + 1))
+        cp "$f" "$to/$i-${f##*/}"
+    done
+}
+
+# The generator gaps (scripts/fuzz_gaps.py): the functions that a valid program reaches and no
+# fixed seed reaches. The seeds alone are the generator's side, with no corpus, so the result
+# depends on the commit and not on what a night kept. The valid side is every program of tests/run
+# and tests/run-fail, and no other directory: tests/diagnostics holds invalid programs.
+gaps() {
+    local dir found
+    # A directory that holds no program, or is a symlink, reads as a reference without it. The
+    # stage floors of fuzz_gaps.py cannot see that, because the other directory still reaches them.
+    for dir in crates/sisuc/tests/run crates/sisuc/tests/run-fail; do
+        found=$(find "$dir" -name '*.sisu' -print -quit)
+        if [[ -z $found ]]; then
+            echo "scripts/fuzz.sh: ${dir} holds no .sisu program" >&2
+            exit 2
+        fi
+    done
+    gaps_dir=$(mktemp -d)
+    mkdir "$gaps_dir/programs"
+    copy_programs "$gaps_dir/programs" crates/sisuc/tests/run crates/sisuc/tests/run-fail
+    # cargo-fuzz merges old raw profiles, so a stale profile could hide a gap.
+    rm -rf fuzz/coverage/program fuzz/coverage/front_end
+    cargo fuzz coverage --sanitizer none program "$seeds"
+    export_coverage program >"$gaps_dir/seeds.json"
+    cargo fuzz coverage --sanitizer none front_end "$gaps_dir/programs"
+    export_coverage front_end >"$gaps_dir/valid.json"
+    local status=0 output
+    output=$(python3 scripts/fuzz_gaps.py "$gaps_dir/seeds.json" "$gaps_dir/valid.json" fuzz/known_gaps.txt) || status=$?
+    echo "$output"
+    mkdir -p fuzz/artifacts
+    { echo; echo "$output"; } >>fuzz/artifacts/summary.md
+    exit "$status"
 }
 
 # These exec cargo, so the trap below would never run: they come before the seeds exist.
@@ -141,21 +206,24 @@ case ${1:-} in
 --cmin) exec cargo fuzz cmin --sanitizer none "$target" "$corpus" -- "${limits[@]}" ;;
 esac
 
-# Every .sisu file under the test tree, copied under a unique name into a temp directory.
+# The seeds go into a temp directory: for front_end every .sisu file under the test tree, copied
+# under a unique name, and for program the files of scripts/fuzz_seeds.py.
 seeds=$(mktemp -d)
 marker=$(mktemp)
 replay_out=$(mktemp)
-trap 'rm -rf "$seeds" "$marker" "$replay_out"' EXIT
-i=0
-while IFS= read -r -d '' f; do
-    i=$((i + 1))
-    cp "$f" "$seeds/$i-${f##*/}"
-done < <(if [[ $target == front_end ]]; then find crates/sisuc/tests -name '*.sisu' -print0; fi)
+gaps_dir=
+trap 'rm -rf "$seeds" "$marker" "$replay_out" "$gaps_dir"' EXIT
+if [[ $target == program ]]; then
+    python3 scripts/fuzz_seeds.py "$seeds"
+else
+    copy_programs "$seeds" crates/sisuc/tests
+fi
 
 if [[ ${1:-} == --coverage ]]; then
     coverage
     exit 0
 fi
+if [[ ${1:-} == --gaps ]]; then gaps; fi
 
 seconds=${1:-1800}
 if [[ ! $seconds =~ ^[0-9]+$ ]]; then

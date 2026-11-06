@@ -32,6 +32,9 @@ pub(crate) const SEEDS: u64 = 64;
 /// How many seeds a test reads at most while it looks for a construct that no seed of its fixed
 /// set holds yet. A change to a cadence in the generator moves a construct to another seed.
 pub(crate) const SEARCH_SEEDS: u64 = 16 * SEEDS;
+/// How many seeds a fuzz run reads. `scripts/fuzz_seeds.py` writes them as files, and is a copy of
+/// `seed`: a shell step cannot call a test-only function.
+pub(crate) const FUZZ_SEEDS: u64 = 128;
 const SEED_LEN: usize = 4_096;
 
 /// What no generated program holds, and why.
@@ -9214,4 +9217,22 @@ fn the_programs_of_seeds_203_4534_and_5974_should_check_clean() {
     for n in [203, 4534, 5974] {
         checked(&generate(&seed(n)).program);
     }
+}
+
+/// The pin covers the bytes and the order of all 128 fuzz seeds: FNV-1a 64 over `seed(0)`, then
+/// `seed(1)`, up to `seed(127)`. `scripts/fuzz_seeds.py` copies `seed`. The test
+/// `scripts/test_fuzz_seeds.py` holds both files to this one value. A change to the rule in one
+/// place fails a test until the other follows.
+#[test]
+fn fuzz_seeds_should_match_the_pinned_values() {
+    assert_eq!(FUZZ_SEEDS, 128);
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for n in 0..FUZZ_SEEDS {
+        let bytes = seed(n);
+        assert_eq!(bytes.len(), 4096, "the length of seed {n}");
+        for byte in bytes {
+            hash = (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    assert_eq!(hash, 0x20e3_12f6_e6ae_c322);
 }

@@ -586,6 +586,7 @@ $ scripts/fuzz.sh --target program --replay <input>
 $ scripts/fuzz.sh --target program --tmin <input>
 $ scripts/fuzz.sh --target program --cmin
 $ scripts/fuzz.sh --target program --coverage
+$ make fuzz-gaps                     # scripts/fuzz.sh --target program --gaps
 ```
 
 To check one seed of the series that the unit tests generate from, with
@@ -600,8 +601,11 @@ $ SISU_FUZZ_SEED=72 cargo nextest run -p sisuc --lib seed_from_env --run-ignored
 The script first builds the runtime archive in release mode and points
 `SISU_RUNTIME` at it, since the builds link it. The target's corpus is
 `fuzz/corpus/program`, its failing inputs go to `fuzz/artifacts/program/`,
-and it starts from the corpus alone, with no seeds and no dictionary. Its
-limits are `-max_len=4096 -timeout=300 -len_control=0`: libFuzzer tries
+and it has no dictionary. It starts from the corpus and from 128 seeds, the
+inputs `seed(0)` to `seed(127)` of the unit tests. `scripts/fuzz_seeds.py`
+writes them as full-size inputs of 4096 bytes. At about one execution a
+second, the fuzzer cannot grow an input to that size by itself. Its limits are
+`-max_len=4096 -timeout=300 -len_control=0`. With them, libFuzzer tries
 full-length inputs at once, since a short input runs out of bytes and gets a
 small program. After a run, the script replays up to 3 new `crash-` inputs
 for up to 340 s each.
@@ -626,16 +630,69 @@ diagnostics when you run `sisu check` on it. The replays after a fuzz run
 write the same directories.
 
 `--coverage` works for either target. It runs `cargo fuzz coverage` over the
-target's corpus, and for `front_end` its seeds too, then prints the line
-coverage of each compiler stage (lexer, parser, check, mir, codegen) and how
-many inputs reach codegen. `make fuzz-coverage [TARGET=program]` runs it, for
-`front_end` by default. A program input that the checker rejects is a crash,
-never a corpus entry, so every program input reaches codegen.
+target's corpus and seeds, then prints the line coverage of each compiler
+stage (lexer, parser, check, mir, codegen) and how many inputs reach codegen.
+`make fuzz-coverage [TARGET=program]` runs it, for `front_end` by default. A
+program input that the checker rejects is a crash, never a corpus entry, so
+every program input, seeds included, reaches codegen.
+
+### The generator gaps
+
+`--gaps` works for the program target only. It finds the functions that a valid
+program reaches and the generator's fixed seeds do not: the generator gaps
+(`GLOSSARY.md`). It runs `cargo fuzz coverage` twice. The first run is
+`program` over the 128 seeds alone, with no corpus. So the result depends on
+the commit and not on what a night kept. The second run is `front_end` over the
+`.sisu` files of `crates/sisuc/tests/run` and `crates/sisuc/tests/run-fail`.
+`tests/diagnostics` holds invalid programs and stays out. Then
+`scripts/fuzz_gaps.py` compares the two exports with `fuzz/known_gaps.txt`.
+`make fuzz-gaps` runs it. A run takes about 4 minutes when the builds are warm.
+The check reads function names with `c++filt -s rust` from GNU binutils. A
+`c++filt` that is missing, or that cannot read Rust names, gives exit 2.
+
+The check names a function by its file below `crates/sisuc/src/`, its first line
+and its name. The name has no crate hashes and no generic arguments, so the
+instances of a generic function merge. A closure counts for its enclosing
+function. The check leaves out `generate/`, `fuzz.rs`, `fuzz_program.rs`,
+`report.rs`, `diagnostic/json.rs` and `diagnostic/render.rs`. The comparison
+prints a section `## Generator gaps`, and `--gaps` appends it to
+`fuzz/artifacts/summary.md`. `--gaps` exits 0 when no gap is new, 1 when a gap
+is new, and 2 when it cannot trust a measurement. A directory with no program
+stops the script with exit 2. A failed `find`, build, `cargo fuzz coverage` or
+`llvm-cov` stops it with the status of that tool. In both cases it stops before
+the comparison and writes no section. On CI the step then writes a section that
+says the check did not finish. A broken measurement is never a pass.
+
+When a gap is new, do one of two things. Add a generator rule that makes the
+seeds reach the function
+([ADR 0033](adr/0033-every-language-feature-has-a-generator-rule.md)), or add
+its key to `fuzz/known_gaps.txt` under a reason. The list has sections. A
+section is a line `## <reason>`, and then one key on each line: the file, a
+TAB, and the name, as the check prints it. A key has no line number, so an edit
+above a function does not change it. A key before the first section, or
+a section with an empty reason, gives exit 2. A key that matches no gap gives a
+warning, and you remove it. A key that matches two definitions gives exit 2:
+remove it and add a generator rule.
+
+After a change to the generator or to `tests/run`, run `make fuzz-gaps`, and
+remove each key that it warns about. A pull request runs the check only with a
+`fuzz-program` label, so a nightly tells you otherwise.
+
+The check has three limits:
+
+- It works for each function. A branch that is missed in a function that the
+  seeds reach stays hidden.
+- Only what `tests/run` and `tests/run-fail` reach can be a gap. A valid
+  construct with no case in those directories is invisible.
+- The reference compiles at O0 through whole-module IR. Code that only the O2
+  and multi-unit builds reach is outside the check, and every run of the
+  program target still reaches it.
 
 ### The nightly program job
 
 The `Fuzz programs` workflow (`.github/workflows/fuzz-program.yml`) runs
-every night at 03:53 UTC for 30 minutes. It works as
+every night at 03:53 UTC for 30 minutes, and then measures `--coverage` (30
+minutes at most) and `--gaps` (15 minutes at most). It works as
 [the front-end job](#the-nightly-job) does, with its own corpus cache,
 `fuzz-program-corpus-`, and its own concurrency group per ref, so neither job
 waits for the other. On a failure it uploads `fuzz/artifacts/` as
@@ -645,13 +702,18 @@ or is stopped at its time limit, its `report` job opens an issue titled `Nightly
 comments on the open one, as for the front end. A failed `plan` job opens one
 too. Nothing blocks a merge.
 
-Program inputs are slow: each takes about 1.25 s. Fork mode first runs each
-restored corpus input once, one at a time, and `-max_total_time` does not stop
-that pass. The pass also counts toward the fuzz time. So after the restore,
-the "Sample the corpus" step keeps 500 inputs at random and removes the
-others, so each run starts with at most 500.
-The run saves those and its new finds, and the next run samples them again. A
-removed input is lost; the fuzzer can find its coverage again. The
+Program inputs are slow: a corpus input takes about 1.25 s, and a seed about
+twice that by estimate. The 1.25 s holds for today's short corpus. New finds
+are mutants of the full-size seeds, so the corpus costs more as nights pass. At
+500 full-size inputs the first pass may take most of the 30 minutes (an
+estimate). Fork mode first runs each
+restored corpus input and each of the 128 seeds once, one at a time, and
+`-max_total_time` does not stop that pass. The pass also counts toward the
+fuzz time. So after the restore, the "Sample the corpus" step keeps 500 inputs
+at random and removes the others. Each run then starts with at most 500
+corpus inputs and the seeds.
+The run saves the corpus inputs and its new finds, and the next run samples
+them again. A removed input is lost; the fuzzer can find its coverage again. The
 summary's executions count only the fuzzing after the first pass: few
 executions, or `unknown`, mean the run spent its time on its corpus. The job
 summary also gives the corpus size before and after cmin and whether cmin
@@ -661,10 +723,15 @@ A first job, `scripts/fuzz_program_plan.py`, decides how long to fuzz and
 whether to measure coverage, and sets the time limits of the fuzz step and of
 the job from that. A fuzz step that passes its limit fails, and the later steps
 still run, so its log and the corpus are kept. The run then fails, and a
-scheduled run opens or comments on the `Nightly fuzz failure: program` issue. A run
+scheduled run opens or comments on the `Nightly fuzz failure: program` issue.
+The `Generator gaps` step runs only after a fuzz step that passed. On the
+nightly, a new gap fails the step and so the run, and a check that did not
+finish does too. The step appends its section to the job summary and uploads
+`fuzz/artifacts/summary.md` as `fuzz-program-failure`, so the issue holds the
+gap list or the reason. In any other run the step cannot fail the job. A run
 by hand with `workflow_dispatch` takes the seconds to fuzz, 60 to 14,400, and
-whether to run `--coverage`. GitHub offers that only for a workflow already on
-`main`.
+whether to run `--coverage` and `--gaps`. GitHub offers that only for a
+workflow already on `main`.
 
 To fuzz a branch, open a pull request and add one label `fuzz-program`
 (2 hours), `fuzz-program <n>m` or `fuzz-program <n>h`, such as
@@ -674,10 +741,11 @@ pushes from starting runs; cancel a run in progress from the Actions tab. Any
 `<n>m` or `<n>h` from 1 minute to 4 hours works, which leaves the job inside
 GitHub's 6-hour limit, and each label must first exist in the repository. A
 pull request with two such labels fails the plan, and adding any other label
-starts nothing. A labeled run always ends with `--coverage` and puts its
-stage lines in the job summary. It restores the newest corpus of its own
-earlier runs or of `main`, and the corpus it saves stays with the pull
-request. GitHub runs no workflow for a pull request with a merge conflict, so
+starts nothing. A labeled run always ends with `--coverage`, and with `--gaps` when the fuzz
+step passed. It puts its stage lines in the job summary, and its gap section
+when `--gaps` ran. It restores the
+newest corpus of its own earlier runs or of `main`, and the corpus it saves
+stays with the pull request. GitHub runs no workflow for a pull request with a merge conflict, so
 resolve it first.
 
 ### Fix a program fuzz failure
@@ -1020,6 +1088,6 @@ must accept any syntax those programs use.
 | `.coderabbit.yaml`, `.greptile/` | The settings of the CodeRabbit and Greptile pull request reviews. Their findings are advice; CI is the merge gate. A `@coderabbitai review` or `@greptileai` comment starts a review again. |
 | `fuzz` | The fuzz targets, `front_end` and `program`, in their own Cargo workspace, run by `scripts/fuzz.sh`. |
 | `Makefile` | The entry point for the commands; `make help` lists its targets. |
-| `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `codspeed-prep.sh`, `fuzz.sh`, `fuzz_program_plan.py`, which plans each run of the program fuzz workflow, `watch_pr.py`, which waits for the next review with text, comment from someone other than you, or check result of a pull request, `diag_diff.py`, which compares the diagnostics of two `sisu` builds for a review, `golden_diff.py`, which checks that a re-bless only reworded expected files, `scaling.py`, which finds the shapes of program for which a compiler stage is superlinear, `merge_pr.py`, which squash-merges a pull request once its checks pass (`--cleanup` removes the worktree of one merged in the UI), and the scripts prek hooks run, such as `check-expect-messages.sh` and `slow_tests.py`. |
+| `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `codspeed-prep.sh`, `fuzz.sh`, `fuzz_program_plan.py`, which plans each run of the program fuzz workflow, `fuzz_seeds.py`, which writes the program fuzzer's 128 seeds, `fuzz_gaps.py`, which finds the generator gaps, `watch_pr.py`, which waits for the next review with text, comment from someone other than you, or check result of a pull request, `diag_diff.py`, which compares the diagnostics of two `sisu` builds for a review, `golden_diff.py`, which checks that a re-bless only reworded expected files, `scaling.py`, which finds the shapes of program for which a compiler stage is superlinear, `merge_pr.py`, which squash-merges a pull request once its checks pass (`--cleanup` removes the worktree of one merged in the UI), and the scripts prek hooks run, such as `check-expect-messages.sh` and `slow_tests.py`. |
 | `site` | The website's pages, data and build script (`make site`). |
 | `docs` | Architecture, roadmap, decisions (`adr/`) and agent guides (`agents/`). |

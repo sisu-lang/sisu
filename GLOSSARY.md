@@ -759,6 +759,9 @@ diagnostic code naming the Sisu way.
 The part of the program fuzzer that writes one kind of syntax, type or built-in into generated programs. A language feature is done only when it has one.
 _Avoid_: fuzz rule, grammar rule
 
+**Generator gap**:
+A function that a valid program in `tests/run` or `tests/run-fail` reaches and no fixed seed of the program fuzzer reaches. `fuzz/known_gaps.txt` lists the gaps that have a reason.
+
 **Reference count**:
 The number of references to an object; the object is dropped when it reaches
 0.
