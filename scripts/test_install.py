@@ -180,7 +180,7 @@ class Machine:
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                 preexec_fn=preexec_fn)
 
-    def run(self, env=None, on_stdin=False, preexec_fn=None):
+    def run(self, env=None, on_stdin=False, preexec_fn=None, cwd=None):
         """on_stdin pipes the script to the shell, as the install line does."""
         kw = {}
         if on_stdin:
@@ -191,7 +191,7 @@ class Machine:
             kw['stdin'] = subprocess.DEVNULL
             argv = SH + [INSTALL]
         return subprocess.run(argv, env=self._env(env), capture_output=True, text=True,
-                              timeout=120, preexec_fn=preexec_fn, **kw)
+                              timeout=120, preexec_fn=preexec_fn, cwd=cwd, **kw)
 
     def builds(self):
         """File name -> build, for the files in ~/.sisu/bin."""
@@ -337,7 +337,8 @@ class InstallTest(unittest.TestCase):
                 'line %d runs before main: %s' % (n, line))
 
     def test_checksum_mismatch_should_keep_the_earlier_install(self):
-        for row in ('a wrong hash', 'no line for this tarball', 'a name that differs at a dot'):
+        for row in ('a wrong hash', 'no line for this tarball', 'a name that differs at a dot',
+                    'a word before the name', 'a star in the name'):
             with self.subTest(row):
                 m = self.machine()
                 m.earlier_install()
@@ -348,12 +349,25 @@ class InstallTest(unittest.TestCase):
                     m.sums('%s  %s\n' % ('0' * 64, name))
                 elif row == 'no line for this tarball':
                     m.sums('%s  other.tar.gz\n' % ('0' * 64))
-                else:
+                elif row == 'a name that differs at a dot':
                     m.sums('%s  %s\n' % (good, name.replace('.', 'X')))
+                elif row == 'a word before the name':
+                    m.sums('%s  x %s\n' % (good, name))
+                else:
+                    m.sums('%s  x*%s\n' % (good, name))
                 r = m.run()
                 self.assertKept(m, r)
                 self.assertIn('does not match', r.stderr)
                 self.assertIn('Run the install line again', r.stderr)
+
+    def test_checksum_should_read_both_forms_of_a_line(self):
+        for form in ('%s  %s\n', '%s *%s\n'):
+            with self.subTest(form):
+                m = self.machine()
+                with open(os.path.join(m.dl, 'SHA256SUMS')) as f:
+                    good = f.read().split()[0]
+                m.sums(form % (good, m.tarball_name))
+                self.assertInstalled(m, m.run())
 
     def test_checksum_should_read_only_this_tarballs_line(self):
         m = self.machine()
@@ -371,7 +385,8 @@ class InstallTest(unittest.TestCase):
                     if os.path.lexists(os.path.join(m.tools, tool)):
                         os.remove(os.path.join(m.tools, tool))
                 if good:
-                    m.fake_command('shasum', 'exec %s\n' % ' '.join(map(shlex.quote, SHA256)))
+                    m.fake_command('shasum', '[ "$*" = "-a 256" ] || exit 2\nexec %s\n'
+                                   % ' '.join(map(shlex.quote, SHA256)))
                 else:
                     m.fake_command('shasum', 'echo "%s  -"\n' % ('0' * 64))
                 r = m.run()
@@ -496,7 +511,7 @@ class InstallTest(unittest.TestCase):
             self.assertIn('sisu old', f.read())
         self.assertFalse(m.tmp_exists())
 
-    def test_failed_setup_command_should_stop_with_one_line(self):
+    def test_failed_removal_or_mkdir_should_stop_with_one_line(self):
         for command, fails, stale in [('rm', '*.sisu/tmp', False), ('mkdir', '*.sisu/tmp', False),
                                       ('rm', '*.sisu/bin.old', True)]:
             with self.subTest('%s %s' % (command, fails)):
@@ -615,6 +630,28 @@ class InstallTest(unittest.TestCase):
         r = m.run()
         self.one_line(m, r)
         self.assertEqual(m.builds(), ALL_OLD)
+
+    def test_cdpath_should_not_move_the_unpack(self):
+        m = self.machine()
+        cwd = os.path.join(m.root, 'cwd')
+        os.makedirs(cwd)
+        # CDPATH holds a second ~/.sisu/tmp that a cd to the relative path would find first.
+        os.makedirs(os.path.join(m.home, '.sisu', 'tmp'))
+        r = m.run(env={'HOME': 'home', 'CDPATH': m.root}, cwd=cwd)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(sorted(os.listdir(os.path.join(cwd, 'home', '.sisu', 'bin'))),
+                         sorted(FILES))
+
+    @unittest.skipIf(os.geteuid() == 0, 'root can write to a read-only directory')
+    def test_tar_stop_should_print_no_error_from_the_cleanup(self):
+        m = self.machine()
+        m.fake_command('tar', '%s 555 "$HOME/.sisu"\n%s\n'
+                       % (shlex.quote(shutil.which('chmod')), FAIL))
+        self.addCleanup(os.chmod, m.sisu, stat.S_IRWXU)
+        r = m.run()
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('fake: failed', r.stderr)
+        self.assertNotIn('rm:', r.stderr)
 
     def test_sisu_path_that_is_a_file_should_stop_with_one_sentence(self):
         m = self.machine()
