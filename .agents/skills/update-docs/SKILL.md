@@ -54,7 +54,7 @@ Read each target below before you decide it needs no edit.
 | A top-level directory or crate | "Repository layout" in `docs/development.md`; the crate list in `AGENTS.md` |
 | What `sisu` prints, or the text of an explanation in `docs/diagnostics/` (each `.json` summary embeds it) | `make bless`, then read the diff under `site/programs/` |
 | Compiler stages | The pipeline section on Home (`site/src/index.html`) |
-| `install.sh`, the supported systems or the install lines | "Install" in `README.md`, "Install it" on Home (`site/src/index.html`), `live-check` in `.github/workflows/nightly-build.yml` |
+| `install.sh`, the supported systems, the `cc` requirement or the install lines | "Install" in `README.md`, "Install it" on Home (`site/src/index.html`), `live-check` in `.github/workflows/nightly-build.yml` |
 | `docs/roadmap.md` | `site/data/status.toml` |
 | A diagnostic code added or removed | `site/data/categories.toml` |
 | An ADR added | A row on `site/src/decisions.html` |
