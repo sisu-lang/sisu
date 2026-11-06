@@ -21,7 +21,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-INSTALL = Path(__file__).absolute().parent.parent / "install.sh"
+INSTALL = Path(__file__).absolute().parent / ".." / "install.sh"
 BASE = "https://github.com/sisu-lang/sisu/releases/latest/download/"
 FILES = ("sisu", "libsisu_runtime_mimalloc.a", "libsisu_runtime_system.a")
 TOOLS = [

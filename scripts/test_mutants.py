@@ -4,6 +4,7 @@ Each test runs the script in a small repository with a fake `cargo` on PATH, so 
 """
 
 import fcntl
+import glob
 import os
 import re
 import shutil
@@ -732,7 +733,10 @@ class Mutants(unittest.TestCase):
         for crate in sorted((top / "crates").glob("*")):
             for where in ("tests", "src/main.rs", "build.rs"):
                 base = crate / where
-                for path in [*base.glob("**/*.rs"), base]:
+                # A symlink to a directory is followed and a hidden file is not matched: the test
+                # guards `crates/` against a test file behind a symlink.
+                found = [Path(p) for p in glob.glob(str(base / "**" / "*.rs"), recursive=True)]  # noqa: PTH207  Path.glob differs on symlinks and hidden files
+                for path in [*found, base]:
                     if path.is_file() and path.name != "architecture.rs":
                         with path.open(encoding="utf-8") as f:
                             if entry.search(f.read()):

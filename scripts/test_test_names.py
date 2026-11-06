@@ -13,7 +13,7 @@ from pathlib import Path
 import git_fixture
 import test_names
 
-ROOT = Path(__file__).absolute().parent.parent
+ROOT = Path(__file__).absolute().parent / ".."
 BASELINE_TEST = (
     "#[test]\nfn old_name() {\n    one();\n}\n\n#[test]\nfn other_name() {\n    two();\n}\n"
 )

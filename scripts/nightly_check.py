@@ -201,7 +201,7 @@ def pack(target: str, release: str, third_party: str, out_dir: str) -> list[str]
     if target not in TARGETS:
         return ["unknown target {}: use one of {}".format(target, ", ".join(TARGETS))]
     Path(out_dir).mkdir(parents=True, exist_ok=True)
-    root = Path(__file__).absolute().parent.parent
+    root = Path(__file__).absolute().parent / ".."
     sources = {
         "sisu": Path(release, "sisu"),
         **{a: Path(release, a) for a in ARCHIVES},

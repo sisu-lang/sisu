@@ -20,7 +20,7 @@ from pathlib import Path
 
 import changed_tests
 
-ROOT = Path(__file__).absolute().parent.parent
+ROOT = Path(__file__).absolute().parent / ".."
 BASELINE = ROOT / "scripts" / "test_names_baseline.txt"
 END_TO_END = re.compile(r"(^|/)crates/[^/]+/tests/")
 # At the start of a line, so `fn` inside an attribute such as `#[should_panic(expected = "fn f")]`
