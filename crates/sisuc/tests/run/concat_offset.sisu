@@ -1,0 +1,32 @@
+// GIVEN a string that ends its block but starts after the block's first byte, a string that
+//   covers a full block, and a string that another variable shares
+// WHEN each gets a `+`
+// THEN the result is the same as for a string that starts at its block's first byte: the bytes
+//   of the first string, then the bytes of the second
+class H {
+    mut s: string
+}
+
+fn tail(s: string) -> string {
+    s[2..]
+}
+
+fn main(args: [string]) {
+    let n = args.len()
+    // A value that ends its block but starts after its first byte: path 1 with an offset.
+    let mut s = tail("ab{n}cd")
+    s = s + "ef"
+    s = s + "gh"
+    print(s)                         // 0cdefgh
+    // A value that covers a full block: path 2 grows it.
+    let mut t = "{n}"
+    for i in 0..20 {
+        t = t + "{i % 10}"
+    }
+    print(t)                         // 001234567890123456789
+    // A shared value: path 3 copies it.
+    let h = H(s: "x{n}")
+    let u = h.s + "y"
+    print(u)                         // x0y
+    print(h.s)                       // x0: the shared value stays as it was
+}

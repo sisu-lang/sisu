@@ -224,6 +224,17 @@ def mut_call_width(k):
             f'    many({given})\n{shown}    print("{{total}}")\n}}\n')
 
 
+def optional_depth(k):
+    # An optional of k + 1 layers, in the field of a class and in a parameter. An array has a niche
+    # for one layer only, so each layer past the first is a `{ flag, value }` pair, which codegen
+    # lays out and counts one layer at a time (#461).
+    q = '?' * (k + 1)
+    return (f'class Holder {{\n    mut xs: [i64]{q}\n}}\n\n'
+            f'fn store(h: Holder, xs: [i64]{q}) {{\n    h.xs = xs\n}}\n\n'
+            'fn main() {\n    let h = Holder(xs: None)\n    store(h, None)\n'
+            '    print(h.xs == None)\n}\n')
+
+
 def alias_chain(k):
     # A chain of k + 1 aliases, each of which names the one before it twice. Types are interned, so
     # the chain has k + 1 distinct types, but it has 2^k paths. The checker walks that read a field
@@ -282,6 +293,7 @@ SHAPES = {
     'mut returns': (250, mut_returns),
     'mut call width': (1000, mut_call_width),
     'alias chain': (12, alias_chain),
+    'optional depth': (24, optional_depth),
 }
 
 
