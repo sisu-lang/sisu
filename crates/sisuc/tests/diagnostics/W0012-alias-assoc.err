@@ -1,7 +1,7 @@
 warning[W0012]: class `Has` is never built
- --> W0012-alias-assoc.sisu:5:7
+ --> W0012-alias-assoc.sisu:9:7
   |
-5 | class Has: Named {
+9 | class Has: Named {
   |       ^^^ never built
   |
   = help: delete it, or name it `_Has` if it is kept on purpose

@@ -1,9 +1,14 @@
-interface Named {
+interface Base {
+    fn base(self) -> i64
+}
+
+interface Named: Base {
     type Name
 }
 
 class Has: Named {
     type Name = i64
+    fn base(self) -> i64 { 1 }
 }
 
 type Items<S> = [S.Name]

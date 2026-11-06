@@ -315,7 +315,8 @@ const GAP_RULES: &[&str] = &[
 
 /// The points of the checker that the forms of `Gen::gap_forms` reach: the functions that
 /// `fuzz/known_gaps.txt` listed, and the branches of `make_check` that keep a check. A key is
-/// `gap_key` of a point. Each is marked when the checker reached it, as `check::reached` records.
+/// `gap_key` of a point. Each is marked when the checker reached it, as `check::reached` records:
+/// `answered_by_several` only when it answers true.
 const GAP_POINTS: &[&str] = &[
     "Waits::lower",
     "written_interface",
@@ -336,7 +337,7 @@ const GAP_POINTS: &[&str] = &[
 
 /// The key that marks `point` of `GAP_POINTS`.
 fn gap_key(point: &str) -> String {
-    format!("reach: the checker runs `{point}`")
+    format!("reach: the checker reaches `{point}`")
 }
 
 /// The forms of `let ... else` and of a jump after `??`, which no variant shows.
@@ -8732,7 +8733,7 @@ fn the_walk_should_mark_what_extension_holds() {
 fn generated_interfaces_should_be_used() {
     let mut interfaces = 0;
     search_seeds(SEEDS, |n| {
-        let source = generate(&seed(n)).plain;
+        let source = generate(&seed(n)).program;
         let (_, diagnostics) = crate::front_end::checked(&source);
         interfaces += source.matches("interface ").count();
         for d in &diagnostics {
