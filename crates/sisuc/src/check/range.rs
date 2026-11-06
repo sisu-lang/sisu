@@ -4,7 +4,7 @@
 use super::array::optional_array;
 use super::call::Dot;
 use super::string::single_term;
-use super::{Checked, Checker, Poisoned, UNKNOWN, type_of};
+use super::{Checked, Checker, Poisoned, UNKNOWN, is_unwrapped, spread, type_of};
 use crate::ast::{self, ExprKind};
 use crate::diagnostic::{
     Diagnostic, DiagnosticKind, GetCall, IndexUsage, MissingBound, RangeForm, RangePlace,
@@ -158,9 +158,10 @@ impl Checker<'_> {
         let (start, end, mismatched) = self.bounds(range);
         let (has_start, has_end) = (start.is_some(), end.is_some());
         let result = if safe { Type::optional(ty) } else { ty };
+        let flagged = is_unwrapped(&checked);
         let parts = [Some(checked), start, end].into_iter().flatten();
         let Ok(operands) = parts.collect::<Result<Vec<_>, _>>() else {
-            return Err(Poisoned::of((!mismatched).then_some(result)));
+            return spread(Err(Poisoned::of((!mismatched).then_some(result))), flagged);
         };
         Ok(self.spilled(span, result, operands, |operands| {
             let mut operands = operands.into_iter().map(Box::new);

@@ -9,6 +9,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::alias::{Through, Via};
 use super::any;
+use super::array::innermost;
 use super::expr::{bare_hole, dbg_argument, option_written};
 use super::interface::{Bound, Required};
 use super::mut_args::{MutParts, MutSite, PlaceShape, marked};
@@ -16,8 +17,9 @@ use super::pattern::{LetPattern, LetValue, arm_key, matchable};
 use super::prelude::PRELUDE;
 use super::stmt::BlockSoFar;
 use super::{
-    Binding, Checked, Checker, Declared, Definition, DiagnosticKind, Misfit, Poisoned, UNKNOWN,
-    as_optional, built_in_type, is_kept, optional_of, own_args, payload, type_of,
+    Binding, Checked, Checker, Declared, Definition, DiagnosticKind, Flag, Misfit, Poisoned,
+    UNKNOWN, as_optional, built_in_type, has_remedy_flag, is_kept, optional_of, own_args, payload,
+    spread, type_of,
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{ArgumentsForm, Diagnostic, Expected, MainForm, Unwrap};
@@ -1632,6 +1634,16 @@ pub(super) struct Site<'a> {
     pub(super) expected: Option<Type>,
 }
 
+/// The type arguments after the first `owner` of `found`, which inference found for a callee,
+/// when `site` writes them. Else none: the arguments bind them, and they may be the fault.
+pub(super) fn written_args<'t>(site: Site<'_>, found: &'t [Type], owner: usize) -> &'t [Type] {
+    if site.written.is_empty() {
+        &[]
+    } else {
+        found.get(owner..).unwrap_or_default()
+    }
+}
+
 /// A waiting generic call that an outer call checks as an argument (see `Checker::infer_waiting`).
 /// The call reports a result that cannot meet the context as a mismatch with `want`.
 #[derive(Clone, Copy)]
@@ -1783,6 +1795,7 @@ pub(super) fn mark((checked, mismatched): (Checked, bool)) -> Checked {
             mismatch: true,
             found: None,
             kept: false,
+            unwrapped: Flag::No,
         })
     } else {
         checked
@@ -2052,6 +2065,72 @@ impl Checker<'_> {
         // The context of the quiet value failed, as an `UNKNOWN` one did.
         let expected = expected.or_else(|| self.quiet(span, expected).then_some(UNKNOWN));
         self.ranked(|c| c.infer_call(span, sig, written, args, expected, parts))
+    }
+
+    /// The result type `ret` of a failed call of a callee with `declared` type parameters, when
+    /// the call fixes it without its arguments. `owner` binds the first parameters. `named` is
+    /// the type arguments that the call writes, and binds the next ones.
+    ///
+    /// `None` when `ret` names a parameter that only the arguments bind, and for a callee with
+    /// no result type.
+    ///
+    /// `None` also when `bounds` holds a bound of the callee's own parameters, and a bound fails
+    /// for `named`. `None` too when such a bound exists and `named` is empty: the arguments would
+    /// bind it. The corrected call is `Error` in both cases. This reports nothing. A call that
+    /// inference checked passes no `bounds`.
+    pub(super) fn fixed_result(
+        &mut self,
+        ret: Option<Type>,
+        declared: usize,
+        owner: &[Type],
+        bounds: &[Vec<Bound>],
+        named: &[Type],
+    ) -> Option<Type> {
+        let ret = ret?;
+        let bounded = bounds.iter().any(|b| !b.is_empty());
+        if !bounded && !ret.has_param() {
+            return Some(ret);
+        }
+        let mut bindings = Bindings::new(declared, owner);
+        for (slot, &ty) in bindings.found[owner.len()..].iter_mut().zip(named) {
+            *slot = Some(ty);
+        }
+        if bounded && (named.is_empty() || !self.meets_bounds(bounds, owner.len(), &bindings)) {
+            return None;
+        }
+        if ret.has_param() {
+            self.known(&bindings, ret)
+        } else {
+            Some(ret)
+        }
+    }
+
+    /// The result of a construction of a generic class or enum whose arguments `Err`. `state` says
+    /// whether an alias bound `held`, whether the call `failed`, and whether an argument has the
+    /// remedy flag (`has_remedy_flag`). `ty` is the type that the arguments bound, `ret` the type
+    /// with its parameters (`declared` of them) and `written` the written type arguments.
+    ///
+    /// A failed call has the type that `fixed_result` gives, and the flag follows only when it
+    /// gives none: then the arguments alone bind the type, and the remedy changes it.
+    pub(super) fn failed_build(
+        &mut self,
+        (held, failed, flagged): (bool, bool, bool),
+        (ty, ret, declared): (Type, Type, usize),
+        written: &[Type],
+    ) -> Checked {
+        let fixed = if held && (failed || flagged) {
+            self.fixed_result(Some(ret), declared, &[], &[], written)
+        } else {
+            None
+        };
+        let ty = if !held {
+            None
+        } else if failed {
+            fixed
+        } else {
+            Some(ty)
+        };
+        spread(Err(Poisoned::of(ty)), flagged && fixed.is_none())
     }
 
     /// `generic_call`, before what ranking kept is dropped.
@@ -2493,7 +2572,7 @@ impl Checker<'_> {
         }
         // A context that fails a bound is not a type that the parameter can have: no argument is
         // to blame for not being it, and the bound check would report the types that it set.
-        if !self.meets_bounds(sig, &context) {
+        if !self.meets_bounds(sig.bounds, sig.owner.len(), &context) {
             return;
         }
         let mut blamed = false;
@@ -2521,6 +2600,7 @@ impl Checker<'_> {
                 mismatch: true,
                 found: None,
                 kept: false,
+                unwrapped: Flag::No,
             }));
             blamed = true;
         }
@@ -2537,10 +2617,9 @@ impl Checker<'_> {
     /// reports only a query that is too deep). A bound whose arguments name a parameter that
     /// `context` leaves unbound is not decided yet, as in `check_early`, and holds here. The work
     /// is one query for each bound of the callee.
-    fn meets_bounds(&mut self, sig: &GenericSig<'_>, context: &Bindings) -> bool {
+    fn meets_bounds(&mut self, all: &[Vec<Bound>], owned: usize, context: &Bindings) -> bool {
         let with: Vec<Type> = context.found.iter().map(|&t| listed(t)).collect();
-        let owned = sig.owner.len();
-        for (k, bounds) in sig.bounds.iter().enumerate() {
+        for (k, bounds) in all.iter().enumerate() {
             let Some(ty) = context.found[owned + k].filter(|&t| t != *REJECTED) else {
                 continue;
             };
@@ -3436,8 +3515,10 @@ impl Checker<'_> {
             K::Match {
                 scrutinee, arms, ..
             } => {
+                let (ty, flagged) = self.value_ahead(scrutinee);
                 let form = LetValue::Match {
-                    ty: self.value_ahead(scrutinee).filter(|&ty| matchable(ty)),
+                    ty: ty.filter(|&ty| matchable(ty)),
+                    flagged,
                 };
                 combine_branches(arms.iter().map(|arm| {
                     let bind =
@@ -3967,7 +4048,7 @@ impl Checker<'_> {
             ast::ExprKind::Applied { .. } => return None,
             _ => {}
         }
-        self.value_ahead(receiver)
+        self.value_ahead(receiver).0
     }
 
     /// `e` checked as a value: as ranking checked it ahead, a method's receiver or a `match`'s
@@ -3979,23 +4060,24 @@ impl Checker<'_> {
         }
     }
 
-    /// The type of `e`, checked ahead of its turn and kept for it as `Ahead::Receiver`.
-    fn value_ahead(&mut self, e: &ast::Expr) -> Option<Type> {
+    /// The type of `e`, checked ahead of its turn and kept for it as `Ahead::Receiver`, and whether
+    /// an E0062 typed it, so that its type depends on the remedy (see `has_remedy_flag`).
+    fn value_ahead(&mut self, e: &ast::Expr) -> (Option<Type>, bool) {
         let kept = self.body.ahead_at.get(&(e.span, false)).and_then(|&index| {
             #[cfg(test)]
             INSPECTED.set(INSPECTED.get() + 1);
             self.body.ahead[index].1.as_ref()
         });
         if let Some(Ahead::Receiver(checked)) = kept {
-            return type_of(checked);
+            return (type_of(checked), has_remedy_flag(checked));
         }
         // An argument is not part of the chain that an index ends.
         let indexed = std::mem::take(&mut self.body.indexed);
         let (checked, jumped) = self.jumps(|c| c.value(e, None));
         self.body.indexed = indexed;
-        let ty = type_of(&checked);
+        let (ty, flagged) = (type_of(&checked), has_remedy_flag(&checked));
         self.keep((e.span, false), Some(Ahead::Receiver(checked)), jumped);
-        ty
+        (ty, flagged)
     }
 
     /// The shape of a call of `name` with `args` that calls a generic function, constructs a
@@ -4453,7 +4535,8 @@ impl Checker<'_> {
         first: &ast::TypeExpr,
         angles: Span,
     ) -> Option<Poisoned> {
-        let ty = type_of(receiver)?;
+        // The members of an optional are those of its payload.
+        let ty = innermost(type_of(receiver)?);
         let field = match ty.kind() {
             TypeKind::Class(id, _) => self.classes[id.0].field(method.name).is_some(),
             TypeKind::Enum(..) => false,

@@ -2,14 +2,14 @@
 
 use std::rc::Rc;
 
-use super::array::{innermost, is_optional_array, optional_array};
+use super::array::{innermost, is_optional_array, optional_array, optional_element};
 use super::expr::{if_some, literal_type, local, operator};
 use super::member::{Access, FoundField, safe_value};
 use super::operator::Operator;
 use super::unused_names::Used;
 use super::{
-    BindingKind, Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, block_expr, payload,
-    type_of,
+    BindingKind, Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, block_expr,
+    is_unwrapped, payload, spread, type_of,
 };
 use crate::ast;
 use crate::diagnostic::{DiagnosticKind, Immutable, IndexUsage, UnwrapHelp};
@@ -75,10 +75,10 @@ pub(super) enum Root {
 
 /// The object that the `?.` of a place's root field takes out of an optional. `bind` holds it
 /// where `scrutinee` has one, and the place starts there. A write or a `push` of the place runs
-/// only there.
+/// only there. The `scrutinee` of an object that an E0062 typed is `Err`: its place has no path.
 pub(super) struct Guard {
     bind: tir::LocalId,
-    scrutinee: tir::Expr,
+    scrutinee: Checked,
 }
 
 pub(super) struct CheckedPlace {
@@ -291,7 +291,7 @@ impl Checker<'_> {
             self.read_pushed(read, receiver);
         }
         match place.guard {
-            Some(Guard { bind, scrutinee }) => safe_value(receiver.span, bind, Ok(scrutinee), read),
+            Some(Guard { bind, scrutinee }) => safe_value(receiver.span, bind, scrutinee, read),
             None => read,
         }
     }
@@ -409,7 +409,7 @@ impl Checker<'_> {
                 found: args.len(),
                 at: span,
             };
-            return self.rejected(d.into(), args);
+            return self.rejected(d.into(), args, element.map(|_| Type::UNIT));
         };
         // A label or a mismatch is reported, and an error withholds the `tir`.
         self.labels(args);
@@ -813,7 +813,10 @@ impl Checker<'_> {
                 .map(|found| (found, false));
         };
         let found = self.field_of_payload(payload, base, name, access)?;
-        let array = matches!(found.2.map(Type::kind), Some(TypeKind::Array(_)));
+        // The field is an array or an optional array, which the `push` writes.
+        let array = found.2.is_some_and(|held| {
+            matches!(held.kind(), TypeKind::Array(_)) || is_optional_array(held)
+        });
         (change != Change::Push || array).then_some((found, true))
     }
 
@@ -860,16 +863,35 @@ impl Checker<'_> {
                 if change != Change::Push {
                     self.stamp_root(base);
                 }
+                // The base of a `mut` argument is checked as the base of an index is: a `?.` fix
+                // there leads to a path that is no place (E0170).
+                let outer = self.body.indexed;
+                self.body.indexed |= change == Change::MutArg;
                 let checked = self.value(base, None);
+                self.body.indexed = outer;
                 let mut guard = None;
                 // `?.` takes the object out of its optional, where the place starts. The write
                 // of the place is the branch where the object is present.
+                let flagged = is_unwrapped(&checked);
                 let checked = if *safe {
                     match (self.safe_payload(&checked, base, name), checked) {
                         (Ok(payload), Ok(scrutinee)) => {
                             let bind = self.fresh(payload);
-                            guard = Some(Guard { bind, scrutinee });
+                            guard = Some(Guard {
+                                bind,
+                                scrutinee: Ok(scrutinee),
+                            });
                             Ok(local(bind, payload, base.span))
+                        }
+                        // An E0062 typed the object: its chain goes on with the payload's type,
+                        // as the `?.` makes the place optional.
+                        (Ok(payload), Err(scrutinee)) if flagged => {
+                            let bind = self.fresh(payload);
+                            guard = Some(Guard {
+                                bind,
+                                scrutinee: Err(scrutinee),
+                            });
+                            spread(Err(Poisoned::typed(payload)), true)
                         }
                         (payload, _) => {
                             // As `?.` does, report the field and give no type.
@@ -927,12 +949,14 @@ impl Checker<'_> {
                 };
                 let outer = std::mem::replace(&mut self.body.indexed, true);
                 let inner = self.place(span, base, inner_change);
-                let element = match inner.value_ty() {
-                    Some(ty) if is_optional_array(ty) => {
+                // The array of an optional array is no place, but its element has a type.
+                let optional = inner.value_ty().filter(|&ty| is_optional_array(ty));
+                let element = match optional {
+                    Some(ty) => {
                         self.optional_array_target(base, &inner);
-                        None
+                        optional_element(ty)
                     }
-                    ty => self.element(base, ty, change.index_usage()),
+                    None => self.element(base, inner.value_ty(), change.index_usage()),
                 };
                 // The index is not part of the chain that it ends.
                 self.body.indexed = false;
@@ -940,7 +964,7 @@ impl Checker<'_> {
                 self.body.indexed = outer;
                 let path = inner
                     .path
-                    .filter(|_| element.is_some())
+                    .filter(|_| element.is_some() && optional.is_none())
                     .zip(index.ok())
                     .map(|(mut path, index)| {
                         path.operands.push(index);
@@ -1057,8 +1081,11 @@ fn held_array_layers(read: &Checked, guarded: bool) -> usize {
 /// present: the right side runs there only. Without a `guard`, `block` as it is.
 fn guarded(guard: Option<Guard>, block: tir::Expr, span: Span) -> tir::Expr {
     match guard {
-        Some(Guard { bind, scrutinee }) => if_some(bind, scrutinee, block, None, span),
-        None => block,
+        Some(Guard {
+            bind,
+            scrutinee: Ok(scrutinee),
+        }) => if_some(bind, scrutinee, block, None, span),
+        _ => block,
     }
 }
 

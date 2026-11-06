@@ -1,0 +1,57 @@
+// GIVEN a `push` on a call that fails, in a function for each case: a wrong count, a wrong
+// argument, a label, written type arguments, an extension method, and a `mut` argument
+// AND each callee fixes its result type to an array
+// WHEN `sisu check` runs on it
+// THEN it reports the call's own error and E0021 at the receiver, as the corrected call does
+// AND a generic callee whose result names a parameter that only its arguments bind reports no E0021
+// AND an argument that fails alone, without a mismatch, still reports E0021
+class Node {
+    v: i64
+    fn ys(self, n: i64) -> [string] { [] }
+}
+extend Node {
+    fn zs(self, n: i64) -> [string] { [] }
+}
+fn g(n: i64) -> [string] { [] }
+fn h<T>(t: T) -> [string] { [] }
+fn gen<T>(t: T) -> [T] { [t] }
+fn bump(mut v: i64, n: i64) -> [string] { [] }
+
+fn count_fn(x: i64) {
+    g(1, x).push("a")
+}
+fn count_method(c: Node) {
+    c.ys(1, 2).push("a")
+}
+fn wrong_fn() {
+    g("s").push("a")
+}
+fn label_fn() {
+    g(m: 1).push("a")
+}
+fn wrong_method(c: Node) {
+    c.ys("s").push("a")
+}
+fn generic_result_fixed() {
+    h(1, 2).push("a")
+}
+fn generic_unbound() {
+    gen(1, 2).push("a")
+}
+fn generic_bound() {
+    gen<i64>(1, 2).push("a")
+}
+fn written_wrong() {
+    gen<i64>("s").push("a")
+}
+fn extension(c: Node) {
+    c.zs(1, 2).push("a")
+}
+fn mut_arg() {
+    let mut v = 1
+    bump(mut v, 1, 2).push("a")
+}
+fn unknown_arg() {
+    g(zz).push("a")
+}
+fn main() {}

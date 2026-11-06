@@ -447,18 +447,18 @@ fn contains_should_report_an_argument_that_is_not_an_element() {
     );
 }
 
-/// A failed `contains` is `Error` when its argument is the problem, so a use of the result
-/// adds no error. A poisoned receiver with a good argument still has type `bool`.
+/// A failed `contains` keeps its type `bool`, whether its argument or its receiver is the
+/// problem, so a use of the result is still checked.
 #[test]
-fn contains_should_be_an_error_only_when_its_argument_is_the_problem() {
+fn contains_should_keep_its_type_when_it_fails() {
     with_prelude();
     codes(
         "fn f(xs: [i64]) {\n    let b = xs.contains(true)\n    print(b + 1)\n}\nfn main() {}",
-        &[(Code::Mismatch, (2, 25))],
+        &[(Code::Mismatch, (2, 25)), (Code::Mismatch, (3, 11))],
     );
     codes(
         "fn f(xs: [i64]) {\n    let b = xs.contains(v: 1)\n    print(b + 1)\n}\nfn main() {}",
-        &[(Code::LabeledArgument, (2, 25))],
+        &[(Code::LabeledArgument, (2, 25)), (Code::Mismatch, (3, 11))],
     );
     codes(
         "fn f(g: [[i64]]) {\n    let b = g[nope].contains(1)\n    print(b + 1)\n}\nfn main() {}",

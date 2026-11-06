@@ -1,0 +1,83 @@
+// GIVEN an index of an optional array, or a `.` or `?.` on an optional before an index
+// AND the rest of the chain has a mistake that it has when the optional is unwrapped
+// WHEN `sisu check` runs on it
+// THEN it reports each E0062 first, then each mistake of the rest of the chain
+// AND an E0062 comes before the E0001 that starts at the same place
+class N2 {
+    yss: [[i64]]
+    oys: [[i64]]?
+}
+
+fn dot_push(c: N2?) {
+    c.yss[0].push("a")
+}
+
+fn dot_assign(c: N2?) {
+    c.yss[0] = ["a"]
+}
+
+fn dot_deep(c: N2?) {
+    c.yss[0][0] = "a"
+}
+
+fn dot_compound(c: N2?) {
+    c.yss[0][0] += "a"
+}
+
+fn dot_value(c: N2?) {
+    let s: string = c.yss[0][0]
+}
+
+fn dot_own(c: N2?) {
+    c.oys[0].push("a")
+}
+
+fn plain_push(c: N2) {
+    c.yss[0].push("a")
+}
+
+fn plain_assign(c: N2) {
+    c.yss[0] = ["a"]
+}
+
+fn plain_deep(c: N2) {
+    c.yss[0][0] = "a"
+}
+
+fn plain_compound(c: N2) {
+    c.yss[0][0] += "a"
+}
+
+fn plain_value(c: N2) {
+    let s: string = c.yss[0][0]
+}
+
+fn plain_own(c: N2) {
+    c.oys[0].push("a")
+}
+
+fn safe_push(c: N2?) {
+    c?.yss[0].push("a")
+}
+
+fn safe_assign(c: N2?) {
+    c?.yss[0] = ["a"]
+}
+
+fn safe_deep(c: N2?) {
+    c?.yss[0][0] = "a"
+}
+
+fn safe_compound(c: N2?) {
+    c?.yss[0][0] += "a"
+}
+
+fn safe_value(c: N2?) {
+    let s: string = c?.yss[0][0]
+}
+
+fn safe_own(c: N2?) {
+    c?.oys[0].push("a")
+}
+
+fn main() {}

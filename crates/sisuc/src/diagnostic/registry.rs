@@ -2164,6 +2164,8 @@ pub(crate) struct Peel {
     pub(crate) receiver: String,
     pub(crate) left: String,
     pub(crate) member: String,
+    /// How many `?? None` the help puts around the receiver.
+    pub(crate) layers: usize,
 }
 
 /// What the help of a `MayBeNone` tells the user to unwrap with `if let`.
@@ -2175,6 +2177,55 @@ pub(crate) enum UnwrapHelp {
     Object(String),
     /// Nothing: no `if let` of the optional gives a place that can be written.
     Nothing,
+    /// A `.` on an optional of an optional: `?.` takes one layer only, so the help peels the
+    /// other layers first. `receiver` and `member` are as written; `layers` is the count of
+    /// `?? None`.
+    Peel {
+        receiver: String,
+        member: String,
+        layers: usize,
+    },
+}
+
+/// The help of an E0062 that says what to unwrap. With `fix`, a `?.` fix comes beside it, so the
+/// help also says why to unwrap.
+fn unwrap_text(unwrap: UnwrapHelp, fix: bool) -> Option<String> {
+    let lead = if fix {
+        "to use the value only when it is present, unwrap"
+    } else {
+        "unwrap"
+    };
+    match unwrap {
+        UnwrapHelp::It => Some(format!(
+            "{lead} it with `if let`, `let ... else` or `?? return`"
+        )),
+        UnwrapHelp::Object(object) => Some(format!(
+            "{lead} `{object}` with `if let`, `let ... else` or `?? return`"
+        )),
+        UnwrapHelp::Peel {
+            receiver,
+            member,
+            layers,
+        } => Some(peel_text("extra", &receiver, &member, layers)),
+        UnwrapHelp::Nothing => None,
+    }
+}
+
+/// The help "peel the `which` layer first": `receiver` with `layers` of `?? None` around it, then
+/// `?.` and `member`. It says "layers" for more than one.
+fn peel_text(which: &str, receiver: &str, member: &str, layers: usize) -> String {
+    let plural = if layers > 1 { "s" } else { "" };
+    let mut text = format!("peel the {which} layer{plural} first: `");
+    text.reserve(receiver.len() + member.len() + layers * 10 + 4);
+    text.extend(std::iter::repeat_n('(', layers));
+    text.push_str(receiver);
+    for _ in 0..layers {
+        text.push_str(" ?? None)");
+    }
+    text.push_str("?.");
+    text.push_str(member);
+    text.push('`');
+    text
 }
 
 /// Moving a token up to the code before it: the `gap` between them becomes a space.
@@ -4839,6 +4890,7 @@ impl From<DiagnosticKind> for Diagnostic {
                     receiver,
                     left,
                     member,
+                    layers,
                 }),
                 ..
             } => Diagnostic::coded(
@@ -4846,9 +4898,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 at,
                 format!("`{receiver}?.` leaves a `{left}`, which may be `None`"),
             )
-            .with_help(format!(
-                "peel the other layer first: `({receiver} ?? None)?.{member}`"
-            )),
+            .with_help(peel_text("other", &receiver, &member, layers)),
             DiagnosticKind::MayBeNone {
                 value,
                 at,
@@ -4858,6 +4908,10 @@ impl From<DiagnosticKind> for Diagnostic {
                 ..
             } => {
                 let d = Diagnostic::coded(code, at, format!("{} may be `None`", named(value)));
+                let d = match unwrap_text(unwrap, access.is_some()) {
+                    Some(help) => d.with_help(help),
+                    None => d,
+                };
                 match access {
                     Some(access) => {
                         let fix = if write {
@@ -4865,26 +4919,9 @@ impl From<DiagnosticKind> for Diagnostic {
                         } else {
                             "if a `None` result is fine, use `?.`"
                         };
-                        let d = match unwrap {
-                            UnwrapHelp::It => d.with_help(
-                                "to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`",
-                            ),
-                            UnwrapHelp::Object(object) => d.with_help(format!(
-                                "to use the value only when it is present, unwrap `{object}` with `if let`, `let ... else` or `?? return`"
-                            )),
-                            UnwrapHelp::Nothing => d,
-                        };
                         d.with_fix(unsafe_fix(fix, access, "?."))
                     }
-                    None => match unwrap {
-                        UnwrapHelp::It => {
-                            d.with_help("unwrap it with `if let`, `let ... else` or `?? return`")
-                        }
-                        UnwrapHelp::Object(object) => d.with_help(format!(
-                            "unwrap `{object}` with `if let`, `let ... else` or `?? return`"
-                        )),
-                        UnwrapHelp::Nothing => d,
-                    },
+                    None => d,
                 }
             }
             DiagnosticKind::NoMember {

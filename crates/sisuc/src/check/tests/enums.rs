@@ -358,13 +358,19 @@ fn construction_errors() {
     }
 }
 
-/// A construction that fails in itself is `Error`; one whose argument fails keeps the enum's
-/// type, as a class's construction does. Each row binds it to a `bool`.
+/// A construction that fails keeps the enum's type, as a class's construction does. Each row
+/// binds it to a `bool`.
 #[test]
-fn failed_construction_poisons() {
+fn a_failed_construction_should_keep_its_type() {
     let rows = [
-        ("Shape.Rect(w: 2)", &[(Code::MissingField, (2, 19))][..]),
-        ("Expr.Num(n: 2)", &[(Code::LabeledArgument, (2, 28))]),
+        (
+            "Shape.Rect(w: 2)",
+            &[(Code::MissingField, (2, 19)), (Code::Mismatch, (2, 19))][..],
+        ),
+        (
+            "Expr.Num(n: 2)",
+            &[(Code::Mismatch, (2, 19)), (Code::LabeledArgument, (2, 28))],
+        ),
         (
             "Expr.Num(nope)",
             &[(Code::Mismatch, (2, 19)), (Code::BindingNotFound, (2, 28))],

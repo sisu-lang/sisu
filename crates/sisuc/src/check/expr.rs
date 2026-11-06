@@ -4,7 +4,8 @@ use std::ops::Range;
 
 use super::generic::Site;
 use super::{
-    Checked, Checker, Poisoned, UNKNOWN, Uninferred, is_kept, payload, tail, type_of, wrap,
+    Checked, Checker, Flag, Poisoned, UNKNOWN, Uninferred, is_kept, is_unwrapped, payload, spread,
+    tail, type_of, wrap,
 };
 use crate::ast::{self, ExprKind, UnaryOp};
 use crate::diagnostic::{
@@ -35,6 +36,8 @@ impl Checker<'_> {
         // The chain that an index ends runs only through field bases, method receivers and
         // indexed bases; any other expression inside it is an ordinary read.
         let outer = self.body.indexed;
+        self.body.indexed |=
+            !self.body.mut_values.is_empty() && self.body.mut_values.contains(&e.span);
         self.body.indexed &= matches!(
             e.kind,
             ExprKind::Field { .. } | ExprKind::MethodCall { .. } | ExprKind::Index { .. }
@@ -92,6 +95,7 @@ impl Checker<'_> {
                     mismatch: true,
                     found: None,
                     kept: false,
+                    unwrapped: Flag::No,
                 });
             }
             return Ok(tir::Expr::new(tir::ExprKind::Float(x), ty, at));
@@ -112,6 +116,7 @@ impl Checker<'_> {
                 mismatch: true,
                 found: None,
                 kept: false,
+                unwrapped: Flag::No,
             });
         }
         Ok(tir::Expr::new(tir::ExprKind::Int(value), ty, at))
@@ -224,18 +229,22 @@ impl Checker<'_> {
                 if *op == UnaryOp::Neg && is_kept(&operand) {
                     return Err(Poisoned::kept_error());
                 }
-                typed(
-                    e.span,
-                    want,
-                    mismatched,
-                    operand.ok().map(|operand| match operand.kind {
-                        // `-1.5` is one literal, as it reads.
-                        tir::ExprKind::Float(x) => tir::ExprKind::Float(-x),
-                        _ => tir::ExprKind::Unary {
-                            op: *op,
-                            operand: Box::new(operand),
-                        },
-                    }),
+                let flagged = is_unwrapped(&operand);
+                spread(
+                    typed(
+                        e.span,
+                        want,
+                        mismatched,
+                        operand.ok().map(|operand| match operand.kind {
+                            // `-1.5` is one literal, as it reads.
+                            tir::ExprKind::Float(x) => tir::ExprKind::Float(-x),
+                            _ => tir::ExprKind::Unary {
+                                op: *op,
+                                operand: Box::new(operand),
+                            },
+                        }),
+                    ),
+                    flagged,
                 )
             }
             ExprKind::Binary {
@@ -519,6 +528,7 @@ impl Checker<'_> {
             mismatch: true,
             found: None,
             kept: false,
+            unwrapped: Flag::No,
         })
     }
 

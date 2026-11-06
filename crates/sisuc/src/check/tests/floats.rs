@@ -426,7 +426,7 @@ fn math_prints() {
 }
 
 #[test]
-fn method_errors() {
+fn a_float_method_error_should_keep_the_type_of_the_call() {
     let rows = [
         // The count is the method's, as for any method.
         ("x.sqrt(1)", Code::ArgumentCount, (2, 13)),
@@ -450,13 +450,13 @@ fn method_errors() {
     );
     // An argument of the wrong type is a mismatch at the argument, whatever the method.
     codes(&scalars("x.pow(n)"), &[(Code::Mismatch, (2, 19))]);
-    // The call that failed is `Error`, so the `bool` it cannot be is not reported too: a bad
-    // argument, or a label, is the whole of the report.
+    // The call that failed keeps its type `f64`, so the `bool` it cannot be is reported too, with
+    // the bad argument or the label.
     for (arg, code) in [("n", Code::Mismatch), ("v: 1.0", Code::LabeledArgument)] {
         let src = format!(
             "fn f(n: i64, x: f64) {{\n    let y: bool = x.pow({arg})\n    print(y)\n}}\nfn main() {{}}"
         );
-        codes(&src, &[(code, (2, 25))]);
+        codes(&src, &[(Code::Mismatch, (2, 19)), (code, (2, 25))]);
     }
 }
 

@@ -3994,12 +3994,6 @@ fn eq_and_less_calls_should_check_their_receiver_and_argument() {
             Code::Mismatch,
         ),
         (
-            "an argument that fails leaves no type to check",
-            "fn f() {\n    let x: i64 = 5.eq(\"a\")\n}\nfn main() {}",
-            "\"a\"",
-            Code::Mismatch,
-        ),
-        (
             "a receiver that is unknown",
             "fn f() -> bool { missing.eq(1) }\nfn main() {}",
             "missing",
@@ -4033,6 +4027,17 @@ fn eq_and_less_calls_should_check_their_receiver_and_argument() {
     for (row, src, at, code) in rows {
         codes_row(row, src, &[(code, where_is(src, at))]);
     }
+    // An argument that fails leaves the call its type, so the `let` reports it too.
+    let src = "fn f() {\n    let x: i64 = 5.eq(\"a\")\n}\nfn main() {}";
+    let wanted = [
+        (Code::Mismatch, where_is(src, "5.eq")),
+        (Code::Mismatch, where_is(src, "\"a\"")),
+    ];
+    codes_row(
+        "an argument that fails keeps the type of the call",
+        src,
+        &wanted,
+    );
 }
 
 #[test]
@@ -4741,15 +4746,18 @@ fn operators_should_report_only_a_mismatch_inside_an_operand() {
 }
 
 /// A number that does not fit is a mismatch, as a value of another type is: the call that takes
-/// it has no type, so its use as a `string` gives no second error.
+/// it keeps its result type, so its use as a `string` reports the type of the call too.
 #[test]
-fn a_call_with_a_number_that_does_not_fit_should_report_only_that_number() {
+fn a_call_with_a_number_that_does_not_fit_should_keep_its_result_type() {
     let src =
         "fn g(x: u8) -> u8 { x }\nfn f() -> bool { let s: string = g(300); true }\nfn main() {}";
     codes_row(
         "a call with a number that does not fit, bound to a string",
         src,
-        &[(Code::IntegerDoesNotFit, where_is(src, "300"))],
+        &[
+            (Code::Mismatch, where_is(src, "g(300)")),
+            (Code::IntegerDoesNotFit, where_is(src, "300")),
+        ],
     );
 }
 
@@ -4775,10 +4783,12 @@ fn operators_should_report_a_missing_operator_beside_an_error_that_is_not_about_
             format!("{node}fn f(a: Node) -> bool {{ a == {{ let x: i64 = true; a }} }}"),
             vec![(Code::NoOperator, "a =="), (Code::Mismatch, "true")],
         ),
+        // The failed call keeps its type `i64`, which is the operand's type: the mismatch of the
+        // operands replaces the missing operator.
         (
             "order of a class and a call with a wrong argument",
             format!("{node}fn g(x: i64) -> i64 {{ x }}\nfn f(a: Node) -> bool {{ a < g(true) }}"),
-            vec![(Code::NoOperator, "a <"), (Code::Mismatch, "true")],
+            vec![(Code::Mismatch, "g(true)"), (Code::Mismatch, "true")],
         ),
         (
             "contains of a parameter and a block with a wrong binding",

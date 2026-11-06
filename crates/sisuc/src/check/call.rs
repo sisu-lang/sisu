@@ -5,15 +5,15 @@ use std::fmt;
 
 use super::alias::{Through, Via};
 use super::expr::{fits, no_member, option_written, path, postfix};
-use super::generic::{GenericSig, Site, mark, mismatched};
-use super::interface::LangPath;
+use super::generic::{GenericSig, Site, mark, mismatched, written_args};
+use super::interface::{Bound, LangPath};
 use super::member::Found;
 use super::mut_args::{Callee, MutParts, MutSite, site_of};
 use super::prelude::PRELUDE;
 use super::unused_names::Used;
 use super::{
-    Checked, Checker, Declared, Lowered, Poisoned, UNKNOWN, block_expr, built_in_type, own_args,
-    type_of,
+    Checked, Checker, Declared, Lowered, Poisoned, UNKNOWN, block_expr, built_in_type,
+    has_remedy_flag, is_unwrapped, own_args, spread, type_of,
 };
 use super::{array, number, string};
 use crate::ast::{self, ExprKind};
@@ -159,8 +159,15 @@ impl Checker<'_> {
         let name = callee.name.as_str();
         let unlabeled = args.iter().all(|arg| arg.label.is_none());
         let mut first_checked = None;
+        // The method of the class or the enum that holds the call, not the first argument's.
+        let own = (self.body.self_type).and_then(|ty| self.idiom_of(callee.name, ty));
         let rest = match args.split_first() {
             Some((first, rest)) if unlabeled => {
+                // The first argument is checked as a receiver. Stamp it for the method of `self`:
+                // when that method wins, the argument is at its `mut` parameter, if it has one.
+                if let Some(Idiom::Method(func, _)) = own {
+                    self.stamp_mut_params(&args[..1], &self.signatures[func.0].muts.clone());
+                }
                 let receiver = self.expr(&first.value, Some(UNKNOWN));
                 // When it fits the method of `self`, the call is most likely `self.name(args)`,
                 // as in a language that calls a bare method name on `this`.
@@ -216,11 +223,6 @@ impl Checker<'_> {
             }
             _ => args,
         };
-        // Not the first argument's method, but one of the class or the enum that holds the call.
-        let own = self
-            .body
-            .self_type
-            .and_then(|ty| self.idiom_of(callee.name, ty));
         if let Some(Idiom::Method(func, owner)) = own {
             let takes = self.method_arguments(func, owner, args, first_checked);
             // The first argument was checked without its parameter's type, so `takes` can be
@@ -398,6 +400,9 @@ impl Checker<'_> {
         first: Option<Checked>,
     ) -> bool {
         let owner = owner.get();
+        // An argument at a `mut` parameter gets the help of a place.
+        let muts = self.signatures[func.0].muts.clone();
+        self.stamp_mut_params(args, &muts);
         let sig = &self.signatures[func.0];
         if sig.type_params.len() > owner.len() {
             // The first argument is reported already.
@@ -525,7 +530,7 @@ impl Checker<'_> {
                     }
                     // A built-in's generated `to_string`, `eq` and `less` report their own list.
                     deferred = !matches!(method.name.as_str(), "to_string" | "eq" | "less")
-                        && type_of(&checked).is_some_and(|ty| {
+                        && type_of(&checked).map(array::innermost).is_some_and(|ty| {
                             matches!(
                                 ty.kind(),
                                 TypeKind::Array(_)
@@ -588,8 +593,27 @@ impl Checker<'_> {
     }
 
     /// `receiver.method(args)`, `receiver` checked from `receiver_expr`. `dot` says whether it
-    /// is `receiver?.method(args)`, or the check of a `.` call on an optional's payload.
+    /// is `receiver?.method(args)`, or the check of a `.` call on an optional's payload. The
+    /// result of a call on a value that an E0062 typed is typed by it too (see
+    /// `Poisoned::unwrapped`).
     pub(super) fn method_call(
+        &mut self,
+        span: Span,
+        dot: Dot,
+        receiver: Checked,
+        receiver_expr: &ast::Expr,
+        site: Site<'_>,
+        args: &[ast::Arg],
+    ) -> Checked {
+        let unwrapped = is_unwrapped(&receiver);
+        spread(
+            self.method_on(span, dot, receiver, receiver_expr, site, args),
+            unwrapped,
+        )
+    }
+
+    /// `method_call`, whatever the receiver is.
+    fn method_on(
         &mut self,
         span: Span,
         dot: Dot,
@@ -692,11 +716,37 @@ impl Checker<'_> {
                 self.generated_display(span, receiver, site, args, listed)
             }
             None => {
+                if ty.is_none() {
+                    self.stamp_type_call(receiver_expr, method.name, args);
+                }
                 self.labels(args);
                 self.stray_call(ty, method.name, args);
                 Err(Poisoned::error())
             }
         }
+    }
+
+    /// Stamps the arguments of `Name.method(args)`, whose receiver has no type. E0105 reports a
+    /// class or an interface there, and a failed local can have its name. An argument at a `mut`
+    /// parameter of the method, or of the requirement, gets the help of a place. A name that is
+    /// none of them, or has no such method, stamps nothing.
+    fn stamp_type_call(&mut self, receiver: &ast::Expr, method: Symbol, args: &[ast::Arg]) {
+        let ExprKind::Name(name) = receiver.kind else {
+            return;
+        };
+        let muts = if let Some(&Declared::Known(id)) = self.class_ids.get(&name)
+            && let Some(&Declared::Known(func)) = self.classes[id.0].methods.get(&method)
+        {
+            self.signatures[func.0].muts.clone()
+        } else if let Some(&Declared::Known(id)) = self.interface_ids.get(&name)
+            && let Some(found) = (self.interfaces[id.0].requirements.iter())
+                .find(|requirement| requirement.name.name == method)
+        {
+            found.muts.clone()
+        } else {
+            return;
+        };
+        self.stamp_mut_params(args, &muts);
     }
 
     /// E0167 for each `mut` argument of the call `receiver.method(args)` of a method of the
@@ -766,7 +816,7 @@ impl Checker<'_> {
                 found: args.len(),
                 at: span,
             };
-            return self.rejected(d.into(), args);
+            return self.rejected(d.into(), args, Some(Type::STRING));
         }
         match receiver {
             Ok(receiver) => {
@@ -827,10 +877,10 @@ impl Checker<'_> {
                 found: args.len(),
                 at: span,
             };
-            return Ok(self.rejected(d.into(), args));
+            return Ok(self.rejected(d.into(), args, Some(Type::BOOL)));
         }
         let labeled = self.labels(args);
-        let (other, mismatched) = self.operand(&args[0].value, Some(ty));
+        let (other, _) = self.operand(&args[0].value, Some(ty));
         Ok(match (receiver, other) {
             (Ok(lhs), Ok(rhs)) if !labeled => {
                 let eq = interface == self.lang.eq;
@@ -857,14 +907,16 @@ impl Checker<'_> {
                     }
                 }))
             }
-            _ => Err(Poisoned::of(
-                (!mismatched && !labeled).then_some(Type::BOOL),
-            )),
+            _ => Err(Poisoned::typed(Type::BOOL)),
         })
     }
 
     /// A call of `func`, which `site` writes. `receiver` is a method's `self`; `args` match the
     /// other parameters.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the steps share the call's signature, receiver and `mut` parts; a split passes each one"
+    )]
     fn invoke(
         &mut self,
         span: Span,
@@ -894,6 +946,7 @@ impl Checker<'_> {
         let declared = sig.type_params.clone();
         let bounds = sig.bounds.clone();
         let conforming = sig.conformance.is_some();
+        self.stamp_mut_params(args, &muts);
         // A method's receiver binds its owner's parameters.
         let owner = match receiver.as_ref().and_then(type_of) {
             Some(ty) => self.owner_args(func, ty).get(),
@@ -910,7 +963,8 @@ impl Checker<'_> {
                 Some(ty) => self.method_name(ty, site.name.name.as_str()),
                 None => name,
             };
-            return self.wrong_count(span, name, params.len(), args);
+            let fixed = self.counted_result(ret, &declared, owner, &bounds, site);
+            return self.wrong_count(span, name, params.len(), args, fixed);
         }
         let checked = if declared.is_empty() {
             let checked = args
@@ -958,23 +1012,60 @@ impl Checker<'_> {
             checked.as_ref().ok().and_then(|(_, _, ret)| *ret),
         );
         self.marks(args, &mut parts, &mut_site, (&params, list), result);
-        let (checked, types, ret) = checked?;
+        let (checked, types, solved) = checked?;
         let parts = self.mut_overlaps(parts);
         let failed = labeled || checked.iter().any(mismatched);
-        match (receiver.into_iter().chain(checked).collect(), ret) {
-            (Ok(args), Some(ret)) if !failed && parts.is_empty() => {
-                Ok(self.spilled(span, ret, args, |args| tir::ExprKind::Call {
-                    func,
-                    types,
-                    args,
-                }))
-            }
-            (Ok(args), Some(ret)) if !failed => {
-                let call = tir::Expr::new(tir::ExprKind::Call { func, types, args }, ret, span);
+        // A result that names a type parameter may take the type of an argument. The `?.` fix of
+        // an E0062 in that argument would make it optional, unless it is optional already. The
+        // flag follows only when the arguments alone bind the result.
+        let flagged = ret.is_some() && checked.iter().any(has_remedy_flag);
+        match (receiver.into_iter().chain(checked).collect(), solved) {
+            (Ok(args), Some(solved)) if !failed && parts.is_empty() => Ok(self.spilled(
+                span,
+                solved,
+                args,
+                |args| tir::ExprKind::Call { func, types, args },
+            )),
+            (Ok(args), Some(solved)) if !failed => {
+                let call = tir::Expr::new(tir::ExprKind::Call { func, types, args }, solved, span);
                 Ok(self.mut_call(call, parts))
             }
-            (_, ret) => Err(Poisoned::of(ret.filter(|_| !failed))),
+            (_, solved) => {
+                // The arguments bind the rest of the result, and they may be the fault.
+                let fixed = if failed || flagged {
+                    let written = written_args(site, types.get(), owner.len());
+                    self.fixed_result(ret, declared.len(), owner, &[], written)
+                } else {
+                    None
+                };
+                let result = if failed { fixed } else { solved };
+                spread(Err(Poisoned::of(result)), flagged && fixed.is_none())
+            }
         }
+    }
+
+    /// The result type of a call at `site` that fails on its count, of a callee with the type
+    /// parameters `declared`, of which `owner` are the receiver's. `ret` is its result type, and
+    /// `bounds` those of its own parameters. The type arguments that `site` writes fix them.
+    ///
+    /// The errors of that list are reported, as the corrected call reports them. `None` when the
+    /// list fails. `None` also for the cases of `fixed_result`.
+    pub(super) fn counted_result(
+        &mut self,
+        ret: Option<Type>,
+        declared: &[Symbol],
+        owner: &[Type],
+        bounds: &[Vec<Bound>],
+        site: Site<'_>,
+    ) -> Option<Type> {
+        let own = declared.get(owner.len()..).unwrap_or_default();
+        // A list on a callee with no parameter of its own is reported elsewhere.
+        let named = if site.written.is_empty() || own.is_empty() {
+            TypeArgs::NONE
+        } else {
+            self.type_args(site.name, own, site.written, site.angles)?
+        };
+        self.fixed_result(ret, declared.len(), owner, bounds, named.get())
     }
 
     /// What a count error calls the method `method` of a receiver of type `ty`: `[i64].len`.
@@ -983,13 +1074,15 @@ impl Checker<'_> {
     }
 
     /// A call at `span` of the method `name` that wants `want` arguments and has the wrong count:
-    /// the count is the error, unless a comparison misread as a call explains it.
+    /// the count is the error, unless a comparison misread as a call explains it. `ret` is the
+    /// type of the call when its callee fixes it.
     pub(super) fn wrong_count(
         &mut self,
         span: Span,
         name: String,
         want: usize,
         args: &[ast::Arg],
+        ret: Option<Type>,
     ) -> Checked {
         self.stray(args);
         if !self.misread_in(args) {
@@ -1000,7 +1093,7 @@ impl Checker<'_> {
                 at: span,
             });
         }
-        Err(Poisoned::error())
+        Err(Poisoned::of(ret))
     }
 
     /// Whether one of `args`, checked, holds a comparison misread as a call, which took the
@@ -1099,8 +1192,11 @@ impl Checker<'_> {
         };
         if !declared.is_empty() {
             let names: Vec<_> = fields.iter().map(|(f, _)| *f).collect();
+            // An annotation that failed its bound reported it: the value is quiet.
+            let bounds = if quiet { &[] } else { &bounds[..] };
             if !self.shaped(span, &name, &names, args) {
-                return Err(Poisoned::error());
+                let fixed = self.counted_result(Some(ret), &declared, &[], bounds, site);
+                return Err(Poisoned::of(fixed));
             }
             let params: Vec<_> = fields.iter().map(|(_, ty)| *ty).collect();
             let sig = GenericSig {
@@ -1110,8 +1206,7 @@ impl Checker<'_> {
                 owner: &[],
                 params: &params,
                 ret: Some(ret),
-                // An annotation that failed its bound reported it: the value is quiet.
-                bounds: if quiet { &[] } else { &bounds },
+                bounds,
                 mut_site: None,
             };
             // An alias's type arguments, when the call wrote them, are applied already.
@@ -1124,6 +1219,8 @@ impl Checker<'_> {
                 return Err(Poisoned::error());
             };
             let failed = args.iter().any(mismatched);
+            // The flag follows only when the arguments alone bind the type.
+            let flagged = args.iter().any(has_remedy_flag);
             // The bounds that the alias's body puts on its parameters, on what they are bound to.
             let held = quiet
                 || through.is_none_or(|t| self.use_checks(&t.checks, list, span) == Some(true));
@@ -1132,7 +1229,12 @@ impl Checker<'_> {
                     Ok(self.spilled(span, ty, args, |args| tir::ExprKind::New { class, args }))
                 }
                 Ok(_) => Err(Poisoned::error()),
-                Err(_) => Err(Poisoned::of((!failed).then_some(ty))),
+                Err(_) => {
+                    // The arguments bind the rest of the type, and they may be the fault.
+                    let written = written_args(site, list.get(), 0);
+                    let state = (held, failed, flagged);
+                    self.failed_build(state, (ty, ret, declared.len()), written)
+                }
             };
         }
         let ty = ret;
@@ -1148,8 +1250,10 @@ impl Checker<'_> {
             }
         }
         match self.construct(span, &name, &fields, args) {
-            Ok(args) => Ok(self.spilled(span, ty, args, |args| tir::ExprKind::New { class, args })),
-            Err(failed) => Err(Poisoned::of((!failed).then_some(ty))),
+            Some(args) => {
+                Ok(self.spilled(span, ty, args, |args| tir::ExprKind::New { class, args }))
+            }
+            None => Err(Poisoned::typed(ty)),
         }
     }
 
@@ -1188,15 +1292,15 @@ impl Checker<'_> {
 
     /// The arguments of `name(f: e, ...)`, a class's constructor or a variant with labels,
     /// which name every one of `fields` in declaration order. Only the first mistake is
-    /// reported; every argument is still checked for its own. `Err` holds whether a mistake was
-    /// reported here, rather than in an argument.
+    /// reported; every argument is still checked for its own. `None` when a mistake was reported,
+    /// here or in an argument.
     pub(super) fn construct(
         &mut self,
         span: Span,
         name: &dyn fmt::Display,
         fields: &[(Symbol, Option<Type>)],
         args: &[ast::Arg],
-    ) -> Result<Vec<tir::Expr>, bool> {
+    ) -> Option<Vec<tir::Expr>> {
         let names: Vec<_> = fields.iter().map(|(f, _)| *f).collect();
         let mut failed = false;
         let mut checked = Vec::with_capacity(args.len());
@@ -1223,10 +1327,11 @@ impl Checker<'_> {
             }
             failed = true;
         }
-        match checked.into_iter().collect() {
-            Ok(args) if !failed => Ok(args),
-            _ => Err(failed),
-        }
+        checked
+            .into_iter()
+            .collect::<Result<_, _>>()
+            .ok()
+            .filter(|_| !failed)
     }
 }
 

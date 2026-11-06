@@ -111,23 +111,35 @@ fn panic_is_not_a_value() {
     }
 }
 
-/// A message that fails to check makes the `panic` call `Error`, as a failed argument rule
-/// does a call: only the message's own error is reported, not "no value" for the call too.
+/// A message that fails to check leaves the `panic` call its type `never`, as a failed argument
+/// rule leaves a call its type: a `let` that holds the call reports "no value" too.
 #[test]
-fn panic_with_a_broken_message_is_an_error() {
+fn a_panic_with_a_broken_message_should_keep_its_type() {
     for (statement, expected) in [
         (
             "let x = panic(missing)",
-            &[(Code::BindingNotFound, (3, 19))][..],
+            &[(Code::NoValue, (3, 13)), (Code::BindingNotFound, (3, 19))][..],
         ),
         (
             "let x = panic(\"{missing}\")",
-            &[(Code::BindingNotFound, (3, 21))],
+            &[(Code::NoValue, (3, 13)), (Code::BindingNotFound, (3, 21))],
         ),
-        ("let x = panic(panic(\"x\"))", &[(Code::NoValue, (3, 19))]),
-        ("let x = panic(1)", &[(Code::Mismatch, (3, 19))]),
-        ("g(panic(1))", &[(Code::Mismatch, (3, 13))]),
-        ("let y = 1 + panic(1)", &[(Code::Mismatch, (3, 23))]),
+        (
+            "let x = panic(panic(\"x\"))",
+            &[(Code::NoValue, (3, 13)), (Code::NoValue, (3, 19))],
+        ),
+        (
+            "let x = panic(1)",
+            &[(Code::NoValue, (3, 13)), (Code::Mismatch, (3, 19))],
+        ),
+        (
+            "g(panic(1))",
+            &[(Code::NoValue, (3, 7)), (Code::Mismatch, (3, 13))],
+        ),
+        (
+            "let y = 1 + panic(1)",
+            &[(Code::NoValue, (3, 17)), (Code::Mismatch, (3, 23))],
+        ),
         (
             "let n: i64? = None\n    let m = n ?? panic(1)",
             &[(Code::Mismatch, (4, 24))],
@@ -394,52 +406,61 @@ fn todo_lowers() {
     }
 }
 
-/// `todo`'s message follows `panic`'s rules, as a statement and as a value, where a broken
-/// `todo` is `Error` and so not also "no value". In each row, the body, the warning's position,
-/// the other diagnostic, and the body its fix makes, if it has one.
+/// `todo`'s message follows `panic`'s rules, as a statement and as a value. A broken `todo` keeps
+/// its type `never`, so as a value it is also "no value". In each row, the body, the warning's
+/// position, the other diagnostic, and the body its fix makes, if it has one.
 #[test]
-fn todo_message_rules() {
-    for (statements, warning, (code, pos), fixed) in [
+fn a_todo_message_should_follow_the_rules_of_panic() {
+    // A row ends with whether a `let` holds the call: then it is "no value" too.
+    for (statements, warning, (code, pos), fixed, held) in [
         (
             "todo(1)",
             (2, 5),
             (Code::Mismatch, (2, 10)),
             Some("todo(\"{1}\")"),
+            false,
         ),
         (
             "todo(\"a\", \"b\")",
             (2, 5),
             (Code::ArgumentCount, (2, 5)),
             None,
+            false,
         ),
         (
             "let xs = [1]\n    todo(xs)",
             (3, 5),
             (Code::Mismatch, (3, 10)),
             None,
+            false,
         ),
         (
             "let x = todo(1)",
             (2, 13),
             (Code::Mismatch, (2, 18)),
             Some("let x = todo(\"{1}\")"),
-        ),
-        (
-            "let x = todo(\"a\", \"b\")",
-            (2, 13),
-            (Code::ArgumentCount, (2, 13)),
-            None,
+            true,
         ),
         (
             "let xs = [1]\n    let x = todo(xs)",
             (3, 13),
             (Code::Mismatch, (3, 18)),
             None,
+            true,
         ),
     ] {
         let src = body("", statements);
-        codes(&src, &[(Code::TodoLeft, warning), (code, pos)]);
-        let d = &diags(&src)[1];
+        let mut wanted = vec![(Code::TodoLeft, warning)];
+        if held {
+            wanted.push((Code::NoValue, warning));
+        }
+        wanted.push((code, pos));
+        codes(&src, &wanted);
+        let all = diags(&src);
+        let d = all
+            .iter()
+            .find(|d| d.code() == code)
+            .expect("the row should report its code");
         match fixed {
             Some(fixed) => {
                 assert_eq!(applied(&src, d), body("", fixed));
@@ -448,6 +469,15 @@ fn todo_message_rules() {
             None => assert_eq!(fixes(&src, d), [], "{src}"),
         }
     }
+    // As a value, the broken call keeps its type `never`, which a `let` cannot hold.
+    codes(
+        &body("", "let x = todo(\"a\", \"b\")"),
+        &[
+            (Code::TodoLeft, (2, 13)),
+            (Code::ArgumentCount, (2, 13)),
+            (Code::NoValue, (2, 13)),
+        ],
+    );
 }
 
 /// `todo` never finishes, as `panic` does: only the warning is reported.
@@ -487,12 +517,16 @@ fn todo_is_not_a_value() {
     }
 }
 
-/// A labelled message is reported once, and makes the `todo` `Error`, as it does a `panic`.
+/// A labelled message is reported once, and the `todo` keeps its type `never`, as a `panic` does.
 #[test]
-fn todo_with_a_label_is_an_error() {
+fn a_todo_with_a_label_should_keep_its_type() {
     codes(
         &body("", "let x = todo(m: \"x\")"),
-        &[(Code::TodoLeft, (2, 13)), (Code::LabeledArgument, (2, 18))],
+        &[
+            (Code::TodoLeft, (2, 13)),
+            (Code::NoValue, (2, 13)),
+            (Code::LabeledArgument, (2, 18)),
+        ],
     );
 }
 

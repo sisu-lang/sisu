@@ -6,11 +6,13 @@ use std::{fmt, mem};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::alias::Through;
-use super::generic::{GenericSig, Site, mismatched};
+use super::generic::{GenericSig, Site, mismatched, written_args};
 use super::interface::Slot;
 use super::mut_args::Callee;
 use super::unused_names::Used;
-use super::{Checked, Checker, Declared, Definition, DiagnosticKind, Poisoned, own_args};
+use super::{
+    Checked, Checker, Declared, Definition, DiagnosticKind, Poisoned, has_remedy_flag, own_args,
+};
 use crate::ast;
 use crate::diagnostic::{BuiltIn, Unbuilt, VariantLabels, suggestion};
 use crate::graph::components;
@@ -271,12 +273,17 @@ impl Checker<'_> {
         let enum_name = enum_name.as_str();
         let Some(&variant) = info.index.get(&member.name) else {
             match info.methods.get(&member.name) {
-                Some(Declared::Known(_)) => self.report(DiagnosticKind::MemberKind {
-                    name: member.name.to_string(),
-                    enum_name: enum_name.to_string(),
-                    method: true,
-                    at: member.span,
-                }),
+                Some(&Declared::Known(func)) => {
+                    // An argument at a `mut` parameter gets the help of a place.
+                    let muts = self.signatures[func.0].muts.clone();
+                    self.stamp_mut_params(call.map_or(&[], |(args, _)| args), &muts);
+                    self.report(DiagnosticKind::MemberKind {
+                        name: member.name.to_string(),
+                        enum_name: enum_name.to_string(),
+                        method: true,
+                        at: member.span,
+                    });
+                }
                 // The method's own error is reported.
                 Some(Declared::Broken) => {}
                 None => {
@@ -332,12 +339,12 @@ impl Checker<'_> {
                 } else {
                     // Mixed labels are reported at the declaration.
                     self.stray(args);
-                    Err(true)
+                    return Err(Poisoned::error());
                 };
-                match built {
-                    Ok(args) => args,
-                    Err(failed) => return Err(Poisoned::of((!failed).then_some(ty))),
-                }
+                let Some(args) = built else {
+                    return Err(Poisoned::typed(ty));
+                };
+                args
             }
             Some((args, parens)) => {
                 // The fix deletes the parentheses, so what they hold (even a comment) makes it
@@ -440,14 +447,16 @@ impl Checker<'_> {
         let labeled = if labels.iter().all(Option::is_some) && !labels.is_empty() {
             let names: Vec<_> = labels.iter().flatten().copied().collect();
             if !self.shaped(span, &path, &names, args) {
-                return Err(Poisoned::error());
+                let fixed = self.counted_result(Some(ret), &declared, &[], &bounds, site);
+                return Err(Poisoned::of(fixed));
             }
             false
         } else if labels.iter().all(Option::is_none) {
-            match self.positional_shape(span, &path, fields.len(), args) {
-                Some(labeled) => labeled,
-                None => return Err(Poisoned::error()),
-            }
+            let Some(labeled) = self.positional_shape(span, &path, fields.len(), args) else {
+                let fixed = self.counted_result(Some(ret), &declared, &[], &bounds, site);
+                return Err(Poisoned::of(fixed));
+            };
+            labeled
         } else {
             // Mixed labels are reported at the declaration.
             self.stray(args);
@@ -473,13 +482,21 @@ impl Checker<'_> {
             return Err(Poisoned::error());
         };
         let failed = labeled || args.iter().any(mismatched);
+        // A generic variant's result names the enum's parameters. The `?.` fix of an E0062 in an
+        // argument would make that argument, and so the result, optional. The flag follows only
+        // when the arguments alone bind the type.
+        let flagged = args.iter().any(has_remedy_flag);
         // The bounds that the alias's body puts on its parameters, on what they are bound to.
         let held = through.is_none_or(|t| self.use_checks(&t.checks, list, span) == Some(true));
         match args.into_iter().collect() {
             Ok(args) if !failed && held => Ok(self.spilled(span, ty, args, |args| {
                 tir::ExprKind::Variant { id, variant, args }
             })),
-            _ => Err(Poisoned::of((!failed && held).then_some(ty))),
+            _ => {
+                // The arguments bind the rest of the type, and they may be the fault.
+                let written = written_args(site, list.get(), 0);
+                self.failed_build((held, failed, flagged), (ty, ret, declared.len()), written)
+            }
         }
     }
 
@@ -527,28 +544,26 @@ impl Checker<'_> {
     }
 
     /// The arguments of `path(args)`, a variant whose payload declares no labels, checked
-    /// against its `fields` in order. `Err` holds whether a mistake was reported here, rather
-    /// than in an argument.
+    /// against its `fields` in order. `None` when a mistake was reported, here or in an argument.
     fn positional(
         &mut self,
         span: Span,
         path: &dyn fmt::Display,
         fields: &[Option<Type>],
         args: &[ast::Arg],
-    ) -> Result<Vec<tir::Expr>, bool> {
-        let Some(labeled) = self.positional_shape(span, path, fields.len(), args) else {
-            return Err(true);
-        };
+    ) -> Option<Vec<tir::Expr>> {
+        let labeled = self.positional_shape(span, path, fields.len(), args)?;
         let (checked, mismatched): (Vec<_>, Vec<_>) = args
             .iter()
             .zip(fields)
             .map(|(arg, field)| self.operand(&arg.value, *field))
             .unzip();
         let failed = labeled || mismatched.contains(&true);
-        match checked.into_iter().collect() {
-            Ok(args) if !failed => Ok(args),
-            _ => Err(failed),
-        }
+        checked
+            .into_iter()
+            .collect::<Result<_, _>>()
+            .ok()
+            .filter(|_| !failed)
     }
 
     /// The prelude's `Result` and the variant it declares for `name`, when `name` is `Ok` or
@@ -808,8 +823,8 @@ impl Checker<'_> {
                 }
             }
         }
-        spread(&mut poison, &holders);
-        spread(&mut class, &holders);
+        mark_holders(&mut poison, &holders);
+        mark_holders(&mut class, &holders);
         HoldsTable {
             enums: (0..enums)
                 .map(|i| Holds {
@@ -906,7 +921,7 @@ pub(super) fn unwrapped(mut ty: Type) -> Type {
 
 /// Marks every node that holds a marked one, through `holders`; a holder past the end of
 /// `marked` is not a node of its fact.
-fn spread(marked: &mut [bool], holders: &[Vec<usize>]) {
+fn mark_holders(marked: &mut [bool], holders: &[Vec<usize>]) {
     let mut work: Vec<usize> = (0..marked.len()).filter(|&i| marked[i]).collect();
     while let Some(held) = work.pop() {
         for &holder in &holders[held] {

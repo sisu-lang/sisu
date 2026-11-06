@@ -8,7 +8,10 @@ use super::expr::{if_some, local, no_member, path};
 use super::extend::{holder_of, method_holder};
 use super::generic::{Site, named_params};
 use super::unused_names::Used;
-use super::{Checked, Checker, Declared, Holder, Poisoned, UNKNOWN, as_optional, type_of, wrap};
+use super::{
+    Checked, Checker, Declared, Flag, Holder, Poisoned, UNKNOWN, as_optional, has_remedy_flag,
+    is_unwrapped, spread, type_of, wrap,
+};
 use crate::ast;
 use crate::diagnostic::{Annotate, Definition, Diagnostic, DiagnosticKind, Peel, UnwrapHelp};
 use crate::source::Span;
@@ -95,7 +98,8 @@ impl Checker<'_> {
         name: &ast::Ident,
     ) -> Result<Type, Poisoned> {
         let Some(TypeKind::Optional(payload)) = type_of(scrutinee).map(Type::kind) else {
-            if type_of(scrutinee).is_some() {
+            // A value that an E0062 typed is optional under its `?.` fix.
+            if type_of(scrutinee).is_some() && !is_unwrapped(scrutinee) {
                 let kind = DiagnosticKind::SafeAccessNotOptional {
                     value: path(receiver),
                     at: receiver.span,
@@ -116,6 +120,7 @@ impl Checker<'_> {
                     receiver: self.source.text(receiver.span).to_string(),
                     left: self.type_name(payload),
                     member: name.name.to_string(),
+                    layers: optional_layers(payload),
                 }),
                 unwrap: UnwrapHelp::It,
             };
@@ -135,11 +140,17 @@ impl Checker<'_> {
         receiver: &ast::Expr,
         name: &ast::Ident,
     ) -> Checked {
+        let unwrapped = is_unwrapped(&base);
+        let on_optional = matches!(type_of(&base).map(Type::kind), Some(TypeKind::Optional(_)));
         let Some((class, index, ty)) =
             self.find_field(type_of(&base), receiver, name, Access::Read)
         else {
             return Err(Poisoned::error());
         };
+        // E0062 is reported. The chain goes on with the type that the field has on the payload.
+        if on_optional {
+            return Err(Poisoned::unwrapped(ty));
+        }
         self.record(Used::Field(class, index), span);
         match (base, ty) {
             (Ok(base), Some(ty)) => Ok(tir::Expr::new(
@@ -150,7 +161,7 @@ impl Checker<'_> {
                 ty,
                 span,
             )),
-            (_, ty) => Err(Poisoned::of(ty)),
+            (_, ty) => spread(Err(Poisoned::of(ty)), unwrapped),
         }
     }
 
@@ -174,7 +185,8 @@ impl Checker<'_> {
     /// The class, index and type of field `name` of `receiver`, a value of type `base`. `None` when
     /// there is none, reported unless `base` is `Error`. `access` says how the field is used; no
     /// `()` can follow the access of a field that is not read. A receiver that may be `None` gets
-    /// the `?.` fix unless an index follows in the chain (`Body::indexed`).
+    /// the `?.` fix unless an index follows in the chain (`Body::indexed`). On an optional, they
+    /// are the field's on the payload, after E0062.
     pub(super) fn find_field(
         &mut self,
         base: Option<Type>,
@@ -224,10 +236,10 @@ impl Checker<'_> {
             TypeKind::Array(_) if name.name.as_str() == "len" => {
                 method(self.type_name(ty), true).into()
             }
-            // A field of the payload gives no value here: the caller of a write asks for it.
+            // A field of the payload gives no value here: `field` and the caller of a write ask
+            // for its class, index and type.
             TypeKind::Optional(payload) => {
-                self.field_of_payload(payload, receiver, name, access);
-                return None;
+                return self.field_of_payload(payload, receiver, name, access);
             }
             _ => no_member(Definition::Field, self.type_name(ty), name, []),
         };
@@ -239,7 +251,9 @@ impl Checker<'_> {
     /// `receiver`, whose type is `payload?`, as `find_field` finds them. A `.` checks the member
     /// as `?.` does, on the payload with no value. E0062 follows only when the field is found.
     /// A field that is missing, or of the wrong kind, is the error: the `?.` fix would lead to
-    /// it. A `payload` that is optional too gets no `?.` fix: `?.` takes one layer only.
+    /// it. A `payload` that is optional too gets no `?.` fix: `?.` takes one layer only. Its help
+    /// peels the other layers first (`UnwrapHelp::Peel`), unless an index follows (`indexed`) or
+    /// the field is a `mut` argument: the peeled `?.` fails there.
     pub(super) fn field_of_payload(
         &mut self,
         payload: Type,
@@ -256,8 +270,14 @@ impl Checker<'_> {
         };
         // A path through `?.` is a place that cannot be a `mut` argument (E0170).
         let fix = payload_fix(payload, self.body.indexed) && !matches!(access, Access::Mut);
+        // The peeled `?.` fails before an index and as a `mut` argument, as the `?.` fix does.
+        let unwrap = if self.body.indexed || matches!(access, Access::Mut) {
+            UnwrapHelp::It
+        } else {
+            self.peel_or(payload, (receiver, name), UnwrapHelp::It)
+        };
         self.diagnostics
-            .push(may_be_none(receiver, name, fix, write, UnwrapHelp::It));
+            .push(may_be_none(receiver, name, fix, write, unwrap));
         Some(found)
     }
 
@@ -475,8 +495,10 @@ impl Checker<'_> {
     /// name and its arguments report their own mistakes. E0062 comes first, unless the lookup
     /// of the name failed (`Body::failed_lookups`). A method that is missing, or a field,
     /// stands alone: the `?.` fix would lead to it. `indexed` is `Body::indexed` of the call:
-    /// an index follows it in its chain. The result is `Error`, so a chain checks its first `.`
-    /// on an optional only.
+    /// an index follows it in its chain. The result is poisoned, with the type of the call that
+    /// was checked, so the chain goes on as it would after the unwrap that the help names. A
+    /// `payload` that is optional too gets the peel help, unless a `push` writes or an index
+    /// follows: the peeled `?.` fails there.
     pub(super) fn method_of_payload(
         &mut self,
         span: Span,
@@ -486,24 +508,47 @@ impl Checker<'_> {
         args: &[ast::Arg],
         indexed: bool,
     ) -> Checked {
-        let start = self.diagnostics.len();
         let inner = innermost(payload);
         let checked = Err(Poisoned::typed(inner));
-        drop(self.method_call(span, Dot::Payload, checked, receiver, site, args));
+        let result = self.method_call(span, Dot::Payload, checked, receiver, site, args);
         let name = site.name;
         if !self.body.failed_lookups.contains(&name.span) {
             // A `push` onto an optional array writes: the `?.` fix makes it do nothing.
             let write = name.name.as_str() == "push" && matches!(inner.kind(), TypeKind::Array(_));
             let unwrap = if write {
                 self.pushed_array_unwrap(receiver, &value)
-            } else {
+            } else if indexed {
                 UnwrapHelp::It
+            } else {
+                self.peel_or(payload, (receiver, name), UnwrapHelp::It)
             };
             let fix = payload_fix(payload, indexed);
             let d = may_be_none(receiver, name, fix, write, unwrap);
-            self.diagnostics.insert(start, d);
+            self.diagnostics.push(d);
         }
-        Err(Poisoned::error())
+        // The call of a generic method may be built from a flagged argument: it keeps that state.
+        if has_remedy_flag(&result) {
+            return spread(Err(Poisoned::of(type_of(&result))), true);
+        }
+        Err(Poisoned::unwrapped(type_of(&result)))
+    }
+
+    /// The help of an E0062 for a `.` after `receiver`, an optional of the `payload?`, before
+    /// `name`: the peel help when `payload` is optional too, else `otherwise`.
+    fn peel_or(
+        &self,
+        payload: Type,
+        (receiver, name): (&ast::Expr, &ast::Ident),
+        otherwise: UnwrapHelp,
+    ) -> UnwrapHelp {
+        match optional_layers(payload) {
+            0 => otherwise,
+            layers => UnwrapHelp::Peel {
+                receiver: self.source.text(receiver.span).to_string(),
+                member: name.name.to_string(),
+                layers,
+            },
+        }
     }
 
     /// The unwrap help for the optional array `receiver`, whose checked value is `value`, that a
@@ -803,6 +848,16 @@ fn candidate_results(rets: &[Option<Type>]) -> impl Iterator<Item = (usize, Opti
     })
 }
 
+/// The layers of optional that `ty` has.
+fn optional_layers(mut ty: Type) -> usize {
+    let mut layers = 0;
+    while let TypeKind::Optional(inner) = ty.kind() {
+        layers += 1;
+        ty = inner;
+    }
+    layers
+}
+
 /// Whether E0062 for a `.` on `payload?` offers the `?.` fix. No index follows it in its chain.
 /// The `payload` is no optional: `?.` takes one layer only.
 fn payload_fix(payload: Type, indexed: bool) -> bool {
@@ -855,8 +910,16 @@ pub(super) fn safe_value(
             });
         }
     };
+    // The result is built from the member or the scrutinee when either has the remedy flag. Else
+    // it is the scrutinee again: `c.n?.v` is `i64?` under both remedies.
+    let built = has_remedy_flag(&scrutinee) || has_remedy_flag(&member);
+    let state = scrutinee.as_ref().err().map_or(Flag::No, |p| p.unwrapped);
     let (Ok(scrutinee), Ok(member)) = (scrutinee, member) else {
-        return Err(Poisoned::typed(ty));
+        // A `?.` after a `.` on an optional goes on, as the first `?.` does (see `Checker::place`).
+        return Err(Poisoned {
+            unwrapped: if built { Flag::Built } else { state },
+            ..Poisoned::typed(ty)
+        });
     };
     let none = (ty != Type::UNIT).then_some(tir::Expr::new(tir::ExprKind::None, ty, span));
     let value = if member.ty == ty {

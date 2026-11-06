@@ -10,5 +10,13 @@ help: if a `None` result is fine, use `?.`
 3 |     print(o?.get(1..3))
   |            +
 
-sisu: 1 error
-sisu: for more on a code, run `sisu explain <code>`: E0062
+warning[W0015]: this value can be `None`, and then this writes the word "None"
+ --> E0062-string-get.sisu:3:11
+  |
+3 |     print(o.get(1..3))
+  |           ^^^^^^^^^^^
+  |
+  = help: use `if let`, give a default with `??`, or call `.to_string()` on the value to write "None" on purpose
+
+sisu: 1 error, 1 warning
+sisu: for more on a code, run `sisu explain <code>`: E0062, W0015

@@ -5,13 +5,22 @@ use super::expr::fits;
 use super::generic::{Ahead, Rank};
 use super::pattern::{LetPattern, arm_key};
 use super::{
-    Checked, CheckedBlock, Checker, Misfit, Poisoned, UNKNOWN, as_optional, block_type, is_kept,
-    payload, tail, value_span, wrap_block,
+    Checked, CheckedBlock, Checker, Flag, Misfit, Poisoned, UNKNOWN, as_optional, block_type,
+    has_remedy_flag, is_kept, payload, spread, tail, value_span, wrap_block,
 };
 use crate::ast;
 use crate::diagnostic::{Diagnostic, DiagnosticKind, Unwrap};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeKind};
+
+/// The failed `if` or `match` whose join is `ty`: as typed as the join is, and flagged (see
+/// `Poisoned::unwrapped`) when a branch is.
+pub(super) fn failed_join(ty: Result<Type, Poisoned>, flagged: bool) -> Checked {
+    spread(
+        Err(ty.map_or_else(|poisoned| poisoned, Poisoned::typed)),
+        flagged,
+    )
+}
 
 impl Checker<'_> {
     /// Without an `else`, `unit`. With one, the branches joined (see `branches`). A condition
@@ -39,6 +48,10 @@ impl Checker<'_> {
             Ok(_) if mismatched => Err(Poisoned::error()),
             ty => ty,
         };
+        // A flagged condition is a `bool?` under the `?.` fix, which fails the `if`.
+        let flagged = has_remedy_flag(&cond)
+            || has_remedy_flag(&then)
+            || other.as_ref().is_some_and(has_remedy_flag);
         match (cond, then, other.transpose(), ty) {
             (Ok(cond), Ok(then_block), Ok(else_block), Ok(ty)) => Ok(tir::Expr::new(
                 tir::ExprKind::If {
@@ -49,7 +62,7 @@ impl Checker<'_> {
                 ty,
                 span,
             )),
-            (.., ty) => Err(ty.map_or_else(|poisoned| poisoned, Poisoned::typed)),
+            (.., ty) => failed_join(ty, flagged),
         }
     }
 
@@ -93,6 +106,10 @@ impl Checker<'_> {
             ty => ty,
         };
         let ty = ty?;
+        // Under the unwrap the `if let` fails with E0051. Under the `?.` fix its value is optional.
+        let flagged = has_remedy_flag(&scrutinee)
+            || has_remedy_flag(&then)
+            || other.as_ref().is_some_and(has_remedy_flag);
         let kind = match (scrutinee, then, other.transpose(), bound) {
             (Ok(scrutinee), Ok(then_block), Ok(else_block), LetPattern::Some { bind }) => {
                 tir::ExprKind::IfSome {
@@ -110,7 +127,7 @@ impl Checker<'_> {
                     pattern: Some(pattern),
                 },
             ) => self.if_let_match(scrutinee, pattern, then_block, else_block),
-            _ => return Err(Poisoned::typed(ty)),
+            _ => return spread(Err(Poisoned::typed(ty)), flagged),
         };
         Ok(tir::Expr::new(kind, ty, span))
     }
@@ -270,6 +287,7 @@ impl Checker<'_> {
                 // A join that has no type is kept when a branch is: that call's E0050 is the one
                 // report.
                 kept: ty.is_none() && blocks.iter().any(is_kept),
+                unwrapped: Flag::No,
             }),
         };
         (blocks, ty)

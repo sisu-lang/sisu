@@ -5,8 +5,8 @@ use super::expr::{fits, if_some, literal_type, local, operator, path, typed};
 use super::generic::{Rank, mismatched};
 use super::interface::Operation;
 use super::{
-    Checked, Checker, Lowered, Poisoned, UNKNOWN, as_optional, beyond_one_layer, block_expr,
-    is_kept, optional_of, payload, type_of, wrap,
+    Checked, Checker, Flag, Lowered, Poisoned, UNKNOWN, as_optional, beyond_one_layer, block_expr,
+    has_remedy_flag, is_kept, is_unwrapped, optional_of, payload, spread, type_of, wrap,
 };
 use crate::ast::{self, CompareOp, ExprKind};
 use crate::diagnostic::{Diagnostic, DiagnosticKind, Expected, Literal, PeelIs, PeelLayers};
@@ -48,6 +48,7 @@ impl Checker<'_> {
                 mismatch: literal,
                 found: None,
                 kept: false,
+                unwrapped: Flag::No,
             });
         }
         let want = if type_of(&checked).map(payload) == Some(Type::F64) {
@@ -78,8 +79,9 @@ impl Checker<'_> {
         let op = |i: usize| ops[i.saturating_sub(1)].to_string();
         let (checked, ty, mismatched) =
             self.ranked(|c| c.integers(&operands, None, Operator::Compare, &op));
+        let flagged = checked.iter().any(is_unwrapped);
         let operands = checked.into_iter().collect::<Result<Vec<_>, _>>().ok();
-        match (operands, ty) {
+        let chain = match (operands, ty) {
             (Some(operands), Some(Type::STRING)) => Ok(self.string_chain(span, operands, ops)),
             (Some(operands), Some(ty)) => self.ordered_chain(span, ty, operands, ops),
             (operands, _) => typed(
@@ -91,7 +93,8 @@ impl Checker<'_> {
                     ops: ops.to_vec(),
                 }),
             ),
-        }
+        };
+        spread(chain, flagged)
     }
 
     /// A comparison chain over `operands` of the type `ty`, a class, an enum or a type parameter
@@ -180,12 +183,13 @@ impl Checker<'_> {
             return Err(Poisoned::error());
         }
         let kept = checked.iter().any(is_kept);
+        let flagged = checked.iter().any(is_unwrapped);
         let [l, r]: [Checked; 2] = checked
             .try_into()
             .unwrap_or_else(|_| panic!("`integers` should return one result per operand"));
         if ty == Some(Type::STRING) {
             self.label_join_literals(start, [lhs, rhs]);
-            return self.concat(span, l, r, mismatched);
+            return spread(self.concat(span, l, r, mismatched), flagged);
         }
         if kept {
             return Err(Poisoned::kept_error());
@@ -196,7 +200,7 @@ impl Checker<'_> {
             rhs: Box::new(r),
         });
         match ty {
-            Some(ty) => typed(span, ty, mismatched, kind),
+            Some(ty) => spread(typed(span, ty, mismatched, kind), flagged),
             None => Err(Poisoned::error()),
         }
     }
@@ -583,6 +587,7 @@ impl Checker<'_> {
     ) -> Checked {
         let expected = type_of(&l).and(Some(want));
         let checked = self.value(rhs, Some(expected.unwrap_or(UNKNOWN)));
+        let flagged = is_unwrapped(&l) || is_unwrapped(&checked);
         // Only a compound assignment's number gets here with a `char` to its right.
         if want != Type::BOOL && type_of(&checked) == Some(Type::CHAR) {
             self.report(DiagnosticKind::ArithmeticOnChar { at: op_span });
@@ -595,7 +600,10 @@ impl Checker<'_> {
             lhs: Box::new(l),
             rhs: Box::new(r),
         });
-        typed(span, want, l_mismatched || r_mismatched, kind)
+        spread(
+            typed(span, want, l_mismatched || r_mismatched, kind),
+            flagged,
+        )
     }
 
     /// `settled`, except that a `checked` of a type that is none of `takes`, if given, is
@@ -668,9 +676,11 @@ impl Checker<'_> {
             return Err(Poisoned::error());
         }
         // `second` is the `none_written`, if either is.
+        // A value that an E0062 typed is optional under its `?.` fix.
         if self.none_written(second)
             && let Some(ty) = type_of(&checked)
             && !matches!(ty.kind(), TypeKind::Optional(_))
+            && !is_unwrapped(&checked)
         {
             let value = path(first);
             self.diagnostics
@@ -984,7 +994,8 @@ impl Checker<'_> {
     ) -> Checked {
         let scrutinee = self.value(lhs, None);
         let Some(TypeKind::Optional(payload)) = type_of(&scrutinee).map(Type::kind) else {
-            if type_of(&scrutinee).is_some() {
+            // A value that an E0062 typed is optional under its `?.` fix.
+            if type_of(&scrutinee).is_some() && !is_unwrapped(&scrutinee) {
                 self.diagnostics
                     .push(DiagnosticKind::CoalesceNotOptional { at: lhs.span }.into());
             }
@@ -1037,6 +1048,8 @@ impl Checker<'_> {
                 other
             }
         };
+        // Under the `?.` fix of an E0062 in either side, the result is optional.
+        let flagged = has_remedy_flag(&scrutinee) || has_remedy_flag(&other);
         // A value converts to an `any` payload, unless it is a wider `any` type, which the
         // payload converts to.
         let other = match type_of(&other) {
@@ -1096,7 +1109,7 @@ impl Checker<'_> {
         let value = if read.ty == ty { read } else { widen(read, ty) };
         match (scrutinee, other) {
             (Ok(scrutinee), Ok(other)) => Ok(if_some(bind, scrutinee, value, Some(other), span)),
-            _ => Err(Poisoned::typed(ty)),
+            _ => spread(Err(Poisoned::typed(ty)), flagged),
         }
     }
 }

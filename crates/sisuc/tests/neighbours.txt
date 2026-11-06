@@ -35,9 +35,17 @@ class Bx {
 type M<T> = T?
 type MM<T> = T??
 type OP = (any Pet)??
+class Bq<T> {
+    v: T
+}
+type Bqa<T> = Bq<T>
 fn nothing<T>() -> T? { None }
 fn nn<T>() -> T?? { None }
 fn n3<T>() -> T??? { None }
+class Oa {
+    oa: [i64]?
+}
+fn oa_none() -> Oa? { None }
 fn mk<T>() -> T { loop {} }
 fn some<T>(v: T) -> T? { Some(v) }
 fn id<T>(v: T) -> T { v }
@@ -94,6 +102,31 @@ Some(Some(p))
 Some(Fox())
 some(p)
 id(Some(Some(p)))
+# Failed calls that keep their result type.
+Bx().none<Fox>(1)
+p.name(1)
+Fox(1)
+# A count error with a written list, and a generic construction with a list.
+Bx().wrap<Fox>(1, 2)
+id<Fox>(p, 1)
+Bq<Fox>(1, 2)
+Bq<Fox>(v: p, w: 1)
+# `Some<T>` with a count error, and a `Some` or a construction through an alias.
+Some<Fox>(p, p)
+M<Fox>.Some(p, p)
+MM<Fox>.Some(n: p)
+OP.Some(p, p)
+Option.Some(n: p)
+Bqa(v: p, w: 1)
+Bqa<Fox>(1)
+# A `Some` whose argument has the remedy flag (E0062), bare, with a written list and through `Option`.
+Some(ob.wrap(1))
+Some<i64>(ob.wrap(1))
+Option.Some(ob.wrap(1))
+# A prelude call with a label, and `panic` with a wrong argument.
+print(n: 1)
+panic(1)
+panic("a", "b")
 # Values that are no optional.
 p
 op
@@ -139,7 +172,11 @@ let 1 = $ else { return }
 if let _l = $ {}
 # A `mut` argument: a place, or a value that is none, for a generic `mut` parameter.
 take(mut $)
+take(x: mut $)
 take($)
+take($, 1)
+take<i64, i64>($)
+take(x: $)
 let _s: string = take($)
 let _s: string = take(mut $)
 # A call that fails to resolve, with a `mut` argument first or later: the argument is stamped as
@@ -150,6 +187,14 @@ n.ste(mut $)
 take(mut $, 1)
 take<i64, i64>(mut $)
 ob?.ste(mut $)
+# A method called as a function (E0070) or as `Bx.put` (E0105), with a value at its `mut`
+# parameter: the argument is stamped as at a call that finds the method. The labeled call is
+# E0052, which does not find the method, so it stamps nothing.
+put(ob, $, 1)
+put(ob, $)
+put(ob, x: $, n: 1)
+Bx.put($, 1)
+Bx.put($)
 # A `mut` call with an exit in another argument or in the receiver: the call is rebound, and its
 # exit flag follows its new arguments.
 take2(mut $, some(k) ?? return)
@@ -170,3 +215,22 @@ id(keep($))
 some(keep($))
 id(some(keep($)))
 opt(keep($))
+# A chain on each value: a `.` on an optional goes on with the type of the member (E0062), and a
+# type argument on a method of an optional is checked.
+let _s: string = $.wrap(1)
+print($.none<i64, i64>())
+# A chain that goes on from a flagged value (E0062): a generic method on an optional receiver with
+# a flagged argument, `??` with a flagged left side, `?.` after a flagged optional or with a
+# flagged member, a `match` on a flagged value that is not matchable, and an index of a member
+# that is an optional array.
+let _s: string = $.wrap(ob.wrap(1))
+let _a = ob.wrap(1) ?? $
+let _a = ob.wrap(ob)?.wrap($)
+let _a = $?.wrap(ob.wrap(1))
+match ob.wrap($) { _ => {} }
+print(oa_none().oa[0] ?? $)
+# A chain on each value as the subject of a `for`, which is indexed in its loop, and the value
+# printed or interpolated, which warns when it can be `None`.
+for _x in $.wrap([1]) {}
+print($)
+print("x {$}")

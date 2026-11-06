@@ -649,7 +649,11 @@ fn push_should_report_a_mistake_through_a_safe_access() {
         (
             "index of an optional array",
             "class C {\n    mut rows: [[i64]]\n}\nfn f(c: C?) { c?.rows[0]?.push(1) }\nfn main() {}",
-            vec![(Code::MayBeNone, (4, 15))],
+            // The element of `c?.rows` is an `[i64]`, which `?.` has no optional to take off.
+            vec![
+                (Code::MayBeNone, (4, 15)),
+                (Code::SafeAccessNotOptional, (4, 15)),
+            ],
         ),
     ]);
 }
@@ -971,21 +975,21 @@ fn an_element_target_of_an_optional_number_should_not_be_an_optional_array() {
     );
 }
 
-/// A `.push` through `?.` is a place as `?.push` is, so the write rule runs, then E0062.
+/// A `.push` through `?.` is a place as `?.push` is, so E0062 comes first, then the write rule.
 #[test]
 fn dot_push_through_safe_access_should_check_the_write_rule() {
     codes(
         "class Node {\n    ys: [i64]\n}\nfn f(c: Node?) {\n    c?.ys.push(1)\n}\nfn main() {}",
-        &[(Code::AssignToImmutable, (5, 5)), (Code::MayBeNone, (5, 5))],
+        &[(Code::MayBeNone, (5, 5)), (Code::AssignToImmutable, (5, 5))],
     );
 }
 
-/// The array is in a place that cannot change: its E0001 comes before E0062.
+/// The array is in a place that cannot change: its E0001 comes after E0062.
 #[test]
 fn dot_push_on_optional_local_should_report_the_held_write() {
     codes(
         "fn f(xs: [i64]?) {\n    xs.push(1)\n}\nfn main() {}",
-        &[(Code::AssignToImmutable, (2, 5)), (Code::MayBeNone, (2, 5))],
+        &[(Code::MayBeNone, (2, 5)), (Code::AssignToImmutable, (2, 5))],
     );
 }
 
