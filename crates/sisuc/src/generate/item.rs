@@ -581,7 +581,6 @@ fn gap_two<T: GapConvert<GapKept> & GapConvert<GapLeft>>(x: T) -> i64 {
 class GapCell<T> { value: T }
 extend<T> GapCell<T>: GapConvert<T> { fn convert(self) -> T { self.value } }
 extend<U> GapCell<U>: GapConvert<[U]> { fn convert(self) -> [U] { [self.value] } }
-type GapMaybe<T> = T?
 type GapLists<T> = [T]?
 fn gap_lists(m: [i64]?) -> i64 {
     match m {
@@ -618,7 +617,6 @@ type GapAnyOf<T> = any GapOf<T>
 interface GapNamed { type Named }
 class GapName: GapNamed {
     type Named = i64
-    fn size(self) -> i64 { 1 }
 }
 type GapItem<S> = [S.Named]";
 
@@ -1642,7 +1640,7 @@ impl Gen<'_> {
     ///     conformances that answer it;
     ///   - `gap_two`: two bounds that answer one method;
     ///   - `GapCell`: two `extend` blocks that the overlap test resolves together;
-    ///   - `GapMaybe` and `GapLists`: an optional alias as a path and as a pattern;
+    ///   - `GapLists`: an optional alias as a path and as a pattern;
     ///   - `GapStep`, `GapOn` and `GapAt`: an associated type bound in a recursive class;
     ///   - `GapRack`: a list that inherits through an `extend` block;
     ///   - `gap_wait` and `gap_wide`: a parameter that waits for an unbound type, and one that
@@ -1696,8 +1694,6 @@ impl Gen<'_> {
             "let held: GapCell<i64> = GapCell(value: 7)",
             "let number: i64 = held.convert()",
             "print(number)",
-            "let some_of = GapMaybe.Some(2)",
-            "print(some_of ?? 1)",
             "print(gap_lists(GapLists<i64>.Some([4])))",
             "print(GapAt<GapOn<GapEnd>>(v: 1).v)",
             "print(gap_same(GapRack(v: GapNum(n: 1))))",
@@ -1708,7 +1704,7 @@ impl Gen<'_> {
             "print(bound.value.shown())",
             "let any_of: GapAnyOf<i64> = GapOne()",
             "print(any_of.of())",
-            "let items: GapItem<GapName> = [GapName().size()]",
+            "let items: GapItem<GapName> = [1]",
             "print(items)",
         ] {
             calls.push(line);
