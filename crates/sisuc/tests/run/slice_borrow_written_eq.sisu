@@ -1,0 +1,35 @@
+// GIVEN a written `eq` that empties the `mut` field that holds an array, and a slice of that
+// array in `==` and in `contains`, once through the field and once through a whole local
+// WHEN the program runs each form
+// THEN each form finds the element, because the slice keeps the old array alive while `eq` runs,
+// and no count goes wrong, under `--rc-checks` and Valgrind
+//
+// The slice through the field is a copy, since `eq` can replace the field. The slice of the
+// whole local reads in place.
+class H { mut xs: [K] }
+class K: Eq {
+    v: i64
+    mut h: H?
+    fn eq(self, o: K) -> bool {
+        if let Some(h) = self.h { h.xs = [] }
+        self.v == o.v
+    }
+}
+fn a(h: H, ys: [K]) -> bool { h.xs[1..] == ys }
+fn b(xs: [K], ys: [K]) -> bool { xs[1..] == ys }
+fn c(h: H, k: K) -> bool { h.xs[1..].contains(k) }
+fn d(xs: [K], k: K) -> bool { xs[1..].contains(k) }
+fn mk(h: H) -> [K] { [K(v: 1, h: Some(h)), K(v: 2, h: Some(h))] }
+fn main() {
+    let h = H(xs: [])
+    let ys = [K(v: 2, h: None)]
+    h.xs = mk(h)
+    print(a(h, ys))
+    h.xs = mk(h)
+    print(b(h.xs, ys))
+    h.xs = mk(h)
+    print(c(h, K(v: 2, h: Some(h))))
+    h.xs = mk(h)
+    print(d(h.xs, K(v: 2, h: Some(h))))
+    print(h.xs.len())                    // 0
+}

@@ -1,0 +1,19 @@
+// GIVEN `dbg` of a slice of a borrowed array, once with the array live afterwards and once with
+// the slice returned
+// WHEN the program runs
+// THEN `dbg` prints the slice with its source position, and the slice reads the right bytes, under
+// `--rc-checks` and Valgrind
+fn f(xs: [string]) -> [string] {
+    let y = dbg(xs[1..])
+    print(y.len())
+    y
+}
+fn g(xs: [string]) -> i64 {
+    let y = dbg(xs[1..])
+    y.len() + xs.len()
+}
+fn main() {
+    let r = f(["a", "b".to_string() + "c"])
+    print(r[0])
+    print(g(["a", "b".to_string() + "c"]))
+}

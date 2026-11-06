@@ -1,0 +1,253 @@
+// GIVEN slices of a borrowed array or text, and of a field, an element, a slice, a `match` binding
+// and a `?` payload
+// WHEN the program reads each slice in place and the array or text that it came from stays live
+// THEN each slice reads the right bytes and no count goes wrong, under `--rc-checks` and Valgrind
+//
+// Each text that a row slices is built at run time, because a literal holds no count that a wrong
+// retain or release could change. A row that needs a real call carries an `o2-calls` marker.
+// `main` passes the argument count as the depth of `note`, which `-O2` cannot know. So `main` keeps
+// its call of `note`, its call of `note_field` through `K.part`, and its call of `sum`.
+// args: a
+// o2-calls: main note 1
+// o2-calls: main note_field 1
+// o2-calls: main sum 1
+fn two() -> [string] { ["a", "b".to_string() + "c"] }
+
+fn three() -> [string] { ["a", "b".to_string() + "c", "d"] }
+
+// A slice that a call only reads. `note` recurses and works after the call, so `-O2` keeps it.
+// `-O2` knows that a length is not negative, so the test is `< 2`, and each call gets an array of
+// run-time length that it cannot decide is short.
+fn note(ys: [string], depth: i64) -> i64 {
+    if depth > 0 && note(ys, depth - 1) < 2 {
+        return -1
+    }
+    ys.len()
+}
+
+fn note_field(ys: [string], depth: i64) -> i64 {
+    if depth > 0 && note_field(ys, depth - 1) < 2 {
+        return -1
+    }
+    ys.len()
+}
+
+fn sum(xs: [i64]) -> i64 {
+    if xs.len() == 0 { return 0 }
+    xs[0] + sum(xs[1..])
+}
+
+class K {
+    cs: [string]
+    fn part(self, depth: i64) -> i64 { note_field(self.cs[1..], depth) }
+}
+
+class L {
+    mut cs: [string]
+    fn part(self) -> i64 { self.cs[1..].len() }
+    fn has(self) -> bool { self.cs[1..].contains("bc") }
+}
+
+class P { mut x: i64 }
+
+class I { cs: [string] }
+
+class O {
+    mut i: I
+    fi: I
+}
+
+class Hold { mut o: [string]? }
+
+enum E {
+    A([string])
+    B(i64)
+}
+
+fn repro(xs: [string]) -> i64 { xs[1..].len() + xs[..1].len() }
+
+fn forms(xs: [string], a: i64, b: i64) -> i64 {
+    xs[a..b].len() + xs[a..=b].len() + xs[..b].len() + xs[a..].len()
+}
+
+fn text(s: string) -> i64 { s[1..].len() + s[..1].len() }
+
+fn chain(xs: [string]) -> i64 { xs[1..][..2].len() }
+
+fn named(xs: [string]) -> i64 {
+    let t = xs[1..]
+    t.len() + xs.len()
+}
+
+fn element(rows: [[string]]) -> i64 { rows[0][1..].len() }
+
+fn element_of_slice(xs: [string]) -> string { xs[1..][0] }
+
+fn store_through(xs: [P]) -> i64 {
+    let t = xs[1..]
+    t[0].x = 9
+    xs[1].x
+}
+
+fn copy_escapes(xs: [string]) -> [string] {
+    let t = xs[1..]
+    let y = t
+    print(t.len())
+    print(xs.len())
+    y
+}
+
+fn on_length(xs: [string]) -> i64 {
+    match xs[1..].len() {
+        0 => 7
+        _ => 8
+    }
+}
+
+fn empty(xs: [string]) -> i64 { xs[0..0].len() + xs[xs.len()..].len() }
+
+fn pieces_bytes(s: string) -> [u8] { s[1..].bytes() }
+
+fn pieces_chars(s: string) -> [char] { s[1..].chars() }
+
+fn pieces_words(s: string) -> [string] { s[1..].words() }
+
+fn pieces_kept(s: string) -> string {
+    let t = s[1..]
+    let ws = t.words()
+    print(ws.len())
+    ws[0]
+}
+
+// `let mut` with no write through it is a plain read.
+fn mutable_a(xs: [string]) -> i64 {
+    let mut t = xs[1..]
+    t.len() + xs.len()
+}
+
+fn mutable_b(xs: [string]) -> i64 {
+    let mut t = xs[1..]
+    let u = t
+    t = ["q"]
+    u.len() + t.len()
+}
+
+fn mutable_c(xs: [string]) -> i64 {
+    let mut t = xs[1..]
+    let n = t.len()
+    t = xs[..1]
+    n + t.len()
+}
+
+fn payload_read(e: E) -> i64 {
+    match e {
+        A(xs) => xs[1..].len() + xs.len()
+        B(n) => n
+    }
+}
+
+fn payload_kept(e: E) -> E {
+    match e {
+        A(xs) => {
+            let n = xs[1..].len()
+            print(n)
+            E.A(xs)
+        }
+        B(n) => E.B(n)
+    }
+}
+
+fn payload_rebuilt(e: E) -> E {
+    match e {
+        A(xs) => E.A(xs[1..])
+        B(n) => E.B(n)
+    }
+}
+
+fn payload_returned(e: E) -> [string] {
+    match e {
+        A(xs) => {
+            let t = xs[1..]
+            print(t.len())
+            print(xs.len())
+            t
+        }
+        B(_) => []
+    }
+}
+
+fn some_read(o: [string]?) -> i64 {
+    if let Some(xs) = o { return xs[1..].len() + xs.len() }
+    0
+}
+
+fn some_returned(o: [string]?) -> [string] {
+    if let Some(xs) = o {
+        let t = xs[1..]
+        print(t.len())
+        return t
+    }
+    []
+}
+
+fn some_in_array(oo: [[string]?]) -> i64 {
+    if let Some(xs) = oo[0] { return xs[1..].len() }
+    0
+}
+
+fn some_replaced(h: Hold) -> i64 {
+    if let Some(xs) = h.o {
+        let t = xs[1..]
+        h.o = None
+        print(t[0])
+        return t.len()
+    }
+    0
+}
+
+fn field_chain_fixed(o: O) -> i64 { o.fi.cs[1..].len() }
+
+fn field_chain_mut(o: O) -> i64 { o.i.cs[1..].len() }
+
+fn main(args: [string]) {
+    let d = args.len()
+    print(repro(two()))                                    // 2
+    print(forms(three(), 1, 2))                            // 1 + 2 + 2 + 2 = 7
+    print(text("ab".to_string() + "c"))                    // 2 + 1 = 3
+    print(chain(three()))                                  // 2
+    print(named(three()))                                  // 2 + 3 = 5
+    print(element([["a", "b".to_string() + "c"]]))         // 1
+    print(element_of_slice(two()))                         // bc
+    print(store_through([P(x: 1), P(x: 2)]))               // 9
+    print(copy_escapes(three()))                           // 2, 3, then [bc, d]
+    print(on_length(two()))                                // 8
+    print(empty(two()) + empty([]))                        // 0
+    let s = "xa b".to_string() + "c"
+    print(pieces_bytes(s).len())                           // 4
+    print(pieces_chars(s).len())                           // 4
+    print(pieces_words(s))                                 // [a, bc]
+    print(pieces_kept(s))                                  // 2, then a
+    print(mutable_a(two()))                                // 1 + 2 = 3
+    print(mutable_b(two()))                                // 1 + 1 = 2
+    print(mutable_c(two()))                                // 1 + 1 = 2
+    print(payload_read(E.A(two())))                        // 1 + 2 = 3
+    let kept = payload_kept(E.A(two()))                    // 1
+    print(payload_read(kept))                              // 3
+    print(payload_read(payload_rebuilt(kept)))             // 1 + 1 = 2
+    print(payload_returned(E.A(three())))                  // 2, 3, then [bc, d]
+    print(some_read(Some(two())))                          // 1 + 2 = 3
+    print(some_returned(Some(three())))                    // 2, then [bc, d]
+    print(some_in_array([Some(two())]))                    // 1
+    print(some_replaced(Hold(o: Some(two()))))             // bc, then 1
+    let o = O(i: I(cs: three()), fi: I(cs: two()))
+    print(field_chain_fixed(o))                            // 1
+    print(field_chain_mut(o))                              // 2
+    let xs = ["bc".to_string(); d + 2]
+    print(note(xs[1..], d) + xs.len())                     // 2 + 3 = 5
+    let k = K(cs: ["bc".to_string(); d + 2])
+    print(k.part(d) + k.cs.len())                          // 2 + 3 = 5
+    let ys = [d; d + 2]
+    print(sum(ys) + ys.len())                              // 3 + 3 = 6
+    print(L(cs: three()).part())                           // 2
+    print(L(cs: two()).has())                              // true
+}

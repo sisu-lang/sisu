@@ -1,0 +1,197 @@
+// GIVEN slices that must keep their own count, because the root changes while the slice lives,
+// the slice is written, pushed, stored, returned or passed on, it crosses a block, or it is `safe`
+// WHEN the program runs each case
+// THEN each slice still reads its own bytes, and no count goes wrong, under `--rc-checks` and
+// Valgrind
+//
+// Each text that a row slices is built at run time, because a literal holds no count that a wrong
+// retain or release could change.
+class H { mut xs: [string] }
+
+class L {
+    mut cs: [string]
+    fn part(self) -> i64 { note(self.cs[1..]) }
+}
+
+class Q: Eq {
+    v: i64
+    fn eq(self, o: Q) -> bool { self.v == o.v }
+}
+
+class QHold { mut xs: [Q] }
+
+class Temp { cs: [string] }
+
+fn two() -> [string] { ["a", "b".to_string() + "c"] }
+
+fn three() -> [string] { ["a", "b".to_string() + "c", "d"] }
+
+fn note(ys: [string]) -> i64 { ys.len() }
+
+fn swap(h: H) { h.xs = ["z"] }
+
+fn replace_arg(mut a: [string]) { a = ["z"] }
+
+fn replace_arg_zero(mut a: [string]) -> i64 {
+    a = ["z"]
+    0
+}
+
+fn keep(h: H, ys: [string]) { h.xs = ys }
+
+fn make() -> Temp { Temp(cs: two()) }
+
+fn eq_on_mut_field(h: QHold, ys: [Q]) -> bool { h.xs[1..] == ys }
+
+fn field_replaced(h: H) -> string {
+    let t = h.xs[1..]
+    h.xs = ["z"]
+    t[0]
+}
+
+fn call_replaces_field(h: H) -> string {
+    let t = h.xs[1..]
+    swap(h)
+    t[0]
+}
+
+fn root_assigned() -> string {
+    let mut xs = two()
+    let t = xs[1..]
+    print(xs.len())
+    xs = ["z"]
+    print(xs.len())
+    t[0]
+}
+
+fn root_pushed() {
+    let mut xs = two()
+    let t = xs[1..]
+    xs.push("z")
+    print(t.len())
+    print(t[0])
+}
+
+fn root_element_written() {
+    let mut xs = two()
+    let t = xs[1..]
+    xs[1] = "z"
+    print(t[0])
+    print(xs[1])
+}
+
+fn mut_argument() {
+    let mut xs = two()
+    let t = xs[1..]
+    replace_arg(mut xs)
+    print(t[0])
+}
+
+fn bound_with_mut_argument() {
+    let mut xs = two()
+    print(xs[replace_arg_zero(mut xs)..].len())
+    print(xs.len())
+}
+
+fn slice_written() {
+    let xs = two()
+    let mut t = xs[1..]
+    t[0] = "z"
+    print(t[0])
+    print(xs[1])
+}
+
+fn slice_pushed() {
+    let xs = three()
+    let mut t = xs[..1]
+    t.push("z")
+    print(t[1])
+    print(xs[1])
+}
+
+fn self_assigned() {
+    let mut xs = three()
+    xs = xs[1..]
+    print(xs.len())
+    print(xs[0])
+}
+
+fn reassigned(xs: [string]) -> i64 {
+    let mut t = xs[1..]
+    t = t[1..]
+    print(xs.len())
+    t.len()
+}
+
+fn in_a_loop() {
+    let mut t = three()
+    while t.len() > 0 {
+        print(t[0])
+        t = t[1..]
+    }
+}
+
+fn safe_one_block(s: string) -> bool { s.get(1..) == None }
+
+fn safe_root_live(s: string) -> i64 {
+    let o = s.get(1..)
+    print(s.len())
+    (o ?? "").len()
+}
+
+fn returned(xs: [string]) -> [string] {
+    let t = xs[1..]
+    print(xs.len())
+    t
+}
+
+fn stored(h: H, ys: [string]) {
+    h.xs = ys[1..]
+    print(ys.len())
+}
+
+fn owned(h: H, xs: [string]) {
+    keep(h, xs[1..])
+    print(xs.len())
+}
+
+fn across_blocks(xs: [string], c: bool) -> i64 {
+    let t = xs[1..]
+    if c { print(t.len()) }
+    print(xs.len())
+    t.len()
+}
+
+fn over_a_slice(xs: [string]) -> i64 {
+    let mut n = 0
+    for x in xs[1..] { n += x.len() }
+    n + xs.len()
+}
+
+fn main() {
+    print(L(cs: two()).part())                             // 1
+    print(eq_on_mut_field(QHold(xs: [Q(v: 1), Q(v: 2)]), [Q(v: 2)])) // true
+    print(field_replaced(H(xs: two())))                    // bc
+    print(call_replaces_field(H(xs: two())))               // bc
+    print(root_assigned())                                 // 2, 1, then bc
+    root_pushed()                                          // 1, bc
+    root_element_written()                                 // bc, z
+    mut_argument()                                         // bc
+    bound_with_mut_argument()                              // 2, 1
+    slice_written()                                        // z, bc
+    slice_pushed()                                         // z, bc
+    self_assigned()                                        // 2, bc
+    print(reassigned(three()))                             // 3, then 1
+    in_a_loop()                                            // a, bc, d
+    print(safe_one_block("ab".to_string() + "c"))          // false
+    print(safe_root_live("ab".to_string() + "c"))          // 3, then 2
+    print(returned(three()))                               // 3, then [bc, d]
+    let h = H(xs: [])
+    stored(h, three())                                     // 3
+    print(h.xs)                                            // [bc, d]
+    owned(h, three())                                      // 3
+    print(h.xs)                                            // [bc, d]
+    print(across_blocks(three(), true))                    // 2, 3, then 2
+    print(over_a_slice(three()))                           // 2 + 1 + 3 = 6
+    print(make().cs[1..].len())                            // 1
+}

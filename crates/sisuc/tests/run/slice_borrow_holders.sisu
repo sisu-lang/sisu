@@ -1,0 +1,103 @@
+// GIVEN slices of an array that a holder object owns, where a written method, a callee or a
+// store replaces the holder's field while a slice of its old array lives
+// WHEN the program runs each case
+// THEN each slice still reads its own bytes, because it keeps the array alive, and no count goes
+// wrong, under `--rc-checks` and Valgrind
+//
+// Each text that a row slices is built at run time, because a literal holds no count that a wrong
+// retain or release could change.
+class H { mut xs: [string] }
+
+class Home { mut xs: [Kid] }
+class Kid {
+    name: string
+    mut h: Home?
+    fn to_string(self) -> string {
+        if let Some(h) = self.h { h.xs = [] }
+        self.name
+    }
+}
+fn written_to_string(xs: [Kid]) { print(xs[1..]) }
+fn written_to_string_let(xs: [Kid]) {
+    let t = xs[1..]
+    print(t)
+    print(t.len())
+    print(t[0].name)
+}
+
+fn param_f(xs: [string], h: H) -> string {
+    let t = xs[1..]
+    h.xs = ["z"]
+    t[0]
+}
+fn param_g(xs: [string], h: H) -> string {
+    let t = xs[1..]
+    param_r(h)
+    t[0]
+}
+fn param_r(h: H) { h.xs = ["w"] }
+
+fn bound_r(h: H) -> i64 { h.xs = ["z"]
+    0 }
+fn bound_q(h: H) -> i64 { h.xs.len() - 1 }
+fn bound_a(h: H) -> i64 { h.xs[bound_r(h)..].len() }
+fn bound_b(h: H) -> i64 { h.xs[bound_q(h)..].len() }
+fn bound_c(xs: [string], d: bool) -> i64 { xs[if d { 1 } else { 0 }..].len() + xs.len() }
+fn bound_e(xs: [string]) -> i64 { xs[xs[1..].len()..].len() }
+fn bound_f(h: H) -> i64 {
+    let t = h.xs[1..]
+    let n = bound_r(h)
+    t.len() + n
+}
+
+class K { cs: [string] }
+class B { mut k: K? }
+fn moves_keep(b: B, k: K) { b.k = Some(k) }
+fn moves_f(b: B, k: K) -> string {
+    let t = k.cs[1..]
+    moves_keep(b, k)
+    b.k = None
+    t[0]
+}
+fn moves_g(b: B) -> string {
+    let k = K(cs: ["a", "b".to_string() + "c"])
+    let t = k.cs[1..]
+    let m = k
+    b.k = Some(m)
+    b.k = None
+    t[0]
+}
+fn moves_u(k: K, b: B) -> i64 {
+    let t = k.cs[1..]
+    b.k = None
+    print(t[0])
+    t.len()
+}
+
+fn main() {
+    let home = Home(xs: [])
+    home.xs = [Kid(name: "a".to_string() + "1", h: Some(home)), Kid(name: "b".to_string() + "2", h: Some(home))]
+    written_to_string(home.xs)                             // [b2]: the call empties home.xs
+    home.xs = [Kid(name: "c".to_string() + "1", h: Some(home)), Kid(name: "d".to_string() + "2", h: Some(home))]
+    written_to_string_let(home.xs)                         // [d2], 1, d2
+    print(home.xs.len())                                   // 0
+
+    let h = H(xs: ["a", "b".to_string() + "c"])
+    print(param_f(h.xs, h))                                // bc
+    h.xs = ["a", "b".to_string() + "c"]
+    print(param_g(h.xs, h))                                // bc
+
+    print(bound_a(H(xs: ["a", "b".to_string() + "c"])))    // 2
+    print(bound_b(H(xs: ["a", "b".to_string() + "c"])))    // 1
+    print(bound_c(["a", "b".to_string() + "c"], true))     // 1 + 2 = 3
+    print(bound_e(["a", "b".to_string() + "c"]))           // 1
+    print(bound_f(H(xs: ["a", "b".to_string() + "c"])))    // 1 + 0 = 1
+
+    let b = B(k: None)
+    print(moves_f(b, K(cs: ["a", "b".to_string() + "c"]))) // bc
+    print(moves_g(b))                                      // bc
+    b.k = Some(K(cs: ["a", "b".to_string() + "c"]))
+    if let Some(k) = b.k { print(moves_u(k, b)) }          // bc, then 1
+    let w = B(k: Some(K(cs: ["a", "b".to_string() + "c"])))
+    print(moves_u(w.k ?? K(cs: []), w))                    // bc, then 1
+}
