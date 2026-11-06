@@ -56,7 +56,7 @@ exit 0
 
 
 class FuzzSummary(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.repo = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.repo)
         os.mkdir(os.path.join(self.repo, "scripts"))
@@ -70,8 +70,8 @@ class FuzzSummary(unittest.TestCase):
             f.write(FAKE_CARGO)
         os.chmod(cargo, os.stat(cargo).st_mode | stat.S_IXUSR)
         git = ["git", "-C", self.repo, "-c", "user.name=t", "-c", "user.email=t@t"]
-        subprocess.run(git + ["init", "-q"], check=True, env=ENV)
-        subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", "base"], check=True, env=ENV)
+        subprocess.run([*git, "init", "-q"], check=True, env=ENV)
+        subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "base"], check=True, env=ENV)
 
     def summary(self, replay):
         env = dict(ENV, PATH=f"{self.bin}:{ENV['PATH']}", FAKE_REPLAY=replay)
@@ -88,7 +88,9 @@ class FuzzSummary(unittest.TestCase):
         ) as f:
             return f.read()
 
-    def test_a_crash_with_a_panic_message_should_show_its_location_and_first_message_line(self):
+    def test_a_crash_with_a_panic_message_should_show_its_location_and_first_message_line(
+        self,
+    ) -> None:
         # The replay output holds binary bytes, and the panic line comes after some of them.
         text = self.summary(
             r"\377\000\001\200 noise\n\000thread '<unnamed>' (7) panicked at "
@@ -103,36 +105,40 @@ class FuzzSummary(unittest.TestCase):
         self.assertIn("Its replay is at the end of `fuzz.log`.", text)
         self.assertNotIn("stack overflow", text)
 
-    def test_a_panic_message_should_lose_its_backticks_and_control_characters(self):
+    def test_a_panic_message_should_lose_its_backticks_and_control_characters(self) -> None:
         text = self.summary(r"panicked at a.rs:1:2:\nbad `code` \001here\n")
         self.assertIn("  Panic at `a.rs:1:2`: `bad code here`\n", text)
 
-    def test_binary_bytes_before_the_panic_on_the_same_line_should_not_reach_the_location(self):
+    def test_binary_bytes_before_the_panic_on_the_same_line_should_not_reach_the_location(
+        self,
+    ) -> None:
         text = self.summary(r"garbage \377\376 panicked at a.rs:1:2:\nhello\n")
         self.assertIn("  Panic at `a.rs:1:2`: `hello`\n", text)
 
-    def test_a_long_message_should_be_cut_in_whole_characters(self):
+    def test_a_long_message_should_be_cut_in_whole_characters(self) -> None:
         text = self.summary(r"panicked at a.rs:1:2:\na" + r"\303\251" * 200 + r"\n")
         line = next(line for line in text.splitlines() if "Panic at" in line)
         self.assertTrue(line.startswith("  Panic at `a.rs:1:2`: `a"))
         self.assertLessEqual(len(line.encode()), 400)
 
-    def test_a_mention_in_a_message_should_stay_in_a_code_span(self):
+    def test_a_mention_in_a_message_should_stay_in_a_code_span(self) -> None:
         text = self.summary(r"panicked at a.rs:1:2:\nhello @octocat #12\n")
         self.assertIn("`hello @octocat #12`", text)
 
-    def test_a_panic_without_a_message_line_should_show_the_location_alone(self):
+    def test_a_panic_without_a_message_line_should_show_the_location_alone(self) -> None:
         text = self.summary(r"panicked at a.rs:1:2:")
         self.assertIn("  Panic at `a.rs:1:2`\n", text)
 
-    def test_a_crash_without_a_panic_message_should_keep_the_note_about_a_fatal_signal(self):
+    def test_a_crash_without_a_panic_message_should_keep_the_note_about_a_fatal_signal(
+        self,
+    ) -> None:
         text = self.summary(r"\377\000 AddressSanitizer: stack-overflow\n")
         self.assertNotIn("Panic at", text)
         self.assertIn("is a stack overflow or another fatal signal", text)
 
 
 class ProgramSeeds(unittest.TestCase):
-    def test_program_run_should_get_the_seeds(self):
+    def test_program_run_should_get_the_seeds(self) -> None:
         with tempfile.TemporaryDirectory() as repo:
             scripts = os.path.join(repo, "scripts")
             os.mkdir(scripts)
@@ -146,9 +152,9 @@ class ProgramSeeds(unittest.TestCase):
                 f.write(PROGRAM_CARGO)
             os.chmod(cargo, os.stat(cargo).st_mode | stat.S_IXUSR)
             git = ["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@t"]
-            subprocess.run(git + ["init", "-q"], check=True, env=ENV)
+            subprocess.run([*git, "init", "-q"], check=True, env=ENV)
             subprocess.run(
-                git + ["commit", "-q", "--allow-empty", "-m", "base"], check=True, env=ENV
+                [*git, "commit", "-q", "--allow-empty", "-m", "base"], check=True, env=ENV
             )
             seen = os.path.join(repo, "seen.txt")
             env = dict(ENV, PATH=f"{bin_dir}:{ENV['PATH']}", FAKE_SEEN=seen)
@@ -244,7 +250,7 @@ NOT_PROGRAMS = {
 }
 
 
-def write_executable(directory, name, text):
+def write_executable(directory, name, text) -> None:
     path = os.path.join(directory, name)
     os.makedirs(directory, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
@@ -255,7 +261,7 @@ def write_executable(directory, name, text):
 class GapsRun:
     """The result of one run of --gaps: its status, output and what the fake tools saw."""
 
-    def __init__(self, repo, work, run):
+    def __init__(self, repo, work, run) -> None:
         self.code, self.stderr, self.stdout = (
             run.returncode,
             run.stderr.decode(),
@@ -302,7 +308,7 @@ class GapsRun:
 
 
 class GapsCheck(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.root = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.root)
         self.repo = os.path.join(self.root, "repo")
@@ -327,10 +333,10 @@ class GapsCheck(unittest.TestCase):
         )
         self.sysroot = sysroot
         git = ["git", "-C", self.repo, "-c", "user.name=t", "-c", "user.email=t@t"]
-        subprocess.run(git + ["init", "-q"], check=True, env=ENV)
-        subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", "base"], check=True, env=ENV)
+        subprocess.run([*git, "init", "-q"], check=True, env=ENV)
+        subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "base"], check=True, env=ENV)
 
-    def put(self, name, text):
+    def put(self, name, text) -> None:
         path = os.path.join(self.repo, name)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
@@ -382,7 +388,7 @@ class GapsCheck(unittest.TestCase):
         )
         return GapsRun(self.repo, self.work, run)
 
-    def test_gaps_should_read_only_programs(self):
+    def test_gaps_should_read_only_programs(self) -> None:
         # Two programs share a basename, one is nested, and four other .sisu or other files must stay out.
         run = self.gaps()
         calls = run.calls("front_end")
@@ -394,13 +400,13 @@ class GapsCheck(unittest.TestCase):
         self.assertTrue(all(name.endswith(".sisu") for name, _ in files), files)
         self.assertEqual(subdirs, 0)
 
-    def test_gaps_should_clear_old_profiles(self):
+    def test_gaps_should_clear_old_profiles(self) -> None:
         run = self.gaps(old_profiles=True)
         for target in ("program", "front_end"):
             with self.subTest(target):
                 self.assertEqual([old for old, _ in run.calls(target)], [False], run.log)
 
-    def test_gaps_should_fail_with_its_tool(self):
+    def test_gaps_should_fail_with_its_tool(self) -> None:
         # A fake that fails every cargo call stops at `cargo build`, so each row fails one step only.
         for step, record_start in (
             ("coverage program", "coverage program "),
@@ -413,7 +419,7 @@ class GapsCheck(unittest.TestCase):
                 self.assertNotIn("## Generator gaps", run.summary)
                 self.assertTrue(any(line.startswith(record_start) for line in run.log), run.log)
 
-    def test_a_new_gap_should_reach_the_summary(self):
+    def test_a_new_gap_should_reach_the_summary(self) -> None:
         before = "# Fuzzing: program\n\n## Failures\n\nNone.\n"
         run = self.gaps(valid=export(*ANCHORS, NEW_GAP), summary=before)
         self.assertEqual(run.code, 1, run.stdout + run.stderr)
@@ -423,7 +429,7 @@ class GapsCheck(unittest.TestCase):
         self.assertIn(NEW_GAP_KEY, section.splitlines())
         self.assertIn(NEW_GAP_KEY, run.stdout.splitlines())
 
-    def test_gaps_should_measure_only_the_seeds(self):
+    def test_gaps_should_measure_only_the_seeds(self) -> None:
         run = self.gaps(corpus=True)
         for target in ("program", "front_end"):
             calls = run.calls(target)
@@ -434,7 +440,7 @@ class GapsCheck(unittest.TestCase):
         self.assertEqual([len(content) for _, content in files], [4096] * 128)
         self.assertEqual(len(run.files("front_end-1")[0]), len(PROGRAMS))
 
-    def test_program_coverage_should_measure_the_corpus_and_the_seeds(self):
+    def test_program_coverage_should_measure_the_corpus_and_the_seeds(self) -> None:
         stages = ("lexer", "parser", "check", "mir", "codegen")
         files = [
             {
@@ -459,18 +465,18 @@ class GapsCheck(unittest.TestCase):
         for stage in stages:
             self.assertRegex(run.stdout, rf"(?m)^{stage} +50\.0% of 10 lines$")
 
-    def test_a_broken_measurement_should_fail_with_its_reason(self):
+    def test_a_broken_measurement_should_fail_with_its_reason(self) -> None:
         # The valid export reaches no function under check/.
         run = self.gaps(valid=export(ANCHORS[1], ANCHORS[2]))
         self.assertEqual(run.code, 2, run.stdout + run.stderr)
         self.assertRegex(run.summary, r"(?ms)^## Generator gaps$.*did not finish")
 
-    def test_no_new_gap_should_pass_with_a_section(self):
+    def test_no_new_gap_should_pass_with_a_section(self) -> None:
         run = self.gaps(valid=export(*ANCHORS, NEW_GAP), known=f"## a reason\n{NEW_GAP_KEY}\n")
         self.assertEqual(run.code, 0, run.stdout + run.stderr)
         self.assertRegex(run.summary, r"(?m)^## Generator gaps$")
 
-    def test_gaps_should_need_the_program_target(self):
+    def test_gaps_should_need_the_program_target(self) -> None:
         for args in (("--target", "front_end", "--gaps"), ("--gaps",)):
             with self.subTest(args):
                 run = self.gaps(args)
@@ -479,7 +485,7 @@ class GapsCheck(unittest.TestCase):
                 self.assertIn("--gaps", run.stderr)
                 self.assertEqual([line for line in run.log if line.startswith("coverage")], [])
 
-    def check_missing_directory(self, name):
+    def check_missing_directory(self, name) -> None:
         """Removes the directory tests/<name>, runs --gaps, and checks that it measures nothing."""
         shutil.rmtree(os.path.join(self.repo, "crates", "sisuc", "tests", name))
         run = self.gaps()
@@ -494,19 +500,19 @@ class GapsCheck(unittest.TestCase):
         )
         self.assertNotIn("## Generator gaps", run.summary)
 
-    def test_gaps_should_fail_without_tests_run(self):
+    def test_gaps_should_fail_without_tests_run(self) -> None:
         self.check_missing_directory("run")
 
-    def test_gaps_should_fail_without_tests_run_fail(self):
+    def test_gaps_should_fail_without_tests_run_fail(self) -> None:
         self.check_missing_directory("run-fail")
 
-    def test_front_end_seeds_should_fail_on_a_missing_test_tree(self):
+    def test_front_end_seeds_should_fail_on_a_missing_test_tree(self) -> None:
         shutil.rmtree(os.path.join(self.repo, "crates", "sisuc", "tests"))
         run = self.gaps(args=("--target", "front_end", "--coverage"))
         self.assertNotEqual(run.code, 0, run.stdout + run.stderr)
         self.assertEqual([line for line in run.log if line.startswith("coverage front_end")], [])
 
-    def check_directory_without_program(self, name):
+    def check_directory_without_program(self, name) -> None:
         """Keeps one other file in tests/<name> and no program, as the real run-fail keeps its .out files."""
         root = os.path.join(self.repo, "crates", "sisuc", "tests", name)
         for directory, _, names in os.walk(root):
@@ -521,13 +527,13 @@ class GapsCheck(unittest.TestCase):
         self.assertEqual([line for line in run.log if line.startswith("coverage")], [])
         self.assertNotIn("## Generator gaps", run.summary)
 
-    def test_gaps_should_fail_when_tests_run_has_no_program(self):
+    def test_gaps_should_fail_when_tests_run_has_no_program(self) -> None:
         self.check_directory_without_program("run")
 
-    def test_gaps_should_fail_when_tests_run_fail_has_no_program(self):
+    def test_gaps_should_fail_when_tests_run_fail_has_no_program(self) -> None:
         self.check_directory_without_program("run-fail")
 
-    def test_gaps_should_fail_when_a_copy_fails(self):
+    def test_gaps_should_fail_when_a_copy_fails(self) -> None:
         write_executable(self.bin, "cp", "#!/bin/sh\nexit 7\n")
         run = self.gaps()
         self.assertEqual(run.code, 7, run.stdout + run.stderr)

@@ -128,13 +128,17 @@ CHECKS = [
     ("python3 scripts/nightly_check.py version target/release/sisu " + PICKED, None),
     ("python3 scripts/nightly_check.py linux target/release/sisu", "runner.os == 'Linux'"),
     (
-        "python3 scripts/nightly_check.py macos target/release/sisu .llvm/23/lib/libLLVMSupport.a "
-        '"$(brew --prefix zstd)/lib/libzstd.a"',
+        (
+            "python3 scripts/nightly_check.py macos target/release/sisu .llvm/23/lib/libLLVMSupport.a "
+            '"$(brew --prefix zstd)/lib/libzstd.a"'
+        ),
         "runner.os == 'macOS'",
     ),
     (
-        "python3 scripts/nightly_check.py pack ${{ matrix.target }} target/release "
-        "target/release/THIRD-PARTY-LICENSES.txt out",
+        (
+            "python3 scripts/nightly_check.py pack ${{ matrix.target }} target/release "
+            "target/release/THIRD-PARTY-LICENSES.txt out"
+        ),
         None,
     ),
 ]
@@ -294,7 +298,7 @@ def unquote(value):
 
 
 class NightlyWorkflowTest(unittest.TestCase):
-    def test_jobs_should_have_the_needs_and_if_of_the_table(self):
+    def test_jobs_should_have_the_needs_and_if_of_the_table(self) -> None:
         found = jobs(self)
         self.assertEqual(sorted(found), sorted(JOBS))
         for name, job in found.items():
@@ -302,12 +306,12 @@ class NightlyWorkflowTest(unittest.TestCase):
             self.assertEqual(set(flow_list(needs)) if needs else set(), NEEDS[name], name)
             self.assertEqual(job_map(job).get("if"), IF[name], name)
 
-    def test_publish_should_not_use_always(self):
+    def test_publish_should_not_use_always(self) -> None:
         found = jobs(self)
         for name in ("publish", "live-check", "prune"):
             self.assertNotIn("always()", "\n".join(found[name]), name)
 
-    def test_write_jobs_should_run_only_their_script(self):
+    def test_write_jobs_should_run_only_their_script(self) -> None:
         found = jobs(self)
         for name, line in WRITE_RUN.items():
             self.assertEqual(
@@ -317,7 +321,7 @@ class NightlyWorkflowTest(unittest.TestCase):
                 [u.split("@")[0] for u in uses(found[name])], ["actions/checkout"], name
             )
 
-    def test_clean_machine_should_check_the_commit_of_the_install(self):
+    def test_clean_machine_should_check_the_commit_of_the_install(self) -> None:
         st = steps(jobs(self)["clean-machine"])
 
         def where(has):
@@ -334,21 +338,21 @@ class NightlyWorkflowTest(unittest.TestCase):
         self.assertLess(install, check)
         self.assertLess(check, smoke)
 
-    def test_live_check_should_compare_the_output_last(self):
+    def test_live_check_should_compare_the_output_last(self) -> None:
         st = steps(jobs(self)["live-check"])
         self.assertEqual(st[-1].get("run"), DIFF)
         self.assertNotIn("if", st[-1])
         self.assertNotIn("continue-on-error", st[-1])
 
-    def test_gates_should_not_be_bypassed(self):
+    def test_gates_should_not_be_bypassed(self) -> None:
         for line in workflow(self):
             self.assertIsNone(GATE.search(line), line)
 
-    def test_job_outputs_should_be_exact(self):
+    def test_job_outputs_should_be_exact(self) -> None:
         for name, job in jobs(self).items():
             self.assertEqual(job_map(job).get("outputs", {}), OUTPUTS.get(name, {}), name)
 
-    def test_build_should_run_every_check_in_order(self):
+    def test_build_should_run_every_check_in_order(self) -> None:
         found = jobs(self)
         st = steps(found["build"])
         positions = []
@@ -363,7 +367,7 @@ class NightlyWorkflowTest(unittest.TestCase):
         self.assertEqual([part(step, "env") for step in cargo], [CARGO_ENV])
         self.assertTrue(any(COUNT_LINE in run_lines(step) for step in steps(found["checksums"])))
 
-    def test_jobs_should_have_the_exact_permissions_and_token(self):
+    def test_jobs_should_have_the_exact_permissions_and_token(self) -> None:
         self.assertIn("permissions: {contents: read}", workflow(self))
         found = jobs(self)
         for name, job in found.items():
@@ -381,19 +385,19 @@ class NightlyWorkflowTest(unittest.TestCase):
             found["pick"],
         )
 
-    def test_every_action_should_be_pinned_by_full_sha(self):
+    def test_every_action_should_be_pinned_by_full_sha(self) -> None:
         actions = [u for job in jobs(self).values() for u in uses(job) if not u.startswith("./")]
         self.assertTrue(actions)
         for action in actions:
             self.assertRegex(action, r"^[\w./-]+@[0-9a-f]{40}$")
 
-    def test_every_checkout_should_keep_no_credentials(self):
+    def test_every_checkout_should_keep_no_credentials(self) -> None:
         found = [step for job in jobs(self).values() for step in checkouts(job)]
         self.assertEqual(len(found), 9)
         for step in found:
             self.assertEqual(part(step, "with").get("persist-credentials"), "false")
 
-    def test_checkouts_should_use_the_picked_sha_where_the_spec_says(self):
+    def test_checkouts_should_use_the_picked_sha_where_the_spec_says(self) -> None:
         for name, job in jobs(self).items():
             self.assertEqual(
                 [part(step, "with").get("ref") for step in checkouts(job)],
@@ -401,21 +405,21 @@ class NightlyWorkflowTest(unittest.TestCase):
                 name,
             )
 
-    def test_jobs_with_the_picked_sha_should_need_pick(self):
+    def test_jobs_with_the_picked_sha_should_need_pick(self) -> None:
         for name, job in jobs(self).items():
             if any("needs.pick" in line for line in job):
                 self.assertIn("pick", flow_list(job_map(job).get("needs", "[]")), name)
 
-    def test_every_job_should_have_a_time_limit(self):
+    def test_every_job_should_have_a_time_limit(self) -> None:
         for name, job in jobs(self).items():
             self.assertEqual(job_map(job).get("timeout-minutes"), str(TIMEOUT[name]), name)
 
-    def test_every_job_should_have_its_runner(self):
+    def test_every_job_should_have_its_runner(self) -> None:
         for name, job in jobs(self).items():
             self.assertEqual(job_map(job).get("runs-on"), RUNS_ON[name], name)
             self.assertEqual(job_map(job).get("container"), CONTAINER.get(name), name)
 
-    def test_rust_cache_should_be_off(self):
+    def test_rust_cache_should_be_off(self) -> None:
         setups = [
             step
             for job in jobs(self).values()
@@ -426,7 +430,7 @@ class NightlyWorkflowTest(unittest.TestCase):
         for step in setups:
             self.assertEqual(part(step, "with").get("cache"), "false")
 
-    def test_triggers_should_be_the_three_of_the_spec(self):
+    def test_triggers_should_be_the_three_of_the_spec(self) -> None:
         on = mapping(top(self, "on"), 2)
         self.assertEqual(sorted(on), ["pull_request", "schedule", "workflow_dispatch"])
         self.assertEqual(on["schedule"], "[{cron: '17 2 * * *'}]")
@@ -438,7 +442,7 @@ class NightlyWorkflowTest(unittest.TestCase):
             if "*" not in path:
                 self.assertTrue(os.path.isfile(os.path.join(ROOT, path)), path)
 
-    def test_concurrency_should_cancel_only_pull_requests(self):
+    def test_concurrency_should_cancel_only_pull_requests(self) -> None:
         self.assertEqual(
             mapping(top(self, "concurrency"), 2),
             {
@@ -447,7 +451,7 @@ class NightlyWorkflowTest(unittest.TestCase):
             },
         )
 
-    def test_matrices_should_have_the_rows_of_the_spec(self):
+    def test_matrices_should_have_the_rows_of_the_spec(self) -> None:
         found = jobs(self)
 
         def rows(name):
@@ -484,7 +488,7 @@ class NightlyWorkflowTest(unittest.TestCase):
         for name in ("clean-machine", "installer-tests"):
             self.assertEqual(job_map(found[name])["strategy"]["fail-fast"], "false", name)
 
-    def test_license_step_should_append_the_embedded_and_std_notices(self):
+    def test_license_step_should_append_the_embedded_and_std_notices(self) -> None:
         st = steps(jobs(self)["build"])
         found = [
             run_lines(step) for step in st if "cargo about generate" in str(step.get("run", ""))
@@ -496,7 +500,7 @@ class NightlyWorkflowTest(unittest.TestCase):
         self.assertNotIn(-1, positions, lines)
         self.assertEqual(positions, sorted(positions))
 
-    def test_std_notices_step_should_write_plain_text(self):
+    def test_std_notices_step_should_write_plain_text(self) -> None:
         st = steps(jobs(self)["build"])
         lines = [line for step in st for line in run_lines(step) if line.startswith("sed -e ")]
         self.assertEqual(len(lines), 1)
@@ -509,12 +513,12 @@ class NightlyWorkflowTest(unittest.TestCase):
             out = os.path.join(tmp, "out.txt")
             with open(html, "w", encoding="utf-8") as f:
                 f.write("<p>say &#34;a&#34; and &#39;b&#39; &#60;c&#62;</p>\n")
-            command = lines[0].replace(source, "'%s'" % html).replace(sink, "> '%s'" % out)
+            command = lines[0].replace(source, f"'{html}'").replace(sink, f"> '{out}'")
             subprocess.run(["bash", "-c", command], check=True)
             with open(out, encoding="utf-8") as f:
                 self.assertEqual(f.read(), "say \"a\" and 'b' <c>\n")
 
-    def test_embedded_notices_should_name_each_author(self):
+    def test_embedded_notices_should_name_each_author(self) -> None:
         path = os.path.join(ROOT, ".config", "notices", "LLVM-EMBEDDED.txt")
         self.assertTrue(os.path.isfile(path), path)
         with open(path, encoding="utf-8") as f:
@@ -522,7 +526,7 @@ class NightlyWorkflowTest(unittest.TestCase):
         for author in EMBEDDED_AUTHORS:
             self.assertIn(author, text)
 
-    def test_prek_should_watch_the_new_files(self):
+    def test_prek_should_watch_the_new_files(self) -> None:
         with open(os.path.join(ROOT, "prek.toml"), encoding="utf-8") as f:
             text = f.read()
         block = text[text.index('id = "python-tests"') :]

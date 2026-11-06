@@ -34,7 +34,7 @@ def fake_sisu(tmp, name, outputs):
 
 
 class DiagDiff(unittest.TestCase):
-    def test_reports_each_program_whose_diagnostics_differ(self):
+    def test_reports_each_program_whose_diagnostics_differ(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             for stem in ["same", "accepted", "rejected", "moved", "crash"]:
                 open(os.path.join(tmp, f"{stem}.sisu"), "w").close()
@@ -69,7 +69,7 @@ class DiagDiff(unittest.TestCase):
             "diag_diff: 5 programs, 1 changed, 1 crash, 1 newly accepted, 1 newly rejected",
         )
 
-    def test_reports_the_programs_of_every_directory_once(self):
+    def test_reports_the_programs_of_every_directory_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             for sub in ["a", "b", "b/c"]:
                 os.makedirs(os.path.join(tmp, sub), exist_ok=True)
@@ -87,7 +87,7 @@ class DiagDiff(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertEqual(out.getvalue(), "diag_diff: 3 programs, no differences\n")
 
-    def test_reports_a_program_that_crashes_both_builds(self):
+    def test_reports_a_program_that_crashes_both_builds(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             open(os.path.join(tmp, "crash.sisu"), "w").close()
             sisu = fake_sisu(tmp, "sisu", {})
@@ -99,7 +99,7 @@ class DiagDiff(unittest.TestCase):
         self.assertTrue(lines[0].startswith("crash: "), lines)
         self.assertEqual(lines[-1], "diag_diff: 1 programs, 1 crash")
 
-    def test_full_should_report_a_program_whose_help_alone_differs(self):
+    def test_full_should_report_a_program_whose_help_alone_differs(self) -> None:
         """GIVEN a program whose diagnostic has the same code and position in both builds
         AND a help that differs
         WHEN diag_diff runs without and with `full`
@@ -126,7 +126,7 @@ class DiagDiff(unittest.TestCase):
         self.assertIn('"help": "use a plain `let`"', lines[2])
         self.assertEqual(lines[-1], "diag_diff: 1 programs, 1 changed")
 
-    def test_full_should_report_each_text_field_that_alone_differs(self):
+    def test_full_should_report_each_text_field_that_alone_differs(self) -> None:
         """GIVEN programs whose diagnostic differs in one field each: the message, the label, a
         secondary label, the message of a fix, an edit of a fix and the safe flag of a fix
         WHEN diag_diff runs from the command line with `--codes`, with no flag and with `--full`
@@ -184,17 +184,17 @@ class DiagDiff(unittest.TestCase):
             }
             self.assertEqual(reported, set(changed))
 
-    def test_jobs_should_bound_the_sisu_processes_that_run_at_once(self):
+    def test_jobs_should_bound_the_sisu_processes_that_run_at_once(self) -> None:
         self.assertLessEqual(max(peak_runs(lambda sisu, tmp: dd.main(sisu, sisu, tmp, jobs=2))), 2)
 
-    def test_main_should_run_at_most_two_sisu_processes_by_default(self):
+    def test_main_should_run_at_most_two_sisu_processes_by_default(self) -> None:
         self.assertLessEqual(max(peak_runs(lambda sisu, tmp: dd.main(sisu, sisu, tmp))), 2)
 
-    def test_command_line_should_bound_the_sisu_processes_by_jobs(self):
+    def test_command_line_should_bound_the_sisu_processes_by_jobs(self) -> None:
         script = os.path.join(os.path.dirname(os.path.abspath(dd.__file__)), "diag_diff.py")
         for flag, limit in [([], 2), (["--jobs=1"], 1)]:
 
-            def run(sisu, tmp, flag=flag):
+            def run(sisu, tmp, flag=flag) -> None:
                 subprocess.run(
                     [sys.executable, script, *flag, sisu, sisu, tmp],
                     check=True,

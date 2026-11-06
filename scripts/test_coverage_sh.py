@@ -27,7 +27,7 @@ STUB_REPORT = "print('Coverage: stub')\n"
 
 
 class CoverageSh(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.repo = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.repo)
         scripts = os.path.join(self.repo, "scripts")
@@ -43,19 +43,19 @@ class CoverageSh(unittest.TestCase):
         os.chmod(cargo, os.stat(cargo).st_mode | stat.S_IXUSR)
         self.env = dict(ENV, PATH=f"{bin_dir}:{ENV['PATH']}")
         self.git = ["git", "-C", self.repo, "-c", "user.name=t", "-c", "user.email=t@t"]
-        subprocess.run(self.git[:3] + ["init", "-q"], check=True, env=ENV)
+        subprocess.run([*self.git[:3], "init", "-q"], check=True, env=ENV)
         self.write_tracked("base\n")
-        subprocess.run(self.git + ["add", "-A"], check=True, env=ENV)
-        subprocess.run(self.git + ["commit", "-q", "-m", "base"], check=True, env=ENV)
+        subprocess.run([*self.git, "add", "-A"], check=True, env=ENV)
+        subprocess.run([*self.git, "commit", "-q", "-m", "base"], check=True, env=ENV)
         self.head = self.rev_parse()
 
-    def write_tracked(self, text):
+    def write_tracked(self, text) -> None:
         with open(os.path.join(self.repo, "a.txt"), "w", encoding="utf-8") as f:
             f.write(text)
 
     def rev_parse(self):
         return subprocess.run(
-            self.git + ["rev-parse", "HEAD"], capture_output=True, text=True, check=True, env=ENV
+            [*self.git, "rev-parse", "HEAD"], capture_output=True, text=True, check=True, env=ENV
         ).stdout.strip()
 
     def measure(self, action=""):
@@ -72,21 +72,21 @@ class CoverageSh(unittest.TestCase):
         self.assertEqual(report, "Coverage: stub")
         return marker
 
-    def test_a_clean_tree_should_give_the_clean_marker(self):
+    def test_a_clean_tree_should_give_the_clean_marker(self) -> None:
         self.assertEqual(self.measure(), f"coverage: measured (HEAD {self.head})")
 
-    def test_a_change_before_the_run_should_give_the_dirty_marker(self):
+    def test_a_change_before_the_run_should_give_the_dirty_marker(self) -> None:
         self.write_tracked("changed\n")
         self.assertEqual(
             self.measure(), f"coverage: measured (HEAD {self.head} with uncommitted changes)"
         )
 
-    def test_a_change_during_the_run_should_give_the_dirty_marker(self):
+    def test_a_change_during_the_run_should_give_the_dirty_marker(self) -> None:
         self.assertEqual(
             self.measure("edit"), f"coverage: measured (HEAD {self.head} with uncommitted changes)"
         )
 
-    def test_a_commit_during_the_run_should_give_the_dirty_marker_with_the_first_head(self):
+    def test_a_commit_during_the_run_should_give_the_dirty_marker_with_the_first_head(self) -> None:
         marker = self.measure("commit")
         self.assertNotEqual(self.rev_parse(), self.head)
         self.assertEqual(marker, f"coverage: measured (HEAD {self.head} with uncommitted changes)")

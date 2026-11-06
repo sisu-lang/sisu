@@ -27,7 +27,7 @@ echo "$FAKE_ISSUES"
 
 
 class FuzzIssue(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.dir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.dir)
         bin_dir = os.path.join(self.dir, "bin")
@@ -66,7 +66,9 @@ class FuzzIssue(unittest.TestCase):
             path, _, body = f.read().partition("\n")
         return path, json.loads(body)
 
-    def test_a_failure_with_no_open_issue_should_open_one_with_the_summary_and_the_run_url(self):
+    def test_a_failure_with_no_open_issue_should_open_one_with_the_summary_and_the_run_url(
+        self,
+    ) -> None:
         path, body = self.run_script([])
         self.assertEqual(path, "repos/o/r/issues")
         self.assertEqual(body["title"], "Nightly fuzz failure: front_end")
@@ -77,7 +79,7 @@ class FuzzIssue(unittest.TestCase):
         with open(os.path.join(self.dir, "list"), encoding="utf-8") as f:
             self.assertIn("labels=fuzz", f.read())
 
-    def test_a_failure_with_an_open_issue_should_comment_on_it(self):
+    def test_a_failure_with_an_open_issue_should_comment_on_it(self) -> None:
         issues = [
             {"number": 5, "title": "Nightly fuzz failure: program"},
             {"number": 7, "title": "Nightly fuzz failure: front_end"},
@@ -86,23 +88,23 @@ class FuzzIssue(unittest.TestCase):
         self.assertEqual(path, "repos/o/r/issues/7/comments")
         self.assertEqual(list(body), ["body"])
 
-    def test_a_pull_request_with_the_title_should_not_count_as_the_open_issue(self):
+    def test_a_pull_request_with_the_title_should_not_count_as_the_open_issue(self) -> None:
         issues = [{"number": 7, "title": "Nightly fuzz failure: front_end", "pull_request": {}}]
         path, _ = self.run_script(issues)
         self.assertEqual(path, "repos/o/r/issues")
 
-    def test_a_summary_with_shell_and_json_characters_should_arrive_unchanged(self):
+    def test_a_summary_with_shell_and_json_characters_should_arrive_unchanged(self) -> None:
         text = "- **crash**: `$(touch pwned)` \"q\" \\ 's' ${HOME}\n"
         _, body = self.run_script([], summary=text.encode())
         self.assertIn(text, body["body"])
         self.assertFalse(os.path.exists(os.path.join(self.dir, "pwned")))
 
-    def test_a_missing_summary_should_still_report_the_run(self):
+    def test_a_missing_summary_should_still_report_the_run(self) -> None:
         _, body = self.run_script([], summary=None)
         self.assertIn("wrote no summary", body["body"])
         self.assertIn("https://example.test/run/1", body["body"])
 
-    def test_a_long_summary_should_be_cut_below_the_api_limit(self):
+    def test_a_long_summary_should_be_cut_below_the_api_limit(self) -> None:
         _, body = self.run_script([], summary=b"x" * 70000)
         self.assertLess(len(body["body"]), 65536)
 

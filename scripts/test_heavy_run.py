@@ -15,7 +15,7 @@ SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "heavy-run.sh"
 ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_") and k != "SISU_HEAVY_LOCK"}
 
 
-def wait_for(condition, what):
+def wait_for(condition, what) -> None:
     deadline = time.monotonic() + 20
     while not condition():
         if time.monotonic() > deadline:
@@ -24,7 +24,7 @@ def wait_for(condition, what):
 
 
 class HeavyRun(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.repo = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.repo)
         subprocess.run(["git", "init", "-q", self.repo], check=True, env=ENV)
@@ -47,7 +47,7 @@ class HeavyRun(unittest.TestCase):
         return run
 
     @staticmethod
-    def stop(run):
+    def stop(run) -> None:
         if run.poll() is None:
             os.killpg(run.pid, signal.SIGKILL)
         run.wait()
@@ -56,7 +56,7 @@ class HeavyRun(unittest.TestCase):
         with open(self.err, encoding="utf-8") as f:
             return f.read()
 
-    def test_a_run_should_wait_for_the_run_that_holds_the_lock_and_name_it(self):
+    def test_a_run_should_wait_for_the_run_that_holds_the_lock_and_name_it(self) -> None:
         with open(self.lock, "w", encoding="utf-8") as held:
             held.write("make test in /elsewhere (pid 1)\n")
             held.flush()
@@ -74,11 +74,11 @@ class HeavyRun(unittest.TestCase):
         self.assertEqual(run.wait(timeout=20), 0)
         self.assertTrue(os.path.exists(self.path("ran")))
 
-    def test_a_run_in_a_linked_worktree_should_wait_for_the_lock_of_the_main_worktree(self):
+    def test_a_run_in_a_linked_worktree_should_wait_for_the_lock_of_the_main_worktree(self) -> None:
         git = ["git", "-C", self.repo, "-c", "user.name=t", "-c", "user.email=t@t"]
-        subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", "base"], check=True, env=ENV)
+        subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "base"], check=True, env=ENV)
         linked = self.path("linked")
-        subprocess.run(git + ["worktree", "add", "-q", "--detach", linked], check=True, env=ENV)
+        subprocess.run([*git, "worktree", "add", "-q", "--detach", linked], check=True, env=ENV)
         with open(self.lock, "w", encoding="utf-8") as held:
             held.write("make test in the main worktree (pid 1)\n")
             held.flush()
@@ -89,7 +89,7 @@ class HeavyRun(unittest.TestCase):
         self.assertEqual(run.wait(timeout=20), 0)
         self.assertTrue(os.path.exists(os.path.join(linked, "ran")))
 
-    def test_a_run_should_hold_the_lock_until_its_command_ends(self):
+    def test_a_run_should_hold_the_lock_until_its_command_ends(self) -> None:
         os.mkfifo(self.path("go"))
         self.start("sh", "-c", "touch ready; read line < go")
         wait_for(lambda: os.path.exists(self.path("ready")), "the command to start")
@@ -98,7 +98,9 @@ class HeavyRun(unittest.TestCase):
             with self.assertRaises(BlockingIOError):
                 fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
-    def test_a_run_with_the_skip_variable_should_run_at_once_while_another_holds_the_lock(self):
+    def test_a_run_with_the_skip_variable_should_run_at_once_while_another_holds_the_lock(
+        self,
+    ) -> None:
         with open(self.lock, "w+", encoding="utf-8") as held:
             held.write("make mutation-test in /elsewhere (pid 1)\n")
             held.flush()
@@ -110,7 +112,7 @@ class HeavyRun(unittest.TestCase):
             held.seek(0)
             self.assertEqual(held.read(), "make mutation-test in /elsewhere (pid 1)\n")
 
-    def test_a_run_with_no_git_directory_should_warn_and_run_with_no_lock(self):
+    def test_a_run_with_no_git_directory_should_warn_and_run_with_no_lock(self) -> None:
         shutil.rmtree(os.path.join(self.repo, ".git"))
         run = self.start("touch", "ran")
         self.assertEqual(run.wait(timeout=20), 0)

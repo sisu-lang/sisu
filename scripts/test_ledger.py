@@ -24,25 +24,25 @@ LEDGER = """# Batch b
 
 
 class Add(unittest.TestCase):
-    def test_event_should_go_at_the_end_of_events(self):
+    def test_event_should_go_at_the_end_of_events(self) -> None:
         out = ledger.add(LEDGER, "event", "merged #1.", NOW)
         self.assertTrue(
             out.endswith("- 2026-11-02 10:00 started.\n- 2026-11-03 14:05 merged #1.\n")
         )
 
-    def test_after_merge_should_go_after_the_last_line_of_its_section(self):
+    def test_after_merge_should_go_after_the_last_line_of_its_section(self) -> None:
         out = ledger.add(LEDGER, "after-merge", "new: repro.", NOW)
         self.assertIn("- old: repro.\n- new: repro.\n\n## Events", out)
 
-    def test_after_merge_should_fill_an_empty_section(self):
+    def test_after_merge_should_fill_an_empty_section(self) -> None:
         out = ledger.add("## After the merge\n\n## Events\n", "after-merge", "x.", NOW)
         self.assertEqual(out, "## After the merge\n- x.\n\n## Events\n")
 
-    def test_a_missing_section_should_be_an_error(self):
+    def test_a_missing_section_should_be_an_error(self) -> None:
         with self.assertRaises(ValueError):
             ledger.add("# Batch b\n", "event", "x.", NOW)
 
-    def test_an_unknown_kind_should_be_an_error(self):
+    def test_an_unknown_kind_should_be_an_error(self) -> None:
         with self.assertRaises(ValueError):
             ledger.add(LEDGER, "note", "x.", NOW)
 

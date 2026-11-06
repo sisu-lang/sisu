@@ -215,7 +215,7 @@ def compare(seeds_path: str, valid_path: str, known_path: str) -> tuple[int, str
     known = read_known(known_path)
     mangled = sorted({row[2] for rows in exports.values() for row in rows})
     names: dict[str, str | None] = {}
-    for original, demangled in zip(mangled, demangle(mangled) if mangled else []):
+    for original, demangled in zip(mangled, demangle(mangled) if mangled else [], strict=False):
         if MANGLED.search(demangled):
             raise Broken(
                 f"the name {original} is still mangled, or is a legacy Rust name, after c++filt"

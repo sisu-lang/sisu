@@ -7,6 +7,7 @@ need Docker; the macOS tests run on macOS. The name does not match `test_*.py`, 
 hook does not run it: the workflow runs it on `ubuntu-24.04` and `macos-15`.
 """
 
+import contextlib
 import os
 import select
 import subprocess
@@ -75,15 +76,13 @@ def docker(image, command):
         )
     finally:
         # A timeout of the removal must not hide the failure that is in flight.
-        try:
+        with contextlib.suppress(subprocess.TimeoutExpired):
             subprocess.run(
                 ["docker", "rm", "-f", name], capture_output=True, check=False, timeout=60
             )
-        except subprocess.TimeoutExpired:
-            pass
 
 
-def write(path, text, mode=0o644):
+def write(path, text, mode=0o644) -> None:
     with open(path, "w", encoding="utf-8") as f:
         f.write(text)
     os.chmod(path, mode)
@@ -99,14 +98,14 @@ class InstallerRealTest(unittest.TestCase):
         return os.path.join(home, ".sisu", "bin", "sisu")
 
     @staticmethod
-    def stop(proc):
+    def stop(proc) -> None:
         proc.kill()
         proc.wait()
         for pipe in (proc.stdin, proc.stdout, proc.stderr):
             if pipe:
                 pipe.close()
 
-    def wait_for_ready(self, proc):
+    def wait_for_ready(self, proc) -> None:
         """Reads the stderr of the process until it holds `ready`, for at most READY_SECONDS."""
         seen = b""
         deadline = time.monotonic() + READY_SECONDS
@@ -120,7 +119,7 @@ class InstallerRealTest(unittest.TestCase):
                     self.fail(f"the program ended before it printed `ready`; stderr: {seen!r}")
                 seen += chunk
 
-    def assert_one_sentence(self, result, words):
+    def assert_one_sentence(self, result, words) -> None:
         """The installer stopped: exit 125 means that Docker did not start the container, and the
         line must start with the prefix of `die` in install.sh, so that no Docker error passes.
         """
@@ -131,21 +130,21 @@ class InstallerRealTest(unittest.TestCase):
         self.assertIn(words, lines[0])
 
     @unittest.skipUnless(LINUX, "Linux only")
-    def test_alpine_should_stop_with_one_sentence(self):
+    def test_alpine_should_stop_with_one_sentence(self) -> None:
         self.assert_one_sentence(docker("alpine:3", "sh /dl/install.sh"), "musl")
 
     @unittest.skipUnless(LINUX, "Linux only")
-    def test_old_glibc_should_stop_with_one_sentence(self):
+    def test_old_glibc_should_stop_with_one_sentence(self) -> None:
         self.assert_one_sentence(docker("ubuntu:20.04", "sh /dl/install.sh"), "glibc 2.31")
 
     @unittest.skipUnless(LINUX, "Linux only")
-    def test_ubuntu_without_a_compiler_should_install_and_name_the_command(self):
+    def test_ubuntu_without_a_compiler_should_install_and_name_the_command(self) -> None:
         result = docker("ubuntu:22.04", 'sh /dl/install.sh && "$HOME/.sisu/bin/sisu" --version')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(HINT, result.stdout)
 
     @unittest.skipUnless(LINUX or MAC, "Linux or macOS only")
-    def test_install_over_a_running_sisu_should_succeed(self):
+    def test_install_over_a_running_sisu_should_succeed(self) -> None:
         home = self.home()
         first = install(home)
         self.assertEqual(first.returncode, 0, first.stderr)
@@ -170,7 +169,7 @@ class InstallerRealTest(unittest.TestCase):
             self.assertTrue(os.path.isfile(os.path.join(home, ".sisu", "bin", name)), name)
 
     @unittest.skipUnless(LINUX or MAC, "Linux or macOS only")
-    def test_build_should_refuse_a_deleted_runtime_archive(self):
+    def test_build_should_refuse_a_deleted_runtime_archive(self) -> None:
         home = self.home()
         self.assertEqual(install(home).returncode, 0)
         os.remove(os.path.join(home, ".sisu", "bin", "libsisu_runtime_mimalloc.a"))
@@ -197,7 +196,7 @@ class InstallerRealTest(unittest.TestCase):
         self.assertIn("libsisu_runtime_mimalloc.a; run the Sisu install line again", result.stderr)
 
     @unittest.skipUnless(MAC, "macOS only")
-    def test_mac_with_a_rosetta_uname_should_get_the_arm64_build(self):
+    def test_mac_with_a_rosetta_uname_should_get_the_arm64_build(self) -> None:
         home = self.home()
         fake = self.home()
         write(
@@ -213,7 +212,7 @@ class InstallerRealTest(unittest.TestCase):
         self.assertEqual(version.returncode, 0, version.stderr)
 
     @unittest.skipUnless(MAC, "macOS only")
-    def test_mac_without_command_line_tools_should_name_the_command(self):
+    def test_mac_without_command_line_tools_should_name_the_command(self) -> None:
         home = self.home()
         fake = self.home()
         write(os.path.join(fake, "xcode-select"), "#!/bin/sh\nexit 2\n", 0o755)

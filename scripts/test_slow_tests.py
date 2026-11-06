@@ -27,7 +27,7 @@ REPORT = """<testsuites>
 
 
 class SlowTests(unittest.TestCase):
-    def test_each_kind_has_its_budget_and_scripts_are_skipped(self):
+    def test_each_kind_has_its_budget_and_scripts_are_skipped(self) -> None:
         self.assertEqual(
             st.over_budget(st.timed(REPORT)),
             [
@@ -36,7 +36,7 @@ class SlowTests(unittest.TestCase):
             ],
         )
 
-    def test_a_test_is_in_the_diff_by_its_function_name_or_case_stem(self):
+    def test_a_test_is_in_the_diff_by_its_function_name_or_case_stem(self) -> None:
         diff = (
             "@@ -9,2 +9,3 @@ fn many_arms() {\n+    let n = 2;\n"
             "+++ b/crates/sisuc/tests/run/fib.out\n"
@@ -49,7 +49,7 @@ class SlowTests(unittest.TestCase):
         ]:
             self.assertEqual(st.in_diff(name, diff), mentioned, name)
 
-    def test_with_diff_only_mentioned_tests_are_listed_and_the_rest_counted(self):
+    def test_with_diff_only_mentioned_tests_are_listed_and_the_rest_counted(self) -> None:
         with git_fixture.repo({"a.rs": "fn slow() {}\n"}) as tmp:
             with open(os.path.join(tmp, "a.rs"), "w", encoding="utf-8") as file:
                 file.write("fn big() {}\nfn slow() {}\n")
@@ -70,7 +70,7 @@ class SlowTests(unittest.TestCase):
         )
         self.assertEqual([line.split()[-1] for line in lines[2:]], ["run::big"])
 
-    def test_an_unusable_report_never_fails_the_run(self):
+    def test_an_unusable_report_never_fails_the_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             for name, text in [
                 ("missing", None),

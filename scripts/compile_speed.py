@@ -17,6 +17,7 @@ over it is killed with its processes, and the script exits with code 1 and names
 """
 
 import argparse
+import contextlib
 import itertools
 import os
 import platform
@@ -58,7 +59,7 @@ class Fail(Exception):
 class Deadline:
     """A total time bound that every command of the run shares."""
 
-    def __init__(self, seconds, clock=time.monotonic):
+    def __init__(self, seconds, clock=time.monotonic) -> None:
         self.clock = clock
         self.end = clock() + seconds
 
@@ -100,7 +101,7 @@ class Deadline:
         return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
 
-def exit_text(code):
+def exit_text(code) -> str | None:
     """Says how a command ended: its exit code, or the signal that stopped it."""
     if code >= 0:
         return f"exited with code {code}"
@@ -110,12 +111,10 @@ def exit_text(code):
         return f"was stopped by signal {-code}"
 
 
-def kill_group(proc):
+def kill_group(proc) -> None:
     """Kills the process group of `proc`, and waits for `proc` and its pipes."""
-    try:
+    with contextlib.suppress(ProcessLookupError):
         os.killpg(proc.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
     proc.communicate()
 
 
@@ -254,7 +253,7 @@ def build(deadline, cmd, what, **kwargs):
     return result
 
 
-def check_no_include(path, text):
+def check_no_include(path, text) -> None:
     """Stops when the C++ unit has an `#include`, `#include_next` or `#import` directive.
 
     A `%:` digraph in place of `#` counts too.
@@ -296,7 +295,7 @@ def read_units(units_dir):
     return units
 
 
-def check_style(units_dir, deadline):
+def check_style(units_dir, deadline) -> None:
     """Runs the check mode of each formatter that is on PATH, and says which ones it skips."""
     for lang, cmd in FORMATTERS.items():
         path = units_dir / f"unit.{EXTENSIONS[lang]}"
@@ -310,7 +309,7 @@ def check_style(units_dir, deadline):
             raise Fail(f"{NAMES[lang]}: {path} is not in the style of {cmd[0]}")
 
 
-def check_sizes(args, units, sizes, deadline):
+def check_sizes(args, units, sizes, deadline) -> None:
     """Builds and runs each input, and compares its output with the output of Sisu."""
     for size in sizes:
         reference = None
@@ -595,7 +594,7 @@ def header_lines(args, deadline, linkers):
 class Measurer:
     """Runs a command several times and keeps the best time."""
 
-    def __init__(self, args, deadline, perf):
+    def __init__(self, args, deadline, perf) -> None:
         self.args, self.deadline, self.perf = args, deadline, perf
         self.serial = itertools.count()
 
@@ -714,7 +713,7 @@ TABLE_HEADERS = (
 )
 
 
-def duration(seconds):
+def duration(seconds) -> str:
     return f"{seconds * 1000:.1f} ms" if seconds < 1 else f"{seconds:.2f} s"
 
 
@@ -750,7 +749,7 @@ def parse_sizes(text):
     return sizes
 
 
-def main(argv):
+def main(argv) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--sisu", default=DEFAULT_SISU, help="the sisu executable")
     parser.add_argument("--units", type=Path, default=Path("bench/compile"))

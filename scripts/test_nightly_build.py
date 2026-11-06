@@ -29,8 +29,7 @@ DIFFER = "the newest green commit has other workflow files than `main`"
 NEWER = "the commit is not newer than the newest nightly build"
 TITLE = "Nightly build failure"
 
-FAKE_GH = (
-    """#!%s
+FAKE_GH = f"""#!{sys.executable}
 import io, json, os, sys, zipfile
 from datetime import datetime, timezone
 from urllib.parse import parse_qs
@@ -81,9 +80,9 @@ if is_release:
     rest = [a for i, a in enumerate(args[3:]) if not a.startswith('--') and args[2 + i] != '--repo']
     if command == 'create':
         state['next_id'] += 1
-        state['releases'].append({'id': state['next_id'], 'tag_name': tag, 'draft': True,
-                                  'published_at': None, 'assets': {},
-                                  'target': args[args.index('--target') + 1]})
+        state['releases'].append({{'id': state['next_id'], 'tag_name': tag, 'draft': True,
+                                  'published_at': None, 'assets': {{}},
+                                  'target': args[args.index('--target') + 1]}})
     elif command == 'upload':
         release = release_of(tag)  # gh also uploads to a published release
         for name in rest:  # gh compares every name before it uploads any
@@ -122,22 +121,22 @@ if '--method' in args and 'DELETE' in args:
     sys.exit(0)  # the reply is empty
 if '--input' in args:
     body = json.load(sys.stdin)
-    state['posted'].append({'path': path, 'body': body})
+    state['posted'].append({{'path': path, 'body': body}})
     if path.endswith('/issues'):
-        state['issues'].append({'number': 100 + len(state['posted']), 'title': body['title'],
+        state['issues'].append({{'number': 100 + len(state['posted']), 'title': body['title'],
                                 'state': 'open', 'pull_request': None,
-                                'labels': [{'name': name} for name in body['labels']]})
+                                'labels': [{{'name': name}} for name in body['labels']]}})
     save()
-    print('{}')
+    print('{{}}')
     sys.exit(0)
 if '/commits?' in path:
-    reply = [{'sha': sha} for sha in state['commits']]
+    reply = [{{'sha': sha}} for sha in state['commits']]
 elif '/actions/workflows/ci.yml/runs?' in path:
-    reply = {'workflow_runs': [{'head_sha': sha} for sha in state['green']]}
+    reply = {{'workflow_runs': [{{'head_sha': sha}} for sha in state['green']]}}
 elif '/actions/runs/' in path and '/artifacts?' in path:
-    listed = [{k: a[k] for k in ('id', 'name', 'created_at')} for a in state['artifacts']]
+    listed = [{{k: a[k] for k in ('id', 'name', 'created_at')}} for a in state['artifacts']]
     pages = [listed[i:i + 100] for i in range(0, len(listed), 100)] or [[]]
-    pages = [{'total_count': len(listed), 'artifacts': page} for page in pages]
+    pages = [{{'total_count': len(listed), 'artifacts': page}} for page in pages]
     if '--paginate' not in args:
         pages = pages[:1]
     if '--slurp' in args:
@@ -169,11 +168,11 @@ elif '/contents/.github?ref=' in path:
     ref = path.split('ref=')[1]
     if ref.endswith('^'):
         ref = state['parents'][ref[:-1]]
-    reply = [{'name': 'ISSUE_TEMPLATE', 'sha': 'other'},
-             {'name': 'workflows', 'sha': state['trees'][ref]}]
+    reply = [{{'name': 'ISSUE_TEMPLATE', 'sha': 'other'}},
+             {{'name': 'workflows', 'sha': state['trees'][ref]}}]
 elif '/commits/' in path:
     sha = path.rsplit('/', 1)[1]
-    reply = {'sha': sha, 'parents': [{'sha': state['parents'][sha]}]}
+    reply = {{'sha': sha, 'parents': [{{'sha': state['parents'][sha]}}]}}
 elif path.endswith('/empty'):
     sys.exit(0)
 else:
@@ -181,8 +180,6 @@ else:
     sys.exit(2)
 print(json.dumps(reply))
 """
-    % sys.executable
-)
 
 
 def is_write_flag(arg):
@@ -224,7 +221,7 @@ def state(
     issues=(),
     fail_after=0,
 ):
-    parents = parents or dict(zip(commits, [*commits[1:], "e" * 40]))
+    parents = parents or dict(zip(commits, [*commits[1:], "e" * 40], strict=False))
     ids = ["main", HEAD, *commits, *parents.values()]
     return {
         "commits": list(commits),
@@ -245,7 +242,7 @@ def state(
 class Script(unittest.TestCase):
     """Runs `nightly_build.py <command>` against the fake `gh`."""
 
-    def setUp(self):
+    def setUp(self) -> None:
         self.dir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.dir)
         bin_dir = os.path.join(self.dir, "bin")
@@ -307,35 +304,35 @@ class Pick(Script):
     def run_pick(self, fake, ref="refs/heads/main", head=HEAD):
         return self.run_script(["pick"], fake, GITHUB_REF=ref, HEAD_SHA=head)
 
-    def assert_answer(self, run, build, publish, sha=None):
+    def assert_answer(self, run, build, publish, sha=None) -> None:
         self.assertEqual(run.code, 0, run.stderr)
         self.assertEqual((run.out.get("build"), run.out.get("publish")), (build, publish), run)
         if sha is not None:
             self.assertEqual(run.out.get("sha"), sha)
 
-    def test_pick_should_take_the_newest_commit_with_a_green_run(self):
+    def test_pick_should_take_the_newest_commit_with_a_green_run(self) -> None:
         run = self.run_pick(state([A, B, C], [A, C], [nightly(C)]))
         self.assert_answer(run, "true", "true", A)
 
-    def test_pick_should_take_the_commit_before_a_red_head(self):
+    def test_pick_should_take_the_commit_before_a_red_head(self) -> None:
         run = self.run_pick(state([A, B, C], [B], [nightly(C)]))
         self.assert_answer(run, "true", "true", B)
 
-    def test_pick_should_not_build_when_the_release_has_the_newest_green_commit(self):
+    def test_pick_should_not_build_when_the_release_has_the_newest_green_commit(self) -> None:
         run = self.run_pick(state([A, B], [B], [nightly(B)]))
         self.assert_answer(run, "false", "false")
         self.assertIn(NO_NEW, run.summary)
 
-    def test_pick_should_not_go_back_after_a_ci_rerun_on_an_old_commit(self):
+    def test_pick_should_not_go_back_after_a_ci_rerun_on_an_old_commit(self) -> None:
         run = self.run_pick(state([A, B, C], [C, B], [nightly(B)]))
         self.assert_answer(run, "false", "false")
         self.assertIn(NO_NEW, run.summary)
 
-    def test_pick_should_build_when_no_nightly_build_exists(self):
+    def test_pick_should_build_when_no_nightly_build_exists(self) -> None:
         run = self.run_pick(state([A], [A]))
         self.assert_answer(run, "true", "true", A)
 
-    def test_pick_should_not_build_when_the_workflow_files_differ(self):
+    def test_pick_should_not_build_when_the_workflow_files_differ(self) -> None:
         # B and its parent C have equal trees: only a compare with `main` sees the difference.
         fake = state(
             [A, B],
@@ -348,12 +345,12 @@ class Pick(Script):
         self.assertIn(DIFFER, run.summary)
         self.assertNotIn(NO_NEW, run.summary)
 
-    def test_pick_should_not_build_when_no_commit_is_green(self):
+    def test_pick_should_not_build_when_no_commit_is_green(self) -> None:
         run = self.run_pick(state([A, B]))
         self.assert_answer(run, "false", "false")
         self.assertIn(NO_NEW, run.summary)
 
-    def test_pick_should_build_the_head_and_not_publish_in_a_dry_run(self):
+    def test_pick_should_build_the_head_and_not_publish_in_a_dry_run(self) -> None:
         for ref in ("refs/pull/1/merge", "refs/heads/x"):
             with self.subTest(ref):
                 run = self.run_pick(state([A, B], [A], [nightly(B)]), ref=ref)
@@ -364,7 +361,7 @@ class Pick(Script):
                 queried = any("commits?sha=main" in call[-1] for call in run.calls)
                 self.assertTrue(queried, run.calls)
 
-    def test_pick_should_fail_on_a_nightly_tag_without_a_short_sha(self):
+    def test_pick_should_fail_on_a_nightly_tag_without_a_short_sha(self) -> None:
         for tag in (
             "nightly-test",
             "nightly-a",
@@ -378,7 +375,7 @@ class Pick(Script):
                 self.assertEqual(run.code, 1, run.stderr)
                 self.assertIn(tag, run.stderr)
 
-    def test_pick_should_ignore_other_releases_and_drafts(self):
+    def test_pick_should_ignore_other_releases_and_drafts(self) -> None:
         tag = "nightly-2026-11-02-" + A[:7]
         draft = release(tag, published_at=None, draft=True)
         newer_draft = release(tag, published_at="2026-11-09T00:00:00Z", draft=True)
@@ -396,12 +393,12 @@ class Pick(Script):
             with self.subTest(name):
                 self.assert_answer(self.run_pick(fake), build, build, sha)
 
-    def test_pick_should_take_the_largest_published_at(self):
+    def test_pick_should_take_the_largest_published_at(self) -> None:
         releases = [nightly(C, "2026-11-01T00:00:00Z"), nightly(B, "2026-11-02T00:00:00Z")]
         run = self.run_pick(state([A, B, C], [B], releases))
         self.assert_answer(run, "false", "false")
 
-    def test_pick_should_read_every_page_of_releases(self):
+    def test_pick_should_read_every_page_of_releases(self) -> None:
         older = [
             release(f"nightly-2026-09-01-{i:07x}", f"2026-09-01T00:00:{i % 60:02d}Z")
             for i in range(100)
@@ -409,15 +406,16 @@ class Pick(Script):
         run = self.run_pick(state([A, B], [B], [*older, nightly(B)]))
         self.assert_answer(run, "false", "false")
 
-    def test_gh_should_return_none_for_an_empty_reply(self):
+    def test_gh_should_return_none_for_an_empty_reply(self) -> None:
         self.run_pick(state([A]))
-        env = dict(
-            PATH=f"{self.bin}:{os.environ['PATH']}", FAKE_STATE=os.path.join(self.dir, "state.json")
-        )
+        env = {
+            "PATH": f"{self.bin}:{os.environ['PATH']}",
+            "FAKE_STATE": os.path.join(self.dir, "state.json"),
+        }
         with mock.patch.dict(os.environ, env):
             self.assertIsNone(nightly_build.gh("repos/o/r/empty"))
 
-    def test_pick_should_send_no_write(self):
+    def test_pick_should_send_no_write(self) -> None:
         for ref in ("refs/heads/main", "refs/heads/x"):
             with self.subTest(ref):
                 run = self.run_pick(state([A, B], [A], [nightly(B)]), ref=ref)
@@ -427,7 +425,7 @@ class Pick(Script):
                     self.assertEqual(call[0], "api")
                     self.assertEqual([arg for arg in call if is_write_flag(arg)], [], call)
 
-    def test_pick_should_fail_when_a_query_fails(self):
+    def test_pick_should_fail_when_a_query_fails(self) -> None:
         for query in ("commits", "runs", "releases", "contents"):
             with self.subTest(query):
                 run = self.run_pick(state([A], [A], fail_on=query))
@@ -498,7 +496,7 @@ class Publish(Script):
         artifacts = all_artifacts() if artifacts is None else artifacts
         return state([A, B], [A], releases, artifacts=artifacts, **extra)
 
-    def assert_stopped(self, run, reason):
+    def assert_stopped(self, run, reason) -> None:
         self.assertEqual(run.code, 0, run.stderr)
         self.assertEqual(run.out.get("published"), "false")
         self.assertIn(reason, run.summary)
@@ -506,7 +504,7 @@ class Publish(Script):
             [c for c in run.calls if "artifacts" in " ".join(c) or c[0] == "release"], []
         )
 
-    def test_publish_should_send_the_calls_in_order(self):
+    def test_publish_should_send_the_calls_in_order(self) -> None:
         for name, releases in (("older nightly build", [nightly(B)]), ("no nightly build", [])):
             with self.subTest(name):
                 before = datetime.now(UTC).strftime("%Y-%m-%d")
@@ -537,7 +535,7 @@ class Publish(Script):
                 self.assertEqual(with_arg(calls, "--prerelease"), [])
                 self.assertEqual(run.out.get("published"), "true")
 
-    def test_publish_should_delete_a_draft_first(self):
+    def test_publish_should_delete_a_draft_first(self) -> None:
         for name, others in (
             ("no other release", []),
             ("100 other releases", [release(f"v0.{i}") for i in range(100)]),
@@ -555,7 +553,7 @@ class Publish(Script):
                 self.assertIn("other", release_tags(run.state, draft=True))
                 self.assertNotIn(draft["tag_name"], release_tags(run.state, draft=True))
 
-    def test_failed_upload_should_not_publish_the_draft(self):
+    def test_failed_upload_should_not_publish_the_draft(self) -> None:
         for name, stored in (("no asset stored", 0), ("two assets stored", 2)):
             with self.subTest(name):
                 fake = self.fake([nightly(B)], fail_on="release upload", fail_after=stored)
@@ -567,14 +565,14 @@ class Publish(Script):
                 [draft] = [r for r in run.state["releases"] if r["draft"]]
                 self.assertEqual(len(draft["assets"]), stored)
 
-    def test_failed_create_should_not_publish(self):
+    def test_failed_create_should_not_publish(self) -> None:
         run = self.run_publish(self.fake([nightly(B)], fail_on="release create"))
         self.assertNotEqual(run.code, 0)
         self.assertEqual(len(sent(run.calls, "release", "create")), 1)
         self.assertEqual(sent(run.calls, "release", "upload"), [])
         self.assertEqual(sent(run.calls, "release", "edit"), [])
 
-    def test_next_publish_should_clear_a_failed_upload(self):
+    def test_next_publish_should_clear_a_failed_upload(self) -> None:
         failed = self.run_publish(self.fake([nightly(B)], fail_on="release upload", fail_after=2))
         self.assertNotEqual(failed.code, 0)
         drafts = [r for r in failed.state["releases"] if r["draft"]]
@@ -591,7 +589,7 @@ class Publish(Script):
         assets = [r["assets"] for r in run.state["releases"] if r["tag_name"] == draft["tag_name"]]
         self.assertEqual(assets, [{f: f"v:{f}" for f in ASSETS}])
 
-    def test_publish_should_upload_the_largest_id_of_each_name(self):
+    def test_publish_should_upload_the_largest_id_of_each_name(self) -> None:
         def pair(old_first, early_new=False):
             old = [
                 artifact(i, n, "old", created_at="2026-11-06T09:00:00Z")
@@ -622,7 +620,7 @@ class Publish(Script):
                 published = [r["assets"] for r in run.state["releases"] if not r["draft"]]
                 self.assertEqual(published, [{f: f"new:{f}" for f in ASSETS}])
 
-    def test_missing_artifact_should_fail_before_the_draft(self):
+    def test_missing_artifact_should_fail_before_the_draft(self) -> None:
         draft = release("nightly-2026-11-02-1234567", None, draft=True)
         run = self.run_publish(self.fake([draft], all_artifacts(skip=["SHA256SUMS"])))
         self.assertNotEqual(run.code, 0)
@@ -630,7 +628,7 @@ class Publish(Script):
         self.assertEqual(with_arg(run.calls, "DELETE"), [])
         self.assertEqual(sent(run.calls, "release"), [])
 
-    def test_publish_should_stop_on_two_artifacts_with_one_file_name(self):
+    def test_publish_should_stop_on_two_artifacts_with_one_file_name(self) -> None:
         def extra(files):
             return {"id": 50, "name": "extra", "created_at": "2026-11-06T01:00:00Z", "files": files}
 
@@ -665,7 +663,7 @@ class Publish(Script):
                 self.assertEqual(with_arg(run.calls, "DELETE"), [])
                 self.assertEqual(sent(run.calls, "release"), [])
 
-    def test_publish_should_stay_in_its_temp_directory(self):
+    def test_publish_should_stay_in_its_temp_directory(self) -> None:
         tmp = os.path.join(self.dir, "tmp")
         os.mkdir(tmp)
         names = ("..", "../../up", "a/b")
@@ -684,26 +682,26 @@ class Publish(Script):
         outside = {"bin", "tmp", "state.json", "state.json.calls", "output", "summary"}
         self.assertLessEqual(set(os.listdir(self.dir)), outside)
 
-    def test_publish_should_stop_when_a_newer_nightly_build_exists(self):
+    def test_publish_should_stop_when_a_newer_nightly_build_exists(self) -> None:
         run = self.run_publish(state([A, B], [A, B], [nightly(A)], artifacts=all_artifacts()), B)
         self.assert_stopped(run, NEWER)
 
-    def test_publish_should_stop_when_the_commit_is_the_newest_nightly_build(self):
+    def test_publish_should_stop_when_the_commit_is_the_newest_nightly_build(self) -> None:
         run = self.run_publish(state([A, B], [A, B], [nightly(B)], artifacts=all_artifacts()), B)
         self.assert_stopped(run, NEWER)
 
-    def test_publish_should_stop_when_the_sha_left_the_listing(self):
+    def test_publish_should_stop_when_the_sha_left_the_listing(self) -> None:
         run = self.run_publish(state([A, B], [A, B], [nightly(B)], artifacts=all_artifacts()), C)
         self.assert_stopped(run, NEWER)
 
-    def test_publish_should_stop_when_the_workflow_files_changed(self):
+    def test_publish_should_stop_when_the_workflow_files_changed(self) -> None:
         trees = {"main": "t1", A: "t2"}
         run = self.run_publish(
             state([A, B], [A], [nightly(B)], trees=trees, artifacts=all_artifacts())
         )
         self.assert_stopped(run, DIFFER)
 
-    def test_publish_and_prune_should_leave_14_after_a_run(self):
+    def test_publish_and_prune_should_leave_14_after_a_run(self) -> None:
         built = [numbered(i) for i in range(15)]
         draft = release("nightly-2026-11-02-1234567", None, draft=True)
         newest = "0" * 6 + "e" + "0" * 33  # the commit of `numbered(14)`
@@ -731,7 +729,7 @@ class Prune(Script):
     def deleted(run):
         return [c[2] for c in sent(run.calls, "release", "delete")]
 
-    def test_prune_should_keep_the_14_newest_and_touch_nothing_else(self):
+    def test_prune_should_keep_the_14_newest_and_touch_nothing_else(self) -> None:
         built = [numbered(i) for i in range(16)]
         draft = release("nightly-2026-12-01-ddddddd", None, draft=True)
         fake = state([A], releases=[*built[::2], release("v1.0.0"), draft, *built[1::2]])
@@ -743,20 +741,20 @@ class Prune(Script):
         self.assertEqual(with_arg(run.calls, "v1.0.0") + with_arg(run.calls, "ddddddd"), [])
         self.assertEqual(len(release_tags(run.state)), 15)
 
-    def test_prune_should_delete_nothing_at_14(self):
+    def test_prune_should_delete_nothing_at_14(self) -> None:
         run = self.run_prune(state([A], releases=[numbered(i) for i in range(14)]))
         self.assertEqual(run.code, 0, run.stderr)
         self.assertTrue(with_arg(run.calls, "releases?"))
         self.assertEqual(self.deleted(run), [])
 
-    def test_prune_should_read_every_page(self):
+    def test_prune_should_read_every_page(self) -> None:
         built = [numbered(i) for i in range(102)]
         run = self.run_prune(state([A], releases=built[::2] + built[1::2]))
         self.assertEqual(run.code, 0, run.stderr)
         self.assertEqual(sorted(self.deleted(run)), sorted(r["tag_name"] for r in built[:88]))
         self.assertEqual(len(release_tags(run.state)), 14)
 
-    def test_prune_should_try_every_delete_and_then_fail(self):
+    def test_prune_should_try_every_delete_and_then_fail(self) -> None:
         run = self.run_prune(
             state([A], releases=[numbered(i) for i in range(16)], fail_on="release delete")
         )
@@ -788,7 +786,7 @@ class Report(Script):
         self.assertEqual(len(run.state["posted"]), 1, run.state["posted"])
         return run.state["posted"][0]
 
-    def test_report_should_open_one_issue(self):
+    def test_report_should_open_one_issue(self) -> None:
         post = self.posted(self.run_report({"pick": "success", "build": "failure"}))
         self.assertEqual(post["path"], "repos/o/r/issues")
         self.assertEqual(post["body"]["title"], TITLE)
@@ -796,52 +794,52 @@ class Report(Script):
         self.assertIn(Report.URL, post["body"]["body"])
         self.assertIn("build: failure", post["body"]["body"])
 
-    def test_report_should_comment_on_an_open_issue(self):
+    def test_report_should_comment_on_an_open_issue(self) -> None:
         issues = [issue(9)]
         post = self.posted(self.run_report({"build": "failure"}, issues))
         self.assertEqual(post["path"], "repos/o/r/issues/9/comments")
         self.assertIn("build: failure", post["body"]["body"])
 
-    def test_report_should_report_a_cancelled_job(self):
+    def test_report_should_report_a_cancelled_job(self) -> None:
         post = self.posted(self.run_report({"clean-machine": "cancelled"}))
         self.assertIn("clean-machine: cancelled", post["body"]["body"])
 
-    def test_report_should_name_the_live_check(self):
+    def test_report_should_name_the_live_check(self) -> None:
         post = self.posted(self.run_report({"live-check": "failure", "publish": "success"}))
         self.assertIn("live-check", post["body"]["body"])
         self.assertNotIn("publish", post["body"]["body"])
 
-    def test_report_should_not_name_a_skipped_job(self):
+    def test_report_should_not_name_a_skipped_job(self) -> None:
         results = {"build": "failure", "checksums": "skipped", "prune": "skipped"}
         body = self.posted(self.run_report(results))["body"]["body"]
         self.assertIn("build: failure", body)
         self.assertNotIn("checksums", body)
         self.assertNotIn("prune", body)
 
-    def test_report_should_ignore_a_pull_request_with_the_title(self):
+    def test_report_should_ignore_a_pull_request_with_the_title(self) -> None:
         issues = [issue(3, pull_request={"url": "x"})]
         self.assertEqual(
             self.posted(self.run_report({"build": "failure"}, issues))["path"], "repos/o/r/issues"
         )
 
-    def test_report_should_read_every_page_of_issues(self):
+    def test_report_should_read_every_page_of_issues(self) -> None:
         issues = [issue(n, "Other") for n in range(100)] + [issue(500)]
         post = self.posted(self.run_report({"build": "failure"}, issues))
         self.assertEqual(post["path"], "repos/o/r/issues/500/comments")
 
-    def test_report_should_not_comment_on_a_closed_issue(self):
+    def test_report_should_not_comment_on_a_closed_issue(self) -> None:
         issues = [issue(6, state="closed")]
         self.assertEqual(
             self.posted(self.run_report({"build": "failure"}, issues))["path"], "repos/o/r/issues"
         )
 
-    def test_report_should_not_comment_on_an_issue_without_the_label(self):
+    def test_report_should_not_comment_on_an_issue_without_the_label(self) -> None:
         issues = [issue(7, labels=())]
         self.assertEqual(
             self.posted(self.run_report({"build": "failure"}, issues))["path"], "repos/o/r/issues"
         )
 
-    def test_report_should_ignore_another_title(self):
+    def test_report_should_ignore_another_title(self) -> None:
         issues = [issue(4, "Other")]
         self.assertEqual(
             self.posted(self.run_report({"build": "failure"}, issues))["path"], "repos/o/r/issues"

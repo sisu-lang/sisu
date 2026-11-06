@@ -38,12 +38,12 @@ OK_T = STRONG % "GLIBC_2.34"
 OK_P = NEEDED % "libc.so.6"
 
 
-def minos_text(cmd, line):
-    return "Load command 9\n      cmd %s\n  cmdsize 32\n%s\n" % (cmd, line)
+def minos_text(cmd, line) -> str:
+    return f"Load command 9\n      cmd {cmd}\n  cmdsize 32\n{line}\n"
 
 
 class Versions(unittest.TestCase):
-    def test_version_should_want_the_picked_commit(self):
+    def test_version_should_want_the_picked_commit(self) -> None:
         text = "sisu 0.1.0\ncommit: %s\nhost: x\nllvm: 23.1.3\n"
         sha = "abc1234def"
         self.assertEqual(nc.version_problems(text % "abc1234", "", sha), [])
@@ -59,25 +59,25 @@ class Versions(unittest.TestCase):
 
 
 class Linux(unittest.TestCase):
-    def test_linux_should_pass_at_the_floor(self):
+    def test_linux_should_pass_at_the_floor(self) -> None:
         t = (STRONG % "GLIBC_2.35") + (STRONG % "GLIBC_2.2.5") + (STRONG % "GLIBCXX_3.4.30")
         self.assertEqual(nc.linux_problems(t, FIXTURE_P), [])
 
-    def test_linux_should_ignore_a_weak_glibc_reference(self):
+    def test_linux_should_ignore_a_weak_glibc_reference(self) -> None:
         self.assertEqual(nc.linux_problems(FIXTURE_T, FIXTURE_P), [])
         self.assertEqual(nc.linux_problems(WEAK % "GLIBC_2.39", FIXTURE_P), [])
 
-    def test_linux_should_fail_above_the_glibc_floor(self):
+    def test_linux_should_fail_above_the_glibc_floor(self) -> None:
         problems = nc.linux_problems(OK_T + STRONG % "GLIBC_2.36", OK_P)
         self.assertTrue(any("2.36" in p for p in problems), problems)
         self.assertTrue(nc.linux_problems(OK_T + STRONG % "GLIBC_2.100", OK_P), "GLIBC_2.100")
 
-    def test_linux_should_fail_above_the_glibcxx_floor(self):
+    def test_linux_should_fail_above_the_glibcxx_floor(self) -> None:
         for version in ("GLIBCXX_3.4.31", "GLIBCXX_3.4.100"):
             with self.subTest(version):
                 self.assertTrue(nc.linux_problems(OK_T + STRONG % version, OK_P))
 
-    def test_linux_should_fail_on_a_library_off_the_list(self):
+    def test_linux_should_fail_on_a_library_off_the_list(self) -> None:
         problems = nc.linux_problems(OK_T, OK_P + NEEDED % "libfoo.so.1")
         self.assertTrue(any("libfoo.so.1" in p for p in problems), problems)
         for name in (
@@ -96,15 +96,15 @@ class Linux(unittest.TestCase):
             with self.subTest(name):
                 self.assertTrue(nc.linux_problems(OK_T, NEEDED % name))
 
-    def test_linux_should_fail_on_output_with_no_glibc_reference(self):
+    def test_linux_should_fail_on_output_with_no_glibc_reference(self) -> None:
         self.assertTrue(nc.linux_problems("", OK_P))
 
-    def test_linux_should_fail_on_output_with_no_needed_line(self):
+    def test_linux_should_fail_on_output_with_no_needed_line(self) -> None:
         self.assertTrue(nc.linux_problems(OK_T, ""))
 
 
 class MacOS(unittest.TestCase):
-    def test_macos_links_should_allow_only_system_paths(self):
+    def test_macos_links_should_allow_only_system_paths(self) -> None:
         head = "target/release/sisu:\n"
         lines = (
             "\t/usr/lib/libz.1.dylib (compatibility version 1.0.0, current version 1.3.1)\n"
@@ -121,11 +121,13 @@ class MacOS(unittest.TestCase):
             with self.subTest(name):
                 self.assertTrue(nc.macos_link_problems(out))
 
-    def test_minos_should_fail_above_the_floor(self):
+    def test_minos_should_fail_above_the_floor(self) -> None:
         build = "LC_BUILD_VERSION"
         for line in (
-            "    platform 1\n       minos 15.0\n         sdk 26.0\n    ntools 1\n"
-            "     tool 3\n  version 1100.0",
+            (
+                "    platform 1\n       minos 15.0\n         sdk 26.0\n    ntools 1\n"
+                "     tool 3\n  version 1100.0"
+            ),
             "       minos 11.0",
             "       minos 9.0",
         ):
@@ -141,21 +143,21 @@ class MacOS(unittest.TestCase):
 
 
 class Tar(unittest.TestCase):
-    def test_tar_should_want_exact_names(self):
+    def test_tar_should_want_exact_names(self) -> None:
         self.assertEqual(nc.tar_problems(NAMES), [])
         for name, names in (
-            ("._ file", NAMES + ["sisu/._sisu"]),
+            ("._ file", [*NAMES, "sisu/._sisu"]),
             ("no LICENSE", [n for n in NAMES if n != "sisu/LICENSE"]),
             ("no directory", [n for n in NAMES if n != "sisu/"]),
-            ("extra", NAMES + ["sisu/extra"]),
-            ("duplicate", NAMES + ["sisu/sisu"]),
+            ("extra", [*NAMES, "sisu/extra"]),
+            ("duplicate", [*NAMES, "sisu/sisu"]),
         ):
             with self.subTest(name):
                 self.assertTrue(nc.tar_problems(names))
 
 
 class PackBase(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.root = tempfile.mkdtemp(prefix="sisu-pack-")
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         self.release = os.path.join(self.root, "release")
@@ -167,7 +169,7 @@ class PackBase(unittest.TestCase):
         os.chmod(os.path.join(self.release, "sisu"), 0o755)
         self.write(self.third, "notices")
 
-    def write(self, path, text):
+    def write(self, path, text) -> None:
         with open(path, "w") as f:
             f.write(text)
 
@@ -181,7 +183,7 @@ class PackBase(unittest.TestCase):
 
 
 class Pack(PackBase):
-    def test_pack_should_write_the_exact_tarball(self):
+    def test_pack_should_write_the_exact_tarball(self) -> None:
         done = self.pack()
         self.assertEqual(done.returncode, 0, done.stderr)
         with tarfile.open(os.path.join(self.out, "sisu-x86_64-linux.tar.gz")) as tar:
@@ -195,35 +197,35 @@ class Pack(PackBase):
             with open(os.path.join(SCRIPTS, "..", "LICENSE"), "rb") as f:
                 self.assertEqual(tar.extractfile("sisu/LICENSE").read(), f.read())
 
-    def test_pack_should_fail_on_a_missing_file(self):
+    def test_pack_should_fail_on_a_missing_file(self) -> None:
         os.remove(os.path.join(self.release, "libsisu_runtime_system.a"))
         done = self.pack()
         self.assertEqual(done.returncode, 1)
         self.assertIn("libsisu_runtime_system.a", done.stderr)
         self.assertEqual([n for n in os.listdir(self.out) if n.endswith(".tar.gz")], [])
 
-    def test_pack_should_fail_on_an_unknown_target(self):
+    def test_pack_should_fail_on_an_unknown_target(self) -> None:
         done = self.pack("riscv-linux")
         self.assertEqual(done.returncode, 1)
         self.assertIn("riscv-linux", done.stderr)
 
 
-def fake_tool(directory, name, body):
+def fake_tool(directory, name, body) -> None:
     path = os.path.join(directory, name)
     with open(path, "w") as f:
-        f.write('#!/bin/sh\necho "%s $*" >> "$LOG"\n%s\n' % (name, body))
+        f.write(f'#!/bin/sh\necho "{name} $*" >> "$LOG"\n{body}\n')
     os.chmod(path, 0o755)
 
 
-def breaks(call):
+def breaks(call) -> str:
     """Shell for a fake: fail with a message when $FAIL names this call."""
-    return 'if [ "$FAIL" = %s ]; then echo "%s broke" >&2; exit 1; fi' % (call, call)
+    return f'if [ "$FAIL" = {call} ]; then echo "{call} broke" >&2; exit 1; fi'
 
 
 class ToolBase(unittest.TestCase):
     """Runs nightly_check.py with fake tools first on PATH. A fake fails when $FAIL names its call."""
 
-    def setUp(self):
+    def setUp(self) -> None:
         self.root = tempfile.mkdtemp(prefix="sisu-tools-")
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         self.bin = os.path.join(self.root, "bin")
@@ -245,19 +247,18 @@ class ToolBase(unittest.TestCase):
 
 
 class MacOSTools(ToolBase):
-    def setUp(self):
+    def setUp(self) -> None:
         super().setUp()
         fake_tool(
             self.bin,
             "otool",
             r"""
 case "$1" in
--L) %s
-    printf 'sisu:\n\t%%s (compatibility version 1.0.0)\n' "${LOAD:-/usr/lib/libz.1.dylib}";;
--l) %s
-    printf '      cmd LC_BUILD_VERSION\n     minos %%s\n' "${MINOS:-15.0}";;
-esac"""
-            % (breaks("otool-L"), breaks("otool-l")),
+-L) {}
+    printf 'sisu:\n\t%s (compatibility version 1.0.0)\n' "${{LOAD:-/usr/lib/libz.1.dylib}}";;
+-l) {}
+    printf '      cmd LC_BUILD_VERSION\n     minos %s\n' "${{MINOS:-15.0}}";;
+esac""".format(breaks("otool-L"), breaks("otool-l")),
         )
         fake_tool(self.bin, "codesign", breaks("codesign"))
         fake_tool(
@@ -265,24 +266,23 @@ esac"""
             "ar",
             r"""
 case "$1" in
--t) %s
-    printf '%%s\n' "__.SYMDEF SORTED" "a.native";;
--x) %s
+-t) {}
+    printf '%s\n' "__.SYMDEF SORTED" "a.native";;
+-x) {}
     : > "$3";;
-esac"""
-            % (breaks("ar-t"), breaks("ar-x")),
+esac""".format(breaks("ar-t"), breaks("ar-x")),
         )
         self.archives = [os.path.join(self.root, n) for n in ("libLLVMSupport.a", "libzstd.a")]
 
     def macos(self, **kwargs):
         return self.check("macos", "sisu", *self.archives, **kwargs)
 
-    def test_macos_should_call_each_tool(self):
+    def test_macos_should_call_each_tool(self) -> None:
         done = self.macos()
         self.assertEqual(done.returncode, 0, done.stderr)
         calls = self.calls()
         for archive in self.archives:
-            for call in ("ar -t " + archive, "ar -x %s a.native" % archive):
+            for call in ("ar -t " + archive, f"ar -x {archive} a.native"):
                 self.assertIn(call, calls)
         self.assertIn("otool -L sisu", calls)
         self.assertIn("codesign -v sisu", calls)
@@ -291,38 +291,37 @@ esac"""
         self.assertEqual(len(read), 2, calls)
         self.assertFalse(any("SYMDEF" in c for c in calls if c.startswith("ar -x")))
 
-    def test_macos_should_fail_when_a_tool_fails(self):
+    def test_macos_should_fail_when_a_tool_fails(self) -> None:
         for fail in ("otool-L", "codesign", "ar-t", "ar-x", "otool-l"):
             with self.subTest(fail):
                 done = self.macos(fail=fail)
                 self.assertEqual(done.returncode, 1)
                 self.assertIn(fail + " broke", done.stderr)
 
-    def test_macos_should_fail_on_a_load_path_off_the_system(self):
+    def test_macos_should_fail_on_a_load_path_off_the_system(self) -> None:
         done = self.macos(LOAD="/opt/homebrew/lib/libzstd.1.dylib")
         self.assertEqual(done.returncode, 1)
         self.assertIn("/opt/homebrew/lib/libzstd.1.dylib", done.stderr)
 
-    def test_macos_should_fail_on_an_object_above_the_floor(self):
+    def test_macos_should_fail_on_an_object_above_the_floor(self) -> None:
         done = self.macos(MINOS="16.0")
         self.assertEqual(done.returncode, 1)
         self.assertIn("a.native", done.stderr)
 
 
 class LinuxAndVersionTools(ToolBase):
-    def setUp(self):
+    def setUp(self) -> None:
         super().setUp()
         fake_tool(
             self.bin,
             "objdump",
             r"""
 case "$1" in
--T) %s
-    printf '%%s' "$OBJDUMP_T";;
--p) %s
-    printf '  NEEDED               %%s\n' "${NEEDED:-libc.so.6}";;
-esac"""
-            % (breaks("objdump-T"), breaks("objdump-p")),
+-T) {}
+    printf '%s' "$OBJDUMP_T";;
+-p) {}
+    printf '  NEEDED               %s\n' "${{NEEDED:-libc.so.6}}";;
+esac""".format(breaks("objdump-T"), breaks("objdump-p")),
         )
         fake_tool(
             self.bin,
@@ -333,7 +332,7 @@ if [ -n "$WARN" ]; then echo "$WARN" >&2; fi
 printf "sisu 0.1.0\\ncommit: abc1234\\n"''',
         )
 
-    def test_linux_should_fail_when_a_tool_fails(self):
+    def test_linux_should_fail_when_a_tool_fails(self) -> None:
         good = self.check("linux", "sisu", OBJDUMP_T=OK_T)
         self.assertEqual(good.returncode, 0, good.stderr)
         for fail in ("objdump-T", "objdump-p"):
@@ -342,31 +341,31 @@ printf "sisu 0.1.0\\ncommit: abc1234\\n"''',
                 self.assertEqual(done.returncode, 1)
                 self.assertIn(fail + " broke", done.stderr)
 
-    def test_linux_should_fail_on_a_library_off_the_list_in_the_tool_output(self):
+    def test_linux_should_fail_on_a_library_off_the_list_in_the_tool_output(self) -> None:
         done = self.check("linux", "sisu", OBJDUMP_T=OK_T, NEEDED="libfoo.so.1")
         self.assertEqual(done.returncode, 1)
         self.assertIn("libfoo.so.1", done.stderr)
 
-    def test_version_should_fail_on_another_commit(self):
+    def test_version_should_fail_on_another_commit(self) -> None:
         sisu = os.path.join(self.bin, "sisu")
         done = self.check("version", sisu, "fff1234")
         self.assertEqual(done.returncode, 1)
         self.assertIn("abc1234", done.stderr)
 
-    def test_version_should_fail_on_a_stderr_line(self):
+    def test_version_should_fail_on_a_stderr_line(self) -> None:
         sisu = os.path.join(self.bin, "sisu")
         done = self.check("version", sisu, "abc1234def", WARN="weak version not found")
         self.assertEqual(done.returncode, 1)
         self.assertIn("weak version not found", done.stderr)
 
-    def test_version_should_fail_when_the_tool_fails(self):
+    def test_version_should_fail_when_the_tool_fails(self) -> None:
         sisu = os.path.join(self.bin, "sisu")
         self.assertEqual(self.check("version", sisu, "abc1234def").returncode, 0)
         done = self.check("version", sisu, "abc1234def", fail="sisu")
         self.assertEqual(done.returncode, 1)
         self.assertIn("sisu broke", done.stderr)
 
-    def test_checks_should_fail_when_a_tool_is_missing(self):
+    def test_checks_should_fail_when_a_tool_is_missing(self) -> None:
         empty = os.path.join(self.root, "empty")
         os.makedirs(empty)
         for args in (("linux", "sisu"), ("version", os.path.join(empty, "no-sisu"), "abc1234")):
@@ -377,7 +376,7 @@ printf "sisu 0.1.0\\ncommit: abc1234\\n"''',
 
 
 class PackTools(PackBase):
-    def setUp(self):
+    def setUp(self) -> None:
         super().setUp()
         self.bin = os.path.join(self.root, "bin")
         self.log = os.path.join(self.root, "log")
@@ -390,10 +389,9 @@ class PackTools(PackBase):
             r'''
 case "$1" in
 -czf) echo "COPYFILE_DISABLE=$COPYFILE_DISABLE" >> "$LOG";;
--tzf) %(real)s "$@"; [ -n "$EXTRA" ] && echo "$EXTRA"; exit 0;;
+-tzf) {real} "$@"; [ -n "$EXTRA" ] && echo "$EXTRA"; exit 0;;
 esac
-exec %(real)s "$@"'''
-            % {"real": shutil.which("tar")},
+exec {real} "$@"'''.format(real=shutil.which("tar")),
         )
 
     def pack_with(self, **extra):
@@ -402,13 +400,13 @@ exec %(real)s "$@"'''
         env.update(PATH=self.bin + os.pathsep + os.environ["PATH"], LOG=self.log, **extra)
         return self.pack(env=env)
 
-    def test_pack_should_disable_copyfile_in_the_create_call(self):
+    def test_pack_should_disable_copyfile_in_the_create_call(self) -> None:
         done = self.pack_with()
         self.assertEqual(done.returncode, 0, done.stderr)
         with open(self.log) as f:
             self.assertIn("COPYFILE_DISABLE=1", f.read())
 
-    def test_pack_should_fail_on_an_extra_name_in_the_listing(self):
+    def test_pack_should_fail_on_an_extra_name_in_the_listing(self) -> None:
         done = self.pack_with(EXTRA="sisu/._sisu")
         self.assertEqual(done.returncode, 1)
         self.assertIn("._sisu", done.stderr)
@@ -416,7 +414,7 @@ exec %(real)s "$@"'''
 
 
 class Smoke(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.root = tempfile.mkdtemp(prefix="sisu-smoke-")
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         self.bin = os.path.join(self.root, "bin")
@@ -425,13 +423,13 @@ class Smoke(unittest.TestCase):
         os.makedirs(self.bin)
         os.makedirs(self.programs)
 
-    def fake(self, body='cat "${4%.sisu}.out"'):
+    def fake(self, body='cat "${4%.sisu}.out"') -> None:
         path = os.path.join(self.bin, "sisu")
         with open(path, "w") as f:
             f.write('#!/bin/sh\necho "$@" >> "$LOG"\n' + body + "\n")
         os.chmod(path, 0o755)
 
-    def program(self, name, out="hello\n"):
+    def program(self, name, out="hello\n") -> None:
         with open(os.path.join(self.programs, name + ".sisu"), "w") as f:
             f.write("fn main() {}\n")
         if out is not None:
@@ -450,7 +448,7 @@ class Smoke(unittest.TestCase):
         with open(self.log) as f:
             return f.read().splitlines()
 
-    def test_smoke_should_pass_when_each_program_prints_its_output(self):
+    def test_smoke_should_pass_when_each_program_prints_its_output(self) -> None:
         self.fake()
         self.program("a")
         self.program("b", "two\nlines\n")
@@ -459,9 +457,9 @@ class Smoke(unittest.TestCase):
         for name in ("a", "b"):
             path = os.path.join(self.programs, name + ".sisu")
             for allocator in ("mimalloc", "system"):
-                self.assertIn("run --allocator %s %s" % (allocator, path), self.calls())
+                self.assertIn(f"run --allocator {allocator} {path}", self.calls())
 
-    def test_smoke_should_run_only_programs_with_an_out_file(self):
+    def test_smoke_should_run_only_programs_with_an_out_file(self) -> None:
         self.fake()
         self.program("with_out")
         self.program("no_out", None)
@@ -470,7 +468,7 @@ class Smoke(unittest.TestCase):
         self.assertTrue(self.calls())
         self.assertFalse(any("no_out" in c for c in self.calls()))
 
-    def test_smoke_should_fail_on_a_wrong_output(self):
+    def test_smoke_should_fail_on_a_wrong_output(self) -> None:
         self.fake('if [ "$3" = system ]; then echo wrong; else cat "${4%.sisu}.out"; fi')
         self.program("prog")
         done = self.smoke()
@@ -478,17 +476,17 @@ class Smoke(unittest.TestCase):
         self.assertIn("prog.sisu", done.stderr)
         self.assertIn("system", done.stderr)
 
-    def test_smoke_should_fail_on_a_stderr_line(self):
+    def test_smoke_should_fail_on_a_stderr_line(self) -> None:
         self.fake('cat "${4%.sisu}.out"; echo warning >&2')
         self.program("prog")
         self.assertEqual(self.smoke().returncode, 1)
 
-    def test_smoke_should_fail_on_a_non_zero_exit(self):
+    def test_smoke_should_fail_on_a_non_zero_exit(self) -> None:
         self.fake('cat "${4%.sisu}.out"; exit 3')
         self.program("prog")
         self.assertEqual(self.smoke().returncode, 1)
 
-    def test_smoke_should_name_a_program_before_it_runs(self):
+    def test_smoke_should_name_a_program_before_it_runs(self) -> None:
         # The fake copies the script's stdout, as it is at its first run, to $SEEN.
         seen = os.path.join(self.root, "seen")
         out = os.path.join(self.root, "out")
@@ -503,7 +501,7 @@ class Smoke(unittest.TestCase):
         self.assertIn("hung.sisu", text)
         self.assertIn("mimalloc", text)
 
-    def test_smoke_should_fail_with_no_programs(self):
+    def test_smoke_should_fail_with_no_programs(self) -> None:
         self.fake()
         self.assertEqual(self.smoke().returncode, 1)
 

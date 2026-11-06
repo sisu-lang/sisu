@@ -36,11 +36,11 @@ def problems(config, tests=TESTS):
         return [line.replace(config_path, "CONFIG") for line in nf.check(config_path, list_path)]
 
 
-def no_match(line, leaf):
+def no_match(line, leaf) -> str:
     return f"CONFIG:{line}: filter leaf `test({leaf})` matches no test; the test was renamed or deleted"
 
 
-def other_kind(line, leaf):
+def other_kind(line, leaf) -> str:
     return (
         f"CONFIG:{line}: filter leaf `test({leaf})` is not a name leaf; "
         "use test(=name) or test(substring)"
@@ -48,7 +48,7 @@ def other_kind(line, leaf):
 
 
 class NextestFilters(unittest.TestCase):
-    def test_a_filter_that_matches_no_test_should_fail(self):
+    def test_a_filter_that_matches_no_test_should_fail(self) -> None:
         config = overrides("test(=check::tests::a_should_x)", "test(=check::tests::gone)")
         self.assertEqual(problems(config), [no_match(6, "=check::tests::gone")])
         scripts = overrides("test(gone_)", table="scripts")
@@ -56,7 +56,7 @@ class NextestFilters(unittest.TestCase):
         ci = overrides("test(gone_)", profile="ci")
         self.assertEqual(problems(ci), [no_match(2, "gone_")])
 
-    def test_a_leaf_of_another_kind_should_fail(self):
+    def test_a_leaf_of_another_kind_should_fail(self) -> None:
         for leaf in [
             "/^check::/",
             "/^(a|b)$/",
@@ -71,7 +71,7 @@ class NextestFilters(unittest.TestCase):
         spaced = overrides("test( /a)b/)")
         self.assertEqual(problems(spaced), [other_kind(2, "/a)b/")])
 
-    def test_each_leaf_should_match_as_nextest_does(self):
+    def test_each_leaf_should_match_as_nextest_does(self) -> None:
         # (row, filter, the leaf that matches no test, if any)
         rows = [
             ("an = leaf equals a whole name", "test(=run::fib.sisu)", None),
@@ -100,13 +100,13 @@ class NextestFilters(unittest.TestCase):
                 expected = [] if missing is None else [no_match(2, missing)]
                 self.assertEqual(problems(overrides(filter_)), expected, row)
 
-    def test_a_leaf_with_whitespace_should_be_checked(self):
+    def test_a_leaf_with_whitespace_should_be_checked(self) -> None:
         spaced = "[[profile.default.overrides]]\nfilter = 'binary(a) & test (missing)'\n"
         self.assertEqual(problems(spaced), [no_match(2, "missing")])
         across = "[[profile.default.overrides]]\nfilter = '''\nbinary(a) &\n  test\n(missing)'''\n"
         self.assertEqual(problems(across), [no_match(4, "missing")])
 
-    def test_a_stale_leaf_should_be_reported_at_each_line_where_a_filter_holds_it(self):
+    def test_a_stale_leaf_should_be_reported_at_each_line_where_a_filter_holds_it(self) -> None:
         gone = "filter = 'test(gone)'\n"
         rows = [  # row, config, the lines that report `gone`
             (
@@ -189,7 +189,7 @@ class NextestFilters(unittest.TestCase):
             with self.subTest(row=row):
                 self.assertEqual(problems(config), [no_match(line, "gone") for line in lines], row)
 
-    def test_a_leaf_should_mean_what_nextest_reads_in_the_parsed_value(self):
+    def test_a_leaf_should_mean_what_nextest_reads_in_the_parsed_value(self) -> None:
         only_a = {"sisuc": {"testcases": {"a": {}}}}
         escaped = '[[profile.default.overrides]]\nfilter = "test(\\u0061)"\n'
         self.assertEqual(problems(escaped, only_a), [], "an escape that spells a name that exists")
@@ -199,7 +199,7 @@ class NextestFilters(unittest.TestCase):
             "an escape that spells a name that does not: line 1",
         )
 
-    def test_an_override_for_a_platform_should_not_be_checked(self):
+    def test_an_override_for_a_platform_should_not_be_checked(self) -> None:
         platform = "[[profile.default.overrides]]\nplatform = 'cfg(target_os = \"macos\")'\nfilter = 'test(gone)'\n"
         table = "[[profile.default.overrides]]\nplatform = { host = 'cfg(unix)' }\nfilter = 'test(gone)'\n"
         for row, config, lines in [
@@ -210,7 +210,7 @@ class NextestFilters(unittest.TestCase):
             with self.subTest(row=row):
                 self.assertEqual(problems(config), [no_match(line, "gone_") for line in lines], row)
 
-    def test_a_bad_leaf_should_fail_the_run_and_print_its_line(self):
+    def test_a_bad_leaf_should_fail_the_run_and_print_its_line(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = os.path.join(tmp, "nextest.toml")
             tests = os.path.join(tmp, "list.json")
@@ -229,7 +229,7 @@ class NextestFilters(unittest.TestCase):
             ),
         )
 
-    def test_a_config_with_nothing_to_check_should_print_nothing_and_pass(self):
+    def test_a_config_with_nothing_to_check_should_print_nothing_and_pass(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = os.path.join(tmp, "nextest.toml")
             tests = os.path.join(tmp, "list.json")

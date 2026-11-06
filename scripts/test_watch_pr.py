@@ -39,7 +39,7 @@ def comment(id, login, body, updated="t1"):
 
 
 class WatchPr(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.dir = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.dir)
         gh = self.dir / "gh"
@@ -74,7 +74,7 @@ class WatchPr(unittest.TestCase):
             [sys.executable, SCRIPT, "7", self.state], env=env, capture_output=True, text=True
         )
 
-    def test_watch_should_print_a_new_comment_once_and_skip_my_own(self):
+    def test_watch_should_print_a_new_comment_once_and_skip_my_own(self) -> None:
         self.table[f"{P}/pulls/7/comments"] = [
             comment(1, "bot", "<b>Fix</b> the line"),
             comment(2, "me", "done"),
@@ -85,25 +85,25 @@ class WatchPr(unittest.TestCase):
         )
         self.assertEqual(self.watch().returncode, 1)
 
-    def test_watch_should_read_every_page(self):
+    def test_watch_should_read_every_page(self) -> None:
         self.table[f"{P}/issues/7/comments"] = [comment(i, "bot", f"c{i}") for i in range(3)]
         self.assertEqual(self.watch().stdout.count("comment 2 bot: c2"), 1)
 
-    def test_watch_should_skip_the_in_progress_note_and_wake_on_its_edit(self):
+    def test_watch_should_skip_the_in_progress_note_and_wake_on_its_edit(self) -> None:
         note = "<!-- This is an auto-generated comment: review in progress by coderabbit.ai -->"
         self.table[f"{P}/issues/7/comments"] = [comment(5, "coderabbitai[bot]", note)]
         self.assertEqual(self.watch().returncode, 1)
         self.table[f"{P}/issues/7/comments"] = [comment(5, "coderabbitai[bot]", "Summary", "t2")]
         self.assertEqual(self.watch().stdout, "comment 5 coderabbitai[bot]: Summary u5\n")
 
-    def test_watch_should_wake_on_an_edited_review(self):
+    def test_watch_should_wake_on_an_edited_review(self) -> None:
         review = {"id": 9, "user": {"login": "bot"}, "state": "COMMENTED", "html_url": "r9"}
         self.table[f"{P}/pulls/7/reviews"] = [dict(review, body="One")]
         self.assertEqual(self.watch().stdout, "review 9 COMMENTED bot: One r9\n")
         self.table[f"{P}/pulls/7/reviews"] = [dict(review, body="Two")]
         self.assertEqual(self.watch().stdout, "review 9 COMMENTED bot: Two r9\n")
 
-    def test_watch_should_wait_for_a_workflow_that_has_not_started(self):
+    def test_watch_should_wait_for_a_workflow_that_has_not_started(self) -> None:
         self.table[f"{P}/commits/abcdef0123/check-runs"] = {
             "check_runs": [
                 {"status": "completed", "conclusion": "skipped", "name": "plan", "html_url": "u"}
@@ -114,7 +114,7 @@ class WatchPr(unittest.TestCase):
         )
         self.assertEqual(self.watch().returncode, 1)
 
-    def test_watch_should_report_a_failed_check_and_then_the_end_of_checks_once(self):
+    def test_watch_should_report_a_failed_check_and_then_the_end_of_checks_once(self) -> None:
         runs = f"{P}/commits/abcdef0123/check-runs"
         self.table[runs] = {
             "check_runs": [

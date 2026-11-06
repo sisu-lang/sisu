@@ -170,7 +170,7 @@ def fake_site(test, pages, repo=None):
     return site
 
 
-def adr_row(num, slug, title, shown=None):
+def adr_row(num, slug, title, shown=None) -> str:
     """A Decisions row linking docs/adr/{num}-{slug}.md and showing the number `shown` (default `num`)."""
     return f'<li><a href="{build.BLOB}docs/adr/{num}-{slug}.md"><span class="num">{shown or num}</span><b>{title}</b><span>x</span></a></li>'
 
@@ -293,12 +293,12 @@ def companion_blocks(markdown):
 
 
 class Build(unittest.TestCase):
-    def assert_fails(self, page, found):
+    def assert_fails(self, page, found) -> None:
         """`found` is exactly one problem, and it names `page`."""
         self.assertEqual(len(found), 1, found)
         self.assertIn(page, found[0])
 
-    def test_text_and_diag_escape_markup(self):
+    def test_text_and_diag_escape_markup(self) -> None:
         path = temp_file(self, "a < b && c > d")
         self.assertEqual(build.expand(f"{{{{text {path}}}}}", {}), "a &lt; b &amp;&amp; c &gt; d")
         shown = build.diag_html(
@@ -307,21 +307,21 @@ class Build(unittest.TestCase):
         self.assertIn("sisu explain &lt;code&gt;", shown)
         self.assertNotIn("<code>", shown)
 
-    def test_diag_html_matches_the_mockup_colouring(self):
+    def test_diag_html_matches_the_mockup_colouring(self) -> None:
         shown = build.diag_html(E0032)
         for span in E0032_SPANS:
             self.assertIn(span, shown)
 
-    def test_diag_html_colours_warnings_help_and_wide_text(self):
+    def test_diag_html_colours_warnings_help_and_wide_text(self) -> None:
         for text, span in COLOURED:
             with self.subTest(text):
                 self.assertIn(span, build.diag_html(text))
 
-    def test_unknown_directive_fails(self):
+    def test_unknown_directive_fails(self) -> None:
         with self.assertRaisesRegex(build.BuildError, "nope"):
             build.expand("{{nope}}", {})
 
-    def test_directive_arguments_are_counted(self):
+    def test_directive_arguments_are_counted(self) -> None:
         for text in ("{{text}}", "{{text a b}}"):
             with (
                 self.subTest(text),
@@ -331,11 +331,11 @@ class Build(unittest.TestCase):
             ):
                 build.expand(text, {})
 
-    def test_substitution_is_not_expanded_again(self):
+    def test_substitution_is_not_expanded_again(self) -> None:
         path = temp_file(self, "{{root}}")
         self.assertEqual(build.expand(f"{{{{text {path}}}}}", {"root": "../"}), "{{root}}")
 
-    def test_head_escapes_title_and_description(self):
+    def test_head_escapes_title_and_description(self) -> None:
         page = build.assemble(
             "",
             title="A <go> & B",
@@ -347,7 +347,7 @@ class Build(unittest.TestCase):
         self.assertIn("<title>A &lt;go&gt; &amp; B", page)
         self.assertIn('content="Say &quot;hi&quot; &amp; &lt;go&gt;"', page)
 
-    def test_assemble_marks_the_page_and_its_depth(self):
+    def test_assemble_marks_the_page_and_its_depth(self) -> None:
         page = build.assemble(
             "", title="t", description="d", page="diagnostics.html", depth=1, context={}
         )
@@ -359,14 +359,14 @@ class Build(unittest.TestCase):
         )
         self.assertIn('href="/sisu/assets/site.css"', missing)
 
-    def test_help_quotes_the_file(self):
+    def test_help_quotes_the_file(self) -> None:
         path = temp_file(self, "  = help: x\nhelp: a `b` <c>\n")
         self.assertEqual(build.expand(f"{{{{help {path}}}}}", {}), "a `b` &lt;c&gt;")
         bare = temp_file(self, "  = help: x\n")
         with self.assertRaisesRegex(build.BuildError, re.escape(str(bare))):
             build.expand(f"{{{{help {bare}}}}}", {})
 
-    def test_links_resolve_from_the_page_directory(self):
+    def test_links_resolve_from_the_page_directory(self) -> None:
         base = {
             "index.html": PAGE.format('<p id="top">top</p>'),
             "assets/site.css": "",
@@ -401,7 +401,7 @@ class Build(unittest.TestCase):
                 else:
                     self.assert_fails("diagnostics/X.html", found)
 
-    def test_diag_html_keeps_the_text(self):
+    def test_diag_html_keeps_the_text(self) -> None:
         errs = sorted((build.SITE / "programs").rglob("*.err"))
         self.assertGreater(len(errs), 100)
         for err in errs:
@@ -409,7 +409,7 @@ class Build(unittest.TestCase):
                 text = err.read_text(encoding="utf-8")
                 self.assertEqual(html.unescape(re.sub(r"<[^>]*>", "", build.diag_html(text))), text)
 
-    def test_stylesheet_urls(self):
+    def test_stylesheet_urls(self) -> None:
         page = {"index.html": PAGE.format("")}
         cases = [
             ("@font-face { src: url(https://fonts.example/f.woff2); }", False),
@@ -442,7 +442,7 @@ class Build(unittest.TestCase):
                 else:
                     self.assert_fails("diagnostics/X.html", found)
 
-    def test_copy_words(self):
+    def test_copy_words(self) -> None:
         cases = [
             ("<p>Milestone 9</p>", False),
             ("<p>Kotlin</p>", False),
@@ -458,7 +458,7 @@ class Build(unittest.TestCase):
                 else:
                     self.assert_fails("tour.html", found)
 
-    def test_headings(self):
+    def test_headings(self) -> None:
         cases = [
             ("<h2>a</h2><h3>b</h3><h2>c</h2>", True),
             ("<h1>again</h1>", False),
@@ -472,7 +472,7 @@ class Build(unittest.TestCase):
                 else:
                     self.assert_fails("tour.html", found)
 
-    def test_build_replaces_only_its_own_output(self):
+    def test_build_replaces_only_its_own_output(self) -> None:
         site = fake_site(self, {"index.html": "Home\n\n<h1>Home</h1>\n"})
         out = site / "_site"
         build.build(out)
@@ -491,24 +491,24 @@ class Build(unittest.TestCase):
         self.assertTrue((site / "src" / "index.html").is_file())
         self.assertTrue((notes / "keep.txt").is_file())
 
-    def test_page_needs_its_title_and_description_lines(self):
+    def test_page_needs_its_title_and_description_lines(self) -> None:
         fake_site(self, {"short.html": "Title\n"})
         with self.assertRaisesRegex(build.BuildError, re.escape("site/src/short.html")):
             build.build(build.SITE / "_site")
 
-    def test_every_page_has_a_description(self):
+    def test_every_page_has_a_description(self) -> None:
         for src in sorted((build.SITE / "src").glob("*.html")):
             description = src.read_text(encoding="utf-8").split("\n", 2)[1]
             with self.subTest(src.name):
                 self.assertTrue(description.strip(), "description is empty")
                 self.assertLess(len(description), 160)
 
-    def test_forbid_tk(self):
+    def test_forbid_tk(self) -> None:
         files = {"contribute.html": PAGE.format("<p>[TK: x]</p>")}
         self.assertEqual(problems(self, files), [])
         self.assert_fails("contribute.html", problems(self, files, forbid_tk=True))
 
-    def test_status_board(self):
+    def test_status_board(self) -> None:
         fake_site(self, {}, {"site/data/status.toml": STATUS, "docs/diagnostics/E0001.md": ""})
         board = build.expand("{{status-board}}", {})
         counts = [
@@ -526,7 +526,7 @@ class Build(unittest.TestCase):
         self.assertIn("<li>Alpha for 1 codes</li>", board)
         self.assertRegex(board, r'<h3>Coming next</h3><ul class="nx"><li>Gamma')
 
-    def test_status_tables(self):
+    def test_status_tables(self) -> None:
         fake_site(self, {}, {"site/data/status.toml": STATUS, "docs/diagnostics/E0001.md": ""})
         tables = build.expand("{{status-tables}}", {})
         self.assertEqual(
@@ -559,12 +559,12 @@ class Build(unittest.TestCase):
             ],
         )
 
-    def test_status_state_must_be_known(self):
+    def test_status_state_must_be_known(self) -> None:
         fake_site(self, {}, {"site/data/status.toml": STATUS.replace('"next"', '"soon"', 1)})
         with self.assertRaisesRegex(build.BuildError, "soon"):
             build.expand("{{status-tables}}", {})
 
-    def test_status_data_must_be_complete(self):
+    def test_status_data_must_be_complete(self) -> None:
         cases = [
             ("area id", 'id = "one"\n', "area 1"),
             ("area name", 'name = "One"\n', "'one'"),
@@ -589,7 +589,7 @@ class Build(unittest.TestCase):
         with self.assertRaisesRegex(build.BuildError, r"status\.toml.*'one'.*feature"):
             build.expand("{{status-board}}", {})
 
-    def test_status_note_paths_are_checked(self):
+    def test_status_note_paths_are_checked(self) -> None:
         page = "Status\n\n<h1>Status</h1>\n{{status-tables}}\n"
         cases = [
             ("docs/roadmap.md#what-works-today", True),
@@ -622,7 +622,7 @@ class Build(unittest.TestCase):
                 else:
                     self.assertTrue(all(path in problem for problem in found) and found, found)
 
-    def test_counts(self):
+    def test_counts(self) -> None:
         # A retired code's page is not counted.
         fake_site(
             self,
@@ -633,7 +633,7 @@ class Build(unittest.TestCase):
         )
         self.assertEqual(build.expand("{{adr-count}} {{diagnostic-count}}", {}), "2 2")
 
-    def test_adr_list(self):
+    def test_adr_list(self) -> None:
         fake_site(
             self,
             {},
@@ -705,7 +705,7 @@ class Build(unittest.TestCase):
                 else:
                     self.assert_fails("decisions.html", found)
 
-    def test_decisions_should_check_adr_rows_without_building(self):
+    def test_decisions_should_check_adr_rows_without_building(self) -> None:
         adrs = {"docs/adr/0001-first.md": "# First\n", "docs/adr/0002-second.md": "# Second\n"}
         listed = adr_row("0001", "first", "First") + adr_row("0002", "second", "Second")
         cases = [
@@ -734,7 +734,7 @@ class Build(unittest.TestCase):
                     )
                 self.assertFalse((build.SITE / "_site").exists())
 
-    def test_adr_needs_a_heading(self):
+    def test_adr_needs_a_heading(self) -> None:
         fake_site(self, {}, {"docs/adr/0001-first.md": "No heading.\n"})
         self.enterContext(
             mock.patch.object(build.check_links, "TRACKED", {"docs/adr/0001-first.md"})
@@ -746,7 +746,7 @@ class Build(unittest.TestCase):
         self.assert_fails("decisions.html", found)
         self.assertIn('no "# " heading', found[0])
 
-    def test_status_board_headings(self):
+    def test_status_board_headings(self) -> None:
         fake_site(self, {}, {"site/data/status.toml": STATUS})
         board = build.expand("{{status-board}}", {})
         self.assertNotRegex(board, r"<summary>(?:(?!</summary>).)*<h\d")
@@ -759,7 +759,7 @@ class Build(unittest.TestCase):
             problems(self, {"index.html": PAGE.replace("<h1>Page</h1>{}", "{}").format(page)}), []
         )
 
-    def test_explanation_links(self):
+    def test_explanation_links(self) -> None:
         adr = "../adr/0019-enums-are-values-named-through-their-enum.md"
         cases = [("#considered-options", True), ("#nope", False)]
         for anchor, ok in cases:
@@ -782,7 +782,7 @@ class Build(unittest.TestCase):
                     self.assert_fails("diagnostics/X0001.html", found)
                     self.assertIn(url, found[0])
 
-    def test_explanation_html_is_text(self):
+    def test_explanation_html_is_text(self) -> None:
         # `sisu explain` prints the Markdown as it is, so a `<` outside code shows, and markup cannot slip past the checks.
         text = '# X0001: t\n\nA value of type Option<T> is <iframe src="https://evil.example/x"></iframe> here.\n\n    indented milestone 9\n\n## Fixed\n'
         shown = build.explanation_html("X0001", text, "")
@@ -796,7 +796,7 @@ class Build(unittest.TestCase):
             "diagnostics/X0001.html", problems(self, {"diagnostics/X0001.html": PAGE.format(shown)})
         )
 
-    def test_categories_complete(self):
+    def test_categories_complete(self) -> None:
         explained = {f"docs/diagnostics/{name}.md": "" for name in ("E0001", "W0002", "README")}
         cases = [
             ("complete", '["E0001"]', '["W0002"]', None),
@@ -815,7 +815,7 @@ class Build(unittest.TestCase):
                     self.assert_fails("categories.toml", found)
                     self.assertIn(code, found[0])
 
-    def test_benchmark_table_shape(self):
+    def test_benchmark_table_shape(self) -> None:
         tables = build.benchmark_tables(bench_md(md_table("fib", FIB)))
         self.assertEqual(
             tables["fib"]["Sisu"],
@@ -861,7 +861,7 @@ class Build(unittest.TestCase):
         other = f"## The programs\n\n{BENCH_HEADER}| Zig | 1 | 1 | 1 | 1 | 1 |\n\n### Extra\n\nNo table.\n"
         self.assertEqual(build.benchmark_tables(bench_md(fib) + other).keys(), {"fib"})
 
-    def test_chart_cells_must_be_drawable(self):
+    def test_chart_cells_must_be_drawable(self) -> None:
         hello = md_table("hello", HELLO, HELLO_BUILDS)
         cases = [
             ("a Wall cell", md_table("fib", FIB | {"Go": "-"}), hello, "fib"),
@@ -895,7 +895,7 @@ class Build(unittest.TestCase):
                 with self.assertRaisesRegex(build.BuildError, rf"docs/benchmarks\.md.*{program}"):
                     build.bench_charts(bench_md(fib, hello))
 
-    def test_chart_widths(self):
+    def test_chart_widths(self) -> None:
         charts = build.bench_charts(
             bench_md(md_table("hello", HELLO, HELLO_BUILDS), md_table("fib", FIB))
         )
@@ -930,7 +930,7 @@ class Build(unittest.TestCase):
             ],
         )
 
-    def test_chart_ties_keep_the_document_order(self):
+    def test_chart_ties_keep_the_document_order(self) -> None:
         walls = {
             "C": "0.14",
             "Sisu": "0.14",
@@ -947,7 +947,7 @@ class Build(unittest.TestCase):
             ["Rust", "C", "Sisu", "Java", "Go", "Python"],
         )
 
-    def test_hello_foot_note(self):
+    def test_hello_foot_note(self) -> None:
         cases = [
             (
                 "one differs",
@@ -979,7 +979,7 @@ class Build(unittest.TestCase):
                 with self.assertRaisesRegex(build.BuildError, r"docs/benchmarks\.md.*hello"):
                     build.bench_charts(bench_md(md_table("hello", walls, HELLO_BUILDS)))
 
-    def test_bench_table(self):
+    def test_bench_table(self) -> None:
         table = build.bench_table(
             bench_md(
                 md_table("fib", FIB),
@@ -1013,7 +1013,7 @@ class Build(unittest.TestCase):
             ],
         )
 
-    def test_results_note(self):
+    def test_results_note(self) -> None:
         md = bench_md(intro="Commit `abc1234`, on\n2026-10-12.\n\nOn a machine.\n\n")
         self.assertEqual(
             build.results_note(md),
@@ -1029,7 +1029,7 @@ class Build(unittest.TestCase):
                 with self.assertRaisesRegex(build.BuildError, r"docs/benchmarks\.md"):
                     build.results_note(text)
 
-    def test_bench_directives_read_the_document(self):
+    def test_bench_directives_read_the_document(self) -> None:
         fake_site(
             self,
             {},
@@ -1045,13 +1045,13 @@ class Build(unittest.TestCase):
             with self.assertRaisesRegex(
                 build.BuildError, r"docs/benchmarks\.md.*missing \['sieve'\]"
             ):
-                build.expand("{{%s}}" % directive, {})
+                build.expand(f"{{{{{directive}}}}}", {})
         (build.ROOT / "scripts/bench.sh").write_text("[[ $# -gt 0 ]] || benchmarks=(hello fib)\n")
         self.assertEqual(build.expand("{{bench-charts}}", {}).count('<figure class="chart">'), 2)
         self.assertIn("<td><code>fib</code></td>", build.expand("{{bench-table}}", {}))
         self.assertIn("Commit abc1234", build.expand("{{bench-results-note}}", {}))
 
-    def test_reference_page_should_have_its_navigation(self):
+    def test_reference_page_should_have_its_navigation(self) -> None:
         entries = build.reference_pages(reference_dir(self, REF_PAGES))
         page = build.reference_page(1, entries)
         side = re.search(r'<nav class="ref-nav".*?</nav>', page, re.DOTALL)[0]
@@ -1096,7 +1096,7 @@ class Build(unittest.TestCase):
         )
         self.assertIn('<a href="../reference/index.html" aria-current="page">', page)
 
-    def test_in_development_tag_should_follow_pending_examples(self):
+    def test_in_development_tag_should_follow_pending_examples(self) -> None:
         working, pending = (
             f"{FENCE}sisu\nfn main() {{}}\n{FENCE}\n",
             f"{FENCE}sisu pending\nfn main() {{ soon() }}\n{FENCE}\n",
@@ -1141,7 +1141,7 @@ class Build(unittest.TestCase):
                 ]
                 self.assertEqual(shown, headings)
 
-    def test_page_list_should_match_the_files(self):
+    def test_page_list_should_match_the_files(self) -> None:
         found = build.reference_list_problems(["README", "gone"], ["README", "extra"])
         self.assertEqual(len(found), 2, found)
         self.assertTrue(any("gone" in p for p in found) and any("extra" in p for p in found), found)
@@ -1151,7 +1151,7 @@ class Build(unittest.TestCase):
                 self, {"README": "# Language reference\n", "extra": "# Extra\n"}, ["README", "gone"]
             )
 
-    def test_milestone_check_should_fail_a_page_that_names_one(self):
+    def test_milestone_check_should_fail_a_page_that_names_one(self) -> None:
         self.assertEqual(check := build.check_site(built_site(self, REF_PAGES)), [], check)
         for prose in ("M8", "M**8**"):
             with self.subTest(prose):
@@ -1165,7 +1165,7 @@ class Build(unittest.TestCase):
                     ["reference/later.html: names a milestone"],
                 )
 
-    def test_milestone_check_should_ignore_attributes_and_code(self):
+    def test_milestone_check_should_ignore_attributes_and_code(self) -> None:
         quiet = '<svg><path d="M10 3a7 7"/></svg><p>Use <code>M8</code>.</p><pre data-lang="sisu">let M8 = 1</pre>'
         self.assertEqual(problems(self, {"tour.html": PAGE.format(quiet)}), [])
         for prose in ("<p>It lands in M8.</p>", "<p>It lands in M<strong>8</strong>.</p>"):
@@ -1175,7 +1175,7 @@ class Build(unittest.TestCase):
             problems(self, {"tour.html": PAGE.format("<ul><li>M</li><li>8</li></ul>")}), []
         )
 
-    def test_heading_ids_should_match_github_slugs(self):
+    def test_heading_ids_should_match_github_slugs(self) -> None:
         markdown = "# T\n\n## The `??` operator\n\n## Examples\n\nSee [the second](#examples-1) and [the top](#t).\n\n## Examples\n\nText.\n"
         body, headings, _ = ref_html(self, markdown)
         self.assertEqual([h[1] for h in headings], ["the--operator", "examples", "examples-1"])
@@ -1186,7 +1186,7 @@ class Build(unittest.TestCase):
         self.assertEqual(build.check_site(out), [])
         self.assertIn('<h1 id="t">T</h1>', (out / "reference/ops.html").read_text(encoding="utf-8"))
 
-    def test_heading_count_mismatch_should_fail_the_build(self):
+    def test_heading_count_mismatch_should_fail_the_build(self) -> None:
         nested = f"# T\n\n````text\n{FENCE}\n````\n\n## Next\n\n{FENCE}text\nx\n{FENCE}\n"
         self.assertEqual([h[:2] for h in ref_html(self, nested)[1]], [(2, "next")])
         # A line with text after its backticks does not close a fence.
@@ -1201,7 +1201,7 @@ class Build(unittest.TestCase):
         with self.assertRaisesRegex(build.BuildError, r"^docs/reference/bad\.md: .*heading"):
             build.reference_pages(entries)
 
-    def test_anchors_should_read_each_line_once(self):
+    def test_anchors_should_read_each_line_once(self) -> None:
         # An unclosed fence, then many lines that look like fences but do not close it.
         text = "# T\n\n" + "`" * 2000 + "\n" + "``` x\n" * 2000
         step = self.enterContext(
@@ -1210,12 +1210,12 @@ class Build(unittest.TestCase):
         self.assertEqual(list(build.check_links.anchors(temp_file(self, text))), ["t"])
         self.assertEqual(step.call_count, len(text.split("\n")))
 
-    def test_markers_should_split_lines_as_the_reference_test_does(self):
+    def test_markers_should_split_lines_as_the_reference_test_does(self) -> None:
         # Rust's str::lines splits only at a newline and drops a carriage return before it.
         self.assertEqual(build.markers('    print("a // error[E0008]\u2028b")\n'), [])
         self.assertEqual(build.markers("    print(1000_) // error[E0008]\r\n"), ["E0008"])
 
-    def test_example_caption_should_read_the_info_string_as_the_test_does(self):
+    def test_example_caption_should_read_the_info_string_as_the_test_does(self) -> None:
         cases = [
             ('sisu args="a b"', "./example a b"),
             ('sisu args="  a  b "', "./example a b"),
@@ -1229,7 +1229,7 @@ class Build(unittest.TestCase):
                     re.findall(r'<figcaption class="cap">(.*?)</figcaption>', body), [caption]
                 )
 
-    def test_build_should_render_each_reference_page_once(self):
+    def test_build_should_render_each_reference_page_once(self) -> None:
         render = self.enterContext(
             mock.patch.object(build, "reference_html", wraps=build.reference_html)
         )
@@ -1238,7 +1238,7 @@ class Build(unittest.TestCase):
             sorted(call.args[1].stem for call in render.call_args_list), sorted(REF_PAGES)
         )
 
-    def test_reference_links_should_become_site_links(self):
+    def test_reference_links_should_become_site_links(self) -> None:
         cases = [
             ("literals.md#escapes", "literals.html#escapes"),
             ("../diagnostics/E0008.md", "../diagnostics/E0008.html"),
@@ -1252,7 +1252,7 @@ class Build(unittest.TestCase):
                 body = ref_html(self, f"# T\n\nSee [it]({href}).\n")[0]
                 self.assertEqual(re.findall(r'<a href="([^"]*)">it</a>', body), [want])
 
-    def test_bold_label_before_a_list_should_mark_a_rules_card(self):
+    def test_bold_label_before_a_list_should_mark_a_rules_card(self) -> None:
         body = ref_html(
             self,
             "# T\n\n**What needs a bound**\n\n"
@@ -1275,7 +1275,7 @@ class Build(unittest.TestCase):
             noted,
         )
 
-    def test_overview_should_have_a_card_for_each_other_page(self):
+    def test_overview_should_have_a_card_for_each_other_page(self) -> None:
         entries = build.reference_pages(reference_dir(self, REF_PAGES))
         page = build.reference_page(0, entries)
         cards = re.search(r'<ul class="cards">.*?</ul>', page, re.DOTALL)[0]
@@ -1293,7 +1293,7 @@ class Pages(unittest.TestCase):
     """The real site, built once."""
 
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
         tmp = tempfile.TemporaryDirectory()
         cls.addClassCleanup(tmp.cleanup)
         cls.out = Path(tmp.name) / "site"
@@ -1302,7 +1302,7 @@ class Pages(unittest.TestCase):
     def page(self, name):
         return (self.out / name).read_text(encoding="utf-8")
 
-    def test_diagnostic_pages(self):
+    def test_diagnostic_pages(self) -> None:
         built = {p.stem for p in (self.out / "diagnostics").glob("*.html")}
         explained = {p.stem for p in (build.ROOT / "docs/diagnostics").glob("*.md")} - {"README"}
         # A retired code's page is left out.
@@ -1327,7 +1327,7 @@ class Pages(unittest.TestCase):
         metas = Metas(self.page("diagnostics/E0130.html")).descriptions
         self.assertEqual(metas, [rule])
 
-    def test_explanation_order(self):
+    def test_explanation_order(self) -> None:
         page = self.page("diagnostics/E0032.html")
         parts = [
             "A value must have the type its position expects",
@@ -1344,7 +1344,7 @@ class Pages(unittest.TestCase):
         self.assertIn('action="../diagnostics.html"', page)
         self.assertNotIn("After the fix", page)
 
-    def test_category_and_severity(self):
+    def test_category_and_severity(self) -> None:
         cases = [("E0072", "Syntax", "Error"), ("W0002", "Variables and change", "Warning")]
         for code, category, severity in cases:
             with self.subTest(code):
@@ -1355,7 +1355,7 @@ class Pages(unittest.TestCase):
                 )
                 self.assertIn(f'<span class="sev">{severity}</span>', page)
 
-    def test_fix_badges(self):
+    def test_fix_badges(self) -> None:
         cases = [("E0130", ["Unsafe fix"]), ("E0001", ["Safe fix"]), ("E0032", [])]
         for code, badges in cases:
             with self.subTest(code):
@@ -1363,14 +1363,14 @@ class Pages(unittest.TestCase):
                 self.assertIn(f'<span class="id">{code}</span>', page)
                 self.assertEqual(re.findall(r'<span class="badge">(.*?)</span>', page), badges)
 
-    def test_search_terms(self):
+    def test_search_terms(self) -> None:
         self.assertIn(
             '<li data-code="E0032" data-words="value of the wrong type"><a href="diagnostics/E0032.html">'
             '<span class="num">E0032</span><b>Value of the wrong type</b></a></li>',
             self.page("diagnostics.html"),
         )
 
-    def test_titles(self):
+    def test_titles(self) -> None:
         index = self.page("diagnostics.html")
         cases = [
             ("E0032", "Value of the wrong type", "Value of the wrong type"),
@@ -1385,7 +1385,7 @@ class Pages(unittest.TestCase):
                 self.assertEqual(title, f"{code}: {plain}")
                 self.assertNotIn("`", title + heading)
 
-    def test_example_panels_should_match_companion_blocks(self):
+    def test_example_panels_should_match_companion_blocks(self) -> None:
         made_up = built_site(self, REF_PAGES)
         real = sorted((build.ROOT / "docs/reference").glob("*.md"))
         self.assertTrue(real)
@@ -1419,7 +1419,7 @@ class Pages(unittest.TestCase):
                 literals,
             )
 
-    def test_literals_page_should_have_its_navigation(self):
+    def test_literals_page_should_have_its_navigation(self) -> None:
         # GIVEN the real docs/reference/literals.md and data/reference.toml
         markdown = (build.ROOT / "docs/reference/literals.md").read_text(encoding="utf-8")
         # WHEN the site is built
@@ -1462,13 +1462,13 @@ class Pages(unittest.TestCase):
 class Metas(HTMLParser):
     """The `content` of each `<meta name="description">` of a page."""
 
-    def __init__(self, text):
+    def __init__(self, text) -> None:
         super().__init__()
         self.descriptions = []
         self.feed(text)
         self.close()
 
-    def handle_starttag(self, tag, attrs):
+    def handle_starttag(self, tag, attrs) -> None:
         if tag == "meta" and dict(attrs).get("name") == "description":
             self.descriptions.append(dict(attrs).get("content"))
 

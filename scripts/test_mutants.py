@@ -109,7 +109,7 @@ def escaped(name):
 
 
 class Mutants(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.repo = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.repo)
         self.scripts = os.path.join(self.repo, "scripts")
@@ -123,22 +123,22 @@ class Mutants(unittest.TestCase):
             f.write(FAKE_CARGO)
         os.chmod(cargo, os.stat(cargo).st_mode | stat.S_IXUSR)
         self.git = ["git", "-C", self.repo, "-c", "user.name=t", "-c", "user.email=t@t"]
-        subprocess.run(self.git[:3] + ["init", "-q"], check=True, env=ENV)
+        subprocess.run([*self.git[:3], "init", "-q"], check=True, env=ENV)
         self.commit("base")
         self.log = os.path.join(self.repo, "mutation.log")
 
-    def commit(self, message):
-        subprocess.run(self.git + ["add", "-A"], check=True, env=ENV)
+    def commit(self, message) -> None:
+        subprocess.run([*self.git, "add", "-A"], check=True, env=ENV)
         subprocess.run(
-            self.git + ["commit", "-q", "--allow-empty", "-m", message], check=True, env=ENV
+            [*self.git, "commit", "-q", "--allow-empty", "-m", message], check=True, env=ENV
         )
 
     def head(self):
         return subprocess.run(
-            self.git + ["rev-parse", "HEAD"], capture_output=True, text=True, check=True, env=ENV
+            [*self.git, "rev-parse", "HEAD"], capture_output=True, text=True, check=True, env=ENV
         ).stdout.strip()
 
-    def write_rust(self, text):
+    def write_rust(self, text) -> None:
         with open(os.path.join(self.repo, "a.rs"), "w", encoding="utf-8") as f:
             f.write(text)
 
@@ -168,11 +168,11 @@ class Mutants(unittest.TestCase):
         with open(self.log, encoding="utf-8") as f:
             return f.read().splitlines()[-1]
 
-    def rust_commit(self):
+    def rust_commit(self) -> None:
         self.write_rust("fn main() {}\n")
         self.commit("rust")
 
-    def test_a_diff_without_rust_should_pass_without_running_cargo(self):
+    def test_a_diff_without_rust_should_pass_without_running_cargo(self) -> None:
         self.commit("docs")
         run = self.mutate()
         self.assertEqual(run.returncode, 0)
@@ -183,7 +183,7 @@ class Mutants(unittest.TestCase):
         )
         self.assertFalse(self.seen("seen"))
 
-    def test_a_second_run_should_fail_and_leave_the_first_runs_log_alone(self):
+    def test_a_second_run_should_fail_and_leave_the_first_runs_log_alone(self) -> None:
         with open(self.log, "w", encoding="utf-8") as f:
             f.write("first run\n")
         os.mkdir(os.path.join(self.repo, "target"))
@@ -203,7 +203,7 @@ class Mutants(unittest.TestCase):
         with open(self.log, encoding="utf-8") as f:
             self.assertEqual(f.read(), "first run\n")
 
-    def test_make_mutation_test_should_take_the_clone_lock_once_and_run(self):
+    def test_make_mutation_test_should_take_the_clone_lock_once_and_run(self) -> None:
         # A recipe that wraps mutants.sh in heavy-run.sh again waits for its own lock forever.
         shutil.copy(os.path.join(os.path.dirname(SCRIPT), "..", "Makefile"), self.repo)
         self.rust_commit()
@@ -219,7 +219,7 @@ class Mutants(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
         self.assertTrue(self.last_line().startswith("mutation-test: PASS"))
 
-    def test_a_run_with_no_missed_mutant_should_pass_and_count_a_timeout_as_caught(self):
+    def test_a_run_with_no_missed_mutant_should_pass_and_count_a_timeout_as_caught(self) -> None:
         self.rust_commit()
         run = self.mutate(caught=3, timeout=1, exit=3)
         self.assertEqual(run.returncode, 0)
@@ -228,7 +228,7 @@ class Mutants(unittest.TestCase):
             f"mutation-test: PASS: 3 caught, 0 unviable, 0 missed, 1 timeouts (HEAD {self.head()})",
         )
 
-    def test_a_timeout_of_the_first_pass_should_be_tested_again_in_the_second_pass(self):
+    def test_a_timeout_of_the_first_pass_should_be_tested_again_in_the_second_pass(self) -> None:
         self.rust_commit()
         run = self.mutate(
             caught=3, timeout=1, exit=3, pass2_caught=1, pass2_timeout=0, pass2_exit=0
@@ -242,7 +242,7 @@ class Mutants(unittest.TestCase):
             f"mutation-test: PASS: 4 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.head()})",
         )
 
-    def test_a_timeout_of_the_second_pass_should_still_count_as_caught(self):
+    def test_a_timeout_of_the_second_pass_should_still_count_as_caught(self) -> None:
         self.rust_commit()
         run = self.mutate(
             caught=3, timeout=2, exit=3, pass2_caught=1, pass2_timeout=1, pass2_exit=3
@@ -254,7 +254,7 @@ class Mutants(unittest.TestCase):
             f"mutation-test: PASS: 4 caught, 0 unviable, 0 missed, 1 timeouts (HEAD {self.head()})",
         )
 
-    def test_a_missed_mutant_should_fail_even_with_a_timeout(self):
+    def test_a_missed_mutant_should_fail_even_with_a_timeout(self) -> None:
         self.rust_commit()
         run = self.mutate(
             caught=1, missed=2, timeout=1, exit=3, missed_names="a\nb", timeout_names="c"
@@ -265,13 +265,13 @@ class Mutants(unittest.TestCase):
             f"mutation-test: FAIL: 1 caught, 0 unviable, 2 missed, 1 timeouts (HEAD {self.head()})",
         )
 
-    def test_a_failed_cargo_run_should_fail_and_name_its_exit_code(self):
+    def test_a_failed_cargo_run_should_fail_and_name_its_exit_code(self) -> None:
         self.rust_commit()
         run = self.mutate(exit=4)
         self.assertEqual(run.returncode, 1)
         self.assertIn("(cargo mutants exit 4, see the output above)", self.last_line())
 
-    def test_uncommitted_rust_should_fail_without_running_cargo(self):
+    def test_uncommitted_rust_should_fail_without_running_cargo(self) -> None:
         self.rust_commit()
         self.write_rust("fn main() { let _x = 1; }\n")
         run = self.mutate(caught=1)
@@ -282,13 +282,13 @@ class Mutants(unittest.TestCase):
         )
         self.assertFalse(self.seen("seen"))
 
-    def test_cargo_should_run_niced_with_two_jobs_of_eight_test_threads_by_default(self):
+    def test_cargo_should_run_niced_with_two_jobs_of_eight_test_threads_by_default(self) -> None:
         self.rust_commit()
         self.mutate(log=False, caught=1)
         with open(os.path.join(self.repo, "seen"), encoding="utf-8") as f:
             self.assertEqual(f.read().strip(), "2 19 8")
 
-    def test_a_run_without_new_output_should_pass_and_leave_the_old_mutants_out_alone(self):
+    def test_a_run_without_new_output_should_pass_and_leave_the_old_mutants_out_alone(self) -> None:
         self.rust_commit()
         self.mutate(missed=5, exit=2)
         run = self.mutate("--iterate", write=0)
@@ -299,7 +299,7 @@ class Mutants(unittest.TestCase):
         self.assertTrue(self.seen("saw_old_out"))
         self.assertTrue(self.seen("mutants.out/missed.txt"))
 
-    def test_a_failed_run_without_new_output_should_fail_and_name_its_exit_code(self):
+    def test_a_failed_run_without_new_output_should_fail_and_name_its_exit_code(self) -> None:
         self.rust_commit()
         run = self.mutate(write=0, exit=2)
         self.assertEqual(run.returncode, 1)
@@ -309,7 +309,9 @@ class Mutants(unittest.TestCase):
             f"see the output above) (HEAD {self.head()})",
         )
 
-    def test_an_argument_that_tests_nothing_should_end_with_not_run_and_keep_the_exit_code(self):
+    def test_an_argument_that_tests_nothing_should_end_with_not_run_and_keep_the_exit_code(
+        self,
+    ) -> None:
         self.rust_commit()
         for arg in ("--list", "--list-files", "--check"):
             with self.subTest(arg):
@@ -318,13 +320,13 @@ class Mutants(unittest.TestCase):
                 self.assertEqual(self.last_line(), f"mutation-test: NOT RUN: {arg} tests no mutant")
                 self.assertEqual(self.mutate(arg, write=0, exit=2).returncode, 2)
 
-    def test_check_should_not_count_its_output_as_a_pass(self):
+    def test_check_should_not_count_its_output_as_a_pass(self) -> None:
         self.rust_commit()
         run = self.mutate("--check", exit=0)
         self.assertEqual(run.returncode, 0)
         self.assertIn("NOT RUN", self.last_line())
 
-    def test_an_argument_that_moves_the_output_should_fail_without_running_cargo(self):
+    def test_an_argument_that_moves_the_output_should_fail_without_running_cargo(self) -> None:
         self.rust_commit()
         for args, env in (
             (("-o", "x"), {}),
@@ -340,14 +342,14 @@ class Mutants(unittest.TestCase):
                 self.assertNotIn("(HEAD", self.last_line())
                 self.assertFalse(self.seen("seen"))
 
-    def test_an_argument_after_double_dash_should_go_to_cargo_test(self):
+    def test_an_argument_after_double_dash_should_go_to_cargo_test(self) -> None:
         self.rust_commit()
         run = self.mutate("--", "-o", "x", caught=1)
         self.assertEqual(run.returncode, 0)
         with open(os.path.join(self.repo, "args"), encoding="utf-8") as f:
             self.assertTrue(f.read().strip().endswith("-- -o x"))
 
-    def test_a_first_pass_should_test_each_mutant_with_the_unit_tests_only(self):
+    def test_a_first_pass_should_test_each_mutant_with_the_unit_tests_only(self) -> None:
         self.rust_commit()
         run = self.mutate(caught=2)
         self.assertEqual(run.returncode, 0)
@@ -359,7 +361,9 @@ class Mutants(unittest.TestCase):
             f"mutation-test: PASS: 2 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.head()})",
         )
 
-    def test_a_mutant_that_only_the_whole_suite_kills_should_be_caught_in_the_second_pass(self):
+    def test_a_mutant_that_only_the_whole_suite_kills_should_be_caught_in_the_second_pass(
+        self,
+    ) -> None:
         self.rust_commit()
         run = self.mutate(
             caught=5, unviable=1, missed=2, exit=2, pass2_caught=2, pass2_missed=0, pass2_exit=0
@@ -375,7 +379,7 @@ class Mutants(unittest.TestCase):
             f"mutation-test: PASS: 7 caught, 1 unviable, 0 missed, 0 timeouts (HEAD {self.head()})",
         )
 
-    def test_a_mutant_that_survives_both_passes_should_fail(self):
+    def test_a_mutant_that_survives_both_passes_should_fail(self) -> None:
         self.rust_commit()
         run = self.mutate(caught=5, missed=2, exit=2, pass2_caught=1, pass2_missed=1)
         self.assertEqual(run.returncode, 1)
@@ -384,7 +388,7 @@ class Mutants(unittest.TestCase):
             f"mutation-test: FAIL: 6 caught, 0 unviable, 1 missed, 0 timeouts (HEAD {self.head()})",
         )
 
-    def test_a_failed_first_pass_should_not_start_the_second(self):
+    def test_a_failed_first_pass_should_not_start_the_second(self) -> None:
         self.rust_commit()
         run = self.mutate(missed=1, exit=4)
         self.assertEqual(run.returncode, 1)
@@ -399,17 +403,17 @@ class Mutants(unittest.TestCase):
         with open(os.path.join(self.repo, "args2"), encoding="utf-8") as f:
             return f.read().split()
 
-    def test_the_second_pass_should_wait_600_seconds_for_each_mutant(self):
+    def test_the_second_pass_should_wait_600_seconds_for_each_mutant(self) -> None:
         args2 = self.pass2_args()
         self.assertEqual(args2[args2.index("--timeout") + 1], "600")
         with open(os.path.join(self.repo, "args"), encoding="utf-8") as f:
             self.assertNotIn("--timeout", f.read())
 
-    def test_mutants_pass2_timeout_should_change_the_wait_of_the_second_pass(self):
+    def test_mutants_pass2_timeout_should_change_the_wait_of_the_second_pass(self) -> None:
         args2 = self.pass2_args(env={"MUTANTS_PASS2_TIMEOUT": "90"})
         self.assertEqual(args2[args2.index("--timeout") + 1], "90")
 
-    def test_a_timeout_given_by_the_caller_should_replace_the_wait_of_the_second_pass(self):
+    def test_a_timeout_given_by_the_caller_should_replace_the_wait_of_the_second_pass(self) -> None:
         for given in (
             ["--timeout", "30"],
             ["--timeout=30"],
@@ -439,7 +443,7 @@ class Mutants(unittest.TestCase):
 
     def test_a_missed_mutant_of_a_lib_only_file_should_be_tested_again_with_the_unit_tests_only(
         self,
-    ):
+    ) -> None:
         run = self.two_groups(
             lib_caught=1, pass2_caught=1, pass2_missed=0, lib_missed=0, pass2_exit=0, lib_exit=0
         )
@@ -457,7 +461,7 @@ class Mutants(unittest.TestCase):
             f"mutation-test: PASS: 2 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.head()})",
         )
 
-    def test_the_second_pass_should_say_which_group_it_runs_and_with_which_tests(self):
+    def test_the_second_pass_should_say_which_group_it_runs_and_with_which_tests(self) -> None:
         self.two_groups(
             lib_caught=1, pass2_caught=1, pass2_missed=0, lib_missed=0, pass2_exit=0, lib_exit=0
         )
@@ -469,7 +473,7 @@ class Mutants(unittest.TestCase):
             "mutation-test: pass 2, whole-suite group: 1 mutants, tests: the whole suite\n", log
         )
 
-    def test_a_second_pass_with_lib_only_mutants_alone_should_not_run_the_whole_suite(self):
+    def test_a_second_pass_with_lib_only_mutants_alone_should_not_run_the_whole_suite(self) -> None:
         self.rust_commit()
         run = self.mutate(
             missed_names=self.LIB, missed=1, exit=2, lib_caught=1, lib_missed=0, lib_exit=0
@@ -479,7 +483,9 @@ class Mutants(unittest.TestCase):
         self.assertFalse(self.seen("args2"))
         self.assertNotIn("whole-suite", self.log_text())
 
-    def test_a_second_pass_with_whole_suite_mutants_alone_should_not_run_the_unit_tests_again(self):
+    def test_a_second_pass_with_whole_suite_mutants_alone_should_not_run_the_unit_tests_again(
+        self,
+    ) -> None:
         self.rust_commit()
         run = self.mutate(
             missed_names=self.SUITE, missed=1, exit=2, pass2_caught=1, pass2_missed=0, pass2_exit=0
@@ -489,7 +495,7 @@ class Mutants(unittest.TestCase):
         self.assertFalse(self.seen("args_lib"))
         self.assertNotIn("lib-only", self.log_text())
 
-    def test_a_timeout_of_the_first_pass_should_go_to_the_group_of_its_file(self):
+    def test_a_timeout_of_the_first_pass_should_go_to_the_group_of_its_file(self) -> None:
         self.rust_commit()
         self.mutate(
             timeout_names=self.LIB, timeout=1, exit=3, lib_caught=1, lib_timeout=0, lib_exit=0
@@ -497,7 +503,7 @@ class Mutants(unittest.TestCase):
         self.assertTrue(self.seen("args_lib"))
         self.assertFalse(self.seen("args2"))
 
-    def test_the_counts_of_three_passes_should_add_up(self):
+    def test_the_counts_of_three_passes_should_add_up(self) -> None:
         run = self.two_groups(
             caught=3,
             unviable=1,
@@ -514,7 +520,7 @@ class Mutants(unittest.TestCase):
             f"mutation-test: FAIL: 4 caught, 1 unviable, 1 missed, 0 timeouts (HEAD {self.head()})",
         )
 
-    def test_a_group_should_not_count_a_mutant_that_was_not_in_its_list(self):
+    def test_a_group_should_not_count_a_mutant_that_was_not_in_its_list(self) -> None:
         # cargo mutants runs every "delete field" mutant of the diff in each group, whatever --re says.
         run = self.two_groups(
             caught=3,
@@ -534,7 +540,7 @@ class Mutants(unittest.TestCase):
 
     def test_a_group_should_ignore_a_missed_mutant_that_was_not_in_its_list_and_the_exit_status_it_gives(
         self,
-    ):
+    ) -> None:
         run = self.two_groups(
             lib_caught=1,
             lib_missed=0,
@@ -550,7 +556,9 @@ class Mutants(unittest.TestCase):
             f"mutation-test: PASS: 2 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.head()})",
         )
 
-    def test_a_missed_mutant_in_the_list_should_still_fail_beside_a_mutant_that_was_not(self):
+    def test_a_missed_mutant_in_the_list_should_still_fail_beside_a_mutant_that_was_not(
+        self,
+    ) -> None:
         run = self.two_groups(
             lib_caught=0,
             lib_missed=1,
@@ -566,7 +574,7 @@ class Mutants(unittest.TestCase):
             f"mutation-test: FAIL: 1 caught, 0 unviable, 1 missed, 0 timeouts (HEAD {self.head()})",
         )
 
-    def test_a_group_that_tests_fewer_mutants_than_it_was_given_should_fail(self):
+    def test_a_group_that_tests_fewer_mutants_than_it_was_given_should_fail(self) -> None:
         run = self.two_groups(
             lib_caught=0, lib_missed=0, lib_exit=0, pass2_caught=1, pass2_missed=0, pass2_exit=0
         )
@@ -577,7 +585,7 @@ class Mutants(unittest.TestCase):
             f"(lib-only group tested 0 of 1 mutants) (HEAD {self.head()})",
         )
 
-    def test_a_group_that_writes_no_result_should_fail_even_when_cargo_exits_zero(self):
+    def test_a_group_that_writes_no_result_should_fail_even_when_cargo_exits_zero(self) -> None:
         run = self.two_groups(group_write=0, pass2_exit=0, lib_exit=0)
         self.assertEqual(run.returncode, 1)
         self.assertIn(
@@ -585,7 +593,7 @@ class Mutants(unittest.TestCase):
             self.last_line(),
         )
 
-    def test_a_missed_mutant_of_the_lib_only_group_should_fail_the_run(self):
+    def test_a_missed_mutant_of_the_lib_only_group_should_fail_the_run(self) -> None:
         run = self.two_groups(
             lib_caught=0, lib_missed=1, lib_exit=2, pass2_caught=1, pass2_missed=0, pass2_exit=0
         )
@@ -595,14 +603,14 @@ class Mutants(unittest.TestCase):
             f"mutation-test: FAIL: 1 caught, 0 unviable, 1 missed, 0 timeouts (HEAD {self.head()})",
         )
 
-    def test_a_failed_group_should_fail_the_run_and_name_its_exit_code(self):
+    def test_a_failed_group_should_fail_the_run_and_name_its_exit_code(self) -> None:
         run = self.two_groups(
             lib_caught=1, lib_missed=0, lib_exit=0, pass2_caught=0, pass2_missed=0, pass2_exit=4
         )
         self.assertEqual(run.returncode, 1)
         self.assertIn("(cargo mutants exit 4, see the output above)", self.last_line())
 
-    def test_the_second_pass_should_drop_the_regex_and_iterate_options_of_the_caller(self):
+    def test_the_second_pass_should_drop_the_regex_and_iterate_options_of_the_caller(self) -> None:
         given = [
             "--re",
             "x",
@@ -653,7 +661,7 @@ class Mutants(unittest.TestCase):
             self.assertIn("--file", words)
             self.assertIn("-j", words)
 
-    def test_a_name_with_regex_characters_should_be_escaped_and_anchored(self):
+    def test_a_name_with_regex_characters_should_be_escaped_and_anchored(self) -> None:
         name = r"crates/sisuc/src/generate/expr.rs:12:5: replace a.b|c[d]{1}(e)+f*g?h^i$j\k with <T>::new()"
         self.rust_commit()
         self.mutate(missed_names=name, missed=1, exit=2, lib_missed=0, lib_exit=0)
@@ -662,7 +670,7 @@ class Mutants(unittest.TestCase):
         self.assertEqual(pattern[0], f"^{escaped(name)}$")
         self.assertTrue(re.fullmatch(pattern[0], name))
 
-    def test_every_pass_should_ask_cargo_to_list_the_caught_mutants(self):
+    def test_every_pass_should_ask_cargo_to_list_the_caught_mutants(self) -> None:
         self.two_groups(lib_missed=0, lib_exit=0, pass2_missed=0, pass2_exit=0)
         for name in ("args", "args2", "args_lib"):
             self.assertIn(" --caught", self.lines(name)[0])
@@ -680,7 +688,7 @@ class Mutants(unittest.TestCase):
             re.search(r"^LIB_ONLY=\(\n(.*?)\n\)", text, re.MULTILINE | re.DOTALL).group(1).split()
         )
 
-    def test_the_lib_only_list_should_be_the_fuzz_layer_of_the_architecture_test(self):
+    def test_the_lib_only_list_should_be_the_fuzz_layer_of_the_architecture_test(self) -> None:
         # The architecture test fails when a module of an earlier layer uses a module of the last
         # layer outside test code, so only the unit tests and the `pub use` interface reach it.
         root = os.path.join(os.path.dirname(SCRIPT), "..", "crates", "sisuc")
@@ -697,7 +705,7 @@ class Mutants(unittest.TestCase):
             )
         self.assertEqual(sorted(paths), sorted(self.lib_only_list()))
 
-    def test_no_integration_test_and_no_binary_should_reach_the_lib_only_files(self):
+    def test_no_integration_test_and_no_binary_should_reach_the_lib_only_files(self) -> None:
         # lib.rs builds generate and fuzz_program only for tests and the `fuzz` feature, and no
         # package turns that feature on in the workspace. Its `pub use` of the two fuzz entry
         # points is the one way out; only the fuzz crate, which is not in the workspace, calls them.
@@ -726,13 +734,13 @@ class Mutants(unittest.TestCase):
                 text = f.read()
             self.assertNotRegex(text, r"sisuc[^\n]*features[^\n]*fuzz", manifest)
 
-    def test_cargo_should_get_output_dot_to_beat_the_environment_and_a_config_file(self):
+    def test_cargo_should_get_output_dot_to_beat_the_environment_and_a_config_file(self) -> None:
         self.rust_commit()
         self.mutate(log=False, env={"CARGO_MUTANTS_OUTPUT": "x"}, caught=1)
         with open(os.path.join(self.repo, "args"), encoding="utf-8") as f:
             self.assertIn(" --output .", f.read())
 
-    def test_a_diff_with_more_mutants_than_the_limit_should_fail_before_a_pass(self):
+    def test_a_diff_with_more_mutants_than_the_limit_should_fail_before_a_pass(self) -> None:
         self.rust_commit()
         run = self.mutate(list=301, caught=1)
         self.assertEqual(run.returncode, 1)
@@ -743,12 +751,12 @@ class Mutants(unittest.TestCase):
         )
         self.assertFalse(self.seen("seen"))
 
-    def test_a_diff_at_the_limit_should_run(self):
+    def test_a_diff_at_the_limit_should_run(self) -> None:
         self.rust_commit()
         self.assertEqual(self.mutate(list=300, caught=1).returncode, 0)
         self.assertTrue(self.seen("args"))
 
-    def test_mutants_max_should_raise_the_limit(self):
+    def test_mutants_max_should_raise_the_limit(self) -> None:
         self.rust_commit()
         run = self.mutate(env={"MUTANTS_MAX": "301"}, list=301, caught=1)
         self.assertEqual(run.returncode, 0)

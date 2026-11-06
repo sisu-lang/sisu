@@ -21,18 +21,18 @@ ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 class Repo(unittest.TestCase):
     """A repository of three commits, base, mid and head, and a side commit off base."""
 
-    def setUp(self):
+    def setUp(self) -> None:
         self.repo = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.repo)
         self.git = ["git", "-C", self.repo, "-c", "user.name=t", "-c", "user.email=t@t"]
-        subprocess.run(self.git[:3] + ["init", "-q"], check=True, env=ENV)
+        subprocess.run([*self.git[:3], "init", "-q"], check=True, env=ENV)
         for message in ("base", "mid", "head"):
             subprocess.run(
-                self.git + ["commit", "-q", "--allow-empty", "-m", message], check=True, env=ENV
+                [*self.git, "commit", "-q", "--allow-empty", "-m", message], check=True, env=ENV
             )
         self.head, self.mid, self.base = (self.sha(r) for r in ("HEAD", "HEAD~1", "HEAD~2"))
         self.side = subprocess.run(
-            self.git + ["commit-tree", "HEAD~2^{tree}", "-p", self.base, "-m", "side"],
+            [*self.git, "commit-tree", "HEAD~2^{tree}", "-p", self.base, "-m", "side"],
             capture_output=True,
             text=True,
             check=True,
@@ -41,13 +41,13 @@ class Repo(unittest.TestCase):
 
     def sha(self, ref):
         return subprocess.run(
-            self.git[:3] + ["rev-parse", ref], capture_output=True, text=True, check=True, env=ENV
+            [*self.git[:3], "rev-parse", ref], capture_output=True, text=True, check=True, env=ENV
         ).stdout.strip()
 
     def rebase(self, text):
         """A side commit off base that writes `f`, and its copy on HEAD, as a rebase leaves it."""
         tree = subprocess.run(
-            self.git[:3] + ["mktree"],
+            [*self.git[:3], "mktree"],
             input=f"100644 blob {self.blob(text)}\tf\n",
             capture_output=True,
             text=True,
@@ -55,18 +55,18 @@ class Repo(unittest.TestCase):
             env=ENV,
         ).stdout.strip()
         side = subprocess.run(
-            self.git + ["commit-tree", tree, "-p", self.base, "-m", "side"],
+            [*self.git, "commit-tree", tree, "-p", self.base, "-m", "side"],
             capture_output=True,
             text=True,
             check=True,
             env=ENV,
         ).stdout.strip()
-        subprocess.run(self.git + ["cherry-pick", side], capture_output=True, check=True, env=ENV)
+        subprocess.run([*self.git, "cherry-pick", side], capture_output=True, check=True, env=ENV)
         return side
 
     def blob(self, text):
         return subprocess.run(
-            self.git[:3] + ["hash-object", "-w", "--stdin"],
+            [*self.git[:3], "hash-object", "-w", "--stdin"],
             input=text,
             capture_output=True,
             text=True,
@@ -84,58 +84,58 @@ class LogMismatch(Repo):
         with mock.patch.dict(os.environ, ENV, clear=True):
             return diff_brief.log_mismatch(log, self.repo, self.base, "HEAD")
 
-    def summary(self, sha):
+    def summary(self, sha) -> str:
         return f"mutation-test: PASS: 2 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {sha})\n"
 
-    def test_a_summary_on_the_head_should_pass(self):
+    def test_a_summary_on_the_head_should_pass(self) -> None:
         self.assertIsNone(
             self.mismatch(
                 f"mutants\nmutation-test: FAIL: 0 caught, 0 unviable, 2 missed, 0 timeouts (HEAD {self.head})\n"
             )
         )
 
-    def test_a_summary_on_an_earlier_commit_of_the_range_should_pass(self):
+    def test_a_summary_on_an_earlier_commit_of_the_range_should_pass(self) -> None:
         self.assertIsNone(self.mismatch(self.summary(self.mid)))
 
-    def test_a_summary_before_a_merge_of_main_should_pass(self):
+    def test_a_summary_before_a_merge_of_main_should_pass(self) -> None:
         main = subprocess.run(
-            self.git + ["commit-tree", "HEAD~2^{tree}", "-p", self.base, "-m", "main"],
+            [*self.git, "commit-tree", "HEAD~2^{tree}", "-p", self.base, "-m", "main"],
             capture_output=True,
             text=True,
             check=True,
             env=ENV,
         ).stdout.strip()
-        subprocess.run(self.git + ["merge", "-q", "--no-edit", main], check=True, env=ENV)
+        subprocess.run([*self.git, "merge", "-q", "--no-edit", main], check=True, env=ENV)
         self.base = main
         self.assertIsNone(self.mismatch(self.summary(self.mid)))
 
-    def test_a_summary_on_the_base_should_fail(self):
+    def test_a_summary_on_the_base_should_fail(self) -> None:
         self.assertIn(
             f"measured {self.base[:8]}, which is not in", self.mismatch(self.summary(self.base))
         )
 
-    def test_a_summary_off_the_range_should_fail(self):
+    def test_a_summary_off_the_range_should_fail(self) -> None:
         self.assertIn(
             f"measured {self.side[:8]}, which is not in", self.mismatch(self.summary(self.side))
         )
 
-    def test_a_summary_on_uncommitted_changes_should_fail(self):
+    def test_a_summary_on_uncommitted_changes_should_fail(self) -> None:
         why = self.mismatch(
             f"mutation-test: PASS: 2 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.head} with uncommitted changes)\n"
         )
         self.assertIn("no summary line", why)
 
-    def test_a_log_without_a_summary_should_fail(self):
+    def test_a_log_without_a_summary_should_fail(self) -> None:
         self.assertIn("no summary line", self.mismatch("coverage\nmutants still running\n"))
 
-    def test_a_summary_on_a_commit_that_a_rebase_copied_into_the_range_should_pass(self):
+    def test_a_summary_on_a_commit_that_a_rebase_copied_into_the_range_should_pass(self) -> None:
         self.assertIsNone(self.mismatch(self.summary(self.rebase("x\n"))))
 
-    def test_a_summary_on_a_commit_whose_patch_differs_from_the_range_should_fail(self):
+    def test_a_summary_on_a_commit_whose_patch_differs_from_the_range_should_fail(self) -> None:
         side = self.rebase("x\n")
         (Path(self.repo) / "f").write_text("y\n")
         subprocess.run(
-            self.git + ["commit", "-q", "--amend", "-a", "-m", "changed"], check=True, env=ENV
+            [*self.git, "commit", "-q", "--amend", "-a", "-m", "changed"], check=True, env=ENV
         )
         self.assertIn(f"measured {side[:8]}, which is not in", self.mismatch(self.summary(side)))
 
@@ -149,20 +149,20 @@ class CoverageMismatch(Repo):
         with mock.patch.dict(os.environ, ENV, clear=True):
             return diff_brief.coverage_mismatch(path, self.repo, "HEAD")
 
-    def test_coverage_on_the_head_should_pass(self):
+    def test_coverage_on_the_head_should_pass(self) -> None:
         self.assertIsNone(self.mismatch(f"coverage: measured (HEAD {self.head})\nCoverage: 90%\n"))
 
-    def test_coverage_on_an_earlier_commit_of_the_range_should_fail(self):
+    def test_coverage_on_an_earlier_commit_of_the_range_should_fail(self) -> None:
         why = self.mismatch(f"coverage: measured (HEAD {self.mid})\nCoverage: 90%\n")
         self.assertIn(f"measured {self.mid[:8]}, not the head {self.head[:8]}", why)
 
-    def test_coverage_on_uncommitted_changes_should_fail(self):
+    def test_coverage_on_uncommitted_changes_should_fail(self) -> None:
         why = self.mismatch(
             f"coverage: measured (HEAD {self.head} with uncommitted changes)\nCoverage: 90%\n"
         )
         self.assertIn("measured uncommitted changes", why)
 
-    def test_coverage_without_a_coverage_line_should_fail(self):
+    def test_coverage_without_a_coverage_line_should_fail(self) -> None:
         self.assertIn("no coverage line", self.mismatch("Coverage: 90%\n"))
 
 
@@ -184,13 +184,13 @@ class Brief(Repo):
             diff_brief.main()
         return out.read_text()
 
-    def test_a_diff_brief_should_name_its_range_by_full_shas(self):
+    def test_a_diff_brief_should_name_its_range_by_full_shas(self) -> None:
         text = self.brief("HEAD~2..HEAD")
         self.assertIn(f"Target: {self.base}..{self.head}.", text)
         self.assertNotIn("# Check, for a plan", text)
         self.assertNotIn("# Re-review", text)
 
-    def test_a_mutation_log_on_an_earlier_commit_should_list_the_later_commits(self):
+    def test_a_mutation_log_on_an_earlier_commit_should_list_the_later_commits(self) -> None:
         log = Path(self.repo) / "mutation.log"
         log.write_text(
             f"mutation-test: PASS: 1 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.mid})\n"
@@ -200,7 +200,7 @@ class Brief(Repo):
             f"measured at {self.mid[:8]}. Commits after it, not mutated: {self.head[:8]}", text
         )
 
-    def test_a_mutation_log_before_a_rebase_should_name_the_rebased_commit(self):
+    def test_a_mutation_log_before_a_rebase_should_name_the_rebased_commit(self) -> None:
         side = self.rebase("x\n")
         twin = self.sha("HEAD")
         log = Path(self.repo) / "mutation.log"
@@ -210,7 +210,7 @@ class Brief(Repo):
         text = self.brief("HEAD~3..HEAD", "--mutation-log", str(log))
         self.assertIn(f"measured at {side[:8]}, which a rebase made {twin[:8]}\n", text)
 
-    def test_each_of_two_mutation_logs_should_get_a_focus_line_with_its_own_note(self):
+    def test_each_of_two_mutation_logs_should_get_a_focus_line_with_its_own_note(self) -> None:
         first, second = Path(self.repo) / "mutation-1.log", Path(self.repo) / "mutation-2.log"
         first.write_text(
             f"mutation-test: PASS: 1 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.mid})\n"
@@ -228,7 +228,7 @@ class Brief(Repo):
         )
         self.assertIn(f"Mutation-test log: {second}\n", text)
 
-    def test_a_second_mutation_log_that_names_a_commit_outside_the_range_should_fail(self):
+    def test_a_second_mutation_log_that_names_a_commit_outside_the_range_should_fail(self) -> None:
         good, bad = Path(self.repo) / "good.log", Path(self.repo) / "bad.log"
         good.write_text(
             f"mutation-test: PASS: 1 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.head})\n"
@@ -240,7 +240,7 @@ class Brief(Repo):
             self.brief("HEAD~2..HEAD", "--mutation-log", str(good), "--mutation-log", str(bad))
         self.assertIn(str(bad), str(stop.exception))
 
-    def test_a_missing_second_mutation_log_should_fail_before_writing(self):
+    def test_a_missing_second_mutation_log_should_fail_before_writing(self) -> None:
         good = Path(self.repo) / "good.log"
         good.write_text(
             f"mutation-test: PASS: 1 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.head})\n"
@@ -251,19 +251,19 @@ class Brief(Repo):
             )
         self.assertEqual(list(self.run_dir.iterdir()), [])
 
-    def test_a_coverage_result_should_be_named_in_focus(self):
+    def test_a_coverage_result_should_be_named_in_focus(self) -> None:
         coverage = Path(self.repo) / "coverage.txt"
         coverage.write_text(f"coverage: measured (HEAD {self.head})\nuncovered: none\n")
         self.assertIn(
             f"Coverage result: {coverage}", self.brief("HEAD~2..HEAD", "--coverage", str(coverage))
         )
 
-    def test_a_missing_plan_should_fail_before_writing(self):
+    def test_a_missing_plan_should_fail_before_writing(self) -> None:
         with self.assertRaises(SystemExit):
             self.brief(str(Path(self.repo) / "no-plan.md"), "--kind", "plan")
         self.assertEqual(list(self.run_dir.iterdir()), [])
 
-    def test_a_second_plan_round_should_name_the_previous_version(self):
+    def test_a_second_plan_round_should_name_the_previous_version(self) -> None:
         plan, prior = Path(self.repo) / "plan.md", Path(self.repo) / "sol.md"
         plan.write_text("# Plan v1\n")
         prior.write_text("Verdict: changes needed\n")
@@ -288,7 +288,9 @@ class Brief(Repo):
         self.assertIn(f"The first brief, {run_dir / 'brief.md'}, names", " ".join(text.split()))
         self.assertEqual((run_dir / "target-2.md").read_text(), "# Plan v2\n")
 
-    def test_a_second_plan_round_without_a_first_snapshot_should_drop_the_previous_version(self):
+    def test_a_second_plan_round_without_a_first_snapshot_should_drop_the_previous_version(
+        self,
+    ) -> None:
         plan = Path(self.repo) / "plan.md"
         plan.write_text("# Plan\n")
         text = self.brief(
@@ -304,7 +306,7 @@ class Brief(Repo):
         )
         self.assertNotIn("The previous version", text)
 
-    def test_a_plan_brief_should_read_a_snapshot_and_drop_the_diff_lines(self):
+    def test_a_plan_brief_should_read_a_snapshot_and_drop_the_diff_lines(self) -> None:
         plan = Path(self.repo) / "plan.md"
         plan.write_text("# Plan\n")
         text = self.brief(str(plan), "--kind", "plan")
@@ -315,7 +317,7 @@ class Brief(Repo):
         self.assertNotIn("# Check, for a diff", text)
         self.assertNotIn("For a diff,", text.split("# Values")[0])
 
-    def test_a_second_round_should_keep_the_re_review_section(self):
+    def test_a_second_round_should_keep_the_re_review_section(self) -> None:
         prior = Path(self.repo) / "sol.md"
         prior.write_text("Verdict: changes needed\n")
         text = self.brief(
@@ -325,7 +327,7 @@ class Brief(Repo):
         self.assertIn("This is round 2.", section)
         self.assertNotIn("The previous version", section)
 
-    def test_an_earlier_rounds_mutation_log_should_pass_in_a_later_round(self):
+    def test_an_earlier_rounds_mutation_log_should_pass_in_a_later_round(self) -> None:
         prior = Path(self.repo) / "sol.md"
         prior.write_text("Verdict: changes needed\n")
         log = Path(self.repo) / "mutation.log"
@@ -347,7 +349,7 @@ class Brief(Repo):
             f"Mutation-test log: {log}, measured at {self.base[:8]}, before this round", text
         )
 
-    def test_a_first_round_mutation_log_on_the_base_should_fail(self):
+    def test_a_first_round_mutation_log_on_the_base_should_fail(self) -> None:
         log = Path(self.repo) / "mutation.log"
         log.write_text(
             f"mutation-test: PASS: 1 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.base})\n"
@@ -355,7 +357,7 @@ class Brief(Repo):
         with self.assertRaises(SystemExit):
             self.brief("HEAD~1..HEAD", "--mutation-log", str(log))
 
-    def test_a_second_round_without_rulings_should_fail(self):
+    def test_a_second_round_without_rulings_should_fail(self) -> None:
         with self.assertRaises(SystemExit):
             self.brief("HEAD~1..HEAD", "--round", "2")
 
@@ -363,11 +365,11 @@ class Brief(Repo):
 class RemovedTests(unittest.TestCase):
     """removed_tests and the Focus lists of a diff brief, on a repository whose head edits its tests."""
 
-    def setUp(self):
+    def setUp(self) -> None:
         self.repo = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.repo)
         self.git = ["git", "-C", str(self.repo), "-c", "user.name=t", "-c", "user.email=t@t"]
-        subprocess.run(self.git[:3] + ["init", "-q"], check=True, env=ENV)
+        subprocess.run([*self.git[:3], "init", "-q"], check=True, env=ENV)
         self.write(
             {
                 "src/tests.rs": 'fn kept() {}\n// old note\n(1, "row one"),\n(2, "row two"),\n}\n',
@@ -388,28 +390,28 @@ class RemovedTests(unittest.TestCase):
         (self.repo / "tests/gone.sisu").unlink()
         self.head = self.commit("head")
 
-    def write(self, files):
+    def write(self, files) -> None:
         for name, text in files.items():
             (self.repo / name).parent.mkdir(parents=True, exist_ok=True)
             (self.repo / name).write_text(text)
 
     def commit(self, message):
-        subprocess.run(self.git + ["add", "-A"], check=True, env=ENV)
-        subprocess.run(self.git + ["commit", "-q", "-m", message], check=True, env=ENV)
+        subprocess.run([*self.git, "add", "-A"], check=True, env=ENV)
+        subprocess.run([*self.git, "commit", "-q", "-m", message], check=True, env=ENV)
         return subprocess.run(
-            self.git[:3] + ["rev-parse", "HEAD"],
+            [*self.git[:3], "rev-parse", "HEAD"],
             capture_output=True,
             text=True,
             check=True,
             env=ENV,
         ).stdout.strip()
 
-    def test_removed_tests_should_list_a_dropped_row_and_a_deleted_file_only(self):
+    def test_removed_tests_should_list_a_dropped_row_and_a_deleted_file_only(self) -> None:
         with mock.patch.dict(os.environ, ENV, clear=True):
             removed = diff_brief.removed_tests(self.repo, self.base, self.head)
         self.assertEqual(removed, ['src/tests.rs:4: (2, "row two"),', "tests/gone.sisu: deleted"])
 
-    def test_removed_tests_should_read_a_byte_that_is_not_utf_8(self):
+    def test_removed_tests_should_read_a_byte_that_is_not_utf_8(self) -> None:
         # E0072.sisu and wc.in hold such bytes; the diff decoded strictly and stopped the brief.
         (self.repo / "tests/raw.in").write_bytes(b"\xff kept\n\xfe gone\n")
         base = self.commit("raw")
@@ -419,7 +421,7 @@ class RemovedTests(unittest.TestCase):
             removed = diff_brief.removed_tests(self.repo, base, head)
         self.assertEqual(removed, ["tests/raw.in:2: \ufffd gone"])
 
-    def test_removed_tests_should_keep_their_line_numbers_under_git_diff_opts(self):
+    def test_removed_tests_should_keep_their_line_numbers_under_git_diff_opts(self) -> None:
         self.write({"tests/opts.in": "a\nb\nc\n"})
         base = self.commit("opts")
         self.write({"tests/opts.in": "a\nc\n"})
@@ -428,7 +430,7 @@ class RemovedTests(unittest.TestCase):
             removed = diff_brief.removed_tests(self.repo, base, head)
         self.assertEqual(removed, ["tests/opts.in:2: b"])
 
-    def test_removed_tests_should_name_a_path_that_is_not_ascii_as_written(self):
+    def test_removed_tests_should_name_a_path_that_is_not_ascii_as_written(self) -> None:
         # git quotes such a path as "tests/\303\244.in" unless core.quotepath is off.
         self.write({"tests/ä.in": "kept\ngone\n"})
         base = self.commit("a umlaut")
@@ -438,7 +440,7 @@ class RemovedTests(unittest.TestCase):
             removed = diff_brief.removed_tests(self.repo, base, head)
         self.assertEqual(removed, ["tests/ä.in:2: gone"])
 
-    def test_a_diff_brief_should_list_removed_tests_and_prebuilt_sisu(self):
+    def test_a_diff_brief_should_list_removed_tests_and_prebuilt_sisu(self) -> None:
         run_dir = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, run_dir)
         build = run_dir / "bin" / self.head / "sisu"

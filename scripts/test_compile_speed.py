@@ -6,6 +6,7 @@ its arguments and writes a small program that logs its own run. The units are sm
 No test starts a real compiler, and no test checks an elapsed time.
 """
 
+import contextlib
 import os
 import re
 import shutil
@@ -84,7 +85,7 @@ def stub_text(
     empty_bench="",
     version_fail=False,
     linker_on_stderr=False,
-):
+) -> str:
     """The text of a stub for tool `name`.
 
     A compiler stub logs its arguments, the first line of its last argument and $GOMAXPROCS. It
@@ -180,7 +181,7 @@ def stubs(tmp, omit=(), **overrides):
 
 
 class CompileSpeed(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp)
         self.units = self.tmp / "units"
@@ -211,7 +212,7 @@ class CompileSpeed(unittest.TestCase):
             timeout=timeout,
         )
 
-    def gone(self, pid):
+    def gone(self, pid) -> bool:
         """True when the process `pid` ends within 5 seconds."""
         for _ in range(50):
             try:
@@ -228,18 +229,16 @@ class CompileSpeed(unittest.TestCase):
             time.sleep(0.1)
         return False
 
-    def kill_pidfile(self, path):
+    def kill_pidfile(self, path) -> None:
         """Kills the process whose pid is in `path`, if a test left it."""
-        try:
+        with contextlib.suppress(OSError, ValueError):
             os.kill(int(path.read_text()), signal.SIGKILL)
-        except (OSError, ValueError):
-            pass
 
     def log_lines(self):
         log = self.tmp / "log"
         return log.read_text().splitlines() if log.exists() else []
 
-    def test_unit_with_a_different_result_should_stop_the_comparison(self):
+    def test_unit_with_a_different_result_should_stop_the_comparison(self) -> None:
         """GIVEN a Rust unit whose result differs from the Sisu unit's
         WHEN `scripts/compile_speed.py` runs
         THEN it exits with code 1
@@ -254,7 +253,7 @@ class CompileSpeed(unittest.TestCase):
                 for text in ("Rust", "size 1", *named):
                     self.assertIn(text, r.stderr)
 
-    def test_unit_with_a_warning_should_stop_the_comparison(self):
+    def test_unit_with_a_warning_should_stop_the_comparison(self) -> None:
         """GIVEN a Rust unit that gives a `dead_code` warning
         WHEN `scripts/compile_speed.py` runs
         THEN it exits with code 1
@@ -267,7 +266,7 @@ class CompileSpeed(unittest.TestCase):
         for text in ("Rust", "size 1", warning):
             self.assertIn(text, r.stderr)
 
-    def test_unit_not_in_the_formatters_style_should_stop_the_script(self):
+    def test_unit_not_in_the_formatters_style_should_stop_the_script(self) -> None:
         """GIVEN a Rust unit that is not in rustfmt's style, with rustfmt on `PATH`
         WHEN `scripts/compile_speed.py` runs
         THEN it exits with code 1
@@ -284,7 +283,7 @@ class CompileSpeed(unittest.TestCase):
                 self.assertIn(language, r.stderr)
                 self.assertIn(unit, r.stderr)
 
-    def test_cpp_unit_with_an_include_should_stop_the_script(self):
+    def test_cpp_unit_with_an_include_should_stop_the_script(self) -> None:
         """GIVEN a C++ unit with `#include <vector>`
         WHEN `scripts/compile_speed.py` runs
         THEN it exits with code 1 and names the `#include` line
@@ -310,7 +309,7 @@ class CompileSpeed(unittest.TestCase):
                 self.assertIn(shown, r.stderr)
                 self.assertNotIn("Traceback", r.stderr)
 
-    def test_check_only_should_check_agreement_and_time_nothing(self):
+    def test_check_only_should_check_agreement_and_time_nothing(self) -> None:
         """GIVEN four fixture units and stub compilers for the four languages
         WHEN `scripts/compile_speed.py --check-only` runs
         THEN it builds and runs each input at the smallest size and compares the outputs
@@ -332,7 +331,7 @@ class CompileSpeed(unittest.TestCase):
         self.assertFalse([line for line in log if "-Wl,--version" in line], log)
         self.assertFalse([line for line in r.stdout.splitlines() if "|" in line], r.stdout)
 
-    def test_compile_that_runs_over_the_time_bound_should_stop_the_script(self):
+    def test_compile_that_runs_over_the_time_bound_should_stop_the_script(self) -> None:
         """GIVEN a compile command that does not end within the total time bound
         WHEN `scripts/compile_speed.py` runs it
         THEN it stops the command
@@ -349,7 +348,7 @@ class CompileSpeed(unittest.TestCase):
         pid = int((self.tmp / "pid").read_text())
         self.assertTrue(self.gone(pid), f"process {pid} is still running")
 
-    def test_deadline_should_give_each_command_the_time_left(self):
+    def test_deadline_should_give_each_command_the_time_left(self) -> None:
         """GIVEN a total time bound of 10 seconds
         WHEN a command runs, 4 seconds pass, and a second command runs
         THEN the second command gets a timeout of 6 seconds
@@ -360,7 +359,7 @@ class CompileSpeed(unittest.TestCase):
         class FakePopen:
             pid = 4242
 
-            def __init__(self, cmd, **kwargs):
+            def __init__(self, cmd, **kwargs) -> None:
                 self.returncode = 0
 
             def communicate(self, timeout=None):
@@ -379,7 +378,7 @@ class CompileSpeed(unittest.TestCase):
             deadline.run(["b"], "second")
         self.assertEqual(timeouts, [10, 6])
 
-    def test_deadline_should_kill_and_wait_for_the_group_on_every_failure(self):
+    def test_deadline_should_kill_and_wait_for_the_group_on_every_failure(self) -> None:
         """GIVEN a command that times out, is interrupted, exits with a code that is not 0, or exits
         WHEN `Deadline.run` runs it
         THEN it kills the process group of the command, waits for it, and then raises or returns
@@ -400,7 +399,7 @@ class CompileSpeed(unittest.TestCase):
                 class FakePopen:
                     pid = 4242
 
-                    def __init__(self, cmd, **kw):
+                    def __init__(self, cmd, **kw) -> None:
                         self.returncode = code
 
                     def communicate(self, timeout=None):
@@ -430,7 +429,7 @@ class CompileSpeed(unittest.TestCase):
         pid = int(pidfile.read_text())
         self.assertTrue(self.gone(pid), f"process {pid} is still running")
 
-    def test_failure_should_stop_the_script_with_a_message_and_no_traceback(self):
+    def test_failure_should_stop_the_script_with_a_message_and_no_traceback(self) -> None:
         """GIVEN a compiler that exits with code 1, a program that fails, a tool that a signal stops,
         a path that cannot be used, or stderr that is not text
         WHEN `scripts/compile_speed.py` runs
@@ -476,7 +475,7 @@ class CompileSpeed(unittest.TestCase):
                 self.assertNotIn("code -9", r.stderr)
                 self.assertNotIn("style of", r.stderr)
 
-    def test_missing_formatter_should_skip_only_its_style_check(self):
+    def test_missing_formatter_should_skip_only_its_style_check(self) -> None:
         """GIVEN a `PATH` with no `gofmt`
         WHEN `scripts/compile_speed.py` runs
         THEN the style check of Go is skipped, and the other style checks run
@@ -490,7 +489,7 @@ class CompileSpeed(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertRegex(r.stdout, r"skipped.*Go style check|Go style check.*skipped")
 
-    def test_generate_should_write_the_header_once_and_each_copy_with_its_number(self):
+    def test_generate_should_write_the_header_once_and_each_copy_with_its_number(self) -> None:
         """GIVEN a unit and a number of copies
         WHEN `generate` runs
         THEN the header is once in the input, each copy has its own number, and `main` adds each result
@@ -511,7 +510,7 @@ class CompileSpeed(unittest.TestCase):
         self.assertIn("func run0", go)
         self.assertIn("func run1", go)
 
-    def test_main_should_call_each_copy_twice_in_one_statement(self):
+    def test_main_should_call_each_copy_twice_in_one_statement(self) -> None:
         """GIVEN a unit and a number of copies in each language
         WHEN `generate` writes the input
         THEN `main` has one statement for each copy
@@ -530,7 +529,7 @@ class CompileSpeed(unittest.TestCase):
                     self.assertEqual(statements[0].count(f"run{i}()"), 2, statements)
                     self.assertIn(f"total = total + run{i}() + run{i}()", statements[0])
 
-    def test_command_should_run_each_compiler_on_one_thread(self):
+    def test_command_should_run_each_compiler_on_one_thread(self) -> None:
         """GIVEN each row and language
         WHEN `command` builds the command
         THEN each compiler runs on one thread, with the edition or standard of the spec
@@ -570,7 +569,9 @@ class CompileSpeed(unittest.TestCase):
             if line.startswith("| ") and not line.startswith(("| Row", "| ---"))
         ]
 
-    def test_tokens_should_count_words_numbers_literals_and_each_punctuation_character(self):
+    def test_tokens_should_count_words_numbers_literals_and_each_punctuation_character(
+        self,
+    ) -> None:
         """GIVEN source text in each language
         WHEN `tokens` counts it
         THEN a word, a number, a literal and each other character is one token
@@ -597,7 +598,7 @@ class CompileSpeed(unittest.TestCase):
             with self.subTest(label):
                 self.assertEqual(compile_speed.tokens(text, path), expected)
 
-    def test_tokens_should_stop_on_a_quote_with_no_close_on_its_line(self):
+    def test_tokens_should_stop_on_a_quote_with_no_close_on_its_line(self) -> None:
         """GIVEN source text with a `'` that has no closing `'` on its line
         WHEN `tokens` counts it
         THEN it raises Fail with the file and the line
@@ -607,14 +608,14 @@ class CompileSpeed(unittest.TestCase):
                 compile_speed.tokens(text, "u.rs")
             self.assertIn(named, str(caught.exception))
 
-    def test_go_fe_parse_should_read_one_phase_time(self):
+    def test_go_fe_parse_should_read_one_phase_time(self) -> None:
         """GIVEN the `-bench` file of a real Go run
         WHEN `go_fe_parse` reads it
         THEN it gives the `fe:parse` time in seconds
         """
         self.assertAlmostEqual(compile_speed.go_fe_parse(GO_BENCH), GO_FE_PARSE, places=9)
 
-    def test_go_run_without_one_fe_parse_line_should_stop_the_script(self):
+    def test_go_run_without_one_fe_parse_line_should_stop_the_script(self) -> None:
         """GIVEN the `-bench` file of a cached build, or one with a repeated line
         WHEN `go_fe_parse` reads it
         THEN it raises Fail that names Go
@@ -632,7 +633,7 @@ class CompileSpeed(unittest.TestCase):
                 compile_speed.go_fe_parse(text)
             self.assertIn("Go", str(caught.exception))
 
-    def test_past_empty_should_print_a_dash_when_the_difference_is_not_positive(self):
+    def test_past_empty_should_print_a_dash_when_the_difference_is_not_positive(self) -> None:
         """GIVEN a time, the time of the empty program and a count of tokens
         WHEN `past_empty` gives the rate
         THEN it is a dash when the time less the empty time is 0 or less
@@ -641,7 +642,7 @@ class CompileSpeed(unittest.TestCase):
         self.assertEqual(compile_speed.past_empty(1000, 0.4, 0.5), "-")
         self.assertEqual(compile_speed.past_empty(1000, 1.5, 0.5), "1.0k")
 
-    def test_missing_toolchain_should_be_skipped(self):
+    def test_missing_toolchain_should_be_skipped(self) -> None:
         """GIVEN a `PATH` with no `go`, and a `perf` that fails
         WHEN `scripts/compile_speed.py` runs
         THEN it exits with code 0
@@ -660,7 +661,7 @@ class CompileSpeed(unittest.TestCase):
                 self.assertRegex(cells[5], r"^\d+\.\d+ m?s$", cells)
                 self.assertEqual(cells[-1], "-", cells)
 
-    def test_full_run_should_print_a_row_for_each_command_language_and_size(self):
+    def test_full_run_should_print_a_row_for_each_command_language_and_size(self) -> None:
         """GIVEN stub compilers for the four languages, a stub `perf`, and two sizes
         WHEN `scripts/compile_speed.py --sizes 2,1 --runs 2` runs twice on one `--out`
         THEN the table has one line for each row, size and language
@@ -776,7 +777,7 @@ class CompileSpeed(unittest.TestCase):
             self.assertIn(text, header)
         self.assertNotIn("warning", header)
 
-    def test_table_should_print_times_and_rates(self):
+    def test_table_should_print_times_and_rates(self) -> None:
         """GIVEN fixed measurements
         WHEN `table` prints them
         THEN a time below 1 s is in milliseconds and a longer one in seconds
@@ -805,7 +806,7 @@ class CompileSpeed(unittest.TestCase):
         for cells in rows:
             self.assertEqual(cells[3:], expected[cells[2]], cells)
 
-    def test_measurement_should_keep_the_best_of_the_runs(self):
+    def test_measurement_should_keep_the_best_of_the_runs(self) -> None:
         """GIVEN `--runs 3` and a command whose three runs take 0.03, 0.01 and 0.02 seconds
         WHEN `Measurer.cell` measures it
         THEN it runs the command 3 times and gives 0.01
@@ -823,7 +824,7 @@ class CompileSpeed(unittest.TestCase):
         self.assertEqual(runner.cell(["c"], "what", "rust", None, "", None, True), (0.01, 7))
         self.assertEqual(calls, [False, False, False, True])
 
-    def test_out_with_a_space_should_work_for_every_command(self):
+    def test_out_with_a_space_should_work_for_every_command(self) -> None:
         """GIVEN an `--out` directory with a space in its name
         WHEN `scripts/compile_speed.py --sizes 1 --runs 1` runs
         THEN it exits with code 0
@@ -837,7 +838,7 @@ class CompileSpeed(unittest.TestCase):
         go = [cells for cells in self.table_rows(r.stdout) if cells[2] == "Go"]
         self.assertEqual([cells[5] for cells in go[:2]], ["29.7 ms"] * 2, go)
 
-    def test_out_with_a_quote_should_stop_only_a_run_that_makes_a_go_bench_command(self):
+    def test_out_with_a_quote_should_stop_only_a_run_that_makes_a_go_bench_command(self) -> None:
         """GIVEN an `--out` directory with a `'` in its name
         WHEN `scripts/compile_speed.py` runs
         THEN a measurement with Go stops with a message that names the Go flags
@@ -867,7 +868,7 @@ class CompileSpeed(unittest.TestCase):
         """A default stub for `tool` that runs the shell `snippet` first."""
         return stub_text(self.tmp, tool).replace("#!/bin/sh\n", "#!/bin/sh\n" + snippet, 1)
 
-    def test_failure_in_a_timed_run_should_stop_the_script_with_a_message(self):
+    def test_failure_in_a_timed_run_should_stop_the_script_with_a_message(self) -> None:
         """GIVEN a warning that only a timed build gives, or a `-bench` file that cannot be read
         WHEN `scripts/compile_speed.py` measures
         THEN it exits with code 1
@@ -920,7 +921,7 @@ done
                     self.assertIn(text, r.stderr)
                 self.assertNotIn("Traceback", r.stderr)
 
-    def test_optional_tool_that_fails_should_give_unknown_and_not_its_error(self):
+    def test_optional_tool_that_fails_should_give_unknown_and_not_its_error(self) -> None:
         """GIVEN version commands, `git`, `perf` and `cc` that exit with code 1 and print an error
         WHEN `scripts/compile_speed.py --sizes 1 --runs 1` runs
         THEN it exits with code 0
@@ -950,7 +951,7 @@ done
         for text in ("version failed", "fatal", "cc broke", "perf: broke"):
             self.assertNotIn(text, r.stdout)
 
-    def test_environment_should_disable_ccache_and_limit_go_to_one_thread(self):
+    def test_environment_should_disable_ccache_and_limit_go_to_one_thread(self) -> None:
         """GIVEN a caller whose environment has `GOMAXPROCS=2` and `CCACHE_DISABLE=0`
         WHEN `environment` builds the environment of the commands of each language
         THEN ccache is off for every language, so that no compile is a cache hit
@@ -963,7 +964,7 @@ done
                     self.assertEqual(env["CCACHE_DISABLE"], "1")
                     self.assertEqual(env["GOMAXPROCS"], "1" if lang == "go" else "2")
 
-    def test_units_should_put_the_copy_number_in_a_label_string(self):
+    def test_units_should_put_the_copy_number_in_a_label_string(self) -> None:
         """GIVEN the four committed units
         WHEN `generate` writes three copies of each
         THEN each copy has its own number in one label string
@@ -981,7 +982,7 @@ done
                 for i in range(3):
                     self.assertEqual(text.count(f'"tally {i} '), 1, i)
 
-    def test_instructions_should_sum_the_lines_of_every_core_type(self):
+    def test_instructions_should_sum_the_lines_of_every_core_type(self) -> None:
         """GIVEN the stderr of `perf stat -x,` on a CPU with one or two core types
         WHEN `instructions` reads it
         THEN it gives the sum of the lines that count instructions
@@ -996,8 +997,10 @@ done
             ("two core types", hybrid, 50000),
             (
                 "a core type that did not count",
-                "48000,,cpu_core/instructions/u,1,1.00,,\n"
-                "<not counted>,,cpu_atom/instructions/u,0,0.00,,\n",
+                (
+                    "48000,,cpu_core/instructions/u,1,1.00,,\n"
+                    "<not counted>,,cpu_atom/instructions/u,0,0.00,,\n"
+                ),
                 48000,
             ),
             ("another event", "999,,cycles:u,1,1.00,,\n7,,instructions:u,1,1.00,,\n", 7),
@@ -1009,7 +1012,7 @@ done
             with self.subTest(label):
                 self.assertEqual(compile_speed.instructions(text), expected)
 
-    def test_perf_with_two_core_types_should_give_the_sum_for_each_token(self):
+    def test_perf_with_two_core_types_should_give_the_sum_for_each_token(self) -> None:
         """GIVEN a `perf` that prints one line for each of two core types
         WHEN `scripts/compile_speed.py --sizes 1 --runs 1` runs
         THEN the instruction cells have the sum of both lines divided by the tokens
@@ -1027,7 +1030,7 @@ done
         cells = self.table_rows(r.stdout)[0]
         self.assertEqual(cells[-1], f"{80000 / int(cells[4]):.0f}", cells)
 
-    def test_linker_line_of_rustc_with_gnu_ld_should_not_have_the_warning_prefix(self):
+    def test_linker_line_of_rustc_with_gnu_ld_should_not_have_the_warning_prefix(self) -> None:
         """GIVEN a rustc that shows the output of GNU ld as `warning: linker stdout: <line>`
         WHEN `scripts/compile_speed.py --sizes 1 --runs 1` runs
         THEN the header has the linker line without the prefix

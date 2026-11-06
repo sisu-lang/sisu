@@ -35,7 +35,7 @@ print(json.dumps(answer))
 
 
 class MergePr(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.dir = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.dir)
         bin_dir = self.dir / "bin"
@@ -47,12 +47,12 @@ class MergePr(unittest.TestCase):
         self.git = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-C"]
         subprocess.run(["git", "init", "-q", str(self.repo)], check=True, env=ENV)
         subprocess.run(
-            self.git + [str(self.repo), "commit", "-q", "--allow-empty", "-m", "one"],
+            [*self.git, str(self.repo), "commit", "-q", "--allow-empty", "-m", "one"],
             check=True,
             env=ENV,
         )
         subprocess.run(
-            self.git + [str(self.repo), "worktree", "add", "-q", "-b", "fix/x", str(self.tree)],
+            [*self.git, str(self.repo), "worktree", "add", "-q", "-b", "fix/x", str(self.tree)],
             check=True,
             env=ENV,
         )
@@ -111,7 +111,9 @@ class MergePr(unittest.TestCase):
         calls = [json.loads(line) for line in self.log.read_text().splitlines()]
         return [c for c in calls if "PUT" in c]
 
-    def test_a_green_pull_request_should_merge_at_its_checked_head_and_remove_its_worktree(self):
+    def test_a_green_pull_request_should_merge_at_its_checked_head_and_remove_its_worktree(
+        self,
+    ) -> None:
         result = self.run_script()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         [merge] = self.merges()
@@ -128,29 +130,29 @@ class MergePr(unittest.TestCase):
         ).stdout
         self.assertEqual(branches, "")
 
-    def test_a_failed_check_should_stop_before_the_merge(self):
+    def test_a_failed_check_should_stop_before_the_merge(self) -> None:
         failed = {"name": "Test", "status": "completed", "conclusion": "failure"}
         result = self.run_script(**{f"commits/{self.sha}/check-runs": self.checks(failed)})
         self.assertEqual(result.returncode, 1)
         self.assertIn("Test: failure", result.stdout)
         self.assertEqual(self.merges(), [])
 
-    def test_a_head_behind_main_should_stop_before_the_merge(self):
+    def test_a_head_behind_main_should_stop_before_the_merge(self) -> None:
         result = self.run_script(**{f"compare/main...{self.sha}": {"behind_by": 2}})
         self.assertEqual(result.returncode, 1)
         self.assertIn("does not contain main", result.stdout)
         self.assertEqual(self.merges(), [])
 
-    def test_a_worktree_with_changes_should_stay_after_the_merge(self):
+    def test_a_worktree_with_changes_should_stay_after_the_merge(self) -> None:
         (self.tree / "note").write_text("draft\n")
         result = self.run_script()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("it has uncommitted changes", result.stdout)
         self.assertTrue((self.tree / "note").exists())
 
-    def test_a_worktree_with_a_commit_after_the_merged_head_should_stay(self):
+    def test_a_worktree_with_a_commit_after_the_merged_head_should_stay(self) -> None:
         subprocess.run(
-            self.git + [str(self.tree), "commit", "-q", "--allow-empty", "-m", "two"],
+            [*self.git, str(self.tree), "commit", "-q", "--allow-empty", "-m", "two"],
             check=True,
             env=ENV,
         )
@@ -159,7 +161,7 @@ class MergePr(unittest.TestCase):
         self.assertIn("its head is not the merged head", result.stdout)
         self.assertTrue(self.tree.exists())
 
-    def test_a_running_check_should_be_waited_for_before_the_merge(self):
+    def test_a_running_check_should_be_waited_for_before_the_merge(self) -> None:
         running = {"name": "Test", "status": "in_progress", "conclusion": None}
         done = dict(running, status="completed", conclusion="success")
         result = self.run_script(
@@ -168,27 +170,27 @@ class MergePr(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(len(self.merges()), 1)
 
-    def test_a_head_with_no_checks_should_stop_before_the_merge(self):
+    def test_a_head_with_no_checks_should_stop_before_the_merge(self) -> None:
         self.env["MERGE_PR_CHECKS_LIMIT"] = "0"
         result = self.run_script(**{f"commits/{self.sha}/check-runs": self.checks()})
         self.assertEqual(result.returncode, 1)
         self.assertIn("the head has no checks", result.stdout)
         self.assertEqual(self.merges(), [])
 
-    def test_checks_on_a_second_page_should_stop_before_the_merge(self):
+    def test_checks_on_a_second_page_should_stop_before_the_merge(self) -> None:
         done = {"name": "Test", "status": "completed", "conclusion": "success"}
         result = self.run_script(**{f"commits/{self.sha}/check-runs": self.checks(done, total=101)})
         self.assertEqual(result.returncode, 1)
         self.assertIn("more than one page", result.stdout)
         self.assertEqual(self.merges(), [])
 
-    def test_a_closed_pull_request_should_not_merge(self):
+    def test_a_closed_pull_request_should_not_merge(self) -> None:
         result = self.run_script(**{"pulls/7": {"state": "closed"}})
         self.assertEqual(result.returncode, 1)
         self.assertIn("#7 is closed", result.stdout)
         self.assertEqual(self.merges(), [])
 
-    def test_main_that_moves_during_the_wait_should_stop_the_merge(self):
+    def test_main_that_moves_during_the_wait_should_stop_the_merge(self) -> None:
         result = self.run_script(
             **{f"compare/main...{self.sha}": [{"behind_by": 0}, {"behind_by": 1}]}
         )
@@ -196,7 +198,7 @@ class MergePr(unittest.TestCase):
         self.assertIn("does not contain main", result.stdout)
         self.assertEqual(self.merges(), [])
 
-    def test_main_that_moves_while_a_check_runs_should_stop_before_the_checks_end(self):
+    def test_main_that_moves_while_a_check_runs_should_stop_before_the_checks_end(self) -> None:
         running = {"name": "Test", "status": "in_progress", "conclusion": None}
         done = dict(running, status="completed", conclusion="success")
         result = self.run_script(
@@ -211,7 +213,7 @@ class MergePr(unittest.TestCase):
         calls = self.log.read_text().splitlines()
         self.assertEqual(sum("check-runs" in line for line in calls), 1)
 
-    def test_cleanup_of_an_open_pull_request_should_stop_and_keep_the_worktree(self):
+    def test_cleanup_of_an_open_pull_request_should_stop_and_keep_the_worktree(self) -> None:
         result = self.run_script(
             "--cleanup",
             "7",
@@ -227,7 +229,7 @@ class MergePr(unittest.TestCase):
         self.assertIn("#7 is not merged", result.stdout)
         self.assertTrue(self.tree.exists())
 
-    def test_cleanup_of_a_merged_pull_request_should_remove_its_worktree_and_branch(self):
+    def test_cleanup_of_a_merged_pull_request_should_remove_its_worktree_and_branch(self) -> None:
         merged = {"state": "closed", "merged": True, "head": {"sha": self.sha, "ref": "fix/x"}}
         result = self.run_script("--cleanup", "7", **{"pulls/7": merged})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -243,7 +245,9 @@ class MergePr(unittest.TestCase):
         self.assertEqual(branches, "")
         self.assertEqual(self.merges(), [])
 
-    def test_a_pull_request_read_with_an_old_head_should_be_read_again_before_the_base_check(self):
+    def test_a_pull_request_read_with_an_old_head_should_be_read_again_before_the_base_check(
+        self,
+    ) -> None:
         pr = {"state": "open", "title": "Fix x", "body": "", "base": {"ref": "main"}}
         old = dict(pr, head={"sha": "old", "ref": "fix/x"})
         new = dict(pr, head={"sha": self.sha, "ref": "fix/x"})
@@ -252,7 +256,9 @@ class MergePr(unittest.TestCase):
         [merge] = self.merges()
         self.assertIn(f"sha={self.sha}", merge)
 
-    def test_cleanup_after_the_number_should_stop_on_an_open_pull_request_and_not_merge(self):
+    def test_cleanup_after_the_number_should_stop_on_an_open_pull_request_and_not_merge(
+        self,
+    ) -> None:
         result = self.run_script(
             "7",
             "--cleanup",
@@ -272,7 +278,7 @@ class MergePr(unittest.TestCase):
         self.assertEqual(self.merges(), [])
         self.assertTrue(self.tree.exists())
 
-    def test_cleanup_with_no_number_should_fail_and_not_merge(self):
+    def test_cleanup_with_no_number_should_fail_and_not_merge(self) -> None:
         # run_script adds the repo path, which argparse would take as the number.
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "--cleanup"], capture_output=True, text=True, env=self.env
@@ -282,7 +288,9 @@ class MergePr(unittest.TestCase):
         self.assertFalse(self.log.exists())
         self.assertTrue(self.tree.exists())
 
-    def test_cleanup_of_a_closed_pull_request_that_was_not_merged_should_keep_the_worktree(self):
+    def test_cleanup_of_a_closed_pull_request_that_was_not_merged_should_keep_the_worktree(
+        self,
+    ) -> None:
         closed = {"state": "closed", "merged": False, "head": {"sha": self.sha, "ref": "fix/x"}}
         result = self.run_script("--cleanup", "7", **{"pulls/7": closed})
         self.assertEqual(result.returncode, 1)

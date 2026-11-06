@@ -30,7 +30,7 @@ write = git_fixture.write
 
 
 class TestNamesDiffAndBaseline(unittest.TestCase):
-    def test_a_changed_baseline_test_should_fail(self):
+    def test_a_changed_baseline_test_should_fail(self) -> None:
         with git_fixture.repo({"crates/a/src/f.rs": BASELINE_TEST}) as tmp:
             baseline = os.path.join(tmp, "baseline.txt")
             write(
@@ -46,12 +46,14 @@ class TestNamesDiffAndBaseline(unittest.TestCase):
         self.assertEqual(
             out.splitlines(),
             [
-                "crates/a/src/f.rs:2: test `old_name` is in test_names_baseline.txt and its body "
-                "changed: rename it to <subject>_should_<result> and remove its baseline line"
+                (
+                    "crates/a/src/f.rs:2: test `old_name` is in test_names_baseline.txt and its body "
+                    "changed: rename it to <subject>_should_<result> and remove its baseline line"
+                )
             ],
         )
 
-    def test_a_baseline_line_with_no_test_should_fail(self):
+    def test_a_baseline_line_with_no_test_should_fail(self) -> None:
         with git_fixture.repo({"f.rs": BASELINE_TEST}) as tmp:
             baseline = os.path.join(tmp, "scripts", "test_names_baseline.txt")
             os.makedirs(os.path.dirname(baseline))
@@ -73,7 +75,7 @@ class TestNamesDiffAndBaseline(unittest.TestCase):
             ],
         )
 
-    def test_a_bad_ref_should_print_gits_error_and_fail(self):
+    def test_a_bad_ref_should_print_gits_error_and_fail(self) -> None:
         with git_fixture.repo({"f.rs": BASELINE_TEST}) as tmp:
             baseline = os.path.join(tmp, "baseline.txt")
             write(tmp, "baseline.txt", "")
@@ -84,7 +86,7 @@ class TestNamesDiffAndBaseline(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertRegex(out, r"^test_names: `git diff no-such-ref` failed: .*no-such-ref")
 
-    def test_the_baseline_should_name_only_tests_on_the_tree(self):
+    def test_the_baseline_should_name_only_tests_on_the_tree(self) -> None:
         run = subprocess.run(
             [sys.executable, os.path.join(ROOT, "scripts", "test_names.py"), "--baseline"],
             capture_output=True,

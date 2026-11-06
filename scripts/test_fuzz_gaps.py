@@ -81,7 +81,7 @@ def c_plus_plus_filt(text):
         return text
 
 
-def fake_tool(directory, script):
+def fake_tool(directory, script) -> None:
     path = os.path.join(directory, "c++filt")
     with open(path, "w", encoding="utf-8") as f:
         f.write("#!/bin/sh\ncat >/dev/null\n" + script)
@@ -91,7 +91,7 @@ def fake_tool(directory, script):
 class Run:
     """Writes the three inputs to a temporary directory, runs the script and keeps its result."""
 
-    def __init__(self, test, seeds, valid, known=NO_REASON, path=None):
+    def __init__(self, test, seeds, valid, known=NO_REASON, path=None) -> None:
         with tempfile.TemporaryDirectory() as directory:
             names = {}
             for label, content in (("seeds.json", seeds), ("valid.json", valid)):
@@ -127,11 +127,11 @@ class Gaps(unittest.TestCase):
     def reached(self, seeds, valid, known=NO_REASON, **kw):
         return Run(self, export(*ANCHORS, *seeds), export(*ANCHORS, *valid), known, **kw)
 
-    def no_gap(self, run, name):
+    def no_gap(self, run, name) -> None:
         self.assertEqual(run.code, 0, run.out)
         self.assertNotIn(name, run.out)
 
-    def test_only_an_unknown_function_valid_programs_reach_should_fail(self):
+    def test_only_an_unknown_function_valid_programs_reach_should_fail(self) -> None:
         with self.subTest("valid reaches f, seeds do not"):
             run = self.reached([record("conformance.rs", FN, 0)], [record("conformance.rs", FN, 1)])
             self.assertEqual(run.code, 1, run.out)
@@ -219,7 +219,7 @@ class Gaps(unittest.TestCase):
         self.known_rows()
         self.quoted_rows()
 
-    def closure_rows(self):
+    def closure_rows(self) -> None:
         outer = "sisuc[a]::emit::outer::{closure#0}"
         listed = [
             (f"{outer}::helper", "sisuc::emit::outer::{closure#0}::helper"),
@@ -248,7 +248,7 @@ class Gaps(unittest.TestCase):
             valid = [record("emit.rs", "<sisuc[a]::f<i64>::{closure#0} as sisuc[a]::Tr>::m", 1, 7)]
             self.no_gap(self.reached(seeds, valid), "Tr")
 
-    def guard_rows(self):
+    def guard_rows(self) -> None:
         rows = [
             ("LLVMFuzzerInitialize", "LLVMFuzzerInitialize"),
             ("sisuc[a]::m::hash", "sisuc::m::hash"),
@@ -264,7 +264,7 @@ class Gaps(unittest.TestCase):
         with self.subTest("the guard reads only names in scope"):
             self.no_gap(self.reached([], [record("generate/item.rs", "_Rbogus", 1)]), "_Rbogus")
 
-    def reached_rows(self):
+    def reached_rows(self) -> None:
         a, b, c = (f"sisuc[a]::m::g::<{t}>" for t in ("i32", "bool", "u8"))
         key = "m.rs\tsisuc::m::g"
         rows = [
@@ -298,7 +298,7 @@ class Gaps(unittest.TestCase):
                 "m::g",
             )
 
-    def known_rows(self):
+    def known_rows(self) -> None:
         m_f, m_g = "sisuc[a]::m::f", "m.rs\tsisuc::m::g"
         with self.subTest("a stale key is listed under a new gap"):
             run = self.reached([], [record("m.rs", m_f, 1)], f"## a reason\n{m_g}\n")
@@ -325,7 +325,7 @@ class Gaps(unittest.TestCase):
             self.assertIn("measured 3 functions", run.out)
             self.assertIn("Known keys: 1", run.out)
 
-    def quoted_rows(self):
+    def quoted_rows(self) -> None:
         token = "sisuc[a]::m::token::<{}>"
         for quoted in ("'>'", "'<'"):
             with self.subTest(f"a generic argument {quoted} merges"):
@@ -345,7 +345,7 @@ class Gaps(unittest.TestCase):
             self.assertEqual(run.code, 1, run.out)
             self.assertIn("m.rs\tsisuc::m::g", run.lines)
 
-    def test_definitions_should_keep_their_identity(self):
+    def test_definitions_should_keep_their_identity(self) -> None:
         i32_value = "<sisuc[abc]::Tag<i32>>::value"
         bool_value = "<sisuc[abc]::Tag<bool>>::value"
         key = "tag.rs\t<sisuc::Tag>::value"
@@ -392,7 +392,7 @@ class Gaps(unittest.TestCase):
                 self.assertIn("generator rule.", run.out)
                 self.assertNotIn("rule..", run.out)
 
-    def test_broken_measurement_should_exit_2(self):
+    def test_broken_measurement_should_exit_2(self) -> None:
         good = export(*ANCHORS)
         known_key = f"{FN_KEY}\n"
         floor = "valid-program export reaches no function under "
@@ -573,7 +573,9 @@ class Gaps(unittest.TestCase):
         cases.append(
             ("a legacy Rust name", lambda: valid_with(record("check/mod.rs", LEGACY, 1)), "legacy")
         )
-        for label, anchor in itertools.product(("seeds", "valid-program"), zip(STAGES, ANCHORS)):
+        for label, anchor in itertools.product(
+            ("seeds", "valid-program"), zip(STAGES, ANCHORS, strict=False)
+        ):
             stage, missing = anchor
             short = export(*(a for a in ANCHORS if a is not missing))
             cases.append(
@@ -622,7 +624,7 @@ class Gaps(unittest.TestCase):
             self.assertIn("has no file name", run.out)
             self.assertIn("seeds.json", run.out)
 
-    def test_real_names_should_normalize_to_their_keys(self):
+    def test_real_names_should_normalize_to_their_keys(self) -> None:
         names = [
             (
                 "_RNvMs_NtNtCs4giHZ0QWn4K_5sisuc5check5aliasNtB6_7Checker9want_name",

@@ -57,8 +57,10 @@ def events(pr, me):
             found.append(
                 (
                     f"review {review['id']} {review['state']} {digest}",
-                    f"review {review['id']} {review['state']} {review['user']['login']}: "
-                    f"{text(review['body'])} {review['html_url']}",
+                    (
+                        f"review {review['id']} {review['state']} {review['user']['login']}: "
+                        f"{text(review['body'])} {review['html_url']}"
+                    ),
                 )
             )
     for c in gh(f"{REPO}/pulls/{pr}/comments?per_page=100", ""):
@@ -67,8 +69,10 @@ def events(pr, me):
             found.append(
                 (
                     f"inline {c['id']} {c['updated_at']}",
-                    f"inline {c['id']} {c['user']['login']} {c['path']}:{line}: {text(c['body'])} "
-                    f"{c['html_url']}",
+                    (
+                        f"inline {c['id']} {c['user']['login']} {c['path']}:{line}: {text(c['body'])} "
+                        f"{c['html_url']}"
+                    ),
                 )
             )
     for c in gh(f"{REPO}/issues/{pr}/comments?per_page=100", ""):
@@ -107,7 +111,7 @@ def events(pr, me):
     return found
 
 
-def main():
+def main() -> int | None:
     if len(sys.argv) not in (2, 3):
         sys.exit(__doc__)
     pr = sys.argv[1]

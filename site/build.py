@@ -96,7 +96,7 @@ def colours(line: str, below: str) -> list[str]:
     """The class of each character of `line`; `below` is the line after it."""
     cls = [""] * len(line)
 
-    def paint(start, end, c):
+    def paint(start, end, c) -> None:
         end = min(end, len(line))
         cls[start:end] = [c] * max(end - start, 0)
 
@@ -132,10 +132,12 @@ def diag_html(text: str) -> str:
     rows = re.findall(r"[^\n]*\n|[^\n]+\Z", text)
     lines = [row.removesuffix("\n") for row in rows]
     out = []
-    for i, (row, line) in enumerate(zip(rows, lines)):
+    for i, (row, line) in enumerate(zip(rows, lines, strict=False)):
         below = lines[i + 1] if i + 1 < len(lines) else ""
         parts = []
-        for c, chars in groupby(zip(line, colours(line, below)), key=lambda pair: pair[1]):
+        for c, chars in groupby(
+            zip(line, colours(line, below), strict=False), key=lambda pair: pair[1]
+        ):
             run = escape("".join(ch for ch, _ in chars))
             parts.append(f'<span class="{c}">{run}</span>' if c else run)
         out.append(f'<span class="ln">{"".join(parts)}{row[len(line) :]}</span>')
@@ -482,7 +484,7 @@ def markers(source: str) -> list[str]:
 
 
 def example_info(info: str) -> tuple[list[str], list[str] | None]:
-    """The words of a fence's info string and its `args="..."` list, read as the reference test
+    r"""The words of a fence's info string and its `args="..."` list, read as the reference test
     reads them: words split at spaces. The test reports faults, and it faults a `\\` or `&` in
     an example's info string, so the string has nothing to decode.
     """
@@ -586,7 +588,7 @@ def reference_html(markdown: str, path: Path) -> tuple[str, list[tuple[int, str,
         raise BuildError(
             f"check_links.anchors finds {len(slugs)} headings and markdown-it {len(opens)}"
         )
-    for token, slug in zip(opens, slugs):
+    for token, slug in zip(opens, slugs, strict=False):
         token.attrSet("id", slug)
     headings, current, kinds = [], None, []
     for i, token in enumerate(tokens):
@@ -668,7 +670,7 @@ def reference_page(index: int, pages: list[dict]) -> str:
     has a card for each other page.
     """
 
-    def href(i):
+    def href(i) -> str:
         return "index.html" if pages[i]["file"] == "README" else f"{pages[i]['file']}.html"
 
     page = pages[index]
@@ -787,7 +789,7 @@ def benchmark_rows(program: str, rows: list[list[str]]) -> dict[str, dict[str, s
         raise BuildError(
             f"{where} has the languages {languages}, not exactly {sorted(BENCH_LANGUAGES)}"
         )
-    return {row[0]: dict(zip(BENCH_HEADER[1:], row[1:])) for row in rows[1:]}
+    return {row[0]: dict(zip(BENCH_HEADER[1:], row[1:], strict=False)) for row in rows[1:]}
 
 
 def seconds(program: str, language: str, column: str, cell: str) -> Decimal:
@@ -837,7 +839,7 @@ def chart(program: str, table: dict[str, dict[str, str]]) -> str:
             f"{BENCHMARKS}: table {program!r}: Python's {column} is not above every other, so it is not off the scale"
         )
 
-    def li(language):
+    def li(language) -> str:
         width = (values[language] / largest * 100).quantize(Decimal("0.1"), ROUND_HALF_UP)
         cls = ' class="sisu"' if language == "Sisu" else ""
         return (
@@ -1054,7 +1056,7 @@ def visible(text: str) -> str:
 class Tags(HTMLParser):
     """A page's `href` and `src` values with their tags, its ids, and its inline CSS."""
 
-    def __init__(self, text: str):
+    def __init__(self, text: str) -> None:
         super().__init__()
         self.links: list[tuple[str, str]] = []
         self.ids: set[str] = set()
@@ -1063,7 +1065,7 @@ class Tags(HTMLParser):
         self.feed(text)
         self.close()
 
-    def handle_starttag(self, tag, attrs):
+    def handle_starttag(self, tag, attrs) -> None:
         for name, value in attrs:
             if name in ("href", "src") and value is not None:
                 self.links.append((tag, value))
@@ -1073,10 +1075,10 @@ class Tags(HTMLParser):
                 self.styles.append(value)
         self.in_style = tag == "style"
 
-    def handle_endtag(self, tag):
+    def handle_endtag(self, tag) -> None:
         self.in_style = False
 
-    def handle_data(self, data):
+    def handle_data(self, data) -> None:
         if self.in_style:
             self.styles.append(data)
 
@@ -1124,7 +1126,7 @@ def page_problems(
     levels = [int(level) for level in HEADING.findall(text)]
     if levels.count(1) != 1:
         yield f"has {levels.count(1)} <h1>, not one"
-    for before, level in zip([0, *levels], levels):
+    for before, level in zip([0, *levels], levels, strict=False):
         if level > before + 1:
             yield (
                 f"<h{level}> after <h{before}> skips a level"

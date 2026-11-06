@@ -27,7 +27,7 @@ def git(*args):
     ).stdout
 
 
-def main(span, subs):
+def main(span, subs) -> int:
     base, head = span.split("..")
     changed = git("diff", "--name-only", "--diff-filter=M", base, head, "--", *CASES)
     files = [f for f in changed.split() if f.endswith(SUFFIXES)]
@@ -39,7 +39,7 @@ def main(span, subs):
             print(f"{f}: {len(old)} lines became {len(new)}")
             problems += 1
             continue
-        for a, b in zip(old, new):
+        for a, b in zip(old, new, strict=False):
             if a == b:
                 continue
             lines += 1
@@ -56,5 +56,5 @@ def main(span, subs):
 if __name__ == "__main__":
     if len(sys.argv) < 4 or len(sys.argv) % 2:
         sys.exit(__doc__)
-    pairs = list(zip(sys.argv[2::2], sys.argv[3::2]))
+    pairs = list(zip(sys.argv[2::2], sys.argv[3::2], strict=False))
     sys.exit(main(sys.argv[1], pairs))

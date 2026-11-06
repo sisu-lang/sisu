@@ -40,41 +40,41 @@ def rewrite(new):
     return lambda tmp: write(tmp, "t.rs", new)
 
 
-def move(tmp):
+def move(tmp) -> None:
     git_fixture.git(tmp, "mv", "t.rs", "u.rs")
 
 
-def move_and_edit(tmp):
+def move_and_edit(tmp) -> None:
     move(tmp)
     write(tmp, "u.rs", THREE.replace("four();", "five();"))
 
 
-def edit_next_to_a_non_utf8_file(tmp):
+def edit_next_to_a_non_utf8_file(tmp) -> None:
     write(tmp, "t.rs", THREE.replace("four", "five"))
     write(tmp, "x.sisu", b"a\n\xe9\n")
 
 
-def edit_with_diff_opts(tmp):
+def edit_with_diff_opts(tmp) -> None:
     os.environ["GIT_DIFF_OPTS"] = "--unified=7"  # `repo()` restores the environment at its exit
     write(tmp, "t.rs", THREE.replace("one", "uno"))
 
 
-def edit_a_sql_file_and_a_rust_test(tmp):
+def edit_a_sql_file_and_a_rust_test(tmp) -> None:
     write(tmp, "a.sql", "++ b.rs\nq\nz\nQ\n")
     write(tmp, "t.rs", THREE.replace("four", "five"))
 
 
-def edit_the_last_line_of_a_file_with_no_final_newline_and_another_file(tmp):
+def edit_the_last_line_of_a_file_with_no_final_newline_and_another_file(tmp) -> None:
     write(tmp, "t.rs", NO_NEWLINE + " // end")
     write(tmp, "u.rs", THREE.replace("four", "five"))
 
 
-def edit_a_rust_file_to_hold_a_non_utf8_byte(tmp):
+def edit_a_rust_file_to_hold_a_non_utf8_byte(tmp) -> None:
     write(tmp, "t.rs", THREE.replace("four();", "four(); // \u00e9").encode("latin-1"))
 
 
 class ChangedTests(unittest.TestCase):
-    def test_changed_tests_should_follow_only_body_lines(self):
+    def test_changed_tests_should_follow_only_body_lines(self) -> None:
         a, b = {("t.rs", "a_should_x")}, {("t.rs", "b_should_y")}
         glued = THREE.rstrip("\n") + "\n#[test]\nfn c_should_z() {\n    six();\n}\n"
         rows = [  # message, files, edit, the changed tests
@@ -186,7 +186,7 @@ class ChangedTests(unittest.TestCase):
                 files = files if isinstance(files, dict) else {"t.rs": files}
                 self.assertEqual(changed_after({"x.sisu": "a\n", **files}, change), want, message)
 
-    def test_the_users_git_config_should_not_change_the_result(self):
+    def test_the_users_git_config_should_not_change_the_result(self) -> None:
         text = FAR + "\n#[test]\nfn d_should_w() {\n    seven();\n}\n"
         with git_fixture.repo({"t.rs": text}) as tmp:
             for key, value in [
@@ -204,7 +204,7 @@ class ChangedTests(unittest.TestCase):
                 ct.changed("HEAD", tmp), {("t.rs", "a_should_x"), ("t.rs", "d_should_w")}
             )
 
-    def test_a_text_conversion_driver_should_not_change_the_result(self):
+    def test_a_text_conversion_driver_should_not_change_the_result(self) -> None:
         with git_fixture.repo({"t.rs": THREE}) as tmp:
             write(tmp, ".gitattributes", "*.rs diff=cut\n")
             git_fixture.git(tmp, "config", "diff.cut.textconv", "sed 1,5d")
@@ -212,7 +212,7 @@ class ChangedTests(unittest.TestCase):
             write(tmp, "t.rs", THREE.replace("four", "five"))
             self.assertEqual(ct.changed("HEAD", tmp), {("t.rs", "b_should_y")})
 
-    def test_a_deleted_test_should_not_be_changed(self):
+    def test_a_deleted_test_should_not_be_changed(self) -> None:
         self.assertEqual(
             changed_after(
                 {"t.rs": THREE},
@@ -222,7 +222,7 @@ class ChangedTests(unittest.TestCase):
             "a deleted test",
         )
 
-    def test_only_rust_files_should_count(self):
+    def test_only_rust_files_should_count(self) -> None:
         self.assertEqual(
             changed_after(
                 {"t.txt": THREE}, lambda t: write(t, "t.txt", THREE.replace("one", "uno"))
@@ -231,7 +231,7 @@ class ChangedTests(unittest.TestCase):
             "a file that is not .rs",
         )
 
-    def test_a_body_that_ends_early_at_a_raw_string_should_not_flag_an_unchanged_test(self):
+    def test_a_body_that_ends_early_at_a_raw_string_should_not_flag_an_unchanged_test(self) -> None:
         # `}` at the indent of the `fn` inside the raw string ends the body of `a` early.
         text = (
             '#[test]\nfn a_should_x() {\n    let s = r"\n}\n";\n    one();\n}\n\n'
@@ -256,7 +256,7 @@ class ChangedTests(unittest.TestCase):
                 changed_after({"t.rs": old}, lambda t: write(t, "t.rs", new)), want, message
             )
 
-    def test_the_body_should_end_at_the_closing_brace_of_its_fn(self):
+    def test_the_body_should_end_at_the_closing_brace_of_its_fn(self) -> None:
         lines = (
             "#[test]\nfn a_should_x() {\n    let c = '}';\n    /* } */\n    one();\n}\n"
             "#[test]\nfn b_should_y() {}\n#[test]\nfn c_should_z() {\n}\n"
@@ -265,7 +265,7 @@ class ChangedTests(unittest.TestCase):
             ct.bodies(lines), [("a_should_x", 2, 6), ("b_should_y", 8, 8), ("c_should_z", 10, 11)]
         )
 
-    def test_a_comment_after_the_closing_brace_should_not_extend_the_body(self):
+    def test_a_comment_after_the_closing_brace_should_not_extend_the_body(self) -> None:
         lines = (
             "#[test]\nfn a_should_x() {\n    one();\n} // why\n"
             "#[test]\nfn b_should_y() { four(); } /* x */\n"
@@ -282,13 +282,13 @@ class ChangedTests(unittest.TestCase):
             ],
         )
 
-    def test_a_body_without_its_closing_brace_should_end_before_the_next_test(self):
+    def test_a_body_without_its_closing_brace_should_end_before_the_next_test(self) -> None:
         lines = (
             "#[test]\nfn a_should_x() {\n    one();\n#[test]\nfn b_should_y() {\n}\n".splitlines()
         )
         self.assertEqual(ct.bodies(lines), [("a_should_x", 2, 4), ("b_should_y", 5, 6)])
 
-    def test_the_hit_tests_should_equal_those_of_a_scan_of_every_body(self):
+    def test_the_hit_tests_should_equal_those_of_a_scan_of_every_body(self) -> None:
         found = [("a", 3, 5), ("b", 8, 8), ("c", 10, 14), ("d", 16, 16)]
         for start in range(19):
             for count in range(20):

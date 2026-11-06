@@ -136,7 +136,7 @@ def in_range(repo, sha, base, head):
     )
 
 
-def log_mismatch(log, repo, base, head, earlier=False):
+def log_mismatch(log, repo, base, head, earlier=False) -> str | None:
     """Why the summary line of `log` does not describe a commit in `base`..`head` of `repo`, or None.
 
     With `earlier`, a commit that `base` reaches is accepted too: an earlier round's log.
@@ -152,7 +152,7 @@ def log_mismatch(log, repo, base, head, earlier=False):
     return None
 
 
-def coverage_mismatch(path, repo, head):
+def coverage_mismatch(path, repo, head) -> str | None:
     """Why the last `coverage:` line of `path` does not describe the commit `head` of `repo`, or None."""
     lines = [line for line in path.read_text().splitlines() if line.startswith("coverage: ")]
     found = (
@@ -236,7 +236,7 @@ def drop_line(t, start):
     return re.sub(rf"- {re.escape(start)}.*?(?=\n- |\n\n)\n?", "", t, flags=re.DOTALL)
 
 
-def main():
+def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("repo")
     p.add_argument("target")

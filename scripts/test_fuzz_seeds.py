@@ -26,7 +26,7 @@ def fnv1a64(hash_value: int, data: bytes) -> int:
 
 
 class FuzzSeeds(unittest.TestCase):
-    def test_seeds_should_match_the_pinned_values(self):
+    def test_seeds_should_match_the_pinned_values(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             subprocess.run([sys.executable, SCRIPT, directory], check=True)
             self.assertEqual(sorted(os.listdir(directory)), sorted(f"seed-{n}" for n in range(128)))

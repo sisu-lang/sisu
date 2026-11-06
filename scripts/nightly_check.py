@@ -60,11 +60,9 @@ def version_problems(verbose_text: str, stderr: str, sha: str) -> list[str]:
     if not match:
         problems.append("`--version --verbose` prints no `commit:` line")
     elif match.group(1) != want:
-        problems.append(
-            "the binary has commit %s, not the picked commit %s" % (match.group(1), want)
-        )
+        problems.append(f"the binary has commit {match.group(1)}, not the picked commit {want}")
     if stderr:
-        problems.append("`--version --verbose` printed to stderr: %s" % stderr.strip())
+        problems.append(f"`--version --verbose` printed to stderr: {stderr.strip()}")
     return problems
 
 
@@ -86,19 +84,17 @@ def linux_problems(objdump_t: str, objdump_p: str) -> list[str]:
     # The build container keeps those out, so only the strong references set the floor.
     strong = [v for v, weak in glibc if not weak]
     if strong and max(strong) > GLIBC_FLOOR:
-        problems.append(
-            "GLIBC_%s is above the floor GLIBC_%s" % (text(max(strong)), text(GLIBC_FLOOR))
-        )
+        problems.append(f"GLIBC_{text(max(strong))} is above the floor GLIBC_{text(GLIBC_FLOOR)}")
     if glibcxx and max(glibcxx) > GLIBCXX_FLOOR:
         problems.append(
-            "GLIBCXX_%s is above the floor GLIBCXX_%s" % (text(max(glibcxx)), text(GLIBCXX_FLOOR))
+            f"GLIBCXX_{text(max(glibcxx))} is above the floor GLIBCXX_{text(GLIBCXX_FLOOR)}"
         )
     libraries = [m.group(1) for m in map(NEEDED_LINE.match, objdump_p.splitlines()) if m]
     if not libraries:
         problems.append("`objdump -p` shows no NEEDED line: the tool call is broken")
     for library in libraries:
         if library not in NEEDED_OK:
-            problems.append("the binary needs %s, which is not in the allow-list" % library)
+            problems.append(f"the binary needs {library}, which is not in the allow-list")
     return problems
 
 
@@ -112,7 +108,7 @@ def macos_link_problems(otool_L: str) -> list[str]:
         seen = True
         path = line.strip().split(" (")[0]
         if not path.startswith(LOAD_PATH_OK):
-            problems.append("the binary loads %s, which is not a system path" % path)
+            problems.append(f"the binary loads {path}, which is not a system path")
     if not seen:
         problems.append("`otool -L` shows no load path: the tool call is broken")
     return problems
@@ -131,9 +127,9 @@ def minos_problems(name: str, otool_l: str) -> list[str]:
         ):
             found.append(words[1])
     if not found:
-        return ["%s has no LC_BUILD_VERSION or LC_VERSION_MIN_MACOSX command" % name]
+        return [f"{name} has no LC_BUILD_VERSION or LC_VERSION_MIN_MACOSX command"]
     return [
-        "%s has minos %s, above the floor %s" % (name, v, text(MINOS_FLOOR))
+        f"{name} has minos {v}, above the floor {text(MINOS_FLOOR)}"
         for v in found
         if dotted(v) > MINOS_FLOOR
     ]
@@ -142,9 +138,9 @@ def minos_problems(name: str, otool_l: str) -> list[str]:
 def tar_problems(names: list[str]) -> list[str]:
     problems = []
     for name in sorted(set(TARBALL_NAMES) - set(names)):
-        problems.append("the tarball has no %s" % name)
+        problems.append(f"the tarball has no {name}")
     for name in sorted(set(names) - set(TARBALL_NAMES)):
-        problems.append("the tarball has %s, which it must not have" % name)
+        problems.append(f"the tarball has {name}, which it must not have")
     if len(names) != len(set(names)):
         problems.append("the tarball lists a name twice")
     return problems
@@ -157,7 +153,7 @@ def run(
     try:
         done = subprocess.run(command, capture_output=True, text=True, cwd=cwd, env=env)
     except OSError as error:
-        return ["cannot run %s: %s" % (command[0], error)], "", ""
+        return [f"cannot run {command[0]}: {error}"], "", ""
     problems = []
     if done.returncode != 0:
         problems.append(
@@ -188,7 +184,7 @@ def check_macos(sisu: str, archives: list[str]) -> list[str]:
         # them all; check every member if an archive ever mixes targets.
         member = next((m for m in members.splitlines() if not m.startswith("__.SYMDEF")), None)
         if listed_problems or member is None:
-            problems += listed_problems or ["%s has no member" % archive]
+            problems += listed_problems or [f"{archive} has no member"]
             continue
         with tempfile.TemporaryDirectory() as tmp:
             extract = run(["ar", "-x", archive, member], cwd=tmp)[0]
@@ -196,13 +192,13 @@ def check_macos(sisu: str, archives: list[str]) -> list[str]:
                 problems += extract
                 continue
             read_problems, otool_l, _ = run(["otool", "-l", os.path.join(tmp, member)])
-            problems += read_problems or minos_problems("%s(%s)" % (archive, member), otool_l)
+            problems += read_problems or minos_problems(f"{archive}({member})", otool_l)
     return problems
 
 
 def pack(target: str, release: str, third_party: str, out_dir: str) -> list[str]:
     if target not in TARGETS:
-        return ["unknown target %s: use one of %s" % (target, ", ".join(TARGETS))]
+        return ["unknown target {}: use one of {}".format(target, ", ".join(TARGETS))]
     os.makedirs(out_dir, exist_ok=True)
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     sources = {
@@ -211,14 +207,14 @@ def pack(target: str, release: str, third_party: str, out_dir: str) -> list[str]
         "LICENSE": os.path.join(root, "LICENSE"),
         THIRD_PARTY: third_party,
     }
-    missing = ["%s is missing" % path for path in sources.values() if not os.path.isfile(path)]
+    missing = [f"{path} is missing" for path in sources.values() if not os.path.isfile(path)]
     if missing:
         return missing
     with tempfile.TemporaryDirectory() as tmp:
         os.makedirs(os.path.join(tmp, "sisu"))
         for name, path in sources.items():
             shutil.copy(path, os.path.join(tmp, "sisu", name))  # copy keeps the mode of `sisu`
-        tarball = "sisu-%s.tar.gz" % target
+        tarball = f"sisu-{target}.tar.gz"
         command = ["tar", "-czf", tarball, "sisu"]
         problems = run(command, cwd=tmp, env=dict(os.environ, COPYFILE_DISABLE="1"))[0]
         if problems:

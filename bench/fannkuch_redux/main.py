@@ -1,4 +1,4 @@
-def fannkuch(n):
+def fannkuch(n) -> None:
     perm1 = list(range(n))
     perm = [0] * n
     count = [0] * n

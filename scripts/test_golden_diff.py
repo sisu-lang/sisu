@@ -27,7 +27,7 @@ def commit(repo, files):
 
 
 class GoldenDiff(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         # A pre-commit hook sets GIT_DIR and GIT_INDEX_FILE, which would aim every git call
         # here at the repository being committed to.
         clean = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
@@ -50,7 +50,7 @@ class GoldenDiff(unittest.TestCase):
                 os.chdir(cwd)
         return status, out.getvalue().splitlines()
 
-    def test_passes_when_every_change_is_a_substitution(self):
+    def test_passes_when_every_change_is_a_substitution(self) -> None:
         status, lines = self.run_in(
             {"crates/c/tests/a.err": "old: x\nsame\n", "crates/c/tests/b.sisu": "1"},
             {"crates/c/tests/a.err": "new: x\nsame\n", "crates/c/tests/b.sisu": "2"},
@@ -59,7 +59,7 @@ class GoldenDiff(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertEqual(lines, ["golden_diff: 1 files, 1 changed lines, 0 problems"])
 
-    def test_fails_on_any_other_change_to_a_case(self):
+    def test_fails_on_any_other_change_to_a_case(self) -> None:
         status, lines = self.run_in(
             {"crates/c/tests/a.err": "old: x\n", "crates/c/tests/b.out": "1\n", "docs/d.json": "1"},
             {
@@ -79,7 +79,7 @@ class GoldenDiff(unittest.TestCase):
             ],
         )
 
-    def test_golden_diff_should_compare_bytes_that_are_not_utf_8(self):
+    def test_golden_diff_should_compare_bytes_that_are_not_utf_8(self) -> None:
         with tempfile.TemporaryDirectory() as repo:
             subprocess.run(["git", "init", "-q", repo], check=True)
             path = os.path.join(repo, "crates/c/tests/b.out")

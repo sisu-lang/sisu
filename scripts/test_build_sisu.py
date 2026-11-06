@@ -25,7 +25,7 @@ chmod +x "$CARGO_TARGET_DIR/debug/sisu"
 
 
 class BuildSisu(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.repo = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.repo)
         self.run_dir = self.repo / "run"
@@ -42,12 +42,12 @@ class BuildSisu(unittest.TestCase):
             GIT_COMMITTER_DATE="2001-01-01T00:00:00",
         )
         self.git = ["git", "-C", str(self.repo), "-c", "user.name=t", "-c", "user.email=t@t"]
-        subprocess.run(self.git[:3] + ["init", "-q"], check=True, env=ENV)
+        subprocess.run([*self.git[:3], "init", "-q"], check=True, env=ENV)
         (self.repo / ".gitignore").write_text(".llvm\nfake-bin\nrun\ncount\n")
         for version in ("one", "two"):
             (self.repo / "version").write_text(f"{version}\n")
-            subprocess.run(self.git + ["add", "-A"], check=True, env=ENV)
-            subprocess.run(self.git + ["commit", "-q", "-m", version], check=True, env=self.env)
+            subprocess.run([*self.git, "add", "-A"], check=True, env=ENV)
+            subprocess.run([*self.git, "commit", "-q", "-m", version], check=True, env=self.env)
 
     def build(self, *refs):
         return subprocess.run(
@@ -60,27 +60,27 @@ class BuildSisu(unittest.TestCase):
 
     def sha(self, ref):
         return subprocess.run(
-            self.git[:3] + ["rev-parse", ref], capture_output=True, text=True, check=True, env=ENV
+            [*self.git[:3], "rev-parse", ref], capture_output=True, text=True, check=True, env=ENV
         ).stdout.strip()
 
     def runs(self):
         return len((self.repo / "count").read_text().splitlines())
 
-    def test_each_commit_should_get_its_own_sisu_and_archives(self):
+    def test_each_commit_should_get_its_own_sisu_and_archives(self) -> None:
         paths = self.build("HEAD~1", "HEAD")
         self.assertEqual(
             paths, [str(self.run_dir / "bin" / self.sha(r) / "sisu") for r in ("HEAD~1", "HEAD")]
         )
-        for path, version in zip(paths, ("one", "two")):
+        for path, version in zip(paths, ("one", "two"), strict=False):
             for name in ("sisu", "libsisu_runtime_mimalloc.a", "libsisu_runtime_system.a"):
                 self.assertEqual((Path(path).parent / name).read_text(), f"{version}\n")
 
-    def test_a_commit_built_before_should_not_build_again(self):
+    def test_a_commit_built_before_should_not_build_again(self) -> None:
         self.build("HEAD")
         self.build("HEAD", "HEAD")
         self.assertEqual(self.runs(), 1)
 
-    def test_the_export_should_be_newer_than_the_commit(self):
+    def test_the_export_should_be_newer_than_the_commit(self) -> None:
         # git archive dates each file 2001 here, which cargo would take as older than its last build.
         self.build("HEAD")
         self.assertGreater((self.run_dir / "src" / "version").stat().st_mtime, 978307200 + 86400)

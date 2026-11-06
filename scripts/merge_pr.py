@@ -66,7 +66,7 @@ def wait_for_checks(pr, sha):
         time.sleep(POLL)
 
 
-def check_base(pr, sha):
+def check_base(pr, sha) -> None:
     if gh(f"{REPO}/compare/{pr['base']['ref']}...{sha}")["behind_by"]:
         raise Stop(
             f"{pr['head']['ref']} does not contain {pr['base']['ref']}: merge it, run make test"
@@ -87,7 +87,7 @@ def git(root, *args):
     return run(["git", "-C", root, *args])
 
 
-def remove_worktree(root, branch, sha):
+def remove_worktree(root, branch, sha) -> str:
     """Removes the worktree of `branch` and the branch, only when it is clean and at `sha`."""
     path = None
     for block in git(root, "worktree", "list", "--porcelain").split("\n\n"):
@@ -108,7 +108,7 @@ def remove_worktree(root, branch, sha):
     return f"removed {path} and branch {branch}"
 
 
-def merge(number, root):
+def merge(number, root) -> None:
     pr = gh(f"{REPO}/pulls/{number}")
     if pr["state"] != "open":
         raise Stop(f"#{number} is {pr['state']}")
@@ -144,14 +144,14 @@ def merge(number, root):
     print(remove_worktree(root, pr["head"]["ref"], sha))
 
 
-def cleanup(number, root):
+def cleanup(number, root) -> None:
     pr = gh(f"{REPO}/pulls/{number}")
     if not pr["merged"]:
         raise Stop(f"#{number} is not merged")
     print(remove_worktree(root, pr["head"]["ref"], pr["head"]["sha"]))
 
 
-def main(argv):
+def main(argv) -> int:
     parser = argparse.ArgumentParser(description="Squash-merges a pull request of sisu-lang/sisu.")
     parser.add_argument("pr")
     parser.add_argument("root", nargs="?", default=".")

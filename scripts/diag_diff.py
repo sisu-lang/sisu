@@ -78,12 +78,12 @@ def show(ds):
     )
 
 
-def main(base_sisu, head_sisu, *roots, full=True, jobs=2):
+def main(base_sisu, head_sisu, *roots, full=True, jobs=2) -> int:
     paths = sorted({p for root in roots for p in Path(root).rglob("*.sisu")})
     with ThreadPoolExecutor(max_workers=jobs) as pool:
         bases = pool.map(lambda p: diagnostics(base_sisu, p, full), paths)
         heads = pool.map(lambda p: diagnostics(head_sisu, p, full), paths)
-        rows = list(zip(paths, bases, heads))
+        rows = list(zip(paths, bases, heads, strict=False))
     counts = {}
     for path, base, head in rows:
         if k := kind(base, head):

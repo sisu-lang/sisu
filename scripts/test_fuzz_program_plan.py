@@ -70,26 +70,26 @@ class Labels(unittest.TestCase):
     def plan(self, labels, **kw):
         return fp.plan("pull_request", pull_request(labels, **kw), {})
 
-    def test_minutes_and_hours(self):
+    def test_minutes_and_hours(self) -> None:
         self.assertEqual(self.plan(["fuzz-program 45m"]), (2700, True))
         self.assertEqual(self.plan(["bug", "fuzz-program 2h"]), (7200, True))
         # The bounds themselves are allowed.
         self.assertEqual(self.plan(["fuzz-program 1m"]), (60, True))
         self.assertEqual(self.plan(["fuzz-program 4h"]), (14400, True))
 
-    def test_a_bare_label_fuzzes_two_hours(self):
+    def test_a_bare_label_fuzzes_two_hours(self) -> None:
         self.assertEqual(self.plan(["fuzz-program"]), (7200, True))
 
-    def test_out_of_range_fails(self):
+    def test_out_of_range_fails(self) -> None:
         for label in ("fuzz-program 0m", "fuzz-program 6h", "fuzz-program 241m"):
             with self.subTest(label), self.assertRaisesRegex(ValueError, "outside"):
                 self.plan([label])
 
-    def test_two_labels_fail_naming_both(self):
+    def test_two_labels_fail_naming_both(self) -> None:
         with self.assertRaisesRegex(ValueError, "fuzz-program 45m, fuzz-program$"):
             self.plan(["fuzz-program 45m", "fuzz-program"])
 
-    def test_unrelated_labels_run_nothing(self):
+    def test_unrelated_labels_run_nothing(self) -> None:
         for labels in (
             [],
             ["bug"],
@@ -102,7 +102,7 @@ class Labels(unittest.TestCase):
             with self.subTest(labels):
                 self.assertIsNone(self.plan(labels))
 
-    def test_adding_another_label_runs_nothing(self):
+    def test_adding_another_label_runs_nothing(self) -> None:
         self.assertIsNone(self.plan(["fuzz-program", "bug"], action="labeled", added="bug"))
         self.assertEqual(
             self.plan(["fuzz-program 45m"], action="labeled", added="fuzz-program 45m"),
@@ -111,18 +111,18 @@ class Labels(unittest.TestCase):
 
 
 class Events(unittest.TestCase):
-    def test_nightly_run_should_get_65_minutes_of_fuzz_step_in_150(self):
+    def test_nightly_run_should_get_65_minutes_of_fuzz_step_in_150(self) -> None:
         self.assertEqual(fp.fuzz_minutes(1800), 65)
         self.assertEqual(fp.minutes(1800, True), 150)
 
-    def test_schedule_should_measure_coverage(self):
+    def test_schedule_should_measure_coverage(self) -> None:
         self.assertEqual(fp.plan("schedule", {}, {}), (1800, True))
 
-    def test_fuzz_step_should_have_time_for_the_corpus_pass_of_a_short_run(self):
+    def test_fuzz_step_should_have_time_for_the_corpus_pass_of_a_short_run(self) -> None:
         # 15 of build, 30 of corpus pass, 17 of crash replays and 3 to stop.
         self.assertEqual(fp.fuzz_minutes(60), 65)
 
-    def test_the_longest_run_should_leave_time_for_gaps(self):
+    def test_the_longest_run_should_leave_time_for_gaps(self) -> None:
         self.assertLessEqual(fp.minutes(fp.MOST, True), 360)
         self.assertEqual(
             fp.minutes(fp.MOST, True) - fp.minutes(fp.MOST, False),
@@ -146,7 +146,7 @@ class Events(unittest.TestCase):
         self.assertEqual(field(upload, "name"), "fuzz-program-failure")
         self.assertEqual(field(upload, "path"), "fuzz/artifacts/summary.md")
 
-    def test_the_gaps_step_should_report_a_check_that_did_not_finish(self):
+    def test_the_gaps_step_should_report_a_check_that_did_not_finish(self) -> None:
         gaps, _ = step_named("Generator gaps")
         section = "## Generator gaps\n\nNo new generator gap.\n"
         for label, fake, code, text in (
@@ -194,7 +194,7 @@ class Events(unittest.TestCase):
                     self.assertIn(text, in_summary)
                     self.assertIn(text, in_step)
 
-    def test_dispatch_takes_its_inputs(self):
+    def test_dispatch_takes_its_inputs(self) -> None:
         env = {"FUZZ_SECONDS": "600", "FUZZ_COVERAGE": "true"}
         self.assertEqual(fp.plan("workflow_dispatch", {}, env), (600, True))
         with self.assertRaisesRegex(ValueError, "outside"):
@@ -218,13 +218,13 @@ class Events(unittest.TestCase):
             with open(output, encoding="utf-8") as f:
                 return status, f.read()
 
-    def test_main_writes_the_outputs(self):
+    def test_main_writes_the_outputs(self) -> None:
         self.assertEqual(
             self.main(["fuzz-program 45m"]),
             (0, "seconds=2700\ncoverage=true\nfuzz_minutes=80\nminutes=165\n"),
         )
 
-    def test_main_plans_no_run_for_an_unlabeled_pull_request(self):
+    def test_main_plans_no_run_for_an_unlabeled_pull_request(self) -> None:
         self.assertEqual(self.main(["bug"]), (0, ""))
 
 

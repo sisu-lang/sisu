@@ -93,7 +93,7 @@ def targets(text):
             yield value
 
 
-def main():
+def main() -> None:
     bad = 0
     for md in map(Path, sys.argv[1:]):
         for target in targets(prose(md)):

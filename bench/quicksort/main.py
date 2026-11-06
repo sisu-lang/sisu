@@ -7,7 +7,7 @@ def random_array(n):
     return xs
 
 
-def quicksort(a, lo, hi):
+def quicksort(a, lo, hi) -> None:
     if lo >= hi:
         return
     pivot = a[hi]
