@@ -156,7 +156,8 @@ class Pick(unittest.TestCase):
                 self.assertIn('main would: ', run.stdout)
                 self.assertIn(A, run.stdout)
                 self.assertIn('main would: ', run.summary)
-                self.assertTrue(any('commits?sha=main' in call[-1] for call in run.calls), run.calls)
+                queried = any('commits?sha=main' in call[-1] for call in run.calls)
+                self.assertTrue(queried, run.calls)
 
     def test_pick_should_ignore_other_releases_and_drafts(self):
         draft = release('nightly-2026-11-02-' + A[:7], published_at=None, draft=True)
