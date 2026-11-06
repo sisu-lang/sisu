@@ -726,9 +726,10 @@ impl Checker<'_> {
         }
     }
 
-    /// Stamps the arguments of `Name.method(args)`, which E0105 reports. `Name` is a class or an
-    /// interface. An argument at a `mut` parameter of the method, or of the requirement, gets the
-    /// help of a place. A name that is none of them, or has no such method, stamps nothing.
+    /// Stamps the arguments of `Name.method(args)`, whose receiver has no type. E0105 reports a
+    /// class or an interface there, and a failed local can have its name. An argument at a `mut`
+    /// parameter of the method, or of the requirement, gets the help of a place. A name that is
+    /// none of them, or has no such method, stamps nothing.
     fn stamp_type_call(&mut self, receiver: &ast::Expr, method: Symbol, args: &[ast::Arg]) {
         let ExprKind::Name(name) = receiver.kind else {
             return;

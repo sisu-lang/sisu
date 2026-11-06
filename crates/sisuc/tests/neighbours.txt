@@ -188,7 +188,8 @@ take(mut $, 1)
 take<i64, i64>(mut $)
 ob?.ste(mut $)
 # A method called as a function (E0070) or as `Bx.put` (E0105), with a value at its `mut`
-# parameter: the argument is stamped as at a call that finds the method.
+# parameter: the argument is stamped as at a call that finds the method. The labeled call is
+# E0052, which does not find the method, so it stamps nothing.
 put(ob, $, 1)
 put(ob, $)
 put(ob, x: $, n: 1)
