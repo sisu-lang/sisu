@@ -13,6 +13,7 @@ import json
 import re
 import sys
 import tomllib
+from pathlib import Path
 from typing import Any
 
 # nextest allows whitespace, a newline too, before `(`. A leaf runs to the first `)`; a regex leaf
@@ -72,10 +73,8 @@ def problem(leaf: str, names: list[str]) -> str | None:
 
 def check(config_path: str, list_path: str) -> list[str]:
     """One line for each bad leaf of the config."""
-    with open(config_path, "rb") as file:
-        raw = file.read()
-    with open(list_path, encoding="utf-8") as file:
-        suites = json.load(file)["rust-suites"]
+    raw = Path(config_path).read_bytes()
+    suites = json.loads(Path(list_path).read_text(encoding="utf-8"))["rust-suites"]
     names = [name for suite in suites.values() for name in suite.get("testcases", {})]
     text = raw.decode("utf-8")
     wrong = {leaf: why for leaf in leaves(tomllib.loads(text)) if (why := problem(leaf, names))}

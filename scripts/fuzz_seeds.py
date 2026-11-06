@@ -11,9 +11,9 @@ sides to that one value. A change to the rule in one place fails a test until th
 Usage: python3 fuzz_seeds.py <directory>. The directory must exist.
 """
 
-import os
 import struct
 import sys
+from pathlib import Path
 
 SEEDS = 128
 SEED_WORDS = 512
@@ -43,8 +43,7 @@ def main(argv: list[str]) -> int:
         print("usage: fuzz_seeds.py <directory>", file=sys.stderr)
         return 2
     for n in range(SEEDS):
-        with open(os.path.join(argv[1], f"seed-{n}"), "wb") as f:
-            f.write(seed(n))
+        Path(argv[1], f"seed-{n}").write_bytes(seed(n))
     return 0
 
 

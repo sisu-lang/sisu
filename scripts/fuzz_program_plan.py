@@ -19,6 +19,7 @@ import os
 import re
 import sys
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 LABEL = re.compile(r"fuzz-program(?: ([0-9]+)([mh]))?")
@@ -110,7 +111,7 @@ def plan(event: str, payload: dict[str, Any], env: Mapping[str, str]) -> tuple[i
 
 
 def main() -> int:
-    with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as f:
+    with Path(os.environ["GITHUB_EVENT_PATH"]).open(encoding="utf-8") as f:
         payload = json.load(f)
     try:
         got = plan(os.environ["GITHUB_EVENT_NAME"], payload, os.environ)
@@ -121,7 +122,7 @@ def main() -> int:
         print("No fuzz-program label: no run.")
         return 0
     seconds, coverage = got
-    with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+    with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as out:
         out.write(
             f"seconds={seconds}\ncoverage={str(coverage).lower()}\n"
             f"fuzz_minutes={fuzz_minutes(seconds)}\nminutes={minutes(seconds, coverage)}\n"

@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 import test_names
 
@@ -134,8 +135,10 @@ def changed(ref: str, repo: str = ".") -> set[tuple[str, str]]:
             if old is None:  # the first hunk of the file
                 text = git(repo, "show", f"{ref}:{old_path}") if old_path else ""
                 old = bodies(text.splitlines())
-                with open(f"{repo}/{new_path}", encoding="utf-8", errors="surrogateescape") as f:
-                    new = bodies(f.read().splitlines())
+                source = Path(f"{repo}/{new_path}")
+                new = bodies(
+                    source.read_text(encoding="utf-8", errors="surrogateescape").splitlines()
+                )
                 new_names = {name for name, _, _ in new}
             found |= {(new_path, n) for n in hit(old, a, b) & new_names}
             found |= {(new_path, n) for n in hit(new, c, d)}

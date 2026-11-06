@@ -7,6 +7,7 @@ Prints nothing when the report is missing, and one line when it cannot be read. 
 
 import sys
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import slow_tests
 
@@ -40,8 +41,7 @@ def report(junit: str, top: int = TOP) -> str:
 
 def main(path: str) -> int:
     try:
-        with open(path, encoding="utf-8") as file:
-            print(report(file.read()))
+        print(report(Path(path).read_text(encoding="utf-8")))
     except FileNotFoundError:
         pass
     except (OSError, ET.ParseError, ValueError) as error:

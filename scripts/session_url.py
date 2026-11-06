@@ -6,6 +6,7 @@ Usage: python3 session_url.py MESSAGE_FILE
 
 import re
 import sys
+from pathlib import Path
 
 SESSION = re.compile(r"claude\.ai/code/session|^Claude-Session:", re.MULTILINE | re.IGNORECASE)
 
@@ -13,7 +14,7 @@ SESSION = re.compile(r"claude\.ai/code/session|^Claude-Session:", re.MULTILINE |
 def main(paths: list[str]) -> int:
     bad = 0
     for path in paths:
-        with open(path, encoding="utf-8") as f:
+        with Path(path).open(encoding="utf-8") as f:
             for n, line in enumerate(f, 1):
                 if not line.startswith("#") and SESSION.search(line):
                     print(f"{path}:{n}: remove the session line from the commit message")

@@ -19,6 +19,7 @@ import re
 import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import Any, overload
 
 REPO = "repos/sisu-lang/sisu"
@@ -125,11 +126,11 @@ def main() -> int:
         sys.exit(__doc__)
     pr = sys.argv[1]
     state = (
-        sys.argv[2]
+        Path(sys.argv[2])
         if len(sys.argv) == 3
-        else os.path.join(os.environ.get("TMPDIR", "/tmp"), f"watch-pr-{pr}.json")
+        else Path(os.environ.get("TMPDIR", "/tmp"), f"watch-pr-{pr}.json")
     )
-    seen = set(json.load(open(state))) if os.path.exists(state) else set()
+    seen = set(json.loads(state.read_text())) if state.exists() else set()
     me: str | None = None
     start = time.monotonic()
     while True:
@@ -145,7 +146,7 @@ def main() -> int:
         if new:
             for _, line in new:
                 print(line)
-            with open(state, "w") as f:
+            with state.open("w") as f:
                 json.dump(sorted(seen | {k for k, _ in new}), f)
             return 0
         if time.monotonic() - start >= LIMIT:

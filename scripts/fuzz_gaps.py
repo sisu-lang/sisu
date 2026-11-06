@@ -25,6 +25,7 @@ import json
 import re
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
 MARKER = "/crates/sisuc/src/"
@@ -113,7 +114,7 @@ def demangle(names: list[str]) -> list[str]:
 def load(path: str) -> list[dict[str, Any]]:
     """The `data[0].functions` records of an export."""
     try:
-        with open(path, encoding="utf-8") as f:
+        with Path(path).open(encoding="utf-8") as f:
             document = json.load(f)
     except OSError as e:
         raise Broken(f"cannot read the export {path} ({e.strerror})") from e
@@ -162,8 +163,7 @@ def identities(
 def read_known(path: str) -> set[tuple[str, str]]:
     """The (file, name) keys of the known list."""
     try:
-        with open(path, encoding="utf-8") as f:
-            text = f.read()
+        text = Path(path).read_text(encoding="utf-8")
     except OSError as e:
         raise Broken(f"cannot read the known list {path} ({e.strerror})") from e
     keys: set[tuple[str, str]] = set()

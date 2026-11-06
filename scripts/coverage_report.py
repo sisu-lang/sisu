@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, NamedTuple
 
 # Integration tests, and unit-test modules in their own file (src/**/tests.rs, src/**/tests/).
@@ -160,8 +161,7 @@ def main(argv: list[str]) -> int:
     def read_line(path: str, number: int) -> str:
         if path not in cache:
             try:
-                with open(f"{root}/{path}", errors="replace") as f:
-                    cache[path] = f.read().splitlines()
+                cache[path] = Path(f"{root}/{path}").read_text(errors="replace").splitlines()
             except OSError:
                 cache[path] = []
         lines = cache[path]
@@ -172,8 +172,7 @@ def main(argv: list[str]) -> int:
             raise ValueError("usage: coverage_report.py COVERAGE.json LCOV.info CHANGES.diff")
         texts = []
         for path in argv:
-            with open(path, errors="replace") as f:
-                texts.append(f.read())
+            texts.append(Path(path).read_text(errors="replace"))
         export = json.loads(texts[0])
         data = export["data"][0]
         for kind in ("lines", "regions"):

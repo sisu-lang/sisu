@@ -15,6 +15,7 @@ import re
 import subprocess
 import time
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 # Seconds on a GitHub-hosted runner. A unit test runs in-process. An end-to-end test spawns sisu,
 # links, and may run under Valgrind. A `tests/run` case, with its builds and Valgrind runs, takes
@@ -52,10 +53,9 @@ def in_diff(name: str, diff: str) -> bool:
 
 def main(path: str, ref: str | None = None) -> None:
     try:
-        with open(path, encoding="utf-8") as file:
-            junit = file.read()
+        junit = Path(path).read_text(encoding="utf-8")
         tests = timed(junit)
-        minutes = (time.time() - os.path.getmtime(path)) / 60
+        minutes = (time.time() - Path(path).stat().st_mtime) / 60
     except FileNotFoundError:
         return
     except (OSError, ET.ParseError, ValueError) as error:

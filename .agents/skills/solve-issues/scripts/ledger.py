@@ -7,6 +7,7 @@ Usage:
 
 import sys
 from datetime import datetime
+from pathlib import Path
 
 
 def add(ledger: str, kind: str, text: str, now: datetime) -> str:
@@ -37,15 +38,13 @@ def main(argv: list[str]) -> int:
         print(__doc__, file=sys.stderr)
         return 2
     path, kind, text = argv
-    with open(path, encoding="utf-8") as f:
-        ledger = f.read()
+    ledger = Path(path).read_text(encoding="utf-8")
     try:
         updated = add(ledger, kind, text, datetime.now())
     except ValueError as e:
         print(f"ledger.py: {e}", file=sys.stderr)
         return 2
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(updated)
+    Path(path).write_text(updated, encoding="utf-8")
     return 0
 
 

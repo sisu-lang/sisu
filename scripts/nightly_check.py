@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 GLIBC_FLOOR = (2, 35)
 GLIBCXX_FLOOR = (3, 4, 30)
@@ -178,7 +179,7 @@ def check_macos(sisu: str, archives: list[str]) -> list[str]:
     problems = problems or macos_link_problems(out)
     problems += run(["codesign", "-v", sisu])[0]
     for archive in archives:
-        archive = os.path.abspath(archive)
+        archive = str(Path(archive).absolute())
         listed_problems, members, _ = run(["ar", "-t", archive])
         # shortcut: the first member stands for the archive, because one deployment target built
         # them all; check every member if an archive ever mixes targets.
@@ -191,7 +192,7 @@ def check_macos(sisu: str, archives: list[str]) -> list[str]:
             if extract:
                 problems += extract
                 continue
-            read_problems, otool_l, _ = run(["otool", "-l", os.path.join(tmp, member)])
+            read_problems, otool_l, _ = run(["otool", "-l", str(Path(tmp, member))])
             problems += read_problems or minos_problems(f"{archive}({member})", otool_l)
     return problems
 
@@ -199,21 +200,21 @@ def check_macos(sisu: str, archives: list[str]) -> list[str]:
 def pack(target: str, release: str, third_party: str, out_dir: str) -> list[str]:
     if target not in TARGETS:
         return ["unknown target {}: use one of {}".format(target, ", ".join(TARGETS))]
-    os.makedirs(out_dir, exist_ok=True)
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    root = Path(__file__).absolute().parent.parent
     sources = {
-        "sisu": os.path.join(release, "sisu"),
-        **{a: os.path.join(release, a) for a in ARCHIVES},
-        "LICENSE": os.path.join(root, "LICENSE"),
-        THIRD_PARTY: third_party,
+        "sisu": Path(release, "sisu"),
+        **{a: Path(release, a) for a in ARCHIVES},
+        "LICENSE": root / "LICENSE",
+        THIRD_PARTY: Path(third_party),
     }
-    missing = [f"{path} is missing" for path in sources.values() if not os.path.isfile(path)]
+    missing = [f"{path} is missing" for path in sources.values() if not path.is_file()]
     if missing:
         return missing
     with tempfile.TemporaryDirectory() as tmp:
-        os.makedirs(os.path.join(tmp, "sisu"))
+        Path(tmp, "sisu").mkdir()
         for name, path in sources.items():
-            shutil.copy(path, os.path.join(tmp, "sisu", name))  # copy keeps the mode of `sisu`
+            shutil.copy(path, Path(tmp, "sisu", name))  # copy keeps the mode of `sisu`
         tarball = f"sisu-{target}.tar.gz"
         command = ["tar", "-czf", tarball, "sisu"]
         problems = run(command, cwd=tmp, env=dict(os.environ, COPYFILE_DISABLE="1"))[0]
@@ -222,7 +223,7 @@ def pack(target: str, release: str, third_party: str, out_dir: str) -> list[str]
         problems, listing, _ = run(["tar", "-tzf", tarball], cwd=tmp)
         problems = problems or tar_problems(listing.splitlines())
         if not problems:
-            shutil.move(os.path.join(tmp, tarball), os.path.join(out_dir, tarball))
+            shutil.move(Path(tmp, tarball), Path(out_dir, tarball))
         return problems
 
 

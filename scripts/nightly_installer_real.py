@@ -16,6 +16,7 @@ import tempfile
 import time
 import unittest
 import uuid
+from pathlib import Path
 
 ARTIFACTS = os.environ.get("SISU_ARTIFACTS")
 LINUX = sys.platform.startswith("linux")
@@ -37,8 +38,8 @@ def environment(home: str, path: str | None = None) -> dict[str, str]:
 
 def install(home: str, path: str | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        # pyrefly: ignore[no-matching-overload]  the `__main__` block exits when ARTIFACTS is unset
-        ["sh", os.path.join(ARTIFACTS, "install.sh")],
+        # pyrefly: ignore[bad-argument-type]  the `__main__` block exits when ARTIFACTS is unset
+        ["sh", Path(ARTIFACTS, "install.sh")],
         env=environment(home, path),
         capture_output=True,
         text=True,
@@ -84,10 +85,9 @@ def docker(image: str, command: str) -> subprocess.CompletedProcess[str]:
             )
 
 
-def write(path: str, text: str, mode: int = 0o644) -> None:
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(text)
-    os.chmod(path, mode)
+def write(path: Path, text: str, mode: int = 0o644) -> None:
+    path.write_text(text, encoding="utf-8")
+    path.chmod(mode)
 
 
 class InstallerRealTest(unittest.TestCase):
@@ -97,7 +97,7 @@ class InstallerRealTest(unittest.TestCase):
         return directory.name
 
     def sisu(self, home: str) -> str:
-        return os.path.join(home, ".sisu", "bin", "sisu")
+        return str(Path(home, ".sisu", "bin", "sisu"))
 
     @staticmethod
     def stop(proc: subprocess.Popen[bytes]) -> None:
@@ -152,7 +152,7 @@ class InstallerRealTest(unittest.TestCase):
         home = self.home()
         first = install(home)
         self.assertEqual(first.returncode, 0, first.stderr)
-        program = os.path.join(home, "wait.sisu")
+        program = Path(home, "wait.sisu")
         write(program, WAIT_PROGRAM)
         proc = subprocess.Popen(
             [self.sisu(home), "run", program],
@@ -170,14 +170,14 @@ class InstallerRealTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, err)
         self.assertEqual(out.decode().strip(), "line")
         for name in ("sisu", "libsisu_runtime_mimalloc.a", "libsisu_runtime_system.a"):
-            self.assertTrue(os.path.isfile(os.path.join(home, ".sisu", "bin", name)), name)
+            self.assertTrue(Path(home, ".sisu", "bin", name).is_file(), name)
 
     @unittest.skipUnless(LINUX or MAC, "Linux or macOS only")
     def test_build_should_refuse_a_deleted_runtime_archive(self) -> None:
         home = self.home()
         self.assertEqual(install(home).returncode, 0)
-        os.remove(os.path.join(home, ".sisu", "bin", "libsisu_runtime_mimalloc.a"))
-        program = os.path.join(home, "hello.sisu")
+        Path(home, ".sisu", "bin", "libsisu_runtime_mimalloc.a").unlink()
+        program = Path(home, "hello.sisu")
         write(program, HELLO_PROGRAM)
         result = subprocess.run(
             [
@@ -187,7 +187,7 @@ class InstallerRealTest(unittest.TestCase):
                 "mimalloc",
                 program,
                 "-o",
-                os.path.join(home, "hello"),
+                Path(home, "hello"),
             ],
             env=environment(home),
             capture_output=True,
@@ -204,7 +204,7 @@ class InstallerRealTest(unittest.TestCase):
         home = self.home()
         fake = self.home()
         write(
-            os.path.join(fake, "uname"),
+            Path(fake, "uname"),
             '#!/bin/sh\nif [ "${1:-}" = -m ]; then echo x86_64; else exec /usr/bin/uname "$@"; fi\n',
             0o755,
         )
@@ -219,7 +219,7 @@ class InstallerRealTest(unittest.TestCase):
     def test_mac_without_command_line_tools_should_name_the_command(self) -> None:
         home = self.home()
         fake = self.home()
-        write(os.path.join(fake, "xcode-select"), "#!/bin/sh\nexit 2\n", 0o755)
+        write(Path(fake, "xcode-select"), "#!/bin/sh\nexit 2\n", 0o755)
         result = install(home, fake + os.pathsep + os.environ["PATH"])
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("xcode-select --install", result.stdout)

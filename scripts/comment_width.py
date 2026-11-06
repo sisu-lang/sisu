@@ -5,6 +5,7 @@ Usage: python3 comment_width.py FILE...
 """
 
 import sys
+from pathlib import Path
 
 WIDTH = 100
 
@@ -12,7 +13,7 @@ WIDTH = 100
 def main(paths: list[str]) -> int:
     bad = 0
     for path in paths:
-        with open(path, encoding="utf-8") as f:
+        with Path(path).open(encoding="utf-8") as f:
             for n, line in enumerate(f, 1):
                 line = line.rstrip("\n")
                 if line.lstrip().startswith("//") and len(line) > WIDTH:

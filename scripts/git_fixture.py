@@ -5,6 +5,7 @@ import os
 import subprocess
 import tempfile
 from collections.abc import Generator
+from pathlib import Path
 from unittest import mock
 
 
@@ -34,8 +35,7 @@ def git(path: str, *args: str) -> str:
 
 def write(path: str, name: str, content: str | bytes) -> None:
     """Writes `content` to the file `name` under `path`."""
-    with open(os.path.join(path, name), "wb") as file:
-        file.write(content if isinstance(content, bytes) else content.encode("utf-8"))
+    Path(path, name).write_bytes(content if isinstance(content, bytes) else content.encode("utf-8"))
 
 
 @contextlib.contextmanager
@@ -47,10 +47,9 @@ def repo(files: dict[str, str]) -> Generator[str]:
     with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, env(), clear=True):
         git(tmp, "init", "-q")
         for name, text in files.items():
-            full = os.path.join(tmp, name)
-            os.makedirs(os.path.dirname(full), exist_ok=True)
-            with open(full, "w", encoding="utf-8") as file:
-                file.write(text)
+            full = Path(tmp, name)
+            full.parent.mkdir(parents=True, exist_ok=True)
+            full.write_text(text, encoding="utf-8")
         git(tmp, "add", ".")
         git(
             tmp,

@@ -631,7 +631,7 @@ def measure(args: argparse.Namespace, counts: dict[str, Any]) -> None:
             check_clean(deadline, args.sisu, path, f"{name}, size {k}")
         per_stage: dict[str, list[int]] = {stage: [] for stage, _ in STAGES}
         with tempfile.TemporaryDirectory() as tmp:
-            profile = os.path.join(tmp, "callgrind.out")
+            profile = str(Path(tmp, "callgrind.out"))
             for k, path in zip(sizes, files, strict=False):
                 what = f"{name}, size {k}"
                 deadline.run(
