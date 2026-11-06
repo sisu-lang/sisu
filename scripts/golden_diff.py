@@ -1,7 +1,8 @@
-"""Checks that a re-bless changed the expected files only by the given text substitutions, so a
-review can sample a mechanical golden diff instead of reading it: every changed `.err`, `.out`
-and `.json` of a test case between BASE and HEAD keeps its line count, and each changed line
-equals its old line with every OLD replaced by NEW.
+"""Check that a re-bless changed the expected files only by the given text substitutions.
+
+A review can then sample a mechanical golden diff instead of reading it: every changed `.err`,
+`.out` and `.json` of a test case between BASE and HEAD keeps its line count, and each changed
+line equals its old line with every OLD replaced by NEW.
 
 Usage: python3 golden_diff.py BASE..HEAD OLD NEW [OLD NEW]...
 Exits 1 when a file differs in any other way.
@@ -16,7 +17,9 @@ CASES = (":(glob)crates/*/tests/**", ":(glob)site/programs/**")
 
 
 def git(*args: str) -> str:
-    # An `.out` file holds the program's raw bytes, so a byte that is not UTF-8 is kept as a surrogate.
+    """Run git with `args`, and return its stdout."""
+    # An `.out` file holds the program's raw bytes, so a byte that is not UTF-8 is kept as a
+    # surrogate.
     return subprocess.run(
         ["git", *args],
         capture_output=True,
@@ -28,6 +31,7 @@ def git(*args: str) -> str:
 
 
 def main(span: str, subs: list[tuple[str, str]]) -> int:
+    """Check the golden files changed between the ends of `span`, and return the exit code."""
     base, head = span.split("..")
     changed = git("diff", "--name-only", "--diff-filter=M", base, head, "--", *CASES)
     files = [f for f in changed.split() if f.endswith(SUFFIXES)]
@@ -54,7 +58,7 @@ def main(span: str, subs: list[tuple[str, str]]) -> int:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 4 or len(sys.argv) % 2:
+    if len(sys.argv) < 4 or len(sys.argv) % 2:  # noqa: PLR2004  the range and one OLD NEW pair
         sys.exit(__doc__)
     pairs = list(zip(sys.argv[2::2], sys.argv[3::2], strict=False))
     sys.exit(main(sys.argv[1], pairs))

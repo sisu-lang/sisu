@@ -1,5 +1,7 @@
-"""Finds generator gaps: functions that a valid program of tests/run or tests/run-fail reaches and
-no fixed fuzz seed reaches. It compares two `llvm-cov export` files with a list of known gaps.
+"""Find the generator gaps.
+
+A gap is a function that a valid program of tests/run or tests/run-fail reaches and no fixed
+fuzz seed reaches. The check compares two `llvm-cov export` files with a list of known gaps.
 
 A function is (file, first line, name). The file is the part of its path after `crates/sisuc/src/`.
 The name is the `c++filt -s rust` name without crate hashes and generic arguments, so the
@@ -44,12 +46,15 @@ STAGES = ("check/", "mir/", "codegen/")
 HEADING = "## Generator gaps"
 
 
-class Broken(Exception):
+class Broken(Exception):  # noqa: N818  the tests and the callers name it `Broken`
     """The measurement cannot be trusted. The message is the reason, without a final period."""
 
 
 def matching_close(name: str, start: int) -> int:
-    """The index of the `>` that closes the `<` at `start`. The `>` of `->` does not count."""
+    """Return the index of the `>` that closes the `<` at `start`.
+
+    The `>` of `->` does not count.
+    """
     depth = 0
     for i in range(start, len(name)):
         if name[i] == "<":
@@ -61,10 +66,12 @@ def matching_close(name: str, start: int) -> int:
     raise Broken(f"the name {name!r} has angle brackets that do not balance")
 
 
-# shortcut: a generic Self type such as <[T] as Tr> does not merge, upgrade when a new gap names such an impl.
+# shortcut: a generic Self type such as <[T] as Tr> does not merge, upgrade when a new gap names
+# such an impl.
 def strip_generics(name: str) -> str:
-    """Removes each `<...>` that follows an identifier character or `::`, with that `::`. A `<`
-    at the start or after another `<` opens `<Type>` or `<T as Trait>`, and stays.
+    """Remove each `<...>` that follows an identifier character or `::`, with that `::`.
+
+    A `<` at the start or after another `<` opens `<Type>` or `<T as Trait>`, and stays.
     """
     out: list[str] = []
     i = 0
@@ -81,16 +88,20 @@ def strip_generics(name: str) -> str:
 
 
 def normalize(name: str) -> str | None:
-    """The name without crate hashes and generic arguments, or None for a name that ends in a
-    closure. The test comes last: a generic argument can hold a closure, and the function is not
-    one. A named function inside a closure is a function.
+    """Return the name without crate hashes and generic arguments, or None for a closure.
+
+    A closure is a name that ends in a closure. The test comes last: a generic argument can hold
+    a closure, and the function is not one. A named function inside a closure is a function.
     """
     name = strip_generics(QUOTED_BRACKET.sub("''", CRATE_HASH.sub("", name)))
     return None if CLOSURE_END.search(name) else name
 
 
 def demangle(names: list[str]) -> list[str]:
-    """One `c++filt -s rust` call for all names. It must return one line for each name."""
+    """Return the demangled names, from one `c++filt -s rust` call for all names.
+
+    The call must return one line for each name.
+    """
     try:
         done = subprocess.run(
             ["c++filt", "-s", "rust"],
@@ -112,7 +123,7 @@ def demangle(names: list[str]) -> list[str]:
 
 
 def load(path: str) -> list[dict[str, Any]]:
-    """The `data[0].functions` records of an export."""
+    """Return the `data[0].functions` records of an export."""
     try:
         with Path(path).open(encoding="utf-8") as f:
             document = json.load(f)
@@ -130,8 +141,9 @@ def load(path: str) -> list[dict[str, Any]]:
 
 
 def in_scope(functions: list[dict[str, Any]], path: str) -> list[tuple[str, int, str, bool]]:
-    """(file, first line, mangled name, reached) of each record in scope. A record with no file
-    name is broken: it would read as out of scope.
+    """Return (file, first line, mangled name, reached) of each record in scope.
+
+    A record with no file name is broken: it would read as out of scope.
     """
     found = []
     for record in functions:
@@ -150,7 +162,7 @@ def in_scope(functions: list[dict[str, Any]], path: str) -> list[tuple[str, int,
 def identities(
     rows: list[tuple[str, int, str, bool]], names: dict[str, str | None]
 ) -> dict[tuple[str, int, str], bool]:
-    """Maps (file, first line, name) to whether any record of that function was reached."""
+    """Map (file, first line, name) to whether any record of that function was reached."""
     seen: dict[tuple[str, int, str], bool] = {}
     for file, line, mangled, reached in rows:
         name = names[mangled]
@@ -161,7 +173,7 @@ def identities(
 
 
 def read_known(path: str) -> set[tuple[str, str]]:
-    """The (file, name) keys of the known list."""
+    """Return the (file, name) keys of the known list."""
     try:
         text = Path(path).read_text(encoding="utf-8")
     except OSError as e:
@@ -188,8 +200,10 @@ def read_known(path: str) -> set[tuple[str, str]]:
 def check_keys_are_unique(
     known: set[tuple[str, str]], *exports: dict[tuple[str, int, str], bool]
 ) -> None:
-    """A known key must name one definition. Two first lines under one key mean that the key
-    would hide the second definition too. The lines of both exports count, reached or not.
+    """Check that each known key names one definition.
+
+    Two first lines under one key mean that the key would hide the second definition too. The
+    lines of both exports count, reached or not.
     """
     lines = collections.defaultdict(set)
     for seen in exports:
@@ -205,14 +219,17 @@ def check_keys_are_unique(
 
 
 def fence(lines: list[str]) -> str:
+    """Return `lines` in a Markdown code fence."""
     return "```text\n" + "\n".join(lines) + "\n```"
 
 
 def section(*parts: str) -> str:
+    """Return the Markdown section that starts with the heading and holds `parts`."""
     return "\n\n".join((HEADING, *parts)) + "\n"
 
 
 def compare(seeds_path: str, valid_path: str, known_path: str) -> tuple[int, str]:
+    """Return the exit code and the Markdown section for the two exports and the known list."""
     exports = {
         "seeds": in_scope(load(seeds_path), seeds_path),
         "valid-program": in_scope(load(valid_path), valid_path),
@@ -263,16 +280,19 @@ def compare(seeds_path: str, valid_path: str, known_path: str) -> tuple[int, str
 
 
 def main(argv: list[str]) -> int:
+    """Write the gap section for the files in `argv`, and return the exit code."""
     try:
-        if len(argv) != 4:
-            raise Broken("usage: fuzz_gaps.py <seeds.json> <valid.json> <known_gaps.txt>")
+        if len(argv) != 4:  # noqa: PLR2004  the program name and the three paths of the usage line
+            raise Broken(  # noqa: TRY301  the handler below turns it into exit code 2
+                "usage: fuzz_gaps.py <seeds.json> <valid.json> <known_gaps.txt>"
+            )
         code, text = compare(*argv[1:])
     except Broken as e:
         code, text = 2, f"{e}"
     # An uncaught failure exits 1, which reads as a new gap.
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001  any other failure is a broken check, not a new gap
         code, text = 2, f"an unexpected {type(e).__name__}: {e}"
-    if code == 2:
+    if code == 2:  # noqa: PLR2004  the exit code of a check that did not finish
         text = section(
             f"The gap check did not finish, so it proves nothing about gaps. Reason: {text}."
         )

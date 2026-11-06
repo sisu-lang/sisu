@@ -1,5 +1,7 @@
-"""Writes the seeds of a fuzz run of the program target: the files seed-0 to seed-127, each of
-4096 bytes, into a directory. scripts/fuzz.sh passes that directory to the fuzzer as a corpus.
+"""Write the seeds of a fuzz run of the program target into a directory.
+
+The seeds are the files seed-0 to seed-127, each of 4096 bytes. scripts/fuzz.sh passes that
+directory to the fuzzer as a corpus.
 
 `generate::seed` in crates/sisuc/src/generate/coverage.rs owns the rule, and this file is a copy,
 because a shell step cannot call a test-only function. `FUZZ_SEEDS` there is the number of seeds.
@@ -21,7 +23,7 @@ MASK = (1 << 64) - 1
 
 
 def splitmix64(state: int) -> tuple[int, int]:
-    """The next state and the next output."""
+    """Return the next state and the next output."""
     state = (state + 0x9E3779B97F4A7C15) & MASK
     z = state
     z = ((z ^ (z >> 30)) * 0xBF58476D1CE4E5B9) & MASK
@@ -30,6 +32,7 @@ def splitmix64(state: int) -> tuple[int, int]:
 
 
 def seed(n: int) -> bytes:
+    """Return the 4096 bytes of the seed `n`."""
     state = n
     words = []
     for _ in range(SEED_WORDS):
@@ -39,7 +42,8 @@ def seed(n: int) -> bytes:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 2:
+    """Write the seeds into the directory in `argv`, and return the exit code."""
+    if len(argv) != 2:  # noqa: PLR2004  the program name and the directory
         print("usage: fuzz_seeds.py <directory>", file=sys.stderr)
         return 2
     for n in range(SEEDS):

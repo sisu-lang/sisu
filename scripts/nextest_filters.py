@@ -1,5 +1,7 @@
-"""Checks that each `test(...)` leaf of a nextest filter matches a test.
-A filter that matches no test does nothing and says nothing: a renamed test then loses its override.
+"""Check that each `test(...)` leaf of a nextest filter matches a test.
+
+A filter that matches no test does nothing and says nothing: a renamed test then loses its
+override.
 
 Usage: python3 nextest_filters.py CONFIG LIST_JSON
 CONFIG is .config/nextest.toml. LIST_JSON is the output of
@@ -19,15 +21,18 @@ from typing import Any
 # nextest allows whitespace, a newline too, before `(`. A leaf runs to the first `)`; a regex leaf
 # runs to its closing `/`, so that the message shows all of it.
 LEAF = re.compile(r"\btest\s*\(\s*(/.*?/|[^)]*)\)")
-# A TOML string or comment. Read in order, so a quote in a comment and a `#` in a string are no token.
+# A TOML string or comment. Read in order, so a quote in a comment and a `#` in a string are no
+# token.
 TOKEN = re.compile(
     r"""'''.*?'''|\"\"\".*?\"\"\"|'[^'\n]*'|"(?:[^"\\\n]|\\.)*"|#[^\n]*""", re.DOTALL
 )
 
 
 def leaves(config: dict[str, Any]) -> list[str]:
-    """The argument of each `test(...)` leaf of each override and script filter, once each, as the
-    parsed TOML holds it. nextest trims the space before an argument, not the space after it.
+    """Return the argument of each `test(...)` leaf of each override and script filter.
+
+    Each argument comes once, as the parsed TOML holds it. nextest trims the space before an
+    argument, not the space after it.
 
     shortcut: the check runs on the Linux list only, so an override with a `platform` key is
     skipped. Upgrade when a platform override is added, to one list for each platform.
@@ -42,9 +47,10 @@ def leaves(config: dict[str, Any]) -> list[str]:
 
 
 def lines_of(text: str, wanted: set[str]) -> dict[str, set[int]]:
-    """The lines of the config text, outside its comments, where each argument of `wanted` stands
-    in a `test(...)` leaf. A leaf is on the line of its `test`. One pass: the lines are counted
-    from one leaf to the next.
+    """Return the lines of the config text, outside its comments, where each `wanted` argument is.
+
+    The argument stands in a `test(...)` leaf. A leaf is on the line of its `test`. One pass: the
+    lines are counted from one leaf to the next.
 
     shortcut: the text is not the parsed value, so a leaf that an escape or a line continuation
     spells is not found, and the caller reports line 1. A leaf of a platform override, or in a key
@@ -62,7 +68,7 @@ def lines_of(text: str, wanted: set[str]) -> dict[str, set[int]]:
 
 
 def problem(leaf: str, names: list[str]) -> str | None:
-    """What is wrong with a leaf, or None."""
+    """Return what is wrong with a leaf, or None."""
     # shortcut: a leaf is matched against every binary, not the one its filter names, so a rename
     # in another binary can hide behind a leaf of the same text; scope by `binary(...)` then.
     if leaf.startswith(("/", "~", "#")) or "\\" in leaf:
@@ -72,7 +78,7 @@ def problem(leaf: str, names: list[str]) -> str | None:
 
 
 def check(config_path: str, list_path: str) -> list[str]:
-    """One line for each bad leaf of the config."""
+    """Return one line for each bad leaf of the config."""
     raw = Path(config_path).read_bytes()
     suites = json.loads(Path(list_path).read_text(encoding="utf-8"))["rust-suites"]
     names = [name for suite in suites.values() for name in suite.get("testcases", {})]
@@ -86,7 +92,8 @@ def check(config_path: str, list_path: str) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 2:
+    """Print one line for each bad leaf in the config, and return the exit code."""
+    if len(argv) != 2:  # noqa: PLR2004  the config and the list of the usage line
         print(__doc__)
         return 2
     lines = check(*argv)

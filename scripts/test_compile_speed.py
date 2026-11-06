@@ -75,9 +75,10 @@ exit $code
 """
 
 
-def stub_text(
+def stub_text(  # noqa: PLR0913  one keyword for each thing that a stub can do
     tmp: Path,
     name: str,
+    *,
     output: str = "45\\n",
     stderr: str = "",
     fail: bool = False,
@@ -372,7 +373,7 @@ class CompileSpeed(unittest.TestCase):
         class FakePopen:
             pid = 4242
 
-            def __init__(self, cmd: object, **kwargs: object) -> None:
+            def __init__(self, _cmd: object, **_kwargs: object) -> None:
                 self.returncode = 0
 
             def communicate(self, timeout: float | None = None) -> tuple[str, str]:
@@ -412,14 +413,14 @@ class CompileSpeed(unittest.TestCase):
                 class FakePopen:
                     pid = 4242
 
-                    def __init__(self, cmd: object, **kw: object) -> None:
-                        self.returncode = code
+                    def __init__(self, _cmd: object, **_kw: object) -> None:
+                        self.returncode = code  # noqa: B023  the class is used in this pass of the loop
 
                     def communicate(self, timeout: float | None = None) -> object:
-                        calls.append(timeout)
-                        if len(calls) == 1 and isinstance(first, BaseException):
-                            raise first
-                        return first if len(calls) == 1 else ("", "")
+                        calls.append(timeout)  # noqa: B023  the class is used in this pass of the loop
+                        if len(calls) == 1 and isinstance(first, BaseException):  # noqa: B023  the class is used in this pass of the loop
+                            raise first  # noqa: B023  the class is used in this pass of the loop
+                        return first if len(calls) == 1 else ("", "")  # noqa: B023  the class is used in this pass of the loop
 
                 deadline = compile_speed.Deadline(10)
                 with (
@@ -556,21 +557,21 @@ class CompileSpeed(unittest.TestCase):
             for lld in (False, True):
                 with self.subTest(row=row, lld=lld):
                     exe = row.startswith("executable")
-                    rust = compile_speed.command(row, "rust", src, out, lld)
+                    rust = compile_speed.command(row, "rust", src, out, lld=lld)
                     assert rust is not None
                     self.assertTrue(has(rust, "--edition", "2024"), rust)
                     self.assertTrue(has(rust, "-C", "codegen-units=1"), rust)
                     self.assertEqual(has(rust, "-C", "link-arg=-Wl,--threads=1"), lld and exe)
-                    cpp = compile_speed.command(row, "cpp", src, out, lld)
+                    cpp = compile_speed.command(row, "cpp", src, out, lld=lld)
                     assert cpp is not None
                     self.assertIn("-std=c++20", cpp)
                     self.assertEqual("-Wl,--threads=1" in cpp, lld and exe)
-                    sisu = compile_speed.command(row, "sisu", src, out, lld)
+                    sisu = compile_speed.command(row, "sisu", src, out, lld=lld)
                     assert sisu is not None
                     self.assertNotIn("--linker", sisu)
                     if "--emit" in sisu:
                         self.assertNotIn("-o", sisu)
-                    go = compile_speed.command(row, "go", src, out, lld)
+                    go = compile_speed.command(row, "go", src, out, lld=lld)
                     if row == "LLVM IR, no optimization":
                         self.assertIsNone(go)
                     else:
@@ -678,7 +679,7 @@ class CompileSpeed(unittest.TestCase):
                 self.assertRegex(cells[5], r"^\d+\.\d+ m?s$", cells)
                 self.assertEqual(cells[-1], "-", cells)
 
-    def test_full_run_should_print_a_row_for_each_command_language_and_size(self) -> None:
+    def test_full_run_should_print_a_row_for_each_command_language_and_size(self) -> None:  # noqa: C901  one check for each fact in the spec
         """GIVEN stub compilers for the four languages, a stub `perf`, and two sizes
         WHEN `scripts/compile_speed.py --sizes 2,1 --runs 2` runs twice on one `--out`
         THEN the table has one line for each row, size and language
@@ -802,12 +803,12 @@ class CompileSpeed(unittest.TestCase):
         AND a cell with no perf, no empty time or no time is a dash
         """
         row = compile_speed.ROWS[0]
-        Result = compile_speed.Result
+        new_result = compile_speed.Result
         results = [
-            Result(row, 10, "sisu", 100, 1000, 0.25, 0.05, 2_000_000),
-            Result(row, 10, "rust", 300, 999_960, 1.0, None, None),
-            Result(row, 10, "cpp", 300, 3000, 1.5, 1.5, None),
-            Result(row, 10, "go", 100, 1000, note="skipped"),
+            new_result(row, 10, "sisu", 100, 1000, 0.25, 0.05, 2_000_000),
+            new_result(row, 10, "rust", 300, 999_960, 1.0, None, None),
+            new_result(row, 10, "cpp", 300, 3000, 1.5, 1.5, None),
+            new_result(row, 10, "go", 100, 1000, note="skipped"),
         ]
         text = compile_speed.table(["commit: abc"], results)
         self.assertIn("commit: abc", text.splitlines()[0])
@@ -829,17 +830,18 @@ class CompileSpeed(unittest.TestCase):
         THEN it runs the command 3 times and gives 0.01
         AND it runs the command once more under perf when perf counts
         """
-        runner = compile_speed.Measurer(mock.Mock(runs=3), mock.Mock(), True)
+        runner = compile_speed.Measurer(mock.Mock(runs=3), mock.Mock(), perf=True)
         calls: list[bool] = []
         times = iter([0.03, 0.01, 0.02])
 
-        def run(
-            cmd: list[str],
-            what: str,
-            lang: str,
-            src: Path,
-            text: str,
-            bench: Path | None,
+        def run(  # noqa: PLR0913, PLR0917  the signature of `Measurer.run`
+            cmd: list[str],  # noqa: ARG001  the name must match `Measurer.run`
+            what: str,  # noqa: ARG001  the name must match `Measurer.run`
+            lang: str,  # noqa: ARG001  the name must match `Measurer.run`
+            src: Path,  # noqa: ARG001  the name must match `Measurer.run`
+            text: str,  # noqa: ARG001  the name must match `Measurer.run`
+            bench: Path | None,  # noqa: ARG001  the name must match `Measurer.run`
+            *,
             wrap: bool = False,
         ) -> tuple[float, str]:
             calls.append(wrap)
@@ -847,7 +849,9 @@ class CompileSpeed(unittest.TestCase):
 
         # pyrefly: ignore[method-assign]  the test replaces `run` with the fake above
         runner.run = run
-        self.assertEqual(runner.cell(["c"], "what", "rust", Path(), "", None, True), (0.01, 7))
+        self.assertEqual(
+            runner.cell(["c"], "what", "rust", Path(), "", None, count_instructions=True), (0.01, 7)
+        )
         self.assertEqual(calls, [False, False, False, True])
 
     def test_out_with_a_space_should_work_for_every_command(self) -> None:

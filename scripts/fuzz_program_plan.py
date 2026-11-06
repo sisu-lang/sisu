@@ -1,6 +1,8 @@
-"""Plans a run of .github/workflows/fuzz-program.yml: how long to fuzz, whether to measure
-coverage, and the time limits of the fuzz step and of the job. Writes `seconds=`, `coverage=`,
-`fuzz_minutes=` and `minutes=` to $GITHUB_OUTPUT, or nothing when the event asks for no run.
+"""Plan a run of .github/workflows/fuzz-program.yml.
+
+The plan says how long to fuzz, whether to measure coverage, and the time limits of the fuzz
+step and of the job. The script writes `seconds=`, `coverage=`, `fuzz_minutes=` and `minutes=`
+to $GITHUB_OUTPUT, or nothing when the event asks for no run.
 
 - schedule: 1800 s, and coverage.
 - workflow_dispatch: the inputs, passed in FUZZ_SECONDS and FUZZ_COVERAGE.
@@ -48,7 +50,7 @@ CORPUS_PASS_MINUTES = 30
 
 
 def label_seconds(name: str) -> int | None:
-    """The fuzz time a label asks for, or None when it is not a fuzz-program label."""
+    """Return the fuzz time a label asks for, or None when it is not a fuzz-program label."""
     m = LABEL.fullmatch(name)
     if m is None:
         return None
@@ -58,13 +60,17 @@ def label_seconds(name: str) -> int | None:
 
 
 def in_range(seconds: int) -> int:
+    """Return `seconds` when the fuzz time is in range, and raise ValueError when it is not."""
     if not LEAST <= seconds <= MOST:
         raise ValueError(f"a fuzz time of {seconds} s is outside {LEAST} s to {MOST // 3600} h")
     return seconds
 
 
 def from_labels(labels: list[str], added: str | None = None) -> int | None:
-    """The fuzz time the labels ask for; None for no run. `added` is a `labeled` event's label."""
+    """Return the fuzz time the labels ask for; None for no run.
+
+    `added` is the label of a `labeled` event.
+    """
     if added is not None and label_seconds(added) is None:
         return None
     matching = [name for name in labels if label_seconds(name) is not None]
@@ -77,16 +83,19 @@ def from_labels(labels: list[str], added: str | None = None) -> int | None:
 
 
 def fuzz_minutes(seconds: int) -> int:
-    """The fuzz step's time limit. It has 15 minutes of build, then the fuzzing or the corpus
-    pass, whichever is longer. Then it has 17 minutes of crash replays and 3 to stop the jobs.
+    """Return the fuzz step's time limit.
+
+    It has 15 minutes of build, then the fuzzing or the corpus pass, whichever is longer. Then it
+    has 17 minutes of crash replays and 3 to stop the jobs.
     """
     return 15 + max(math.ceil(seconds / 60), CORPUS_PASS_MINUTES) + 17 + 3
 
 
-def minutes(seconds: int, coverage: bool) -> int:
-    """The job's time limit: the fuzz step, 15 minutes of tmin, cmin, 5 of setup and the cache,
-    and the coverage and the gap check. The 5 minutes are an estimate, not a bound: no step
-    limits them.
+def minutes(seconds: int, *, coverage: bool) -> int:
+    """Return the job's time limit.
+
+    It holds the fuzz step, 15 minutes of tmin, cmin, 5 of setup and the cache, and the coverage
+    and the gap check. The 5 minutes are an estimate, not a bound: no step limits them.
     """
     return (
         fuzz_minutes(seconds)
@@ -98,6 +107,7 @@ def minutes(seconds: int, coverage: bool) -> int:
 
 
 def plan(event: str, payload: dict[str, Any], env: Mapping[str, str]) -> tuple[int, bool] | None:
+    """Return the fuzz seconds and the coverage flag that `event` asks for, or None for no run."""
     if event == "schedule":
         return NIGHTLY, True
     if event == "workflow_dispatch":
@@ -111,6 +121,7 @@ def plan(event: str, payload: dict[str, Any], env: Mapping[str, str]) -> tuple[i
 
 
 def main() -> int:
+    """Read the event, write the plan to $GITHUB_OUTPUT, and return the exit code."""
     with Path(os.environ["GITHUB_EVENT_PATH"]).open(encoding="utf-8") as f:
         payload = json.load(f)
     try:
@@ -125,7 +136,7 @@ def main() -> int:
     with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as out:
         out.write(
             f"seconds={seconds}\ncoverage={str(coverage).lower()}\n"
-            f"fuzz_minutes={fuzz_minutes(seconds)}\nminutes={minutes(seconds, coverage)}\n"
+            f"fuzz_minutes={fuzz_minutes(seconds)}\nminutes={minutes(seconds, coverage=coverage)}\n"
         )
     print(f"Fuzz for {seconds} s, coverage {coverage}.")
     return 0

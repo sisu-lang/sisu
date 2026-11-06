@@ -1,5 +1,6 @@
-"""Rejects a commit message that holds an agent's session line or session URL: a commit names
-its change, and a session link leads to a private chat log.
+"""Reject a commit message that holds an agent's session line or session URL.
+
+A commit names its change, and a session link leads to a private chat log.
 
 Usage: python3 session_url.py MESSAGE_FILE
 """
@@ -12,6 +13,7 @@ SESSION = re.compile(r"claude\.ai/code/session|^Claude-Session:", re.MULTILINE |
 
 
 def main(paths: list[str]) -> int:
+    """Print each session line in the message files `paths`, and return the exit code."""
     bad = 0
     for path in paths:
         with Path(path).open(encoding="utf-8") as f:

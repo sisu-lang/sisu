@@ -119,7 +119,7 @@ class Labels(unittest.TestCase):
 class Events(unittest.TestCase):
     def test_nightly_run_should_get_65_minutes_of_fuzz_step_in_150(self) -> None:
         self.assertEqual(fp.fuzz_minutes(1800), 65)
-        self.assertEqual(fp.minutes(1800, True), 150)
+        self.assertEqual(fp.minutes(1800, coverage=True), 150)
 
     def test_schedule_should_measure_coverage(self) -> None:
         self.assertEqual(fp.plan("schedule", {}, {}), (1800, True))
@@ -129,9 +129,9 @@ class Events(unittest.TestCase):
         self.assertEqual(fp.fuzz_minutes(60), 65)
 
     def test_the_longest_run_should_leave_time_for_gaps(self) -> None:
-        self.assertLessEqual(fp.minutes(fp.MOST, True), 360)
+        self.assertLessEqual(fp.minutes(fp.MOST, coverage=True), 360)
         self.assertEqual(
-            fp.minutes(fp.MOST, True) - fp.minutes(fp.MOST, False),
+            fp.minutes(fp.MOST, coverage=True) - fp.minutes(fp.MOST, coverage=False),
             fp.COVERAGE_MINUTES + fp.GAPS_MINUTES,
         )
         coverage, _ = step_named("Coverage")

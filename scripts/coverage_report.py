@@ -1,5 +1,6 @@
-"""Turns a cargo-llvm-cov export, its LCOV file and a git diff into the uncovered regions the
-change touches.
+"""Report the uncovered regions that a change touches.
+
+The script turns a cargo-llvm-cov export, its LCOV file and a git diff into the report.
 
 Usage: python3 coverage_report.py COVERAGE.json LCOV.info CHANGES.diff
 Exits 0 for any valid report, however low the coverage, and 1 when an input is unusable.
@@ -23,6 +24,8 @@ HUNK = re.compile(r"^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 
 class Region(NamedTuple):
+    """A span of source that has a zero count, or a function that never ran."""
+
     start: int
     start_col: int
     end: int
@@ -31,7 +34,10 @@ class Region(NamedTuple):
 
 
 def changed_lines(diff: str) -> dict[str, set[int]]:
-    """The new-side line numbers of added lines, per Rust file that is not test code (`TEST_DIR`)."""
+    """Return the new-side line numbers of added lines, per Rust file that is not test code.
+
+    Test code is what `TEST_DIR` matches.
+    """
     result: dict[str, set[int]] = {}
     path = None
     line = old_left = new_left = 0
@@ -62,11 +68,12 @@ def changed_lines(diff: str) -> dict[str, set[int]]:
 
 
 def relative(path: str, root: str) -> str | None:
+    """Return `path` relative to `root`, or None when `path` is not under `root`."""
     return path[len(root) + 1 :] if path.startswith(root + "/") else None
 
 
 def uncovered(export: dict[str, Any], root: str) -> dict[str, list[Region]]:
-    """Zero-count regions per file; a function that never ran is one never_run region."""
+    """Return the zero-count regions per file; a function that never ran is one never_run region."""
     # A source function is its file plus the span of its first region; its instantiations
     # have different mangled names, so they are grouped by that key and merged span by span.
     functions: dict[
@@ -84,7 +91,7 @@ def uncovered(export: dict[str, Any], root: str) -> dict[str, list[Region]]:
             key = (names[r[5]], *r[:4])
             spans[key] = max(spans.get(key, 0), r[4])
     result: dict[str, list[Region]] = {}
-    for (name, first), (count, spans) in functions.items():
+    for (name, _first), (count, spans) in functions.items():
         if count == 0:
             path = relative(name, root)
             if path is None:
@@ -93,7 +100,7 @@ def uncovered(export: dict[str, Any], root: str) -> dict[str, list[Region]]:
             own = [k for k in spans if k[0] == name]
             top = min(own, key=lambda k: k[1:])
             result.setdefault(path, []).append(
-                Region(top[1], top[2], max(k[3] for k in own), 0, True)
+                Region(top[1], top[2], max(k[3] for k in own), 0, never_run=True)
             )
             continue
         for (file, *span), n in spans.items():
@@ -103,6 +110,7 @@ def uncovered(export: dict[str, Any], root: str) -> dict[str, list[Region]]:
 
 
 def line_hits(lcov: str, root: str) -> dict[str, dict[int, int]]:
+    """Return the hit count of each instrumented line, per file under `root`, from LCOV text."""
     result: dict[str, dict[int, int]] = {}
     hits: dict[int, int] = {}
     for text in lcov.splitlines():
@@ -118,16 +126,23 @@ def line_hits(lcov: str, root: str) -> dict[str, dict[int, int]]:
 def report(
     export: dict[str, Any], lcov: str, diff: str, root: str, read_line: Callable[[str, int], str]
 ) -> str:
+    """Return the report text: the coverage figures and the uncovered regions in changed files."""
     totals = export["data"][0]["totals"]
     changed = changed_lines(diff)
     hits = line_hits(lcov, root)
     instrumented = [h[n] for p, ns in changed.items() for n in ns if n in (h := hits.get(p, {}))]
     if instrumented:
         covered = sum(1 for h in instrumented if h > 0)
-        pct = f"changed lines {100 * covered / len(instrumented):.1f}% ({covered} of {len(instrumented)})"
+        pct = (
+            f"changed lines {100 * covered / len(instrumented):.1f}% "
+            f"({covered} of {len(instrumented)})"
+        )
     else:
         pct = "changed lines: none"
-    head = f"Coverage: lines {totals['lines']['percent']:.1f}%, regions {totals['regions']['percent']:.1f}%, {pct}."
+    head = (
+        f"Coverage: lines {totals['lines']['percent']:.1f}%, "
+        f"regions {totals['regions']['percent']:.1f}%, {pct}."
+    )
 
     touching: list[str] = []
     other: list[str] = []
@@ -156,6 +171,7 @@ def report(
 
 
 def main(argv: list[str]) -> int:
+    """Print the report for the three files in `argv`, and return the exit code."""
     cache: dict[str, list[str]] = {}
 
     def read_line(path: str, number: int) -> str:
@@ -168,16 +184,20 @@ def main(argv: list[str]) -> int:
         return lines[number - 1] if 0 < number <= len(lines) else ""
 
     try:
-        if len(argv) != 3:
-            raise ValueError("usage: coverage_report.py COVERAGE.json LCOV.info CHANGES.diff")
+        if len(argv) != 3:  # noqa: PLR2004  the three paths of the usage line
+            raise ValueError(  # noqa: TRY301  the handler below prints the message and returns 1
+                "usage: coverage_report.py COVERAGE.json LCOV.info CHANGES.diff"
+            )
         texts = [Path(path).read_text(errors="replace") for path in argv]
         export = json.loads(texts[0])
         data = export["data"][0]
         for kind in ("lines", "regions"):
             if not isinstance(data["totals"][kind]["percent"], (int, float)):
-                raise ValueError(f"totals.{kind}.percent is not a number")
+                raise ValueError(  # noqa: TRY004, TRY301  the handler prints the type name, so TypeError changes the message
+                    f"totals.{kind}.percent is not a number"
+                )
         if not isinstance(data["functions"], list):
-            raise ValueError("functions is not a list")
+            raise ValueError("functions is not a list")  # noqa: TRY004, TRY301  as for `percent`
         root = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True
         ).stdout.strip()

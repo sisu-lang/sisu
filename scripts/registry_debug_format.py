@@ -1,5 +1,6 @@
-"""Rejects `{:?}` in diagnostic text, the code of `registry.rs` before its tests. Rust's `{:?}`
-escapes a value the Rust way; diagnostic text quotes Sisu source.
+"""Reject `{:?}` in diagnostic text, the code of `registry.rs` before its tests.
+
+Rust's `{:?}` escapes a value the Rust way; diagnostic text quotes Sisu source.
 
 Usage: python3 registry_debug_format.py FILE...
 """
@@ -13,12 +14,14 @@ from pathlib import Path
 # shortcut: between the two, the pattern takes blank lines, `//` comments and attributes with one
 # level of inner brackets, not a `/* */` comment; add the form when a file uses it.
 TESTS = re.compile(
-    r"^#\[cfg\(test\)\]\n(?:#\[(?:[^][]|\[[^]]*\])*\]\n|//[^\n]*\n|\n)*(?:pub(?:\([^)\n]*\))? )?mod \w+ \{",
+    r"^#\[cfg\(test\)\]\n(?:#\[(?:[^][]|\[[^]]*\])*\]\n|//[^\n]*\n|\n)*"
+    r"(?:pub(?:\([^)\n]*\))? )?mod \w+ \{",
     re.MULTILINE,
 )
 
 
 def main(paths: list[str]) -> int:
+    """Print each `{:?}` in the production code of the files `paths`, and return the exit code."""
     bad = 0
     for path in paths:
         text = Path(path).read_text(encoding="utf-8")

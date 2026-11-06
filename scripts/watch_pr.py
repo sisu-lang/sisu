@@ -3,13 +3,13 @@
 Usage: python3 scripts/watch_pr.py PR [STATE_FILE]
 
 An event is a new review with text, or a new or edited inline or issue comment, from someone
-other than you; the first failed check of the head; or the end of all checks of the head with none failed.
-CodeRabbit's "review in progress" note is not an event; the review that replaces it is. After a
-failed check, a rerun that passes is an event. Each list reads 100 items. Each line holds the first
-300 characters of the body and the URL of the full text. STATE_FILE (by default $TMPDIR/watch-pr-<PR>.json) keeps the events already
-printed, so the next run prints only newer ones. Run it with `run_in_background` and the sandbox
-off (`gh api` is REST and needs the network), then run it again after each event. Exit status:
-0 an event, 1 the time limit.
+other than you; the first failed check of the head; or the end of all checks of the head with
+none failed. CodeRabbit's "review in progress" note is not an event; the review that replaces it
+is. After a failed check, a rerun that passes is an event. Each list reads 100 items. Each line
+holds the first 300 characters of the body and the URL of the full text. STATE_FILE (by default
+$TMPDIR/watch-pr-<PR>.json) keeps the events already printed, so the next run prints only newer
+ones. Run it with `run_in_background` and the sandbox off (`gh api` is REST and needs the
+network), then run it again after each event. Exit status: 0 an event, 1 the time limit.
 """
 
 import hashlib
@@ -38,8 +38,10 @@ def gh(path: str, key: str) -> list[dict[str, Any]]: ...
 
 
 def gh(path: str, key: str | None = None) -> dict[str, Any] | list[dict[str, Any]]:
-    """The answer to one request. With `key`, every page of a list, joined: `key` names the list
-    in each page, or is "" when the page is the list.
+    """Return the answer to one request.
+
+    With `key`, the answer is every page of a list, joined: `key` names the list in each page, or
+    is "" when the page is the list.
     """
     pages = ["--paginate", "--slurp"] if key is not None else []
     # A hung request would hold the watcher past its limit; a timeout counts as a failed call.
@@ -52,13 +54,13 @@ def gh(path: str, key: str | None = None) -> dict[str, Any] | list[dict[str, Any
 
 
 def text(body: str | None, width: int = 300) -> str:
-    """The body as one line, with HTML tags and comments taken out."""
+    """Return the body as one line, with HTML tags and comments taken out."""
     body = re.sub(r"<!--.*?-->|<[^>]+>", " ", body or "", flags=re.DOTALL)
     return " ".join(body.split())[:width]
 
 
 def events(pr: str, me: str) -> list[tuple[str, str]]:
-    """Each event now on the pull request, as (key, line). An edit gives a new key."""
+    """Return each event now on the pull request, as (key, line). An edit gives a new key."""
     found: list[tuple[str, str]] = []
     for review in gh(f"{REPO}/pulls/{pr}/reviews?per_page=100", ""):
         if review["user"]["login"] != me and review["body"]:
@@ -80,19 +82,19 @@ def events(pr: str, me: str) -> list[tuple[str, str]]:
                 (
                     f"inline {c['id']} {c['updated_at']}",
                     (
-                        f"inline {c['id']} {c['user']['login']} {c['path']}:{line}: {text(c['body'])} "
-                        f"{c['html_url']}"
+                        f"inline {c['id']} {c['user']['login']} {c['path']}:{line}: "
+                        f"{text(c['body'])} {c['html_url']}"
                     ),
                 )
             )
-    for c in gh(f"{REPO}/issues/{pr}/comments?per_page=100", ""):
-        if c["user"]["login"] != me and IN_PROGRESS not in (c["body"] or ""):
-            found.append(
-                (
-                    f"comment {c['id']} {c['updated_at']}",
-                    f"comment {c['id']} {c['user']['login']}: {text(c['body'])} {c['html_url']}",
-                )
-            )
+    found.extend(
+        (
+            f"comment {c['id']} {c['updated_at']}",
+            f"comment {c['id']} {c['user']['login']}: {text(c['body'])} {c['html_url']}",
+        )
+        for c in gh(f"{REPO}/issues/{pr}/comments?per_page=100", "")
+        if c["user"]["login"] != me and IN_PROGRESS not in (c["body"] or "")
+    )
     sha = gh(f"{REPO}/pulls/{pr}")["head"]["sha"]
     runs = gh(f"{REPO}/commits/{sha}/check-runs?per_page=100", "check_runs")
     failed = [r for r in runs if r["status"] == "completed" and r["conclusion"] not in PASSED]
@@ -122,13 +124,14 @@ def events(pr: str, me: str) -> list[tuple[str, str]]:
 
 
 def main() -> int:
+    """Wait for an event on the pull request, print it, and return the exit code."""
     if len(sys.argv) not in (2, 3):
         sys.exit(__doc__)
     pr = sys.argv[1]
     state = (
         Path(sys.argv[2])
-        if len(sys.argv) == 3
-        else Path(os.environ.get("TMPDIR", "/tmp"), f"watch-pr-{pr}.json")
+        if len(sys.argv) == 3  # noqa: PLR2004  the program, the pull request and the state file
+        else Path(os.environ.get("TMPDIR", "/tmp"), f"watch-pr-{pr}.json")  # noqa: S108  the fallback when TMPDIR is unset; the file holds event keys only
     )
     seen = set(json.loads(state.read_text())) if state.exists() else set()
     me: str | None = None

@@ -1,6 +1,7 @@
-"""Warns about the tests in a nextest JUnit report that ran over their time budget
-(CODING_STANDARDS.md, Tests). A warning, never a failure: wall-clock time depends on the machine
-and its load.
+"""Warn about the tests in a nextest JUnit report that ran over their time budget.
+
+The budget is in CODING_STANDARDS.md, Tests. A warning, never a failure: wall-clock time depends
+on the machine and its load.
 
 Usage: python3 slow_tests.py JUNIT.xml [--diff REF]
 Prints nothing when the report is missing or every test is within budget, and one line when the
@@ -25,33 +26,37 @@ END_TO_END_BUDGET = 4.0
 
 
 def timed(junit: str) -> list[tuple[float, float, str]]:
-    """(seconds, budget, name) of each test in the report, setup scripts left out."""
+    """Return (seconds, budget, name) of each test in the report, setup scripts left out."""
     tests = []
-    for case in ET.fromstring(junit).iter("testcase"):
+    for case in ET.fromstring(junit).iter("testcase"):  # noqa: S314  the report is the output of nextest in this repository
         binary = case.get("classname", "")
         if binary.startswith("@"):  # a setup script, not a test
             continue
-        # nextest names an integration test binary `<crate>::<binary>`, a crate's own tests `<crate>`.
+        # nextest names an integration test binary `<crate>::<binary>`, a crate's own tests
+        # `<crate>`.
         budget = END_TO_END_BUDGET if "::" in binary else UNIT_BUDGET
         tests.append((float(case.get("time", "0")), budget, f"{binary} {case.get('name')}"))
     return tests
 
 
 def over_budget(tests: list[tuple[float, float, str]]) -> list[tuple[float, float, str]]:
-    """The tests over their budget, slowest first."""
+    """Return the tests over their budget, slowest first."""
     return sorted((test for test in tests if test[0] > test[1]), reverse=True)
 
 
 def in_diff(name: str, diff: str) -> bool:
-    """Whether the diff mentions the test: its function name, which a `fn` line or a hunk header
-    carries (`.gitattributes` gives Rust files git's `rust` hunk headers), or the stem of its
-    `tests/` case file, such as `fib` for `run::fib.sisu`.
+    """Tell whether the diff mentions the test.
+
+    The diff mentions a test by its function name, which a `fn` line or a hunk header carries
+    (`.gitattributes` gives Rust files git's `rust` hunk headers), or by the stem of its `tests/`
+    case file, such as `fib` for `run::fib.sisu`.
     """
     key = name.split(" ", 1)[-1].rsplit("::", 1)[-1].removesuffix(".sisu")
     return re.search(rf"(?<!\w){re.escape(key)}(?!\w)", diff) is not None
 
 
 def main(path: str, ref: str | None = None) -> None:
+    """Print the tests over budget in the report `path`, only those the diff against `ref` names."""
     try:
         junit = Path(path).read_text(encoding="utf-8")
         tests = timed(junit)
@@ -70,6 +75,7 @@ def main(path: str, ref: str | None = None) -> None:
             capture_output=True,
             text=True,
             errors="surrogateescape",
+            check=False,
         ).stdout
         mentioned = [test for test in slow if in_diff(test[2], diff)]
         others = len(slow) - len(mentioned)
@@ -78,13 +84,15 @@ def main(path: str, ref: str | None = None) -> None:
         print(f"slow_tests: {others} other tests over budget are outside `git diff {ref}`")
     if slow:
         print(
-            f"Tests over their time budget (CODING_STANDARDS.md, Tests), in {path} from {minutes:.0f} min ago:"
+            "Tests over their time budget (CODING_STANDARDS.md, Tests), "
+            f"in {path} from {minutes:.0f} min ago:"
         )
     for seconds, budget, name in slow:
         print(f"  {seconds:6.2f} s (budget {budget:g} s)  {name}")
         if os.environ.get("GITHUB_ACTIONS") == "true":
             print(
-                f"::warning title=Slow test::{name} took {seconds:.2f} s; its budget is {budget:g} s"
+                f"::warning title=Slow test::{name} took {seconds:.2f} s; "
+                f"its budget is {budget:g} s"
             )
 
 
