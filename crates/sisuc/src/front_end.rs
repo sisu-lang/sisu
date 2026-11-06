@@ -1732,6 +1732,21 @@ fn main() {
                 "fn print() {}\nfn g(x: print) {}\nfn main() {}\n",
                 &[(Twice, (1, 4))],
             ),
+            (
+                "conformance, fn",
+                "fn print() {}\nclass C: print {}\nfn main() {}\n",
+                &[(Twice, (1, 4))],
+            ),
+            (
+                "any, fn",
+                "fn print() {}\nfn g(x: any print) {}\nfn main() {}\n",
+                &[(Twice, (1, 4))],
+            ),
+            (
+                "bound, fn",
+                "fn print() {}\nfn g<T: print>(x: T) {}\nfn main() {}\n",
+                &[(Twice, (1, 4))],
+            ),
         ];
         assert_rows(rows);
     }
@@ -1866,6 +1881,71 @@ fn main() {
                 "class Some\n{}\nfn main() { let a = Some }\n",
                 &[(Built, (1, 7)), (Brace, (2, 1))],
             ),
+            (
+                "broken Ok, call",
+                "class Ok\n{}\nfn main() { let a = Ok(1) }\n",
+                &[(Built, (1, 7)), (Brace, (2, 1))],
+            ),
+            (
+                "broken Err, call",
+                "class Err\n{}\nfn f() -> Result<i64, string> {\n    Err(\"e\")\n}\nfn main() {}\n",
+                &[(Built, (1, 7)), (Brace, (2, 1))],
+            ),
+            (
+                "broken Option, Some",
+                "class Option\n{}\nfn main() { let a = Some(1)\n    print(1) }\n",
+                &[(Built, (1, 7)), (Brace, (2, 1))],
+            ),
+            (
+                "type position, fn Eq",
+                "fn Eq()\n{}\nfn g(x: Eq) {}\nfn main() {}\n",
+                &[(Built, (1, 4)), (Brace, (2, 1))],
+            ),
+            (
+                "return type, fn Eq",
+                "fn Eq()\n{}\nfn g() -> Eq { }\nfn main() {}\n",
+                &[(Built, (1, 4)), (Brace, (2, 1))],
+            ),
+            (
+                "annotation, fn Eq",
+                "fn Eq()\n{}\nfn main() { let x: Eq = 1 }\n",
+                &[(Built, (1, 4)), (Brace, (2, 1))],
+            ),
+            (
+                "conformance, fn",
+                "fn I()\n{}\nclass C: I {}\nfn main() {}\n",
+                &[(Brace, (2, 1))],
+            ),
+            (
+                "any, fn",
+                "fn I()\n{}\nfn g(x: any I) {}\nfn main() {}\n",
+                &[(Brace, (2, 1))],
+            ),
+            (
+                "bound, fn",
+                "fn I()\n{}\nfn g<T: I>(x: T) {}\nfn main() {}\n",
+                &[(Brace, (2, 1))],
+            ),
+            (
+                "extend, fn",
+                "fn I()\n{}\nextend I {\n    fn m(self) {}\n}\nfn main() {}\n",
+                &[(Brace, (2, 1))],
+            ),
+            (
+                "extend, fn Eq",
+                "fn Eq()\n{}\nextend Eq {\n    fn m(self) {}\n}\nfn main() {}\n",
+                &[(Built, (1, 4)), (Brace, (2, 1))],
+            ),
+            (
+                "optional bound, fn Eq",
+                "fn Eq()\n{}\nfn g<T: Eq?>(x: T) {}\nfn main() {}\n",
+                &[(Built, (1, 4)), (Brace, (2, 1))],
+            ),
+            (
+                "array conformance, fn Eq",
+                "fn Eq()\n{}\nclass C: [Eq] {}\nfn main() {}\n",
+                &[(Built, (1, 4)), (Brace, (2, 1))],
+            ),
         ];
         assert_rows(rows);
     }
@@ -1957,9 +2037,11 @@ fn main() {
     fn a_use_that_nothing_poisons_should_keep_its_error() {
         use Code::{
             AssignToFunction as Assign, BindingNotFound as NoBind, BraceOnNewLine as Brace,
-            BuiltInName as Built, CannotInfer as Infer, DefinedTwice as Twice,
-            FunctionNotFound as NoFn, Mismatch, PrintArgument as Print, TypeAsValue as AsValue,
-            UnknownType as NoType, VariantForm as Variant,
+            BuiltInName as Built, CannotBeAny as CannotAny, CannotInfer as Infer,
+            ConformanceBody as ConfBody, DefinedTwice as Twice, FunctionNotFound as NoFn,
+            InterfaceAsType as IfaceType, Mismatch, NotAnInterface as NotIface,
+            PrintArgument as Print, TypeAsValue as AsValue, UnknownType as NoType,
+            VariantForm as Variant,
         };
         let rows: &[(&str, &str, &[Found])] = &[
             (
@@ -2027,21 +2109,6 @@ fn main() {
                 "class Result {}\nfn f() -> Result<i64, string> {\n    Ok(1)\n}\nfn main() {}\n",
                 &[(Built, (1, 7))],
             ),
-            (
-                "broken Ok, call",
-                "class Ok\n{}\nfn main() { let a = Ok(1) }\n",
-                &[(Built, (1, 7)), (Brace, (2, 1))],
-            ),
-            (
-                "broken Err, call",
-                "class Err\n{}\nfn f() -> Result<i64, string> {\n    Err(\"e\")\n}\nfn main() {}\n",
-                &[(Built, (1, 7)), (Brace, (2, 1))],
-            ),
-            (
-                "broken Option, Some",
-                "class Option\n{}\nfn main() { let a = Some(1)\n    print(1) }\n",
-                &[(Built, (1, 7)), (Brace, (2, 1))],
-            ),
             // `Some` does not belong to the `Ok` and `Err` part of the rule.
             (
                 "broken Option, read of Some",
@@ -2103,6 +2170,51 @@ fn main() {
                 "fn f() {}\nfn g(x: f) {}\nfn main() {}\n",
                 &[(NoType, (2, 9))],
             ),
+            (
+                "an interface is no type",
+                "fn g(x: Eq) {}\nfn main() {}\n",
+                &[(IfaceType, (1, 9))],
+            ),
+            (
+                "a language interface is not poisoned, type position",
+                "interface Eq\n{}\nfn g(x: Eq) {}\nfn main() {}\n",
+                &[(Built, (1, 11)), (Brace, (2, 1)), (IfaceType, (3, 9))],
+            ),
+            (
+                "an intact fn Eq is not poisoned",
+                "fn Eq() {}\nfn g(x: Eq) {}\nfn main() {}\n",
+                &[(Built, (1, 4)), (IfaceType, (2, 9))],
+            ),
+            (
+                "extend of an interface",
+                "extend Eq {\n    fn m(self) {}\n}\nfn main() {}\n",
+                &[(IfaceType, (1, 8))],
+            ),
+            (
+                "optional bound",
+                "fn g<T: Eq?>(x: T) {}\nfn main() {}\n",
+                &[(NotIface, (1, 9))],
+            ),
+            (
+                "a language interface is not poisoned, extend",
+                "interface Eq\n{}\nextend Eq {\n    fn m(self) {}\n}\nfn main() {}\n",
+                &[(Built, (1, 11)), (Brace, (2, 1)), (IfaceType, (3, 8))],
+            ),
+            (
+                "a language interface is not poisoned, optional bound",
+                "interface Eq\n{}\nfn g<T: Eq?>(x: T) {}\nfn main() {}\n",
+                &[(Built, (1, 11)), (Brace, (2, 1)), (NotIface, (3, 9))],
+            ),
+            (
+                "the language interface stays, conformance",
+                "fn Eq()\n{}\nclass C: Eq {}\nfn main() {}\n",
+                &[(Built, (1, 4)), (Brace, (2, 1)), (ConfBody, (3, 10))],
+            ),
+            (
+                "the language interface stays, any",
+                "fn Eq()\n{}\nfn g(x: any Eq) {}\nfn main() {}\n",
+                &[(Built, (1, 4)), (Brace, (2, 1)), (CannotAny, (3, 13))],
+            ),
         ];
         assert_rows(rows);
     }
@@ -2111,7 +2223,9 @@ fn main() {
     /// a type. The intact item is the duplicate, and the type gives no second error.
     #[test]
     fn a_type_after_a_broken_item_of_its_name_should_give_no_second_error() {
-        use Code::{BraceOnNewLine as Brace, DefinedTwice as Twice, Expected as Exp};
+        use Code::{
+            BraceOnNewLine as Brace, BuiltInName as Built, DefinedTwice as Twice, Expected as Exp,
+        };
         let rows: &[(&str, &str, &[Found])] = &[
             (
                 "fn, class",
@@ -2142,6 +2256,56 @@ fn main() {
                 "constant, class",
                 "const A = 1 2\nclass A {}\nfn g(x: A) {}\nfn main() {}\n",
                 &[(Exp, (1, 13)), (Twice, (2, 7))],
+            ),
+            (
+                "Eq, fn, class",
+                "fn Eq()\n{}\nclass Eq {}\nfn g(x: Eq) {}\nfn main() {}\n",
+                &[
+                    (Built, (1, 4)),
+                    (Brace, (2, 1)),
+                    (Built, (3, 7)),
+                    (Twice, (3, 7)),
+                ],
+            ),
+            (
+                "Eq, fn, enum",
+                "fn Eq()\n{}\nenum Eq { X }\nfn g(x: Eq) {}\nfn main() {}\n",
+                &[
+                    (Built, (1, 4)),
+                    (Brace, (2, 1)),
+                    (Built, (3, 6)),
+                    (Twice, (3, 6)),
+                ],
+            ),
+            (
+                "Eq, fn, alias",
+                "fn Eq()\n{}\ntype Eq = i64\nfn g(x: Eq) {}\nfn main() {}\n",
+                &[
+                    (Built, (1, 4)),
+                    (Brace, (2, 1)),
+                    (Built, (3, 6)),
+                    (Twice, (3, 6)),
+                ],
+            ),
+            (
+                "Eq, constant, enum",
+                "const Eq = 1 2\nenum Eq { X }\nfn g(x: Eq) {}\nfn main() {}\n",
+                &[
+                    (Built, (1, 7)),
+                    (Exp, (1, 14)),
+                    (Built, (2, 6)),
+                    (Twice, (2, 6)),
+                ],
+            ),
+            (
+                "Ord, constant, class",
+                "const Ord = 1 2\nclass Ord {}\nfn g(x: Ord) {}\nfn main() {}\n",
+                &[
+                    (Built, (1, 7)),
+                    (Exp, (1, 15)),
+                    (Built, (2, 7)),
+                    (Twice, (2, 7)),
+                ],
             ),
         ];
         assert_rows(rows);
