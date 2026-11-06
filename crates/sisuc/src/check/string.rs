@@ -78,6 +78,8 @@ impl Checker<'_> {
                 Some(TypeKind::Never) => {
                     if ty != Type::NEVER {
                         // A part that is a never literal gives the part inside it.
+                        #[cfg(test)]
+                        super::reached("never_at for a part of a string");
                         never_at = Some(self.never_at(part.span));
                         jumped = is_jumped(&value);
                     }

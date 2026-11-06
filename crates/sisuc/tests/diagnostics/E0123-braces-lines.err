@@ -1,0 +1,41 @@
+error[E0123]: write `R(w)`
+  --> E0123-braces-lines.sisu:17:18
+   |
+17 |             x: R { w }
+   |                  ^^^^^
+   |
+help: write `R(w)`
+   |
+17 -             x: R { w }
+17 +             x: R(w)
+   |
+
+error[E0123]: write `E.P(x, y)`
+  --> E0123-braces-lines.sisu:25:13
+   |
+25 |           E.P {
+   |  _____________^
+26 | |             x,
+27 | |             y
+28 | |         } => print(x)
+   | |_________^
+   |
+help: write `E.P(x, y)`
+   |
+25 -         E.P {
+26 -             x,
+27 -             y
+28 -         } => print(x)
+25 +         E.P(x, y) => print(x)
+   |
+
+error[E0123]: write `E.P(x, y)`
+  --> E0123-braces-lines.sisu:35:13
+   |
+35 |           E.P { x, // keep me
+   |  _____________^
+36 | |             y } => print(x)
+   | |_______________^
+
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0123
