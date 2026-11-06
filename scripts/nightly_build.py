@@ -15,13 +15,16 @@ HEAD_SHA, publishes nothing and prints what `main` would do.
 
 `pick` exits 0 on every answer, and 1 when a `gh` call fails. It only reads.
 
-`publish` checks again that --sha is newer than the newest nightly build and that the workflow
-files are still those of `main`; if not, it writes `published=false` and exits 0. Else it takes
-the files of the run's artifacts (GITHUB_RUN_ID), deletes each `nightly-*` draft, creates a draft
-release, uploads the six assets, and in one call publishes the draft and marks it latest. It
-writes `published=true`. `prune` deletes the published `nightly-*` releases beyond the 14 newest,
-with their tags. `report` reads NEEDS (the JSON of `toJSON(needs)`) and RUN_URL, and opens the
-issue `Nightly build failure` or comments on the open one.
+`publish` checks again that --sha is newer than the newest nightly build. It checks too that the
+workflow files are still those of `main`. When a check fails, it writes `published=false` and
+exits 0. Else it takes the six assets from the artifacts of the run (GITHUB_RUN_ID) and deletes
+each `nightly-*` draft. Then it creates a draft release and uploads the assets. In one call it
+publishes the draft and marks it latest. Then it writes `published=true`.
+
+`prune` deletes the published `nightly-*` releases beyond the 14 newest, with their tags.
+
+`report` reads NEEDS (the JSON of `toJSON(needs)`) and RUN_URL. It opens the issue
+`Nightly build failure`, or it comments on that issue when it is open.
 
 Every command calls `gh api` (REST) or `gh release`, so it needs the network. Python 3.10
 standard library only.
@@ -37,7 +40,7 @@ from datetime import datetime, timezone
 
 NO_NEW = 'no new green commit'
 DIFFER = 'the newest green commit has other workflow files than `main`'
-NEWER = 'a newer nightly build exists'
+NEWER = 'the commit is not newer than the newest nightly build'
 KEEP = 14
 TITLE = 'Nightly build failure'
 LABELS = ['needs-triage', 'bug', 'nightly-build']
@@ -82,19 +85,24 @@ def workflows_tree(repo: str, ref: str) -> str:
     return next(e['sha'] for e in entries if e['name'] == 'workflows')
 
 
+def released_commit(repo: str) -> tuple[list[str], str | None]:
+    """The commits of `main`, newest first, and the short SHA of the newest nightly build."""
+    # shortcut: reads one page of 100, more than 100 commits between two nightly builds needs
+    # paging
+    commits = [c['sha'] for c in gh(f'repos/{repo}/commits?sha=main&per_page=100')]
+    newest = nightly_releases(repo)
+    # A release's tag is the only store of its commit: `nightly-<date>-<short sha>`.
+    return commits, newest[0]['tag_name'].rsplit('-', 1)[1] if newest else None
+
+
 def answer_of_main(repo: str) -> tuple[str, str | None]:
     """The text of the answer, and the commit to build or None."""
-    # shortcut: reads one page of 100, more than 100 commits or CI successes between two nightly
-    # builds needs paging
-    commits = [c['sha'] for c in gh(f'repos/{repo}/commits?sha=main&per_page=100')]
-    # shortcut: reads one page of 100, more than 100 commits or CI successes between two nightly
-    # builds needs paging
+    commits, released = released_commit(repo)
+    # shortcut: reads one page of 100, more than 100 CI successes between two nightly builds
+    # needs paging
     runs = gh(f'repos/{repo}/actions/workflows/ci.yml/runs?branch=main&event=push'
               '&status=success&per_page=100')
     green = {r['head_sha'] for r in runs['workflow_runs']}
-    newest = nightly_releases(repo)
-    # A release's tag is the only store of its commit: `nightly-<date>-<short sha>`.
-    released = newest[0]['tag_name'].rsplit('-', 1)[1] if newest else None
     sha = newest_green(commits, green, released)
     if sha is None:
         return NO_NEW, None
@@ -130,11 +138,9 @@ def summarize(text: str, published: bool) -> None:
 
 def recheck(repo: str, sha: str) -> str | None:
     """Why `sha` must not be published now, or None."""
-    commits = [c['sha'] for c in gh(f'repos/{repo}/commits?sha=main&per_page=100')]
-    newest = nightly_releases(repo)
-    released = newest[0]['tag_name'].rsplit('-', 1)[1] if newest else None
-    # The walk of `pick` with `sha` as the only green commit: a sha that is not before the
-    # released commit, or not in the list, gives None.
+    commits, released = released_commit(repo)
+    # This is the walk of `pick`, with `sha` as the only green commit.
+    # It gives None for a sha at or after the released commit, and for a sha not in the list.
     if newest_green(commits, {sha}, released) is None:
         return NEWER
     if workflows_tree(repo, sha) != workflows_tree(repo, 'main'):
@@ -152,15 +158,20 @@ def download(repo: str, run_id: str, into: str) -> dict[str, str]:
         # filterLatest and change this to match
         newest[artifact['name']] = max(artifact['id'], newest.get(artifact['name'], 0))
     found: dict[str, str] = {}
+    owner: dict[str, str] = {}
     for name, id_ in newest.items():
-        archive = os.path.join(into, f'{name}.zip')
+        # The id names the local files: an artifact name can hold `..` or `/`.
+        archive = os.path.join(into, f'{id_}.zip')
         with open(archive, 'wb') as f:
             subprocess.run(['gh', 'api', f'repos/{repo}/actions/artifacts/{id_}/zip'], stdout=f,
                            stderr=subprocess.PIPE, text=True, check=True)
         with zipfile.ZipFile(archive) as z:
-            z.extractall(os.path.join(into, name))
-        for folder, _, files in os.walk(os.path.join(into, name)):
-            found.update({f: os.path.join(folder, f) for f in files if f in ASSETS})
+            z.extractall(os.path.join(into, str(id_)))
+        for folder, _, files in os.walk(os.path.join(into, str(id_))):
+            for f in (f for f in files if f in ASSETS):
+                if f in found:
+                    sys.exit(f'nightly_build.py: {f} is in the artifacts {owner[f]} and {name}')
+                found[f], owner[f] = os.path.join(folder, f), name
     missing = [a for a in ASSETS if a not in found]
     if missing:
         sys.exit(f'nightly_build.py: the artifacts of run {run_id} lack {", ".join(missing)}')
