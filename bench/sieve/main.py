@@ -1,4 +1,4 @@
-def sieve(n):
+def sieve(n: int) -> list[bool]:
     is_prime = [True] * (n + 1)
     is_prime[0] = False
     is_prime[1] = False

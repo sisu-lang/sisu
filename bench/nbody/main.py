@@ -5,7 +5,9 @@ DAYS_PER_YEAR = 365.24
 
 
 class Body:
-    def __init__(self, x, y, z, vx, vy, vz, mass) -> None:
+    def __init__(
+        self, x: float, y: float, z: float, vx: float, vy: float, vz: float, mass: float
+    ) -> None:
         self.x = x
         self.y = y
         self.z = z
@@ -15,13 +17,13 @@ class Body:
         self.mass = mass
 
 
-def planet(x, y, z, vx, vy, vz, mass):
+def planet(x: float, y: float, z: float, vx: float, vy: float, vz: float, mass: float) -> Body:
     return Body(
         x, y, z, vx * DAYS_PER_YEAR, vy * DAYS_PER_YEAR, vz * DAYS_PER_YEAR, mass * SOLAR_MASS
     )
 
 
-def offset_momentum(bodies) -> None:
+def offset_momentum(bodies: list[Body]) -> None:
     px = py = pz = 0.0
     for b in bodies:
         px += b.vx * b.mass
@@ -32,7 +34,7 @@ def offset_momentum(bodies) -> None:
     bodies[0].vz = -pz / SOLAR_MASS
 
 
-def energy(bodies):
+def energy(bodies: list[Body]) -> float:
     e = 0.0
     for i, a in enumerate(bodies):
         e += 0.5 * a.mass * (a.vx * a.vx + a.vy * a.vy + a.vz * a.vz)
@@ -44,7 +46,7 @@ def energy(bodies):
     return e
 
 
-def advance(bodies, dt) -> None:
+def advance(bodies: list[Body], dt: float) -> None:
     for i, a in enumerate(bodies):
         for b in bodies[i + 1 :]:
             dx = a.x - b.x
