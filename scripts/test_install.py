@@ -18,9 +18,10 @@ import tempfile
 import time
 import unittest
 from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
-INSTALL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "install.sh")
+INSTALL = Path(__file__).absolute().parent.parent / "install.sh"
 BASE = "https://github.com/sisu-lang/sisu/releases/latest/download/"
 FILES = ("sisu", "libsisu_runtime_mimalloc.a", "libsisu_runtime_system.a")
 TOOLS = [
@@ -53,7 +54,7 @@ GNU_LDD = "ldd (GNU libc) 2.39"
 # The shell is found once, before the Machine replaces PATH, as an absolute path.
 SH = shlex.split(os.environ.get("SISU_TEST_SH", "/bin/sh"))
 SH[0] = shutil.which(SH[0]) or SH[0]
-if not (os.path.isfile(SH[0]) and os.access(SH[0], os.X_OK)):
+if not (Path(SH[0]).is_file() and os.access(SH[0], os.X_OK)):
     raise RuntimeError(f"SISU_TEST_SH names no executable shell: {SH[0]}")
 # A command that hashes its stdin with SHA-256, for the fake shasum.
 SHA256 = [which("sha256sum")] if shutil.which("sha256sum") else [which("shasum"), "-a", "256"]
@@ -64,10 +65,10 @@ UNSUPPORTED = (
 )
 
 
-def script(path: str, body: str) -> None:
-    with open(path, "w") as f:
+def script(path: Path, body: str) -> None:
+    with path.open("w") as f:
         f.write("#!/bin/sh\n" + body)
-    os.chmod(path, 0o755)
+    path.chmod(0o755)
 
 
 class Machine:
@@ -84,20 +85,20 @@ class Machine:
         clt: bool = True,
         prefix: str = "",
     ) -> None:
-        self.root = tempfile.mkdtemp(prefix="sisu-install-")
+        self.root = Path(tempfile.mkdtemp(prefix="sisu-install-"))
         test.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         self.profile = profile
-        self.home = os.path.join(self.root, prefix + "home")
-        self.dl = os.path.join(self.root, "dl")
-        self.fake = os.path.join(self.root, "fake")
-        self.tools = os.path.join(self.root, "tools")
+        self.home = self.root / (prefix + "home")
+        self.dl = self.root / "dl"
+        self.fake = self.root / "fake"
+        self.tools = self.root / "tools"
         for d in (self.home, self.dl, self.fake, self.tools):
-            os.makedirs(d)
-        self.path = self.fake + os.pathsep + self.tools
-        self.sisu = os.path.join(self.home, ".sisu")
-        self.lock = os.path.join(self.sisu, "install.lock")
+            d.mkdir(parents=True)
+        self.path = f"{self.fake}{os.pathsep}{self.tools}"
+        self.sisu = self.home / ".sisu"
+        self.lock = self.sisu / "install.lock"
         for tool in [*TOOLS, (shutil.which("sha256sum") and "sha256sum") or "shasum"]:
-            os.symlink(which(tool), os.path.join(self.tools, tool))
+            (self.tools / tool).symlink_to(which(tool))
         self._fake_commands(profile, cc, apt, clt)
 
     def _fake_commands(self, profile: str, cc: bool, apt: bool, clt: bool) -> None:
@@ -159,27 +160,27 @@ class Machine:
         if apt:
             script(self._f("apt-get"), "exit 0\n")
 
-    def _f(self, name: str) -> str:
-        return os.path.join(self.fake, name)
+    def _f(self, name: str) -> Path:
+        return self.fake / name
 
     def fake_command(self, name: str, body: str) -> None:
         script(self._f(name), body)
 
     def fake_curl(self, before: str = "") -> None:
         """A curl that logs each call, runs `before`, and serves the file of the URL from dl."""
-        self.curl_log = os.path.join(self.root, "curl.log")
+        self.curl_log = self.root / "curl.log"
         script(
             self._f("curl"),
-            f'printf "%s\\n" "$*" >> {shlex.quote(self.curl_log)}\n{before}\n'
+            f'printf "%s\\n" "$*" >> {shlex.quote(str(self.curl_log))}\n{before}\n'
             "while [ $# -gt 0 ]; do\n"
             '  case "$1" in -o) shift; out=$1;; https://*) url=$1;; esac\n  shift\ndone\n'
-            f'cp {shlex.quote(self.dl)}/"${{url##*/}}" "$out"\n',
+            f'cp {shlex.quote(str(self.dl))}/"${{url##*/}}" "$out"\n',
         )
 
     def curl_calls(self) -> list[list[str]]:
-        if not os.path.exists(self.curl_log):
+        if not self.curl_log.exists():
             return []
-        with open(self.curl_log) as f:
+        with self.curl_log.open() as f:
             return [line.split() for line in f]
 
     def tarball(
@@ -193,7 +194,7 @@ class Machine:
         """Writes the tarball and its line in SHA256SUMS to the download directory."""
         name = name or self.tarball_name
         stub = '#!/bin/sh\necho "sisu %s"\nexit %d\n#%s\n' % (build, sisu_exit, "x" * pad)
-        path = os.path.join(self.dl, name)
+        path = self.dl / name
         with tarfile.open(path, "w:gz") as tar:
             for f in (*FILES, "LICENSE"):
                 if f in omit:
@@ -203,26 +204,26 @@ class Machine:
                 info.size = len(data)
                 info.mode = 0o755 if f == "sisu" else 0o644
                 tar.addfile(info, io.BytesIO(data))
-        with open(path, "rb") as f:
+        with path.open("rb") as f:
             digest = hashlib.sha256(f.read()).hexdigest()
-        with open(os.path.join(self.dl, "SHA256SUMS"), "a") as f:
+        with (self.dl / "SHA256SUMS").open("a") as f:
             f.write(f"{digest}  {name}\n")
         return name
 
     def sums(self, text: str) -> None:
-        with open(os.path.join(self.dl, "SHA256SUMS"), "w") as f:
+        with (self.dl / "SHA256SUMS").open("w") as f:
             f.write(text)
 
     def earlier_install(self, build: str = "old") -> None:
-        os.makedirs(os.path.join(self.sisu, "bin"))
+        (self.sisu / "bin").mkdir(parents=True)
         for f in FILES:
             stub = f'#!/bin/sh\necho "sisu {build}"\nexit 0\n'
-            with open(os.path.join(self.sisu, "bin", f), "w") as out:
+            with (self.sisu / "bin" / f).open("w") as out:
                 out.write(stub if f == "sisu" else build + "\n")
-        os.chmod(os.path.join(self.sisu, "bin", "sisu"), 0o755)
+        (self.sisu / "bin" / "sisu").chmod(0o755)
 
     def _env(self, env: Mapping[str, str | None] | None) -> dict[str, str]:
-        e = {"HOME": self.home, "PATH": self.path, "SISU_DOWNLOAD_DIR": self.dl}
+        e = {"HOME": str(self.home), "PATH": self.path, "SISU_DOWNLOAD_DIR": str(self.dl)}
         for k, v in (env or {}).items():
             if v is None:
                 e.pop(k, None)
@@ -250,12 +251,12 @@ class Machine:
         env: Mapping[str, str | None] | None = None,
         on_stdin: bool = False,
         preexec_fn: Callable[[], None] | None = None,
-        cwd: str | None = None,
+        cwd: Path | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """on_stdin pipes the script to the shell, as the install line does."""
         kw: dict[str, Any] = {}
         if on_stdin:
-            with open(INSTALL) as f:
+            with INSTALL.open() as f:
                 kw["input"] = f.read()
             argv = SH
         else:
@@ -276,9 +277,9 @@ class Machine:
         """File name -> build, for the files in ~/.sisu/bin."""
         found: dict[str, str] = {}
         for f in FILES:
-            path = os.path.join(self.sisu, "bin", f)
-            if os.path.exists(path):
-                with open(path) as fh:
+            path = self.sisu / "bin" / f
+            if path.exists():
+                with path.open() as fh:
                     text = fh.read(200)
                 m = re.search(r'echo "sisu (\w+)"', text)
                 found[f] = m.group(1) if f == "sisu" and m else text.strip()
@@ -286,15 +287,15 @@ class Machine:
 
     def hold(self, target: str | int) -> None:
         """Makes install.lock a symlink to `target`, as an install does with its PID."""
-        os.makedirs(self.sisu, exist_ok=True)
-        os.symlink(str(target), self.lock)
+        self.sisu.mkdir(parents=True, exist_ok=True)
+        self.lock.symlink_to(str(target))
 
     def lock_exists(self) -> bool:
         # A PID lock dangles, so os.path.exists says False while it is there.
         return os.path.lexists(self.lock)
 
     def tmp_exists(self) -> bool:
-        return os.path.exists(os.path.join(self.sisu, "tmp"))
+        return (self.sisu / "tmp").exists()
 
 
 ALL_OLD = dict.fromkeys(FILES, "old")
@@ -339,7 +340,7 @@ class InstallTest(unittest.TestCase):
                 self.assertEqual(len(r.stderr.splitlines()), 1, r.stderr)
                 for text in (named, "glibc 2.35", "macOS 15"):
                     self.assertIn(text, r.stderr)
-                self.assertFalse(os.path.exists(m.sisu))
+                self.assertFalse(m.sisu.exists())
 
     def test_unsupported_system_should_keep_the_earlier_install(self) -> None:
         for profile in (
@@ -418,7 +419,7 @@ class InstallTest(unittest.TestCase):
                 self.assertIn("Sisu needs a C compiler to build programs.", r.stdout)
                 self.assertIn(command, r.stdout)
                 version = subprocess.run(
-                    [os.path.join(m.sisu, "bin", "sisu"), "--version"],
+                    [m.sisu / "bin" / "sisu", "--version"],
                     capture_output=True,
                     text=True,
                 )
@@ -434,7 +435,7 @@ class InstallTest(unittest.TestCase):
 
     def test_cut_download_should_change_nothing(self) -> None:
         m = Machine(self)
-        with open(INSTALL, "rb") as f:
+        with INSTALL.open("rb") as f:
             size = len(f.read())
         loop = (
             'i=0\nwhile [ "$i" -le "$2" ]; do\n'
@@ -449,10 +450,10 @@ class InstallTest(unittest.TestCase):
             timeout=300,
         )
         self.assertEqual(r.stdout.strip(), str(size - 1), r.stderr)
-        self.assertEqual(os.listdir(m.home), [])
+        self.assertEqual(list(m.home.iterdir()), [])
 
     def test_installer_should_run_only_definitions_before_main(self) -> None:
-        with open(INSTALL) as f:
+        with INSTALL.open() as f:
             lines = f.read().splitlines()
         self.assertEqual(lines[-1], "main")
         definition = re.compile(r"^[A-Za-z_]\w*\(\) \{(.*\})?$")
@@ -477,7 +478,7 @@ class InstallTest(unittest.TestCase):
                 m = self.machine()
                 m.earlier_install()
                 name = m.tarball_name
-                with open(os.path.join(m.dl, "SHA256SUMS")) as f:
+                with (m.dl / "SHA256SUMS").open() as f:
                     good = f.read().split()[0]
                 if row == "a wrong hash":
                     m.sums("{}  {}\n".format("0" * 64, name))
@@ -498,14 +499,14 @@ class InstallTest(unittest.TestCase):
         for form in ("%s  %s\n", "%s *%s\n"):
             with self.subTest(form):
                 m = self.machine()
-                with open(os.path.join(m.dl, "SHA256SUMS")) as f:
+                with (m.dl / "SHA256SUMS").open() as f:
                     good = f.read().split()[0]
                 m.sums(form % (good, m.tarball_name))
                 self.assertInstalled(m, m.run())
 
     def test_checksum_should_read_only_this_tarballs_line(self) -> None:
         m = self.machine()
-        with open(os.path.join(m.dl, "SHA256SUMS")) as f:
+        with (m.dl / "SHA256SUMS").open() as f:
             mine = f.read()
         m.sums(
             "{}  sisu-aarch64-linux.tar.gz\n{}{}  sisu-aarch64-macos.tar.gz\n".format(
@@ -519,8 +520,8 @@ class InstallTest(unittest.TestCase):
             with self.subTest(row):
                 m = self.machine()
                 for tool in ("sha256sum", "shasum"):
-                    if os.path.lexists(os.path.join(m.tools, tool)):
-                        os.remove(os.path.join(m.tools, tool))
+                    if os.path.lexists(m.tools / tool):
+                        (m.tools / tool).unlink()
                 if good:
                     m.fake_command(
                         "shasum",
@@ -541,8 +542,8 @@ class InstallTest(unittest.TestCase):
         m = self.machine()
         m.earlier_install()
         for tool in ("sha256sum", "shasum"):
-            if os.path.lexists(os.path.join(m.tools, tool)):
-                os.remove(os.path.join(m.tools, tool))
+            if os.path.lexists(m.tools / tool):
+                (m.tools / tool).unlink()
         r = m.run()
         self.assertKept(m, r)
         self.assertEqual(r.stderr, "install.sh: this machine has no sha256sum or shasum.\n")
@@ -581,13 +582,13 @@ class InstallTest(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("cannot run the Sisu build", r.stderr)
 
-    def fake_mv(self, m: Machine, fails: str) -> str:
+    def fake_mv(self, m: Machine, fails: str) -> Path:
         """A mv that logs each call, and exits 1 when $1 matches the `fails` pattern."""
-        log = os.path.join(m.root, "mv.log")
+        log = m.root / "mv.log"
         m.fake_command(
             "mv",
             'echo "$*" >> {}\ncase "$1" in {}) {};; esac\nexec {} "$@"\n'.format(
-                shlex.quote(log), fails, FAIL, shlex.quote(which("mv"))
+                shlex.quote(str(log)), fails, FAIL, shlex.quote(which("mv"))
             ),
         )
         return log
@@ -604,19 +605,19 @@ class InstallTest(unittest.TestCase):
                     m.earlier_install()
                 elif state == "only bin.old":
                     m.earlier_install()
-                    os.rename(os.path.join(m.sisu, "bin"), os.path.join(m.sisu, "bin.old"))
+                    (m.sisu / "bin").rename(m.sisu / "bin.old")
                 log = self.fake_mv(m, "*.sisu/tmp/sisu")
                 r = m.run()
                 self.one_line(m, r)
-                self.assertFalse(os.path.exists(os.path.join(m.sisu, "bin.old")))
+                self.assertFalse((m.sisu / "bin.old").exists())
                 self.assertFalse(m.tmp_exists())
                 if state == "no ~/.sisu":
-                    self.assertFalse(os.path.exists(os.path.join(m.sisu, "bin")))
+                    self.assertFalse((m.sisu / "bin").exists())
                     continue
                 self.assertEqual(m.builds(), ALL_OLD)
                 if state == "bin":
-                    with open(log) as f:
-                        calls = [line.replace(m.home, "~").strip() for line in f]
+                    with log.open() as f:
+                        calls = [line.replace(str(m.home), "~").strip() for line in f]
                     self.assertEqual(
                         calls,
                         [
@@ -632,8 +633,8 @@ class InstallTest(unittest.TestCase):
         self.fake_mv(m, "*.sisu/tmp/sisu | *.sisu/bin.old")
         r = m.run()
         self.one_line(m, r)
-        self.assertFalse(os.path.exists(os.path.join(m.sisu, "bin")))
-        self.assertEqual(sorted(os.listdir(os.path.join(m.sisu, "bin.old"))), sorted(FILES))
+        self.assertFalse((m.sisu / "bin").exists())
+        self.assertEqual(sorted(p.name for p in (m.sisu / "bin.old").iterdir()), sorted(FILES))
         self.assertFalse(m.tmp_exists())
 
     def test_failed_rename_of_bin_should_keep_the_earlier_install(self) -> None:
@@ -642,10 +643,10 @@ class InstallTest(unittest.TestCase):
         log = self.fake_mv(m, "*.sisu/bin")
         r = m.run()
         self.one_line(m, r)
-        with open(log) as f:
+        with log.open() as f:
             self.assertEqual(len(f.readlines()), 1)
         self.assertEqual(m.builds(), ALL_OLD)
-        self.assertFalse(os.path.exists(os.path.join(m.sisu, "bin.old")))
+        self.assertFalse((m.sisu / "bin.old").exists())
         self.assertFalse(m.tmp_exists())
 
     def test_failed_final_removal_should_stop_after_the_swap(self) -> None:
@@ -661,7 +662,7 @@ class InstallTest(unittest.TestCase):
         self.one_line(m, r)
         self.assertNotIn("Sisu is installed", r.stdout)
         self.assertEqual(m.builds(), ALL_NEW)
-        with open(os.path.join(m.sisu, "bin.old", "sisu")) as f:
+        with (m.sisu / "bin.old" / "sisu").open() as f:
             self.assertIn("sisu old", f.read())
         self.assertFalse(m.tmp_exists())
 
@@ -675,7 +676,7 @@ class InstallTest(unittest.TestCase):
                 m = self.machine()
                 m.earlier_install()
                 if stale:
-                    os.makedirs(os.path.join(m.sisu, "bin.old"))
+                    (m.sisu / "bin.old").mkdir(parents=True)
                 m.fake_command(
                     command,
                     f'case "$2" in {fails}) {FAIL};; esac\nexec {shlex.quote(which(command))} "$@"\n',
@@ -689,15 +690,15 @@ class InstallTest(unittest.TestCase):
             with self.subTest(state):
                 m = self.machine()
                 if state != "no ~/.sisu":
-                    old = os.path.join(m.sisu, "bin.old")
-                    os.makedirs(old)
-                    with open(os.path.join(old, "stale"), "w") as f:
+                    old = m.sisu / "bin.old"
+                    old.mkdir(parents=True)
+                    with (old / "stale").open("w") as f:
                         f.write("stale\n")
                 if state == "bin and a stale bin.old":
-                    os.makedirs(os.path.join(m.sisu, "bin"))
+                    (m.sisu / "bin").mkdir(parents=True)
                 r = m.run()
                 self.assertInstalled(m, r)
-                self.assertFalse(os.path.exists(os.path.join(m.sisu, "bin.old")))
+                self.assertFalse((m.sisu / "bin.old").exists())
                 self.assertFalse(m.tmp_exists())
 
     def test_download_should_ask_for_the_right_files(self) -> None:
@@ -726,7 +727,7 @@ class InstallTest(unittest.TestCase):
                 m = self.machine()
                 m.earlier_install()
                 name = m.tarball_name if missing == "tarball" else "SHA256SUMS"
-                os.remove(os.path.join(m.dl, name))
+                (m.dl / name).unlink()
                 r = m.run()
                 self.assertKept(m, r)
                 self.assertEqual(r.stderr, f"install.sh: {m.dl} has no {name}.\n")
@@ -738,7 +739,7 @@ class InstallTest(unittest.TestCase):
         self.assertIn('export PATH="$HOME/.sisu/bin:$PATH"\n', r.stdout)
         self.assertIn("fish_add_path $HOME/.sisu/bin\n", r.stdout)
         m = self.machine()
-        r = m.run(env={"PATH": os.path.join(m.sisu, "bin") + os.pathsep + m.path})
+        r = m.run(env={"PATH": f"{m.sisu / 'bin'}{os.pathsep}{m.path}"})
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("PATH=", r.stdout)
         self.assertNotIn("fish_add_path", r.stdout)
@@ -749,13 +750,13 @@ class InstallTest(unittest.TestCase):
         def default_int() -> None:
             signal.signal(signal.SIGINT, signal.SIG_DFL)
 
-        marker = os.path.join(m.root, "marker")
-        m.fake_curl(f": > {shlex.quote(marker)}\n{shlex.quote(SLEEP)} 0.3")
+        marker = m.root / "marker"
+        m.fake_curl(f": > {shlex.quote(str(marker))}\n{shlex.quote(SLEEP)} 0.3")
         p = m.start(env={"SISU_DOWNLOAD_DIR": None}, preexec_fn=default_int)
         deadline = time.time() + 5
-        while not os.path.exists(marker) and time.time() < deadline:
+        while not marker.exists() and time.time() < deadline:
             time.sleep(0.01)
-        if not os.path.exists(marker):
+        if not marker.exists():
             p.kill()
             p.communicate()
             self.fail("curl did not start within 5 s")
@@ -791,7 +792,7 @@ class InstallTest(unittest.TestCase):
     def test_unwritable_sisu_directory_should_keep_the_earlier_install(self) -> None:
         m = self.machine()
         m.earlier_install()
-        os.chmod(m.sisu, 0o555)
+        m.sisu.chmod(0o555)
         self.addCleanup(os.chmod, m.sisu, stat.S_IRWXU)
         r = m.run()
         self.one_line(m, r)
@@ -799,13 +800,15 @@ class InstallTest(unittest.TestCase):
 
     def test_cdpath_should_not_move_the_unpack(self) -> None:
         m = self.machine()
-        cwd = os.path.join(m.root, "cwd")
-        os.makedirs(cwd)
+        cwd = m.root / "cwd"
+        cwd.mkdir(parents=True)
         # CDPATH holds a second ~/.sisu/tmp that a cd to the relative path would find first.
-        os.makedirs(os.path.join(m.home, ".sisu", "tmp"))
-        r = m.run(env={"HOME": "home", "CDPATH": m.root}, cwd=cwd)
+        (m.home / ".sisu" / "tmp").mkdir(parents=True)
+        r = m.run(env={"HOME": "home", "CDPATH": str(m.root)}, cwd=cwd)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertLessEqual(set(FILES), set(os.listdir(os.path.join(cwd, "home", ".sisu", "bin"))))
+        self.assertLessEqual(
+            set(FILES), {p.name for p in (cwd / "home" / ".sisu" / "bin").iterdir()}
+        )
 
     @unittest.skipIf(os.geteuid() == 0, "root can write to a read-only directory")
     def test_tar_stop_should_print_no_error_from_the_cleanup(self) -> None:
@@ -821,11 +824,11 @@ class InstallTest(unittest.TestCase):
 
     def test_sisu_path_that_is_a_file_should_stop_with_one_sentence(self) -> None:
         m = self.machine()
-        with open(m.sisu, "w") as f:
+        with m.sisu.open("w") as f:
             f.write("not a directory\n")
         r = m.run()
         self.one_line(m, r)
-        with open(m.sisu) as f:
+        with m.sisu.open() as f:
             self.assertEqual(f.read(), "not a directory\n")
 
     def test_failed_download_should_keep_the_earlier_install(self) -> None:
@@ -839,13 +842,13 @@ class InstallTest(unittest.TestCase):
 
     def test_stale_tmp_should_not_reach_the_new_install(self) -> None:
         m = self.machine()
-        os.makedirs(os.path.join(m.sisu, "tmp", "sisu"))
+        (m.sisu / "tmp" / "sisu").mkdir(parents=True)
         for junk in ("sisu/junk", "other"):
-            with open(os.path.join(m.sisu, "tmp", junk), "w") as f:
+            with (m.sisu / "tmp" / junk).open("w") as f:
                 f.write("junk\n")
         r = m.run()
         self.assertInstalled(m, r)
-        self.assertFalse(os.path.exists(os.path.join(m.sisu, "bin", "junk")))
+        self.assertFalse((m.sisu / "bin" / "junk").exists())
         self.assertFalse(m.tmp_exists())
 
     def live_process(self) -> int:
@@ -870,16 +873,16 @@ class InstallTest(unittest.TestCase):
         m.earlier_install()
         pid = self.live_process()
         m.hold(pid)
-        os.makedirs(os.path.join(m.sisu, "tmp"))
-        mark = os.path.join(m.sisu, "tmp", "first-run")
-        with open(mark, "w") as f:
+        (m.sisu / "tmp").mkdir(parents=True)
+        mark = m.sisu / "tmp" / "first-run"
+        with mark.open("w") as f:
             f.write("x\n")
         m.fake_curl()
         r = m.run(env={"SISU_DOWNLOAD_DIR": None})
-        self.one_line_with(r, "another install is running", m.lock)
+        self.one_line_with(r, "another install is running", str(m.lock))
         self.assertEqual(m.builds(), ALL_OLD)
-        self.assertEqual(os.readlink(m.lock), str(pid))
-        self.assertTrue(os.path.exists(mark))
+        self.assertEqual(str(m.lock.readlink()), str(pid))
+        self.assertTrue(mark.exists())
         self.assertEqual(m.curl_calls(), [])
 
     def test_lock_of_a_dead_process_should_not_stop_the_install(self) -> None:
@@ -927,14 +930,14 @@ class InstallTest(unittest.TestCase):
                 if name == "success":
                     self.assertInstalled(m, m.run())
                 elif name == "tmp goes first":
-                    flag = os.path.join(m.root, "tmp-after-lock")
+                    flag = m.root / "tmp-after-lock"
                     m.fake_command(
                         "rm",
                         'case "$*" in *.sisu/tmp)\n'
-                        f'  if [ ! -L {shlex.quote(m.lock)} ]; then : > {shlex.quote(flag)}; fi;; esac\nexec {real_rm} "$@"\n',
+                        f'  if [ ! -L {shlex.quote(str(m.lock))} ]; then : > {shlex.quote(str(flag))}; fi;; esac\nexec {real_rm} "$@"\n',
                     )
                     self.assertInstalled(m, m.run())
-                    self.assertFalse(os.path.exists(flag))
+                    self.assertFalse(flag.exists())
                 elif name == "checksum mismatch":
                     m.sums("{}  {}\n".format("0" * 64, m.tarball_name))
                     r = m.run()
@@ -981,27 +984,27 @@ class InstallTest(unittest.TestCase):
             with self.subTest(kind):
                 m = self.machine()
                 m.earlier_install()
-                outside = os.path.join(m.root, "outside")
+                outside = m.root / "outside"
                 if kind == "a regular file":
-                    with open(m.lock, "w") as f:
+                    with m.lock.open("w") as f:
                         f.write("x\n")
                 elif kind == "a directory":
-                    os.mkdir(m.lock)
+                    m.lock.mkdir()
                 else:
-                    os.mkdir(outside)
-                    os.symlink(outside, m.lock)
+                    outside.mkdir()
+                    m.lock.symlink_to(outside)
                 r = m.run()
-                self.one_line_with(r, "is not a lock", m.lock)
+                self.one_line_with(r, "is not a lock", str(m.lock))
                 self.assertEqual(r.returncode, 1)
                 self.assertEqual(m.builds(), ALL_OLD)
                 self.assertTrue(m.lock_exists())
                 if kind == "a regular file":
-                    self.assertTrue(os.path.isfile(m.lock))
+                    self.assertTrue(m.lock.is_file())
                 elif kind == "a directory":
-                    self.assertEqual(os.listdir(m.lock), [])
+                    self.assertEqual(list(m.lock.iterdir()), [])
                 else:
-                    self.assertEqual(os.readlink(m.lock), outside)
-                    self.assertEqual(os.listdir(outside), [])
+                    self.assertEqual(m.lock.readlink(), outside)
+                    self.assertEqual(list(outside.iterdir()), [])
 
     def test_installs_at_the_same_time_should_leave_one_whole_build(self) -> None:
         # Each run spins on the gate, so that the four runs start within a few milliseconds.
@@ -1009,11 +1012,11 @@ class InstallTest(unittest.TestCase):
         for earlier in (True, False):
             with self.subTest("earlier install" if earlier else "no earlier install"):
                 m = self.machine()
-                gate = os.path.join(m.root, "gate")
+                gate = m.root / "gate"
                 for n in range(25):
                     shutil.rmtree(m.sisu, ignore_errors=True)
-                    if os.path.exists(gate):
-                        os.remove(gate)
+                    if gate.exists():
+                        gate.unlink()
                     if earlier:
                         m.earlier_install()
                     runs = [
@@ -1027,7 +1030,7 @@ class InstallTest(unittest.TestCase):
                         )
                         for _ in range(4)
                     ]
-                    open(gate, "w").close()
+                    gate.touch()
                     done = [(p.communicate(timeout=120), p.returncode) for p in runs]
                     where = "round %d: %r" % (n, done)
                     for (_out, err), code in done:
@@ -1037,7 +1040,7 @@ class InstallTest(unittest.TestCase):
                             self.assertIn("another install is running", err, where)
                     self.assertIn(0, [code for _, code in done], where)
                     self.assertEqual(m.builds(), ALL_NEW, where)
-                    self.assertFalse(os.path.exists(os.path.join(m.sisu, "bin.old")), where)
+                    self.assertFalse((m.sisu / "bin.old").exists(), where)
                     self.assertFalse(m.tmp_exists(), where)
                     self.assertFalse(m.lock_exists(), where)
 
@@ -1060,24 +1063,24 @@ class InstallTest(unittest.TestCase):
 
     def once(self, m: Machine, name: str, body: str) -> None:
         """A fake `name` that runs `body` on its first call, and is the real command after."""
-        flag = os.path.join(m.root, name + ".flag")
+        flag = m.root / f"{name}.flag"
         m.fake_command(
             name,
-            f'if [ ! -e {shlex.quote(flag)} ]; then\n: > {shlex.quote(flag)}\n{body}\nfi\nexec {shlex.quote(which(name))} "$@"\n',
+            f'if [ ! -e {shlex.quote(str(flag))} ]; then\n: > {shlex.quote(str(flag))}\n{body}\nfi\nexec {shlex.quote(which(name))} "$@"\n',
         )
 
     def test_holders_that_end_during_the_lock_check_should_not_give_a_write_error(self) -> None:
         # Three failed `ln` calls in a row, each after the holder ended: the run tries again.
         m = self.machine()
         m.hold(self.live_process())
-        count = os.path.join(m.root, "ln.count")
+        count = m.root / "ln.count"
         m.fake_command(
             "ln",
             "echo x >> {}\nn=$(grep -c x {})\n"
             'if [ "$n" -le 3 ]; then rm -f {}; {}; fi\nexec {} "$@"\n'.format(
-                shlex.quote(count),
-                shlex.quote(count),
-                shlex.quote(m.lock),
+                shlex.quote(str(count)),
+                shlex.quote(str(count)),
+                shlex.quote(str(m.lock)),
                 FAIL,
                 shlex.quote(which("ln")),
             ),
@@ -1098,16 +1101,16 @@ class InstallTest(unittest.TestCase):
             "%s -f %s\n%s -s %d %s\necho %d\nexit 0"
             % (
                 shlex.quote(which("rm")),
-                shlex.quote(m.lock),
+                shlex.quote(str(m.lock)),
                 shlex.quote(which("ln")),
                 live,
-                shlex.quote(m.lock),
+                shlex.quote(str(m.lock)),
                 dead,
             ),
         )
         r = m.run()
         self.one_line_with(r, "another install is running")
-        self.assertEqual(os.readlink(m.lock), str(live))
+        self.assertEqual(str(m.lock.readlink()), str(live))
 
     def test_failed_lock_read_should_not_remove_the_lock(self) -> None:
         m = self.machine()
@@ -1117,7 +1120,7 @@ class InstallTest(unittest.TestCase):
         m.fake_command("readlink", FAIL + "\n")
         r = m.run()
         self.one_line_with(r, "another install is running")
-        self.assertEqual(os.readlink(m.lock), str(live))
+        self.assertEqual(str(m.lock.readlink()), str(live))
         self.assertEqual(m.builds(), ALL_OLD)
 
 
