@@ -1,0 +1,14 @@
+interface Named {
+    type Name
+}
+
+class Has: Named {
+    type Name = i64
+}
+
+type Items<S> = [S.Name]
+
+fn main() {
+    let items: Items<Has> = [1]
+    print(items)
+}

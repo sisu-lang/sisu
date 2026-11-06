@@ -1,0 +1,10 @@
+warning[W0012]: class `Has` is never built
+ --> W0012-alias-assoc.sisu:5:7
+  |
+5 | class Has: Named {
+  |       ^^^ never built
+  |
+  = help: delete it, or name it `_Has` if it is kept on purpose
+
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0012

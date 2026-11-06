@@ -2675,6 +2675,8 @@ impl Waits {
     /// One declaration of the key is available: the bounds that can do without the ones left are
     /// ready now.
     fn lower(&mut self, key: usize, ready: &mut Vec<usize>) {
+        #[cfg(test)]
+        super::reached("Waits::lower");
         let key = &mut self.keys[key];
         key.pending -= 1;
         while let Some(&(m, without)) = key.waiting.last() {

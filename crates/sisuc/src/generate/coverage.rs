@@ -20,7 +20,7 @@ use super::stmt::MAX_BLOCKS;
 use super::writer::{Rewrite, Site, Writer, allowed};
 use super::{Answer, BUDGET, Cost, DEPTHS, FUEL, Gen, MAX_BOUND, MAX_NESTING, MAX_SIZE, generate};
 use crate::check::{self, prelude_function_names};
-use crate::conformance::holds_class;
+use crate::conformance::{RESOLVE_ALL_CALLS, holds_class};
 use crate::diagnostic::Severity;
 use crate::front_end::{PRELUDE_SOURCE, front_end, prelude_program};
 use crate::symbol::Symbol;
@@ -312,6 +312,32 @@ const GAP_RULES: &[&str] = &[
     "reach: a program gets W0006",
     "reach: a program gets W0007",
 ];
+
+/// The points of the checker that the forms of `Gen::gap_forms` reach: the functions that
+/// `fuzz/known_gaps.txt` listed, and the branches of `make_check` that keep a check. A key is
+/// `gap_key` of a point. Each is marked when the checker reached it, as `check::reached` records.
+const GAP_POINTS: &[&str] = &[
+    "Waits::lower",
+    "written_interface",
+    "path_method",
+    "answered_by_several",
+    "requirement_result",
+    "Unifier::resolve_all",
+    "optional_alias_path",
+    "type_meets",
+    "assoc_conforms",
+    "listed_inheritance",
+    "names_unbound",
+    "wider_than",
+    "make_check keeps a conformance",
+    "make_check keeps an any",
+    "make_check keeps an applied type",
+];
+
+/// The key that marks `point` of `GAP_POINTS`.
+fn gap_key(point: &str) -> String {
+    format!("reach: the checker runs `{point}`")
+}
 
 /// The forms of `let ... else` and of a jump after `??`, which no variant shows.
 const JUMPS: &[&str] = &[
@@ -801,7 +827,16 @@ impl Walk {
         for (_, counter) in counters {
             counter.set(0);
         }
+        check::POINTS.with_borrow_mut(FxHashSet::clear);
+        RESOLVE_ALL_CALLS.set(0);
         let (ast, tir, codes) = checked_with_codes(source);
+        // `conformance` cannot call `check`, so it counts and this turns the count into a point.
+        if RESOLVE_ALL_CALLS.get() > 0 {
+            check::reached("Unifier::resolve_all");
+        }
+        for point in check::POINTS.with_borrow(Clone::clone) {
+            self.mark(&gap_key(point));
+        }
         for (key, counter) in counters {
             if counter.get() > 0 {
                 self.mark(key);
@@ -6032,16 +6067,296 @@ fn a_push_key_should_mark_what_the_checker_did() {
     }
 }
 
+/// GIVEN whole programs, each with the points of `GAP_POINTS` that its check reaches and no others
+/// WHEN the walk reads each program
+/// THEN the keys of `GAP_POINTS` that it marks are those points: a point that fires on a near
+/// program, or one that never fires, fails its row
+#[test]
+#[expect(clippy::too_many_lines, reason = "one table of whole programs")]
+fn gap_point_keys_should_mark_what_the_checker_did() {
+    let rows: Vec<(&str, &str, &[&str])> = vec![
+        ("no generics", "fn main() {}", &[]),
+        (
+            "a bound waits for a later parameter",
+            r"interface Source { type Item; fn next(self) -> Item }
+interface Convert<T> { fn convert(self) -> T }
+interface Holds<Y> { type Item; fn held(self) -> Item }
+class Count: Source { type Item = i64; n: i64; fn next(self) -> Item { self.n } }
+class Twice: Convert<i64> { k: i64; fn convert(self) -> i64 { self.k * 2 } }
+class Pair: Holds<i64> { type Item = i64; k: i64; fn held(self) -> Item { self.k } }
+fn chain<S: Holds<T.Item>, U: Convert<S.Item>, T: Source>(s: S, _t: T, u: U) -> [S.Item] { [s.held(), u.convert()] }
+fn main() { print(chain(Pair(k: 5), Count(n: 6), Twice(k: 7))) }",
+            &["Waits::lower", "written_interface"],
+        ),
+        (
+            "a bound names an earlier parameter",
+            r"interface Source { type Item; fn next(self) -> Item }
+interface Convert<T> { fn convert(self) -> T }
+class Count: Source { type Item = i64; n: i64; fn next(self) -> Item { self.n } }
+class Twice: Convert<i64> { k: i64; fn convert(self) -> i64 { self.k * 2 } }
+fn after<S: Source, T: Convert<S.Item>>(s: S, t: T) -> [S.Item] { [s.next(), t.convert()] }
+fn main() { print(after(Count(n: 1), Twice(k: 2))) }",
+            &[],
+        ),
+        (
+            "a bound names the parameter itself",
+            r"interface Source { type Item; fn next(self) -> Item }
+interface Convert<T> { fn convert(self) -> T }
+class Both: Source, Convert<i64> { type Item = i64; n: i64; fn next(self) -> Item { self.n }; fn convert(self) -> i64 { self.n + 1 } }
+fn own<S: Source & Convert<S.Item>>(s: S) -> S.Item { s.convert() }
+fn main() { print(own(Both(n: 8))) }",
+            &["written_interface"],
+        ),
+        (
+            "written type arguments on a local, two conformances",
+            r"interface Pick<T> { fn pick<U>(self, x: U) -> T }
+class K { d: i64 }
+class L { d: i64 }
+class C {}
+extend C: Pick<K> { fn pick<U>(self, x: U) -> K { K(d: [x].len()) } }
+extend C: Pick<L> { fn pick<U>(self, x: U) -> L { L(d: [x].len()) } }
+fn take<T>(a: T, b: T) -> [T] { [a, b] }
+fn main() { let c = C(); print(take(c.pick<i64>(1), K(d: 2))[0].d) }",
+            &["path_method", "answered_by_several"],
+        ),
+        (
+            "the same, one conformance",
+            r"interface Pick<T> { fn pick<U>(self, x: U) -> T }
+class K { d: i64 }
+class C {}
+extend C: Pick<K> { fn pick<U>(self, x: U) -> K { K(d: [x].len()) } }
+fn take<T>(a: T, b: T) -> [T] { [a, b] }
+fn main() { let c = C(); print(take(c.pick<i64>(1), K(d: 2))[0].d) }",
+            &["path_method"],
+        ),
+        (
+            "one conformance, no written type arguments",
+            r"interface Pick<T> { fn pick<U>(self, x: U) -> T }
+class K { d: i64 }
+class C {}
+extend C: Pick<K> { fn pick<U>(self, x: U) -> K { K(d: [x].len()) } }
+fn take<T>(a: T, b: T) -> [T] { [a, b] }
+fn main() { let c = C(); print(take(c.pick(1), K(d: 2))[0].d) }",
+            &[],
+        ),
+        (
+            "two conformances, no method type parameters",
+            r"interface Pick<T> { fn pick(self, x: i64) -> T }
+class K { d: i64 }
+class L { d: i64 }
+class C {}
+extend C: Pick<K> { fn pick(self, x: i64) -> K { K(d: x) } }
+extend C: Pick<L> { fn pick(self, x: i64) -> L { L(d: x) } }
+fn take<T>(a: T, b: T) -> [T] { [a, b] }
+fn main() { let c = C(); print(take(c.pick(1), K(d: 2))[0].d) }",
+            &[],
+        ),
+        (
+            "two bounds answer one method",
+            r"interface Conv<T> { fn conv(self) -> T }
+class K { d: i64 }
+class L { d: i64 }
+class P {}
+extend P: Conv<K> { fn conv(self) -> K { K(d: 3) } }
+extend P: Conv<L> { fn conv(self) -> L { L(d: 4) } }
+fn two<T: Conv<K> & Conv<L>>(x: T) -> i64 { let k: K = x.conv(); let l: L = x.conv(); k.d + l.d }
+fn main() { print(two(P())) }",
+            &["requirement_result"],
+        ),
+        (
+            "one bound answers it",
+            r"interface Conv<T> { fn conv(self) -> T }
+class K { d: i64 }
+class P {}
+extend P: Conv<K> { fn conv(self) -> K { K(d: 3) } }
+fn one<T: Conv<K>>(x: T) -> i64 { let k: K = x.conv(); k.d }
+fn main() { print(one(P())) }",
+            &[],
+        ),
+        (
+            "overlap test resolves a parameter",
+            r"interface Convert<T> { fn convert(self) -> T }
+class Cell<T> { value: T }
+extend<T> Cell<T>: Convert<T> { fn convert(self) -> T { self.value } }
+extend<U> Cell<U>: Convert<[U]> { fn convert(self) -> [U] { [self.value] } }
+fn main() { let c = Cell(value: 1); let n: i64 = c.convert(); print(n) }",
+            &["Unifier::resolve_all"],
+        ),
+        (
+            "overlap test with no such parameter",
+            r#"interface Convert<T> { fn convert(self) -> T }
+class Cell<T> { value: T }
+extend<T> Cell<T>: Convert<T> { fn convert(self) -> T { self.value } }
+extend Cell<i64>: Convert<string> { fn convert(self) -> string { "c" } }
+fn main() { let c = Cell(value: 1); let n: i64 = c.convert(); print(n) }"#,
+            &[],
+        ),
+        (
+            "an optional alias as a path",
+            r"type M<T> = T?
+fn main() { let n: M<i64> = M<i64>.None; print(n ?? 1); let s = M.Some(2); print(s ?? 1) }",
+            &["optional_alias_path"],
+        ),
+        (
+            "an optional alias with a plain `None`",
+            r"type M<T> = T?
+fn main() { let n: M<i64> = None; print(n ?? 1) }",
+            &[],
+        ),
+        (
+            "a pattern through a generic alias",
+            r"type L<T> = [T]?
+fn f(m: [i64]?) -> i64 { match m { L.Some(xs) => xs.len(); L.None => 0 } }
+fn main() { print(f(Some([4]))) }",
+            &["type_meets"],
+        ),
+        (
+            "a pattern with plain `Some`",
+            r"fn f(m: [i64]?) -> i64 { match m { Some(xs) => xs.len(); None => 0 } }
+fn main() { print(f(Some([4]))) }",
+            &[],
+        ),
+        (
+            "an associated type bound in a recursive class",
+            r"interface Step { type Next: Step; type Item }
+class End: Step { type Next = End; type Item = i64 }
+class On<T: Step>: Step { type Next = On<T.Next>; type Item = i64 }
+class At<T: Step> { v: T.Item }
+fn main() { print(At<On<End>>(v: 1).v) }",
+            &["assoc_conforms"],
+        ),
+        (
+            "the same with no such class",
+            r"interface Step { type Next: Step; type Item }
+class End: Step { type Next = End; type Item = i64 }
+class At<T: Step> { v: T.Item }
+fn main() { print(At<End>(v: 1).v) }",
+            &[],
+        ),
+        (
+            "a generic class's list inherits through an `extend` block",
+            r"interface Same { fn same(self, o: Self) -> bool }
+interface Less: Same { fn less(self, o: Self) -> bool }
+class Rack<T: Less>: Less { v: T; fn less(self, o: Self) -> bool { self.v.less(o.v) } }
+extend<T: Less> Rack<T>: Same { fn same(self, o: Self) -> bool { self.v.same(o.v) } }
+class Num: Less { n: i64; fn same(self, o: Num) -> bool { self.n == o.n }; fn less(self, o: Num) -> bool { self.n < o.n } }
+fn same<T: Same>(a: T) -> bool { a.same(a) }
+fn main() { print(same(Rack(v: Num(n: 1)))) }",
+            &["listed_inheritance"],
+        ),
+        (
+            "the generic class gives both itself",
+            r"interface Same { fn same(self, o: Self) -> bool }
+interface Less: Same { fn less(self, o: Self) -> bool }
+class Rack<T: Less>: Less { v: T; fn same(self, o: Self) -> bool { self.v.same(o.v) }; fn less(self, o: Self) -> bool { self.v.less(o.v) } }
+class Num: Less { n: i64; fn same(self, o: Num) -> bool { self.n == o.n }; fn less(self, o: Num) -> bool { self.n < o.n } }
+fn same<T: Same>(a: T) -> bool { a.same(a) }
+fn main() { print(same(Rack(v: Num(n: 1)))) }",
+            &[],
+        ),
+        (
+            "a parameter waits on an unbound callee type",
+            r"class Two<A, B> { a: [A]; b: B }
+fn res<E>() -> Result<i64, E> { Ok(7) }
+fn empty<X>() -> Two<X, bool> { Two(a: [], b: true) }
+fn wait<T>(_c: Two<T, bool>, _d: Result<T, string>) -> i64 { 1 }
+fn main() { print(wait(empty(), res())) }",
+            &["names_unbound"],
+        ),
+        (
+            "the same with a callee that is not generic",
+            r"class Two<A, B> { a: [A]; b: B }
+fn res<E>() -> Result<i64, E> { Ok(7) }
+fn empty() -> Two<i64, bool> { Two(a: [], b: true) }
+fn wait<T>(_c: Two<T, bool>, _d: Result<T, string>) -> i64 { 1 }
+fn main() { print(wait(empty(), res())) }",
+            &[],
+        ),
+        (
+            "the bound parameter is itself optional under a hint",
+            r"fn wide<T>(a: T, _b: T?) -> T { a }
+fn main() { let w: u8? = wide(1, Some(Some(2))); print(w ?? 0) }",
+            &["wider_than"],
+        ),
+        (
+            "the same value, a plain payload",
+            r"fn wide<T>(a: T, _b: T?) -> T { a }
+fn main() { let w: u8? = wide(1, Some(2)); print(w ?? 0) }",
+            &[],
+        ),
+        (
+            "alias over a bounded class",
+            r"interface Shown { fn shown(self) -> i64 }
+class Made: Shown { fn shown(self) -> i64 { 1 } }
+class Bound<T: Shown> { value: T }
+type A<T> = Bound<T>
+fn main() { let b: A<Made> = Bound(value: Made()); print(b.value.shown()) }",
+            &["make_check keeps an applied type"],
+        ),
+        (
+            "alias over `any Of<T>`",
+            r"interface Of<T> { fn of(self) -> T }
+class One: Of<i64> { fn of(self) -> i64 { 1 } }
+type A<T> = any Of<T>
+fn main() { let a: A<i64> = One(); print(a.of()) }",
+            &["make_check keeps an any"],
+        ),
+        (
+            "alias over `S.Name`",
+            r"interface Named { type Name }
+class Has: Named { type Name = i64 }
+type A<S> = [S.Name]
+fn main() { let xs: A<Has> = [1]; print(xs) }",
+            &["make_check keeps a conformance"],
+        ),
+        (
+            "aliases with a parameter and no check to keep",
+            r"class Box<T> { value: T }
+type A<T> = Box<T>
+type L<T> = [T]
+fn main() { let b: A<i64> = Box(value: 1); let xs: L<i64> = [2]; print(b.value); print(xs) }",
+            &[],
+        ),
+        (
+            "alias over a bounded class, no parameter",
+            r"interface Shown { fn shown(self) -> i64 }
+class Made: Shown { fn shown(self) -> i64 { 1 } }
+class Bound<T: Shown> { value: T }
+type A = Bound<Made>
+fn main() { let b: A = Bound(value: Made()); print(b.value.shown()) }",
+            &[],
+        ),
+        (
+            "alias over `any`, no parameter",
+            r"interface Of<T> { fn of(self) -> T }
+class One: Of<i64> { fn of(self) -> i64 { 1 } }
+type A = any Of<i64>
+fn main() { let a: A = One(); print(a.of()) }",
+            &[],
+        ),
+    ];
+    for (row, source, want) in rows {
+        let seen = marked(source);
+        let mut got: Vec<&str> = (GAP_POINTS.iter().copied())
+            .filter(|point| seen.contains(&gap_key(point)))
+            .collect();
+        got.sort_unstable();
+        let mut want = want.to_vec();
+        want.sort_unstable();
+        assert_eq!(got, want, "row `{row}`");
+    }
+}
+
 /// GIVEN the programs of the seeds `0..FUZZ_SEEDS`, which the nightly reads and no others
 /// WHEN the walk reads them in order
-/// THEN each key of `GAP_RULES` is marked, and the walk stops once all are
+/// THEN each key of `GAP_RULES` and of `GAP_POINTS` is marked, and the walk stops once all are
 #[test]
 fn generated_programs_should_reach_each_gap_rule() {
     let mut walk = Walk::default();
-    let missing = |walk: &Walk| -> Vec<&str> {
-        (GAP_RULES.iter())
-            .copied()
-            .filter(|key| !walk.seen.contains(*key))
+    let missing = |walk: &Walk| -> Vec<String> {
+        (GAP_RULES.iter().map(|&key| key.to_string()))
+            .chain(GAP_POINTS.iter().map(|&point| gap_key(point)))
+            .filter(|key| !walk.seen.contains(key))
             .collect()
     };
     for n in 0..FUZZ_SEEDS {
@@ -6061,8 +6376,8 @@ fn generated_programs_should_reach_each_gap_rule() {
 
 /// GIVEN the programs of the seeds `0..FUZZ_SEEDS`
 /// WHEN a program holds `fn shapes()`
-/// THEN its `program` holds `PushTally` and `twice_set(mut slots[0]`, and its `plain` holds
-/// neither, and at least one seed holds them
+/// THEN its `program` holds `PushTally`, `twice_set(mut slots[0]`, `gap_chain(` and `GapBound`,
+/// and its `plain` holds none of them, and at least one seed holds them
 #[test]
 fn plain_text_should_leave_out_the_gap_forms() {
     let mut seen = false;
@@ -6072,7 +6387,12 @@ fn plain_text_should_leave_out_the_gap_forms() {
             continue;
         }
         seen = true;
-        for form in ["PushTally", "twice_set(mut slots[0]"] {
+        for form in [
+            "PushTally",
+            "twice_set(mut slots[0]",
+            "gap_chain(",
+            "GapBound",
+        ] {
             assert!(generated.program.contains(form), "seed {n}: `{form}`");
             assert!(!generated.plain.contains(form), "seed {n}: `{form}`");
         }
