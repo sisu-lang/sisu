@@ -1,0 +1,8 @@
+# The type rules for every tracked Python file. prek pins the Pyrefly version: see `prek.toml`.
+project-includes = ["scripts", "site", "bench", ".agents/skills/*/scripts"]
+# Pyrefly's default excludes hold every directory that starts with a dot, which `.agents` does.
+disable-project-excludes-heuristics = true
+project-excludes = ["**/__pycache__"]
+search-path = ["scripts", "site"]
+python-version = "3.12"
+preset = "strict"

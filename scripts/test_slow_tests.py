@@ -1,14 +1,15 @@
 """Unit tests for slow_tests.py: python3 -m unittest discover -s scripts -p 'test_*.py'."""
-import os
+
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 import git_fixture
 import slow_tests as st
 
-SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'slow_tests.py')
+SCRIPT = Path(__file__).absolute().parent / "slow_tests.py"
 
 REPORT = """<testsuites>
 <testsuite name="@setup-script:build-runtime">
@@ -26,48 +27,73 @@ REPORT = """<testsuites>
 
 
 class SlowTests(unittest.TestCase):
-    def test_each_kind_has_its_budget_and_scripts_are_skipped(self):
-        self.assertEqual(st.over_budget(st.timed(REPORT)), [
-            (7.0, st.END_TO_END_BUDGET, "sisuc::cases run::big.sisu"),
-            (1.5, st.UNIT_BUDGET, "sisuc slow"),
-        ])
+    def test_each_kind_has_its_budget_and_scripts_are_skipped(self) -> None:
+        self.assertEqual(
+            st.over_budget(st.timed(REPORT)),
+            [
+                (7.0, st.END_TO_END_BUDGET, "sisuc::cases run::big.sisu"),
+                (1.5, st.UNIT_BUDGET, "sisuc slow"),
+            ],
+        )
 
-    def test_a_test_is_in_the_diff_by_its_function_name_or_case_stem(self):
-        diff = ("@@ -9,2 +9,3 @@ fn many_arms() {\n+    let n = 2;\n"
-                "+++ b/crates/sisuc/tests/run/fib.out\n")
-        for name, mentioned in [("sisuc check::tests::many_arms", True),
-                                ("sisuc check::tests::many_arms_wide", False),
-                                ("sisuc::cases run::fib.sisu", True),
-                                ("sisuc::cases run::fibs.sisu", False)]:
+    def test_a_test_is_in_the_diff_by_its_function_name_or_case_stem(self) -> None:
+        diff = (
+            "@@ -9,2 +9,3 @@ fn many_arms() {\n+    let n = 2;\n"
+            "+++ b/crates/sisuc/tests/run/fib.out\n"
+        )
+        for name, mentioned in [
+            ("sisuc check::tests::many_arms", True),
+            ("sisuc check::tests::many_arms_wide", False),
+            ("sisuc::cases run::fib.sisu", True),
+            ("sisuc::cases run::fibs.sisu", False),
+        ]:
             self.assertEqual(st.in_diff(name, diff), mentioned, name)
 
-    def test_with_diff_only_mentioned_tests_are_listed_and_the_rest_counted(self):
-        with git_fixture.repo({'a.rs': 'fn slow() {}\n'}) as tmp:
-            with open(os.path.join(tmp, 'a.rs'), 'w', encoding='utf-8') as file:
-                file.write('fn big() {}\nfn slow() {}\n')
-            report = os.path.join(tmp, 'junit.xml')
-            with open(report, 'w', encoding='utf-8') as file:
-                file.write(REPORT.replace('run::big.sisu', 'run::big'))
-            run = subprocess.run([sys.executable, SCRIPT, report, '--diff', 'HEAD'],
-                                 capture_output=True, text=True, cwd=tmp, env=git_fixture.env())
+    def test_with_diff_only_mentioned_tests_are_listed_and_the_rest_counted(self) -> None:
+        with git_fixture.repo({"a.rs": "fn slow() {}\n"}) as tmp:
+            with Path(tmp, "a.rs").open("w", encoding="utf-8") as file:
+                file.write("fn big() {}\nfn slow() {}\n")
+            report = Path(tmp, "junit.xml")
+            with report.open("w", encoding="utf-8") as file:
+                file.write(REPORT.replace("run::big.sisu", "run::big"))
+            run = subprocess.run(
+                [sys.executable, SCRIPT, report, "--diff", "HEAD"],
+                capture_output=True,
+                text=True,
+                cwd=tmp,
+                env=git_fixture.env(),
+                check=False,
+            )
         lines = run.stdout.splitlines()
         self.assertEqual(run.returncode, 0)
-        self.assertEqual(lines[0], "slow_tests: 1 other tests over budget are outside `git diff HEAD`")
+        self.assertEqual(
+            lines[0], "slow_tests: 1 other tests over budget are outside `git diff HEAD`"
+        )
         self.assertEqual([line.split()[-1] for line in lines[2:]], ["run::big"])
 
-    def test_an_unusable_report_never_fails_the_run(self):
+    def test_an_unusable_report_never_fails_the_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            for name, text in [('missing', None), ('empty', ''), ('truncated', '<testsuites><testsuite>'),
-                               ('bad_time', '<testsuites><testcase classname="sisuc" name="t" time="x"/></testsuites>')]:
-                path = os.path.join(tmp, f'{name}.xml')
+            for name, text in [
+                ("missing", None),
+                ("empty", ""),
+                ("truncated", "<testsuites><testsuite>"),
+                (
+                    "bad_time",
+                    '<testsuites><testcase classname="sisuc" name="t" time="x"/></testsuites>',
+                ),
+            ]:
+                path = Path(tmp, f"{name}.xml")
                 if text is not None:
-                    with open(path, 'w', encoding='utf-8') as file:
+                    with path.open("w", encoding="utf-8") as file:
                         file.write(text)
-                run = subprocess.run([sys.executable, SCRIPT, path], capture_output=True, text=True)
-                self.assertEqual((run.returncode, run.stderr), (0, ''), name)
-                self.assertEqual(run.stdout.startswith('slow_tests: cannot read'), text is not None, name)
+                run = subprocess.run(
+                    [sys.executable, SCRIPT, path], capture_output=True, text=True, check=False
+                )
+                self.assertEqual((run.returncode, run.stderr), (0, ""), name)
+                self.assertEqual(
+                    run.stdout.startswith("slow_tests: cannot read"), text is not None, name
+                )
 
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

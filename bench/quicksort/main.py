@@ -1,4 +1,4 @@
-def random_array(n):
+def random_array(n: int) -> list[int]:
     xs = [0] * n
     x = 42
     for i in range(n):
@@ -7,7 +7,7 @@ def random_array(n):
     return xs
 
 
-def quicksort(a, lo, hi):
+def quicksort(a: list[int], lo: int, hi: int) -> None:
     if lo >= hi:
         return
     pivot = a[hi]

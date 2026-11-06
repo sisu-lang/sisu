@@ -17,35 +17,41 @@ import re
 import subprocess
 import sys
 import time
+from typing import Any
 
 REPO = "repos/sisu-lang/sisu"
 POLL = float(os.environ.get("MERGE_PR_POLL", "30"))
 CHECKS_LIMIT = float(os.environ.get("MERGE_PR_CHECKS_LIMIT", str(90 * 60)))
 NO_CHECKS_LIMIT = min(CHECKS_LIMIT, 10 * 60)
 ISSUES_LIMIT = 120
-CLOSES = re.compile(r"^Closes #(\d+)\s*$", re.M | re.I)
+CLOSES = re.compile(r"^Closes #(\d+)\s*$", re.MULTILINE | re.IGNORECASE)
 PASSED = {"success", "skipped", "neutral"}
 
 
-class Stop(Exception):
-    pass
+class Stop(Exception):  # noqa: N818  a signal to stop with no merge, not a fault: `merge` catches it to read again, `main` to exit with 1
+    """A reason to stop with no merge: `main` prints the message and returns 1."""
 
 
-def run(args):
+def run(args: list[str]) -> str:
+    """Run the command `args` and return its stdout; raise Stop when it fails."""
     try:
         return subprocess.run(args, capture_output=True, text=True, check=True).stdout
     except subprocess.CalledProcessError as e:
         raise Stop(f"{' '.join(args[:4])}: {e.stderr.strip() or e}") from None
 
 
-def gh(*args):
+def gh(*args: str) -> Any:  # noqa: ANN401  gh answers with JSON of any shape
+    """Run `gh api` with `args`, and return its JSON answer, or None for no output."""
     out = run(["gh", "api", *args])
     return json.loads(out) if out.strip() else None
 
 
-def wait_for_checks(pr, sha):
-    """Returns the checks that did not pass, after every check ends. Stops at the time limit, and
-    when main moves while a check runs: the head must then merge main and run its checks again."""
+def wait_for_checks(pr: dict[str, Any], sha: str) -> list[str]:
+    """Return the checks that did not pass, after every check ends.
+
+    It stops at the time limit, and when main moves while a check runs: the head must then merge
+    main and run its checks again.
+    """
     start = time.monotonic()
     while True:
         page = gh(f"{REPO}/commits/{sha}/check-runs?per_page=100")
@@ -53,7 +59,9 @@ def wait_for_checks(pr, sha):
         if page["total_count"] > len(runs):
             raise Stop(f"{page['total_count']} checks, more than one page: merge by hand")
         if runs and all(r["status"] == "completed" for r in runs):
-            return [f'{r["name"]}: {r["conclusion"]}' for r in runs if r["conclusion"] not in PASSED]
+            return [
+                f"{r['name']}: {r['conclusion']}" for r in runs if r["conclusion"] not in PASSED
+            ]
         waited = time.monotonic() - start
         if not runs and waited >= NO_CHECKS_LIMIT:
             raise Stop("the head has no checks")
@@ -63,13 +71,16 @@ def wait_for_checks(pr, sha):
         time.sleep(POLL)
 
 
-def check_base(pr, sha):
+def check_base(pr: dict[str, Any], sha: str) -> None:
+    """Raise Stop when the head `sha` does not contain the base branch of the pull request."""
     if gh(f"{REPO}/compare/{pr['base']['ref']}...{sha}")["behind_by"]:
-        raise Stop(f"{pr['head']['ref']} does not contain {pr['base']['ref']}: merge it, run make test")
+        raise Stop(
+            f"{pr['head']['ref']} does not contain {pr['base']['ref']}: merge it, run make test"
+        )
 
 
-def wait_for_issues(numbers):
-    """Returns `#N state` for each issue, after all close or the time limit."""
+def wait_for_issues(numbers: list[str]) -> list[str]:
+    """Return `#N state` for each issue, after all close or the time limit."""
     start = time.monotonic()
     while True:
         states = {n: gh(f"{REPO}/issues/{n}")["state"] for n in numbers}
@@ -78,12 +89,13 @@ def wait_for_issues(numbers):
         time.sleep(min(POLL, 5))
 
 
-def git(root, *args):
+def git(root: str, *args: str) -> str:
+    """Run git in `root` with `args`, and return its stdout."""
     return run(["git", "-C", root, *args])
 
 
-def remove_worktree(root, branch, sha):
-    """Removes the worktree of `branch` and the branch, only when it is clean and at `sha`."""
+def remove_worktree(root: str, branch: str, sha: str) -> str:
+    """Remove the worktree of `branch` and the branch, only when it is clean and at `sha`."""
     path = None
     for block in git(root, "worktree", "list", "--porcelain").split("\n\n"):
         fields = dict(line.split(" ", 1) for line in block.splitlines() if " " in line)
@@ -103,7 +115,8 @@ def remove_worktree(root, branch, sha):
     return f"removed {path} and branch {branch}"
 
 
-def merge(number, root):
+def merge(number: str, root: str) -> None:
+    """Squash-merge the pull request `number` when it is safe, then remove its worktree."""
     pr = gh(f"{REPO}/pulls/{number}")
     if pr["state"] != "open":
         raise Stop(f"#{number} is {pr['state']}")
@@ -111,7 +124,8 @@ def merge(number, root):
     try:
         check_base(pr, sha)
     except Stop:
-        # Right after a push, GitHub can still answer with the old head. Read the pull request again.
+        # Right after a push, GitHub can still answer with the old head. Read the pull request
+        # again.
         time.sleep(POLL)
         pr = gh(f"{REPO}/pulls/{number}")
         sha = pr["head"]["sha"]
@@ -121,8 +135,17 @@ def merge(number, root):
         raise Stop("; ".join(failed))
     # main can move during the wait.
     check_base(pr, sha)
-    merged = gh("-X", "PUT", f"{REPO}/pulls/{number}/merge", "-f", "merge_method=squash",
-                "-f", f"sha={sha}", "-f", f"commit_title={pr['title']} (#{number})")
+    merged = gh(
+        "-X",
+        "PUT",
+        f"{REPO}/pulls/{number}/merge",
+        "-f",
+        "merge_method=squash",
+        "-f",
+        f"sha={sha}",
+        "-f",
+        f"commit_title={pr['title']} (#{number})",
+    )
     print(f"merged #{number} as {merged['sha'][:8]}")
     issues = CLOSES.findall(pr["body"] or "")
     if issues:
@@ -130,14 +153,16 @@ def merge(number, root):
     print(remove_worktree(root, pr["head"]["ref"], sha))
 
 
-def cleanup(number, root):
+def cleanup(number: str, root: str) -> None:
+    """Remove the worktree of the merged pull request `number`; raise Stop when it is not merged."""
     pr = gh(f"{REPO}/pulls/{number}")
     if not pr["merged"]:
         raise Stop(f"#{number} is not merged")
     print(remove_worktree(root, pr["head"]["ref"], pr["head"]["sha"]))
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
+    """Run the command line `argv`, and return the exit code."""
     parser = argparse.ArgumentParser(description="Squash-merges a pull request of sisu-lang/sisu.")
     parser.add_argument("pr")
     parser.add_argument("root", nargs="?", default=".")

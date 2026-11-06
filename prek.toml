@@ -183,6 +183,19 @@ language = "system"
 entry = "shellcheck"
 types = ["shell"]
 
+# Each Python file obeys `ruff.toml` and `pyrefly.toml`: see `CODING_STANDARDS.md` (Python).
+[[repos]]
+repo = "https://github.com/astral-sh/ruff-pre-commit"
+rev = "c0f278f1254ccc8fb09676bcdb8d847e7db493e5" # v0.17.4
+# The default types of `ruff-format` hold Markdown; these files stay as their writers made them.
+hooks = [{ id = "ruff-check" }, { id = "ruff-format", types_or = ["python", "pyi"] }]
+
+# `site/build.py` imports `markdown_it`, at the version in its script metadata.
+[[repos]]
+repo = "https://github.com/facebook/pyrefly-pre-commit"
+rev = "5786ef22e47097ea70c1eede4748d5db79df8c06" # 1.4.1
+hooks = [{ id = "pyrefly-check", additional_dependencies = ["markdown-it-py==4.2.0"] }]
+
 # Lints .github/workflows, including `run:` scripts through shellcheck.
 # prek builds it with its own Go toolchain, so it needs no local install.
 [[repos]]

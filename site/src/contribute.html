@@ -55,6 +55,7 @@ How to help with Sisu, a one-person learning project at an early stage.
         <li><code>prek</code> for the Git hooks, with <code>typos</code>, <code>cargo-shear</code> and <code>shellcheck</code>, which the hooks run. <code>make setup</code> installs <code>cargo-shear</code>.</li>
         <li><code>cargo-nextest</code> and <code>cargo-deny</code>, and on Linux Valgrind for the end-to-end tests.</li>
         <li><code>uv</code>, to build the site.</li>
+        <li>Python 3.12 or later, which the scripts and the hooks need. prek installs Ruff and Pyrefly at the pinned versions on its first run.</li>
         <li>For <code>make miri</code>, a nightly toolchain with Miri: <code>rustup toolchain install nightly --component miri --component rust-src</code>.</li>
       </ul>
       <p>You do not install LLVM yourself. <code>make setup</code> downloads the official LLVM 23 release and keeps what the build needs in <code>.llvm/23</code>, about 570 MB. The build uses that copy and leaves any system LLVM alone.</p>
