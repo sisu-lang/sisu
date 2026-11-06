@@ -1,18 +1,101 @@
 error[E0062]: `c` may be `None`
-  --> E0062-for-subject.sisu:19:14
+  --> E0062-for-subject.sisu:20:14
    |
-19 |     for y in c.ys {
+20 |     for y in c.ys {
    |              ^
    |
    = help: unwrap it with `if let`, `let ... else` or `?? return`
 
 error[E0062]: `c` may be `None`
-  --> E0062-for-subject.sisu:25:14
+  --> E0062-for-subject.sisu:26:14
    |
-25 |     bump(mut c.m.v)
+26 |     bump(mut c.m.v)
    |              ^
    |
    = help: unwrap it with `if let`, `let ... else` or `?? return`
 
-sisu: 2 errors
-sisu: for more on a code, run `sisu explain <code>`: E0062
+error[E0055]: this call takes no labels on its arguments
+  --> E0062-for-subject.sisu:35:10
+   |
+35 |     bump(x: mut c.v)
+   |          ^
+   |
+   = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0062]: `c` may be `None`
+  --> E0062-for-subject.sisu:35:17
+   |
+35 |     bump(x: mut c.v)
+   |                 ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0055]: this call takes no labels on its arguments
+  --> E0062-for-subject.sisu:39:10
+   |
+39 |     bump(x: mut c.m.v)
+   |          ^
+   |
+   = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0062]: `c` may be `None`
+  --> E0062-for-subject.sisu:39:17
+   |
+39 |     bump(x: mut c.m.v)
+   |                 ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0167]: `Leaf(…)` takes no `mut` argument: it copies each value into its field
+  --> E0062-for-subject.sisu:43:21
+   |
+43 |     let l = Leaf(v: mut c.v)
+   |                     ^^^ no `mut` here
+   |
+   = help: a `mut` field can change after the object is made
+help: remove `mut`
+   |
+43 -     let l = Leaf(v: mut c.v)
+43 +     let l = Leaf(v: c.v)
+   |
+
+error[E0062]: `c` may be `None`
+  --> E0062-for-subject.sisu:43:25
+   |
+43 |     let l = Leaf(v: mut c.v)
+   |                         ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0055]: this call takes no labels on its arguments
+  --> E0062-for-subject.sisu:47:10
+   |
+47 |     bump(x: c.v)
+   |          ^
+   |
+   = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0062]: `c` may be `None`
+  --> E0062-for-subject.sisu:47:13
+   |
+47 |     bump(x: c.v)
+   |             ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0053]: `bump` takes 1 argument, found 2
+  --> E0062-for-subject.sisu:51:5
+   |
+51 |     bump(mut c.v, 1)
+   |     ^^^^^^^^^^^^^^^^
+
+error[E0062]: `c` may be `None`
+  --> E0062-for-subject.sisu:51:14
+   |
+51 |     bump(mut c.v, 1)
+   |              ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+sisu: 12 errors
+sisu: for more on a code, run `sisu explain <code>`: E0053, E0055, E0062, E0167

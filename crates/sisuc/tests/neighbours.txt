@@ -172,6 +172,7 @@ let 1 = $ else { return }
 if let _l = $ {}
 # A `mut` argument: a place, or a value that is none, for a generic `mut` parameter.
 take(mut $)
+take(x: mut $)
 take($)
 let _s: string = take($)
 let _s: string = take(mut $)

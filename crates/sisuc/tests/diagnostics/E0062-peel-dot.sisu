@@ -3,7 +3,7 @@
 // WHEN `sisu check` runs on it
 // THEN it reports E0062 with no fix, and a help that peels the layers that `?.` does not take
 // AND the `.` says "the extra layers", and the `?.` says "the other layers", with one `?? None` for each
-// AND an index, a slice, a `for` subject or a `mut` argument after the `.` gets the `if let` help instead
+// AND an index, a slice, a `for` subject, or a `mut` argument or an argument at a `mut` parameter after the `.` gets the `if let` help instead, also in a call that fails
 // AND a `push` onto `[i64]??` gets the `if let` help and no fix: the peeled `push` gives E0021
 class Node {
     v: i64
@@ -141,6 +141,109 @@ fn g6(c: Tree??, xs: [i64]) {
 
 fn g7(c: Tree??) {
     c.m.ys.push(1)
+}
+
+class Bumper {
+    fn bumpm(self, mut x: i64) {
+        x += 1
+    }
+}
+
+fn read(x: i64) {}
+
+fn q3(c: Tree??) {
+    bump(x: mut c.m.v)
+}
+
+fn m3(t: Bumper, c: Tree??) {
+    t.bumpm(x: mut c.m.v)
+}
+
+fn k3(c: Tree??) {
+    let l = Leaf(v: mut c.m.v, ys: [])
+}
+
+fn v3(c: Tree??) {
+    bump(x: c.m.v)
+}
+
+fn n3(c: Tree??) {
+    bump(mut c.m.v, 1)
+}
+
+fn n4(t: Bumper, c: Tree??) {
+    t.bumpm(mut c.m.v, 1)
+}
+
+fn u3(c: Tree??) {
+    ste(mut c.m.v)
+}
+
+fn u4(t: Bumper, c: Tree??) {
+    t.ste(mut c.m.v)
+}
+
+fn p3(mut xs: [i64], c: Tree??) {
+    xs.push(mut c.m.v)
+}
+
+fn p4(c: Tree??) {
+    print(mut c.m.v)
+}
+
+fn e3(c: Tree??) {
+    bump(mut c.m.v)
+}
+
+fn e4(c: Tree??) {
+    bump(c.m.v)
+}
+
+fn r7(c: Tree??) {
+    read(x: c.m.v)
+}
+
+fn r8(c: Tree??) {
+    let l = Leaf(v: c.m.v, ys: [])
+}
+
+enum Shape {
+    Circle(r: i64)
+}
+
+interface Bp {
+    fn bp(self, mut x: i64)
+}
+
+class Box<T> {
+    v: T
+    fn put(self, mut x: T) {
+        x = self.v
+    }
+}
+
+fn d3(c: Tree???) {
+    bump(x: mut c.v)
+}
+
+fn d4(c: Tree???) {
+    bump(x: mut c.m.v)
+}
+
+fn f7b<U: Bp>(u: U, c: Tree??) {
+    u.bp(x: mut c.m.v)
+}
+
+fn f11(c: Tree??) {
+    let s = Shape.Circle(r: mut c.m.v)
+}
+
+fn f13(t: Bumper?, c: Tree??) {
+    t?.bumpm(x: mut c.m.v)
+}
+
+fn f15(b: Box<i64>, c: Tree??) {
+    b.put(x: mut c.m.v)
 }
 
 fn main() {}

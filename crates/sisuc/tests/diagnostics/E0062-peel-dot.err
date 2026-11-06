@@ -232,5 +232,320 @@ error[E0062]: `c` may be `None`
     |
     = help: peel the extra layer first: `(c ?? None)?.m`
 
-sisu: 28 errors
-sisu: for more on a code, run `sisu explain <code>`: E0001, E0062
+error[E0055]: this call takes no labels on its arguments
+   --> E0062-peel-dot.sisu:155:10
+    |
+155 |     bump(x: mut c.m.v)
+    |          ^
+    |
+    = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:155:17
+    |
+155 |     bump(x: mut c.m.v)
+    |                 ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0055]: this call takes no labels on its arguments
+   --> E0062-peel-dot.sisu:159:13
+    |
+159 |     t.bumpm(x: mut c.m.v)
+    |             ^
+    |
+    = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:159:20
+    |
+159 |     t.bumpm(x: mut c.m.v)
+    |                    ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0167]: `Leaf(…)` takes no `mut` argument: it copies each value into its field
+   --> E0062-peel-dot.sisu:163:21
+    |
+163 |     let l = Leaf(v: mut c.m.v, ys: [])
+    |                     ^^^ no `mut` here
+    |
+    = help: a `mut` field can change after the object is made
+help: remove `mut`
+    |
+163 -     let l = Leaf(v: mut c.m.v, ys: [])
+163 +     let l = Leaf(v: c.m.v, ys: [])
+    |
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:163:25
+    |
+163 |     let l = Leaf(v: mut c.m.v, ys: [])
+    |                         ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0055]: this call takes no labels on its arguments
+   --> E0062-peel-dot.sisu:167:10
+    |
+167 |     bump(x: c.m.v)
+    |          ^
+    |
+    = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:167:13
+    |
+167 |     bump(x: c.m.v)
+    |             ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0053]: `bump` takes 1 argument, found 2
+   --> E0062-peel-dot.sisu:171:5
+    |
+171 |     bump(mut c.m.v, 1)
+    |     ^^^^^^^^^^^^^^^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:171:14
+    |
+171 |     bump(mut c.m.v, 1)
+    |              ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0053]: `Bumper.bumpm` takes 1 argument, found 2
+   --> E0062-peel-dot.sisu:175:5
+    |
+175 |     t.bumpm(mut c.m.v, 1)
+    |     ^^^^^^^^^^^^^^^^^^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:175:17
+    |
+175 |     t.bumpm(mut c.m.v, 1)
+    |                 ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0052]: cannot find function `ste`
+   --> E0062-peel-dot.sisu:179:5
+    |
+179 |     ste(mut c.m.v)
+    |     ^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:179:13
+    |
+179 |     ste(mut c.m.v)
+    |             ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0063]: `Bumper` has no method `ste`
+   --> E0062-peel-dot.sisu:183:7
+    |
+183 |     t.ste(mut c.m.v)
+    |       ^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:183:15
+    |
+183 |     t.ste(mut c.m.v)
+    |               ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0167]: argument 1 of `xs.push` is not `mut`
+   --> E0062-peel-dot.sisu:187:13
+    |
+187 |     xs.push(mut c.m.v)
+    |             ^^^ not a `mut` parameter
+    |
+help: remove `mut`
+    |
+187 -     xs.push(mut c.m.v)
+187 +     xs.push(c.m.v)
+    |
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:187:17
+    |
+187 |     xs.push(mut c.m.v)
+    |                 ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0167]: argument 1 of `print` is not `mut`
+   --> E0062-peel-dot.sisu:191:11
+    |
+191 |     print(mut c.m.v)
+    |           ^^^ not a `mut` parameter
+    |
+help: remove `mut`
+    |
+191 -     print(mut c.m.v)
+191 +     print(c.m.v)
+    |
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:191:15
+    |
+191 |     print(mut c.m.v)
+    |               ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:195:14
+    |
+195 |     bump(mut c.m.v)
+    |              ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:199:10
+    |
+199 |     bump(c.m.v)
+    |          ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0166]: the parameter `x` of `bump` is `mut`, so its argument needs `mut`
+   --> E0062-peel-dot.sisu:199:10
+    |
+ 66 | fn bump(mut x: i64) {
+    |             - declared `mut` here
+...
+199 |     bump(c.m.v)
+    |          ^^^^^ needs `mut`
+
+error[E0055]: this call takes no labels on its arguments
+   --> E0062-peel-dot.sisu:203:10
+    |
+203 |     read(x: c.m.v)
+    |          ^
+    |
+    = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:203:13
+    |
+203 |     read(x: c.m.v)
+    |             ^
+    |
+    = help: peel the extra layer first: `(c ?? None)?.m`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:207:21
+    |
+207 |     let l = Leaf(v: c.m.v, ys: [])
+    |                     ^
+    |
+    = help: peel the extra layer first: `(c ?? None)?.m`
+
+error[E0055]: this call takes no labels on its arguments
+   --> E0062-peel-dot.sisu:226:10
+    |
+226 |     bump(x: mut c.v)
+    |          ^
+    |
+    = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:226:17
+    |
+226 |     bump(x: mut c.v)
+    |                 ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0055]: this call takes no labels on its arguments
+   --> E0062-peel-dot.sisu:230:10
+    |
+230 |     bump(x: mut c.m.v)
+    |          ^
+    |
+    = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:230:17
+    |
+230 |     bump(x: mut c.m.v)
+    |                 ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0055]: this call takes no labels on its arguments
+   --> E0062-peel-dot.sisu:234:10
+    |
+234 |     u.bp(x: mut c.m.v)
+    |          ^
+    |
+    = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:234:17
+    |
+234 |     u.bp(x: mut c.m.v)
+    |                 ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0167]: `Shape.Circle(…)` takes no `mut` argument: it copies each value into its field
+   --> E0062-peel-dot.sisu:238:29
+    |
+238 |     let s = Shape.Circle(r: mut c.m.v)
+    |                             ^^^ no `mut` here
+    |
+    = help: an enum value never changes after it is built
+help: remove `mut`
+    |
+238 -     let s = Shape.Circle(r: mut c.m.v)
+238 +     let s = Shape.Circle(r: c.m.v)
+    |
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:238:33
+    |
+238 |     let s = Shape.Circle(r: mut c.m.v)
+    |                                 ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0055]: this call takes no labels on its arguments
+   --> E0062-peel-dot.sisu:242:14
+    |
+242 |     t?.bumpm(x: mut c.m.v)
+    |              ^
+    |
+    = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:242:21
+    |
+242 |     t?.bumpm(x: mut c.m.v)
+    |                     ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0055]: this call takes no labels on its arguments
+   --> E0062-peel-dot.sisu:246:11
+    |
+246 |     b.put(x: mut c.m.v)
+    |           ^
+    |
+    = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:246:18
+    |
+246 |     b.put(x: mut c.m.v)
+    |                  ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+sisu: 66 errors
+sisu: for more on a code, run `sisu explain <code>`: E0001, E0052, E0053, E0055, E0062, E0063, E0166, E0167
