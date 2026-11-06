@@ -162,7 +162,7 @@ fn main() {
 **Types**
 
 - The values of all the `break`s of a loop must have one type. [E0032](../diagnostics/E0032.md)
-- The expected type gives that type. So does the left side of an operator or an earlier branch, when it is not a literal: `v + loop { break 1 }` is valid when `v` is a `u8`. With none of these, the first `break` value gives it, so `let x = loop { if c { break 1 }; break v }` and `loop { break 1 } + v` are errors.
+- The expected type gives that type. A value before the loop with a type of its own also gives it: the left side of an operator, an earlier branch or an earlier `break` value. So `v + loop { break 1 }` is valid when `v` is a `u8`. `1 + loop { break v }` is also valid, because `1`, `1 + 1` and `id(1)` have no type of their own. With none of these, the first `break` value gives the type, so `let x = loop { if c { break 1 }; break v }` and `loop { break 1 } + v` are errors.
 - A `break` value of the type `never` takes the type of the other `break` values, as a branch of an `if` does.
 - The loop has the type `never` only when it has no `break`, or when each `break` has a value of the type `never` ([Types](types.md#never)).
 
