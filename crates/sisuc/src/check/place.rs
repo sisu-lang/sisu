@@ -179,19 +179,22 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether a `push` checks its receiver `e` as a place. That holds for a field, or for an
-    /// index of a local or of a field, whether or not a `?.` leads to it. The place stamps by
-    /// the rule of `push_receiver`.
+    /// Whether a `push` checks its receiver `e` as a place. That holds for a field or an index
+    /// whose chain `rooted` accepts, whether or not a `?.` leads to it. The place stamps by the
+    /// rule of `push_receiver`.
     pub(super) fn is_push_place(&mut self, e: &ast::Expr) -> bool {
         // A receiver checked ahead of its turn is a value already.
         is_place(e) && !self.body.ahead_at.contains_key(&(e.span, false)) && self.rooted(e)
     }
 
-    /// Whether the chain of indexes of the place `e` ends in a field or in a local: not in a
-    /// constant, a function or an unknown name.
+    /// Whether the chain of indexes and fields of the place `e` ends in a local or in an
+    /// expression such as a call, whose field is a place. It ends in no constant, function, type
+    /// or unknown name.
     pub(super) fn rooted(&mut self, e: &ast::Expr) -> bool {
         match &e.kind {
-            ast::ExprKind::Index { base, .. } => self.rooted(base),
+            ast::ExprKind::Index { base, .. } | ast::ExprKind::Field { base, .. } => {
+                self.rooted(base)
+            }
             &ast::ExprKind::Name(name) => self.lookup(name).is_some(),
             _ => true,
         }
@@ -279,6 +282,8 @@ impl Checker<'_> {
     /// place that holds an optional array, of any depth, reports its E0001 now, before the call
     /// reports E0062. The place is then no more: the call writes nothing.
     pub(super) fn pushed_value(&mut self, receiver: &ast::Expr, read: Checked) -> Checked {
+        #[cfg(test)]
+        super::PUSHED_VALUES.set(super::PUSHED_VALUES.get() + 1);
         let mut place = self
             .take_pushed(receiver)
             .expect("`push_receiver` should have kept the place of a receiver that is a place");
@@ -742,6 +747,8 @@ impl Checker<'_> {
         let Some(b) = self.lookup(name) else {
             if let Some(place) = self.constant_place(span, name, change) {
                 return place;
+            } else if self.poisoned_use(name) {
+                // The item's own error is reported, and the name is no typo for a binding.
             } else if self.is_function(name) {
                 self.report(DiagnosticKind::AssignToFunction {
                     name: name.to_string(),

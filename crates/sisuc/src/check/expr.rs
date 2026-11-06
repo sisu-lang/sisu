@@ -349,6 +349,10 @@ impl Checker<'_> {
                 Err(Poisoned::error())
             }
             None => self.constant_use(name, span).unwrap_or_else(|| {
+                // The item's own error is reported.
+                if self.poisoned_use(name) {
+                    return Err(Poisoned::error());
+                }
                 let d = if name == Symbol::SOME || self.result_variant(name).is_some() {
                     // These variants of the prelude's enums are written without the enum, and
                     // `Option` makes no enum for `bare_variant` to find.

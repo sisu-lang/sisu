@@ -8,6 +8,10 @@ Superseded in part by [ADR 0043](0043-mut-parameters-copy-in-and-out.md).
 caller's place. The exclusivity rule for a `mut self` call on a field is gone
 too: the call copies in and out. The decisions below stay as written.
 
+[ADR 0046](0046-structs-replace-classes.md) changes this further, when classes
+go. The class rules and the question "which to use" go, and the variable
+decides for every value.
+
 One word, `mut`, marks everything that can change, wherever it is written:
 
 - **Bindings**: `let x` cannot be reassigned, `let mut x` can. `var` is gone.

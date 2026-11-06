@@ -2003,6 +2003,10 @@ fn wrap_breaks(e: &mut tir::Expr, depth: usize, ty: Type, crossed: bool) {
         let placeholder = tir::Expr::new(ExprKind::None, ty, value.span);
         let payload = std::mem::replace(&mut **value, placeholder);
         **value = widen(payload, ty);
+        #[cfg(test)]
+        if !crossed {
+            super::WIDENED_BREAKS.set(super::WIDENED_BREAKS.get() + 1);
+        }
     }
 }
 
