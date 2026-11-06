@@ -241,7 +241,7 @@ fn main(args: [string]) {
     print(payload_read(E.A(two())))                        // 1 + 2 = 3
     let kept = payload_kept(E.A(two()))                    // 1
     print(payload_read(kept))                              // 3
-    print(payload_read(payload_rebuilt(kept)))             // 1 + 1 = 2
+    print(payload_read(payload_rebuilt(kept)))             // 0 + 1 = 1
     print(payload_returned(E.A(three())))                  // 2, 3, then ["bc", "d"]
     print(some_read(Some(two())))                          // 1 + 2 = 3
     print(some_returned(Some(three())))                    // 2, then ["bc", "d"]
