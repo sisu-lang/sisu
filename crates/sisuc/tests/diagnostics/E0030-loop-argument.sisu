@@ -1,0 +1,8 @@
+fn id<T>(x: T) -> T {
+    x
+}
+
+fn main() {
+    let a: Missing = id(loop { break 1 })
+    print(a)
+}

@@ -1901,6 +1901,10 @@ pub(super) struct Ranked {
     /// not ranked. The `1` of `Bx(v: 1)` is not passed on. An array, or a call that returns
     /// `Some(...)` or a class, is not.
     scalar: bool,
+    /// For a `Concrete` value: whether its type comes from a `loop`, whose `break` values take a
+    /// type that the call's context binds first (see `infer_call`). Ranking does not read `break`
+    /// values.
+    holds_loop: bool,
 }
 
 impl Ranked {
@@ -1910,6 +1914,7 @@ impl Ranked {
         holds_optional: false,
         nested: false,
         scalar: false,
+        holds_loop: false,
     };
     const LITERAL: Self = Self {
         rank: Rank::Literal,
@@ -1917,6 +1922,7 @@ impl Ranked {
         holds_optional: false,
         nested: false,
         scalar: true,
+        holds_loop: false,
     };
     const WAITS: Self = Self {
         rank: Rank::Waits,
@@ -1924,6 +1930,7 @@ impl Ranked {
         holds_optional: false,
         nested: false,
         scalar: false,
+        holds_loop: false,
     };
 
     /// The rank that joins and operators order siblings by. They type a `Literal` value with
@@ -1949,13 +1956,19 @@ impl Ranked {
 /// `Waits` when every part waits, `Literal` when no part is `Concrete` and one is `Literal`,
 /// else `Concrete`. It is `optional`, `holds_optional` or `nested` when a part is, and `scalar`
 /// when each `Literal` part is.
-/// It stops at the first `Concrete` part, so the parts after it are not ranked.
+/// It stops at the first `Concrete` part and takes `holds_loop` from it. The parts after it are
+/// not ranked.
 fn combine(parts: impl IntoIterator<Item = Ranked>) -> Ranked {
     let mut found = Ranked::WAITS;
     let mut scalar = true;
     for part in parts {
         match part.rank {
-            Rank::Concrete => return Ranked::CONCRETE,
+            Rank::Concrete => {
+                return Ranked {
+                    holds_loop: part.holds_loop,
+                    ..Ranked::CONCRETE
+                };
+            }
             Rank::Literal => found.rank = Rank::Literal,
             Rank::Waits => {}
         }
@@ -2194,12 +2207,20 @@ impl Checker<'_> {
         }
         // Whether every call in an argument fits its declaration.
         let mut fit = vec![true; args.len()];
-        let (ranks, holds, (through, layers)) = self.rank_arguments(&call, sig, args, &mut fit);
+        let (ranks, holds, (through, layers), holds_loop) =
+            self.rank_arguments(&call, sig, args, &mut fit);
         // An `any` context binds no parameter before the arguments do; the result converts to it.
         let (plain, into_any) = any::split_context(expected);
         // A context that holds a hole gives the arguments below more context (see `hint`).
         if let (Some(ret), Some(want)) = (sig.ret, plain) {
             call.bindings.hint(ret, want);
+            // The `break` values of a `loop` take the type that a written context gives, as they do
+            // under written type arguments. An optional context can bind `T` whole or its payload,
+            // and the loop's type decides that. A sibling's hint is no written type.
+            let fixed = want != UNKNOWN && !matches!(want.kind(), TypeKind::Optional(_));
+            if holds_loop && fixed && !call.hinted && call.bindings.unify(ret, want) {
+                self.report_fresh(&mut call, span);
+            }
         }
         for (i, arg) in args.iter().enumerate().filter(|&(i, _)| ranks[i] == 0) {
             self.infer_arg(&mut call, i, &arg.value, sig.params[i], None);
@@ -2400,9 +2421,10 @@ impl Checker<'_> {
         sig: &GenericSig<'_>,
         args: &[ast::Arg],
         fit: &mut [bool],
-    ) -> (Vec<u8>, Vec<bool>, (bool, usize)) {
+    ) -> (Vec<u8>, Vec<bool>, (bool, usize), bool) {
         let makes = Makes::of(sig.ret, sig.params.iter().copied());
         let (mut through, mut layers) = (false, 0);
+        let mut holds_loop = false;
         let (ranks, holds) = iter::zip(args, fit)
             .enumerate()
             .map(|(i, (arg, fit))| {
@@ -2427,11 +2449,14 @@ impl Checker<'_> {
                         }
                         (1, ranked.holds_optional)
                     }
-                    Rank::Concrete => (0, false),
+                    Rank::Concrete => {
+                        holds_loop |= ranked.holds_loop;
+                        (0, false)
+                    }
                 }
             })
             .unzip();
-        (ranks, holds, (through, layers))
+        (ranks, holds, (through, layers), holds_loop)
     }
 
     /// Checks the bounds of the parameters `bound`, which a binding has just bound, and the bounds
@@ -3533,6 +3558,10 @@ impl Checker<'_> {
             K::Block(block) => self
                 .block_rank(block, fit, |_| None)
                 .unwrap_or(Ranked::CONCRETE),
+            K::Loop { .. } => Ranked {
+                holds_loop: true,
+                ..Ranked::CONCRETE
+            },
             K::Int { .. }
             | K::Float(_)
             | K::Bool(_)
@@ -3559,7 +3588,6 @@ impl Checker<'_> {
             | K::IfLet {
                 else_block: None, ..
             }
-            | K::Loop { .. }
             | K::Return { .. }
             | K::Break { .. }
             | K::Continue { .. } => Ranked::CONCRETE,

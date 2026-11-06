@@ -1,0 +1,105 @@
+// GIVEN `loop` arguments of generic calls that the fix for a written type must not change, and
+// loops with no generic call around them
+// WHEN the program runs
+// THEN each one gives the value that its order and types say
+interface Nm {
+    fn nm(self) -> string
+}
+
+class Cat: Nm {
+    fn nm(self) -> string { "cat" }
+}
+
+class Tag {
+    name: string
+}
+
+fn id<T>(x: T) -> T {
+    x
+}
+
+fn pick<T>(a: T, _b: T) -> T {
+    a
+}
+
+fn h<T>(a: T, b: T?) -> T {
+    b ?? a
+}
+
+fn keep<T>(a: T, _b: [T]) -> T {
+    a
+}
+
+fn named<T: Nm>(a: T) -> T {
+    a
+}
+
+fn main() {
+    let v: u8 = 200
+    let o: u8? = 201
+    let y: i64? = None
+    let z: u8? = None
+    let cat: any Nm = Cat()
+    let c = 1
+
+    // No written type: the first `break` gives the type.
+    let a = id(loop { if c == 0 { break 1 }; break 2 })
+    print(a + 10)                                                // 12
+    let b = pick(loop { break o }, v)
+    print(b ?? 0)                                                // 201
+
+    // A hint from `??` or a sibling is not a written type.
+    print(y ?? id(loop { break 3 }))                             // 3
+    let s = if c == 1 { v } else { id(loop { break o }) }
+    print(s ?? 0)                                                // 200
+
+    // A literal waits for the loop, or for the value.
+    print(pick(1, loop { break v }))                             // 1
+    print(pick(v, loop { break 4 }))                             // 200
+
+    // The first `break` has its type, under a written type.
+    let d: Result<u8, i64> = Ok(loop { if c == 0 { break v }; break 5 })
+    if let Ok(x) = d { print(x) }                                // 5
+    let e: u8? = id(loop { if c == 0 { break o }; break 6 })
+    print(e ?? 0)                                                // 6
+    let f: Result<Tag, i64> = Ok(loop { break Tag(name: "t" + "g") })
+    if let Ok(x) = f { print(x.name) }                           // tg
+
+    // A loop with no generic call around it has its written type.
+    let g: u8 = loop { if c == 0 { break 7 }; break v }
+    print(g)                                                     // 200
+    // `Some` gives its loop the payload of its written type.
+    let h: u8? = Some(loop { if c == 1 { break 8 }; break v })
+    print(h ?? 0)                                                // 8
+    // An array gives its loop the element of its written type.
+    let i: [u8] = [loop { if c == 1 { break 9 }; break v }]
+    print(i[0])                                                  // 9
+
+    // An operator gives the other side's type.
+    print(v == (loop { break 200 }))                             // true
+    print((o ?? (loop { break 10 })) + 1)                        // 202
+
+    // An optional written type: the type of the loop decides how `T` meets it.
+    let j: u8? = h(loop { break v }, loop { break z })
+    print(j ?? 0)                                                // 200
+    let k: Cat? = named(loop { break Cat() })
+    if let Some(x) = k { print(x.nm()) }                         // cat
+    let m: u8? = pick(loop { break o }, v)
+    print(m ?? 0)                                                // 201
+    let p: [u8?] = pick([loop { break o }], [v])
+    print(p[0] ?? 0)                                             // 201
+    let q: [u8?] = pick(loop { break [o] }, [v])
+    print(q[0] ?? 0)                                             // 201
+    let r: [u8?] = keep(loop { break [o] }, [[v]])
+    print(r[0] ?? 0)                                             // 201
+    let t: u8?? = h(loop { break o }, loop { break z })
+    if let Some(x) = t { print(x ?? 0) }                         // 0
+    let u: u8?? = id(loop { if c == 0 { break o }; break None })
+    if let Some(x) = u { print(x ?? 11) } else { print(12) }     // 11
+
+    // An `any` element: the written type holds it, and the first `break` has it.
+    let w: [any Nm] = pick([loop { break cat }], [Cat()])
+    print(w[0].nm())                                             // cat
+    let aa: [any Nm] = keep(loop { break [cat] }, [[Cat()]])
+    print(aa[0].nm())                                            // cat
+}

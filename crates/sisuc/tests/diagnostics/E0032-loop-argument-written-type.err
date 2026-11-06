@@ -1,0 +1,20 @@
+error[E0032]: expected `u8`, found `string`
+ --> E0032-loop-argument-written-type.sisu:8:46
+  |
+8 |     let a: Result<u8, i64> = Ok(loop { break "s" })
+  |                                              ^^^
+
+error[E0032]: expected `u8`, found `i64`
+ --> E0032-loop-argument-written-type.sisu:9:77
+  |
+9 |     let b: Result<u8, i64> = Ok(loop { if c == 0 { break 1 }; c -= 1; break n })
+  |                                                                             ^
+
+error[E0032]: expected `string`, found `i64`
+  --> E0032-loop-argument-written-type.sisu:10:37
+   |
+10 |     let d: string = id(loop { break 1 })
+   |                                     ^
+
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

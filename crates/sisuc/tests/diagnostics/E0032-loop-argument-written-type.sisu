@@ -1,0 +1,14 @@
+fn id<T>(x: T) -> T {
+    x
+}
+
+fn main() {
+    let mut c = 1
+    let n: i64 = 5
+    let a: Result<u8, i64> = Ok(loop { break "s" })
+    let b: Result<u8, i64> = Ok(loop { if c == 0 { break 1 }; c -= 1; break n })
+    let d: string = id(loop { break 1 })
+    print(a == Err(0))
+    print(b == Err(0))
+    print(d)
+}

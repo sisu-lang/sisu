@@ -1,0 +1,10 @@
+fn id<T>(x: T) -> T {
+    x
+}
+
+fn main() {
+    let a: Result<u8, i64> = Ok(loop { break })
+    let b: u8 = id(loop { break })
+    print(a == Err(0))
+    print(b)
+}
