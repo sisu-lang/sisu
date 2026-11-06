@@ -41,7 +41,7 @@ use inkwell::{AddressSpace, GlobalVisibility, IntPredicate, OptimizationLevel};
 
 use self::array::element_of;
 use self::enums::{Component, EnumLayout};
-use self::layout::{ClassLayout, HeapBlock, tbaa_tag};
+use self::layout::{ClassLayout, HeapBlock, Niche, tbaa_tag};
 use self::rc::Helper;
 use self::units::{Placement, Unit};
 use crate::conformance::Written;
@@ -150,6 +150,8 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
             pending: RefCell::new(Vec::new()),
             written: RefCell::new(Written::default()),
             class_held: RefCell::new(FxHashMap::default()),
+            niches: RefCell::new(FxHashMap::default()),
+            optional_types: RefCell::new(FxHashMap::default()),
             deep: RefCell::default(),
             target_data,
             path,
@@ -406,6 +408,10 @@ struct Codegen<'ctx, 'src> {
     written: RefCell<Written>,
     /// The types that hold a class, settled so far; see `show::holds_class`.
     class_held: RefCell<FxHashMap<Type, bool>>,
+    /// The niche of an optional of each payload type, settled so far; see `niche`.
+    niches: RefCell<FxHashMap<Type, Option<Niche>>>,
+    /// The LLVM type of each optional type, settled so far; see `llvm_type`.
+    optional_types: RefCell<FxHashMap<Type, BasicTypeEnum<'ctx>>>,
     /// Which drop functions count the drop depth, and their weights; see `deep`.
     deep: RefCell<deep::DropMemo>,
     /// The target's layout: the sizes and alignments of classes.
