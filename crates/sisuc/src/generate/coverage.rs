@@ -295,7 +295,7 @@ const REACH: &[&str] = &[
 /// The keys that the forms of `Gen::gap_forms` mark. `Generated::plain` leaves the forms out, so
 /// the universe has no `GAP_RULES` key. The nightly reads the seeds `0..FUZZ_SEEDS` and no others,
 /// so `generated_programs_should_reach_each_gap_rule` reads the `program` of those.
-const WIDENS: &str = "reach: a `break` value converts to the type that its loop grew to";
+const WIDENS: &str = "reach: a `break` value converts to the type that its loop grew to, and no nested `break` targets that loop";
 const CROSSES: &str = "reach: the widening of a `break` crosses a nested loop";
 const OBJECT_IN_SOME: &str = "reach: the checker runs `object_in_some`";
 const OWN_PUSH: &str = "reach: a `.push` reads a place of a type that is no array";

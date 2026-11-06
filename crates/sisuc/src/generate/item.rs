@@ -1557,7 +1557,10 @@ impl Gen<'_> {
     /// - `push` of a class, called on a local, a local that holds an optional, an element and a
     ///   field;
     /// - `push` of a class through `?.`, on a field that holds an optional;
-    /// - `push` of an enum variant, a method of the enum;
+    /// - `push` of an enum variant, a method of the enum. The receiver is a value, because
+    ///   `rooted` gives false for it. No key marks this line: `enum_method_named_push` in
+    ///   `tests/run` holds the rule, and the stdout that `a_failure_should_print_the_program`
+    ///   pins holds the line;
     /// - a `loop` that gives a `u8?` and then a literal, in a `let` with no written type;
     /// - a `loop` whose `break` of `T` widens to the `T?` of the loop;
     /// - a `loop` where a `break` in an inner loop gives the outer loop `None`;
@@ -1566,7 +1569,7 @@ impl Gen<'_> {
     /// - a `match` with an arm that no value reaches (W0006), and a statement with an
     ///   unnecessary `;` (W0007). The checker accepts a warning in a generated program.
     ///
-    /// Each loop counts down from one and ends with a `break`, so it ends in at most two passes.
+    /// Each loop counts down from one and a `break` ends it, in at most two passes.
     /// An index is a literal.
     fn gap_forms(&mut self, calls: &mut Calls) {
         self.known_text(|g| {

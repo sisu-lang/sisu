@@ -179,9 +179,9 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether a `push` checks its receiver `e` as a place. That holds for a field, or for an
-    /// index of a local or of a field, whether or not a `?.` leads to it. The place stamps by
-    /// the rule of `push_receiver`.
+    /// Whether a `push` checks its receiver `e` as a place. That holds for a field or an index
+    /// whose chain `rooted` accepts, whether or not a `?.` leads to it. The place stamps by the
+    /// rule of `push_receiver`.
     pub(super) fn is_push_place(&mut self, e: &ast::Expr) -> bool {
         // A receiver checked ahead of its turn is a value already.
         is_place(e) && !self.body.ahead_at.contains_key(&(e.span, false)) && self.rooted(e)

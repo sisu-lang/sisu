@@ -617,7 +617,8 @@ thread_local! {
     pub(crate) static WIDENED_BREAKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many times `object_in_some` has been called on this thread.
     pub(crate) static OBJECT_IN_SOME_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many calls of `push` have read a place of a type that is no array, on this thread.
+    /// How many calls written `.push` have read a place of a type that is no array, on this
+    /// thread.
     pub(crate) static OWN_PUSH_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many times `pushed_value` has been called on this thread.
     pub(crate) static PUSHED_VALUES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
