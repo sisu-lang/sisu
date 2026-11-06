@@ -114,6 +114,13 @@ entry = "python3 scripts/comment_width.py"
 types = ["rust"]
 
 [[repos.hooks]]
+id = "text-limits"
+name = "changed text keeps to the sentence and comment limits"
+language = "system"
+entry = "python3 scripts/text_limits.py --diff HEAD"
+files = '\.(rs|py|sh|md)$'
+
+[[repos.hooks]]
 id = "typos"
 name = "typos"
 language = "system"
