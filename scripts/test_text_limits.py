@@ -219,6 +219,13 @@ class MainTests(unittest.TestCase):
         self.git("config", "diff.relative", "true")
         self.assertEqual(self.run_main("../a.md")[0], 1)
 
+    def test_a_path_through_a_symlinked_directory_should_be_read(self):
+        os.mkdir("real")
+        self.write("real/c.md", f"{LONG}\n")
+        self.git("add", ".")
+        os.symlink("real", "lnk")
+        self.assertEqual(self.run_main("lnk/c.md")[0], 1)
+
     def test_a_git_attribute_should_not_hide_a_new_long_sentence(self):
         self.write("a.md", f"Old.\n\n{LONG}\n\n{LONG}\n")
         self.git("config", "diff.cut.textconv", "sed 1d")

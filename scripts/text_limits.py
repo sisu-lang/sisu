@@ -142,6 +142,10 @@ def changed_lines(ref: str) -> dict[str, set[int]]:
     # The flags hold the output in one form, whatever the user's Git settings and attributes are.
     # shortcut: Git still quotes a name with a tab or a quotation mark, so that file is not read.
     # No file here has such a name. Read `--name-status -z` if one comes.
+    # shortcut: a clean filter that changes the line count shifts the numbers, and no flag stops it.
+    # No filter applies here. Compare with the file on disk if one comes.
+    # shortcut: `--text` keeps the whole diff of a binary file in memory, about 14 times its size.
+    # The largest tracked file here is 430 KB. Limit the diff to file types if a large one comes.
     command = ["git", "-c", "core.quotePath=false", "diff", "-M", "--no-relative", "--no-color", "--no-ext-diff",
                "--no-textconv", "--text", "--unified=0", "--inter-hunk-context=0", "--src-prefix=a/",
                "--dst-prefix=b/", ref]
