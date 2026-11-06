@@ -184,6 +184,7 @@ class PackBase(unittest.TestCase):
             capture_output=True,
             text=True,
             env=env,
+            check=False,
         )
 
 
@@ -248,7 +249,7 @@ class ToolBase(unittest.TestCase):
         search = f"{self.bin}{os.pathsep}{os.environ['PATH']}" if path is None else path
         env = dict(os.environ, PATH=search, LOG=str(self.log), FAIL=fail, **env)
         return subprocess.run(
-            [sys.executable, CHECK, *args], capture_output=True, text=True, env=env
+            [sys.executable, CHECK, *args], capture_output=True, text=True, env=env, check=False
         )
 
     def calls(self) -> list[str]:
@@ -455,7 +456,11 @@ class Smoke(unittest.TestCase):
     def smoke(self) -> subprocess.CompletedProcess[str]:
         env = dict(os.environ, LOG=str(self.log))
         return subprocess.run(
-            ["bash", SMOKE, self.bin, self.programs], env=env, capture_output=True, text=True
+            ["bash", SMOKE, self.bin, self.programs],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
         )
 
     def calls(self) -> list[str]:
@@ -510,7 +515,9 @@ class Smoke(unittest.TestCase):
         self.program("hung")
         env = dict(os.environ, LOG=str(self.log), OUT=str(out), SEEN=str(seen))
         with out.open("w") as f:
-            done = subprocess.run(["bash", SMOKE, self.bin, self.programs], env=env, stdout=f)
+            done = subprocess.run(
+                ["bash", SMOKE, self.bin, self.programs], env=env, stdout=f, check=False
+            )
         self.assertEqual(done.returncode, 0)
         with seen.open() as f:
             text = f.read()

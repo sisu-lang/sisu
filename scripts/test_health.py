@@ -17,7 +17,7 @@ TOP = 10
 def report(junit: str, top: int = TOP) -> str:
     """The report text for the JUnit report text."""
     tests = slow_tests.timed(junit)
-    wall = float(ET.fromstring(junit).get("time", "0"))
+    wall = float(ET.fromstring(junit).get("time", "0"))  # noqa: S314  the report is the output of nextest in this repository
     binaries: dict[str, list[float]] = {}
     for seconds, _, name in tests:
         binaries.setdefault(name.split(" ", 1)[0], []).append(seconds)

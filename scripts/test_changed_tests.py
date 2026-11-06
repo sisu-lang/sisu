@@ -184,8 +184,8 @@ class ChangedTests(unittest.TestCase):
             )
         for message, files, change, want in rows:
             with self.subTest(message):
-                files = files if isinstance(files, dict) else {"t.rs": files}
-                self.assertEqual(changed_after({"x.sisu": "a\n", **files}, change), want, message)
+                tree = files if isinstance(files, dict) else {"t.rs": files}
+                self.assertEqual(changed_after({"x.sisu": "a\n", **tree}, change), want, message)
 
     def test_the_users_git_config_should_not_change_the_result(self) -> None:
         text = FAR + "\n#[test]\nfn d_should_w() {\n    seven();\n}\n"
@@ -254,7 +254,9 @@ class ChangedTests(unittest.TestCase):
             ),
         ]:
             self.assertEqual(
-                changed_after({"t.rs": old}, lambda t: write(t, "t.rs", new)), want, message
+                changed_after({"t.rs": old}, lambda t: write(t, "t.rs", new)),  # noqa: B023  the lambda runs in this pass of the loop
+                want,
+                message,
             )
 
     def test_the_body_should_end_at_the_closing_brace_of_its_fn(self) -> None:

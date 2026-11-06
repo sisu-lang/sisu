@@ -65,6 +65,7 @@ class FuzzIssue(unittest.TestCase):
             capture_output=True,
             env=env,
             timeout=30,
+            check=False,
         )
         self.assertEqual(run.returncode, 0, run.stderr)
         posts = Path(self.dir, "posts")

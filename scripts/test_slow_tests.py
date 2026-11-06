@@ -62,6 +62,7 @@ class SlowTests(unittest.TestCase):
                 text=True,
                 cwd=tmp,
                 env=git_fixture.env(),
+                check=False,
             )
         lines = run.stdout.splitlines()
         self.assertEqual(run.returncode, 0)
@@ -85,7 +86,9 @@ class SlowTests(unittest.TestCase):
                 if text is not None:
                     with path.open("w", encoding="utf-8") as file:
                         file.write(text)
-                run = subprocess.run([sys.executable, SCRIPT, path], capture_output=True, text=True)
+                run = subprocess.run(
+                    [sys.executable, SCRIPT, path], capture_output=True, text=True, check=False
+                )
                 self.assertEqual((run.returncode, run.stderr), (0, ""), name)
                 self.assertEqual(
                     run.stdout.startswith("slow_tests: cannot read"), text is not None, name

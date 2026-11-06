@@ -84,6 +84,7 @@ class FuzzSummary(unittest.TestCase):
             capture_output=True,
             env=env,
             timeout=60,
+            check=False,
         )
         self.assertEqual(run.returncode, 1, run.stderr)
         with (self.repo / "fuzz" / "artifacts" / "summary.md").open(encoding="utf-8") as f:
@@ -165,6 +166,7 @@ class ProgramSeeds(unittest.TestCase):
                 capture_output=True,
                 env=env,
                 timeout=60,
+                check=False,
             )
             self.assertEqual(run.returncode, 0, run.stderr)
             with seen.open(encoding="utf-8") as f:
@@ -301,8 +303,8 @@ class GapsRun:
         subdirs = 0
         for directory, dirs, names in os.walk(root):
             subdirs += len(dirs)
-            for name in names:
-                path = Path(directory, name)
+            for file_name in names:
+                path = Path(directory, file_name)
                 with path.open("rb") as f:
                     found.append((os.path.relpath(path, root), f.read()))
         return found, subdirs
@@ -342,9 +344,10 @@ class GapsCheck(unittest.TestCase):
         with path.open("w", encoding="utf-8") as f:
             f.write(text)
 
-    def gaps(
+    def gaps(  # noqa: PLR0913  one keyword for each thing that a case can change
         self,
         args: tuple[str, ...] = ("--target", "program", "--gaps"),
+        *,
         seeds: dict[str, Any] | None = None,
         valid: dict[str, Any] | None = None,
         known: str = "## a reason\n",
@@ -385,6 +388,7 @@ class GapsCheck(unittest.TestCase):
             capture_output=True,
             env=env,
             timeout=120,
+            check=False,
         )
         return GapsRun(self.repo, self.work, run)
 

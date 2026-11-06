@@ -93,6 +93,7 @@ class TestNamesDiffAndBaseline(unittest.TestCase):
             capture_output=True,
             text=True,
             cwd=ROOT,
+            check=False,
         )
         self.assertEqual((run.returncode, run.stdout), (0, ""))
 

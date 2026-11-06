@@ -68,6 +68,7 @@ class CoverageSh(unittest.TestCase):
             capture_output=True,
             text=True,
             env=dict(self.env, FAKE_ACTION=action),
+            check=False,
         )
         self.assertEqual(run.returncode, 0, run.stderr)
         # The marker line comes before the report, which CI copies from `Coverage:` on.

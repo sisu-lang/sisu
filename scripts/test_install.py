@@ -76,10 +76,11 @@ class Machine:
     links to the tools the installer needs.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913  one keyword for each thing that a machine can lack
         self,
         test: unittest.TestCase,
         profile: str = "linux-x86_64",
+        *,
         cc: bool = True,
         apt: bool = True,
         clt: bool = True,
@@ -99,9 +100,11 @@ class Machine:
         self.lock = self.sisu / "install.lock"
         for tool in [*TOOLS, (shutil.which("sha256sum") and "sha256sum") or "shasum"]:
             (self.tools / tool).symlink_to(which(tool))
-        self._fake_commands(profile, cc, apt, clt)
+        self._fake_commands(profile, cc=cc, apt=apt, clt=clt)
 
-    def _fake_commands(self, profile: str, cc: bool, apt: bool, clt: bool) -> None:
+    def _fake_commands(  # noqa: C901, PLR0912  one branch for each profile and each fake command
+        self, profile: str, *, cc: bool, apt: bool, clt: bool
+    ) -> None:
         system, machine, libc, sysctl, version = "Linux", "x86_64", "2.39", None, None
         if profile in ("linux-x86_64", "linux-musl", "linux-unknown-libc"):
             pass
@@ -193,7 +196,7 @@ class Machine:
     ) -> str:
         """Writes the tarball and its line in SHA256SUMS to the download directory."""
         name = name or self.tarball_name
-        stub = '#!/bin/sh\necho "sisu %s"\nexit %d\n#%s\n' % (build, sisu_exit, "x" * pad)
+        stub = f'#!/bin/sh\necho "sisu {build}"\nexit {sisu_exit}\n#{"x" * pad}\n'
         path = self.dl / name
         with tarfile.open(path, "w:gz") as tar:
             for f in (*FILES, "LICENSE"):
@@ -243,12 +246,13 @@ class Machine:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            preexec_fn=preexec_fn,
+            preexec_fn=preexec_fn,  # noqa: PLW1509  the caller gives a function that only sets a limit or a handler
         )
 
     def run(
         self,
         env: Mapping[str, str | None] | None = None,
+        *,
         on_stdin: bool = False,
         preexec_fn: Callable[[], None] | None = None,
         cwd: Path | None = None,
@@ -271,6 +275,7 @@ class Machine:
             preexec_fn=preexec_fn,
             cwd=cwd,
             **kw,
+            check=False,
         )
 
     def builds(self) -> dict[str, str]:
@@ -304,7 +309,7 @@ ALL_NEW = dict.fromkeys(FILES, "new")
 
 class InstallTest(unittest.TestCase):
     def machine(
-        self, profile: str = "linux-x86_64", tarball: bool = True, **kw: bool | str
+        self, profile: str = "linux-x86_64", *, tarball: bool = True, **kw: bool | str
     ) -> Machine:
         # pyrefly: ignore[bad-argument-type]  `kw` holds only the keywords cc, apt, clt and prefix
         m = Machine(self, profile, **kw)
@@ -312,11 +317,15 @@ class InstallTest(unittest.TestCase):
             m.tarball()
         return m
 
-    def assertInstalled(self, m: Machine, r: subprocess.CompletedProcess[str]) -> None:
+    def assertInstalled(  # noqa: N802  named like the assert methods of unittest
+        self, m: Machine, r: subprocess.CompletedProcess[str]
+    ) -> None:
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(m.builds(), ALL_NEW)
 
-    def assertKept(self, m: Machine, r: subprocess.CompletedProcess[str]) -> None:
+    def assertKept(  # noqa: N802  named like the assert methods of unittest
+        self, m: Machine, r: subprocess.CompletedProcess[str]
+    ) -> None:
         self.assertNotEqual(r.returncode, 0)
         self.assertEqual(m.builds(), ALL_OLD)
         self.assertFalse(m.tmp_exists())
@@ -422,6 +431,7 @@ class InstallTest(unittest.TestCase):
                     [m.sisu / "bin" / "sisu", "--version"],
                     capture_output=True,
                     text=True,
+                    check=False,
                 )
                 self.assertEqual(version.returncode, 0)
 
@@ -448,6 +458,7 @@ class InstallTest(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=300,
+            check=False,
         )
         self.assertEqual(r.stdout.strip(), str(size - 1), r.stderr)
         self.assertEqual(list(m.home.iterdir()), [])
@@ -463,7 +474,7 @@ class InstallTest(unittest.TestCase):
                 or line.startswith(("#", " ", "\t"))
                 or line in ("set -eu", "}")
                 or definition.match(line),
-                "line %d runs before main: %s" % (n, line),
+                f"line {n} runs before main: {line}",
             )
 
     def test_checksum_mismatch_should_keep_the_earlier_install(self) -> None:
@@ -907,6 +918,7 @@ class InstallTest(unittest.TestCase):
                         capture_output=True,
                         text=True,
                         timeout=120,
+                        check=False,
                     )
                 else:
                     m.hold(target)
@@ -1032,7 +1044,7 @@ class InstallTest(unittest.TestCase):
                     ]
                     gate.touch()
                     done = [(p.communicate(timeout=120), p.returncode) for p in runs]
-                    where = "round %d: %r" % (n, done)
+                    where = f"round {n}: {done!r}"
                     for (_out, err), code in done:
                         if code != 0:
                             self.assertEqual(code, 1, where)
@@ -1098,15 +1110,9 @@ class InstallTest(unittest.TestCase):
         self.once(
             m,
             "readlink",
-            "%s -f %s\n%s -s %d %s\necho %d\nexit 0"
-            % (
-                shlex.quote(which("rm")),
-                shlex.quote(str(m.lock)),
-                shlex.quote(which("ln")),
-                live,
-                shlex.quote(str(m.lock)),
-                dead,
-            ),
+            f"{shlex.quote(which('rm'))} -f {shlex.quote(str(m.lock))}\n"
+            f"{shlex.quote(which('ln'))} -s {live} {shlex.quote(str(m.lock))}\n"
+            f"echo {dead}\nexit 0",
         )
         r = m.run()
         self.one_line_with(r, "another install is running")

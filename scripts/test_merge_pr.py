@@ -105,6 +105,7 @@ class MergePr(unittest.TestCase):
             capture_output=True,
             text=True,
             env=self.env,
+            check=False,
         )
 
     def checks(self, *runs: Mapping[str, object], total: int | None = None) -> dict[str, Any]:
@@ -284,7 +285,11 @@ class MergePr(unittest.TestCase):
     def test_cleanup_with_no_number_should_fail_and_not_merge(self) -> None:
         # run_script adds the repo path, which argparse would take as the number.
         result = subprocess.run(
-            [sys.executable, str(SCRIPT), "--cleanup"], capture_output=True, text=True, env=self.env
+            [sys.executable, str(SCRIPT), "--cleanup"],
+            capture_output=True,
+            text=True,
+            env=self.env,
+            check=False,
         )
         self.assertEqual(result.returncode, 2)
         self.assertIn("required: pr", result.stderr)

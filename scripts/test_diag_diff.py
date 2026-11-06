@@ -134,12 +134,13 @@ class DiagDiff(unittest.TestCase):
         THEN the run with `--codes` reports none of them, and each other run reports each of them
         """
 
-        def diagnostic(
+        def diagnostic(  # noqa: PLR0913  one keyword for each field that a case changes
             message: str = "m",
             label: str = "l",
             other: str = "o",
             fix: str = "f",
             replacement: str = "",
+            *,
             safe: bool = True,
         ) -> str:
             return json.dumps(
@@ -177,7 +178,10 @@ class DiagDiff(unittest.TestCase):
             flags: list[list[str]] = [["--codes"], [], ["--full"]]
             runs = [
                 subprocess.run(
-                    [sys.executable, script, *flag, base, head, tmp], capture_output=True, text=True
+                    [sys.executable, script, *flag, base, head, tmp],
+                    capture_output=True,
+                    text=True,
+                    check=False,
                 )
                 for flag in flags
             ]

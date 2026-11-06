@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from typing import override
+from typing import ClassVar, override
 
 SCRIPT = Path(__file__).absolute().parent / "mutants.sh"
 # A pre-commit hook runs these tests with GIT_DIR and its kin set to the outer repository.
@@ -169,6 +169,7 @@ class Mutants(unittest.TestCase):
             text=True,
             env=env,
             timeout=limit,
+            check=False,
         )
 
     def seen(self, name: str) -> bool:
@@ -225,6 +226,7 @@ class Mutants(unittest.TestCase):
             text=True,
             env=env,
             timeout=30,
+            check=False,
         )
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
         self.assertTrue(self.last_line().startswith("mutation-test: PASS"))
@@ -687,7 +689,7 @@ class Mutants(unittest.TestCase):
         for name in ("args", "args2", "args_lib"):
             self.assertIn(" --caught", self.lines(name)[0])
 
-    LIB_ONLY = [
+    LIB_ONLY: ClassVar[list[str]] = [
         "crates/sisuc/src/fuzz.rs",
         "crates/sisuc/src/fuzz_program.rs",
         "crates/sisuc/src/generate/",

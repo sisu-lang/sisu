@@ -2,7 +2,7 @@
 
 import importlib.util
 import unittest
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / ".agents/skills/solve-issues/scripts/ledger.py"
@@ -12,7 +12,7 @@ ledger = importlib.util.module_from_spec(spec)
 # pyrefly: ignore[missing-attribute]  as above, and a file spec has a loader
 spec.loader.exec_module(ledger)
 
-NOW = datetime(2026, 11, 3, 14, 5)
+NOW = datetime(2026, 11, 3, 14, 5, tzinfo=UTC)
 LEDGER = """# Batch b
 
 ## After the merge

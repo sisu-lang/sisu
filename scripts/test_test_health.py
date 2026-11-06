@@ -52,6 +52,7 @@ class TestHealth(unittest.TestCase):
                 [sys.executable, SCRIPT, Path(directory, "none.xml")],
                 capture_output=True,
                 text=True,
+                check=False,
             )
         self.assertEqual((run.returncode, run.stdout), (0, ""))
 
@@ -60,7 +61,7 @@ class TestHealth(unittest.TestCase):
             file.write("<testsuites")
             file.flush()
             run = subprocess.run(
-                [sys.executable, SCRIPT, file.name], capture_output=True, text=True
+                [sys.executable, SCRIPT, file.name], capture_output=True, text=True, check=False
             )
         self.assertEqual(run.returncode, 0)
         self.assertIn("cannot read", run.stdout)

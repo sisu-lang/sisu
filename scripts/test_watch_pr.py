@@ -27,15 +27,15 @@ print(json.dumps(answer))
 P = "repos/sisu-lang/sisu"
 
 
-def comment(id: int, login: str, body: str, updated: str = "t1") -> dict[str, Any]:
+def comment(comment_id: int, login: str, body: str, updated: str = "t1") -> dict[str, Any]:
     return {
-        "id": id,
+        "id": comment_id,
         "user": {"login": login},
         "body": body,
         "updated_at": updated,
         "path": "a.rs",
         "line": 3,
-        "html_url": f"u{id}",
+        "html_url": f"u{comment_id}",
     }
 
 
@@ -73,7 +73,11 @@ class WatchPr(unittest.TestCase):
             WATCH_PR_LIMIT="0",
         )
         return subprocess.run(
-            [sys.executable, SCRIPT, "7", self.state], env=env, capture_output=True, text=True
+            [sys.executable, SCRIPT, "7", self.state],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
         )
 
     def test_watch_should_print_a_new_comment_once_and_skip_my_own(self) -> None:

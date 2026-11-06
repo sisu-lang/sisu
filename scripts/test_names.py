@@ -28,7 +28,7 @@ END_TO_END = re.compile(r"(^|/)crates/[^/]+/tests/")
 FN = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:(?:async|const|unsafe)\s+)*fn\s+(\w+)")
 
 
-def tests(lines: Sequence[str]) -> list[tuple[int, str, list[str]]]:
+def tests(lines: Sequence[str]) -> list[tuple[int, str, list[str]]]:  # noqa: C901  one scan with a branch for each token that ends a function head
     """(line, name, doc lines) of each `#[test]` function. The doc is the run of `///` lines above
     the function's attributes.
     """
@@ -78,7 +78,9 @@ def main(
 ) -> int:
     # A count, so a new test that reuses an old name in another module of the file is checked.
     with baseline.open(encoding="utf-8") as f:
-        old = collections.Counter(l.strip() for l in f if l.strip() and not l.startswith("#"))
+        old = collections.Counter(
+            line.strip() for line in f if line.strip() and not line.startswith("#")
+        )
     bad = 0
     for path in paths:
         with Path(path).open(encoding="utf-8") as f:

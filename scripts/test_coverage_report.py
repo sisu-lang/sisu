@@ -54,7 +54,7 @@ def run(
     exp: dict[str, Any],
     lc: str = "",
     df: str = "",
-    read: Callable[[str, int], str] = lambda p, n: f"line {n}",
+    read: Callable[[str, int], str] = lambda _p, n: f"line {n}",
 ) -> str:
     return cr.report(exp, lc, df, ROOT, read)
 
@@ -163,7 +163,9 @@ class Report(unittest.TestCase):
                 files=["/r/a.rs", "/r/b.rs", "/rustc/x/lib.rs"],
             )
         )
-        self.assertEqual(cr.uncovered(exp, ROOT), {"b.rs": [cr.Region(3, 1, 4, 1, False)]})
+        self.assertEqual(
+            cr.uncovered(exp, ROOT), {"b.rs": [cr.Region(3, 1, 4, 1, never_run=False)]}
+        )
 
     def test_zero_regions_in_unchanged_files_are_not_listed(self) -> None:
         exp = export(func("f", [(1, 1, 9, 1, 1), (3, 1, 4, 1, 0)], file="/r/b.rs"))
@@ -180,7 +182,7 @@ class Report(unittest.TestCase):
             5: "    0",
         }
         _, touching, other = sections(
-            run(exp, df=diff(start=3, count=3), read=lambda p, n: lines[n])
+            run(exp, df=diff(start=3, count=3), read=lambda _p, n: lines[n])
         )
         self.assertEqual([t.split(": ")[0] for t in touching], ["a.rs:5:5-5:9"])
         self.assertEqual([t.split(": ")[0] for t in other], ["a.rs:3:5-3:17", "a.rs:4:5-4:11"])
@@ -197,7 +199,7 @@ class Report(unittest.TestCase):
         # Line 4 never ran, so its assert did not run, and its region still counts.
         lc = lcov(**{"a.rs": {3: 1, 4: 0, 5: 0}})
         _, touching, other = sections(
-            run(exp, lc, diff(start=3, count=3), read=lambda p, n: lines[n])
+            run(exp, lc, diff(start=3, count=3), read=lambda _p, n: lines[n])
         )
         self.assertEqual([t.split(": ")[0] for t in touching], ["a.rs:4:30-4:36", "a.rs:5:5-5:9"])
         self.assertEqual([t.split(": ")[0] for t in other], ["a.rs:3:30-3:36"])
@@ -231,7 +233,7 @@ class Report(unittest.TestCase):
 
     def test_long_source_lines_are_cut_at_80_characters(self) -> None:
         exp = export(func("f", [(1, 1, 9, 1, 1), (3, 1, 4, 1, 0)]))
-        out = run(exp, df=diff(start=3), read=lambda p, n: "  " + "x" * 100)
+        out = run(exp, df=diff(start=3), read=lambda _p, _n: "  " + "x" * 100)
         self.assertIn(": " + "x" * 80 + "\n", out + "\n")
 
 

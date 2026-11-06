@@ -149,7 +149,7 @@ class Gaps(unittest.TestCase):
         self.assertEqual(run.code, 0, run.out)
         self.assertNotIn(name, run.out)
 
-    def test_only_an_unknown_function_valid_programs_reach_should_fail(self) -> None:
+    def test_only_an_unknown_function_valid_programs_reach_should_fail(self) -> None:  # noqa: PLR0915  one subtest for each way to reach a function
         with self.subTest("valid reaches f, seeds do not"):
             run = self.reached([record("conformance.rs", FN, 0)], [record("conformance.rs", FN, 1)])
             self.assertEqual(run.code, 1, run.out)
@@ -572,7 +572,7 @@ class Gaps(unittest.TestCase):
             ),
             (
                 "no c++filt",
-                lambda: Run(self, good, good, path=lambda tools: None),
+                lambda: Run(self, good, good, path=lambda _tools: None),
                 "c++filt did not run",
             ),
             (

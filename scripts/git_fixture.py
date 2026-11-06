@@ -10,9 +10,10 @@ from unittest import mock
 
 
 def env() -> dict[str, str]:
-    """The environment without `GIT_*` and `GITHUB_ACTIONS`. A pre-commit hook exports GIT_DIR and
-    GIT_INDEX_FILE, which would point git at the hooked repository, and in CI GITHUB_ACTIONS adds
-    a workflow warning line per slow test.
+    """Return the environment without `GIT_*` and `GITHUB_ACTIONS`.
+
+    A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which would point git at the hooked
+    repository, and in CI GITHUB_ACTIONS adds a workflow warning line per slow test.
     """
     return {
         key: value
@@ -22,7 +23,7 @@ def env() -> dict[str, str]:
 
 
 def git(path: str, *args: str) -> str:
-    """The output of `git -C path ARGS`; fails when git fails."""
+    """Return the output of `git -C path ARGS`; fails when git fails."""
     return subprocess.run(
         ["git", "-C", path, *args],
         check=True,
@@ -34,15 +35,16 @@ def git(path: str, *args: str) -> str:
 
 
 def write(path: str | Path, name: str, content: str | bytes) -> None:
-    """Writes `content` to the file `name` under `path`."""
+    """Write `content` to the file `name` under `path`."""
     Path(path, name).write_bytes(content if isinstance(content, bytes) else content.encode("utf-8"))
 
 
 @contextlib.contextmanager
 def repo(files: dict[str, str]) -> Generator[str]:
-    """The path of a temporary repository with one commit of `files`. It is removed at exit.
-    While it exists, `os.environ` has no `GIT_*` variable, so code under test that runs git
-    without its own environment reaches this repository.
+    """Yield the path of a temporary repository with one commit of `files`.
+
+    The repository is removed at exit. While it exists, `os.environ` has no `GIT_*` variable, so
+    code under test that runs git without its own environment reaches this repository.
     """
     with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, env(), clear=True):
         git(tmp, "init", "-q")

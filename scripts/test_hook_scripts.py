@@ -66,7 +66,9 @@ HEADERS = (
 )
 
 
-def run_hook(script: str, text: str, name: str = "f.rs", relative: bool = False) -> tuple[int, str]:
+def run_hook(
+    script: str, text: str, name: str = "f.rs", *, relative: bool = False
+) -> tuple[int, str]:
     """The exit code and output of `scripts/<script>` on one file, `name`, holding `text`.
 
     With `relative`, the hook gets `name` as a relative path, as prek gives it.
@@ -84,6 +86,7 @@ def run_hook(script: str, text: str, name: str = "f.rs", relative: bool = False)
             capture_output=True,
             text=True,
             cwd=d,
+            check=False,
         )
     return done.returncode, done.stdout
 
@@ -177,9 +180,11 @@ class TestWording(unittest.TestCase):
             for relative in (False, True):
                 with self.subTest(name=exempt, relative=relative):
                     self.assertEqual(
-                        run_hook("check-test-wording.sh", text, exempt, relative), (0, "")
+                        run_hook("check-test-wording.sh", text, exempt, relative=relative), (0, "")
                     )
-                    self.assertEqual(run_hook("check-test-wording.sh", text, other, relative)[0], 1)
+                    self.assertEqual(
+                        run_hook("check-test-wording.sh", text, other, relative=relative)[0], 1
+                    )
         self.assertEqual(
             run_hook("check-test-wording.sh", text, "crates/sisuc/src/check/tests/other.rs")[0], 1
         )

@@ -288,7 +288,9 @@ def script(path: Path, text: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
-def stubs(tmp: Path | str, check: str = "", annotate: str = ANNOTATE, valgrind: bool = True) -> str:
+def stubs(
+    tmp: Path | str, check: str = "", annotate: str = ANNOTATE, *, valgrind: bool = True
+) -> str:
     """Writes stub `sisu`, `valgrind` and `callgrind_annotate` in `tmp/bin`; returns that PATH.
 
     `check` is shell text that runs first for each call of the stub `sisu`. A stub exits with

@@ -187,7 +187,7 @@ print(json.dumps(reply))
 def is_write_flag(arg: str) -> bool:
     """A `gh api` flag that sends a method or a body, alone or with its value attached."""
     if arg.startswith("--"):
-        return arg.split("=")[0] in ("--method", "--field", "--raw-field", "--input")
+        return arg.split("=", maxsplit=1)[0] in ("--method", "--field", "--raw-field", "--input")
     return arg.startswith("-") and len(arg) > 1 and arg[1] in "XfF"
 
 
@@ -205,7 +205,7 @@ _ids = itertools.count(1)
 
 
 def release(
-    tag: str, published_at: str | None = "2026-11-01T00:00:00Z", draft: bool = False
+    tag: str, published_at: str | None = "2026-11-01T00:00:00Z", *, draft: bool = False
 ) -> dict[str, Any]:
     return {"id": next(_ids), "tag_name": tag, "draft": draft, "published_at": published_at}
 
@@ -214,10 +214,11 @@ def nightly(sha: str, published_at: str = "2026-11-01T00:00:00Z") -> dict[str, A
     return release("nightly-2026-11-01-" + sha[:7], published_at)
 
 
-def state(
+def state(  # noqa: PLR0913  one keyword for each part of the fake repository
     commits: Sequence[str],
     green: Sequence[str] = (),
     releases: Sequence[dict[str, Any]] = (),
+    *,
     trees: dict[str, str] | None = None,
     parents: dict[str, str] | None = None,
     fail_on: str | None = None,
@@ -284,6 +285,7 @@ class Script(unittest.TestCase):
             text=True,
             env=env,
             timeout=60,
+            check=False,
         )
         return Run(
             run.returncode,
@@ -456,7 +458,6 @@ ARTIFACTS = {
     "tarball-aarch64-macos": ASSETS[2:3],
     "release-files": ASSETS[3:],
 }
-UTC = UTC
 
 
 def artifact(
@@ -482,7 +483,7 @@ def numbered(i: int) -> dict[str, Any]:
     return release(f"nightly-2026-09-01-{i:07x}", when.strftime("%Y-%m-%dT%H:%M:%SZ"))
 
 
-def release_tags(fake_state: dict[str, Any], draft: bool = False) -> list[str]:
+def release_tags(fake_state: dict[str, Any], *, draft: bool = False) -> list[str]:
     return [r["tag_name"] for r in fake_state["releases"] if r["draft"] == draft]
 
 
@@ -615,7 +616,7 @@ class Publish(Script):
         self.assertEqual(assets, [{f: f"v:{f}" for f in ASSETS}])
 
     def test_publish_should_upload_the_largest_id_of_each_name(self) -> None:
-        def pair(old_first: bool, early_new: bool = False) -> list[dict[str, Any]]:
+        def pair(*, old_first: bool, early_new: bool = False) -> list[dict[str, Any]]:
             old = [
                 artifact(i, n, "old", created_at="2026-11-06T09:00:00Z")
                 for i, n in enumerate(ARTIFACTS, 1)
@@ -633,10 +634,10 @@ class Publish(Script):
 
         many_old = [artifact(i, n, "old") for i, n in enumerate(list(ARTIFACTS) * 25, 1)]
         rows = (
-            ("smaller id first", pair(True)),
-            ("larger id first", pair(False)),
+            ("smaller id first", pair(old_first=True)),
+            ("larger id first", pair(old_first=False)),
             ("100 entries first", many_old + all_artifacts("new", 1000)),
-            ("larger id, earlier created_at", pair(True, early_new=True)),
+            ("larger id, earlier created_at", pair(old_first=True, early_new=True)),
         )
         for name, artifacts in rows:
             with self.subTest(name):
