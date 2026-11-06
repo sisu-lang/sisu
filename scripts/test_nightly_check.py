@@ -340,8 +340,9 @@ esac
 exec %(real)s "$@"''' % {'real': shutil.which('tar')})
 
     def pack_with(self, **extra):
-        env = dict(os.environ, PATH=self.bin + os.pathsep + os.environ['PATH'], LOG=self.log,
-                   **extra)
+        # The caller's shell must not set COPYFILE_DISABLE for the test.
+        env = {k: v for k, v in os.environ.items() if k != 'COPYFILE_DISABLE'}
+        env.update(PATH=self.bin + os.pathsep + os.environ['PATH'], LOG=self.log, **extra)
         return self.pack(env=env)
 
     def test_pack_should_disable_copyfile_in_the_create_call(self):
@@ -430,16 +431,19 @@ class Smoke(unittest.TestCase):
         self.assertEqual(self.smoke().returncode, 1)
 
     def test_smoke_should_name_a_program_before_it_runs(self):
-        # A hung program must be named in the log, so the fake sleeps past the timeout.
-        self.fake('sleep 5')
+        # The fake copies the script's stdout, as it is at its first run, to $SEEN.
+        seen = os.path.join(self.root, 'seen')
+        out = os.path.join(self.root, 'out')
+        self.fake('[ -e "$SEEN" ] || cp "$OUT" "$SEEN"\ncat "${4%.sisu}.out"')
         self.program('hung')
-        env = dict(os.environ, LOG=self.log)
-        with self.assertRaises(subprocess.TimeoutExpired) as raised:
-            subprocess.run(['bash', SMOKE, self.bin, self.programs], env=env,
-                           capture_output=True, timeout=1)
-        out = (raised.exception.stdout or b'').decode()
-        self.assertIn('hung.sisu', out)
-        self.assertIn('mimalloc', out)
+        env = dict(os.environ, LOG=self.log, OUT=out, SEEN=seen)
+        with open(out, 'w') as f:
+            done = subprocess.run(['bash', SMOKE, self.bin, self.programs], env=env, stdout=f)
+        self.assertEqual(done.returncode, 0)
+        with open(seen) as f:
+            text = f.read()
+        self.assertIn('hung.sisu', text)
+        self.assertIn('mimalloc', text)
 
     def test_smoke_should_fail_with_no_programs(self):
         self.fake()

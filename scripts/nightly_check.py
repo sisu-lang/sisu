@@ -5,8 +5,8 @@
   nightly_check.py macos <sisu> <libLLVMSupport.a> <libzstd.a>
   nightly_check.py pack <target> <release dir> <third-party file> <out dir>
 
-Each command exits 0, or prints each problem to stderr and exits 1. The checks read text, so
-the tests need no tool. Python 3.10 standard library only: ubuntu:22.04 has 3.10.
+Each command exits 0, or prints each problem to stderr and exits 1. The text checks read text, so
+their tests need no tool. Python 3.10 standard library only: ubuntu:22.04 has 3.10.
 """
 import os
 import re
@@ -78,10 +78,12 @@ def linux_problems(objdump_t: str, objdump_p: str) -> list[str]:
     if glibcxx and max(glibcxx) > GLIBCXX_FLOOR:
         problems.append('GLIBCXX_%s is above the floor GLIBCXX_%s'
                         % (text(max(glibcxx)), text(GLIBCXX_FLOOR)))
-    for line in objdump_p.splitlines():
-        needed = NEEDED_LINE.match(line)
-        if needed and needed.group(1) not in NEEDED_OK:
-            problems.append('the binary needs %s, which is not in the allow-list' % needed.group(1))
+    libraries = [m.group(1) for m in map(NEEDED_LINE.match, objdump_p.splitlines()) if m]
+    if not libraries:
+        problems.append('`objdump -p` shows no NEEDED line: the tool call is broken')
+    for library in libraries:
+        if library not in NEEDED_OK:
+            problems.append('the binary needs %s, which is not in the allow-list' % library)
     return problems
 
 
