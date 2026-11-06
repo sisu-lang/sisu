@@ -36,6 +36,7 @@ fn note_field(ys: [string], depth: i64) -> i64 {
     ys.len()
 }
 
+// `sum` prints so that its call writes memory (see `note`).
 fn sum(xs: [i64]) -> i64 {
     if xs.len() == 0 {
         print("end")
@@ -226,13 +227,13 @@ fn main(args: [string]) {
     print(element([["a", "b".to_string() + "c"]]))         // 1
     print(element_of_slice(two()))                         // bc
     print(store_through([P(x: 1), P(x: 2)]))               // 9
-    print(copy_escapes(three()))                           // 2, 3, then [bc, d]
+    print(copy_escapes(three()))                           // 2, 3, then ["bc", "d"]
     print(on_length(two()))                                // 8
     print(empty(two()) + empty([]))                        // 0
     let s = "xa b".to_string() + "c"
     print(pieces_bytes(s).len())                           // 4
     print(pieces_chars(s).len())                           // 4
-    print(pieces_words(s))                                 // [a, bc]
+    print(pieces_words(s))                                 // ["a", "bc"]
     print(pieces_kept(s))                                  // 2, then a
     print(mutable_a(two()))                                // 1 + 2 = 3
     print(mutable_b(two()))                                // 1 + 1 = 2
@@ -241,20 +242,25 @@ fn main(args: [string]) {
     let kept = payload_kept(E.A(two()))                    // 1
     print(payload_read(kept))                              // 3
     print(payload_read(payload_rebuilt(kept)))             // 1 + 1 = 2
-    print(payload_returned(E.A(three())))                  // 2, 3, then [bc, d]
+    print(payload_returned(E.A(three())))                  // 2, 3, then ["bc", "d"]
     print(some_read(Some(two())))                          // 1 + 2 = 3
-    print(some_returned(Some(three())))                    // 2, then [bc, d]
+    print(some_returned(Some(three())))                    // 2, then ["bc", "d"]
     print(some_in_array([Some(two())]))                    // 1
     print(some_replaced(Hold(o: Some(two()))))             // bc, then 1
     let o = O(i: I(cs: three()), fi: I(cs: two()))
     print(field_chain_fixed(o))                            // 1
     print(field_chain_mut(o))                              // 2
-    let xs = ["bc".to_string(); d + 2]
+    let mut xs = ["a".to_string(); d + 2]
+    xs[1] = "bc".to_string()
     print(note(xs[1..], d) + xs.len())                     // bc, then 2 + 3 = 5
-    let k = K(cs: ["bc".to_string(); d + 2])
+    let mut cs = ["a".to_string(); d + 2]
+    cs[1] = "bc".to_string()
+    let k = K(cs: cs)
     print(k.part(d) + k.cs.len())                          // bc, then 2 + 3 = 5
-    let ys = [d; d + 2]
-    print(sum(ys) + ys.len())                              // end, then 3 + 3 = 6
+    let mut ys = [d; d + 2]
+    ys[1] = d + 1
+    ys[2] = d + 2
+    print(sum(ys) + ys.len())                              // end, then 1 + 2 + 3 + 3 = 9
     print(L(cs: three()).part())                           // 2
     print(L(cs: two()).has())                              // true
 }
