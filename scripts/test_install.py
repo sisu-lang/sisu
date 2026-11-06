@@ -20,11 +20,18 @@ import unittest
 INSTALL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'install.sh')
 BASE = 'https://github.com/sisu-lang/sisu/releases/latest/download/'
 FILES = ('sisu', 'libsisu_runtime_mimalloc.a', 'libsisu_runtime_system.a')
-TOOLS = 'mkdir rm mv cp tar gzip grep cut head cat'.split()
+TOOLS = 'mkdir rm mv cp tar gzip grep sed cut head cat'.split()
+# What a fake command that fails runs: a real one prints its own error.
+FAIL = 'echo "fake: failed" >&2; exit 1'
 GNU_LDD = 'ldd (GNU libc) 2.39'
 # The shell is found once, before the Machine replaces PATH, as an absolute path.
 SH = shlex.split(os.environ.get('SISU_TEST_SH', '/bin/sh'))
 SH[0] = shutil.which(SH[0]) or SH[0]
+if not (os.path.isfile(SH[0]) and os.access(SH[0], os.X_OK)):
+    raise RuntimeError('SISU_TEST_SH names no executable shell: %s' % SH[0])
+# A command that hashes its stdin with SHA-256, for the fake shasum.
+SHA256 = [shutil.which('sha256sum')] if shutil.which('sha256sum') \
+    else [shutil.which('shasum'), '-a', '256']
 SLEEP = shutil.which('sleep')
 UNSUPPORTED = ('cannot install on {}: Sisu supports x86-64 and ARM64 Linux with glibc 2.35 or '
                'newer, and ARM64 macOS 15 or newer.')
@@ -330,13 +337,19 @@ class InstallTest(unittest.TestCase):
                 'line %d runs before main: %s' % (n, line))
 
     def test_checksum_mismatch_should_keep_the_earlier_install(self):
-        for row in ('a wrong hash', 'no line for this tarball'):
+        for row in ('a wrong hash', 'no line for this tarball', 'a name that differs at a dot'):
             with self.subTest(row):
                 m = self.machine()
                 m.earlier_install()
                 name = m.tarball_name
-                m.sums('%s  %s\n' % ('0' * 64, name) if row == 'a wrong hash'
-                       else '%s  other.tar.gz\n' % ('0' * 64))
+                with open(os.path.join(m.dl, 'SHA256SUMS')) as f:
+                    good = f.read().split()[0]
+                if row == 'a wrong hash':
+                    m.sums('%s  %s\n' % ('0' * 64, name))
+                elif row == 'no line for this tarball':
+                    m.sums('%s  other.tar.gz\n' % ('0' * 64))
+                else:
+                    m.sums('%s  %s\n' % (good, name.replace('.', 'X')))
                 r = m.run()
                 self.assertKept(m, r)
                 self.assertIn('does not match', r.stderr)
@@ -351,7 +364,6 @@ class InstallTest(unittest.TestCase):
         self.assertInstalled(m, m.run())
 
     def test_shasum_should_check_when_sha256sum_is_missing(self):
-        real = shutil.which('sha256sum') or shutil.which('shasum')
         for row, good in (('good', True), ('bad', False)):
             with self.subTest(row):
                 m = self.machine()
@@ -359,9 +371,9 @@ class InstallTest(unittest.TestCase):
                     if os.path.lexists(os.path.join(m.tools, tool)):
                         os.remove(os.path.join(m.tools, tool))
                 if good:
-                    m.fake_command('shasum', 'exec %s "$3"\n' % shlex.quote(real))
+                    m.fake_command('shasum', 'exec %s\n' % ' '.join(map(shlex.quote, SHA256)))
                 else:
-                    m.fake_command('shasum', 'echo "%s  $3"\n' % ('0' * 64))
+                    m.fake_command('shasum', 'echo "%s  -"\n' % ('0' * 64))
                 r = m.run()
                 if good:
                     self.assertInstalled(m, r)
@@ -390,6 +402,7 @@ class InstallTest(unittest.TestCase):
         r = m.run(preexec_fn=limit)
         self.assertKept(m, r)
         self.assertIn('tar', r.stderr)
+        self.assertNotIn('the tarball has no', r.stderr)
         self.assertNotIn('does not match', r.stderr)
         self.assertNotIn('cannot run', r.stderr)
 
@@ -412,21 +425,88 @@ class InstallTest(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn('cannot run the Sisu build', r.stderr)
 
+    def fake_mv(self, m, fails):
+        """A mv that logs each call, and exits 1 when $1 matches the `fails` pattern."""
+        log = os.path.join(m.root, 'mv.log')
+        m.fake_command('mv', 'echo "$*" >> %s\ncase "$1" in %s) %s;; esac\nexec %s "$@"\n'
+                       % (shlex.quote(log), fails, FAIL, shlex.quote(shutil.which('mv'))))
+        return log
+
+    def one_line(self, m, r):
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(r.stderr, 'install.sh: cannot write to %s.\n' % m.sisu)
+
     def test_failed_swap_should_restore_the_earlier_install(self):
+        for state in ('bin', 'only bin.old', 'no ~/.sisu'):
+            with self.subTest(state):
+                m = self.machine()
+                if state == 'bin':
+                    m.earlier_install()
+                elif state == 'only bin.old':
+                    m.earlier_install()
+                    os.rename(os.path.join(m.sisu, 'bin'), os.path.join(m.sisu, 'bin.old'))
+                log = self.fake_mv(m, '*.sisu/tmp/sisu')
+                r = m.run()
+                self.one_line(m, r)
+                self.assertFalse(os.path.exists(os.path.join(m.sisu, 'bin.old')))
+                self.assertFalse(m.tmp_exists())
+                if state == 'no ~/.sisu':
+                    self.assertFalse(os.path.exists(os.path.join(m.sisu, 'bin')))
+                    continue
+                self.assertEqual(m.builds(), ALL_OLD)
+                if state == 'bin':
+                    with open(log) as f:
+                        calls = [line.replace(m.home, '~').strip() for line in f]
+                    self.assertEqual(calls, ['~/.sisu/bin ~/.sisu/bin.old',
+                                             '~/.sisu/tmp/sisu ~/.sisu/bin',
+                                             '~/.sisu/bin.old ~/.sisu/bin'])
+
+    def test_failed_restore_should_keep_the_earlier_install_in_bin_old(self):
         m = self.machine()
         m.earlier_install()
-        log = os.path.join(m.root, 'mv.log')
-        m.fake_command('mv', 'echo "$*" >> %s\ncase "$1" in *.sisu/tmp/sisu) exit 1;; esac\n'
-                       'exec %s "$@"\n' % (shlex.quote(log), shlex.quote(shutil.which('mv'))))
+        self.fake_mv(m, '*.sisu/tmp/sisu | *.sisu/bin.old')
         r = m.run()
-        self.assertKept(m, r)
+        self.one_line(m, r)
+        self.assertFalse(os.path.exists(os.path.join(m.sisu, 'bin')))
+        self.assertEqual(sorted(os.listdir(os.path.join(m.sisu, 'bin.old'))), sorted(FILES))
+        self.assertFalse(m.tmp_exists())
+
+    def test_failed_rename_of_bin_should_keep_the_earlier_install(self):
+        m = self.machine()
+        m.earlier_install()
+        self.fake_mv(m, '*.sisu/bin')
+        r = m.run()
+        self.one_line(m, r)
+        self.assertEqual(m.builds(), ALL_OLD)
         self.assertFalse(os.path.exists(os.path.join(m.sisu, 'bin.old')))
-        calls = []
-        if os.path.exists(log):
-            with open(log) as f:
-                calls = [line.replace(m.home, '~').strip() for line in f]
-        self.assertEqual(calls, ['~/.sisu/bin ~/.sisu/bin.old', '~/.sisu/tmp/sisu ~/.sisu/bin',
-                                 '~/.sisu/bin.old ~/.sisu/bin'])
+        self.assertFalse(m.tmp_exists())
+
+    def test_failed_final_removal_should_stop_after_the_swap(self):
+        m = self.machine()
+        m.earlier_install()
+        m.fake_command('rm', 'case "$2" in *.sisu/bin.old) [ -e "$2" ] && { %s; };; esac\n'
+                       'exec %s "$@"\n' % (FAIL, shlex.quote(shutil.which('rm'))))
+        r = m.run()
+        self.one_line(m, r)
+        self.assertNotIn('Sisu is installed', r.stdout)
+        self.assertEqual(m.builds(), ALL_NEW)
+        with open(os.path.join(m.sisu, 'bin.old', 'sisu')) as f:
+            self.assertIn('sisu old', f.read())
+        self.assertFalse(m.tmp_exists())
+
+    def test_failed_setup_command_should_stop_with_one_line(self):
+        for command, fails, stale in [('rm', '*.sisu/tmp', False), ('mkdir', '*.sisu/tmp', False),
+                                      ('rm', '*.sisu/bin.old', True)]:
+            with self.subTest('%s %s' % (command, fails)):
+                m = self.machine()
+                m.earlier_install()
+                if stale:
+                    os.makedirs(os.path.join(m.sisu, 'bin.old'))
+                m.fake_command(command, 'case "$2" in %s) %s;; esac\nexec %s "$@"\n'
+                               % (fails, FAIL, shlex.quote(shutil.which(command))))
+                r = m.run()
+                self.one_line(m, r)
+                self.assertEqual(m.builds(), ALL_OLD)
 
     def test_swap_should_work_from_each_starting_state(self):
         for state in ('no ~/.sisu', 'only bin.old', 'bin and a stale bin.old'):
@@ -452,7 +532,7 @@ class InstallTest(unittest.TestCase):
         calls = m.curl_calls()
         self.assertEqual(len(calls), 2)
         for call in calls:
-            for token in ('--proto', '=https', '--tlsv1.2', '-fsSL'):
+            for token in ('--proto', '=https', '--tlsv1.2', '-fsSL', '--retry'):
                 self.assertIn(token, call)
         self.assertEqual(sorted(c[-1] for c in calls),
                          sorted([BASE + m.tarball_name, BASE + 'SHA256SUMS']))
@@ -514,6 +594,10 @@ class InstallTest(unittest.TestCase):
         m = self.machine(prefix='a b/')
         self.assertInstalled(m, m.run())
 
+    def test_home_with_a_backslash_should_install(self):
+        m = self.machine(prefix='a\\b/')
+        self.assertInstalled(m, m.run())
+
     def test_home_unset_should_stop_with_one_sentence(self):
         m = self.machine()
         r = m.run(env={'HOME': None})
@@ -527,8 +611,7 @@ class InstallTest(unittest.TestCase):
         os.chmod(m.sisu, 0o555)
         self.addCleanup(os.chmod, m.sisu, stat.S_IRWXU)
         r = m.run()
-        self.assertNotEqual(r.returncode, 0)
-        self.assertIn('cannot write to', r.stderr)
+        self.one_line(m, r)
         self.assertEqual(m.builds(), ALL_OLD)
 
     def test_sisu_path_that_is_a_file_should_stop_with_one_sentence(self):
@@ -536,8 +619,7 @@ class InstallTest(unittest.TestCase):
         with open(m.sisu, 'w') as f:
             f.write('not a directory\n')
         r = m.run()
-        self.assertNotEqual(r.returncode, 0)
-        self.assertIn('cannot write to', r.stderr)
+        self.one_line(m, r)
         with open(m.sisu) as f:
             self.assertEqual(f.read(), 'not a directory\n')
 
