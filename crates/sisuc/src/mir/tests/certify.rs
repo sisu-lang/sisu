@@ -4287,9 +4287,10 @@ fn slice_that_borrows_should_keep_its_bases_clobbers() {
 /// GIVEN a slice whose base reads the element `xs[0]`, which is a projection, and a `release` of
 /// the slice
 /// WHEN the function is certified
-/// THEN it is accepted: only a whole local makes a slice borrow, so this slice owns its count
+/// THEN it is accepted: only a whole local makes a slice borrow. No lowering makes this form; the
+/// row holds the check on projections
 #[test]
-fn certify_should_keep_a_slice_through_a_projection_owned() {
+fn certify_should_not_take_a_slice_through_a_projection_as_a_borrow() {
     let mut b = Builder::new("f");
     let xs = b.param("xs", Type::array(Type::array(Type::I64)));
     let d = b.local("d", Type::array(Type::I64));

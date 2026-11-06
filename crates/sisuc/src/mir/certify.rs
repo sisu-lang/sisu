@@ -716,7 +716,7 @@ pub(super) enum Effect {
     Release,
     ScopeRelease,
     Assign,
-    /// `b = borrow p`.
+    /// `b = borrow p`, or a slice that reads the whole local `p` in place.
     AssignBorrowed,
     End,
     /// The root of a place that a `take`, a store or a `make_unique` writes through. It reads
@@ -811,10 +811,11 @@ pub(super) fn statement<'a>(
     }
 }
 
-/// The place `value` borrows: the place of a `borrow`, or the whole local that a slice that is
-/// not `safe` reads in place, as pair removal leaves it. Such a slice holds no count, so it is a
-/// borrow of that local. A slice of a projection or a `safe` slice is no borrow: it takes the
-/// reference of its base, and a `safe` one releases its base when a check fails.
+/// The place `value` borrows: the place of a `borrow`, or the whole local that a slice reads in
+/// place, as pair removal leaves it. Such a slice is not `safe` and holds no count, so it is a
+/// borrow of that local. A slice of a projection is no borrow, and no lowering makes one. A `safe`
+/// slice is no borrow, because it releases its base when a check fails. Other rvalues give `None`:
+/// `Clobbers::new` lists each of them, so a new one is placed there.
 fn borrowed_place(value: &Rvalue) -> Option<&Place> {
     match value {
         Rvalue::Borrow(place) => Some(place),
