@@ -149,8 +149,6 @@ jobs:
     steps:
       - if: matrix.image
         run: apt-get update && apt-get install -y build-essential
-      - if: runner.os == 'macOS'
-        run: brew uninstall --ignore-dependencies --force zstd
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -159,6 +157,9 @@ jobs:
         with:
           merge-multiple: true
           path: dl
+      # After checkout, because the Homebrew git of macos-15 needs this zstd for HTTPS.
+      - if: runner.os == 'macOS'
+        run: brew uninstall --ignore-dependencies --force zstd
       - run: SISU_DOWNLOAD_DIR=$PWD/dl sh dl/install.sh
       # `build` checks the binary before the pack. This checks the tarball that this job installed,
       # for each of the three targets: after "re-run all jobs", `download-artifact` can take a
