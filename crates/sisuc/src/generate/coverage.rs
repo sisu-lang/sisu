@@ -333,6 +333,19 @@ const GAP_POINTS: &[&str] = &[
     "make_check keeps a conformance",
     "make_check keeps an any",
     "make_check keeps an applied type",
+    "make_any on the right",
+    "make_any on the left",
+    "seeded_join for a branch",
+    "seeded_join for a loop",
+    "hinted_elements",
+    "value_beside",
+    "unwrap_some_object of a Some",
+    "unwrap_some_object of a None",
+    "a hinted Some keeps its type",
+    "a dbg in a generic function",
+    "dbg_show reads an enum",
+    "an any conversion in a generic function",
+    "never_at for a part of a string",
 ];
 
 /// The key that marks `point` of `GAP_POINTS`.
@@ -6333,6 +6346,174 @@ fn main() { let b: A = Bound(value: Made()); print(b.value.shown()) }",
 class One: Of<i64> { fn of(self) -> i64 { 1 } }
 type A = any Of<i64>
 fn main() { let a: A = One(); print(a.of()) }",
+            &[],
+        ),
+        (
+            "an object on the right of `is` beside an `any`",
+            r"interface Heard: AnyObject { fn heard(self) -> i64 }
+class Ear: Heard { fn heard(self) -> i64 { 2 } }
+fn main() { let e = Ear(); let a: any Heard = e; print(a is e) }",
+            &["make_any on the right"],
+        ),
+        (
+            "an object on the left of `is` beside an `any`",
+            r"interface Heard: AnyObject { fn heard(self) -> i64 }
+class Ear: Heard { fn heard(self) -> i64 { 2 } }
+fn main() { let e = Ear(); let a: any Heard = e; print(e is a) }",
+            &["make_any on the left"],
+        ),
+        (
+            "two `any` values beside `is`",
+            r"interface Heard: AnyObject { fn heard(self) -> i64 }
+class Ear: Heard { fn heard(self) -> i64 { 2 } }
+fn main() { let a: any Heard = Ear(); print(a is a) }",
+            &[],
+        ),
+        (
+            "a `Some` of an object joins an `any` branch",
+            r"interface Seen { fn seen(self) -> i64 }
+class Eye: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+class Lid: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = if c { a } else { Some(Eye(v: 2)) }; print((j ?? a).seen()) }",
+            &["unwrap_some_object of a Some"],
+        ),
+        (
+            "a `None` joins an `any` branch",
+            r"interface Seen { fn seen(self) -> i64 }
+class Eye: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+class Lid: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = if c { a } else { None }; print((j ?? a).seen()) }",
+            &["unwrap_some_object of a None"],
+        ),
+        (
+            "an object joins an `any` branch",
+            r"interface Seen { fn seen(self) -> i64 }
+class Eye: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+class Lid: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = if c { a } else { Eye(v: 2) }; print(j.seen()) }",
+            &[],
+        ),
+        (
+            "a hinted `Some` of another object beside an `any`",
+            r"interface Seen { fn seen(self) -> i64 }
+class Eye: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+class Lid: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = if c { Some(Eye(v: 2)) } else { if c { Some(Lid(v: 3)) } else { a } }; print((j ?? a).seen()) }",
+            &["a hinted Some keeps its type"],
+        ),
+        (
+            "branches of two objects beside an `any` branch",
+            r"interface Seen { fn seen(self) -> i64 }
+class Eye: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+class Lid: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = if c { a } else { if c { Eye(v: 2) } else { Lid(v: 3) } }; print(j.seen()) }",
+            &["seeded_join for a branch"],
+        ),
+        (
+            "branches of one object beside an `any` branch",
+            r"interface Seen { fn seen(self) -> i64 }
+class Eye: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+class Lid: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = if c { a } else { if c { Eye(v: 2) } else { Eye(v: 3) } }; print(j.seen()) }",
+            &[],
+        ),
+        (
+            "breaks of two objects beside an `any` branch",
+            r"interface Seen { fn seen(self) -> i64 }
+class Eye: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+class Lid: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+fn main() {
+let a: any Seen = Eye(v: 1); let c = [1].len() == 2;
+let j = if c { a } else {
+    let mut left = 1
+    loop {
+        if left == 0 { break Eye(v: 2) }
+        left -= 1
+        break Lid(v: 3)
+    }
+}
+print(j.seen())
+}",
+            &["seeded_join for a loop"],
+        ),
+        (
+            "an array of objects beside an array of `any`",
+            r"interface Seen { fn seen(self) -> i64 }
+class Eye: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+class Lid: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = if c { [a] } else { [Eye(v: 2), Lid(v: 3)] }; print(j[0].seen()) }",
+            &["hinted_elements"],
+        ),
+        (
+            "an array of integers beside an array of integers",
+            r"fn main() { let c = [1].len() == 2; let j = if c { [1] } else { [2] }; print(j) }",
+            &[],
+        ),
+        (
+            "an object after an `any` element",
+            r"interface Seen { fn seen(self) -> i64 }
+class Eye: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+class Lid: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = [a, Eye(v: 2)]; print(j[0].seen()) }",
+            &["value_beside"],
+        ),
+        (
+            "an object before an `any` element",
+            r"interface Seen { fn seen(self) -> i64 }
+class Eye: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+class Lid: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = [Eye(v: 2), a]; print(j[0].seen()) }",
+            &[],
+        ),
+        (
+            "`dbg` of a parameter in a generic function",
+            r"fn s<T: Display>(x: T) -> T { dbg(x) }
+fn main() { print(s(1)) }",
+            &["a dbg in a generic function"],
+        ),
+        (
+            "`dbg` of an enum of a parameter in a generic function",
+            r"enum L<T> { Leaf(T) }
+fn s<T: Display>(x: T) { let _ = dbg(L.Leaf(x)) }
+fn main() { s(1) }",
+            &["a dbg in a generic function", "dbg_show reads an enum"],
+        ),
+        (
+            "`dbg` in a function that is not generic",
+            r"fn main() { print(dbg(1)) }",
+            &[],
+        ),
+        (
+            "an `any` conversion in a generic function",
+            r"interface Seen { fn seen(self) -> i64 }
+class Eye: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+class Lid: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+fn b<T: Seen>(x: T) -> any Seen { x }
+fn main() { print(b(Eye(v: 1)).seen()) }",
+            &["an any conversion in a generic function"],
+        ),
+        (
+            "a `never` part in a string literal",
+            r#"fn main() {
+    let c = [1].len() == 2
+    if c {
+        "a{panic("x")}"
+    }
+}"#,
+            &["never_at for a part of a string"],
+        ),
+        (
+            "an integer part in a string literal",
+            r#"fn main() { print("a{1}") }"#,
+            &[],
+        ),
+        (
+            "an `any` conversion in a function that is not generic",
+            r"interface Seen { fn seen(self) -> i64 }
+class Eye: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+class Lid: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+fn b(x: Eye) -> any Seen { x }
+fn main() { print(b(Eye(v: 1)).seen()) }",
             &[],
         ),
     ];
