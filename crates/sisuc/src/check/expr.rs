@@ -378,8 +378,8 @@ impl Checker<'_> {
         (result, invalid_jump)
     }
 
-    /// Where a `never` value at `span` is reported: at the first part of a string literal that is
-    /// `never` because of a part, else at `span`.
+    /// Where the value at `span` is reported: at the first part of a string literal that is
+    /// `never` because of a part, else at `span`. A `unit` value has no such part.
     pub(super) fn never_at(&self, span: Span) -> Span {
         self.body
             .never_part
@@ -392,11 +392,7 @@ impl Checker<'_> {
         let checked = read_jump(self.expr(e, expected));
         match type_of(&checked) {
             Some(ty @ (Type::UNIT | Type::NEVER)) => {
-                let at = if ty == Type::NEVER {
-                    self.never_at(e.span)
-                } else {
-                    e.span
-                };
+                let at = self.never_at(e.span);
                 self.no_value(at, ty);
                 Err(Poisoned::error())
             }

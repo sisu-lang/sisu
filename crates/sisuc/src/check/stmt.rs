@@ -39,7 +39,7 @@ pub(super) struct BlockSoFar {
     value: Option<Poisoned>,
     /// How many of the block's statements are checked.
     done: usize,
-    /// Whether the statement that made `ty` `never` failed only by a `break` or `continue`
+    /// Whether the statement that ends the block with `never` is a failed `break` or `continue`
     /// outside a loop (see `Poisoned::jumped`).
     jumped: bool,
 }

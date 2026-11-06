@@ -130,9 +130,10 @@ struct Poisoned {
     /// optional (E0044, E0048, E0049, E0051) or not matchable (E0124) skips it. A `let` or a
     /// `for` binds `Error` for it, as its optionality depends on the remedy.
     unwrapped: Flag,
-    /// The value is `never` only by a `break` or `continue` outside a loop, which has its own
-    /// report. No `return`, `panic` or valid jump makes it `never`. The flow keeps the `never`,
-    /// as a jump statement does; a place that reads the value takes it as `Error` (`read_jump`).
+    /// A failed `break` or `continue` outside a loop makes the value `never`, and that jump has
+    /// its own report. In a block, it is the statement that ends the block. In an `if` or a
+    /// `match`, it is at least one branch (see `join`). The flow keeps the `never`, as a jump
+    /// statement does; a place that reads the value takes it as `Error` (`read_jump`).
     jumped: bool,
 }
 
@@ -202,7 +203,7 @@ fn is_kept<T>(checked: &Result<T, Poisoned>) -> bool {
     matches!(checked, Err(Poisoned { kept: true, .. }))
 }
 
-/// Whether only a failed `break` or `continue` makes `checked` `never` (see `Poisoned::jumped`).
+/// Whether a failed `break` or `continue` makes `checked` `never` (see `Poisoned::jumped`).
 fn is_jumped<T>(checked: &Result<T, Poisoned>) -> bool {
     matches!(checked, Err(Poisoned { jumped: true, .. }))
 }

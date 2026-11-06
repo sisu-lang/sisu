@@ -729,14 +729,14 @@ pub(super) fn row_program(stmt: &str) -> String {
 
 /// `codes_under` for the text of every diagnostic: they are exactly `expected`, sorted by the
 /// start of the span, and by code when two start at the same place. Each entry is a code and the
-/// text it underlines. The start of an entry is the first place of its text in `src` at or after
-/// the start of the entry before it (after it, when both have the same code), and the first
-/// entry looks from the start of `stmt`. So a text that the row writes twice is told apart by the
+/// text it underlines. The first entry looks for its text from the start of `stmt`. Each next
+/// entry looks from the start of the entry before it. When both entries have the same code, it
+/// looks from one byte after that start. So a text that the row writes twice is told apart by the
 /// order. An entry may write context around its text: `"; «break»"` underlines `break` in the
 /// first `; break`. A diagnostic outside `stmt` writes its context, as `"0\n«}»"` does for the
 /// closing `}` of the function.
-pub(super) fn codes_texts(row: &str, src: &str, stmt: &str, expected: &[(Code, &str)]) {
-    let row = named(row);
+pub(super) fn codes_texts(src: &str, stmt: &str, expected: &[(Code, &str)]) {
+    let row = named(stmt);
     let mut ds = diags(src);
     ds.sort_by_key(|d| (d.span().start(), d.code().as_str()));
     let found: Vec<_> = ds
@@ -1185,7 +1185,7 @@ fn a_block_that_an_invalid_jump_ends_should_give_e0038_alone() {
         ),
     ];
     for &(stmt, expected) in rows {
-        codes_texts(stmt, &row_program(stmt), stmt, expected);
+        codes_texts(&row_program(stmt), stmt, expected);
     }
 }
 
@@ -1255,7 +1255,7 @@ fn a_never_from_a_valid_jump_beside_an_invalid_one_should_keep_its_report() {
         ),
     ];
     for &(stmt, expected) in rows {
-        codes_texts(stmt, &row_program(stmt), stmt, expected);
+        codes_texts(&row_program(stmt), stmt, expected);
     }
 }
 
@@ -1293,7 +1293,7 @@ fn a_failed_jump_statement_should_end_the_flow_as_a_jump_does() {
         let src = format!(
             "fn id<T>(x: T) -> T {{ x }}\nfn g(c: bool) -> i64 {{\n    {stmt}\n    print(1)\n}}\nfn main() {{}}"
         );
-        codes_texts(stmt, &src, stmt, expected);
+        codes_texts(&src, stmt, expected);
     }
 }
 

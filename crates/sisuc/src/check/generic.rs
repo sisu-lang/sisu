@@ -3003,11 +3003,7 @@ impl Checker<'_> {
         });
         let checked = read_jump(self.infer_value(call, e, pattern, context));
         if unbound && let Some(ty @ (Type::UNIT | Type::NEVER)) = type_of(&checked) {
-            let at = if ty == Type::NEVER {
-                self.never_at(e.span)
-            } else {
-                e.span
-            };
+            let at = self.never_at(e.span);
             call.last.push((i, ty, at));
         }
         call.slots[i] = Some(checked);
@@ -3256,11 +3252,7 @@ impl Checker<'_> {
                 let checked = read_jump(checked);
                 slots[i] = Some(match type_of(&checked) {
                     Some(ty @ (Type::UNIT | Type::NEVER)) => {
-                        let at = if ty == Type::NEVER {
-                            self.never_at(e.span)
-                        } else {
-                            e.span
-                        };
+                        let at = self.never_at(e.span);
                         self.no_value(at, ty);
                         Err(Poisoned::error())
                     }

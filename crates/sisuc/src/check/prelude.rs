@@ -3,8 +3,7 @@
 //! `todo`, a keyword that panics as `panic` does, is checked here too.
 
 use super::array::pair;
-use super::expr::read_jump;
-use super::expr::{path, typed};
+use super::expr::{path, read_jump, typed};
 use super::mut_args::Callee;
 use super::{Checked, Checker, Poisoned, has_remedy_flag, spread, type_of};
 use crate::ast;

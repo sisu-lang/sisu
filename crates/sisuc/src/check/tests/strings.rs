@@ -980,6 +980,6 @@ fn a_never_part_of_a_literal_as_an_argument_should_be_underlined_at_the_part() {
         ),
     ];
     for &(stmt, expected) in rows {
-        codes_texts(stmt, &row_program(stmt), stmt, expected);
+        codes_texts(&row_program(stmt), stmt, expected);
     }
 }
