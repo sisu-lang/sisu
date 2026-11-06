@@ -1493,6 +1493,10 @@ impl Checker<'_> {
                     tir::ExprKind::Dbg { ref operand, .. } => {
                         #[cfg(test)]
                         super::reached("a dbg in a generic function");
+                        #[cfg(test)]
+                        if matches!(operand.ty.kind(), TypeKind::Enum(..)) {
+                            super::reached("a dbg of an enum in a generic function");
+                        }
                         self.operator_edges(&mut graph, holder, e);
                         let shown = shown.get_or_insert_with(|| self.shown_params());
                         self.dbg_show(&mut graph, shown, holder, operand.ty, e.span);
@@ -1752,8 +1756,6 @@ impl Checker<'_> {
             DBG_VISITS.set(DBG_VISITS.get() + 1);
             match ty.kind() {
                 TypeKind::Enum(id, args) => {
-                    #[cfg(test)]
-                    super::reached("dbg_show reads an enum");
                     let target = graph.dbg_first + id.0;
                     graph.args(
                         holder,

@@ -563,7 +563,11 @@ interface GapHeard: AnyObject { fn loud(self) -> i64 }
 class GapEye: GapSeen { v: i64; fn seen(self) -> i64 { self.v } }
 class GapLid: GapSeen { v: i64; fn seen(self) -> i64 { self.v + 1 } }
 class GapEar: GapHeard { fn loud(self) -> i64 { 2 } }
-fn gap_shown<T: Display>(x: T) -> T { dbg(x) }
+enum GapLeaf<T> { Leaf(T) }
+fn gap_shown<T: Display>(x: T) -> T {
+    let _ = dbg(GapLeaf.Leaf(x))
+    dbg(x)
+}
 fn gap_boxed<T: GapSeen>(x: T) -> any GapSeen { x }
 fn gap_saw(x: any GapSeen) -> i64 { x.seen() }";
 
@@ -1667,7 +1671,8 @@ impl Gen<'_> {
     ///   - `gap_looped`: a loop of two objects beside an `any`;
     ///   - `gap_hinted`: a branch that joins an array of two objects with an array of `any`;
     ///   - `gap_beside`: array elements beside an `any`;
-    ///   - `gap_shown` and `gap_boxed`: `dbg` and an `any` conversion in a generic function;
+    ///   - `gap_shown` and `gap_boxed`: `dbg`, of an enum too, and an `any` conversion in a
+    ///     generic function;
     /// - a `never` part of a string, as a statement on a branch that does not run.
     ///
     /// Each loop counts down from one and a `break` ends it, in at most two passes.

@@ -313,10 +313,9 @@ const GAP_RULES: &[&str] = &[
     "reach: a program gets W0007",
 ];
 
-/// The points of the checker that the forms of `Gen::gap_forms` reach: the functions that
-/// `fuzz/known_gaps.txt` listed, and the branches of `make_check` that keep a check. A key is
-/// `gap_key` of a point. Each is marked when the checker reached it, as `check::reached` records:
-/// `answered_by_several` only when it answers true.
+/// The points of the checker that the forms of `Gen::gap_forms` reach: functions and branches. A
+/// key is `gap_key` of a point. Each is marked when the checker reached it, as `check::reached`
+/// records: `answered_by_several` only when it answers true.
 const GAP_POINTS: &[&str] = &[
     "Waits::lower",
     "written_interface",
@@ -343,7 +342,7 @@ const GAP_POINTS: &[&str] = &[
     "unwrap_some_object of a None",
     "a hinted Some keeps its type",
     "a dbg in a generic function",
-    "dbg_show reads an enum",
+    "a dbg of an enum in a generic function",
     "an any conversion in a generic function",
     "never_at for a part of a string",
 ];
@@ -6506,7 +6505,10 @@ fn main() { print(s(1)) }",
             r"enum L<T> { Leaf(T) }
 fn s<T: Display>(x: T) { let _ = dbg(L.Leaf(x)) }
 fn main() { s(1) }",
-            &["a dbg in a generic function", "dbg_show reads an enum"],
+            &[
+                "a dbg in a generic function",
+                "a dbg of an enum in a generic function",
+            ],
         ),
         (
             "`dbg` in a function that is not generic",
@@ -6588,8 +6590,8 @@ fn generated_programs_should_reach_each_gap_rule() {
 
 /// GIVEN the programs of the seeds `0..FUZZ_SEEDS`
 /// WHEN a program holds `fn shapes()`
-/// THEN its `program` holds `PushTally`, `twice_set(mut slots[0]`, `gap_chain(` and `GapBound`,
-/// and its `plain` holds none of them, and at least one seed holds them
+/// THEN its `program` holds `PushTally`, `twice_set(mut slots[0]`, `gap_chain(`, `GapBound` and
+/// `gap_boxed(`, and its `plain` holds none of them, and at least one seed holds them
 #[test]
 fn plain_text_should_leave_out_the_gap_forms() {
     let mut seen = false;
