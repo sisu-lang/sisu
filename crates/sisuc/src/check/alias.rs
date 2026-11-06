@@ -657,6 +657,14 @@ impl Checker<'_> {
             if !kept.contains(&check) {
                 kept.push(check);
             }
+            #[cfg(test)]
+            super::reached(match check {
+                UseCheck::Conforms { .. } => "make_check keeps a conformance",
+                UseCheck::Applied(ty) if matches!(ty.kind(), TypeKind::Any(..)) => {
+                    "make_check keeps an any"
+                }
+                UseCheck::Applied(_) => "make_check keeps an applied type",
+            });
             return true;
         }
         match check {
@@ -798,6 +806,8 @@ impl Checker<'_> {
         call: Option<(&[ast::Arg], Span)>,
     ) -> Checked {
         // The value is `Option`'s, but a message names the alias, as the user wrote it.
+        #[cfg(test)]
+        super::reached("optional_alias_path");
         let site = if through.params.is_empty() {
             Site {
                 written: &[],

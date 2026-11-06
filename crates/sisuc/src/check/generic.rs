@@ -450,6 +450,8 @@ fn unbound_params(outer: &Bindings, ty: Type, on: &mut FxHashSet<usize>, seen: &
 
 /// Whether `built`, a callee's type, names a parameter of the callee that is `unbound`.
 fn names_unbound(unbound: &[bool], built: Type, seen: &mut WalkMemo<Type, bool>) -> bool {
+    #[cfg(test)]
+    super::reached("names_unbound");
     wait_step();
     type_step();
     if !built.has_param() {
@@ -861,6 +863,8 @@ impl Makes {
 /// Whether `ty` has more than `layers` optionals on it, one inside the other: `i64??` has more than
 /// 1, and not more than 2.
 fn wider_than(mut ty: Type, layers: usize) -> bool {
+    #[cfg(test)]
+    super::reached("wider_than");
     for _ in 0..=layers {
         let TypeKind::Optional(inner) = ty.kind() else {
             return false;
@@ -1551,6 +1555,8 @@ impl Bindings {
 
 /// Whether `value` is `pattern` for some types of its `count` parameters.
 pub(super) fn type_meets(count: usize, pattern: Type, value: Type) -> bool {
+    #[cfg(test)]
+    super::reached("type_meets");
     Bindings::new(count, &[]).unify(pattern, value)
 }
 
@@ -3695,6 +3701,8 @@ impl Checker<'_> {
                 if !self.answered_by_several(receiver, method, *safe) {
                     return None;
                 }
+                #[cfg(test)]
+                super::reached("answered_by_several");
                 Some((self.generic_method(receiver, method, args, *safe), args))
             }
             K::MethodCall {
@@ -4533,6 +4541,8 @@ impl Checker<'_> {
     /// Whether `receiver` before `.method` is a path, not a value: an enum, `Option`, or `math`
     /// or a built-in type that no local takes.
     pub(super) fn path_method(&mut self, receiver: &ast::Expr, method: &ast::Ident) -> bool {
+        #[cfg(test)]
+        super::reached("path_method");
         let name = match &receiver.kind {
             ast::ExprKind::Name(name) => *name,
             ast::ExprKind::Applied { name, .. } => name.name,

@@ -983,6 +983,8 @@ impl Checker<'_> {
     /// Reports an interface that the list of a class or an enum gets from another when the block
     /// that gives it fails under the list's own parameters and bounds.
     fn listed_inheritance(&mut self, found: &Found) {
+        #[cfg(test)]
+        super::reached("listed_inheritance");
         let (params, bounds) = self.source_params(Source::Body(found.holder));
         let (interface, args) = found.inherited;
         self.with_body(Body::default(), |checker| {

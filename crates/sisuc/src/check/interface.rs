@@ -715,6 +715,8 @@ impl Checker<'_> {
     /// The interface that `ty`, the bound of a parameter, names, if it names one that is declared.
     /// A bound that writes an associated type has arguments, so it is never a plain name.
     fn written_interface(&self, ty: &ast::TypeExpr) -> Option<InterfaceId> {
+        #[cfg(test)]
+        super::reached("written_interface");
         let ast::TypeKind::Applied(applied) = &ty.kind else {
             return None;
         };
