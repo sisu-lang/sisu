@@ -102,7 +102,7 @@ class Machine:
             (self.tools / tool).symlink_to(which(tool))
         self._fake_commands(profile, cc=cc, apt=apt, clt=clt)
 
-    def _fake_commands(  # noqa: C901, PLR0912  one branch for each profile and each fake command
+    def _fake_commands(  # noqa: C901, PLR0912  both count the same branches: one for each profile and each fake command
         self, profile: str, *, cc: bool, apt: bool, clt: bool
     ) -> None:
         system, machine, libc, sysctl, version = "Linux", "x86_64", "2.39", None, None

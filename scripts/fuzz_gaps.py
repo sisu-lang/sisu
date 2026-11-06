@@ -44,9 +44,11 @@ CLOSURE_END = re.compile(r"\{closure[^}]*\}$")
 MANGLED = re.compile(r"(^|\W)_(R|ZN)\w|::h[0-9a-f]{16}$")
 STAGES = ("check/", "mir/", "codegen/")
 HEADING = "## Generator gaps"
+# The exit code of a check that did not finish.
+CHECK_NOT_FINISHED = 2
 
 
-class Broken(Exception):  # noqa: N818  the tests and the callers name it `Broken`
+class Broken(Exception):  # noqa: N818  a signal that the measurement is not trusted, not a fault: only `main` catches it, and it exits with 2
     """The measurement cannot be trusted. The message is the reason, without a final period."""
 
 
@@ -288,11 +290,11 @@ def main(argv: list[str]) -> int:
             )
         code, text = compare(*argv[1:])
     except Broken as e:
-        code, text = 2, f"{e}"
+        code, text = CHECK_NOT_FINISHED, f"{e}"
     # An uncaught failure exits 1, which reads as a new gap.
     except Exception as e:  # noqa: BLE001  any other failure is a broken check, not a new gap
-        code, text = 2, f"an unexpected {type(e).__name__}: {e}"
-    if code == 2:  # noqa: PLR2004  the exit code of a check that did not finish
+        code, text = CHECK_NOT_FINISHED, f"an unexpected {type(e).__name__}: {e}"
+    if code == CHECK_NOT_FINISHED:
         text = section(
             f"The gap check did not finish, so it proves nothing about gaps. Reason: {text}."
         )

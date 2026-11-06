@@ -834,7 +834,7 @@ class CompileSpeed(unittest.TestCase):
         calls: list[bool] = []
         times = iter([0.03, 0.01, 0.02])
 
-        def run(  # noqa: PLR0913, PLR0917  the signature of `Measurer.run`
+        def run(  # noqa: PLR0913, PLR0917  too many arguments and too many positional ones: the fake has the signature of `Measurer.run`
             cmd: list[str],  # noqa: ARG001  the name must match `Measurer.run`
             what: str,  # noqa: ARG001  the name must match `Measurer.run`
             lang: str,  # noqa: ARG001  the name must match `Measurer.run`

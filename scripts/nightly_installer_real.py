@@ -159,7 +159,6 @@ class InstallerRealTest(unittest.TestCase):
 
     @unittest.skipUnless(LINUX, "Linux only")
     def test_ubuntu_without_a_compiler_should_install_and_name_the_command(self) -> None:
-        """Check that the installer works with no compiler, and names the command to get one."""
         result = docker("ubuntu:22.04", 'sh /dl/install.sh && "$HOME/.sisu/bin/sisu" --version')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(HINT, result.stdout)

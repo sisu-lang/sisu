@@ -5,9 +5,12 @@
 target-version = "py312"
 line-length = 100
 
-# The build job of the nightly workflow runs this script in `ubuntu:22.04`.
+# The `build` job of the nightly workflow runs `nightly_check.py` in `ubuntu:22.04`. The
+# `clean-machine` and `installer-tests` jobs run the other two on `ubuntu:22.04` and `ubuntu-24.04`.
 [per-file-target-version]
 "scripts/nightly_check.py" = "py310"
+"scripts/test_install.py" = "py310"
+"scripts/nightly_installer_real.py" = "py310"
 
 [lint]
 select = ["ALL"]
@@ -16,7 +19,7 @@ ignore = [
   "COM812", "COM819", "D206", "D300", "E111", "E114", "E117", "Q000", "Q001", "Q002", "Q003", "Q004", "W191",
   # Each pair conflicts. These are the two that the formatter and PEP 257 do not use.
   "D203", "D213",
-  # The class docstring tells how to make an instance.
+  # The signature and the class docstring are sufficient.
   "D107",
   # The licence is at the repository root, not in each file.
   "CPY001", # spellchecker:disable-line
@@ -35,8 +38,11 @@ ignore = [
 [lint.per-file-ignores]
 # A test name says what should hold, and an expected text stays on one line so that a search finds
 # it. A test compares with literals, reads private names, makes fake secrets and tools, and uses
-# `assert` to narrow a type.
+# `assert` to narrow a type. `scripts/test_health.py` and `scripts/test_names.py` are tools that
+# have this prefix, so these rules are off for them too.
 "scripts/test_*.py" = ["D", "E501", "PLR2004", "S101", "S103", "S105", "S106", "S108", "SLF001"]
+# This file holds tests. Its name does not match the test glob, because no hook must run it.
+"scripts/nightly_installer_real.py" = ["D"]
 "site/build_test.py" = ["D", "E501", "PLR2004", "S101", "S103", "S105", "S106", "S108", "SLF001"]
 # A benchmark program stays the same as its row in each other language, so rules that change its
 # logic stay off. The formatter and the type rules apply.

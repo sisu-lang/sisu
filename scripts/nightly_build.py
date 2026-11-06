@@ -223,7 +223,11 @@ def download(repo: str, run_id: str, into: str) -> dict[str, str]:
 
 
 def publish(sha: str) -> int:
-    """Publish the draft release of the nightly build of `sha`, and return the exit code."""
+    """Publish the nightly build of `sha`, and return 0.
+
+    It checks `sha` again first. When `recheck` gives a reason, it publishes nothing and returns 0.
+    Else it deletes the old `nightly-` drafts, makes a draft with the assets, and publishes it.
+    """
     repo = os.environ["GITHUB_REPOSITORY"]
     reason = recheck(repo, sha)
     if reason:

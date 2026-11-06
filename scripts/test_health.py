@@ -1,4 +1,4 @@
-"""Prints the health of a nextest JUnit report: counts, times, the slowest tests and the tests
+"""Print the health of a nextest JUnit report: counts, times, the slowest tests and the tests
 over their budget (CODING_STANDARDS.md, Tests). A milestone pull request quotes it before and after.
 
 Usage: python3 test_health.py JUNIT.xml

@@ -351,12 +351,12 @@ def fixes(json_text: str, code: str) -> list[bool]:
 
 
 def explanation(code: str) -> str:
-    """Return the Markdown file of the explanation of `code`."""
+    """Return the Markdown text of the explanation of `code`."""
     return (ROOT / f"docs/diagnostics/{code}.md").read_text(encoding="utf-8")
 
 
 def title(code: str, markdown: str) -> str:
-    """Return the Markdown of the explanation's title: the heading after `CODE: `, upper-cased."""
+    """Return the title of the explanation: its heading after `CODE: `, first letter upper-cased."""
     heading = markdown.partition("\n")[0]
     if not heading.startswith(f"# {code}: "):
         raise BuildError(f'{code} does not start with "# {code}: "')
@@ -625,7 +625,7 @@ def mark_rules(tokens: list[Token]) -> None:  # noqa: C901  one scan of the toke
                     break
 
 
-def reference_html(  # noqa: C901, PLR0912  one scan of the tokens, with one branch for each token kind
+def reference_html(  # noqa: C901, PLR0912  both count the same branches: one scan of the tokens, with one branch for each token kind
     markdown: str, path: Path
 ) -> tuple[str, list[tuple[int, str, str, bool]], bool]:
     """Return a language reference page without its `#` title, its headings and its tag.
@@ -810,7 +810,7 @@ def bench_programs() -> list[str]:
     return sorted(found[1].split())
 
 
-def benchmark_tables(  # noqa: C901, PLR0912  one scan of the tokens, with one branch for each check
+def benchmark_tables(  # noqa: C901, PLR0912  both count the same branches: one scan of the tokens, with one branch for each check
     markdown: str, expected: list[str] | None = None
 ) -> dict[str, dict[str, dict[str, str]]]:
     """Return program -> language -> column -> cell text, from each `### <program>` table.
@@ -1216,7 +1216,7 @@ def link_problems(
             yield f"missing anchor {target}"
 
 
-def page_problems(  # noqa: C901, PLR0913  one check after the other, as the page is read once
+def page_problems(  # noqa: C901, PLR0913  one check after the other, as the page is read once; the arguments are the page, its text, its tags, its ids and one flag, which the checks read
     out: Path, page: Path, text: str, tags: Tags, ids: dict[Path, set[str]], *, forbid_tk: bool
 ) -> Iterator[str]:
     """Yield the problems of one built page."""

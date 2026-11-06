@@ -28,7 +28,7 @@ CLOSES = re.compile(r"^Closes #(\d+)\s*$", re.MULTILINE | re.IGNORECASE)
 PASSED = {"success", "skipped", "neutral"}
 
 
-class Stop(Exception):  # noqa: N818  the tests and the callers name it `Stop`
+class Stop(Exception):  # noqa: N818  a signal to stop with no merge, not a fault: `merge` catches it to read again, `main` to exit with 1
     """A reason to stop with no merge: `main` prints the message and returns 1."""
 
 

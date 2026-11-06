@@ -53,7 +53,7 @@ FORMATTERS = {
 STDERR_LINES = 20
 
 
-class Fail(Exception):  # noqa: N818  the tests and the callers name it `Fail`
+class Fail(Exception):  # noqa: N818  a signal for a failed check, not a fault: only `main` catches it, and it exits with 1
     """A check or a command failed: `main` prints the message and exits with code 1."""
 
 
@@ -187,7 +187,7 @@ def empty_program(lang: str) -> str:
     }[lang]
 
 
-def command(  # noqa: C901, PLR0911, PLR0913  one branch for each language and row, as a table of commands
+def command(  # noqa: C901, PLR0911, PLR0913  the branches and returns are one for each language, as a table of commands; the arguments are the row, the language, the two paths and two options, and each changes the command
     row: str,
     lang: str,
     src: Path | str,
@@ -635,7 +635,7 @@ class Measurer:
         self.args, self.deadline, self.perf = args, deadline, perf
         self.serial = itertools.count()
 
-    def run(  # noqa: PLR0913, PLR0917  the cell passes the six values it has
+    def run(  # noqa: PLR0913, PLR0917  too many arguments and too many positional ones: the cell passes the six values it has
         self,
         cmd: list[str],
         what: str,
@@ -673,7 +673,7 @@ class Measurer:
             elapsed = go_fe_parse(content, what)
         return elapsed, r.stderr
 
-    def cell(  # noqa: PLR0913, PLR0917  the six values of `run` and one flag
+    def cell(  # noqa: PLR0913, PLR0917  too many arguments and too many positional ones: the six values of `run` and one flag
         self,
         cmd: list[str],
         what: str,

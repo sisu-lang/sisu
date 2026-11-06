@@ -88,7 +88,7 @@ def functions(k: int) -> str:
 
 
 def statements(k: int) -> str:
-    """Return a program whose `main` has a chain of `k` `let` statements."""
+    """Return a program whose `main` has a chain of `k + 1` `let` statements."""
     lets = "".join(f"    let a{tag(i)} = a{tag(i - 1)} + 1\n" for i in range(1, k + 1))
     return f'fn main() {{\n    let a{tag(0)} = 0\n{lets}    print("{{a{tag(k)}}}")\n}}\n'
 
@@ -102,13 +102,13 @@ def expression_depth(k: int) -> str:
 
 
 def float_left(k: int) -> str:
-    """Return a program with a left-nested sum of `k` float literals."""
+    """Return a program with a left-nested sum of `k + 1` float literals."""
     chain = nest(k, lambda s: f"({s}) + 1.1", "1.1")
     return f'fn main() {{\n    let x = {chain}\n    print("{{x}}")\n}}\n'
 
 
 def string_left(k: int) -> str:
-    """Return a program with a left-nested sum of `k` string literals."""
+    """Return a program with a left-nested sum of `k + 1` string literals."""
     chain = nest(k, lambda s: f'({s}) + "a"', '"a"')
     return f'fn main() {{\n    let x = {chain}\n    print("{{x}}")\n}}\n'
 

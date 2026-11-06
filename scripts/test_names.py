@@ -1,4 +1,4 @@
-"""Rejects a `#[test]` whose name does not say what should hold, and an end-to-end test without
+"""Reject a `#[test]` whose name does not say what should hold, and an end-to-end test without
 GIVEN, WHEN and THEN lines above it (CODING_STANDARDS.md, Tests). The tests in
 test_names_baseline.txt were named before the rule and are skipped.
 

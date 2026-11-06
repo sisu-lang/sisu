@@ -56,7 +56,11 @@ def in_diff(name: str, diff: str) -> bool:
 
 
 def main(path: str, ref: str | None = None) -> None:
-    """Print the tests over budget in the report `path`, only those the diff against `ref` names."""
+    """Print the tests over budget in the report `path`.
+
+    With no `ref`, it prints all of them. With a `ref`, it prints only the tests that the diff
+    against `ref` names, and says how many others are over budget.
+    """
     try:
         junit = Path(path).read_text(encoding="utf-8")
         tests = timed(junit)

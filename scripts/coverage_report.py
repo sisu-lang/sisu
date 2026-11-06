@@ -193,11 +193,11 @@ def main(argv: list[str]) -> int:
         data = export["data"][0]
         for kind in ("lines", "regions"):
             if not isinstance(data["totals"][kind]["percent"], (int, float)):
-                raise ValueError(  # noqa: TRY004, TRY301  the handler prints the type name, so TypeError changes the message
+                raise ValueError(  # noqa: TRY004, TRY301  the handler of this `try` prints the message, and TypeError would change the type name that it prints
                     f"totals.{kind}.percent is not a number"
                 )
         if not isinstance(data["functions"], list):
-            raise ValueError("functions is not a list")  # noqa: TRY004, TRY301  as for `percent`
+            raise ValueError("functions is not a list")  # noqa: TRY004, TRY301  as for `percent`: the handler prints the message, and TypeError would change the type name
         root = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True
         ).stdout.strip()

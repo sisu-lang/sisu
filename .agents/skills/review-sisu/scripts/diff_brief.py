@@ -276,7 +276,7 @@ def drop_line(t: str, start: str) -> str:
     return re.sub(rf"- {re.escape(start)}.*?(?=\n- |\n\n)\n?", "", t, flags=re.DOTALL)
 
 
-def main() -> None:  # noqa: C901, PLR0912, PLR0915  one linear pass: a step reads what the step before it set
+def main() -> None:  # noqa: C901, PLR0912, PLR0915  one linear pass: a branch for each option, a statement for each step, and each step reads what the step before it set
     """Write the brief that the command line asks for, and print its path."""
     p = argparse.ArgumentParser()
     p.add_argument("repo")
