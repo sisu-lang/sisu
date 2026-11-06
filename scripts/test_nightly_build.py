@@ -25,12 +25,13 @@ A, B, C = ('a' * 40, 'b' * 40, 'c' * 40)
 HEAD = 'd' * 40
 NO_NEW = 'no new green commit'
 DIFFER = 'the newest green commit has other workflow files than `main`'
-NEWER = 'a newer nightly build exists'
+NEWER = 'the commit is not newer than the newest nightly build'
 TITLE = 'Nightly build failure'
 
 FAKE_GH = """#!%s
 import io, json, os, sys, zipfile
 from datetime import datetime, timezone
+from urllib.parse import parse_qs
 args = sys.argv[1:]
 state_path = os.environ['FAKE_STATE']
 with open(state_path, encoding='utf-8') as f:
@@ -56,10 +57,19 @@ def draft_of(tag):
     return found[-1]
 
 
+def release_of(tag):
+    found = [r for r in state['releases'] if r['tag_name'] == tag]
+    if not found:
+        print('gh: release not found: ' + tag, file=sys.stderr)
+        sys.exit(1)
+    return found[-1]
+
+
 is_release = args[0] == 'release'
 path = '' if is_release else next(a for a in args if a.startswith('repos/'))
 key = ' '.join(args[:2]) if is_release else path
-if state['fail_on'] and state['fail_on'] in key:
+partial = state['fail_after'] and key == 'release upload'
+if state['fail_on'] and state['fail_on'] in key and not partial:
     state['fail_on'] = None  # one call fails
     save()
     print('gh: HTTP 500', file=sys.stderr)
@@ -73,15 +83,27 @@ if is_release:
                                   'published_at': None, 'assets': {},
                                   'target': args[args.index('--target') + 1]})
     elif command == 'upload':
-        for name in rest:
+        release = release_of(tag)  # gh also uploads to a published release
+        for count, name in enumerate(rest):
+            if state['fail_on'] and partial and count == state['fail_after']:
+                state['fail_on'] = None  # one call fails, after some assets are stored
+                save()
+                print('gh: HTTP 500', file=sys.stderr)
+                sys.exit(1)
+            asset = os.path.basename(name)
+            if asset in release['assets'] and '--clobber' not in args:
+                print('gh: asset under the same name already exists: ' + asset, file=sys.stderr)
+                sys.exit(1)
             with open(name, encoding='utf-8') as f:
-                draft_of(tag)['assets'][os.path.basename(name)] = f.read()
+                release['assets'][asset] = f.read()
+            save()
     elif command == 'edit':
         release = draft_of(tag)
         release['draft'] = '--draft=false' not in args
         release['published_at'] = now()
         release['latest'] = '--latest' in args
     elif command == 'delete':
+        release_of(tag)
         state['releases'] = [r for r in state['releases'] if r['tag_name'] != tag]
         if '--cleanup-tag' in args:
             state['tags_deleted'].append(tag)
@@ -89,6 +111,9 @@ if is_release:
     sys.exit(0)
 if '--method' in args and 'DELETE' in args:
     gone = int(path.rsplit('/', 1)[1])
+    if gone not in [r['id'] for r in state['releases']]:
+        print('gh: HTTP 404', file=sys.stderr)
+        sys.exit(1)
     state['releases'] = [r for r in state['releases'] if r['id'] != gone]
     save()
     sys.exit(0)  # the reply is empty
@@ -96,7 +121,9 @@ if '--input' in args:
     body = json.load(sys.stdin)
     state['posted'].append({'path': path, 'body': body})
     if path.endswith('/issues'):
-        state['issues'].append({'number': 100 + len(state['posted']), 'title': body['title']})
+        state['issues'].append({'number': 100 + len(state['posted']), 'title': body['title'],
+                                'state': 'open', 'pull_request': None,
+                                'labels': [{'name': name} for name in body['labels']]})
     save()
     print('{}')
     sys.exit(0)
@@ -128,7 +155,11 @@ elif '/actions/artifacts/' in path and path.endswith('/zip'):
 elif '/releases?' in path:
     reply = state['releases'] if '--paginate' in args else state['releases'][:100]
 elif '/issues?' in path:
-    reply = state['issues'] if '--paginate' in args else state['issues'][:100]
+    query = parse_qs(path.split('?')[1])
+    reply = [i for i in state['issues'] if i['state'] == query['state'][0]
+             and query['labels'][0] in [label['name'] for label in i['labels']]]
+    if '--paginate' not in args:
+        reply = reply[:100]
 elif '/contents/.github?ref=' in path:
     ref = path.split('ref=')[1]
     if ref.endswith('^'):
@@ -176,11 +207,12 @@ def nightly(sha, published_at='2026-11-01T00:00:00Z'):
 
 
 def state(commits, green=(), releases=(), trees=None, parents=None, fail_on=None, artifacts=(),
-          issues=()):
+          issues=(), fail_after=0):
     parents = parents or dict(zip(commits, [*commits[1:], 'e' * 40]))
     ids = ['main', HEAD, *commits, *parents.values()]
     return {'commits': list(commits), 'green': list(green), 'releases': list(releases),
             'trees': trees or {sha: 't1' for sha in ids}, 'parents': parents, 'fail_on': fail_on,
+            'fail_after': fail_after,
             'artifacts': list(artifacts), 'issues': list(issues), 'posted': [],
             'tags_deleted': [], 'next_id': 10**6}
 
@@ -358,8 +390,7 @@ def numbered(i):
     return release(f'nightly-2026-09-01-{i:07x}', when.strftime('%Y-%m-%dT%H:%M:%SZ'))
 
 
-def tags(fake_state, **match):
-    draft = match.get('draft', False)
+def release_tags(fake_state, draft=False):
     return [r['tag_name'] for r in fake_state['releases'] if r['draft'] == draft]
 
 
@@ -380,8 +411,8 @@ def sent(calls, *words):
 
 
 class Publish(Script):
-    def run_publish(self, fake, sha=A):
-        return self.run_script(['publish', '--sha', sha], fake, GITHUB_RUN_ID='42')
+    def run_publish(self, fake, sha=A, **env):
+        return self.run_script(['publish', '--sha', sha], fake, GITHUB_RUN_ID='42', **env)
 
     def fake(self, releases=(), artifacts=None, **extra):
         artifacts = all_artifacts() if artifacts is None else artifacts
@@ -413,6 +444,7 @@ class Publish(Script):
                 self.assertIn('--draft', calls[create])
                 self.assertEqual(calls[create][calls[create].index('--target') + 1], A)
                 self.assertIn('--latest=false', calls[create])
+                self.assertIn(A, calls[create][calls[create].index('--notes') + 1])
                 self.assertEqual(calls[upload][2], tag)
                 files = [a for a in calls[upload][3:] if not a.startswith('--') and a != 'o/r']
                 self.assertEqual(sorted(os.path.basename(f) for f in files), sorted(ASSETS))
@@ -435,34 +467,44 @@ class Publish(Script):
                 self.assertEqual([run.calls[i][-1] for i in deletes],
                                  [f'repos/o/r/releases/{draft["id"]}'])
                 self.assertLess(deletes[0], first(run.calls, 'release', 'create'))
-                self.assertIn('other', tags(run.state, draft=True))
-                self.assertNotIn(draft['tag_name'], tags(run.state, draft=True))
+                self.assertIn('other', release_tags(run.state, draft=True))
+                self.assertNotIn(draft['tag_name'], release_tags(run.state, draft=True))
 
     def test_failed_upload_should_not_publish_the_draft(self):
-        fake = self.fake([nightly(B)], fail_on='release upload')
-        run = self.run_publish(fake)
-        self.assertNotEqual(run.code, 0)
-        self.assertEqual(sent(run.calls, 'release', 'edit'), [])
-        self.assertEqual(tags(run.state), tags(fake))
+        for name, stored in (('no asset stored', 0), ('two assets stored', 2)):
+            with self.subTest(name):
+                fake = self.fake([nightly(B)], fail_on='release upload', fail_after=stored)
+                run = self.run_publish(fake)
+                self.assertNotEqual(run.code, 0)
+                self.assertEqual(sent(run.calls, 'release', 'edit'), [])
+                self.assertNotEqual(run.out.get('published'), 'true')
+                self.assertEqual(release_tags(run.state), release_tags(fake))
+                [draft] = [r for r in run.state['releases'] if r['draft']]
+                self.assertEqual(len(draft['assets']), stored)
 
     def test_failed_create_should_not_publish(self):
         run = self.run_publish(self.fake([nightly(B)], fail_on='release create'))
         self.assertNotEqual(run.code, 0)
+        self.assertEqual(len(sent(run.calls, 'release', 'create')), 1)
+        self.assertEqual(sent(run.calls, 'release', 'upload'), [])
         self.assertEqual(sent(run.calls, 'release', 'edit'), [])
 
     def test_next_publish_should_clear_a_failed_upload(self):
-        failed = self.run_publish(self.fake([nightly(B)], fail_on='release upload'))
+        failed = self.run_publish(self.fake([nightly(B)], fail_on='release upload', fail_after=2))
         self.assertNotEqual(failed.code, 0)
         drafts = [r for r in failed.state['releases'] if r['draft']]
         self.assertEqual(len(drafts), 1)
         draft = drafts[0]
-        run = self.run_publish(dict(failed.state, fail_on=None))
+        self.assertEqual(len(draft['assets']), 2)
+        run = self.run_publish(dict(failed.state, fail_on=None, fail_after=0))
         self.assertEqual(run.code, 0, run.stderr)
         deleted = [c[-1] for c in run.calls if 'DELETE' in c]
         self.assertIn(f'repos/o/r/releases/{draft["id"]}', deleted)
         self.assertEqual(run.out.get('published'), 'true')
-        self.assertEqual(tags(run.state, draft=True), [])
-        self.assertIn(draft['tag_name'], tags(run.state))
+        self.assertEqual(release_tags(run.state, draft=True), [])
+        self.assertIn(draft['tag_name'], release_tags(run.state))
+        assets = [r['assets'] for r in run.state['releases'] if r['tag_name'] == draft['tag_name']]
+        self.assertEqual(assets, [{f: f'v:{f}' for f in ASSETS}])
 
     def test_publish_should_upload_the_largest_id_of_each_name(self):
         def pair(old_first, early_new=False):
@@ -491,6 +533,40 @@ class Publish(Script):
         self.assertEqual(with_arg(run.calls, 'DELETE'), [])
         self.assertEqual(sent(run.calls, 'release'), [])
 
+    def test_publish_should_stop_on_two_artifacts_with_one_file_name(self):
+        def extra(files):
+            return {'id': 50, 'name': 'extra', 'created_at': '2026-11-06T01:00:00Z', 'files': files}
+
+        draft = release('nightly-2026-11-02-1234567', None, draft=True)
+        rows = (('extra listed last', [*all_artifacts(), extra({'install.sh': 'other'})],
+                 ['release-files', 'extra']),
+                ('extra listed first', [extra({'install.sh': 'other'}), *all_artifacts()],
+                 ['release-files', 'extra']),
+                ('one artifact, two folders',
+                 [extra({'install.sh': 'a', 'sub/install.sh': 'b'}),
+                  *all_artifacts(skip=ASSETS[3:4])], ['extra']))
+        for name, artifacts, named in rows:
+            with self.subTest(name):
+                run = self.run_publish(self.fake([draft], artifacts))
+                self.assertNotEqual(run.code, 0)
+                self.assertIn('install.sh', run.stderr)
+                for artifact_name in named:
+                    self.assertIn(artifact_name, run.stderr)
+                self.assertEqual(with_arg(run.calls, 'DELETE'), [])
+                self.assertEqual(sent(run.calls, 'release'), [])
+
+    def test_publish_should_stay_in_its_temp_directory(self):
+        tmp = os.path.join(self.dir, 'tmp')
+        os.mkdir(tmp)
+        names = ('..', '../../up', 'a/b')
+        evil = [{'id': 60 + i, 'name': n, 'created_at': '2026-11-06T01:00:00Z',
+                 'files': {'evil.txt': 'x', '../zipslip.txt': 'y'}} for i, n in enumerate(names)]
+        run = self.run_publish(self.fake([], [*all_artifacts(), *evil]), TMPDIR=tmp)
+        self.assertEqual(run.code, 0, run.stderr)
+        self.assertEqual(os.listdir(tmp), [])
+        outside = {'bin', 'tmp', 'state.json', 'state.json.calls', 'output', 'summary'}
+        self.assertLessEqual(set(os.listdir(self.dir)), outside)
+
     def test_publish_should_stop_when_a_newer_nightly_build_exists(self):
         run = self.run_publish(state([A, B], [A, B], [nightly(A)], artifacts=all_artifacts()), B)
         self.assert_stopped(run, NEWER)
@@ -518,12 +594,15 @@ class Publish(Script):
         self.assertEqual(published.code, 0, published.stderr)
         run = self.run_script(['prune'], published.state)
         self.assertEqual(run.code, 0, run.stderr)
-        left = tags(run.state)
+        left = release_tags(run.state)
         self.assertEqual(len(left), 14)
         self.assertIn(published.calls[first(published.calls, 'release', 'create')][2], left)
-        self.assertEqual(tags(run.state, draft=True), [])
-        for old in built[:2]:
-            self.assertNotIn(old['tag_name'], left)
+        self.assertEqual(release_tags(run.state, draft=True), [])
+        old = [r['tag_name'] for r in built[:2]]
+        for tag in old:
+            self.assertNotIn(tag, left)
+            self.assertIn(tag, run.state['tags_deleted'])
+        self.assertEqual(len(run.state['tags_deleted']), len(old))
 
 
 class Prune(Script):
@@ -544,7 +623,7 @@ class Prune(Script):
         for call in sent(run.calls, 'release', 'delete'):
             self.assertIn('--cleanup-tag', call)
         self.assertEqual(with_arg(run.calls, 'v1.0.0') + with_arg(run.calls, 'ddddddd'), [])
-        self.assertEqual(len(tags(run.state)), 15)
+        self.assertEqual(len(release_tags(run.state)), 15)
 
     def test_prune_should_delete_nothing_at_14(self):
         run = self.run_prune(state([A], releases=[numbered(i) for i in range(14)]))
@@ -557,13 +636,18 @@ class Prune(Script):
         run = self.run_prune(state([A], releases=built[::2] + built[1::2]))
         self.assertEqual(run.code, 0, run.stderr)
         self.assertEqual(sorted(self.deleted(run)), sorted(r['tag_name'] for r in built[:88]))
-        self.assertEqual(len(tags(run.state)), 14)
+        self.assertEqual(len(release_tags(run.state)), 14)
 
     def test_prune_should_try_every_delete_and_then_fail(self):
         run = self.run_prune(state([A], releases=[numbered(i) for i in range(16)],
                                    fail_on='release delete'))
         self.assertNotEqual(run.code, 0)
         self.assertEqual(len(self.deleted(run)), 2)
+
+
+def issue(number, title=TITLE, state='open', labels=('nightly-build',), pull_request=None):
+    return {'number': number, 'title': title, 'state': state, 'pull_request': pull_request,
+            'labels': [{'name': name} for name in labels]}
 
 
 class Report(Script):
@@ -588,7 +672,7 @@ class Report(Script):
         self.assertIn('build: failure', post['body']['body'])
 
     def test_report_should_comment_on_an_open_issue(self):
-        issues = [{'number': 9, 'title': TITLE, 'pull_request': None}]
+        issues = [issue(9)]
         post = self.posted(self.run_report({'build': 'failure'}, issues))
         self.assertEqual(post['path'], 'repos/o/r/issues/9/comments')
         self.assertIn('build: failure', post['body']['body'])
@@ -610,18 +694,27 @@ class Report(Script):
         self.assertNotIn('prune', body)
 
     def test_report_should_ignore_a_pull_request_with_the_title(self):
-        issues = [{'number': 3, 'title': TITLE, 'pull_request': {'url': 'x'}}]
+        issues = [issue(3, pull_request={'url': 'x'})]
         self.assertEqual(self.posted(self.run_report({'build': 'failure'}, issues))['path'],
                          'repos/o/r/issues')
 
     def test_report_should_read_every_page_of_issues(self):
-        issues = [{'number': n, 'title': 'Other', 'pull_request': None} for n in range(100)]
-        issues.append({'number': 500, 'title': TITLE, 'pull_request': None})
+        issues = [issue(n, 'Other') for n in range(100)] + [issue(500)]
         post = self.posted(self.run_report({'build': 'failure'}, issues))
         self.assertEqual(post['path'], 'repos/o/r/issues/500/comments')
 
+    def test_report_should_not_comment_on_a_closed_issue(self):
+        issues = [issue(6, state='closed')]
+        self.assertEqual(self.posted(self.run_report({'build': 'failure'}, issues))['path'],
+                         'repos/o/r/issues')
+
+    def test_report_should_not_comment_on_an_issue_without_the_label(self):
+        issues = [issue(7, labels=())]
+        self.assertEqual(self.posted(self.run_report({'build': 'failure'}, issues))['path'],
+                         'repos/o/r/issues')
+
     def test_report_should_ignore_another_title(self):
-        issues = [{'number': 4, 'title': 'Other', 'pull_request': None}]
+        issues = [issue(4, 'Other')]
         self.assertEqual(self.posted(self.run_report({'build': 'failure'}, issues))['path'],
                          'repos/o/r/issues')
 
