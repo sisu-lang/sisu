@@ -24,12 +24,12 @@ fn main() {
     let h = H(xs: [])
     let ys = [K(v: 2, h: None)]
     h.xs = mk(h)
-    print(a(h, ys))
+    print(a(h, ys))  // true
     h.xs = mk(h)
-    print(b(h.xs, ys))
+    print(b(h.xs, ys))  // true
     h.xs = mk(h)
-    print(c(h, K(v: 2, h: Some(h))))
+    print(c(h, K(v: 2, h: Some(h))))  // true
     h.xs = mk(h)
-    print(d(h.xs, K(v: 2, h: Some(h))))
+    print(d(h.xs, K(v: 2, h: Some(h))))  // true
     print(h.xs.len())                    // 0
 }

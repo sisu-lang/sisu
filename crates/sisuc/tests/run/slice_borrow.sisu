@@ -17,11 +17,14 @@ fn three() -> [string] { ["a", "b".to_string() + "c", "d"] }
 
 // A slice that a call only reads. `note` recurses and works after the call, so `-O2` keeps it.
 // `-O2` knows that a length is not negative, so the test is `< 2`, and each call gets an array of
-// run-time length that it cannot decide is short.
+// run-time length that it cannot decide is short. The callees print `ys[0]` at depth 0. So a call
+// must pass the data pointer, and it must write memory (`docs/development.md`, the `o2-calls`
+// rule). A callee that only returns `ys.len()` takes the length alone, and `-O2` drops the pointer.
 fn note(ys: [string], depth: i64) -> i64 {
     if depth > 0 && note(ys, depth - 1) < 2 {
         return -1
     }
+    if depth == 0 { print(ys[0]) }
     ys.len()
 }
 
@@ -29,11 +32,15 @@ fn note_field(ys: [string], depth: i64) -> i64 {
     if depth > 0 && note_field(ys, depth - 1) < 2 {
         return -1
     }
+    if depth == 0 { print(ys[0]) }
     ys.len()
 }
 
 fn sum(xs: [i64]) -> i64 {
-    if xs.len() == 0 { return 0 }
+    if xs.len() == 0 {
+        print("end")
+        return 0
+    }
     xs[0] + sum(xs[1..])
 }
 
@@ -243,11 +250,11 @@ fn main(args: [string]) {
     print(field_chain_fixed(o))                            // 1
     print(field_chain_mut(o))                              // 2
     let xs = ["bc".to_string(); d + 2]
-    print(note(xs[1..], d) + xs.len())                     // 2 + 3 = 5
+    print(note(xs[1..], d) + xs.len())                     // bc, then 2 + 3 = 5
     let k = K(cs: ["bc".to_string(); d + 2])
-    print(k.part(d) + k.cs.len())                          // 2 + 3 = 5
+    print(k.part(d) + k.cs.len())                          // bc, then 2 + 3 = 5
     let ys = [d; d + 2]
-    print(sum(ys) + ys.len())                              // 3 + 3 = 6
+    print(sum(ys) + ys.len())                              // end, then 3 + 3 = 6
     print(L(cs: three()).part())                           // 2
     print(L(cs: two()).has())                              // true
 }
