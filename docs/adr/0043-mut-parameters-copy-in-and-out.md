@@ -5,6 +5,14 @@ caller's array" of [ADR 0007](0007-arrays-are-values.md) and the sentence
 "there is no `inout`" of [ADR 0011](0011-let-mut-marks-what-can-change.md). It
 retires the error E0019, "a parameter cannot be `mut`".
 
+Changed in part by [ADR 0046](0046-structs-replace-classes.md): the take from
+its step 2, the rest when classes go. "What reaches a place" and `MutLostWrite`
+go. All conditions of a take go except three: the run-time test for two `mut`
+arguments that overlap stays, the condition on a resource type reverses for a
+move-only value, and a call with a `mut` place through a map entry or a user
+`Indexable` type copies each of its `mut` arguments. Otherwise, a `mut` argument
+through struct fields and array elements is taken. None of these is built.
+
 A function can change an array, a string or a struct that its caller holds. The
 parameter says `mut`, and the call site says `mut` again:
 
