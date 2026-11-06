@@ -33,7 +33,7 @@ def git(path: str, *args: str) -> str:
     ).stdout
 
 
-def write(path: str, name: str, content: str | bytes) -> None:
+def write(path: str | Path, name: str, content: str | bytes) -> None:
     """Writes `content` to the file `name` under `path`."""
     Path(path, name).write_bytes(content if isinstance(content, bytes) else content.encode("utf-8"))
 

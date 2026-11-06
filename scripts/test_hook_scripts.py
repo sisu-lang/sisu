@@ -2,11 +2,11 @@
 
 import contextlib
 import io
-import os
 import subprocess
 import tempfile
 import unittest
 from collections.abc import Callable
+from pathlib import Path
 
 import comment_width
 import registry_debug_format
@@ -17,12 +17,12 @@ import test_names
 def run(main: Callable[[list[str]], int], text: str) -> tuple[int, str]:
     """`main`'s exit code and output on one file holding `text`."""
     with tempfile.TemporaryDirectory() as d:
-        path = os.path.join(d, "f.rs")
-        with open(path, "w", encoding="utf-8") as f:
+        path = Path(d, "f.rs")
+        with path.open("w", encoding="utf-8") as f:
             f.write(text)
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            code = main([path])
+            code = main([str(path)])
     return code, out.getvalue()
 
 
@@ -72,13 +72,13 @@ def run_hook(script: str, text: str, name: str = "f.rs", relative: bool = False)
     With `relative`, the hook gets `name` as a relative path, as prek gives it.
     """
     with tempfile.TemporaryDirectory() as d:
-        path = os.path.join(d, name)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
+        path = Path(d, name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as f:
             f.write(text)
         done = subprocess.run(
             [
-                os.path.join(os.path.dirname(os.path.abspath(__file__)), script),
+                Path(__file__).absolute().parent / script,
                 name if relative else path,
             ],
             capture_output=True,
@@ -205,16 +205,16 @@ def run_test_names(
 ) -> tuple[int, str]:
     """test_names' exit code and output on one file at `path` holding `text`."""
     with tempfile.TemporaryDirectory() as d:
-        full = os.path.join(d, path)
-        os.makedirs(os.path.dirname(full))
-        with open(full, "w", encoding="utf-8") as f:
+        full = Path(d, path)
+        full.parent.mkdir(parents=True)
+        with full.open("w", encoding="utf-8") as f:
             f.write(text)
-        old = os.path.join(d, "baseline.txt")
-        with open(old, "w", encoding="utf-8") as f:
-            f.write(baseline.replace("PATH", full))
+        old = Path(d, "baseline.txt")
+        with old.open("w", encoding="utf-8") as f:
+            f.write(baseline.replace("PATH", str(full)))
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            code = test_names.main([full], old)
+            code = test_names.main([str(full)], old)
     return code, out.getvalue()
 
 

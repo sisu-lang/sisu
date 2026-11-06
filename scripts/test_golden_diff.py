@@ -6,6 +6,7 @@ import os
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 from typing import override
 from unittest import mock
 
@@ -14,8 +15,9 @@ import golden_diff as gd
 
 def commit(repo: str, files: dict[str, str]) -> str:
     for name, text in files.items():
-        os.makedirs(os.path.join(repo, os.path.dirname(name)), exist_ok=True)
-        with open(os.path.join(repo, name), "w", encoding="utf-8") as f:
+        file = Path(repo, name)
+        file.parent.mkdir(parents=True, exist_ok=True)
+        with file.open("w", encoding="utf-8") as f:
             f.write(text)
     subprocess.run(["git", "-C", repo, "add", "."], check=True)
     subprocess.run(
@@ -48,7 +50,7 @@ class GoldenDiff(unittest.TestCase):
             base = commit(repo, files_before)
             head = commit(repo, files_after)
             out = io.StringIO()
-            cwd = os.getcwd()
+            cwd = Path.cwd()
             os.chdir(repo)
             try:
                 with contextlib.redirect_stdout(out):
@@ -89,14 +91,14 @@ class GoldenDiff(unittest.TestCase):
     def test_golden_diff_should_compare_bytes_that_are_not_utf_8(self) -> None:
         with tempfile.TemporaryDirectory() as repo:
             subprocess.run(["git", "init", "-q", repo], check=True)
-            path = os.path.join(repo, "crates/c/tests/b.out")
-            os.makedirs(os.path.dirname(path))
+            path = Path(repo, "crates/c/tests/b.out")
+            path.parent.mkdir(parents=True)
             for text in (b"\xff old\n", b"\xfe new\n"):
-                with open(path, "wb") as f:
+                with path.open("wb") as f:
                     f.write(text)
                 commit(repo, {})
             out = io.StringIO()
-            cwd = os.getcwd()
+            cwd = Path.cwd()
             os.chdir(repo)
             try:
                 with contextlib.redirect_stdout(out):

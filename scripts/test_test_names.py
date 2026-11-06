@@ -8,17 +8,18 @@ import os
 import subprocess
 import sys
 import unittest
+from pathlib import Path
 
 import git_fixture
 import test_names
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = Path(__file__).absolute().parent.parent
 BASELINE_TEST = (
     "#[test]\nfn old_name() {\n    one();\n}\n\n#[test]\nfn other_name() {\n    two();\n}\n"
 )
 
 
-def run(argv: list[str], baseline: str) -> tuple[int, str]:
+def run(argv: list[str], baseline: Path) -> tuple[int, str]:
     """The exit code and output of `test_names.py ARGV` with `baseline` as its baseline file."""
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
@@ -32,11 +33,11 @@ write = git_fixture.write
 class TestNamesDiffAndBaseline(unittest.TestCase):
     def test_a_changed_baseline_test_should_fail(self) -> None:
         with git_fixture.repo({"crates/a/src/f.rs": BASELINE_TEST}) as tmp:
-            baseline = os.path.join(tmp, "baseline.txt")
+            baseline = Path(tmp, "baseline.txt")
             write(
                 tmp, "baseline.txt", "crates/a/src/f.rs::old_name\ncrates/a/src/f.rs::other_name\n"
             )
-            cwd = os.getcwd()
+            cwd = Path.cwd()
             os.chdir(tmp)
             self.addCleanup(os.chdir, cwd)
             self.assertEqual(run(["--diff", "HEAD", "crates/a/src/f.rs"], baseline), (0, ""))
@@ -55,16 +56,16 @@ class TestNamesDiffAndBaseline(unittest.TestCase):
 
     def test_a_baseline_line_with_no_test_should_fail(self) -> None:
         with git_fixture.repo({"f.rs": BASELINE_TEST}) as tmp:
-            baseline = os.path.join(tmp, "scripts", "test_names_baseline.txt")
-            os.makedirs(os.path.dirname(baseline))
+            baseline = Path(tmp, "scripts", "test_names_baseline.txt")
+            baseline.parent.mkdir(parents=True)
             write(
-                os.path.dirname(baseline),
+                baseline.parent,
                 "test_names_baseline.txt",
                 "# a comment\nf.rs::old_name\ngone.rs::old_name\nf.rs::no_name\nf.rs::old_name\n",
             )
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
-                code = test_names.check_baseline(baseline, tmp)
+                code = test_names.check_baseline(baseline, Path(tmp))
         self.assertEqual(code, 1)
         self.assertEqual(
             out.getvalue().splitlines(),
@@ -77,9 +78,9 @@ class TestNamesDiffAndBaseline(unittest.TestCase):
 
     def test_a_bad_ref_should_print_gits_error_and_fail(self) -> None:
         with git_fixture.repo({"f.rs": BASELINE_TEST}) as tmp:
-            baseline = os.path.join(tmp, "baseline.txt")
+            baseline = Path(tmp, "baseline.txt")
             write(tmp, "baseline.txt", "")
-            cwd = os.getcwd()
+            cwd = Path.cwd()
             os.chdir(tmp)
             self.addCleanup(os.chdir, cwd)
             code, out = run(["--diff", "no-such-ref", "f.rs"], baseline)
@@ -88,7 +89,7 @@ class TestNamesDiffAndBaseline(unittest.TestCase):
 
     def test_the_baseline_should_name_only_tests_on_the_tree(self) -> None:
         run = subprocess.run(
-            [sys.executable, os.path.join(ROOT, "scripts", "test_names.py"), "--baseline"],
+            [sys.executable, ROOT / "scripts" / "test_names.py", "--baseline"],
             capture_output=True,
             text=True,
             cwd=ROOT,

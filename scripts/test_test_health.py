@@ -1,14 +1,14 @@
 """Unit tests for test_health.py: python3 -m unittest discover -s scripts -p 'test_*.py'."""
 
-import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 import test_health as th
 
-SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test_health.py")
+SCRIPT = Path(__file__).absolute().parent / "test_health.py"
 
 REPORT = """<testsuites name="nextest-run" time="12.500">
 <testsuite name="@setup-script:build-runtime">
@@ -49,7 +49,7 @@ class TestHealth(unittest.TestCase):
     def test_the_script_should_print_nothing_and_exit_0_for_a_missing_report(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run = subprocess.run(
-                [sys.executable, SCRIPT, os.path.join(directory, "none.xml")],
+                [sys.executable, SCRIPT, Path(directory, "none.xml")],
                 capture_output=True,
                 text=True,
             )

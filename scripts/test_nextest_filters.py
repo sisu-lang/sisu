@@ -3,9 +3,9 @@
 import contextlib
 import io
 import json
-import os
 import tempfile
 import unittest
+from pathlib import Path
 from typing import Any
 
 import nextest_filters as nf
@@ -28,13 +28,14 @@ def overrides(*filters: str, table: str = "overrides", profile: str = "default")
 def problems(config: str, tests: dict[str, dict[str, Any]] = TESTS) -> list[str]:
     """What `check` finds for a config text and a nextest list of `tests` (a name per suite)."""
     with tempfile.TemporaryDirectory() as tmp:
-        config_path = os.path.join(tmp, "nextest.toml")
-        list_path = os.path.join(tmp, "list.json")
-        with open(config_path, "w", encoding="utf-8") as file:
+        config_path = Path(tmp, "nextest.toml")
+        list_path = Path(tmp, "list.json")
+        with config_path.open("w", encoding="utf-8") as file:
             file.write(config)
-        with open(list_path, "w", encoding="utf-8") as file:
+        with list_path.open("w", encoding="utf-8") as file:
             json.dump({"rust-suites": tests}, file)
-        return [line.replace(config_path, "CONFIG") for line in nf.check(config_path, list_path)]
+        found = nf.check(str(config_path), str(list_path))
+        return [line.replace(str(config_path), "CONFIG") for line in found]
 
 
 def no_match(line: int, leaf: str) -> str:
@@ -214,15 +215,15 @@ class NextestFilters(unittest.TestCase):
 
     def test_a_bad_leaf_should_fail_the_run_and_print_its_line(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            config = os.path.join(tmp, "nextest.toml")
-            tests = os.path.join(tmp, "list.json")
-            with open(config, "w", encoding="utf-8") as file:
+            config = Path(tmp, "nextest.toml")
+            tests = Path(tmp, "list.json")
+            with config.open("w", encoding="utf-8") as file:
                 file.write(overrides("test(=check::tests::a_should_x)", "test(=gone)"))
-            with open(tests, "w", encoding="utf-8") as file:
+            with tests.open("w", encoding="utf-8") as file:
                 json.dump({"rust-suites": TESTS}, file)
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
-                status = nf.main([config, tests])
+                status = nf.main([str(config), str(tests)])
         self.assertEqual(
             (status, out.getvalue()),
             (
@@ -233,15 +234,15 @@ class NextestFilters(unittest.TestCase):
 
     def test_a_config_with_nothing_to_check_should_print_nothing_and_pass(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            config = os.path.join(tmp, "nextest.toml")
-            tests = os.path.join(tmp, "list.json")
-            with open(config, "w", encoding="utf-8") as file:
+            config = Path(tmp, "nextest.toml")
+            tests = Path(tmp, "list.json")
+            with config.open("w", encoding="utf-8") as file:
                 file.write(overrides("binary(sisuc) | kind(test)"))
-            with open(tests, "w", encoding="utf-8") as file:
+            with tests.open("w", encoding="utf-8") as file:
                 json.dump({"rust-suites": TESTS}, file)
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
-                self.assertEqual(nf.main([config, tests]), 0)
+                self.assertEqual(nf.main([str(config), str(tests)]), 0)
         self.assertEqual(out.getvalue(), "")
 
 

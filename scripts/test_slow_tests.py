@@ -1,15 +1,15 @@
 """Unit tests for slow_tests.py: python3 -m unittest discover -s scripts -p 'test_*.py'."""
 
-import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 import git_fixture
 import slow_tests as st
 
-SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "slow_tests.py")
+SCRIPT = Path(__file__).absolute().parent / "slow_tests.py"
 
 REPORT = """<testsuites>
 <testsuite name="@setup-script:build-runtime">
@@ -51,10 +51,10 @@ class SlowTests(unittest.TestCase):
 
     def test_with_diff_only_mentioned_tests_are_listed_and_the_rest_counted(self) -> None:
         with git_fixture.repo({"a.rs": "fn slow() {}\n"}) as tmp:
-            with open(os.path.join(tmp, "a.rs"), "w", encoding="utf-8") as file:
+            with Path(tmp, "a.rs").open("w", encoding="utf-8") as file:
                 file.write("fn big() {}\nfn slow() {}\n")
-            report = os.path.join(tmp, "junit.xml")
-            with open(report, "w", encoding="utf-8") as file:
+            report = Path(tmp, "junit.xml")
+            with report.open("w", encoding="utf-8") as file:
                 file.write(REPORT.replace("run::big.sisu", "run::big"))
             run = subprocess.run(
                 [sys.executable, SCRIPT, report, "--diff", "HEAD"],
@@ -81,9 +81,9 @@ class SlowTests(unittest.TestCase):
                     '<testsuites><testcase classname="sisuc" name="t" time="x"/></testsuites>',
                 ),
             ]:
-                path = os.path.join(tmp, f"{name}.xml")
+                path = Path(tmp, f"{name}.xml")
                 if text is not None:
-                    with open(path, "w", encoding="utf-8") as file:
+                    with path.open("w", encoding="utf-8") as file:
                         file.write(text)
                 run = subprocess.run([sys.executable, SCRIPT, path], capture_output=True, text=True)
                 self.assertEqual((run.returncode, run.stderr), (0, ""), name)

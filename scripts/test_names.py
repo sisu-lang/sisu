@@ -16,11 +16,12 @@ import re
 import subprocess
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 import changed_tests
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BASELINE = os.path.join(ROOT, "scripts", "test_names_baseline.txt")
+ROOT = Path(__file__).absolute().parent.parent
+BASELINE = ROOT / "scripts" / "test_names_baseline.txt"
 END_TO_END = re.compile(r"(^|/)crates/[^/]+/tests/")
 # At the start of a line, so `fn` inside an attribute such as `#[should_panic(expected = "fn f")]`
 # is not the test's name. rustfmt puts `#[test]` and `fn` on lines of their own.
@@ -73,14 +74,14 @@ def has_given_when_then(comment: list[str]) -> bool:
 
 
 def main(
-    paths: list[str], baseline: str = BASELINE, changed: frozenset[tuple[str, str]] = frozenset()
+    paths: list[str], baseline: Path = BASELINE, changed: frozenset[tuple[str, str]] = frozenset()
 ) -> int:
     # A count, so a new test that reuses an old name in another module of the file is checked.
-    with open(baseline, encoding="utf-8") as f:
+    with baseline.open(encoding="utf-8") as f:
         old = collections.Counter(l.strip() for l in f if l.strip() and not l.startswith("#"))
     bad = 0
     for path in paths:
-        with open(path, encoding="utf-8") as f:
+        with Path(path).open(encoding="utf-8") as f:
             lines = f.read().splitlines()
         for n, name, comment in tests(lines):
             if old[f"{path}::{name}"] > 0:
@@ -108,12 +109,12 @@ def main(
     return bad
 
 
-def check_baseline(baseline: str = BASELINE, root: str = ROOT) -> int:
+def check_baseline(baseline: Path = BASELINE, root: Path = ROOT) -> int:
     """Prints each line of `baseline` whose file, under `root`, has no test of that name."""
     have: dict[str, collections.Counter[str]] = {}
     seen: collections.Counter[str] = collections.Counter()
     bad = 0
-    with open(baseline, encoding="utf-8") as f:
+    with baseline.open(encoding="utf-8") as f:
         entries = f.read().splitlines()
     for n, entry in enumerate(entries, 1):
         if not entry.strip() or entry.startswith("#"):
@@ -121,7 +122,7 @@ def check_baseline(baseline: str = BASELINE, root: str = ROOT) -> int:
         path, _, name = entry.strip().rpartition("::")
         if path not in have:
             try:
-                with open(os.path.join(root, path), encoding="utf-8") as f:
+                with Path(root, path).open(encoding="utf-8") as f:
                     have[path] = collections.Counter(t[1] for t in tests(f.read().splitlines()))
             except FileNotFoundError:
                 have[path] = collections.Counter()
@@ -132,7 +133,7 @@ def check_baseline(baseline: str = BASELINE, root: str = ROOT) -> int:
     return bad
 
 
-def cli(argv: list[str], baseline: str = BASELINE) -> int:
+def cli(argv: list[str], baseline: Path = BASELINE) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--diff", metavar="REF")
     parser.add_argument("--baseline", action="store_true", dest="check")
