@@ -3460,7 +3460,7 @@ impl<'a> Parser<'a> {
         let (form, at) = match (&token.kind, &next.kind) {
             (TokenKind::Ident(_), _) if text == "case" => {
                 // A comment or a line break after `case` does not end the arm: `case` and a line
-                // break and then `=>` is a binding. A `;` ends it.
+                // break and then `=>` is a binding. A `;` on its line ends it.
                 let at = self.after_line_breaks(self.pos + 1);
                 let next = &self.tokens[at];
                 if next.kind == TokenKind::FatArrow {
@@ -8132,6 +8132,13 @@ mod tests {
             (in_arm("E.P { x }"), Code::Expected, 3, 13),
             // A `;` is no line break: it ends the arm before the `=>`.
             (in_arm("E.P { x }; => print(1)"), Code::Expected, 3, 13),
+            // A line break and then another token does not end a sub-pattern.
+            (
+                in_arm("E.P {\n            x: R { w }\n            y\n        } => print(1)"),
+                Code::Expected,
+                4,
+                18,
+            ),
             // A block in an arm is no sub-pattern: it does not keep the state of the pattern.
             (
                 "    match e {\n        A(x) => {\n            let a { }\n        }\n    }".into(),
@@ -8643,27 +8650,35 @@ mod tests {
     /// WHEN the parser reads it
     /// THEN `case` is a binding, as `case => x` is, and the arm is split (ArmSplit): the fix joins
     /// the lines, unless a comment lies between
-    /// AND `case ;`, `else` and `default` keep their errors
     #[test]
     fn case_on_its_own_line_before_an_arrow_should_be_a_binding() {
         let rows = [
-            ("case\n        => print(1)", Code::ArmSplit, (4, 9), Some(1)),
-            (
-                "case // c\n        => print(1)",
-                Code::ArmSplit,
-                (4, 9),
-                Some(0),
-            ),
-            ("case ; => print(1)", Code::MatchIdiom, (3, 9), None),
-            ("else\n        => print(1)", Code::MatchIdiom, (3, 9), None),
-            (
-                "default // c\n        : print(1)",
-                Code::Expected,
-                (3, 21),
-                None,
-            ),
+            ("case\n        => print(1)", (4, 9), 1),
+            ("case // c\n        => print(1)", (4, 9), 0),
         ];
-        for (arm, code, position, fixes) in rows {
+        for (arm, position, fixes) in rows {
+            let src = before_none(arm);
+            let d = parse_diagnostic(&src);
+            assert_eq!(
+                (d.code(), line_col(&src, d.span().start())),
+                (Code::ArmSplit, position),
+                "{src}"
+            );
+            assert_eq!(d.fixes().len(), fixes, "{src}");
+        }
+    }
+
+    /// GIVEN `case` and then a `;` on its line, or another idiom and then a line break
+    /// WHEN the parser reads the arm
+    /// THEN it keeps the error of that idiom, because the rule for `case` does not reach it
+    #[test]
+    fn an_arm_that_is_no_case_line_break_should_keep_its_error() {
+        let rows = [
+            ("case ; => print(1)", Code::MatchIdiom, (3, 9)),
+            ("else\n        => print(1)", Code::MatchIdiom, (3, 9)),
+            ("default // c\n        : print(1)", Code::Expected, (3, 21)),
+        ];
+        for (arm, code, position) in rows {
             let src = before_none(arm);
             let d = parse_diagnostic(&src);
             assert_eq!(
@@ -8671,9 +8686,6 @@ mod tests {
                 (code, position),
                 "{src}"
             );
-            if let Some(fixes) = fixes {
-                assert_eq!(d.fixes().len(), fixes, "{src}");
-            }
         }
     }
 
