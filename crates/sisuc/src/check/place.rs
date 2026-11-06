@@ -187,11 +187,14 @@ impl Checker<'_> {
         is_place(e) && !self.body.ahead_at.contains_key(&(e.span, false)) && self.rooted(e)
     }
 
-    /// Whether the chain of indexes of the place `e` ends in a field or in a local: not in a
-    /// constant, a function or an unknown name.
+    /// Whether the chain of indexes and fields of the place `e` ends in a local or in an
+    /// expression such as a call, whose field is a place. It ends in no constant, function, type
+    /// or unknown name.
     pub(super) fn rooted(&mut self, e: &ast::Expr) -> bool {
         match &e.kind {
-            ast::ExprKind::Index { base, .. } => self.rooted(base),
+            ast::ExprKind::Index { base, .. } | ast::ExprKind::Field { base, .. } => {
+                self.rooted(base)
+            }
             &ast::ExprKind::Name(name) => self.lookup(name).is_some(),
             _ => true,
         }
