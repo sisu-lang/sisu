@@ -187,7 +187,7 @@ def empty_program(lang: str) -> str:
     }[lang]
 
 
-def command(  # noqa: C901, PLR0911, PLR0913  the branches and returns are one for each language, as a table of commands; the arguments are the row, the language, the two paths and two options, and each changes the command
+def command(  # noqa: C901, PLR0911, PLR0913  the branches and returns are one for each language, as a table of commands. The arguments are the row, the language, the two paths and two options, and each changes the command
     row: str,
     lang: str,
     src: Path | str,

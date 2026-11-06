@@ -18,7 +18,7 @@ ignore = [
   "D203", "D213",
   # The signature and the class docstring are sufficient.
   "D107",
-  # The licence is at the repository root, not in each file.
+  # The license is at the repository root, not in each file.
   "CPY001", # spellchecker:disable-line
   # The scripts are programs, not a package.
   "INP001",
@@ -34,13 +34,13 @@ ignore = [
 
 [lint.per-file-ignores]
 # A test name says what should hold, and an expected text stays on one line so that a search finds
-# it. A test compares with literals, reads private names, makes fake secrets and tools, and uses
+# it. A test compares with literals, reads private names, makes fake secrets, and uses
 # `assert` to narrow a type. `scripts/test_health.py` and `scripts/test_names.py` are tools that
 # have this prefix, so these rules are off for them too.
-"scripts/test_*.py" = ["D", "E501", "PLR2004", "S101", "S103", "S105", "S106", "S108", "SLF001"]
+"scripts/test_*.py" = ["D", "E501", "PLR2004", "S101", "S105", "S106", "SLF001"]
 # This file holds tests. Its name does not match the test glob, because no hook must run it.
 "scripts/nightly_installer_real.py" = ["D"]
-"site/build_test.py" = ["D", "E501", "PLR2004", "S101", "S103", "S105", "S106", "S108", "SLF001"]
-# A benchmark program stays the same as its row in each other language, so rules that change its
-# logic stay off. The formatter and the type rules apply.
-"bench/**" = ["D", "ARG", "C4", "C90", "E741", "FBT", "FURB", "N", "PERF", "PLR", "PLW", "RET", "RUF", "SIM", "TRY", "UP"]
+"site/build_test.py" = ["D", "E501", "PLR2004", "S101"]
+# A benchmark program stays the same as its row in each other language, so it has no docstrings and
+# keeps its shape. The formatter and the type rules apply.
+"bench/**" = ["C90", "D", "PLR"]

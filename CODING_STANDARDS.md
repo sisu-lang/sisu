@@ -102,9 +102,9 @@ Scenario Outline: S5. Only a statement that always leaves makes the next line un
 ## Python
 
 - **Each Python file obeys `ruff.toml` and `pyrefly.toml`.** This holds for each tracked file in `scripts/`, `site/`, `bench/` and `.agents/skills/*/scripts/`. Hooks run Ruff (lint and format) and Pyrefly, and `prek.toml` pins their versions.
-- **The tools need Python 3.12, and one file must run on 3.10.** `scripts/nightly_check.py` runs in `ubuntu:22.04` on Python 3.10, with no third-party module. Its Ruff target checks only the syntax, and Pyrefly checks it as 3.12. So do not use an API newer than 3.10 in it. The dry run of `nightly-build.yml` on a pull request runs it.
-- **A suppression has one code and a reason.** It is `# noqa: CODE  <reason>` or `# pyrefly: ignore[kind]  <reason>`, and the reason covers each code. Use one only when the code is right and the rule cannot see that. A shape rule such as `C901` is different: keep a shape that is right, with a reason, as with the Rust lints. The rules in `ruff.toml` change only with the user's agreement, the same as the lint table.
-- **A type is true for each caller.** No `Any` in a signature, except for JSON from outside (`dict[str, Any]`, or a `noqa: ANN401` where the shape varies).
+- **The tools need Python 3.12, and one file must run on 3.10.** `scripts/nightly_check.py` runs in `ubuntu:22.04` on Python 3.10, with no third-party module. Its Ruff target checks the syntax and the upgrade rules, not the standard-library API, and Pyrefly checks it as 3.12. So do not use an API newer than 3.10 in it. The dry run of `nightly-build.yml` on a pull request runs it.
+- **A suppression names each code that fires, and has a reason.** It is `# noqa: CODE  <reason>` or `# pyrefly: ignore[kind]  <reason>`, and the reason covers each code. Use one only when the code is right and the rule cannot see that. A shape rule such as `C901` is different: keep a shape that is right, with a reason, as with the Rust lints. The rules in `ruff.toml` change only with the user's agreement, the same as the lint table.
+- **A type is true for each caller.** No `Any` in a signature, except for data parsed from JSON, TOML or YAML (`dict[str, Any]`), for a subprocess result whose stream type the caller selects, and for a `noqa: ANN401` where the shape varies.
 - **A program in `bench/` stays the same as its row in each other language.** It gets annotations and format, and no change in logic.
 
 ## Performance
