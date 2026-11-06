@@ -15,8 +15,8 @@ are skipped, and `make coverage`, `make mutation-test`, `make fuzz`,
 - A C compiler on `PATH` as `cc`. `sisu` uses it to link programs. On macOS,
   the Xcode Command Line Tools provide it and Make.
 - On Ubuntu: `libzstd-dev`, `libxml2-dev` and `zlib1g-dev`, which LLVM links
-  against. On macOS: Homebrew's `zstd`; LLVM looks for it in
-  `/opt/homebrew/lib`.
+  against, and on ARM64 also `libffi-dev`. On macOS: Homebrew's `zstd`; LLVM
+  looks for it in `/opt/homebrew/lib`.
 - [prek](https://prek.j178.dev) for the Git hooks, with
   [typos](https://github.com/crate-ci/typos),
   [cargo-shear](https://github.com/Boshen/cargo-shear) and `shellcheck`,
