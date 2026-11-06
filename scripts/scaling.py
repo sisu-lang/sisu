@@ -45,7 +45,12 @@ STAGES = [
 ]
 # The cases that are superlinear today, and the cases just under the rule that have a known cause:
 # (shape, stage, issue). The pull request that fixes a case removes its row.
-KNOWN = []
+KNOWN = [
+    ('mut exits', 'mir', 502),
+    ('mut exits', 'codegen', 502),
+    ('owned exits', 'mir', 502),
+    ('owned exits', 'codegen', 502),
+]
 ANNOTATE = ['callgrind_annotate', '--inclusive=yes', '--threshold=100', '--show=Ir', '--auto=no']
 DIAGNOSTIC = re.compile(r'^(error|warning)\[([EW]\d{4})\]')
 DEFAULT_SISU = 'target/release/sisu'
@@ -224,6 +229,29 @@ def mut_call_width(k):
             f'    many({given})\n{shown}    print("{{total}}")\n}}\n')
 
 
+def mut_exits(k):
+    # `many` has k `mut` parameters and k early returns, and each return stores every `mut`
+    # parameter, so `mir` and `codegen` grow with k squared (#502). `main` reads each local, so that
+    # no size has a W0014, and adds to `total` once, so that size 0 has no W0002.
+    params = ''.join(f'mut x{tag(i)}: [i64], ' for i in range(k))
+    returns = ''.join(f'    if x{tag(i)}[0] == stop {{\n        return\n    }}\n' for i in range(k))
+    writes = ''.join(f'    x{tag(i)}[0] = 1\n' for i in range(k))
+    locals_ = ''.join(f'    let mut x{tag(i)} = [0]\n' for i in range(k))
+    args = ''.join(f'mut x{tag(i)}, ' for i in range(k))
+    shown = ''.join(f'    total += x{tag(i)}[0]\n' for i in range(k))
+    return (f'fn many({params}stop: i64) {{\n    if stop == -1 {{\n        return\n    }}\n{returns}{writes}}}\n\n'
+            f'fn main() {{\n{locals_}    many({args}1)\n    let mut total = 0\n    total += 1\n{shown}'
+            '    print("{total}")\n}\n')
+
+
+def owned_exits(k):
+    # `owned` has k owned locals and an early return after each, and each return releases every
+    # local in scope, so `mir` and `codegen` grow with k squared (#502).
+    body = ''.join(f'    let x{tag(i)} = [0]\n    if x{tag(i)}.len() == stop {{\n        return x{tag(i)}.len()\n    }}\n'
+                   for i in range(k))
+    return f'fn owned(stop: i64) -> i64 {{\n{body}    return stop\n}}\n\nfn main() {{\n    print(owned(1))\n}}\n'
+
+
 def optional_depth(k):
     # An optional of k + 1 layers, in the field of a class and in a parameter. An array has a niche
     # for one layer only, so each layer past the first is a `{ flag, value }` pair, which codegen
@@ -292,6 +320,8 @@ SHAPES = {
     'mut parameters': (250, mut_parameters),
     'mut returns': (250, mut_returns),
     'mut call width': (1000, mut_call_width),
+    'mut exits': (25, mut_exits),
+    'owned exits': (25, owned_exits),
     'alias chain': (12, alias_chain),
     'optional depth': (24, optional_depth),
 }

@@ -509,14 +509,14 @@ check when its tool is not on `PATH`. It needs `perf` for the last column.
 `make scaling` finds the programs for which a compiler stage costs more than
 a fixed amount for each unit of input. A shape is a kind of program that
 grows in one direction, such as more functions, deeper nesting or more match
-arms. `scripts/scaling.py` compiles each of 23 shapes at size 0 and at four
+arms. `scripts/scaling.py` compiles each of 25 shapes at size 0 and at four
 sizes that double: n, 2n, 4n and 8n. It counts the instructions of each stage
 under callgrind: `lex`, `parse`, `check`, `mono`, `mir` and `codegen`. The
 count does not depend on the load of the machine. It also changes a little with
 the file paths and the C library. So on another machine, such as the runner of
 the nightly job, a ratio near a number of the rule can fall on the other side.
 It needs `valgrind`, and a full run takes
-about 3 minutes on the machine above.
+about 5 minutes on the machine above.
 
 The script prints one table for each shape. It also writes `table.md` and
 `counts.json` to `target/scaling/`. `ARGS='--shapes functions,fields'`
@@ -554,18 +554,23 @@ on stdout. It exits with code 1 when:
 
 The pull request that fixes a known case removes its row. The gaps between
 the numbers keep a row from changing between known and fixed when a change
-moves a ratio a little. `KNOWN` has no row. Each `tir::Expr` holds its exit
-flag. The checker sets it once, when it makes the expression. So array literal
-depth (#344), type depth, method chain, generic call depth (#366) and string
-call depth are linear in `check`. The checker also keeps the answer of
-`int_literal` for each operator expression of a body. So expression depth,
-float left and string left are linear in `check` (#367). Array literal depth in
-`codegen` is linear by the rule, but its ratios rise to about 2.26. The cause is
-known and has no row: an array of depth d has d types, and the name of each
-release and drop function spells its whole type, such as
-`sisu_rc.release.[[[i64]]]`. So the text of the names grows as d². The
-nightly job runs
-the sweep (`docs/development.md`, "The nightly compile-speed job").
+moves a ratio a little. `KNOWN` has four rows, for `mir` and `codegen` in the
+shapes mut exits and owned exits (#502). Each `return` writes its own cleanup,
+so n exits and n values give n² statements. Real programs have few of these:
+no exit in the benchmark programs or the lexer has more than 4 cleanup
+statements.
+
+Each `tir::Expr` holds its exit flag. The checker sets it once, when it makes
+the expression. So array literal depth (#344), type depth, method chain,
+generic call depth (#366) and string call depth are linear in `check`. The
+checker also keeps the answer of `int_literal` for each operator expression of
+a body. So expression depth, float left and string left are linear in `check`
+(#367). Array literal depth in `codegen` is linear by the rule, but its ratios
+rise to about 2.26. The cause is known and has no row: an array of depth d has
+d types, and the name of each release and drop function spells its whole type,
+such as `sisu_rc.release.[[[i64]]]`. So the text of the names grows as d². The
+nightly job runs the sweep (`docs/development.md`, "The nightly compile-speed
+job").
 
 ## Benchmarks for CodSpeed only
 
