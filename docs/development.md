@@ -34,6 +34,8 @@ are skipped, and `make coverage`, `make mutation-test`, `make fuzz`,
 - For `make miri`, a nightly toolchain with Miri:
   `rustup toolchain install nightly --component miri --component rust-src`.
 - [uv](https://docs.astral.sh/uv/), for `make site`, which builds the website.
+- Python 3.12 or later, which the scripts and the Python hooks need. prek installs Ruff and
+  Pyrefly at the pinned versions on its first run, so nobody installs them by hand.
 
 LLVM 23 lives inside the repository. `scripts/install-llvm.sh` downloads the
 official release for the machine, x86-64 or ARM64 Linux or ARM64 macOS (about
@@ -59,7 +61,7 @@ $ make setup   # LLVM 23 into .llvm/23, the pre-commit and commit-msg hooks, car
 $ make help    # every target
 $ make build   # sisu and the two runtime archives
 $ make test    # unit tests and end-to-end cases
-$ make lint    # fmt, clippy (also with the fuzz feature), expect messages, unused dependencies, typos, file hygiene, shell and workflow lint, as in CI
+$ make lint    # fmt, clippy (also with the fuzz feature), expect messages, unused dependencies, Ruff and Pyrefly on the Python files, typos, file hygiene, shell and workflow lint, as in CI
 $ make deny    # advisories, licenses, sources
 $ make miri    # the runtime's unit tests under Miri, which stops at undefined behaviour
 $ make check   # lint, test and deny; CI also runs make miri
@@ -1312,6 +1314,7 @@ must accept any syntax those programs use.
 | `codspeed.yml`, `codspeed-main.yml` | The CodSpeed benchmark lists: `codspeed.yml` on every run, `codspeed-main.yml` on pushes to `main` only. |
 | `.coderabbit.yaml`, `.greptile/` | The settings of the CodeRabbit and Greptile pull request reviews. Their findings are advice; CI is the merge gate. A `@coderabbitai review` or `@greptileai` comment starts a review again. |
 | `fuzz` | The fuzz targets, `front_end` and `program`, in their own Cargo workspace, run by `scripts/fuzz.sh`. |
+| `ruff.toml`, `pyrefly.toml` | The rules for each tracked Python file: Ruff for lint and format, Pyrefly for types. The Python hooks of `prek.toml` run them (see `CODING_STANDARDS.md`, Python). |
 | `Makefile` | The entry point for the commands; `make help` lists its targets. |
 | `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `codspeed-prep.sh`, `fuzz.sh`, `fuzz_program_plan.py`, which plans each run of the program fuzz workflow, `fuzz_seeds.py`, which writes the program fuzzer's 128 seeds, `fuzz_gaps.py`, which finds the generator gaps, `watch_pr.py`, which waits for the next review with text, comment from someone other than you, or check result of a pull request, `diag_diff.py`, which compares the diagnostics of two `sisu` builds for a review, `golden_diff.py`, which checks that a re-bless only reworded expected files, `scaling.py`, which finds the shapes of program for which a compiler stage is superlinear, `merge_pr.py`, which squash-merges a pull request once its checks pass (`--cleanup` removes the worktree of one merged in the UI), and the scripts prek hooks run, such as `check-expect-messages.sh` and `slow_tests.py`. |
 | `scripts/nightly_build.py` | The steps of the nightly build workflow that use the GitHub API: `pick`, `publish`, `prune` and `report`. |

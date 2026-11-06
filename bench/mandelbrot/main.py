@@ -1,4 +1,4 @@
-def main():
+def main() -> None:
     n = 4000
     size = float(n)
     count = 0

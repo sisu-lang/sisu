@@ -4,6 +4,7 @@ Run them with: python3 -m unittest discover -s scripts -p 'test_*.py'
 
 Each test runs the script in a small repository with a fake `cargo` on PATH, so no fuzzer runs.
 """
+
 import json
 import os
 import re
@@ -12,12 +13,14 @@ import stat
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
+from typing import Any, override
 
 from test_fuzz_gaps import ANCHORS, export, record
 
-SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fuzz.sh')
+SCRIPT = Path(__file__).absolute().parent / "fuzz.sh"
 # A pre-commit hook runs these tests with GIT_DIR and its kin set to the outer repository.
-ENV = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
+ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 # The fake cargo fuzz run (the one with --jobs) writes a crash input and fails, as libFuzzer does.
 # A replay of that input prints the bytes of $FAKE_REPLAY, which a test sets with printf escapes.
 FAKE_CARGO = """#!/usr/bin/env bash
@@ -55,97 +58,123 @@ exit 0
 
 
 class FuzzSummary(unittest.TestCase):
-    def setUp(self):
-        self.repo = tempfile.mkdtemp()
+    @override
+    def setUp(self) -> None:
+        self.repo = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.repo)
-        os.mkdir(os.path.join(self.repo, 'scripts'))
-        shutil.copy(SCRIPT, os.path.join(self.repo, 'scripts'))
-        os.makedirs(os.path.join(self.repo, 'crates', 'sisuc', 'tests'))
-        os.makedirs(os.path.join(self.repo, 'fuzz'))
-        self.bin = os.path.join(self.repo, 'bin')
-        os.mkdir(self.bin)
-        cargo = os.path.join(self.bin, 'cargo')
-        with open(cargo, 'w', encoding='utf-8') as f:
+        (self.repo / "scripts").mkdir()
+        shutil.copy(SCRIPT, self.repo / "scripts")
+        (self.repo / "crates" / "sisuc" / "tests").mkdir(parents=True)
+        (self.repo / "fuzz").mkdir(parents=True)
+        self.bin = self.repo / "bin"
+        self.bin.mkdir()
+        cargo = self.bin / "cargo"
+        with cargo.open("w", encoding="utf-8") as f:
             f.write(FAKE_CARGO)
-        os.chmod(cargo, os.stat(cargo).st_mode | stat.S_IXUSR)
-        git = ['git', '-C', self.repo, '-c', 'user.name=t', '-c', 'user.email=t@t']
-        subprocess.run(git + ['init', '-q'], check=True, env=ENV)
-        subprocess.run(git + ['commit', '-q', '--allow-empty', '-m', 'base'], check=True, env=ENV)
+        cargo.chmod(cargo.stat().st_mode | stat.S_IXUSR)
+        git = ["git", "-C", self.repo, "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run([*git, "init", "-q"], check=True, env=ENV)
+        subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "base"], check=True, env=ENV)
 
-    def summary(self, replay):
-        env = dict(ENV, PATH=f'{self.bin}:{ENV["PATH"]}', FAKE_REPLAY=replay)
-        run = subprocess.run(['bash', 'scripts/fuzz.sh', '1'], cwd=self.repo, capture_output=True,
-                             env=env, timeout=60)
+    def summary(self, replay: str) -> str:
+        env = dict(ENV, PATH=f"{self.bin}:{ENV['PATH']}", FAKE_REPLAY=replay)
+        run = subprocess.run(
+            ["bash", "scripts/fuzz.sh", "1"],
+            cwd=self.repo,
+            capture_output=True,
+            env=env,
+            timeout=60,
+            check=False,
+        )
         self.assertEqual(run.returncode, 1, run.stderr)
-        with open(os.path.join(self.repo, 'fuzz', 'artifacts', 'summary.md'), encoding='utf-8') as f:
+        with (self.repo / "fuzz" / "artifacts" / "summary.md").open(encoding="utf-8") as f:
             return f.read()
 
-    def test_a_crash_with_a_panic_message_should_show_its_location_and_first_message_line(self):
+    def test_a_crash_with_a_panic_message_should_show_its_location_and_first_message_line(
+        self,
+    ) -> None:
         # The replay output holds binary bytes, and the panic line comes after some of them.
-        text = self.summary(r"\377\000\001\200 noise\n\000thread '<unnamed>' (7) panicked at "
-                            r"crates/sisuc/src/fuzz.rs:70:9:\nBraceOnNewLine: a safe fix removes NoMember too:\n"
-                            r"second line\n")
-        self.assertIn('  Panic at `crates/sisuc/src/fuzz.rs:70:9`: `BraceOnNewLine: a safe fix removes NoMember too:`\n', text)
-        self.assertNotIn('second line', text)
-        self.assertIn('Its replay is at the end of `fuzz.log`.', text)
-        self.assertNotIn('stack overflow', text)
+        text = self.summary(
+            r"\377\000\001\200 noise\n\000thread '<unnamed>' (7) panicked at "
+            r"crates/sisuc/src/fuzz.rs:70:9:\nBraceOnNewLine: a safe fix removes NoMember too:\n"
+            r"second line\n"
+        )
+        self.assertIn(
+            "  Panic at `crates/sisuc/src/fuzz.rs:70:9`: `BraceOnNewLine: a safe fix removes NoMember too:`\n",
+            text,
+        )
+        self.assertNotIn("second line", text)
+        self.assertIn("Its replay is at the end of `fuzz.log`.", text)
+        self.assertNotIn("stack overflow", text)
 
-    def test_a_panic_message_should_lose_its_backticks_and_control_characters(self):
+    def test_a_panic_message_should_lose_its_backticks_and_control_characters(self) -> None:
         text = self.summary(r"panicked at a.rs:1:2:\nbad `code` \001here\n")
-        self.assertIn('  Panic at `a.rs:1:2`: `bad code here`\n', text)
+        self.assertIn("  Panic at `a.rs:1:2`: `bad code here`\n", text)
 
-    def test_binary_bytes_before_the_panic_on_the_same_line_should_not_reach_the_location(self):
+    def test_binary_bytes_before_the_panic_on_the_same_line_should_not_reach_the_location(
+        self,
+    ) -> None:
         text = self.summary(r"garbage \377\376 panicked at a.rs:1:2:\nhello\n")
-        self.assertIn('  Panic at `a.rs:1:2`: `hello`\n', text)
+        self.assertIn("  Panic at `a.rs:1:2`: `hello`\n", text)
 
-    def test_a_long_message_should_be_cut_in_whole_characters(self):
+    def test_a_long_message_should_be_cut_in_whole_characters(self) -> None:
         text = self.summary(r"panicked at a.rs:1:2:\na" + r"\303\251" * 200 + r"\n")
-        line = next(line for line in text.splitlines() if 'Panic at' in line)
-        self.assertTrue(line.startswith('  Panic at `a.rs:1:2`: `a'))
+        line = next(line for line in text.splitlines() if "Panic at" in line)
+        self.assertTrue(line.startswith("  Panic at `a.rs:1:2`: `a"))
         self.assertLessEqual(len(line.encode()), 400)
 
-    def test_a_mention_in_a_message_should_stay_in_a_code_span(self):
+    def test_a_mention_in_a_message_should_stay_in_a_code_span(self) -> None:
         text = self.summary(r"panicked at a.rs:1:2:\nhello @octocat #12\n")
-        self.assertIn('`hello @octocat #12`', text)
+        self.assertIn("`hello @octocat #12`", text)
 
-    def test_a_panic_without_a_message_line_should_show_the_location_alone(self):
+    def test_a_panic_without_a_message_line_should_show_the_location_alone(self) -> None:
         text = self.summary(r"panicked at a.rs:1:2:")
-        self.assertIn('  Panic at `a.rs:1:2`\n', text)
+        self.assertIn("  Panic at `a.rs:1:2`\n", text)
 
-    def test_a_crash_without_a_panic_message_should_keep_the_note_about_a_fatal_signal(self):
+    def test_a_crash_without_a_panic_message_should_keep_the_note_about_a_fatal_signal(
+        self,
+    ) -> None:
         text = self.summary(r"\377\000 AddressSanitizer: stack-overflow\n")
-        self.assertNotIn('Panic at', text)
-        self.assertIn('is a stack overflow or another fatal signal', text)
+        self.assertNotIn("Panic at", text)
+        self.assertIn("is a stack overflow or another fatal signal", text)
 
 
 class ProgramSeeds(unittest.TestCase):
-    def test_program_run_should_get_the_seeds(self):
+    def test_program_run_should_get_the_seeds(self) -> None:
         with tempfile.TemporaryDirectory() as repo:
-            scripts = os.path.join(repo, 'scripts')
-            os.mkdir(scripts)
-            for name in ('fuzz.sh', 'fuzz_seeds.py'):
-                shutil.copy(os.path.join(os.path.dirname(SCRIPT), name), scripts)
-            os.makedirs(os.path.join(repo, 'fuzz'))
-            bin_dir = os.path.join(repo, 'bin')
-            os.mkdir(bin_dir)
-            cargo = os.path.join(bin_dir, 'cargo')
-            with open(cargo, 'w', encoding='utf-8') as f:
+            scripts = Path(repo, "scripts")
+            scripts.mkdir()
+            for name in ("fuzz.sh", "fuzz_seeds.py"):
+                shutil.copy(SCRIPT.parent / name, scripts)
+            Path(repo, "fuzz").mkdir(parents=True)
+            bin_dir = Path(repo, "bin")
+            bin_dir.mkdir()
+            cargo = bin_dir / "cargo"
+            with cargo.open("w", encoding="utf-8") as f:
                 f.write(PROGRAM_CARGO)
-            os.chmod(cargo, os.stat(cargo).st_mode | stat.S_IXUSR)
-            git = ['git', '-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t']
-            subprocess.run(git + ['init', '-q'], check=True, env=ENV)
-            subprocess.run(git + ['commit', '-q', '--allow-empty', '-m', 'base'], check=True, env=ENV)
-            seen = os.path.join(repo, 'seen.txt')
-            env = dict(ENV, PATH=f'{bin_dir}:{ENV["PATH"]}', FAKE_SEEN=seen)
-            run = subprocess.run(['bash', 'scripts/fuzz.sh', '--target', 'program', '1'], cwd=repo,
-                                 capture_output=True, env=env, timeout=60)
+            cargo.chmod(cargo.stat().st_mode | stat.S_IXUSR)
+            git = ["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@t"]
+            subprocess.run([*git, "init", "-q"], check=True, env=ENV)
+            subprocess.run(
+                [*git, "commit", "-q", "--allow-empty", "-m", "base"], check=True, env=ENV
+            )
+            seen = Path(repo, "seen.txt")
+            env = dict(ENV, PATH=f"{bin_dir}:{ENV['PATH']}", FAKE_SEEN=str(seen))
+            run = subprocess.run(
+                ["bash", "scripts/fuzz.sh", "--target", "program", "1"],
+                cwd=repo,
+                capture_output=True,
+                env=env,
+                timeout=60,
+                check=False,
+            )
             self.assertEqual(run.returncode, 0, run.stderr)
-            with open(seen, encoding='utf-8') as f:
+            with seen.open(encoding="utf-8") as f:
                 lines = f.read().splitlines()
             # The corpus is empty. The seeds directory comes second.
-            self.assertEqual(lines[0], 'program 0 0')
+            self.assertEqual(lines[0], "program 0 0")
             self.assertEqual(len(lines), 2, lines)
-            self.assertTrue(lines[1].endswith(' 128 128'), lines[1])
+            self.assertTrue(lines[1].endswith(" 128 128"), lines[1])
 
 
 # The fake tools of the gap check. Each writes to $FAKE_LOG what it saw, so that a test can tell
@@ -204,257 +233,317 @@ case "$binary $profile" in
 *) exit 1 ;;
 esac
 """
-HOST = 'x86_64-unknown-linux-gnu'
-NEW_GAP = record('check/new.rs', 'sisuc[abc]::check::new_gap', 1)
-NEW_GAP_KEY = 'check/new.rs\tsisuc::check::new_gap'
+HOST = "x86_64-unknown-linux-gnu"
+NEW_GAP = record("check/new.rs", "sisuc[abc]::check::new_gap", 1)
+NEW_GAP_KEY = "check/new.rs\tsisuc::check::new_gap"
 # The programs the reference compiles: each file of run/ and run-fail/, nested ones too, and no
 # other file. Two files share a basename, so a copy that keeps the name loses one of them.
-PROGRAMS = {'run/a.sisu': 'run a', 'run/dup.sisu': 'run dup', 'run/sub/x.sisu': 'run sub x',
-            'run-fail/dup.sisu': 'fail dup', 'run-fail/b.sisu': 'fail b'}
-NOT_PROGRAMS = {'run/notes.txt': 'notes', 'diagnostics/d.sisu': 'diagnostic', 'programs/p.sisu': 'programs',
-                'tokens/t.sisu': 'tokens'}
+PROGRAMS = {
+    "run/a.sisu": "run a",
+    "run/dup.sisu": "run dup",
+    "run/sub/x.sisu": "run sub x",
+    "run-fail/dup.sisu": "fail dup",
+    "run-fail/b.sisu": "fail b",
+}
+NOT_PROGRAMS = {
+    "run/notes.txt": "notes",
+    "diagnostics/d.sisu": "diagnostic",
+    "programs/p.sisu": "programs",
+    "tokens/t.sisu": "tokens",
+}
 
 
-def write_executable(directory, name, text):
-    path = os.path.join(directory, name)
-    os.makedirs(directory, exist_ok=True)
-    with open(path, 'w', encoding='utf-8') as f:
+def write_executable(directory: Path, name: str, text: str) -> None:
+    path = directory / name
+    directory.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
         f.write(text)
-    os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
 class GapsRun:
     """The result of one run of --gaps: its status, output and what the fake tools saw."""
 
-    def __init__(self, repo, work, run):
-        self.code, self.stderr, self.stdout = run.returncode, run.stderr.decode(), run.stdout.decode()
-        self.log = self.read(os.path.join(work, 'log')).splitlines()
-        self.summary = self.read(os.path.join(repo, 'fuzz', 'artifacts', 'summary.md'))
-        self.dirs = os.path.join(work, 'dirs')
+    def __init__(self, repo: Path, work: Path, run: subprocess.CompletedProcess[bytes]) -> None:
+        self.code, self.stderr, self.stdout = (
+            run.returncode,
+            run.stderr.decode(),
+            run.stdout.decode(),
+        )
+        self.log = self.read(work / "log").splitlines()
+        self.summary = self.read(repo / "fuzz" / "artifacts" / "summary.md")
+        self.dirs = work / "dirs"
 
     @staticmethod
-    def read(path):
+    def read(path: Path) -> str:
         """The text of the file, or an empty text when the run wrote no such file."""
         try:
-            with open(path, encoding='utf-8') as f:
+            with path.open(encoding="utf-8") as f:
                 return f.read()
         except FileNotFoundError:
-            return ''
+            return ""
 
-    def calls(self, target):
+    def calls(self, target: str) -> list[tuple[bool, list[str]]]:
         """The argument lists of the `cargo fuzz coverage` calls for `target`, and whether an old
-        raw profile was there at the start of each."""
+        raw profile was there at the start of each.
+        """
         found = []
         for line in self.log:
-            match = re.fullmatch(rf'coverage {target} old=([01])((?: .*)?)', line)
+            match = re.fullmatch(rf"coverage {target} old=([01])((?: .*)?)", line)
             if match:
-                found.append((match[1] == '1', match[2].split()))
+                found.append((match[1] == "1", match[2].split()))
         return found
 
-    def files(self, name):
+    def files(self, name: str) -> tuple[list[tuple[str, bytes]], int]:
         """(relative path, content) of each regular file of the directory copied under `name`,
-        and the number of directories under it."""
-        root = os.path.join(self.dirs, name)
+        and the number of directories under it.
+        """
+        root = self.dirs / name
         found = []
         subdirs = 0
         for directory, dirs, names in os.walk(root):
             subdirs += len(dirs)
-            for name in names:
-                path = os.path.join(directory, name)
-                with open(path, 'rb') as f:
+            for file_name in names:
+                path = Path(directory, file_name)
+                with path.open("rb") as f:
                     found.append((os.path.relpath(path, root), f.read()))
         return found, subdirs
 
 
 class GapsCheck(unittest.TestCase):
-    def setUp(self):
+    @override
+    def setUp(self) -> None:
         self.root = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.root)
-        self.repo = os.path.join(self.root, 'repo')
-        self.work = os.path.join(self.root, 'work')
-        sysroot = os.path.join(self.root, 'sysroot')
-        os.makedirs(os.path.join(self.work, 'dirs'))
-        scripts = os.path.join(self.repo, 'scripts')
-        os.makedirs(scripts)
-        for name in ('fuzz.sh', 'fuzz_seeds.py', 'fuzz_gaps.py'):
-            shutil.copy(os.path.join(os.path.dirname(SCRIPT), name), scripts)
-        os.makedirs(os.path.join(self.repo, 'fuzz'))
-        tests = os.path.join(self.repo, 'crates', 'sisuc', 'tests')
+        self.repo = Path(self.root, "repo")
+        self.work = Path(self.root, "work")
+        sysroot = Path(self.root, "sysroot")
+        (self.work / "dirs").mkdir(parents=True)
+        scripts = self.repo / "scripts"
+        scripts.mkdir(parents=True)
+        for name in ("fuzz.sh", "fuzz_seeds.py", "fuzz_gaps.py"):
+            shutil.copy(SCRIPT.parent / name, scripts)
+        (self.repo / "fuzz").mkdir(parents=True)
+        tests = self.repo / "crates" / "sisuc" / "tests"
         for name, text in {**PROGRAMS, **NOT_PROGRAMS}.items():
-            os.makedirs(os.path.join(tests, os.path.dirname(name)), exist_ok=True)
-            with open(os.path.join(tests, name), 'w', encoding='utf-8') as f:
+            (tests / Path(name).parent).mkdir(parents=True, exist_ok=True)
+            with (tests / name).open("w", encoding="utf-8") as f:
                 f.write(text)
-        self.bin = os.path.join(self.root, 'bin')
-        write_executable(self.bin, 'cargo', GAPS_CARGO)
-        write_executable(self.bin, 'rustc', GAPS_RUSTC)
-        write_executable(os.path.join(sysroot, 'lib', 'rustlib', HOST, 'bin'), 'llvm-cov', GAPS_LLVM_COV)
+        self.bin = Path(self.root, "bin")
+        write_executable(self.bin, "cargo", GAPS_CARGO)
+        write_executable(self.bin, "rustc", GAPS_RUSTC)
+        write_executable(sysroot / "lib" / "rustlib" / HOST / "bin", "llvm-cov", GAPS_LLVM_COV)
         self.sysroot = sysroot
-        git = ['git', '-C', self.repo, '-c', 'user.name=t', '-c', 'user.email=t@t']
-        subprocess.run(git + ['init', '-q'], check=True, env=ENV)
-        subprocess.run(git + ['commit', '-q', '--allow-empty', '-m', 'base'], check=True, env=ENV)
+        git = ["git", "-C", self.repo, "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run([*git, "init", "-q"], check=True, env=ENV)
+        subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "base"], check=True, env=ENV)
 
-    def put(self, name, text):
-        path = os.path.join(self.repo, name)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, 'w', encoding='utf-8') as f:
+    def put(self, name: str, text: str) -> None:
+        path = self.repo / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as f:
             f.write(text)
 
-    def gaps(self, args=('--target', 'program', '--gaps'), seeds=None, valid=None, known='## a reason\n',
-             fail='', summary=None, old_profiles=False, corpus=False):
+    def gaps(  # noqa: PLR0913  one keyword for each thing that a case can change
+        self,
+        args: tuple[str, ...] = ("--target", "program", "--gaps"),
+        *,
+        seeds: dict[str, Any] | None = None,
+        valid: dict[str, Any] | None = None,
+        known: str = "## a reason\n",
+        fail: str = "",
+        summary: str | None = None,
+        old_profiles: bool = False,
+        corpus: bool = False,
+    ) -> GapsRun:
         """Runs fuzz.sh with `args`. The fake llvm-cov prints `seeds` for the program target and
-        `valid` for front_end, which both default to the three anchors."""
+        `valid` for front_end, which both default to the three anchors.
+        """
         fixtures = {}
-        for label, content in (('seeds', seeds), ('valid', valid)):
-            fixtures[label] = os.path.join(self.work, f'{label}.json')
-            with open(fixtures[label], 'w', encoding='utf-8') as f:
+        for label, content in (("seeds", seeds), ("valid", valid)):
+            fixtures[label] = self.work / f"{label}.json"
+            with fixtures[label].open("w", encoding="utf-8") as f:
                 json.dump(export(*ANCHORS) if content is None else content, f)
-        self.put('fuzz/known_gaps.txt', known)
+        self.put("fuzz/known_gaps.txt", known)
         if summary is not None:
-            self.put('fuzz/artifacts/summary.md', summary)
-        for target in ('program', 'front_end'):
+            self.put("fuzz/artifacts/summary.md", summary)
+        for target in ("program", "front_end"):
             if old_profiles:
-                self.put(f'fuzz/coverage/{target}/raw/batch-9.profraw', 'old')
+                self.put(f"fuzz/coverage/{target}/raw/batch-9.profraw", "old")
             if corpus:
-                self.put(f'fuzz/corpus/{target}/input', 'corpus input')
-        env = dict(ENV, PATH=f'{self.bin}:{ENV["PATH"]}', FAKE_LOG=os.path.join(self.work, 'log'),
-                   FAKE_DIRS=os.path.join(self.work, 'dirs'), FAKE_SYSROOT=self.sysroot, FAKE_FAIL=fail,
-                   FAKE_SEEDS_JSON=fixtures['seeds'], FAKE_VALID_JSON=fixtures['valid'])
-        run = subprocess.run(['bash', 'scripts/fuzz.sh', *args], cwd=self.repo, capture_output=True,
-                             env=env, timeout=120)
+                self.put(f"fuzz/corpus/{target}/input", "corpus input")
+        env = dict(
+            ENV,
+            PATH=f"{self.bin}:{ENV['PATH']}",
+            FAKE_LOG=str(self.work / "log"),
+            FAKE_DIRS=str(self.work / "dirs"),
+            FAKE_SYSROOT=str(self.sysroot),
+            FAKE_FAIL=fail,
+            FAKE_SEEDS_JSON=str(fixtures["seeds"]),
+            FAKE_VALID_JSON=str(fixtures["valid"]),
+        )
+        run = subprocess.run(
+            ["bash", "scripts/fuzz.sh", *args],
+            cwd=self.repo,
+            capture_output=True,
+            env=env,
+            timeout=120,
+            check=False,
+        )
         return GapsRun(self.repo, self.work, run)
 
-    def test_gaps_should_read_only_programs(self):
+    def test_gaps_should_read_only_programs(self) -> None:
         # Two programs share a basename, one is nested, and four other .sisu or other files must stay out.
         run = self.gaps()
-        calls = run.calls('front_end')
+        calls = run.calls("front_end")
         self.assertEqual(len(calls), 1, run.log)
-        files, subdirs = run.files('front_end-1')
-        self.assertEqual(sorted(content.decode() for _, content in files), sorted(PROGRAMS.values()))
-        self.assertTrue(all(name.endswith('.sisu') for name, _ in files), files)
+        files, subdirs = run.files("front_end-1")
+        self.assertEqual(
+            sorted(content.decode() for _, content in files), sorted(PROGRAMS.values())
+        )
+        self.assertTrue(all(name.endswith(".sisu") for name, _ in files), files)
         self.assertEqual(subdirs, 0)
 
-    def test_gaps_should_clear_old_profiles(self):
+    def test_gaps_should_clear_old_profiles(self) -> None:
         run = self.gaps(old_profiles=True)
-        for target in ('program', 'front_end'):
+        for target in ("program", "front_end"):
             with self.subTest(target):
                 self.assertEqual([old for old, _ in run.calls(target)], [False], run.log)
 
-    def test_gaps_should_fail_with_its_tool(self):
+    def test_gaps_should_fail_with_its_tool(self) -> None:
         # A fake that fails every cargo call stops at `cargo build`, so each row fails one step only.
-        for step, record_start in (('coverage program', 'coverage program '),
-                                   ('coverage front_end', 'coverage front_end '),
-                                   ('llvm-cov', 'llvm-cov ')):
+        for step, record_start in (
+            ("coverage program", "coverage program "),
+            ("coverage front_end", "coverage front_end "),
+            ("llvm-cov", "llvm-cov "),
+        ):
             with self.subTest(step):
                 run = self.gaps(fail=step)
                 self.assertNotEqual(run.code, 0, run.stderr)
-                self.assertNotIn('## Generator gaps', run.summary)
+                self.assertNotIn("## Generator gaps", run.summary)
                 self.assertTrue(any(line.startswith(record_start) for line in run.log), run.log)
 
-    def test_a_new_gap_should_reach_the_summary(self):
-        before = '# Fuzzing: program\n\n## Failures\n\nNone.\n'
+    def test_a_new_gap_should_reach_the_summary(self) -> None:
+        before = "# Fuzzing: program\n\n## Failures\n\nNone.\n"
         run = self.gaps(valid=export(*ANCHORS, NEW_GAP), summary=before)
         self.assertEqual(run.code, 1, run.stdout + run.stderr)
         self.assertTrue(run.summary.startswith(before), run.summary)
-        section = run.summary[len(before):]
-        self.assertRegex(section, r'(?m)^## Generator gaps$')
+        section = run.summary[len(before) :]
+        self.assertRegex(section, r"(?m)^## Generator gaps$")
         self.assertIn(NEW_GAP_KEY, section.splitlines())
         self.assertIn(NEW_GAP_KEY, run.stdout.splitlines())
 
-    def test_gaps_should_measure_only_the_seeds(self):
+    def test_gaps_should_measure_only_the_seeds(self) -> None:
         run = self.gaps(corpus=True)
-        for target in ('program', 'front_end'):
+        for target in ("program", "front_end"):
             calls = run.calls(target)
             self.assertEqual(len(calls), 1, run.log)
             self.assertEqual(len(calls[0][1]), 1, calls)
-            self.assertNotIn('corpus', calls[0][1][0])
-        files, _ = run.files('program-1')
+            self.assertNotIn("corpus", calls[0][1][0])
+        files, _ = run.files("program-1")
         self.assertEqual([len(content) for _, content in files], [4096] * 128)
-        self.assertEqual(len(run.files('front_end-1')[0]), len(PROGRAMS))
+        self.assertEqual(len(run.files("front_end-1")[0]), len(PROGRAMS))
 
-    def test_program_coverage_should_measure_the_corpus_and_the_seeds(self):
-        stages = ('lexer', 'parser', 'check', 'mir', 'codegen')
-        files = [{'filename': f'/r/crates/sisuc/src/{stage}/mod.rs',
-                  'summary': {'lines': {'count': 10, 'covered': 5}}} for stage in stages]
-        run = self.gaps(args=('--target', 'program', '--coverage'), seeds={'data': [{'files': files}]},
-                        old_profiles=True, corpus=True)
+    def test_program_coverage_should_measure_the_corpus_and_the_seeds(self) -> None:
+        stages = ("lexer", "parser", "check", "mir", "codegen")
+        files = [
+            {
+                "filename": f"/r/crates/sisuc/src/{stage}/mod.rs",
+                "summary": {"lines": {"count": 10, "covered": 5}},
+            }
+            for stage in stages
+        ]
+        run = self.gaps(
+            args=("--target", "program", "--coverage"),
+            seeds={"data": [{"files": files}]},
+            old_profiles=True,
+            corpus=True,
+        )
         self.assertEqual(run.code, 0, run.stdout + run.stderr)
-        calls = run.calls('program')
+        calls = run.calls("program")
         self.assertEqual([old for old, _ in calls], [False], run.log)
         self.assertEqual(len(calls[0][1]), 2, calls)
-        self.assertEqual(calls[0][1][0], 'fuzz/corpus/program')
-        self.assertEqual(len(run.files('program-2')[0]), 128)
-        self.assertIn('inputs reaching codegen: all 129 (corpus and seeds', run.stdout)
+        self.assertEqual(calls[0][1][0], "fuzz/corpus/program")
+        self.assertEqual(len(run.files("program-2")[0]), 128)
+        self.assertIn("inputs reaching codegen: all 129 (corpus and seeds", run.stdout)
         for stage in stages:
-            self.assertRegex(run.stdout, rf'(?m)^{stage} +50\.0% of 10 lines$')
+            self.assertRegex(run.stdout, rf"(?m)^{stage} +50\.0% of 10 lines$")
 
-    def test_a_broken_measurement_should_fail_with_its_reason(self):
+    def test_a_broken_measurement_should_fail_with_its_reason(self) -> None:
         # The valid export reaches no function under check/.
         run = self.gaps(valid=export(ANCHORS[1], ANCHORS[2]))
         self.assertEqual(run.code, 2, run.stdout + run.stderr)
-        self.assertRegex(run.summary, r'(?ms)^## Generator gaps$.*did not finish')
+        self.assertRegex(run.summary, r"(?ms)^## Generator gaps$.*did not finish")
 
-    def test_no_new_gap_should_pass_with_a_section(self):
-        run = self.gaps(valid=export(*ANCHORS, NEW_GAP), known=f'## a reason\n{NEW_GAP_KEY}\n')
+    def test_no_new_gap_should_pass_with_a_section(self) -> None:
+        run = self.gaps(valid=export(*ANCHORS, NEW_GAP), known=f"## a reason\n{NEW_GAP_KEY}\n")
         self.assertEqual(run.code, 0, run.stdout + run.stderr)
-        self.assertRegex(run.summary, r'(?m)^## Generator gaps$')
+        self.assertRegex(run.summary, r"(?m)^## Generator gaps$")
 
-    def test_gaps_should_need_the_program_target(self):
-        for args in (('--target', 'front_end', '--gaps'), ('--gaps',)):
+    def test_gaps_should_need_the_program_target(self) -> None:
+        for args in (("--target", "front_end", "--gaps"), ("--gaps",)):
             with self.subTest(args):
                 run = self.gaps(args)
                 self.assertEqual(run.code, 2, run.stderr)
-                self.assertIn('usage:', run.stderr)
-                self.assertIn('--gaps', run.stderr)
-                self.assertEqual([line for line in run.log if line.startswith('coverage')], [])
+                self.assertIn("usage:", run.stderr)
+                self.assertIn("--gaps", run.stderr)
+                self.assertEqual([line for line in run.log if line.startswith("coverage")], [])
 
-    def check_missing_directory(self, name):
+    def check_missing_directory(self, name: str) -> None:
         """Removes the directory tests/<name>, runs --gaps, and checks that it measures nothing."""
-        shutil.rmtree(os.path.join(self.repo, 'crates', 'sisuc', 'tests', name))
+        shutil.rmtree(self.repo / "crates" / "sisuc" / "tests" / name)
         run = self.gaps()
         self.assertNotEqual(run.code, 0, run.stdout + run.stderr)
-        self.assertEqual([line for line in run.log if line.startswith(('coverage front_end', 'coverage program'))], [])
-        self.assertNotIn('## Generator gaps', run.summary)
+        self.assertEqual(
+            [
+                line
+                for line in run.log
+                if line.startswith(("coverage front_end", "coverage program"))
+            ],
+            [],
+        )
+        self.assertNotIn("## Generator gaps", run.summary)
 
-    def test_gaps_should_fail_without_tests_run(self):
-        self.check_missing_directory('run')
+    def test_gaps_should_fail_without_tests_run(self) -> None:
+        self.check_missing_directory("run")
 
-    def test_gaps_should_fail_without_tests_run_fail(self):
-        self.check_missing_directory('run-fail')
+    def test_gaps_should_fail_without_tests_run_fail(self) -> None:
+        self.check_missing_directory("run-fail")
 
-    def test_front_end_seeds_should_fail_on_a_missing_test_tree(self):
-        shutil.rmtree(os.path.join(self.repo, 'crates', 'sisuc', 'tests'))
-        run = self.gaps(args=('--target', 'front_end', '--coverage'))
+    def test_front_end_seeds_should_fail_on_a_missing_test_tree(self) -> None:
+        shutil.rmtree(self.repo / "crates" / "sisuc" / "tests")
+        run = self.gaps(args=("--target", "front_end", "--coverage"))
         self.assertNotEqual(run.code, 0, run.stdout + run.stderr)
-        self.assertEqual([line for line in run.log if line.startswith('coverage front_end')], [])
+        self.assertEqual([line for line in run.log if line.startswith("coverage front_end")], [])
 
-    def check_directory_without_program(self, name):
+    def check_directory_without_program(self, name: str) -> None:
         """Keeps one other file in tests/<name> and no program, as the real run-fail keeps its .out files."""
-        root = os.path.join(self.repo, 'crates', 'sisuc', 'tests', name)
+        root = self.repo / "crates" / "sisuc" / "tests" / name
         for directory, _, names in os.walk(root):
             for file in names:
-                if file.endswith('.sisu'):
-                    os.remove(os.path.join(directory, file))
-        with open(os.path.join(root, 'other.out'), 'w', encoding='utf-8') as f:
-            f.write('output')
+                if file.endswith(".sisu"):
+                    Path(directory, file).unlink()
+        with (root / "other.out").open("w", encoding="utf-8") as f:
+            f.write("output")
         run = self.gaps()
         self.assertEqual(run.code, 2, run.stdout + run.stderr)
-        self.assertIn(f'crates/sisuc/tests/{name}', run.stderr)
-        self.assertEqual([line for line in run.log if line.startswith('coverage')], [])
-        self.assertNotIn('## Generator gaps', run.summary)
+        self.assertIn(f"crates/sisuc/tests/{name}", run.stderr)
+        self.assertEqual([line for line in run.log if line.startswith("coverage")], [])
+        self.assertNotIn("## Generator gaps", run.summary)
 
-    def test_gaps_should_fail_when_tests_run_has_no_program(self):
-        self.check_directory_without_program('run')
+    def test_gaps_should_fail_when_tests_run_has_no_program(self) -> None:
+        self.check_directory_without_program("run")
 
-    def test_gaps_should_fail_when_tests_run_fail_has_no_program(self):
-        self.check_directory_without_program('run-fail')
+    def test_gaps_should_fail_when_tests_run_fail_has_no_program(self) -> None:
+        self.check_directory_without_program("run-fail")
 
-    def test_gaps_should_fail_when_a_copy_fails(self):
-        write_executable(self.bin, 'cp', '#!/bin/sh\nexit 7\n')
+    def test_gaps_should_fail_when_a_copy_fails(self) -> None:
+        write_executable(self.bin, "cp", "#!/bin/sh\nexit 7\n")
         run = self.gaps()
         self.assertEqual(run.code, 7, run.stdout + run.stderr)
-        self.assertEqual([line for line in run.log if line.startswith('coverage')], [])
-        self.assertNotIn('## Generator gaps', run.summary)
+        self.assertEqual([line for line in run.log if line.startswith("coverage")], [])
+        self.assertNotIn("## Generator gaps", run.summary)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

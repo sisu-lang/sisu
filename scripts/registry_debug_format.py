@@ -1,26 +1,32 @@
-"""Rejects `{:?}` in diagnostic text, the code of `registry.rs` before its tests. Rust's `{:?}`
-escapes a value the Rust way; diagnostic text quotes Sisu source.
+"""Reject `{:?}` in diagnostic text, the code of `registry.rs` before its tests.
+
+Rust's `{:?}` escapes a value the Rust way; diagnostic text quotes Sisu source.
 
 Usage: python3 registry_debug_format.py FILE...
 """
 
 import re
 import sys
+from pathlib import Path
 
 # The tests: an inline `#[cfg(test)] mod name {`, which clippy's items_after_test_module keeps at
 # the end of the file. A `#[cfg(test)]` step counter before it is production code.
 # shortcut: between the two, the pattern takes blank lines, `//` comments and attributes with one
 # level of inner brackets, not a `/* */` comment; add the form when a file uses it.
-TESTS = re.compile(r"^#\[cfg\(test\)\]\n(?:#\[(?:[^][]|\[[^]]*\])*\]\n|//[^\n]*\n|\n)*(?:pub(?:\([^)\n]*\))? )?mod \w+ \{", re.M)
+TESTS = re.compile(
+    r"^#\[cfg\(test\)\]\n(?:#\[(?:[^][]|\[[^]]*\])*\]\n|//[^\n]*\n|\n)*"
+    r"(?:pub(?:\([^)\n]*\))? )?mod \w+ \{",
+    re.MULTILINE,
+)
 
 
 def main(paths: list[str]) -> int:
+    """Print each `{:?}` in the production code of the files `paths`, and return the exit code."""
     bad = 0
     for path in paths:
-        with open(path, encoding="utf-8") as f:
-            text = f.read()
+        text = Path(path).read_text(encoding="utf-8")
         tests = TESTS.search(text)
-        code = text[:tests.start()] if tests else text
+        code = text[: tests.start()] if tests else text
         for n, line in enumerate(code.splitlines(), 1):
             if ":?}" in line:
                 print(f"{path}:{n}: diagnostic text uses {{:?}}; escape the Sisu way")

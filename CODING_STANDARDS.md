@@ -99,6 +99,14 @@ Scenario Outline: S5. Only a statement that always leaves makes the next line un
 
 - **Prefer a crate to hand-written code.** Where a well-maintained crate that `deny.toml` allows does the job, use it, and check it with GitHits first.
 
+## Python
+
+- **Each Python file obeys `ruff.toml` and `pyrefly.toml`.** This holds for each tracked file in `scripts/`, `site/`, `bench/` and `.agents/skills/*/scripts/`. Hooks run Ruff (lint and format) and Pyrefly, and `prek.toml` pins their versions.
+- **The tools need Python 3.12, and one file must run on 3.10.** `scripts/nightly_check.py` runs in `ubuntu:22.04` on Python 3.10, with no third-party module. Its Ruff target checks the syntax and the upgrade rules, not the standard-library API, and Pyrefly checks it as 3.12. So do not use an API newer than 3.10 in it. The dry run of `nightly-build.yml` on a pull request runs it.
+- **A suppression names each code that fires, and has a reason.** It is `# noqa: CODE  <reason>` or `# pyrefly: ignore[kind]  <reason>`, and the reason covers each code. Use one only when the code is right and the rule cannot see that. A shape rule such as `C901` is different: keep a shape that is right, with a reason, as with the Rust lints. The rules in `ruff.toml` change only with the user's agreement, the same as the lint table.
+- **A type is true for each caller.** No `Any` in a signature, with three exceptions. JSON, TOML or YAML data can use `dict[str, Any]`. A subprocess result or process can use `Any` when the caller selects its stream type. A value whose shape varies can use `Any` with a `noqa: ANN401`.
+- **A program in `bench/` stays the same as its row in each other language.** It gets annotations and format, and no change in logic.
+
 ## Performance
 
 - **Borrow or move before you clone.** Code that only reads a value takes a reference, and code that hands it on moves it. Anywhere in `crates/sisuc`, a `clone()`, `to_string()`, `to_vec()` or new allocation needs a reason: the receiver keeps the value and the source still needs it. On a per-token, per-node or per-lookup path, the reason is also measured or obvious. Names travel as `Symbol`s and become a `String` only where they leave for `tir` or a diagnostic.

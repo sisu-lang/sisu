@@ -1,17 +1,15 @@
 class Node:
-    def __init__(self, left, right):
+    def __init__(self, left: "Node | None", right: "Node | None") -> None:
         self.left = left
         self.right = right
 
-    def check(self):
+    def check(self) -> int:
         return (
-            1
-            + (self.left.check() if self.left else 0)
-            + (self.right.check() if self.right else 0)
+            1 + (self.left.check() if self.left else 0) + (self.right.check() if self.right else 0)
         )
 
 
-def make(depth):
+def make(depth: int) -> Node:
     if depth == 0:
         return Node(None, None)
     return Node(make(depth - 1), make(depth - 1))
