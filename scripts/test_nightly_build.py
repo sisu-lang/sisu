@@ -13,6 +13,9 @@ import sys
 import tempfile
 import unittest
 from typing import NamedTuple
+from unittest import mock
+
+import nightly_build
 
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'nightly_build.py')
 # A is the newest commit. Each is a distinct 40-character string.
@@ -40,13 +43,28 @@ elif '/actions/workflows/ci.yml/runs?' in path:
 elif '/releases?' in path:
     reply = state['releases'] if '--paginate' in args else state['releases'][:100]
 elif '/contents/.github?ref=' in path:
+    ref = path.split('ref=')[1]
+    if ref.endswith('^'):
+        ref = state['parents'][ref[:-1]]
     reply = [{'name': 'ISSUE_TEMPLATE', 'sha': 'other'},
-             {'name': 'workflows', 'sha': state['trees'][path.split('ref=')[1]]}]
+             {'name': 'workflows', 'sha': state['trees'][ref]}]
+elif '/commits/' in path:
+    sha = path.rsplit('/', 1)[1]
+    reply = {'sha': sha, 'parents': [{'sha': state['parents'][sha]}]}
+elif path.endswith('/empty'):
+    sys.exit(0)
 else:
     print('fake gh: unknown query ' + path, file=sys.stderr)
     sys.exit(2)
 print(json.dumps(reply))
 """ % sys.executable
+
+
+def is_write_flag(arg):
+    """A `gh api` flag that sends a method or a body, alone or with its value attached."""
+    if arg.startswith('--'):
+        return arg.split('=')[0] in ('--method', '--field', '--raw-field', '--input')
+    return arg.startswith('-') and len(arg) > 1 and arg[1] in 'XfF'
 
 
 class Run(NamedTuple):
@@ -66,10 +84,11 @@ def nightly(sha, published_at='2026-11-01T00:00:00Z'):
     return release('nightly-2026-11-01-' + sha[:7], published_at)
 
 
-def state(commits, green=(), releases=(), trees=None, fail_on=None):
-    ids = [*commits, HEAD]
+def state(commits, green=(), releases=(), trees=None, parents=None, fail_on=None):
+    parents = parents or dict(zip(commits, [*commits[1:], 'e' * 40]))
+    ids = ['main', HEAD, *commits, *parents.values()]
     return {'commits': list(commits), 'green': list(green), 'releases': list(releases),
-            'trees': trees or {sha: 't1' for sha in ['main', *ids]}, 'fail_on': fail_on}
+            'trees': trees or {sha: 't1' for sha in ids}, 'parents': parents, 'fail_on': fail_on}
 
 
 class Pick(unittest.TestCase):
@@ -89,6 +108,9 @@ class Pick(unittest.TestCase):
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(fake, f)
         output, summary = (os.path.join(self.dir, n) for n in ('output', 'summary'))
+        for stale in (output, summary, path + '.calls'):
+            if os.path.exists(stale):
+                os.remove(stale)
         env = dict(os.environ, PATH=f'{self.bin}:{os.environ["PATH"]}', FAKE_STATE=path,
                    GITHUB_REPOSITORY='o/r', GITHUB_REF=ref, HEAD_SHA=head, GH_TOKEN='t',
                    GITHUB_OUTPUT=output, GITHUB_STEP_SUMMARY=summary)
@@ -137,7 +159,9 @@ class Pick(unittest.TestCase):
         self.assert_answer(run, 'true', 'true', A)
 
     def test_pick_should_not_build_when_the_workflow_files_differ(self):
-        fake = state([A, B], [B], trees={'main': 't1', A: 't1', B: 't2', HEAD: 't1'})
+        # B and its parent C have equal trees: only a compare with `main` sees the difference.
+        fake = state([A, B], [B], parents={A: B, B: C},
+                     trees={'main': 't1', A: 't1', B: 't2', C: 't2', HEAD: 't1'})
         run = self.run_pick(fake)
         self.assert_answer(run, 'false', 'false')
         self.assertIn(DIFFER, run.summary)
@@ -160,32 +184,54 @@ class Pick(unittest.TestCase):
                 self.assertTrue(queried, run.calls)
 
     def test_pick_should_ignore_other_releases_and_drafts(self):
-        draft = release('nightly-2026-11-02-' + A[:7], published_at=None, draft=True)
-        run = self.run_pick(state([A, B], [A], [draft, nightly(B)]))
-        self.assert_answer(run, 'true', 'true', A)
+        tag = 'nightly-2026-11-02-' + A[:7]
+        draft = release(tag, published_at=None, draft=True)
+        newer_draft = release(tag, published_at='2026-11-09T00:00:00Z', draft=True)
         other = release('v1.0.0', published_at='2026-11-09T00:00:00Z')
-        run = self.run_pick(state([A, B], [B], [nightly(B), other]))
-        self.assert_answer(run, 'false', 'false')
+        for name, fake, build, sha in (
+                ('draft without published_at', state([A, B], [A], [draft, nightly(B)]), 'true', A),
+                ('draft with a newer published_at',
+                 state([A, B], [A], [newer_draft, nightly(B)]), 'true', A),
+                ('other release', state([A, B], [B], [nightly(B), other]), 'false', '')):
+            with self.subTest(name):
+                self.assert_answer(self.run_pick(fake), build, build, sha)
 
     def test_pick_should_take_the_largest_published_at(self):
         releases = [nightly(C, '2026-11-01T00:00:00Z'), nightly(B, '2026-11-02T00:00:00Z')]
         run = self.run_pick(state([A, B, C], [B], releases))
         self.assert_answer(run, 'false', 'false')
 
+    def test_pick_should_read_every_page_of_releases(self):
+        older = [release(f'nightly-2026-09-01-{i:07x}', f'2026-09-01T00:00:{i % 60:02d}Z')
+                 for i in range(100)]
+        run = self.run_pick(state([A, B], [B], [*older, nightly(B)]))
+        self.assert_answer(run, 'false', 'false')
+
+    def test_gh_should_return_none_for_an_empty_reply(self):
+        self.run_pick(state([A]))
+        env = dict(PATH=f'{self.bin}:{os.environ["PATH"]}',
+                   FAKE_STATE=os.path.join(self.dir, 'state.json'))
+        with mock.patch.dict(os.environ, env):
+            self.assertIsNone(nightly_build.gh('repos/o/r/empty'))
+
     def test_pick_should_send_no_write(self):
         for ref in ('refs/heads/main', 'refs/heads/x'):
             with self.subTest(ref):
                 run = self.run_pick(state([A, B], [A], [nightly(B)]), ref=ref)
                 self.assertTrue(run.calls)
+                self.assertEqual(run.code, 0, run.stderr)
                 for call in run.calls:
                     self.assertEqual(call[0], 'api')
-                    self.assertNotIn('--method', call)
+                    self.assertEqual([arg for arg in call if is_write_flag(arg)], [], call)
 
     def test_pick_should_fail_when_a_query_fails(self):
         for query in ('commits', 'runs', 'releases', 'contents'):
             with self.subTest(query):
                 run = self.run_pick(state([A], [A], fail_on=query))
                 self.assertNotEqual(run.code, 0)
+                self.assertIn('HTTP 500', run.stderr)
+                self.assertNotIn('Traceback', run.stderr)
+                self.assertEqual(run.out, {})
 
 
 if __name__ == '__main__':
