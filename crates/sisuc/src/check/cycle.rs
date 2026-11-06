@@ -1432,6 +1432,10 @@ impl Checker<'_> {
     }
 
     /// The instantiation graph of the program: see `instantiation_cycles`.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per expression kind that adds edges, so the graph reads in one place"
+    )]
     fn instantiation_graph(&self, functions: &[Option<tir::Function>], unbuilt: &[bool]) -> Graph {
         let (mut graph, hubs, interface_hubs) = self.graph_frame();
         graph.records = self.written_records();
@@ -1487,11 +1491,19 @@ impl Checker<'_> {
                         }
                     }
                     tir::ExprKind::Dbg { ref operand, .. } => {
+                        #[cfg(test)]
+                        super::reached("a dbg in a generic function");
+                        #[cfg(test)]
+                        if matches!(operand.ty.kind(), TypeKind::Enum(..)) {
+                            super::reached("a dbg of an enum in a generic function");
+                        }
                         self.operator_edges(&mut graph, holder, e);
                         let shown = shown.get_or_insert_with(|| self.shown_params());
                         self.dbg_show(&mut graph, shown, holder, operand.ty, e.span);
                     }
                     tir::ExprKind::ToAny(ref operand) => {
+                        #[cfg(test)]
+                        super::reached("an any conversion in a generic function");
                         // The table holds the methods of the interface and of those it
                         // inherits, and both ways to show the value: a call through each hub.
                         let TypeKind::Any(interface, args) = e.ty.kind() else {

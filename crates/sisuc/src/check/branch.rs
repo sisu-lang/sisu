@@ -363,7 +363,11 @@ impl Checker<'_> {
         };
         // With an `any` type in reach, the mistake is the member that leaves it.
         let failed = match self.seeded_join(siblings, &objects) {
-            AnyJoin::Joined { ty } => return (Some(made(ty)), error, false),
+            AnyJoin::Joined { ty } => {
+                #[cfg(test)]
+                super::reached("seeded_join for a branch");
+                return (Some(made(ty)), error, false);
+            }
             leaves @ AnyJoin::Leaves { .. } => leaves,
             AnyJoin::NoAny | AnyJoin::Fails { .. } => failed,
         };
@@ -633,8 +637,14 @@ fn unwrap_some_object(block: &mut CheckedBlock, ty: Type) {
         .as_mut()
         .expect("`some_object` should have found a value");
     match std::mem::replace(&mut value.kind, tir::ExprKind::None) {
-        tir::ExprKind::Wrap(inner) => **value = *inner,
+        tir::ExprKind::Wrap(inner) => {
+            #[cfg(test)]
+            super::reached("unwrap_some_object of a Some");
+            **value = *inner;
+        }
         none => {
+            #[cfg(test)]
+            super::reached("unwrap_some_object of a None");
             value.kind = none;
             value.ty = ty;
         }
