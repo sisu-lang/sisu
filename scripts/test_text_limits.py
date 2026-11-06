@@ -249,9 +249,12 @@ class MainTests(unittest.TestCase):
         self.assertEqual(self.run_main(), (1, self.NEW))
 
     def test_a_merge_should_pass(self):
+        self.git("checkout", "-qb", "other")
+        self.write("b.txt", "x\n")
+        self.commit()
+        self.git("checkout", "-q", "main")
+        self.git("merge", "-q", "--no-ff", "--no-commit", "other")
         self.write("a.md", f"{LONG}\n\n{LONG}\n")
-        head = subprocess.run(["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
-        self.git("update-ref", "MERGE_HEAD", head)
         self.assertEqual(self.run_main(), (0, ""))
 
 
