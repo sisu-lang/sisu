@@ -554,7 +554,13 @@ on stdout. It exits with code 1 when:
 
 The pull request that fixes a known case removes its row. The gaps between
 the numbers keep a row from changing between known and fixed when a change
-moves a ratio a little. `KNOWN` has no row. Each `tir::Expr` holds its exit
+moves a ratio a little. `KNOWN` has four rows, for `mir` and `codegen` in the
+shapes mut exits and owned exits (#502). Each `return` writes its own cleanup,
+so n exits and n values give n² statements. Real programs have few of these:
+no exit in the benchmark programs or the lexer has more than 4 cleanup
+statements.
+
+Each `tir::Expr` holds its exit
 flag. The checker sets it once, when it makes the expression. So array literal
 depth (#344), type depth, method chain, generic call depth (#366) and string
 call depth are linear in `check`. The checker also keeps the answer of
