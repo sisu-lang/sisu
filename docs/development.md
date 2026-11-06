@@ -767,6 +767,205 @@ resolve it first.
    that fails on it, then fix the generator. Never steer the generator around
    a compiler bug.
 
+## The nightly build
+
+The `Nightly build` workflow (`.github/workflows/nightly-build.yml`) builds
+`sisu` for x86-64 Linux, ARM64 Linux and ARM64 macOS from the newest `main`
+commit whose `ci.yml` push run passed. It publishes the builds as a GitHub
+release `nightly-<YYYY-MM-DD>-<short SHA>`, marked latest. The release holds
+the three tarballs, `install.sh`, `orders.sisu` and `SHA256SUMS`. The install
+line runs `install.sh` from `releases/latest/download/`. The term for a
+published build is "nightly build" (`GLOSSARY.md`).
+
+The workflow runs at 02:17 UTC, by hand with `workflow_dispatch`, and on a
+pull request that changes its files (see "Dry run"). The logic that needs the
+GitHub API is in `scripts/nightly_build.py`. It has four commands: `pick`,
+`publish`, `prune` and `report`. The jobs run in this order:
+
+| Job | What it does |
+| --- | --- |
+| `pick` | Chooses the commit. It takes the newest `main` commit that has a successful `ci.yml` push run. That commit must be newer than the commit of the newest `nightly-*` release, and its `.github/workflows/` tree must equal the one at the head of `main`. It writes the answer to the job summary. |
+| `build` | Builds, checks and packs one tarball for each of the three targets. |
+| `checksums` | Writes `SHA256SUMS` with three lines. It uploads that file, `install.sh` and `orders.sisu`. |
+| `clean-machine` | Runs `install.sh` and the site's programs on eight clean systems. |
+| `installer-tests` | Runs the installer tests that need a broken or an unsupported machine. |
+| `publish` | Creates a draft release, uploads the six files and publishes the draft. |
+| `live-check` | Runs the install line against the real URLs. |
+| `prune` | Deletes the nightly builds beyond the 14 newest. |
+| `report` | Opens or updates the issue `Nightly build failure`. |
+
+A run that finds no new green commit ends with success, and its job summary
+says `no new green commit`. A failed run publishes nothing. The next scheduled
+run picks the same commit again. No failure replaces a working nightly build.
+A draft that a killed `publish` leaves is deleted by the next `publish`.
+
+GitHub disables a `schedule` trigger after 60 days without activity in the
+repository (see [the nightly job](#the-nightly-job)).
+
+### Dry run
+
+A pull request that changes one of these paths runs the workflow:
+`.github/workflows/nightly-build.yml`, `install.sh`, `scripts/nightly_*`,
+`scripts/test_install.py`, `scripts/test_nightly_*.py`, the `install-llvm`
+action, `scripts/install-llvm.sh`, `.config/about.toml`, `.config/about.hbs`
+and `.config/notices/`. A run by hand on a branch other than `main` does the
+same.
+
+Both are dry runs. A dry run builds the head commit of the branch or the pull
+request and runs `pick`, `build`, `checksums`, `clean-machine` and
+`installer-tests`. It skips `publish`, `live-check`, `prune` and `report`, so
+it publishes nothing and opens no issue. `pick` also asks the question that
+`main` would ask, and the job summary shows `main would: <answer>`. The
+tarballs stay as artifacts for 7 days.
+
+Start a dry run by hand with the Actions tab, or with
+`gh api --method POST repos/sisu-lang/sisu/actions/workflows/nightly-build.yml/dispatches -f ref=<branch>`.
+A run by hand on `main` is not a dry run: it can publish. A new push to a pull
+request cancels the run in progress.
+
+A dry run on a branch behind `main` can fail with no fault in the branch (see
+"Read a failure").
+
+### Read a failure
+
+Find the first red job. A job that GitHub skipped is not a failure: a run with
+no new commit opens no issue.
+
+- `pick` fails when a `gh` call fails. Its other answers end with success.
+- `build` fails in one of these steps:
+  - `nightly_check.py version`: `sisu --version --verbose` must print a
+    `commit:` line with the first 7 characters of the picked commit, and print
+    nothing to stderr. A commit `unknown` means that the build had no `git`, or
+    that `git` did not trust the checkout.
+  - `nightly_check.py linux`: the highest strong `GLIBC_` reference is at most
+    2.35, the highest `GLIBCXX_` is at most 3.4.30, and `NEEDED` holds only
+    `libm`, `libz`, `libzstd`, `libstdc++`, `libgcc_s`, `libc` and the loader.
+    A new library needs a decision. It does not pass by itself.
+  - `nightly_check.py macos`: `otool -L` lists only `/usr/lib/` and `/System/`
+    paths, `codesign -v` passes, and the `minos` of one member of
+    `libLLVMSupport.a` and of `libzstd.a` is at most 15.0. The floor of 15 does
+    not rise without a decision. Stop and ask.
+  - `cargo about --fail`: for example, a crate has a license that
+    `.config/about.toml` does not accept. On macOS, the step that appends the
+    `zstd` license fails when Homebrew has no `LICENSE` for `zstd`.
+  - `nightly_check.py pack`: the tarball must hold exactly the directory
+    `sisu/` with `sisu`, both runtime archives, `LICENSE` and
+    `THIRD-PARTY-LICENSES.txt`. A `._` file is an error.
+- `checksums` fails when `SHA256SUMS` does not have three lines.
+- `clean-machine` fails in `install.sh`, in the commit check, or in
+  `scripts/nightly_smoke.sh`. The commit check runs `sisu --version --verbose`
+  from `~/.sisu/bin`. It prints no text when the commit differs. The smoke
+  script runs each program of `site/programs/run` that has an `.out` file,
+  with both allocators. Each run must exit with 0, print nothing to stderr and
+  print the `.out` file. The failure line names the program and the allocator.
+- `installer-tests` fails in `scripts/test_install.py` or in
+  `scripts/nightly_installer_real.py`.
+- `publish` ends with success and `published=false` when its own check of the
+  commit fails. The job summary then says
+  ``the commit is not newer than the newest nightly build``, or
+  ``the newest green commit has other workflow files than `main` ``. The job
+  fails when an artifact is missing: the error names the files. It also fails,
+  before any write to the releases, when two artifacts hold one file name.
+  The error names the file and both paths.
+- `live-check` fails when an install line fails, or when the output of
+  `orders.sisu` differs from `site/programs/run/orders.out`. It almost always
+  means a URL or upload problem. It does not roll back. The nightly build stays
+  published.
+- `prune` fails when a `gh release delete` call fails. It names the tag on
+  stderr and goes on with the other tags.
+- `report` needs the label `nightly-build`.
+
+`publish` and `prune` have no time cap of their own. The `timeout-minutes` of
+each job is the limit. A kill in `prune` is safe, because the next `prune`
+continues.
+
+Three failures have no bad build behind them:
+
+- A by-hand re-run of a failed `live-check` after a newer nightly build is
+  published compares the new asset with the old `orders.out`.
+- A dry run on a branch behind `main` runs the merged workflow of `main` on the
+  head of the branch. Update the branch to end it.
+- A "re-run all jobs" can take the artifacts of an earlier attempt, because
+  artifact ids are not in creation order. `clean-machine` then stops on the
+  commit or the checksum. An exit 1 with no text from its commit check means
+  that the tarball comes from another commit. A new run clears it: the next
+  scheduled run on `main`, or a new push on a branch.
+
+#### The issue
+
+When a job of a scheduled run fails or is cancelled, `report` opens the issue
+`Nightly build failure` with the labels `needs-triage`, `bug` and
+`nightly-build`. When an open issue with that title and label exists, it adds
+a comment. The text names the run's URL and the failed jobs. A run by hand and
+a dry run open no issue. A successful run does not close the issue: the
+maintainer closes it. A red `main` opens no issue: `pick` skips a red commit.
+
+#### After a failed prune
+
+`prune` runs `gh release delete --cleanup-tag`. That call deletes the release
+first and the tag second. When the tag delete fails, no later `prune` lists the
+tag, because `prune` lists releases. After a failed `prune`, look for a tag
+with no release: compare `git ls-remote --tags origin 'nightly-*'` with the
+releases. Delete such a tag with
+`gh api --method DELETE repos/sisu-lang/sisu/git/refs/tags/<tag>`.
+
+### A bad nightly build
+
+A commit can pass CI and every check and still have a serious bug. There is no
+skip list. Marking the previous nightly build as latest moves new installs
+back, and `pick` does not publish the bad commit again, because it compares
+with the newest `nightly-*` release. But any newer green commit that still has
+the bug gets published. So:
+
+1. Merge a revert or a fix to `main`.
+2. When CI passes, run the workflow by hand on `main`.
+3. If the fix takes longer and installs must not get the bad build, mark the
+   previous nightly build as latest, and disable the workflow on the Actions
+   tab until the fix merges.
+
+### The gap between the two downloads
+
+`install.sh` gets `SHA256SUMS` and the tarball in two requests. If a new
+nightly build is published between them, the two files come from different
+builds. This gap is a few seconds long and opens once a day. The design
+accepts it:
+
+- The checksum finds the mismatch. The install stops before anything changes,
+  and a second run of the install line works.
+- An older `install.sh` that gets a newer tarball with another layout also
+  stops safely, because it checks that the three files are there before it
+  moves them.
+
+To close the gap, `publish` would write the tag into `install.sh`. Then the
+published file would differ from the file that `clean-machine` ran. `fetch` in
+`install.sh` holds a `shortcut:` comment for the gap. If users report this
+mismatch, write the tag into the installer.
+
+### Pruning
+
+`prune` keeps the 14 newest nightly builds. It counts every published release
+whose tag starts with `nightly-`, also one with a malformed tag, and orders
+them by `published_at`. It deletes the others with their tags. It reads only
+`nightly-*` tags, so it cannot touch another release. It runs only after
+`live-check` succeeds, so a run that publishes nothing prunes nothing.
+
+### The tests
+
+- `scripts/test_install.py`, `scripts/test_nightly_build.py`,
+  `scripts/test_nightly_check.py` and `scripts/test_nightly_workflow.py` run in
+  the `python-tests` hook. The tests of `nightly_build.py` use a fake `gh` and
+  stored API replies. The tests of `install.sh` use fake system commands.
+  `SISU_TEST_SH` names another shell for them, such as `bash --posix`. The
+  workflow test reads `nightly-build.yml` as text.
+- `scripts/nightly_installer_real.py` needs a real machine: Docker on Linux,
+  macOS on a Mac. Its name does not match `test_*.py`, so no hook runs it. The
+  `installer-tests` job runs it with `SISU_ARTIFACTS=<dir>`. The directory holds
+  the tarball of the host, `install.sh` and `SHA256SUMS`.
+- The end-to-end tests of `crates/sisuc/tests/cases.rs` do not run against a
+  release `sisu`. They find the binary with `CARGO_BIN_EXE_sisu` at compile
+  time. The eight `clean-machine` rows run the site's programs with
+  `scripts/nightly_smoke.sh`.
+
 ## The growing proof program
 
 `selfhost/lexer.sisu` is Sisu's lexer, written in Sisu. It is the first
@@ -870,7 +1069,8 @@ alone print the usage.
 `sisu` links every program with `libsisu_runtime_mimalloc.a`, or with
 `libsisu_runtime_system.a` for `--allocator system`, which it looks for next to
 its own executable. `cargo build --workspace` puts both archives and `sisu`
-there; `cargo build -p sisuc` does not build the runtime.
+there, and so does an install from a nightly build. `cargo build -p sisuc`
+does not build the runtime.
 
 When a program breaks a rule, `sisu` prints a diagnostic to stderr and exits
 with code 1. Take this `bad.sisu`:
@@ -1090,4 +1290,10 @@ must accept any syntax those programs use.
 | `Makefile` | The entry point for the commands; `make help` lists its targets. |
 | `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `codspeed-prep.sh`, `fuzz.sh`, `fuzz_program_plan.py`, which plans each run of the program fuzz workflow, `fuzz_seeds.py`, which writes the program fuzzer's 128 seeds, `fuzz_gaps.py`, which finds the generator gaps, `watch_pr.py`, which waits for the next review with text, comment from someone other than you, or check result of a pull request, `diag_diff.py`, which compares the diagnostics of two `sisu` builds for a review, `golden_diff.py`, which checks that a re-bless only reworded expected files, `scaling.py`, which finds the shapes of program for which a compiler stage is superlinear, `merge_pr.py`, which squash-merges a pull request once its checks pass (`--cleanup` removes the worktree of one merged in the UI), and the scripts prek hooks run, such as `check-expect-messages.sh` and `slow_tests.py`. |
 | `site` | The website's pages, data and build script (`make site`). |
+| `install.sh` | The installer, which the nightly build publishes as a release asset (see [The nightly build](#the-nightly-build)). |
+| `scripts/nightly_build.py` | The steps of the nightly build workflow that use the GitHub API: `pick`, `publish`, `prune` and `report`. |
+| `scripts/nightly_check.py` | The checks of the nightly build: the binary's commit, its Linux and macOS libraries, and the tarball's names. |
+| `scripts/nightly_smoke.sh` | Runs each site program that has an `.out` file with both allocators, on a clean machine of the nightly build. |
+| `scripts/nightly_installer_real.py` | The installer tests that need a real machine, which `SISU_ARTIFACTS` points at. |
+| `.config/about.toml` | The settings of `cargo-about`, which writes the third-party license file of a nightly build's tarball. `about.hbs` and `notices/` sit beside it. |
 | `docs` | Architecture, roadmap, decisions (`adr/`) and agent guides (`agents/`). |
