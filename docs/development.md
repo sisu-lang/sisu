@@ -695,19 +695,27 @@ A rule makes the fixed seeds reach a function. Do these steps in this order:
 
 1. Add a case that holds the construct to `crates/sisuc/tests/run`. The
    reference then reaches the function, so the check can see a gap.
-2. Write the construct in `Gen::gap_forms` (`crates/sisuc/src/generate/item.rs`)
-   through `known_text`. Use fixed text and draw no byte from the seed, because
-   a draw moves what each later part of a seed writes. The coverage test leaves
-   this text out, so the form cannot hide an older key.
-3. Call `reached` at the decision in `crates/sisuc/src/check/`, and add the point
-   to `GAP_POINTS` (`generate/coverage.rs`). A search of the program's text only
-   guesses at that decision, and a near form passes it. A module that cannot
-   call `check` keeps a counter, as `RESOLVE_ALL_CALLS` does.
+2. Write the construct in `Gen::gap_forms` (`crates/sisuc/src/generate/item.rs`).
+   An item goes into `GENERIC_GAP_ITEMS` or `ANY_GAP_ITEMS`, and a statement goes
+   into the list of lines in `gap_forms`. Add it to the comment above `gap_forms`.
+   Use fixed text and draw no byte from the seed, because a draw moves what each
+   later part of a seed writes. The coverage test leaves this text out, so the
+   form cannot hide an older key.
+3. Call `reached` at the decision in `crates/sisuc/src/check/`, and put
+   `#[cfg(test)]` on the call, because `reached` exists only in tests. Add the
+   point to `GAP_POINTS` (`generate/coverage.rs`). A search of the program's text
+   only guesses at that decision, and a near form passes it. A module that cannot
+   call `check` keeps a counter, as `RESOLVE_ALL_CALLS` does. `Walk::program`
+   resets the counter and turns its count into a point.
 4. Add a row to `gap_point_keys_should_mark_what_the_checker_did`: a whole
    program that reaches the point. Add a near program that does not reach it.
 5. Run `generated_programs_should_reach_each_gap_rule`. It reads only the seeds
    that the nightly reads. Remove the form for a moment: the test must fail.
-6. Remove the key from `fuzz/known_gaps.txt`. `make fuzz-gaps` must exit 0.
+6. When the form prints a line, update the two pins in
+   `crates/sisuc/src/fuzz_program.rs`: the count of lines in
+   `a_budget_program_should_finish_within_the_limit`, and the stdout in
+   `a_failure_should_print_the_program`.
+7. Remove the key from `fuzz/known_gaps.txt`. `make fuzz-gaps` must exit 0.
 
 When the form finds a compiler bug, fix the bug in the same work, with its own
 case in `tests/run`.

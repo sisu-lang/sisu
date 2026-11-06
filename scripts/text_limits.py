@@ -12,6 +12,7 @@ Usage: python3 text_limits.py --diff REF FILE...
 import argparse
 import ast
 import io
+import os
 import re
 import subprocess
 import sys
@@ -27,6 +28,9 @@ STARTS_BLOCK = re.compile(r"([-*+] |\d+[.)] |GIVEN\b|WHEN\b|THEN\b|AND\b|BUT\b|E
 FENCE = re.compile(r"\s*(```|~~~)")
 # A semicolon or a colon also ends a count, so that a false alarm stays rare.
 ENDS_SENTENCE = re.compile(r"[.!?;:][)\]\"'*_]*$")
+# A heading, an HTML comment or a table row, in Markdown or in a comment.
+NOT_PROSE = ("#", "<!--", "|")
+HUNK = re.compile(r"@@ -\S+ \+(\d+)(?:,(\d+))? @@")
 
 
 def outside_fences(numbered: list[tuple[int, str]]) -> list[tuple[int, str]]:
@@ -68,7 +72,7 @@ def prose(path: str, lines: list[str]) -> list[tuple[int, str]]:
         if lines and lines[0].startswith("---"):
             end = next((i for i, line in enumerate(lines[1:], 1) if line.startswith("---")), 0)
             body = numbered[end + 1:]
-        return outside_fences([(n, t) for n, t in body if not t.lstrip().startswith(("#", "<!--", "|"))])
+        return outside_fences(body)
     if path.endswith(".py"):
         return outside_fences(python_prose(lines))
     if path.endswith(".rs"):
@@ -82,7 +86,8 @@ def prose(path: str, lines: list[str]) -> list[tuple[int, str]]:
 
 def long_sentences(numbered: list[tuple[int, str]], changed: set[int]) -> list[tuple[int, int]]:
     """Each sentence over the limit with a changed line, as (first line, words). A gap in the line
-    numbers, an empty line or a line that `STARTS_BLOCK` matches ends the sentence."""
+    numbers, an empty line, a line of `NOT_PROSE` or a line that `STARTS_BLOCK` matches ends the
+    sentence."""
     found = []
     words = 0
     first = 0
@@ -97,6 +102,8 @@ def long_sentences(numbered: list[tuple[int, str]], changed: set[int]) -> list[t
         touched = False
 
     for n, text in numbered:
+        if text.lstrip().startswith(NOT_PROSE):
+            continue
         if last is None or n != last + 1 or not text.strip() or STARTS_BLOCK.match(text.lstrip()):
             end()
         last = n
@@ -121,19 +128,35 @@ def findings(path: str, lines: list[str], changed: set[int]) -> list[str]:
            for n, words in long_sentences(numbered, changed)]
     if path.endswith((".py", ".sh")):
         for n, _ in numbered:
-            if n in changed and len(lines[n - 1].rstrip("\n")) > WIDTH:
-                out.append(f"{path}:{n}: a comment line has {len(lines[n - 1].rstrip())} columns; wrap it at {WIDTH}")
+            columns = len(lines[n - 1].rstrip("\n"))
+            if n in changed and columns > WIDTH:
+                out.append(f"{path}:{n}: a comment line has {columns} columns; wrap it at {WIDTH}")
     return out
 
 
-def changed_lines(ref: str, path: str) -> set[int]:
-    """The line numbers of `path` that differ from `ref`."""
-    diff = subprocess.run(["git", "diff", "--unified=0", ref, "--", path],
-                          capture_output=True, text=True, check=True).stdout
-    changed = set()
-    for start, count in re.findall(r"^@@ -\S+ \+(\d+)(?:,(\d+))? @@", diff, flags=re.M):
-        first = int(start)
-        changed.update(range(first, first + int(count or 1)))
+def changed_lines(ref: str) -> dict[str, set[int]]:
+    """The line numbers that differ from `ref`, for each file below this directory. A rename counts
+    only the lines that it changes, so Git must see the whole diff and not one path."""
+    # The flags hold the output in one form, whatever the user's Git settings are.
+    # shortcut: Git still quotes a name with a tab or a quotation mark, so that file is not read.
+    # No file here has such a name. Read `--name-status -z` if one comes.
+    command = ["git", "-c", "core.quotePath=false", "diff", "-M", "--relative", "--no-color", "--no-ext-diff",
+               "--unified=0", "--inter-hunk-context=0", "--src-prefix=a/", "--dst-prefix=b/", ref]
+    diff = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True).stdout
+    changed: dict[str, set[int]] = {}
+    current: set[int] = set()
+    in_header = False
+    for line in diff.split("\n"):
+        if line.startswith("diff --git "):
+            current = set()
+            in_header = True
+        elif in_header and line.startswith("+++ b/"):
+            # Git ends the name with a tab when the name holds a space.
+            changed[line[6:].rstrip("\t")] = current
+        elif hunk := HUNK.match(line):
+            in_header = False
+            first = int(hunk[1])
+            current.update(range(first, first + int(hunk[2] or 1)))
     return changed
 
 
@@ -147,13 +170,14 @@ def main(argv: list[str]) -> int:
     if merging.returncode == 0:
         return 0
     bad = 0
+    changed = changed_lines(args.diff)
     for path in args.paths:
-        changed = changed_lines(args.diff, path)
-        if not changed:
+        ours = changed.get(os.path.normpath(path))
+        if not ours:
             continue
         with open(path, encoding="utf-8") as f:
             lines = f.readlines()
-        for line in findings(path, lines, changed):
+        for line in findings(path, lines, ours):
             print(line)
             bad = 1
     return bad
