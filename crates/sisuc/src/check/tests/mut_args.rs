@@ -2176,8 +2176,8 @@ fn mut_argument_against_a_written_context_should_be_e0170_only() {
         "let n: i64 = pair(mut names, \"b\")",
     ] {
         let src = context_program("", body);
-        let want =
-            src.find(body).expect("the body is in the program") + body.find("names").unwrap_or(0);
+        let want = src.find(body).expect("the body is in the program")
+            + body.find("names").expect("the body names `names`");
         let ds = diags(&src);
         let starts: Vec<_> = (ds.iter())
             .filter(|d| d.code() == E170)
@@ -2498,7 +2498,7 @@ fn temporary_mut_argument_with_its_own_error_should_also_be_e0169() {
 ///   report needs the type, and the other forms keep what they had
 #[test]
 #[expect(clippy::too_many_lines, reason = "a table of rows, one for each form")]
-fn mut_place_with_a_failed_base_should_have_no_e0169() {
+fn mut_argument_beside_an_earlier_error_should_keep_its_reports() {
     let rows: &[Row] = &[
         (
             "i: a field of a call",
