@@ -89,20 +89,19 @@ take_lock() {
   mkdir -p "$sisu" 2>/dev/null || die "cannot write to $sisu."
   # A PID target does not exist as a file. `ln -s` into a directory, or through a symlink to
   # one, would succeed and take no lock.
-  if [ -e "$lock" ]; then die "cannot write to $sisu."; fi
+  if [ -e "$lock" ]; then die "$lock is not a lock. Remove it, and run the install line again."; fi
   for _ in 1 2 3 4 5; do
     ln -s "$$" "$lock" 2>/dev/null && return 0
-    # The holder can end between these lines, so a missing lock means try again.
-    [ -L "$lock" ] || continue
     holder=$(readlink "$lock" 2>/dev/null || true)
     case $holder in
+      # The holder can end between these lines, so a missing lock means try again.
       '') continue ;;
       # This run cannot hold the lock yet, so its own PID is a stale value. `kill -0 0` always
       # succeeds, because 0 is the process group.
       "$$" | 0 | *[!0-9]*) ;;
       *) if kill -0 "$holder" 2>/dev/null; then busy; fi ;;
     esac
-    [ "$(readlink "$lock" 2>/dev/null || true)" = "$holder" ] || continue
+    [ "$(readlink "$lock" 2>/dev/null)" = "$holder" ] || continue
     rm -f "$lock" 2>/dev/null || die "cannot write to $sisu."
   done
   if [ -L "$lock" ]; then busy; fi

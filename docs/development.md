@@ -962,9 +962,9 @@ mismatch, write the tag into the installer.
 The lock is a symbolic link, and its target is the PID of the run. A second run
 that starts while the first run is alive stops at once. It prints that another
 install is running, and it changes nothing. The lock of a run that was killed
-does not stop the next run: the next run sees that the PID is not alive, removes
-the lock and goes on. Without the lock, two runs would share `~/.sisu/tmp` and
-could delete the compiler.
+does not stop the next run. The next run sees that the PID is not alive. It
+removes the lock and goes on. Without the lock, two runs would share
+`~/.sisu/tmp` and could delete the compiler.
 
 ### Pruning
 

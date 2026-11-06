@@ -734,6 +734,7 @@ class InstallTest(unittest.TestCase):
         own = ('mkdir -p "$HOME/.sisu"; ln -s $$ "$HOME/.sisu/install.lock"; exec "$@"')
         rows = [('a reaped child', self.dead_pid(), ''), ('not-a-pid', 'not-a-pid', ''),
                 ('a PID that does not exist', 99999999, ''), ('zero', 0, ''),
+                ('minus one', -1, ''),
                 ('a space in HOME', self.dead_pid(), 'a b/'), ('its own PID', None, '')]
         for name, target, prefix in rows:
             with self.subTest(name):
@@ -749,12 +750,21 @@ class InstallTest(unittest.TestCase):
                 self.assertFalse(m.lock_exists())
 
     def test_install_should_remove_its_lock_at_the_end(self):
-        for name in ('success', 'checksum mismatch', 'TERM', 'INT', 'failed rm of tmp'):
+        for name in ('success', 'checksum mismatch', 'TERM', 'INT', 'failed rm of tmp',
+                     'tmp goes first'):
             with self.subTest(name):
                 m = self.machine()
                 m.earlier_install()
+                real_rm = shlex.quote(shutil.which('rm'))
                 if name == 'success':
                     self.assertInstalled(m, m.run())
+                elif name == 'tmp goes first':
+                    flag = os.path.join(m.root, 'tmp-after-lock')
+                    m.fake_command('rm', 'case "$*" in *.sisu/tmp)\n'
+                                   '  if [ ! -L %s ]; then : > %s; fi;; esac\nexec %s "$@"\n'
+                                   % (shlex.quote(m.lock), shlex.quote(flag), real_rm))
+                    self.assertInstalled(m, m.run())
+                    self.assertFalse(os.path.exists(flag))
                 elif name == 'checksum mismatch':
                     m.sums('%s  %s\n' % ('0' * 64, m.tarball_name))
                     r = m.run()
@@ -769,6 +779,18 @@ class InstallTest(unittest.TestCase):
                     self.assertEqual(self.kill_during_curl(m, sig), code)
                 self.assertFalse(m.lock_exists())
 
+    def test_install_should_exit_zero_when_its_lock_cannot_be_removed(self):
+        # The new build is whole, so the run exits 0 although the lock stays.
+        m = self.machine()
+        m.earlier_install()
+        m.fake_command('rm', 'for last; do :; done\n'
+                       'case "$last" in *install.lock) %s;; esac\nexec %s "$@"\n'
+                       % (FAIL, shlex.quote(shutil.which('rm'))))
+        r = m.run()
+        self.assertInstalled(m, r)
+        # Only the fake `rm` leaves the lock, so this proves that the fake fired.
+        self.assertTrue(m.lock_exists())
+
     def test_killed_install_should_not_stop_the_next_install(self):
         m = self.machine()
         m.earlier_install()
@@ -777,7 +799,7 @@ class InstallTest(unittest.TestCase):
         self.assertInstalled(m, m.run())
         self.assertFalse(m.lock_exists())
 
-    def test_lock_path_that_is_not_a_pid_lock_should_stop_with_one_sentence(self):
+    def test_lock_path_that_is_not_a_pid_lock_should_stop_with_one_line(self):
         for kind in ('a regular file', 'a directory', 'a symlink to a directory'):
             with self.subTest(kind):
                 m = self.machine()
@@ -792,7 +814,8 @@ class InstallTest(unittest.TestCase):
                     os.mkdir(outside)
                     os.symlink(outside, m.lock)
                 r = m.run()
-                self.one_line(m, r)
+                self.one_line_with(r, 'is not a lock', m.lock)
+                self.assertEqual(r.returncode, 1)
                 self.assertEqual(m.builds(), ALL_OLD)
                 self.assertTrue(m.lock_exists())
                 if kind == 'a regular file':
@@ -858,11 +881,15 @@ class InstallTest(unittest.TestCase):
                        % (shlex.quote(flag), shlex.quote(flag), body,
                           shlex.quote(shutil.which(name))))
 
-    def test_holder_that_ends_during_the_lock_check_should_not_give_a_write_error(self):
+    def test_holders_that_end_during_the_lock_check_should_not_give_a_write_error(self):
+        # Three failed `ln` calls in a row, each after the holder ended: the run tries again.
         m = self.machine()
         m.hold(self.live_process())
-        self.once(m, 'ln', '%s -f %s\n%s' % (shlex.quote(shutil.which('rm')),
-                                              shlex.quote(m.lock), FAIL))
+        count = os.path.join(m.root, 'ln.count')
+        m.fake_command('ln', 'echo x >> %s\nn=$(grep -c x %s)\n'
+                       'if [ "$n" -le 3 ]; then rm -f %s; %s; fi\nexec %s "$@"\n'
+                       % (shlex.quote(count), shlex.quote(count), shlex.quote(m.lock), FAIL,
+                          shlex.quote(shutil.which('ln'))))
         r = m.run()
         self.assertInstalled(m, r)
         self.assertNotIn('cannot write', r.stderr)
@@ -887,7 +914,7 @@ class InstallTest(unittest.TestCase):
         m.hold(live)
         m.fake_command('readlink', FAIL + '\n')
         r = m.run()
-        self.one_line_with(r)
+        self.one_line_with(r, 'another install is running')
         self.assertEqual(os.readlink(m.lock), str(live))
         self.assertEqual(m.builds(), ALL_OLD)
 

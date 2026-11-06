@@ -320,7 +320,8 @@ class Pick(Script):
                 self.assertTrue(queried, run.calls)
 
     def test_pick_should_fail_on_a_nightly_tag_without_a_short_sha(self):
-        for tag in ('nightly-test', 'nightly-a', 'nightly-2026-11-01-', 'nightly-2026-11-01-ABCDEF0'):
+        for tag in ('nightly-test', 'nightly-a', 'nightly-2026-11-01-',
+                    'nightly-2026-11-01-ABCDEF0', 'nightly-2026-11-01-abcdef01'):
             with self.subTest(tag):
                 # Each of these tags can hide the release's commit, or stop the walk at a commit.
                 run = self.run_pick(state([A, B], [A], [release(tag)]))
