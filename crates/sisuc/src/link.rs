@@ -66,9 +66,8 @@ fn on_path(program: &str) -> bool {
         .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
 }
 
-/// The runtime archive on `allocator`, which Cargo builds into the same directory as `sisu`:
-/// `libsisu_runtime_mimalloc.a` or `libsisu_runtime_system.a`.
-// shortcut: Cargo target directories only; add a search path once sisu installs elsewhere.
+/// The runtime archive on `allocator`. It is next to `sisu`, in a Cargo target directory or in an
+/// install: `libsisu_runtime_mimalloc.a` or `libsisu_runtime_system.a`.
 pub(crate) fn runtime_library(allocator: Allocator) -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| format!("cannot locate sisu: {e}"))?;
     let path = exe.with_file_name(match allocator {
@@ -79,7 +78,8 @@ pub(crate) fn runtime_library(allocator: Allocator) -> Result<PathBuf, String> {
         Ok(path)
     } else {
         Err(format!(
-            "runtime library not found at {}; build it with `cargo build --workspace`",
+            "runtime library not found at {}; run the Sisu install line again, or run \
+             `cargo build --workspace` in a clone",
             path.display()
         ))
     }

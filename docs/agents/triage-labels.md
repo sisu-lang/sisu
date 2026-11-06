@@ -14,7 +14,7 @@ Each GitHub issue has one kind, one area and one triage label. A `bug`, `diagnos
 
 ## Area
 
-`lexer`, `parser`, `checker`, `mir`, `codegen`, `runtime`, `cli`, `fuzz`.
+`lexer`, `parser`, `checker`, `mir`, `codegen`, `runtime`, `cli`, `fuzz`, `nightly-build`.
 
 ## Severity
 

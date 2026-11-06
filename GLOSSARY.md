@@ -804,3 +804,11 @@ the program uses the milestone's feature where the feature fits. The tests
 check that it prints the same tokens as `sisu build --emit tokens` for each
 Sisu file of the compiler's tests that lexes without an error.
 _Avoid_: self-hosting (the compiler is still written in Rust), bootstrap
+
+**Nightly build**:
+A build of `sisu` and its runtime archives from the newest `main` commit whose
+CI passed, published once a day as a GitHub release. Sisu has no other releases.
+_Avoid_: nightly (alone), release (alone), snapshot
+
+**Install line**:
+The `curl | sh` command that runs `install.sh` from `releases/latest/download/`.
