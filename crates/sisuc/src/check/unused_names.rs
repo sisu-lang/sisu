@@ -234,7 +234,8 @@ impl Checker<'_> {
     /// that live code builds is reported, and its methods are not. Each cites up to three of its
     /// uses in dead code. Each pending finding of a live function is W0014. A pending finding of a
     /// dead function gives only the W0002 that it holds, if any. The function's warning tells you
-    /// to delete all of it.
+    /// to delete all of it. An alias is not judged, and the interface that its body names as
+    /// `S.Name` counts as used, also when the alias is dead.
     #[expect(
         clippy::too_many_lines,
         reason = "one report loop for each kind of item, so the warnings read in one place"
@@ -615,6 +616,10 @@ impl Checker<'_> {
         // The interfaces live code uses, and those not yet followed to the ones they name.
         let mut interfaces = vec![false; self.interfaces.len()];
         let mut to_follow = Vec::new();
+        // An alias body that names `S.Name` has no owner, so no use records its interface.
+        for interface in &self.aliases.named_interfaces {
+            use_interface(&mut interfaces, &mut to_follow, interface.0);
+        }
         while let Some(o) = stack.pop() {
             // A live method makes its `extend` block live: the block names the interfaces in its
             // bounds.

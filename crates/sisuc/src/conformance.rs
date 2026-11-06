@@ -30,6 +30,8 @@ thread_local! {
     pub(crate) static HOLDS_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many keys `calls_written` has listed the parts of on this thread.
     pub(crate) static CALLS_KEYS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many times `Unifier::resolve_all` has run on this thread.
+    pub(crate) static RESOLVE_ALL_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The free stack that a walk over the depth of a type keeps. rustc's `ensure_sufficient_stack`
@@ -1352,6 +1354,8 @@ impl Unifier {
     }
 
     fn resolve_all(&mut self, args: TypeArgs) -> Option<TypeArgs> {
+        #[cfg(test)]
+        RESOLVE_ALL_CALLS.set(RESOLVE_ALL_CALLS.get() + 1);
         let list = (args.get().iter())
             .map(|&ty| self.resolve(ty))
             .collect::<Option<Vec<Type>>>()?;
