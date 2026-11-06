@@ -6906,8 +6906,9 @@ fn generated_programs_should_reach_each_lowering_rule() {
 
 /// GIVEN the programs of the seeds `0..FUZZ_SEEDS`
 /// WHEN the fold of the bytes of a seed, modulo 8, is `MAIN_ARGS_GATE`
-/// THEN its `program` holds `fn main(gap_args: [string])`, and no other `program` does; every
-/// `plain` holds `fn main() ` and no `gap_args`; and at least one seed holds the form
+/// THEN its `program` holds `fn main(gap_args: [string])` and `print(gap_args.len())`, and no
+/// other `program` does; every `plain` holds `fn main() ` and no `gap_args`; and at least one seed
+/// holds the form
 #[test]
 fn main_should_take_args_only_in_the_gated_programs() {
     let mut gated = false;
@@ -6918,6 +6919,11 @@ fn main_should_take_args_only_in_the_gated_programs() {
         let holds = fold % 8 == MAIN_ARGS_GATE;
         assert_eq!(
             generated.program.contains("fn main(gap_args: [string])"),
+            holds,
+            "seed {n}"
+        );
+        assert_eq!(
+            generated.program.contains("print(gap_args.len())"),
             holds,
             "seed {n}"
         );
