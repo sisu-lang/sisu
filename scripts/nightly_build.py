@@ -1,4 +1,6 @@
-"""Steps of the nightly build workflow that need the GitHub API. Usage:
+"""Run the steps of the nightly build workflow that need the GitHub API.
+
+Usage:
 
   nightly_build.py pick
   nightly_build.py publish --sha <sha>
@@ -26,8 +28,8 @@ publishes the draft and marks it latest. Then it writes `published=true`.
 `report` reads NEEDS (the JSON of `toJSON(needs)`) and RUN_URL. It opens the issue
 `Nightly build failure`, or it comments on that issue when it is open.
 
-Every command calls `gh api` (REST) or `gh release`, so it needs the network. Python 3.10
-standard library only.
+Every command calls `gh api` (REST) or `gh release`, so it needs the network. It uses the Python
+standard library only. It runs on `ubuntu-26.04`.
 """
 
 import argparse
@@ -59,6 +61,7 @@ ASSETS = [
 
 
 def gh(*args: str, stdin: str | None = None) -> Any:  # noqa: ANN401  gh answers with JSON of any shape
+    """Run `gh api` with `args`, and return its JSON answer, or None for no output."""
     out = subprocess.run(
         ["gh", "api", *args], capture_output=True, text=True, check=True, input=stdin
     ).stdout
@@ -66,16 +69,21 @@ def gh(*args: str, stdin: str | None = None) -> Any:  # noqa: ANN401  gh answers
 
 
 def gh_release(*args: str) -> None:
+    """Run `gh release` with `args`."""
     subprocess.run(["gh", "release", *args], capture_output=True, text=True, check=True)
 
 
 def releases(repo: str) -> list[dict[str, Any]]:
+    """Return every release of `repo`, drafts included."""
     # `prune` needs every release, and gh gives one array of all pages when its output is a pipe.
     return gh("--paginate", f"repos/{repo}/releases?per_page=100")
 
 
 def nightly_releases(repo: str) -> list[dict[str, Any]]:
-    """The published `nightly-*` releases, the largest `published_at` first. A draft has none."""
+    """Return the published `nightly-*` releases, the largest `published_at` first.
+
+    A draft has none.
+    """
     found = [
         r
         for r in releases(repo)
@@ -85,7 +93,10 @@ def nightly_releases(repo: str) -> list[dict[str, Any]]:
 
 
 def newest_green(commits: list[str], green: set[str], released: str | None) -> str | None:
-    """The first commit, newest first, that is in `green`, or None at the commit of `released`."""
+    """Return the first commit, newest first, that is in `green`.
+
+    It returns None at the commit of `released`.
+    """
     for commit in commits:
         if released and commit.startswith(released):
             return None
@@ -95,12 +106,13 @@ def newest_green(commits: list[str], green: set[str], released: str | None) -> s
 
 
 def workflows_tree(repo: str, ref: str) -> str:
+    """Return the SHA of the `.github/workflows` tree of `repo` at `ref`."""
     entries = gh(f"repos/{repo}/contents/.github?ref={ref}")
     return next(e["sha"] for e in entries if e["name"] == "workflows")
 
 
 def released_commit(repo: str) -> tuple[list[str], str | None]:
-    """The commits of `main`, newest first, and the short SHA of the newest nightly build."""
+    """Return the commits of `main`, newest first, and the short SHA of the newest nightly build."""
     # shortcut: reads one page of 100, more than 100 commits between two nightly builds needs
     # paging
     commits = [c["sha"] for c in gh(f"repos/{repo}/commits?sha=main&per_page=100")]
@@ -116,7 +128,7 @@ def released_commit(repo: str) -> tuple[list[str], str | None]:
 
 
 def answer_of_main(repo: str) -> tuple[str, str | None]:
-    """The text of the answer, and the commit to build or None."""
+    """Return the text of the answer, and the commit to build or None."""
     commits, released = released_commit(repo)
     # shortcut: reads one page of 100, more than 100 CI successes between two nightly builds
     # needs paging
@@ -134,11 +146,13 @@ def answer_of_main(repo: str) -> tuple[str, str | None]:
 
 
 def append(path: str, text: str) -> None:
+    """Append `text` to the file `path`."""
     with Path(path).open("a", encoding="utf-8") as f:
         f.write(text)
 
 
 def pick() -> int:
+    """Choose the commit of the nightly build, write the answer, and return the exit code."""
     repo = os.environ["GITHUB_REPOSITORY"]
     text, sha = answer_of_main(repo)
     if os.environ["GITHUB_REF"] == "refs/heads/main":
@@ -152,14 +166,15 @@ def pick() -> int:
     return 0
 
 
-def summarize(text: str, published: bool) -> None:
+def summarize(text: str, *, published: bool) -> None:
+    """Print `text`, add it to the step summary, and write `published=` to the output."""
     print(text)
     append(os.environ["GITHUB_STEP_SUMMARY"], text + "\n")
     append(os.environ["GITHUB_OUTPUT"], f"published={'true' if published else 'false'}\n")
 
 
 def recheck(repo: str, sha: str) -> str | None:
-    """Why `sha` must not be published now, or None."""
+    """Return why `sha` must not be published now, or None."""
     commits, released = released_commit(repo)
     # This is the walk of `pick`, with `sha` as the only green commit.
     # It gives None for a sha at or after the released commit, and for a sha not in the list.
@@ -171,7 +186,7 @@ def recheck(repo: str, sha: str) -> str | None:
 
 
 def download(repo: str, run_id: str, into: str) -> dict[str, str]:
-    """The paths of the six assets, found by file name in the artifacts of the run."""
+    """Return the paths of the six assets, found by file name in the artifacts of the run."""
     pages = gh(
         "--paginate", "--slurp", f"repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100"
     )
@@ -208,10 +223,11 @@ def download(repo: str, run_id: str, into: str) -> dict[str, str]:
 
 
 def publish(sha: str) -> int:
+    """Publish the draft release of the nightly build of `sha`, and return the exit code."""
     repo = os.environ["GITHUB_REPOSITORY"]
     reason = recheck(repo, sha)
     if reason:
-        summarize(reason, False)
+        summarize(reason, published=False)
         return 0
     with tempfile.TemporaryDirectory() as tmp:
         files = download(repo, os.environ["GITHUB_RUN_ID"], tmp)
@@ -237,11 +253,12 @@ def publish(sha: str) -> int:
         gh_release("upload", tag, "--repo", repo, *(files[a] for a in ASSETS))
         # One request publishes the draft and marks it latest.
         gh_release("edit", tag, "--repo", repo, "--draft=false", "--latest")
-    summarize(f"published {tag}", True)
+    summarize(f"published {tag}", published=True)
     return 0
 
 
 def prune() -> int:
+    """Delete the published nightly releases beyond the newest ones, and return the exit code."""
     repo = os.environ["GITHUB_REPOSITORY"]
     failed = []
     for r in nightly_releases(repo)[KEEP:]:
@@ -254,6 +271,7 @@ def prune() -> int:
 
 
 def report() -> int:
+    """Open or update the issue of a failed run, and return the exit code."""
     repo = os.environ["GITHUB_REPOSITORY"]
     needs = json.loads(os.environ["NEEDS"])
     jobs = ", ".join(
@@ -285,6 +303,7 @@ def report() -> int:
 
 
 def main(argv: list[str]) -> int:
+    """Run the command line `argv`, and return the exit code."""
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawTextHelpFormatter
     )

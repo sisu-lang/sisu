@@ -1,4 +1,6 @@
-"""Checks for the nightly build: the binary and the tarball. Usage:
+"""Check the nightly build: the binary and the tarball.
+
+Usage:
 
   nightly_check.py version <sisu> <sha>
   nightly_check.py linux <sisu>
@@ -47,14 +49,17 @@ LOAD_PATH_OK = ("/usr/lib/", "/System/")
 
 
 def dotted(version: str) -> tuple[int, ...]:
+    """Return the parts of a dotted version as numbers."""
     return tuple(int(part) for part in version.split("."))
 
 
 def text(version: tuple[int, ...]) -> str:
+    """Return a version as dotted text."""
     return ".".join(map(str, version))
 
 
 def version_problems(verbose_text: str, stderr: str, sha: str) -> list[str]:
+    """Return the problems of the `--version --verbose` output of the binary."""
     problems = []
     want = sha[:7]
     match = re.search(r"^commit: (\S*)$", verbose_text, re.MULTILINE)
@@ -68,6 +73,7 @@ def version_problems(verbose_text: str, stderr: str, sha: str) -> list[str]:
 
 
 def linux_problems(objdump_t: str, objdump_p: str) -> list[str]:
+    """Return the problems of the Linux binary: its GLIBC and GLIBCXX floor and its libraries."""
     problems = []
     glibc = []
     glibcxx = []
@@ -93,16 +99,19 @@ def linux_problems(objdump_t: str, objdump_p: str) -> list[str]:
     libraries = [m.group(1) for m in map(NEEDED_LINE.match, objdump_p.splitlines()) if m]
     if not libraries:
         problems.append("`objdump -p` shows no NEEDED line: the tool call is broken")
-    for library in libraries:
-        if library not in NEEDED_OK:
-            problems.append(f"the binary needs {library}, which is not in the allow-list")
+    problems.extend(
+        f"the binary needs {library}, which is not in the allow-list"
+        for library in libraries
+        if library not in NEEDED_OK
+    )
     return problems
 
 
-def macos_link_problems(otool_L: str) -> list[str]:
+def macos_link_problems(otool_libraries: str) -> list[str]:
+    """Return the problems of the load paths in the `otool -L` output."""
     problems = []
     seen = False
-    for line in otool_L.splitlines():
+    for line in otool_libraries.splitlines():
         # The first line is the file's own name, and ends with a colon.
         if not line.strip() or line.endswith(":"):
             continue
@@ -116,6 +125,7 @@ def macos_link_problems(otool_L: str) -> list[str]:
 
 
 def minos_problems(name: str, otool_l: str) -> list[str]:
+    """Return the problems of the minimum macOS version in the `otool -l` output of `name`."""
     found = []
     command = ""
     for line in otool_l.splitlines():
@@ -137,11 +147,12 @@ def minos_problems(name: str, otool_l: str) -> list[str]:
 
 
 def tar_problems(names: list[str]) -> list[str]:
-    problems = []
-    for name in sorted(set(TARBALL_NAMES) - set(names)):
-        problems.append(f"the tarball has no {name}")
-    for name in sorted(set(names) - set(TARBALL_NAMES)):
-        problems.append(f"the tarball has {name}, which it must not have")
+    """Return the problems of the member names of the tarball."""
+    problems = [f"the tarball has no {name}" for name in sorted(set(TARBALL_NAMES) - set(names))]
+    problems.extend(
+        f"the tarball has {name}, which it must not have"
+        for name in sorted(set(names) - set(TARBALL_NAMES))
+    )
     if len(names) != len(set(names)):
         problems.append("the tarball lists a name twice")
     return problems
@@ -150,36 +161,41 @@ def tar_problems(names: list[str]) -> list[str]:
 def run(
     command: list[str], cwd: str | None = None, env: dict[str, str] | None = None
 ) -> tuple[list[str], str, str]:
-    """Runs a tool and gives its problems, stdout and stderr."""
+    """Run a tool and give its problems, stdout and stderr."""
     try:
-        done = subprocess.run(command, capture_output=True, text=True, cwd=cwd, env=env)
+        done = subprocess.run(
+            command, capture_output=True, text=True, cwd=cwd, env=env, check=False
+        )
     except OSError as error:
         return [f"cannot run {command[0]}: {error}"], "", ""
     problems = []
     if done.returncode != 0:
         problems.append(
-            "`%s` exited with %d: %s" % (" ".join(command), done.returncode, done.stderr.strip())
+            f"`{' '.join(command)}` exited with {done.returncode}: {done.stderr.strip()}"
         )
     return problems, done.stdout, done.stderr
 
 
 def check_version(sisu: str, sha: str) -> list[str]:
+    """Return the problems of the version output of the binary `sisu`."""
     problems, out, err = run([sisu, "--version", "--verbose"])
     return problems or version_problems(out, err, sha)
 
 
 def check_linux(sisu: str) -> list[str]:
+    """Return the problems of the Linux binary `sisu`."""
     problems_t, out_t, _ = run(["objdump", "-T", sisu])
     problems_p, out_p, _ = run(["objdump", "-p", sisu])
     return problems_t + problems_p or linux_problems(out_t, out_p)
 
 
 def check_macos(sisu: str, archives: list[str]) -> list[str]:
+    """Return the problems of the macOS binary `sisu` and of its static archives."""
     problems, out, _ = run(["otool", "-L", sisu])
     problems = problems or macos_link_problems(out)
     problems += run(["codesign", "-v", sisu])[0]
-    for archive in archives:
-        archive = str(Path(archive).absolute())
+    for given in archives:
+        archive = str(Path(given).absolute())
         listed_problems, members, _ = run(["ar", "-t", archive])
         # shortcut: the first member stands for the archive, because one deployment target built
         # them all; check every member if an archive ever mixes targets.
@@ -198,6 +214,7 @@ def check_macos(sisu: str, archives: list[str]) -> list[str]:
 
 
 def pack(target: str, release: str, third_party: str, out_dir: str) -> list[str]:
+    """Pack the release files into the tarball of `target` in `out_dir`, and return the problems."""
     if target not in TARGETS:
         return ["unknown target {}: use one of {}".format(target, ", ".join(TARGETS))]
     Path(out_dir).mkdir(parents=True, exist_ok=True)
@@ -228,6 +245,7 @@ def pack(target: str, release: str, third_party: str, out_dir: str) -> list[str]
 
 
 def main(argv: list[str]) -> int:
+    """Run the command line `argv`, and return the exit code."""
     arity = {"version": 3, "linux": 2, "macos": 4, "pack": 5}
     if not argv or arity.get(argv[0]) != len(argv):
         print(__doc__, file=sys.stderr)
