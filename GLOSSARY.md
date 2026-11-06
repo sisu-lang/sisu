@@ -764,6 +764,9 @@ _Avoid_: fuzz rule, grammar rule
 **Generator gap**:
 A function that a valid program in `tests/run` or `tests/run-fail` reaches and no fixed seed of the program fuzzer reaches. `fuzz/known_gaps.txt` lists the gaps that have a reason.
 
+**Fixed form**:
+Text that the program fuzzer's generator writes to reach a generator gap. It draws no byte of the input, so it moves no other part of a program. `every_variant_should_be_generated` does not read it, so a language feature needs a generator rule.
+
 **Reference count**:
 The number of references to an object; the object is dropped when it reaches
 0.
