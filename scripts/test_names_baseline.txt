@@ -1300,7 +1300,6 @@ crates/sisuc/src/parser.rs::loop_labels
 crates/sisuc/src/parser.rs::many_todo_bangs_parse_in_linear_time
 crates/sisuc/src/parser.rs::match_errors
 crates/sisuc/src/parser.rs::match_newlines
-crates/sisuc/src/parser.rs::match_syntax
 crates/sisuc/src/parser.rs::method_params_follow_self
 crates/sisuc/src/parser.rs::method_without_self
 crates/sisuc/src/parser.rs::min_magnitude_elsewhere_is_too_large

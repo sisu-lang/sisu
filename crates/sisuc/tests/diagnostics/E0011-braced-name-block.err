@@ -1,0 +1,32 @@
+error[E0011]: expected `=`, found `{`
+ --> E0011-braced-name-block.sisu:6:14
+  |
+6 |     if let a {
+  |              ^
+
+error[E0011]: expected `=`, found `{`
+  --> E0011-braced-name-block.sisu:12:17
+   |
+12 |     while let a {
+   |                 ^
+
+error[E0011]: expected `=`, found `{`
+  --> E0011-braced-name-block.sisu:17:27
+   |
+17 | fn let_one_line() { let a { } }
+   |                           ^
+
+error[E0011]: expected `=`, found `{`
+  --> E0011-braced-name-block.sisu:19:33
+   |
+19 | fn if_let_one_line() { if let a { print(a) } }
+   |                                 ^
+
+error[E0011]: expected `=>`, found `{`
+  --> E0011-braced-name-block.sisu:21:43
+   |
+21 | fn match_one_line(e: i64) { match e { E.P { x } } }
+   |                                           ^
+
+sisu: 5 errors
+sisu: for more on a code, run `sisu explain <code>`: E0011

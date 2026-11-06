@@ -1,0 +1,42 @@
+// GIVEN braced patterns on many lines: one with a braced pattern inside, one with a pattern on
+// each line, and one with a comment between the sub-patterns
+// WHEN `sisu check` runs on it
+// THEN it reports E0123 at each, with the fix `E.P(R(w))` or `E.P(x, y)`
+// AND the report of the comment has no fix, because the fix would delete the comment
+enum E {
+    P(x: i64, y: i64)
+}
+
+class R {
+    w: i64
+}
+
+fn nested(e: E) {
+    match e {
+        E.P {
+            x: R { w }
+        } => print(1)
+        _ => print(0)
+    }
+}
+
+fn lines(e: E) {
+    match e {
+        E.P {
+            x,
+            y
+        } => print(x)
+        _ => print(0)
+    }
+}
+
+fn comment(e: E) {
+    match e {
+        E.P { x, // keep me
+            y } => print(x)
+        _ => print(0)
+    }
+}
+
+fn main() {
+}
