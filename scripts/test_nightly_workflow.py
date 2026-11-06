@@ -8,6 +8,8 @@ holds the mapping one level deeper, and a `|` value holds its block, so that the
 """
 import os
 import re
+import subprocess
+import tempfile
 import unittest
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
@@ -389,6 +391,24 @@ class NightlyWorkflowTest(unittest.TestCase):
         positions = [lines.index(line) if line in lines else -1 for line in want]
         self.assertNotIn(-1, positions, lines)
         self.assertEqual(positions, sorted(positions))
+
+    def test_std_notices_step_should_write_plain_text(self):
+        st = steps(jobs(self)['build'])
+        lines = [line for step in st for line in run_lines(step) if line.startswith('sed -e ')]
+        self.assertEqual(len(lines), 1)
+        source = '"$(rustc --print sysroot)/share/doc/rust/COPYRIGHT-library.html"'
+        sink = '>> ' + THIRD_PARTY
+        self.assertIn(source, lines[0])
+        self.assertTrue(lines[0].endswith(sink), lines[0])
+        with tempfile.TemporaryDirectory() as tmp:
+            html = os.path.join(tmp, 'in.html')
+            out = os.path.join(tmp, 'out.txt')
+            with open(html, 'w', encoding='utf-8') as f:
+                f.write('<p>say &#34;a&#34; and &#39;b&#39; &#60;c&#62;</p>\n')
+            command = lines[0].replace(source, "'%s'" % html).replace(sink, "> '%s'" % out)
+            subprocess.run(['bash', '-c', command], check=True)
+            with open(out, encoding='utf-8') as f:
+                self.assertEqual(f.read(), 'say "a" and \'b\' <c>\n')
 
     def test_embedded_notices_should_name_each_author(self):
         path = os.path.join(ROOT, '.config', 'notices', 'LLVM-EMBEDDED.txt')
