@@ -5,12 +5,9 @@
 target-version = "py312"
 line-length = 100
 
-# The `build` job of the nightly workflow runs `nightly_check.py` in `ubuntu:22.04`. The
-# `clean-machine` and `installer-tests` jobs run the other two on `ubuntu:22.04` and `ubuntu-24.04`.
+# The `build` job of the nightly workflow runs this script in `ubuntu:22.04`.
 [per-file-target-version]
 "scripts/nightly_check.py" = "py310"
-"scripts/test_install.py" = "py310"
-"scripts/nightly_installer_real.py" = "py310"
 
 [lint]
 select = ["ALL"]
