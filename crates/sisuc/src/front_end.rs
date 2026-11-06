@@ -1486,10 +1486,7 @@ fn main() {
     /// name as a broken one is a duplicate.
     #[test]
     fn broken_items_should_get_the_name_errors_beside_items_of_the_same_name() {
-        use Code::{
-            BraceOnNewLine as Brace, BuiltInName as Built, DefinedTwice as Twice,
-            FunctionNotFound as NoFn,
-        };
+        use Code::{BraceOnNewLine as Brace, BuiltInName as Built, DefinedTwice as Twice};
         let rows: &[(&str, &str, &[Found])] = &[
             (
                 "broken then intact",
@@ -1546,7 +1543,7 @@ fn main() {
             (
                 "broken class Result",
                 "class Result\n{}\nfn f() -> Result<i64, string> {\n    Ok(1)\n}\nfn main() {\n    print(1)\n}\n",
-                &[(Built, (1, 7)), (Brace, (2, 1)), (NoFn, (4, 5))],
+                &[(Built, (1, 7)), (Brace, (2, 1))],
             ),
             (
                 "broken fn Some",
@@ -1562,6 +1559,768 @@ fn main() {
             };
             assert_eq!(checked_codes(&src), want, "{row}");
         }
+    }
+
+    /// Checks each row `(name, program, wanted codes)`, and names every row that fails.
+    fn assert_rows(rows: &[(&str, &str, &[Found])]) {
+        let failed: Vec<String> = rows
+            .iter()
+            .filter_map(|&(row, src, want)| {
+                let got = codes(src);
+                (got != want).then(|| format!("{row}: got {got:?}, want {want:?}"))
+            })
+            .collect();
+        assert!(failed.is_empty(), "{}", failed.join("\n"));
+    }
+
+    /// A rejected item (a name that a prelude function takes, or a duplicate) poisons its name:
+    /// the item's own error is reported, and a use of the name gives no more errors.
+    #[test]
+    #[expect(clippy::too_many_lines, reason = "one table of rows")]
+    fn a_use_of_a_rejected_name_should_give_no_second_error() {
+        use Code::{
+            BindingNotFound as NoBind, DefinedTwice as Twice, MutMarkerMissing as MutMissing,
+        };
+        let rows: &[(&str, &str, &[Found])] = &[
+            (
+                "call, enum",
+                "enum print { A }\nfn main() { print(1, 2) }\n",
+                &[(Twice, (1, 6))],
+            ),
+            (
+                "call, alias",
+                "type print = i64\nfn main() { print(1, 2) }\n",
+                &[(Twice, (1, 6))],
+            ),
+            (
+                "call dbg, enum",
+                "enum dbg { A }\nfn main() { dbg(1, 2) }\n",
+                &[(Twice, (1, 6))],
+            ),
+            (
+                "call dbg, alias",
+                "type dbg = i64\nfn main() { dbg(1, 2) }\n",
+                &[(Twice, (1, 6))],
+            ),
+            (
+                "call, arguments stay checked",
+                "enum print { A }\nfn main() { print(nope) }\n",
+                &[(Twice, (1, 6)), (NoBind, (2, 19))],
+            ),
+            (
+                "read, fn",
+                "fn print(x: i64, y: i64) {}\nfn main() { let p = print }\n",
+                &[(Twice, (1, 4))],
+            ),
+            (
+                "read, class",
+                "class print {}\nfn main() { let p = print }\n",
+                &[(Twice, (1, 7))],
+            ),
+            (
+                "read, enum",
+                "enum print { A }\nfn main() { let p = print }\n",
+                &[(Twice, (1, 6))],
+            ),
+            (
+                "read, alias",
+                "type print = i64\nfn main() { let p = print }\n",
+                &[(Twice, (1, 6))],
+            ),
+            (
+                "read, interface",
+                "interface print {}\nfn main() { let p = print }\n",
+                &[(Twice, (1, 11))],
+            ),
+            (
+                "read, constant",
+                "const print = 1\nfn main() { let p = print }\n",
+                &[(Twice, (1, 7))],
+            ),
+            (
+                "argument of a call of it",
+                "class print {}\nfn main() { print(print) }\n",
+                &[(Twice, (1, 7))],
+            ),
+            (
+                "argument",
+                "class print {}\nfn g(x: i64) {}\nfn main() { g(print) }\n",
+                &[(Twice, (1, 7))],
+            ),
+            (
+                "field read",
+                "class print {}\nfn main() { let a = print.x }\n",
+                &[(Twice, (1, 7))],
+            ),
+            (
+                "index read",
+                "class print {}\nfn main() { let a = print[0] }\n",
+                &[(Twice, (1, 7))],
+            ),
+            (
+                "method call",
+                "class print {}\nfn main() { print.go() }\n",
+                &[(Twice, (1, 7))],
+            ),
+            (
+                "for",
+                "class print {}\nfn main() { for x in print { } }\n",
+                &[(Twice, (1, 7))],
+            ),
+            (
+                "interpolation",
+                "class print {}\nfn main() { let a = \"{print}\" }\n",
+                &[(Twice, (1, 7))],
+            ),
+            (
+                "tail",
+                "class print {}\nfn g() -> i64 { print }\nfn main() {}\n",
+                &[(Twice, (1, 7))],
+            ),
+            (
+                "assign",
+                "class print {}\nfn main() { print = 1 }\n",
+                &[(Twice, (1, 7))],
+            ),
+            (
+                "compound assign",
+                "class print {}\nfn main() { print += 1 }\n",
+                &[(Twice, (1, 7))],
+            ),
+            (
+                "field assign",
+                "class print {}\nfn main() { print.x = 1 }\n",
+                &[(Twice, (1, 7))],
+            ),
+            (
+                "index assign",
+                "class print {}\nfn main() { print[0] = 1 }\n",
+                &[(Twice, (1, 7))],
+            ),
+            (
+                "a local takes the name",
+                "class print {}\nfn main() {\n    let print = 1\n    let p = print\n}\n",
+                &[(Twice, (1, 7))],
+            ),
+            (
+                "mut argument",
+                "class print {}\nfn g(mut x: i64) { x = 1 }\nfn main() { g(mut print) }\n",
+                &[(Twice, (1, 7))],
+            ),
+            (
+                "constant's value",
+                "class print {}\nconst K = print\nfn main() {}\n",
+                &[(Twice, (1, 7))],
+            ),
+            (
+                "call with a mut argument",
+                "enum print { A }\nfn main() { let mut a = 1\n print(mut a) }\n",
+                &[(Twice, (1, 6))],
+            ),
+            (
+                "call inside a generic argument",
+                "enum dbg { A }\nfn id<T>(x: T) -> T { x }\nfn main() { let a = id(dbg(1, 2)) }\n",
+                &[(Twice, (1, 6))],
+            ),
+            (
+                "the argument's missing `mut` stays",
+                "class print {}\nfn g(mut x: i64) { x = 1 }\nfn main() { g(print) }\n",
+                &[(Twice, (1, 7)), (MutMissing, (3, 15))],
+            ),
+            (
+                "type position, fn",
+                "fn print() {}\nfn g(x: print) {}\nfn main() {}\n",
+                &[(Twice, (1, 4))],
+            ),
+            (
+                "conformance, fn",
+                "fn print() {}\nclass C: print {}\nfn main() {}\n",
+                &[(Twice, (1, 4))],
+            ),
+            (
+                "any, fn",
+                "fn print() {}\nfn g(x: any print) {}\nfn main() {}\n",
+                &[(Twice, (1, 4))],
+            ),
+            (
+                "bound, fn",
+                "fn print() {}\nfn g<T: print>(x: T) {}\nfn main() {}\n",
+                &[(Twice, (1, 4))],
+            ),
+        ];
+        assert_rows(rows);
+    }
+
+    /// A broken item (a syntax error in it) poisons its name: a use of the name gives no more
+    /// errors. A use before the item is poisoned too.
+    #[test]
+    #[expect(clippy::too_many_lines, reason = "one table of rows")]
+    fn a_use_of_a_broken_name_should_give_no_second_error() {
+        use Code::{
+            BindingNotFound as NoBind, BraceOnNewLine as Brace, BuiltInName as Built,
+            Expected as Exp, NeverReassigned as Never,
+        };
+        let rows: &[(&str, &str, &[Found])] = &[
+            (
+                "call, enum",
+                "enum E\n{ A }\nfn main() { E(1) }\n",
+                &[(Brace, (2, 1))],
+            ),
+            (
+                "call, alias",
+                "type T = 1\nfn main() { T(1) }\n",
+                &[(Exp, (1, 10))],
+            ),
+            (
+                "read, fn",
+                "fn f()\n{}\nfn main() { let p = f }\n",
+                &[(Brace, (2, 1))],
+            ),
+            (
+                "read, class",
+                "class C\n{}\nfn main() { let p = C }\n",
+                &[(Brace, (2, 1))],
+            ),
+            (
+                "read, enum",
+                "enum E\n{ A }\nfn main() { let p = E }\n",
+                &[(Brace, (2, 1))],
+            ),
+            (
+                "read, interface",
+                "interface I\n{}\nfn main() { let p = I }\n",
+                &[(Brace, (2, 1))],
+            ),
+            (
+                "read, alias",
+                "type T = 1\nfn main() { let p = T }\n",
+                &[(Exp, (1, 10))],
+            ),
+            (
+                "read, a variant's name too",
+                "enum E { A }\nclass A\n{}\nfn main() { let p = A }\n",
+                &[(Brace, (3, 1))],
+            ),
+            (
+                "assign, fn",
+                "fn f()\n{}\nfn main() { f = 1 }\n",
+                &[(Brace, (2, 1))],
+            ),
+            (
+                "assign, class",
+                "class C\n{}\nfn main() { C = 1 }\n",
+                &[(Brace, (2, 1))],
+            ),
+            (
+                "assign, enum",
+                "enum E\n{ A }\nfn main() { E = 1 }\n",
+                &[(Brace, (2, 1))],
+            ),
+            (
+                "assign gives the warning",
+                "class C\n{}\nfn main() {\n    let mut x = 1\n    C = 2\n    print(x)\n}\n",
+                &[(Brace, (2, 1)), (Never, (4, 13))],
+            ),
+            (
+                "mut argument, class",
+                "class C\n{}\nfn g(mut x: i64) { x = 1 }\nfn main() { g(mut C) }\n",
+                &[(Brace, (2, 1))],
+            ),
+            (
+                "mut argument, fn",
+                "fn f()\n{}\nfn g(mut x: i64) { x = 1 }\nfn main() { g(mut f) }\n",
+                &[(Brace, (2, 1))],
+            ),
+            (
+                "mut argument, field",
+                "class C\n{}\nfn g(mut x: i64) { x = 1 }\nfn main() { g(mut C.x) }\n",
+                &[(Brace, (2, 1))],
+            ),
+            (
+                "constant's value",
+                "class C\n{}\nconst K = C\nfn main() {}\n",
+                &[(Brace, (2, 1))],
+            ),
+            (
+                "method call",
+                "class C\n{}\nfn main() { C.go() }\n",
+                &[(Brace, (2, 1))],
+            ),
+            (
+                "method call, arguments stay checked",
+                "class C\n{}\nfn main() { C.go(nope) }\n",
+                &[(Brace, (2, 1)), (NoBind, (3, 18))],
+            ),
+            (
+                "read before the item",
+                "fn main() { let p = C }\nclass C\n{}\n",
+                &[(Brace, (3, 1))],
+            ),
+            (
+                "type position, fn",
+                "fn C()\n{}\nfn g(x: C) {}\nfn main() {}\n",
+                &[(Brace, (2, 1))],
+            ),
+            (
+                "type position, constant",
+                "const C = 1 2\nfn g(x: C) {}\nfn main() {}\n",
+                &[(Exp, (1, 13))],
+            ),
+            (
+                "pattern path, fn",
+                "enum E { X }\nfn C()\n{}\nfn f(e: E) { match e { C.X => {}; _ => {} } }\nfn main() {}\n",
+                &[(Brace, (3, 1))],
+            ),
+            (
+                "read of a broken Ok",
+                "class Ok\n{}\nfn main() { let a = Ok }\n",
+                &[(Built, (1, 7)), (Brace, (2, 1))],
+            ),
+            (
+                "read of a broken Some",
+                "class Some\n{}\nfn main() { let a = Some }\n",
+                &[(Built, (1, 7)), (Brace, (2, 1))],
+            ),
+            (
+                "broken Ok, call",
+                "class Ok\n{}\nfn main() { let a = Ok(1) }\n",
+                &[(Built, (1, 7)), (Brace, (2, 1))],
+            ),
+            (
+                "broken Err, call",
+                "class Err\n{}\nfn f() -> Result<i64, string> {\n    Err(\"e\")\n}\nfn main() {}\n",
+                &[(Built, (1, 7)), (Brace, (2, 1))],
+            ),
+            (
+                "broken Option, Some",
+                "class Option\n{}\nfn main() { let a = Some(1)\n    print(1) }\n",
+                &[(Built, (1, 7)), (Brace, (2, 1))],
+            ),
+            (
+                "type position, fn Eq",
+                "fn Eq()\n{}\nfn g(x: Eq) {}\nfn main() {}\n",
+                &[(Built, (1, 4)), (Brace, (2, 1))],
+            ),
+            (
+                "return type, fn Eq",
+                "fn Eq()\n{}\nfn g() -> Eq { }\nfn main() {}\n",
+                &[(Built, (1, 4)), (Brace, (2, 1))],
+            ),
+            (
+                "annotation, fn Eq",
+                "fn Eq()\n{}\nfn main() { let x: Eq = 1 }\n",
+                &[(Built, (1, 4)), (Brace, (2, 1))],
+            ),
+            (
+                "conformance, fn",
+                "fn I()\n{}\nclass C: I {}\nfn main() {}\n",
+                &[(Brace, (2, 1))],
+            ),
+            (
+                "any, fn",
+                "fn I()\n{}\nfn g(x: any I) {}\nfn main() {}\n",
+                &[(Brace, (2, 1))],
+            ),
+            (
+                "bound, fn",
+                "fn I()\n{}\nfn g<T: I>(x: T) {}\nfn main() {}\n",
+                &[(Brace, (2, 1))],
+            ),
+            (
+                "extend, fn",
+                "fn I()\n{}\nextend I {\n    fn m(self) {}\n}\nfn main() {}\n",
+                &[(Brace, (2, 1))],
+            ),
+            (
+                "extend, fn Eq",
+                "fn Eq()\n{}\nextend Eq {\n    fn m(self) {}\n}\nfn main() {}\n",
+                &[(Built, (1, 4)), (Brace, (2, 1))],
+            ),
+            (
+                "optional bound, fn Eq",
+                "fn Eq()\n{}\nfn g<T: Eq?>(x: T) {}\nfn main() {}\n",
+                &[(Built, (1, 4)), (Brace, (2, 1))],
+            ),
+            (
+                "array conformance, fn Eq",
+                "fn Eq()\n{}\nclass C: [Eq] {}\nfn main() {}\n",
+                &[(Built, (1, 4)), (Brace, (2, 1))],
+            ),
+        ];
+        assert_rows(rows);
+    }
+
+    /// A broken `Result` poisons `Ok` and `Err`, which belong to the prelude's `Result`, unless a
+    /// user's function or class takes the name.
+    #[test]
+    fn a_broken_result_should_poison_ok_and_err() {
+        use Code::{BraceOnNewLine as Brace, BuiltInName as Built, Expected as Exp};
+        let rows: &[(&str, &str, &[Found])] = &[
+            (
+                "class, call",
+                "class Result\n{}\nfn f() -> Result<i64, string> {\n    Ok(1)\n}\nfn main() {}\n",
+                &[(Built, (1, 7)), (Brace, (2, 1))],
+            ),
+            (
+                "enum, call",
+                "enum Result\n{}\nfn f() -> Result<i64, string> {\n    Ok(1)\n}\nfn main() {}\n",
+                &[(Built, (1, 6)), (Brace, (2, 1))],
+            ),
+            (
+                "interface, call",
+                "interface Result\n{}\nfn f() -> Result<i64, string> {\n    Ok(1)\n}\nfn main() {}\n",
+                &[(Built, (1, 11)), (Brace, (2, 1))],
+            ),
+            (
+                "fn, call",
+                "fn Result()\n{}\nfn f() -> Result<i64, string> {\n    Ok(1)\n}\nfn main() {}\n",
+                &[(Built, (1, 4)), (Brace, (2, 1))],
+            ),
+            (
+                "constant, call",
+                "const Result = 1 2\nfn f() -> Result<i64, string> {\n    Ok(1)\n}\nfn main() {}\n",
+                &[(Built, (1, 7)), (Exp, (1, 18))],
+            ),
+            (
+                "alias, call",
+                "type Result = 1\nfn f() -> Result<i64, string> {\n    Ok(1)\n}\nfn main() {}\n",
+                &[(Built, (1, 6)), (Exp, (1, 15))],
+            ),
+            (
+                "Err with no annotation",
+                "class Result\n{}\nfn main() { let x = Err(\"e\")\n    print(1) }\n",
+                &[(Built, (1, 7)), (Brace, (2, 1))],
+            ),
+            (
+                "read of Ok",
+                "class Result\n{}\nfn main() { let x = Ok }\n",
+                &[(Built, (1, 7)), (Brace, (2, 1))],
+            ),
+            (
+                "if let",
+                "class Result\n{}\nfn main() { if let Ok(x) = f() { print(x) } }\nfn f() -> Result<i64, string> { Err(\"e\") }\n",
+                &[(Built, (1, 7)), (Brace, (2, 1))],
+            ),
+            (
+                "generic argument",
+                "class Result\n{}\nfn id<T>(x: T) -> T { x }\nfn main() { let a = id(Ok(1)) }\n",
+                &[(Built, (1, 7)), (Brace, (2, 1))],
+            ),
+            (
+                "path",
+                "class Result\n{}\nfn main() { let x: Result<i64, string> = Result.Ok(1)\n    print(1) }\n",
+                &[(Built, (1, 7)), (Brace, (2, 1))],
+            ),
+            (
+                "call of Result",
+                "class Result\n{}\nfn main() { Result(1) }\n",
+                &[(Built, (1, 7)), (Brace, (2, 1))],
+            ),
+            (
+                "assign to Ok",
+                "class Result\n{}\nfn main() { Ok = 1 }\n",
+                &[(Built, (1, 7)), (Brace, (2, 1))],
+            ),
+            (
+                "a user's constant Ok, call",
+                "class Result\n{}\nconst Ok = 1\nfn main() { let a = Ok(1) }\n",
+                &[(Built, (1, 7)), (Brace, (2, 1)), (Built, (3, 7))],
+            ),
+        ];
+        assert_rows(rows);
+    }
+
+    /// Names that nothing poisons keep their errors, and a poisoned `Ok`, `Err` or type name
+    /// stays apart from a user's own function or class of that name.
+    #[test]
+    #[expect(clippy::too_many_lines, reason = "one table of rows")]
+    fn a_use_that_nothing_poisons_should_keep_its_error() {
+        use Code::{
+            AssignToFunction as Assign, BindingNotFound as NoBind, BraceOnNewLine as Brace,
+            BuiltInName as Built, CannotInfer as Infer, DefinedTwice as Twice,
+            FunctionNotFound as NoFn, InterfaceAsType as IfaceType, Mismatch,
+            NotAnInterface as NotIface, PrintArgument as Print, TypeAsValue as AsValue,
+            UnknownType as NoType, VariantForm as Variant,
+        };
+        let rows: &[(&str, &str, &[Found])] = &[
+            (
+                "built-in, too many arguments",
+                "fn main() { print(1, 2) }\n",
+                &[(Print, (1, 13))],
+            ),
+            (
+                "built-in read",
+                "fn main() { let p = print }\n",
+                &[(AsValue, (1, 21))],
+            ),
+            (
+                "built-in assigned",
+                "fn main() { print = 1 }\n",
+                &[(Assign, (1, 13))],
+            ),
+            (
+                "unknown name assigned",
+                "fn main() { zz = 1 }\n",
+                &[(NoBind, (1, 13))],
+            ),
+            (
+                "intact fn read",
+                "fn f(x: i64) {}\nfn main() { let p = f }\n",
+                &[(AsValue, (2, 21))],
+            ),
+            (
+                "intact class assigned",
+                "class C {}\nfn main() { C = 1 }\n",
+                &[(AsValue, (2, 13))],
+            ),
+            (
+                "intact enum called",
+                "enum E { A }\nfn main() { E(1) }\n",
+                &[(NoFn, (2, 13))],
+            ),
+            (
+                "duplicate class read: the first stays",
+                "class C {}\nclass C {}\nfn main() { let p = C }\n",
+                &[(Twice, (2, 7)), (AsValue, (3, 21))],
+            ),
+            (
+                "duplicate fn read",
+                "fn f() {}\nfn f() {}\nfn main() { let p = f }\n",
+                &[(Twice, (2, 4)), (AsValue, (3, 21))],
+            ),
+            (
+                "duplicate enum called",
+                "enum E { A }\nenum E { B }\nfn main() { E(1) }\n",
+                &[(Twice, (2, 6)), (NoFn, (3, 13))],
+            ),
+            (
+                "intact class Result, read of Ok",
+                "class Result {}\nfn main() { let x = Ok }\n",
+                &[(Built, (1, 7)), (Variant, (2, 21))],
+            ),
+            (
+                "intact class Result, Err with no annotation",
+                "class Result {}\nfn main() { let x = Err(\"e\")\n    print(1) }\n",
+                &[(Built, (1, 7)), (Infer, (2, 21))],
+            ),
+            (
+                "intact class Result, Ok stays checked",
+                "class Result {}\nfn f() -> Result<i64, string> {\n    Ok(1)\n}\nfn main() {}\n",
+                &[(Built, (1, 7))],
+            ),
+            // `Some` does not belong to the `Ok` and `Err` part of the rule.
+            (
+                "broken Option, read of Some",
+                "class Option\n{}\nfn main() { let a = Some }\n",
+                &[(Built, (1, 7)), (Brace, (2, 1)), (Variant, (3, 21))],
+            ),
+            (
+                "a language interface is not poisoned, read",
+                "interface Eq\n{}\nfn main() { let p = Eq }\n",
+                &[(Built, (1, 11)), (Brace, (2, 1)), (AsValue, (3, 21))],
+            ),
+            (
+                "a language interface is not poisoned, call",
+                "interface Eq\n{}\nfn main() { Eq() }\n",
+                &[(Built, (1, 11)), (Brace, (2, 1)), (AsValue, (3, 13))],
+            ),
+            (
+                "a broken extend does not poison Ok",
+                "extend Result\n{}\nfn f() -> Result<i64, string> { Ok(1) }\nfn main() {}\n",
+                &[(Brace, (2, 1))],
+            ),
+            (
+                "method with type arguments on an intact class",
+                "class C {}\nfn main() { C.go<i64>(1) }\n",
+                &[(AsValue, (2, 13))],
+            ),
+            (
+                "a user's fn Ok stays checked after a broken Result",
+                "class Result\n{}\nfn Ok(x: i64) {}\nfn main() { Ok(\"s\") }\n",
+                &[
+                    (Built, (1, 7)),
+                    (Brace, (2, 1)),
+                    (Built, (3, 4)),
+                    (Mismatch, (4, 16)),
+                ],
+            ),
+            (
+                "a user's class Ok stays checked after a broken Result",
+                "class Result\n{}\nclass Ok { x: i64 }\nfn main() { let a: string = Ok(x: 1).x\n    print(1) }\n",
+                &[
+                    (Built, (1, 7)),
+                    (Brace, (2, 1)),
+                    (Built, (3, 7)),
+                    (Mismatch, (4, 29)),
+                ],
+            ),
+            (
+                "Ok in a type position keeps its error after a broken Result",
+                "class Result\n{}\nfn g(x: Ok) {}\nfn main() {}\n",
+                &[(Built, (1, 7)), (Brace, (2, 1)), (NoType, (3, 9))],
+            ),
+            (
+                "unknown type",
+                "fn g(x: Nope) {}\nfn main() {}\n",
+                &[(NoType, (1, 9))],
+            ),
+            (
+                "intact fn in a type position",
+                "fn f() {}\nfn g(x: f) {}\nfn main() {}\n",
+                &[(NoType, (2, 9))],
+            ),
+            (
+                "an interface is no type",
+                "fn g(x: Eq) {}\nfn main() {}\n",
+                &[(IfaceType, (1, 9))],
+            ),
+            (
+                "a language interface is not poisoned, type position",
+                "interface Eq\n{}\nfn g(x: Eq) {}\nfn main() {}\n",
+                &[(Built, (1, 11)), (Brace, (2, 1)), (IfaceType, (3, 9))],
+            ),
+            (
+                "an intact fn Eq is not poisoned",
+                "fn Eq() {}\nfn g(x: Eq) {}\nfn main() {}\n",
+                &[(Built, (1, 4)), (IfaceType, (2, 9))],
+            ),
+            (
+                "extend of an interface",
+                "extend Eq {\n    fn m(self) {}\n}\nfn main() {}\n",
+                &[(IfaceType, (1, 8))],
+            ),
+            (
+                "optional bound",
+                "fn g<T: Eq?>(x: T) {}\nfn main() {}\n",
+                &[(NotIface, (1, 9))],
+            ),
+            (
+                "a language interface is not poisoned, extend",
+                "interface Eq\n{}\nextend Eq {\n    fn m(self) {}\n}\nfn main() {}\n",
+                &[(Built, (1, 11)), (Brace, (2, 1)), (IfaceType, (3, 8))],
+            ),
+            (
+                "a language interface is not poisoned, optional bound",
+                "interface Eq\n{}\nfn g<T: Eq?>(x: T) {}\nfn main() {}\n",
+                &[(Built, (1, 11)), (Brace, (2, 1)), (NotIface, (3, 9))],
+            ),
+        ];
+        assert_rows(rows);
+    }
+
+    /// The prelude's code reads a language interface by its name, so a bound on that name stays
+    /// the interface after a broken item of the name.
+    #[test]
+    fn a_language_interface_should_stay_a_bound_after_a_broken_item_of_its_name() {
+        use Code::{
+            BraceOnNewLine as Brace, BuiltInName as Built, CannotBeAny as CannotAny,
+            ConformanceBody as ConfBody,
+        };
+        let rows: &[(&str, &str, &[Found])] = &[
+            (
+                "conformance",
+                "fn Eq()\n{}\nclass C: Eq {}\nfn main() {}\n",
+                &[(Built, (1, 4)), (Brace, (2, 1)), (ConfBody, (3, 10))],
+            ),
+            (
+                "any",
+                "fn Eq()\n{}\nfn g(x: any Eq) {}\nfn main() {}\n",
+                &[(Built, (1, 4)), (Brace, (2, 1)), (CannotAny, (3, 13))],
+            ),
+        ];
+        assert_rows(rows);
+    }
+
+    /// A broken `fn` or `const` comes first, then an intact item of a type's kind, then a use as
+    /// a type. The intact item is the duplicate, and the type gives no second error.
+    #[test]
+    fn a_type_after_a_broken_item_of_its_name_should_give_no_second_error() {
+        use Code::{
+            BraceOnNewLine as Brace, BuiltInName as Built, DefinedTwice as Twice, Expected as Exp,
+        };
+        let rows: &[(&str, &str, &[Found])] = &[
+            (
+                "fn, class",
+                "fn A()\n{}\nclass A {}\nfn g(x: A) {}\nfn main() {}\n",
+                &[(Brace, (2, 1)), (Twice, (3, 7))],
+            ),
+            (
+                "fn, enum",
+                "fn A()\n{}\nenum A { X }\nfn g(x: A) {}\nfn main() {}\n",
+                &[(Brace, (2, 1)), (Twice, (3, 6))],
+            ),
+            (
+                "fn, alias",
+                "fn A()\n{}\ntype A = i64\nfn g(x: A) {}\nfn main() {}\n",
+                &[(Brace, (2, 1)), (Twice, (3, 6))],
+            ),
+            (
+                "fn, interface, bound",
+                "fn A()\n{}\ninterface A {}\nfn g<T: A>(x: T) {}\nfn main() {}\n",
+                &[(Brace, (2, 1)), (Twice, (3, 11))],
+            ),
+            (
+                "fn, class, extend",
+                "fn A()\n{}\nclass A {}\nextend A {\n    fn m(self) {}\n}\nfn main() {}\n",
+                &[(Brace, (2, 1)), (Twice, (3, 7))],
+            ),
+            (
+                "constant, class",
+                "const A = 1 2\nclass A {}\nfn g(x: A) {}\nfn main() {}\n",
+                &[(Exp, (1, 13)), (Twice, (2, 7))],
+            ),
+            (
+                "Eq, fn, class",
+                "fn Eq()\n{}\nclass Eq {}\nfn g(x: Eq) {}\nfn main() {}\n",
+                &[
+                    (Built, (1, 4)),
+                    (Brace, (2, 1)),
+                    (Built, (3, 7)),
+                    (Twice, (3, 7)),
+                ],
+            ),
+            (
+                "Eq, fn, enum",
+                "fn Eq()\n{}\nenum Eq { X }\nfn g(x: Eq) {}\nfn main() {}\n",
+                &[
+                    (Built, (1, 4)),
+                    (Brace, (2, 1)),
+                    (Built, (3, 6)),
+                    (Twice, (3, 6)),
+                ],
+            ),
+            (
+                "Eq, fn, alias",
+                "fn Eq()\n{}\ntype Eq = i64\nfn g(x: Eq) {}\nfn main() {}\n",
+                &[
+                    (Built, (1, 4)),
+                    (Brace, (2, 1)),
+                    (Built, (3, 6)),
+                    (Twice, (3, 6)),
+                ],
+            ),
+            (
+                "Eq, constant, enum",
+                "const Eq = 1 2\nenum Eq { X }\nfn g(x: Eq) {}\nfn main() {}\n",
+                &[
+                    (Built, (1, 7)),
+                    (Exp, (1, 14)),
+                    (Built, (2, 6)),
+                    (Twice, (2, 6)),
+                ],
+            ),
+            (
+                "Ord, constant, class",
+                "const Ord = 1 2\nclass Ord {}\nfn g(x: Ord) {}\nfn main() {}\n",
+                &[
+                    (Built, (1, 7)),
+                    (Exp, (1, 15)),
+                    (Built, (2, 7)),
+                    (Twice, (2, 7)),
+                ],
+            ),
+        ];
+        assert_rows(rows);
     }
 
     /// A constant runs to the end of its line, so text skipped after its value is its own: the

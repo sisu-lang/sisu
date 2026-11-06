@@ -4129,8 +4129,8 @@ impl Checker<'_> {
         // `dbg<T>(x: T) -> T`: its type is its argument's, so it waits when that argument waits;
         // its parameter names `T`, so it is not `open`. One argument is the shape, with or
         // without a label: the label is E0055, and the argument still waits.
-        // It comes first, as `call` runs the prelude's call before it looks up a user's item: a
-        // user's `class dbg` or `fn dbg` is rejected, and never the callee.
+        // It comes first, as `call` runs the prelude's call before it looks up a user's item. A
+        // user's item named `dbg` is rejected, and `call` then poisons the call.
         if name.as_str() == "dbg" {
             return CallShape {
                 generic: true,
