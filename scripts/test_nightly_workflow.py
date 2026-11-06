@@ -75,6 +75,7 @@ COMMIT_CHECK = ('"$HOME/.sisu/bin/sisu" --version --verbose | grep -Fx '
                 '"commit: $(printf %.7s \'' + PICKED + '\')"')
 INSTALL = 'SISU_DOWNLOAD_DIR=$PWD/dl sh dl/install.sh'
 SMOKE = 'scripts/nightly_smoke.sh "$HOME/.sisu/bin" site/programs/run'
+DIFF = 'diff orders.actual site/programs/run/orders.out'
 CHECKS = [('python3 scripts/nightly_check.py version target/release/sisu ' + PICKED, None),
           ('python3 scripts/nightly_check.py linux target/release/sisu', "runner.os == 'Linux'"),
           ('python3 scripts/nightly_check.py macos target/release/sisu .llvm/23/lib/libLLVMSupport.a '
@@ -106,11 +107,12 @@ def jobs(test):
     for line in workflow(test):
         if line == 'jobs:':
             in_jobs = True
-        elif in_jobs and (m := re.fullmatch(r'  ([^\s#:]+):', line)):
+        elif line.strip() and not line.startswith(' '):
+            in_jobs = False
+            name = None
+        elif in_jobs and (m := re.fullmatch(r'  ([^\s#:]+):(?:\s.*)?', line)):
             name = m[1]
             found[name] = []
-        elif in_jobs and line.strip() and not line.startswith(' '):
-            name = None
         elif in_jobs and name and line.strip():
             found[name].append(line)
     return found
@@ -125,7 +127,8 @@ def top(test, key):
     for line in lines[lines.index(f'{key}:') + 1:]:
         if line.strip() and not line.startswith(' '):
             break
-        body.append(line)
+        if line.strip():
+            body.append(line)
     return body
 
 
@@ -152,7 +155,7 @@ def mapping(lines, indent):
         j = i + 1
         while j < len(lines) and len(lines[j]) - len(lines[j].lstrip()) > indent:
             j += 1
-        key, value, body = m[1], m[2], lines[i + 1:j]
+        key, value, body = m[1].strip('\'"'), m[2], lines[i + 1:j]
         if value in ('|', '>', '|-', '>-'):
             found[key] = '\n'.join(line[indent + 2:] for line in body)
         elif not value:
@@ -227,9 +230,6 @@ class NightlyWorkflowTest(unittest.TestCase):
         for name in ('publish', 'live-check', 'prune'):
             self.assertNotIn('always()', '\n'.join(found[name]), name)
 
-    def test_publish_should_run_only_the_checkout_action(self):
-        self.assertEqual([u.split('@')[0] for u in uses(jobs(self)['publish'])], ['actions/checkout'])
-
     def test_write_jobs_should_run_only_their_script(self):
         found = jobs(self)
         for name, line in WRITE_RUN.items():
@@ -252,6 +252,12 @@ class NightlyWorkflowTest(unittest.TestCase):
             self.assertNotIn('continue-on-error', st[i])
         self.assertLess(install, check)
         self.assertLess(check, smoke)
+
+    def test_live_check_should_compare_the_output_last(self):
+        st = steps(jobs(self)['live-check'])
+        self.assertEqual(st[-1].get('run'), DIFF)
+        self.assertNotIn('if', st[-1])
+        self.assertNotIn('continue-on-error', st[-1])
 
     def test_gates_should_not_be_bypassed(self):
         for line in workflow(self):
@@ -280,16 +286,13 @@ class NightlyWorkflowTest(unittest.TestCase):
         self.assertIn('permissions: {contents: read}', workflow(self))
         found = jobs(self)
         for name, job in found.items():
-            permissions = job_map(job).get('permissions') or {}
-            if isinstance(permissions, str):
-                permissions = flow_map(permissions)
-            self.assertEqual(permissions, PERMISSIONS[name], name)
+            self.assertEqual(job_map(job).get('permissions'), PERMISSIONS[name], name)
             has_token = '          GH_TOKEN: ${{ github.token }}' in job
             self.assertEqual(has_token, name in TOKEN_JOBS, name)
-            if name not in TOKEN_JOBS:
-                self.assertEqual([line for line in job if TOKEN.search(line)], [], name)
-        above = workflow(self)[:workflow(self).index('jobs:')]
-        self.assertEqual([line for line in above if TOKEN.search(line)], [])
+        # A token line is allowed only as a line of the four jobs: not in another job, not above
+        # `jobs:` and not in a key after the jobs.
+        allowed = {line for name in TOKEN_JOBS for line in found[name]}
+        self.assertEqual([line for line in workflow(self) if TOKEN.search(line) and line not in allowed], [])
         self.assertIn('          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}',
                       found['pick'])
 

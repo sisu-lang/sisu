@@ -37,7 +37,7 @@ def install(home, path=None):
                           capture_output=True, text=True, timeout=300, check=False)
 
 
-def docker(image, command, timeout=600):
+def docker(image, command):
     """Runs `sh -c command` in the image with ARTIFACTS at /dl. The pull is quiet, so that its
     progress does not reach the stderr of the test. A timeout kills the docker client, not the
     container, so the container has a name and `docker rm -f` removes it at the end."""
@@ -47,9 +47,13 @@ def docker(image, command, timeout=600):
         return subprocess.run(
             ['docker', 'run', '--rm', '--name', name, '-v', f'{ARTIFACTS}:/dl:ro', '-e',
              'SISU_DOWNLOAD_DIR=/dl', image, 'sh', '-c', command],
-            capture_output=True, text=True, timeout=timeout, check=False)
+            capture_output=True, text=True, timeout=600, check=False)
     finally:
-        subprocess.run(['docker', 'rm', '-f', name], capture_output=True, check=False)
+        # A timeout of the removal must not hide the failure that is in flight.
+        try:
+            subprocess.run(['docker', 'rm', '-f', name], capture_output=True, check=False, timeout=60)
+        except subprocess.TimeoutExpired:
+            pass
 
 
 def write(path, text, mode=0o644):
