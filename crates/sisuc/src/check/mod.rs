@@ -715,6 +715,16 @@ thread_local! {
     pub(super) static LOOKUP_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many dropped locals the rollback of a string join has visited on this thread.
     pub(super) static ROLLBACK_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The points of the checker that this thread has reached since `Walk::program` cleared them.
+    pub(crate) static POINTS: std::cell::RefCell<FxHashSet<&'static str>> = std::cell::RefCell::default();
+}
+
+/// Records that the checker reached `point` on this thread.
+#[cfg(test)]
+pub(crate) fn reached(point: &'static str) {
+    POINTS.with_borrow_mut(|points| {
+        points.insert(point);
+    });
 }
 
 struct Checker<'src> {

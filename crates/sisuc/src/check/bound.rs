@@ -196,6 +196,8 @@ impl Checker<'_> {
         ret: Type,
         written: &[Type],
     ) -> Option<Type> {
+        #[cfg(test)]
+        super::reached("requirement_result");
         let own = self.interfaces[one.interface.0].requirements[one.method]
             .own
             .len();

@@ -1,0 +1,53 @@
+// GIVEN generic aliases over a bounded class, over `any Of<T>` and over the associated type `S.Name`
+// WHEN a program uses each alias, and one value leaves the class's type argument to inference
+// THEN the checker keeps the check of each alias body for its uses, and no unused name is reported
+interface Shown {
+    fn shown(self) -> i64
+}
+
+class Made: Shown {
+    fn shown(self) -> i64 { 1 }
+}
+
+class Bound<T: Shown> {
+    value: T
+}
+
+type Alias<T> = Bound<T>
+
+interface Of<T> {
+    fn of(self) -> T
+}
+
+class One: Of<i64> {
+    fn of(self) -> i64 { 2 }
+}
+
+type AnyOf<T> = any Of<T>
+
+interface Named {
+    type Name
+}
+
+class Name: Named {
+    type Name = i64
+    fn size(self) -> i64 { 3 }
+}
+
+type Items<S> = [S.Name]
+
+class Kept {
+    items: Items<Name>
+}
+
+fn main() {
+    let written: Alias<Made> = Bound<Made>(value: Made())
+    print(written.value.shown()) // 1
+    let inferred: Alias<Made> = Bound(value: Made())
+    print(inferred.value.shown()) // 1
+    let any_of: AnyOf<i64> = One()
+    print(any_of.of()) // 2
+    let items: Items<Name> = [Name().size()]
+    print(items) // [3]
+    print(Kept(items: items).items) // [3]
+}
