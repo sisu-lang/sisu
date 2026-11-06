@@ -22,6 +22,7 @@ use crate::tir::{self, Type, TypeKind};
 fn failed_jump(checked: Checked) -> Checked {
     checked.map_err(|poisoned| Poisoned {
         ty: None,
+        jumped: false,
         ..poisoned
     })
 }

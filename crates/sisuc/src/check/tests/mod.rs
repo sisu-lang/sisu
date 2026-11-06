@@ -727,13 +727,13 @@ pub(super) fn row_program(stmt: &str) -> String {
     format!("{ROW_ITEMS}fn g(c: bool) -> i64 {{\n    {stmt}\n    0\n}}\nfn main() {{}}")
 }
 
-/// `codes_under` for the text of every diagnostic: they are exactly `expected`, sorted by the
-/// start of the span, and by code when two start at the same place. Each entry is a code and the
-/// text it underlines. The first entry looks for its text from the start of `stmt`. Each next
-/// entry looks from the start of the entry before it. When both entries have the same code, it
-/// looks from one byte after that start. So a text that the row writes twice is told apart by the
-/// order. An entry may write context around its text: `"; «break»"` underlines `break` in the
-/// first `; break`. A diagnostic outside `stmt` writes its context, as `"0\n«}»"` does for the
+/// `codes_under` for the text of every diagnostic. The diagnostics are exactly `expected`. They are
+/// sorted by the start of the span, and by code when two start at the same place. Each entry is a
+/// code and the text it underlines. The first entry looks for its text from the start of `stmt`.
+/// Each next entry looks from the start of the entry before it. When both entries have the same
+/// code, it looks from one byte after that start. So a text that the row writes twice is told apart
+/// by the order. An entry may write context around its text: `"; «break»"` underlines `break` in
+/// the first `; break`. A diagnostic outside `stmt` writes its context, as `"0\n«}»"` does for the
 /// closing `}` of the function.
 pub(super) fn codes_texts(src: &str, stmt: &str, expected: &[(Code, &str)]) {
     let row = named(stmt);
