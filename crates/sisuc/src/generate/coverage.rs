@@ -4335,7 +4335,7 @@ fn a_leading_push_should_wait_for_the_growth_that_a_block_left() {
         215, 215, 215, 215, 215, 215, 10, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215,
     ];
     let program = generate(INPUT).program;
-    assert!(program.contains("fn main()"), "{program}");
+    assert!(program.contains("fn main("), "{program}");
 }
 
 /// GIVEN `f1`, `f2` and `f3`, of which `f2` has a `mut` parameter
@@ -8950,7 +8950,7 @@ fn a_panic_site_should_not_follow_a_return() {
     let mut returning = 0;
     search_seeds(256, |n| {
         let g = generate(&seed(n));
-        let main = g.program.split("fn main() ").nth(1).unwrap_or_default();
+        let main = g.program.split("fn main(").nth(1).unwrap_or_default();
         let main = main.split("\nfn k").next().unwrap_or_default();
         if main.contains("return") {
             returning += 1;

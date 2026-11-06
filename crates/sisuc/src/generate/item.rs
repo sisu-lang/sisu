@@ -636,6 +636,50 @@ class GapName: GapNamed {
 }
 type GapItem<S> = [S.Named]";
 
+/// The declarations of the forms of `gap_forms` that reach lowering and the runtime. Their names
+/// start with `Gap` or `gap_`. The text is fixed and makes no draw. `gap_forms` writes the
+/// statements of `shapes` that use it.
+const LOWERING_GAP_ITEMS: &str = r"enum GapTerm {
+    Num(i64)
+    Neg(GapTerm)
+}
+fn gap_flip(e: GapTerm) -> GapTerm {
+    match e {
+        Neg(x) => GapTerm.Neg(gap_flip(x))
+        other => other
+    }
+}
+fn gap_depth(e: GapTerm) -> i64 {
+    match e {
+        Num(n) => n
+        Neg(x) => 1 + gap_depth(x)
+    }
+}
+enum GapLayered {
+    End
+    Next(GapLayered??)
+}
+class GapHen {
+    egg: GapEgg?
+}
+class GapEgg {
+    _hen: GapHen?
+}
+enum GapRun {
+    Cell(string, GapRun?)
+}
+fn gap_cells(l: GapRun) -> i64 {
+    match l {
+        Cell(s, None) => s.len()
+        Cell(_, Some(rest)) => 1 + gap_cells(rest)
+    }
+}
+fn gap_sorted<T: Ord>(a: T, b: T, c: T) -> bool { a < b < c }
+fn gap_tail(s: string, n: i64) -> string {
+    if n == 0 { return s }
+    gap_tail(s, n - 1)
+}";
+
 impl Gen<'_> {
     /// Writes the program, and returns its cost (decision 5), its known sites (decision 3) and the
     /// lines that the marked statements of `shapes` print (`Generated::expected`).
@@ -669,8 +713,7 @@ impl Gen<'_> {
         }
         self.mut_functions();
         self.fuel += reserve;
-        self.w.text("fn main() ");
-        self.open_body();
+        self.open_main();
         let sites: Vec<KnownSite> = (0..self.rewrite_pick(MAX_KNOWN + 1))
             .map(|n| self.known_site(n))
             .collect();
@@ -861,6 +904,23 @@ impl Gen<'_> {
             n.to_string()
         };
         (text, n)
+    }
+
+    /// Writes the head of `main` and opens its body. With `main_args`, `main` takes `gap_args` and
+    /// prints its length first. Both are known text, so `plain` holds `fn main() ` and no print.
+    fn open_main(&mut self) {
+        self.w.text("fn main(");
+        if self.main_args {
+            self.known_text(|g| g.w.text("gap_args: [string]"));
+        }
+        self.w.text(") ");
+        self.open_body();
+        if self.main_args {
+            self.known_text(|g| {
+                g.w.line();
+                g.w.text("print(gap_args.len())");
+            });
+        }
     }
 
     /// Opens the body of a function or `main`, which counts its own cost.
@@ -1673,7 +1733,19 @@ impl Gen<'_> {
     ///   - `gap_beside`: array elements beside an `any`;
     ///   - `gap_shown` and `gap_boxed`: `dbg`, of an enum too, and an `any` conversion in a
     ///     generic function;
+    /// - the forms of `LOWERING_GAP_ITEMS`, each for the points of lowering and of the runtime in
+    ///   `LOWERING_POINTS` (`coverage.rs`):
+    ///   - `gap_flip`: a `match` that takes a boxed variant apart and builds one;
+    ///   - `GapLayered`: `==` on a variant that holds `Self??`;
+    ///   - `GapHen` and `GapEgg`: two classes that hold each other;
+    ///   - `"a b".words().len()`: the word count of a string;
+    ///   - `gap_sorted`: a chain of three operands in a generic function, with `T` fixed to
+    ///     `string`;
+    ///   - `gap_cells`: a consuming `match` with `Some(x)` under a boxed optional field;
+    ///   - `gap_tail`: a self call in tail position that passes a named argument;
     /// - a `never` part of a string, as a statement on a branch that does not run.
+    ///
+    /// `main` takes `gap_args` in the programs of `MAIN_ARGS_GATE`. `open_main` writes it.
     ///
     /// Each loop counts down from one and a `break` ends it, in at most two passes.
     /// An index is a literal.
@@ -1686,6 +1758,8 @@ impl Gen<'_> {
             g.w.text(GENERIC_GAP_ITEMS);
             g.w.line();
             g.w.text(ANY_GAP_ITEMS);
+            g.w.line();
+            g.w.text(LOWERING_GAP_ITEMS);
             g.w.line();
         });
         let first = calls.lines.len();
@@ -1756,6 +1830,14 @@ impl Gen<'_> {
             "print(gap_shown(21))",
             "print(gap_boxed(GapEye(v: 22)).seen())",
             "if gap_off { \"a{panic(\"gap\")}\" }",
+            "print(gap_depth(gap_flip(GapTerm.Neg(GapTerm.Num(1)))))",
+            "print(GapLayered.Next(Some(Some(GapLayered.End))) == GapLayered.Next(None))",
+            "let gap_hen = GapHen(egg: GapEgg(_hen: None))",
+            "print(gap_hen.egg == None)",
+            "print(\"a b\".words().len())",
+            "print(gap_sorted(\"a\", \"b\", \"c\"))",
+            "print(gap_cells(GapRun.Cell(\"x\", Some(GapRun.Cell(\"y\", None)))))",
+            "print(gap_tail(\"t\", 2))",
         ] {
             calls.push(line);
         }

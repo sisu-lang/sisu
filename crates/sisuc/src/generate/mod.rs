@@ -154,6 +154,8 @@ pub(crate) fn generate(data: &[u8]) -> Generated {
     // jump in `coalesce` is tuned to the same seeds.
     let fold = data.iter().fold(0, |fold, byte| fold ^ byte);
     g.leaves = fold % 8 == 5;
+    // The same holds for the gate of `main_args`, which `MAIN_ARGS_GATE` explains.
+    g.main_args = fold % 8 == MAIN_ARGS_GATE;
     let (cost, known, expected) = g.program();
     // Only the tests read the cost.
     #[cfg(not(test))]
@@ -284,6 +286,8 @@ struct Gen<'a> {
     mut_fn: bool,
     /// Whether the program holds `let ... else`, and `return`, `break` and `continue` after `??`.
     leaves: bool,
+    /// Whether `main` takes the parameter `gap_args` and prints its length.
+    main_args: bool,
     /// Whether an expression of the statement being written so far has an effect or may
     /// panic, so one after it may not move before the statement (decision 2).
     effect: bool,
@@ -335,6 +339,7 @@ impl<'a> Gen<'a> {
             nested: false,
             mut_fn: false,
             leaves: false,
+            main_args: false,
             effect: false,
             returns: false,
             bound_sites: Vec::new(),
