@@ -8670,7 +8670,7 @@ mod tests {
 
     /// GIVEN `case` and then a `;` on its line, or another idiom and then a line break
     /// WHEN the parser reads the arm
-    /// THEN it keeps the error of that idiom, because the rule for `case` does not reach it
+    /// THEN it keeps its error, because the rule for `case` does not reach it
     #[test]
     fn an_arm_that_is_no_case_line_break_should_keep_its_error() {
         let rows = [
