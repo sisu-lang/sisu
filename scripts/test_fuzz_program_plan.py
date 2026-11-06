@@ -6,21 +6,20 @@ import re
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 from typing import Any
 from unittest import mock
 
 import fuzz_program_plan as fp
 
-WORKFLOW = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", ".github", "workflows", "fuzz-program.yml"
-)
+WORKFLOW = Path(__file__).absolute().parent / ".." / ".github" / "workflows" / "fuzz-program.yml"
 
 
 def steps() -> list[list[str]]:
     """The workflow's steps as lists of lines. A step starts at a line of six spaces and `- `, and
     ends before the next one or at the first line with less indent (the next job).
     """
-    with open(WORKFLOW, encoding="utf-8") as f:
+    with WORKFLOW.open(encoding="utf-8") as f:
         lines = f.read().splitlines()
     found: list[list[str] | None] = []
     for line in lines:
@@ -168,17 +167,17 @@ class Events(unittest.TestCase):
             ("exit 0, with section", f"printf '\\n{section}' >>fuzz/artifacts/summary.md", 0, None),
         ):
             with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
-                os.makedirs(os.path.join(tmp, "scripts"))
-                os.makedirs(os.path.join(tmp, "fuzz", "artifacts"))
-                fake_path = os.path.join(tmp, "scripts", "fuzz.sh")
-                with open(fake_path, "w", encoding="utf-8") as f:
+                Path(tmp, "scripts").mkdir(parents=True)
+                Path(tmp, "fuzz", "artifacts").mkdir(parents=True)
+                fake_path = Path(tmp, "scripts", "fuzz.sh")
+                with fake_path.open("w", encoding="utf-8") as f:
                     f.write(f"#!/bin/bash\n{fake}\n")
-                os.chmod(fake_path, 0o755)
-                summary = os.path.join(tmp, "fuzz", "artifacts", "summary.md")
-                with open(summary, "w", encoding="utf-8") as f:
+                fake_path.chmod(0o755)
+                summary = Path(tmp, "fuzz", "artifacts", "summary.md")
+                with summary.open("w", encoding="utf-8") as f:
                     f.write("# Fuzzing: program\n\nNone.\n")
-                step_summary = os.path.join(tmp, "step-summary.md")
-                env = dict(os.environ, GITHUB_STEP_SUMMARY=step_summary)
+                step_summary = Path(tmp, "step-summary.md")
+                env = dict(os.environ, GITHUB_STEP_SUMMARY=str(step_summary))
                 done = subprocess.run(
                     ["bash", "-e", "-c", run_block(gaps)],
                     cwd=tmp,
@@ -187,9 +186,9 @@ class Events(unittest.TestCase):
                     text=True,
                     check=False,
                 )
-                with open(summary, encoding="utf-8") as f:
+                with summary.open(encoding="utf-8") as f:
                     in_summary = f.read()
-                with open(step_summary, encoding="utf-8") as f:
+                with step_summary.open(encoding="utf-8") as f:
                     in_step = f.read()
                 self.assertEqual(done.returncode, code, done.stderr)
                 self.assertEqual(in_summary.count("## Generator gaps"), 1, in_summary)
@@ -210,19 +209,19 @@ class Events(unittest.TestCase):
     def main(self, labels: list[str]) -> tuple[int, str]:
         """Runs main() on a pull_request event with `labels`; returns its status and output."""
         with tempfile.TemporaryDirectory() as tmp:
-            event = os.path.join(tmp, "event.json")
-            output = os.path.join(tmp, "output")
-            with open(event, "w", encoding="utf-8") as f:
+            event = Path(tmp, "event.json")
+            output = Path(tmp, "output")
+            with event.open("w", encoding="utf-8") as f:
                 json.dump(pull_request(labels), f)
-            open(output, "w", encoding="utf-8").close()
+            output.touch()
             env = {
                 "GITHUB_EVENT_NAME": "pull_request",
-                "GITHUB_EVENT_PATH": event,
-                "GITHUB_OUTPUT": output,
+                "GITHUB_EVENT_PATH": str(event),
+                "GITHUB_OUTPUT": str(output),
             }
             with mock.patch.dict(os.environ, env), mock.patch("sys.stdout"):
                 status = fp.main()
-            with open(output, encoding="utf-8") as f:
+            with output.open(encoding="utf-8") as f:
                 return status, f.read()
 
     def test_main_writes_the_outputs(self) -> None:

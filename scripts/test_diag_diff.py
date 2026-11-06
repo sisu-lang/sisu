@@ -3,7 +3,6 @@
 import contextlib
 import io
 import json
-import os
 import shlex
 import subprocess
 import sys
@@ -27,19 +26,19 @@ W0001 = (
 
 def fake_sisu(tmp: str, name: str, outputs: Mapping[str, str]) -> str:
     """A sisu stand-in that prints the JSON lines `outputs` gives a file's stem, or crashes."""
-    path = os.path.join(tmp, name)
+    path = Path(tmp, name)
     cases = "".join(f"  {stem}) printf '%s\\n' '{out}' >&2;;\n" for stem, out in outputs.items())
-    with open(path, "w", encoding="utf-8") as f:
+    with path.open("w", encoding="utf-8") as f:
         f.write(f'#!/bin/sh\ncase $(basename "$4" .sisu) in\n{cases}  *) exit 101;;\nesac\n')
-    os.chmod(path, 0o755)
-    return path
+    path.chmod(0o755)
+    return str(path)
 
 
 class DiagDiff(unittest.TestCase):
     def test_reports_each_program_whose_diagnostics_differ(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             for stem in ["same", "accepted", "rejected", "moved", "crash"]:
-                open(os.path.join(tmp, f"{stem}.sisu"), "w").close()
+                Path(tmp, f"{stem}.sisu").touch()
             moved = E0032.replace('"column":9', '"column":10')
             base = fake_sisu(
                 tmp,
@@ -74,24 +73,24 @@ class DiagDiff(unittest.TestCase):
     def test_reports_the_programs_of_every_directory_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             for sub in ["a", "b", "b/c"]:
-                os.makedirs(os.path.join(tmp, sub), exist_ok=True)
-                open(os.path.join(tmp, sub, "same.sisu"), "w").close()
+                Path(tmp, sub).mkdir(parents=True, exist_ok=True)
+                Path(tmp, sub, "same.sisu").touch()
             sisu = fake_sisu(tmp, "sisu", {"same": E0032})
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
                 status = dd.main(
                     sisu,
                     sisu,
-                    os.path.join(tmp, "a"),
-                    os.path.join(tmp, "b"),
-                    os.path.join(tmp, "b", "c"),
+                    str(Path(tmp, "a")),
+                    str(Path(tmp, "b")),
+                    str(Path(tmp, "b", "c")),
                 )
         self.assertEqual(status, 0)
         self.assertEqual(out.getvalue(), "diag_diff: 3 programs, no differences\n")
 
     def test_reports_a_program_that_crashes_both_builds(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            open(os.path.join(tmp, "crash.sisu"), "w").close()
+            Path(tmp, "crash.sisu").touch()
             sisu = fake_sisu(tmp, "sisu", {})
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
@@ -108,7 +107,7 @@ class DiagDiff(unittest.TestCase):
         THEN only the run with `full` reports it, and shows the help of each build
         """
         with tempfile.TemporaryDirectory() as tmp:
-            open(os.path.join(tmp, "help.sisu"), "w").close()
+            Path(tmp, "help.sisu").touch()
             base = fake_sisu(
                 tmp, "base", {"help": E0032.replace("}]}", '}],"help":"use `match`"}')}
             )
@@ -169,10 +168,10 @@ class DiagDiff(unittest.TestCase):
             "edit": {"replacement": "x"},
             "safe": {"safe": False},
         }
-        script = os.path.join(os.path.dirname(os.path.abspath(dd.__file__)), "diag_diff.py")
+        script = Path(dd.__file__).absolute().parent / "diag_diff.py"
         with tempfile.TemporaryDirectory() as tmp:
             for stem in changed:
-                open(os.path.join(tmp, f"{stem}.sisu"), "w").close()
+                Path(tmp, f"{stem}.sisu").touch()
             base = fake_sisu(tmp, "base", {stem: diagnostic() for stem in changed})
             head = fake_sisu(tmp, "head", {stem: diagnostic(**f) for stem, f in changed.items()})
             flags: list[list[str]] = [["--codes"], [], ["--full"]]
@@ -201,7 +200,7 @@ class DiagDiff(unittest.TestCase):
         self.assertLessEqual(max(peak_runs(lambda sisu, tmp: dd.main(sisu, sisu, tmp))), 2)
 
     def test_command_line_should_bound_the_sisu_processes_by_jobs(self) -> None:
-        script = os.path.join(os.path.dirname(os.path.abspath(dd.__file__)), "diag_diff.py")
+        script = Path(dd.__file__).absolute().parent / "diag_diff.py"
         cases: list[tuple[list[str], int]] = [([], 2), (["--jobs=1"], 1)]
         for flag, limit in cases:
 
@@ -219,18 +218,18 @@ def peak_runs(run: Callable[[str, str], object]) -> list[int]:
     """The count of fake sisu runs at each start while `run(sisu, dir)` checks six programs."""
     with tempfile.TemporaryDirectory() as tmp:
         for n in range(6):
-            open(os.path.join(tmp, f"p{n}.sisu"), "w").close()
+            Path(tmp, f"p{n}.sisu").touch()
         # Each run marks itself, counts the runs that have a mark, waits, and removes its mark.
         d = shlex.quote(tmp)
-        sisu = os.path.join(tmp, "sisu")
-        with open(sisu, "w", encoding="utf-8") as f:
+        sisu = Path(tmp, "sisu")
+        with sisu.open("w", encoding="utf-8") as f:
             f.write(
                 f"#!/bin/sh\ntouch {d}/run.$$\n"
                 f'ls {d} | grep -c "^run" >> {d}/counts\nsleep 0.1\nrm {d}/run.$$\n'
             )
-        os.chmod(sisu, 0o755)
+        sisu.chmod(0o755)
         with contextlib.redirect_stdout(io.StringIO()):
-            run(sisu, tmp)
+            run(str(sisu), tmp)
         counts = [int(n) for n in Path(tmp, "counts").read_text().split()]
     assert len(counts) == 12, counts
     return counts

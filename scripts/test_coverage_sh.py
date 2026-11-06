@@ -10,9 +10,10 @@ import stat
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 from typing import override
 
-SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "coverage.sh")
+SCRIPT = Path(__file__).absolute().parent / "coverage.sh"
 # A pre-commit hook runs these tests with GIT_DIR and its kin set to the outer repository.
 ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 # The fake cargo does nothing, except that `nextest` runs the action that the test names in
@@ -32,17 +33,17 @@ class CoverageSh(unittest.TestCase):
     def setUp(self) -> None:
         self.repo = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.repo)
-        scripts = os.path.join(self.repo, "scripts")
-        os.mkdir(scripts)
+        scripts = Path(self.repo, "scripts")
+        scripts.mkdir()
         shutil.copy(SCRIPT, scripts)
-        with open(os.path.join(scripts, "coverage_report.py"), "w", encoding="utf-8") as f:
+        with (scripts / "coverage_report.py").open("w", encoding="utf-8") as f:
             f.write(STUB_REPORT)
-        bin_dir = os.path.join(self.repo, "bin")
-        os.mkdir(bin_dir)
-        cargo = os.path.join(bin_dir, "cargo")
-        with open(cargo, "w", encoding="utf-8") as f:
+        bin_dir = Path(self.repo, "bin")
+        bin_dir.mkdir()
+        cargo = bin_dir / "cargo"
+        with cargo.open("w", encoding="utf-8") as f:
             f.write(FAKE_CARGO)
-        os.chmod(cargo, os.stat(cargo).st_mode | stat.S_IXUSR)
+        cargo.chmod(cargo.stat().st_mode | stat.S_IXUSR)
         self.env = dict(ENV, PATH=f"{bin_dir}:{ENV['PATH']}")
         self.git = ["git", "-C", self.repo, "-c", "user.name=t", "-c", "user.email=t@t"]
         subprocess.run([*self.git[:3], "init", "-q"], check=True, env=ENV)
@@ -52,7 +53,7 @@ class CoverageSh(unittest.TestCase):
         self.head = self.rev_parse()
 
     def write_tracked(self, text: str) -> None:
-        with open(os.path.join(self.repo, "a.txt"), "w", encoding="utf-8") as f:
+        with Path(self.repo, "a.txt").open("w", encoding="utf-8") as f:
             f.write(text)
 
     def rev_parse(self) -> str:

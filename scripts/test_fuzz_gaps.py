@@ -16,10 +16,11 @@ import sys
 import tempfile
 import unittest
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-SCRIPT = os.path.join(HERE, "fuzz_gaps.py")
+HERE = Path(__file__).absolute().parent
+SCRIPT = HERE / "fuzz_gaps.py"
 SRC = "/work/crates/sisuc/src/"
 HEADING = "## Generator gaps"
 NO_REASON = "## no reason yet\n"
@@ -85,11 +86,11 @@ def c_plus_plus_filt(text: str) -> str:
         return text
 
 
-def fake_tool(directory: str, script: str) -> None:
-    path = os.path.join(directory, "c++filt")
-    with open(path, "w", encoding="utf-8") as f:
+def fake_tool(directory: Path, script: str) -> None:
+    path = Path(directory, "c++filt")
+    with path.open("w", encoding="utf-8") as f:
         f.write("#!/bin/sh\ncat >/dev/null\n" + script)
-    os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
 class Run:
@@ -101,26 +102,26 @@ class Run:
         seeds: dict[str, Any] | str | None,
         valid: dict[str, Any] | str | None,
         known: str | None = NO_REASON,
-        path: Callable[[str], None] | None = None,
+        path: Callable[[Path], None] | None = None,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            names: dict[str, str] = {}
+            names: dict[str, Path] = {}
             for label, content in (("seeds.json", seeds), ("valid.json", valid)):
-                names[label] = os.path.join(directory, label)
+                names[label] = Path(directory, label)
                 if content is None:
                     continue
-                with open(names[label], "w", encoding="utf-8") as f:
+                with names[label].open("w", encoding="utf-8") as f:
                     f.write(content if isinstance(content, str) else json.dumps(content))
-            names["known"] = os.path.join(directory, "known_gaps.txt")
+            names["known"] = Path(directory, "known_gaps.txt")
             if known is not None:
-                with open(names["known"], "w", encoding="utf-8") as f:
+                with names["known"].open("w", encoding="utf-8") as f:
                     f.write(known)
             env = dict(os.environ)
             if path is not None:
-                tools = os.path.join(directory, "tools")
-                os.mkdir(tools)
+                tools = Path(directory, "tools")
+                tools.mkdir()
                 path(tools)
-                env["PATH"] = tools
+                env["PATH"] = str(tools)
             done = subprocess.run(
                 [sys.executable, SCRIPT, names["seeds.json"], names["valid.json"], names["known"]],
                 capture_output=True,
@@ -140,7 +141,7 @@ class Gaps(unittest.TestCase):
         seeds: list[dict[str, Any]],
         valid: list[dict[str, Any]],
         known: str | None = NO_REASON,
-        **kw: Callable[[str], None],
+        **kw: Callable[[Path], None],
     ) -> Run:
         return Run(self, export(*ANCHORS, *seeds), export(*ANCHORS, *valid), known, **kw)
 

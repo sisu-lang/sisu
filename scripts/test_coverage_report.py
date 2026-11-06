@@ -3,10 +3,10 @@
 import contextlib
 import io
 import json
-import os
 import tempfile
 import unittest
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import coverage_report as cr
@@ -240,8 +240,9 @@ class Main(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             paths: list[str] = []
             for name, text in (("c.json", exp_text), ("l.info", lcov_text), ("d.diff", diff_text)):
-                paths.append(os.path.join(d, name))
-                with open(paths[-1], "w") as f:
+                file = Path(d, name)
+                paths.append(str(file))
+                with file.open("w") as f:
                     f.write(text)
             return self.run_main(paths)
 
@@ -282,11 +283,11 @@ class Main(unittest.TestCase):
 
     def test_a_wrong_argument_count_exits_1(self) -> None:
         with tempfile.TemporaryDirectory() as d:
-            path = os.path.join(d, "f")
-            with open(path, "w") as f:
+            path = Path(d, "f")
+            with path.open("w") as f:
                 f.write(json.dumps(export()))
             for count in (2, 4):
-                code, err = self.run_main([path] * count)
+                code, err = self.run_main([str(path)] * count)
                 self.assertEqual(code, 1)
                 self.assertIn("usage: coverage_report.py", err)
 

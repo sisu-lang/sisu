@@ -170,9 +170,7 @@ def main(argv: list[str]) -> int:
     try:
         if len(argv) != 3:
             raise ValueError("usage: coverage_report.py COVERAGE.json LCOV.info CHANGES.diff")
-        texts = []
-        for path in argv:
-            texts.append(Path(path).read_text(errors="replace"))
+        texts = [Path(path).read_text(errors="replace") for path in argv]
         export = json.loads(texts[0])
         data = export["data"][0]
         for kind in ("lines", "regions"):

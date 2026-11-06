@@ -10,9 +10,10 @@ import stat
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 from typing import Any, override
 
-SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fuzz_issue.sh")
+SCRIPT = Path(__file__).absolute().parent / "fuzz_issue.sh"
 # The fake gh answers a list request with the JSON in $FAKE_ISSUES, and records the path of
 # a request that sends a body, with that body, to `posts`.
 FAKE_GH = """#!/usr/bin/env bash
@@ -32,14 +33,14 @@ class FuzzIssue(unittest.TestCase):
     def setUp(self) -> None:
         self.dir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.dir)
-        bin_dir = os.path.join(self.dir, "bin")
-        os.mkdir(bin_dir)
-        gh = os.path.join(bin_dir, "gh")
-        with open(gh, "w", encoding="utf-8") as f:
+        bin_dir = Path(self.dir, "bin")
+        bin_dir.mkdir()
+        gh = bin_dir / "gh"
+        with gh.open("w", encoding="utf-8") as f:
             f.write(FAKE_GH)
-        os.chmod(gh, os.stat(gh).st_mode | stat.S_IXUSR)
+        gh.chmod(gh.stat().st_mode | stat.S_IXUSR)
         self.bin = bin_dir
-        self.summary = os.path.join(self.dir, "summary.md")
+        self.summary = Path(self.dir, "summary.md")
 
     def run_script(
         self,
@@ -48,7 +49,7 @@ class FuzzIssue(unittest.TestCase):
         target: str = "front_end",
     ) -> tuple[str, dict[str, Any]] | tuple[None, None]:
         if summary is not None:
-            with open(self.summary, "wb") as f:
+            with self.summary.open("wb") as f:
                 f.write(summary)
         env = dict(
             os.environ,
@@ -66,10 +67,10 @@ class FuzzIssue(unittest.TestCase):
             timeout=30,
         )
         self.assertEqual(run.returncode, 0, run.stderr)
-        posts = os.path.join(self.dir, "posts")
-        if not os.path.exists(posts):
+        posts = Path(self.dir, "posts")
+        if not posts.exists():
             return None, None
-        with open(posts, encoding="utf-8") as f:
+        with posts.open(encoding="utf-8") as f:
             path, _, body = f.read().partition("\n")
         return path, json.loads(body)
 
@@ -84,7 +85,7 @@ class FuzzIssue(unittest.TestCase):
         self.assertIn("# Fuzzing: front_end", body["body"])
         self.assertIn("https://example.test/run/1", body["body"])
         self.assertIn("severity label", body["body"])
-        with open(os.path.join(self.dir, "list"), encoding="utf-8") as f:
+        with Path(self.dir, "list").open(encoding="utf-8") as f:
             self.assertIn("labels=fuzz", f.read())
 
     def test_a_failure_with_an_open_issue_should_comment_on_it(self) -> None:
@@ -109,7 +110,7 @@ class FuzzIssue(unittest.TestCase):
         _, body = self.run_script([], summary=text.encode())
         assert body is not None
         self.assertIn(text, body["body"])
-        self.assertFalse(os.path.exists(os.path.join(self.dir, "pwned")))
+        self.assertFalse(Path(self.dir, "pwned").exists())
 
     def test_a_missing_summary_should_still_report_the_run(self) -> None:
         _, body = self.run_script([], summary=None)

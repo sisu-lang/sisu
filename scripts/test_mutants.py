@@ -4,7 +4,6 @@ Each test runs the script in a small repository with a fake `cargo` on PATH, so 
 """
 
 import fcntl
-import glob
 import os
 import re
 import shutil
@@ -12,9 +11,10 @@ import stat
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 from typing import override
 
-SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mutants.sh")
+SCRIPT = Path(__file__).absolute().parent / "mutants.sh"
 # A pre-commit hook runs these tests with GIT_DIR and its kin set to the outer repository.
 # A caller's LOG, CARGO_MUTANTS_JOBS, NEXTEST_TEST_THREADS and MUTANTS_PASS2_TIMEOUT would change
 # what the script does.
@@ -112,22 +112,22 @@ def escaped(name: str) -> str:
 class Mutants(unittest.TestCase):
     @override
     def setUp(self) -> None:
-        self.repo = tempfile.mkdtemp()
+        self.repo = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.repo)
-        self.scripts = os.path.join(self.repo, "scripts")
-        os.mkdir(self.scripts)
+        self.scripts = self.repo / "scripts"
+        self.scripts.mkdir()
         shutil.copy(SCRIPT, self.scripts)
-        shutil.copy(os.path.join(os.path.dirname(SCRIPT), "heavy-run.sh"), self.scripts)
-        self.bin = os.path.join(self.repo, "bin")
-        os.mkdir(self.bin)
-        cargo = os.path.join(self.bin, "cargo")
-        with open(cargo, "w", encoding="utf-8") as f:
+        shutil.copy(SCRIPT.parent / "heavy-run.sh", self.scripts)
+        self.bin = self.repo / "bin"
+        self.bin.mkdir()
+        cargo = self.bin / "cargo"
+        with cargo.open("w", encoding="utf-8") as f:
             f.write(FAKE_CARGO)
-        os.chmod(cargo, os.stat(cargo).st_mode | stat.S_IXUSR)
+        cargo.chmod(cargo.stat().st_mode | stat.S_IXUSR)
         self.git = ["git", "-C", self.repo, "-c", "user.name=t", "-c", "user.email=t@t"]
         subprocess.run([*self.git[:3], "init", "-q"], check=True, env=ENV)
         self.commit("base")
-        self.log = os.path.join(self.repo, "mutation.log")
+        self.log = self.repo / "mutation.log"
 
     def commit(self, message: str) -> None:
         subprocess.run([*self.git, "add", "-A"], check=True, env=ENV)
@@ -141,7 +141,7 @@ class Mutants(unittest.TestCase):
         ).stdout.strip()
 
     def write_rust(self, text: str) -> None:
-        with open(os.path.join(self.repo, "a.rs"), "w", encoding="utf-8") as f:
+        with (self.repo / "a.rs").open("w", encoding="utf-8") as f:
             f.write(text)
 
     def mutate(
@@ -155,12 +155,12 @@ class Mutants(unittest.TestCase):
         env = dict(
             ENV,
             PATH=f"{self.bin}:{ENV['PATH']}",
-            TMPDIR=self.repo,
+            TMPDIR=str(self.repo),
             **(env or {}),
             **{f"FAKE_{k.upper()}": str(v) for k, v in fake.items()},
         )
         if log:
-            env["LOG"] = self.log
+            env["LOG"] = str(self.log)
         return subprocess.run(
             ["bash", "scripts/mutants.sh", "HEAD~1", *args],
             cwd=self.repo,
@@ -171,10 +171,10 @@ class Mutants(unittest.TestCase):
         )
 
     def seen(self, name: str) -> bool:
-        return os.path.exists(os.path.join(self.repo, name))
+        return (self.repo / name).exists()
 
     def last_line(self) -> str:
-        with open(self.log, encoding="utf-8") as f:
+        with self.log.open(encoding="utf-8") as f:
             return f.read().splitlines()[-1]
 
     def rust_commit(self) -> None:
@@ -193,13 +193,13 @@ class Mutants(unittest.TestCase):
         self.assertFalse(self.seen("seen"))
 
     def test_a_second_run_should_fail_and_leave_the_first_runs_log_alone(self) -> None:
-        with open(self.log, "w", encoding="utf-8") as f:
+        with self.log.open("w", encoding="utf-8") as f:
             f.write("first run\n")
-        os.mkdir(os.path.join(self.repo, "target"))
+        (self.repo / "target").mkdir()
         # A run in another worktree holds the lock of the clone too; this run must not wait for it.
         with (
-            open(os.path.join(self.repo, "target", "mutation-test.lock"), "w") as lock,
-            open(os.path.join(self.repo, ".git", "sisu-heavy-run.lock"), "w") as clone,
+            (self.repo / "target" / "mutation-test.lock").open("w") as lock,
+            (self.repo / ".git" / "sisu-heavy-run.lock").open("w") as clone,
         ):
             fcntl.flock(lock, fcntl.LOCK_EX)
             fcntl.flock(clone, fcntl.LOCK_EX)
@@ -209,14 +209,14 @@ class Mutants(unittest.TestCase):
             "mutation-test: FAIL: another make mutation-test is running in this worktree",
             run.stdout,
         )
-        with open(self.log, encoding="utf-8") as f:
+        with self.log.open(encoding="utf-8") as f:
             self.assertEqual(f.read(), "first run\n")
 
     def test_make_mutation_test_should_take_the_clone_lock_once_and_run(self) -> None:
         # A recipe that wraps mutants.sh in heavy-run.sh again waits for its own lock forever.
-        shutil.copy(os.path.join(os.path.dirname(SCRIPT), "..", "Makefile"), self.repo)
+        shutil.copy(SCRIPT.parent / ".." / "Makefile", self.repo)
         self.rust_commit()
-        env = dict(ENV, PATH=f"{self.bin}:{ENV['PATH']}", TMPDIR=self.repo, FAKE_CAUGHT="1")
+        env = dict(ENV, PATH=f"{self.bin}:{ENV['PATH']}", TMPDIR=str(self.repo), FAKE_CAUGHT="1")
         run = subprocess.run(
             ["make", "mutation-test", "BASE=HEAD~1", f"LOG={self.log}"],
             cwd=self.repo,
@@ -243,7 +243,7 @@ class Mutants(unittest.TestCase):
             caught=3, timeout=1, exit=3, pass2_caught=1, pass2_timeout=0, pass2_exit=0
         )
         self.assertEqual(run.returncode, 0)
-        with open(os.path.join(self.repo, "args2"), encoding="utf-8") as f:
+        with (self.repo / "args2").open(encoding="utf-8") as f:
             args2 = f.read().split()
         self.assertEqual(args2[args2.index("--timeout") + 1], "600")
         self.assertEqual(
@@ -294,7 +294,7 @@ class Mutants(unittest.TestCase):
     def test_cargo_should_run_niced_with_two_jobs_of_eight_test_threads_by_default(self) -> None:
         self.rust_commit()
         self.mutate(log=False, caught=1)
-        with open(os.path.join(self.repo, "seen"), encoding="utf-8") as f:
+        with (self.repo / "seen").open(encoding="utf-8") as f:
             self.assertEqual(f.read().strip(), "2 19 8")
 
     def test_a_run_without_new_output_should_pass_and_leave_the_old_mutants_out_alone(self) -> None:
@@ -356,14 +356,14 @@ class Mutants(unittest.TestCase):
         self.rust_commit()
         run = self.mutate("--", "-o", "x", caught=1)
         self.assertEqual(run.returncode, 0)
-        with open(os.path.join(self.repo, "args"), encoding="utf-8") as f:
+        with (self.repo / "args").open(encoding="utf-8") as f:
             self.assertTrue(f.read().strip().endswith("-- -o x"))
 
     def test_a_first_pass_should_test_each_mutant_with_the_unit_tests_only(self) -> None:
         self.rust_commit()
         run = self.mutate(caught=2)
         self.assertEqual(run.returncode, 0)
-        with open(os.path.join(self.repo, "args"), encoding="utf-8") as f:
+        with (self.repo / "args").open(encoding="utf-8") as f:
             self.assertTrue(f.read().strip().endswith("-- --lib"))
         self.assertFalse(self.seen("args2"))
         self.assertEqual(
@@ -379,7 +379,7 @@ class Mutants(unittest.TestCase):
             caught=5, unviable=1, missed=2, exit=2, pass2_caught=2, pass2_missed=0, pass2_exit=0
         )
         self.assertEqual(run.returncode, 0)
-        with open(os.path.join(self.repo, "args2"), encoding="utf-8") as f:
+        with (self.repo / "args2").open(encoding="utf-8") as f:
             args2 = f.read().split()
         self.assertIn("--re", args2)
         self.assertNotIn("--iterate", args2)
@@ -410,13 +410,13 @@ class Mutants(unittest.TestCase):
     def pass2_args(self, *args: str, env: dict[str, str] | None = None) -> list[str]:
         self.rust_commit()
         self.mutate(*args, env=env, missed=1, exit=2, pass2_caught=1, pass2_missed=0, pass2_exit=0)
-        with open(os.path.join(self.repo, "args2"), encoding="utf-8") as f:
+        with (self.repo / "args2").open(encoding="utf-8") as f:
             return f.read().split()
 
     def test_the_second_pass_should_wait_600_seconds_for_each_mutant(self) -> None:
         args2 = self.pass2_args()
         self.assertEqual(args2[args2.index("--timeout") + 1], "600")
-        with open(os.path.join(self.repo, "args"), encoding="utf-8") as f:
+        with (self.repo / "args").open(encoding="utf-8") as f:
             self.assertNotIn("--timeout", f.read())
 
     def test_mutants_pass2_timeout_should_change_the_wait_of_the_second_pass(self) -> None:
@@ -439,11 +439,11 @@ class Mutants(unittest.TestCase):
     SUITE = "crates/sisuc/src/lib.rs:7:9: replace c with d"
 
     def log_text(self) -> str:
-        with open(self.log, encoding="utf-8") as f:
+        with self.log.open(encoding="utf-8") as f:
             return f.read()
 
     def lines(self, name: str) -> list[str]:
-        with open(os.path.join(self.repo, name), encoding="utf-8") as f:
+        with (self.repo / name).open(encoding="utf-8") as f:
             return f.read().splitlines()
 
     def two_groups(self, *args: str, **fake: object) -> subprocess.CompletedProcess[str]:
@@ -693,7 +693,7 @@ class Mutants(unittest.TestCase):
     ]
 
     def lib_only_list(self) -> list[str]:
-        with open(SCRIPT, encoding="utf-8") as f:
+        with SCRIPT.open(encoding="utf-8") as f:
             text = f.read()
         match = re.search(r"^LIB_ONLY=\(\n(.*?)\n\)", text, re.MULTILINE | re.DOTALL)
         assert match is not None
@@ -702,8 +702,8 @@ class Mutants(unittest.TestCase):
     def test_the_lib_only_list_should_be_the_fuzz_layer_of_the_architecture_test(self) -> None:
         # The architecture test fails when a module of an earlier layer uses a module of the last
         # layer outside test code, so only the unit tests and the `pub use` interface reach it.
-        root = os.path.join(os.path.dirname(SCRIPT), "..", "crates", "sisuc")
-        with open(os.path.join(root, "tests", "architecture.rs"), encoding="utf-8") as f:
+        root = SCRIPT.parent / ".." / "crates" / "sisuc"
+        with (root / "tests" / "architecture.rs").open(encoding="utf-8") as f:
             layers_match = re.search(r"const LAYERS:.*?\n\];", f.read(), re.DOTALL)
         assert layers_match is not None
         layers = layers_match.group(0)
@@ -712,9 +712,7 @@ class Mutants(unittest.TestCase):
         for module in last:
             flat = f"crates/sisuc/src/{module}.rs"
             paths.append(
-                flat
-                if os.path.exists(os.path.join(root, "..", "..", flat))
-                else f"crates/sisuc/src/{module}/"
+                flat if (root / ".." / ".." / flat).exists() else f"crates/sisuc/src/{module}/"
             )
         self.assertEqual(sorted(paths), sorted(self.lib_only_list()))
 
@@ -722,8 +720,8 @@ class Mutants(unittest.TestCase):
         # lib.rs builds generate and fuzz_program only for tests and the `fuzz` feature, and no
         # package turns that feature on in the workspace. Its `pub use` of the two fuzz entry
         # points is the one way out; only the fuzz crate, which is not in the workspace, calls them.
-        top = os.path.join(os.path.dirname(SCRIPT), "..")
-        with open(os.path.join(top, "crates", "sisuc", "src", "lib.rs"), encoding="utf-8") as f:
+        top = SCRIPT.parent / ".."
+        with (top / "crates" / "sisuc" / "src" / "lib.rs").open(encoding="utf-8") as f:
             lib = f.read()
         exports = re.findall(r"^pub use (fuzz\w*|generate)::(\w+)", lib, re.MULTILINE)
         self.assertEqual(sorted(exports), [("fuzz", "front_end"), ("fuzz_program", "program")])
@@ -731,26 +729,25 @@ class Mutants(unittest.TestCase):
         self.assertIn('#[cfg(any(test, feature = "fuzz"))]\nmod fuzz_program;', lib)
         entry = re.compile(r"fuzz_front_end|fuzz_program\b|\bsisuc::\{?[^;]*\b(generate|fuzz)\b")
         users = []
-        for crate in sorted(glob.glob(os.path.join(top, "crates", "*"))):
-            for where in ("tests", os.path.join("src", "main.rs"), "build.rs"):
-                for path in glob.glob(
-                    os.path.join(crate, where, "**", "*.rs"), recursive=True
-                ) + glob.glob(os.path.join(crate, where)):
-                    if os.path.isfile(path) and os.path.basename(path) != "architecture.rs":
-                        with open(path, encoding="utf-8") as f:
+        for crate in sorted((top / "crates").glob("*")):
+            for where in ("tests", "src/main.rs", "build.rs"):
+                base = crate / where
+                for path in [*base.glob("**/*.rs"), base]:
+                    if path.is_file() and path.name != "architecture.rs":
+                        with path.open(encoding="utf-8") as f:
                             if entry.search(f.read()):
                                 users.append(os.path.relpath(path, top))
         self.assertEqual(users, [], "remove the file from LIB_ONLY in mutants.sh, or the use")
         # No workspace package turns the feature on.
-        for manifest in glob.glob(os.path.join(top, "crates", "*", "Cargo.toml")):
-            with open(manifest, encoding="utf-8") as f:
+        for manifest in (top / "crates").glob("*/Cargo.toml"):
+            with manifest.open(encoding="utf-8") as f:
                 text = f.read()
-            self.assertNotRegex(text, r"sisuc[^\n]*features[^\n]*fuzz", manifest)
+            self.assertNotRegex(text, r"sisuc[^\n]*features[^\n]*fuzz", str(manifest))
 
     def test_cargo_should_get_output_dot_to_beat_the_environment_and_a_config_file(self) -> None:
         self.rust_commit()
         self.mutate(log=False, env={"CARGO_MUTANTS_OUTPUT": "x"}, caught=1)
-        with open(os.path.join(self.repo, "args"), encoding="utf-8") as f:
+        with (self.repo / "args").open(encoding="utf-8") as f:
             self.assertIn(" --output .", f.read())
 
     def test_a_diff_with_more_mutants_than_the_limit_should_fail_before_a_pass(self) -> None:
