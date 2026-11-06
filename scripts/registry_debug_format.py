@@ -13,7 +13,7 @@ import sys
 # level of inner brackets, not a `/* */` comment; add the form when a file uses it.
 TESTS = re.compile(
     r"^#\[cfg\(test\)\]\n(?:#\[(?:[^][]|\[[^]]*\])*\]\n|//[^\n]*\n|\n)*(?:pub(?:\([^)\n]*\))? )?mod \w+ \{",
-    re.M,
+    re.MULTILINE,
 )
 
 

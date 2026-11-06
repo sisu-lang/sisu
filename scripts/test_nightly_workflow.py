@@ -161,7 +161,7 @@ EMBEDDED_AUTHORS = (
     "Unicode, Inc.",
 )
 # A token in any spelling: `github.token`, `github['token']`, `secrets.X`, `GH_TOKEN`.
-TOKEN = re.compile(r"github\W*token|secrets\b|\b(?:GH|GITHUB)_TOKEN\b", re.I)
+TOKEN = re.compile(r"github\W*token|secrets\b|\b(?:GH|GITHUB)_TOKEN\b", re.IGNORECASE)
 GATE = re.compile(r"continue-on-error|\|\|\s*(?:true\b|:|exit\s+0)|set\s+\+e")
 
 
@@ -218,7 +218,8 @@ def flow_map(text):
 def mapping(lines, indent):
     """The keys at `indent` of the lines. The lines below a key, deeper than `indent`, are its
     value: a mapping when the key has no value, the block text for `|` and `>`, else they join the
-    value, as in a flow list on two lines."""
+    value, as in a flow list on two lines.
+    """
     found = {}
     i = 0
     while i < len(lines):
@@ -525,7 +526,7 @@ class NightlyWorkflowTest(unittest.TestCase):
         with open(os.path.join(ROOT, "prek.toml"), encoding="utf-8") as f:
             text = f.read()
         block = text[text.index('id = "python-tests"') :]
-        pattern = re.search(r"^files = '(.*)'$", block, re.M)[1]
+        pattern = re.search(r"^files = '(.*)'$", block, re.MULTILINE)[1]
         for path in (
             "install.sh",
             ".github/workflows/nightly-build.yml",

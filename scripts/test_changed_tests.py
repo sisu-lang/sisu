@@ -215,7 +215,8 @@ class ChangedTests(unittest.TestCase):
     def test_a_deleted_test_should_not_be_changed(self):
         self.assertEqual(
             changed_after(
-                {"t.rs": THREE}, lambda t: write(t, "t.rs", THREE.split("\n\n")[0] + "\n")
+                {"t.rs": THREE},
+                lambda t: write(t, "t.rs", THREE.split("\n\n", maxsplit=1)[0] + "\n"),
             ),
             set(),
             "a deleted test",
@@ -289,8 +290,8 @@ class ChangedTests(unittest.TestCase):
 
     def test_the_hit_tests_should_equal_those_of_a_scan_of_every_body(self):
         found = [("a", 3, 5), ("b", 8, 8), ("c", 10, 14), ("d", 16, 16)]
-        for start in range(0, 19):
-            for count in range(0, 20):
+        for start in range(19):
+            for count in range(20):
                 want = {
                     name
                     for name, first, last in found

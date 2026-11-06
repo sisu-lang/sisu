@@ -676,14 +676,16 @@ class Mutants(unittest.TestCase):
     def lib_only_list(self):
         with open(SCRIPT, encoding="utf-8") as f:
             text = f.read()
-        return re.search(r"^LIB_ONLY=\(\n(.*?)\n\)", text, re.M | re.S).group(1).split()
+        return (
+            re.search(r"^LIB_ONLY=\(\n(.*?)\n\)", text, re.MULTILINE | re.DOTALL).group(1).split()
+        )
 
     def test_the_lib_only_list_should_be_the_fuzz_layer_of_the_architecture_test(self):
         # The architecture test fails when a module of an earlier layer uses a module of the last
         # layer outside test code, so only the unit tests and the `pub use` interface reach it.
         root = os.path.join(os.path.dirname(SCRIPT), "..", "crates", "sisuc")
         with open(os.path.join(root, "tests", "architecture.rs"), encoding="utf-8") as f:
-            layers = re.search(r"const LAYERS:.*?\n\];", f.read(), re.S).group(0)
+            layers = re.search(r"const LAYERS:.*?\n\];", f.read(), re.DOTALL).group(0)
         last = re.findall(r'"(\w+)"', re.findall(r"&\[[^\[\]]*\],", layers)[-1])
         paths = []
         for module in last:
@@ -702,7 +704,7 @@ class Mutants(unittest.TestCase):
         top = os.path.join(os.path.dirname(SCRIPT), "..")
         with open(os.path.join(top, "crates", "sisuc", "src", "lib.rs"), encoding="utf-8") as f:
             lib = f.read()
-        exports = re.findall(r"^pub use (fuzz\w*|generate)::(\w+)", lib, re.M)
+        exports = re.findall(r"^pub use (fuzz\w*|generate)::(\w+)", lib, re.MULTILINE)
         self.assertEqual(sorted(exports), [("fuzz", "front_end"), ("fuzz_program", "program")])
         self.assertIn('#[cfg(any(test, feature = "fuzz"))]\nmod generate;', lib)
         self.assertIn('#[cfg(any(test, feature = "fuzz"))]\nmod fuzz_program;', lib)

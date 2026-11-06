@@ -100,7 +100,8 @@ BENCH_HEADER = "| Language | Wall (s) | CPU (s) | Peak RSS (MiB) | Binary (KiB) 
 
 def md_table(program, walls, builds=None):
     """A `### <program>` table: `walls` maps each language to its Wall cell, `builds` to its Build cell.
-    By default every build takes 0.05 and Python has none."""
+    By default every build takes 0.05 and Python has none.
+    """
     builds = builds or {lang: "-" if lang == "Python" else "0.05" for lang in walls}
     rows = []
     for lang, wall in walls.items():
@@ -115,7 +116,7 @@ def md_table(program, walls, builds=None):
 
 # The mockup's fib values, then a hello whose Wall cells agree, in the order the Markdown has them.
 FIB = {"Rust": "0.17", "C": "0.18", "Sisu": "0.26", "Java": "0.27", "Go": "0.28", "Python": "5.18"}
-HELLO = {lang: "0.00" for lang in FIB}
+HELLO = dict.fromkeys(FIB, "0.00")
 HELLO_BUILDS = {
     "Go": "0.037",
     "C": "0.053",
@@ -146,7 +147,8 @@ def temp_file(test, text):
 
 def fake_site(test, pages, repo=None):
     """A repository whose site/src holds `pages`, standing in for build.ROOT and build.SITE.
-    `repo` maps other repository paths to their text."""
+    `repo` maps other repository paths to their text.
+    """
     tmp = tempfile.TemporaryDirectory()
     test.addCleanup(tmp.cleanup)
     site = Path(tmp.name).resolve() / "site"
@@ -883,7 +885,7 @@ class Build(unittest.TestCase):
                 "hello",
             ),
             ("no hello", md_table("fib", FIB), "", "hello"),
-            ("only zeros", md_table("fib", {lang: "0.00" for lang in FIB}), hello, "fib"),
+            ("only zeros", md_table("fib", dict.fromkeys(FIB, "0.00")), hello, "fib"),
             # Python is drawn off the scale, which is only true when it is the slowest.
             ("Python faster than Go", md_table("fib", FIB | {"Python": "0.20"}), hello, "fib"),
             ("Python level with Go", md_table("fib", FIB | {"Python": "0.28"}), hello, "fib"),
@@ -1052,12 +1054,12 @@ class Build(unittest.TestCase):
     def test_reference_page_should_have_its_navigation(self):
         entries = build.reference_pages(reference_dir(self, REF_PAGES))
         page = build.reference_page(1, entries)
-        side = re.search(r'<nav class="ref-nav".*?</nav>', page, re.S)[0]
+        side = re.search(r'<nav class="ref-nav".*?</nav>', page, re.DOTALL)[0]
         self.assertEqual(
             re.findall(r'<a href="([^"]*)"( aria-current="page")?>', side),
             [("index.html", ""), ("literals.html", ' aria-current="page"'), ("later.html", "")],
         )
-        toc = re.search(r'<nav class="ref-toc".*?</nav>', page, re.S)[0]
+        toc = re.search(r'<nav class="ref-toc".*?</nav>', page, re.DOTALL)[0]
         self.assertEqual(
             re.findall(r'<li class="h(\d)"><a href="#([^"]*)">(.*?)</a>', toc),
             [
@@ -1066,7 +1068,7 @@ class Build(unittest.TestCase):
                 ("2", "planned", 'Planned <span class="soon">In development</span>'),
             ],
         )
-        pager = re.search(r'<nav class="pager".*?</nav>', page, re.S)[0]
+        pager = re.search(r'<nav class="pager".*?</nav>', page, re.DOTALL)[0]
         self.assertEqual(
             re.findall(r'<a href="([^"]*)" rel="\w+"><span>(\w+)</span>(.*?)</a>', pager),
             [("index.html", "Previous", "Language reference"), ("later.html", "Next", "Later")],
@@ -1076,18 +1078,19 @@ class Build(unittest.TestCase):
             re.findall(r'<p class="marker">.*?</p>', page), [link]
         )  # not the full-line comment's E9999
         self.assertIn("</pre></figure>\n" + link, page)
-        for pre in re.findall(r"<pre\b.*?</pre>", page, re.S):
+        for pre in re.findall(r"<pre\b.*?</pre>", page, re.DOTALL):
             self.assertNotIn("<a ", pre)
         first, last = build.reference_page(0, entries), build.reference_page(2, entries)
         self.assertEqual(
             re.findall(
-                r"<span>(\w+)</span>", re.search(r'<nav class="pager".*?</nav>', first, re.S)[0]
+                r"<span>(\w+)</span>",
+                re.search(r'<nav class="pager".*?</nav>', first, re.DOTALL)[0],
             ),
             ["Next"],
         )
         self.assertEqual(
             re.findall(
-                r"<span>(\w+)</span>", re.search(r'<nav class="pager".*?</nav>', last, re.S)[0]
+                r"<span>(\w+)</span>", re.search(r'<nav class="pager".*?</nav>', last, re.DOTALL)[0]
             ),
             ["Previous"],
         )
@@ -1129,7 +1132,7 @@ class Build(unittest.TestCase):
                     reference_dir(self, {"README": "# Language reference\n", "one": markdown})
                 )
                 page = build.reference_page(1, entries)
-                side = re.search(r'<nav class="ref-nav".*?</nav>', page, re.S)[0]
+                side = re.search(r'<nav class="ref-nav".*?</nav>', page, re.DOTALL)[0]
                 self.assertEqual("In development" in side, tagged)
                 self.assertNotIn("In development", re.search(r'<h1 id="t">.*?</h1>', page)[0])
                 shown = [
@@ -1275,7 +1278,7 @@ class Build(unittest.TestCase):
     def test_overview_should_have_a_card_for_each_other_page(self):
         entries = build.reference_pages(reference_dir(self, REF_PAGES))
         page = build.reference_page(0, entries)
-        cards = re.search(r'<ul class="cards">.*?</ul>', page, re.S)[0]
+        cards = re.search(r'<ul class="cards">.*?</ul>', page, re.DOTALL)[0]
         self.assertEqual(
             re.findall(r'<li><a href="([^"]*)"><b>(.*?)</b><span>(.*?)</span></a></li>', cards),
             [
@@ -1422,21 +1425,24 @@ class Pages(unittest.TestCase):
         # WHEN the site is built
         page = self.page("reference/literals.html")
         # THEN the sidebar marks Literals as the current page
-        side = re.search(r'<nav class="ref-nav".*?</nav>', page, re.S)[0]
+        side = re.search(r'<nav class="ref-nav".*?</nav>', page, re.DOTALL)[0]
         self.assertEqual(
             re.findall(r'<a href="([^"]*)" aria-current="page">', side), ["literals.html"]
         )
         # AND "On this page" lists each ## and ### heading, and each entry goes to a heading of the page
-        toc = re.search(r'<nav class="ref-toc".*?</nav>', page, re.S)[0]
+        toc = re.search(r'<nav class="ref-toc".*?</nav>', page, re.DOTALL)[0]
         entries = re.findall(r'<li class="h(\d)"><a href="#([^"]*)">(.*?)</a>', toc)
         self.assertEqual(
             [(level, text) for level, _, text in entries],
-            [(str(len(m[1])), m[2]) for m in re.finditer(r"^(#{2,3}) (.*)$", markdown, re.M)],
+            [
+                (str(len(m[1])), m[2])
+                for m in re.finditer(r"^(#{2,3}) (.*)$", markdown, re.MULTILINE)
+            ],
         )
         for level, slug, _ in entries:
             self.assertIn(f'<h{level} id="{slug}">', page)
         # AND the pager goes back to Lexical structure and on to Types
-        pager = re.search(r'<nav class="pager".*?</nav>', page, re.S)[0]
+        pager = re.search(r'<nav class="pager".*?</nav>', page, re.DOTALL)[0]
         self.assertEqual(
             re.findall(r'<a href="([^"]*)" rel="\w+"><span>(\w+)</span>(.*?)</a>', pager),
             [("lexical.html", "Previous", "Lexical structure"), ("types.html", "Next", "Types")],

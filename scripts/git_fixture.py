@@ -10,7 +10,8 @@ from unittest import mock
 def env() -> dict:
     """The environment without `GIT_*` and `GITHUB_ACTIONS`. A pre-commit hook exports GIT_DIR and
     GIT_INDEX_FILE, which would point git at the hooked repository, and in CI GITHUB_ACTIONS adds
-    a workflow warning line per slow test."""
+    a workflow warning line per slow test.
+    """
     return {
         key: value
         for key, value in os.environ.items()
@@ -40,7 +41,8 @@ def write(path: str, name: str, content: str | bytes) -> None:
 def repo(files: dict[str, str]):
     """The path of a temporary repository with one commit of `files`. It is removed at exit.
     While it exists, `os.environ` has no `GIT_*` variable, so code under test that runs git
-    without its own environment reaches this repository."""
+    without its own environment reaches this repository.
+    """
     with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, env(), clear=True):
         git(tmp, "init", "-q")
         for name, text in files.items():

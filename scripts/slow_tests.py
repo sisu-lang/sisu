@@ -44,7 +44,8 @@ def over_budget(tests: list[tuple[float, float, str]]) -> list[tuple[float, floa
 def in_diff(name: str, diff: str) -> bool:
     """Whether the diff mentions the test: its function name, which a `fn` line or a hunk header
     carries (`.gitattributes` gives Rust files git's `rust` hunk headers), or the stem of its
-    `tests/` case file, such as `fib` for `run::fib.sisu`."""
+    `tests/` case file, such as `fib` for `run::fib.sisu`.
+    """
     key = name.split(" ", 1)[-1].rsplit("::", 1)[-1].removesuffix(".sisu")
     return re.search(rf"(?<!\w){re.escape(key)}(?!\w)", diff) is not None
 

@@ -7,7 +7,7 @@ Usage: python3 session_url.py MESSAGE_FILE
 import re
 import sys
 
-SESSION = re.compile(r"claude\.ai/code/session|^Claude-Session:", re.M | re.I)
+SESSION = re.compile(r"claude\.ai/code/session|^Claude-Session:", re.MULTILINE | re.IGNORECASE)
 
 
 def main(paths: list[str]) -> int:

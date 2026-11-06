@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 INLINE = re.compile(r'\]\(<?([^)\s>]+)>?(?:\s+"[^"]*")?\)')
-REF_DEF = re.compile(r'^\s*\[[^\]]+\]:\s+<?(\S+?)>?(?:\s+"[^"]*")?\s*$', re.M)
+REF_DEF = re.compile(r'^\s*\[[^\]]+\]:\s+<?(\S+?)>?(?:\s+"[^"]*")?\s*$', re.MULTILINE)
 ATTR = re.compile(r'\b(src|href|srcset)="([^"]+)"')
 FENCE = re.compile(r"`{3,}|~{3,}")
 # A code span naming a path under one of the repository's top-level directories. Placeholders
@@ -46,7 +46,8 @@ def in_repo(path):
 def fence_after(line, fence):
     """The fence that is open after `line`, when `fence` is open before it (None: no fence). A fence
     closes only on a line of its character, at least as long, with only spaces or tabs after it,
-    so a ```` fence can show a ``` one."""
+    so a ```` fence can show a ``` one.
+    """
     run = FENCE.match(line)
     if fence is None:
         return run and run[0]
@@ -72,7 +73,7 @@ def prose(path):
 def anchors(path):
     """GitHub's heading slugs: link text kept, punctuation dropped, duplicates numbered."""
     seen = {}
-    for heading in re.findall(r"^#{1,6}\s+(.*?)\s*#*\s*$", prose(path), re.M):
+    for heading in re.findall(r"^#{1,6}\s+(.*?)\s*#*\s*$", prose(path), re.MULTILINE):
         text = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", heading).replace("`", "")
         slug = re.sub(r"[^\w\- ]", "", text.lower()).replace(" ", "-")
         count = seen.get(slug, 0)

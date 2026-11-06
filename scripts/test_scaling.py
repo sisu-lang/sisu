@@ -381,8 +381,7 @@ class ScalingTest(unittest.TestCase):
         return log.read_text() if log.exists() else ""
 
     def test_judge_should_mark_a_superlinear_stage(self):
-        """
-        GIVEN a shape whose total growth at `8n` is 100000
+        """GIVEN a shape whose total growth at `8n` is 100000
         AND check growths at `n`, `2n`, `4n` and `8n` of the rows of the table of S10
         WHEN `scripts/scaling.py` reads them
         THEN the check row is marked `superlinear` for the rows that the table marks
@@ -401,8 +400,7 @@ class ScalingTest(unittest.TestCase):
         self.assertEqual((self.out / "table.md").read_text(), S10_TABLE)
 
     def test_stage_function_missing_should_stop_the_sweep(self):
-        """
-        GIVEN callgrind output with no `mono::instantiate`
+        """GIVEN callgrind output with no `mono::instantiate`
         WHEN `scripts/scaling.py` reads it
         THEN it exits with code 1 and names `mono::instantiate`
         """
@@ -413,8 +411,7 @@ class ScalingTest(unittest.TestCase):
         self.assertIn("mono::instantiate", err)
 
     def test_superlinear_case_with_no_known_row_should_fail_the_sweep(self):
-        """
-        GIVEN counts that make the match arms shape superlinear in the check stage
+        """GIVEN counts that make the match arms shape superlinear in the check stage
         AND a known list with no row for that shape and stage
         WHEN `scripts/scaling.py` reads them
         THEN the check row is marked `superlinear`
@@ -430,8 +427,7 @@ class ScalingTest(unittest.TestCase):
         )
 
     def test_known_case_no_longer_superlinear_should_fail_the_sweep(self):
-        """
-        GIVEN a known list with the row (array literal depth, check, #344)
+        """GIVEN a known list with the row (array literal depth, check, #344)
         AND counts that give the check stage of that shape the ratios <ratios>
         WHEN `scripts/scaling.py` reads them
         THEN it exits with code 1
@@ -450,8 +446,7 @@ class ScalingTest(unittest.TestCase):
                 self.assertIn("#344 looks fixed: remove its row", err)
 
     def test_known_case_should_pass_the_sweep(self):
-        """
-        GIVEN a known list with the row (array literal depth, check, #344)
+        """GIVEN a known list with the row (array literal depth, check, #344)
         AND counts that give the check stage of that shape the ratios <ratios>
         WHEN `scripts/scaling.py` reads them
         THEN it prints the case and `#344`
@@ -476,8 +471,7 @@ class ScalingTest(unittest.TestCase):
             self.assertNotIn("::warning", out)
 
     def test_shape_that_does_not_build_should_stop_the_sweep(self):
-        """
-        GIVEN a shape whose program at `8n` gives E0071
+        """GIVEN a shape whose program at `8n` gives E0071
         WHEN `scripts/scaling.py` runs
         THEN it exits with code 1 before it runs callgrind
         AND it names the shape, the size and E0071
@@ -502,8 +496,7 @@ class ScalingTest(unittest.TestCase):
             self.assertNotIn("--tool=callgrind", self.log())
 
     def test_stage_function_shown_twice_should_stop_the_sweep(self):
-        """
-        GIVEN callgrind output with `sisuc::check::check` and `sisuc::check::check.llvm.123`
+        """GIVEN callgrind output with `sisuc::check::check` and `sisuc::check::check.llvm.123`
         AND output with the function from two source files, both with an object field
         WHEN `stage_counts` reads it
         THEN it raises Fail and names the function
@@ -521,8 +514,7 @@ class ScalingTest(unittest.TestCase):
         self.assertIn("/src/b.rs:sisuc::check::check", str(raised.exception))
 
     def test_known_row_of_a_shape_not_measured_should_be_skipped(self):
-        """
-        GIVEN a known row for the type depth shape
+        """GIVEN a known row for the type depth shape
         AND a run that measured only the functions shape
         WHEN `compare` reads the verdicts
         THEN it gives exit code 0 and no line for the row
@@ -532,8 +524,7 @@ class ScalingTest(unittest.TestCase):
         self.assertEqual(sc.compare(verdicts, known, {"functions"}), ([], [], 0))
 
     def test_missing_valgrind_should_stop_the_sweep_first(self):
-        """
-        GIVEN a `PATH` that has `sisu` and no `valgrind`
+        """GIVEN a `PATH` that has `sisu` and no `valgrind`
         WHEN `scripts/scaling.py` runs
         THEN it exits with code 1 and says that valgrind is not on PATH
         AND it runs no command
@@ -544,8 +535,7 @@ class ScalingTest(unittest.TestCase):
         self.assertEqual(self.log(), "")
 
     def test_stopped_run_should_write_the_table_so_far(self):
-        """
-        GIVEN a run of the functions and match arms shapes
+        """GIVEN a run of the functions and match arms shapes
         AND a `sisu check` that fails for the match arms shape
         WHEN `scripts/scaling.py` runs
         THEN it exits with code 1
@@ -565,8 +555,7 @@ class ScalingTest(unittest.TestCase):
         self.assertEqual(counts["valgrind"], "valgrind-3.22.0")
 
     def test_file_error_while_measuring_should_write_the_table_so_far(self):
-        """
-        GIVEN a run of the functions and match arms shapes
+        """GIVEN a run of the functions and match arms shapes
         AND a regular file where the directory of the match arms shape belongs
         WHEN `scripts/scaling.py` runs
         THEN it exits with code 1
@@ -585,8 +574,7 @@ class ScalingTest(unittest.TestCase):
         self.assertIn("\nscaling: ", text)
 
     def test_report_that_cannot_be_written_should_exit_with_code_1(self):
-        """
-        GIVEN a run of the functions shape that measures with no error
+        """GIVEN a run of the functions shape that measures with no error
         AND a directory where `counts.json` belongs
         WHEN `scripts/scaling.py` runs
         THEN it exits with code 1
@@ -600,8 +588,7 @@ class ScalingTest(unittest.TestCase):
         self.assertIn("scaling: cannot write the report", err)
 
     def test_each_shape_should_have_its_size_in_its_structure(self):
-        """
-        GIVEN the 25 shapes
+        """GIVEN the 25 shapes
         WHEN each makes its program at size k
         THEN the repeated part of the program has a size of base + k
         AND the base is what the program at size 0 needs to check clean
@@ -698,8 +685,7 @@ class ScalingTest(unittest.TestCase):
                     self.assertEqual(measure(make(k)), base + k)
 
     def test_text_of_each_shape_should_grow_linearly_with_its_size(self):
-        """
-        GIVEN the 25 shapes at their sizes 0, n, 2n, 4n and 8n
+        """GIVEN the 25 shapes at their sizes 0, n, 2n, 4n and 8n
         WHEN the bytes of each program are counted
         THEN the growth in bytes at each size is below 2.01 times the growth at half that size
         """
@@ -715,8 +701,7 @@ class ScalingTest(unittest.TestCase):
                     self.assertLess(growth[i] / growth[i - 1], 2.01)
 
     def test_stage_counts_should_read_each_stage_from_its_own_line(self):
-        """
-        GIVEN callgrind output with a line for each stage function and a closure of `check::check`
+        """GIVEN callgrind output with a line for each stage function and a closure of `check::check`
         WHEN `stage_counts` reads it
         THEN each stage has the count of its own line
         AND the closure is not added to `check`
@@ -729,8 +714,7 @@ class ScalingTest(unittest.TestCase):
         self.assertEqual(sc.stage_counts(clone), EXPECTED_COUNTS)
 
     def test_rule_should_find_issue_344_in_the_saved_counts(self):
-        """
-        GIVEN the callgrind counts of 85c95105, where #344 is open
+        """GIVEN the callgrind counts of 85c95105, where #344 is open
         WHEN scaling.py reads them
         THEN array literal depth is superlinear in check only, and functions in no stage
         """
@@ -746,8 +730,7 @@ class ScalingTest(unittest.TestCase):
         self.assertEqual(code, 0)
 
     def test_known_rows_should_name_a_shape_and_a_stage(self):
-        """
-        GIVEN the known list
+        """GIVEN the known list
         WHEN each row is read
         THEN its shape is a shape, its stage is a stage and its issue is a positive integer
         """
@@ -759,8 +742,7 @@ class ScalingTest(unittest.TestCase):
                 self.assertGreater(issue, 0)
 
     def test_judge_should_keep_each_boundary_of_the_rule(self):
-        """
-        GIVEN check growths on each side of each number of the rule
+        """GIVEN check growths on each side of each number of the rule
         WHEN `judge` reads them
         THEN it takes the number as its text says, with no round-off
         """
@@ -781,8 +763,7 @@ class ScalingTest(unittest.TestCase):
                 self.assertEqual(sc.judge(growth, total)[0], verdict)
 
     def test_sweep_should_decide_each_boundary_of_the_rule_exactly(self):
-        """
-        GIVEN counts whose ratios are on a number of the rule, or just beside it
+        """GIVEN counts whose ratios are on a number of the rule, or just beside it
         WHEN `scripts/scaling.py` reads them through `main --counts`
         THEN the exit code is the one that the rule gives
         """
@@ -863,8 +844,7 @@ class ScalingTest(unittest.TestCase):
                 self.assertIn(text, err)
 
     def test_saved_counts_that_are_not_valid_should_stop_the_sweep(self):
-        """
-        GIVEN a counts file that is missing, is not JSON, or does not have the structure of a run
+        """GIVEN a counts file that is missing, is not JSON, or does not have the structure of a run
         WHEN `scripts/scaling.py` reads it
         THEN it exits with code 1 and one line `scaling: ...` that names the file
         AND it writes no file into the output directory
@@ -917,8 +897,7 @@ class ScalingTest(unittest.TestCase):
             self.assertFalse(self.out.exists())
 
     def test_header_should_be_read_only_when_the_sweep_measures(self):
-        """
-        GIVEN a libc that cannot give its version
+        """GIVEN a libc that cannot give its version
         WHEN `scripts/scaling.py` reads saved counts
         THEN it works, and the header is the one of the file
         AND when it measures, the glibc of the header is `unknown`
@@ -940,8 +919,7 @@ class ScalingTest(unittest.TestCase):
                 )
 
     def test_sweep_should_run_the_documented_commands_at_five_sizes(self):
-        """
-        GIVEN a run of the functions shape with stubs that accept only the documented arguments
+        """GIVEN a run of the functions shape with stubs that accept only the documented arguments
         WHEN `scripts/scaling.py` runs
         THEN it checks the sizes 0 and 2000, and measures the sizes 0, 250, 500, 1000 and 2000
         AND each measurement is `sisu build --emit ir-raw` under callgrind, read by `callgrind_annotate`
@@ -962,8 +940,7 @@ class ScalingTest(unittest.TestCase):
         self.assertEqual(len(annotated), 5)
 
     def test_unknown_shape_should_exit_with_code_2(self):
-        """
-        GIVEN a `--shapes` value with a name that is not a shape
+        """GIVEN a `--shapes` value with a name that is not a shape
         WHEN `scripts/scaling.py` runs
         THEN it exits with code 2
         """

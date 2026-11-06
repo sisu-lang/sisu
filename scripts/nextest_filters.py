@@ -18,7 +18,9 @@ import tomllib
 # runs to its closing `/`, so that the message shows all of it.
 LEAF = re.compile(r"\btest\s*\(\s*(/.*?/|[^)]*)\)")
 # A TOML string or comment. Read in order, so a quote in a comment and a `#` in a string are no token.
-TOKEN = re.compile(r"""'''.*?'''|\"\"\".*?\"\"\"|'[^'\n]*'|"(?:[^"\\\n]|\\.)*"|#[^\n]*""", re.S)
+TOKEN = re.compile(
+    r"""'''.*?'''|\"\"\".*?\"\"\"|'[^'\n]*'|"(?:[^"\\\n]|\\.)*"|#[^\n]*""", re.DOTALL
+)
 
 
 def leaves(config: dict) -> list[str]:
@@ -26,7 +28,8 @@ def leaves(config: dict) -> list[str]:
     parsed TOML holds it. nextest trims the space before an argument, not the space after it.
 
     shortcut: the check runs on the Linux list only, so an override with a `platform` key is
-    skipped. Upgrade when a platform override is added, to one list for each platform."""
+    skipped. Upgrade when a platform override is added, to one list for each platform.
+    """
     found = []
     for profile in config.get("profile", {}).values():
         for table in ("overrides", "scripts"):
@@ -43,7 +46,8 @@ def lines_of(text: str, wanted: set[str]) -> dict[str, set[int]]:
 
     shortcut: the text is not the parsed value, so a leaf that an escape or a line continuation
     spells is not found, and the caller reports line 1. A leaf of a platform override, or in a key
-    other than `filter`, is reported on its line too."""
+    other than `filter`, is reported on its line too.
+    """
     code = TOKEN.sub(lambda token: "" if token.group().startswith("#") else token.group(), text)
     found: dict[str, set[int]] = {}
     line = start = 0

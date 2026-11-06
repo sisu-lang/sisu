@@ -47,7 +47,8 @@ def install(home, path=None):
 def docker(image, command):
     """Runs `sh -c command` in the image with ARTIFACTS at /dl. The pull is quiet, so that its
     progress does not reach the stderr of the test. A timeout kills the docker client, not the
-    container, so the container has a name and `docker rm -f` removes it at the end."""
+    container, so the container has a name and `docker rm -f` removes it at the end.
+    """
     subprocess.run(["docker", "pull", "-q", image], capture_output=True, check=True, timeout=600)
     name = f"sisu-installer-{uuid.uuid4().hex}"
     try:
@@ -121,7 +122,8 @@ class InstallerRealTest(unittest.TestCase):
 
     def assert_one_sentence(self, result, words):
         """The installer stopped: exit 125 means that Docker did not start the container, and the
-        line must start with the prefix of `die` in install.sh, so that no Docker error passes."""
+        line must start with the prefix of `die` in install.sh, so that no Docker error passes.
+        """
         self.assertNotIn(result.returncode, (0, 125), result.stderr)
         lines = result.stderr.strip().splitlines()
         self.assertEqual(len(lines), 1, result.stderr)

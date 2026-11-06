@@ -29,7 +29,8 @@ PASSED = {"success", "skipped", "neutral"}
 
 def gh(path, key=None):
     """The answer to one request. With `key`, every page of a list, joined: `key` names the list
-    in each page, or is "" when the page is the list."""
+    in each page, or is "" when the page is the list.
+    """
     pages = ["--paginate", "--slurp"] if key is not None else []
     # A hung request would hold the watcher past its limit; a timeout counts as a failed call.
     out = subprocess.run(
@@ -42,7 +43,7 @@ def gh(path, key=None):
 
 def text(body, width=300):
     """The body as one line, with HTML tags and comments taken out."""
-    body = re.sub(r"<!--.*?-->|<[^>]+>", " ", body or "", flags=re.S)
+    body = re.sub(r"<!--.*?-->|<[^>]+>", " ", body or "", flags=re.DOTALL)
     return " ".join(body.split())[:width]
 
 

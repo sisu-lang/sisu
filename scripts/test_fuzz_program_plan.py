@@ -10,7 +10,6 @@ from unittest import mock
 
 import fuzz_program_plan as fp
 
-
 WORKFLOW = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", ".github", "workflows", "fuzz-program.yml"
 )
@@ -18,7 +17,8 @@ WORKFLOW = os.path.join(
 
 def steps():
     """The workflow's steps as lists of lines. A step starts at a line of six spaces and `- `, and
-    ends before the next one or at the first line with less indent (the next job)."""
+    ends before the next one or at the first line with less indent (the next job).
+    """
     with open(WORKFLOW, encoding="utf-8") as f:
         lines = f.read().splitlines()
     found = []

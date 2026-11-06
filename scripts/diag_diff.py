@@ -20,7 +20,6 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-
 # The fields of a diagnostic that the default compares, besides its code and positions.
 TEXT = ("message", "help", "fixes")
 
@@ -28,7 +27,8 @@ TEXT = ("message", "help", "fixes")
 def diagnostics(sisu, path, full=True):
     """Each diagnostic sisu reports on `path`: (code, severity, line, column, secondaries, text).
 
-    `text` is '' unless `full`; then it is the JSON of the diagnostic's text and fixes."""
+    `text` is '' unless `full`; then it is the JSON of the diagnostic's text and fixes.
+    """
     run = subprocess.run(
         [sisu, "check", "--format", "json", str(path)], capture_output=True, text=True
     )

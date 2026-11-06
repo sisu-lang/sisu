@@ -71,7 +71,8 @@ SKILLS = {
 def git(repo, *args):
     """The stripped stdout of a git command in `repo`, or '' when it fails. A byte that is not UTF-8,
     as some test fixtures hold, reads as U+FFFD, so the brief can still be written. GIT_DIFF_OPTS
-    would beat `--unified=0`."""
+    would beat `--unified=0`.
+    """
     env = {key: value for key, value in os.environ.items() if key != "GIT_DIFF_OPTS"}
     return subprocess.run(
         ["git", "-C", str(repo), *args],
@@ -99,7 +100,8 @@ def is_ancestor(repo, a, b):
 
 def summary(log):
     """The match of the last `mutation-test:` summary line of `log`, whose group 1 is the measured SHA,
-    or None."""
+    or None.
+    """
     lines = [line for line in log.read_text().splitlines() if line.startswith("mutation-test: ")]
     return re.search(r"\(HEAD ([0-9a-f]{40})\)$", lines[-1]) if lines else None
 
@@ -176,7 +178,8 @@ SHOWN = 40
 
 def removed_tests(repo, base, head):
     """Each line that base..head removes from a test file with no identical line added back to any
-    test file, as "path:line: text", then each deleted test file. Blank lines and comments are left out."""
+    test file, as "path:line: text", then each deleted test file. Blank lines and comments are left out.
+    """
     deleted = git(
         repo, "diff", "--name-only", "--diff-filter=D", base, head, "--", *TESTS
     ).splitlines()
@@ -230,7 +233,7 @@ def removed_tests(repo, base, head):
 
 def drop_line(t, start):
     """`t` without the "- " list item that begins with `start`, up to the next item or blank line."""
-    return re.sub(rf"- {re.escape(start)}.*?(?=\n- |\n\n)\n?", "", t, flags=re.S)
+    return re.sub(rf"- {re.escape(start)}.*?(?=\n- |\n\n)\n?", "", t, flags=re.DOTALL)
 
 
 def main():
@@ -328,7 +331,7 @@ def main():
     t = t.replace("<repository root>", str(repo))
     t = t.replace("<base>..<head>", str(target))
     docs = "".join(f"- {Path(d).resolve()}\n" for d in a.doc)
-    t = re.sub(r"- <the other documents to read.*?>\n", docs, t, flags=re.S)
+    t = re.sub(r"- <the other documents to read.*?>\n", docs, t, flags=re.DOTALL)
     if a.kind != "diff":
         t = drop_line(t, "For a diff,")
         t = drop_line(t, "`<rust-best-practices SKILL.md path>`")
@@ -345,9 +348,9 @@ def main():
             t = drop_line(t, f"`{slot}`")
     for kind in KINDS:
         if kind != a.kind:
-            t = re.sub(rf"# Check, for a {kind}\n.*?(?=\n# )\n", "", t, flags=re.S)
+            t = re.sub(rf"# Check, for a {kind}\n.*?(?=\n# )\n", "", t, flags=re.DOTALL)
     if a.round == 1:
-        t = re.sub(r"# Re-review\n.*?(?=\n# )\n", "", t, flags=re.S)
+        t = re.sub(r"# Re-review\n.*?(?=\n# )\n", "", t, flags=re.DOTALL)
     else:
         t = t.replace("<round>", str(a.round))
         t = t.replace("<prior reports>", ", ".join(str(Path(r).resolve()) for r in a.prior))

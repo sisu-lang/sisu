@@ -7,8 +7,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest import mock
 from pathlib import Path
+from unittest import mock
 
 SCRIPT = Path(__file__).resolve().parents[1] / ".agents/skills/review-sisu/scripts/diff_brief.py"
 spec = importlib.util.spec_from_file_location("diff_brief", SCRIPT)

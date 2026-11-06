@@ -269,7 +269,7 @@ def check_no_include(path, text):
         r"//[^\n]*|/\*.*?\*/",
         lambda m: m.group() if m.group().startswith("//") else " " + "\n" * m.group().count("\n"),
         text,
-        flags=re.S,
+        flags=re.DOTALL,
     )
     first, joined = 0, ""
     for number, line in enumerate(text.splitlines(), 1):
@@ -372,7 +372,7 @@ TOKEN = re.compile(
   | (?P<quote>")
   | (?P<other>.)
 """,
-    re.X | re.S,
+    re.VERBOSE | re.DOTALL,
 )
 
 
@@ -442,9 +442,9 @@ def go_fe_parse(text, what="Go"):
 
     The file must have one `commit:` line and one `fe:parse` line. A cached build writes none.
     """
-    headers = len(re.findall(r"^commit:", text, re.M))
+    headers = len(re.findall(r"^commit:", text, re.MULTILINE))
     times = re.findall(
-        r"^BenchmarkCompile:\S*:fe:parse\s+\d+\s+(\d+(?:\.\d+)?)\s+ns/op", text, re.M
+        r"^BenchmarkCompile:\S*:fe:parse\s+\d+\s+(\d+(?:\.\d+)?)\s+ns/op", text, re.MULTILINE
     )
     if headers != 1 or len(times) != 1:
         raise Fail(
@@ -601,7 +601,8 @@ class Measurer:
 
     def run(self, cmd, what, lang, src, text, bench, wrap=False):
         """One run of `cmd`: its time in seconds (the `fe:parse` time when `bench` is a file),
-        and its stderr. Before a Go command, the first line of the input changes."""
+        and its stderr. Before a Go command, the first line of the input changes.
+        """
         if lang == "go":
             stamp = f"// run {time.time_ns()} {next(self.serial)}"
             try:

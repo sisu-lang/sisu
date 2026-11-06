@@ -68,7 +68,8 @@ HEADERS = (
 def run_hook(script, text, name="f.rs", relative=False):
     """The exit code and output of `scripts/<script>` on one file, `name`, holding `text`.
 
-    With `relative`, the hook gets `name` as a relative path, as prek gives it."""
+    With `relative`, the hook gets `name` as a relative path, as prek gives it.
+    """
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, name)
         os.makedirs(os.path.dirname(path), exist_ok=True)

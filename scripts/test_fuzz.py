@@ -276,7 +276,8 @@ class GapsRun:
 
     def calls(self, target):
         """The argument lists of the `cargo fuzz coverage` calls for `target`, and whether an old
-        raw profile was there at the start of each."""
+        raw profile was there at the start of each.
+        """
         found = []
         for line in self.log:
             match = re.fullmatch(rf"coverage {target} old=([01])((?: .*)?)", line)
@@ -286,7 +287,8 @@ class GapsRun:
 
     def files(self, name):
         """(relative path, content) of each regular file of the directory copied under `name`,
-        and the number of directories under it."""
+        and the number of directories under it.
+        """
         root = os.path.join(self.dirs, name)
         found = []
         subdirs = 0
@@ -346,7 +348,8 @@ class GapsCheck(unittest.TestCase):
         corpus=False,
     ):
         """Runs fuzz.sh with `args`. The fake llvm-cov prints `seeds` for the program target and
-        `valid` for front_end, which both default to the three anchors."""
+        `valid` for front_end, which both default to the three anchors.
+        """
         fixtures = {}
         for label, content in (("seeds", seeds), ("valid", valid)):
             fixtures[label] = os.path.join(self.work, f"{label}.json")

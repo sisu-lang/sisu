@@ -28,7 +28,8 @@ FN = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:(?:async|const|unsafe)\s+)*fn\
 
 def tests(lines: list[str]) -> list[tuple[int, str, list[str]]]:
     """(line, name, doc lines) of each `#[test]` function. The doc is the run of `///` lines above
-    the function's attributes."""
+    the function's attributes.
+    """
     found = []
     for i, line in enumerate(lines):
         if line.strip() != "#[test]":

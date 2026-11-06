@@ -21,7 +21,21 @@ import unittest
 INSTALL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "install.sh")
 BASE = "https://github.com/sisu-lang/sisu/releases/latest/download/"
 FILES = ("sisu", "libsisu_runtime_mimalloc.a", "libsisu_runtime_system.a")
-TOOLS = "mkdir rm mv cp tar gzip grep sed cut head cat ln readlink".split()
+TOOLS = [
+    "mkdir",
+    "rm",
+    "mv",
+    "cp",
+    "tar",
+    "gzip",
+    "grep",
+    "sed",
+    "cut",
+    "head",
+    "cat",
+    "ln",
+    "readlink",
+]
 # What a fake command that fails runs: a real one prints its own error.
 FAIL = 'echo "fake: failed" >&2; exit 1'
 GNU_LDD = "ldd (GNU libc) 2.39"
@@ -51,7 +65,8 @@ def script(path, body):
 
 class Machine:
     """A temporary HOME, a download directory, and a PATH with only fake system commands and
-    links to the tools the installer needs."""
+    links to the tools the installer needs.
+    """
 
     def __init__(self, test, profile="linux-x86_64", cc=True, apt=True, clt=True, prefix=""):
         self.root = tempfile.mkdtemp(prefix="sisu-install-")
@@ -66,7 +81,7 @@ class Machine:
         self.path = self.fake + os.pathsep + self.tools
         self.sisu = os.path.join(self.home, ".sisu")
         self.lock = os.path.join(self.sisu, "install.lock")
-        for tool in TOOLS + [shutil.which("sha256sum") and "sha256sum" or "shasum"]:
+        for tool in TOOLS + [(shutil.which("sha256sum") and "sha256sum") or "shasum"]:
             os.symlink(shutil.which(tool), os.path.join(self.tools, tool))
         self._fake_commands(profile, cc, apt, clt)
 
@@ -252,8 +267,8 @@ class Machine:
         return os.path.exists(os.path.join(self.sisu, "tmp"))
 
 
-ALL_OLD = {f: "old" for f in FILES}
-ALL_NEW = {f: "new" for f in FILES}
+ALL_OLD = dict.fromkeys(FILES, "old")
+ALL_NEW = dict.fromkeys(FILES, "new")
 
 
 class InstallTest(unittest.TestCase):

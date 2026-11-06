@@ -14,7 +14,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
 from unittest import mock
 
@@ -230,7 +230,7 @@ def state(
         "commits": list(commits),
         "green": list(green),
         "releases": list(releases),
-        "trees": trees or {sha: "t1" for sha in ids},
+        "trees": trees or dict.fromkeys(ids, "t1"),
         "parents": parents,
         "fail_on": fail_on,
         "fail_after": fail_after,
@@ -452,7 +452,7 @@ ARTIFACTS = {
     "tarball-aarch64-macos": ASSETS[2:3],
     "release-files": ASSETS[3:],
 }
-UTC = timezone.utc
+UTC = UTC
 
 
 def artifact(id_, name, text, created_at="2026-11-06T01:00:00Z", skip=()):

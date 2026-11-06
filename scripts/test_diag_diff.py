@@ -100,8 +100,7 @@ class DiagDiff(unittest.TestCase):
         self.assertEqual(lines[-1], "diag_diff: 1 programs, 1 crash")
 
     def test_full_should_report_a_program_whose_help_alone_differs(self):
-        """
-        GIVEN a program whose diagnostic has the same code and position in both builds
+        """GIVEN a program whose diagnostic has the same code and position in both builds
         AND a help that differs
         WHEN diag_diff runs without and with `full`
         THEN only the run with `full` reports it, and shows the help of each build
@@ -128,8 +127,7 @@ class DiagDiff(unittest.TestCase):
         self.assertEqual(lines[-1], "diag_diff: 1 programs, 1 changed")
 
     def test_full_should_report_each_text_field_that_alone_differs(self):
-        """
-        GIVEN programs whose diagnostic differs in one field each: the message, the label, a
+        """GIVEN programs whose diagnostic differs in one field each: the message, the label, a
         secondary label, the message of a fix, an edit of a fix and the safe flag of a fix
         WHEN diag_diff runs from the command line with `--codes`, with no flag and with `--full`
         THEN the run with `--codes` reports none of them, and each other run reports each of them

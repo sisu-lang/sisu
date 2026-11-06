@@ -56,7 +56,7 @@ def text(version: tuple[int, ...]) -> str:
 def version_problems(verbose_text: str, stderr: str, sha: str) -> list[str]:
     problems = []
     want = sha[:7]
-    match = re.search(r"^commit: (\S*)$", verbose_text, re.M)
+    match = re.search(r"^commit: (\S*)$", verbose_text, re.MULTILINE)
     if not match:
         problems.append("`--version --verbose` prints no `commit:` line")
     elif match.group(1) != want:
@@ -126,9 +126,9 @@ def minos_problems(name: str, otool_l: str) -> list[str]:
         if words[:1] == ["cmd"]:
             command = words[1] if len(words) > 1 else ""
         # Under LC_BUILD_VERSION, `version` is a tool's, so only `minos` counts there.
-        elif command == "LC_BUILD_VERSION" and words[:1] == ["minos"] and len(words) > 1:
-            found.append(words[1])
-        elif command == "LC_VERSION_MIN_MACOSX" and words[:1] == ["version"] and len(words) > 1:
+        elif (command == "LC_BUILD_VERSION" and words[:1] == ["minos"] and len(words) > 1) or (
+            command == "LC_VERSION_MIN_MACOSX" and words[:1] == ["version"] and len(words) > 1
+        ):
             found.append(words[1])
     if not found:
         return ["%s has no LC_BUILD_VERSION or LC_VERSION_MIN_MACOSX command" % name]

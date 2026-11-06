@@ -27,7 +27,8 @@ def bodies(lines: list[str]) -> list[tuple[str, int, int]]:
 
     shortcut: a raw string that holds a `}` at the indent of its `fn` ends the body early, so a
     later change in that body is missed. Upgrade to a lexer if such a miss is ever seen. The miss
-    never flags a test whose body did not change."""
+    never flags a test whose body did not change.
+    """
     tests = test_names.tests(lines)
     found = []
     for i, (first, name, _) in enumerate(tests):
@@ -50,7 +51,8 @@ def bodies(lines: list[str]) -> list[tuple[str, int, int]]:
 def git(repo: str, *args: str) -> str:
     """The output of `git -C repo ARGS`. A byte that is not UTF-8 in some tracked text file must
     not stop the check, so it is kept as a surrogate. GIT_DIFF_OPTS would beat `-U0`; the other
-    `GIT_*` variables, such as GIT_DIR in a hook, stay."""
+    `GIT_*` variables, such as GIT_DIR in a hook, stay.
+    """
     env = {key: value for key, value in os.environ.items() if key != "GIT_DIFF_OPTS"}
     return subprocess.run(
         ["git", "-C", repo, *args],
@@ -65,7 +67,8 @@ def git(repo: str, *args: str) -> str:
 
 def hit(found: list[tuple[str, int, int]], start: int, count: int) -> set[str]:
     """The tests whose body meets the range of `count` lines from `start`; a count of 0 is empty.
-    `found` is in order and its bodies do not overlap, so a bisect finds the first test to meet it."""
+    `found` is in order and its bodies do not overlap, so a bisect finds the first test to meet it.
+    """
     end = start + count - 1
     found_at = bisect.bisect_left(found, start, key=lambda body: body[2])
     meeting = set()
@@ -104,7 +107,8 @@ def changed(ref: str, repo: str = ".") -> set[tuple[str, str]]:
 
     shortcut: a path that git quotes (it holds a quote, a backslash or a control character) keeps
     its quotes, so its file is not found. No such path is in the tree; read `-z` output if one is
-    ever added."""
+    ever added.
+    """
     diff = git(repo, *DIFF, ref).splitlines()
     found: set[tuple[str, str]] = set()
     old_path = new_path = ""

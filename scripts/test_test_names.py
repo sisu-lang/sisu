@@ -1,5 +1,6 @@
 """Unit tests for the diff and baseline checks of test_names.py:
-python3 -m unittest discover -s scripts -p 'test_*.py'."""
+python3 -m unittest discover -s scripts -p 'test_*.py'.
+"""
 
 import contextlib
 import io

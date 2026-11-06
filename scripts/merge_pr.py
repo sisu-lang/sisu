@@ -23,7 +23,7 @@ POLL = float(os.environ.get("MERGE_PR_POLL", "30"))
 CHECKS_LIMIT = float(os.environ.get("MERGE_PR_CHECKS_LIMIT", str(90 * 60)))
 NO_CHECKS_LIMIT = min(CHECKS_LIMIT, 10 * 60)
 ISSUES_LIMIT = 120
-CLOSES = re.compile(r"^Closes #(\d+)\s*$", re.M | re.I)
+CLOSES = re.compile(r"^Closes #(\d+)\s*$", re.MULTILINE | re.IGNORECASE)
 PASSED = {"success", "skipped", "neutral"}
 
 
@@ -45,7 +45,8 @@ def gh(*args):
 
 def wait_for_checks(pr, sha):
     """Returns the checks that did not pass, after every check ends. Stops at the time limit, and
-    when main moves while a check runs: the head must then merge main and run its checks again."""
+    when main moves while a check runs: the head must then merge main and run its checks again.
+    """
     start = time.monotonic()
     while True:
         page = gh(f"{REPO}/commits/{sha}/check-runs?per_page=100")

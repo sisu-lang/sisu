@@ -9,7 +9,8 @@ import json
 import re
 import subprocess
 import sys
-from typing import Callable, NamedTuple
+from collections.abc import Callable
+from typing import NamedTuple
 
 # Integration tests, and unit-test modules in their own file (src/**/tests.rs, src/**/tests/).
 TEST_DIR = re.compile(r"^crates/[^/]+/(?:tests/|src/(?:.+/)?tests(?:\.rs$|/))")

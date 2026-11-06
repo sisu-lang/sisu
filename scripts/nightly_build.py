@@ -38,7 +38,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 NO_NEW = "no new green commit"
 DIFFER = "the newest green commit has other workflow files than `main`"
@@ -217,7 +217,7 @@ def publish(sha: str) -> int:
         for r in releases(repo):
             if r["draft"] and r["tag_name"].startswith("nightly-"):
                 gh("--method", "DELETE", f"repos/{repo}/releases/{r['id']}")
-        tag = f"nightly-{datetime.now(timezone.utc):%Y-%m-%d}-{sha[:7]}"
+        tag = f"nightly-{datetime.now(UTC):%Y-%m-%d}-{sha[:7]}"
         gh_release(
             "create",
             tag,

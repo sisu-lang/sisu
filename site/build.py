@@ -128,7 +128,7 @@ def colours(line: str, below: str) -> list[str]:
 
 
 def diag_html(text: str) -> str:
-    """sisu's diagnostic output as coloured lines, one `<span class="ln">` each."""
+    """Sisu's diagnostic output as coloured lines, one `<span class="ln">` each."""
     rows = re.findall(r"[^\n]*\n|[^\n]+\Z", text)
     lines = [row.removesuffix("\n") for row in rows]
     out = []
@@ -484,7 +484,8 @@ def markers(source: str) -> list[str]:
 def example_info(info: str) -> tuple[list[str], list[str] | None]:
     """The words of a fence's info string and its `args="..."` list, read as the reference test
     reads them: words split at spaces. The test reports faults, and it faults a `\\` or `&` in
-    an example's info string, so the string has nothing to decode."""
+    an example's info string, so the string has nothing to decode.
+    """
     words, args = [], None
     rest = info.strip()
     while rest:
@@ -500,7 +501,8 @@ def example_info(info: str) -> tuple[list[str], list[str] | None]:
 
 def example_html(token, words, args, companions) -> str:
     """An example as one figure: its caption, the program and a panel for each companion block,
-    then a line for each diagnostic marker that links its page. `words` and `args` are its info."""
+    then a line for each diagnostic marker that links its page. `words` and `args` are its info.
+    """
     caption = (
         "In development"
         if "pending" in words
@@ -528,7 +530,8 @@ SITE_CODE_LINK = re.compile(r"\.\./diagnostics/([EW]\d{4})\.html")
 def mark_rules(tokens) -> None:
     """A paragraph that is only bold text, directly before a bullet list, labels a list of rules:
     the paragraph gets the class rules-h and the list rules. In such a list, the diagnostic links
-    that end an item, each with its code as text, get the class tag."""
+    that end an item, each with its code as text, get the class tag.
+    """
     depth = 0
     for i, token in enumerate(tokens):
         if (
@@ -574,7 +577,8 @@ def reference_html(markdown: str, path: Path) -> tuple[str, list[tuple[int, str,
     """A language reference page without its `#` title; its `##` and `###` headings as (level, id,
     inline HTML, tagged); and whether the page is tagged "In development".
     A heading is tagged when its own text holds a pending example; the page, when it has examples
-    and all are pending. The page grammar is the one the reference test checks."""
+    and all are pending. The page grammar is the one the reference test checks.
+    """
     tokens = MD.parse(markdown)
     slugs = list(check_links.anchors(path))
     opens = [t for t in tokens if t.type == "heading_open"]
@@ -634,7 +638,8 @@ def reference_title(markdown: str) -> str:
 
 def reference_pages(pages: list[dict]) -> list[dict]:
     """Each page of `pages` read from docs/reference/ and rendered once: its entry with its title,
-    the title's id, its body, its headings and its tag."""
+    the title's id, its body, its headings and its tag.
+    """
     prepared = []
     for page in pages:
         path = REFERENCE / f"{page['file']}.md"
@@ -660,7 +665,8 @@ def reference_pages(pages: list[dict]) -> list[dict]:
 def reference_page(index: int, pages: list[dict]) -> str:
     """The page reference/<file>.html of pages[index], from reference_pages: the sidebar of all
     pages, the page, Previous and Next, and its "On this page" list. The Overview, pages[0], also
-    has a card for each other page."""
+    has a card for each other page.
+    """
 
     def href(i):
         return "index.html" if pages[i]["file"] == "README" else f"{pages[i]['file']}.html"
@@ -737,7 +743,8 @@ def benchmark_tables(
     markdown: str, expected: list[str] | None = None
 ) -> dict[str, dict[str, dict[str, str]]]:
     """Program -> language -> column -> cell text, from each `### <program>` table under `## Results`.
-    With `expected`, the programs must be exactly those."""
+    With `expected`, the programs must be exactly those.
+    """
     tables, programs = {}, []
     section = tag = ""
     rows = None
@@ -1026,17 +1033,17 @@ def build(out: Path) -> None:
 
 
 SCHEME = re.compile(r"[a-z][a-z0-9+.-]*:|//")
-FOREIGN = re.compile(r"(?:https?:)?//", re.I)
+FOREIGN = re.compile(r"(?:https?:)?//", re.IGNORECASE)
 CSS_URL = re.compile(r'url\(\s*([\'"]?)(.*?)\1\s*\)|@import\s+([\'"])(.*?)\3')
 HEADING = re.compile(r"<h([1-6])\b")
 MILESTONE_ID = re.compile(r"\bM\d+\b")
-HIDDEN = re.compile(r"<(pre|code|script|style)\b.*?</\1>", re.S)
+HIDDEN = re.compile(r"<(pre|code|script|style)\b.*?</\1>", re.DOTALL)
 # Inline tags join their text: `M<strong>8</strong>` reads "M8". Any other tag separates text.
 INLINE_TAG = re.compile(
     r"</?(?:a|abbr|b|cite|del|em|i|ins|mark|q|s|small|span|strong|sub|sup|u)\b[^>]*>"
 )
 # A <pre> with no data-lang holds diag_html output, which shows what sisu prints.
-UNTAGGED_PRE = re.compile(r"<pre\b(?![^>]*\bdata-lang=)[^>]*>.*?</pre>", re.S)
+UNTAGGED_PRE = re.compile(r"<pre\b(?![^>]*\bdata-lang=)[^>]*>.*?</pre>", re.DOTALL)
 
 
 def visible(text: str) -> str:
@@ -1126,11 +1133,11 @@ def page_problems(
             )
     if "<!--" in text:
         yield "holds a <!-- comment"
-    if re.search("milestone", UNTAGGED_PRE.sub("", text), re.I) or MILESTONE_ID.search(
+    if re.search("milestone", UNTAGGED_PRE.sub("", text), re.IGNORECASE) or MILESTONE_ID.search(
         visible(text)
     ):
         yield "names a milestone"
-    if re.search("kotlin", text, re.I):
+    if re.search("kotlin", text, re.IGNORECASE):
         yield "names Kotlin"
     if forbid_tk and "[TK" in text:
         yield "holds a [TK] marker"
@@ -1154,7 +1161,7 @@ def css_problems(out: Path, base: Path, css: str):
 ADR_ROW = re.compile(
     re.escape(BLOB)
     + r'(docs/adr/[^"#]+\.md)"[^>]*>\s*<span class="num">(\d+)</span>\s*<b>(.*?)</b>',
-    re.S,
+    re.DOTALL,
 )
 # What follows a row's title in its <b>: a status note the ADR's heading does not hold.
 ADR_NOTE = re.compile(r'<(?:small>|span class="soon">)')

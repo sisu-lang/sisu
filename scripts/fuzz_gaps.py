@@ -62,7 +62,8 @@ def matching_close(name: str, start: int) -> int:
 # shortcut: a generic Self type such as <[T] as Tr> does not merge, upgrade when a new gap names such an impl.
 def strip_generics(name: str) -> str:
     """Removes each `<...>` that follows an identifier character or `::`, with that `::`. A `<`
-    at the start or after another `<` opens `<Type>` or `<T as Trait>`, and stays."""
+    at the start or after another `<` opens `<Type>` or `<T as Trait>`, and stays.
+    """
     out: list[str] = []
     i = 0
     while i < len(name):
@@ -80,7 +81,8 @@ def strip_generics(name: str) -> str:
 def normalize(name: str) -> str | None:
     """The name without crate hashes and generic arguments, or None for a name that ends in a
     closure. The test comes last: a generic argument can hold a closure, and the function is not
-    one. A named function inside a closure is a function."""
+    one. A named function inside a closure is a function.
+    """
     name = strip_generics(QUOTED_BRACKET.sub("''", CRATE_HASH.sub("", name)))
     return None if CLOSURE_END.search(name) else name
 
@@ -127,7 +129,8 @@ def load(path: str) -> list[dict]:
 
 def in_scope(functions: list[dict], path: str) -> list[tuple[str, int, str, bool]]:
     """(file, first line, mangled name, reached) of each record in scope. A record with no file
-    name is broken: it would read as out of scope."""
+    name is broken: it would read as out of scope.
+    """
     found = []
     for record in functions:
         files = record.get("filenames")
@@ -181,7 +184,8 @@ def read_known(path: str) -> set[tuple[str, str]]:
 
 def check_keys_are_unique(known: set[tuple[str, str]], *exports: dict) -> None:
     """A known key must name one definition. Two first lines under one key mean that the key
-    would hide the second definition too. The lines of both exports count, reached or not."""
+    would hide the second definition too. The lines of both exports count, reached or not.
+    """
     lines = collections.defaultdict(set)
     for seen in exports:
         for file, line, name in seen:
