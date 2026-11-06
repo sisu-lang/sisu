@@ -8,6 +8,10 @@ namespaces" in the roadmap's "Open decisions" for modules, and it builds on
 [ADR 0023](0023-generics-are-monomorphized-and-checked-at-the-definition.md)
 (a generic body is checked where it is defined).
 
+Changed in part by [ADR 0046](0046-structs-replace-classes.md), when classes
+go. `pub mut` goes. A module that holds a value in a `let mut` can write its
+`pub` fields.
+
 A Sisu program can be more than one file. The file tree is the module tree,
 and each name is private to its file unless it is `pub`.
 

@@ -3,6 +3,11 @@
 Status: accepted, 2026-10-21 (mir part 4, #112). It replaces ADR 0012, which
 was proposed and never built.
 
+Changed in part by [ADR 0046](0046-structs-replace-classes.md), when classes
+go. The rule for a `weak` field goes, and a move-only value is never consumed
+by inference. The rules that copy a `mut` field and an array element before a
+call change: see "Still open" in ADR 0046.
+
 Changed by [ADR 0043](0043-mut-parameters-copy-in-and-out.md). The caller
 retains a borrowed argument before the copy-in of a `mut` argument, a local or
 not. This holds when the value of the argument comes from a place that the `mut`

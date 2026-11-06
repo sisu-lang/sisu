@@ -1,5 +1,8 @@
 # Weak references break cycles
 
+Status: superseded by [ADR 0046](0046-structs-replace-classes.md) before it
+was built, 2026-11-06.
+
 Reference counting leaks a cycle (ADR 0005). A field declared
 `weak mut parent: Node?` breaks one: it does not keep its object alive, and
 reading it gives `None` once the object has been dropped. `weak` is allowed
