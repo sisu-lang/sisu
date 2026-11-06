@@ -115,8 +115,14 @@ Bq<Fox>(v: p, w: 1)
 Some<Fox>(p, p)
 M<Fox>.Some(p, p)
 MM<Fox>.Some(n: p)
+OP.Some(p, p)
+Option.Some(n: p)
 Bqa(v: p, w: 1)
 Bqa<Fox>(1)
+# A `Some` whose argument has the remedy flag (E0062), bare, with a written list and through `Option`.
+Some(ob.wrap(1))
+Some<i64>(ob.wrap(1))
+Option.Some(ob.wrap(1))
 # A prelude call with a label, and `panic` with a wrong argument.
 print(n: 1)
 panic(1)
@@ -211,3 +217,8 @@ let _a = ob.wrap(ob)?.wrap($)
 let _a = $?.wrap(ob.wrap(1))
 match ob.wrap($) { _ => {} }
 print(oa_none().oa[0] ?? $)
+# A chain on each value as the subject of a `for`, which is indexed in its loop, and the value
+# printed or interpolated, which warns when it can be `None`.
+for _x in $.wrap([1]) {}
+print($)
+print("x {$}")

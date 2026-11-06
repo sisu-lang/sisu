@@ -29,9 +29,14 @@
 // THEN it reports the bound and the argument, and no mismatch: the corrected call is `Error`
 //
 // GIVEN `Some` through an alias of an optional type that fixes its payload, and the call fails on
-// its count, its label or its argument, in a `let`, or as the receiver of `push`
+// its count, its label or its argument, in a `let`
 // WHEN `sisu check` runs on it
 // THEN it reports the mismatch of the alias's type, as the corrected call does
+//
+// GIVEN the same call as the receiver of `push`
+// WHEN `sisu check` runs on it
+// THEN it reports E0062, as the alias's type is optional, then the count, then E0021 for the `push`
+// onto a value that no variable holds
 class Node {
     v: i64
     fn ys(self, n: i64) -> [string] { [] }
