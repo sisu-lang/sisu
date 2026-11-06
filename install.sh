@@ -81,7 +81,7 @@ setup() {
   rm -rf "$tmp" 2>/dev/null || die "cannot write to $sisu."
   mkdir -p "$tmp" 2>/dev/null || die "cannot write to $sisu."
   # dash does not run an EXIT trap on a signal.
-  trap 'rm -rf "$tmp"' EXIT
+  trap 'rm -rf "$tmp" 2>/dev/null' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
 }
@@ -103,7 +103,7 @@ fetch() {
 
 verify() {
   dotted=$(printf '%s' "$tarball" | sed 's/[.]/[.]/g')
-  want=$(grep "[ *]$dotted\$" "$tmp/SHA256SUMS" | cut -d ' ' -f 1 | head -n 1)
+  want=$(grep "^[^ ]* [ *]$dotted\$" "$tmp/SHA256SUMS" | cut -d ' ' -f 1 | head -n 1)
   got=$(sha256 "$tmp/$tarball" | cut -d ' ' -f 1)
   if [ -z "$want" ] || [ "$got" != "$want" ]; then
     die "the checksum of $tarball does not match SHA256SUMS. Run the install line again."
@@ -112,7 +112,7 @@ verify() {
 
 unpack() {
   # GNU tar reads a backslash in the argument of -C as an escape, so go into the directory.
-  (cd "$tmp" && tar -xzf "$tarball")
+  (CDPATH='' cd -- "$tmp" && tar -xzf "$tarball")
   for file in sisu libsisu_runtime_mimalloc.a libsisu_runtime_system.a; do
     [ -f "$tmp/sisu/$file" ] || die "the tarball has no $file."
   done
@@ -129,9 +129,7 @@ swap() {
     mv "$bin" "$old" 2>/dev/null || die "cannot write to $sisu."
   fi
   if ! mv "$tmp/sisu" "$bin" 2>/dev/null; then
-    if [ -e "$old" ]; then
-      mv "$old" "$bin" 2>/dev/null || die "cannot write to $sisu."
-    fi
+    mv "$old" "$bin" 2>/dev/null || true
     die "cannot write to $sisu."
   fi
   rm -rf "$old" 2>/dev/null || die "cannot write to $sisu."

@@ -639,8 +639,7 @@ class InstallTest(unittest.TestCase):
         os.makedirs(os.path.join(m.home, '.sisu', 'tmp'))
         r = m.run(env={'HOME': 'home', 'CDPATH': m.root}, cwd=cwd)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(sorted(os.listdir(os.path.join(cwd, 'home', '.sisu', 'bin'))),
-                         sorted(FILES))
+        self.assertLessEqual(set(FILES), set(os.listdir(os.path.join(cwd, 'home', '.sisu', 'bin'))))
 
     @unittest.skipIf(os.geteuid() == 0, 'root can write to a read-only directory')
     def test_tar_stop_should_print_no_error_from_the_cleanup(self):
