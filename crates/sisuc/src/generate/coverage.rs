@@ -292,6 +292,21 @@ const REACH: &[&str] = &[
     "reach: an assignment goes through `?.`",
 ];
 
+/// What `Gen::gap_forms` writes, and the key that each form marks. The nightly reads the seeds
+/// `0..FUZZ_SEEDS` and no others, so `generated_programs_should_reach_each_gap_rule` reads only
+/// those. They are in the universe as the `REACH` keys are.
+const GAP_RULES: &[&str] = &[
+    "reach: a class's own `push` is called on a place",
+    "reach: a class's own `?.push` is called on a place",
+    "reach: a `break` of `T` widens to the `T?` of its loop",
+    "reach: the widening of a `break` crosses a nested loop",
+    "reach: a literal `break` joins an optional `break` in a `let` with no written type",
+    "reach: two `mut` arguments have one root local",
+    "reach: a `string` field appends to itself",
+    "reach: a program gets W0006",
+    "reach: a program gets W0007",
+];
+
 /// The forms of `let ... else` and of a jump after `??`, which no variant shows.
 const JUMPS: &[&str] = &[
     "let-else on Optional",
@@ -441,6 +456,12 @@ fn splitmix64(state: &mut u64) -> u64 {
 /// typed tree is the checker's, before `mono`, so it holds the generic declarations with their
 /// type parameters (`types::TypeKind::Param`).
 fn checked(source: &str) -> (ast::Program, tir::Program) {
+    let (ast, tir, _) = checked_with_codes(source);
+    (ast, tir)
+}
+
+/// `checked`, and the codes of the diagnostics of the program, which it allows to be warnings.
+fn checked_with_codes(source: &str) -> (ast::Program, tir::Program, Vec<String>) {
     let (program, diagnostics) = crate::front_end::checked(source);
     // An unused loop label would be a label no rule meant to write. Every generated function
     // returns and every generated loop ends, so W0010 and W0011 may not appear.
@@ -466,7 +487,10 @@ fn checked(source: &str) -> (ast::Program, tir::Program) {
         panic!("a generated program fails to check: {errors:?}\n{numbered}")
     });
     let lexed = lexer::lex(source).expect("a program that checks should lex");
-    (parser::parse(lexed, false).program, program)
+    let codes = (diagnostics.iter())
+        .map(|d| d.code().as_str().to_string())
+        .collect();
+    (parser::parse(lexed, false).program, program, codes)
 }
 
 /// The syntax tree of a program, which the other tests have checked: a test that reads only
@@ -543,7 +567,7 @@ fn universe() -> FxHashSet<String> {
     for (from, to) in CONVERSIONS {
         universe.insert(format!("tir::ExprKind::Convert from {from} to {to}"));
     }
-    for key in REACH.iter().chain(JUMPS) {
+    for key in REACH.iter().chain(JUMPS).chain(GAP_RULES) {
         universe.insert(key.to_string());
     }
     for (feature, _) in TEXT {
@@ -713,6 +737,32 @@ struct Walk {
     user_funcs: usize,
     class_names: Vec<String>,
     enum_names: Vec<String>,
+    /// Where a call of a method named `push` on a place starts, without and with `?.`: an array's
+    /// `push` is a statement of its own in the typed tree, so a `Call` that starts at one of
+    /// these is a class's.
+    pushes: FxHashSet<usize>,
+    safe_pushes: FxHashSet<usize>,
+    /// Where a `loop` starts that ends the value of a `let` with no written type.
+    untyped_loops: FxHashSet<usize>,
+    /// The `loop`s around the point walked in the typed tree, innermost last.
+    loops: Vec<LoopBreaks>,
+}
+
+/// What the `break`s that target one `loop` give it.
+#[derive(Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "five independent facts about the breaks of one loop"
+)]
+struct LoopBreaks {
+    /// A value of the loop's own type that the checker wrapped, and a `None`.
+    wrapped: bool,
+    none: bool,
+    /// A `break` from a loop inside this one targets it.
+    crossed: bool,
+    /// A `break` gives an optional that is no literal, and a later one a literal.
+    optional: bool,
+    literal_after: bool,
 }
 
 /// Whether the first parameter of `f` is a bare type parameter with a bound, and a later one names
@@ -759,8 +809,11 @@ impl Walk {
     }
 
     fn program(&mut self, source: &str) {
-        let (ast, tir) = checked(source);
+        let (ast, tir, codes) = checked_with_codes(source);
         source.clone_into(&mut self.source);
+        self.pushes.clear();
+        self.safe_pushes.clear();
+        self.untyped_loops.clear();
         self.lens.clear();
         self.offsets.clear();
         self.immutable.clear();
@@ -780,6 +833,14 @@ impl Walk {
         self.ast(&ast);
         self.tir(&tir);
         self.built(tir);
+        for (code, key) in [
+            ("W0006", "reach: a program gets W0006"),
+            ("W0007", "reach: a program gets W0007"),
+        ] {
+            if codes.iter().any(|c| c == code) {
+                self.mark(key);
+            }
+        }
         for (feature, holds) in TEXT {
             if holds(source) {
                 self.mark(feature);
@@ -1720,6 +1781,20 @@ impl Walk {
         }
         if let Some(ty) = ty {
             self.type_expr(ty);
+        } else {
+            let value = match &init.kind {
+                ast::ExprKind::Block(block) => tail(block),
+                _ => Some(init),
+            };
+            if let Some(
+                value @ ast::Expr {
+                    kind: ast::ExprKind::Loop { .. },
+                    ..
+                },
+            ) = value
+            {
+                self.untyped_loops.insert(value.span.start());
+            }
         }
         self.ast_expr(init);
     }
@@ -1950,6 +2025,14 @@ impl Walk {
             } => {
                 self.mark("ast::ExprKind::MethodCall");
                 self.mark(&format!("ast::ExprKind::MethodCall.safe = {safe}"));
+                if method.name.as_str() == "push" && rooted_in_name(receiver) {
+                    let pushes = if *safe {
+                        &mut self.safe_pushes
+                    } else {
+                        &mut self.pushes
+                    };
+                    pushes.insert(e.span.start());
+                }
                 if enum_name(receiver) == Some("Option") && method.name.as_str() == "Some" {
                     self.mark("reach: `Some` builds an optional");
                 }
@@ -2482,6 +2565,11 @@ impl Walk {
                 }
                 tir::Stmt::Append { place, value } => {
                     self.mark("tir::Stmt::Append");
+                    // `+=` and `a.f = a.f + e` both give an `Append`, whose `same_read` decides
+                    // that the value reads the place.
+                    if matches!(place, tir::Place::Field { .. }) && value.ty == Type::STRING {
+                        self.mark("reach: a `string` field appends to itself");
+                    }
                     self.place(place);
                     self.tir_expr(value, Parent::Other);
                 }
@@ -2691,6 +2779,14 @@ impl Walk {
                 if func.0 >= self.user_funcs {
                     let key = format!("prelude method {}", self.function_names[func.0]);
                     self.mark(&key);
+                }
+                let own_push = func.0 < self.user_funcs
+                    && self.function_names[func.0].rsplit('.').next() == Some("push");
+                if own_push && self.pushes.contains(&e.span.start()) {
+                    self.mark("reach: a class's own `push` is called on a place");
+                }
+                if own_push && self.safe_pushes.contains(&e.span.start()) {
+                    self.mark("reach: a class's own `?.push` is called on a place");
                 }
                 let name = &self.function_names[func.0];
                 let (operator, contains) = (
@@ -3054,10 +3150,38 @@ impl Walk {
             }
             tir::ExprKind::Loop(body) => {
                 self.mark("tir::ExprKind::Loop");
+                self.loops.push(LoopBreaks::default());
                 self.tir_block(body);
+                let breaks = (self.loops.pop()).expect("the walk of a loop should keep its frame");
+                // `wrap_breaks` wraps the `T` values of a loop that a `T?` value widened. A
+                // written `Some(..)` in a loop with `break None` would show the same.
+                if matches!(e.ty.kind(), TypeKind::Optional(_)) && breaks.wrapped && breaks.none {
+                    self.mark("reach: a `break` of `T` widens to the `T?` of its loop");
+                    if breaks.crossed {
+                        self.mark("reach: the widening of a `break` crosses a nested loop");
+                    }
+                }
+                if breaks.literal_after && self.untyped_loops.contains(&e.span.start()) {
+                    self.mark(
+                        "reach: a literal `break` joins an optional `break` in a `let` with no written type",
+                    );
+                }
             }
-            tir::ExprKind::Break { value, .. } => {
+            tir::ExprKind::Break { depth, value } => {
                 self.mark("tir::ExprKind::Break");
+                let target = (self.loops.len()).checked_sub(depth + 1);
+                if let Some(breaks) = target.and_then(|at| self.loops.get_mut(at)) {
+                    breaks.crossed |= *depth > 0;
+                    if let Some(value) = value {
+                        breaks.wrapped |= matches!(value.kind, tir::ExprKind::Wrap(_));
+                        breaks.none |= matches!(value.kind, tir::ExprKind::None);
+                        let optional = matches!(value.ty.kind(), TypeKind::Optional(_));
+                        breaks.literal_after |= breaks.optional && literal_value(value);
+                        breaks.optional |= optional
+                            && !literal_value(value)
+                            && !matches!(value.kind, tir::ExprKind::None);
+                    }
+                }
                 if let Some(value) = value {
                     self.tir_expr(value, Parent::Other);
                 }
@@ -3075,6 +3199,14 @@ impl Walk {
             }
             tir::ExprKind::MutCall { call, muts, back } => {
                 self.mark("tir::ExprKind::MutCall");
+                let roots: Vec<_> = muts.iter().filter_map(|m| root_local(&m.read)).collect();
+                if roots
+                    .iter()
+                    .enumerate()
+                    .any(|(i, r)| roots[..i].contains(r))
+                {
+                    self.mark("reach: two `mut` arguments have one root local");
+                }
                 for m in muts {
                     for (_, object) in &m.keep {
                         self.tir_expr(object, Parent::Other);
@@ -3196,6 +3328,39 @@ fn array_len(e: &ast::Expr) -> Option<i128> {
         array_len(tail(block)?)
     } else {
         None
+    }
+}
+
+/// Whether `e` is a name, or a field or an element of a place.
+fn rooted_in_name(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Name(_) => true,
+        ast::ExprKind::Field { base, .. } | ast::ExprKind::Index { base, .. } => {
+            rooted_in_name(base)
+        }
+        _ => false,
+    }
+}
+
+/// The local at the root of a place that `e` reads.
+fn root_local(e: &tir::Expr) -> Option<tir::LocalId> {
+    match &e.kind {
+        tir::ExprKind::Local(id) => Some(*id),
+        tir::ExprKind::Field { base, .. } | tir::ExprKind::Index { base, .. } => root_local(base),
+        _ => None,
+    }
+}
+
+/// Whether `e` is a literal, or one that the checker wrapped into an optional.
+fn literal_value(e: &tir::Expr) -> bool {
+    match &e.kind {
+        tir::ExprKind::Int(_)
+        | tir::ExprKind::Float(_)
+        | tir::ExprKind::Bool(_)
+        | tir::ExprKind::Char(_)
+        | tir::ExprKind::Str(_) => true,
+        tir::ExprKind::Wrap(inner) => literal_value(inner),
+        _ => false,
     }
 }
 
@@ -5709,6 +5874,11 @@ fn a_push_should_reach_a_local_an_element_and_a_guarded_field() {
         let program = generate(&seed(n)).program;
         let lines: Vec<&str> = program.lines().map(str::trim_start).collect();
         for (at, line) in lines.iter().enumerate() {
+            // An array's `push` gives no value to print, and the generator writes it as a
+            // statement. A `print(` line holds a class's own `push`, from `Gen::gap_forms`.
+            if line.starts_with("print(") {
+                continue;
+            }
             let Some((place, _)) = line.split_once(".push(") else {
                 continue;
             };
@@ -5735,6 +5905,33 @@ fn a_push_should_reach_a_local_an_element_and_a_guarded_field() {
     assert!(
         local && element && field,
         "{local} {element} {field}: a local, an element and a field"
+    );
+}
+
+/// GIVEN the programs of the seeds `0..FUZZ_SEEDS`, which the nightly reads and no others
+/// WHEN the walk reads them in order
+/// THEN each key of `GAP_RULES` is marked, and the walk stops once all are
+#[test]
+fn generated_programs_should_reach_each_gap_rule() {
+    let mut walk = Walk::default();
+    let missing = |walk: &Walk| -> Vec<&str> {
+        (GAP_RULES.iter())
+            .copied()
+            .filter(|key| !walk.seen.contains(*key))
+            .collect()
+    };
+    for n in 0..FUZZ_SEEDS {
+        let generated = generate(&seed(n));
+        walk.mut_lens = generated.mut_lens.into_iter().collect();
+        walk.program(&generated.plain);
+        if missing(&walk).is_empty() {
+            break;
+        }
+    }
+    let missing = missing(&walk);
+    assert!(
+        missing.is_empty(),
+        "no program of the seeds 0..{FUZZ_SEEDS} holds: {missing:#?}"
     );
 }
 
