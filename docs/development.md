@@ -33,8 +33,7 @@ are skipped, and `make coverage`, `make mutation-test`, `make fuzz`,
   run each program natively and do not check for leaks.
 - For `make miri`, a nightly toolchain with Miri:
   `rustup toolchain install nightly --component miri --component rust-src`.
-- [uv](https://docs.astral.sh/uv/), for `make site`, which builds the website, and for the
-  two Python hooks, which prek installs with it.
+- [uv](https://docs.astral.sh/uv/), for `make site`, which builds the website.
 - Python 3.12 or later, which the scripts and the Python hooks need. prek installs Ruff and
   Pyrefly at the pinned versions on its first run, so nobody installs them by hand.
 
