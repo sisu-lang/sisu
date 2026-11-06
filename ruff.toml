@@ -1,0 +1,41 @@
+# The Python rules for every tracked file. `CODING_STANDARDS.md` (Python) says how to use them.
+# prek pins the Ruff version: see `prek.toml`.
+
+# Most scripts run on a contributor's machine or on a current CI runner. `site/build.py` needs 3.12.
+target-version = "py312"
+line-length = 100
+
+# The build job of the nightly workflow runs this script in `ubuntu:22.04`.
+[per-file-target-version]
+"scripts/nightly_check.py" = "py310"
+
+[lint]
+select = ["ALL"]
+ignore = [
+  # The formatter owns these. Ruff's formatter guide lists them as conflicts.
+  "COM812", "COM819", "D206", "D300", "E111", "E114", "E117", "Q000", "Q001", "Q002", "Q003", "Q004", "W191",
+  # Each pair conflicts. These are the two that the formatter and PEP 257 do not use.
+  "D203", "D213",
+  # The class docstring tells how to make an instance.
+  "D107",
+  # The licence is at the repository root, not in each file.
+  "CPY001", # spellchecker:disable-line
+  # The scripts are programs, not a package.
+  "INP001",
+  # These programs write their output with `print`.
+  "T201",
+  # These programs exist to run tools. Each command is a list, with no shell.
+  "S603", "S607",
+  # A message at its `raise` is easier to read than a variable above it.
+  "EM101", "EM102", "TRY003",
+  # The tests use `unittest`, not `pytest`.
+  "PT009", "PT027",
+]
+
+[lint.per-file-ignores]
+# A test name says what should hold. A test may compare with a literal and use a fake secret.
+"scripts/test_*.py" = ["D1", "PLR2004", "S105", "S106", "S108", "SLF001"]
+"site/build_test.py" = ["D1", "PLR2004", "S105", "S106", "S108", "SLF001"]
+# A benchmark program stays the same as its row in each other language, so rules that change its
+# logic stay off. The formatter and the type rules apply.
+"bench/**" = ["D", "ARG", "C4", "E741", "FBT", "FURB", "N", "PERF", "PLR", "PLW", "RET", "RUF", "SIM", "TRY", "UP"]

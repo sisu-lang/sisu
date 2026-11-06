@@ -10,6 +10,7 @@ sides to that one value. A change to the rule in one place fails a test until th
 
 Usage: python3 fuzz_seeds.py <directory>. The directory must exist.
 """
+
 import os
 import struct
 import sys
@@ -34,18 +35,18 @@ def seed(n: int) -> bytes:
     for _ in range(SEED_WORDS):
         state, word = splitmix64(state)
         words.append(word)
-    return struct.pack(f'<{SEED_WORDS}Q', *words)
+    return struct.pack(f"<{SEED_WORDS}Q", *words)
 
 
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
-        print('usage: fuzz_seeds.py <directory>', file=sys.stderr)
+        print("usage: fuzz_seeds.py <directory>", file=sys.stderr)
         return 2
     for n in range(SEEDS):
-        with open(os.path.join(argv[1], f'seed-{n}'), 'wb') as f:
+        with open(os.path.join(argv[1], f"seed-{n}"), "wb") as f:
             f.write(seed(n))
     return 0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main(sys.argv))

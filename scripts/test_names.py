@@ -82,18 +82,24 @@ def main(paths: list[str], baseline: str = BASELINE, changed: frozenset = frozen
             if old[f"{path}::{name}"] > 0:
                 old[f"{path}::{name}"] -= 1
                 if (path, name) in changed:
-                    print(f"{path}:{n}: test `{name}` is in test_names_baseline.txt and its body "
-                          "changed: rename it to <subject>_should_<result> and remove its "
-                          "baseline line")
+                    print(
+                        f"{path}:{n}: test `{name}` is in test_names_baseline.txt and its body "
+                        "changed: rename it to <subject>_should_<result> and remove its "
+                        "baseline line"
+                    )
                     bad = 1
                 continue
             if "_should_" not in name:
-                print(f"{path}:{n}: test name `{name}` should say what should hold: "
-                      "<subject>_should_<result>")
+                print(
+                    f"{path}:{n}: test name `{name}` should say what should hold: "
+                    "<subject>_should_<result>"
+                )
                 bad = 1
             if END_TO_END.search(path) and not has_given_when_then(comment):
-                print(f"{path}:{n}: end-to-end test `{name}` needs GIVEN, WHEN and THEN lines "
-                      "in its doc comment")
+                print(
+                    f"{path}:{n}: end-to-end test `{name}` needs GIVEN, WHEN and THEN lines "
+                    "in its doc comment"
+                )
                 bad = 1
     return bad
 

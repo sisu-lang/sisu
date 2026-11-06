@@ -11,7 +11,10 @@ import sys
 # the end of the file. A `#[cfg(test)]` step counter before it is production code.
 # shortcut: between the two, the pattern takes blank lines, `//` comments and attributes with one
 # level of inner brackets, not a `/* */` comment; add the form when a file uses it.
-TESTS = re.compile(r"^#\[cfg\(test\)\]\n(?:#\[(?:[^][]|\[[^]]*\])*\]\n|//[^\n]*\n|\n)*(?:pub(?:\([^)\n]*\))? )?mod \w+ \{", re.M)
+TESTS = re.compile(
+    r"^#\[cfg\(test\)\]\n(?:#\[(?:[^][]|\[[^]]*\])*\]\n|//[^\n]*\n|\n)*(?:pub(?:\([^)\n]*\))? )?mod \w+ \{",
+    re.M,
+)
 
 
 def main(paths: list[str]) -> int:
@@ -20,7 +23,7 @@ def main(paths: list[str]) -> int:
         with open(path, encoding="utf-8") as f:
             text = f.read()
         tests = TESTS.search(text)
-        code = text[:tests.start()] if tests else text
+        code = text[: tests.start()] if tests else text
         for n, line in enumerate(code.splitlines(), 1):
             if ":?}" in line:
                 print(f"{path}:{n}: diagnostic text uses {{:?}}; escape the Sisu way")

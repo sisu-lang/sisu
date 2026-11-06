@@ -1,4 +1,5 @@
 """Tests for build.py. Run them with `uv run --locked --script site/build.py --test`."""
+
 import contextlib
 import html
 import io
@@ -39,18 +40,24 @@ E0032_SPANS = [
 # Lines that colour other ways: each input line, then the span diag_html must give it.
 COLOURED = [
     # The header of site/programs/explanations/W0002.err.
-    ('warning[W0002]: `count` is never reassigned\n',
-     '<span class="ln"><span class="h">warning[W0002]</span>: `count` is never reassigned\n</span>'),
+    (
+        "warning[W0002]: `count` is never reassigned\n",
+        '<span class="ln"><span class="h">warning[W0002]</span>: `count` is never reassigned\n</span>',
+    ),
     # Line 7 of crates/sisuc/tests/diagnostics/W0004-branch.err.
-    ('  = help: use it, or write `let _ =` to drop it on purpose\n',
-     '<span class="ln">  <span class="g">=</span> <span class="h">help</span>: use it, or write `let _ =` to drop it on purpose\n</span>'),
+    (
+        "  = help: use it, or write `let _ =` to drop it on purpose\n",
+        '<span class="ln">  <span class="g">=</span> <span class="h">help</span>: use it, or write `let _ =` to drop it on purpose\n</span>',
+    ),
     # From `sisu check` on a program whose `let n` follows two wide characters: the `+` markers
     # count display columns, where 界 takes two.
-    ('2 |     if "界" == "界" { let mut n = 1\n  |                           +++\n',
-     '<span class="ln"><span class="g">2 |</span>     if "界" == "界" { let <span class="add">mut</span> n = 1\n</span>'),
+    (
+        '2 |     if "界" == "界" { let mut n = 1\n  |                           +++\n',
+        '<span class="ln"><span class="g">2 |</span>     if "界" == "界" { let <span class="add">mut</span> n = 1\n</span>',
+    ),
 ]
 
-PAGE = '<!doctype html><html><head></head><body><h1>Page</h1>{}</body></html>'
+PAGE = "<!doctype html><html><head></head><body><h1>Page</h1>{}</body></html>"
 
 # Two areas: the first has a note, a counted directive, and two links, one with an anchor.
 STATUS = """
@@ -88,37 +95,52 @@ notes = [["Roadmap", "docs/roadmap.md"]]
 """
 
 
-BENCH_HEADER = '| Language | Wall (s) | CPU (s) | Peak RSS (MiB) | Binary (KiB) | Build (s) |\n| --- | ---: | ---: | ---: | ---: | ---: |\n'
+BENCH_HEADER = "| Language | Wall (s) | CPU (s) | Peak RSS (MiB) | Binary (KiB) | Build (s) |\n| --- | ---: | ---: | ---: | ---: | ---: |\n"
 
 
 def md_table(program, walls, builds=None):
     """A `### <program>` table: `walls` maps each language to its Wall cell, `builds` to its Build cell.
     By default every build takes 0.05 and Python has none."""
-    builds = builds or {lang: '-' if lang == 'Python' else '0.05' for lang in walls}
+    builds = builds or {lang: "-" if lang == "Python" else "0.05" for lang in walls}
     rows = []
     for lang, wall in walls.items():
-        cells = [lang, wall, '0.1', '1.0', '9', builds[lang]]
-        rows.append('| ' + ' | '.join(f'**{c}**' for c in cells) + ' |' if lang == 'Sisu' else '| ' + ' | '.join(cells) + ' |')
-    return f'### {program}\n\n{BENCH_HEADER}' + '\n'.join(rows) + '\n\n'
+        cells = [lang, wall, "0.1", "1.0", "9", builds[lang]]
+        rows.append(
+            "| " + " | ".join(f"**{c}**" for c in cells) + " |"
+            if lang == "Sisu"
+            else "| " + " | ".join(cells) + " |"
+        )
+    return f"### {program}\n\n{BENCH_HEADER}" + "\n".join(rows) + "\n\n"
 
 
 # The mockup's fib values, then a hello whose Wall cells agree, in the order the Markdown has them.
-FIB = {'Rust': '0.17', 'C': '0.18', 'Sisu': '0.26', 'Java': '0.27', 'Go': '0.28', 'Python': '5.18'}
-HELLO = {lang: '0.00' for lang in FIB}
-HELLO_BUILDS = {'Go': '0.037', 'C': '0.053', 'Sisu': '0.058', 'Rust': '0.073', 'Java': '0.196', 'Python': '-'}
+FIB = {"Rust": "0.17", "C": "0.18", "Sisu": "0.26", "Java": "0.27", "Go": "0.28", "Python": "5.18"}
+HELLO = {lang: "0.00" for lang in FIB}
+HELLO_BUILDS = {
+    "Go": "0.037",
+    "C": "0.053",
+    "Sisu": "0.058",
+    "Rust": "0.073",
+    "Java": "0.196",
+    "Python": "-",
+}
 BENCH_LI = r'<li( class="\w+")?><span>(\w+)</span><span class="track">(.*?)</span><span class="val">(.*?)</span></li>'
 
 
-def bench_md(*tables, intro='Commit abc1234, on 2026-10-12.\n\nOn a machine.\n\n'):
-    return f'# Benchmarks\n\nAbout.\n\n## Results\n\n{intro}' + ''.join(tables) + '## The programs\n\nText.\n'
+def bench_md(*tables, intro="Commit abc1234, on 2026-10-12.\n\nOn a machine.\n\n"):
+    return (
+        f"# Benchmarks\n\nAbout.\n\n## Results\n\n{intro}"
+        + "".join(tables)
+        + "## The programs\n\nText.\n"
+    )
 
 
 def temp_file(test, text):
     """A file holding `text`, removed when the test ends."""
     tmp = tempfile.TemporaryDirectory()
     test.addCleanup(tmp.cleanup)
-    path = Path(tmp.name) / 'f'
-    path.write_text(text, encoding='utf-8')
+    path = Path(tmp.name) / "f"
+    path.write_text(text, encoding="utf-8")
     return path
 
 
@@ -127,22 +149,22 @@ def fake_site(test, pages, repo=None):
     `repo` maps other repository paths to their text."""
     tmp = tempfile.TemporaryDirectory()
     test.addCleanup(tmp.cleanup)
-    site = Path(tmp.name).resolve() / 'site'
-    (site / 'assets').mkdir(parents=True)
-    (site / 'src').mkdir()
-    for name in ('_head.html', '_foot.html'):
-        (site / name).write_text('', encoding='utf-8')
-    (site / 'data').mkdir()
-    (site / 'data/categories.toml').write_text('category = []\n', encoding='utf-8')
-    (site / 'data/reference.toml').write_text('page = []\n', encoding='utf-8')
+    site = Path(tmp.name).resolve() / "site"
+    (site / "assets").mkdir(parents=True)
+    (site / "src").mkdir()
+    for name in ("_head.html", "_foot.html"):
+        (site / name).write_text("", encoding="utf-8")
+    (site / "data").mkdir()
+    (site / "data/categories.toml").write_text("category = []\n", encoding="utf-8")
+    (site / "data/reference.toml").write_text("page = []\n", encoding="utf-8")
     for name, text in pages.items():
-        (site / 'src' / name).write_text(text, encoding='utf-8')
+        (site / "src" / name).write_text(text, encoding="utf-8")
     for name, text in (repo or {}).items():
         (site.parent / name).parent.mkdir(parents=True, exist_ok=True)
-        (site.parent / name).write_text(text, encoding='utf-8')
-    test.enterContext(mock.patch.object(build, 'ROOT', site.parent))
-    test.enterContext(mock.patch.object(build, 'SITE', site))
-    test.enterContext(mock.patch.object(build, 'REFERENCE', site.parent / 'docs/reference'))
+        (site.parent / name).write_text(text, encoding="utf-8")
+    test.enterContext(mock.patch.object(build, "ROOT", site.parent))
+    test.enterContext(mock.patch.object(build, "SITE", site))
+    test.enterContext(mock.patch.object(build, "REFERENCE", site.parent / "docs/reference"))
     return site
 
 
@@ -158,15 +180,15 @@ def problems(test, files, **kwargs):
     out = Path(tmp.name)
     for name, text in files.items():
         (out / name).parent.mkdir(parents=True, exist_ok=True)
-        (out / name).write_text(text, encoding='utf-8')
+        (out / name).write_text(text, encoding="utf-8")
     return build.check_site(out, **kwargs)
 
 
 # Three made-up language reference pages that hold every feature the build reads: `##` and `###`
 # headings, a marker, each companion block, a `pending` example and an `args` example.
-FENCE = '```'
+FENCE = "```"
 REF_PAGES = {
-    'README': f"""# Language reference
+    "README": f"""# Language reference
 
 The language reference says what each construct means. See [the escapes](literals.md#escapes).
 
@@ -176,7 +198,7 @@ fn main() {{
 }}
 {FENCE}
 """,
-    'literals': f"""# Literals
+    "literals": f"""# Literals
 
 A *literal* is a value written in the source.
 
@@ -214,7 +236,7 @@ fn main() {{
 }}
 {FENCE}
 """,
-    'later': f"""# Later
+    "later": f"""# Later
 
 ## Soon
 
@@ -233,10 +255,10 @@ def reference_dir(test, pages, listed=None):
     test.addCleanup(tmp.cleanup)
     folder = Path(tmp.name)
     for stem, text in pages.items():
-        (folder / f'{stem}.md').write_text(text, encoding='utf-8')
-    entries = [{'file': stem, 'description': f'About {stem}.'} for stem in (listed or pages)]
-    test.enterContext(mock.patch.object(build, 'REFERENCE', folder))
-    test.enterContext(mock.patch.object(build, 'reference_list', lambda: entries))
+        (folder / f"{stem}.md").write_text(text, encoding="utf-8")
+    entries = [{"file": stem, "description": f"About {stem}."} for stem in (listed or pages)]
+    test.enterContext(mock.patch.object(build, "REFERENCE", folder))
+    test.enterContext(mock.patch.object(build, "reference_list", lambda: entries))
     return entries
 
 
@@ -245,7 +267,7 @@ def built_site(test, pages, listed=None):
     reference_dir(test, pages, listed)
     tmp = tempfile.TemporaryDirectory()
     test.addCleanup(tmp.cleanup)
-    out = Path(tmp.name) / 'site'
+    out = Path(tmp.name) / "site"
     build.build(out)
     return out
 
@@ -259,10 +281,10 @@ def companion_blocks(markdown):
     """The `output`, `input` and `stderr` fences of a page, read line by line apart from markdown-it."""
     count, fence = 0, None
     for line in markdown.splitlines():
-        ticks = len(line) - len(line.lstrip('`'))
+        ticks = len(line) - len(line.lstrip("`"))
         if fence is None and ticks >= 3:
             fence = ticks
-            count += line[ticks:].strip() in ('output', 'input', 'stderr')
+            count += line[ticks:].strip() in ("output", "input", "stderr")
         elif fence is not None and ticks >= fence and not line[ticks:].strip():
             fence = None
     return count
@@ -275,11 +297,13 @@ class Build(unittest.TestCase):
         self.assertIn(page, found[0])
 
     def test_text_and_diag_escape_markup(self):
-        path = temp_file(self, 'a < b && c > d')
-        self.assertEqual(build.expand(f'{{{{text {path}}}}}', {}), 'a &lt; b &amp;&amp; c &gt; d')
-        shown = build.diag_html((build.SITE / 'programs/diagnostics/rounds.err').read_text(encoding='utf-8'))
-        self.assertIn('sisu explain &lt;code&gt;', shown)
-        self.assertNotIn('<code>', shown)
+        path = temp_file(self, "a < b && c > d")
+        self.assertEqual(build.expand(f"{{{{text {path}}}}}", {}), "a &lt; b &amp;&amp; c &gt; d")
+        shown = build.diag_html(
+            (build.SITE / "programs/diagnostics/rounds.err").read_text(encoding="utf-8")
+        )
+        self.assertIn("sisu explain &lt;code&gt;", shown)
+        self.assertNotIn("<code>", shown)
 
     def test_diag_html_matches_the_mockup_colouring(self):
         shown = build.diag_html(E0032)
@@ -292,54 +316,76 @@ class Build(unittest.TestCase):
                 self.assertIn(span, build.diag_html(text))
 
     def test_unknown_directive_fails(self):
-        with self.assertRaisesRegex(build.BuildError, 'nope'):
-            build.expand('{{nope}}', {})
+        with self.assertRaisesRegex(build.BuildError, "nope"):
+            build.expand("{{nope}}", {})
 
     def test_directive_arguments_are_counted(self):
-        for text in ('{{text}}', '{{text a b}}'):
-            with self.subTest(text), self.assertRaisesRegex(build.BuildError, re.escape(f'expected {{{{text path}}}}, found {text}')):
+        for text in ("{{text}}", "{{text a b}}"):
+            with (
+                self.subTest(text),
+                self.assertRaisesRegex(
+                    build.BuildError, re.escape(f"expected {{{{text path}}}}, found {text}")
+                ),
+            ):
                 build.expand(text, {})
 
     def test_substitution_is_not_expanded_again(self):
-        path = temp_file(self, '{{root}}')
-        self.assertEqual(build.expand(f'{{{{text {path}}}}}', {'root': '../'}), '{{root}}')
+        path = temp_file(self, "{{root}}")
+        self.assertEqual(build.expand(f"{{{{text {path}}}}}", {"root": "../"}), "{{root}}")
 
     def test_head_escapes_title_and_description(self):
-        page = build.assemble('', title='A <go> & B', description='Say "hi" & <go>', page='tour.html', depth=0, context={})
-        self.assertIn('<title>A &lt;go&gt; &amp; B', page)
+        page = build.assemble(
+            "",
+            title="A <go> & B",
+            description='Say "hi" & <go>',
+            page="tour.html",
+            depth=0,
+            context={},
+        )
+        self.assertIn("<title>A &lt;go&gt; &amp; B", page)
         self.assertIn('content="Say &quot;hi&quot; &amp; &lt;go&gt;"', page)
 
     def test_assemble_marks_the_page_and_its_depth(self):
-        page = build.assemble('', title='t', description='d', page='diagnostics.html', depth=1, context={})
+        page = build.assemble(
+            "", title="t", description="d", page="diagnostics.html", depth=1, context={}
+        )
         self.assertIn('<a href="../diagnostics.html" aria-current="page">', page)
-        self.assertEqual(page.count('aria-current'), 1)
+        self.assertEqual(page.count("aria-current"), 1)
         self.assertIn('href="../assets/site.css"', page)
-        missing = build.assemble('', title='t', description='d', page='404.html', depth=0, context={})
+        missing = build.assemble(
+            "", title="t", description="d", page="404.html", depth=0, context={}
+        )
         self.assertIn('href="/sisu/assets/site.css"', missing)
 
     def test_help_quotes_the_file(self):
-        path = temp_file(self, '  = help: x\nhelp: a `b` <c>\n')
-        self.assertEqual(build.expand(f'{{{{help {path}}}}}', {}), 'a `b` &lt;c&gt;')
-        bare = temp_file(self, '  = help: x\n')
+        path = temp_file(self, "  = help: x\nhelp: a `b` <c>\n")
+        self.assertEqual(build.expand(f"{{{{help {path}}}}}", {}), "a `b` &lt;c&gt;")
+        bare = temp_file(self, "  = help: x\n")
         with self.assertRaisesRegex(build.BuildError, re.escape(str(bare))):
-            build.expand(f'{{{{help {bare}}}}}', {})
+            build.expand(f"{{{{help {bare}}}}}", {})
 
     def test_links_resolve_from_the_page_directory(self):
         base = {
-            'index.html': PAGE.format('<p id="top">top</p>'),
-            'assets/site.css': '',
+            "index.html": PAGE.format('<p id="top">top</p>'),
+            "assets/site.css": "",
         }
         cases = [
             ('<link rel="stylesheet" href="../assets/site.css">', True),
             ('<a href="../index.html#top">top</a>', True),
             ('<a href="/sisu/index.html">home</a>', True),
-            ('<a href="https://github.com/sisu-lang/sisu/blob/main/docs/development.md">dev</a>', True),
+            (
+                '<a href="https://github.com/sisu-lang/sisu/blob/main/docs/development.md">dev</a>',
+                True,
+            ),
             ('<link rel="stylesheet" href="assets/site.css">', False),
             ('<a href="#missing">x</a>', False),
             ('<a href="#">x</a>', False),
             ('<a href="/sisu/nope.html">x</a>', False),
             ('<a href="https://github.com/sisu-lang/sisu/blob/main/docs/nope.md">x</a>', False),
-            ('<a href="https://github.com/sisu-lang/sisu/blob/main/docs/development.md#nope">x</a>', False),
+            (
+                '<a href="https://github.com/sisu-lang/sisu/blob/main/docs/development.md#nope">x</a>',
+                False,
+            ),
             ('<script src="https://cdn.example/x.js"></script>', False),
             ("<a href='missing.html'>x</a>", False),
             ("<script src='https://cdn.example/x.js'></script>", False),
@@ -347,166 +393,228 @@ class Build(unittest.TestCase):
         ]
         for body, ok in cases:
             with self.subTest(body):
-                found = problems(self, base | {'diagnostics/X.html': PAGE.format(body)})
+                found = problems(self, base | {"diagnostics/X.html": PAGE.format(body)})
                 if ok:
                     self.assertEqual(found, [])
                 else:
-                    self.assert_fails('diagnostics/X.html', found)
+                    self.assert_fails("diagnostics/X.html", found)
 
     def test_diag_html_keeps_the_text(self):
-        errs = sorted((build.SITE / 'programs').rglob('*.err'))
+        errs = sorted((build.SITE / "programs").rglob("*.err"))
         self.assertGreater(len(errs), 100)
         for err in errs:
             with self.subTest(err.name):
-                text = err.read_text(encoding='utf-8')
-                self.assertEqual(html.unescape(re.sub(r'<[^>]*>', '', build.diag_html(text))), text)
+                text = err.read_text(encoding="utf-8")
+                self.assertEqual(html.unescape(re.sub(r"<[^>]*>", "", build.diag_html(text))), text)
 
     def test_stylesheet_urls(self):
-        page = {'index.html': PAGE.format('')}
+        page = {"index.html": PAGE.format("")}
         cases = [
-            ('@font-face { src: url(https://fonts.example/f.woff2); }', False),
+            ("@font-face { src: url(https://fonts.example/f.woff2); }", False),
             ('@import "https://fonts.example/f.css";', False),
-            ('@font-face { src: url(fonts/missing.woff2); }', False),
+            ("@font-face { src: url(fonts/missing.woff2); }", False),
             ('@font-face { src: url("fonts/f.woff2") format("woff2"); }', True),
         ]
         for css, ok in cases:
             with self.subTest(css):
-                found = problems(self, page | {'assets/site.css': css, 'assets/fonts/f.woff2': ''})
+                found = problems(self, page | {"assets/site.css": css, "assets/fonts/f.woff2": ""})
                 if ok:
                     self.assertEqual(found, [])
                 else:
-                    self.assert_fails('assets/site.css', found)
+                    self.assert_fails("assets/site.css", found)
         # A page's own <style> and style="" are checked too, resolved from the page's directory.
         styles = [
-            ('<style>body { background: url(https://cdn.example/bg.png); }</style>', False),
+            ("<style>body { background: url(https://cdn.example/bg.png); }</style>", False),
             ('<p style="background: url(https://cdn.example/bg.png)">x</p>', False),
-            ('<style>@font-face { src: url(assets/fonts/f.woff2); }</style>', False),
-            ('<style>@font-face { src: url(../assets/fonts/f.woff2); }</style>', True),
+            ("<style>@font-face { src: url(assets/fonts/f.woff2); }</style>", False),
+            ("<style>@font-face { src: url(../assets/fonts/f.woff2); }</style>", True),
         ]
         for body, ok in styles:
             with self.subTest(body):
-                found = problems(self, page | {'diagnostics/X.html': PAGE.format(body), 'assets/fonts/f.woff2': ''})
+                found = problems(
+                    self,
+                    page | {"diagnostics/X.html": PAGE.format(body), "assets/fonts/f.woff2": ""},
+                )
                 if ok:
                     self.assertEqual(found, [])
                 else:
-                    self.assert_fails('diagnostics/X.html', found)
+                    self.assert_fails("diagnostics/X.html", found)
 
     def test_copy_words(self):
         cases = [
-            ('<p>Milestone 9</p>', False),
-            ('<p>Kotlin</p>', False),
-            ('<!-- x -->', False),
-            ('<pre>labels come in milestone 10</pre>', True),
+            ("<p>Milestone 9</p>", False),
+            ("<p>Kotlin</p>", False),
+            ("<!-- x -->", False),
+            ("<pre>labels come in milestone 10</pre>", True),
             ('<pre data-lang="out">labels come in milestone 10</pre>', False),
         ]
         for body, ok in cases:
             with self.subTest(body):
-                found = problems(self, {'tour.html': PAGE.format(body)})
+                found = problems(self, {"tour.html": PAGE.format(body)})
                 if ok:
                     self.assertEqual(found, [])
                 else:
-                    self.assert_fails('tour.html', found)
+                    self.assert_fails("tour.html", found)
 
     def test_headings(self):
         cases = [
-            ('<h2>a</h2><h3>b</h3><h2>c</h2>', True),
-            ('<h1>again</h1>', False),
-            ('<h3>skips h2</h3>', False),
+            ("<h2>a</h2><h3>b</h3><h2>c</h2>", True),
+            ("<h1>again</h1>", False),
+            ("<h3>skips h2</h3>", False),
         ]
         for body, ok in cases:
             with self.subTest(body):
-                found = problems(self, {'tour.html': PAGE.format(body)})
+                found = problems(self, {"tour.html": PAGE.format(body)})
                 if ok:
                     self.assertEqual(found, [])
                 else:
-                    self.assert_fails('tour.html', found)
+                    self.assert_fails("tour.html", found)
 
     def test_build_replaces_only_its_own_output(self):
-        site = fake_site(self, {'index.html': 'Home\n\n<h1>Home</h1>\n'})
-        out = site / '_site'
+        site = fake_site(self, {"index.html": "Home\n\n<h1>Home</h1>\n"})
+        out = site / "_site"
         build.build(out)
         build.build(out)  # the first build marked the directory as its own
-        self.assertTrue((out / 'index.html').is_file())
-        notes = site.parent / 'notes'
+        self.assertTrue((out / "index.html").is_file())
+        notes = site.parent / "notes"
         notes.mkdir()
-        (notes / 'keep.txt').write_text('x', encoding='utf-8')
-        for dest, refusal in [(site / 'src', 'is a build input'), (site.parent, 'is a build input'), (notes, 'not built by')]:
+        (notes / "keep.txt").write_text("x", encoding="utf-8")
+        for dest, refusal in [
+            (site / "src", "is a build input"),
+            (site.parent, "is a build input"),
+            (notes, "not built by"),
+        ]:
             with self.subTest(dest), self.assertRaisesRegex(build.BuildError, refusal):
                 build.build(dest)
-        self.assertTrue((site / 'src' / 'index.html').is_file())
-        self.assertTrue((notes / 'keep.txt').is_file())
+        self.assertTrue((site / "src" / "index.html").is_file())
+        self.assertTrue((notes / "keep.txt").is_file())
 
     def test_page_needs_its_title_and_description_lines(self):
-        fake_site(self, {'short.html': 'Title\n'})
-        with self.assertRaisesRegex(build.BuildError, re.escape('site/src/short.html')):
-            build.build(build.SITE / '_site')
+        fake_site(self, {"short.html": "Title\n"})
+        with self.assertRaisesRegex(build.BuildError, re.escape("site/src/short.html")):
+            build.build(build.SITE / "_site")
 
     def test_every_page_has_a_description(self):
-        for src in sorted((build.SITE / 'src').glob('*.html')):
-            description = src.read_text(encoding='utf-8').split('\n', 2)[1]
+        for src in sorted((build.SITE / "src").glob("*.html")):
+            description = src.read_text(encoding="utf-8").split("\n", 2)[1]
             with self.subTest(src.name):
-                self.assertTrue(description.strip(), 'description is empty')
+                self.assertTrue(description.strip(), "description is empty")
                 self.assertLess(len(description), 160)
 
     def test_forbid_tk(self):
-        files = {'contribute.html': PAGE.format('<p>[TK: x]</p>')}
+        files = {"contribute.html": PAGE.format("<p>[TK: x]</p>")}
         self.assertEqual(problems(self, files), [])
-        self.assert_fails('contribute.html', problems(self, files, forbid_tk=True))
+        self.assert_fails("contribute.html", problems(self, files, forbid_tk=True))
 
     def test_status_board(self):
-        fake_site(self, {}, {'site/data/status.toml': STATUS, 'docs/diagnostics/E0001.md': ''})
-        board = build.expand('{{status-board}}', {})
-        counts = [re.sub('<[^>]*>', '', c) for c in re.findall(r'<span class="counts">(.*?)</span>', board)]
-        self.assertEqual(counts, ['2 work today · 1 next', '1 work today · 1 planned'])
-        self.assertEqual(re.findall(r'<i class="(\w+)" style="flex:(\d+)"', board), [('ok', '2'), ('next', '1'), ('ok', '1'), ('plan', '1')])
-        self.assertEqual(re.findall(r'<details class="area"( open)?>', board), ['', ''])
-        self.assertEqual(re.findall(r'<span class="area-name">(.*?)</span>', board), ['One', 'Two'])
-        self.assertEqual(re.findall(r'<p class="note">(.*?)</p>', board), ['Careful.'])
-        self.assertIn('<li>Alpha for 1 codes</li>', board)
+        fake_site(self, {}, {"site/data/status.toml": STATUS, "docs/diagnostics/E0001.md": ""})
+        board = build.expand("{{status-board}}", {})
+        counts = [
+            re.sub("<[^>]*>", "", c)
+            for c in re.findall(r'<span class="counts">(.*?)</span>', board)
+        ]
+        self.assertEqual(counts, ["2 work today · 1 next", "1 work today · 1 planned"])
+        self.assertEqual(
+            re.findall(r'<i class="(\w+)" style="flex:(\d+)"', board),
+            [("ok", "2"), ("next", "1"), ("ok", "1"), ("plan", "1")],
+        )
+        self.assertEqual(re.findall(r'<details class="area"( open)?>', board), ["", ""])
+        self.assertEqual(re.findall(r'<span class="area-name">(.*?)</span>', board), ["One", "Two"])
+        self.assertEqual(re.findall(r'<p class="note">(.*?)</p>', board), ["Careful."])
+        self.assertIn("<li>Alpha for 1 codes</li>", board)
         self.assertRegex(board, r'<h3>Coming next</h3><ul class="nx"><li>Gamma')
 
     def test_status_tables(self):
-        fake_site(self, {}, {'site/data/status.toml': STATUS, 'docs/diagnostics/E0001.md': ''})
-        tables = build.expand('{{status-tables}}', {})
-        self.assertEqual(re.findall(r'<h2 id="(\w+)">(\w+)</h2>\s*<p>(.*?)</p>', tables),
-                         [('one', 'One', 'Intro <code>x</code>'), ('two', 'Two', 'Second.')])
-        rows = re.findall(r'<tr><td>(.*?)</td><td><span class="st (\w+)">(.*?)</span></td><td>(.*?)</td></tr>', tables)
-        self.assertEqual([row[:3] for row in rows], [
-            ('Alpha for 1 codes', 'ok', '✓ Works today'), ('Beta', 'ok', '✓ Works today'), ('Gamma', 'next', '● Coming next'),
-            ('Delta', 'ok', '✓ Works today'), ('Epsilon', 'plan', '○ Planned')])
-        self.assertEqual([re.findall(r'<a href="(.*?)">(.*?)</a>', row[3]) for row in rows[:3]], [
-            [(build.BLOB + 'docs/adr/0001-first.md', 'ADR 1'), (build.BLOB + 'docs/roadmap.md#what-works-today', 'Roadmap: here')],
-            [], [(build.BLOB + 'docs/roadmap.md', 'Roadmap')]])
+        fake_site(self, {}, {"site/data/status.toml": STATUS, "docs/diagnostics/E0001.md": ""})
+        tables = build.expand("{{status-tables}}", {})
+        self.assertEqual(
+            re.findall(r'<h2 id="(\w+)">(\w+)</h2>\s*<p>(.*?)</p>', tables),
+            [("one", "One", "Intro <code>x</code>"), ("two", "Two", "Second.")],
+        )
+        rows = re.findall(
+            r'<tr><td>(.*?)</td><td><span class="st (\w+)">(.*?)</span></td><td>(.*?)</td></tr>',
+            tables,
+        )
+        self.assertEqual(
+            [row[:3] for row in rows],
+            [
+                ("Alpha for 1 codes", "ok", "✓ Works today"),
+                ("Beta", "ok", "✓ Works today"),
+                ("Gamma", "next", "● Coming next"),
+                ("Delta", "ok", "✓ Works today"),
+                ("Epsilon", "plan", "○ Planned"),
+            ],
+        )
+        self.assertEqual(
+            [re.findall(r'<a href="(.*?)">(.*?)</a>', row[3]) for row in rows[:3]],
+            [
+                [
+                    (build.BLOB + "docs/adr/0001-first.md", "ADR 1"),
+                    (build.BLOB + "docs/roadmap.md#what-works-today", "Roadmap: here"),
+                ],
+                [],
+                [(build.BLOB + "docs/roadmap.md", "Roadmap")],
+            ],
+        )
 
     def test_status_state_must_be_known(self):
-        fake_site(self, {}, {'site/data/status.toml': STATUS.replace('"next"', '"soon"', 1)})
-        with self.assertRaisesRegex(build.BuildError, 'soon'):
-            build.expand('{{status-tables}}', {})
+        fake_site(self, {}, {"site/data/status.toml": STATUS.replace('"next"', '"soon"', 1)})
+        with self.assertRaisesRegex(build.BuildError, "soon"):
+            build.expand("{{status-tables}}", {})
 
     def test_status_data_must_be_complete(self):
-        cases = [('area id', 'id = "one"\n', 'area 1'), ('area name', 'name = "One"\n', "'one'"), ('area intro', 'intro = "Second."\n', "'two'"),
-                 ('area note', 'note = "Careful."\n', "'one'"), ('feature text', 'text = "Beta"\n', "'one'"),
-                 ('feature state', 'state = "next"\n', "'one'"), ('feature notes', 'notes = []\n', "'Beta'")]
+        cases = [
+            ("area id", 'id = "one"\n', "area 1"),
+            ("area name", 'name = "One"\n', "'one'"),
+            ("area intro", 'intro = "Second."\n', "'two'"),
+            ("area note", 'note = "Careful."\n', "'one'"),
+            ("feature text", 'text = "Beta"\n', "'one'"),
+            ("feature state", 'state = "next"\n', "'one'"),
+            ("feature notes", "notes = []\n", "'Beta'"),
+        ]
         for name, line, where in cases:
             with self.subTest(name):
-                fake_site(self, {}, {'site/data/status.toml': STATUS.replace(line, '', 1)})
-                with self.assertRaisesRegex(build.BuildError, rf'status\.toml.*{where}'):
-                    build.expand('{{status-tables}}', {})
-        fake_site(self, {}, {'site/data/status.toml': '[[area]]\nid = "one"\nname = "One"\nintro = ""\nnote = ""\n'})
+                fake_site(self, {}, {"site/data/status.toml": STATUS.replace(line, "", 1)})
+                with self.assertRaisesRegex(build.BuildError, rf"status\.toml.*{where}"):
+                    build.expand("{{status-tables}}", {})
+        fake_site(
+            self,
+            {},
+            {
+                "site/data/status.toml": '[[area]]\nid = "one"\nname = "One"\nintro = ""\nnote = ""\n'
+            },
+        )
         with self.assertRaisesRegex(build.BuildError, r"status\.toml.*'one'.*feature"):
-            build.expand('{{status-board}}', {})
+            build.expand("{{status-board}}", {})
 
     def test_status_note_paths_are_checked(self):
-        page = 'Status\n\n<h1>Status</h1>\n{{status-tables}}\n'
-        cases = [('docs/roadmap.md#what-works-today', True), ('docs/nope.md', False), ('docs/roadmap.md#nope', False)]
+        page = "Status\n\n<h1>Status</h1>\n{{status-tables}}\n"
+        cases = [
+            ("docs/roadmap.md#what-works-today", True),
+            ("docs/nope.md", False),
+            ("docs/roadmap.md#nope", False),
+        ]
         for path, ok in cases:
             with self.subTest(path):
-                toml = STATUS.replace('docs/roadmap.md#what-works-today', path)
-                site = fake_site(self, {'status.html': page}, {'site/data/status.toml': toml, 'docs/adr/0001-first.md': '',
-                                                                'docs/roadmap.md': '# Roadmap\n\n## What works today\n'})
-                self.enterContext(mock.patch.object(build.check_links, 'TRACKED', build.check_links.TRACKED | {'docs/adr/0001-first.md'}))
-                build.build(site / '_site')
-                found = build.check_site(site / '_site')
+                toml = STATUS.replace("docs/roadmap.md#what-works-today", path)
+                site = fake_site(
+                    self,
+                    {"status.html": page},
+                    {
+                        "site/data/status.toml": toml,
+                        "docs/adr/0001-first.md": "",
+                        "docs/roadmap.md": "# Roadmap\n\n## What works today\n",
+                    },
+                )
+                self.enterContext(
+                    mock.patch.object(
+                        build.check_links,
+                        "TRACKED",
+                        build.check_links.TRACKED | {"docs/adr/0001-first.md"},
+                    )
+                )
+                build.build(site / "_site")
+                found = build.check_site(site / "_site")
                 if ok:
                     self.assertEqual(found, [])
                 else:
@@ -514,364 +622,667 @@ class Build(unittest.TestCase):
 
     def test_counts(self):
         # A retired code's page is not counted.
-        fake_site(self, {}, {f'docs/adr/{name}.md': '# T' for name in ('0001-a', '0002-b')}
-                  | {f'docs/diagnostics/{name}.md': '' for name in ('E0001', 'W0002', 'README')}
-                  | {'docs/diagnostics/E0003.md': '# E0003: t\n\nStatus: retired in ADR 0028.\n'})
-        self.assertEqual(build.expand('{{adr-count}} {{diagnostic-count}}', {}), '2 2')
+        fake_site(
+            self,
+            {},
+            {f"docs/adr/{name}.md": "# T" for name in ("0001-a", "0002-b")}
+            | {f"docs/diagnostics/{name}.md": "" for name in ("E0001", "W0002", "README")}
+            | {"docs/diagnostics/E0003.md": "# E0003: t\n\nStatus: retired in ADR 0028.\n"},
+        )
+        self.assertEqual(build.expand("{{adr-count}} {{diagnostic-count}}", {}), "2 2")
 
     def test_adr_list(self):
-        fake_site(self, {}, {'docs/adr/0001-first.md': '# First `code` record\n\nBody.\n', 'docs/adr/0002-second.md': '# Second\n'})
-        self.enterContext(mock.patch.object(build.check_links, 'TRACKED', {'docs/adr/0001-first.md', 'docs/adr/0002-second.md'}))
+        fake_site(
+            self,
+            {},
+            {
+                "docs/adr/0001-first.md": "# First `code` record\n\nBody.\n",
+                "docs/adr/0002-second.md": "# Second\n",
+            },
+        )
+        self.enterContext(
+            mock.patch.object(
+                build.check_links, "TRACKED", {"docs/adr/0001-first.md", "docs/adr/0002-second.md"}
+            )
+        )
         cases = [
-            ('both', adr_row('0001', 'first', 'First <code>code</code> record') + adr_row('0002', 'second', 'Second'), True),
-            ('small note', adr_row('0001', 'first', 'First <code>code</code> record<small>proposed</small>') + adr_row('0002', 'second', 'Second'), True),
-            ('soon note', adr_row('0001', 'first', 'First <code>code</code> record') + adr_row('0002', 'second', 'Second <span class="soon">planned</span>'), True),
-            ('missing', adr_row('0001', 'first', 'First <code>code</code> record'), False),
-            ('twice', adr_row('0001', 'first', 'First <code>code</code> record') * 2 + adr_row('0002', 'second', 'Second'), False),
-            ('different title', adr_row('0001', 'first', 'First code record') + adr_row('0002', 'second', 'Second'), False),
-            ('longer title', adr_row('0001', 'first', 'First <code>code</code> record') + adr_row('0002', 'second', 'Second one'), False),
-            ('visible tags', adr_row('0001', 'first', 'First &lt;code&gt;code&lt;/code&gt; record') + adr_row('0002', 'second', 'Second'), False),
-            ('wrong number', adr_row('0001', 'first', 'First <code>code</code> record', shown='0012') + adr_row('0002', 'second', 'Second'), False),
+            (
+                "both",
+                adr_row("0001", "first", "First <code>code</code> record")
+                + adr_row("0002", "second", "Second"),
+                True,
+            ),
+            (
+                "small note",
+                adr_row("0001", "first", "First <code>code</code> record<small>proposed</small>")
+                + adr_row("0002", "second", "Second"),
+                True,
+            ),
+            (
+                "soon note",
+                adr_row("0001", "first", "First <code>code</code> record")
+                + adr_row("0002", "second", 'Second <span class="soon">planned</span>'),
+                True,
+            ),
+            ("missing", adr_row("0001", "first", "First <code>code</code> record"), False),
+            (
+                "twice",
+                adr_row("0001", "first", "First <code>code</code> record") * 2
+                + adr_row("0002", "second", "Second"),
+                False,
+            ),
+            (
+                "different title",
+                adr_row("0001", "first", "First code record") + adr_row("0002", "second", "Second"),
+                False,
+            ),
+            (
+                "longer title",
+                adr_row("0001", "first", "First <code>code</code> record")
+                + adr_row("0002", "second", "Second one"),
+                False,
+            ),
+            (
+                "visible tags",
+                adr_row("0001", "first", "First &lt;code&gt;code&lt;/code&gt; record")
+                + adr_row("0002", "second", "Second"),
+                False,
+            ),
+            (
+                "wrong number",
+                adr_row("0001", "first", "First <code>code</code> record", shown="0012")
+                + adr_row("0002", "second", "Second"),
+                False,
+            ),
         ]
         for name, rows, ok in cases:
             with self.subTest(name):
-                found = problems(self, {'decisions.html': PAGE.format(f'<ul>{rows}</ul>')})
+                found = problems(self, {"decisions.html": PAGE.format(f"<ul>{rows}</ul>")})
                 if ok:
                     self.assertEqual(found, [])
                 else:
-                    self.assert_fails('decisions.html', found)
+                    self.assert_fails("decisions.html", found)
 
     def test_decisions_should_check_adr_rows_without_building(self):
-        adrs = {'docs/adr/0001-first.md': '# First\n', 'docs/adr/0002-second.md': '# Second\n'}
-        listed = adr_row('0001', 'first', 'First') + adr_row('0002', 'second', 'Second')
-        cases = [('complete', listed, True), ('new ADR has no row', adr_row('0001', 'first', 'First'), False),
-                 ('row only in a comment', adr_row('0001', 'first', 'First') + '\n<!-- ' + adr_row('0002', 'second', 'Second') + ' -->\n', False)]
+        adrs = {"docs/adr/0001-first.md": "# First\n", "docs/adr/0002-second.md": "# Second\n"}
+        listed = adr_row("0001", "first", "First") + adr_row("0002", "second", "Second")
+        cases = [
+            ("complete", listed, True),
+            ("new ADR has no row", adr_row("0001", "first", "First"), False),
+            (
+                "row only in a comment",
+                adr_row("0001", "first", "First")
+                + "\n<!-- "
+                + adr_row("0002", "second", "Second")
+                + " -->\n",
+                False,
+            ),
+        ]
         for name, rows, ok in cases:
             with self.subTest(name):
-                fake_site(self, {'decisions.html': f'Title\nMeta\n<ul>{rows}</ul>\n'}, adrs)
+                fake_site(self, {"decisions.html": f"Title\nMeta\n<ul>{rows}</ul>\n"}, adrs)
                 out = io.StringIO()
                 with contextlib.redirect_stdout(out):
-                    status = build.main(['--decisions'])
+                    status = build.main(["--decisions"])
                 self.assertEqual(status, 0 if ok else 1, out.getvalue())
                 if not ok:
-                    self.assertIn('decisions.html: lists docs/adr/0002-second.md 0 times, not once', out.getvalue())
-                self.assertFalse((build.SITE / '_site').exists())
+                    self.assertIn(
+                        "decisions.html: lists docs/adr/0002-second.md 0 times, not once",
+                        out.getvalue(),
+                    )
+                self.assertFalse((build.SITE / "_site").exists())
 
     def test_adr_needs_a_heading(self):
-        fake_site(self, {}, {'docs/adr/0001-first.md': 'No heading.\n'})
-        self.enterContext(mock.patch.object(build.check_links, 'TRACKED', {'docs/adr/0001-first.md'}))
-        found = problems(self, {'decisions.html': PAGE.format('<ul>' + adr_row('0001', 'first', 'First') + '</ul>')})
-        self.assert_fails('decisions.html', found)
+        fake_site(self, {}, {"docs/adr/0001-first.md": "No heading.\n"})
+        self.enterContext(
+            mock.patch.object(build.check_links, "TRACKED", {"docs/adr/0001-first.md"})
+        )
+        found = problems(
+            self,
+            {"decisions.html": PAGE.format("<ul>" + adr_row("0001", "first", "First") + "</ul>")},
+        )
+        self.assert_fails("decisions.html", found)
         self.assertIn('no "# " heading', found[0])
 
     def test_status_board_headings(self):
-        fake_site(self, {}, {'site/data/status.toml': STATUS})
-        board = build.expand('{{status-board}}', {})
-        self.assertNotRegex(board, r'<summary>(?:(?!</summary>).)*<h\d')
-        self.assertEqual(re.findall(r'<h(\d)>(.*?)</h', board), [('3', 'Works today'), ('3', 'Coming next'), ('3', 'Works today'), ('3', 'Planned')])
+        fake_site(self, {}, {"site/data/status.toml": STATUS})
+        board = build.expand("{{status-board}}", {})
+        self.assertNotRegex(board, r"<summary>(?:(?!</summary>).)*<h\d")
+        self.assertEqual(
+            re.findall(r"<h(\d)>(.*?)</h", board),
+            [("3", "Works today"), ("3", "Coming next"), ("3", "Works today"), ("3", "Planned")],
+        )
         page = f'<h1>Home</h1><svg><symbol id="chev"></symbol></svg><section><h2>Where Sisu stands</h2>{board}</section>'
-        self.assertEqual(problems(self, {'index.html': PAGE.replace('<h1>Page</h1>{}', '{}').format(page)}), [])
+        self.assertEqual(
+            problems(self, {"index.html": PAGE.replace("<h1>Page</h1>{}", "{}").format(page)}), []
+        )
 
     def test_explanation_links(self):
-        adr = '../adr/0019-enums-are-values-named-through-their-enum.md'
-        cases = [('#considered-options', True), ('#nope', False)]
+        adr = "../adr/0019-enums-are-values-named-through-their-enum.md"
+        cases = [("#considered-options", True), ("#nope", False)]
         for anchor, ok in cases:
             with self.subTest(anchor):
-                text = f'# X0001: t\n\nSee [W0002](W0002.md) and [ADR 19]({adr}{anchor}).\n\n## Fixed\n'
-                shown = build.explanation_html('X0001', text, '')
+                text = f"# X0001: t\n\nSee [W0002](W0002.md) and [ADR 19]({adr}{anchor}).\n\n## Fixed\n"
+                shown = build.explanation_html("X0001", text, "")
                 self.assertIn('<a href="W0002.html">W0002</a>', shown)
-                url = f'{build.BLOB}docs/adr/0019-enums-are-values-named-through-their-enum.md{anchor}'
+                url = f"{build.BLOB}docs/adr/0019-enums-are-values-named-through-their-enum.md{anchor}"
                 self.assertIn(f'<a href="{url}">ADR 19</a>', shown)
-                found = problems(self, {'diagnostics/X0001.html': PAGE.format(shown), 'diagnostics/W0002.html': PAGE.format('')})
+                found = problems(
+                    self,
+                    {
+                        "diagnostics/X0001.html": PAGE.format(shown),
+                        "diagnostics/W0002.html": PAGE.format(""),
+                    },
+                )
                 if ok:
                     self.assertEqual(found, [])
                 else:
-                    self.assert_fails('diagnostics/X0001.html', found)
+                    self.assert_fails("diagnostics/X0001.html", found)
                     self.assertIn(url, found[0])
 
     def test_explanation_html_is_text(self):
         # `sisu explain` prints the Markdown as it is, so a `<` outside code shows, and markup cannot slip past the checks.
         text = '# X0001: t\n\nA value of type Option<T> is <iframe src="https://evil.example/x"></iframe> here.\n\n    indented milestone 9\n\n## Fixed\n'
-        shown = build.explanation_html('X0001', text, '')
-        self.assertIn('<p>A value of type Option&lt;T&gt; is &lt;iframe src=&quot;https://evil.example/x&quot;&gt;&lt;/iframe&gt; here.</p>', shown)
-        self.assertNotIn('<iframe', shown)
+        shown = build.explanation_html("X0001", text, "")
+        self.assertIn(
+            "<p>A value of type Option&lt;T&gt; is &lt;iframe src=&quot;https://evil.example/x&quot;&gt;&lt;/iframe&gt; here.</p>",
+            shown,
+        )
+        self.assertNotIn("<iframe", shown)
         self.assertIn('<pre data-lang="">indented milestone 9\n</pre>', shown)
-        self.assert_fails('diagnostics/X0001.html', problems(self, {'diagnostics/X0001.html': PAGE.format(shown)}))
+        self.assert_fails(
+            "diagnostics/X0001.html", problems(self, {"diagnostics/X0001.html": PAGE.format(shown)})
+        )
 
     def test_categories_complete(self):
-        explained = {f'docs/diagnostics/{name}.md': '' for name in ('E0001', 'W0002', 'README')}
+        explained = {f"docs/diagnostics/{name}.md": "" for name in ("E0001", "W0002", "README")}
         cases = [
-            ('complete', '["E0001"]', '["W0002"]', None),
-            ('missing', '["E0001"]', '[]', 'W0002'),
-            ('no explanation', '["E0001", "E0003"]', '["W0002"]', 'E0003'),
-            ('twice', '["E0001"]', '["W0002", "E0001"]', 'E0001'),
+            ("complete", '["E0001"]', '["W0002"]', None),
+            ("missing", '["E0001"]', "[]", "W0002"),
+            ("no explanation", '["E0001", "E0003"]', '["W0002"]', "E0003"),
+            ("twice", '["E0001"]', '["W0002", "E0001"]', "E0001"),
         ]
         for name, one, two, code in cases:
             with self.subTest(name):
                 toml = f'[[category]]\nid = "a"\nname = "A"\ncodes = {one}\n\n[[category]]\nid = "b"\nname = "B"\ncodes = {two}\n'
-                fake_site(self, {}, explained | {'site/data/categories.toml': toml})
+                fake_site(self, {}, explained | {"site/data/categories.toml": toml})
                 found = problems(self, {})
                 if code is None:
                     self.assertEqual(found, [])
                 else:
-                    self.assert_fails('categories.toml', found)
+                    self.assert_fails("categories.toml", found)
                     self.assertIn(code, found[0])
 
     def test_benchmark_table_shape(self):
-        tables = build.benchmark_tables(bench_md(md_table('fib', FIB)))
-        self.assertEqual(tables['fib']['Sisu'], {'Wall (s)': '0.26', 'CPU (s)': '0.1', 'Peak RSS (MiB)': '1.0',
-                                                 'Binary (KiB)': '9', 'Build (s)': '0.05'})
-        self.assertEqual(list(tables['fib']), list(FIB))
-        fib = md_table('fib', FIB)
+        tables = build.benchmark_tables(bench_md(md_table("fib", FIB)))
+        self.assertEqual(
+            tables["fib"]["Sisu"],
+            {
+                "Wall (s)": "0.26",
+                "CPU (s)": "0.1",
+                "Peak RSS (MiB)": "1.0",
+                "Binary (KiB)": "9",
+                "Build (s)": "0.05",
+            },
+        )
+        self.assertEqual(list(tables["fib"]), list(FIB))
+        fib = md_table("fib", FIB)
         cases = [
-            ('a renamed column', fib.replace('CPU (s)', 'CPU'), 'fib'),
-            ('a new language', md_table('fib', FIB | {'Zig': '0.2'}), 'fib'),
-            ('a missing language', md_table('fib', {k: v for k, v in FIB.items() if k != 'Go'}), 'fib'),
-            ('a program without a table', fib + '### sieve\n\nNo table yet.\n\n', 'sieve'),
+            ("a renamed column", fib.replace("CPU (s)", "CPU"), "fib"),
+            ("a new language", md_table("fib", FIB | {"Zig": "0.2"}), "fib"),
+            (
+                "a missing language",
+                md_table("fib", {k: v for k, v in FIB.items() if k != "Go"}),
+                "fib",
+            ),
+            ("a program without a table", fib + "### sieve\n\nNo table yet.\n\n", "sieve"),
         ]
         for name, table, program in cases:
             with self.subTest(name):
-                with self.assertRaisesRegex(build.BuildError, rf'docs/benchmarks\.md.*{program}'):
+                with self.assertRaisesRegex(build.BuildError, rf"docs/benchmarks\.md.*{program}"):
                     build.benchmark_tables(bench_md(table))
-        expected = ['fib', 'sieve']
-        with self.assertRaisesRegex(build.BuildError, r"docs/benchmarks\.md.*missing \['sieve'\], extra \[\]"):
+        expected = ["fib", "sieve"]
+        with self.assertRaisesRegex(
+            build.BuildError, r"docs/benchmarks\.md.*missing \['sieve'\], extra \[\]"
+        ):
             build.benchmark_tables(bench_md(fib), expected)
-        with self.assertRaisesRegex(build.BuildError, r"docs/benchmarks\.md.*missing \[\], extra \['zig'\]"):
-            build.benchmark_tables(bench_md(fib, md_table('sieve', FIB), md_table('zig', FIB)), expected)
-        self.assertEqual(build.benchmark_tables(bench_md(md_table('sieve', FIB), fib), expected).keys(), {'fib', 'sieve'})
-        other = f'## The programs\n\n{BENCH_HEADER}| Zig | 1 | 1 | 1 | 1 | 1 |\n\n### Extra\n\nNo table.\n'
-        self.assertEqual(build.benchmark_tables(bench_md(fib) + other).keys(), {'fib'})
+        with self.assertRaisesRegex(
+            build.BuildError, r"docs/benchmarks\.md.*missing \[\], extra \['zig'\]"
+        ):
+            build.benchmark_tables(
+                bench_md(fib, md_table("sieve", FIB), md_table("zig", FIB)), expected
+            )
+        self.assertEqual(
+            build.benchmark_tables(bench_md(md_table("sieve", FIB), fib), expected).keys(),
+            {"fib", "sieve"},
+        )
+        other = f"## The programs\n\n{BENCH_HEADER}| Zig | 1 | 1 | 1 | 1 | 1 |\n\n### Extra\n\nNo table.\n"
+        self.assertEqual(build.benchmark_tables(bench_md(fib) + other).keys(), {"fib"})
 
     def test_chart_cells_must_be_drawable(self):
-        hello = md_table('hello', HELLO, HELLO_BUILDS)
+        hello = md_table("hello", HELLO, HELLO_BUILDS)
         cases = [
-            ('a Wall cell', md_table('fib', FIB | {'Go': '-'}), hello, 'fib'),
-            ("Python's Wall cell", md_table('fib', FIB | {'Python': '-'}), hello, 'fib'),
-            ('a hello Wall cell', md_table('fib', FIB), md_table('hello', HELLO | {'Go': '-'}, HELLO_BUILDS), 'hello'),
-            ('a hello Build cell', md_table('fib', FIB), md_table('hello', HELLO, HELLO_BUILDS | {'Go': '-'}), 'hello'),
-            ('a hello Python Build cell', md_table('fib', FIB), md_table('hello', HELLO, HELLO_BUILDS | {'Python': '0.5'}), 'hello'),
-            ('no hello', md_table('fib', FIB), '', 'hello'),
-            ('only zeros', md_table('fib', {lang: '0.00' for lang in FIB}), hello, 'fib'),
+            ("a Wall cell", md_table("fib", FIB | {"Go": "-"}), hello, "fib"),
+            ("Python's Wall cell", md_table("fib", FIB | {"Python": "-"}), hello, "fib"),
+            (
+                "a hello Wall cell",
+                md_table("fib", FIB),
+                md_table("hello", HELLO | {"Go": "-"}, HELLO_BUILDS),
+                "hello",
+            ),
+            (
+                "a hello Build cell",
+                md_table("fib", FIB),
+                md_table("hello", HELLO, HELLO_BUILDS | {"Go": "-"}),
+                "hello",
+            ),
+            (
+                "a hello Python Build cell",
+                md_table("fib", FIB),
+                md_table("hello", HELLO, HELLO_BUILDS | {"Python": "0.5"}),
+                "hello",
+            ),
+            ("no hello", md_table("fib", FIB), "", "hello"),
+            ("only zeros", md_table("fib", {lang: "0.00" for lang in FIB}), hello, "fib"),
             # Python is drawn off the scale, which is only true when it is the slowest.
-            ('Python faster than Go', md_table('fib', FIB | {'Python': '0.20'}), hello, 'fib'),
-            ('Python level with Go', md_table('fib', FIB | {'Python': '0.28'}), hello, 'fib'),
+            ("Python faster than Go", md_table("fib", FIB | {"Python": "0.20"}), hello, "fib"),
+            ("Python level with Go", md_table("fib", FIB | {"Python": "0.28"}), hello, "fib"),
         ]
         for name, fib, hello, program in cases:
             with self.subTest(name):
-                with self.assertRaisesRegex(build.BuildError, rf'docs/benchmarks\.md.*{program}'):
+                with self.assertRaisesRegex(build.BuildError, rf"docs/benchmarks\.md.*{program}"):
                     build.bench_charts(bench_md(fib, hello))
 
     def test_chart_widths(self):
-        charts = build.bench_charts(bench_md(md_table('hello', HELLO, HELLO_BUILDS), md_table('fib', FIB)))
-        self.assertEqual(re.findall(r'<h3>(.*?)</h3><p class="unit">(.*?)</p>', charts),
-                         [('fib', 'wall time, seconds'), ('hello', 'build time, seconds: compile one file and link it')])
+        charts = build.bench_charts(
+            bench_md(md_table("hello", HELLO, HELLO_BUILDS), md_table("fib", FIB))
+        )
+        self.assertEqual(
+            re.findall(r'<h3>(.*?)</h3><p class="unit">(.*?)</p>', charts),
+            [
+                ("fib", "wall time, seconds"),
+                ("hello", "build time, seconds: compile one file and link it"),
+            ],
+        )
         fib, hello = charts.split('<figure class="chart">')[1:]
-        self.assertEqual(re.findall(BENCH_LI, fib), [
-            ('', 'Rust', '<i style="width:60.7%"></i>', '0.17 s'), ('', 'C', '<i style="width:64.3%"></i>', '0.18 s'),
-            (' class="sisu"', 'Sisu', '<i style="width:92.9%"></i>', '0.26 s'), ('', 'Java', '<i style="width:96.4%"></i>', '0.27 s'),
-            ('', 'Go', '<i style="width:100%"></i>', '0.28 s'), (' class="off"', 'Python', 'off the scale', '5.18 s')])
-        self.assertEqual(re.findall(BENCH_LI, hello), [
-            ('', 'Go', '<i style="width:18.9%"></i>', '0.037 s'), ('', 'C', '<i style="width:27%"></i>', '0.053 s'),
-            (' class="sisu"', 'Sisu', '<i style="width:29.6%"></i>', '0.058 s'), ('', 'Rust', '<i style="width:37.2%"></i>', '0.073 s'),
-            ('', 'Java', '<i style="width:100%"></i>', '0.196 s'), (' class="off"', 'Python', 'no build step', '-')])
+        self.assertEqual(
+            re.findall(BENCH_LI, fib),
+            [
+                ("", "Rust", '<i style="width:60.7%"></i>', "0.17 s"),
+                ("", "C", '<i style="width:64.3%"></i>', "0.18 s"),
+                (' class="sisu"', "Sisu", '<i style="width:92.9%"></i>', "0.26 s"),
+                ("", "Java", '<i style="width:96.4%"></i>', "0.27 s"),
+                ("", "Go", '<i style="width:100%"></i>', "0.28 s"),
+                (' class="off"', "Python", "off the scale", "5.18 s"),
+            ],
+        )
+        self.assertEqual(
+            re.findall(BENCH_LI, hello),
+            [
+                ("", "Go", '<i style="width:18.9%"></i>', "0.037 s"),
+                ("", "C", '<i style="width:27%"></i>', "0.053 s"),
+                (' class="sisu"', "Sisu", '<i style="width:29.6%"></i>', "0.058 s"),
+                ("", "Rust", '<i style="width:37.2%"></i>', "0.073 s"),
+                ("", "Java", '<i style="width:100%"></i>', "0.196 s"),
+                (' class="off"', "Python", "no build step", "-"),
+            ],
+        )
 
     def test_chart_ties_keep_the_document_order(self):
-        walls = {'C': '0.14', 'Sisu': '0.14', 'Go': '0.23', 'Java': '0.20', 'Rust': '0.12', 'Python': '12.16'}
-        charts = build.bench_charts(bench_md(md_table('nbody', walls), md_table('hello', HELLO, HELLO_BUILDS)))
-        self.assertEqual(re.findall(r'<span>(\w+)</span>', charts.split('<figure class="chart">')[1]),
-                         ['Rust', 'C', 'Sisu', 'Java', 'Go', 'Python'])
+        walls = {
+            "C": "0.14",
+            "Sisu": "0.14",
+            "Go": "0.23",
+            "Java": "0.20",
+            "Rust": "0.12",
+            "Python": "12.16",
+        }
+        charts = build.bench_charts(
+            bench_md(md_table("nbody", walls), md_table("hello", HELLO, HELLO_BUILDS))
+        )
+        self.assertEqual(
+            re.findall(r"<span>(\w+)</span>", charts.split('<figure class="chart">')[1]),
+            ["Rust", "C", "Sisu", "Java", "Go", "Python"],
+        )
 
     def test_hello_foot_note(self):
         cases = [
-            ('one differs', HELLO | {'Java': '0.01'}, "Every hello program runs in 0.00 s of wall time except Java's, 0.01 s. The build is what differs."),
-            ('spelled differently', HELLO | {'Java': '0.0'}, 'Every hello program runs in 0.00 s of wall time. The build is what differs.'),
-            ('all equal', HELLO, 'Every hello program runs in 0.00 s of wall time. The build is what differs.'),
+            (
+                "one differs",
+                HELLO | {"Java": "0.01"},
+                "Every hello program runs in 0.00 s of wall time except Java's, 0.01 s. The build is what differs.",
+            ),
+            (
+                "spelled differently",
+                HELLO | {"Java": "0.0"},
+                "Every hello program runs in 0.00 s of wall time. The build is what differs.",
+            ),
+            (
+                "all equal",
+                HELLO,
+                "Every hello program runs in 0.00 s of wall time. The build is what differs.",
+            ),
         ]
         for name, walls, note in cases:
             with self.subTest(name):
-                charts = build.bench_charts(bench_md(md_table('fib', FIB), md_table('hello', walls, HELLO_BUILDS)))
+                charts = build.bench_charts(
+                    bench_md(md_table("fib", FIB), md_table("hello", walls, HELLO_BUILDS))
+                )
                 self.assertEqual(re.findall(r'<p class="foot">(.*?)</p>', charts), [note])
-        for name, walls in [('two differ', HELLO | {'Java': '0.01', 'Go': '0.01'}), ('a split', {k: '0.01' if k in ('C', 'Go', 'Java') else '0.00' for k in HELLO})]:
+        for name, walls in [
+            ("two differ", HELLO | {"Java": "0.01", "Go": "0.01"}),
+            ("a split", {k: "0.01" if k in ("C", "Go", "Java") else "0.00" for k in HELLO}),
+        ]:
             with self.subTest(name):
-                with self.assertRaisesRegex(build.BuildError, r'docs/benchmarks\.md.*hello'):
-                    build.bench_charts(bench_md(md_table('hello', walls, HELLO_BUILDS)))
+                with self.assertRaisesRegex(build.BuildError, r"docs/benchmarks\.md.*hello"):
+                    build.bench_charts(bench_md(md_table("hello", walls, HELLO_BUILDS)))
 
     def test_bench_table(self):
-        table = build.bench_table(bench_md(md_table('fib', FIB), md_table('hello', HELLO | {'Java': '0.01'}, HELLO_BUILDS),
-                                           md_table('sieve', FIB)))
-        self.assertEqual(re.findall(r'<th(?: [^>]*)?>(.*?)</th>', table), ['Benchmark', 'Sisu', 'C', 'Rust', 'Go', 'Java', 'Python'])
-        rows = [re.findall(r'<td[^>]*>(.*?)</td>', row) for row in re.findall(r'<tr><td>.*?</tr>', table)]
-        self.assertEqual(rows, [
-            ['<code>fib</code>', '<b>0.26</b>', '0.18', '0.17', '0.28', '0.27', '5.18'],
-            ['<code>hello</code>', '<b>0.00</b>', '0.00', '0.00', '0.00', '0.01', '0.00'],
-            ['<code>hello</code>, build', '<b>0.058</b>', '0.053', '0.073', '0.037', '0.196', '-'],
-            ['<code>sieve</code>', '<b>0.26</b>', '0.18', '0.17', '0.28', '0.27', '5.18']])
+        table = build.bench_table(
+            bench_md(
+                md_table("fib", FIB),
+                md_table("hello", HELLO | {"Java": "0.01"}, HELLO_BUILDS),
+                md_table("sieve", FIB),
+            )
+        )
+        self.assertEqual(
+            re.findall(r"<th(?: [^>]*)?>(.*?)</th>", table),
+            ["Benchmark", "Sisu", "C", "Rust", "Go", "Java", "Python"],
+        )
+        rows = [
+            re.findall(r"<td[^>]*>(.*?)</td>", row)
+            for row in re.findall(r"<tr><td>.*?</tr>", table)
+        ]
+        self.assertEqual(
+            rows,
+            [
+                ["<code>fib</code>", "<b>0.26</b>", "0.18", "0.17", "0.28", "0.27", "5.18"],
+                ["<code>hello</code>", "<b>0.00</b>", "0.00", "0.00", "0.00", "0.01", "0.00"],
+                [
+                    "<code>hello</code>, build",
+                    "<b>0.058</b>",
+                    "0.053",
+                    "0.073",
+                    "0.037",
+                    "0.196",
+                    "-",
+                ],
+                ["<code>sieve</code>", "<b>0.26</b>", "0.18", "0.17", "0.28", "0.27", "5.18"],
+            ],
+        )
 
     def test_results_note(self):
-        md = bench_md(intro='Commit `abc1234`, on\n2026-10-12.\n\nOn a machine.\n\n')
-        self.assertEqual(build.results_note(md), '<p class="after">Commit <code>abc1234</code>, on\n2026-10-12.</p>\n')
-        for name, text in [('a heading first', bench_md(intro='### fib\n\nOn a machine.\n\n')),
-                           ('no paragraph', bench_md(intro='')),
-                           ('a table first', bench_md(intro=BENCH_HEADER + '| C | 1 | 1 | 1 | 1 | 1 |\n\n')),
-                           ('no Results', '# Benchmarks\n\nAbout.\n\n## Other\n\nText.\n')]:
+        md = bench_md(intro="Commit `abc1234`, on\n2026-10-12.\n\nOn a machine.\n\n")
+        self.assertEqual(
+            build.results_note(md),
+            '<p class="after">Commit <code>abc1234</code>, on\n2026-10-12.</p>\n',
+        )
+        for name, text in [
+            ("a heading first", bench_md(intro="### fib\n\nOn a machine.\n\n")),
+            ("no paragraph", bench_md(intro="")),
+            ("a table first", bench_md(intro=BENCH_HEADER + "| C | 1 | 1 | 1 | 1 | 1 |\n\n")),
+            ("no Results", "# Benchmarks\n\nAbout.\n\n## Other\n\nText.\n"),
+        ]:
             with self.subTest(name):
-                with self.assertRaisesRegex(build.BuildError, r'docs/benchmarks\.md'):
+                with self.assertRaisesRegex(build.BuildError, r"docs/benchmarks\.md"):
                     build.results_note(text)
 
     def test_bench_directives_read_the_document(self):
-        fake_site(self, {}, {'docs/benchmarks.md': bench_md(md_table('fib', FIB), md_table('hello', HELLO, HELLO_BUILDS)),
-                             'scripts/bench.sh': '[[ $# -gt 0 ]] || benchmarks=(hello fib sieve)\n',
-                             'bench/features/strings/main.sisu': ''})
-        for directive in ('bench-charts', 'bench-table'):
-            with self.assertRaisesRegex(build.BuildError, r"docs/benchmarks\.md.*missing \['sieve'\]"):
-                build.expand('{{%s}}' % directive, {})
-        (build.ROOT / 'scripts/bench.sh').write_text('[[ $# -gt 0 ]] || benchmarks=(hello fib)\n')
-        self.assertEqual(build.expand('{{bench-charts}}', {}).count('<figure class="chart">'), 2)
-        self.assertIn('<td><code>fib</code></td>', build.expand('{{bench-table}}', {}))
-        self.assertIn('Commit abc1234', build.expand('{{bench-results-note}}', {}))
+        fake_site(
+            self,
+            {},
+            {
+                "docs/benchmarks.md": bench_md(
+                    md_table("fib", FIB), md_table("hello", HELLO, HELLO_BUILDS)
+                ),
+                "scripts/bench.sh": "[[ $# -gt 0 ]] || benchmarks=(hello fib sieve)\n",
+                "bench/features/strings/main.sisu": "",
+            },
+        )
+        for directive in ("bench-charts", "bench-table"):
+            with self.assertRaisesRegex(
+                build.BuildError, r"docs/benchmarks\.md.*missing \['sieve'\]"
+            ):
+                build.expand("{{%s}}" % directive, {})
+        (build.ROOT / "scripts/bench.sh").write_text("[[ $# -gt 0 ]] || benchmarks=(hello fib)\n")
+        self.assertEqual(build.expand("{{bench-charts}}", {}).count('<figure class="chart">'), 2)
+        self.assertIn("<td><code>fib</code></td>", build.expand("{{bench-table}}", {}))
+        self.assertIn("Commit abc1234", build.expand("{{bench-results-note}}", {}))
 
     def test_reference_page_should_have_its_navigation(self):
         entries = build.reference_pages(reference_dir(self, REF_PAGES))
         page = build.reference_page(1, entries)
         side = re.search(r'<nav class="ref-nav".*?</nav>', page, re.S)[0]
-        self.assertEqual(re.findall(r'<a href="([^"]*)"( aria-current="page")?>', side),
-                         [('index.html', ''), ('literals.html', ' aria-current="page"'), ('later.html', '')])
+        self.assertEqual(
+            re.findall(r'<a href="([^"]*)"( aria-current="page")?>', side),
+            [("index.html", ""), ("literals.html", ' aria-current="page"'), ("later.html", "")],
+        )
         toc = re.search(r'<nav class="ref-toc".*?</nav>', page, re.S)[0]
-        self.assertEqual(re.findall(r'<li class="h(\d)"><a href="#([^"]*)">(.*?)</a>', toc),
-                         [('2', 'integers', 'Integers'), ('3', 'escapes', 'Escapes'), ('2', 'planned', 'Planned <span class="soon">In development</span>')])
+        self.assertEqual(
+            re.findall(r'<li class="h(\d)"><a href="#([^"]*)">(.*?)</a>', toc),
+            [
+                ("2", "integers", "Integers"),
+                ("3", "escapes", "Escapes"),
+                ("2", "planned", 'Planned <span class="soon">In development</span>'),
+            ],
+        )
         pager = re.search(r'<nav class="pager".*?</nav>', page, re.S)[0]
-        self.assertEqual(re.findall(r'<a href="([^"]*)" rel="\w+"><span>(\w+)</span>(.*?)</a>', pager),
-                         [('index.html', 'Previous', 'Language reference'), ('later.html', 'Next', 'Later')])
+        self.assertEqual(
+            re.findall(r'<a href="([^"]*)" rel="\w+"><span>(\w+)</span>(.*?)</a>', pager),
+            [("index.html", "Previous", "Language reference"), ("later.html", "Next", "Later")],
+        )
         link = '<p class="marker"><a href="../diagnostics/E0008.html">E0008</a>: what this error means</p>'
-        self.assertEqual(re.findall(r'<p class="marker">.*?</p>', page), [link])  # not the full-line comment's E9999
-        self.assertIn('</pre></figure>\n' + link, page)
-        for pre in re.findall(r'<pre\b.*?</pre>', page, re.S):
-            self.assertNotIn('<a ', pre)
+        self.assertEqual(
+            re.findall(r'<p class="marker">.*?</p>', page), [link]
+        )  # not the full-line comment's E9999
+        self.assertIn("</pre></figure>\n" + link, page)
+        for pre in re.findall(r"<pre\b.*?</pre>", page, re.S):
+            self.assertNotIn("<a ", pre)
         first, last = build.reference_page(0, entries), build.reference_page(2, entries)
-        self.assertEqual(re.findall(r'<span>(\w+)</span>', re.search(r'<nav class="pager".*?</nav>', first, re.S)[0]), ['Next'])
-        self.assertEqual(re.findall(r'<span>(\w+)</span>', re.search(r'<nav class="pager".*?</nav>', last, re.S)[0]), ['Previous'])
+        self.assertEqual(
+            re.findall(
+                r"<span>(\w+)</span>", re.search(r'<nav class="pager".*?</nav>', first, re.S)[0]
+            ),
+            ["Next"],
+        )
+        self.assertEqual(
+            re.findall(
+                r"<span>(\w+)</span>", re.search(r'<nav class="pager".*?</nav>', last, re.S)[0]
+            ),
+            ["Previous"],
+        )
         self.assertIn('<a href="../reference/index.html" aria-current="page">', page)
 
     def test_in_development_tag_should_follow_pending_examples(self):
-        working, pending = f'{FENCE}sisu\nfn main() {{}}\n{FENCE}\n', f'{FENCE}sisu pending\nfn main() {{ soon() }}\n{FENCE}\n'
+        working, pending = (
+            f"{FENCE}sisu\nfn main() {{}}\n{FENCE}\n",
+            f"{FENCE}sisu pending\nfn main() {{ soon() }}\n{FENCE}\n",
+        )
         cases = [
-            ('a pending ## and a working ##', f'# T\n\n## A\n\n{pending}\n## B\n\n{working}', [True, False], False),
-            ('a working ## over a pending ###', f'# T\n\n## A\n\n{working}\n### B\n\n{pending}', [False, True], False),
-            ('only pending examples', f'# T\n\n{pending}\n## A\n\n{pending}', [True], True),
-            ('no example', '# T\n\n## A\n\nText.\n', [False], False),
-            ('a pending example under a #### heading', f'# T\n\n## A\n\n{working}\n#### D\n\n{pending}', [False], False),
+            (
+                "a pending ## and a working ##",
+                f"# T\n\n## A\n\n{pending}\n## B\n\n{working}",
+                [True, False],
+                False,
+            ),
+            (
+                "a working ## over a pending ###",
+                f"# T\n\n## A\n\n{working}\n### B\n\n{pending}",
+                [False, True],
+                False,
+            ),
+            ("only pending examples", f"# T\n\n{pending}\n## A\n\n{pending}", [True], True),
+            ("no example", "# T\n\n## A\n\nText.\n", [False], False),
+            (
+                "a pending example under a #### heading",
+                f"# T\n\n## A\n\n{working}\n#### D\n\n{pending}",
+                [False],
+                False,
+            ),
         ]
         for name, markdown, headings, tagged in cases:
             with self.subTest(name):
                 _, found, page_tagged = ref_html(self, markdown)
                 self.assertEqual([h[3] for h in found], headings)
                 self.assertEqual(page_tagged, tagged)
-                entries = build.reference_pages(reference_dir(self, {'README': '# Language reference\n', 'one': markdown}))
+                entries = build.reference_pages(
+                    reference_dir(self, {"README": "# Language reference\n", "one": markdown})
+                )
                 page = build.reference_page(1, entries)
                 side = re.search(r'<nav class="ref-nav".*?</nav>', page, re.S)[0]
-                self.assertEqual('In development' in side, tagged)
-                self.assertNotIn('In development', re.search(r'<h1 id="t">.*?</h1>', page)[0])
-                shown = [bool(re.search(r'In development</span></h\d>', h)) for h in re.findall(r'<h[23] id=.*?</h[23]>', page)]
+                self.assertEqual("In development" in side, tagged)
+                self.assertNotIn("In development", re.search(r'<h1 id="t">.*?</h1>', page)[0])
+                shown = [
+                    bool(re.search(r"In development</span></h\d>", h))
+                    for h in re.findall(r"<h[23] id=.*?</h[23]>", page)
+                ]
                 self.assertEqual(shown, headings)
 
     def test_page_list_should_match_the_files(self):
-        found = build.reference_list_problems(['README', 'gone'], ['README', 'extra'])
+        found = build.reference_list_problems(["README", "gone"], ["README", "extra"])
         self.assertEqual(len(found), 2, found)
-        self.assertTrue(any('gone' in p for p in found) and any('extra' in p for p in found), found)
-        self.assertEqual(build.reference_list_problems(['README'], ['README']), [])
-        with self.assertRaisesRegex(build.BuildError, r'(?s)gone.*extra|extra.*gone'):
-            built_site(self, {'README': '# Language reference\n', 'extra': '# Extra\n'}, ['README', 'gone'])
+        self.assertTrue(any("gone" in p for p in found) and any("extra" in p for p in found), found)
+        self.assertEqual(build.reference_list_problems(["README"], ["README"]), [])
+        with self.assertRaisesRegex(build.BuildError, r"(?s)gone.*extra|extra.*gone"):
+            built_site(
+                self, {"README": "# Language reference\n", "extra": "# Extra\n"}, ["README", "gone"]
+            )
 
     def test_milestone_check_should_fail_a_page_that_names_one(self):
         self.assertEqual(check := build.check_site(built_site(self, REF_PAGES)), [], check)
-        for prose in ('M8', 'M**8**'):
+        for prose in ("M8", "M**8**"):
             with self.subTest(prose):
-                named = REF_PAGES | {'later': REF_PAGES['later'].replace('## Soon\n', f'## Soon\n\nThis comes in {prose}.\n')}
-                self.assertEqual(build.check_site(built_site(self, named)), ['reference/later.html: names a milestone'])
+                named = REF_PAGES | {
+                    "later": REF_PAGES["later"].replace(
+                        "## Soon\n", f"## Soon\n\nThis comes in {prose}.\n"
+                    )
+                }
+                self.assertEqual(
+                    build.check_site(built_site(self, named)),
+                    ["reference/later.html: names a milestone"],
+                )
 
     def test_milestone_check_should_ignore_attributes_and_code(self):
         quiet = '<svg><path d="M10 3a7 7"/></svg><p>Use <code>M8</code>.</p><pre data-lang="sisu">let M8 = 1</pre>'
-        self.assertEqual(problems(self, {'tour.html': PAGE.format(quiet)}), [])
-        for prose in ('<p>It lands in M8.</p>', '<p>It lands in M<strong>8</strong>.</p>'):
+        self.assertEqual(problems(self, {"tour.html": PAGE.format(quiet)}), [])
+        for prose in ("<p>It lands in M8.</p>", "<p>It lands in M<strong>8</strong>.</p>"):
             with self.subTest(prose):
-                self.assert_fails('tour.html', problems(self, {'tour.html': PAGE.format(prose)}))
-        self.assertEqual(problems(self, {'tour.html': PAGE.format('<ul><li>M</li><li>8</li></ul>')}), [])
+                self.assert_fails("tour.html", problems(self, {"tour.html": PAGE.format(prose)}))
+        self.assertEqual(
+            problems(self, {"tour.html": PAGE.format("<ul><li>M</li><li>8</li></ul>")}), []
+        )
 
     def test_heading_ids_should_match_github_slugs(self):
-        markdown = '# T\n\n## The `??` operator\n\n## Examples\n\nSee [the second](#examples-1) and [the top](#t).\n\n## Examples\n\nText.\n'
+        markdown = "# T\n\n## The `??` operator\n\n## Examples\n\nSee [the second](#examples-1) and [the top](#t).\n\n## Examples\n\nText.\n"
         body, headings, _ = ref_html(self, markdown)
-        self.assertEqual([h[1] for h in headings], ['the--operator', 'examples', 'examples-1'])
+        self.assertEqual([h[1] for h in headings], ["the--operator", "examples", "examples-1"])
         self.assertIn('<h2 id="the--operator">The <code>??</code> operator</h2>', body)
-        out = built_site(self, {'README': '# Language reference\n\nSee [T](ops.md#t).\n', 'ops': markdown})
+        out = built_site(
+            self, {"README": "# Language reference\n\nSee [T](ops.md#t).\n", "ops": markdown}
+        )
         self.assertEqual(build.check_site(out), [])
-        self.assertIn('<h1 id="t">T</h1>', (out / 'reference/ops.html').read_text(encoding='utf-8'))
+        self.assertIn('<h1 id="t">T</h1>', (out / "reference/ops.html").read_text(encoding="utf-8"))
 
     def test_heading_count_mismatch_should_fail_the_build(self):
-        nested = f'# T\n\n````text\n{FENCE}\n````\n\n## Next\n\n{FENCE}text\nx\n{FENCE}\n'
-        self.assertEqual([h[:2] for h in ref_html(self, nested)[1]], [(2, 'next')])
+        nested = f"# T\n\n````text\n{FENCE}\n````\n\n## Next\n\n{FENCE}text\nx\n{FENCE}\n"
+        self.assertEqual([h[:2] for h in ref_html(self, nested)[1]], [(2, "next")])
         # A line with text after its backticks does not close a fence.
-        still_open = f'# T\n\n{FENCE}text\n{FENCE} text\n## Hidden\n{FENCE}\n\n## Next\n'
-        self.assertEqual([h[:2] for h in ref_html(self, still_open)[1]], [(2, 'next')])
-        with self.assertRaisesRegex(build.BuildError, 'heading'):
-            ref_html(self, '# T\n\nSetext\n------\n')
+        still_open = f"# T\n\n{FENCE}text\n{FENCE} text\n## Hidden\n{FENCE}\n\n## Next\n"
+        self.assertEqual([h[:2] for h in ref_html(self, still_open)[1]], [(2, "next")])
+        with self.assertRaisesRegex(build.BuildError, "heading"):
+            ref_html(self, "# T\n\nSetext\n------\n")
         # The pages are read and rendered once, and the fault names the page that holds it.
-        entries = reference_dir(self, {'README': '# Language reference\n', 'bad': '# T\n\nSetext\n------\n'})
-        with self.assertRaisesRegex(build.BuildError, r'^docs/reference/bad\.md: .*heading'):
+        entries = reference_dir(
+            self, {"README": "# Language reference\n", "bad": "# T\n\nSetext\n------\n"}
+        )
+        with self.assertRaisesRegex(build.BuildError, r"^docs/reference/bad\.md: .*heading"):
             build.reference_pages(entries)
 
     def test_anchors_should_read_each_line_once(self):
         # An unclosed fence, then many lines that look like fences but do not close it.
-        text = '# T\n\n' + '`' * 2000 + '\n' + '``` x\n' * 2000
-        step = self.enterContext(mock.patch.object(build.check_links, 'fence_after', wraps=build.check_links.fence_after))
-        self.assertEqual(list(build.check_links.anchors(temp_file(self, text))), ['t'])
-        self.assertEqual(step.call_count, len(text.split('\n')))
+        text = "# T\n\n" + "`" * 2000 + "\n" + "``` x\n" * 2000
+        step = self.enterContext(
+            mock.patch.object(build.check_links, "fence_after", wraps=build.check_links.fence_after)
+        )
+        self.assertEqual(list(build.check_links.anchors(temp_file(self, text))), ["t"])
+        self.assertEqual(step.call_count, len(text.split("\n")))
 
     def test_markers_should_split_lines_as_the_reference_test_does(self):
         # Rust's str::lines splits only at a newline and drops a carriage return before it.
         self.assertEqual(build.markers('    print("a // error[E0008]\u2028b")\n'), [])
-        self.assertEqual(build.markers('    print(1000_) // error[E0008]\r\n'), ['E0008'])
+        self.assertEqual(build.markers("    print(1000_) // error[E0008]\r\n"), ["E0008"])
 
     def test_example_caption_should_read_the_info_string_as_the_test_does(self):
-        cases = [('sisu args="a b"', './example a b'), ('sisu args="  a  b "', './example a b'), ('sisu args=""', './example'),
-                 ('sisu  pending', 'In development')]
+        cases = [
+            ('sisu args="a b"', "./example a b"),
+            ('sisu args="  a  b "', "./example a b"),
+            ('sisu args=""', "./example"),
+            ("sisu  pending", "In development"),
+        ]
         for info, caption in cases:
             with self.subTest(info):
-                body = ref_html(self, f'# T\n\n{FENCE}{info}\nfn main() {{}}\n{FENCE}\n')[0]
-                self.assertEqual(re.findall(r'<figcaption class="cap">(.*?)</figcaption>', body), [caption])
+                body = ref_html(self, f"# T\n\n{FENCE}{info}\nfn main() {{}}\n{FENCE}\n")[0]
+                self.assertEqual(
+                    re.findall(r'<figcaption class="cap">(.*?)</figcaption>', body), [caption]
+                )
 
     def test_build_should_render_each_reference_page_once(self):
-        render = self.enterContext(mock.patch.object(build, 'reference_html', wraps=build.reference_html))
+        render = self.enterContext(
+            mock.patch.object(build, "reference_html", wraps=build.reference_html)
+        )
         built_site(self, REF_PAGES)
-        self.assertEqual(sorted(call.args[1].stem for call in render.call_args_list), sorted(REF_PAGES))
+        self.assertEqual(
+            sorted(call.args[1].stem for call in render.call_args_list), sorted(REF_PAGES)
+        )
 
     def test_reference_links_should_become_site_links(self):
-        cases = [('literals.md#escapes', 'literals.html#escapes'), ('../diagnostics/E0008.md', '../diagnostics/E0008.html'),
-                 ('README.md', 'index.html'), ('../adr/0004-x.md#why', build.BLOB + 'docs/adr/0004-x.md#why'),
-                 ('#escapes', '#escapes'), ('https://example.org/', 'https://example.org/')]
+        cases = [
+            ("literals.md#escapes", "literals.html#escapes"),
+            ("../diagnostics/E0008.md", "../diagnostics/E0008.html"),
+            ("README.md", "index.html"),
+            ("../adr/0004-x.md#why", build.BLOB + "docs/adr/0004-x.md#why"),
+            ("#escapes", "#escapes"),
+            ("https://example.org/", "https://example.org/"),
+        ]
         for href, want in cases:
             with self.subTest(href):
-                body = ref_html(self, f'# T\n\nSee [it]({href}).\n')[0]
+                body = ref_html(self, f"# T\n\nSee [it]({href}).\n")[0]
                 self.assertEqual(re.findall(r'<a href="([^"]*)">it</a>', body), [want])
 
     def test_bold_label_before_a_list_should_mark_a_rules_card(self):
-        body = ref_html(self, '# T\n\n**What needs a bound**\n\n'
-                              '- `==` needs `T: Eq`. [E0139](../diagnostics/E0139.md) [E0154](../diagnostics/E0154.md)\n'
-                              '- See [E0063](../diagnostics/E0063.md) here.\n'
-                              '- Ends in [the error](../diagnostics/E0001.md)\n\n'
-                              'Some **bold** text.\n\n- plain [E0001](../diagnostics/E0001.md)\n')[0]
-        self.assertIn('<p class="rules-h"><strong>What needs a bound</strong></p>\n<ul class="rules">', body)
-        self.assertEqual(re.findall(r'<a href="[^"]*" class="tag">(\w+)</a>', body), ['E0139', 'E0154'])
+        body = ref_html(
+            self,
+            "# T\n\n**What needs a bound**\n\n"
+            "- `==` needs `T: Eq`. [E0139](../diagnostics/E0139.md) [E0154](../diagnostics/E0154.md)\n"
+            "- See [E0063](../diagnostics/E0063.md) here.\n"
+            "- Ends in [the error](../diagnostics/E0001.md)\n\n"
+            "Some **bold** text.\n\n- plain [E0001](../diagnostics/E0001.md)\n",
+        )[0]
+        self.assertIn(
+            '<p class="rules-h"><strong>What needs a bound</strong></p>\n<ul class="rules">', body
+        )
+        self.assertEqual(
+            re.findall(r'<a href="[^"]*" class="tag">(\w+)</a>', body), ["E0139", "E0154"]
+        )
         self.assertRegex(body, r'<a href="[^"]*E0001[^"]*">the error</a>')
         self.assertEqual(body.count('class="rules'), 2)
-        noted = ref_html(self, '# T\n\n**Label**\n\nA note.\n\n- a rule\n')[0]
-        self.assertIn('<p class="rules-h"><strong>Label</strong></p>\n<p class="rules-note">A note.</p>\n<ul class="rules">', noted)
+        noted = ref_html(self, "# T\n\n**Label**\n\nA note.\n\n- a rule\n")[0]
+        self.assertIn(
+            '<p class="rules-h"><strong>Label</strong></p>\n<p class="rules-note">A note.</p>\n<ul class="rules">',
+            noted,
+        )
 
     def test_overview_should_have_a_card_for_each_other_page(self):
         entries = build.reference_pages(reference_dir(self, REF_PAGES))
         page = build.reference_page(0, entries)
         cards = re.search(r'<ul class="cards">.*?</ul>', page, re.S)[0]
-        self.assertEqual(re.findall(r'<li><a href="([^"]*)"><b>(.*?)</b><span>(.*?)</span></a></li>', cards),
-                         [('literals.html', 'Literals', 'About literals.'), ('later.html', 'Later', 'About later.')])
+        self.assertEqual(
+            re.findall(r'<li><a href="([^"]*)"><b>(.*?)</b><span>(.*?)</span></a></li>', cards),
+            [
+                ("literals.html", "Literals", "About literals."),
+                ("later.html", "Later", "About later."),
+            ],
+        )
         self.assertNotIn('class="cards"', build.reference_page(1, entries))
 
 
@@ -882,113 +1293,163 @@ class Pages(unittest.TestCase):
     def setUpClass(cls):
         tmp = tempfile.TemporaryDirectory()
         cls.addClassCleanup(tmp.cleanup)
-        cls.out = Path(tmp.name) / 'site'
+        cls.out = Path(tmp.name) / "site"
         build.build(cls.out)
 
     def page(self, name):
-        return (self.out / name).read_text(encoding='utf-8')
+        return (self.out / name).read_text(encoding="utf-8")
 
     def test_diagnostic_pages(self):
-        built = {p.stem for p in (self.out / 'diagnostics').glob('*.html')}
-        explained = {p.stem for p in (build.ROOT / 'docs/diagnostics').glob('*.md')} - {'README'}
+        built = {p.stem for p in (self.out / "diagnostics").glob("*.html")}
+        explained = {p.stem for p in (build.ROOT / "docs/diagnostics").glob("*.md")} - {"README"}
         # A retired code's page is left out.
-        retired = {p.stem for p in (build.ROOT / 'docs/diagnostics').glob('*.md')
-                   if '\nStatus: retired' in p.read_text(encoding='utf-8')}
+        retired = {
+            p.stem
+            for p in (build.ROOT / "docs/diagnostics").glob("*.md")
+            if "\nStatus: retired" in p.read_text(encoding="utf-8")
+        }
         self.assertTrue(explained)
-        self.assertIn('E0012', retired)
+        self.assertIn("E0012", retired)
         self.assertEqual(built, explained - retired)
-        self.assertTrue((self.out / 'diagnostics.html').is_file())
-        self.assertIn('href="/sisu/diagnostics.html"', self.page('404.html'))
+        self.assertTrue((self.out / "diagnostics.html").is_file())
+        self.assertIn('href="/sisu/diagnostics.html"', self.page("404.html"))
         # The first paragraph of E0130 quotes the error, so the description escapes a `"`.
-        rule = (build.ROOT / 'docs/diagnostics/E0130.md').read_text(encoding='utf-8').split('\n\n')[1].replace('`', '')
+        rule = (
+            (build.ROOT / "docs/diagnostics/E0130.md")
+            .read_text(encoding="utf-8")
+            .split("\n\n")[1]
+            .replace("`", "")
+        )
         self.assertIn('"', rule)
-        metas = Metas(self.page('diagnostics/E0130.html')).descriptions
+        metas = Metas(self.page("diagnostics/E0130.html")).descriptions
         self.assertEqual(metas, [rule])
 
     def test_explanation_order(self):
-        page = self.page('diagnostics/E0032.html')
-        parts = ['A value must have the type its position expects', '<h2>Why</h2>', '<h2>Broken</h2>',
-                 '<h2>What sisu says</h2>', 'error[E0032]', '<h2>Fixed</h2>']
+        page = self.page("diagnostics/E0032.html")
+        parts = [
+            "A value must have the type its position expects",
+            "<h2>Why</h2>",
+            "<h2>Broken</h2>",
+            "<h2>What sisu says</h2>",
+            "error[E0032]",
+            "<h2>Fixed</h2>",
+        ]
         places = [page.find(part) for part in parts]
         self.assertNotIn(-1, places, parts)
         self.assertEqual(places, sorted(places))
-        self.assertNotIn('Your code', page)
+        self.assertNotIn("Your code", page)
         self.assertIn('action="../diagnostics.html"', page)
-        self.assertNotIn('After the fix', page)
+        self.assertNotIn("After the fix", page)
 
     def test_category_and_severity(self):
-        cases = [('E0072', 'Syntax', 'Error'), ('W0002', 'Variables and change', 'Warning')]
+        cases = [("E0072", "Syntax", "Error"), ("W0002", "Variables and change", "Warning")]
         for code, category, severity in cases:
             with self.subTest(code):
-                page = self.page(f'diagnostics/{code}.html')
-                self.assertEqual(re.findall(r'<a href="[^"]*#[^"]*" aria-current="page"[^>]*>(.*?)</a>', page), [category])
+                page = self.page(f"diagnostics/{code}.html")
+                self.assertEqual(
+                    re.findall(r'<a href="[^"]*#[^"]*" aria-current="page"[^>]*>(.*?)</a>', page),
+                    [category],
+                )
                 self.assertIn(f'<span class="sev">{severity}</span>', page)
 
     def test_fix_badges(self):
-        cases = [('E0130', ['Unsafe fix']), ('E0001', ['Safe fix']), ('E0032', [])]
+        cases = [("E0130", ["Unsafe fix"]), ("E0001", ["Safe fix"]), ("E0032", [])]
         for code, badges in cases:
             with self.subTest(code):
-                page = self.page(f'diagnostics/{code}.html')
+                page = self.page(f"diagnostics/{code}.html")
                 self.assertIn(f'<span class="id">{code}</span>', page)
                 self.assertEqual(re.findall(r'<span class="badge">(.*?)</span>', page), badges)
 
     def test_search_terms(self):
-        self.assertIn('<li data-code="E0032" data-words="value of the wrong type"><a href="diagnostics/E0032.html">'
-                      '<span class="num">E0032</span><b>Value of the wrong type</b></a></li>', self.page('diagnostics.html'))
+        self.assertIn(
+            '<li data-code="E0032" data-words="value of the wrong type"><a href="diagnostics/E0032.html">'
+            '<span class="num">E0032</span><b>Value of the wrong type</b></a></li>',
+            self.page("diagnostics.html"),
+        )
 
     def test_titles(self):
-        index = self.page('diagnostics.html')
-        cases = [('E0032', 'Value of the wrong type', 'Value of the wrong type'),
-                 ('E0006', '<code>else</code> on a line of its own', 'else on a line of its own')]
+        index = self.page("diagnostics.html")
+        cases = [
+            ("E0032", "Value of the wrong type", "Value of the wrong type"),
+            ("E0006", "<code>else</code> on a line of its own", "else on a line of its own"),
+        ]
         for code, heading, plain in cases:
             with self.subTest(code):
-                page = self.page(f'diagnostics/{code}.html')
-                self.assertIn(f'<h1>{heading}</h1>', page)
-                self.assertIn(f'<b>{heading}</b>', index)
-                title = re.search('<title>(.*?)</title>', page)[1]
-                self.assertEqual(title, f'{code}: {plain}')
-                self.assertNotIn('`', title + heading)
+                page = self.page(f"diagnostics/{code}.html")
+                self.assertIn(f"<h1>{heading}</h1>", page)
+                self.assertIn(f"<b>{heading}</b>", index)
+                title = re.search("<title>(.*?)</title>", page)[1]
+                self.assertEqual(title, f"{code}: {plain}")
+                self.assertNotIn("`", title + heading)
 
     def test_example_panels_should_match_companion_blocks(self):
         made_up = built_site(self, REF_PAGES)
-        real = sorted((build.ROOT / 'docs/reference').glob('*.md'))
+        real = sorted((build.ROOT / "docs/reference").glob("*.md"))
         self.assertTrue(real)
-        for markdown, built in [*((p.read_text(encoding='utf-8'), self.out / 'reference' / ('index' if p.stem == 'README' else p.stem)) for p in real),
-                                *((text, made_up / 'reference' / ('index' if stem == 'README' else stem)) for stem, text in REF_PAGES.items())]:
+        for markdown, built in [
+            *(
+                (
+                    p.read_text(encoding="utf-8"),
+                    self.out / "reference" / ("index" if p.stem == "README" else p.stem),
+                )
+                for p in real
+            ),
+            *(
+                (text, made_up / "reference" / ("index" if stem == "README" else stem))
+                for stem, text in REF_PAGES.items()
+            ),
+        ]:
             with self.subTest(built.name):
-                page = built.with_suffix('.html').read_text(encoding='utf-8')
+                page = built.with_suffix(".html").read_text(encoding="utf-8")
                 self.assertEqual(page.count('<figure class="panel">'), companion_blocks(markdown))
-        literals = (made_up / 'reference/literals.html').read_text(encoding='utf-8')
-        self.assertEqual(companion_blocks(REF_PAGES['literals']), 3)
-        self.assertIn('<figcaption class="cap">In development</figcaption><pre data-lang="sisu">', literals)
-        self.assertIn('<figcaption class="cap">./example a b</figcaption><pre data-lang="sisu">', literals)
-        for kind in ('input', 'output', 'stderr'):
-            self.assertIn(f'<figure class="panel"><figcaption class="cap">{kind}</figcaption><pre data-lang="out">', literals)
+        literals = (made_up / "reference/literals.html").read_text(encoding="utf-8")
+        self.assertEqual(companion_blocks(REF_PAGES["literals"]), 3)
+        self.assertIn(
+            '<figcaption class="cap">In development</figcaption><pre data-lang="sisu">', literals
+        )
+        self.assertIn(
+            '<figcaption class="cap">./example a b</figcaption><pre data-lang="sisu">', literals
+        )
+        for kind in ("input", "output", "stderr"):
+            self.assertIn(
+                f'<figure class="panel"><figcaption class="cap">{kind}</figcaption><pre data-lang="out">',
+                literals,
+            )
 
     def test_literals_page_should_have_its_navigation(self):
         # GIVEN the real docs/reference/literals.md and data/reference.toml
-        markdown = (build.ROOT / 'docs/reference/literals.md').read_text(encoding='utf-8')
+        markdown = (build.ROOT / "docs/reference/literals.md").read_text(encoding="utf-8")
         # WHEN the site is built
-        page = self.page('reference/literals.html')
+        page = self.page("reference/literals.html")
         # THEN the sidebar marks Literals as the current page
         side = re.search(r'<nav class="ref-nav".*?</nav>', page, re.S)[0]
-        self.assertEqual(re.findall(r'<a href="([^"]*)" aria-current="page">', side), ['literals.html'])
+        self.assertEqual(
+            re.findall(r'<a href="([^"]*)" aria-current="page">', side), ["literals.html"]
+        )
         # AND "On this page" lists each ## and ### heading, and each entry goes to a heading of the page
         toc = re.search(r'<nav class="ref-toc".*?</nav>', page, re.S)[0]
         entries = re.findall(r'<li class="h(\d)"><a href="#([^"]*)">(.*?)</a>', toc)
-        self.assertEqual([(level, text) for level, _, text in entries],
-                         [(str(len(m[1])), m[2]) for m in re.finditer(r'^(#{2,3}) (.*)$', markdown, re.M)])
+        self.assertEqual(
+            [(level, text) for level, _, text in entries],
+            [(str(len(m[1])), m[2]) for m in re.finditer(r"^(#{2,3}) (.*)$", markdown, re.M)],
+        )
         for level, slug, _ in entries:
             self.assertIn(f'<h{level} id="{slug}">', page)
         # AND the pager goes back to Lexical structure and on to Types
         pager = re.search(r'<nav class="pager".*?</nav>', page, re.S)[0]
-        self.assertEqual(re.findall(r'<a href="([^"]*)" rel="\w+"><span>(\w+)</span>(.*?)</a>', pager),
-                         [('lexical.html', 'Previous', 'Lexical structure'), ('types.html', 'Next', 'Types')])
+        self.assertEqual(
+            re.findall(r'<a href="([^"]*)" rel="\w+"><span>(\w+)</span>(.*?)</a>', pager),
+            [("lexical.html", "Previous", "Lexical structure"), ("types.html", "Next", "Types")],
+        )
         # AND each marker of the source is a link in a paragraph after its example, and after its output panel
-        after = ''.join(re.findall(r'</pre></figure>(?:</figure>)*\n((?:<p class="marker">.*?</p>\n)+)', page))
-        linked = re.findall(r'<p class="marker"><a href="\.\./diagnostics/(\w+)\.html">\1</a>', after)
-        self.assertIn('E0008', linked)
-        self.assertEqual(linked, re.findall(r'// (?:error|warning)\[(\w+)\]', markdown))
+        after = "".join(
+            re.findall(r'</pre></figure>(?:</figure>)*\n((?:<p class="marker">.*?</p>\n)+)', page)
+        )
+        linked = re.findall(
+            r'<p class="marker"><a href="\.\./diagnostics/(\w+)\.html">\1</a>', after
+        )
+        self.assertIn("E0008", linked)
+        self.assertEqual(linked, re.findall(r"// (?:error|warning)\[(\w+)\]", markdown))
         self.assertEqual(page.count('<p class="marker">'), len(linked))
 
 
@@ -1002,9 +1463,9 @@ class Metas(HTMLParser):
         self.close()
 
     def handle_starttag(self, tag, attrs):
-        if tag == 'meta' and dict(attrs).get('name') == 'description':
-            self.descriptions.append(dict(attrs).get('content'))
+        if tag == "meta" and dict(attrs).get("name") == "description":
+            self.descriptions.append(dict(attrs).get("content"))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

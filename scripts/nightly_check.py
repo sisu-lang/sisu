@@ -8,6 +8,7 @@
 Each command exits 0, or prints each problem to stderr and exits 1. The text checks read text, so
 their tests need no tool. Python 3.10 standard library only: ubuntu:22.04 has 3.10.
 """
+
 import os
 import re
 import shutil
@@ -18,41 +19,52 @@ import tempfile
 GLIBC_FLOOR = (2, 35)
 GLIBCXX_FLOOR = (3, 4, 30)
 MINOS_FLOOR = (15, 0)
-TARGETS = ('x86_64-linux', 'aarch64-linux', 'aarch64-macos')
-ARCHIVES = ('libsisu_runtime_mimalloc.a', 'libsisu_runtime_system.a')
-THIRD_PARTY = 'THIRD-PARTY-LICENSES.txt'
-TARBALL_NAMES = ['sisu/', *('sisu/' + n for n in ('sisu', *ARCHIVES, 'LICENSE', THIRD_PARTY))]
+TARGETS = ("x86_64-linux", "aarch64-linux", "aarch64-macos")
+ARCHIVES = ("libsisu_runtime_mimalloc.a", "libsisu_runtime_system.a")
+THIRD_PARTY = "THIRD-PARTY-LICENSES.txt"
+TARBALL_NAMES = ["sisu/", *("sisu/" + n for n in ("sisu", *ARCHIVES, "LICENSE", THIRD_PARTY))]
 # The libraries of the Linux build, and the loader, which has another name on each architecture.
 # The list is exact: a new version of a library is a decision, not a pass.
-NEEDED_OK = frozenset(('libm.so.6', 'libz.so.1', 'libzstd.so.1', 'libstdc++.so.6',
-                       'libgcc_s.so.1', 'libc.so.6', 'ld-linux-x86-64.so.2',
-                       'ld-linux-aarch64.so.1'))
+NEEDED_OK = frozenset(
+    (
+        "libm.so.6",
+        "libz.so.1",
+        "libzstd.so.1",
+        "libstdc++.so.6",
+        "libgcc_s.so.1",
+        "libc.so.6",
+        "ld-linux-x86-64.so.2",
+        "ld-linux-aarch64.so.1",
+    )
+)
 # `GLIBC_` must not match `GLIBCXX_`, and a version can have three parts, as in `GLIBC_2.2.5`.
-GLIBC_REF = re.compile(r'\bGLIBC_(\d+(?:\.\d+)*)')
-GLIBCXX_REF = re.compile(r'\bGLIBCXX_(\d+(?:\.\d+)*)')
-WEAK_LINE = re.compile(r'^[0-9a-f]+\s+w\s')
-NEEDED_LINE = re.compile(r'^\s*NEEDED\s+(\S+)')
-LOAD_PATH_OK = ('/usr/lib/', '/System/')
+GLIBC_REF = re.compile(r"\bGLIBC_(\d+(?:\.\d+)*)")
+GLIBCXX_REF = re.compile(r"\bGLIBCXX_(\d+(?:\.\d+)*)")
+WEAK_LINE = re.compile(r"^[0-9a-f]+\s+w\s")
+NEEDED_LINE = re.compile(r"^\s*NEEDED\s+(\S+)")
+LOAD_PATH_OK = ("/usr/lib/", "/System/")
 
 
 def dotted(version: str) -> tuple[int, ...]:
-    return tuple(int(part) for part in version.split('.'))
+    return tuple(int(part) for part in version.split("."))
 
 
 def text(version: tuple[int, ...]) -> str:
-    return '.'.join(map(str, version))
+    return ".".join(map(str, version))
 
 
 def version_problems(verbose_text: str, stderr: str, sha: str) -> list[str]:
     problems = []
     want = sha[:7]
-    match = re.search(r'^commit: (\S*)$', verbose_text, re.M)
+    match = re.search(r"^commit: (\S*)$", verbose_text, re.M)
     if not match:
-        problems.append('`--version --verbose` prints no `commit:` line')
+        problems.append("`--version --verbose` prints no `commit:` line")
     elif match.group(1) != want:
-        problems.append('the binary has commit %s, not the picked commit %s' % (match.group(1), want))
+        problems.append(
+            "the binary has commit %s, not the picked commit %s" % (match.group(1), want)
+        )
     if stderr:
-        problems.append('`--version --verbose` printed to stderr: %s' % stderr.strip())
+        problems.append("`--version --verbose` printed to stderr: %s" % stderr.strip())
     return problems
 
 
@@ -69,21 +81,24 @@ def linux_problems(objdump_t: str, objdump_p: str) -> list[str]:
         if ref:
             glibcxx.append(dotted(ref.group(1)))
     if not glibc:
-        problems.append('`objdump -T` shows no GLIBC_ reference: the tool call is broken')
+        problems.append("`objdump -T` shows no GLIBC_ reference: the tool call is broken")
     # A weak reference that is missing at run time only costs a loader warning.
     # The build container keeps those out, so only the strong references set the floor.
     strong = [v for v, weak in glibc if not weak]
     if strong and max(strong) > GLIBC_FLOOR:
-        problems.append('GLIBC_%s is above the floor GLIBC_%s' % (text(max(strong)), text(GLIBC_FLOOR)))
+        problems.append(
+            "GLIBC_%s is above the floor GLIBC_%s" % (text(max(strong)), text(GLIBC_FLOOR))
+        )
     if glibcxx and max(glibcxx) > GLIBCXX_FLOOR:
-        problems.append('GLIBCXX_%s is above the floor GLIBCXX_%s'
-                        % (text(max(glibcxx)), text(GLIBCXX_FLOOR)))
+        problems.append(
+            "GLIBCXX_%s is above the floor GLIBCXX_%s" % (text(max(glibcxx)), text(GLIBCXX_FLOOR))
+        )
     libraries = [m.group(1) for m in map(NEEDED_LINE.match, objdump_p.splitlines()) if m]
     if not libraries:
-        problems.append('`objdump -p` shows no NEEDED line: the tool call is broken')
+        problems.append("`objdump -p` shows no NEEDED line: the tool call is broken")
     for library in libraries:
         if library not in NEEDED_OK:
-            problems.append('the binary needs %s, which is not in the allow-list' % library)
+            problems.append("the binary needs %s, which is not in the allow-list" % library)
     return problems
 
 
@@ -92,116 +107,123 @@ def macos_link_problems(otool_L: str) -> list[str]:
     seen = False
     for line in otool_L.splitlines():
         # The first line is the file's own name, and ends with a colon.
-        if not line.strip() or line.endswith(':'):
+        if not line.strip() or line.endswith(":"):
             continue
         seen = True
-        path = line.strip().split(' (')[0]
+        path = line.strip().split(" (")[0]
         if not path.startswith(LOAD_PATH_OK):
-            problems.append('the binary loads %s, which is not a system path' % path)
+            problems.append("the binary loads %s, which is not a system path" % path)
     if not seen:
-        problems.append('`otool -L` shows no load path: the tool call is broken')
+        problems.append("`otool -L` shows no load path: the tool call is broken")
     return problems
 
 
 def minos_problems(name: str, otool_l: str) -> list[str]:
     found = []
-    command = ''
+    command = ""
     for line in otool_l.splitlines():
         words = line.split()
-        if words[:1] == ['cmd']:
-            command = words[1] if len(words) > 1 else ''
+        if words[:1] == ["cmd"]:
+            command = words[1] if len(words) > 1 else ""
         # Under LC_BUILD_VERSION, `version` is a tool's, so only `minos` counts there.
-        elif command == 'LC_BUILD_VERSION' and words[:1] == ['minos'] and len(words) > 1:
+        elif command == "LC_BUILD_VERSION" and words[:1] == ["minos"] and len(words) > 1:
             found.append(words[1])
-        elif command == 'LC_VERSION_MIN_MACOSX' and words[:1] == ['version'] and len(words) > 1:
+        elif command == "LC_VERSION_MIN_MACOSX" and words[:1] == ["version"] and len(words) > 1:
             found.append(words[1])
     if not found:
-        return ['%s has no LC_BUILD_VERSION or LC_VERSION_MIN_MACOSX command' % name]
-    return ['%s has minos %s, above the floor %s' % (name, v, text(MINOS_FLOOR))
-            for v in found if dotted(v) > MINOS_FLOOR]
+        return ["%s has no LC_BUILD_VERSION or LC_VERSION_MIN_MACOSX command" % name]
+    return [
+        "%s has minos %s, above the floor %s" % (name, v, text(MINOS_FLOOR))
+        for v in found
+        if dotted(v) > MINOS_FLOOR
+    ]
 
 
 def tar_problems(names: list[str]) -> list[str]:
     problems = []
     for name in sorted(set(TARBALL_NAMES) - set(names)):
-        problems.append('the tarball has no %s' % name)
+        problems.append("the tarball has no %s" % name)
     for name in sorted(set(names) - set(TARBALL_NAMES)):
-        problems.append('the tarball has %s, which it must not have' % name)
+        problems.append("the tarball has %s, which it must not have" % name)
     if len(names) != len(set(names)):
-        problems.append('the tarball lists a name twice')
+        problems.append("the tarball lists a name twice")
     return problems
 
 
-def run(command: list[str], cwd: str | None = None,
-        env: dict[str, str] | None = None) -> tuple[list[str], str, str]:
+def run(
+    command: list[str], cwd: str | None = None, env: dict[str, str] | None = None
+) -> tuple[list[str], str, str]:
     """Runs a tool and gives its problems, stdout and stderr."""
     try:
         done = subprocess.run(command, capture_output=True, text=True, cwd=cwd, env=env)
     except OSError as error:
-        return ['cannot run %s: %s' % (command[0], error)], '', ''
+        return ["cannot run %s: %s" % (command[0], error)], "", ""
     problems = []
     if done.returncode != 0:
-        problems.append('`%s` exited with %d: %s' % (' '.join(command), done.returncode,
-                                                     done.stderr.strip()))
+        problems.append(
+            "`%s` exited with %d: %s" % (" ".join(command), done.returncode, done.stderr.strip())
+        )
     return problems, done.stdout, done.stderr
 
 
 def check_version(sisu: str, sha: str) -> list[str]:
-    problems, out, err = run([sisu, '--version', '--verbose'])
+    problems, out, err = run([sisu, "--version", "--verbose"])
     return problems or version_problems(out, err, sha)
 
 
 def check_linux(sisu: str) -> list[str]:
-    problems_t, out_t, _ = run(['objdump', '-T', sisu])
-    problems_p, out_p, _ = run(['objdump', '-p', sisu])
+    problems_t, out_t, _ = run(["objdump", "-T", sisu])
+    problems_p, out_p, _ = run(["objdump", "-p", sisu])
     return problems_t + problems_p or linux_problems(out_t, out_p)
 
 
 def check_macos(sisu: str, archives: list[str]) -> list[str]:
-    problems, out, _ = run(['otool', '-L', sisu])
+    problems, out, _ = run(["otool", "-L", sisu])
     problems = problems or macos_link_problems(out)
-    problems += run(['codesign', '-v', sisu])[0]
+    problems += run(["codesign", "-v", sisu])[0]
     for archive in archives:
         archive = os.path.abspath(archive)
-        listed_problems, members, _ = run(['ar', '-t', archive])
+        listed_problems, members, _ = run(["ar", "-t", archive])
         # shortcut: the first member stands for the archive, because one deployment target built
         # them all; check every member if an archive ever mixes targets.
-        member = next((m for m in members.splitlines() if not m.startswith('__.SYMDEF')), None)
+        member = next((m for m in members.splitlines() if not m.startswith("__.SYMDEF")), None)
         if listed_problems or member is None:
-            problems += listed_problems or ['%s has no member' % archive]
+            problems += listed_problems or ["%s has no member" % archive]
             continue
         with tempfile.TemporaryDirectory() as tmp:
-            extract = run(['ar', '-x', archive, member], cwd=tmp)[0]
+            extract = run(["ar", "-x", archive, member], cwd=tmp)[0]
             if extract:
                 problems += extract
                 continue
-            read_problems, otool_l, _ = run(['otool', '-l', os.path.join(tmp, member)])
-            problems += read_problems or minos_problems('%s(%s)' % (archive, member), otool_l)
+            read_problems, otool_l, _ = run(["otool", "-l", os.path.join(tmp, member)])
+            problems += read_problems or minos_problems("%s(%s)" % (archive, member), otool_l)
     return problems
 
 
 def pack(target: str, release: str, third_party: str, out_dir: str) -> list[str]:
     if target not in TARGETS:
-        return ['unknown target %s: use one of %s' % (target, ', '.join(TARGETS))]
+        return ["unknown target %s: use one of %s" % (target, ", ".join(TARGETS))]
     os.makedirs(out_dir, exist_ok=True)
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    sources = {'sisu': os.path.join(release, 'sisu'),
-               **{a: os.path.join(release, a) for a in ARCHIVES},
-               'LICENSE': os.path.join(root, 'LICENSE'),
-               THIRD_PARTY: third_party}
-    missing = ['%s is missing' % path for path in sources.values() if not os.path.isfile(path)]
+    sources = {
+        "sisu": os.path.join(release, "sisu"),
+        **{a: os.path.join(release, a) for a in ARCHIVES},
+        "LICENSE": os.path.join(root, "LICENSE"),
+        THIRD_PARTY: third_party,
+    }
+    missing = ["%s is missing" % path for path in sources.values() if not os.path.isfile(path)]
     if missing:
         return missing
     with tempfile.TemporaryDirectory() as tmp:
-        os.makedirs(os.path.join(tmp, 'sisu'))
+        os.makedirs(os.path.join(tmp, "sisu"))
         for name, path in sources.items():
-            shutil.copy(path, os.path.join(tmp, 'sisu', name))  # copy keeps the mode of `sisu`
-        tarball = 'sisu-%s.tar.gz' % target
-        command = ['tar', '-czf', tarball, 'sisu']
-        problems = run(command, cwd=tmp, env=dict(os.environ, COPYFILE_DISABLE='1'))[0]
+            shutil.copy(path, os.path.join(tmp, "sisu", name))  # copy keeps the mode of `sisu`
+        tarball = "sisu-%s.tar.gz" % target
+        command = ["tar", "-czf", tarball, "sisu"]
+        problems = run(command, cwd=tmp, env=dict(os.environ, COPYFILE_DISABLE="1"))[0]
         if problems:
             return problems
-        problems, listing, _ = run(['tar', '-tzf', tarball], cwd=tmp)
+        problems, listing, _ = run(["tar", "-tzf", tarball], cwd=tmp)
         problems = problems or tar_problems(listing.splitlines())
         if not problems:
             shutil.move(os.path.join(tmp, tarball), os.path.join(out_dir, tarball))
@@ -209,16 +231,16 @@ def pack(target: str, release: str, third_party: str, out_dir: str) -> list[str]
 
 
 def main(argv: list[str]) -> int:
-    arity = {'version': 3, 'linux': 2, 'macos': 4, 'pack': 5}
+    arity = {"version": 3, "linux": 2, "macos": 4, "pack": 5}
     if not argv or arity.get(argv[0]) != len(argv):
         print(__doc__, file=sys.stderr)
         return 2
     command, args = argv[0], argv[1:]
-    if command == 'version':
+    if command == "version":
         problems = check_version(*args)
-    elif command == 'linux':
+    elif command == "linux":
         problems = check_linux(*args)
-    elif command == 'macos':
+    elif command == "macos":
         problems = check_macos(args[0], args[1:])
     else:
         problems = pack(*args)
@@ -227,5 +249,5 @@ def main(argv: list[str]) -> int:
     return 1 if problems else 0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))

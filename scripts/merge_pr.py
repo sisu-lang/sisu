@@ -53,7 +53,9 @@ def wait_for_checks(pr, sha):
         if page["total_count"] > len(runs):
             raise Stop(f"{page['total_count']} checks, more than one page: merge by hand")
         if runs and all(r["status"] == "completed" for r in runs):
-            return [f'{r["name"]}: {r["conclusion"]}' for r in runs if r["conclusion"] not in PASSED]
+            return [
+                f"{r['name']}: {r['conclusion']}" for r in runs if r["conclusion"] not in PASSED
+            ]
         waited = time.monotonic() - start
         if not runs and waited >= NO_CHECKS_LIMIT:
             raise Stop("the head has no checks")
@@ -65,7 +67,9 @@ def wait_for_checks(pr, sha):
 
 def check_base(pr, sha):
     if gh(f"{REPO}/compare/{pr['base']['ref']}...{sha}")["behind_by"]:
-        raise Stop(f"{pr['head']['ref']} does not contain {pr['base']['ref']}: merge it, run make test")
+        raise Stop(
+            f"{pr['head']['ref']} does not contain {pr['base']['ref']}: merge it, run make test"
+        )
 
 
 def wait_for_issues(numbers):
@@ -121,8 +125,17 @@ def merge(number, root):
         raise Stop("; ".join(failed))
     # main can move during the wait.
     check_base(pr, sha)
-    merged = gh("-X", "PUT", f"{REPO}/pulls/{number}/merge", "-f", "merge_method=squash",
-                "-f", f"sha={sha}", "-f", f"commit_title={pr['title']} (#{number})")
+    merged = gh(
+        "-X",
+        "PUT",
+        f"{REPO}/pulls/{number}/merge",
+        "-f",
+        "merge_method=squash",
+        "-f",
+        f"sha={sha}",
+        "-f",
+        f"commit_title={pr['title']} (#{number})",
+    )
     print(f"merged #{number} as {merged['sha'][:8]}")
     issues = CLOSES.findall(pr["body"] or "")
     if issues:

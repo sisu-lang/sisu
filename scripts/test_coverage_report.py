@@ -1,4 +1,5 @@
 """Unit tests for coverage_report.py: python3 -m unittest discover -s scripts -p 'test_*.py'."""
+
 import contextlib
 import io
 import json
@@ -18,7 +19,9 @@ def func(name, regions, file="/r/a.rs", count=None, files=None):
         "name": name,
         "filenames": files or [file],
         "count": regions[0][4] if count is None else count,
-        "regions": [[*r[:5], r[5] if len(r) > 5 else 0, 0, r[6] if len(r) > 6 else 0] for r in regions],
+        "regions": [
+            [*r[:5], r[5] if len(r) > 5 else 0, 0, r[6] if len(r) > 6 else 0] for r in regions
+        ],
     }
 
 
@@ -54,13 +57,17 @@ class ChangedLines(unittest.TestCase):
         self.assertEqual(cr.changed_lines(d), {"a.rs": {3, 4, 5}})
 
     def test_a_plus_plus_plus_line_inside_a_hunk_is_added_text(self):
-        d = ("diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,0 +1,3 @@\n"
-             "+x\n+++ b/fake.rs\n+y\n")
+        d = (
+            "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,0 +1,3 @@\n"
+            "+x\n+++ b/fake.rs\n+y\n"
+        )
         self.assertEqual(cr.changed_lines(d), {"a.rs": {1, 2, 3}})
 
     def test_changed_lines_follows_u0_hunks_across_files(self):
-        d = ("diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -2 +1,0 @@\n-x\n@@ -5,0 +5 @@\n+y\n"
-             "diff --git a/b.rs b/b.rs\n--- a/b.rs\n+++ b/b.rs\n@@ -1 +1 @@\n-p\n+q\n")
+        d = (
+            "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -2 +1,0 @@\n-x\n@@ -5,0 +5 @@\n+y\n"
+            "diff --git a/b.rs b/b.rs\n--- a/b.rs\n+++ b/b.rs\n@@ -1 +1 @@\n-p\n+q\n"
+        )
         self.assertEqual(cr.changed_lines(d), {"a.rs": {5}, "b.rs": {1}})
 
     def test_changed_lines_skips_deleted_test_and_non_rust_files(self):
@@ -75,12 +82,16 @@ class ChangedLines(unittest.TestCase):
     def test_changed_lines_skips_unit_test_modules_in_their_own_file(self):
         def added(path):
             return f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -0,0 +1 @@\n+x\n"
-        d = "".join(added(p) for p in (
-            "crates/sisuc/src/codegen/tests.rs",
-            "crates/sisuc/src/mir/tests/certify.rs",
-            "crates/sisuc/src/mir/certify.rs",
-            "crates/sisuc/src/mir/tests_helper.rs",
-        ))
+
+        d = "".join(
+            added(p)
+            for p in (
+                "crates/sisuc/src/codegen/tests.rs",
+                "crates/sisuc/src/mir/tests/certify.rs",
+                "crates/sisuc/src/mir/certify.rs",
+                "crates/sisuc/src/mir/tests_helper.rs",
+            )
+        )
         self.assertEqual(
             cr.changed_lines(d),
             {"crates/sisuc/src/mir/certify.rs": {1}, "crates/sisuc/src/mir/tests_helper.rs": {1}},
@@ -132,8 +143,13 @@ class Report(unittest.TestCase):
             self.assertNotIn("never run:", run(export(*order), df=diff(start=11)))
 
     def test_regions_resolve_their_own_file(self):
-        exp = export(func("f", [(1, 1, 9, 1, 1), (3, 1, 4, 1, 0, 1), (5, 1, 6, 1, 0, 2)],
-                          files=["/r/a.rs", "/r/b.rs", "/rustc/x/lib.rs"]))
+        exp = export(
+            func(
+                "f",
+                [(1, 1, 9, 1, 1), (3, 1, 4, 1, 0, 1), (5, 1, 6, 1, 0, 2)],
+                files=["/r/a.rs", "/r/b.rs", "/rustc/x/lib.rs"],
+            )
+        )
         self.assertEqual(cr.uncovered(exp, ROOT), {"b.rs": [cr.Region(3, 1, 4, 1, False)]})
 
     def test_zero_regions_in_unchanged_files_are_not_listed(self):
@@ -142,18 +158,34 @@ class Report(unittest.TestCase):
         self.assertEqual((touching, other), (["(none)"], ["(none)"]))
 
     def test_an_invariant_panic_touching_changes_is_advisory(self):
-        exp = export(func("f", [(1, 1, 9, 1, 1), (3, 5, 3, 17, 0), (4, 5, 4, 11, 0), (5, 5, 5, 9, 0)]))
-        lines = {3: '    unreachable!("x should be y")', 4: '    _ => panic!("z should hold"),', 5: "    0"}
-        _, touching, other = sections(run(exp, df=diff(start=3, count=3), read=lambda p, n: lines[n]))
+        exp = export(
+            func("f", [(1, 1, 9, 1, 1), (3, 5, 3, 17, 0), (4, 5, 4, 11, 0), (5, 5, 5, 9, 0)])
+        )
+        lines = {
+            3: '    unreachable!("x should be y")',
+            4: '    _ => panic!("z should hold"),',
+            5: "    0",
+        }
+        _, touching, other = sections(
+            run(exp, df=diff(start=3, count=3), read=lambda p, n: lines[n])
+        )
         self.assertEqual([t.split(": ")[0] for t in touching], ["a.rs:5:5-5:9"])
         self.assertEqual([t.split(": ")[0] for t in other], ["a.rs:3:5-3:17", "a.rs:4:5-4:11"])
 
     def test_the_message_of_an_assert_that_ran_is_advisory(self):
-        exp = export(func("f", [(1, 1, 9, 1, 1), (3, 30, 3, 36, 0), (4, 30, 4, 36, 0), (5, 5, 5, 9, 0)]))
-        lines = {3: '    assert!(n <= 4, "{} steps", n.get());', 4: '    debug_assert_eq!(a, b, "{}", c);', 5: "    0"}
+        exp = export(
+            func("f", [(1, 1, 9, 1, 1), (3, 30, 3, 36, 0), (4, 30, 4, 36, 0), (5, 5, 5, 9, 0)])
+        )
+        lines = {
+            3: '    assert!(n <= 4, "{} steps", n.get());',
+            4: '    debug_assert_eq!(a, b, "{}", c);',
+            5: "    0",
+        }
         # Line 4 never ran, so its assert did not run, and its region still counts.
         lc = lcov(**{"a.rs": {3: 1, 4: 0, 5: 0}})
-        _, touching, other = sections(run(exp, lc, diff(start=3, count=3), read=lambda p, n: lines[n]))
+        _, touching, other = sections(
+            run(exp, lc, diff(start=3, count=3), read=lambda p, n: lines[n])
+        )
         self.assertEqual([t.split(": ")[0] for t in touching], ["a.rs:4:30-4:36", "a.rs:5:5-5:9"])
         self.assertEqual([t.split(": ")[0] for t in other], ["a.rs:3:30-3:36"])
 
@@ -167,8 +199,10 @@ class Report(unittest.TestCase):
         self.assertEqual(head, "Coverage: lines 87.3%, regions 85.1%, changed lines: none.")
 
     def test_paths_outside_the_root_are_dropped(self):
-        exp = export(func("f", [(1, 1, 5, 1, 1), (3, 1, 4, 1, 0)], file="/rustc/abc/lib.rs"),
-                     func("g", [(1, 1, 5, 1, 0)], file="/rx/lib.rs"))
+        exp = export(
+            func("f", [(1, 1, 5, 1, 1), (3, 1, 4, 1, 0)], file="/rustc/abc/lib.rs"),
+            func("g", [(1, 1, 5, 1, 0)], file="/rx/lib.rs"),
+        )
         self.assertEqual(cr.uncovered(exp, ROOT), {})
 
     def test_instantiations_with_different_names_are_one_function(self):
@@ -212,8 +246,23 @@ class Main(unittest.TestCase):
     def test_malformed_inputs_exit_1_without_a_traceback(self):
         good = json.dumps(export(func("f", [(1, 1, 2, 1, 1)])))
         bad_func = json.dumps({"data": [{"totals": TOTALS, "functions": [{"count": 1}]}]})
-        bad_pct = json.dumps({"data": [{"totals": {"lines": {"percent": "x"}, "regions": {"percent": 1}}, "functions": []}]})
-        for args in ((bad_func,), (bad_pct,), (json.dumps({"data": [{}]}),), (good, "SF:/r/a.rs\nDA:1,x\n", diff()), ("{", "", "")):
+        bad_pct = json.dumps(
+            {
+                "data": [
+                    {
+                        "totals": {"lines": {"percent": "x"}, "regions": {"percent": 1}},
+                        "functions": [],
+                    }
+                ]
+            }
+        )
+        for args in (
+            (bad_func,),
+            (bad_pct,),
+            (json.dumps({"data": [{}]}),),
+            (good, "SF:/r/a.rs\nDA:1,x\n", diff()),
+            ("{", "", ""),
+        ):
             code, err = self.call(*args)
             self.assertEqual(code, 1, args)
             self.assertRegex(err, r"^coverage_report: [^\n]+\n$")

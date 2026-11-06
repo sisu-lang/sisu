@@ -1,4 +1,5 @@
 """Unit tests for the prek hook scripts: python3 -m unittest discover -s scripts -p 'test_*.py'."""
+
 import contextlib
 import io
 import os
@@ -15,8 +16,8 @@ import test_names
 def run(main, text):
     """`main`'s exit code and output on one file holding `text`."""
     with tempfile.TemporaryDirectory() as d:
-        path = os.path.join(d, 'f.rs')
-        with open(path, 'w', encoding='utf-8') as f:
+        path = os.path.join(d, "f.rs")
+        with open(path, "w", encoding="utf-8") as f:
             f.write(text)
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
@@ -26,230 +27,263 @@ def run(main, text):
 
 class CommentWidth(unittest.TestCase):
     def test_a_comment_over_100_columns_fails_at_its_line(self):
-        code, out = run(comment_width.main, 'fn f() {}\n    // ' + 'x' * 94 + '\n')
+        code, out = run(comment_width.main, "fn f() {}\n    // " + "x" * 94 + "\n")
         self.assertEqual(code, 1)
-        self.assertIn(':2: comment is 101 columns', out)
+        self.assertIn(":2: comment is 101 columns", out)
 
     def test_a_comment_of_100_columns_and_long_code_pass(self):
-        text = '    // ' + 'x' * 93 + '\nlet s = "' + 'x' * 100 + '";\n'
-        self.assertEqual(run(comment_width.main, text), (0, ''))
+        text = "    // " + "x" * 93 + '\nlet s = "' + "x" * 100 + '";\n'
+        self.assertEqual(run(comment_width.main, text), (0, ""))
 
 
 class RegistryDebugFormat(unittest.TestCase):
     def test_debug_format_before_the_tests_fails(self):
         code, out = run(registry_debug_format.main, 'use a;\nformat!("{x:?}")\n#[cfg(test)]\n')
         self.assertEqual(code, 1)
-        self.assertIn(':2: diagnostic text uses {:?}', out)
+        self.assertIn(":2: diagnostic text uses {:?}", out)
 
     def test_debug_format_in_the_test_module_should_pass(self):
         for header in HEADERS:
             with self.subTest(header=header):
-                text = 'use a;\n' + header + '    format!("{x:?}")\n}\n'
-                self.assertEqual(run(registry_debug_format.main, text), (0, ''))
+                text = "use a;\n" + header + '    format!("{x:?}")\n}\n'
+                self.assertEqual(run(registry_debug_format.main, text), (0, ""))
 
     def test_debug_format_after_a_step_counter_should_fail(self):
         text = '#[cfg(test)]\nthread_local! {}\nformat!("{x:?}")\n#[cfg(test)]\nmod tests {}\n'
         code, out = run(registry_debug_format.main, text)
         self.assertEqual(code, 1)
-        self.assertIn(':3: diagnostic text uses {:?}', out)
+        self.assertIn(":3: diagnostic text uses {:?}", out)
 
 
 # A step counter that CODING_STANDARDS.md asks for, at the top of a production file.
-STEPS = '#[cfg(test)]\nthread_local! {\n    static STEPS: Cell<u32> = const { Cell::new(0) };\n}\n'
+STEPS = "#[cfg(test)]\nthread_local! {\n    static STEPS: Cell<u32> = const { Cell::new(0) };\n}\n"
 # The plain test module header, and one with what may come between: rustfmt splits a long
 # attribute over lines and keeps a blank line, and a doc comment may come too.
 HEADERS = (
-    '#[cfg(test)]\nmod tests {\n',
+    "#[cfg(test)]\nmod tests {\n",
     '#[cfg(test)]\n\n/// The tests.\n#[expect(\n    clippy::x,\n    reason = "[r]",\n)]\nmod tests {\n',
 )
 
 
-def run_hook(script, text, name='f.rs', relative=False):
+def run_hook(script, text, name="f.rs", relative=False):
     """The exit code and output of `scripts/<script>` on one file, `name`, holding `text`.
 
     With `relative`, the hook gets `name` as a relative path, as prek gives it."""
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, name)
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, 'w', encoding='utf-8') as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write(text)
         done = subprocess.run(
-            [os.path.join(os.path.dirname(os.path.abspath(__file__)), script),
-             name if relative else path],
-            capture_output=True, text=True, cwd=d)
+            [
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), script),
+                name if relative else path,
+            ],
+            capture_output=True,
+            text=True,
+            cwd=d,
+        )
     return done.returncode, done.stdout
 
 
 class ExpectMessages(unittest.TestCase):
     def test_an_expect_after_a_step_counter_should_fail_at_its_line(self):
-        code, out = run_hook('check-expect-messages.sh', STEPS + 'x.expect("no");\n')
+        code, out = run_hook("check-expect-messages.sh", STEPS + 'x.expect("no");\n')
         self.assertEqual(code, 1)
-        self.assertIn('f.rs:5: expect message should say', out)
+        self.assertIn("f.rs:5: expect message should say", out)
 
     def test_an_expect_in_the_test_module_should_pass(self):
         for header in HEADERS:
             with self.subTest(header=header):
                 text = STEPS + 'x.expect("a should");\n' + header + '    x.expect("no");\n}\n'
-                self.assertEqual(run_hook('check-expect-messages.sh', text), (0, ''))
+                self.assertEqual(run_hook("check-expect-messages.sh", text), (0, ""))
 
 
 class TestWording(unittest.TestCase):
     def test_wording_after_a_step_counter_should_pass(self):
-        self.assertEqual(run_hook('check-test-wording.sh', STEPS + 'd.message();\n'), (0, ''))
+        self.assertEqual(run_hook("check-test-wording.sh", STEPS + "d.message();\n"), (0, ""))
 
     def test_wording_in_the_test_module_should_fail(self):
         for header in HEADERS:
             with self.subTest(header=header):
-                text = STEPS + header + '    d.message();\n}\n'
-                code, out = run_hook('check-test-wording.sh', text)
+                text = STEPS + header + "    d.message();\n}\n"
+                code, out = run_hook("check-test-wording.sh", text)
                 self.assertEqual(code, 1)
-                line = text.count('\n') - 1
-                self.assertIn(f'f.rs:{line}: a unit test reads diagnostic wording', out)
-
+                line = text.count("\n") - 1
+                self.assertIn(f"f.rs:{line}: a unit test reads diagnostic wording", out)
 
     def test_a_path_form_in_the_test_module_should_fail(self):
-        for read in ('ds.iter().map(Diagnostic::message)', 'Diagnostic::label(d)',
-                     'Diagnostic::help(d).unwrap()'):
+        for read in (
+            "ds.iter().map(Diagnostic::message)",
+            "Diagnostic::label(d)",
+            "Diagnostic::help(d).unwrap()",
+        ):
             with self.subTest(read=read):
-                code, out = run_hook('check-test-wording.sh', HEADERS[0] + f'    {read};\n}}\n')
+                code, out = run_hook("check-test-wording.sh", HEADERS[0] + f"    {read};\n}}\n")
                 self.assertEqual(code, 1)
-                self.assertIn('f.rs:3: a unit test reads diagnostic wording', out)
+                self.assertIn("f.rs:3: a unit test reads diagnostic wording", out)
 
     def test_a_help_check_should_pass(self):
-        for body in ('    Diagnostic::help(d).is_none();\n',
-                     '    assert_eq!(Diagnostic::help(d), None);\n'):
+        for body in (
+            "    Diagnostic::help(d).is_none();\n",
+            "    assert_eq!(Diagnostic::help(d), None);\n",
+        ):
             with self.subTest(body=body):
-                self.assertEqual(run_hook('check-test-wording.sh', HEADERS[0] + body + '}\n'), (0, ''))
+                self.assertEqual(
+                    run_hook("check-test-wording.sh", HEADERS[0] + body + "}\n"), (0, "")
+                )
 
     def test_a_read_after_a_marker_comment_should_fail(self):
         body = '    // wording compared: two outputs.\n    assert_eq!(ds[0].message(), "x");\n'
-        code, out = run_hook('check-test-wording.sh', HEADERS[0] + body + '}\n')
+        code, out = run_hook("check-test-wording.sh", HEADERS[0] + body + "}\n")
         self.assertEqual(code, 1)
-        self.assertIn('f.rs:4: a unit test reads diagnostic wording', out)
+        self.assertIn("f.rs:4: a unit test reads diagnostic wording", out)
 
     def test_two_debug_strings_compared_in_the_test_module_should_fail(self):
-        for body in ('    assert_eq!(format!("{a:?}"), format!("{b:?}"), "{p}");\n',
-                     '    assert_ne!(\n        format!("{:#?}", a),\n        format!("{:?}", b)\n    );\n',
-                     '    assert_eq!(format!("{:?}", a.first()), format!("{:?}", b.first()));\n',
-                     '    assert_eq!(format!("{:?}", f(g(a), 1)), format!("{:?}", b.get(0, 1)));\n',
-                     '    assert_eq!(format!("{:?}", a.iter().map(|d| d.at).collect::<Vec<_>>()), format!("{:?}", b));\n'):
+        for body in (
+            '    assert_eq!(format!("{a:?}"), format!("{b:?}"), "{p}");\n',
+            '    assert_ne!(\n        format!("{:#?}", a),\n        format!("{:?}", b)\n    );\n',
+            '    assert_eq!(format!("{:?}", a.first()), format!("{:?}", b.first()));\n',
+            '    assert_eq!(format!("{:?}", f(g(a), 1)), format!("{:?}", b.get(0, 1)));\n',
+            '    assert_eq!(format!("{:?}", a.iter().map(|d| d.at).collect::<Vec<_>>()), format!("{:?}", b));\n',
+        ):
             with self.subTest(body=body):
-                code, out = run_hook('check-test-wording.sh', HEADERS[0] + body + '}\n')
+                code, out = run_hook("check-test-wording.sh", HEADERS[0] + body + "}\n")
                 self.assertEqual(code, 1)
-                self.assertIn('f.rs:3: a unit test compares the Debug text of two values', out)
+                self.assertIn("f.rs:3: a unit test compares the Debug text of two values", out)
 
     def test_a_debug_string_compared_with_a_literal_should_pass(self):
-        for text in (HEADERS[0] + '    assert_eq!(format!("{pair:?}"), "[I64, String]");\n}\n',
-                     STEPS + 'assert_eq!(format!("{a:?}"), format!("{b:?}"));\n'):
+        for text in (
+            HEADERS[0] + '    assert_eq!(format!("{pair:?}"), "[I64, String]");\n}\n',
+            STEPS + 'assert_eq!(format!("{a:?}"), format!("{b:?}"));\n',
+        ):
             with self.subTest(text=text):
-                self.assertEqual(run_hook('check-test-wording.sh', text), (0, ''))
+                self.assertEqual(run_hook("check-test-wording.sh", text), (0, ""))
 
     def test_a_read_in_an_exempt_file_should_pass_and_in_another_crate_fail(self):
-        text = HEADERS[0] + '    fn f(d: &Diagnostic) -> String {\n        d.message().to_owned()\n    }\n}\n'
-        for exempt in ('crates/sisuc/src/check/tests/parity.rs',
-                       'crates/sisuc/src/diagnostic/render.rs',
-                       'crates/sisuc/src/diagnostic/json.rs',
-                       'crates/sisuc/src/report.rs'):
-            other = exempt.replace('crates/sisuc/', 'crates/runtime/')
+        text = (
+            HEADERS[0]
+            + "    fn f(d: &Diagnostic) -> String {\n        d.message().to_owned()\n    }\n}\n"
+        )
+        for exempt in (
+            "crates/sisuc/src/check/tests/parity.rs",
+            "crates/sisuc/src/diagnostic/render.rs",
+            "crates/sisuc/src/diagnostic/json.rs",
+            "crates/sisuc/src/report.rs",
+        ):
+            other = exempt.replace("crates/sisuc/", "crates/runtime/")
             for relative in (False, True):
                 with self.subTest(name=exempt, relative=relative):
                     self.assertEqual(
-                        run_hook('check-test-wording.sh', text, exempt, relative), (0, ''))
-                    self.assertEqual(run_hook('check-test-wording.sh', text, other, relative)[0], 1)
+                        run_hook("check-test-wording.sh", text, exempt, relative), (0, "")
+                    )
+                    self.assertEqual(run_hook("check-test-wording.sh", text, other, relative)[0], 1)
         self.assertEqual(
-            run_hook('check-test-wording.sh', text, 'crates/sisuc/src/check/tests/other.rs')[0], 1)
+            run_hook("check-test-wording.sh", text, "crates/sisuc/src/check/tests/other.rs")[0], 1
+        )
+
 
 class SessionUrl(unittest.TestCase):
     def test_a_session_line_or_url_should_fail_at_its_line(self):
-        for line in ('Claude-Session: https://claude.ai/code/session_01ab',
-                     'See https://claude.ai/code/session_01ab'):
-            code, out = run(session_url.main, f'Fix the lexer\n\n{line}\n')
+        for line in (
+            "Claude-Session: https://claude.ai/code/session_01ab",
+            "See https://claude.ai/code/session_01ab",
+        ):
+            code, out = run(session_url.main, f"Fix the lexer\n\n{line}\n")
             self.assertEqual(code, 1, line)
-            self.assertIn(':3: remove the session line', out)
+            self.assertIn(":3: remove the session line", out)
 
     def test_a_message_without_one_should_pass(self):
-        text = 'Fix the lexer\n\nThe session of a `let` ends at its line.\n# Claude-Session: a comment\n'
-        self.assertEqual(run(session_url.main, text), (0, ''))
+        text = "Fix the lexer\n\nThe session of a `let` ends at its line.\n# Claude-Session: a comment\n"
+        self.assertEqual(run(session_url.main, text), (0, ""))
 
 
-def run_test_names(text, path='crates/sisuc/src/f.rs', baseline=''):
+def run_test_names(text, path="crates/sisuc/src/f.rs", baseline=""):
     """test_names' exit code and output on one file at `path` holding `text`."""
     with tempfile.TemporaryDirectory() as d:
         full = os.path.join(d, path)
         os.makedirs(os.path.dirname(full))
-        with open(full, 'w', encoding='utf-8') as f:
+        with open(full, "w", encoding="utf-8") as f:
             f.write(text)
-        old = os.path.join(d, 'baseline.txt')
-        with open(old, 'w', encoding='utf-8') as f:
-            f.write(baseline.replace('PATH', full))
+        old = os.path.join(d, "baseline.txt")
+        with open(old, "w", encoding="utf-8") as f:
+            f.write(baseline.replace("PATH", full))
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             code = test_names.main([full], old)
     return code, out.getvalue()
 
 
-GWT = '/// GIVEN a file\n/// WHEN sisu builds it\n/// AND it runs\n/// THEN it prints 1\n'
+GWT = "/// GIVEN a file\n/// WHEN sisu builds it\n/// AND it runs\n/// THEN it prints 1\n"
 
 
 class TestNames(unittest.TestCase):
     def test_a_name_without_should_should_fail_at_its_fn_line(self):
-        code, out = run_test_names('#[test]\n#[should_panic]\nfn emit_ir() {}\n')
+        code, out = run_test_names("#[test]\n#[should_panic]\nfn emit_ir() {}\n")
         self.assertEqual(code, 1)
-        self.assertIn(':3: test name `emit_ir`', out)
+        self.assertIn(":3: test name `emit_ir`", out)
 
     def test_a_name_with_should_should_pass(self):
-        self.assertEqual(run_test_names('#[test]\nfn ir_should_verify() {}\n'), (0, ''))
+        self.assertEqual(run_test_names("#[test]\nfn ir_should_verify() {}\n"), (0, ""))
 
     def test_fn_in_an_attribute_should_not_be_the_name(self):
         text = '#[test]\n#[should_panic(expected = "fn f_should_x")]\nfn emit_ir() {}\n'
         code, out = run_test_names(text)
         self.assertEqual(code, 1)
-        self.assertIn(':3: test name `emit_ir`', out)
+        self.assertIn(":3: test name `emit_ir`", out)
 
     def test_a_reused_baseline_name_should_fail_at_its_second_use(self):
-        text = '#[test]\nfn emit_ir() {}\nmod m {\n#[test]\nfn emit_ir() {}\n}\n'
-        code, out = run_test_names(text, baseline='PATH::emit_ir\n')
+        text = "#[test]\nfn emit_ir() {}\nmod m {\n#[test]\nfn emit_ir() {}\n}\n"
+        code, out = run_test_names(text, baseline="PATH::emit_ir\n")
         self.assertEqual(code, 1)
-        self.assertIn(':5: test name `emit_ir`', out)
+        self.assertIn(":5: test name `emit_ir`", out)
 
     def test_an_end_to_end_test_should_fail_with_plain_comments(self):
-        text = ('// GIVEN a file\n// WHEN sisu builds it\n// THEN it prints 1\n'
-                '#[test]\nfn ir_should_verify() {}\n')
-        self.assertEqual(run_test_names(text, path='crates/sisuc/tests/cli.rs')[0], 1)
+        text = (
+            "// GIVEN a file\n// WHEN sisu builds it\n// THEN it prints 1\n"
+            "#[test]\nfn ir_should_verify() {}\n"
+        )
+        self.assertEqual(run_test_names(text, path="crates/sisuc/tests/cli.rs")[0], 1)
 
     def test_a_macro_test_should_not_take_the_name_of_the_next_function(self):
-        text = ('macro_rules! m {\n    () => {\n        #[test]\n        fn $name() {}\n    };\n}\n'
-                'fn setup() {}\n')
-        self.assertEqual(run_test_names(text), (0, ''))
+        text = (
+            "macro_rules! m {\n    () => {\n        #[test]\n        fn $name() {}\n    };\n}\n"
+            "fn setup() {}\n"
+        )
+        self.assertEqual(run_test_names(text), (0, ""))
 
     def test_doc_lines_above_a_long_attribute_should_count(self):
-        text = (GWT + '#[cfg_attr(\n    any(),\n    ignore = "slow"\n)]\n'
-                '#[test]\nfn ir_should_verify() {}\n')
-        self.assertEqual(run_test_names(text, path='crates/sisuc/tests/cli.rs'), (0, ''))
+        text = (
+            GWT + '#[cfg_attr(\n    any(),\n    ignore = "slow"\n)]\n'
+            "#[test]\nfn ir_should_verify() {}\n"
+        )
+        self.assertEqual(run_test_names(text, path="crates/sisuc/tests/cli.rs"), (0, ""))
 
     def test_a_name_in_the_baseline_should_pass(self):
-        text = '#[test]\nfn emit_ir() {}\n'
-        self.assertEqual(run_test_names(text, baseline='# old\nPATH::emit_ir\n'), (0, ''))
+        text = "#[test]\nfn emit_ir() {}\n"
+        self.assertEqual(run_test_names(text, baseline="# old\nPATH::emit_ir\n"), (0, ""))
 
     def test_an_end_to_end_test_should_fail_without_then(self):
-        text = '/// GIVEN a file\n/// WHEN sisu builds it\n#[test]\nfn ir_should_verify() {}\n'
-        code, out = run_test_names(text, path='crates/sisuc/tests/cli.rs')
+        text = "/// GIVEN a file\n/// WHEN sisu builds it\n#[test]\nfn ir_should_verify() {}\n"
+        code, out = run_test_names(text, path="crates/sisuc/tests/cli.rs")
         self.assertEqual(code, 1)
-        self.assertIn(':4: end-to-end test `ir_should_verify` needs GIVEN', out)
+        self.assertIn(":4: end-to-end test `ir_should_verify` needs GIVEN", out)
 
     def test_an_end_to_end_test_should_fail_when_its_lines_are_out_of_order(self):
-        text = ('/// WHEN sisu builds it\n/// GIVEN a file\n/// THEN it prints 1\n'
-                '#[test]\nfn ir_should_verify() {}\n')
-        self.assertEqual(run_test_names(text, path='crates/sisuc/tests/cli.rs')[0], 1)
+        text = (
+            "/// WHEN sisu builds it\n/// GIVEN a file\n/// THEN it prints 1\n"
+            "#[test]\nfn ir_should_verify() {}\n"
+        )
+        self.assertEqual(run_test_names(text, path="crates/sisuc/tests/cli.rs")[0], 1)
 
     def test_an_end_to_end_test_should_pass_with_given_when_and_then_above_its_attributes(self):
-        text = GWT + '#[test]\n#[ignore]\nfn ir_should_verify() {}\n'
-        self.assertEqual(run_test_names(text, path='crates/sisuc/tests/cli.rs'), (0, ''))
+        text = GWT + "#[test]\n#[ignore]\nfn ir_should_verify() {}\n"
+        self.assertEqual(run_test_names(text, path="crates/sisuc/tests/cli.rs"), (0, ""))
 
     def test_a_unit_test_should_pass_without_given_when_and_then(self):
-        text = '#[test]\nfn ir_should_verify() {}\n'
-        self.assertEqual(run_test_names(text, path='crates/sisuc/src/check/tests/u8.rs'), (0, ''))
+        text = "#[test]\nfn ir_should_verify() {}\n"
+        self.assertEqual(run_test_names(text, path="crates/sisuc/src/check/tests/u8.rs"), (0, ""))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

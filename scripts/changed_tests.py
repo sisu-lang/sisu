@@ -33,12 +33,16 @@ def bodies(lines: list[str]) -> list[tuple[str, int, int]]:
     for i, (first, name, _) in enumerate(tests):
         text = lines[first - 1]
         closing = re.compile(re.escape(text[: len(text) - len(text.lstrip())]) + CLOSE.pattern)
-        stop = tests[i + 1][0] - 1 if i + 1 < len(tests) else len(lines)  # the line before the next `fn`
+        stop = (
+            tests[i + 1][0] - 1 if i + 1 < len(tests) else len(lines)
+        )  # the line before the next `fn`
         last = first
         # shortcut: a `fn` line that holds a closed inner block is a one-line body; rustfmt never writes that.
         if not CLOSE.search(text.rstrip()):
-            last = next((n for n in range(first + 1, stop + 1) if closing.fullmatch(lines[n - 1].rstrip())),
-                        max(stop, first))
+            last = next(
+                (n for n in range(first + 1, stop + 1) if closing.fullmatch(lines[n - 1].rstrip())),
+                max(stop, first),
+            )
         found.append((name, first, last))
     return found
 
@@ -48,8 +52,15 @@ def git(repo: str, *args: str) -> str:
     not stop the check, so it is kept as a surrogate. GIT_DIFF_OPTS would beat `-U0`; the other
     `GIT_*` variables, such as GIT_DIR in a hook, stay."""
     env = {key: value for key, value in os.environ.items() if key != "GIT_DIFF_OPTS"}
-    return subprocess.run(["git", "-C", repo, *args], check=True, capture_output=True, text=True,
-                          encoding="utf-8", errors="surrogateescape", env=env).stdout
+    return subprocess.run(
+        ["git", "-C", repo, *args],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="surrogateescape",
+        env=env,
+    ).stdout
 
 
 def hit(found: list[tuple[str, int, int]], start: int, count: int) -> set[str]:
@@ -67,9 +78,20 @@ def hit(found: list[tuple[str, int, int]], start: int, count: int) -> set[str]:
 # These flags make the output the same under any user config: no color, no external diff driver
 # or text conversion, the `a/` and `b/` prefixes, and no merge of near hunks, which would add
 # unchanged lines to a range.
-DIFF = ("-c", "core.quotepath=off", "diff", "-U0", "-M", "-l10000", "--no-color", "--no-ext-diff",
-        "--no-textconv", "--inter-hunk-context=0", "--src-prefix=a/",
-        "--dst-prefix=b/")
+DIFF = (
+    "-c",
+    "core.quotepath=off",
+    "diff",
+    "-U0",
+    "-M",
+    "-l10000",
+    "--no-color",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--inter-hunk-context=0",
+    "--src-prefix=a/",
+    "--dst-prefix=b/",
+)
 
 
 def changed(ref: str, repo: str = ".") -> set[tuple[str, str]]:

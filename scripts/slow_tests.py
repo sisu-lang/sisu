@@ -8,6 +8,7 @@ report cannot be read. Always exits 0. Under GitHub Actions, each slow test is a
 warning. With --diff, it lists only the slow tests whose name `git diff -U0 REF` mentions, the
 tests a change added or edited, and counts the rest: on a loaded machine the rest are noise.
 """
+
 import argparse
 import os
 import re
@@ -25,13 +26,13 @@ END_TO_END_BUDGET = 4.0
 def timed(junit: str) -> list[tuple[float, float, str]]:
     """(seconds, budget, name) of each test in the report, setup scripts left out."""
     tests = []
-    for case in ET.fromstring(junit).iter('testcase'):
-        binary = case.get('classname', '')
-        if binary.startswith('@'):  # a setup script, not a test
+    for case in ET.fromstring(junit).iter("testcase"):
+        binary = case.get("classname", "")
+        if binary.startswith("@"):  # a setup script, not a test
             continue
         # nextest names an integration test binary `<crate>::<binary>`, a crate's own tests `<crate>`.
-        budget = END_TO_END_BUDGET if '::' in binary else UNIT_BUDGET
-        tests.append((float(case.get('time', '0')), budget, f"{binary} {case.get('name')}"))
+        budget = END_TO_END_BUDGET if "::" in binary else UNIT_BUDGET
+        tests.append((float(case.get("time", "0")), budget, f"{binary} {case.get('name')}"))
     return tests
 
 
@@ -44,13 +45,13 @@ def in_diff(name: str, diff: str) -> bool:
     """Whether the diff mentions the test: its function name, which a `fn` line or a hunk header
     carries (`.gitattributes` gives Rust files git's `rust` hunk headers), or the stem of its
     `tests/` case file, such as `fib` for `run::fib.sisu`."""
-    key = name.split(' ', 1)[-1].rsplit('::', 1)[-1].removesuffix('.sisu')
-    return re.search(rf'(?<!\w){re.escape(key)}(?!\w)', diff) is not None
+    key = name.split(" ", 1)[-1].rsplit("::", 1)[-1].removesuffix(".sisu")
+    return re.search(rf"(?<!\w){re.escape(key)}(?!\w)", diff) is not None
 
 
 def main(path: str, ref: str | None = None) -> None:
     try:
-        with open(path, encoding='utf-8') as file:
+        with open(path, encoding="utf-8") as file:
             junit = file.read()
         tests = timed(junit)
         minutes = (time.time() - os.path.getmtime(path)) / 60
@@ -63,24 +64,32 @@ def main(path: str, ref: str | None = None) -> None:
     slow = over_budget(tests)
     others = 0
     if ref is not None and slow:
-        diff = subprocess.run(['git', 'diff', '-U0', '--no-color', '--no-ext-diff', '--no-textconv', ref],
-                              capture_output=True, text=True, errors='surrogateescape').stdout
+        diff = subprocess.run(
+            ["git", "diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", ref],
+            capture_output=True,
+            text=True,
+            errors="surrogateescape",
+        ).stdout
         mentioned = [test for test in slow if in_diff(test[2], diff)]
         others = len(slow) - len(mentioned)
         slow = mentioned
     if others:
         print(f"slow_tests: {others} other tests over budget are outside `git diff {ref}`")
     if slow:
-        print(f"Tests over their time budget (CODING_STANDARDS.md, Tests), in {path} from {minutes:.0f} min ago:")
+        print(
+            f"Tests over their time budget (CODING_STANDARDS.md, Tests), in {path} from {minutes:.0f} min ago:"
+        )
     for seconds, budget, name in slow:
         print(f"  {seconds:6.2f} s (budget {budget:g} s)  {name}")
-        if os.environ.get('GITHUB_ACTIONS') == 'true':
-            print(f"::warning title=Slow test::{name} took {seconds:.2f} s; its budget is {budget:g} s")
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            print(
+                f"::warning title=Slow test::{name} took {seconds:.2f} s; its budget is {budget:g} s"
+            )
 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
-    parser.add_argument('junit')
-    parser.add_argument('--diff', metavar='REF')
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("junit")
+    parser.add_argument("--diff", metavar="REF")
     args = parser.parse_args()
     main(args.junit, args.diff)

@@ -5,9 +5,7 @@ class Node:
 
     def check(self):
         return (
-            1
-            + (self.left.check() if self.left else 0)
-            + (self.right.check() if self.right else 0)
+            1 + (self.left.check() if self.left else 0) + (self.right.check() if self.right else 0)
         )
 
 
