@@ -15,7 +15,10 @@ import re
 import stat
 import tempfile
 import unittest
+from collections.abc import Callable
+from fractions import Fraction
 from pathlib import Path
+from typing import Any, override
 from unittest import mock
 
 import scaling as sc
@@ -244,20 +247,20 @@ Sizes: 0, 50, 100, 200, 400. Growth is the count less the count at size 0.
 """
 
 
-def growths(r1, r2, r3):
+def growths(r1: float, r2: float, r3: float) -> list[int]:
     """The growths at n, 2n, 4n and 8n for a stage with these ratios."""
     g2 = round(1000 * r1)
     g4 = round(g2 * r2)
     return [1000, g2, g4, round(g4 * r3)]
 
 
-def counts_file(tmp, shapes):
+def counts_file(tmp: Path | str, shapes: dict[str, dict[str, list[int]]]) -> Path:
     """Writes a counts.json for `shapes`: {shape: {stage: growths}}, and returns its path.
 
     The first stage without growths is linear and takes the rest of 100000 for the growth at 8n.
     Each other stage has no growth.
     """
-    data = {
+    data: dict[str, Any] = {
         "commit": "abc1234",
         "cpu": "Test CPU",
         "valgrind": "valgrind-3.0",
@@ -280,12 +283,12 @@ def counts_file(tmp, shapes):
     return path
 
 
-def script(path, text) -> None:
+def script(path: Path, text: str) -> None:
     path.write_text("#!/bin/sh\n" + text)
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
-def stubs(tmp, check="", annotate=ANNOTATE, valgrind=True):
+def stubs(tmp: Path | str, check: str = "", annotate: str = ANNOTATE, valgrind: bool = True) -> str:
     """Writes stub `sisu`, `valgrind` and `callgrind_annotate` in `tmp/bin`; returns that PATH.
 
     `check` is shell text that runs first for each call of the stub `sisu`. A stub exits with
@@ -329,7 +332,7 @@ def stubs(tmp, check="", annotate=ANNOTATE, valgrind=True):
     return str(bin_dir)
 
 
-def run_main(*argv, path=None, **env):
+def run_main(*argv: str, path: str | None = None, **env: str) -> tuple[int, str, str]:
     """Runs `main`; returns the exit code, standard output and standard error."""
     out, err = io.StringIO(), io.StringIO()
     if path is not None:
@@ -344,6 +347,7 @@ def run_main(*argv, path=None, **env):
 
 
 class ScalingTest(unittest.TestCase):
+    @override
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -352,7 +356,9 @@ class ScalingTest(unittest.TestCase):
         self.no_tools = self.tmp / "no-tools"
         self.no_tools.mkdir()
 
-    def counts_run(self, shapes, **env):
+    def counts_run(
+        self, shapes: dict[str, dict[str, list[int]]], **env: str
+    ) -> tuple[int, str, str]:
         """Runs `main --counts` on `shapes`, as `counts_file` makes them, with no tool on PATH."""
         return run_main(
             "--counts",
@@ -363,8 +369,9 @@ class ScalingTest(unittest.TestCase):
             **env,
         )
 
-    def stub_run(self, *shapes, **kwargs):
+    def stub_run(self, *shapes: str, **kwargs: str | bool) -> tuple[int, str, str]:
         """Runs `main --shapes ...` with stubs for the tools; returns (code, stdout, stderr)."""
+        # pyrefly: ignore[bad-argument-type]  `kwargs` holds only the stub options: check, annotate, valgrind
         path = stubs(self.tmp, **kwargs)
         return run_main(
             "--shapes",
@@ -376,7 +383,7 @@ class ScalingTest(unittest.TestCase):
             path=path,
         )
 
-    def log(self):
+    def log(self) -> str:
         log = self.tmp / "log"
         return log.read_text() if log.exists() else ""
 
@@ -395,7 +402,8 @@ class ScalingTest(unittest.TestCase):
                 )
         names = list(sc.SHAPES)
         shapes = {names[i]: {"check": growth} for i, (growth, _, _) in enumerate(S10)}
-        with mock.patch.object(sc, "KNOWN", []):
+        no_known: list[tuple[str, str, int]] = []
+        with mock.patch.object(sc, "KNOWN", no_known):
             self.counts_run(shapes)
         self.assertEqual((self.out / "table.md").read_text(), S10_TABLE)
 
@@ -519,7 +527,9 @@ class ScalingTest(unittest.TestCase):
         WHEN `compare` reads the verdicts
         THEN it gives exit code 0 and no line for the row
         """
-        verdicts = {("functions", "check"): ("linear", [2.0, 2.0, 2.0])}
+        verdicts: dict[tuple[str, str], tuple[str, list[Fraction | None]]] = {
+            ("functions", "check"): ("linear", [Fraction(2), Fraction(2), Fraction(2)])
+        }
         known = [("type depth", "check", 99)]
         self.assertEqual(sc.compare(verdicts, known, {"functions"}), ([], [], 0))
 
@@ -623,7 +633,7 @@ class ScalingTest(unittest.TestCase):
         ]
         self.assertEqual([(name, n) for name, (n, _) in sc.SHAPES.items()], sizes)
 
-        def depth(text, opening, closing):
+        def depth(text: str, opening: str, closing: str) -> int:
             """The deepest nesting of one kind of bracket."""
             now = deepest = 0
             for char in text:
@@ -631,7 +641,7 @@ class ScalingTest(unittest.TestCase):
                 deepest = max(deepest, now)
             return deepest
 
-        def blocks(text):
+        def blocks(text: str) -> int:
             """The deepest nesting of `{ ... }` blocks, from the lines that open and close one."""
             now = deepest = 0
             for row in text.splitlines():
@@ -639,10 +649,10 @@ class ScalingTest(unittest.TestCase):
                 deepest = max(deepest, now)
             return deepest
 
-        def line(text, start):
+        def line(text: str, start: str) -> str:
             return next(row.strip() for row in text.splitlines() if row.strip().startswith(start))
 
-        def chain(text):
+        def chain(text: str) -> int:
             """The length of the one receiver chain `c.next().next()...`; -1 when it is not one."""
             found = re.fullmatch(r"let d = c((?:\.next\(\))*)", line(text, "let d ="))
             if found is None or text.count(".next()") != len(found[1]) // 7:
@@ -650,7 +660,7 @@ class ScalingTest(unittest.TestCase):
             return len(found[1]) // 7
 
         # shape: (the size of the repeated part of the program, its size at size 0)
-        parts = {
+        parts: dict[str, tuple[Callable[[str], int], int]] = {
             "functions": (lambda t: t.count("fn "), 1),
             "statements": (lambda t: t.count("let "), 1),
             "expression depth": (lambda t: depth(line(t, "let x"), "(", ")"), 0),
@@ -770,7 +780,7 @@ class ScalingTest(unittest.TestCase):
         shape = "match arms"
         known_shape = "array literal depth"
         # shape, growth of check, known list, exit code, text in stderr
-        rows = {
+        rows: dict[str, tuple[str, list[int], list[tuple[str, str, int]], int, str]] = {
             "r3 = r1 - 0.05 is superlinear and has no row": (
                 shape,
                 [4000, 9800, 22540, 54096],
@@ -852,7 +862,7 @@ class ScalingTest(unittest.TestCase):
         good = json.loads(counts_file(self.tmp, {"functions": {"check": [1, 2, 4, 8]}}).read_text())
         stage_counts = good["shapes"]["functions"]["counts"]
 
-        def changed(edit):
+        def changed(edit: Callable[[dict[str, Any]], object]) -> str:
             data = json.loads(json.dumps(good))
             edit(data["shapes"]["functions"])
             return json.dumps(data)
@@ -928,11 +938,14 @@ class ScalingTest(unittest.TestCase):
         self.assertEqual((code, err), (0, ""))
         rows = self.log().splitlines()
         size = re.compile(r"size-(\d+)\.sisu$")
+        # pyrefly: ignore[unsupported-operation]  every such row names a size-N.sisu file
         checks = [size.search(row)[1] for row in rows if row.startswith("sisu check ")]
         self.assertEqual(checks, ["0", "2000"])
         profiled = [row for row in rows if row.startswith("valgrind --tool=callgrind ")]
         self.assertEqual(
-            [size.search(row)[1] for row in profiled], ["0", "250", "500", "1000", "2000"]
+            # pyrefly: ignore[unsupported-operation]  as for `checks`
+            [size.search(row)[1] for row in profiled],
+            ["0", "250", "500", "1000", "2000"],
         )
         for row in profiled:
             self.assertIn(" build --emit ir-raw ", row)

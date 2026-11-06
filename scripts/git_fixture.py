@@ -4,7 +4,7 @@ import contextlib
 import os
 import subprocess
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Generator
 from unittest import mock
 
 
@@ -39,7 +39,7 @@ def write(path: str, name: str, content: str | bytes) -> None:
 
 
 @contextlib.contextmanager
-def repo(files: dict[str, str]) -> Iterator[str]:
+def repo(files: dict[str, str]) -> Generator[str]:
     """The path of a temporary repository with one commit of `files`. It is removed at exit.
     While it exists, `os.environ` has no `GIT_*` variable, so code under test that runs git
     without its own environment reaches this repository.

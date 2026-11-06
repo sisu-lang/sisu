@@ -17,7 +17,9 @@ import sys
 import tempfile
 import time
 import unittest
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import override
 from unittest import mock
 
 import compile_speed
@@ -74,17 +76,17 @@ exit $code
 
 
 def stub_text(
-    tmp,
-    name,
-    output="45\\n",
-    stderr="",
-    fail=False,
-    out="",
-    bench="",
-    linker="GNU ld stub 1.0",
-    empty_bench="",
-    version_fail=False,
-    linker_on_stderr=False,
+    tmp: Path,
+    name: str,
+    output: str = "45\\n",
+    stderr: str = "",
+    fail: bool = False,
+    out: str = "",
+    bench: str = "",
+    linker: str = "GNU ld stub 1.0",
+    empty_bench: str = "",
+    version_fail: bool = False,
+    linker_on_stderr: bool = False,
 ) -> str:
     """The text of a stub for tool `name`.
 
@@ -160,7 +162,9 @@ if [ -n "$outdir" ]; then echo > "$outdir/stub.out"; fi
 {exit_code}"""
 
 
-def stubs(tmp, omit=(), **overrides):
+def stubs(
+    tmp: Path, omit: Sequence[str] = (), **overrides: str | Mapping[str, str | bool]
+) -> dict[str, str]:
     """Writes a stub for each tool into tmp/bin and returns an environment whose PATH is only that.
 
     A keyword is a tool (`rustc`, `clangxx`, `go`, `sisu`, `rustfmt`, `gofmt`, `clang_format`) and
@@ -173,6 +177,7 @@ def stubs(tmp, omit=(), **overrides):
         if key in omit:
             continue
         change = overrides.get(key, {})
+        # pyrefly: ignore[bad-argument-type]  a mapping holds only keyword arguments of `stub_text`
         text = change if isinstance(change, str) else stub_text(tmp, name, **change)
         path = bin_dir / name
         path.write_text(text)
@@ -181,6 +186,7 @@ def stubs(tmp, omit=(), **overrides):
 
 
 class CompileSpeed(unittest.TestCase):
+    @override
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp)
@@ -189,7 +195,13 @@ class CompileSpeed(unittest.TestCase):
         for name, text in UNITS.items():
             (self.units / name).write_text(text)
 
-    def run_script(self, *args, env, time_bound="60", timeout=None):
+    def run_script(
+        self,
+        *args: str,
+        env: Mapping[str, str],
+        time_bound: str = "60",
+        timeout: float | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         """Runs the script. A later `--sisu` or `--out` in `args` replaces the default."""
         return subprocess.run(
             [
@@ -212,7 +224,7 @@ class CompileSpeed(unittest.TestCase):
             timeout=timeout,
         )
 
-    def gone(self, pid) -> bool:
+    def gone(self, pid: int) -> bool:
         """True when the process `pid` ends within 5 seconds."""
         for _ in range(50):
             try:
@@ -229,12 +241,12 @@ class CompileSpeed(unittest.TestCase):
             time.sleep(0.1)
         return False
 
-    def kill_pidfile(self, path) -> None:
+    def kill_pidfile(self, path: Path) -> None:
         """Kills the process whose pid is in `path`, if a test left it."""
         with contextlib.suppress(OSError, ValueError):
             os.kill(int(path.read_text()), signal.SIGKILL)
 
-    def log_lines(self):
+    def log_lines(self) -> list[str]:
         log = self.tmp / "log"
         return log.read_text().splitlines() if log.exists() else []
 
@@ -277,6 +289,7 @@ class CompileSpeed(unittest.TestCase):
             ("gofmt", {"out": "unit.go"}, "Go", "unit.go"),
         ):
             with self.subTest(tool):
+                # pyrefly: ignore[bad-argument-type]  `tool` is a tool name, never the keyword `omit`
                 env = stubs(self.tmp, **{tool: change})
                 r = self.run_script("--sizes", "1", "--check-only", env=env)
                 self.assertEqual(r.returncode, 1, r.stdout)
@@ -354,15 +367,15 @@ class CompileSpeed(unittest.TestCase):
         THEN the second command gets a timeout of 6 seconds
         """
         now = [100.0]
-        timeouts = []
+        timeouts: list[float] = []
 
         class FakePopen:
             pid = 4242
 
-            def __init__(self, cmd, **kwargs) -> None:
+            def __init__(self, cmd: object, **kwargs: object) -> None:
                 self.returncode = 0
 
-            def communicate(self, timeout=None):
+            def communicate(self, timeout: float | None = None) -> tuple[str, str]:
                 # The call without a timeout is the wait after the kill of the group.
                 if timeout is not None:
                     timeouts.append(timeout)
@@ -385,24 +398,24 @@ class CompileSpeed(unittest.TestCase):
         """
         timeout = subprocess.TimeoutExpired(["a"], 1)
         # (label, what the first communicate does, exit code, run arguments, expected error)
-        cases = (
+        cases: list[tuple[str, object, int, dict[str, bool], type[BaseException] | None]] = [
             ("timeout", timeout, 0, {}, compile_speed.Fail),
             ("interrupt", KeyboardInterrupt(), 0, {}, KeyboardInterrupt),
             ("failed exit", ("", "bad\n"), 1, {}, compile_speed.Fail),
             ("failed exit with check off", ("", "bad\n"), 1, {"check": False}, None),
             ("clean exit", ("", ""), 0, {}, None),
-        )
+        ]
         for label, first, code, kwargs, error in cases:
             with self.subTest(label):
-                calls = []
+                calls: list[float | None] = []
 
                 class FakePopen:
                     pid = 4242
 
-                    def __init__(self, cmd, **kw) -> None:
+                    def __init__(self, cmd: object, **kw: object) -> None:
                         self.returncode = code
 
-                    def communicate(self, timeout=None):
+                    def communicate(self, timeout: float | None = None) -> object:
                         calls.append(timeout)
                         if len(calls) == 1 and isinstance(first, BaseException):
                             raise first
@@ -455,14 +468,14 @@ class CompileSpeed(unittest.TestCase):
             ' prev=$a; done\nprintf "#!/bin/sh\\necho boom >&2\\nexit 3\\n" > "$out"\n'
             '/bin/chmod +x "$out"\n'
         )
-        cases = (
+        cases: list[tuple[str, dict[str, str], tuple[str, ...], str]] = [
             ("program that exits 3", {"rustc": broken_program}, (), "boom"),
             ("compiler stopped by a signal", {"clangxx": killed}, (), "SIGKILL"),
             ("formatter stopped by a signal", {"rustfmt": killed}, (), "SIGKILL"),
             ("bytes that are not text", {"clangxx": garbage}, (), "C++"),
             ("sisu without the execute bit", {}, ("--sisu", str(noexec)), "Sisu"),
             ("out that names a file", {}, ("--out", str(regular)), str(regular)),
-        )
+        ]
         for label, overrides, extra, named in cases:
             with self.subTest(label):
                 r = self.run_script(
@@ -536,7 +549,7 @@ class CompileSpeed(unittest.TestCase):
         """
         src, out = Path("d/input.x"), Path("d/prog")
 
-        def has(cmd, *words):
+        def has(cmd: list[str], *words: str) -> bool:
             return any(cmd[i : i + len(words)] == list(words) for i in range(len(cmd)))
 
         for row in compile_speed.ROWS:
@@ -544,13 +557,16 @@ class CompileSpeed(unittest.TestCase):
                 with self.subTest(row=row, lld=lld):
                     exe = row.startswith("executable")
                     rust = compile_speed.command(row, "rust", src, out, lld)
+                    assert rust is not None
                     self.assertTrue(has(rust, "--edition", "2024"), rust)
                     self.assertTrue(has(rust, "-C", "codegen-units=1"), rust)
                     self.assertEqual(has(rust, "-C", "link-arg=-Wl,--threads=1"), lld and exe)
                     cpp = compile_speed.command(row, "cpp", src, out, lld)
+                    assert cpp is not None
                     self.assertIn("-std=c++20", cpp)
                     self.assertEqual("-Wl,--threads=1" in cpp, lld and exe)
                     sisu = compile_speed.command(row, "sisu", src, out, lld)
+                    assert sisu is not None
                     self.assertNotIn("--linker", sisu)
                     if "--emit" in sisu:
                         self.assertNotIn("-o", sisu)
@@ -558,10 +574,11 @@ class CompileSpeed(unittest.TestCase):
                     if row == "LLVM IR, no optimization":
                         self.assertIsNone(go)
                     else:
+                        assert go is not None
                         self.assertIn("-p=1", go)
                         self.assertTrue(any("-c=1" in arg for arg in go), go)
 
-    def table_rows(self, stdout):
+    def table_rows(self, stdout: str) -> list[list[str]]:
         """The cells of each row of the markdown table in `stdout`, as lists of text."""
         return [
             [c.strip() for c in line.strip("|").split("|")]
@@ -745,7 +762,7 @@ class CompileSpeed(unittest.TestCase):
         # Samples: `--runs 2` runs of a command, and one more under perf where perf counts. The
         # two type-check rows share their runs. The empty program has two runs of each command
         # once, not once for each size.
-        def count(name, *words):
+        def count(name: str, *words: str) -> int:
             return len(
                 [
                     line
@@ -812,15 +829,26 @@ class CompileSpeed(unittest.TestCase):
         THEN it runs the command 3 times and gives 0.01
         AND it runs the command once more under perf when perf counts
         """
+        # pyrefly: ignore[bad-argument-type]  the fake `run` below never reads the deadline
         runner = compile_speed.Measurer(mock.Mock(runs=3), None, True)
-        calls = []
+        calls: list[bool] = []
         times = iter([0.03, 0.01, 0.02])
 
-        def run(cmd, what, lang, src, text, bench, wrap=False):
+        def run(
+            cmd: list[str],
+            what: str,
+            lang: str,
+            src: Path,
+            text: str,
+            bench: Path | None,
+            wrap: bool = False,
+        ) -> tuple[float, str]:
             calls.append(wrap)
             return (0.0, "7,,instructions:u,1,100.00,,") if wrap else (next(times), "")
 
+        # pyrefly: ignore[method-assign]  the test replaces `run` with the fake above
         runner.run = run
+        # pyrefly: ignore[bad-argument-type]  the fake `run` ignores the source path
         self.assertEqual(runner.cell(["c"], "what", "rust", None, "", None, True), (0.01, 7))
         self.assertEqual(calls, [False, False, False, True])
 
@@ -864,7 +892,7 @@ class CompileSpeed(unittest.TestCase):
             r.stderr,
         )
 
-    def with_prefix(self, tool, snippet):
+    def with_prefix(self, tool: str, snippet: str) -> str:
         """A default stub for `tool` that runs the shell `snippet` first."""
         return stub_text(self.tmp, tool).replace("#!/bin/sh\n", "#!/bin/sh\n" + snippet, 1)
 
@@ -913,6 +941,7 @@ done
         )
         for label, overrides, named in cases:
             with self.subTest(label):
+                # pyrefly: ignore[bad-argument-type]  the keys are tool names, never the keyword `omit`
                 env = stubs(self.tmp, **{"go": {"bench": GO_BENCH}, "perf": PERF, **overrides})
                 r = self.run_script("--sizes", "1", "--runs", "1", env=env)
                 self.assertEqual(r.returncode, 1, r.stdout)

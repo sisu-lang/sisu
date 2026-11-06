@@ -17,6 +17,8 @@ import tarfile
 import tempfile
 import time
 import unittest
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any
 
 INSTALL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "install.sh")
 BASE = "https://github.com/sisu-lang/sisu/releases/latest/download/"
@@ -36,6 +38,15 @@ TOOLS = [
     "ln",
     "readlink",
 ]
+
+
+def which(command: str) -> str:
+    """The path of `command` on PATH; a test that needs a missing tool fails."""
+    path = shutil.which(command)
+    assert path is not None, command
+    return path
+
+
 # What a fake command that fails runs: a real one prints its own error.
 FAIL = 'echo "fake: failed" >&2; exit 1'
 GNU_LDD = "ldd (GNU libc) 2.39"
@@ -45,19 +56,15 @@ SH[0] = shutil.which(SH[0]) or SH[0]
 if not (os.path.isfile(SH[0]) and os.access(SH[0], os.X_OK)):
     raise RuntimeError(f"SISU_TEST_SH names no executable shell: {SH[0]}")
 # A command that hashes its stdin with SHA-256, for the fake shasum.
-SHA256 = (
-    [shutil.which("sha256sum")]
-    if shutil.which("sha256sum")
-    else [shutil.which("shasum"), "-a", "256"]
-)
-SLEEP = shutil.which("sleep")
+SHA256 = [which("sha256sum")] if shutil.which("sha256sum") else [which("shasum"), "-a", "256"]
+SLEEP = which("sleep")
 UNSUPPORTED = (
     "cannot install on {}: Sisu supports x86-64 and ARM64 Linux with glibc 2.35 or "
     "newer, and ARM64 macOS 15 or newer."
 )
 
 
-def script(path, body) -> None:
+def script(path: str, body: str) -> None:
     with open(path, "w") as f:
         f.write("#!/bin/sh\n" + body)
     os.chmod(path, 0o755)
@@ -69,7 +76,13 @@ class Machine:
     """
 
     def __init__(
-        self, test, profile="linux-x86_64", cc=True, apt=True, clt=True, prefix=""
+        self,
+        test: unittest.TestCase,
+        profile: str = "linux-x86_64",
+        cc: bool = True,
+        apt: bool = True,
+        clt: bool = True,
+        prefix: str = "",
     ) -> None:
         self.root = tempfile.mkdtemp(prefix="sisu-install-")
         test.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
@@ -84,10 +97,10 @@ class Machine:
         self.sisu = os.path.join(self.home, ".sisu")
         self.lock = os.path.join(self.sisu, "install.lock")
         for tool in [*TOOLS, (shutil.which("sha256sum") and "sha256sum") or "shasum"]:
-            os.symlink(shutil.which(tool), os.path.join(self.tools, tool))
+            os.symlink(which(tool), os.path.join(self.tools, tool))
         self._fake_commands(profile, cc, apt, clt)
 
-    def _fake_commands(self, profile, cc, apt, clt) -> None:
+    def _fake_commands(self, profile: str, cc: bool, apt: bool, clt: bool) -> None:
         system, machine, libc, sysctl, version = "Linux", "x86_64", "2.39", None, None
         if profile in ("linux-x86_64", "linux-musl", "linux-unknown-libc"):
             pass
@@ -131,6 +144,7 @@ class Machine:
                 )
             self.tarball_name = f"sisu-{machine}-linux.tar.gz"
         elif system == "Darwin":
+            # pyrefly: ignore[bad-argument-type]  the macos- profile branch sets sysctl for Darwin
             script(self._f("sysctl"), sysctl)
             script(self._f("sw_vers"), f'echo "{version}"\n')
             script(
@@ -145,13 +159,13 @@ class Machine:
         if apt:
             script(self._f("apt-get"), "exit 0\n")
 
-    def _f(self, name):
+    def _f(self, name: str) -> str:
         return os.path.join(self.fake, name)
 
-    def fake_command(self, name, body) -> None:
+    def fake_command(self, name: str, body: str) -> None:
         script(self._f(name), body)
 
-    def fake_curl(self, before="") -> None:
+    def fake_curl(self, before: str = "") -> None:
         """A curl that logs each call, runs `before`, and serves the file of the URL from dl."""
         self.curl_log = os.path.join(self.root, "curl.log")
         script(
@@ -162,13 +176,20 @@ class Machine:
             f'cp {shlex.quote(self.dl)}/"${{url##*/}}" "$out"\n',
         )
 
-    def curl_calls(self):
+    def curl_calls(self) -> list[list[str]]:
         if not os.path.exists(self.curl_log):
             return []
         with open(self.curl_log) as f:
             return [line.split() for line in f]
 
-    def tarball(self, name=None, build="new", omit=(), sisu_exit=0, pad=0):
+    def tarball(
+        self,
+        name: str | None = None,
+        build: str = "new",
+        omit: Sequence[str] = (),
+        sisu_exit: int = 0,
+        pad: int = 0,
+    ) -> str:
         """Writes the tarball and its line in SHA256SUMS to the download directory."""
         name = name or self.tarball_name
         stub = '#!/bin/sh\necho "sisu %s"\nexit %d\n#%s\n' % (build, sisu_exit, "x" * pad)
@@ -188,11 +209,11 @@ class Machine:
             f.write(f"{digest}  {name}\n")
         return name
 
-    def sums(self, text) -> None:
+    def sums(self, text: str) -> None:
         with open(os.path.join(self.dl, "SHA256SUMS"), "w") as f:
             f.write(text)
 
-    def earlier_install(self, build="old") -> None:
+    def earlier_install(self, build: str = "old") -> None:
         os.makedirs(os.path.join(self.sisu, "bin"))
         for f in FILES:
             stub = f'#!/bin/sh\necho "sisu {build}"\nexit 0\n'
@@ -200,7 +221,7 @@ class Machine:
                 out.write(stub if f == "sisu" else build + "\n")
         os.chmod(os.path.join(self.sisu, "bin", "sisu"), 0o755)
 
-    def _env(self, env):
+    def _env(self, env: Mapping[str, str | None] | None) -> dict[str, str]:
         e = {"HOME": self.home, "PATH": self.path, "SISU_DOWNLOAD_DIR": self.dl}
         for k, v in (env or {}).items():
             if v is None:
@@ -209,7 +230,11 @@ class Machine:
                 e[k] = v
         return e
 
-    def start(self, env=None, preexec_fn=None):
+    def start(
+        self,
+        env: Mapping[str, str | None] | None = None,
+        preexec_fn: Callable[[], None] | None = None,
+    ) -> subprocess.Popen[str]:
         return subprocess.Popen(
             [*SH, INSTALL],
             env=self._env(env),
@@ -220,9 +245,15 @@ class Machine:
             preexec_fn=preexec_fn,
         )
 
-    def run(self, env=None, on_stdin=False, preexec_fn=None, cwd=None):
+    def run(
+        self,
+        env: Mapping[str, str | None] | None = None,
+        on_stdin: bool = False,
+        preexec_fn: Callable[[], None] | None = None,
+        cwd: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         """on_stdin pipes the script to the shell, as the install line does."""
-        kw = {}
+        kw: dict[str, Any] = {}
         if on_stdin:
             with open(INSTALL) as f:
                 kw["input"] = f.read()
@@ -241,9 +272,9 @@ class Machine:
             **kw,
         )
 
-    def builds(self):
+    def builds(self) -> dict[str, str]:
         """File name -> build, for the files in ~/.sisu/bin."""
-        found = {}
+        found: dict[str, str] = {}
         for f in FILES:
             path = os.path.join(self.sisu, "bin", f)
             if os.path.exists(path):
@@ -253,16 +284,16 @@ class Machine:
                 found[f] = m.group(1) if f == "sisu" and m else text.strip()
         return found
 
-    def hold(self, target) -> None:
+    def hold(self, target: str | int) -> None:
         """Makes install.lock a symlink to `target`, as an install does with its PID."""
         os.makedirs(self.sisu, exist_ok=True)
         os.symlink(str(target), self.lock)
 
-    def lock_exists(self):
+    def lock_exists(self) -> bool:
         # A PID lock dangles, so os.path.exists says False while it is there.
         return os.path.lexists(self.lock)
 
-    def tmp_exists(self):
+    def tmp_exists(self) -> bool:
         return os.path.exists(os.path.join(self.sisu, "tmp"))
 
 
@@ -271,17 +302,20 @@ ALL_NEW = dict.fromkeys(FILES, "new")
 
 
 class InstallTest(unittest.TestCase):
-    def machine(self, profile="linux-x86_64", tarball=True, **kw):
+    def machine(
+        self, profile: str = "linux-x86_64", tarball: bool = True, **kw: bool | str
+    ) -> Machine:
+        # pyrefly: ignore[bad-argument-type]  `kw` holds only the keywords cc, apt, clt and prefix
         m = Machine(self, profile, **kw)
         if tarball:
             m.tarball()
         return m
 
-    def assertInstalled(self, m, r) -> None:
+    def assertInstalled(self, m: Machine, r: subprocess.CompletedProcess[str]) -> None:
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(m.builds(), ALL_NEW)
 
-    def assertKept(self, m, r) -> None:
+    def assertKept(self, m: Machine, r: subprocess.CompletedProcess[str]) -> None:
         self.assertNotEqual(r.returncode, 0)
         self.assertEqual(m.builds(), ALL_OLD)
         self.assertFalse(m.tmp_exists())
@@ -377,6 +411,7 @@ class InstallTest(unittest.TestCase):
         ]
         for kw, command in rows:
             with self.subTest(kw):
+                # pyrefly: ignore[bad-argument-type]  `kw` holds only keywords of `machine`
                 m = self.machine(**kw)
                 r = m.run()
                 self.assertInstalled(m, r)
@@ -546,18 +581,18 @@ class InstallTest(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("cannot run the Sisu build", r.stderr)
 
-    def fake_mv(self, m, fails):
+    def fake_mv(self, m: Machine, fails: str) -> str:
         """A mv that logs each call, and exits 1 when $1 matches the `fails` pattern."""
         log = os.path.join(m.root, "mv.log")
         m.fake_command(
             "mv",
             'echo "$*" >> {}\ncase "$1" in {}) {};; esac\nexec {} "$@"\n'.format(
-                shlex.quote(log), fails, FAIL, shlex.quote(shutil.which("mv"))
+                shlex.quote(log), fails, FAIL, shlex.quote(which("mv"))
             ),
         )
         return log
 
-    def one_line(self, m, r) -> None:
+    def one_line(self, m: Machine, r: subprocess.CompletedProcess[str]) -> None:
         self.assertNotEqual(r.returncode, 0)
         self.assertEqual(r.stderr, f"install.sh: cannot write to {m.sisu}.\n")
 
@@ -619,7 +654,7 @@ class InstallTest(unittest.TestCase):
         m.fake_command(
             "rm",
             'case "$2" in *.sisu/bin.old) [ -e "$2" ] && {{ {}; }};; esac\nexec {} "$@"\n'.format(
-                FAIL, shlex.quote(shutil.which("rm"))
+                FAIL, shlex.quote(which("rm"))
             ),
         )
         r = m.run()
@@ -643,7 +678,7 @@ class InstallTest(unittest.TestCase):
                     os.makedirs(os.path.join(m.sisu, "bin.old"))
                 m.fake_command(
                     command,
-                    f'case "$2" in {fails}) {FAIL};; esac\nexec {shlex.quote(shutil.which(command))} "$@"\n',
+                    f'case "$2" in {fails}) {FAIL};; esac\nexec {shlex.quote(which(command))} "$@"\n',
                 )
                 r = m.run()
                 self.one_line(m, r)
@@ -708,7 +743,7 @@ class InstallTest(unittest.TestCase):
         self.assertNotIn("PATH=", r.stdout)
         self.assertNotIn("fish_add_path", r.stdout)
 
-    def kill_during_curl(self, m, sig):
+    def kill_during_curl(self, m: Machine, sig: int) -> int:
         """Runs the install, sends `sig` while the fake curl sleeps, and returns the exit code."""
 
         def default_int() -> None:
@@ -776,7 +811,7 @@ class InstallTest(unittest.TestCase):
     def test_tar_stop_should_print_no_error_from_the_cleanup(self) -> None:
         m = self.machine()
         m.fake_command(
-            "tar", '{} 555 "$HOME/.sisu"\n{}\n'.format(shlex.quote(shutil.which("chmod")), FAIL)
+            "tar", '{} 555 "$HOME/.sisu"\n{}\n'.format(shlex.quote(which("chmod")), FAIL)
         )
         self.addCleanup(os.chmod, m.sisu, stat.S_IRWXU)
         r = m.run()
@@ -813,18 +848,18 @@ class InstallTest(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(m.sisu, "bin", "junk")))
         self.assertFalse(m.tmp_exists())
 
-    def live_process(self):
+    def live_process(self) -> int:
         p = subprocess.Popen([SLEEP, "60"])
         self.addCleanup(p.wait)
         self.addCleanup(p.kill)
         return p.pid
 
-    def dead_pid(self):
-        p = subprocess.Popen([shutil.which("true")])
+    def dead_pid(self) -> int:
+        p = subprocess.Popen([which("true")])
         p.wait()
         return p.pid
 
-    def one_line_with(self, r, *texts) -> None:
+    def one_line_with(self, r: subprocess.CompletedProcess[str], *texts: str) -> None:
         self.assertNotEqual(r.returncode, 0)
         self.assertEqual(len(r.stderr.splitlines()), 1, r.stderr)
         for text in texts:
@@ -888,7 +923,7 @@ class InstallTest(unittest.TestCase):
             with self.subTest(name):
                 m = self.machine()
                 m.earlier_install()
-                real_rm = shlex.quote(shutil.which("rm"))
+                real_rm = shlex.quote(which("rm"))
                 if name == "success":
                     self.assertInstalled(m, m.run())
                 elif name == "tmp goes first":
@@ -909,7 +944,7 @@ class InstallTest(unittest.TestCase):
                     m.fake_command(
                         "rm",
                         'case "$2" in *.sisu/tmp) {};; esac\nexec {} "$@"\n'.format(
-                            FAIL, shlex.quote(shutil.which("rm"))
+                            FAIL, shlex.quote(which("rm"))
                         ),
                     )
                     self.one_line(m, m.run())
@@ -925,7 +960,7 @@ class InstallTest(unittest.TestCase):
         m.fake_command(
             "rm",
             'for last; do :; done\ncase "$last" in *install.lock) {};; esac\nexec {} "$@"\n'.format(
-                FAIL, shlex.quote(shutil.which("rm"))
+                FAIL, shlex.quote(which("rm"))
             ),
         )
         r = m.run()
@@ -1023,12 +1058,12 @@ class InstallTest(unittest.TestCase):
         self.one_line(m, r)
         self.assertEqual(m.builds(), ALL_OLD)
 
-    def once(self, m, name, body) -> None:
+    def once(self, m: Machine, name: str, body: str) -> None:
         """A fake `name` that runs `body` on its first call, and is the real command after."""
         flag = os.path.join(m.root, name + ".flag")
         m.fake_command(
             name,
-            f'if [ ! -e {shlex.quote(flag)} ]; then\n: > {shlex.quote(flag)}\n{body}\nfi\nexec {shlex.quote(shutil.which(name))} "$@"\n',
+            f'if [ ! -e {shlex.quote(flag)} ]; then\n: > {shlex.quote(flag)}\n{body}\nfi\nexec {shlex.quote(which(name))} "$@"\n',
         )
 
     def test_holders_that_end_during_the_lock_check_should_not_give_a_write_error(self) -> None:
@@ -1044,7 +1079,7 @@ class InstallTest(unittest.TestCase):
                 shlex.quote(count),
                 shlex.quote(m.lock),
                 FAIL,
-                shlex.quote(shutil.which("ln")),
+                shlex.quote(which("ln")),
             ),
         )
         r = m.run()
@@ -1062,9 +1097,9 @@ class InstallTest(unittest.TestCase):
             "readlink",
             "%s -f %s\n%s -s %d %s\necho %d\nexit 0"
             % (
-                shlex.quote(shutil.which("rm")),
+                shlex.quote(which("rm")),
                 shlex.quote(m.lock),
-                shlex.quote(shutil.which("ln")),
+                shlex.quote(which("ln")),
                 live,
                 shlex.quote(m.lock),
                 dead,

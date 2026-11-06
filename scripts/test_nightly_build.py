@@ -14,8 +14,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from typing import NamedTuple
+from typing import Any, NamedTuple, override
 from unittest import mock
 
 import nightly_build
@@ -182,7 +183,7 @@ print(json.dumps(reply))
 """
 
 
-def is_write_flag(arg):
+def is_write_flag(arg: str) -> bool:
     """A `gh api` flag that sends a method or a body, alone or with its value attached."""
     if arg.startswith("--"):
         return arg.split("=")[0] in ("--method", "--field", "--raw-field", "--input")
@@ -191,36 +192,38 @@ def is_write_flag(arg):
 
 class Run(NamedTuple):
     code: int
-    out: dict
+    out: dict[str, str]
     summary: str
-    calls: list
+    calls: list[list[str]]
     stdout: str
     stderr: str
-    state: dict
+    state: dict[str, Any]
 
 
 _ids = itertools.count(1)
 
 
-def release(tag, published_at="2026-11-01T00:00:00Z", draft=False):
+def release(
+    tag: str, published_at: str | None = "2026-11-01T00:00:00Z", draft: bool = False
+) -> dict[str, Any]:
     return {"id": next(_ids), "tag_name": tag, "draft": draft, "published_at": published_at}
 
 
-def nightly(sha, published_at="2026-11-01T00:00:00Z"):
+def nightly(sha: str, published_at: str = "2026-11-01T00:00:00Z") -> dict[str, Any]:
     return release("nightly-2026-11-01-" + sha[:7], published_at)
 
 
 def state(
-    commits,
-    green=(),
-    releases=(),
-    trees=None,
-    parents=None,
-    fail_on=None,
-    artifacts=(),
-    issues=(),
-    fail_after=0,
-):
+    commits: Sequence[str],
+    green: Sequence[str] = (),
+    releases: Sequence[dict[str, Any]] = (),
+    trees: dict[str, str] | None = None,
+    parents: dict[str, str] | None = None,
+    fail_on: str | None = None,
+    artifacts: Sequence[dict[str, Any]] = (),
+    issues: Sequence[dict[str, Any]] = (),
+    fail_after: int = 0,
+) -> dict[str, Any]:
     parents = parents or dict(zip(commits, [*commits[1:], "e" * 40], strict=False))
     ids = ["main", HEAD, *commits, *parents.values()]
     return {
@@ -242,6 +245,7 @@ def state(
 class Script(unittest.TestCase):
     """Runs `nightly_build.py <command>` against the fake `gh`."""
 
+    @override
     def setUp(self) -> None:
         self.dir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.dir)
@@ -253,7 +257,7 @@ class Script(unittest.TestCase):
         os.chmod(gh, os.stat(gh).st_mode | stat.S_IXUSR)
         self.bin = bin_dir
 
-    def run_script(self, args, fake, **env):
+    def run_script(self, args: list[str], fake: dict[str, Any], **env: str) -> Run:
         path = os.path.join(self.dir, "state.json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump(fake, f)
@@ -290,21 +294,21 @@ class Script(unittest.TestCase):
         )
 
     @staticmethod
-    def read(path):
+    def read(path: str) -> str:
         if not os.path.exists(path):
             return ""
         with open(path, encoding="utf-8") as f:
             return f.read()
 
-    def read_outputs(self, path):
+    def read_outputs(self, path: str) -> dict[str, str]:
         return dict(line.split("=", 1) for line in self.read(path).splitlines())
 
 
 class Pick(Script):
-    def run_pick(self, fake, ref="refs/heads/main", head=HEAD):
+    def run_pick(self, fake: dict[str, Any], ref: str = "refs/heads/main", head: str = HEAD) -> Run:
         return self.run_script(["pick"], fake, GITHUB_REF=ref, HEAD_SHA=head)
 
-    def assert_answer(self, run, build, publish, sha=None) -> None:
+    def assert_answer(self, run: Run, build: str, publish: str, sha: str | None = None) -> None:
         self.assertEqual(run.code, 0, run.stderr)
         self.assertEqual((run.out.get("build"), run.out.get("publish")), (build, publish), run)
         if sha is not None:
@@ -453,26 +457,34 @@ ARTIFACTS = {
 UTC = UTC
 
 
-def artifact(id_, name, text, created_at="2026-11-06T01:00:00Z", skip=()):
+def artifact(
+    id_: int,
+    name: str,
+    text: str,
+    created_at: str = "2026-11-06T01:00:00Z",
+    skip: Sequence[str] = (),
+) -> dict[str, Any]:
     files = {f: f"{text}:{f}" for f in ARTIFACTS[name] if f not in skip}
     return {"id": id_, "name": name, "created_at": created_at, "files": files}
 
 
-def all_artifacts(text="v", first_id=1, skip=()):
+def all_artifacts(
+    text: str = "v", first_id: int = 1, skip: Sequence[str] = ()
+) -> list[dict[str, Any]]:
     return [artifact(first_id + i, name, text, skip=skip) for i, name in enumerate(ARTIFACTS)]
 
 
-def numbered(i):
+def numbered(i: int) -> dict[str, Any]:
     """The i-th published nightly build; a larger i is newer."""
     when = datetime(2026, 9, 1, tzinfo=UTC) + timedelta(hours=i)
     return release(f"nightly-2026-09-01-{i:07x}", when.strftime("%Y-%m-%dT%H:%M:%SZ"))
 
 
-def release_tags(fake_state, draft=False):
+def release_tags(fake_state: dict[str, Any], draft: bool = False) -> list[str]:
     return [r["tag_name"] for r in fake_state["releases"] if r["draft"] == draft]
 
 
-def first(calls, *words):
+def first(calls: list[list[str]], *words: str) -> int:
     """The index of the first call that has every word as one of its arguments."""
     for i, call in enumerate(calls):
         if all(w in call for w in words):
@@ -480,23 +492,29 @@ def first(calls, *words):
     raise AssertionError(f"no call has {words}: {calls}")
 
 
-def with_arg(calls, text):
+def with_arg(calls: list[list[str]], text: str) -> list[list[str]]:
     return [c for c in calls if any(text in a for a in c)]
 
 
-def sent(calls, *words):
+def sent(calls: list[list[str]], *words: str) -> list[list[str]]:
     return [c for c in calls if c[: len(words)] == list(words)]
 
 
 class Publish(Script):
-    def run_publish(self, fake, sha=A, **env):
+    def run_publish(self, fake: dict[str, Any], sha: str = A, **env: str) -> Run:
         return self.run_script(["publish", "--sha", sha], fake, GITHUB_RUN_ID="42", **env)
 
-    def fake(self, releases=(), artifacts=None, **extra):
+    def fake(
+        self,
+        releases: Sequence[dict[str, Any]] = (),
+        artifacts: list[dict[str, Any]] | None = None,
+        **extra: str | int,
+    ) -> dict[str, Any]:
         artifacts = all_artifacts() if artifacts is None else artifacts
+        # pyrefly: ignore[bad-argument-type]  `extra` holds only fail_on and fail_after
         return state([A, B], [A], releases, artifacts=artifacts, **extra)
 
-    def assert_stopped(self, run, reason) -> None:
+    def assert_stopped(self, run: Run, reason: str) -> None:
         self.assertEqual(run.code, 0, run.stderr)
         self.assertEqual(run.out.get("published"), "false")
         self.assertIn(reason, run.summary)
@@ -505,7 +523,11 @@ class Publish(Script):
         )
 
     def test_publish_should_send_the_calls_in_order(self) -> None:
-        for name, releases in (("older nightly build", [nightly(B)]), ("no nightly build", [])):
+        cases: list[tuple[str, list[dict[str, Any]]]] = [
+            ("older nightly build", [nightly(B)]),
+            ("no nightly build", []),
+        ]
+        for name, releases in cases:
             with self.subTest(name):
                 before = datetime.now(UTC).strftime("%Y-%m-%d")
                 run = self.run_publish(self.fake(releases))
@@ -536,10 +558,11 @@ class Publish(Script):
                 self.assertEqual(run.out.get("published"), "true")
 
     def test_publish_should_delete_a_draft_first(self) -> None:
-        for name, others in (
+        cases: list[tuple[str, list[dict[str, Any]]]] = [
             ("no other release", []),
             ("100 other releases", [release(f"v0.{i}") for i in range(100)]),
-        ):
+        ]
+        for name, others in cases:
             with self.subTest(name):
                 draft = release("nightly-2026-11-02-1234567", None, draft=True)
                 other = release("other", None, draft=True)
@@ -590,7 +613,7 @@ class Publish(Script):
         self.assertEqual(assets, [{f: f"v:{f}" for f in ASSETS}])
 
     def test_publish_should_upload_the_largest_id_of_each_name(self) -> None:
-        def pair(old_first, early_new=False):
+        def pair(old_first: bool, early_new: bool = False) -> list[dict[str, Any]]:
             old = [
                 artifact(i, n, "old", created_at="2026-11-06T09:00:00Z")
                 for i, n in enumerate(ARTIFACTS, 1)
@@ -629,7 +652,7 @@ class Publish(Script):
         self.assertEqual(sent(run.calls, "release"), [])
 
     def test_publish_should_stop_on_two_artifacts_with_one_file_name(self) -> None:
-        def extra(files):
+        def extra(files: dict[str, str]) -> dict[str, Any]:
             return {"id": 50, "name": "extra", "created_at": "2026-11-06T01:00:00Z", "files": files}
 
         draft = release("nightly-2026-11-02-1234567", None, draft=True)
@@ -722,11 +745,11 @@ class Publish(Script):
 
 
 class Prune(Script):
-    def run_prune(self, fake):
+    def run_prune(self, fake: dict[str, Any]) -> Run:
         return self.run_script(["prune"], fake)
 
     @staticmethod
-    def deleted(run):
+    def deleted(run: Run) -> list[str]:
         return [c[2] for c in sent(run.calls, "release", "delete")]
 
     def test_prune_should_keep_the_14_newest_and_touch_nothing_else(self) -> None:
@@ -762,7 +785,13 @@ class Prune(Script):
         self.assertEqual(len(self.deleted(run)), 2)
 
 
-def issue(number, title=TITLE, state="open", labels=("nightly-build",), pull_request=None):
+def issue(
+    number: int,
+    title: str = TITLE,
+    state: str = "open",
+    labels: Sequence[str] = ("nightly-build",),
+    pull_request: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     return {
         "number": number,
         "title": title,
@@ -775,13 +804,13 @@ def issue(number, title=TITLE, state="open", labels=("nightly-build",), pull_req
 class Report(Script):
     URL = "https://example.test/o/r/actions/runs/7"
 
-    def run_report(self, results, issues=()):
+    def run_report(self, results: dict[str, str], issues: Sequence[dict[str, Any]] = ()) -> Run:
         needs = json.dumps(
             {name: {"result": result, "outputs": {}} for name, result in results.items()}
         )
         return self.run_script(["report"], state([A], issues=issues), NEEDS=needs, RUN_URL=self.URL)
 
-    def posted(self, run):
+    def posted(self, run: Run) -> dict[str, Any]:
         self.assertEqual(run.code, 0, run.stderr)
         self.assertEqual(len(run.state["posted"]), 1, run.state["posted"])
         return run.state["posted"][0]
