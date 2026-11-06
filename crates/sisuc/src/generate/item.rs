@@ -1539,8 +1539,8 @@ impl Gen<'_> {
     ///   an inner loop gives the outer loop `None`;
     /// - a call with two `mut` arguments that are elements of one array;
     /// - a `string` field that appends to itself with `+=` and with `a.f = a.f + e`;
-    /// - a `match` with an arm that no value reaches (W0006), and a statement with a `;` that
-    ///   follows its block (W0007). The checker accepts a warning in a generated program.
+    /// - a `match` with an arm that no value reaches (W0006), and a statement with an
+    ///   unnecessary `;` (W0007). The checker accepts a warning in a generated program.
     ///
     /// The loops count down from one, as `every_loop_is_bounded` needs. An index is a literal.
     fn gap_forms(&mut self, calls: &mut Calls) {

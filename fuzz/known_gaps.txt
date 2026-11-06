@@ -12,7 +12,7 @@ check/generic.rs	<sisuc::check::Checker>::path_method
 ## Generic bodies come from `solve`, which never calls `expr`.
 check/cycle.rs	<sisuc::check::Checker>::dbg_edges
 check/cycle.rs	<sisuc::check::Checker>::dbg_show
-## Only the `front_end` harness renders reports and checks fixes.
+## Only report rendering, fix checks and the reading of a source file run these, and a valid program in the `program` harness runs none of them.
 diagnostic/mod.rs	<sisuc::diagnostic::Diagnostic>::demote_fixes
 diagnostic/mod.rs	<sisuc::diagnostic::Diagnostic>::help
 diagnostic/mod.rs	<sisuc::diagnostic::Diagnostic>::label

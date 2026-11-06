@@ -3156,13 +3156,10 @@ impl Walk {
                 self.loops.push(LoopBreaks::default());
                 self.tir_block(body);
                 let breaks = (self.loops.pop()).expect("the walk of a loop should keep its frame");
-                // `wrap_breaks` wraps the `T` values of a loop that a `T?` value widened. A
-                // written `Some(..)` in a loop with `break None` would show the same.
+                // `wrap_breaks` wraps the `T` values of a loop that a later `None` widened. It
+                // enters an inner loop only when a `break` from it targets this loop.
                 if matches!(e.ty.kind(), TypeKind::Optional(_)) && breaks.wrapped && breaks.none {
-                    self.mark(WIDENS);
-                    if breaks.crossed {
-                        self.mark(CROSSES);
-                    }
+                    self.mark(if breaks.crossed { CROSSES } else { WIDENS });
                 }
                 if breaks.literal_after && self.untyped_loops.contains(&e.span.start()) {
                     self.mark(
@@ -3173,11 +3170,19 @@ impl Walk {
             tir::ExprKind::Break { depth, value } => {
                 self.mark("tir::ExprKind::Break");
                 let target = (self.loops.len()).checked_sub(depth + 1);
+                // A written `Some(..)` has the typed tree that the checker's wrap has, and
+                // `wrap_breaks` does nothing for it. Only the source tells them apart.
+                let written = value.as_ref().is_some_and(|v| {
+                    self.source[v.span.range()]
+                        .trim_start_matches('(')
+                        .starts_with("Some(")
+                });
                 if let Some(breaks) = target.and_then(|at| self.loops.get_mut(at)) {
                     breaks.crossed |= *depth > 0;
                     if let Some(value) = value {
-                        breaks.wrapped |= matches!(value.kind, tir::ExprKind::Wrap(_));
-                        breaks.none |= matches!(value.kind, tir::ExprKind::None);
+                        // Only a `None` after a wrapped value is widened to.
+                        breaks.none |= breaks.wrapped && matches!(value.kind, tir::ExprKind::None);
+                        breaks.wrapped |= !written && matches!(value.kind, tir::ExprKind::Wrap(_));
                         let optional = matches!(value.ty.kind(), TypeKind::Optional(_));
                         breaks.literal_after |= breaks.optional && literal_value(value);
                         breaks.optional |= optional
