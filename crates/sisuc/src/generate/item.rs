@@ -555,6 +555,73 @@ pub(crate) struct Folded {
     size: u64,
 }
 
+/// The declarations of the generic forms of `gap_forms`. Their names start with `Gap` or `gap_`.
+/// The text is fixed and makes no draw. `gap_forms` writes the statements of `shapes` that use it.
+const GENERIC_GAP_ITEMS: &str = r"interface GapSource { type Item; fn next(self) -> Item }
+interface GapConvert<T> { fn convert(self) -> T }
+interface GapHolds<Y> { type Item; fn gets(self) -> Item }
+class GapCount: GapSource { type Item = i64; n: i64; fn next(self) -> Item { self.n } }
+class GapTwice: GapConvert<i64> { k: i64; fn convert(self) -> i64 { self.k * 2 } }
+class GapPair: GapHolds<i64> { type Item = i64; k: i64; fn gets(self) -> Item { self.k } }
+fn gap_chain<S: GapHolds<T.Item>, U: GapConvert<S.Item>, T: GapSource>(s: S, _t: T, u: U) -> [S.Item] { [s.gets(), u.convert()] }
+class GapKept { d: i64 }
+class GapLeft { d: i64 }
+interface GapPick<T> { fn pick<U>(self, x: U) -> T }
+class GapPicker {}
+extend GapPicker: GapPick<GapKept> { fn pick<U>(self, x: U) -> GapKept { GapKept(d: [x].len()) } }
+extend GapPicker: GapPick<GapLeft> { fn pick<U>(self, x: U) -> GapLeft { GapLeft(d: [x].len() + 1) } }
+extend GapPicker: GapConvert<GapKept> { fn convert(self) -> GapKept { GapKept(d: 3) } }
+extend GapPicker: GapConvert<GapLeft> { fn convert(self) -> GapLeft { GapLeft(d: 4) } }
+fn gap_take<T>(a: T, b: T) -> [T] { [a, b] }
+fn gap_two<T: GapConvert<GapKept> & GapConvert<GapLeft>>(x: T) -> i64 {
+    let k: GapKept = x.convert()
+    let l: GapLeft = x.convert()
+    k.d + l.d
+}
+class GapCell<T> { value: T }
+extend<T> GapCell<T>: GapConvert<T> { fn convert(self) -> T { self.value } }
+extend<U> GapCell<U>: GapConvert<[U]> { fn convert(self) -> [U] { [self.value] } }
+type GapMaybe<T> = T?
+type GapLists<T> = [T]?
+fn gap_lists(m: [i64]?) -> i64 {
+    match m {
+        GapLists.Some(xs) => xs.len()
+        GapLists.None => 0
+    }
+}
+interface GapStep { type Next: GapStep; type Item }
+class GapEnd: GapStep { type Next = GapEnd; type Item = i64 }
+class GapOn<T: GapStep>: GapStep { type Next = GapOn<T.Next>; type Item = i64 }
+class GapAt<T: GapStep> { v: T.Item }
+interface GapSame { fn same(self, o: Self) -> bool }
+interface GapLess: GapSame { fn less(self, o: Self) -> bool }
+class GapRack<T: GapLess>: GapLess { v: T; fn less(self, o: Self) -> bool { self.v.less(o.v) } }
+extend<T: GapLess> GapRack<T>: GapSame { fn same(self, o: Self) -> bool { self.v.same(o.v) } }
+class GapNum: GapLess {
+    n: i64
+    fn same(self, o: GapNum) -> bool { self.n == o.n }
+    fn less(self, o: GapNum) -> bool { self.n < o.n }
+}
+fn gap_same<T: GapSame>(a: T) -> bool { a.same(a) }
+class GapTwo<A, B> { a: [A]; b: B }
+fn gap_result<E>() -> Result<i64, E> { Ok(7) }
+fn gap_empty<X>() -> GapTwo<X, bool> { GapTwo(a: [], b: true) }
+fn gap_wait<T>(_c: GapTwo<T, bool>, _d: Result<T, string>) -> i64 { 1 }
+fn gap_wide<T>(a: T, _b: T?) -> T { a }
+interface GapShown { fn shown(self) -> i64 }
+class GapMade: GapShown { fn shown(self) -> i64 { 1 } }
+class GapBound<T: GapShown> { value: T }
+type GapAlias<T> = GapBound<T>
+interface GapOf<T> { fn of(self) -> T }
+class GapOne: GapOf<i64> { fn of(self) -> i64 { 1 } }
+type GapAnyOf<T> = any GapOf<T>
+interface GapNamed { type Named }
+class GapName: GapNamed {
+    type Named = i64
+    fn size(self) -> i64 { 1 }
+}
+type GapItem<S> = [S.Named]";
+
 impl Gen<'_> {
     /// Writes the program, and returns its cost (decision 5), its known sites (decision 3) and the
     /// lines that the marked statements of `shapes` print (`Generated::expected`).
@@ -1567,7 +1634,20 @@ impl Gen<'_> {
     /// - a call with two `mut` arguments that are elements of one array;
     /// - a `string` field that appends to itself with `+=` and with `a.f = a.f + e`;
     /// - a `match` with an arm that no value reaches (W0006), and a statement with an
-    ///   unnecessary `;` (W0007). The checker accepts a warning in a generated program.
+    ///   unnecessary `;` (W0007). The checker accepts a warning in a generated program;
+    /// - the generic forms of `GENERIC_GAP_ITEMS`, each for the points of the checker in
+    ///   `GAP_POINTS` (`coverage.rs`):
+    ///   - `gap_chain`: a bound that waits for a later parameter, and one that names an earlier;
+    ///   - `GapPicker`, with `gap_take`: a method with written type arguments, and two
+    ///     conformances that answer it;
+    ///   - `gap_two`: two bounds that answer one method;
+    ///   - `GapCell`: two `extend` blocks that the overlap test resolves together;
+    ///   - `GapMaybe` and `GapLists`: an optional alias as a path and as a pattern;
+    ///   - `GapStep`, `GapOn` and `GapAt`: an associated type bound in a recursive class;
+    ///   - `GapRack`: a list that inherits through an `extend` block;
+    ///   - `gap_wait` and `gap_wide`: a parameter that waits for an unbound type, and one that
+    ///     is optional under a hint;
+    ///   - `GapAlias`, `GapAnyOf` and `GapItem`: an alias body that keeps a check.
     ///
     /// Each loop counts down from one and a `break` ends it, in at most two passes.
     /// An index is a literal.
@@ -1576,6 +1656,8 @@ impl Gen<'_> {
             g.w.text(
                 "class PushTally {\n    mut total: i64\n    fn push(self, x: i64) -> i64 {\n        self.total += x\n        self.total\n    }\n}\nclass PushHolder {\n    mut held: PushTally?\n    kept: PushTally\n}\nclass AppendField {\n    mut text: string\n}\nenum PushKind {\n    One\n    fn push(self, x: i64) -> i64 { x }\n}\nfn twice_set(mut a: i64, _b: i64, mut c: i64) {\n    a += 10\n    c += 20\n}",
             );
+            g.w.line();
+            g.w.text(GENERIC_GAP_ITEMS);
             g.w.line();
         });
         let first = calls.lines.len();
@@ -1607,6 +1689,27 @@ impl Gen<'_> {
             "let arm = slots.len()",
             "let dead = match arm {\n        _ => 1\n        2 => 2\n    }",
             "print(dead);",
+            "print(gap_chain(GapPair(k: 5), GapCount(n: 6), GapTwice(k: 7)))",
+            "let picker = GapPicker()",
+            "print(gap_take(picker.pick<i64>(1), GapKept(d: 9))[0].d)",
+            "print(gap_two(picker))",
+            "let held: GapCell<i64> = GapCell(value: 7)",
+            "let number: i64 = held.convert()",
+            "print(number)",
+            "let some_of = GapMaybe.Some(2)",
+            "print(some_of ?? 1)",
+            "print(gap_lists(GapLists<i64>.Some([4])))",
+            "print(GapAt<GapOn<GapEnd>>(v: 1).v)",
+            "print(gap_same(GapRack(v: GapNum(n: 1))))",
+            "print(gap_wait(gap_empty(), gap_result()))",
+            "let wide: u8? = gap_wide(1, Some(Some(2)))",
+            "print(wide ?? 0)",
+            "let bound: GapAlias<GapMade> = GapBound(value: GapMade())",
+            "print(bound.value.shown())",
+            "let any_of: GapAnyOf<i64> = GapOne()",
+            "print(any_of.of())",
+            "let items: GapItem<GapName> = [GapName().size()]",
+            "print(items)",
         ] {
             calls.push(line);
         }

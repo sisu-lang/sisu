@@ -2163,12 +2163,12 @@ mod tests {
         let Run { exit, stdout, .. } = o0_run(&g);
         assert_eq!(exit, Exit::Code(0), "{}", g.program);
         // One line from each pass of the innermost loop: every loop ran to its bound. The
-        // twenty-eight more lines are the two that `lang_both` prints, the two that print an
-        // `any` value, the eight that print what `put` wrote through `any`, the twelve that
-        // `gap_forms` prints, the three that `nest` prints and the one that prints its result.
+        // forty-one more lines are the two that `lang_both` prints, the two that print an
+        // `any` value, the eight that print what `put` wrote through `any`, the twenty-five
+        // that `gap_forms` prints, the three that `nest` prints and the one that prints its result.
         assert_eq!(
             String::from_utf8_lossy(&stdout).lines().count(),
-            8 * 8 * 8 + 28
+            8 * 8 * 8 + 41
         );
     }
 
@@ -2233,11 +2233,11 @@ mod tests {
             stderr.find("==> stdin\n"),
             // Output without a final line break gets one. The empty input's program prints the
             // two lines of `lang_both`, the two of the `any` values, the eight of `put` through
-            // `any`, the twelve of `gap_forms`, the three of `nest` and the one that prints its
-            // result.
+            // `any`, the twenty-five of `gap_forms`, the three of `nest` and the one that prints
+            // its result.
             stderr.find("==> program -O2 stdout\nforced\n==> program -O2 stderr\n"),
             stderr.find(
-                "==> program --rc-checks stdout\nRanked\n[1, 2]\nEye\n[\"s\", 'c', 5, Wide(1)]\n@d0 9\n@d1 4\n@d2 12\n@d3 13\n@d4 15\n@d5 15\n@d6 17\n@d7 17\n4\n5\n6\n1\n1\n2\n6\n4\nb\n[11, 22]\nabc\n1\nA(A(End))\ntrue\nfalse\n2\n==> program --rc-checks stderr\n",
+                "==> program --rc-checks stdout\nRanked\n[1, 2]\nEye\n[\"s\", 'c', 5, Wide(1)]\n@d0 9\n@d1 4\n@d2 12\n@d3 13\n@d4 15\n@d5 15\n@d6 17\n@d7 17\n4\n5\n6\n1\n1\n2\n6\n4\nb\n[11, 22]\nabc\n1\n[5, 14]\n1\n7\n7\n2\n1\n1\ntrue\n1\n1\n1\n1\n[1]\nA(A(End))\ntrue\nfalse\n2\n==> program --rc-checks stderr\n",
             ),
             stderr.find("program fuzzer: property 3 failed"),
         ];

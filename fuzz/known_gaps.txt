@@ -1,14 +1,3 @@
-## The generator bounds a parameter only by `i64` or `string` (`Conformed::written`, `generate/item.rs`).
-check/interface.rs	<sisuc::check::Checker>::resolve_member_bounds
-check/interface.rs	<sisuc::check::interface::Waits>::class
-check/interface.rs	<sisuc::check::interface::Waits>::give
-check/interface.rs	<sisuc::check::interface::Waits>::lower
-check/interface.rs	<sisuc::check::interface::Waits>::new
-check/interface.rs	<sisuc::check::interface::Waits>::resolved
-check/interface.rs	<sisuc::check::interface::Waits>::start
-## No generated method has its own type parameters.
-check/generic.rs	<sisuc::check::Checker>::answered_by_several
-check/generic.rs	<sisuc::check::Checker>::path_method
 ## Generic bodies come from `solve`, which never calls `expr`.
 check/cycle.rs	<sisuc::check::Checker>::dbg_edges
 check/cycle.rs	<sisuc::check::Checker>::dbg_show
@@ -34,31 +23,15 @@ source.rs	<sisuc::source::LineIndex>::render_line
 ## Only a program with no generic item and no recorded prelude use reaches this check, and each fixed seed records a prelude use.
 mono.rs	sisuc::mono::prelude_method_of_outside_type
 ## Not yet analysed: PR 2 gives each of these a rule or its own reason.
-ast.rs	<sisuc::ast::TypeExpr>::member_roots
-check/alias.rs	<sisuc::check::Checker>::optional_alias_path
 check/any.rs	<sisuc::check::Checker>::make_any
 check/any.rs	<sisuc::check::Checker>::seeded_join
 check/array.rs	<sisuc::check::Checker>::hinted_elements
 check/array.rs	<sisuc::check::Checker>::value_beside
-check/assoc.rs	<sisuc::check::Checker>::assoc_conforms
-check/bound.rs	<sisuc::check::Checker>::requirement_result
 check/branch.rs	<sisuc::check::Checker>::value_branch
 check/branch.rs	sisuc::check::branch::some_object
 check/branch.rs	sisuc::check::branch::unwrap_some_object
-check/call.rs	<sisuc::check::Checker>::built_in_arity
-check/conform.rs	<sisuc::check::Checker>::listed_inheritance
 check/cycle.rs	<sisuc::check::Checker>::own_type
 check/cycle.rs	<sisuc::check::Checker>::shown_params
-check/generic.rs	<sisuc::check::Checker>::method_args
-check/generic.rs	sisuc::check::generic::names_unbound
-check/generic.rs	sisuc::check::generic::type_meets
-check/generic.rs	sisuc::check::generic::wider_than
-check/interface.rs	<sisuc::check::Checker>::add_bounds
-check/interface.rs	<sisuc::check::Checker>::find_declarers
-check/interface.rs	<sisuc::check::Checker>::written_arguments
-check/interface.rs	<sisuc::check::Checker>::written_interface
-check/member.rs	<sisuc::check::Checker>::written_types
-check/mod.rs	<sisuc::check::Diagnostics>::truncate
 check/optional.rs	sisuc::check::optional::beneath
 codegen/enums.rs	<sisuc::codegen::Codegen>::define_reuse
 codegen/enums.rs	<sisuc::codegen::Codegen>::layer_boxes
@@ -68,16 +41,7 @@ codegen/io.rs	<sisuc::codegen::Codegen>::args
 codegen/rc.rs	<sisuc::codegen::Codegen>::define_class_drain
 codegen/rc.rs	<sisuc::codegen::rc::ClassCycles>::position
 codegen/string.rs	<sisuc::codegen::Codegen>::len_words
-conformance.rs	<sisuc::conformance::Unifier>::class
-conformance.rs	<sisuc::conformance::Unifier>::join
-conformance.rs	<sisuc::conformance::Unifier>::new
-conformance.rs	<sisuc::conformance::Unifier>::resolve
-conformance.rs	<sisuc::conformance::Unifier>::resolve_all
-conformance.rs	<sisuc::conformance::Unifier>::unify
-conformance.rs	<sisuc::conformance::Unifier>::unify_all
-conformance.rs	<sisuc::conformance::Unifier>::walk
 conformance.rs	sisuc::conformance::always_written
-conformance.rs	sisuc::conformance::overlap
 lang.rs	<sisuc::lang::Cx>::fresh
 lang.rs	sisuc::lang::and
 lang.rs	sisuc::lang::block
