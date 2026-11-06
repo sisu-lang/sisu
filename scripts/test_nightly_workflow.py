@@ -89,8 +89,10 @@ CARGO_ENV = {'CARGO_PROFILE_RELEASE_STRIP': 'symbols',
              'MACOSX_DEPLOYMENT_TARGET': "${{ runner.os == 'macOS' && '15.0' || '' }}"}
 COUNT_LINE = 'test "$(wc -l < SHA256SUMS)" = 3'
 THIRD_PARTY = 'target/release/THIRD-PARTY-LICENSES.txt'
-EMBEDDED_LINE = 'cat .config/notices/LLVM-EMBEDDED.txt >> ' + THIRD_PARTY
-STD_LINE = ("sed -e 's/<[^>]*>//g' \"$(rustc --print sysroot)/share/doc/rust/COPYRIGHT-library.html\" "
+NOTICES_LINE = ('cat .config/notices/LLVM-LICENSE.txt .config/notices/LLVM-EMBEDDED.txt >> '
+                + THIRD_PARTY)
+STD_LINE = ("sed -e 's/<[^>]*>//g' -e 's/&#34;/\"/g' -e \"s/&#39;/'/g\" -e 's/&#60;/</g' "
+            "-e 's/&#62;/>/g' \"$(rustc --print sysroot)/share/doc/rust/COPYRIGHT-library.html\" "
             ">> " + THIRD_PARTY)
 EMBEDDED_AUTHORS = ('Yann Collet', 'Henry Spencer', 'Regents of the University of California',
                     'Todd C. Miller', 'Unicode, Inc.')
@@ -387,7 +389,7 @@ class NightlyWorkflowTest(unittest.TestCase):
         found = [run_lines(step) for step in st if 'cargo about generate' in str(step.get('run', ''))]
         self.assertEqual(len(found), 1)
         lines = found[0]
-        want = ['cat .config/notices/LLVM-LICENSE.txt >> ' + THIRD_PARTY, EMBEDDED_LINE, STD_LINE]
+        want = [NOTICES_LINE, STD_LINE]
         positions = [lines.index(line) if line in lines else -1 for line in want]
         self.assertNotIn(-1, positions, lines)
         self.assertEqual(positions, sorted(positions))

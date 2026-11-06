@@ -80,10 +80,8 @@ jobs:
           tool: cargo-about@0.9.3
       - run: |
           cargo about generate --workspace --all-features --locked --offline --fail -c .config/about.toml -o target/release/THIRD-PARTY-LICENSES.txt .config/about.hbs
-          # shellcheck disable=SC2129 # one append per file shows which file failed
-          cat .config/notices/LLVM-LICENSE.txt >> target/release/THIRD-PARTY-LICENSES.txt
-          cat .config/notices/LLVM-EMBEDDED.txt >> target/release/THIRD-PARTY-LICENSES.txt
-          sed -e 's/<[^>]*>//g' "$(rustc --print sysroot)/share/doc/rust/COPYRIGHT-library.html" >> target/release/THIRD-PARTY-LICENSES.txt
+          cat .config/notices/LLVM-LICENSE.txt .config/notices/LLVM-EMBEDDED.txt >> target/release/THIRD-PARTY-LICENSES.txt
+          sed -e 's/<[^>]*>//g' -e 's/&#34;/"/g' -e "s/&#39;/'/g" -e 's/&#60;/</g' -e 's/&#62;/>/g' "$(rustc --print sysroot)/share/doc/rust/COPYRIGHT-library.html" >> target/release/THIRD-PARTY-LICENSES.txt
       - if: runner.os == 'macOS'
         run: cat "$(brew --prefix zstd)/LICENSE" >> target/release/THIRD-PARTY-LICENSES.txt
       - run: python3 scripts/nightly_check.py version target/release/sisu ${{ needs.pick.outputs.sha }}

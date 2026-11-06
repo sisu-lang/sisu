@@ -2,12 +2,9 @@
 
 [default]
 # A test keeps a deliberate typo with a trailing `// spellchecker:disable-line`, in a Rust or Sisu file.
-extend-ignore-re = ["(?Rm)^.*(#|//)\\s*spellchecker:disable-line$"]
+# The name of the xxHash author is in the notices of LLVM's embedded code.
+extend-ignore-re = ["(?Rm)^.*(#|//)\\s*spellchecker:disable-line$", "Yann Collet"]
 
 [files]
 # The fixtures are compiler input and output, where misspelled names are the point.
 extend-exclude = ["crates/sisuc/tests/diagnostics/", "site/programs/"]
-
-[default.extend-words]
-# The surname of Yann Collet, the author of xxHash, in the notice of LLVM's embedded code.
-Collet = "Collet"
