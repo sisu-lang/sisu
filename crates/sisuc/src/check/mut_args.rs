@@ -57,19 +57,6 @@ pub(super) fn site_of(
     )
 }
 
-/// Whether `e` is a literal that takes its type from its context: `[]`, `None`, an array of them,
-/// or `Some` of one.
-fn context_literal(e: &ast::Expr) -> bool {
-    match &e.kind {
-        ast::ExprKind::NoneLit => true,
-        ast::ExprKind::ArrayLit(elements) => elements.iter().all(context_literal),
-        ast::ExprKind::Call { callee, args, .. } => {
-            callee.name == Symbol::SOME && args.iter().all(|a| context_literal(&a.value))
-        }
-        _ => false,
-    }
-}
-
 /// What a call path knows of its callee, for the reports about its `mut` arguments.
 pub(super) struct MutSite<'a> {
     /// The callee as an error names it.
@@ -395,11 +382,10 @@ impl Checker<'_> {
             return Ok(CheckedPlace::failed());
         }
         if !is_place(arg) {
-            // An expression with an error has its error, and no place to report.
-            return match self.checked_alone(arg) {
-                (_, true) => Ok(CheckedPlace::failed()),
-                (_, false) => Err((NotPlace::Temporary, None)),
-            };
+            // A value that is not a place is never one: E0169 does not depend on its type or its
+            // errors. The value is checked for its own mistakes first, and they stay.
+            self.checked_alone(arg);
+            return Err((NotPlace::Temporary, None));
         }
         let mut place = self.place(arg.span, arg, Change::MutArg);
         if let Some(cause) = place.refused.take() {
@@ -419,21 +405,16 @@ impl Checker<'_> {
     }
 
     /// The type of the expression `arg`, checked on its own for its own mistakes, and whether
-    /// it failed.
+    /// it failed. The range arm uses both. The function and `self` arms use only the check: its
+    /// errors are their report.
     ///
-    /// It failed when it reported an error. It failed too when its type is unknown, an error was
-    /// reported before it, and it is no context literal: its type comes from a local that failed.
-    /// A context literal (`[]`, `None`, `Some` and arrays of them) has no type and no error, so it
-    /// never failed. With no earlier error, an unknown type is no failure either, so E0169 is
-    /// reported.
-    // shortcut: a temporary of another form that takes its type from its context, such as
-    // `if c { [] } else { [] }` or `{ [] }`, counts as failed beside an earlier error and hides
-    // its E0169; upgrade if such a form must report E0169 there.
+    /// It failed when it reported an error. It failed too when its type is unknown and an error
+    /// was reported before it: its type comes from a local that failed. With no earlier error, an
+    /// unknown type is no failure, so the report is made.
     fn checked_alone(&mut self, arg: &ast::Expr) -> (Option<Type>, bool) {
         let errors = self.diagnostics.errors;
         let ty = type_of(&self.expr(arg, Some(UNKNOWN)));
-        let failed =
-            self.diagnostics.errors > errors || ty.is_none() && errors > 0 && !context_literal(arg);
+        let failed = self.diagnostics.errors > errors || ty.is_none() && errors > 0;
         (ty, failed)
     }
 

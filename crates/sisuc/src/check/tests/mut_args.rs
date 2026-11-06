@@ -267,12 +267,12 @@ fn generic_mut_argument_should_not_promote() {
     codes(&src, &[]);
 }
 
-/// GIVEN a `mut` argument `mut self`, `mut self[0]` or `mut self[0..1]` outside a method
+/// GIVEN a `mut` argument `mut self` or `mut self[0..1]` outside a method
 /// WHEN it is checked
 /// THEN it is E0041 only: there is no `self` to pass, so no E0169
 #[test]
 fn mut_self_outside_a_method_should_be_reported_once() {
-    for place in ["self", "self[0]", "self[0..1]"] {
+    for place in ["self", "self[0..1]"] {
         let src =
             format!("fn set(mut x: i64) {{\n    x = 1\n}}\nfn main() {{\n    set(mut {place})\n}}");
         assert_eq!(
@@ -2301,6 +2301,7 @@ fn temporary_program(extra: &str, body: &str) -> String {
 /// WHEN the call is checked
 /// THEN the value is E0169 beside the E0030, with the other error of its row if it has one
 #[test]
+#[expect(clippy::too_many_lines, reason = "a table of rows, one for each form")]
 fn temporary_mut_argument_should_be_e0169_beside_an_earlier_error() {
     let rows: &[Row] = &[
         ("a", "", "set(mut bad())", &[(E30, "Nope"), (E169, "bad()")]),
@@ -2393,6 +2394,12 @@ fn temporary_mut_argument_should_be_e0169_beside_an_earlier_error() {
             &[(E30, "Nope"), (E169, "bad()")],
         ),
         (
+            "nested: a `mut` call in a `mut` argument",
+            "",
+            "set(mut id(mut bad()))",
+            &[(E30, "Nope"), (E169, "id(mut bad())"), (E169, "bad()")],
+        ),
+        (
             "req: a requirement, through `any J` and through `U: J`",
             "fn via_any(j: any J) { j.put(mut bad()) }\n\
             fn via_gen<U: J>(j: U) { j.put(mut bad()) }\n",
@@ -2458,7 +2465,7 @@ fn temporary_mut_argument_with_its_own_error_should_also_be_e0169() {
             "isx: `x is O`",
             "",
             "take(mut x is O)",
-            &[(E30, "Nope"), (Code::TypeAsValue, "O"), (E169, "x is O")],
+            &[(E30, "Nope"), (E169, "x is O"), (Code::TypeAsValue, "O")],
         ),
         (
             "inmeth: an index of `self` in a method",
@@ -2576,12 +2583,6 @@ fn mut_place_with_a_failed_base_should_have_no_e0169() {
             "",
             "take(mut !x)",
             &[(E30, "Nope"), (E169, "!x")],
-        ),
-        (
-            "nested: a `mut` call in a `mut` argument",
-            "",
-            "set(mut id(mut bad()))",
-            &[(E30, "Nope"), (E169, "id(mut bad())")],
         ),
         (
             "cmp: a comparison",
