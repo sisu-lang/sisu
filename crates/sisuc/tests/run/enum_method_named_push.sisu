@@ -1,0 +1,18 @@
+// GIVEN `enum E { A }` with a method `push(self, x: i64) -> i64` that gives back `x`, and a
+// generic `fn id<T>(x: T) -> T`
+// WHEN `main` calls `E.A.push(2)`, then `es[0].push(1)` on `let es = [E.A]`, then
+// `id(E.A.push(2))`, and prints each result
+// THEN it prints "2", "1" and "2": a method named `push` of an enum is an ordinary method
+enum E {
+    A
+    fn push(self, x: i64) -> i64 { x }
+}
+
+fn id<T>(x: T) -> T { x }
+
+fn main() {
+    print(E.A.push(2))
+    let es = [E.A]
+    print(es[0].push(1))
+    print(id(E.A.push(2)))
+}

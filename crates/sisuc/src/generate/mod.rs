@@ -35,7 +35,8 @@ pub(crate) struct Generated {
     /// The program's cost, as decision 5 counts it.
     #[cfg(test)]
     pub(crate) cost: u64,
-    /// `program` without its known sites, which the coverage test walks so they hide nothing.
+    /// `program` without its known sites and the forms of `gap_forms`, which the coverage test
+    /// walks so they hide nothing.
     #[cfg(test)]
     pub(crate) plain: String,
     /// The rewrites `rewritten` holds.
@@ -285,7 +286,8 @@ struct Gen<'a> {
     returns: bool,
     /// The bound sites of `program`, in order.
     bound_sites: Vec<BoundSite>,
-    /// Where `program` holds the known sites' text, in order.
+    /// Where `program` holds the text of the known sites and of the forms of `gap_forms`, in
+    /// order.
     #[cfg(test)]
     known_text: Vec<std::ops::Range<usize>>,
     /// See `Generated::mut_lens`.

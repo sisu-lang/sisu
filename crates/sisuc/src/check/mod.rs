@@ -611,7 +611,17 @@ thread_local! {
     /// it answers from `body.int_literals` not counted.
     pub(super) static INT_LITERAL_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many nested loops the walk that wraps a widened loop's values has entered.
-    pub(super) static WRAP_LOOPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static WRAP_LOOPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many values `wrap_breaks` has wrapped in a walk that enters no nested loop, on this
+    /// thread.
+    pub(crate) static WIDENED_BREAKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many times `object_in_some` has been called on this thread.
+    pub(crate) static OBJECT_IN_SOME_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many calls written `.push` have read a place of a type that is no array, on this
+    /// thread.
+    pub(crate) static OWN_PUSH_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many times `pushed_value` has been called on this thread.
+    pub(crate) static PUSHED_VALUES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many type parameter names have been indexed or looked up on this thread.
     pub(super) static PARAM_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many inherited interfaces the check for a requirement that an interface declares
