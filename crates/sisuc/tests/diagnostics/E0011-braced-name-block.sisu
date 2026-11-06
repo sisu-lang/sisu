@@ -1,0 +1,24 @@
+// GIVEN a name after `if let`, `while let`, `let` or in a `match` arm, then `{ ... }` that no
+// pattern ends at: the body of a block, or a block that ends at the `}`
+// WHEN `sisu check` runs on it
+// THEN it reports E0011 at the `{`, expecting `=` or `=>`, and offers no fix
+fn if_let_lines(o: i64?) {
+    if let a {
+        print(a)
+    }
+}
+
+fn while_let_lines(o: i64?) {
+    while let a {
+        print(a)
+    }
+}
+
+fn let_one_line() { let a { } }
+
+fn if_let_one_line() { if let a { print(a) } }
+
+fn match_one_line(e: i64) { match e { E.P { x } } }
+
+fn main() {
+}

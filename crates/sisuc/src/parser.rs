@@ -3,6 +3,7 @@
 use std::borrow::Cow;
 use std::cell::OnceCell;
 use std::cmp::Ordering;
+use std::iter;
 use std::mem;
 use std::ops::Range;
 
@@ -69,6 +70,7 @@ pub(crate) fn parse(lexed: Lexed<'_>, prelude: bool) -> Parsed {
         breaks: &breaks,
         recovered: Vec::new(),
         header: false,
+        sub_pattern: false,
         warnings,
         labels: Vec::new(),
         loops: Vec::new(),
@@ -635,6 +637,9 @@ struct Parser<'a> {
     /// Whether the parser reads the head of a `for`, `if`, `while` or `match`, outside any
     /// bracket or block in it. There, a `{` after `..` opens the body, not the end of the range.
     header: bool,
+    /// Whether the pattern being read is a sub-pattern, inside `( )` or `{ }`. Only there can a
+    /// `,`, `)` or `}` end a pattern.
+    sub_pattern: bool,
     /// The lexer's warnings, which `program` reports whether or not their item is broken.
     warnings: Vec<Diagnostic>,
     /// The loop labels open around the next token, innermost last: from each one's `name:` to the
@@ -1934,6 +1939,7 @@ impl<'a> Parser<'a> {
             breaks: self.breaks,
             recovered: Vec::new(),
             header: false,
+            sub_pattern: false,
             warnings: Vec::new(),
             labels: Vec::new(),
             loops: Vec::new(),
@@ -3019,9 +3025,10 @@ impl<'a> Parser<'a> {
     }
 
     /// Rust's `Rect { w, h }`, or with labels, `Rect { w: x, h: y }`, at the next token, after the
-    /// pattern `path`: its error, when a pattern can end at the `}`. Else the `{` is not part of a
-    /// pattern: it stays the next token, `path` is the whole pattern, and the caller reports the
-    /// `{`.
+    /// pattern `path`: its error, when a pattern can end at the `}` that closes the `{`. Else the
+    /// `{` is not part of a pattern: it stays the next token, `path` is the whole pattern, and the
+    /// caller reports the `{`, before it reads anything inside the braces. A lexer error in the
+    /// braces comes first, because an unclosed literal can hide the `}` that the scan looks for.
     fn braced_pattern(
         &mut self,
         path: Span,
@@ -3029,20 +3036,43 @@ impl<'a> Parser<'a> {
         reach: &mut Height,
     ) -> Result<Option<Diagnostic>, Diagnostic> {
         let open = self.pos;
-        let (patterns, _, braces) = self.sub_patterns(base, reach, &TokenKind::RBrace)?;
-        if !self.pattern_ends() {
-            self.pos = open;
-            *reach = base;
+        let mut depth = 0;
+        let close = self.tokens[open..]
+            .iter()
+            .position(|t| {
+                // The scan starts on the `{`, and the lexer rejects a closer with no opener.
+                depth = nested(&t.kind, depth).unwrap_or(0);
+                depth == 0
+            })
+            .map(|at| open + at);
+        let end = close.map_or(usize::MAX, |at| self.tokens[at].span.end());
+        if let Some(lexed) = self.lexer_in(self.tokens[open].span.start()..end).next() {
+            return Err(lexed.clone());
+        }
+        if !close.is_some_and(|at| self.pattern_ends(at + 1)) {
             return Ok(None);
         }
-        // The message goes on one line, but the fix replaces the source as written.
-        let fields = Self::listed(&patterns, |span| Cow::Borrowed(self.source.text(span)));
+        let (patterns, _, braces) = self.sub_patterns(base, reach, &TokenKind::RBrace)?;
+        // The fix replaces the source as written, so it would delete a comment in a gap: between
+        // the `{`, the sub-patterns (a label is in a gap) and the `}`.
+        let after = iter::once(braces.start() + 1).chain(patterns.iter().map(|p| p.span.end()));
+        let next = patterns
+            .iter()
+            .map(|p| p.span.start())
+            .chain(iter::once(braces.end() - 1));
+        let fix = after
+            .zip(next)
+            .all(|(after, next)| self.removal_end(after, next) == next)
+            .then(|| {
+                // The message goes on one line.
+                let fields = Self::listed(&patterns, |span| Cow::Borrowed(self.source.text(span)));
+                (Span::new(path.end(), braces.end()), fields)
+            });
         Ok(Some(
             DiagnosticKind::PatternForm {
                 form: ForeignPattern::Braces {
                     form: self.one_line_form(path, &patterns),
-                    replace: Span::new(path.end(), braces.end()),
-                    fields,
+                    fix,
                 },
                 at: braces,
             }
@@ -3050,28 +3080,35 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    /// Whether a pattern can end before the next token. The token is `=` (a `let`, an `if let` or
-    /// a `while let`), `:` (the type of a `let` pattern), `=>`, `->`, `if` or `|` (a match arm),
-    /// or `,`, `)` or `}` (a sub-pattern; a `|` also joins the alternatives of a sub-pattern). A
-    /// line break and then `=>` or `|` also ends an arm's pattern, because neither can start a
-    /// statement. An `if` after a line break starts a statement, so it is no end.
-    fn pattern_ends(&self) -> bool {
-        match self.peek().kind {
+    /// Whether a pattern can end before the token at index `at`. The token is `=` (a `let`, an
+    /// `if let` or a `while let`), `:` (the type of a `let` pattern), `=>`, `->`, `if` or `|` (a
+    /// match arm), or, in a sub-pattern, `,`, `)` or `}` (a `|` also joins the alternatives of a
+    /// sub-pattern). A line break and then `=>` or `|`, or in a sub-pattern `,` or `}`, also ends
+    /// a pattern, because none of them can start a statement. An `if` after a line break starts
+    /// a statement, so it is no end.
+    fn pattern_ends(&self, at: usize) -> bool {
+        match &self.tokens[at].kind {
             TokenKind::Eq
             | TokenKind::FatArrow
             | TokenKind::Arrow
             | TokenKind::If
             | TokenKind::Pipe
-            | TokenKind::Comma
-            | TokenKind::RParen
-            | TokenKind::RBrace
             | TokenKind::Colon => true,
-            TokenKind::Newline => self.tokens[self.pos..]
-                .iter()
-                .find(|t| t.kind != TokenKind::Newline)
-                .is_some_and(|t| matches!(t.kind, TokenKind::FatArrow | TokenKind::Pipe)),
+            TokenKind::Comma | TokenKind::RParen | TokenKind::RBrace => self.sub_pattern,
+            TokenKind::Newline => {
+                let next = &self.tokens[self.after_line_breaks(at)].kind;
+                matches!(next, TokenKind::FatArrow | TokenKind::Pipe)
+                    || (self.sub_pattern && matches!(next, TokenKind::Comma | TokenKind::RBrace))
+            }
             _ => false,
         }
+    }
+
+    /// The index of the first token at or after `at` that is no line break. `Eof` is none, so the
+    /// search ends there. A `;` that separates is no line break.
+    fn after_line_breaks(&self, at: usize) -> usize {
+        let skipped = self.tokens[at..].iter().take_while(|t| t.is_line_break());
+        at + skipped.count()
     }
 
     /// The error for a string pattern with an interpolation, at the next token, the string's
@@ -3291,7 +3328,14 @@ impl<'a> Parser<'a> {
             if let Some(label) = self.pattern_label() {
                 labels.push(label);
             }
-            fields.push(self.child(base, reach, Self::pattern)?);
+            let outer = mem::replace(&mut self.sub_pattern, true);
+            let field = self.child(base, reach, Self::pattern);
+            self.sub_pattern = outer;
+            fields.push(field?);
+            // A line break can end a sub-pattern in a `{ }` list, before its `,` or `}`.
+            while self.peek().is_line_break() {
+                self.bump();
+            }
             if self.eat(&TokenKind::Comma).is_none() {
                 break;
             }
@@ -3414,14 +3458,21 @@ impl<'a> Parser<'a> {
         let next = &self.tokens[self.pos + 1];
         let text = self.source.text(token.span);
         let (form, at) = match (&token.kind, &next.kind) {
-            (TokenKind::Ident(_), kind) if text == "case" && *kind != TokenKind::FatArrow => {
+            (TokenKind::Ident(_), _) if text == "case" => {
+                // A comment or a line break after `case` does not end the arm: `case` and a line
+                // break and then `=>` is a binding. A `;` on its line ends it.
+                let at = self.after_line_breaks(self.pos + 1);
+                let next = &self.tokens[at];
+                if next.kind == TokenKind::FatArrow {
+                    return None;
+                }
                 // Swift's `case let .some(x)` also loses its `let` and its `.`. A `let` is not
                 // `Eof`, so the token after it exists.
                 let end = self.removal_end(token.span.end(), next.span.start());
                 let mut remove = vec![Span::new(token.span.start(), end)];
                 let mut after = next;
                 if next.kind == TokenKind::Let {
-                    after = &self.tokens[self.pos + 2];
+                    after = &self.tokens[at + 1];
                     let end = self.removal_end(next.span.end(), after.span.start());
                     remove.push(Span::new(next.span.start(), end));
                 }
@@ -7257,6 +7308,7 @@ mod tests {
             breaks: &lexed.breaks,
             recovered: Vec::new(),
             header: false,
+            sub_pattern: false,
             warnings: Vec::new(),
             labels: Vec::new(),
             loops: Vec::new(),
@@ -8030,13 +8082,18 @@ mod tests {
 
     /// GIVEN a name followed by `{ ... }` in each place where a pattern stands
     /// WHEN the parser reads it
-    /// THEN it reports the braced pattern (E0123) only when a pattern can end at the `}`: the next
-    /// token is `=`, `=>`, `->`, `if`, `|`, `,`, `)`, `}` or `:`, or a line break and then `=>`
-    /// or `|`
-    /// AND otherwise it reports the `{` as a stray token (E0011) with no fix, as `let a { }` does
+    /// THEN it reports the braced pattern (E0123) only when a pattern can end at the `}` that
+    /// closes the `{`: the token after it is `=`, `=>`, `->`, `if`, `|` or `:`, or, in a
+    /// sub-pattern, `,`, `)` or `}`, or a line break and then `=>`, `|` or, in a sub-pattern, `,`
+    /// or `}`
+    /// AND otherwise it reports the `{` as a stray token (E0011) with no fix, as `let a { }` does,
+    /// before it reads anything inside the braces
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one row per place and token, so the table reads in one place"
+    )]
     fn a_braced_name_should_be_a_pattern_only_when_a_pattern_can_end_at_its_brace() {
-        let arm = |pattern: &str| format!("    match e {{\n        {pattern}\n    }}");
         // (statement, code, line, column of the error)
         let rows: Vec<(String, Code, usize, usize)> =
             vec![
@@ -8049,28 +8106,161 @@ mod tests {
             ("    if let a { } {\n    }".into(), Code::Expected, 2, 14),
             ("    while let a { } {\n    }".into(), Code::Expected, 2, 17),
             ("    if let a { print(a) }".into(), Code::Expected, 2, 14),
+            ("    match e { E.P { x } }".into(), Code::Expected, 2, 19),
+            // The `{` is the error, and the body after it is not read as patterns.
+            ("    if let a {\n        print(a)\n    }".into(), Code::Expected, 2, 14),
+            ("    while let a {\n        print(a)\n    }".into(), Code::Expected, 2, 17),
+            ("    let a {\n        print(a)\n    }".into(), Code::Expected, 2, 11),
+            ("    if let E.P {\n        print(1)\n    }".into(), Code::Expected, 2, 16),
+            (
+                "    if let a {\n        let b = 1\n        print(b)\n    } else {\n        print(2)\n    }"
+                    .into(),
+                Code::Expected,
+                2,
+                14,
+            ),
+            (
+                "    if let a {\n        if let b {\n            print(b)\n        }\n    }".into(),
+                Code::Expected,
+                2,
+                14,
+            ),
+            ("    if let a { x + 1 }".into(), Code::Expected, 2, 14),
+            ("    if let a { let b = 1 }".into(), Code::Expected, 2, 14),
+            ("    if let a { return }".into(), Code::Expected, 2, 14),
+            ("    while let a { x + 1 }".into(), Code::Expected, 2, 17),
+            (in_arm("E.P { x }"), Code::Expected, 3, 13),
+            // A `;` is no line break: it ends the arm before the `=>`.
+            (in_arm("E.P { x }; => print(1)"), Code::Expected, 3, 13),
+            // A line break and then another token does not end a sub-pattern.
+            (
+                in_arm("E.P {\n            x: R { w }\n            y\n        } => print(1)"),
+                Code::Expected,
+                4,
+                18,
+            ),
+            // A block in an arm is no sub-pattern: it does not keep the state of the pattern.
+            (
+                "    match e {\n        A(x) => {\n            let a { }\n        }\n    }".into(),
+                Code::Expected,
+                4,
+                19,
+            ),
+            // After a sub-pattern in a sub-pattern, the outer one is still a sub-pattern.
+            (in_arm("Some(S(x) | R { w }) => 1"), Code::PatternForm, 3, 23),
             // An `if` after a line break starts a statement, not a guard.
             ("    let a { }\n    if true { }".into(), Code::Expected, 2, 11),
             // A guard on the next line: the `{` is the mistake.
-            (arm("E.P { x }\n        if x > 0 => print(x)"), Code::Expected, 3, 13),
+            (in_arm("E.P { x }\n        if x > 0 => print(x)"), Code::Expected, 3, 13),
             // A pattern ends at the `}`: one row for each token of the rule.
             ("    let a { } = s".into(), Code::PatternForm, 2, 11),
             ("    let a { } = s else { return }".into(), Code::PatternForm, 2, 11),
             ("    let a {} = 1".into(), Code::PatternForm, 2, 11),
             ("    let R { w }: R = r".into(), Code::PatternForm, 2, 11),
-            (arm("E.P { x } => print(x)"), Code::PatternForm, 3, 13),
-            (arm("E.P { x } -> print(x)"), Code::PatternForm, 3, 13),
-            (arm("E.P { x } if x > 0 => print(x)"), Code::PatternForm, 3, 13),
-            (arm("E.P { x } | E.Q => print(1)"), Code::PatternForm, 3, 13),
-            (arm("E.Q | E.P { x } => print(1)"), Code::PatternForm, 3, 19),
-            (arm("Some(R { w }) => print(w)"), Code::PatternForm, 3, 16),
-            (arm("Some(R { w }, 1) => print(w)"), Code::PatternForm, 3, 16),
+            (in_arm("E.P { x } => print(x)"), Code::PatternForm, 3, 13),
+            (in_arm("E.P { x } -> print(x)"), Code::PatternForm, 3, 13),
+            (in_arm("E.P { x } if x > 0 => print(x)"), Code::PatternForm, 3, 13),
+            (in_arm("E.P { x } | E.Q => print(1)"), Code::PatternForm, 3, 13),
+            (in_arm("E.Q | E.P { x } => print(1)"), Code::PatternForm, 3, 19),
+            (in_arm("Some(R { w }) => print(w)"), Code::PatternForm, 3, 16),
+            (in_arm("Some(R { w }, 1) => print(w)"), Code::PatternForm, 3, 16),
             // The inner pattern is the first one that ends at its `}`.
-            (arm("E.P { x: R { w } } => print(1)"), Code::PatternForm, 3, 20),
-            ("    match e { E.P { x } }".into(), Code::PatternForm, 2, 19),
+            (in_arm("E.P { x: R { w } } => print(1)"), Code::PatternForm, 3, 20),
+            // A real braced pattern on many lines. The inner pattern is the first one to report.
+            (
+                in_arm("E.P {\n            x: R { w }\n        } => print(1)"),
+                Code::PatternForm,
+                4,
+                18,
+            ),
+            (
+                in_arm("E.P {\n            x,\n            y\n        } => print(1)"),
+                Code::PatternForm,
+                3,
+                13,
+            ),
+            (
+                in_arm("E.P {\n            x: R {\n                w\n            }\n        } => print(1)"),
+                Code::PatternForm,
+                4,
+                18,
+            ),
+            (
+                in_arm("Some(R {\n            w\n        }) => print(1)"),
+                Code::PatternForm,
+                3,
+                16,
+            ),
+            (
+                "    match o {\n        Some(\n            R {\n                w\n            }\n        ) => print(1)\n    }"
+                    .into(),
+                Code::PatternForm,
+                4,
+                15,
+            ),
+            (
+                in_arm("E.P {\n            x: R { w },\n            y\n        } => print(1)"),
+                Code::PatternForm,
+                4,
+                18,
+            ),
+            (
+                in_arm("E.P {\n            x: R { w }\n            , y\n        } => print(1)"),
+                Code::PatternForm,
+                4,
+                18,
+            ),
+            (
+                in_arm("E.P {\n            x\n            , y\n        } => print(1)"),
+                Code::PatternForm,
+                3,
+                13,
+            ),
+            (
+                in_arm("E.P {\n            x\n        } | E.Q => print(1)"),
+                Code::PatternForm,
+                3,
+                13,
+            ),
+            (
+                in_arm("E.P {\n            x\n        } if x > 0 => print(x)"),
+                Code::PatternForm,
+                3,
+                13,
+            ),
+            (
+                in_arm("E.P {\n            x | y\n        } => print(1)"),
+                Code::PatternForm,
+                3,
+                13,
+            ),
+            (
+                "    let E.P {\n        x: R { w }\n    } = e else { return }".into(),
+                Code::PatternForm,
+                3,
+                14,
+            ),
+            (
+                "    if let E.P {\n        x: R { w }\n    } = e {\n    }".into(),
+                Code::PatternForm,
+                3,
+                14,
+            ),
+            (
+                "    while let E.P {\n        x,\n        y\n    } = e {\n    }".into(),
+                Code::PatternForm,
+                2,
+                19,
+            ),
+            (
+                "    let R {\n        w\n    }: R = r".into(),
+                Code::PatternForm,
+                2,
+                11,
+            ),
             // A line break and then `=>` or `|`: neither can start a statement.
-            (arm("E.P { x }\n        => print(x)"), Code::PatternForm, 3, 13),
-            (arm("E.P { x }\n        | E.Q => print(1)"), Code::PatternForm, 3, 13),
+            (in_arm("E.P { x }\n        => print(x)"), Code::PatternForm, 3, 13),
+            (in_arm("E.P { x }\n        | E.Q => print(1)"), Code::PatternForm, 3, 13),
             (
                 "    match o {\n        Some(\n            R { w }\n        ) => print(w)\n    }"
                     .into(),
@@ -8101,6 +8291,402 @@ mod tests {
             (Code::Expected, (2, 9))
         );
         assert_eq!(&src[d.span().range()], "mut");
+    }
+
+    /// `pattern` as the pattern of a `match` arm, as one statement of a `main`.
+    fn in_arm(pattern: &str) -> String {
+        format!("    match e {{\n        {pattern}\n    }}")
+    }
+
+    /// `stmt` as the body of a `main`.
+    fn in_main(stmt: &str) -> String {
+        format!("fn main() {{\n{stmt}\n}}")
+    }
+
+    /// GIVEN a name and then `{ ... }` at the end of a block, on one line with the block's `}`
+    /// WHEN the parser reads it
+    /// THEN it reports the `{` as a stray token (E0011) with no fix, because no pattern can end
+    /// at the `}`: the `}` of the block follows
+    #[test]
+    fn a_braced_name_at_the_end_of_a_block_should_report_the_brace() {
+        let rows = [
+            ("fn main() { let a { } }", 19),
+            ("fn main() { if let a { } }", 22),
+            ("fn main() { while let a { } }", 25),
+            ("fn main() { let a { print(a) } }", 19),
+            ("fn main() { if let a { print(a) } }", 22),
+            ("fn main() { while let a { print(a) } }", 25),
+            ("fn main() { if let a { x, y } }", 22),
+            ("fn main() { let E.P { x } }", 21),
+            ("fn main() { match e { E.P { x } } }", 27),
+            ("fn main() { match e { a { } } }", 25),
+            ("fn main() { f(if let a { }) }", 24),
+            ("fn main() { let a { }, 1 }", 19),
+        ];
+        for (src, column) in rows {
+            let d = parse_diagnostic(src);
+            assert_eq!(
+                (d.code(), line_col(src, d.span().start())),
+                (Code::Expected, (1, column)),
+                "{src}"
+            );
+            assert_eq!(&src[d.span().range()], "{", "{src}");
+            assert!(d.fixes().is_empty(), "{src}");
+        }
+    }
+
+    /// GIVEN a braced pattern, where a pattern can end at its `}`, that has an error inside
+    /// WHEN the parser reads it
+    /// THEN the error inside is the error, as it was before the parser decided at the `{`
+    /// AND a `;` between the sub-patterns is still an error at the `;`
+    #[test]
+    fn an_error_in_a_braced_pattern_should_stay_when_a_pattern_ends_at_its_brace() {
+        let arm = |pattern: &str| in_main(&in_arm(pattern));
+        let interpolated = Code::InterpolatedPattern;
+        let rows = [
+            (arm("E.P { x: 1 + 2 } => print(1)"), Code::Expected, 3, 20),
+            (arm("E.P { x: y z } => print(1)"), Code::Expected, 3, 20),
+            (
+                in_main("    let E.P { x: 1 + 2 } = e else { return }"),
+                Code::Expected,
+                2,
+                20,
+            ),
+            (arm("E.P { Foo::Bar } => print(1)"), Code::MatchIdiom, 3, 18),
+            (
+                arm("E.P { x: Option<i64>.Some(v) } => print(1)"),
+                Code::PatternForm,
+                3,
+                24,
+            ),
+            (arm("E.P { R(w: a) } => print(1)"), Code::PatternForm, 3, 17),
+            (arm("E.P { \"a{b}\" } => print(1)"), interpolated, 3, 17),
+            (arm("E.P { x; y } => print(1)"), Code::Expected, 3, 16),
+            (arm("E.P { x;, y } => print(1)"), Code::Expected, 3, 16),
+            (
+                arm("E.P { x: R { w }; } => print(1)"),
+                Code::PatternForm,
+                3,
+                20,
+            ),
+        ];
+        for (src, code, line, column) in rows {
+            let d = first_syntax_diagnostic(&src);
+            assert_eq!(
+                (d.code(), line_col(&src, d.span().start())),
+                (code, (line, column)),
+                "{src}"
+            );
+        }
+    }
+
+    /// GIVEN 300 braces nested in a pattern, and 300 after `if let a` that has no `=`
+    /// WHEN the parser reads them
+    /// THEN the first reports that the nesting is too deep (E0071), because a pattern can end at
+    /// its `}`
+    /// AND the second reports the first `{` as a stray token (E0011), because no pattern can end
+    /// there
+    #[test]
+    fn nested_braces_should_report_the_depth_only_in_a_pattern() {
+        let deep = format!("{}x{} => print(1)", "a { ".repeat(300), " }".repeat(300));
+        let pattern = in_main(&in_arm(&deep));
+        let stmt = format!("    if let {}x{}", "a { ".repeat(300), " }".repeat(300));
+        let stray = in_main(&stmt);
+        // The parser recurses as deep as the limit allows, which the compiler's own stack holds.
+        let (too_deep, stray) = crate::on_compiler_stack(|| {
+            let d = parse_diagnostic(&stray);
+            (
+                parse_diagnostic(&pattern).code(),
+                (d.code(), line_col(&stray, d.span().start())),
+            )
+        });
+        assert_eq!(too_deep, Code::NestingTooDeep);
+        assert_eq!(stray, (Code::Expected, (2, 14)));
+    }
+
+    /// GIVEN an error in a sub-pattern of one function, and a stray braced name in the next
+    /// WHEN the parser reads both
+    /// THEN the second function reports the `{` as a stray token (E0011), because it is not in a
+    /// sub-pattern
+    #[test]
+    fn an_error_in_a_sub_pattern_should_leave_the_next_function_outside_it() {
+        let src =
+            "fn f() {\n    match e {\n        A(*) => 1\n    }\n}\nfn main() {\n    let a { }\n}";
+        let ds = parsed(src).diagnostics;
+        let [_, second] = ds.as_slice() else {
+            panic!("{src}: expected two diagnostics, got {ds:?}");
+        };
+        assert_eq!(
+            (second.code(), line_col(src, second.span().start())),
+            (Code::Expected, (7, 11))
+        );
+    }
+
+    /// The first diagnostic of the lexer and the parser for `src`.
+    fn first_syntax_diagnostic(src: &str) -> Diagnostic {
+        match lex(src) {
+            Err(d) => d,
+            Ok(lexed) => parse(lexed, false)
+                .diagnostics
+                .into_iter()
+                .next()
+                .expect("the source should have a diagnostic"),
+        }
+    }
+
+    /// GIVEN a name and then `{ ... }` that holds a lexer error
+    /// WHEN the parser reads it
+    /// THEN the lexer error is the error, also when the parse error at the `{` is earlier
+    #[test]
+    fn a_lexer_error_in_braces_should_come_before_an_error_at_the_brace() {
+        let rows: Vec<(String, Code, usize, usize)> = vec![
+            (
+                in_main(&in_arm("E.P { \"abc } => print(1)")),
+                Code::LiteralNotClosed,
+                3,
+                15,
+            ),
+            (
+                in_main(&in_arm("Some(E.P { \"abc }) => print(1)")),
+                Code::LiteralNotClosed,
+                3,
+                20,
+            ),
+            (
+                in_main(&in_arm("E.P { \"abc\n        } => print(1)")),
+                Code::LiteralNotClosed,
+                3,
+                15,
+            ),
+            (
+                in_main(&in_arm("E.P { 'a } => print(1)")),
+                Code::LiteralNotClosed,
+                3,
+                15,
+            ),
+            (
+                in_main("    let E.P { \"abc } = e"),
+                Code::LiteralNotClosed,
+                2,
+                15,
+            ),
+            (
+                "fn main() {\n    match e {\n        E.P { \"abc".into(),
+                Code::LiteralNotClosed,
+                3,
+                15,
+            ),
+            (
+                in_main(&in_arm("E.P { x) } => print(1)")),
+                Code::UnexpectedClosingBracket,
+                3,
+                16,
+            ),
+            (
+                in_main(&in_arm("E.P { x # } => print(1)")),
+                Code::UnexpectedCharacter,
+                3,
+                17,
+            ),
+            (
+                in_main(&in_arm("E.P { x: 1 + \"abc } => print(1)")),
+                Code::LiteralNotClosed,
+                3,
+                22,
+            ),
+            (
+                in_main("    if let a { print(\"abc) }"),
+                Code::LiteralNotClosed,
+                2,
+                22,
+            ),
+        ];
+        for (src, code, line, column) in rows {
+            let d = first_syntax_diagnostic(&src);
+            assert_eq!(
+                (d.code(), line_col(&src, d.span().start())),
+                (code, (line, column)),
+                "{src}"
+            );
+        }
+    }
+
+    /// GIVEN a braced pattern with a comment in a gap: after the `{`, between two sub-patterns,
+    /// after a label or before the `}`
+    /// WHEN the parser reports it (E0123)
+    /// THEN the diagnostic has no fix, because the fix would delete the comment
+    #[test]
+    fn a_comment_between_the_sub_patterns_of_braces_should_leave_no_fix() {
+        let rows = [
+            in_main(&in_arm("E.P { x, // c\n            y } => print(x)")),
+            in_main(&in_arm("E.P { // c\n            x, y } => print(x)")),
+            in_main(&in_arm("E.P { x, y // c\n        } => print(x)")),
+            in_main(&in_arm("E.P { w: // c\n            x } => print(x)")),
+            in_main(&in_arm(
+                "E.P {\n            // c\n            x\n        } => print(x)",
+            )),
+            in_main(&in_arm(
+                "E.P {\n            x\n            // c\n        } => print(x)",
+            )),
+            in_main(&in_arm(
+                "E.P { x,\n            // c\n            y } => print(x)",
+            )),
+            in_main(&in_arm("E.P { // c\n        } => print(1)")),
+            in_main("    let E.P { x, // c\n        y } = e else { return }"),
+            in_main("    if let E.P { x, // c\n        y } = e {\n    }"),
+        ];
+        for src in rows {
+            let d = parse_diagnostic(&src);
+            assert_eq!(d.code(), Code::PatternForm, "{src}");
+            assert!(d.fixes().is_empty(), "{src}");
+        }
+    }
+
+    /// Applies the fix of the first diagnostic of `src` until none is left or the first has no
+    /// fix: the source, and how many fixes were applied.
+    fn fixed_until_done(src: &str) -> (String, usize) {
+        let mut now = src.to_string();
+        for applied in 0..8 {
+            let found = parsed(&now).diagnostics;
+            let Some(d) = found.first() else {
+                return (now, applied);
+            };
+            if d.fixes().is_empty() {
+                return (now, applied);
+            }
+            now = apply_fix(&now, d);
+        }
+        panic!("{src}: the fixes do not end");
+    }
+
+    /// GIVEN a braced pattern on many lines, with a pattern inside, with a comment after another
+    /// pattern, or with a comment inside a sub-pattern
+    /// WHEN each fix is applied until no diagnostic is left
+    /// THEN the source parses and every comment stays
+    #[test]
+    fn a_fix_of_braces_should_parse_and_keep_each_other_comment() {
+        let rows = [
+            (
+                in_main(&in_arm(
+                    "E.P {\n            x,\n            y\n        } => print(x)",
+                )),
+                in_main(&in_arm("E.P(x, y) => print(x)")),
+            ),
+            (
+                in_main(&in_arm(
+                    "E.P {\n            x: R { w }\n        } => print(1)",
+                )),
+                in_main(&in_arm("E.P(R(w)) => print(1)")),
+            ),
+            (
+                in_main(&in_arm(
+                    "R { w: Some( // keep\n            a), h } => print(h)",
+                )),
+                in_main(&in_arm("R(Some( // keep\n            a), h) => print(h)")),
+            ),
+            (in_main("    let a { } = s"), in_main("    let a() = s")),
+        ];
+        for (src, want) in rows {
+            let (got, _) = fixed_until_done(&src);
+            assert_eq!(got, want, "{src}");
+            assert!(parsed(&got).diagnostics.is_empty(), "{src}");
+        }
+        // The arm is split by a comment, which no fix joins: the one fix of the braces stays.
+        let src = in_main(&in_arm("E.P { x } // c\n        => print(x)"));
+        let (now, applied) = fixed_until_done(&src);
+        assert_eq!(applied, 1, "{src}");
+        assert!(now.contains("// c"), "{now}");
+    }
+
+    /// `arm` as an arm of a `match`, before the arm `None`.
+    fn before_none(arm: &str) -> String {
+        format!("fn main() {{\n    match o {{\n        {arm}\n        None => print(0)\n    }}\n}}")
+    }
+
+    /// GIVEN a `case` arm with a comment or a line break after `case` or `let`
+    /// WHEN the parser reports the `case` (E0122)
+    /// THEN the fix removes `case`, the `let` and the `.` that follow, and keeps each comment
+    #[test]
+    fn a_fix_of_case_should_look_past_a_line_break() {
+        let rows: [(&str, &[&str]); 6] = [
+            (
+                "case // c\n        let .Some(x) => print(x)",
+                &["case ", "let ", "."],
+            ),
+            (
+                "case\n        let .Some(x) => print(x)",
+                &["case\n        ", "let ", "."],
+            ),
+            (
+                "case // c\n\n        let .Some(x) => print(x)",
+                &["case ", "let ", "."],
+            ),
+            (
+                "case // a\n        // b\n        let .Some(x) => print(x)",
+                &["case ", "let ", "."],
+            ),
+            (
+                "case // c\n        let Some(x) => print(x)",
+                &["case ", "let "],
+            ),
+            (
+                "case // c\n        let // d\n        .Some(x) => print(x)",
+                &["case ", "let ", "."],
+            ),
+        ];
+        for (arm, want) in rows {
+            let src = before_none(arm);
+            assert_eq!(removed_text(&src), want, "{src}");
+            let d = parse_diagnostic(&src);
+            let fixed = apply_fix(&src, &d);
+            assert!(parsed(&fixed).diagnostics.is_empty(), "{fixed}");
+            for comment in arm.lines().filter_map(|l| l.find("//").map(|at| &l[at..])) {
+                assert!(fixed.contains(comment), "{fixed}");
+            }
+        }
+    }
+
+    /// GIVEN a `case` and then a line break and `=>` as an arm
+    /// WHEN the parser reads it
+    /// THEN `case` is a binding, as `case => x` is, and the arm is split (ArmSplit): the fix joins
+    /// the lines, unless a comment lies between
+    #[test]
+    fn case_on_its_own_line_before_an_arrow_should_be_a_binding() {
+        let rows = [
+            ("case\n        => print(1)", (4, 9), 1),
+            ("case // c\n        => print(1)", (4, 9), 0),
+        ];
+        for (arm, position, fixes) in rows {
+            let src = before_none(arm);
+            let d = parse_diagnostic(&src);
+            assert_eq!(
+                (d.code(), line_col(&src, d.span().start())),
+                (Code::ArmSplit, position),
+                "{src}"
+            );
+            assert_eq!(d.fixes().len(), fixes, "{src}");
+        }
+    }
+
+    /// GIVEN `case` and then a `;` on its line, or another idiom and then a line break
+    /// WHEN the parser reads the arm
+    /// THEN it keeps its error, because the rule for `case` does not reach it
+    #[test]
+    fn an_arm_that_is_no_case_line_break_should_keep_its_error() {
+        let rows = [
+            ("case ; => print(1)", Code::MatchIdiom, (3, 9)),
+            ("else\n        => print(1)", Code::MatchIdiom, (3, 9)),
+            ("default // c\n        : print(1)", Code::Expected, (3, 21)),
+        ];
+        for (arm, code, position) in rows {
+            let src = before_none(arm);
+            let d = parse_diagnostic(&src);
+            assert_eq!(
+                (d.code(), line_col(&src, d.span().start())),
+                (code, position),
+                "{src}"
+            );
+        }
     }
 
     /// The text that each edit of each fix of the one error of `src` removes, with the check that
@@ -8185,7 +8771,7 @@ mod tests {
             ),
             (
                 "fn main() {\n    match o {\n        // before\n        case\n        Some(x) => print(x) // later\n    }\n}",
-                &["case"],
+                &["case\n        "],
             ),
             (
                 "fn main() {\n    match o {\n        // before\n        case let\n        .Some(x) => print(x) // later\n    }\n}",
@@ -8297,7 +8883,7 @@ mod tests {
     }
 
     #[test]
-    fn match_syntax() {
+    fn a_match_with_bad_syntax_should_report_the_token_found() {
         let rows = [
             // A `let` is no arm body.
             ("match e {\n    A => let x = 1\n}", 2, 10),
@@ -8311,7 +8897,7 @@ mod tests {
             ("match e => 1", 1, 13),
             ("match e {\n    A(a b) => 1\n}", 2, 9),
             ("match e {\n    A => return *\n}", 2, 17),
-            ("match e {\n    A { w => 1 }\n}", 2, 11),
+            ("match e {\n    A { w => 1 }\n}", 2, 7),
             // `::` takes a name, with nothing between its colons.
             ("let c = C::1", 1, 14),
             ("let c = C: :D", 1, 14),
