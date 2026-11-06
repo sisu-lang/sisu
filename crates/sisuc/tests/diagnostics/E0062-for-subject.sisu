@@ -29,6 +29,10 @@ fn o2(c: Node?) {
 class Tree {
     mut v: i64
     mut m: Leaf
+    fn bumpm(self, mut x: i64) { x += 1 }
+    fn e9(self, c: Tree?) {
+        bumpm(c.v)
+    }
 }
 
 fn q1(c: Tree?) {

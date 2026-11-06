@@ -5,6 +5,7 @@
 // AND the `.` says "the extra layers", and the `?.` says "the other layers", with one `?? None` for each
 // AND an index, a slice or a `for` subject after the `.` gets the `if let` help instead
 // AND so does an argument with `mut`, or at a `mut` parameter, also in a call that fails
+// AND so does one at a `mut` parameter of a method that a call written as a function names
 // AND a `push` onto `[i64]??` gets the `if let` help and no fix: the peeled `push` gives E0021
 class Node {
     v: i64
@@ -62,6 +63,26 @@ class Tree {
     mut q: Pusher
     fn all(self) -> [i64] { self.ys }
     fn get(self) -> i64 { self.v }
+    fn bumpm(self, mut x: i64) { x += 1 }
+    fn readm(self, x: i64) {}
+    fn putg<U>(self, mut x: U) {}
+    // GIVEN a method of `self` called as a function, in a method of its class
+    // THEN the value at a `mut` parameter gets the `if let` help, and one at a plain parameter the peel help
+    fn e1(self, c: Tree??) {
+        bumpm(c.m.v)
+    }
+    fn e2(self, c: Tree???) {
+        bumpm(c.m.v)
+    }
+    fn e3(self, c: Tree??) {
+        bumpm(x: c.m.v)
+    }
+    fn e8(self, c: Tree??) {
+        putg(c.m.v)
+    }
+    fn g1(self, c: Tree??) {
+        readm(c.m.v)
+    }
 }
 
 fn bump(mut x: i64) {
@@ -340,6 +361,92 @@ fn z2(c: Tree??) {
 fn z3(c: Tree??) {
     let f = bump
     f(c.m.v, 1)
+}
+
+// GIVEN a method called as a function, E0070, and a method called as `Name.method(..)`, E0105
+// WHEN the value is at a `mut` parameter of the method
+// THEN it gets the `if let` help, as for a call that finds the method
+// AND a value at a plain parameter keeps the peel help, also where the receiver's method wins
+fn row_e4(t: Tree, c: Tree??) {
+    bumpm(t, c.m.v)
+}
+
+fn row_e5(t: Tree?, c: Tree??) {
+    bumpm(t, c.m.v)
+}
+
+fn row_e6(t: Tree, c: Tree???) {
+    bumpm(t, c.m.v)
+}
+
+fn row_e7(t: Tree, c: Tree??) {
+    bumpm(t, c.m.v, 1)
+}
+
+fn row_q1(c: Tree??) {
+    Tree.bumpm(c.m.v)
+}
+
+fn row_q2(c: Tree??) {
+    Bp.bp(c.m.v)
+}
+
+fn row_g2(t: Tree, c: Tree??) {
+    readm(t, c.m.v)
+}
+
+fn row_g3(c: Tree??) {
+    Tree.readm(c.m.v)
+}
+
+class Rd {
+    fn put(self, x: i64) {}
+}
+
+class Wr {
+    fn put(self, x: i64, mut y: i64) {}
+    fn g4(self, r: Rd, c: Tree??) {
+        put(r, c.m.v)
+    }
+}
+
+class Wr4 {
+    fn bumpm(self, mut x: Tree, y: i64) {}
+    fn g5(self, c: Tree??, d: Tree??) {
+        bumpm(c.m, d.m.v)
+    }
+}
+
+// GIVEN the method of a generic class, or of an enum, called as a function
+// THEN the value at a `mut` parameter gets the `if let` help
+class Gc<T> {
+    v: T
+    fn put(self, mut x: T) {
+        x = self.v
+    }
+    fn e10(self, c: Tree??) {
+        put(c.m.v)
+    }
+}
+
+fn row_e11(b: Gc<i64>, c: Tree??) {
+    put(b, c.m.v)
+}
+
+fn row_q3(c: Tree??) {
+    Gc.put(c.m.v)
+}
+
+enum En {
+    A
+    fn em(self, mut x: i64) {}
+    fn e12(self, c: Tree??) {
+        em(c.m.v)
+    }
+}
+
+fn row_e13(e: En, c: Tree??) {
+    em(e, c.m.v)
 }
 
 fn main() {}

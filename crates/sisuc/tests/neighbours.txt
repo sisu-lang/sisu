@@ -187,6 +187,13 @@ n.ste(mut $)
 take(mut $, 1)
 take<i64, i64>(mut $)
 ob?.ste(mut $)
+# A method called as a function (E0070) or as `Bx.put` (E0105), with a value at its `mut`
+# parameter: the argument is stamped as at a call that finds the method.
+put(ob, $, 1)
+put(ob, $)
+put(ob, x: $, n: 1)
+Bx.put($, 1)
+Bx.put($)
 # A `mut` call with an exit in another argument or in the receiver: the call is rebound, and its
 # exit flag follows its new arguments.
 take2(mut $, some(k) ?? return)
