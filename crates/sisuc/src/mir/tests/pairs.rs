@@ -507,15 +507,314 @@ fn copy_should_stay_across_a_show_of_an_any_value() {
     }
 }
 
-/// GIVEN a copy of `xs` that a slice consumes, and a release of the slice
+/// GIVEN a copy of `xs` that a slice takes, and a release of the slice
 /// WHEN pair removal reads the block
-/// THEN the copy stays: the slice takes its reference, so the copy is moved, not only read
+/// THEN the copy becomes a borrow and the slice reads it in place: the slice holds no count, so
+/// it ends and has no release
 #[test]
-fn a_copy_moved_into_a_slice_should_be_kept() {
+fn a_copy_moved_into_a_slice_should_become_a_borrow() {
     let printed = built(
         "fn f(xs: [i64]) -> i64 {\n    let t = xs[1..]\n    t.len() + xs.len()\n}\nfn main() {\n    print(f([1, 2, 3]))\n}",
     );
+    has(
+        &printed,
+        "f",
+        &["= borrow xs#0", "t#1 = slice _[1..]", "end t#1"],
+    );
     let f = function(&printed, "f");
-    assert!(f.contains("= copy xs#0"), "{f}");
-    assert!(!f.contains("= borrow xs#0"), "{f}");
+    assert!(!f.contains("= copy xs#0"), "{f}");
+    assert!(!f.contains("release t#1"), "{f}");
+}
+
+/// The issue's program: each slice of the borrowed `xs` took a copy and a release.
+#[test]
+fn slice_of_a_borrowed_array_should_keep_no_copy_and_no_release() {
+    let printed = built(
+        "fn q(xs: [string]) -> i64 { xs[1..].len() + xs[..1].len() }\nfn main() {\n    print(q([\"a\", \"b\"]))\n}",
+    );
+    let f = function(&printed, "q");
+    assert_eq!(f.matches("= borrow xs#0").count(), 2, "{f}");
+    assert_eq!(f.matches("slice _[1..]").count(), 1, "{f}");
+    assert_eq!(f.matches("slice _[..1]").count(), 1, "{f}");
+    assert_eq!(f.matches("\n    end ").count(), 4, "{f}");
+    assert!(!f.contains("= copy xs#0"), "{f}");
+    assert!(!f.contains("release "), "{f}");
+}
+
+/// Each bound form, with a bound that a lost bound or a lost `inclusive` would change.
+#[test]
+fn each_bound_form_of_a_slice_should_become_a_borrow() {
+    let printed = built(
+        "fn q(xs: [string], a: i64, b: i64) -> i64 {\n    xs[a..b].len() + xs[a..=b].len() + xs[..b].len() + xs[a..].len()\n}\nfn main() {\n    print(q([\"a\", \"b\", \"c\", \"d\"], 1, 2))\n}",
+    );
+    let f = function(&printed, "q");
+    for slice in [
+        "slice _[a#1..b#2]",
+        "slice _[a#1..=b#2]",
+        "slice _[..b#2]",
+        "slice _[a#1..]",
+    ] {
+        assert_eq!(f.matches(slice).count(), 1, "{slice} in\n{f}");
+    }
+    assert_eq!(f.matches("= borrow xs#0").count(), 4, "{f}");
+    assert!(!f.contains("= copy"), "{f}");
+    assert!(!f.contains("release "), "{f}");
+}
+
+#[test]
+fn slice_of_a_string_should_become_a_borrow() {
+    let printed = built(
+        "fn q(s: string) -> i64 { s[1..].len() + s[..1].len() }\nfn main() {\n    print(q(\"abc\"))\n}",
+    );
+    let f = function(&printed, "q");
+    assert_eq!(f.matches("= borrow s#0").count(), 2, "{f}");
+    assert_eq!(f.matches("slice _[1..]").count(), 1, "{f}");
+    assert_eq!(f.matches("slice _[..1]").count(), 1, "{f}");
+    assert!(!f.contains("= copy s#0"), "{f}");
+    assert!(!f.contains("release "), "{f}");
+}
+
+/// The first slice moves into the second, so the chain has two slices and ends last first.
+#[test]
+fn slice_of_a_slice_should_become_a_chain_of_borrows() {
+    let printed = built(
+        "fn q(xs: [string]) -> i64 { xs[1..][..2].len() }\nfn main() {\n    print(q([\"a\", \"b\", \"c\", \"d\"]))\n}",
+    );
+    has(
+        &printed,
+        "q",
+        &["= borrow xs#0", "slice _[1..]", "slice _[..2]"],
+    );
+    let f = function(&printed, "q");
+    assert_eq!(f.matches("\n    end ").count(), 3, "{f}");
+    assert!(!f.contains("= copy xs#0"), "{f}");
+    assert!(!f.contains("release "), "{f}");
+}
+
+/// A place the slice reads through a field or an element is borrowed too, with or without `mut`.
+#[test]
+fn slice_through_a_field_or_an_element_should_become_a_borrow() {
+    for (name, src, at, root, releases) in [
+        (
+            "non-mut field, user call",
+            "fn n(ys: [string]) -> i64 { ys.len() }\nclass K {\n    cs: [string]\n    fn part(self) -> i64 { n(self.cs[1..]) }\n}",
+            "K.part",
+            "self#0.0",
+            0,
+        ),
+        (
+            "mut field, len",
+            "class L {\n    mut cs: [string]\n    fn part(self) -> i64 { self.cs[1..].len() }\n}",
+            "L.part",
+            "self#0.0",
+            0,
+        ),
+        (
+            "mut field, quiet prelude call",
+            "class L {\n    mut cs: [string]\n    fn has(self) -> bool { self.cs[1..].contains(\"b\") }\n}",
+            "L.has",
+            "self#0.0",
+            // The copy of the text `"b"`.
+            1,
+        ),
+        (
+            "element",
+            "fn q(rows: [[string]]) -> i64 { rows[0][1..].len() }",
+            "q",
+            "rows#0[",
+            0,
+        ),
+    ] {
+        let f = function(&built(src), at);
+        assert!(f.contains(&format!("= borrow {root}")), "{name}: {f}");
+        assert!(f.contains("slice _[1..]"), "{name}: {f}");
+        assert!(!f.contains(&format!("= copy {root}")), "{name}: {f}");
+        assert_eq!(f.matches("release ").count(), releases, "{name}: {f}");
+    }
+}
+
+/// `y` copies the slice `t`, so `y` keeps its own count and escapes. `t` and the borrow of `xs`
+/// end before `xs` moves out at its last use.
+#[test]
+fn copy_of_a_slice_that_borrows_should_keep_its_own_count() {
+    let printed = built(
+        "fn copied(xs: [string]) -> [string] {\n    let t = xs[1..]\n    let y = t\n    print(t.len())\n    print(xs.len())\n    y\n}\nfn main() {\n    print(copied([\"a\", \"b\"]))\n}",
+    );
+    has(
+        &printed,
+        "copied",
+        &[
+            "= borrow xs#0",
+            "t#1 = slice _[1..]",
+            "y#2 = copy t#1",
+            "end t#1",
+            "end _",
+            "_ = move xs#0",
+            "return move _",
+        ],
+    );
+    let f = function(&printed, "copied");
+    assert!(!f.contains("= copy xs#0"), "{f}");
+    assert!(f.contains("= move y#2"), "{f}");
+}
+
+const WRITTEN_EQ: &str = "class H { mut xs: [K] }\n\
+    class K: Eq {\n    v: i64\n    mut h: H?\n    fn eq(self, o: K) -> bool {\n        if let Some(h) = self.h { h.xs = [] }\n        self.v == o.v\n    }\n}\n";
+
+/// A written `eq` can replace the `mut` field that holds the root, so a slice of that field
+/// stays a move. A slice of a whole local is safe: the call cannot replace the local.
+#[test]
+fn slice_read_by_a_written_method_should_follow_the_root() {
+    let printed = built(&format!(
+        "{WRITTEN_EQ}fn a(h: H, ys: [K]) -> bool {{ h.xs[1..] == ys }}\n\
+         fn b(xs: [K], ys: [K]) -> bool {{ xs[1..] == ys }}\n\
+         fn c(h: H, k: K) -> bool {{ h.xs[1..].contains(k) }}\n\
+         fn d(xs: [K], k: K) -> bool {{ xs[1..].contains(k) }}"
+    ));
+    for (at, root) in [("b", "xs#0"), ("d", "xs#0")] {
+        let f = function(&printed, at);
+        assert!(f.contains(&format!("= borrow {root}")), "{at}: {f}");
+        assert!(f.contains("slice _[1..]"), "{at}: {f}");
+        assert!(!f.contains(&format!("= copy {root}")), "{at}: {f}");
+    }
+    for at in ["a", "c"] {
+        let f = function(&printed, at);
+        assert!(f.contains("= copy h#0.0"), "{at}: {f}");
+        assert!(f.contains("slice move"), "{at}: {f}");
+        assert!(!f.contains("slice _["), "{at}: {f}");
+    }
+}
+
+const SLICE_HOLDER: &str = "class H { mut xs: [string] }\n";
+
+/// Each program holds a slice of a copy that a borrow would make wrong, or that the pass cannot
+/// borrow: the root changes while the slice lives, the slice is written, escapes or crosses a
+/// block, or it is `safe`. The copy proves that each row opens a candidate, and the row must
+/// keep it and the `slice move`.
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the table is one row for each program, and the loop under it is short"
+)]
+fn slice_should_stay_a_move_where_a_borrow_is_wrong() {
+    let src0 = format!("{WRITTEN_EQ}fn a(h: H, ys: [K]) -> bool {{ h.xs[1..] == ys }}");
+    let src1 = format!("{WRITTEN_EQ}fn c(h: H, k: K) -> bool {{ h.xs[1..].contains(k) }}");
+    let src2 = format!(
+        "{SLICE_HOLDER}fn f(h: H) -> string {{\n    let t = h.xs[1..]\n    h.xs = [\"z\"]\n    t[0]\n}}"
+    );
+    let src3 = format!(
+        "{SLICE_HOLDER}fn swap(h: H) {{ h.xs = [\"z\"] }}\nfn f(h: H) -> string {{\n    let t = h.xs[1..]\n    swap(h)\n    t[0]\n}}"
+    );
+    let src4 = format!(
+        "{SLICE_HOLDER}fn stored(h: H, ys: [string]) {{\n    h.xs = ys[1..]\n    print(ys.len())\n}}"
+    );
+    let src5 = format!(
+        "{SLICE_HOLDER}fn keep(h: H, ys: [string]) {{ h.xs = ys }}\nfn owned(h: H, xs: [string]) {{\n    keep(h, xs[1..])\n    print(xs.len())\n}}"
+    );
+    let rows = [
+        (
+            "mut field, user call",
+            "fn n(ys: [string]) -> i64 { ys.len() }\nclass L {\n    mut cs: [string]\n    fn part(self) -> i64 { n(self.cs[1..]) }\n}",
+            "L.part",
+        ),
+        (
+            "mut field, written eq",
+            "class K: Eq {\n    v: i64\n    fn eq(self, o: K) -> bool { self.v == o.v }\n}\nclass H { mut xs: [K] }\nfn q(h: H, ys: [K]) -> bool { h.xs[1..] == ys }",
+            "q",
+        ),
+        ("written eq on a mut field", &src0, "a"),
+        ("written contains on a mut field", &src1, "c"),
+        ("field replaced while the slice lives", &src2, "f"),
+        ("call replaces the field", &src3, "f"),
+        (
+            "root assigned",
+            "fn a() -> string {\n    let mut xs = [\"a\", \"b\".to_string() + \"c\"]\n    let t = xs[1..]\n    print(xs.len())\n    xs = [\"z\"]\n    print(xs.len())\n    t[0]\n}",
+            "a",
+        ),
+        (
+            "root pushed",
+            "fn f() {\n    let mut xs = [\"a\", \"b\".to_string() + \"c\"]\n    let t = xs[1..]\n    xs.push(\"z\")\n    print(t.len())\n    print(t[0])\n}",
+            "f",
+        ),
+        (
+            "root element written",
+            "fn f() {\n    let mut xs = [\"a\", \"b\".to_string() + \"c\"]\n    let t = xs[1..]\n    xs[1] = \"z\"\n    print(t[0])\n    print(xs[1])\n}",
+            "f",
+        ),
+        (
+            "mut argument",
+            "fn g(mut a: [string]) { a = [\"z\"] }\nfn f() {\n    let mut xs = [\"a\", \"b\".to_string() + \"c\"]\n    let t = xs[1..]\n    g(mut xs)\n    print(t[0])\n}",
+            "f",
+        ),
+        (
+            "bound with a mut argument",
+            "fn g(mut a: [string]) -> i64 {\n    a = [\"z\"]\n    0\n}\nfn f() {\n    let mut xs = [\"a\", \"b\".to_string() + \"c\"]\n    print(xs[g(mut xs)..].len())\n    print(xs.len())\n}",
+            "f",
+        ),
+        (
+            "slice written",
+            "fn f() {\n    let xs = [\"a\", \"b\".to_string() + \"c\"]\n    let mut t = xs[1..]\n    t[0] = \"z\"\n    print(t[0])\n    print(xs[1])\n}",
+            "f",
+        ),
+        (
+            "slice pushed",
+            "fn f() {\n    let xs = [\"a\", \"b\".to_string() + \"c\", \"d\"]\n    let mut t = xs[..1]\n    t.push(\"z\")\n    print(t[1])\n    print(xs[1])\n}",
+            "f",
+        ),
+        (
+            "reassigned slice",
+            "fn b(xs: [string]) -> i64 {\n    let mut t = xs[1..]\n    t = t[1..]\n    print(xs.len())\n    t.len()\n}",
+            "b",
+        ),
+        (
+            "safe slice, one block",
+            "fn safe_one_block(s: string) -> bool { s.get(1..) == None }",
+            "safe_one_block",
+        ),
+        (
+            "safe slice, root live",
+            "fn safeslice(s: string) -> i64 {\n    let o = s.get(1..)\n    print(s.len())\n    (o ?? \"\").len()\n}",
+            "safeslice",
+        ),
+        (
+            "returned",
+            "fn returned(xs: [string]) -> [string] {\n    let t = xs[1..]\n    print(xs.len())\n    t\n}",
+            "returned",
+        ),
+        ("stored", &src4, "stored"),
+        ("owned parameter", &src5, "owned"),
+        (
+            "across blocks",
+            "fn blocks(xs: [string], c: bool) -> i64 {\n    let t = xs[1..]\n    if c { print(t.len()) }\n    print(xs.len())\n    t.len()\n}",
+            "blocks",
+        ),
+        (
+            "for over a slice",
+            "fn forloop(xs: [string]) -> i64 {\n    let mut n = 0\n    for x in xs[1..] { n += x.len() }\n    n + xs.len()\n}",
+            "forloop",
+        ),
+        (
+            "temporary root",
+            "class L { cs: [string] }\nfn make() -> L { L(cs: [\"a\", \"b\".to_string() + \"c\"]) }\nfn main() { print(make().cs[1..].len()) }",
+            "main",
+        ),
+    ];
+    for (name, src, at) in rows {
+        // A panic inside the certifier names no row, so the row is named first.
+        eprintln!("row: {name}");
+        let f = function(&built(src), at);
+        let copy = f
+            .find("= copy")
+            .unwrap_or_else(|| panic!("{name}: no copy in\n{f}"));
+        let moved = [f.find("slice move"), f.find("slice? move")]
+            .into_iter()
+            .flatten()
+            .min()
+            .unwrap_or_else(|| panic!("{name}: no `slice move` in\n{f}"));
+        assert!(copy < moved, "{name}: the copy should come first in\n{f}");
+        assert!(
+            !f.contains("slice _[") && !f.contains("slice? _["),
+            "{name}: the slice should stay a move in\n{f}"
+        );
+    }
 }

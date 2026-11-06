@@ -315,9 +315,11 @@ paths reach and makes one that only owned paths reach a plain release, so
 codegen stores the zero value on a move only for a local that a conditional
 release still tests (for every local under `--rc-checks`).
 Pair removal (`pairs.rs`) then turns a copy that is only borrowed within a block
-into a borrow, and its release into an `end`. A call of a prelude function that
-writes and frees nothing its caller can reach is a quiet call (`params::quiet`),
-and a copy can become a borrow across it. A user function is never quiet.
+into a borrow, and its release into an `end`. A slice of such a copy that is not
+`safe` reads it in place and holds no count; a `safe` slice keeps its copy. A
+call of a prelude function that writes and frees nothing its caller can reach is
+a quiet call (`params::quiet`), and a copy can become a borrow across it. A user
+function is never quiet.
 Debug builds of the compiler end with the certifier (`certify.rs`), which
 checks on every path that each owned reference is moved or released once and
 that nothing writes or changes what a borrow reads.

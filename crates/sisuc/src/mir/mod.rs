@@ -305,7 +305,9 @@ pub(crate) enum Rvalue {
     /// `base[start..end]`, or `..=` with `inclusive`: the part of the array or string `base`
     /// that the range covers, as a new value that shares `base`'s block. It takes `base`'s
     /// reference, so a `base` at its last use gives the slice its count and a copy of `base`
-    /// gives it one. A missing bound is `None`. A range that fails a check panics at `span`,
+    /// gives it one. Pair removal can turn a `base` that is a move, in a slice that is not
+    /// `safe`, into a read of a whole local: the slice then holds no count, and the block is the
+    /// local's. A missing bound is `None`. A range that fails a check panics at `span`,
     /// the whole range; with `safe` it releases `base` and gives `None`.
     Slice {
         base: Operand,

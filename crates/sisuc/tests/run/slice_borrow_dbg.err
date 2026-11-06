@@ -1,0 +1,2 @@
+slice_borrow_dbg.sisu:7:17: xs[1..] = ["bc"]
+slice_borrow_dbg.sisu:12:17: xs[1..] = ["bc"]
