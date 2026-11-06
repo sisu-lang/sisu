@@ -1,6 +1,3 @@
-## Generic bodies come from `solve`, which never calls `expr`.
-check/cycle.rs	<sisuc::check::Checker>::dbg_edges
-check/cycle.rs	<sisuc::check::Checker>::dbg_show
 ## Only report rendering, fix checks and the reading of a source file run these. A valid program in the `program` harness runs none of them.
 diagnostic/mod.rs	<sisuc::diagnostic::Diagnostic>::demote_fixes
 diagnostic/mod.rs	<sisuc::diagnostic::Diagnostic>::help
@@ -23,16 +20,6 @@ source.rs	<sisuc::source::LineIndex>::render_line
 ## Only a program with no generic item and no recorded prelude use reaches this check, and each fixed seed records a prelude use.
 mono.rs	sisuc::mono::prelude_method_of_outside_type
 ## Not yet analysed: PR 2 gives each of these a rule or its own reason.
-check/any.rs	<sisuc::check::Checker>::make_any
-check/any.rs	<sisuc::check::Checker>::seeded_join
-check/array.rs	<sisuc::check::Checker>::hinted_elements
-check/array.rs	<sisuc::check::Checker>::value_beside
-check/branch.rs	<sisuc::check::Checker>::value_branch
-check/branch.rs	sisuc::check::branch::some_object
-check/branch.rs	sisuc::check::branch::unwrap_some_object
-check/cycle.rs	<sisuc::check::Checker>::own_type
-check/cycle.rs	<sisuc::check::Checker>::shown_params
-check/optional.rs	sisuc::check::optional::beneath
 codegen/enums.rs	<sisuc::codegen::Codegen>::define_reuse
 codegen/enums.rs	<sisuc::codegen::Codegen>::layer_boxes
 codegen/enums.rs	<sisuc::codegen::Codegen>::layer_place
@@ -41,7 +28,6 @@ codegen/io.rs	<sisuc::codegen::Codegen>::args
 codegen/rc.rs	<sisuc::codegen::Codegen>::define_class_drain
 codegen/rc.rs	<sisuc::codegen::rc::ClassCycles>::position
 codegen/string.rs	<sisuc::codegen::Codegen>::len_words
-conformance.rs	sisuc::conformance::always_written
 lang.rs	<sisuc::lang::Cx>::fresh
 lang.rs	sisuc::lang::and
 lang.rs	sisuc::lang::block

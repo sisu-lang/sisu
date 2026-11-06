@@ -555,6 +555,18 @@ pub(crate) struct Folded {
     size: u64,
 }
 
+/// The declarations of the forms of `gap_forms` that join `any` values and that use `dbg` and
+/// `any` in a generic function. Their names start with `Gap` or `gap_`. The text is fixed and makes
+/// no draw.
+const ANY_GAP_ITEMS: &str = r"interface GapSeen { fn seen(self) -> i64 }
+interface GapHeard: AnyObject { fn loud(self) -> i64 }
+class GapEye: GapSeen { v: i64; fn seen(self) -> i64 { self.v } }
+class GapLid: GapSeen { v: i64; fn seen(self) -> i64 { self.v + 1 } }
+class GapEar: GapHeard { fn loud(self) -> i64 { 2 } }
+fn gap_shown<T: Display>(x: T) -> T { dbg(x) }
+fn gap_boxed<T: GapSeen>(x: T) -> any GapSeen { x }
+fn gap_saw(x: any GapSeen) -> i64 { x.seen() }";
+
 /// The declarations of the generic forms of `gap_forms`. Their names start with `Gap` or `gap_`.
 /// The text is fixed and makes no draw. `gap_forms` writes the statements of `shapes` that use it.
 const GENERIC_GAP_ITEMS: &str = r"interface GapSource { type Item; fn next(self) -> Item }
@@ -1646,6 +1658,17 @@ impl Gen<'_> {
     ///   - `gap_wait` and `gap_wide`: a parameter that waits for an unbound type, and one that
     ///     is optional under a hint;
     ///   - `GapAlias`, `GapAnyOf` and `GapItem`: an alias body that keeps a check.
+    /// - the forms of `ANY_GAP_ITEMS`, each for the points of the checker in `GAP_POINTS`. Each
+    ///   value is on the branch that runs:
+    ///   - `is` with an `any` on each side;
+    ///   - `gap_none`: a `Some` and a `None` before an `any` branch. The `any` branch must come
+    ///     last, or the hint converts them and nothing unwraps;
+    ///   - `gap_kept`: a `Some` of an object under a hint of a `Some` of another object;
+    ///   - `gap_looped`: a loop of two objects beside an `any`;
+    ///   - `gap_hinted`: a branch that joins an array of two objects with an array of `any`;
+    ///   - `gap_beside`: array elements beside an `any`;
+    ///   - `gap_shown` and `gap_boxed`: `dbg` and an `any` conversion in a generic function;
+    /// - a `never` part of a string, as a statement on a branch that does not run.
     ///
     /// Each loop counts down from one and a `break` ends it, in at most two passes.
     /// An index is a literal.
@@ -1656,6 +1679,8 @@ impl Gen<'_> {
             );
             g.w.line();
             g.w.text(GENERIC_GAP_ITEMS);
+            g.w.line();
+            g.w.text(ANY_GAP_ITEMS);
             g.w.line();
         });
         let first = calls.lines.len();
@@ -1706,6 +1731,26 @@ impl Gen<'_> {
             "print(any_of.of())",
             "let items: GapItem<GapName> = [1]",
             "print(items)",
+            "let gap_on = [1].len() == 1",
+            "let gap_off = !gap_on",
+            "let gap_eye: any GapSeen = GapEye(v: 1)",
+            "let gap_lone = GapEar()",
+            "let gap_ear: any GapHeard = gap_lone",
+            "print(gap_ear is gap_lone)",
+            "print(gap_lone is gap_ear)",
+            "let gap_none = match [1].len() {\n        0 => Some(GapEye(v: 3))\n        1 => None\n        _ => gap_eye\n    }",
+            "print(gap_saw(gap_none ?? GapLid(v: 3)))",
+            "let gap_kept = if gap_off { Some(GapEye(v: 5)) } else { if gap_on { Some(GapLid(v: 6)) } else { gap_eye } }",
+            "print(gap_saw(gap_kept ?? gap_eye))",
+            "let gap_looped = if gap_off {\n        gap_eye\n    } else {\n        let mut left = 1\n        loop {\n            if left == 0 { break GapEye(v: 11) }\n            left -= 1\n            break GapLid(v: 12)\n        }\n    }",
+            "print(gap_saw(gap_looped))",
+            "let gap_hinted = if gap_off { [gap_eye] } else { [GapEye(v: 14), GapLid(v: 15)] }",
+            "print(gap_saw(gap_hinted[1]))",
+            "let gap_beside = [gap_eye, GapEye(v: 17), Some(GapLid(v: 18))]",
+            "print(gap_saw(gap_beside[2] ?? gap_eye))",
+            "print(gap_shown(21))",
+            "print(gap_boxed(GapEye(v: 22)).seen())",
+            "if gap_off { \"a{panic(\"gap\")}\" }",
         ] {
             calls.push(line);
         }

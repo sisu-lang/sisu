@@ -6604,6 +6604,7 @@ fn plain_text_should_leave_out_the_gap_forms() {
             "twice_set(mut slots[0]",
             "gap_chain(",
             "GapBound",
+            "gap_boxed(",
         ] {
             assert!(generated.program.contains(form), "seed {n}: `{form}`");
             assert!(!generated.plain.contains(form), "seed {n}: `{form}`");
