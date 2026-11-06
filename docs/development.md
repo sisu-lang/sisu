@@ -675,8 +675,9 @@ warning, and you remove it. A key that matches two definitions gives exit 2:
 remove it and add a generator rule.
 
 After a change to the generator or to `tests/run`, run `make fuzz-gaps`, and
-remove each key that it warns about. A pull request runs the check only with a
-`fuzz-program` label, so a nightly tells you otherwise.
+remove each key that it warns about. On a pull request, CI runs the check only
+with a `fuzz-program` label. `review-sisu` runs it on the final diff of a branch.
+A nightly tells you otherwise.
 
 The check has three limits:
 
@@ -687,6 +688,29 @@ The check has three limits:
 - The reference compiles at O0 through whole-module IR. Code that only the O2
   and multi-unit builds reach is outside the check, and every run of the
   program target still reaches it.
+
+### Add a generator rule
+
+A rule makes the fixed seeds reach a function. Do these steps in this order:
+
+1. Add a case that holds the construct to `crates/sisuc/tests/run`. The
+   reference then reaches the function, so the check can see a gap.
+2. Write the construct in `Gen::gap_forms` (`crates/sisuc/src/generate/item.rs`)
+   through `known_text`. Use fixed text and draw no byte from the seed, because
+   a draw moves what each later part of a seed writes. The coverage test leaves
+   this text out, so the form cannot hide an older key.
+3. Call `reached` at the decision in `crates/sisuc/src/check/`, and add the point
+   to `GAP_POINTS` (`generate/coverage.rs`). A search of the program's text only
+   guesses at that decision, and a near form passes it. A module that cannot
+   call `check` keeps a counter, as `RESOLVE_ALL_CALLS` does.
+4. Add a row to `gap_point_keys_should_mark_what_the_checker_did`: a whole
+   program that reaches the point. Add a near program that does not reach it.
+5. Run `generated_programs_should_reach_each_gap_rule`. It reads only the seeds
+   that the nightly reads. Remove the form for a moment: the test must fail.
+6. Remove the key from `fuzz/known_gaps.txt`. `make fuzz-gaps` must exit 0.
+
+When the form finds a compiler bug, fix the bug in the same work, with its own
+case in `tests/run`.
 
 ### The nightly program job
 
