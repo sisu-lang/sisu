@@ -300,7 +300,8 @@ fn mut_argument_that_needs_its_context_should_be_reported_as_no_place() {
     }
 }
 
-/// GIVEN a `mut` argument that is a value, or a range index, and whose expression has an error
+/// GIVEN a `mut` argument that is a range index, or the range of `self`, and whose expression
+///   has an error
 /// WHEN it is checked
 /// THEN the error stands alone: the argument is not also reported as no place, and its label
 ///   does not guess the kind of its range
@@ -318,8 +319,6 @@ fn mut_argument_with_a_failed_expression_should_not_be_reported_as_no_place() {
         ),
         ("range of an unknown name", "set(mut nope[0..1])"),
         ("range of `self`", "set(mut self[0..1])"),
-        ("call of an unknown function", "set(mut nope())"),
-        ("index of `self`", "set(mut self[0])"),
         (
             "range of a string that failed to concatenate",
             "let s = \"a\" + 1\n    set(mut s[0..1])",
@@ -327,10 +326,6 @@ fn mut_argument_with_a_failed_expression_should_not_be_reported_as_no_place() {
         (
             "range of a name that failed to bind",
             "let s = nope\n    set(mut s[0..1])",
-        ),
-        (
-            "call on a name that failed to bind",
-            "let s = nope\n    set(mut s.f())",
         ),
     ];
     for (row, stmt) in rows {
@@ -1583,16 +1578,6 @@ fn unmarked_place_whose_call_misses_its_expected_type_should_report_the_mismatch
     assert_eq!(found, [Code::Mismatch, Code::MutMarkerMissing], "return");
 }
 
-/// GIVEN `fn bad() -> Nope`, whose return type is unknown (E0030), and `set(mut bad())`
-/// WHEN it is checked
-/// THEN it is E0030 only: the call has no type because of an earlier error, so it is no context
-///   literal, and E0169 would repeat that error
-#[test]
-fn call_that_failed_earlier_should_not_be_reported_as_no_place() {
-    let src = format!("{SET}fn bad() -> Nope {{\n    1\n}}\nfn main() {{\n    set(mut bad())\n}}");
-    assert_eq!(found_codes(&src), [Code::UnknownType]);
-}
-
 /// GIVEN two `mut` places, and `f(mut a, mut b)`
 /// WHEN the places are the same, or only the index, the field or the object differs
 /// THEN only the same place is E0171: a literal index, a field of a field and a field of an
@@ -1739,13 +1724,24 @@ fn unmarked_place_inside_a_later_place_should_get_no_fix() {
 /// GIVEN a generic function `first<T>(mut xs: [T]) -> T`, and `bump(mut first(xs))`, where the
 ///   call is the argument of a `mut` parameter and so is checked with no type expected of it
 /// WHEN it is checked
-/// THEN E0166 has the fix: the result meets a context that expects nothing
+/// THEN `first(xs)` is E0169, as a call is no place, and E0166 has the fix: the result meets a
+///   context that expects nothing
 #[test]
 fn unmarked_place_whose_result_has_no_context_should_get_its_fix() {
     let src = "fn first<T>(mut xs: [T]) -> T {\n    let x = xs[0]\n    xs[0] = x\n    x\n}\n\
         fn bump(mut n: i64) {\n    n += 1\n}\n\
         fn main() {\n    let mut xs = [1]\n    bump(mut first(xs))\n    print(xs)\n}";
-    assert_eq!(marker_fixes(src), [(11, 20, true)]);
+    let mut ds = diags(src);
+    ds.sort_by_key(|d| d.span().start());
+    let found: Vec<_> = ds.iter().map(|d| (d.code(), at(src, d.span()))).collect();
+    assert_eq!(
+        found,
+        [
+            (Code::MutArgumentNotPlace, (11, 14)),
+            (Code::MutMarkerMissing, (11, 20))
+        ]
+    );
+    assert!(!ds[1].fixes().is_empty(), "E0166 offers its fix");
 }
 
 /// GIVEN a stray `mut` that a line break separates from its argument
@@ -1965,4 +1961,692 @@ fn mut_call_should_keep_a_root_binding_only_when_an_argument_rebinds_it() {
         format!("{decls}fn main() {{\n    let mut b = Box(x: [0])\n    g(mut b, mut b.x)\n}}");
     let printed = lowered(&pair);
     assert_eq!(printed.matches("(keep ").count(), 1, "{printed}");
+}
+
+/// The errors of `src` in span order, each as its code and the source text of its place.
+/// Warnings are left out, and two errors on one place stay in the order they are reported.
+fn error_texts(src: &str) -> Vec<(Code, &str)> {
+    let mut ds = diags(src);
+    ds.retain(|d| d.code().severity() == Severity::Error);
+    ds.sort_by_key(|d| d.span().start());
+    let place = |d: &Diagnostic| &src[d.span().start()..d.span().end()];
+    ds.iter().map(|d| (d.code(), place(d))).collect()
+}
+
+const E30: Code = Code::UnknownType;
+const E32: Code = Code::Mismatch;
+const E169: Code = Code::MutArgumentNotPlace;
+const E170: Code = Code::MutArgumentType;
+
+/// A row of a table of programs: its name, the items `extra` and the statements `body` for a
+/// program builder, and the errors wanted, each as its code and the source text of its place.
+type Row = (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static [(Code, &'static str)],
+);
+
+/// Checks each row of `rows` in the program that `program` builds from it: a failure names the row.
+fn check_rows(rows: &[Row], program: fn(&str, &str) -> String) {
+    for &(row, extra, body, wanted) in rows {
+        let src = program(extra, body);
+        assert_eq!(error_texts(&src), wanted, "row `{row}`");
+    }
+}
+
+/// The callees that the rows of the `mut` argument tests with a written context call.
+const CONTEXT_DECLS: &str = "fn first<T>(mut xs: [T]) -> T { xs = xs; xs[0] }\n\
+    fn two<T>(mut a: [T], mut b: [T]) -> T { a = a; b = b; a[0] }\n\
+    fn pair<T>(mut xs: [T], y: T) -> T { xs = xs; y }\n\
+    fn pick<T>(n: i64, mut xs: [T]) -> T { xs = xs; xs[n] }\n\
+    fn keep<T>(mut x: T?) -> T? { x = x; x }\n\
+    fn need(n: i64) {}\n\
+    class Bx { v: i64; fn get<T>(self, mut xs: [T]) -> T { xs = xs; xs[0] } }\n\
+    class H { mut xs: [string] }\n";
+
+/// A program with the callees of `CONTEXT_DECLS`, the items `extra`, and a `main` with some
+/// places, then the statements `body`.
+fn context_program(extra: &str, body: &str) -> String {
+    format!(
+        "{CONTEXT_DECLS}{extra}fn main() {{\n    let mut names = [\"a\"]\n    \
+        let mut names2 = [\"b\"]\n    let mut ints = [1]\n    let mut mq: string? = None\n    \
+        let b = Bx(v: 1)\n    let c = b.v > 0\n    let o: i64? = None\n    \
+        let h = H(xs: [\"a\"])\n    {body}\n}}"
+    )
+}
+
+/// GIVEN a generic callee with a `mut` parameter, and a `mut` argument whose type is not what
+///   the written context makes of the parameter, in every place a context is written, with one
+///   `mut` argument or two, with the other arguments fitting or not, and with a parameter that no
+///   argument binds
+/// WHEN the call is checked
+/// THEN the `mut` argument is E0170 at its place and nothing else: no E0032 shares its place
+///   AND the other argument that does not fit keeps its own E0032
+#[test]
+#[expect(clippy::too_many_lines, reason = "a table of rows, one for each form")]
+fn mut_argument_against_a_written_context_should_be_e0170_only() {
+    let rows: &[Row] = &[
+        ("a", "", "let n: i64 = first(mut names)", &[(E170, "names")]),
+        (
+            "c: the other argument fits",
+            "",
+            "let n: i64 = pair(mut names, 1)",
+            &[(E170, "names")],
+        ),
+        (
+            "b: the other argument does not fit",
+            "",
+            "let n: i64 = pair(mut names, \"b\")",
+            &[(E170, "names"), (E32, "\"b\"")],
+        ),
+        (
+            "d: a generic method",
+            "",
+            "let n: i64 = b.get(mut names)",
+            &[(E170, "names")],
+        ),
+        (
+            "g: the `mut` parameter is second",
+            "",
+            "let n: i64 = pick(0, mut names)",
+            &[(E170, "names")],
+        ),
+        (
+            "f: an optional context",
+            "",
+            "let n: i64? = first(mut names)",
+            &[(E170, "names")],
+        ),
+        (
+            "h: an argument of a call",
+            "",
+            "need(first(mut names))",
+            &[(E170, "names")],
+        ),
+        (
+            "m: an element of an array",
+            "",
+            "let n: [i64] = [first(mut names)]",
+            &[(E170, "names")],
+        ),
+        (
+            "l: an optional parameter",
+            "",
+            "let n: i64? = keep(mut mq)",
+            &[(E170, "mq")],
+        ),
+        (
+            "e: the result of a function",
+            "fn g(mut names: [string]) -> i64 { names = names; first(mut names) }\n",
+            "print(g(mut names))",
+            &[(E170, "names")],
+        ),
+        (
+            "unbound: a parameter that no argument binds",
+            "fn f<T, U>(mut xs: [T]) -> T { xs = xs; xs[0] }\n",
+            "let n: i64 = f(mut names)",
+            &[(E170, "names")],
+        ),
+        (
+            "unbound-wrongb: the same, and another argument that does not fit",
+            "fn f<T, U>(mut xs: [T], y: T) -> T { xs = xs; y }\n",
+            "let n: i64 = f(mut names, \"b\")",
+            &[(E170, "names"), (E32, "\"b\"")],
+        ),
+        (
+            "two: two `mut` arguments",
+            "",
+            "let n: i64 = two(mut names, mut names2)",
+            &[(E170, "names"), (E170, "names2")],
+        ),
+        (
+            "ret: after `return`",
+            "fn g(mut names: [string]) -> i64 { names = names; return first(mut names) }\n",
+            "print(g(mut names))",
+            &[(E170, "names")],
+        ),
+        (
+            "brk: the value of `break`",
+            "",
+            "let n: i64 = loop { break first(mut names) }",
+            &[(E170, "names")],
+        ),
+        (
+            "coal: the right side of `??`",
+            "",
+            "let n: i64 = o ?? first(mut names)",
+            &[(E170, "names")],
+        ),
+        (
+            "ifb: a branch of `if`",
+            "",
+            "let n: i64 = if c { first(mut names) } else { 0 }",
+            &[(E170, "names")],
+        ),
+        (
+            "asg: an assignment",
+            "",
+            "let mut n: i64 = 0\n    n = first(mut names)",
+            &[(E170, "names")],
+        ),
+        (
+            "ctor: an argument of a constructor",
+            "",
+            "let b2 = Bx(v: first(mut names))",
+            &[(E170, "names")],
+        ),
+        (
+            "block: the value of a block",
+            "",
+            "let n: i64 = { first(mut names) }",
+            &[(E170, "names")],
+        ),
+        (
+            "match: an arm",
+            "",
+            "let n: i64 = match c {\n        true => first(mut names)\n        false => 0\n    }",
+            &[(E170, "names")],
+        ),
+        (
+            "nest: in the argument of another call",
+            "",
+            "let n: i64 = pair(mut ints, first(mut names))",
+            &[(E170, "names")],
+        ),
+        (
+            "field: a field is the place",
+            "",
+            "let n: i64 = first(mut h.xs)",
+            &[(E170, "h.xs")],
+        ),
+        (
+            "geni: a requirement of a generic parameter",
+            "interface I { fn get<T>(self, mut xs: [T]) -> T }\n\
+            class Cx: I { v: i64; fn get<T>(self, mut xs: [T]) -> T { xs = xs; xs[0] } }\n\
+            fn use_g<U: I>(t: U, mut names: [string]) -> i64 { names = names; t.get(mut names) }\n",
+            "print(use_g(Cx(v: 1), mut names))",
+            &[(E170, "names")],
+        ),
+    ];
+    check_rows(rows, context_program);
+    // The E0170 sits on the argument itself, not on the call.
+    for body in [
+        "let n: i64 = first(mut names)",
+        "let n: i64 = pair(mut names, \"b\")",
+    ] {
+        let src = context_program("", body);
+        let want =
+            src.find(body).expect("the body is in the program") + body.find("names").unwrap_or(0);
+        let ds = diags(&src);
+        let starts: Vec<_> = (ds.iter())
+            .filter(|d| d.code() == E170)
+            .map(|d| d.span().start())
+            .collect();
+        assert_eq!(starts, [want], "`{body}`");
+        assert!(
+            !ds.iter()
+                .any(|d| d.code() == E32 && d.span().start() == want),
+            "`{body}`: no E0032 shares the place"
+        );
+    }
+}
+
+/// GIVEN a `mut` argument at a generic call with a written context, where the argument fits, or
+///   only another argument does not fit, or the `mut` is missing or has a label, or the call
+///   writes its type arguments, or is a safe call, or is not generic, or the place is behind `?.`,
+///   or the parameter is an associated type, or a parameter that no argument binds is in context
+/// WHEN the call is checked
+/// THEN the reports are those of the call before: this fix changes none of them
+#[test]
+fn mut_argument_against_a_written_context_should_keep_the_other_reports() {
+    let rows: &[Row] = &[
+        (
+            "j: the context fits",
+            "",
+            "let s: string = first(mut names)",
+            &[],
+        ),
+        (
+            "k: only the other argument does not fit",
+            "",
+            "let n: string = pair(mut names, 1)",
+            &[(E32, "1")],
+        ),
+        (
+            "i: no `mut`",
+            "",
+            "let n: i64 = first(names)",
+            &[(E32, "first(names)"), (Code::MutMarkerMissing, "names")],
+        ),
+        (
+            "n: a written type argument",
+            "",
+            "let n: i64 = first<string>(mut names)",
+            &[(E32, "first<string>(mut names)")],
+        ),
+        (
+            "twomix: only one of two does not fit",
+            "",
+            "let n: i64 = two(mut names, mut ints)",
+            &[(E170, "ints")],
+        ),
+        (
+            "lbl: a labeled `mut` argument",
+            "",
+            "let n: i64 = first(xs: mut names)",
+            &[(Code::LabeledArgument, "xs"), (E32, "names")],
+        ),
+        (
+            "safe: a safe call",
+            "",
+            "let bo: Bx? = Some(b)\n    let n: i64? = bo?.get(mut names)",
+            &[(E32, "bo?.get(mut names)")],
+        ),
+        (
+            "nongen: a callee that is not generic",
+            "fn fixed(mut xs: [string]) -> string { xs = xs; xs[0] }\n",
+            "let n: i64 = fixed(mut names)",
+            &[(E32, "fixed(mut names)")],
+        ),
+        (
+            "chain: a place behind `?.`",
+            "",
+            "let ho: H? = Some(H(xs: [\"a\"]))\n    let n: i64 = first(mut ho?.xs)",
+            &[(E170, "ho?.xs")],
+        ),
+        (
+            "assoc: an associated type",
+            "interface Src { type Item; fn get(self) -> Item }\n\
+            class S: Src { v: i64; type Item = string; fn get(self) -> string { \"a\" } }\n\
+            fn g<T: Src>(mut xs: [T.Item], s: T) -> T.Item { xs = xs; s.get() }\n",
+            "let n: i64 = g(mut names, S(v: 1))",
+            &[(E32, "g(mut names, S(v: 1))")],
+        ),
+        (
+            "unbound-fit: an unbound parameter, and the context fits",
+            "fn f<T, U>(mut xs: [T]) -> T { xs = xs; xs[0] }\n",
+            "let n: string = f(mut names)",
+            &[(Code::CannotInfer, "f")],
+        ),
+    ];
+    check_rows(rows, context_program);
+}
+
+/// The callees and the values that the rows of the `mut` argument tests with a temporary use.
+/// `bad` has a return type that fails (E0030), and so has no type.
+const TEMPORARY_DECLS: &str = "fn set(mut n: i64) { n = 1 }\n\
+    fn sets(mut s: string) { s = \"\" }\n\
+    fn take<T>(mut x: T) { x = x }\n\
+    fn id(mut n: i64) -> i64 { n = n; n }\n\
+    fn bad() -> Nope { bad() }\n\
+    interface J { fn put(self, mut n: i64) }\n\
+    class O: J {\n    mut v: i64\n    fn set(self, mut n: i64) { n = 1 }\n    \
+    fn put(self, mut n: i64) { n = 1 }\n}\n\
+    fn num() -> i64 { 1 }\n";
+
+/// A program with the items of `TEMPORARY_DECLS`, the items `extra`, and a `main` with some
+/// values, then the statements `body`.
+fn temporary_program(extra: &str, body: &str) -> String {
+    format!(
+        "{TEMPORARY_DECLS}{extra}fn main() {{\n    let o = O(v: 1)\n    let c = num() > 0\n    \
+        let x = bad()\n    {body}\n    print(o.v)\n    print(c)\n}}"
+    )
+}
+
+/// GIVEN `fn bad() -> Nope`, which fails with E0030, and a value that is no place as a `mut`
+///   argument, a call, an operator, an `if`, a block or an index of a call, for a function, a
+///   generic function, a method, a requirement, a safe call, a written type argument and a
+///   `return`
+/// WHEN the call is checked
+/// THEN the value is E0169 beside the E0030, with the other error of its row if it has one
+#[test]
+fn temporary_mut_argument_should_be_e0169_beside_an_earlier_error() {
+    let rows: &[Row] = &[
+        ("a", "", "set(mut bad())", &[(E30, "Nope"), (E169, "bad()")]),
+        (
+            "b: an operator",
+            "",
+            "set(mut bad() + 1)",
+            &[(E30, "Nope"), (E169, "bad() + 1")],
+        ),
+        (
+            "f: an operator on a local that failed",
+            "",
+            "set(mut x + 1)",
+            &[(E30, "Nope"), (E169, "x + 1")],
+        ),
+        (
+            "g: a generic function",
+            "",
+            "take(mut bad())",
+            &[(E30, "Nope"), (E169, "bad()")],
+        ),
+        (
+            "h: a method",
+            "",
+            "o.set(mut bad())",
+            &[(E30, "Nope"), (E169, "bad()")],
+        ),
+        (
+            "m: an `if` that takes its type from its context",
+            "",
+            "take(mut if c { [] } else { [] })",
+            &[(E30, "Nope"), (E169, "if c { [] } else { [] }")],
+        ),
+        (
+            "j: an unknown function, beside the E0030",
+            "",
+            "set(mut nope())",
+            &[
+                (E30, "Nope"),
+                (Code::FunctionNotFound, "nope"),
+                (E169, "nope()"),
+            ],
+        ),
+        (
+            "idx: an index of a call",
+            "",
+            "set(mut bad()[0])",
+            &[(E30, "Nope"), (E169, "bad()[0]")],
+        ),
+        (
+            "block: a block",
+            "",
+            "set(mut { bad() })",
+            &[(E30, "Nope"), (E169, "{ bad() }")],
+        ),
+        (
+            "blocklit: a block of a literal",
+            "",
+            "take(mut { [] })",
+            &[(E30, "Nope"), (E169, "{ [] }")],
+        ),
+        (
+            "coal: `??` on a local that failed",
+            "",
+            "set(mut x ?? 1)",
+            &[(E30, "Nope"), (E169, "x ?? 1")],
+        ),
+        (
+            "paren: a call in parentheses",
+            "",
+            "set(mut (bad()))",
+            &[(E30, "Nope"), (E169, "(bad())")],
+        ),
+        (
+            "retid: after `return`",
+            "fn g() -> i64 { return id(mut bad()) }\n",
+            "print(g())",
+            &[(E30, "Nope"), (E169, "bad()")],
+        ),
+        (
+            "written: a written type argument",
+            "",
+            "take<i64>(mut bad())",
+            &[(E30, "Nope"), (E169, "bad()")],
+        ),
+        (
+            "safe: a safe call",
+            "",
+            "let oo: O? = Some(o)\n    oo?.set(mut bad())",
+            &[(E30, "Nope"), (E169, "bad()")],
+        ),
+        (
+            "req: a requirement, through `any J` and through `U: J`",
+            "fn via_any(j: any J) { j.put(mut bad()) }\n\
+            fn via_gen<U: J>(j: U) { j.put(mut bad()) }\n",
+            "via_any(o)\n    via_gen(o)",
+            &[(E30, "Nope"), (E169, "bad()"), (E169, "bad()")],
+        ),
+    ];
+    check_rows(rows, temporary_program);
+}
+
+/// GIVEN a value that is no place as a `mut` argument, and the value has an error of its own,
+///   with no earlier error: an unknown function, a bad operand, a name that failed to bind, an
+///   index of a call, `x is O`, or `self` outside a method or an index of it in a method
+/// WHEN the call is checked
+/// THEN the error of the value stands, and the value is E0169 too: it is no place whatever its
+///   type
+#[test]
+fn temporary_mut_argument_with_its_own_error_should_also_be_e0169() {
+    let set = "fn set(mut n: i64) { n = 1 }\n";
+    let alone = [
+        (
+            "own-a: an unknown function",
+            "fn main() {\n    set(mut nope())\n}",
+            vec![(Code::FunctionNotFound, "nope"), (E169, "nope()")],
+        ),
+        (
+            "own-b: an operand of another type",
+            "fn num() -> i64 { 1 }\nfn main() {\n    set(mut num() + \"a\")\n}",
+            vec![(Code::Mismatch, "num()"), (E169, "num() + \"a\"")],
+        ),
+        (
+            "own-c: a name that failed to bind",
+            "fn main() {\n    let s = nope\n    set(mut s.f())\n}",
+            vec![(Code::BindingNotFound, "nope"), (E169, "s.f()")],
+        ),
+        (
+            "self-out: an index of `self` outside a method",
+            "fn main() {\n    set(mut self[0])\n}",
+            vec![(Code::SelfOutsideMethod, "self"), (E169, "self[0]")],
+        ),
+        (
+            "selfcall-alone: a call on `self` outside a method",
+            "fn main() {\n    set(mut self.f())\n}",
+            vec![(Code::SelfOutsideMethod, "self"), (E169, "self.f()")],
+        ),
+    ];
+    for (row, main, wanted) in alone {
+        let src = format!("{set}{main}");
+        assert_eq!(error_texts(&src), wanted, "row `{row}`");
+    }
+    let beside: &[Row] = &[
+        (
+            "fncall: an index of a call",
+            "",
+            "set(mut num()[0])",
+            &[
+                (E30, "Nope"),
+                (Code::CannotIndex, "num()"),
+                (E169, "num()[0]"),
+            ],
+        ),
+        (
+            "isx: `x is O`",
+            "",
+            "take(mut x is O)",
+            &[(E30, "Nope"), (Code::TypeAsValue, "O"), (E169, "x is O")],
+        ),
+        (
+            "inmeth: an index of `self` in a method",
+            "class P { v: i64; fn f(self) { set(mut self[0]) } }\n",
+            "print(0)",
+            &[
+                (E30, "Nope"),
+                (Code::CannotIndex, "self"),
+                (E169, "self[0]"),
+            ],
+        ),
+        (
+            "selfidx2: an index of an index of `self` outside a method",
+            "",
+            "set(mut self[0][0])",
+            &[
+                (E30, "Nope"),
+                (Code::SelfOutsideMethod, "self"),
+                (E169, "self[0][0]"),
+            ],
+        ),
+    ];
+    check_rows(beside, temporary_program);
+}
+
+/// GIVEN a `mut` argument that is a place, a range or `self`, or a value that a rule other than
+///   the place rule handles, and its base, its bound or itself has an earlier error
+/// WHEN the call is checked
+/// THEN the reports are those of the call before: a place with a failed base has no E0169, as its
+///   report needs the type, and the other forms keep what they had
+#[test]
+#[expect(clippy::too_many_lines, reason = "a table of rows, one for each form")]
+fn mut_place_with_a_failed_base_should_have_no_e0169() {
+    let rows: &[Row] = &[
+        (
+            "i: a field of a call",
+            "",
+            "set(mut bad().v)",
+            &[(E30, "Nope")],
+        ),
+        (
+            "n: a field of a local that failed",
+            "",
+            "set(mut x.v)",
+            &[(E30, "Nope")],
+        ),
+        (
+            "o: a range of a local that failed",
+            "",
+            "set(mut x[0..1])",
+            &[(E30, "Nope")],
+        ),
+        (
+            "rng: a range of a call",
+            "",
+            "sets(mut bad()[0..1])",
+            &[(E30, "Nope")],
+        ),
+        (
+            "lbl: a labeled argument",
+            "",
+            "set(n: mut bad())",
+            &[(E30, "Nope"), (Code::LabeledArgument, "n")],
+        ),
+        (
+            "fnval: a function",
+            "",
+            "set(mut num)",
+            &[(E30, "Nope"), (Code::TypeAsValue, "num")],
+        ),
+        (
+            "fnfield: a field of a function",
+            "",
+            "set(mut num.v)",
+            &[(E30, "Nope"), (Code::TypeAsValue, "num")],
+        ),
+        (
+            "selfv: a field of `self` outside a method",
+            "",
+            "set(mut self.v)",
+            &[(E30, "Nope"), (Code::SelfOutsideMethod, "self")],
+        ),
+        (
+            "match: a `match`",
+            "",
+            "set(mut match c {\n        true => bad()\n        false => 1\n    })",
+            &[
+                (E30, "Nope"),
+                (
+                    E169,
+                    "match c {\n        true => bad()\n        false => 1\n    }",
+                ),
+            ],
+        ),
+        (
+            "interp: an interpolation",
+            "",
+            "sets(mut \"{bad()}\")",
+            &[(E30, "Nope"), (E169, "\"{bad()}\"")],
+        ),
+        (
+            "cast: a cast",
+            "",
+            "set(mut i64(bad()))",
+            &[(E30, "Nope"), (E169, "i64(bad())")],
+        ),
+        (
+            "neg: a negation",
+            "",
+            "set(mut -bad())",
+            &[(E30, "Nope"), (E169, "-bad()")],
+        ),
+        (
+            "not: a `!`",
+            "",
+            "take(mut !x)",
+            &[(E30, "Nope"), (E169, "!x")],
+        ),
+        (
+            "nested: a `mut` call in a `mut` argument",
+            "",
+            "set(mut id(mut bad()))",
+            &[(E30, "Nope"), (E169, "id(mut bad())")],
+        ),
+        (
+            "cmp: a comparison",
+            "",
+            "take(mut x == 1)",
+            &[(E30, "Nope"), (E169, "x == 1")],
+        ),
+        (
+            "nonelit: `None`",
+            "",
+            "take(mut None)",
+            &[(E30, "Nope"), (E169, "None")],
+        ),
+        (
+            "somelit: `Some` of an empty array",
+            "",
+            "take(mut Some([]))",
+            &[(E30, "Nope"), (E169, "Some([])")],
+        ),
+        (
+            "strlit: a string",
+            "",
+            "sets(mut \"a\")",
+            &[(E30, "Nope"), (E169, "\"a\"")],
+        ),
+        (
+            "c: a call",
+            "",
+            "set(mut num())",
+            &[(E30, "Nope"), (E169, "num()")],
+        ),
+        (
+            "d: an `if`",
+            "",
+            "set(mut if c { 1 } else { 2 })",
+            &[(E30, "Nope"), (E169, "if c { 1 } else { 2 }")],
+        ),
+        (
+            "e: a literal",
+            "",
+            "set(mut 1)",
+            &[(E30, "Nope"), (E169, "1")],
+        ),
+        (
+            "k: a constructor",
+            "",
+            "take(mut O(v: 1))",
+            &[(E30, "Nope"), (E169, "O(v: 1)")],
+        ),
+        (
+            "l: an empty array",
+            "",
+            "take(mut [])",
+            &[(E30, "Nope"), (E169, "[]")],
+        ),
+        (
+            "p: a call that returns a value",
+            "",
+            "take(mut num())",
+            &[(E30, "Nope"), (E169, "num()")],
+        ),
+    ];
+    check_rows(rows, temporary_program);
+    // `self` in a method of an extension is E0155 first, and stops the call.
+    let src = "fn set(mut n: i64) { n = 1 }\nextend [i64] {\n    fn f(self) {\n        \
+        set(mut self[0])\n    }\n}\nfn main() {\n    [1].f()\n}";
+    assert_eq!(error_texts(src), [(Code::CannotExtend, "[i64]")], "self-in");
 }
