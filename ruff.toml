@@ -38,9 +38,10 @@ ignore = [
 # `assert` to narrow a type. `scripts/test_health.py` and `scripts/test_names.py` are tools that
 # have this prefix, so these rules are off for them too.
 "scripts/test_*.py" = ["D", "E501", "PLR2004", "S101", "S105", "S106", "SLF001"]
+"site/build_test.py" = ["D", "E501", "PLR2004", "S101"]
 # This file holds tests. Its name does not match the test glob, because no hook must run it.
 "scripts/nightly_installer_real.py" = ["D"]
-"site/build_test.py" = ["D", "E501", "PLR2004", "S101"]
 # A benchmark program stays the same as its row in each other language, so it has no docstrings and
-# keeps its shape. The formatter and the type rules apply.
+# keeps its shape. The other rules apply: keep a shape that a rule rejects with a `noqa` and a
+# reason.
 "bench/**" = ["C90", "D", "PLR"]

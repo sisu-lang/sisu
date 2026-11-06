@@ -523,7 +523,7 @@ def first_line(text: str | None) -> str:
 
 def try_run(
     deadline: Deadline, cmd: list[str], what: str, lang: str | None = None
-) -> subprocess.CompletedProcess[Any] | None:
+) -> subprocess.CompletedProcess[str] | None:
     """Run an optional tool. A program that is not on PATH or fails gives None."""
     if shutil.which(cmd[0]) is None:
         return None

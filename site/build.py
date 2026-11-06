@@ -1216,7 +1216,7 @@ def link_problems(
             yield f"missing anchor {target}"
 
 
-def page_problems(  # noqa: C901, PLR0913  one check after the other, as the page is read once; the arguments are the page, its text, its tags, its ids and one flag, which the checks read
+def page_problems(  # noqa: C901, PLR0913  one check after the other, as the page is read once. The arguments are the page, its text, its tags, its ids and one flag, which the checks read
     out: Path, page: Path, text: str, tags: Tags, ids: dict[Path, set[str]], *, forbid_tk: bool
 ) -> Iterator[str]:
     """Yield the problems of one built page."""
