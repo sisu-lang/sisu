@@ -28,15 +28,18 @@ import unicodedata
 import unittest
 from bisect import bisect_left
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Sequence
 from decimal import ROUND_HALF_UP, Decimal
 from functools import cache
 from html.parser import HTMLParser
 from itertools import accumulate, groupby
 from pathlib import Path
+from typing import Any, override
 
 from markdown_it import MarkdownIt
+from markdown_it.renderer import RendererProtocol
 from markdown_it.token import Token
+from markdown_it.utils import EnvType, OptionsDict
 
 SITE = Path(__file__).resolve().parent
 ROOT = SITE.parent
@@ -45,7 +48,9 @@ REFERENCE = ROOT / "docs/reference"
 _spec = importlib.util.spec_from_file_location(
     "check_links", ROOT / ".agents/skills/update-docs/scripts/check_links.py"
 )
+# pyrefly: ignore[bad-argument-type]  the file is in the repository, so the spec is found
 check_links = importlib.util.module_from_spec(_spec)
+# pyrefly: ignore[missing-attribute]  as above, and a file spec has a loader
 _spec.loader.exec_module(check_links)
 
 
@@ -96,7 +101,7 @@ def colours(line: str, below: str) -> list[str]:
     """The class of each character of `line`; `below` is the line after it."""
     cls = [""] * len(line)
 
-    def paint(start, end, c) -> None:
+    def paint(start: int, end: int, c: str) -> None:
         end = min(end, len(line))
         cls[start:end] = [c] * max(end - start, 0)
 
@@ -172,7 +177,7 @@ def diagnostic_count() -> str:
     return str(len(explanation_codes()))
 
 
-def status_areas() -> list[dict]:
+def status_areas() -> list[dict[str, Any]]:
     """The areas of data/status.toml, each with its features."""
     try:
         areas = tomllib.loads(read("data/status.toml"))["area"]
@@ -196,10 +201,10 @@ def status_areas() -> list[dict]:
 def status_board() -> str:
     """The Home page's board: a bar, counts and the lists for each area, all closed. A state with no feature has no bar part and no count."""
 
-    def items(area, state):
+    def items(area: dict[str, Any], state: str) -> list[str]:
         return [expand(f["text"], {}) for f in area["feature"] if f["state"] == state]
 
-    def li(texts):
+    def li(texts: list[str]) -> str:
         return "".join(f"<li>{t}</li>" for t in texts)
 
     out = []
@@ -261,7 +266,13 @@ def status_tables() -> str:
     return "\n\n".join(out)
 
 
-def code_fence(renderer, tokens, idx, options, env) -> str:
+def code_fence(
+    renderer: RendererProtocol,
+    tokens: Sequence[Token],
+    idx: int,
+    options: OptionsDict,
+    env: EnvType,
+) -> str:
     token = tokens[idx]
     if "html" in token.meta:  # an example of the language reference, or one of its companion blocks
         return token.meta["html"]
@@ -276,10 +287,11 @@ MD.add_render_rule("code_block", code_fence)
 CODE_LINK = re.compile(r"([EW]\d{4})\.md(#.*)?")
 
 
-def plain(inline) -> str:
+def plain(inline: Token) -> str:
     """The text of an `inline` token, without its markup."""
     return "".join(
         " " if child.type in ("softbreak", "hardbreak") else child.content
+        # pyrefly: ignore[not-iterable]  an `inline` token always has children
         for child in inline.children
     )
 
@@ -309,7 +321,7 @@ def explanation_html(code: str, markdown: str, err: str) -> str:
     return f'{before}<h2>What sisu says</h2><figure class="code"><pre>{diag_html(err)}</pre></figure>\n{fixed}{after}'
 
 
-def diagnostics_of(json_text: str, code: str) -> list[dict]:
+def diagnostics_of(json_text: str, code: str) -> list[dict[str, Any]]:
     """The diagnostics with code `code` in sisu's JSON output, one object per line."""
     records = [json.loads(line) for line in json_text.splitlines() if line.strip()]
     return [r for r in records if r.get("kind") == "diagnostic" and r.get("code") == code]
@@ -333,7 +345,7 @@ def title(code: str, markdown: str) -> str:
     return text[0].upper() + text[1:] if text[:1].isalpha() else text
 
 
-def categories() -> list[dict]:
+def categories() -> list[dict[str, Any]]:
     """The categories of data/categories.toml, in order."""
     try:
         found = tomllib.loads(read("data/categories.toml"))["category"]
@@ -347,7 +359,7 @@ def categories() -> list[dict]:
     return found
 
 
-def category_problems():
+def category_problems() -> Iterator[str]:
     """Each explained code is in exactly one category, and each listed code is explained."""
     explained = set(explanation_codes())
     listed = Counter(code for category in categories() for code in category["codes"])
@@ -422,7 +434,7 @@ def code_page(code: str) -> str:
     )
 
 
-def reference_list() -> list[dict]:
+def reference_list() -> list[dict[str, Any]]:
     """The pages of data/reference.toml, in sidebar order, each with its file and description."""
     try:
         pages = tomllib.loads(read("data/reference.toml"))["page"]
@@ -488,7 +500,8 @@ def example_info(info: str) -> tuple[list[str], list[str] | None]:
     reads them: words split at spaces. The test reports faults, and it faults a `\\` or `&` in
     an example's info string, so the string has nothing to decode.
     """
-    words, args = [], None
+    words: list[str] = []
+    args: list[str] | None = None
     rest = info.strip()
     while rest:
         if rest.startswith('args="'):
@@ -501,7 +514,9 @@ def example_info(info: str) -> tuple[list[str], list[str] | None]:
     return words, args
 
 
-def example_html(token, words, args, companions) -> str:
+def example_html(
+    token: Token, words: list[str], args: list[str] | None, companions: list[Token]
+) -> str:
     """An example as one figure: its caption, the program and a panel for each companion block,
     then a line for each diagnostic marker that links its page. `words` and `args` are its info.
     """
@@ -518,7 +533,7 @@ def example_html(token, words, args, companions) -> str:
         for c in companions
     )
     # A pending example's markers are not checked, so they link no page.
-    notes = [] if "pending" in words else markers(token.content)
+    notes: list[str] = [] if "pending" in words else markers(token.content)
     lines = "".join(
         f'<p class="marker"><a href="../diagnostics/{code}.html">{code}</a>: what this {"error" if code[0] == "E" else "warning"} means</p>\n'
         for code in notes
@@ -529,7 +544,7 @@ def example_html(token, words, args, companions) -> str:
 SITE_CODE_LINK = re.compile(r"\.\./diagnostics/([EW]\d{4})\.html")
 
 
-def mark_rules(tokens) -> None:
+def mark_rules(tokens: list[Token]) -> None:
     """A paragraph that is only bold text, directly before a bullet list, labels a list of rules:
     the paragraph gets the class rules-h and the list rules. In such a list, the diagnostic links
     that end an item, each with its code as text, get the class tag.
@@ -590,7 +605,9 @@ def reference_html(markdown: str, path: Path) -> tuple[str, list[tuple[int, str,
         )
     for token, slug in zip(opens, slugs, strict=False):
         token.attrSet("id", slug)
-    headings, current, kinds = [], None, []
+    headings: list[list[Any]] = []
+    current: int | None = None
+    kinds: list[bool] = []
     for i, token in enumerate(tokens):
         for child in token.children or []:
             if child.type == "link_open":
@@ -603,7 +620,8 @@ def reference_html(markdown: str, path: Path) -> tuple[str, list[tuple[int, str,
         elif token.type == "table_open":
             token.attrSet("class", "tbl")
         elif token.type == "fence" and (info := example_info(token.info))[0][:1] == ["sisu"]:
-            companions, j = [], i + 1
+            companions: list[Token] = []
+            j = i + 1
             while (
                 j < len(tokens)
                 and tokens[j].type == "fence"
@@ -624,6 +642,7 @@ def reference_html(markdown: str, path: Path) -> tuple[str, list[tuple[int, str,
     if tokens and tokens[0].tag == "h1":
         tokens = tokens[3:]
     found = [
+        # pyrefly: ignore[missing-attribute]  MD.renderer is a RendererHTML, which has `renderInline`
         (level, slug, MD.renderer.renderInline(inline.children, MD.options, {}), tagged)
         for level, slug, inline, tagged in headings
     ]
@@ -638,7 +657,7 @@ def reference_title(markdown: str) -> str:
     return heading.removeprefix("# ")
 
 
-def reference_pages(pages: list[dict]) -> list[dict]:
+def reference_pages(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Each page of `pages` read from docs/reference/ and rendered once: its entry with its title,
     the title's id, its body, its headings and its tag.
     """
@@ -664,13 +683,13 @@ def reference_pages(pages: list[dict]) -> list[dict]:
     return prepared
 
 
-def reference_page(index: int, pages: list[dict]) -> str:
+def reference_page(index: int, pages: list[dict[str, Any]]) -> str:
     """The page reference/<file>.html of pages[index], from reference_pages: the sidebar of all
     pages, the page, Previous and Next, and its "On this page" list. The Overview, pages[0], also
     has a card for each other page.
     """
 
-    def href(i) -> str:
+    def href(i: int) -> str:
         return "index.html" if pages[i]["file"] == "README" else f"{pages[i]['file']}.html"
 
     page = pages[index]
@@ -747,9 +766,10 @@ def benchmark_tables(
     """Program -> language -> column -> cell text, from each `### <program>` table under `## Results`.
     With `expected`, the programs must be exactly those.
     """
-    tables, programs = {}, []
+    tables: dict[str, dict[str, dict[str, str]]] = {}
+    programs: list[str] = []
     section = tag = ""
-    rows = None
+    rows: list[list[str]] | None = None
     for token in MD.parse(markdown):
         if token.type == "heading_open":
             tag = token.tag
@@ -767,6 +787,7 @@ def benchmark_tables(
             rows[-1].append(plain(token))
         elif token.type == "table_close":
             if section == "Results" and programs:
+                # pyrefly: ignore[bad-argument-type]  a `table_open` token has made `rows` a list
                 tables[programs[-1]] = benchmark_rows(programs[-1], rows)
             rows = None
     for program in programs:
@@ -839,7 +860,7 @@ def chart(program: str, table: dict[str, dict[str, str]]) -> str:
             f"{BENCHMARKS}: table {program!r}: Python's {column} is not above every other, so it is not off the scale"
         )
 
-    def li(language) -> str:
+    def li(language: str) -> str:
         width = (values[language] / largest * 100).quantize(Decimal("0.1"), ROUND_HALF_UP)
         cls = ' class="sisu"' if language == "Sisu" else ""
         return (
@@ -882,14 +903,14 @@ def bench_charts(markdown: str, expected: list[str] | None = None) -> str:
 def bench_table(markdown: str, expected: list[str] | None = None) -> str:
     """The results table: a row for each program's Wall time, and for hello's Build time after hello's."""
 
-    def row(label, table, column):
+    def row(label: str, table: dict[str, dict[str, str]], column: str) -> str:
         cells = [
             f"<b>{escape(table[l][column])}</b>" if l == "Sisu" else escape(table[l][column])
             for l in BENCH_LANGUAGES
         ]
         return f"<tr><td>{label}</td>" + "".join(f'<td class="n">{c}</td>' for c in cells) + "</tr>"
 
-    rows = []
+    rows: list[str] = []
     for program, table in benchmark_tables(markdown, expected).items():
         rows.append(row(f"<code>{escape(program)}</code>", table, "Wall (s)"))
         if program == "hello":
@@ -919,7 +940,9 @@ def results_note(markdown: str) -> str:
 
 DIRECTIVES: dict[str, Callable[..., str]] = {
     "commit": commit,
+    # pyrefly: ignore[implicit-any-lambda]  `Callable[..., str]` gives the parameter no type
     "text": lambda path: escape(read(path)),
+    # pyrefly: ignore[implicit-any-lambda]  as for "text"
     "diag": lambda path: diag_html(read(path)),
     "help": help_line,
     "status-board": status_board,
@@ -938,7 +961,7 @@ DIRECTIVE = re.compile(r"\{\{([\w-]+)((?: [^\s{}]+)*)\}\}")
 def expand(text: str, context: dict[str, str]) -> str:
     """Replaces each `{{name arg…}}` once; what it substitutes is not expanded again."""
 
-    def one(m):
+    def one(m: re.Match[str]) -> str:
         name = m[1]
         if name in context:
             return context[name]
@@ -1065,7 +1088,8 @@ class Tags(HTMLParser):
         self.feed(text)
         self.close()
 
-    def handle_starttag(self, tag, attrs) -> None:
+    @override
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         for name, value in attrs:
             if name in ("href", "src") and value is not None:
                 self.links.append((tag, value))
@@ -1075,15 +1099,19 @@ class Tags(HTMLParser):
                 self.styles.append(value)
         self.in_style = tag == "style"
 
-    def handle_endtag(self, tag) -> None:
+    @override
+    def handle_endtag(self, tag: str) -> None:
         self.in_style = False
 
-    def handle_data(self, data) -> None:
+    @override
+    def handle_data(self, data: str) -> None:
         if self.in_style:
             self.styles.append(data)
 
 
-def link_problems(out: Path, page: Path, links: list[tuple[str, str]], ids: dict[Path, set[str]]):
+def link_problems(
+    out: Path, page: Path, links: list[tuple[str, str]], ids: dict[Path, set[str]]
+) -> Iterator[str]:
     for _, target in links:
         if target.startswith(BLOB):
             path, _, anchor = target.removeprefix(BLOB).partition("#")
@@ -1116,7 +1144,7 @@ def link_problems(out: Path, page: Path, links: list[tuple[str, str]], ids: dict
 
 def page_problems(
     out: Path, page: Path, text: str, tags: Tags, ids: dict[Path, set[str]], forbid_tk: bool
-):
+) -> Iterator[str]:
     yield from link_problems(out, page, tags.links, ids)
     for tag, url in tags.links:
         if tag in ("link", "script", "img") and FOREIGN.match(url):
@@ -1145,7 +1173,7 @@ def page_problems(
         yield "holds a [TK] marker"
 
 
-def css_problems(out: Path, base: Path, css: str):
+def css_problems(out: Path, base: Path, css: str) -> Iterator[str]:
     """The problems of the CSS text `css`, whose relative URLs resolve from the directory `base`."""
     for m in CSS_URL.finditer(css):
         target = m[2] if m[2] is not None else m[4]
@@ -1169,7 +1197,7 @@ ADR_ROW = re.compile(
 ADR_NOTE = re.compile(r'<(?:small>|span class="soon">)')
 
 
-def adr_problems(text: str):
+def adr_problems(text: str) -> Iterator[str]:
     """Each ADR is listed once, by its GitHub link, under its heading rendered inline."""
     rows: dict[str, list[tuple[str, str]]] = {}
     for m in ADR_ROW.finditer(text):
@@ -1203,7 +1231,7 @@ def check_site(out: Path, *, forbid_tk: bool = False) -> list[str]:
     texts = {page: page.read_text(encoding="utf-8") for page in sorted(out.rglob("*.html"))}
     tags = {page: Tags(text) for page, text in texts.items()}
     ids = {page.resolve(): tags[page].ids for page in texts}
-    found = []
+    found: list[str] = []
     for page, text in texts.items():
         found += [
             f"{page.relative_to(out)}: {p}"

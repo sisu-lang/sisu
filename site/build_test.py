@@ -6,8 +6,10 @@ import io
 import re
 import tempfile
 import unittest
+from collections.abc import Mapping
 from html.parser import HTMLParser
 from pathlib import Path
+from typing import Any, override
 from unittest import mock
 
 import build
@@ -98,12 +100,12 @@ notes = [["Roadmap", "docs/roadmap.md"]]
 BENCH_HEADER = "| Language | Wall (s) | CPU (s) | Peak RSS (MiB) | Binary (KiB) | Build (s) |\n| --- | ---: | ---: | ---: | ---: | ---: |\n"
 
 
-def md_table(program, walls, builds=None):
+def md_table(program: str, walls: dict[str, str], builds: dict[str, str] | None = None) -> str:
     """A `### <program>` table: `walls` maps each language to its Wall cell, `builds` to its Build cell.
     By default every build takes 0.05 and Python has none.
     """
     builds = builds or {lang: "-" if lang == "Python" else "0.05" for lang in walls}
-    rows = []
+    rows: list[str] = []
     for lang, wall in walls.items():
         cells = [lang, wall, "0.1", "1.0", "9", builds[lang]]
         rows.append(
@@ -128,7 +130,9 @@ HELLO_BUILDS = {
 BENCH_LI = r'<li( class="\w+")?><span>(\w+)</span><span class="track">(.*?)</span><span class="val">(.*?)</span></li>'
 
 
-def bench_md(*tables, intro="Commit abc1234, on 2026-10-12.\n\nOn a machine.\n\n"):
+def bench_md(
+    *tables: str, intro: str = "Commit abc1234, on 2026-10-12.\n\nOn a machine.\n\n"
+) -> str:
     return (
         f"# Benchmarks\n\nAbout.\n\n## Results\n\n{intro}"
         + "".join(tables)
@@ -136,7 +140,7 @@ def bench_md(*tables, intro="Commit abc1234, on 2026-10-12.\n\nOn a machine.\n\n
     )
 
 
-def temp_file(test, text):
+def temp_file(test: unittest.TestCase, text: str) -> Path:
     """A file holding `text`, removed when the test ends."""
     tmp = tempfile.TemporaryDirectory()
     test.addCleanup(tmp.cleanup)
@@ -145,7 +149,9 @@ def temp_file(test, text):
     return path
 
 
-def fake_site(test, pages, repo=None):
+def fake_site(
+    test: unittest.TestCase, pages: Mapping[str, str], repo: Mapping[str, str] | None = None
+) -> Path:
     """A repository whose site/src holds `pages`, standing in for build.ROOT and build.SITE.
     `repo` maps other repository paths to their text.
     """
@@ -170,12 +176,12 @@ def fake_site(test, pages, repo=None):
     return site
 
 
-def adr_row(num, slug, title, shown=None) -> str:
+def adr_row(num: str, slug: str, title: str, shown: str | None = None) -> str:
     """A Decisions row linking docs/adr/{num}-{slug}.md and showing the number `shown` (default `num`)."""
     return f'<li><a href="{build.BLOB}docs/adr/{num}-{slug}.md"><span class="num">{shown or num}</span><b>{title}</b><span>x</span></a></li>'
 
 
-def problems(test, files, **kwargs):
+def problems(test: unittest.TestCase, files: Mapping[str, str], **kwargs: bool) -> list[str]:
     """check_site over a site holding `files`: {relative path: text}."""
     tmp = tempfile.TemporaryDirectory()
     test.addCleanup(tmp.cleanup)
@@ -251,7 +257,9 @@ fn main() {{
 }
 
 
-def reference_dir(test, pages, listed=None):
+def reference_dir(
+    test: unittest.TestCase, pages: Mapping[str, str], listed: list[str] | None = None
+) -> list[dict[str, Any]]:
     """docs/reference holding `pages`, {stem: Markdown}; reference.toml lists `listed` (default: the stems)."""
     tmp = tempfile.TemporaryDirectory()
     test.addCleanup(tmp.cleanup)
@@ -264,7 +272,9 @@ def reference_dir(test, pages, listed=None):
     return entries
 
 
-def built_site(test, pages, listed=None):
+def built_site(
+    test: unittest.TestCase, pages: Mapping[str, str], listed: list[str] | None = None
+) -> Path:
     """The real site built with `pages` as its language reference."""
     reference_dir(test, pages, listed)
     tmp = tempfile.TemporaryDirectory()
@@ -274,12 +284,14 @@ def built_site(test, pages, listed=None):
     return out
 
 
-def ref_html(test, markdown):
+def ref_html(
+    test: unittest.TestCase, markdown: str
+) -> tuple[str, list[tuple[int, str, str, bool]], bool]:
     """reference_html of `markdown`, read from a file as a page is."""
     return build.reference_html(markdown, temp_file(test, markdown))
 
 
-def companion_blocks(markdown):
+def companion_blocks(markdown: str) -> int:
     """The `output`, `input` and `stderr` fences of a page, read line by line apart from markdown-it."""
     count, fence = 0, None
     for line in markdown.splitlines():
@@ -293,7 +305,7 @@ def companion_blocks(markdown):
 
 
 class Build(unittest.TestCase):
-    def assert_fails(self, page, found) -> None:
+    def assert_fails(self, page: str, found: list[str]) -> None:
         """`found` is exactly one problem, and it names `page`."""
         self.assertEqual(len(found), 1, found)
         self.assertIn(page, found[0])
@@ -1054,12 +1066,16 @@ class Build(unittest.TestCase):
     def test_reference_page_should_have_its_navigation(self) -> None:
         entries = build.reference_pages(reference_dir(self, REF_PAGES))
         page = build.reference_page(1, entries)
-        side = re.search(r'<nav class="ref-nav".*?</nav>', page, re.DOTALL)[0]
+        side_match = re.search(r'<nav class="ref-nav".*?</nav>', page, re.DOTALL)
+        assert side_match is not None
+        side = side_match[0]
         self.assertEqual(
             re.findall(r'<a href="([^"]*)"( aria-current="page")?>', side),
             [("index.html", ""), ("literals.html", ' aria-current="page"'), ("later.html", "")],
         )
-        toc = re.search(r'<nav class="ref-toc".*?</nav>', page, re.DOTALL)[0]
+        toc_match = re.search(r'<nav class="ref-toc".*?</nav>', page, re.DOTALL)
+        assert toc_match is not None
+        toc = toc_match[0]
         self.assertEqual(
             re.findall(r'<li class="h(\d)"><a href="#([^"]*)">(.*?)</a>', toc),
             [
@@ -1068,7 +1084,9 @@ class Build(unittest.TestCase):
                 ("2", "planned", 'Planned <span class="soon">In development</span>'),
             ],
         )
-        pager = re.search(r'<nav class="pager".*?</nav>', page, re.DOTALL)[0]
+        pager_match = re.search(r'<nav class="pager".*?</nav>', page, re.DOTALL)
+        assert pager_match is not None
+        pager = pager_match[0]
         self.assertEqual(
             re.findall(r'<a href="([^"]*)" rel="\w+"><span>(\w+)</span>(.*?)</a>', pager),
             [("index.html", "Previous", "Language reference"), ("later.html", "Next", "Later")],
@@ -1081,19 +1099,12 @@ class Build(unittest.TestCase):
         for pre in re.findall(r"<pre\b.*?</pre>", page, re.DOTALL):
             self.assertNotIn("<a ", pre)
         first, last = build.reference_page(0, entries), build.reference_page(2, entries)
-        self.assertEqual(
-            re.findall(
-                r"<span>(\w+)</span>",
-                re.search(r'<nav class="pager".*?</nav>', first, re.DOTALL)[0],
-            ),
-            ["Next"],
-        )
-        self.assertEqual(
-            re.findall(
-                r"<span>(\w+)</span>", re.search(r'<nav class="pager".*?</nav>', last, re.DOTALL)[0]
-            ),
-            ["Previous"],
-        )
+        first_pager = re.search(r'<nav class="pager".*?</nav>', first, re.DOTALL)
+        assert first_pager is not None
+        self.assertEqual(re.findall(r"<span>(\w+)</span>", first_pager[0]), ["Next"])
+        last_pager = re.search(r'<nav class="pager".*?</nav>', last, re.DOTALL)
+        assert last_pager is not None
+        self.assertEqual(re.findall(r"<span>(\w+)</span>", last_pager[0]), ["Previous"])
         self.assertIn('<a href="../reference/index.html" aria-current="page">', page)
 
     def test_in_development_tag_should_follow_pending_examples(self) -> None:
@@ -1132,9 +1143,13 @@ class Build(unittest.TestCase):
                     reference_dir(self, {"README": "# Language reference\n", "one": markdown})
                 )
                 page = build.reference_page(1, entries)
-                side = re.search(r'<nav class="ref-nav".*?</nav>', page, re.DOTALL)[0]
+                side_match = re.search(r'<nav class="ref-nav".*?</nav>', page, re.DOTALL)
+                assert side_match is not None
+                side = side_match[0]
                 self.assertEqual("In development" in side, tagged)
-                self.assertNotIn("In development", re.search(r'<h1 id="t">.*?</h1>', page)[0])
+                h1 = re.search(r'<h1 id="t">.*?</h1>', page)
+                assert h1 is not None
+                self.assertNotIn("In development", h1[0])
                 shown = [
                     bool(re.search(r"In development</span></h\d>", h))
                     for h in re.findall(r"<h[23] id=.*?</h[23]>", page)
@@ -1278,7 +1293,9 @@ class Build(unittest.TestCase):
     def test_overview_should_have_a_card_for_each_other_page(self) -> None:
         entries = build.reference_pages(reference_dir(self, REF_PAGES))
         page = build.reference_page(0, entries)
-        cards = re.search(r'<ul class="cards">.*?</ul>', page, re.DOTALL)[0]
+        cards_match = re.search(r'<ul class="cards">.*?</ul>', page, re.DOTALL)
+        assert cards_match is not None
+        cards = cards_match[0]
         self.assertEqual(
             re.findall(r'<li><a href="([^"]*)"><b>(.*?)</b><span>(.*?)</span></a></li>', cards),
             [
@@ -1293,13 +1310,14 @@ class Pages(unittest.TestCase):
     """The real site, built once."""
 
     @classmethod
+    @override
     def setUpClass(cls) -> None:
         tmp = tempfile.TemporaryDirectory()
         cls.addClassCleanup(tmp.cleanup)
         cls.out = Path(tmp.name) / "site"
         build.build(cls.out)
 
-    def page(self, name):
+    def page(self, name: str) -> str:
         return (self.out / name).read_text(encoding="utf-8")
 
     def test_diagnostic_pages(self) -> None:
@@ -1356,7 +1374,11 @@ class Pages(unittest.TestCase):
                 self.assertIn(f'<span class="sev">{severity}</span>', page)
 
     def test_fix_badges(self) -> None:
-        cases = [("E0130", ["Unsafe fix"]), ("E0001", ["Safe fix"]), ("E0032", [])]
+        cases: list[tuple[str, list[str]]] = [
+            ("E0130", ["Unsafe fix"]),
+            ("E0001", ["Safe fix"]),
+            ("E0032", []),
+        ]
         for code, badges in cases:
             with self.subTest(code):
                 page = self.page(f"diagnostics/{code}.html")
@@ -1381,7 +1403,9 @@ class Pages(unittest.TestCase):
                 page = self.page(f"diagnostics/{code}.html")
                 self.assertIn(f"<h1>{heading}</h1>", page)
                 self.assertIn(f"<b>{heading}</b>", index)
-                title = re.search("<title>(.*?)</title>", page)[1]
+                title_match = re.search("<title>(.*?)</title>", page)
+                assert title_match is not None
+                title = title_match[1]
                 self.assertEqual(title, f"{code}: {plain}")
                 self.assertNotIn("`", title + heading)
 
@@ -1425,12 +1449,16 @@ class Pages(unittest.TestCase):
         # WHEN the site is built
         page = self.page("reference/literals.html")
         # THEN the sidebar marks Literals as the current page
-        side = re.search(r'<nav class="ref-nav".*?</nav>', page, re.DOTALL)[0]
+        side_match = re.search(r'<nav class="ref-nav".*?</nav>', page, re.DOTALL)
+        assert side_match is not None
+        side = side_match[0]
         self.assertEqual(
             re.findall(r'<a href="([^"]*)" aria-current="page">', side), ["literals.html"]
         )
         # AND "On this page" lists each ## and ### heading, and each entry goes to a heading of the page
-        toc = re.search(r'<nav class="ref-toc".*?</nav>', page, re.DOTALL)[0]
+        toc_match = re.search(r'<nav class="ref-toc".*?</nav>', page, re.DOTALL)
+        assert toc_match is not None
+        toc = toc_match[0]
         entries = re.findall(r'<li class="h(\d)"><a href="#([^"]*)">(.*?)</a>', toc)
         self.assertEqual(
             [(level, text) for level, _, text in entries],
@@ -1442,7 +1470,9 @@ class Pages(unittest.TestCase):
         for level, slug, _ in entries:
             self.assertIn(f'<h{level} id="{slug}">', page)
         # AND the pager goes back to Lexical structure and on to Types
-        pager = re.search(r'<nav class="pager".*?</nav>', page, re.DOTALL)[0]
+        pager_match = re.search(r'<nav class="pager".*?</nav>', page, re.DOTALL)
+        assert pager_match is not None
+        pager = pager_match[0]
         self.assertEqual(
             re.findall(r'<a href="([^"]*)" rel="\w+"><span>(\w+)</span>(.*?)</a>', pager),
             [("lexical.html", "Previous", "Lexical structure"), ("types.html", "Next", "Types")],
@@ -1462,13 +1492,14 @@ class Pages(unittest.TestCase):
 class Metas(HTMLParser):
     """The `content` of each `<meta name="description">` of a page."""
 
-    def __init__(self, text) -> None:
+    def __init__(self, text: str) -> None:
         super().__init__()
-        self.descriptions = []
+        self.descriptions: list[str | None] = []
         self.feed(text)
         self.close()
 
-    def handle_starttag(self, tag, attrs) -> None:
+    @override
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "meta" and dict(attrs).get("name") == "description":
             self.descriptions.append(dict(attrs).get("content"))
 
