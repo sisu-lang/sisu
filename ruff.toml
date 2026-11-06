@@ -34,9 +34,10 @@ ignore = [
 
 [lint.per-file-ignores]
 # A test name says what should hold, and an expected text stays on one line so that a search finds
-# it. A test compares with literals, reads private names, and makes fake secrets and tools.
-"scripts/test_*.py" = ["D", "E501", "PLR2004", "S103", "S105", "S106", "S108", "SLF001"]
-"site/build_test.py" = ["D", "E501", "PLR2004", "S103", "S105", "S106", "S108", "SLF001"]
+# it. A test compares with literals, reads private names, makes fake secrets and tools, and uses
+# `assert` to narrow a type.
+"scripts/test_*.py" = ["D", "E501", "PLR2004", "S101", "S103", "S105", "S106", "S108", "SLF001"]
+"site/build_test.py" = ["D", "E501", "PLR2004", "S101", "S103", "S105", "S106", "S108", "SLF001"]
 # A benchmark program stays the same as its row in each other language, so rules that change its
 # logic stay off. The formatter and the type rules apply.
 "bench/**" = ["D", "ARG", "C4", "E741", "FBT", "FURB", "N", "PERF", "PLR", "PLW", "RET", "RUF", "SIM", "TRY", "UP"]
