@@ -36,7 +36,7 @@ are GitHub issues.
 
 | Ruling | Decided | Committed text that says otherwise | Built by |
 | --- | --- | --- | --- |
-| The value type is `struct`, not `record`. `class` stays. | 2026-10-28 | `docs/roadmap.md`; ADR 0011 | Milestone 9 part 1, Task 0: a new ADR, the lexer, E0083 |
+| The value type is `struct`, not `record`, and `class` goes (ADR 0046). The variable decides what can change. `pub mut` goes. | 2026-11-06 (`struct`: 2026-10-28) | `docs/roadmap.md`; `docs/reference/`; `docs/architecture.md`; `docs/diagnostics/`; `README.md`; `site/`; `GLOSSARY.md` (Class, Record, Object, Reference, Identity, Weak reference, Class-only interface, Weak capture, Take, Reach, Lost write); the ADRs that ADR 0046 names. Not committed: each spec that names a class | The class removal: the specs, then structs beside classes with the lexer and E0083, then the migration, then the deletion (ADR 0046) |
 | Tests use the `@test` attribute, not `test` blocks. | 2026-10-26 | `docs/roadmap.md` ("What can start now", "Recovering from a panic"); ADR 0027; the lexer reserves `test` (E0083) | The attributes work |
 | The fixed-size inline array is `FixedArray<T, N>`. | 2026-10-17 | none; the roadmap's "fixed-size inline array" bullet points here | Milestone 9 part 1, Task 0 (roadmap) |
 | A bare variant `V` means `E.V` when the expected type is the enum `E`. A name that is also a local is an error. | 2026-10-31 | ADR 0019 (bare `Num(2)`, the reserved `.Variant` form); `docs/roadmap.md` ("Names and namespaces" keeps Swift's `.circle` open, with a note) | After slices: a new ADR |

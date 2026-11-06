@@ -4,6 +4,9 @@ Status: accepted, 2026-10-16. It reverses milestone 2's rule that `==`
 compares classes structurally, now that milestone 8 makes `==` a method of the
 `Eq` interface.
 
+Superseded by [ADR 0046](0046-structs-replace-classes.md) when classes go.
+Until then, this describes the compiler.
+
 A class has no `==` of its own. The compiler writes no `Eq` for a class, so
 `a == b` on two objects is an error unless the class conforms to `Eq` by
 hand. `a is b` compares identity: whether both sides are the same object.
