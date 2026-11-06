@@ -121,7 +121,7 @@ Scenario Outline: S5. Only a statement that always leaves makes the next line un
 
 ## Writing
 
-- **Text follows ASD-STE100 Simplified Technical English.** This applies to diagnostic messages, labels and help text, comments and doc comments, docs, commit messages, and pull request and issue text. An instruction has at most 20 words, and a description at most 25 words. The `text-limits` hook checks the limit of 25 on changed lines. Write one idea in each sentence. Use the active voice and the present tense. Use common words, and give each word one meaning: "use", not "leverage" or "utilise". Do not use idioms. Code names, types, error codes and flags stay as they are.
+- **Text follows ASD-STE100 Simplified Technical English.** This applies to diagnostic messages, labels and help text, comments and doc comments, docs, commit messages, and pull request and issue text. An instruction has at most 20 words, and a description at most 25 words. At a commit, the `text-limits` hook checks the limit of 25 on changed comments, docstrings and Markdown. A review checks diagnostic text and a comment after code. CI reads a clean tree, so it has no changed line to check. Write one idea in each sentence. Use the active voice and the present tense. Use common words, and give each word one meaning: "use", not "leverage" or "utilise". Do not use idioms. Code names, types, error codes and flags stay as they are.
 - **Only new and changed text must comply.** A diff does not reword old text that it does not touch.
 - **A violation is a nit.** It blocks only when the text also misleads or is vague, as "Diagnostic wording blocks when it misleads" says.
 

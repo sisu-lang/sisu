@@ -4,7 +4,7 @@ changed Python or shell comment or docstring line of over 100 columns. `CODING_S
 wrapped lines.
 
 The check cannot tell an instruction, which has a limit of 20 words, from a description. It also
-does not read diagnostic text in Rust strings. A review checks those.
+does not read diagnostic text in Rust strings or a comment after code. A review checks those.
 
 Usage: python3 text_limits.py --diff REF FILE...
 """
@@ -66,6 +66,8 @@ def python_prose(lines: list[str]) -> list[tuple[int, str]]:
 
 def prose(path: str, lines: list[str]) -> list[tuple[int, str]]:
     """Each line of prose in the file, as (line number, text)."""
+    # shortcut: a line in a Rust string or a shell heredoc counts as a comment when it starts with
+    # a comment mark. No tracked line does that. Read the strings if a false alarm comes.
     numbered = list(enumerate((line.rstrip("\n") for line in lines), 1))
     if path.endswith(".md"):
         body = numbered
