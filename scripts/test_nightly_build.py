@@ -84,18 +84,19 @@ if is_release:
                                   'target': args[args.index('--target') + 1]})
     elif command == 'upload':
         release = release_of(tag)  # gh also uploads to a published release
+        for name in rest:  # gh compares every name before it uploads any
+            asset = os.path.basename(name)
+            if asset in release['assets'] and '--clobber' not in args:
+                print('gh: asset under the same name already exists: ' + asset, file=sys.stderr)
+                sys.exit(1)
         for count, name in enumerate(rest):
             if state['fail_on'] and partial and count == state['fail_after']:
                 state['fail_on'] = None  # one call fails, after some assets are stored
                 save()
                 print('gh: HTTP 500', file=sys.stderr)
                 sys.exit(1)
-            asset = os.path.basename(name)
-            if asset in release['assets'] and '--clobber' not in args:
-                print('gh: asset under the same name already exists: ' + asset, file=sys.stderr)
-                sys.exit(1)
             with open(name, encoding='utf-8') as f:
-                release['assets'][asset] = f.read()
+                release['assets'][os.path.basename(name)] = f.read()
             save()
     elif command == 'edit':
         release = draft_of(tag)
@@ -156,8 +157,10 @@ elif '/releases?' in path:
     reply = state['releases'] if '--paginate' in args else state['releases'][:100]
 elif '/issues?' in path:
     query = parse_qs(path.split('?')[1])
-    reply = [i for i in state['issues'] if i['state'] == query['state'][0]
-             and query['labels'][0] in [label['name'] for label in i['labels']]]
+    want = query.get('state', ['open'])[0]  # the API's default is open
+    reply = [i for i in state['issues'] if want in (i['state'], 'all')
+             and ('labels' not in query
+                  or query['labels'][0] in [label['name'] for label in i['labels']])]
     if '--paginate' not in args:
         reply = reply[:100]
 elif '/contents/.github?ref=' in path:

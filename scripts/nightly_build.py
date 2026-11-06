@@ -169,9 +169,10 @@ def download(repo: str, run_id: str, into: str) -> dict[str, str]:
             z.extractall(os.path.join(into, str(id_)))
         for folder, _, files in os.walk(os.path.join(into, str(id_))):
             for f in (f for f in files if f in ASSETS):
+                here = f'{name} ({os.path.relpath(os.path.join(folder, f), into)})'
                 if f in found:
-                    sys.exit(f'nightly_build.py: {f} is in the artifacts {owner[f]} and {name}')
-                found[f], owner[f] = os.path.join(folder, f), name
+                    sys.exit(f'nightly_build.py: {f} is in the artifacts {owner[f]} and {here}')
+                found[f], owner[f] = os.path.join(folder, f), here
     missing = [a for a in ASSETS if a not in found]
     if missing:
         sys.exit(f'nightly_build.py: the artifacts of run {run_id} lack {", ".join(missing)}')
