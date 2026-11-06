@@ -86,6 +86,12 @@ CARGO_BUILD = 'cargo build --release --locked --workspace'
 CARGO_ENV = {'CARGO_PROFILE_RELEASE_STRIP': 'symbols',
              'MACOSX_DEPLOYMENT_TARGET': "${{ runner.os == 'macOS' && '15.0' || '' }}"}
 COUNT_LINE = 'test "$(wc -l < SHA256SUMS)" = 3'
+THIRD_PARTY = 'target/release/THIRD-PARTY-LICENSES.txt'
+EMBEDDED_LINE = 'cat .config/notices/LLVM-EMBEDDED.txt >> ' + THIRD_PARTY
+STD_LINE = ("sed -e 's/<[^>]*>//g' \"$(rustc --print sysroot)/share/doc/rust/COPYRIGHT-library.html\" "
+            ">> " + THIRD_PARTY)
+EMBEDDED_AUTHORS = ('Yann Collet', 'Henry Spencer', 'Regents of the University of California',
+                    'Todd C. Miller', 'Unicode, Inc.')
 # A token in any spelling: `github.token`, `github['token']`, `secrets.X`, `GH_TOKEN`.
 TOKEN = re.compile(r'github\W*token|secrets\b|\b(?:GH|GITHUB)_TOKEN\b', re.I)
 GATE = re.compile(r'continue-on-error|\|\|\s*(?:true\b|:|exit\s+0)|set\s+\+e')
@@ -373,6 +379,24 @@ class NightlyWorkflowTest(unittest.TestCase):
         self.assertEqual(flow_list(strategy['matrix']['runner']), ['ubuntu-24.04', 'macos-15'])
         for name in ('clean-machine', 'installer-tests'):
             self.assertEqual(job_map(found[name])['strategy']['fail-fast'], 'false', name)
+
+    def test_license_step_should_append_the_embedded_and_std_notices(self):
+        st = steps(jobs(self)['build'])
+        found = [run_lines(step) for step in st if 'cargo about generate' in str(step.get('run', ''))]
+        self.assertEqual(len(found), 1)
+        lines = found[0]
+        want = ['cat .config/notices/LLVM-LICENSE.txt >> ' + THIRD_PARTY, EMBEDDED_LINE, STD_LINE]
+        positions = [lines.index(line) if line in lines else -1 for line in want]
+        self.assertNotIn(-1, positions, lines)
+        self.assertEqual(positions, sorted(positions))
+
+    def test_embedded_notices_should_name_each_author(self):
+        path = os.path.join(ROOT, '.config', 'notices', 'LLVM-EMBEDDED.txt')
+        self.assertTrue(os.path.isfile(path), path)
+        with open(path, encoding='utf-8') as f:
+            text = f.read()
+        for author in EMBEDDED_AUTHORS:
+            self.assertIn(author, text)
 
     def test_prek_should_watch_the_new_files(self):
         with open(os.path.join(ROOT, 'prek.toml'), encoding='utf-8') as f:

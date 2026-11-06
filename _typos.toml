@@ -7,3 +7,7 @@ extend-ignore-re = ["(?Rm)^.*(#|//)\\s*spellchecker:disable-line$"]
 [files]
 # The fixtures are compiler input and output, where misspelled names are the point.
 extend-exclude = ["crates/sisuc/tests/diagnostics/", "site/programs/"]
+
+[default.extend-words]
+# The surname of Yann Collet, the author of xxHash, in the notice of LLVM's embedded code.
+Collet = "Collet"
