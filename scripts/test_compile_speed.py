@@ -362,6 +362,17 @@ class CompileSpeed(unittest.TestCase):
         pid = int((self.tmp / "pid").read_text())
         self.assertTrue(self.gone(pid), f"process {pid} is still running")
 
+    def test_a_time_bound_that_is_not_above_zero_should_be_an_error(self) -> None:
+        """GIVEN a `--time-bound` of 0, below 0, not a number or infinite
+        WHEN `scripts/compile_speed.py` starts
+        THEN it exits with code 2 and names the option
+        """
+        for bound in ("0", "-1", "nan", "inf"):
+            with self.subTest(bound):
+                r = self.run_script("--check-only", env=stubs(self.tmp), time_bound=bound)
+                self.assertEqual(r.returncode, 2)
+                self.assertIn("--time-bound is a number above 0", r.stderr)
+
     def test_deadline_should_give_each_command_the_time_left(self) -> None:
         """GIVEN a total time bound of 10 seconds
         WHEN a command runs, 4 seconds pass, and a second command runs

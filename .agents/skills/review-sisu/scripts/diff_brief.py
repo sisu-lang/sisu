@@ -2,7 +2,8 @@
 
 The script fills every slot above "# Report", keeps the sections for the target's kind and drops
 the others. It fails, writing nothing, when a slot above "# Report" is left unfilled, so a
-template change cannot slip past it.
+template change cannot slip past it. A git command that fails stops the script with its error, so
+a failure cannot read as an empty result.
 
 Usage: python3 diff_brief.py REPO TARGET OUT [--kind spec|plan|diff] [--doc PATH]... [--focus FILE]
            [--mutation-log LOG]... [--coverage FILE] [--round N --prior REPORT... --rulings FILE]
@@ -70,39 +71,41 @@ SKILLS: dict[str, Path | None] = {
 }
 
 
-def git(repo: Path | str, *args: str) -> str:
-    """Return the stripped stdout of a git command in `repo`, or '' when it fails.
+def run_git(
+    repo: Path | str, *args: str, stdin: bytes | None = None, answers: tuple[int, ...] = (0,)
+) -> subprocess.CompletedProcess[bytes]:
+    """Run git in `repo`, and stop the script when its exit code is not in `answers`.
 
-    A byte that is not UTF-8, as some test fixtures hold, reads as U+FFFD, so the brief can still
-    be written. GIT_DIFF_OPTS would beat `--unified=0`.
+    GIT_DIFF_OPTS would beat `--unified=0`.
     """
     env = {key: value for key, value in os.environ.items() if key != "GIT_DIFF_OPTS"}
-    return subprocess.run(
-        ["git", "-C", str(repo), *args],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        env=env,
-        check=False,
-    ).stdout.strip()
+    done = subprocess.run(
+        ["git", "-C", str(repo), *args], input=stdin, capture_output=True, env=env, check=False
+    )
+    if done.returncode not in answers:
+        error = done.stderr.decode(errors="replace").strip()
+        sys.exit(f"diff_brief: git {' '.join(args)}: {error}")
+    return done
+
+
+def git(repo: Path | str, *args: str) -> str:
+    """Return the stripped stdout of a git command in `repo`.
+
+    A byte that is not UTF-8, as some test fixtures hold, reads as U+FFFD, so the brief can still
+    be written.
+    """
+    return run_git(repo, *args).stdout.decode(errors="replace").strip()
 
 
 def commit(repo: Path | str, ref: str) -> str:
-    """Return the full SHA of `ref` in `repo`, or ''."""
-    return git(repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+    """Return the full SHA of `ref` in `repo`, or '' when `ref` names no commit."""
+    args = ("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+    return run_git(repo, *args, answers=(0, 1)).stdout.decode().strip()
 
 
 def is_ancestor(repo: Path | str, a: str, b: str) -> bool:
-    """Tell whether the commit `a` is an ancestor of the commit `b` in `repo`."""
-    return (
-        subprocess.run(
-            ["git", "-C", str(repo), "merge-base", "--is-ancestor", a, b],
-            capture_output=True,
-            check=False,
-        ).returncode
-        == 0
-    )
+    """Tell whether the commit `a` is an ancestor of the commit `b`; both must be in `repo`."""
+    return run_git(repo, "merge-base", "--is-ancestor", a, b, answers=(0, 1)).returncode == 0
 
 
 def summary(log: Path) -> re.Match[str] | None:
@@ -116,19 +119,8 @@ def summary(log: Path) -> re.Match[str] | None:
 
 def patch_id(repo: Path | str, sha: str) -> str:
     """Return the stable `git patch-id` of the commit `sha`, or '' for an empty commit."""
-    shown = subprocess.run(
-        ["git", "-C", str(repo), "show", sha], capture_output=True, check=False
-    ).stdout
-    return (
-        subprocess.run(
-            ["git", "-C", str(repo), "patch-id", "--stable"],
-            input=shown,
-            capture_output=True,
-            check=False,
-        )
-        .stdout.decode()
-        .partition(" ")[0]
-    )
+    shown = run_git(repo, "show", sha).stdout
+    return run_git(repo, "patch-id", "--stable", stdin=shown).stdout.decode().partition(" ")[0]
 
 
 def in_range(repo: Path | str, sha: str, base: str, head: str) -> str:
@@ -163,9 +155,11 @@ def log_mismatch(
     found = summary(log)
     if not found:
         return f'no summary line ending "(HEAD <sha>)" in {log}'
-    if earlier and is_ancestor(repo, found[1], base):
+    # A log can come from another clone, so this clone may not have the commit that it measured.
+    known = commit(repo, found[1])
+    if known and earlier and is_ancestor(repo, found[1], base):
         return None
-    if not in_range(repo, found[1], base, head):
+    if not known or not in_range(repo, found[1], base, head):
         want = commit(repo, head)
         return (
             f"{log} measured {found[1][:8]}, which is not in {base}..{head} "

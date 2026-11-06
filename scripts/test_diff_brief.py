@@ -476,5 +476,63 @@ class RemovedTests(unittest.TestCase):
         self.assertIn(f"- {self.head[:8]} head: {build}", focus)
 
 
+class GitFailures(Repo):
+    """A git command that fails stops the script, unless the failure is an answer."""
+
+    @override
+    def setUp(self) -> None:
+        super().setUp()
+        env = mock.patch.dict(os.environ, ENV, clear=True)
+        env.start()
+        self.addCleanup(env.stop)
+
+    def test_a_failed_git_should_stop_with_its_error(self) -> None:
+        with self.assertRaises(SystemExit) as stop:
+            diff_brief.git(self.repo, "rev-list", "no-such-ref")
+        self.assertIn("diff_brief: git rev-list no-such-ref: fatal:", str(stop.exception))
+
+    def test_a_failed_diff_should_not_read_as_no_removed_tests(self) -> None:
+        with self.assertRaises(SystemExit):
+            diff_brief.removed_tests(self.repo, "no-such-ref", self.head)
+
+    def test_a_patch_id_of_an_unknown_commit_should_stop_with_its_error(self) -> None:
+        with self.assertRaises(SystemExit) as stop:
+            diff_brief.patch_id(self.repo, "0" * 40)
+        self.assertIn(f"diff_brief: git show {'0' * 40}:", str(stop.exception))
+
+    def test_a_patch_id_of_an_empty_commit_should_be_empty(self) -> None:
+        self.assertEqual(diff_brief.patch_id(self.repo, self.head), "")
+
+    def test_a_ref_that_is_not_a_commit_should_read_as_no_commit(self) -> None:
+        self.assertEqual(diff_brief.commit(self.repo, "no-such-ref"), "")
+        self.assertEqual(diff_brief.commit(self.repo, "0" * 40), "")
+
+    def test_a_commit_lookup_without_a_repository_should_stop_with_its_error(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {"GIT_DIR": "/no-such-git-dir"}),
+            self.assertRaises(SystemExit) as stop,
+        ):
+            diff_brief.commit(self.repo, "HEAD")
+        self.assertIn("not a git repository", str(stop.exception))
+
+    def test_is_ancestor_should_answer_for_two_commits(self) -> None:
+        self.assertTrue(diff_brief.is_ancestor(self.repo, self.base, self.head))
+        self.assertFalse(diff_brief.is_ancestor(self.repo, self.head, self.base))
+
+    def test_is_ancestor_of_an_unknown_commit_should_stop_with_its_error(self) -> None:
+        with self.assertRaises(SystemExit) as stop:
+            diff_brief.is_ancestor(self.repo, "0" * 40, self.head)
+        self.assertIn("diff_brief: git merge-base --is-ancestor", str(stop.exception))
+
+    def test_a_log_on_an_unknown_commit_should_be_outside_the_range(self) -> None:
+        log = Path(self.repo) / "mutation.log"
+        log.write_text(f"mutation-test: PASS: 1 caught (HEAD {'0' * 40})\n")
+        for earlier in (False, True):
+            with self.subTest(earlier=earlier):
+                why = diff_brief.log_mismatch(log, self.repo, self.base, "HEAD", earlier=earlier)
+                assert why is not None
+                self.assertIn(f"measured {'0' * 8}, which is not in", why)
+
+
 if __name__ == "__main__":
     unittest.main()

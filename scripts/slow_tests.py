@@ -7,7 +7,8 @@ Usage: python3 slow_tests.py JUNIT.xml [--diff REF]
 Prints nothing when the report is missing or every test is within budget, and one line when the
 report cannot be read. Always exits 0. Under GitHub Actions, each slow test is also a workflow
 warning. With --diff, it lists only the slow tests whose name `git diff -U0 REF` mentions, the
-tests a change added or edited, and counts the rest: on a loaded machine the rest are noise.
+tests a change added or edited, and counts the rest: on a loaded machine the rest are noise. When
+git gives no diff, it says why in one line and lists every slow test.
 """
 
 import argparse
@@ -55,6 +56,26 @@ def in_diff(name: str, diff: str) -> bool:
     return re.search(rf"(?<!\w){re.escape(key)}(?!\w)", diff) is not None
 
 
+def diff_against(ref: str) -> str | None:
+    """Return `git diff -U0 ref`, or print why git gives no diff and return None."""
+    try:
+        done = subprocess.run(
+            ["git", "diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", ref],
+            capture_output=True,
+            text=True,
+            errors="surrogateescape",
+            check=False,
+        )
+    except OSError as error:
+        print(f"slow_tests: cannot run `git diff {ref}`: {error}")
+        return None
+    if done.returncode != 0:
+        first_line = done.stderr.partition("\n")[0]
+        print(f"slow_tests: `git diff {ref}` failed: {first_line}")
+        return None
+    return done.stdout
+
+
 def main(path: str, ref: str | None = None) -> None:
     """Print the tests over budget in the report `path`.
 
@@ -74,16 +95,11 @@ def main(path: str, ref: str | None = None) -> None:
     slow = over_budget(tests)
     others = 0
     if ref is not None and slow:
-        diff = subprocess.run(
-            ["git", "diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", ref],
-            capture_output=True,
-            text=True,
-            errors="surrogateescape",
-            check=False,
-        ).stdout
-        mentioned = [test for test in slow if in_diff(test[2], diff)]
-        others = len(slow) - len(mentioned)
-        slow = mentioned
+        diff = diff_against(ref)
+        if diff is not None:
+            mentioned = [test for test in slow if in_diff(test[2], diff)]
+            others = len(slow) - len(mentioned)
+            slow = mentioned
     if others:
         print(f"slow_tests: {others} other tests over budget are outside `git diff {ref}`")
     if slow:

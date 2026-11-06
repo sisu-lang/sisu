@@ -6,6 +6,7 @@ Each Rust file named by its last parts, such as `lexer.rs` or `check/mod.rs`, mu
 path.
 
 Usage: python3 check_links.py FILE.md... Prints each broken link or path and exits 1 if any.
+A git command that fails stops the script with its error, so no path reads as missing because of it.
 """
 
 import re
@@ -29,11 +30,14 @@ RUST_FILE = re.compile(
 ROOT = Path(__file__).resolve().parents[4]
 
 
-def git(*args: str) -> subprocess.CompletedProcess[str]:
-    """Run git in the repository root, and return the finished process."""
-    return subprocess.run(
+def git(*args: str, answers: tuple[int, ...] = (0,)) -> subprocess.CompletedProcess[str]:
+    """Run git in the repository root, and stop the script on an exit code not in `answers`."""
+    done = subprocess.run(
         ["git", "-C", str(ROOT), *args], capture_output=True, text=True, check=False
     )
+    if done.returncode not in answers:
+        sys.exit(f"check_links: git {' '.join(args)}: {done.stderr.strip()}")
+    return done
 
 
 # What a clean checkout holds: each tracked file and each directory above one. Checking the
@@ -46,7 +50,10 @@ for name in git("ls-files", "-z").stdout.split("\0"):
 
 def in_repo(path: str) -> bool:
     """Tell whether `path` is tracked, or ignored on purpose like `docs/superpowers/`."""
-    return path.rstrip("/") in TRACKED or git("check-ignore", "-q", path).returncode == 0
+    return (
+        path.rstrip("/") in TRACKED
+        or git("check-ignore", "-q", path, answers=(0, 1)).returncode == 0
+    )
 
 
 def fence_after(line: str, fence: str | None) -> str | None:
