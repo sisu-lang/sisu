@@ -295,11 +295,14 @@ const REACH: &[&str] = &[
 /// What `Gen::gap_forms` writes, and the key that each form marks. The nightly reads the seeds
 /// `0..FUZZ_SEEDS` and no others, so `generated_programs_should_reach_each_gap_rule` reads only
 /// those. They are in the universe as the `REACH` keys are.
+const WIDENS: &str = "reach: a `break` of `T` widens to the `T?` of its loop";
+const CROSSES: &str = "reach: the widening of a `break` crosses a nested loop";
+
 const GAP_RULES: &[&str] = &[
     "reach: a class's own `push` is called on a place",
     "reach: a class's own `?.push` is called on a place",
-    "reach: a `break` of `T` widens to the `T?` of its loop",
-    "reach: the widening of a `break` crosses a nested loop",
+    WIDENS,
+    CROSSES,
     "reach: a literal `break` joins an optional `break` in a `let` with no written type",
     "reach: two `mut` arguments have one root local",
     "reach: a `string` field appends to itself",
@@ -3156,9 +3159,9 @@ impl Walk {
                 // `wrap_breaks` wraps the `T` values of a loop that a `T?` value widened. A
                 // written `Some(..)` in a loop with `break None` would show the same.
                 if matches!(e.ty.kind(), TypeKind::Optional(_)) && breaks.wrapped && breaks.none {
-                    self.mark("reach: a `break` of `T` widens to the `T?` of its loop");
+                    self.mark(WIDENS);
                     if breaks.crossed {
-                        self.mark("reach: the widening of a `break` crosses a nested loop");
+                        self.mark(CROSSES);
                     }
                 }
                 if breaks.literal_after && self.untyped_loops.contains(&e.span.start()) {
@@ -5906,6 +5909,62 @@ fn a_push_should_reach_a_local_an_element_and_a_guarded_field() {
         local && element && field,
         "{local} {element} {field}: a local, an element and a field"
     );
+}
+
+/// GIVEN a program with a loop that has a written `i64?` or `string?` and two `break`s
+/// WHEN the walk reads it
+/// THEN the widening key is marked only for a `break` that the checker wraps, before a `break`
+/// that gives `None` and with no `break` out of an inner loop, and the crossing key only for the
+/// same with such a `break`. A written `Some(..)` or a `None` first gives the same typed tree, but
+/// `wrap_breaks` does nothing for it.
+#[test]
+fn a_widening_key_should_mark_only_what_the_checker_wraps() {
+    let program = |ty: &str, breaks: &str| {
+        format!(
+            "fn main() {{\n    let y: {ty} = ({{\n        let mut c = 1\n{breaks}\n    }})\n    print(y ?? 0)\n}}"
+        )
+    };
+    let flat = |first: &str, second: &str| {
+        program(
+            "i64?",
+            &format!(
+                "        loop {{\n            if c == 0 {{ break {first} }}\n            c -= 1\n            break {second}\n        }}"
+            ),
+        )
+    };
+    let crossed = program(
+        "i64?",
+        "        outer: loop {\n            if c == 0 { break 1 }\n            c -= 1\n            let mut d = 1\n            loop {\n                if d == 0 { break }\n                d -= 1\n                break outer None\n            }\n        }",
+    );
+    for (row, source, widens, crosses) in [
+        ("a value, then None", flat("1", "None"), true, false),
+        (
+            "a written Some, then None",
+            flat("Some(1)", "None"),
+            false,
+            false,
+        ),
+        ("None, then a value", flat("None", "1"), false, false),
+        (
+            "a value, then None out of an inner loop",
+            crossed,
+            false,
+            true,
+        ),
+    ] {
+        let mut walk = Walk::default();
+        walk.program(&source);
+        assert_eq!(
+            walk.seen.contains(WIDENS),
+            widens,
+            "widening key, row `{row}`"
+        );
+        assert_eq!(
+            walk.seen.contains(CROSSES),
+            crosses,
+            "crossing key, row `{row}`"
+        );
+    }
 }
 
 /// GIVEN the programs of the seeds `0..FUZZ_SEEDS`, which the nightly reads and no others
