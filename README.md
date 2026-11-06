@@ -98,7 +98,8 @@ $ sisu run orders.sisu
 The first line, run again, updates Sisu. It checks the tarball against the
 release's `SHA256SUMS`, which shows that the file is whole and comes from the
 same release. It does not show who made the release. A bug report gives the
-output of `sisu --version --verbose`.
+output of `sisu --version --verbose`. To keep `sisu` on `PATH` in a new shell,
+add the `export` line to your shell's start-up file.
 
 To work on Sisu itself, build it from a clone:
 [Developing Sisu](docs/development.md).
