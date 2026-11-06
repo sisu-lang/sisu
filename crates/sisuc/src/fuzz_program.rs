@@ -751,8 +751,9 @@ mod tests {
     };
     use crate::diagnostic::Severity;
     use crate::fresh_names;
+    use crate::generate::coverage::FUZZ_SEEDS;
     use crate::generate::coverage::{SEARCH_SEEDS, item_text, search_seeds};
-    use crate::generate::{BoundSite, Generated, coverage, generate};
+    use crate::generate::{BoundSite, Generated, MAIN_ARGS_GATE, coverage, generate};
 
     /// A directory of the test's own, removed when dropped.
     struct Scratch(PathBuf);
@@ -1724,6 +1725,24 @@ mod tests {
             .expect("SISU_FUZZ_SEED should name a seed number");
         seed_passes(n, false);
         seed_passes(n, true);
+    }
+
+    /// GIVEN the first seed of `0..FUZZ_SEEDS` whose `main` takes `gap_args` and has a known value
+    /// site
+    /// WHEN the full judge reads the program, with all properties
+    /// THEN it passes, because `main` prints the length of `gap_args` after the known sites
+    #[test]
+    fn a_gated_main_should_pass_every_property() {
+        let gated = |n: u64| {
+            let data = seed(n);
+            let fold = data.iter().fold(0, |fold, byte| fold ^ byte);
+            fold % 8 == MAIN_ARGS_GATE
+                && (generate(&data).known.iter()).any(|k| matches!(k.answer, Answer::Value(_)))
+        };
+        let n = (0..FUZZ_SEEDS)
+            .find(|&n| gated(n))
+            .expect("some gated seed should hold a known value site");
+        crate::on_compiler_stack(|| program(&seed(n), &runtime()));
     }
 
     #[test]

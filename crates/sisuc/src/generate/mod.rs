@@ -127,7 +127,7 @@ const STATEMENT_MOST: u64 = (MAX_BOUND + 1) * (MAX_BOUND + 1) * (MAX_BOUND + 1);
 /// The remainder, modulo 8, of the XOR of all input bytes that gives `main` the parameter
 /// `gap_args`. The gate makes no draw. The value 1 is not 5, the gate of `leaves`. The pinned
 /// seeds have the remainders 5, 0 and 7, so none of them is gated.
-const MAIN_ARGS_GATE: u8 = 1;
+pub(crate) const MAIN_ARGS_GATE: u8 = 1;
 
 /// Accepts every byte string. When `data` runs out, every choice is the smallest valid one.
 pub(crate) fn generate(data: &[u8]) -> Generated {
