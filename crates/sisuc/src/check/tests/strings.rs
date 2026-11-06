@@ -108,7 +108,7 @@ fn interpolating_a_unit_should_report_the_part() {
     // A part that never finishes is accepted, and makes the interpolation never finish.
     codes(
         &with_items(&body(params, "print(\"a{ { return } }\")")),
-        &[(Code::PrintNever, (2, 11))],
+        &[(Code::PrintNever, (2, 15))],
     );
 }
 
@@ -908,4 +908,78 @@ fn string_call_arguments() {
         "fn main() {\n    print(string(nope))\n}",
         &[(Code::BindingNotFound, (2, 18))],
     );
+}
+
+/// A string literal that never finishes, as an argument of a call that fails for it, is
+/// underlined at its first part that never finishes, as it is as a value. A block, a `loop` and an
+/// array keep their own span.
+#[test]
+fn a_never_part_of_a_literal_as_an_argument_should_be_underlined_at_the_part() {
+    const V: Code = Code::NoValue;
+    const T: Code = Code::TypeArgument;
+    const P: Code = Code::PrintNever;
+    const L: Code = Code::LabeledArgument;
+    const N: Code = Code::BindingNotFound;
+    with_prelude();
+    let rows: &[(&str, &[(Code, &str)])] = &[
+        (r#"pick("a{return 1}b", "c")"#, &[(V, "return 1")]),
+        (r#"pick("c", "a{return 1}b")"#, &[(V, "return 1")]),
+        (
+            r#"pick("a{return 1}b", "x{return 2}y")"#,
+            &[(T, "return 1"), (V, "return 2")],
+        ),
+        (r#"let b = Some("p{return 1}q")"#, &[(T, "return 1")]),
+        (r#"let b = id("p{return 1}q")"#, &[(T, "return 1")]),
+        (
+            r#"let b: string? = Some("p{return 1}q")"#,
+            &[(V, "return 1")],
+        ),
+        (r#"let b = Ok("p{return 1}q")"#, &[(T, "return 1")]),
+        (r#"let b = R.A("p{return 1}q")"#, &[(T, "return 1")]),
+        (r#"let b = Bx().wrap("p{return 1}q")"#, &[(T, "return 1")]),
+        (
+            r#"let b = id(x: "p{return 1}q")"#,
+            &[(L, "(«x»"), (T, "return 1")],
+        ),
+        (r#"let b = id(("p{return 1}q"))"#, &[(T, "return 1")]),
+        (r#"let b = id("a{1}b{return 1}c")"#, &[(T, "return 1")]),
+        (r#"let b = id("a{ "b{return 1}" }c")"#, &[(T, "return 1")]),
+        (
+            r#"let b = id({ "p{return 1}q" })"#,
+            &[(T, r#"{ "p{return 1}q" }"#)],
+        ),
+        (r#"let b = id(["a{return 1}b"])"#, &[(V, "return 1")]),
+        (r#"pick(["a{return 1}b"], ["c"])"#, &[(V, "return 1")]),
+        ("let b = id(print(1))", &[(T, "print(1)")]),
+        ("pick(print(1), 2)", &[(V, "print(1)")]),
+        (r#"print("p{return 1}q")"#, &[(P, "return 1")]),
+        (r#"eprint("p{return 1}q")"#, &[(P, "return 1")]),
+        (r#"foo(["a{return 1}b"])"#, &[(V, "return 1")]),
+        (r#"foo([1, "a{return 1}b"])"#, &[(V, "return 1")]),
+        ("foo([print(1)])", &[(V, "print(1)")]),
+        (r#"dbg("p{return 1}q")"#, &[(P, "return 1")]),
+        (r#"let x = Cell(v: "a{return 1}b")"#, &[(T, "return 1")]),
+        (
+            r#"let x = Bx().wrap(v: "p{return 1}q")"#,
+            &[(L, "(«v»"), (T, "return 1")],
+        ),
+        (r#"let x = id(id("p{return 1}q"))"#, &[(T, "return 1")]),
+        (r#"let x = "a{ id("b{return 1}c") }d""#, &[(T, "return 1")]),
+        (r#"if let _l = Some("a{return 1}b") {}"#, &[(T, "return 1")]),
+        (
+            r#"let x = Some(1) ?? id("a{return 1}b")"#,
+            &[(V, "return 1")],
+        ),
+        (
+            r#"let x = id("a{nope}b{return 1}c")"#,
+            &[(N, "nope"), (T, "return 1")],
+        ),
+        (
+            r#"let x = id(loop { break "a{return 1}b" })"#,
+            &[(T, r#"loop { break "a{return 1}b" }"#)],
+        ),
+    ];
+    for &(stmt, expected) in rows {
+        codes_texts(&row_program(stmt), stmt, expected);
+    }
 }

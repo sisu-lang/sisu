@@ -747,6 +747,8 @@ impl Checker<'_> {
         let Some(b) = self.lookup(name) else {
             if let Some(place) = self.constant_place(span, name, change) {
                 return place;
+            } else if self.poisoned_use(name) {
+                // The item's own error is reported, and the name is no typo for a binding.
             } else if self.is_function(name) {
                 self.report(DiagnosticKind::AssignToFunction {
                     name: name.to_string(),

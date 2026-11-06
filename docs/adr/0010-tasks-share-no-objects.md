@@ -3,6 +3,11 @@
 Status: proposed, 2026-10-10. It is accepted when concurrency gets a milestone
 spec (roadmap, "Concurrency").
 
+Changed in part by [ADR 0046](0046-structs-replace-classes.md). A value that
+cannot be copied crosses by a move: its move-only parts move, and each other
+counted part is copied. A copy no longer needs to keep cycles, and it still
+keeps a record of each shared block.
+
 Concurrent code runs in tasks that share no heap objects. A value that crosses
 into another task, as a `spawn` capture, a channel `send` or a `join` result,
 is copied. Only channel and task handles are shared. We chose this so

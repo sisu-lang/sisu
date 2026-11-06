@@ -3,7 +3,7 @@
 //! `todo`, a keyword that panics as `panic` does, is checked here too.
 
 use super::array::pair;
-use super::expr::{path, typed};
+use super::expr::{path, read_jump, typed};
 use super::mut_args::Callee;
 use super::{Checked, Checker, Poisoned, has_remedy_flag, spread, type_of};
 use crate::ast;
@@ -121,12 +121,12 @@ impl Checker<'_> {
             return Err(Err(Poisoned::of(ret)));
         };
         self.refuse_mut(args, Callee::Unnamed(&function));
-        let checked = self.expr(&arg.value, expected);
+        let checked = read_jump(self.expr(&arg.value, expected));
         let error = match type_of(&checked) {
             Some(Type::UNIT) => wrong(PrintProblem::NoValue, arg.value.span),
             Some(Type::NEVER) => DiagnosticKind::PrintNever {
                 function,
-                at: arg.value.span,
+                at: self.never_at(arg.value.span),
             }
             .into(),
             _ => return Ok((arg, checked, labeled)),

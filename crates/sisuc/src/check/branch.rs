@@ -6,7 +6,7 @@ use super::generic::{Ahead, Rank};
 use super::pattern::{LetPattern, arm_key};
 use super::{
     Checked, CheckedBlock, Checker, Flag, Misfit, Poisoned, UNKNOWN, as_optional, block_type,
-    has_remedy_flag, is_kept, payload, spread, tail, value_span, wrap_block,
+    has_remedy_flag, is_jumped, is_kept, payload, spread, tail, value_span, wrap_block,
 };
 use crate::ast;
 use crate::diagnostic::{Diagnostic, DiagnosticKind, Unwrap};
@@ -181,8 +181,9 @@ impl Checker<'_> {
     /// Then a `never` branch, and after it an `Error` one, takes the others' type. A `T` and a
     /// `T?` join to `T?`, the `T` branches wrapped; other types that differ are reported. A join
     /// that fails for a branch that rejected `expected` is a mismatch too. With no branches, the
-    /// type is `never`. A branch with no expected type is quiet when the `if` or `match` is (see
-    /// `Body::quiet_at`).
+    /// type is `never`. A `never` join with a branch that only a failed `break` or `continue`
+    /// makes `never` is `Err` with that mark (see `Poisoned::jumped`): one such branch is enough.
+    /// A branch with no expected type is quiet when the `if` or `match` is (see `Body::quiet_at`).
     pub(super) fn join(
         &mut self,
         span: Span,
@@ -279,6 +280,14 @@ impl Checker<'_> {
             }
         }
         let ty = match ty {
+            // A join that is `never` only because a branch is (a failed `break` or `continue`)
+            // keeps that mark.
+            Some(Type::NEVER) if !mismatch && found.is_none() && blocks.iter().any(is_jumped) => {
+                Err(Poisoned {
+                    jumped: true,
+                    ..Poisoned::typed(Type::NEVER)
+                })
+            }
             Some(ty) if !mismatch && found.is_none() => Ok(ty),
             _ => Err(Poisoned {
                 ty: None,
@@ -288,6 +297,7 @@ impl Checker<'_> {
                 // report.
                 kept: ty.is_none() && blocks.iter().any(is_kept),
                 unwrapped: Flag::No,
+                jumped: false,
             }),
         };
         (blocks, ty)

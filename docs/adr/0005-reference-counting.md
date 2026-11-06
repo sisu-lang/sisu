@@ -1,5 +1,9 @@
 # Memory is managed by reference counting
 
+Status: changed in part by [ADR 0046](0046-structs-replace-classes.md), when
+classes go. Counts stay, as an implementation of copies, and a cycle of
+counted values can no longer be made.
+
 Every heap object carries a count of the references to it. Generated code
 adds 1 when a reference is copied and subtracts 1 when one is dropped, and
 the object is freed when the count reaches 0. We chose this so memory is
