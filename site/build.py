@@ -4,7 +4,8 @@
 # ///
 """Builds the site into site/_site and checks it.
 
-Usage: uv run --locked --script site/build.py [--out DIR] [--forbid-tk] [--test] [--categories] [--decisions]
+Usage: uv run --locked --script site/build.py [--out DIR] [--forbid-tk] [--test] [--categories]
+       [--decisions]
 
 Each site/src/<page>.html gives <page>.html: line 1 is its title, line 2 its meta description,
 the rest its body, filled in between _head.html and _foot.html. Each docs/diagnostics/<code>.md
@@ -59,11 +60,12 @@ class BuildError(Exception):
 
 
 def escape(text: str) -> str:
+    """Return `text` with `&`, `<` and `>` escaped for HTML."""
     return html.escape(text, quote=False)
 
 
 def read(path: str) -> str:
-    """The file at SITE/<path>."""
+    """Return the file at SITE/<path>."""
     try:
         return (SITE / path).read_text(encoding="utf-8")
     except OSError as e:
@@ -72,6 +74,7 @@ def read(path: str) -> str:
 
 @cache
 def commit() -> str:
+    """Return the short SHA of HEAD."""
     return subprocess.run(
         ["git", "-C", str(ROOT), "rev-parse", "--short=7", "HEAD"],
         capture_output=True,
@@ -81,7 +84,7 @@ def commit() -> str:
 
 
 def help_line(path: str) -> str:
-    """The text after `help: ` on the file's first line that starts with it."""
+    """Return the text after `help: ` on the file's first line that starts with it."""
     for line in read(path).splitlines():
         if line.startswith("help: "):
             return escape(line.removeprefix("help: "))
@@ -98,7 +101,7 @@ PLUS_LINE = re.compile(r" *\|( +\++)+")
 
 
 def colours(line: str, below: str) -> list[str]:
-    """The class of each character of `line`; `below` is the line after it."""
+    """Return the class of each character of `line`; `below` is the line after it."""
     cls = [""] * len(line)
 
     def paint(start: int, end: int, c: str) -> None:
@@ -119,7 +122,8 @@ def colours(line: str, below: str) -> list[str]:
                 paint(mark.start(1), mark.end(1), {"^": "e", "-": "g", "+": "add"}[mark[1][0]])
                 pos = mark.end()
         elif m[1].endswith("|") and PLUS_LINE.fullmatch(below):
-            # The markers count display columns, as annotate-snippets does: a wide character takes two.
+            # The markers count display columns, as annotate-snippets does: a wide character takes
+            # two.
             # shortcut: zero-width characters count as one column; upgrade when an output holds one.
             starts = list(
                 accumulate(
@@ -158,11 +162,12 @@ STATES = {
 
 
 def adr_files() -> list[Path]:
+    """Return the ADR files under docs/adr/, sorted."""
     return sorted((ROOT / "docs/adr").glob("[0-9][0-9][0-9][0-9]-*.md"))
 
 
 def explanation_codes() -> list[str]:
-    """The codes that docs/diagnostics/ explains, without the retired ones, which the site leaves out."""
+    """Return the codes that docs/diagnostics/ explains, without the retired ones."""
     return sorted(
         path.stem
         for path in (ROOT / "docs/diagnostics").glob("[EW][0-9][0-9][0-9][0-9].md")
@@ -174,11 +179,12 @@ def explanation_codes() -> list[str]:
 
 
 def diagnostic_count() -> str:
+    """Return the number of explained codes, as text."""
     return str(len(explanation_codes()))
 
 
 def status_areas() -> list[dict[str, Any]]:
-    """The areas of data/status.toml, each with its features."""
+    """Return the areas of data/status.toml, each with its features."""
     try:
         areas = tomllib.loads(read("data/status.toml"))["area"]
     except (tomllib.TOMLDecodeError, KeyError) as e:
@@ -199,7 +205,10 @@ def status_areas() -> list[dict[str, Any]]:
 
 
 def status_board() -> str:
-    """The Home page's board: a bar, counts and the lists for each area, all closed. A state with no feature has no bar part and no count."""
+    """Return the Home page's board: a bar, counts and the lists for each area, all closed.
+
+    A state with no feature has no bar part and no count.
+    """
 
     def items(area: dict[str, Any], state: str) -> list[str]:
         return [expand(f["text"], {}) for f in area["feature"] if f["state"] == state]
@@ -241,7 +250,7 @@ def status_board() -> str:
 
 
 def status_tables() -> str:
-    """The Status page's sections: a heading, an introduction and a table for each area."""
+    """Return the Status page's sections: a heading, an introduction and a table for each area."""
     out = []
     for area in status_areas():
         rows = []
@@ -252,7 +261,8 @@ def status_tables() -> str:
                 for text, path in f["notes"]
             )
             rows.append(
-                f'<tr><td>{expand(f["text"], {})}</td><td><span class="st {cls}">{label}</span></td><td>{links}</td></tr>'
+                f"<tr><td>{expand(f['text'], {})}</td>"
+                f'<td><span class="st {cls}">{label}</span></td><td>{links}</td></tr>'
             )
         body = "\n          ".join(rows)
         out.append(f'''<h2 id="{area["id"]}">{escape(area["name"])}</h2>
@@ -267,16 +277,20 @@ def status_tables() -> str:
 
 
 def code_fence(
-    renderer: RendererProtocol,
+    _renderer: RendererProtocol,
     tokens: Sequence[Token],
     idx: int,
-    options: OptionsDict,
-    env: EnvType,
+    _options: OptionsDict,
+    _env: EnvType,
 ) -> str:
+    """Render a fenced or indented code block as a figure."""
     token = tokens[idx]
     if "html" in token.meta:  # an example of the language reference, or one of its companion blocks
         return token.meta["html"]
-    return f'<figure class="code"><pre data-lang="{html.escape(token.info.strip())}">{escape(token.content)}</pre></figure>\n'
+    return (
+        f'<figure class="code"><pre data-lang="{html.escape(token.info.strip())}">'
+        f"{escape(token.content)}</pre></figure>\n"
+    )
 
 
 # No raw HTML: `sisu explain` prints `Option<T>` as written, and the page must show the same.
@@ -288,7 +302,7 @@ CODE_LINK = re.compile(r"([EW]\d{4})\.md(#.*)?")
 
 
 def plain(inline: Token) -> str:
-    """The text of an `inline` token, without its markup."""
+    """Return the text of an `inline` token, without its markup."""
     return "".join(
         " " if child.type in ("softbreak", "hardbreak") else child.content
         # pyrefly: ignore[not-iterable]  an `inline` token always has children
@@ -297,7 +311,7 @@ def plain(inline: Token) -> str:
 
 
 def explanation_link(href: str) -> str:
-    """Where a link in docs/diagnostics/ goes on the site: another code's page, or the file on GitHub."""
+    """Say where a link in docs/diagnostics/ goes: another code's page, or the file on GitHub."""
     if m := CODE_LINK.fullmatch(href):
         return f"{m[1]}.html{m[2] or ''}"
     if SCHEME.match(href) or href.startswith(("#", "/")):
@@ -307,7 +321,7 @@ def explanation_link(href: str) -> str:
 
 
 def explanation_html(code: str, markdown: str, err: str) -> str:
-    """The explanation without its heading, with what sisu says about Broken placed before Fixed."""
+    """Return the explanation without its heading, with what sisu says placed before Fixed."""
     tokens = MD.parse(markdown)
     if tokens and tokens[0].tag == "h1":
         tokens = tokens[3:]
@@ -318,11 +332,15 @@ def explanation_html(code: str, markdown: str, err: str) -> str:
     before, fixed, after = MD.renderer.render(tokens, MD.options, {}).partition("<h2>Fixed</h2>")
     if not fixed:
         raise BuildError(f'{code} has no "## Fixed"')
-    return f'{before}<h2>What sisu says</h2><figure class="code"><pre>{diag_html(err)}</pre></figure>\n{fixed}{after}'
+    return (
+        f"{before}<h2>What sisu says</h2>"
+        f'<figure class="code"><pre>{diag_html(err)}</pre></figure>\n'
+        f"{fixed}{after}"
+    )
 
 
 def diagnostics_of(json_text: str, code: str) -> list[dict[str, Any]]:
-    """The diagnostics with code `code` in sisu's JSON output, one object per line."""
+    """Return the diagnostics with code `code` in sisu's JSON output, one object per line."""
     records = [json.loads(line) for line in json_text.splitlines() if line.strip()]
     return [r for r in records if r.get("kind") == "diagnostic" and r.get("code") == code]
 
@@ -333,11 +351,12 @@ def fixes(json_text: str, code: str) -> list[bool]:
 
 
 def explanation(code: str) -> str:
+    """Return the Markdown file of the explanation of `code`."""
     return (ROOT / f"docs/diagnostics/{code}.md").read_text(encoding="utf-8")
 
 
 def title(code: str, markdown: str) -> str:
-    """The Markdown of the explanation's title, the heading after `CODE: `, its first letter upper-cased."""
+    """Return the Markdown of the explanation's title: the heading after `CODE: `, upper-cased."""
     heading = markdown.partition("\n")[0]
     if not heading.startswith(f"# {code}: "):
         raise BuildError(f'{code} does not start with "# {code}: "')
@@ -346,7 +365,7 @@ def title(code: str, markdown: str) -> str:
 
 
 def categories() -> list[dict[str, Any]]:
-    """The categories of data/categories.toml, in order."""
+    """Return the categories of data/categories.toml, in order."""
     try:
         found = tomllib.loads(read("data/categories.toml"))["category"]
     except (tomllib.TOMLDecodeError, KeyError) as e:
@@ -371,7 +390,7 @@ def category_problems() -> Iterator[str]:
 
 
 def category_links(page: str, code: str | None = None) -> str:
-    """The aside's category list, linking `page#<id>`, with `code`'s category marked."""
+    """Return the aside's category list, linking `page#<id>`, with `code`'s category marked."""
     out = []
     for category in categories():
         current = ' aria-current="page"' if code in category["codes"] else ""
@@ -392,17 +411,19 @@ def diagnostics_index() -> str:
                 name = title(code, explanation(code))
                 words = html.escape(plain(MD.parseInline(name)[0]).lower())
                 rows.append(
-                    f'<li data-code="{code}" data-words="{words}"><a href="diagnostics/{code}.html">'
+                    f'<li data-code="{code}" data-words="{words}">'
+                    f'<a href="diagnostics/{code}.html">'
                     f'<span class="num">{code}</span><b>{MD.renderInline(name)}</b></a></li>'
                 )
         out.append(
-            f'<h2 id="{category["id"]}">{escape(category["name"])}</h2>\n<ul class="rows">{"".join(rows)}</ul>'
+            f'<h2 id="{category["id"]}">{escape(category["name"])}</h2>\n'
+            f'<ul class="rows">{"".join(rows)}</ul>'
         )
     return "\n".join(out)
 
 
 def code_page(code: str) -> str:
-    """The page diagnostics/<code>.html."""
+    """Return the page diagnostics/<code>.html."""
     markdown = explanation(code)
     name = title(code, markdown)
     json_text = read(f"programs/explanations/{code}.json")
@@ -435,7 +456,7 @@ def code_page(code: str) -> str:
 
 
 def reference_list() -> list[dict[str, Any]]:
-    """The pages of data/reference.toml, in sidebar order, each with its file and description."""
+    """Return the pages of data/reference.toml, in sidebar order, with file and description."""
     try:
         pages = tomllib.loads(read("data/reference.toml"))["page"]
     except (tomllib.TOMLDecodeError, KeyError) as e:
@@ -469,7 +490,10 @@ IN_DEVELOPMENT = ' <span class="soon">In development</span>'
 
 
 def reference_link(href: str) -> str:
-    """Where a link in docs/reference/ goes on the site: a language reference page, a diagnostic, or the file on GitHub."""
+    """Say where a link in docs/reference/ goes.
+
+    It goes to a language reference page, a diagnostic, or the file on GitHub.
+    """
     if m := REF_PAGE_LINK.fullmatch(href):
         return f"{'index' if m[1] == 'README' else m[1]}.html{m[2] or ''}"
     if m := REF_CODE_LINK.fullmatch(href):
@@ -481,7 +505,7 @@ def reference_link(href: str) -> str:
 
 
 def markers(source: str) -> list[str]:
-    """The `error[Ennnn]` and `warning[Wnnnn]` trailing comments of an example, in order."""
+    """Return the `error[Ennnn]` and `warning[Wnnnn]` trailing comments of an example, in order."""
     found = []
     # As Rust's str::lines: split only at a newline, and drop a carriage return before it.
     for line in source.split("\n"):
@@ -496,9 +520,11 @@ def markers(source: str) -> list[str]:
 
 
 def example_info(info: str) -> tuple[list[str], list[str] | None]:
-    r"""The words of a fence's info string and its `args="..."` list, read as the reference test
-    reads them: words split at spaces. The test reports faults, and it faults a `\\` or `&` in
-    an example's info string, so the string has nothing to decode.
+    r"""Return the words of a fence's info string and its `args="..."` list.
+
+    They are read as the reference test reads them: words split at spaces. The test reports
+    faults, and it faults a `\\` or `&` in an example's info string, so the string has nothing
+    to decode.
     """
     words: list[str] = []
     args: list[str] | None = None
@@ -517,8 +543,10 @@ def example_info(info: str) -> tuple[list[str], list[str] | None]:
 def example_html(
     token: Token, words: list[str], args: list[str] | None, companions: list[Token]
 ) -> str:
-    """An example as one figure: its caption, the program and a panel for each companion block,
-    then a line for each diagnostic marker that links its page. `words` and `args` are its info.
+    """Return an example as one figure.
+
+    The figure holds its caption, the program and a panel for each companion block, then a line
+    for each diagnostic marker that links its page. `words` and `args` are its info.
     """
     caption = (
         "In development"
@@ -529,23 +557,30 @@ def example_html(
     )
     cap = f'<figcaption class="cap">{escape(caption)}</figcaption>' if caption else ""
     panels = "".join(
-        f'<figure class="panel"><figcaption class="cap">{c.info.strip()}</figcaption><pre data-lang="out">{escape(c.content)}</pre></figure>'
+        f'<figure class="panel"><figcaption class="cap">{c.info.strip()}</figcaption>'
+        f'<pre data-lang="out">{escape(c.content)}</pre></figure>'
         for c in companions
     )
     # A pending example's markers are not checked, so they link no page.
     notes: list[str] = [] if "pending" in words else markers(token.content)
     lines = "".join(
-        f'<p class="marker"><a href="../diagnostics/{code}.html">{code}</a>: what this {"error" if code[0] == "E" else "warning"} means</p>\n'
+        f'<p class="marker"><a href="../diagnostics/{code}.html">{code}</a>: '
+        f"what this {'error' if code[0] == 'E' else 'warning'} means</p>\n"
         for code in notes
     )
-    return f'<figure class="code">{cap}<pre data-lang="sisu">{escape(token.content)}</pre>{panels}</figure>\n{lines}'
+    return (
+        f'<figure class="code">{cap}<pre data-lang="sisu">{escape(token.content)}</pre>'
+        f"{panels}</figure>\n{lines}"
+    )
 
 
 SITE_CODE_LINK = re.compile(r"\.\./diagnostics/([EW]\d{4})\.html")
 
 
-def mark_rules(tokens: list[Token]) -> None:
-    """A paragraph that is only bold text, directly before a bullet list, labels a list of rules:
+def mark_rules(tokens: list[Token]) -> None:  # noqa: C901  one scan of the tokens, with one branch for each token kind
+    """Label each list of rules in `tokens`.
+
+    A paragraph that is only bold text, directly before a bullet list, labels a list of rules:
     the paragraph gets the class rules-h and the list rules. In such a list, the diagnostic links
     that end an item, each with its code as text, get the class tag.
     """
@@ -578,7 +613,7 @@ def mark_rules(tokens: list[Token]) -> None:
                 if kids[end - 1].type == "text" and not kids[end - 1].content.strip():
                     end -= 1
                 elif (
-                    end >= 3
+                    end >= 3  # noqa: PLR2004  a link is three tokens
                     and kids[end - 1].type == "link_close"
                     and kids[end - 2].type == "text"
                     and (m := SITE_CODE_LINK.fullmatch(str(kids[end - 3].attrGet("href"))))
@@ -590,9 +625,13 @@ def mark_rules(tokens: list[Token]) -> None:
                     break
 
 
-def reference_html(markdown: str, path: Path) -> tuple[str, list[tuple[int, str, str, bool]], bool]:
-    """A language reference page without its `#` title; its `##` and `###` headings as (level, id,
-    inline HTML, tagged); and whether the page is tagged "In development".
+def reference_html(  # noqa: C901, PLR0912  one scan of the tokens, with one branch for each token kind
+    markdown: str, path: Path
+) -> tuple[str, list[tuple[int, str, str, bool]], bool]:
+    """Return a language reference page without its `#` title, its headings and its tag.
+
+    The headings are the `##` and `###` headings as (level, id, inline HTML, tagged). The tag
+    tells whether the page is tagged "In development".
     A heading is tagged when its own text holds a pending example; the page, when it has examples
     and all are pending. The page grammar is the one the reference test checks.
     """
@@ -650,7 +689,7 @@ def reference_html(markdown: str, path: Path) -> tuple[str, list[tuple[int, str,
 
 
 def reference_title(markdown: str) -> str:
-    """The inline Markdown of the page's `#` title."""
+    """Return the inline Markdown of the page's `#` title."""
     heading = markdown.partition("\n")[0]
     if not heading.startswith("# "):
         raise BuildError('does not start with a "# " heading')
@@ -658,8 +697,9 @@ def reference_title(markdown: str) -> str:
 
 
 def reference_pages(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Each page of `pages` read from docs/reference/ and rendered once: its entry with its title,
-    the title's id, its body, its headings and its tag.
+    """Return each page of `pages` read from docs/reference/ and rendered once.
+
+    A page is its entry with its title, the title's id, its body, its headings and its tag.
     """
     prepared = []
     for page in pages:
@@ -684,9 +724,10 @@ def reference_pages(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def reference_page(index: int, pages: list[dict[str, Any]]) -> str:
-    """The page reference/<file>.html of pages[index], from reference_pages: the sidebar of all
-    pages, the page, Previous and Next, and its "On this page" list. The Overview, pages[0], also
-    has a card for each other page.
+    """Return the page reference/<file>.html of pages[index], from reference_pages.
+
+    The page has the sidebar of all pages, the page, Previous and Next, and its "On this page"
+    list. The Overview, pages[0], also has a card for each other page.
     """
 
     def href(i: int) -> str:
@@ -694,7 +735,8 @@ def reference_page(index: int, pages: list[dict[str, Any]]) -> str:
 
     page = pages[index]
     side = "".join(
-        f'<li><a href="{href(i)}"{' aria-current="page"' if i == index else ""}>{MD.renderInline(p["title"])}{IN_DEVELOPMENT if p["tagged"] else ""}</a></li>'
+        f'<li><a href="{href(i)}"{' aria-current="page"' if i == index else ""}>'
+        f"{MD.renderInline(p['title'])}{IN_DEVELOPMENT if p['tagged'] else ''}</a></li>"
         for i, p in enumerate(pages)
     )
     toc = "".join(
@@ -702,7 +744,8 @@ def reference_page(index: int, pages: list[dict[str, Any]]) -> str:
         for level, slug, text, _ in page["headings"]
     )
     pager = "".join(
-        f'<a href="{href(i)}" rel="{rel}"><span>{label}</span>{MD.renderInline(pages[i]["title"])}</a>'
+        f'<a href="{href(i)}" rel="{rel}"><span>{label}</span>'
+        f"{MD.renderInline(pages[i]['title'])}</a>"
         for i, rel, label in ((index - 1, "prev", "Previous"), (index + 1, "next", "Next"))
         if 0 <= i < len(pages)
     )
@@ -711,7 +754,8 @@ def reference_page(index: int, pages: list[dict[str, Any]]) -> str:
         if index
         else '<ul class="cards">'
         + "".join(
-            f'<li><a href="{href(i)}"><b>{MD.renderInline(p["title"])}</b><span>{escape(p["description"])}</span></a></li>'
+            f'<li><a href="{href(i)}"><b>{MD.renderInline(p["title"])}</b>'
+            f"<span>{escape(p['description'])}</span></a></li>"
             for i, p in enumerate(pages)
             if i
         )
@@ -728,7 +772,8 @@ def reference_page(index: int, pages: list[dict[str, Any]]) -> str:
         "pager": f'<nav class="pager" aria-label="Previous and next page">{pager}</nav>'
         if pager
         else "",
-        "toc": f'<nav class="ref-toc" aria-label="On this page"><p class="ref-h">On this page</p><ol>{toc}</ol></nav>'
+        "toc": f'<nav class="ref-toc" aria-label="On this page"><p class="ref-h">On this page</p>'
+        f"<ol>{toc}</ol></nav>"
         if toc
         else "",
     }
@@ -744,27 +789,33 @@ def reference_page(index: int, pages: list[dict[str, Any]]) -> str:
 
 BENCHMARKS = "docs/benchmarks.md"
 BENCH_HEADER = ["Language", "Wall (s)", "CPU (s)", "Peak RSS (MiB)", "Binary (KiB)", "Build (s)"]
-# The table's columns, which is not the order of the Markdown's rows: that runs from fastest to slowest.
+# The table's columns, which is not the order of the Markdown's rows: that runs from fastest to
+# slowest.
 BENCH_LANGUAGES = ["Sisu", "C", "Rust", "Go", "Java", "Python"]
 
 
 def benchmarks_md() -> str:
+    """Return the text of docs/benchmarks.md."""
     return read(f"../{BENCHMARKS}")
 
 
 def bench_programs() -> list[str]:
-    """The programs scripts/bench.sh runs by default. bench/features/ holds CodSpeed-only programs."""
+    """Return the programs scripts/bench.sh runs by default.
+
+    bench/features/ holds CodSpeed-only programs.
+    """
     found = re.search(r"\|\| benchmarks=\(([^)]*)\)", read("../scripts/bench.sh"))
     if not found:
         raise BuildError("scripts/bench.sh: no default benchmarks=(...) list")
     return sorted(found[1].split())
 
 
-def benchmark_tables(
+def benchmark_tables(  # noqa: C901, PLR0912  one scan of the tokens, with one branch for each check
     markdown: str, expected: list[str] | None = None
 ) -> dict[str, dict[str, dict[str, str]]]:
-    """Program -> language -> column -> cell text, from each `### <program>` table under `## Results`.
-    With `expected`, the programs must be exactly those.
+    """Return program -> language -> column -> cell text, from each `### <program>` table.
+
+    The tables are under `## Results`. With `expected`, the programs must be exactly those.
     """
     tables: dict[str, dict[str, dict[str, str]]] = {}
     programs: list[str] = []
@@ -796,12 +847,14 @@ def benchmark_tables(
     if expected is not None and sorted(tables) != sorted(expected):
         missing, extra = sorted(set(expected) - set(tables)), sorted(set(tables) - set(expected))
         raise BuildError(
-            f"{BENCHMARKS}: the programs differ from the directories under bench/: missing {missing}, extra {extra}"
+            f"{BENCHMARKS}: the programs differ from the directories under bench/: "
+            f"missing {missing}, extra {extra}"
         )
     return tables
 
 
 def benchmark_rows(program: str, rows: list[list[str]]) -> dict[str, dict[str, str]]:
+    """Return language -> column -> cell text for the rows of one table, after checking them."""
     where = f"{BENCHMARKS}: table {program!r}"
     if rows[0] != BENCH_HEADER:
         raise BuildError(f"{where} has the header {rows[0]}, not {BENCH_HEADER}")
@@ -814,7 +867,7 @@ def benchmark_rows(program: str, rows: list[list[str]]) -> dict[str, dict[str, s
 
 
 def seconds(program: str, language: str, column: str, cell: str) -> Decimal:
-    """A cell that a chart draws, which must be a number."""
+    """Return a cell that a chart draws, which must be a number."""
     if not re.fullmatch(r"\d+(\.\d+)?", cell):
         raise BuildError(
             f"{BENCHMARKS}: table {program!r}: {language}'s {column} is {cell!r}, not a number"
@@ -823,18 +876,21 @@ def seconds(program: str, language: str, column: str, cell: str) -> Decimal:
 
 
 def hello_note(table: dict[str, dict[str, str]]) -> str:
-    """The foot of the hello chart: the one Wall time all its programs share, or all but one."""
+    """Return the foot of the hello chart: the Wall time that all its programs share.
+
+    One program may differ.
+    """
     cells = {language: row["Wall (s)"] for language, row in table.items()}
     # Decimals, so that 0.0 and 0.00 are one time; the note shows the first spelling.
     times = {
         language: seconds("hello", language, "Wall (s)", cell) for language, cell in cells.items()
     }
     (common, _), *rest = Counter(times.values()).most_common()
-    common = next(cells[l] for l, t in times.items() if t == common)
+    common = next(cells[lang] for lang, t in times.items() if t == common)
     if not rest:
         odd = ""
     elif len(rest) == 1 and rest[0][1] == 1:
-        language = next(l for l, t in times.items() if t == rest[0][0])
+        language = next(lang for lang, t in times.items() if t == rest[0][0])
         odd = f" except {language}'s, {cells[language]} s"
     else:
         raise BuildError(
@@ -844,10 +900,15 @@ def hello_note(table: dict[str, dict[str, str]]) -> str:
 
 
 def chart(program: str, table: dict[str, dict[str, str]]) -> str:
-    """One bar chart: the program's Wall time, or its Build time for hello. Python is text, off the scale."""
+    """Return one bar chart: the program's Wall time, or its Build time for hello.
+
+    Python is text, off the scale.
+    """
     column = "Build (s)" if program == "hello" else "Wall (s)"
     values = {
-        l: seconds(program, l, column, row[column]) for l, row in table.items() if l != "Python"
+        lang: seconds(program, lang, column, row[column])
+        for lang, row in table.items()
+        if lang != "Python"
     }
     largest = max(values.values())
     if not largest:
@@ -857,14 +918,16 @@ def chart(program: str, table: dict[str, dict[str, str]]) -> str:
         and seconds(program, "Python", column, table["Python"][column]) <= largest
     ):
         raise BuildError(
-            f"{BENCHMARKS}: table {program!r}: Python's {column} is not above every other, so it is not off the scale"
+            f"{BENCHMARKS}: table {program!r}: Python's {column} is not above every other, "
+            "so it is not off the scale"
         )
 
     def li(language: str) -> str:
         width = (values[language] / largest * 100).quantize(Decimal("0.1"), ROUND_HALF_UP)
         cls = ' class="sisu"' if language == "Sisu" else ""
         return (
-            f'<li{cls}><span>{language}</span><span class="track"><i style="width:{str(width).removesuffix(".0")}%"></i></span>'
+            f'<li{cls}><span>{language}</span><span class="track">'
+            f'<i style="width:{str(width).removesuffix(".0")}%"></i></span>'
             f'<span class="val">{table[language][column]} s</span></li>'
         )
 
@@ -878,7 +941,8 @@ def chart(program: str, table: dict[str, dict[str, str]]) -> str:
     )
     items = [li(language) for language in sorted(values, key=values.__getitem__)]
     items.append(
-        f'<li class="off"><span>Python</span><span class="track">{track}</span><span class="val">{val}</span></li>'
+        f'<li class="off"><span>Python</span><span class="track">{track}</span>'
+        f'<span class="val">{val}</span></li>'
     )
     unit = (
         "build time, seconds: compile one file and link it"
@@ -887,11 +951,14 @@ def chart(program: str, table: dict[str, dict[str, str]]) -> str:
     )
     foot = f'<p class="foot">{hello_note(table)}</p>' if program == "hello" else ""
     body = "\n        ".join(items)
-    return f'<figure class="chart"><h3>{escape(program)}</h3><p class="unit">{unit}</p><ol>\n        {body}\n      </ol>{foot}</figure>'
+    return (
+        f'<figure class="chart"><h3>{escape(program)}</h3><p class="unit">{unit}</p><ol>\n'
+        f"        {body}\n      </ol>{foot}</figure>"
+    )
 
 
 def bench_charts(markdown: str, expected: list[str] | None = None) -> str:
-    """A chart for each program, in the document's order with hello last."""
+    """Return a chart for each program, in the document's order with hello last."""
     tables = benchmark_tables(markdown, expected)
     if "hello" not in tables:
         raise BuildError(f"{BENCHMARKS}: no table for 'hello'")
@@ -901,12 +968,17 @@ def bench_charts(markdown: str, expected: list[str] | None = None) -> str:
 
 
 def bench_table(markdown: str, expected: list[str] | None = None) -> str:
-    """The results table: a row for each program's Wall time, and for hello's Build time after hello's."""
+    """Return the results table: a row for each program's Wall time.
+
+    The Build time of hello has a row after the Wall time of hello.
+    """
 
     def row(label: str, table: dict[str, dict[str, str]], column: str) -> str:
         cells = [
-            f"<b>{escape(table[l][column])}</b>" if l == "Sisu" else escape(table[l][column])
-            for l in BENCH_LANGUAGES
+            f"<b>{escape(table[lang][column])}</b>"
+            if lang == "Sisu"
+            else escape(table[lang][column])
+            for lang in BENCH_LANGUAGES
         ]
         return f"<tr><td>{label}</td>" + "".join(f'<td class="n">{c}</td>' for c in cells) + "</tr>"
 
@@ -915,7 +987,7 @@ def bench_table(markdown: str, expected: list[str] | None = None) -> str:
         rows.append(row(f"<code>{escape(program)}</code>", table, "Wall (s)"))
         if program == "hello":
             rows.append(row("<code>hello</code>, build", table, "Build (s)"))
-    head = "".join(f'<th class="n">{l}</th>' for l in BENCH_LANGUAGES)
+    head = "".join(f'<th class="n">{lang}</th>' for lang in BENCH_LANGUAGES)
     body = "\n        ".join(rows)
     return f"""<div class="tbl-wrap"><table class="tbl">
       <thead><tr><th>Benchmark</th>{head}</tr></thead>
@@ -926,7 +998,7 @@ def bench_table(markdown: str, expected: list[str] | None = None) -> str:
 
 
 def results_note(markdown: str) -> str:
-    """The first paragraph between `## Results` and the next heading, rendered."""
+    """Return the first paragraph between `## Results` and the next heading, rendered."""
     tokens = MD.parse(markdown)
     in_results = False
     for i, token in enumerate(tokens):
@@ -959,7 +1031,7 @@ DIRECTIVE = re.compile(r"\{\{([\w-]+)((?: [^\s{}]+)*)\}\}")
 
 
 def expand(text: str, context: dict[str, str]) -> str:
-    """Replaces each `{{name arg…}}` once; what it substitutes is not expanded again."""
+    """Replace each `{{name arg…}}` once; what it substitutes is not expanded again."""
 
     def one(m: re.Match[str]) -> str:
         name = m[1]
@@ -977,8 +1049,8 @@ def expand(text: str, context: dict[str, str]) -> str:
 
 
 def split_source(text: str) -> tuple[str, str, str]:
-    """The title, the description and the body of a src page, without the editors' comment lines."""
-    if text.count("\n") < 2:
+    """Return the title, the description and the body of a src page, without comment lines."""
+    if text.count("\n") < 2:  # noqa: PLR2004  a title line and a description line
         raise BuildError("needs a title line, a description line and the body")
     name, description, rest = text.split("\n", 2)
     return (
@@ -988,10 +1060,10 @@ def split_source(text: str) -> tuple[str, str, str]:
     )
 
 
-def assemble(
+def assemble(  # noqa: PLR0913  one call site per page, and the keywords name each part
     body: str, *, title: str, description: str, page: str, depth: int, context: dict[str, str]
 ) -> str:
-    """Head, body and foot, with `page`'s nav link marked current."""
+    """Return the head, the body and the foot, with `page`'s nav link marked current."""
     # 404.html is served at any depth, so its links start at the site root.
     root = "/sisu/" if page == "404.html" else "../" * depth
     link = f'<a href="{{{{root}}}}{page}">'
@@ -1013,6 +1085,7 @@ MARKER = ".built-by-build-py"
 
 
 def build(out: Path) -> None:
+    """Build the site into `out`."""
     dest = out.resolve()
     if SITE.is_relative_to(dest) or (
         dest.is_relative_to(SITE) and not dest.is_relative_to(SITE / "_site")
@@ -1072,7 +1145,7 @@ UNTAGGED_PRE = re.compile(r"<pre\b(?![^>]*\bdata-lang=)[^>]*>.*?</pre>", re.DOTA
 
 
 def visible(text: str) -> str:
-    """The page's text outside tags and outside <pre>, <code>, <script> and <style>."""
+    """Return the page's text outside tags and outside <pre>, <code>, <script> and <style>."""
     return re.sub(r"<[^>]*>", " ", INLINE_TAG.sub("", HIDDEN.sub(" ", text)))
 
 
@@ -1112,6 +1185,7 @@ class Tags(HTMLParser):
 def link_problems(
     out: Path, page: Path, links: list[tuple[str, str]], ids: dict[Path, set[str]]
 ) -> Iterator[str]:
+    """Yield the problems of the links of `page`."""
     for _, target in links:
         if target.startswith(BLOB):
             path, _, anchor = target.removeprefix(BLOB).partition("#")
@@ -1142,9 +1216,10 @@ def link_problems(
             yield f"missing anchor {target}"
 
 
-def page_problems(
-    out: Path, page: Path, text: str, tags: Tags, ids: dict[Path, set[str]], forbid_tk: bool
+def page_problems(  # noqa: C901, PLR0913  one check after the other, as the page is read once
+    out: Path, page: Path, text: str, tags: Tags, ids: dict[Path, set[str]], *, forbid_tk: bool
 ) -> Iterator[str]:
+    """Yield the problems of one built page."""
     yield from link_problems(out, page, tags.links, ids)
     for tag, url in tags.links:
         if tag in ("link", "script", "img") and FOREIGN.match(url):
@@ -1174,7 +1249,7 @@ def page_problems(
 
 
 def css_problems(out: Path, base: Path, css: str) -> Iterator[str]:
-    """The problems of the CSS text `css`, whose relative URLs resolve from the directory `base`."""
+    """Yield the problems of the CSS text `css`, whose relative URLs start at `base`."""
     for m in CSS_URL.finditer(css):
         target = m[2] if m[2] is not None else m[4]
         if target.startswith("data:"):
@@ -1235,7 +1310,7 @@ def check_site(out: Path, *, forbid_tk: bool = False) -> list[str]:
     for page, text in texts.items():
         found += [
             f"{page.relative_to(out)}: {p}"
-            for p in page_problems(out, page, text, tags[page], ids, forbid_tk)
+            for p in page_problems(out, page, text, tags[page], ids, forbid_tk=forbid_tk)
         ]
         if page == out / "decisions.html":
             found += [f"decisions.html: {p}" for p in adr_problems(text)]
@@ -1249,6 +1324,7 @@ def check_site(out: Path, *, forbid_tk: bool = False) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
+    """Run the command line `argv`, and return the exit code."""
     parser = argparse.ArgumentParser(description="Build the site and check it.")
     parser.add_argument(
         "--out", type=Path, default=SITE / "_site", help="where to build (default: site/_site)"

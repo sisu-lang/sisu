@@ -268,7 +268,7 @@ def reference_dir(
         (folder / f"{stem}.md").write_text(text, encoding="utf-8")
     entries = [{"file": stem, "description": f"About {stem}."} for stem in (listed or pages)]
     test.enterContext(mock.patch.object(build, "REFERENCE", folder))
-    test.enterContext(mock.patch.object(build, "reference_list", lambda: entries))
+    test.enterContext(mock.patch.object(build, "reference_list", return_value=entries))
     return entries
 
 
@@ -852,9 +852,11 @@ class Build(unittest.TestCase):
             ("a program without a table", fib + "### sieve\n\nNo table yet.\n\n", "sieve"),
         ]
         for name, table, program in cases:
-            with self.subTest(name):
-                with self.assertRaisesRegex(build.BuildError, rf"docs/benchmarks\.md.*{program}"):
-                    build.benchmark_tables(bench_md(table))
+            with (
+                self.subTest(name),
+                self.assertRaisesRegex(build.BuildError, rf"docs/benchmarks\.md.*{program}"),
+            ):
+                build.benchmark_tables(bench_md(table))
         expected = ["fib", "sieve"]
         with self.assertRaisesRegex(
             build.BuildError, r"docs/benchmarks\.md.*missing \['sieve'\], extra \[\]"
@@ -903,9 +905,11 @@ class Build(unittest.TestCase):
             ("Python level with Go", md_table("fib", FIB | {"Python": "0.28"}), hello, "fib"),
         ]
         for name, fib, hello, program in cases:
-            with self.subTest(name):
-                with self.assertRaisesRegex(build.BuildError, rf"docs/benchmarks\.md.*{program}"):
-                    build.bench_charts(bench_md(fib, hello))
+            with (
+                self.subTest(name),
+                self.assertRaisesRegex(build.BuildError, rf"docs/benchmarks\.md.*{program}"),
+            ):
+                build.bench_charts(bench_md(fib, hello))
 
     def test_chart_widths(self) -> None:
         charts = build.bench_charts(
@@ -987,9 +991,11 @@ class Build(unittest.TestCase):
             ("two differ", HELLO | {"Java": "0.01", "Go": "0.01"}),
             ("a split", {k: "0.01" if k in ("C", "Go", "Java") else "0.00" for k in HELLO}),
         ]:
-            with self.subTest(name):
-                with self.assertRaisesRegex(build.BuildError, r"docs/benchmarks\.md.*hello"):
-                    build.bench_charts(bench_md(md_table("hello", walls, HELLO_BUILDS)))
+            with (
+                self.subTest(name),
+                self.assertRaisesRegex(build.BuildError, r"docs/benchmarks\.md.*hello"),
+            ):
+                build.bench_charts(bench_md(md_table("hello", walls, HELLO_BUILDS)))
 
     def test_bench_table(self) -> None:
         table = build.bench_table(
@@ -1037,9 +1043,11 @@ class Build(unittest.TestCase):
             ("a table first", bench_md(intro=BENCH_HEADER + "| C | 1 | 1 | 1 | 1 | 1 |\n\n")),
             ("no Results", "# Benchmarks\n\nAbout.\n\n## Other\n\nText.\n"),
         ]:
-            with self.subTest(name):
-                with self.assertRaisesRegex(build.BuildError, r"docs/benchmarks\.md"):
-                    build.results_note(text)
+            with (
+                self.subTest(name),
+                self.assertRaisesRegex(build.BuildError, r"docs/benchmarks\.md"),
+            ):
+                build.results_note(text)
 
     def test_bench_directives_read_the_document(self) -> None:
         fake_site(
