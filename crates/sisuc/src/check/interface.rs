@@ -917,6 +917,7 @@ impl Checker<'_> {
             && !self.enum_ids.contains_key(&name)
             && !self.aliases.names.contains_key(&name)
             && matches!(self.interface_ids.get(&name), Some(Declared::Known(_)))
+            && !self.poisoned(name)
     }
 
     /// The interface that `ty`, in the inheritance list of `interface`, names. An argument that is

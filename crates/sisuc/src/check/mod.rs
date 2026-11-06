@@ -1728,7 +1728,6 @@ impl Checker<'_> {
             }
         }
         if user_items == items.len() {
-            self.take_broken(&mut waiting, None, &mut first);
             self.prelude = self.item_counts(next_function);
         }
         // After the loop: the prelude's own items, which come last, would take the names back.
@@ -1816,7 +1815,7 @@ impl Checker<'_> {
 
     /// Whether a rejected or broken item poisons the top-level name `name`, so that a use of it
     /// gives no more errors.
-    pub(super) fn poisoned(&self, name: Symbol) -> bool {
+    fn poisoned(&self, name: Symbol) -> bool {
         is_broken(self.class_ids.get(&name))
             || is_broken(self.function_ids.get(&name))
             || is_broken(self.enum_ids.get(&name))
@@ -1827,7 +1826,7 @@ impl Checker<'_> {
 
     /// Whether a call or a read of the value `name` is poisoned. `Ok` and `Err`, when no user's
     /// function or class takes them, belong to the prelude's `Result`.
-    pub(super) fn poisoned_use(&self, name: Symbol) -> bool {
+    fn poisoned_use(&self, name: Symbol) -> bool {
         self.poisoned(name)
             || ((name == Symbol::OK || name == Symbol::ERR)
                 && !self.function_ids.contains_key(&name)
@@ -2347,7 +2346,9 @@ impl Checker<'_> {
         // A class or an enum that took a language interface's name is the type.
         let taken = matches!(declared, (Some(_), _) | (_, Some(_)));
         if let (false, Some(found)) = (taken, self.interface_ids.get(&name)) {
-            if let Declared::Known(id) = *found {
+            if let Declared::Known(id) = *found
+                && !self.poisoned(name)
+            {
                 self.interface_as_type(id, name.to_string(), ty, ident().span);
             }
             return None;
