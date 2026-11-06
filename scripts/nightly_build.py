@@ -1,6 +1,9 @@
 """Steps of the nightly build workflow that need the GitHub API. Usage:
 
   nightly_build.py pick
+  nightly_build.py publish --sha <sha>
+  nightly_build.py prune
+  nightly_build.py report
 
 `pick` chooses the commit of the nightly build. It reads GITHUB_REPOSITORY, GITHUB_REF, HEAD_SHA
 and GH_TOKEN, and writes `sha=`, `build=` and `publish=` to $GITHUB_OUTPUT and its answer to
@@ -10,22 +13,46 @@ the commit has other `.github/workflows/` files than `main`, it takes nothing, b
 GITHUB_TOKEN cannot create a release for such a commit. Any other ref is a dry run: it builds
 HEAD_SHA, publishes nothing and prints what `main` would do.
 
-`pick` exits 0 on every answer, and 1 when a `gh` call fails. It only reads. It calls `gh api`
-(REST), so it needs the network. Python 3.10 standard library only.
+`pick` exits 0 on every answer, and 1 when a `gh` call fails. It only reads.
+
+`publish` checks again that --sha is newer than the newest nightly build and that the workflow
+files are still those of `main`; if not, it writes `published=false` and exits 0. Else it takes
+the files of the run's artifacts (GITHUB_RUN_ID), deletes each `nightly-*` draft, creates a draft
+release, uploads the six assets, and in one call publishes the draft and marks it latest. It
+writes `published=true`. `prune` deletes the published `nightly-*` releases beyond the 14 newest,
+with their tags. `report` reads NEEDS (the JSON of `toJSON(needs)`) and RUN_URL, and opens the
+issue `Nightly build failure` or comments on the open one.
+
+Every command calls `gh api` (REST) or `gh release`, so it needs the network. Python 3.10
+standard library only.
 """
 import argparse
 import json
 import os
 import subprocess
 import sys
+import tempfile
+import zipfile
+from datetime import datetime, timezone
 
 NO_NEW = 'no new green commit'
 DIFFER = 'the newest green commit has other workflow files than `main`'
+NEWER = 'a newer nightly build exists'
+KEEP = 14
+TITLE = 'Nightly build failure'
+LABELS = ['needs-triage', 'bug', 'nightly-build']
+ASSETS = ['sisu-x86_64-linux.tar.gz', 'sisu-aarch64-linux.tar.gz', 'sisu-aarch64-macos.tar.gz',
+          'install.sh', 'orders.sisu', 'SHA256SUMS']
 
 
-def gh(*args: str) -> object:
-    out = subprocess.run(['gh', 'api', *args], capture_output=True, text=True, check=True).stdout
+def gh(*args: str, stdin: str | None = None) -> object:
+    out = subprocess.run(['gh', 'api', *args], capture_output=True, text=True, check=True,
+                         input=stdin).stdout
     return json.loads(out) if out.strip() else None
+
+
+def gh_release(*args: str) -> None:
+    subprocess.run(['gh', 'release', *args], capture_output=True, text=True, check=True)
 
 
 def releases(repo: str) -> list[dict]:
@@ -95,15 +122,101 @@ def pick() -> int:
     return 0
 
 
+def summarize(text: str, published: bool) -> None:
+    print(text)
+    append(os.environ['GITHUB_STEP_SUMMARY'], text + '\n')
+    append(os.environ['GITHUB_OUTPUT'], f'published={"true" if published else "false"}\n')
+
+
+def recheck(repo: str, sha: str) -> str | None:
+    """Why `sha` must not be published now, or None."""
+    commits = [c['sha'] for c in gh(f'repos/{repo}/commits?sha=main&per_page=100')]
+    newest = nightly_releases(repo)
+    released = newest[0]['tag_name'].rsplit('-', 1)[1] if newest else None
+    # The walk of `pick` with `sha` as the only green commit: a sha that is not before the
+    # released commit, or not in the list, gives None.
+    if newest_green(commits, {sha}, released) is None:
+        return NEWER
+    if workflows_tree(repo, sha) != workflows_tree(repo, 'main'):
+        return DIFFER
+    return None
+
+
+def download(repo: str, run_id: str, into: str) -> dict[str, str]:
+    """The paths of the six assets, found by file name in the artifacts of the run."""
+    pages = gh('--paginate', '--slurp',
+               f'repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100')
+    newest: dict[str, int] = {}
+    for artifact in (a for page in pages for a in page['artifacts']):
+        # shortcut: same rule as download-artifact at the pin, when the pin moves read
+        # filterLatest and change this to match
+        newest[artifact['name']] = max(artifact['id'], newest.get(artifact['name'], 0))
+    found: dict[str, str] = {}
+    for name, id_ in newest.items():
+        archive = os.path.join(into, f'{name}.zip')
+        with open(archive, 'wb') as f:
+            subprocess.run(['gh', 'api', f'repos/{repo}/actions/artifacts/{id_}/zip'], stdout=f,
+                           stderr=subprocess.PIPE, text=True, check=True)
+        with zipfile.ZipFile(archive) as z:
+            z.extractall(os.path.join(into, name))
+        for folder, _, files in os.walk(os.path.join(into, name)):
+            found.update({f: os.path.join(folder, f) for f in files if f in ASSETS})
+    missing = [a for a in ASSETS if a not in found]
+    if missing:
+        sys.exit(f'nightly_build.py: the artifacts of run {run_id} lack {", ".join(missing)}')
+    return found
+
+
 def publish(sha: str) -> int:
+    repo = os.environ['GITHUB_REPOSITORY']
+    reason = recheck(repo, sha)
+    if reason:
+        summarize(reason, False)
+        return 0
+    with tempfile.TemporaryDirectory() as tmp:
+        files = download(repo, os.environ['GITHUB_RUN_ID'], tmp)
+        # A run on `main` cannot overlap another, so a `nightly-*` draft is what a failed run left.
+        for r in releases(repo):
+            if r['draft'] and r['tag_name'].startswith('nightly-'):
+                gh('--method', 'DELETE', f'repos/{repo}/releases/{r["id"]}')
+        tag = f'nightly-{datetime.now(timezone.utc):%Y-%m-%d}-{sha[:7]}'
+        gh_release('create', tag, '--repo', repo, '--draft', '--target', sha, '--title', tag,
+                   '--notes', f'Nightly build of commit {sha}.', '--latest=false')
+        gh_release('upload', tag, '--repo', repo, *(files[a] for a in ASSETS))
+        # One request publishes the draft and marks it latest.
+        gh_release('edit', tag, '--repo', repo, '--draft=false', '--latest')
+    summarize(f'published {tag}', True)
     return 0
 
 
 def prune() -> int:
-    return 0
+    repo = os.environ['GITHUB_REPOSITORY']
+    failed = []
+    for r in nightly_releases(repo)[KEEP:]:
+        try:
+            gh_release('delete', r['tag_name'], '--repo', repo, '--cleanup-tag', '--yes')
+        except subprocess.CalledProcessError as e:
+            print(f'gh release delete {r["tag_name"]}: {e.stderr.strip() or e}', file=sys.stderr)
+            failed.append(r['tag_name'])
+    return 1 if failed else 0
 
 
 def report() -> int:
+    repo = os.environ['GITHUB_REPOSITORY']
+    needs = json.loads(os.environ['NEEDS'])
+    jobs = ', '.join(f'{name}: {job["result"]}' for name, job in needs.items()
+                     if job['result'] in ('failure', 'cancelled'))
+    body = f'The nightly build failed.\n\nRun: {os.environ["RUN_URL"]}\nJobs: {jobs}'
+    # The issues list holds pull requests too, and they have a `pull_request` key.
+    open_issues = gh('--paginate',
+                     f'repos/{repo}/issues?state=open&labels=nightly-build&per_page=100')
+    found = [i for i in open_issues if not i.get('pull_request') and i['title'] == TITLE]
+    if found:
+        gh(f'repos/{repo}/issues/{found[0]["number"]}/comments', '--input', '-',
+           stdin=json.dumps({'body': body}))
+    else:
+        gh(f'repos/{repo}/issues', '--input', '-',
+           stdin=json.dumps({'title': TITLE, 'body': body, 'labels': LABELS}))
     return 0
 
 

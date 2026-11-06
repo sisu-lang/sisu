@@ -128,7 +128,7 @@ elif '/actions/artifacts/' in path and path.endswith('/zip'):
 elif '/releases?' in path:
     reply = state['releases'] if '--paginate' in args else state['releases'][:100]
 elif '/issues?' in path:
-    reply = state['issues']
+    reply = state['issues'] if '--paginate' in args else state['issues'][:100]
 elif '/contents/.github?ref=' in path:
     ref = path.split('ref=')[1]
     if ref.endswith('^'):
@@ -359,7 +359,8 @@ def numbered(i):
 
 
 def tags(fake_state, **match):
-    return [r['tag_name'] for r in fake_state['releases'] if r['draft'] == match.get('draft', False)]
+    draft = match.get('draft', False)
+    return [r['tag_name'] for r in fake_state['releases'] if r['draft'] == draft]
 
 
 def first(calls, *words):
@@ -457,7 +458,8 @@ class Publish(Script):
         draft = drafts[0]
         run = self.run_publish(dict(failed.state, fail_on=None))
         self.assertEqual(run.code, 0, run.stderr)
-        self.assertIn(f'repos/o/r/releases/{draft["id"]}', [c[-1] for c in run.calls if 'DELETE' in c])
+        deleted = [c[-1] for c in run.calls if 'DELETE' in c]
+        self.assertIn(f'repos/o/r/releases/{draft["id"]}', deleted)
         self.assertEqual(run.out.get('published'), 'true')
         self.assertEqual(tags(run.state, draft=True), [])
         self.assertIn(draft['tag_name'], tags(run.state))
@@ -611,6 +613,12 @@ class Report(Script):
         issues = [{'number': 3, 'title': TITLE, 'pull_request': {'url': 'x'}}]
         self.assertEqual(self.posted(self.run_report({'build': 'failure'}, issues))['path'],
                          'repos/o/r/issues')
+
+    def test_report_should_read_every_page_of_issues(self):
+        issues = [{'number': n, 'title': 'Other', 'pull_request': None} for n in range(100)]
+        issues.append({'number': 500, 'title': TITLE, 'pull_request': None})
+        post = self.posted(self.run_report({'build': 'failure'}, issues))
+        self.assertEqual(post['path'], 'repos/o/r/issues/500/comments')
 
     def test_report_should_ignore_another_title(self):
         issues = [{'number': 4, 'title': 'Other', 'pull_request': None}]
