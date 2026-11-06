@@ -306,7 +306,7 @@ notes = [["Roadmap: early tooling", "docs/roadmap.md#early-tooling"]]
 
 [[area.feature]]
 text = "Install without cloning"
-state = "planned"
+state = "works"
 notes = [["Roadmap: gaps before production", "docs/roadmap.md#gaps-before-production"]]
 
 [[area.feature]]
