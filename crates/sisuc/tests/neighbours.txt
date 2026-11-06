@@ -35,6 +35,10 @@ class Bx {
 type M<T> = T?
 type MM<T> = T??
 type OP = (any Pet)??
+class Bq<T> {
+    v: T
+}
+type Bqa<T> = Bq<T>
 fn nothing<T>() -> T? { None }
 fn nn<T>() -> T?? { None }
 fn n3<T>() -> T??? { None }
@@ -102,6 +106,21 @@ id(Some(Some(p)))
 Bx().none<Fox>(1)
 p.name(1)
 Fox(1)
+# A count error with a written list, and a generic construction with a list.
+Bx().wrap<Fox>(1, 2)
+id<Fox>(p, 1)
+Bq<Fox>(1, 2)
+Bq<Fox>(v: p, w: 1)
+# `Some<T>` with a count error, and a `Some` or a construction through an alias.
+Some<Fox>(p, p)
+M<Fox>.Some(p, p)
+MM<Fox>.Some(n: p)
+Bqa(v: p, w: 1)
+Bqa<Fox>(1)
+# A prelude call with a label, and `panic` with a wrong argument.
+print(n: 1)
+panic(1)
+panic("a", "b")
 # Values that are no optional.
 p
 op

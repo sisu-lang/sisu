@@ -806,7 +806,7 @@ impl Checker<'_> {
             expected: Some(through.ty),
             ..site
         };
-        self.option_path(span, site, member, call, None)
+        self.option_path(span, site, member, call, Some(through))
     }
 
     /// The type `base.name` in an alias body, where `base`, a parameter of the alias, takes no

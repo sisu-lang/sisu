@@ -932,7 +932,7 @@ impl Checker<'_> {
                 Some(ty) => self.method_name(ty, site.name.name.as_str()),
                 None => name,
             };
-            let fixed = self.counted_result(ret, (&declared, owner, &bounds), site);
+            let fixed = self.counted_result(ret, &declared, owner, &bounds, site);
             return self.wrong_count(span, name, params.len(), args, fixed);
         }
         let checked = if declared.is_empty() {
@@ -1020,7 +1020,9 @@ impl Checker<'_> {
     pub(super) fn counted_result(
         &mut self,
         ret: Option<Type>,
-        (declared, owner, bounds): (&[Symbol], &[Type], &[Vec<Bound>]),
+        declared: &[Symbol],
+        owner: &[Type],
+        bounds: &[Vec<Bound>],
         site: Site<'_>,
     ) -> Option<Type> {
         let own = declared.get(owner.len()..).unwrap_or_default();
@@ -1160,7 +1162,7 @@ impl Checker<'_> {
             // An annotation that failed its bound reported it: the value is quiet.
             let bounds = if quiet { &[] } else { &bounds[..] };
             if !self.shaped(span, &name, &names, args) {
-                let fixed = self.counted_result(Some(ret), (&declared, &[], bounds), site);
+                let fixed = self.counted_result(Some(ret), &declared, &[], bounds, site);
                 return Err(Poisoned::of(fixed));
             }
             let params: Vec<_> = fields.iter().map(|(_, ty)| *ty).collect();
@@ -1195,13 +1197,13 @@ impl Checker<'_> {
                 Ok(_) => Err(Poisoned::error()),
                 Err(_) => {
                     // The arguments bind the rest of the type, and they may be the fault.
-                    let ty = if !failed {
-                        Some(ty)
-                    } else if held {
+                    let ty = if !held {
+                        None
+                    } else if failed {
                         let written = written_args(site, list.get(), 0);
                         self.fixed_result(Some(ret), declared.len(), &[], &[], written)
                     } else {
-                        None
+                        Some(ty)
                     };
                     spread(Err(Poisoned::of(ty)), flagged)
                 }

@@ -44,7 +44,8 @@ impl Checker<'_> {
         let open = through.filter(|t| !t.params.is_empty());
         let Some(labeled) = self.positional_shape(span, &path, 1, args) else {
             let (declared, _, ret) = some_shape(open);
-            let fixed = self.counted_result(Some(ret), (&declared, &[], &[]), site);
+            let fixed = closed_alias(through)
+                .or_else(|| self.counted_result(Some(ret), &declared, &[], &[], site));
             return Err(Poisoned::of(fixed));
         };
         // An alias `type M<T> = T?` is `Option` over its parameter: an expected optional fixes
@@ -130,15 +131,34 @@ impl Checker<'_> {
             _ => {
                 // The arguments bind the rest of the type, and they may be the fault.
                 let found = if failed {
-                    let (declared, _, ret) = some_shape(open);
-                    let written = written_args(site, list.get(), 0);
-                    self.fixed_result(Some(ret), declared.len(), &[], &[], written)
+                    self.failed_some(through, site, list.get())
                 } else {
                     Some(found)
                 };
                 spread(Err(Poisoned::of(found)), flagged)
             }
         }
+    }
+
+    /// The type of a `Some` at `site`, through `through`, whose argument fails. `list` is the type
+    /// arguments that the arguments bound. An alias with no open parameter fixes the type, as does
+    /// a written list; else `None`, as the arguments may be the fault.
+    fn failed_some(
+        &mut self,
+        through: Option<&Through>,
+        site: Site<'_>,
+        list: &[Type],
+    ) -> Option<Type> {
+        closed_alias(through).or_else(|| {
+            let (declared, _, ret) = some_shape(through.filter(|t| !t.params.is_empty()));
+            self.fixed_result(
+                Some(ret),
+                declared.len(),
+                &[],
+                &[],
+                written_args(site, list, 0),
+            )
+        })
     }
 
     /// `Option.member`, or `Option.member(args)` when `call` gives the arguments and the span of
@@ -219,6 +239,12 @@ impl Checker<'_> {
             }
         }
     }
+}
+
+/// The type that `through`, an alias with no open parameter, names: it fixes the type of a `Some`
+/// through it, whatever the arguments are.
+fn closed_alias(through: Option<&Through>) -> Option<Type> {
+    through.filter(|t| t.params.is_empty()).map(|t| t.ty)
 }
 
 /// `ty` without its optional layers.

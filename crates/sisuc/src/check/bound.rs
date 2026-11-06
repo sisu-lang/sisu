@@ -64,7 +64,7 @@ impl Checker<'_> {
         let mut owner = vec![ty];
         owner.extend_from_slice(iargs.get());
         if params.len() != args.len() {
-            let fixed = self.counted_result(ret, (&declared, &owner, &bounds), site);
+            let fixed = self.counted_result(ret, &declared, &owner, &bounds, site);
             return self.wrong_count(span, name, params.len(), args, fixed);
         }
         let mut_site = MutSite {

@@ -443,13 +443,13 @@ impl Checker<'_> {
         let labeled = if labels.iter().all(Option::is_some) && !labels.is_empty() {
             let names: Vec<_> = labels.iter().flatten().copied().collect();
             if !self.shaped(span, &path, &names, args) {
-                let fixed = self.counted_result(Some(ret), (&declared, &[], &bounds), site);
+                let fixed = self.counted_result(Some(ret), &declared, &[], &bounds, site);
                 return Err(Poisoned::of(fixed));
             }
             false
         } else if labels.iter().all(Option::is_none) {
             let Some(labeled) = self.positional_shape(span, &path, fields.len(), args) else {
-                let fixed = self.counted_result(Some(ret), (&declared, &[], &bounds), site);
+                let fixed = self.counted_result(Some(ret), &declared, &[], &bounds, site);
                 return Err(Poisoned::of(fixed));
             };
             labeled
