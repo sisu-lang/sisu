@@ -144,7 +144,7 @@ class Machine:
                 )
             self.tarball_name = f"sisu-{machine}-linux.tar.gz"
         elif system == "Darwin":
-            # pyrefly: ignore[bad-argument-type]  the macos- profile branch sets sysctl for Darwin
+            assert sysctl is not None
             script(self._f("sysctl"), sysctl)
             script(self._f("sw_vers"), f'echo "{version}"\n')
             script(

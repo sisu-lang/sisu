@@ -65,10 +65,9 @@ def kind(base: list[Diagnostic], head: list[Diagnostic]) -> str | None:
         return "crash"
     if base == head:
         return None
-    rejects = [any(d[1] == "error" for d in ds) for ds in (base, head)]
-    # pyrefly: ignore[no-matching-overload]  `rejects` always holds two items, as the keys do
+    rejects = (any(d[1] == "error" for d in base), any(d[1] == "error" for d in head))
     return {(True, False): "newly accepted", (False, True): "newly rejected"}.get(
-        tuple(rejects), "changed"
+        rejects, "changed"
     )
 
 

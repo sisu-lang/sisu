@@ -120,7 +120,7 @@ def events(pr: str, me: str) -> list[tuple[str, str]]:
     return found
 
 
-def main() -> int | None:
+def main() -> int:
     if len(sys.argv) not in (2, 3):
         sys.exit(__doc__)
     pr = sys.argv[1]

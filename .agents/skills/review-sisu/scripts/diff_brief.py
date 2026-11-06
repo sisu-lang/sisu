@@ -206,7 +206,7 @@ def removed_tests(repo: Path | str, base: str, head: str) -> list[str]:
         *EXPECTED,
     )
     # A removed line is named by its base path and line, so a renamed file reads as the base has it.
-    removed: list[tuple[str | None, str | None, int, str]] = []
+    removed: list[tuple[str | None, str, int, str]] = []
     added: set[str] = set()
     old: str | None = None
     new: str | None = None
@@ -233,7 +233,6 @@ def removed_tests(repo: Path | str, base: str, head: str) -> list[str]:
         if re.search(r"\w", text)
         and text not in added
         and not text.startswith("//")
-        # pyrefly: ignore[missing-attribute]  a removed line comes after its "+++ b/" header
         and not (p.endswith(".py") and text.startswith("#"))
     ]
     return lines + [f"{p}: deleted" for p in deleted]

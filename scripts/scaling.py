@@ -400,10 +400,9 @@ def judge(growth: list[int], total_8n: int) -> tuple[str, list[Fraction | None]]
     ratios = [Fraction(b, a) if a > 0 else None for a, b in itertools.pairwise(growth)]
     if growth[3] <= 0 or growth[3] * 100 < total_8n:
         return "not judged", ratios
-    if None in ratios:
-        return "no ratio", ratios
     r1, r2, r3 = ratios
-    # pyrefly: ignore[unsupported-operation]  `None in ratios` has returned: no ratio is None here
+    if r1 is None or r2 is None or r3 is None:
+        return "no ratio", ratios
     if r3 > SUPERLINEAR_R3 and r2 >= SUPERLINEAR_R2 and (r3 >= r1 - FALL_ALLOWED or r3 >= STEEP):
         return "superlinear", ratios
     return "linear", ratios
@@ -417,7 +416,7 @@ def looks_fixed(verdict: str, ratios: list[Fraction | None]) -> bool:
     if verdict in ("not judged", "no ratio"):
         return True
     r1, _, r3 = ratios
-    # pyrefly: ignore[unsupported-operation]  only the verdict "no ratio" has a None ratio
+    # pyrefly: ignore[unsupported-operation]  the verdicts above are the only ones with a None ratio
     return r3 < KEPT_R3 or (r3 < STEEP and r3 < r1 - FALL_FIXED)
 
 

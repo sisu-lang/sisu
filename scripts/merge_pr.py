@@ -39,9 +39,8 @@ def run(args: list[str]) -> str:
         raise Stop(f"{' '.join(args[:4])}: {e.stderr.strip() or e}") from None
 
 
-def gh(*args: str) -> dict[str, Any]:
+def gh(*args: str) -> Any:  # noqa: ANN401  gh answers with JSON of any shape
     out = run(["gh", "api", *args])
-    # pyrefly: ignore[bad-return]  an empty answer gives None, and no caller reads an empty answer
     return json.loads(out) if out.strip() else None
 
 

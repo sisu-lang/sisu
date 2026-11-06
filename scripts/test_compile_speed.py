@@ -829,8 +829,7 @@ class CompileSpeed(unittest.TestCase):
         THEN it runs the command 3 times and gives 0.01
         AND it runs the command once more under perf when perf counts
         """
-        # pyrefly: ignore[bad-argument-type]  the fake `run` below never reads the deadline
-        runner = compile_speed.Measurer(mock.Mock(runs=3), None, True)
+        runner = compile_speed.Measurer(mock.Mock(runs=3), mock.Mock(), True)
         calls: list[bool] = []
         times = iter([0.03, 0.01, 0.02])
 
@@ -848,8 +847,7 @@ class CompileSpeed(unittest.TestCase):
 
         # pyrefly: ignore[method-assign]  the test replaces `run` with the fake above
         runner.run = run
-        # pyrefly: ignore[bad-argument-type]  the fake `run` ignores the source path
-        self.assertEqual(runner.cell(["c"], "what", "rust", None, "", None, True), (0.01, 7))
+        self.assertEqual(runner.cell(["c"], "what", "rust", Path(), "", None, True), (0.01, 7))
         self.assertEqual(calls, [False, False, False, True])
 
     def test_out_with_a_space_should_work_for_every_command(self) -> None:

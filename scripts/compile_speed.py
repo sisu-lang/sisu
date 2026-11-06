@@ -105,7 +105,7 @@ class Deadline:
         return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
 
-def exit_text(code: int) -> str | None:
+def exit_text(code: int) -> str:
     """Says how a command ended: its exit code, or the signal that stopped it."""
     if code >= 0:
         return f"exited with code {code}"
@@ -570,8 +570,8 @@ def find_linker(lang: str, args: argparse.Namespace, deadline: Deadline) -> tupl
 
 
 def available(lang: str) -> bool:
-    # pyrefly: ignore[no-matching-overload]  the first test of the `or` has ruled out None
-    return COMPILERS[lang] is None or shutil.which(COMPILERS[lang]) is not None
+    tool = COMPILERS[lang]
+    return tool is None or shutil.which(tool) is not None
 
 
 def tool_line(deadline: Deadline, cmd: list[str], lang: str | None = None) -> str:

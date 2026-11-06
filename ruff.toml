@@ -40,4 +40,4 @@ ignore = [
 "site/build_test.py" = ["D", "E501", "PLR2004", "S101", "S103", "S105", "S106", "S108", "SLF001"]
 # A benchmark program stays the same as its row in each other language, so rules that change its
 # logic stay off. The formatter and the type rules apply.
-"bench/**" = ["D", "ARG", "C4", "E741", "FBT", "FURB", "N", "PERF", "PLR", "PLW", "RET", "RUF", "SIM", "TRY", "UP"]
+"bench/**" = ["D", "ARG", "C4", "C90", "E741", "FBT", "FURB", "N", "PERF", "PLR", "PLW", "RET", "RUF", "SIM", "TRY", "UP"]
