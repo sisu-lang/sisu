@@ -134,7 +134,7 @@ id = "python-tests"
 name = "script unit tests"
 language = "system"
 entry = "python3 -m unittest discover -s scripts -p 'test_*.py'"
-files = '^(scripts|\.agents/skills/[^/]+/scripts)/.*\.py$|^bench/compile/.*\.json$|^crates/sisuc/src/generate/coverage\.rs$|^scripts/fuzz\.sh$|^\.github/workflows/fuzz-program\.yml$'
+files = '^(scripts|\.agents/skills/[^/]+/scripts)/.*\.py$|^bench/compile/.*\.json$|^crates/sisuc/src/generate/coverage\.rs$|^scripts/fuzz\.sh$|^\.github/workflows/fuzz-program\.yml$|^install\.sh$|^\.github/workflows/nightly-build\.yml$|^scripts/nightly_.*$'
 pass_filenames = false
 
 # A new diagnostic code needs a category, or the site build fails long after the commit.
