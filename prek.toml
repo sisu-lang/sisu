@@ -113,6 +113,14 @@ language = "system"
 entry = "python3 scripts/comment_width.py"
 types = ["rust"]
 
+# Reads the diff against HEAD. CI's `--all-files` has a clean tree, so only a commit can fail this.
+[[repos.hooks]]
+id = "text-limits"
+name = "changed text keeps to the sentence and comment limits"
+language = "system"
+entry = "python3 scripts/text_limits.py --diff HEAD"
+files = '\.(rs|py|sh|md)$'
+
 [[repos.hooks]]
 id = "typos"
 name = "typos"

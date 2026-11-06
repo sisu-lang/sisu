@@ -677,8 +677,9 @@ warning, and you remove it. A key that matches two definitions gives exit 2:
 remove it and add a generator rule.
 
 After a change to the generator or to `tests/run`, run `make fuzz-gaps`, and
-remove each key that it warns about. A pull request runs the check only with a
-`fuzz-program` label, so a nightly tells you otherwise.
+remove each key that it warns about. On a pull request, CI runs the check only
+with a `fuzz-program` label. `review-sisu` runs it on the final diff of a branch.
+A nightly tells you otherwise.
 
 The check has three limits:
 
@@ -689,6 +690,38 @@ The check has three limits:
 - The reference compiles at O0 through whole-module IR. Code that only the O2
   and multi-unit builds reach is outside the check, and every run of the
   program target still reaches it.
+
+### Add a generator rule
+
+A rule makes the fixed seeds reach a function. Do these steps in this order:
+
+1. Add a case that holds the construct to `crates/sisuc/tests/run`. The
+   reference then reaches the function, so the check can see a gap.
+2. Write the construct in `Gen::gap_forms` (`crates/sisuc/src/generate/item.rs`).
+   An item goes into `GENERIC_GAP_ITEMS` or `ANY_GAP_ITEMS`, or into the text at
+   the top of `gap_forms` when it is neither generic nor `any`. A statement goes
+   into the list of lines in `gap_forms`. Add it to the comment above `gap_forms`.
+   Use fixed text and draw no byte from the seed, because a draw moves what each
+   later part of a seed writes. The coverage test leaves this text out, so the
+   form cannot hide an older key.
+3. Call `reached` at the decision in `crates/sisuc/src/check/`, and put
+   `#[cfg(test)]` on the call, because `reached` exists only in tests. Add the
+   point to `GAP_POINTS` (`generate/coverage.rs`). A search of the program's text
+   only guesses at that decision, and a near form passes it. A module that cannot
+   call `check` keeps a counter, as `RESOLVE_ALL_CALLS` does. `Walk::program`
+   resets the counter and turns its count into a point.
+4. Add a row to `gap_point_keys_should_mark_what_the_checker_did`: a whole
+   program that reaches the point. Add a near program that does not reach it.
+5. Run `generated_programs_should_reach_each_gap_rule`. It reads only the seeds
+   that the nightly reads. Remove the form for a moment: the test must fail.
+6. When the form prints a line, update the two pins in
+   `crates/sisuc/src/fuzz_program.rs`: the count of lines in
+   `a_budget_program_should_finish_within_the_limit`, and the stdout in
+   `a_failure_should_print_the_program`. Update the counts in their comments too.
+7. Remove the key from `fuzz/known_gaps.txt`. `make fuzz-gaps` must exit 0.
+
+When the form finds a compiler bug, fix the bug in the same work, with its own
+case in `tests/run`.
 
 ### The nightly program job
 
@@ -1316,7 +1349,7 @@ must accept any syntax those programs use.
 | `fuzz` | The fuzz targets, `front_end` and `program`, in their own Cargo workspace, run by `scripts/fuzz.sh`. |
 | `ruff.toml`, `pyrefly.toml` | The rules for each tracked Python file: Ruff for lint and format, Pyrefly for types. The Python hooks of `prek.toml` run them (see `CODING_STANDARDS.md`, Python). |
 | `Makefile` | The entry point for the commands; `make help` lists its targets. |
-| `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `codspeed-prep.sh`, `fuzz.sh`, `fuzz_program_plan.py`, which plans each run of the program fuzz workflow, `fuzz_seeds.py`, which writes the program fuzzer's 128 seeds, `fuzz_gaps.py`, which finds the generator gaps, `watch_pr.py`, which waits for the next review with text, comment from someone other than you, or check result of a pull request, `diag_diff.py`, which compares the diagnostics of two `sisu` builds for a review, `golden_diff.py`, which checks that a re-bless only reworded expected files, `scaling.py`, which finds the shapes of program for which a compiler stage is superlinear, `merge_pr.py`, which squash-merges a pull request once its checks pass (`--cleanup` removes the worktree of one merged in the UI), and the scripts prek hooks run, such as `check-expect-messages.sh` and `slow_tests.py`. |
+| `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `codspeed-prep.sh`, `fuzz.sh`, `fuzz_program_plan.py`, which plans each run of the program fuzz workflow, `fuzz_seeds.py`, which writes the program fuzzer's 128 seeds, `fuzz_gaps.py`, which finds the generator gaps, `text_limits.py`, which checks the sentence and comment limits on changed text, `watch_pr.py`, which waits for the next review with text, comment from someone other than you, or check result of a pull request, `diag_diff.py`, which compares the diagnostics of two `sisu` builds for a review, `golden_diff.py`, which checks that a re-bless only reworded expected files, `scaling.py`, which finds the shapes of program for which a compiler stage is superlinear, `merge_pr.py`, which squash-merges a pull request once its checks pass (`--cleanup` removes the worktree of one merged in the UI), and the scripts prek hooks run, such as `check-expect-messages.sh` and `slow_tests.py`. |
 | `scripts/nightly_build.py` | The steps of the nightly build workflow that use the GitHub API: `pick`, `publish`, `prune` and `report`. |
 | `scripts/nightly_check.py` | The checks of the nightly build: the binary's commit, its Linux and macOS libraries, and the tarball's names. |
 | `scripts/nightly_smoke.sh` | Runs each site program that has an `.out` file with both allocators, on a clean machine of the nightly build. |
