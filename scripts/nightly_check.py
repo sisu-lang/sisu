@@ -21,10 +21,12 @@ MINOS_FLOOR = (15, 0)
 TARGETS = ('x86_64-linux', 'aarch64-linux', 'aarch64-macos')
 ARCHIVES = ('libsisu_runtime_mimalloc.a', 'libsisu_runtime_system.a')
 THIRD_PARTY = 'THIRD-PARTY-LICENSES.txt'
-TARBALL_NAMES = sorted('sisu/' + n for n in ('sisu', *ARCHIVES, 'LICENSE', THIRD_PARTY))
+TARBALL_NAMES = ['sisu/', *('sisu/' + n for n in ('sisu', *ARCHIVES, 'LICENSE', THIRD_PARTY))]
 # The libraries of the Linux build, and the loader, which has another name on each architecture.
-NEEDED_OK = re.compile(r'(libm|libz|libzstd|libstdc\+\+|libgcc_s|libc)\.so(\.\d+)*|'
-                       r'ld-linux[\w.-]*\.so(\.\d+)*')
+# The list is exact: a new version of a library is a decision, not a pass.
+NEEDED_OK = frozenset(('libm.so.6', 'libz.so.1', 'libzstd.so.1', 'libstdc++.so.6',
+                       'libgcc_s.so.1', 'libc.so.6', 'ld-linux-x86-64.so.2',
+                       'ld-linux-aarch64.so.1'))
 # `GLIBC_` must not match `GLIBCXX_`, and a version can have three parts, as in `GLIBC_2.2.5`.
 GLIBC_REF = re.compile(r'\bGLIBC_(\d+(?:\.\d+)*)')
 GLIBCXX_REF = re.compile(r'\bGLIBCXX_(\d+(?:\.\d+)*)')
@@ -68,8 +70,8 @@ def linux_problems(objdump_t: str, objdump_p: str) -> list[str]:
             glibcxx.append(dotted(ref.group(1)))
     if not glibc:
         problems.append('`objdump -T` shows no GLIBC_ reference: the tool call is broken')
-    # A weak reference that is missing at run time only costs a loader warning, and the build
-    # container is what keeps those out, so only the strong ones set the floor.
+    # A weak reference that is missing at run time only costs a loader warning.
+    # The build container keeps those out, so only the strong references set the floor.
     strong = [v for v, weak in glibc if not weak]
     if strong and max(strong) > GLIBC_FLOOR:
         problems.append('GLIBC_%s is above the floor GLIBC_%s' % (text(max(strong)), text(GLIBC_FLOOR)))
@@ -78,20 +80,24 @@ def linux_problems(objdump_t: str, objdump_p: str) -> list[str]:
                         % (text(max(glibcxx)), text(GLIBCXX_FLOOR)))
     for line in objdump_p.splitlines():
         needed = NEEDED_LINE.match(line)
-        if needed and not NEEDED_OK.fullmatch(needed.group(1)):
+        if needed and needed.group(1) not in NEEDED_OK:
             problems.append('the binary needs %s, which is not in the allow-list' % needed.group(1))
     return problems
 
 
 def macos_link_problems(otool_L: str) -> list[str]:
     problems = []
+    seen = False
     for line in otool_L.splitlines():
         # The first line is the file's own name, and ends with a colon.
         if not line.strip() or line.endswith(':'):
             continue
+        seen = True
         path = line.strip().split(' (')[0]
         if not path.startswith(LOAD_PATH_OK):
             problems.append('the binary loads %s, which is not a system path' % path)
+    if not seen:
+        problems.append('`otool -L` shows no load path: the tool call is broken')
     return problems
 
 
@@ -189,8 +195,7 @@ def pack(target: str, release: str, third_party: str, out_dir: str) -> list[str]
         for name, path in sources.items():
             shutil.copy(path, os.path.join(tmp, 'sisu', name))  # copy keeps the mode of `sisu`
         tarball = 'sisu-%s.tar.gz' % target
-        # The names are listed, so the tarball holds no directory entry; macOS tar adds no `._` file.
-        command = ['tar', '-czf', tarball, *('sisu/' + n for n in sources)]
+        command = ['tar', '-czf', tarball, 'sisu']
         problems = run(command, cwd=tmp, env=dict(os.environ, COPYFILE_DISABLE='1'))[0]
         if problems:
             return problems

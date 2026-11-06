@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Runs each program of a directory that has an `.out` file, with each allocator, and checks that
-# its stdout equals the `.out` file, its stderr is empty and its exit code is 0.
+# Runs each program of a directory that has an `.out` file, with each allocator.
+# Each run must print the `.out` file as stdout, print nothing to stderr and exit with 0.
 #   scripts/nightly_smoke.sh <bin dir> <programs dir>
-# It needs bash and coreutils only, because the clean images have no Python. It also runs on
-# the bash 3.2 of macOS, so it has no mapfile and no associative array.
+# It needs bash and coreutils only, because the clean images have no Python.
+# It also runs on the bash 3.2 of macOS, so it has no mapfile and no associative array.
+# The `timeout-minutes` of the job is the time limit of the whole loop, because no step follows it.
+# A hung program is named by the progress line, which is printed before the program runs.
 set -u
 
 if [ $# -ne 2 ]; then
@@ -22,6 +24,7 @@ for program in "$programs"/*.sisu; do
   [ -f "$expected" ] || continue
   for allocator in mimalloc system; do
     ran=$((ran + 1))
+    echo "$program with --allocator $allocator"
     "$bin/sisu" run --allocator "$allocator" "$program" >"$tmp/stdout" 2>"$tmp/stderr"
     code=$?
     if [ "$code" -ne 0 ]; then
