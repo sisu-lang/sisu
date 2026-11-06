@@ -1,0 +1,12 @@
+// GIVEN `q`, which slices its borrowed array parameter from index 3, and an array of one text
+// built at run time
+// WHEN `main` calls `q` with it
+// THEN it exits with code 101 and the panic is `range start 3 is past length 1`, as for a slice
+// of a local
+fn q(xs: [string]) -> i64 { xs[3..].len() }
+
+fn main() {
+    let xs = ["a".to_string() + "b"]
+    print(q(xs))
+    print(xs.len())               // never runs
+}

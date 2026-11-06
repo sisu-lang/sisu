@@ -337,6 +337,10 @@ struct Clobbers {
 }
 
 impl Clobbers {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the match lists every rvalue, so that a new one is placed here"
+    )]
     fn new(function: &Function, tree: &Tree) -> Self {
         let locals = function.locals.len();
         // Each local is marked as it is queued, so it is queued, and its edges walked, once.
@@ -358,7 +362,7 @@ impl Clobbers {
                 let clobbers = match stmt {
                     Statement::Assign { dest, value } => match value {
                         value if value.may_call_written() => true,
-                        Rvalue::Borrow(place) => {
+                        value if let Some(place) = borrowed_place(value) => {
                             if let Some(dest) = *dest {
                                 if !place.projections.iter().all(Projection::stable)
                                     && !unstable[dest.0]
@@ -377,6 +381,7 @@ impl Clobbers {
                         | Rvalue::Use(_)
                         | Rvalue::Copy(_)
                         | Rvalue::CopyStr(_)
+                        | Rvalue::Borrow(_)
                         | Rvalue::Unwrap(_)
                         | Rvalue::New { .. }
                         | Rvalue::Variant { .. }
@@ -711,7 +716,7 @@ pub(super) enum Effect {
     Release,
     ScopeRelease,
     Assign,
-    /// `b = borrow p`.
+    /// `b = borrow p`, or a slice that reads the whole local `p` in place.
     AssignBorrowed,
     End,
     /// The root of a place that a `take`, a store or a `make_unique` writes through. It reads
@@ -765,7 +770,7 @@ pub(super) fn statement<'a>(
         Statement::Assign { dest, value } => {
             rvalue(value, lowered, f);
             if let Some(dest) = *dest {
-                let borrowed = matches!(value, Rvalue::Borrow(_));
+                let borrowed = borrowed_place(value).is_some();
                 f(
                     dest,
                     if borrowed {
@@ -803,6 +808,23 @@ pub(super) fn statement<'a>(
             }
         }
         Statement::Free(local) => f(*local, Effect::Free, None),
+    }
+}
+
+/// The place `value` borrows: the place of a `borrow`, or the whole local that a slice reads in
+/// place, as pair removal leaves it. Such a slice is not `safe` and holds no count, so it is a
+/// borrow of that local. A slice of a projection is no borrow, and no lowering makes one. A `safe`
+/// slice is no borrow, because it releases its base when a check fails. Other rvalues give `None`:
+/// `Clobbers::new` lists each of them, so a new one is placed there.
+fn borrowed_place(value: &Rvalue) -> Option<&Place> {
+    match value {
+        Rvalue::Borrow(place) => Some(place),
+        Rvalue::Slice {
+            base: Operand::Read(place),
+            safe: false,
+            ..
+        } if place.projections.is_empty() => Some(place),
+        _ => None,
     }
 }
 
@@ -884,11 +906,16 @@ fn rvalue<'a>(
             consumed(value, lowered, f);
             operand(len, lowered, f);
         }
-        // The slice takes the base's reference; the bounds are numbers.
+        // The slice takes the base's reference, unless it reads a whole local in place, as pair
+        // removal leaves it: then it holds no count. The bounds are numbers.
         Rvalue::Slice {
             base, start, end, ..
         } => {
-            consumed(base, lowered, f);
+            if borrowed_place(value).is_some() {
+                operand(base, lowered, f);
+            } else {
+                consumed(base, lowered, f);
+            }
             for bound in start.iter().chain(end) {
                 operand(bound, lowered, f);
             }

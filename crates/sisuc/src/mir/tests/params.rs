@@ -1199,8 +1199,8 @@ fn slice_of_a_parameter_kept_in_a_local_should_own_it() {
 
 /// GIVEN `xs[1..]` passed to a call that only reads it
 /// WHEN the parameters are inferred
-/// THEN `xs` stays borrowed, and the function takes a copy only for the slice, which the call
-/// releases
+/// THEN `xs` stays borrowed, and the function takes no copy: the slice reads `xs` in place and
+/// holds no count
 #[test]
 fn slice_of_a_parameter_passed_on_should_stay_borrowed() {
     let printed = built(
@@ -1210,6 +1210,8 @@ fn slice_of_a_parameter_passed_on_should_stay_borrowed() {
     has(
         &printed,
         "pass",
-        &["= copy xs#0", "slice move _[1..]", "call pass"],
+        &["= borrow xs#0", "slice _[1..]", "call pass"],
     );
+    let f = function(&printed, "pass");
+    assert!(!f.contains("= copy xs#0"), "{f}");
 }
