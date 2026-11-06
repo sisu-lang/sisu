@@ -209,6 +209,24 @@ class MainTests(unittest.TestCase):
         os.chdir("sub")
         self.assertEqual(self.run_main("c.md")[0], 1)
 
+    def test_an_absolute_path_or_a_path_above_this_directory_should_be_read(self):
+        os.mkdir("sub")
+        self.write("a.md", f"{LONG}\n\n{LONG}\n")
+        self.git("add", ".")
+        self.assertEqual(self.run_main(os.path.abspath("a.md"))[0], 1)
+        os.chdir("sub")
+        self.assertEqual(self.run_main("../a.md")[0], 1)
+        self.git("config", "diff.relative", "true")
+        self.assertEqual(self.run_main("../a.md")[0], 1)
+
+    def test_a_git_attribute_should_not_hide_a_new_long_sentence(self):
+        self.write("a.md", f"Old.\n\n{LONG}\n\n{LONG}\n")
+        self.git("config", "diff.cut.textconv", "sed 1d")
+        for attribute in ("*.md diff=cut", "*.md -diff"):
+            with self.subTest(attribute):
+                self.write(".git/info/attributes", f"{attribute}\n")
+                self.assertEqual(self.run_main(), (1, "a.md:5: a sentence has 26 words; the limit is 25: split it\n"))
+
     def test_added_text_like_a_diff_header_should_not_start_a_file(self):
         self.write("z.md", "Old.\n")
         self.commit()
