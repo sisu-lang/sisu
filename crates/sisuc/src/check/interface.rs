@@ -715,6 +715,8 @@ impl Checker<'_> {
     /// The interface that `ty`, the bound of a parameter, names, if it names one that is declared.
     /// A bound that writes an associated type has arguments, so it is never a plain name.
     fn written_interface(&self, ty: &ast::TypeExpr) -> Option<InterfaceId> {
+        #[cfg(test)]
+        super::reached("written_interface");
         let ast::TypeKind::Applied(applied) = &ty.kind else {
             return None;
         };
@@ -2675,6 +2677,8 @@ impl Waits {
     /// One declaration of the key is available: the bounds that can do without the ones left are
     /// ready now.
     fn lower(&mut self, key: usize, ready: &mut Vec<usize>) {
+        #[cfg(test)]
+        super::reached("Waits::lower");
         let key = &mut self.keys[key];
         key.pending -= 1;
         while let Some(&(m, without)) = key.waiting.last() {

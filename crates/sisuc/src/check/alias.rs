@@ -152,6 +152,9 @@ pub(super) struct Aliases {
     exhausted: bool,
     /// How many uses of an alias have resolved.
     pub(super) uses: usize,
+    /// The interfaces that an alias body names as `S.Name`. An alias has no owner, so no use
+    /// records them, and `Checker::reach` marks them as used.
+    pub(super) named_interfaces: Vec<InterfaceId>,
 }
 
 /// The type parameter of an alias body at place `i`: it has no name.
@@ -657,6 +660,14 @@ impl Checker<'_> {
             if !kept.contains(&check) {
                 kept.push(check);
             }
+            #[cfg(test)]
+            super::reached(match check {
+                UseCheck::Conforms { .. } => "make_check keeps a conformance",
+                UseCheck::Applied(ty) if matches!(ty.kind(), TypeKind::Any(..)) => {
+                    "make_check keeps an any"
+                }
+                UseCheck::Applied(_) => "make_check keeps an applied type",
+            });
             return true;
         }
         match check {
@@ -798,6 +809,8 @@ impl Checker<'_> {
         call: Option<(&[ast::Arg], Span)>,
     ) -> Checked {
         // The value is `Option`'s, but a message names the alias, as the user wrote it.
+        #[cfg(test)]
+        super::reached("optional_alias_path");
         let site = if through.params.is_empty() {
             Site {
                 written: &[],
@@ -829,6 +842,7 @@ impl Checker<'_> {
             // A generic interface needs arguments that no bound writes: no one names it.
             [(interface, k)] if self.interfaces[interface.0].type_params.len() == 1 => {
                 let k = u32::try_from(k).expect("an interface should have fewer than 2^32 types");
+                self.aliases.named_interfaces.push(interface);
                 self.make_check(
                     UseCheck::Conforms {
                         ty: base_ty,

@@ -420,6 +420,8 @@ impl Checker<'_> {
         interface: InterfaceId,
         args: TypeArgs,
     ) -> bool {
+        #[cfg(test)]
+        super::reached("assoc_conforms");
         self.assoc_interfaces(ty).contains(&(interface, args)) || self.body.wide_assoc.contains(&ty)
     }
 

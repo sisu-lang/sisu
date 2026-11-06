@@ -49,6 +49,7 @@ impl Checker<'_> {
                 found: None,
                 kept: false,
                 unwrapped: Flag::No,
+                jumped: false,
             });
         }
         let want = if type_of(&checked).map(payload) == Some(Type::F64) {

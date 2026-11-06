@@ -26,6 +26,10 @@ reviews:
         Read the implementation before the changed .err and .json files.
         Compare each expected result with its .sisu input: codes, spans, fixes and exact bytes.
         Do not accept changed expected output only because it matches the implementation.
+        The last line of a .json file is a summary. Its "explanations" map holds the text of
+        docs/diagnostics/<code>.md for each code that the file reports. A change to that .md file
+        changes this line in every .json file that reports the code. Find the changed key before
+        you call the change out of scope.
   finishing_touches:
     docstrings:
       enabled: false

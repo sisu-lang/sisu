@@ -3,14 +3,14 @@ description: Restores or installs the project-local LLVM in .llvm/23 that llvm-s
 runs:
   using: composite
   steps:
-    # llvm-config names these system libraries; libzstd.a by absolute path. The macOS
-    # runners already have them.
+    # llvm-config names these system libraries; libzstd.a by absolute path. The ARM64 Linux
+    # build also names libffi. The macOS runners already have them.
     - name: Install LLVM's system libraries
       if: runner.os == 'Linux'
       shell: bash
       run: |
         sudo apt-get update
-        sudo apt-get install --yes --no-install-recommends libzstd-dev libxml2-dev zlib1g-dev
+        sudo apt-get install --yes --no-install-recommends libzstd-dev libxml2-dev zlib1g-dev libffi-dev
     # The script pins the LLVM version and checksum, so a version bump changes the key.
     - id: cache
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

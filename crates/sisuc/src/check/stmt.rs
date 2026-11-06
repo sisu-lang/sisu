@@ -39,6 +39,9 @@ pub(super) struct BlockSoFar {
     value: Option<Poisoned>,
     /// How many of the block's statements are checked.
     done: usize,
+    /// Whether the statement that ends the block with `never` is a failed `break` or `continue`
+    /// outside a loop (see `Poisoned::jumped`).
+    jumped: bool,
 }
 
 impl Default for BlockSoFar {
@@ -50,6 +53,7 @@ impl Default for BlockSoFar {
             warned: false,
             value: None,
             done: 0,
+            jumped: false,
         }
     }
 }
@@ -95,6 +99,7 @@ impl Checker<'_> {
             ty,
             failed,
             value,
+            jumped,
             ..
         } = so_far;
         self.pop_scope();
@@ -111,6 +116,8 @@ impl Checker<'_> {
                     found: value.found.filter(|_| none),
                     kept: value.kept && none,
                     unwrapped: value.unwrapped,
+                    // The block is `never` exactly when `ty` is, and then `jumped` says why.
+                    jumped,
                 });
             }
         };
@@ -162,6 +169,9 @@ impl Checker<'_> {
                 Err(poisoned) => {
                     so_far.failed = true;
                     let ty = poisoned.ty;
+                    if ty == Some(Type::NEVER) && so_far.ty != Some(Type::NEVER) {
+                        so_far.jumped = poisoned.jumped;
+                    }
                     so_far.value = last.then_some(poisoned);
                     // An invalid jump made the block `never` only by error; what follows is no
                     // new news. Any other failed `never` statement still leaves the block.
@@ -1237,7 +1247,10 @@ impl Checker<'_> {
                 _ => {
                     self.report(DiagnosticKind::JumpOutsideLoop { keyword, at: span });
                     self.body.invalid_jump = true;
-                    Err(Poisoned::typed(Type::NEVER))
+                    Err(Poisoned {
+                        jumped: true,
+                        ..Poisoned::typed(Type::NEVER)
+                    })
                 }
             },
         }
