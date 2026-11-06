@@ -469,6 +469,8 @@ impl Checker<'_> {
         value: &tir::Expr,
         want: Type,
     ) -> Option<(Span, Type, Type)> {
+        #[cfg(test)]
+        super::OBJECT_IN_SOME_CALLS.set(super::OBJECT_IN_SOME_CALLS.get() + 1);
         let object = |ty: Type| matches!(ty.kind(), TypeKind::Class(..) | TypeKind::Any(..));
         let want = payload(want);
         match &value.kind {

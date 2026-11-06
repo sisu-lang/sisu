@@ -282,6 +282,8 @@ impl Checker<'_> {
     /// place that holds an optional array, of any depth, reports its E0001 now, before the call
     /// reports E0062. The place is then no more: the call writes nothing.
     pub(super) fn pushed_value(&mut self, receiver: &ast::Expr, read: Checked) -> Checked {
+        #[cfg(test)]
+        super::PUSHED_VALUES.set(super::PUSHED_VALUES.get() + 1);
         let mut place = self
             .take_pushed(receiver)
             .expect("`push_receiver` should have kept the place of a receiver that is a place");

@@ -19,7 +19,7 @@ use super::scope::{
 use super::stmt::MAX_BLOCKS;
 use super::writer::{Rewrite, Site, Writer, allowed};
 use super::{Answer, BUDGET, Cost, DEPTHS, FUEL, Gen, MAX_BOUND, MAX_NESTING, MAX_SIZE, generate};
-use crate::check::prelude_function_names;
+use crate::check::{self, prelude_function_names};
 use crate::conformance::holds_class;
 use crate::diagnostic::Severity;
 use crate::front_end::{PRELUDE_SOURCE, front_end, prelude_program};
@@ -743,32 +743,6 @@ struct Walk {
     user_funcs: usize,
     class_names: Vec<String>,
     enum_names: Vec<String>,
-    /// Where a call of a method named `push` on a place starts, without and with `?.`: an array's
-    /// `push` is a statement of its own in the typed tree, so a `Call` that starts at one of
-    /// these is a class's.
-    pushes: FxHashSet<usize>,
-    safe_pushes: FxHashSet<usize>,
-    /// Where a `loop` starts that ends the value of a `let` with no written type.
-    untyped_loops: FxHashSet<usize>,
-    /// The `loop`s around the point walked in the typed tree, innermost last.
-    loops: Vec<LoopBreaks>,
-}
-
-/// What the `break`s that target one `loop` give it.
-#[derive(Default)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "five independent facts about the breaks of one loop"
-)]
-struct LoopBreaks {
-    /// A value of the loop's own type that the checker wrapped, and a `None`.
-    wrapped: bool,
-    none: bool,
-    /// A `break` from a loop inside this one targets it.
-    crossed: bool,
-    /// A `break` gives an optional that is no literal, and a later one a literal.
-    optional: bool,
-    literal_after: bool,
 }
 
 /// Whether the first parameter of `f` is a bare type parameter with a bound, and a later one names
@@ -815,11 +789,25 @@ impl Walk {
     }
 
     fn program(&mut self, source: &str) {
+        // The checker's own work, which the typed tree cannot tell from a form that the program
+        // writes: `Some(1)` and the wrap of `1` are the same tree.
+        let counters = [
+            (WIDENS, &check::WIDENED_BREAKS),
+            (CROSSES, &check::WRAP_LOOPS),
+            (OBJECT_IN_SOME, &check::OBJECT_IN_SOME_CALLS),
+            (OWN_PUSH, &check::OWN_PUSH_READS),
+            (PUSHED_VALUE, &check::PUSHED_VALUES),
+        ];
+        for (_, counter) in counters {
+            counter.set(0);
+        }
         let (ast, tir, codes) = checked_with_codes(source);
+        for (key, counter) in counters {
+            if counter.get() > 0 {
+                self.mark(key);
+            }
+        }
         source.clone_into(&mut self.source);
-        self.pushes.clear();
-        self.safe_pushes.clear();
-        self.untyped_loops.clear();
         self.lens.clear();
         self.offsets.clear();
         self.immutable.clear();
@@ -1787,20 +1775,6 @@ impl Walk {
         }
         if let Some(ty) = ty {
             self.type_expr(ty);
-        } else {
-            let value = match &init.kind {
-                ast::ExprKind::Block(block) => tail(block),
-                _ => Some(init),
-            };
-            if let Some(
-                value @ ast::Expr {
-                    kind: ast::ExprKind::Loop { .. },
-                    ..
-                },
-            ) = value
-            {
-                self.untyped_loops.insert(value.span.start());
-            }
         }
         self.ast_expr(init);
     }
@@ -2031,14 +2005,6 @@ impl Walk {
             } => {
                 self.mark("ast::ExprKind::MethodCall");
                 self.mark(&format!("ast::ExprKind::MethodCall.safe = {safe}"));
-                if method.name.as_str() == "push" && rooted_in_name(receiver) {
-                    let pushes = if *safe {
-                        &mut self.safe_pushes
-                    } else {
-                        &mut self.pushes
-                    };
-                    pushes.insert(e.span.start());
-                }
                 if enum_name(receiver) == Some("Option") && method.name.as_str() == "Some" {
                     self.mark("reach: `Some` builds an optional");
                 }
@@ -2786,14 +2752,6 @@ impl Walk {
                     let key = format!("prelude method {}", self.function_names[func.0]);
                     self.mark(&key);
                 }
-                let own_push = func.0 < self.user_funcs
-                    && self.function_names[func.0].rsplit('.').next() == Some("push");
-                if own_push && self.pushes.contains(&e.span.start()) {
-                    self.mark(OWN_PUSH);
-                }
-                if own_push && self.safe_pushes.contains(&e.span.start()) {
-                    self.mark(PUSHED_VALUE);
-                }
                 let name = &self.function_names[func.0];
                 let (operator, contains) = (
                     matches!(name.rsplit('.').next(), Some("eq" | "less")),
@@ -3156,41 +3114,10 @@ impl Walk {
             }
             tir::ExprKind::Loop(body) => {
                 self.mark("tir::ExprKind::Loop");
-                self.loops.push(LoopBreaks::default());
                 self.tir_block(body);
-                let breaks = (self.loops.pop()).expect("the walk of a loop should keep its frame");
-                // `wrap_breaks` wraps the `T` values of a loop that a later `None` widened. It
-                // enters an inner loop only when a `break` from it targets this loop.
-                if matches!(e.ty.kind(), TypeKind::Optional(_)) && breaks.wrapped && breaks.none {
-                    self.mark(if breaks.crossed { CROSSES } else { WIDENS });
-                }
-                if breaks.literal_after && self.untyped_loops.contains(&e.span.start()) {
-                    self.mark(OBJECT_IN_SOME);
-                }
             }
-            tir::ExprKind::Break { depth, value } => {
+            tir::ExprKind::Break { value, .. } => {
                 self.mark("tir::ExprKind::Break");
-                let target = (self.loops.len()).checked_sub(depth + 1);
-                // A written `Some(..)` has the typed tree that the checker's wrap has, and
-                // `wrap_breaks` does nothing for it. Only the source tells them apart.
-                let written = value.as_ref().is_some_and(|v| {
-                    self.source[v.span.range()]
-                        .trim_start_matches('(')
-                        .starts_with("Some(")
-                });
-                if let Some(breaks) = target.and_then(|at| self.loops.get_mut(at)) {
-                    breaks.crossed |= *depth > 0;
-                    if let Some(value) = value {
-                        // Only a `None` after a wrapped value is widened to.
-                        breaks.none |= breaks.wrapped && matches!(value.kind, tir::ExprKind::None);
-                        breaks.wrapped |= !written && matches!(value.kind, tir::ExprKind::Wrap(_));
-                        let optional = matches!(value.ty.kind(), TypeKind::Optional(_));
-                        breaks.literal_after |= breaks.optional && literal_value(value);
-                        breaks.optional |= optional
-                            && !literal_value(value)
-                            && !matches!(value.kind, tir::ExprKind::None);
-                    }
-                }
                 if let Some(value) = value {
                     self.tir_expr(value, Parent::Other);
                 }
@@ -3340,36 +3267,12 @@ fn array_len(e: &ast::Expr) -> Option<i128> {
     }
 }
 
-/// Whether `e` is a name, or a field or an element of a place.
-fn rooted_in_name(e: &ast::Expr) -> bool {
-    match &e.kind {
-        ast::ExprKind::Name(_) => true,
-        ast::ExprKind::Field { base, .. } | ast::ExprKind::Index { base, .. } => {
-            rooted_in_name(base)
-        }
-        _ => false,
-    }
-}
-
 /// The local at the root of a place that `e` reads.
 fn root_local(e: &tir::Expr) -> Option<tir::LocalId> {
     match &e.kind {
         tir::ExprKind::Local(id) => Some(*id),
         tir::ExprKind::Field { base, .. } | tir::ExprKind::Index { base, .. } => root_local(base),
         _ => None,
-    }
-}
-
-/// Whether `e` is a literal, or one that the checker wrapped into an optional.
-fn literal_value(e: &tir::Expr) -> bool {
-    match &e.kind {
-        tir::ExprKind::Int(_)
-        | tir::ExprKind::Float(_)
-        | tir::ExprKind::Bool(_)
-        | tir::ExprKind::Char(_)
-        | tir::ExprKind::Str(_) => true,
-        tir::ExprKind::Wrap(inner) => literal_value(inner),
-        _ => false,
     }
 }
 
@@ -5950,7 +5853,7 @@ fn a_loop_key_should_mark_what_the_checker_did() {
     let inner_loop = "loop {\n let mut d = 1\n loop {\n if d == 0 { break }\n d -= 1\n break\n }\n if c == 0 { break 1 }\n c -= 1\n break None\n}";
     let joined_to_any = "interface I {}\nclass A {}\nextend A: I {}\n";
     let any_program = format!(
-        "{joined_to_any}fn main() {{\n let a: any I = A()\n let y = ({{\n let mut c = 1\n{}\n }})\n print(y.is_some())\n}}",
+        "{joined_to_any}fn main() {{\n let a: any I = A()\n let y = ({{\n let mut c = 1\n{}\n }})\n print(1)\n}}",
         flat(&["A()", "a"])
     );
     let rows: Vec<(&str, String, bool, bool, bool)> = vec![
@@ -8514,8 +8417,7 @@ fn without_unused(source: &str) -> (String, usize) {
         false,
     );
     let prelude = prelude_program(PRELUDE_SOURCE);
-    let (_, diagnostics) =
-        crate::check::check(&parsed.program, &prelude, source, &parsed.diagnostics);
+    let (_, diagnostics) = check::check(&parsed.program, &prelude, source, &parsed.diagnostics);
     let unused: FxHashSet<usize> = (diagnostics.iter())
         .filter(|d| d.code().as_str() == "W0012")
         .map(|d| d.span().start())
