@@ -16,12 +16,13 @@ import tempfile
 import unittest
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, NamedTuple, override
 from unittest import mock
 
 import nightly_build
 
-SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nightly_build.py")
+SCRIPT = Path(__file__).absolute().parent / "nightly_build.py"
 # A is the newest commit. Each is a distinct 40-character string.
 A, B, C = ("a" * 40, "b" * 40, "c" * 40)
 HEAD = "d" * 40
@@ -247,32 +248,33 @@ class Script(unittest.TestCase):
 
     @override
     def setUp(self) -> None:
-        self.dir = tempfile.mkdtemp()
+        self.dir = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.dir)
-        bin_dir = os.path.join(self.dir, "bin")
-        os.mkdir(bin_dir)
-        gh = os.path.join(bin_dir, "gh")
-        with open(gh, "w", encoding="utf-8") as f:
+        bin_dir = self.dir / "bin"
+        bin_dir.mkdir()
+        gh = bin_dir / "gh"
+        with gh.open("w", encoding="utf-8") as f:
             f.write(FAKE_GH)
-        os.chmod(gh, os.stat(gh).st_mode | stat.S_IXUSR)
+        gh.chmod(gh.stat().st_mode | stat.S_IXUSR)
         self.bin = bin_dir
 
     def run_script(self, args: list[str], fake: dict[str, Any], **env: str) -> Run:
-        path = os.path.join(self.dir, "state.json")
-        with open(path, "w", encoding="utf-8") as f:
+        path = self.dir / "state.json"
+        calls = self.dir / "state.json.calls"
+        with path.open("w", encoding="utf-8") as f:
             json.dump(fake, f)
-        output, summary = (os.path.join(self.dir, n) for n in ("output", "summary"))
-        for stale in (output, summary, path + ".calls"):
-            if os.path.exists(stale):
-                os.remove(stale)
+        output, summary = (self.dir / n for n in ("output", "summary"))
+        for stale in (output, summary, calls):
+            if stale.exists():
+                stale.unlink()
         env = dict(
             os.environ,
             PATH=f"{self.bin}:{os.environ['PATH']}",
-            FAKE_STATE=path,
+            FAKE_STATE=str(path),
             GITHUB_REPOSITORY="o/r",
             GH_TOKEN="t",
-            GITHUB_OUTPUT=output,
-            GITHUB_STEP_SUMMARY=summary,
+            GITHUB_OUTPUT=str(output),
+            GITHUB_STEP_SUMMARY=str(summary),
             **env,
         )
         run = subprocess.run(
@@ -287,20 +289,20 @@ class Script(unittest.TestCase):
             run.returncode,
             self.read_outputs(output),
             self.read(summary),
-            [json.loads(line) for line in self.read(path + ".calls").splitlines()],
+            [json.loads(line) for line in self.read(calls).splitlines()],
             run.stdout,
             run.stderr,
             json.loads(self.read(path)),
         )
 
     @staticmethod
-    def read(path: str) -> str:
-        if not os.path.exists(path):
+    def read(path: Path) -> str:
+        if not path.exists():
             return ""
-        with open(path, encoding="utf-8") as f:
+        with path.open(encoding="utf-8") as f:
             return f.read()
 
-    def read_outputs(self, path: str) -> dict[str, str]:
+    def read_outputs(self, path: Path) -> dict[str, str]:
         return dict(line.split("=", 1) for line in self.read(path).splitlines())
 
 
@@ -414,7 +416,7 @@ class Pick(Script):
         self.run_pick(state([A]))
         env = {
             "PATH": f"{self.bin}:{os.environ['PATH']}",
-            "FAKE_STATE": os.path.join(self.dir, "state.json"),
+            "FAKE_STATE": str(self.dir / "state.json"),
         }
         with mock.patch.dict(os.environ, env):
             self.assertIsNone(nightly_build.gh("repos/o/r/empty"))
@@ -549,7 +551,7 @@ class Publish(Script):
                 self.assertIn(A, calls[create][calls[create].index("--notes") + 1])
                 self.assertEqual(calls[upload][2], tag)
                 files = [a for a in calls[upload][3:] if not a.startswith("--") and a != "o/r"]
-                self.assertEqual(sorted(os.path.basename(f) for f in files), sorted(ASSETS))
+                self.assertEqual(sorted(Path(f).name for f in files), sorted(ASSETS))
                 self.assertNotIn("--clobber", calls[upload])
                 self.assertEqual(calls[edit][2], tag)
                 self.assertIn("--draft=false", calls[edit])
@@ -687,8 +689,8 @@ class Publish(Script):
                 self.assertEqual(sent(run.calls, "release"), [])
 
     def test_publish_should_stay_in_its_temp_directory(self) -> None:
-        tmp = os.path.join(self.dir, "tmp")
-        os.mkdir(tmp)
+        tmp = self.dir / "tmp"
+        tmp.mkdir()
         names = ("..", "../../up", "a/b")
         evil = [
             {
@@ -699,11 +701,11 @@ class Publish(Script):
             }
             for i, n in enumerate(names)
         ]
-        run = self.run_publish(self.fake([], [*all_artifacts(), *evil]), TMPDIR=tmp)
+        run = self.run_publish(self.fake([], [*all_artifacts(), *evil]), TMPDIR=str(tmp))
         self.assertEqual(run.code, 0, run.stderr)
-        self.assertEqual(os.listdir(tmp), [])
+        self.assertEqual(list(tmp.iterdir()), [])
         outside = {"bin", "tmp", "state.json", "state.json.calls", "output", "summary"}
-        self.assertLessEqual(set(os.listdir(self.dir)), outside)
+        self.assertLessEqual({p.name for p in self.dir.iterdir()}, outside)
 
     def test_publish_should_stop_when_a_newer_nightly_build_exists(self) -> None:
         run = self.run_publish(state([A, B], [A, B], [nightly(A)], artifacts=all_artifacts()), B)

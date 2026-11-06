@@ -7,16 +7,16 @@ holds the mapping one level deeper, and a `|` value holds its block, so that the
 `run: |` block is never a key. Limit: a flow map with a nested flow map that has a comma.
 """
 
-import os
 import re
 import subprocess
 import tempfile
 import unittest
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
-ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-WORKFLOW = os.path.join(ROOT, ".github", "workflows", "nightly-build.yml")
+ROOT = Path(__file__).absolute().parent / ".."
+WORKFLOW = ROOT / ".github" / "workflows" / "nightly-build.yml"
 PICKED = "${{ needs.pick.outputs.sha }}"
 JOBS = [
     "pick",
@@ -173,9 +173,9 @@ GATE = re.compile(r"continue-on-error|\|\|\s*(?:true\b|:|exit\s+0)|set\s+\+e")
 
 def workflow(test: unittest.TestCase) -> list[str]:
     """The workflow's lines without comments. A missing file fails the test on an assertion."""
-    if not os.path.isfile(WORKFLOW):
+    if not WORKFLOW.is_file():
         test.fail(f"{WORKFLOW} does not exist")
-    with open(WORKFLOW, encoding="utf-8") as f:
+    with WORKFLOW.open(encoding="utf-8") as f:
         return [line for line in f.read().splitlines() if not line.lstrip().startswith("#")]
 
 
@@ -442,7 +442,7 @@ class NightlyWorkflowTest(unittest.TestCase):
         self.assertEqual(listed, PULL_REQUEST_PATHS)
         for path in listed:
             if "*" not in path:
-                self.assertTrue(os.path.isfile(os.path.join(ROOT, path)), path)
+                self.assertTrue((ROOT / path).is_file(), path)
 
     def test_concurrency_should_cancel_only_pull_requests(self) -> None:
         self.assertEqual(
@@ -511,25 +511,25 @@ class NightlyWorkflowTest(unittest.TestCase):
         self.assertIn(source, lines[0])
         self.assertTrue(lines[0].endswith(sink), lines[0])
         with tempfile.TemporaryDirectory() as tmp:
-            html = os.path.join(tmp, "in.html")
-            out = os.path.join(tmp, "out.txt")
-            with open(html, "w", encoding="utf-8") as f:
+            html = Path(tmp, "in.html")
+            out = Path(tmp, "out.txt")
+            with html.open("w", encoding="utf-8") as f:
                 f.write("<p>say &#34;a&#34; and &#39;b&#39; &#60;c&#62;</p>\n")
             command = lines[0].replace(source, f"'{html}'").replace(sink, f"> '{out}'")
             subprocess.run(["bash", "-c", command], check=True)
-            with open(out, encoding="utf-8") as f:
+            with out.open(encoding="utf-8") as f:
                 self.assertEqual(f.read(), "say \"a\" and 'b' <c>\n")
 
     def test_embedded_notices_should_name_each_author(self) -> None:
-        path = os.path.join(ROOT, ".config", "notices", "LLVM-EMBEDDED.txt")
-        self.assertTrue(os.path.isfile(path), path)
-        with open(path, encoding="utf-8") as f:
+        path = ROOT / ".config" / "notices" / "LLVM-EMBEDDED.txt"
+        self.assertTrue(path.is_file(), path)
+        with path.open(encoding="utf-8") as f:
             text = f.read()
         for author in EMBEDDED_AUTHORS:
             self.assertIn(author, text)
 
     def test_prek_should_watch_the_new_files(self) -> None:
-        with open(os.path.join(ROOT, "prek.toml"), encoding="utf-8") as f:
+        with (ROOT / "prek.toml").open(encoding="utf-8") as f:
             text = f.read()
         block = text[text.index('id = "python-tests"') :]
         match = re.search(r"^files = '(.*)'$", block, re.MULTILINE)

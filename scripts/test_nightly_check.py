@@ -8,13 +8,14 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from pathlib import Path
 from typing import override
 
 import nightly_check as nc
 
-SCRIPTS = os.path.dirname(os.path.abspath(__file__))
-CHECK = os.path.join(SCRIPTS, "nightly_check.py")
-SMOKE = os.path.join(SCRIPTS, "nightly_smoke.sh")
+SCRIPTS = Path(__file__).absolute().parent
+CHECK = SCRIPTS / "nightly_check.py"
+SMOKE = SCRIPTS / "nightly_smoke.sh"
 NAMES = [
     "sisu/",
     "sisu/sisu",
@@ -160,19 +161,19 @@ class Tar(unittest.TestCase):
 class PackBase(unittest.TestCase):
     @override
     def setUp(self) -> None:
-        self.root = tempfile.mkdtemp(prefix="sisu-pack-")
+        self.root = Path(tempfile.mkdtemp(prefix="sisu-pack-"))
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
-        self.release = os.path.join(self.root, "release")
-        self.out = os.path.join(self.root, "out", "dist")
-        self.third = os.path.join(self.root, "third-party.txt")
-        os.makedirs(self.release)
+        self.release = self.root / "release"
+        self.out = self.root / "out" / "dist"
+        self.third = self.root / "third-party.txt"
+        self.release.mkdir(parents=True)
         for name in ("sisu", "libsisu_runtime_mimalloc.a", "libsisu_runtime_system.a"):
-            self.write(os.path.join(self.release, name), "content of " + name)
-        os.chmod(os.path.join(self.release, "sisu"), 0o755)
+            self.write(self.release / name, "content of " + name)
+        (self.release / "sisu").chmod(0o755)
         self.write(self.third, "notices")
 
-    def write(self, path: str, text: str) -> None:
-        with open(path, "w") as f:
+    def write(self, path: Path, text: str) -> None:
+        with path.open("w") as f:
             f.write(text)
 
     def pack(
@@ -190,7 +191,7 @@ class Pack(PackBase):
     def test_pack_should_write_the_exact_tarball(self) -> None:
         done = self.pack()
         self.assertEqual(done.returncode, 0, done.stderr)
-        with tarfile.open(os.path.join(self.out, "sisu-x86_64-linux.tar.gz")) as tar:
+        with tarfile.open(self.out / "sisu-x86_64-linux.tar.gz") as tar:
             self.assertEqual(sorted(tar.getnames()), sorted(n.rstrip("/") for n in NAMES))
             for name in ("sisu", "libsisu_runtime_mimalloc.a", "libsisu_runtime_system.a"):
                 member = tar.extractfile("sisu/" + name)
@@ -202,15 +203,15 @@ class Pack(PackBase):
             self.assertTrue(tar.getmember("sisu/sisu").mode & stat.S_IXUSR)
             licence = tar.extractfile("sisu/LICENSE")
             assert licence is not None
-            with open(os.path.join(SCRIPTS, "..", "LICENSE"), "rb") as f:
+            with (SCRIPTS / ".." / "LICENSE").open("rb") as f:
                 self.assertEqual(licence.read(), f.read())
 
     def test_pack_should_fail_on_a_missing_file(self) -> None:
-        os.remove(os.path.join(self.release, "libsisu_runtime_system.a"))
+        (self.release / "libsisu_runtime_system.a").unlink()
         done = self.pack()
         self.assertEqual(done.returncode, 1)
         self.assertIn("libsisu_runtime_system.a", done.stderr)
-        self.assertEqual([n for n in os.listdir(self.out) if n.endswith(".tar.gz")], [])
+        self.assertEqual([p for p in self.out.iterdir() if p.name.endswith(".tar.gz")], [])
 
     def test_pack_should_fail_on_an_unknown_target(self) -> None:
         done = self.pack("riscv-linux")
@@ -218,11 +219,11 @@ class Pack(PackBase):
         self.assertIn("riscv-linux", done.stderr)
 
 
-def fake_tool(directory: str, name: str, body: str) -> None:
-    path = os.path.join(directory, name)
-    with open(path, "w") as f:
+def fake_tool(directory: Path, name: str, body: str) -> None:
+    path = directory / name
+    with path.open("w") as f:
         f.write(f'#!/bin/sh\necho "{name} $*" >> "$LOG"\n{body}\n')
-    os.chmod(path, 0o755)
+    path.chmod(0o755)
 
 
 def breaks(call: str) -> str:
@@ -235,25 +236,25 @@ class ToolBase(unittest.TestCase):
 
     @override
     def setUp(self) -> None:
-        self.root = tempfile.mkdtemp(prefix="sisu-tools-")
+        self.root = Path(tempfile.mkdtemp(prefix="sisu-tools-"))
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
-        self.bin = os.path.join(self.root, "bin")
-        self.log = os.path.join(self.root, "log")
-        os.makedirs(self.bin)
+        self.bin = self.root / "bin"
+        self.log = self.root / "log"
+        self.bin.mkdir(parents=True)
 
     def check(
-        self, *args: str, fail: str = "", path: str | None = None, **env: str
+        self, *args: str | Path, fail: str = "", path: str | None = None, **env: str
     ) -> subprocess.CompletedProcess[str]:
-        path = path if path is not None else self.bin + os.pathsep + os.environ["PATH"]
-        env = dict(os.environ, PATH=path, LOG=self.log, FAIL=fail, **env)
+        search = f"{self.bin}{os.pathsep}{os.environ['PATH']}" if path is None else path
+        env = dict(os.environ, PATH=search, LOG=str(self.log), FAIL=fail, **env)
         return subprocess.run(
             [sys.executable, CHECK, *args], capture_output=True, text=True, env=env
         )
 
     def calls(self) -> list[str]:
-        if not os.path.exists(self.log):
+        if not self.log.exists():
             return []
-        with open(self.log) as f:
+        with self.log.open() as f:
             return f.read().splitlines()
 
 
@@ -284,7 +285,7 @@ case "$1" in
     : > "$3";;
 esac""".format(breaks("ar-t"), breaks("ar-x")),
         )
-        self.archives = [os.path.join(self.root, n) for n in ("libLLVMSupport.a", "libzstd.a")]
+        self.archives = [self.root / n for n in ("libLLVMSupport.a", "libzstd.a")]
 
     def macos(self, **kwargs: str) -> subprocess.CompletedProcess[str]:
         return self.check("macos", "sisu", *self.archives, **kwargs)
@@ -294,7 +295,7 @@ esac""".format(breaks("ar-t"), breaks("ar-x")),
         self.assertEqual(done.returncode, 0, done.stderr)
         calls = self.calls()
         for archive in self.archives:
-            for call in ("ar -t " + archive, f"ar -x {archive} a.native"):
+            for call in (f"ar -t {archive}", f"ar -x {archive} a.native"):
                 self.assertIn(call, calls)
         self.assertIn("otool -L sisu", calls)
         self.assertIn("codesign -v sisu", calls)
@@ -360,30 +361,30 @@ printf "sisu 0.1.0\\ncommit: abc1234\\n"''',
         self.assertIn("libfoo.so.1", done.stderr)
 
     def test_version_should_fail_on_another_commit(self) -> None:
-        sisu = os.path.join(self.bin, "sisu")
+        sisu = self.bin / "sisu"
         done = self.check("version", sisu, "fff1234")
         self.assertEqual(done.returncode, 1)
         self.assertIn("abc1234", done.stderr)
 
     def test_version_should_fail_on_a_stderr_line(self) -> None:
-        sisu = os.path.join(self.bin, "sisu")
+        sisu = self.bin / "sisu"
         done = self.check("version", sisu, "abc1234def", WARN="weak version not found")
         self.assertEqual(done.returncode, 1)
         self.assertIn("weak version not found", done.stderr)
 
     def test_version_should_fail_when_the_tool_fails(self) -> None:
-        sisu = os.path.join(self.bin, "sisu")
+        sisu = self.bin / "sisu"
         self.assertEqual(self.check("version", sisu, "abc1234def").returncode, 0)
         done = self.check("version", sisu, "abc1234def", fail="sisu")
         self.assertEqual(done.returncode, 1)
         self.assertIn("sisu broke", done.stderr)
 
     def test_checks_should_fail_when_a_tool_is_missing(self) -> None:
-        empty = os.path.join(self.root, "empty")
-        os.makedirs(empty)
-        for args in (("linux", "sisu"), ("version", os.path.join(empty, "no-sisu"), "abc1234")):
+        empty = self.root / "empty"
+        empty.mkdir(parents=True)
+        for args in (("linux", "sisu"), ("version", empty / "no-sisu", "abc1234")):
             with self.subTest(args[0]):
-                done = self.check(*args, path=empty)
+                done = self.check(*args, path=str(empty))
                 self.assertEqual(done.returncode, 1)
                 self.assertIn("cannot run", done.stderr)
 
@@ -392,9 +393,9 @@ class PackTools(PackBase):
     @override
     def setUp(self) -> None:
         super().setUp()
-        self.bin = os.path.join(self.root, "bin")
-        self.log = os.path.join(self.root, "log")
-        os.makedirs(self.bin)
+        self.bin = self.root / "bin"
+        self.log = self.root / "log"
+        self.bin.mkdir(parents=True)
         # A tar that forwards to the real one, records COPYFILE_DISABLE on the create call, and
         # adds a name to the listing when $EXTRA is set.
         fake_tool(
@@ -411,56 +412,56 @@ exec {real} "$@"'''.format(real=shutil.which("tar")),
     def pack_with(self, **extra: str) -> subprocess.CompletedProcess[str]:
         # The caller's shell must not set COPYFILE_DISABLE for the test.
         env = {k: v for k, v in os.environ.items() if k != "COPYFILE_DISABLE"}
-        env.update(PATH=self.bin + os.pathsep + os.environ["PATH"], LOG=self.log, **extra)
+        env.update(PATH=f"{self.bin}{os.pathsep}{os.environ['PATH']}", LOG=str(self.log), **extra)
         return self.pack(env=env)
 
     def test_pack_should_disable_copyfile_in_the_create_call(self) -> None:
         done = self.pack_with()
         self.assertEqual(done.returncode, 0, done.stderr)
-        with open(self.log) as f:
+        with self.log.open() as f:
             self.assertIn("COPYFILE_DISABLE=1", f.read())
 
     def test_pack_should_fail_on_an_extra_name_in_the_listing(self) -> None:
         done = self.pack_with(EXTRA="sisu/._sisu")
         self.assertEqual(done.returncode, 1)
         self.assertIn("._sisu", done.stderr)
-        self.assertEqual([n for n in os.listdir(self.out) if n.endswith(".tar.gz")], [])
+        self.assertEqual([p for p in self.out.iterdir() if p.name.endswith(".tar.gz")], [])
 
 
 class Smoke(unittest.TestCase):
     @override
     def setUp(self) -> None:
-        self.root = tempfile.mkdtemp(prefix="sisu-smoke-")
+        self.root = Path(tempfile.mkdtemp(prefix="sisu-smoke-"))
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
-        self.bin = os.path.join(self.root, "bin")
-        self.programs = os.path.join(self.root, "programs")
-        self.log = os.path.join(self.root, "log")
-        os.makedirs(self.bin)
-        os.makedirs(self.programs)
+        self.bin = self.root / "bin"
+        self.programs = self.root / "programs"
+        self.log = self.root / "log"
+        self.bin.mkdir(parents=True)
+        self.programs.mkdir(parents=True)
 
     def fake(self, body: str = 'cat "${4%.sisu}.out"') -> None:
-        path = os.path.join(self.bin, "sisu")
-        with open(path, "w") as f:
+        path = self.bin / "sisu"
+        with path.open("w") as f:
             f.write('#!/bin/sh\necho "$@" >> "$LOG"\n' + body + "\n")
-        os.chmod(path, 0o755)
+        path.chmod(0o755)
 
     def program(self, name: str, out: str | None = "hello\n") -> None:
-        with open(os.path.join(self.programs, name + ".sisu"), "w") as f:
+        with (self.programs / f"{name}.sisu").open("w") as f:
             f.write("fn main() {}\n")
         if out is not None:
-            with open(os.path.join(self.programs, name + ".out"), "w") as f:
+            with (self.programs / f"{name}.out").open("w") as f:
                 f.write(out)
 
     def smoke(self) -> subprocess.CompletedProcess[str]:
-        env = dict(os.environ, LOG=self.log)
+        env = dict(os.environ, LOG=str(self.log))
         return subprocess.run(
             ["bash", SMOKE, self.bin, self.programs], env=env, capture_output=True, text=True
         )
 
     def calls(self) -> list[str]:
-        if not os.path.exists(self.log):
+        if not self.log.exists():
             return []
-        with open(self.log) as f:
+        with self.log.open() as f:
             return f.read().splitlines()
 
     def test_smoke_should_pass_when_each_program_prints_its_output(self) -> None:
@@ -470,7 +471,7 @@ class Smoke(unittest.TestCase):
         done = self.smoke()
         self.assertEqual(done.returncode, 0, done.stderr)
         for name in ("a", "b"):
-            path = os.path.join(self.programs, name + ".sisu")
+            path = self.programs / f"{name}.sisu"
             for allocator in ("mimalloc", "system"):
                 self.assertIn(f"run --allocator {allocator} {path}", self.calls())
 
@@ -503,15 +504,15 @@ class Smoke(unittest.TestCase):
 
     def test_smoke_should_name_a_program_before_it_runs(self) -> None:
         # The fake copies the script's stdout, as it is at its first run, to $SEEN.
-        seen = os.path.join(self.root, "seen")
-        out = os.path.join(self.root, "out")
+        seen = self.root / "seen"
+        out = self.root / "out"
         self.fake('[ -e "$SEEN" ] || cp "$OUT" "$SEEN"\ncat "${4%.sisu}.out"')
         self.program("hung")
-        env = dict(os.environ, LOG=self.log, OUT=out, SEEN=seen)
-        with open(out, "w") as f:
+        env = dict(os.environ, LOG=str(self.log), OUT=str(out), SEEN=str(seen))
+        with out.open("w") as f:
             done = subprocess.run(["bash", SMOKE, self.bin, self.programs], env=env, stdout=f)
         self.assertEqual(done.returncode, 0)
-        with open(seen) as f:
+        with seen.open() as f:
             text = f.read()
         self.assertIn("hung.sisu", text)
         self.assertIn("mimalloc", text)
