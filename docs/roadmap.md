@@ -1575,9 +1575,10 @@ stretch goals" with no date. Each gap gets a milestone once a definition of
   needs glibc and libgcc_s. A stable release needs a version string that tells
   it from a nightly build. `releases/latest/download/` must then mean the stable
   release, so nightly builds stop marking themselves latest and get another
-  install path. A fully static `sisu` built against musl needs LLVM built from
-  source against musl. Static compiled programs need the runtime built for
-  `x86_64-unknown-linux-musl` and a link against musl's C library.
+  install path. Static linking is a separate item. A fully static `sisu` built
+  against musl needs LLVM built from source against musl. Static compiled
+  programs need the runtime built for `x86_64-unknown-linux-musl` and a link
+  against musl's C library.
 
 [ADR 0027](adr/0027-what-sisu-is-for.md) (proposed) is the definition of 1.0:
 what Sisu is for, three acceptance programs, what 1.0 requires and leaves

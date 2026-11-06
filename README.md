@@ -95,7 +95,7 @@ $ curl -fsSLO https://github.com/sisu-lang/sisu/releases/latest/download/orders.
 $ sisu run orders.sisu
 ```
 
-The first line, run again, updates Sisu. It checks the download against the
+The first line, run again, updates Sisu. It checks the tarball against the
 release's `SHA256SUMS`, which shows that the file is whole and comes from the
 same release. It does not show who made the release. A bug report gives the
 output of `sisu --version --verbose`.
@@ -259,8 +259,8 @@ editors and agents, and marks each fix as safe or unsafe.
 
 ## Status
 
-Sisu has only nightly builds and runs on x86-64 and ARM64 Linux and ARM64 macOS
-only.
+Sisu has only nightly builds. It runs only on x86-64 and ARM64 Linux and ARM64
+macOS.
 Today it compiles:
 
 - functions, and the types `i64`, `f64`, `u8`, `bool` and `char`

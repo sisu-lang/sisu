@@ -53,13 +53,14 @@ Read each target below before you decide it needs no edit.
 | The toolchain or a prerequisite (`rust-toolchain.toml`, `scripts/`, `.cargo/`), a command, how tests run (`crates/sisuc/tests/*.rs`), CI (`.github/workflows/`, `prek.toml`), dependency policy (`deny.toml`) or lint policy (`[workspace.lints]` in `Cargo.toml`) | "Prerequisites" and "Build and test" in `docs/development.md`; "Commands" and "Code rules" in `AGENTS.md`; step 5 of `CONTRIBUTING.md` |
 | A top-level directory or crate | "Repository layout" in `docs/development.md`; the crate list in `AGENTS.md` |
 | What `sisu` prints, or the text of an explanation in `docs/diagnostics/` (each `.json` summary embeds it) | `make bless`, then read the diff under `site/programs/` |
-| The build steps, prerequisites or compiler stages | "Install it" and the pipeline section on Home (`site/src/index.html`) |
+| Compiler stages | The pipeline section on Home (`site/src/index.html`) |
+| `install.sh`, the supported systems or the install lines | "Install" in `README.md`, "Install it" on Home (`site/src/index.html`), `live-check` in `.github/workflows/nightly-build.yml` |
 | `docs/roadmap.md` | `site/data/status.toml` |
 | A diagnostic code added or removed | `site/data/categories.toml` |
 | An ADR added | A row on `site/src/decisions.html` |
 | Closures landing | Move `site/programs/pending/orders.sisu` to `site/programs/run/`, in place of the `orders.sisu` that Home shows today, and write its `.out`; the pending case says so |
 | A stage, the runtime (`crates/runtime`) or `docs/architecture.md` | The Architecture page, `site/src/architecture.html`, and the page's hand-kept commit |
-| A command, a prerequisite, CI (`.github/workflows/`), `CONTRIBUTING.md`, `AGENTS.md` or `CODING_STANDARDS.md` | The Contribute page, `site/src/contribute.html`, and "Install it" on Home, and the page's hand-kept commit |
+| A command, a prerequisite, CI (`.github/workflows/`), `CONTRIBUTING.md`, `AGENTS.md` or `CODING_STANDARDS.md` | The Contribute page, `site/src/contribute.html`, and the page's hand-kept commit |
 | A language feature added or changed | The Tour's prose and its "What is not here yet" list in `site/src/tour.html`, and the page's hand-kept commit |
 | A language feature added or changed | Its page in `docs/reference/`, in the same pull request |
 | How `sisu` builds: its threads, its codegen units, or what one command runs | The Compile speed notes in `docs/benchmarks.md` and `site/src/benchmarks.html` |
