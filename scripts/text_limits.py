@@ -135,13 +135,16 @@ def findings(path: str, lines: list[str], changed: set[int]) -> list[str]:
 
 
 def changed_lines(ref: str) -> dict[str, set[int]]:
-    """The line numbers that differ from `ref`, for each file below this directory. A rename counts
+    """The line numbers that differ from `ref`, for the absolute path of each file. A rename counts
     only the lines that it changes, so Git must see the whole diff and not one path."""
-    # The flags hold the output in one form, whatever the user's Git settings are.
+    top = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                         capture_output=True, text=True, check=True).stdout.rstrip("\n")
+    # The flags hold the output in one form, whatever the user's Git settings and attributes are.
     # shortcut: Git still quotes a name with a tab or a quotation mark, so that file is not read.
     # No file here has such a name. Read `--name-status -z` if one comes.
-    command = ["git", "-c", "core.quotePath=false", "diff", "-M", "--relative", "--no-color", "--no-ext-diff",
-               "--unified=0", "--inter-hunk-context=0", "--src-prefix=a/", "--dst-prefix=b/", ref]
+    command = ["git", "-c", "core.quotePath=false", "diff", "-M", "--no-relative", "--no-color", "--no-ext-diff",
+               "--no-textconv", "--text", "--unified=0", "--inter-hunk-context=0", "--src-prefix=a/",
+               "--dst-prefix=b/", ref]
     diff = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True).stdout
     changed: dict[str, set[int]] = {}
     current: set[int] = set()
@@ -152,7 +155,7 @@ def changed_lines(ref: str) -> dict[str, set[int]]:
             in_header = True
         elif in_header and line.startswith("+++ b/"):
             # Git ends the name with a tab when the name holds a space.
-            changed[line[6:].rstrip("\t")] = current
+            changed[os.path.join(top, line[6:].rstrip("\t"))] = current
         elif hunk := HUNK.match(line):
             in_header = False
             first = int(hunk[1])
@@ -172,7 +175,7 @@ def main(argv: list[str]) -> int:
     bad = 0
     changed = changed_lines(args.diff)
     for path in args.paths:
-        ours = changed.get(os.path.normpath(path))
+        ours = changed.get(os.path.realpath(path))
         if not ours:
             continue
         with open(path, encoding="utf-8") as f:

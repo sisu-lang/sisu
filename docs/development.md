@@ -696,7 +696,8 @@ A rule makes the fixed seeds reach a function. Do these steps in this order:
 1. Add a case that holds the construct to `crates/sisuc/tests/run`. The
    reference then reaches the function, so the check can see a gap.
 2. Write the construct in `Gen::gap_forms` (`crates/sisuc/src/generate/item.rs`).
-   An item goes into `GENERIC_GAP_ITEMS` or `ANY_GAP_ITEMS`, and a statement goes
+   An item goes into `GENERIC_GAP_ITEMS` or `ANY_GAP_ITEMS`, or into the text at
+   the top of `gap_forms` when it is neither generic nor `any`. A statement goes
    into the list of lines in `gap_forms`. Add it to the comment above `gap_forms`.
    Use fixed text and draw no byte from the seed, because a draw moves what each
    later part of a seed writes. The coverage test leaves this text out, so the
@@ -714,7 +715,7 @@ A rule makes the fixed seeds reach a function. Do these steps in this order:
 6. When the form prints a line, update the two pins in
    `crates/sisuc/src/fuzz_program.rs`: the count of lines in
    `a_budget_program_should_finish_within_the_limit`, and the stdout in
-   `a_failure_should_print_the_program`.
+   `a_failure_should_print_the_program`. Update the counts in their comments too.
 7. Remove the key from `fuzz/known_gaps.txt`. `make fuzz-gaps` must exit 0.
 
 When the form finds a compiler bug, fix the bug in the same work, with its own
