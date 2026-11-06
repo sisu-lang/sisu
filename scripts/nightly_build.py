@@ -5,10 +5,10 @@
 `pick` chooses the commit of the nightly build. It reads GITHUB_REPOSITORY, GITHUB_REF, HEAD_SHA
 and GH_TOKEN, and writes `sha=`, `build=` and `publish=` to $GITHUB_OUTPUT and its answer to
 $GITHUB_STEP_SUMMARY. On `main` it takes the newest commit that has a successful `ci.yml` push
-run and is newer than the commit of the newest published `nightly-*` release. When the commit has
-other `.github/workflows/` files than `main`, it takes nothing, because GITHUB_TOKEN cannot create
-a release for such a commit. Any other ref is a dry run: it builds HEAD_SHA, publishes nothing and
-prints what `main` would do.
+run. The commit must be newer than the commit of the newest published `nightly-*` release. When
+the commit has other `.github/workflows/` files than `main`, it takes nothing, because
+GITHUB_TOKEN cannot create a release for such a commit. Any other ref is a dry run: it builds
+HEAD_SHA, publishes nothing and prints what `main` would do.
 
 `pick` exits 0 on every answer, and 1 when a `gh` call fails. It only reads. It calls `gh api`
 (REST), so it needs the network. Python 3.10 standard library only.
@@ -25,7 +25,7 @@ DIFFER = 'the newest green commit has other workflow files than `main`'
 
 def gh(*args: str) -> object:
     out = subprocess.run(['gh', 'api', *args], capture_output=True, text=True, check=True).stdout
-    return json.loads(out)
+    return json.loads(out) if out.strip() else None
 
 
 def releases(repo: str) -> list[dict]:
