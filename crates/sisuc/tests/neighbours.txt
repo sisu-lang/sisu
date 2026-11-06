@@ -142,6 +142,11 @@ Rock()
 # A function name with no call, bare and indexed: no value, no place.
 nothing
 nothing[0]
+# A literal with a part that never finishes, and a block that a `break` outside a loop ends: the
+# report goes to the part or the jump, whatever call or context holds the value.
+"a{return}b"
+{ break; 1 }
+{ if c { break }; return }
 
 [contexts]
 # Array literals beside a hint from another branch, with the value alone, first and last.
