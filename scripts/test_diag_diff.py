@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -130,6 +131,40 @@ class DiagDiff(unittest.TestCase):
             reported = {Path(line.split(': ', 1)[1]).stem
                         for line in run.stdout.splitlines() if line.startswith('changed: ')}
             self.assertEqual(reported, set(changed))
+
+
+    def test_jobs_should_bound_the_sisu_processes_that_run_at_once(self):
+        self.assertLessEqual(max(peak_runs(lambda sisu, tmp: dd.main(sisu, sisu, tmp, jobs=2))), 2)
+
+    def test_main_should_run_at_most_two_sisu_processes_by_default(self):
+        self.assertLessEqual(max(peak_runs(lambda sisu, tmp: dd.main(sisu, sisu, tmp))), 2)
+
+    def test_command_line_should_bound_the_sisu_processes_by_jobs(self):
+        script = os.path.join(os.path.dirname(os.path.abspath(dd.__file__)), 'diag_diff.py')
+        for flag, limit in [([], 2), (['--jobs=1'], 1)]:
+            def run(sisu, tmp, flag=flag):
+                subprocess.run([sys.executable, script, *flag, sisu, sisu, tmp], check=True,
+                               capture_output=True)
+            self.assertLessEqual(max(peak_runs(run)), limit, flag)
+
+
+def peak_runs(run):
+    """The count of fake sisu runs at each start while `run(sisu, dir)` checks six programs."""
+    with tempfile.TemporaryDirectory() as tmp:
+        for n in range(6):
+            open(os.path.join(tmp, f'p{n}.sisu'), 'w').close()
+        # Each run marks itself, counts the runs that have a mark, waits, and removes its mark.
+        d = shlex.quote(tmp)
+        sisu = os.path.join(tmp, 'sisu')
+        with open(sisu, 'w', encoding='utf-8') as f:
+            f.write(f'#!/bin/sh\ntouch {d}/run.$$\n'
+                    f'ls {d} | grep -c "^run" >> {d}/counts\nsleep 0.1\nrm {d}/run.$$\n')
+        os.chmod(sisu, 0o755)
+        with contextlib.redirect_stdout(io.StringIO()):
+            run(sisu, tmp)
+        counts = [int(n) for n in Path(tmp, 'counts').read_text().split()]
+    assert len(counts) == 12, counts
+    return counts
 
 
 if __name__ == '__main__':

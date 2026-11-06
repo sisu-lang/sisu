@@ -7,7 +7,10 @@ A diagnostic differs when its code, position, message, labels, help or fixes (th
 and safe flag) differ. With `--codes`, only the codes, positions and count count, for a change that
 rewords many diagnostics on purpose. `--full` is the default, and is still accepted.
 
-Usage: python3 diag_diff.py [--codes] BASE_SISU HEAD_SISU DIR...
+It runs at most two sisu processes at once, so that it can run next to other work. `--jobs=N`
+runs at most N.
+
+Usage: python3 diag_diff.py [--codes] [--jobs=N] BASE_SISU HEAD_SISU DIR...
 Exits 1 when a program differs or crashes the head.
 """
 import json
@@ -57,9 +60,9 @@ def show(ds):
                      for c, _, line, col, s, t in ds) or 'none'
 
 
-def main(base_sisu, head_sisu, *roots, full=True):
+def main(base_sisu, head_sisu, *roots, full=True, jobs=2):
     paths = sorted({p for root in roots for p in Path(root).rglob('*.sisu')})
-    with ThreadPoolExecutor() as pool:
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
         bases = pool.map(lambda p: diagnostics(base_sisu, p, full), paths)
         heads = pool.map(lambda p: diagnostics(head_sisu, p, full), paths)
         rows = list(zip(paths, bases, heads))
@@ -74,7 +77,8 @@ def main(base_sisu, head_sisu, *roots, full=True):
 
 
 if __name__ == '__main__':
-    args = [a for a in sys.argv[1:] if a not in ('--codes', '--full')]
+    jobs = [int(a.removeprefix('--jobs=')) for a in sys.argv[1:] if a.startswith('--jobs=')]
+    args = [a for a in sys.argv[1:] if a not in ('--codes', '--full') and not a.startswith('--jobs=')]
     if len(args) < 3:
         sys.exit(__doc__)
-    sys.exit(main(*args, full='--codes' not in sys.argv[1:]))
+    sys.exit(main(*args, full='--codes' not in sys.argv[1:], jobs=jobs[-1] if jobs else 2))
