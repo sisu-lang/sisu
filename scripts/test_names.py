@@ -15,6 +15,7 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Sequence
 
 import changed_tests
 
@@ -26,7 +27,7 @@ END_TO_END = re.compile(r"(^|/)crates/[^/]+/tests/")
 FN = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:(?:async|const|unsafe)\s+)*fn\s+(\w+)")
 
 
-def tests(lines: list[str]) -> list[tuple[int, str, list[str]]]:
+def tests(lines: Sequence[str]) -> list[tuple[int, str, list[str]]]:
     """(line, name, doc lines) of each `#[test]` function. The doc is the run of `///` lines above
     the function's attributes.
     """

@@ -7,7 +7,9 @@ from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / ".agents/skills/solve-issues/scripts/ledger.py"
 spec = importlib.util.spec_from_file_location("ledger", SCRIPT)
+# pyrefly: ignore[bad-argument-type]  the script is in the repository, so the spec is found
 ledger = importlib.util.module_from_spec(spec)
+# pyrefly: ignore[missing-attribute]  as above, and a file spec has a loader
 spec.loader.exec_module(ledger)
 
 NOW = datetime(2026, 11, 3, 14, 5)

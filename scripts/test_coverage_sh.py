@@ -10,6 +10,7 @@ import stat
 import subprocess
 import tempfile
 import unittest
+from typing import override
 
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "coverage.sh")
 # A pre-commit hook runs these tests with GIT_DIR and its kin set to the outer repository.
@@ -27,6 +28,7 @@ STUB_REPORT = "print('Coverage: stub')\n"
 
 
 class CoverageSh(unittest.TestCase):
+    @override
     def setUp(self) -> None:
         self.repo = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.repo)
@@ -49,16 +51,16 @@ class CoverageSh(unittest.TestCase):
         subprocess.run([*self.git, "commit", "-q", "-m", "base"], check=True, env=ENV)
         self.head = self.rev_parse()
 
-    def write_tracked(self, text) -> None:
+    def write_tracked(self, text: str) -> None:
         with open(os.path.join(self.repo, "a.txt"), "w", encoding="utf-8") as f:
             f.write(text)
 
-    def rev_parse(self):
+    def rev_parse(self) -> str:
         return subprocess.run(
             [*self.git, "rev-parse", "HEAD"], capture_output=True, text=True, check=True, env=ENV
         ).stdout.strip()
 
-    def measure(self, action=""):
+    def measure(self, action: str = "") -> str:
         run = subprocess.run(
             ["bash", "scripts/coverage.sh", "HEAD"],
             cwd=self.repo,

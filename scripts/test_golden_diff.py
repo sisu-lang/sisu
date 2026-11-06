@@ -6,12 +6,13 @@ import os
 import subprocess
 import tempfile
 import unittest
+from typing import override
 from unittest import mock
 
 import golden_diff as gd
 
 
-def commit(repo, files):
+def commit(repo: str, files: dict[str, str]) -> str:
     for name, text in files.items():
         os.makedirs(os.path.join(repo, os.path.dirname(name)), exist_ok=True)
         with open(os.path.join(repo, name), "w", encoding="utf-8") as f:
@@ -27,6 +28,7 @@ def commit(repo, files):
 
 
 class GoldenDiff(unittest.TestCase):
+    @override
     def setUp(self) -> None:
         # A pre-commit hook sets GIT_DIR and GIT_INDEX_FILE, which would aim every git call
         # here at the repository being committed to.
@@ -35,7 +37,12 @@ class GoldenDiff(unittest.TestCase):
         patch.start()
         self.addCleanup(patch.stop)
 
-    def run_in(self, files_before, files_after, subs):
+    def run_in(
+        self,
+        files_before: dict[str, str],
+        files_after: dict[str, str],
+        subs: list[tuple[str, str]],
+    ) -> tuple[int, list[str]]:
         with tempfile.TemporaryDirectory() as repo:
             subprocess.run(["git", "init", "-q", repo], check=True)
             base = commit(repo, files_before)

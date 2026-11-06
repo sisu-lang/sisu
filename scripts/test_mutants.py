@@ -12,6 +12,7 @@ import stat
 import subprocess
 import tempfile
 import unittest
+from typing import override
 
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mutants.sh")
 # A pre-commit hook runs these tests with GIT_DIR and its kin set to the outer repository.
@@ -103,12 +104,13 @@ exit "${!exit_var:-0}"
 """
 
 
-def escaped(name):
+def escaped(name: str) -> str:
     """The name with the characters `\\ . + * ? ( ) | [ ] { } ^ $` escaped, as the script does."""
     return re.sub(r"([\\.+*?()|\[\]{}^$])", r"\\\1", name)
 
 
 class Mutants(unittest.TestCase):
+    @override
     def setUp(self) -> None:
         self.repo = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.repo)
@@ -127,22 +129,29 @@ class Mutants(unittest.TestCase):
         self.commit("base")
         self.log = os.path.join(self.repo, "mutation.log")
 
-    def commit(self, message) -> None:
+    def commit(self, message: str) -> None:
         subprocess.run([*self.git, "add", "-A"], check=True, env=ENV)
         subprocess.run(
             [*self.git, "commit", "-q", "--allow-empty", "-m", message], check=True, env=ENV
         )
 
-    def head(self):
+    def head(self) -> str:
         return subprocess.run(
             [*self.git, "rev-parse", "HEAD"], capture_output=True, text=True, check=True, env=ENV
         ).stdout.strip()
 
-    def write_rust(self, text) -> None:
+    def write_rust(self, text: str) -> None:
         with open(os.path.join(self.repo, "a.rs"), "w", encoding="utf-8") as f:
             f.write(text)
 
-    def mutate(self, *args, log=True, env=None, limit=None, **fake):
+    def mutate(
+        self,
+        *args: str,
+        log: bool = True,
+        env: dict[str, str] | None = None,
+        limit: float | None = None,
+        **fake: object,
+    ) -> subprocess.CompletedProcess[str]:
         env = dict(
             ENV,
             PATH=f"{self.bin}:{ENV['PATH']}",
@@ -161,10 +170,10 @@ class Mutants(unittest.TestCase):
             timeout=limit,
         )
 
-    def seen(self, name):
+    def seen(self, name: str) -> bool:
         return os.path.exists(os.path.join(self.repo, name))
 
-    def last_line(self):
+    def last_line(self) -> str:
         with open(self.log, encoding="utf-8") as f:
             return f.read().splitlines()[-1]
 
@@ -328,13 +337,14 @@ class Mutants(unittest.TestCase):
 
     def test_an_argument_that_moves_the_output_should_fail_without_running_cargo(self) -> None:
         self.rust_commit()
-        for args, env in (
+        cases: list[tuple[tuple[str, ...], dict[str, str]]] = [
             (("-o", "x"), {}),
             (("--output=x",), {}),
             (("-d", "x"), {}),
             (("--dir", "x"), {}),
             (("--manifest-path=x",), {}),
-        ):
+        ]
+        for args, env in cases:
             with self.subTest(args=args, env=env):
                 run = self.mutate(*args, env=env)
                 self.assertEqual(run.returncode, 1)
@@ -397,7 +407,7 @@ class Mutants(unittest.TestCase):
             self.last_line().startswith("mutation-test: FAIL: 0 caught, 0 unviable, 1 missed")
         )
 
-    def pass2_args(self, *args, env=None):
+    def pass2_args(self, *args: str, env: dict[str, str] | None = None) -> list[str]:
         self.rust_commit()
         self.mutate(*args, env=env, missed=1, exit=2, pass2_caught=1, pass2_missed=0, pass2_exit=0)
         with open(os.path.join(self.repo, "args2"), encoding="utf-8") as f:
@@ -428,17 +438,18 @@ class Mutants(unittest.TestCase):
     LIB = "crates/sisuc/src/generate/expr.rs:12:5: replace a with b"
     SUITE = "crates/sisuc/src/lib.rs:7:9: replace c with d"
 
-    def log_text(self):
+    def log_text(self) -> str:
         with open(self.log, encoding="utf-8") as f:
             return f.read()
 
-    def lines(self, name):
+    def lines(self, name: str) -> list[str]:
         with open(os.path.join(self.repo, name), encoding="utf-8") as f:
             return f.read().splitlines()
 
-    def two_groups(self, *args, **fake):
+    def two_groups(self, *args: str, **fake: object) -> subprocess.CompletedProcess[str]:
         self.rust_commit()
         fake = {"missed_names": f"{self.LIB}\n{self.SUITE}", "missed": 2, "exit": 2, **fake}
+        # pyrefly: ignore[bad-argument-type]  `fake` holds only fake-cargo settings, never log, env or limit
         return self.mutate(*args, **fake)
 
     def test_a_missed_mutant_of_a_lib_only_file_should_be_tested_again_with_the_unit_tests_only(
@@ -681,19 +692,21 @@ class Mutants(unittest.TestCase):
         "crates/sisuc/src/generate/",
     ]
 
-    def lib_only_list(self):
+    def lib_only_list(self) -> list[str]:
         with open(SCRIPT, encoding="utf-8") as f:
             text = f.read()
-        return (
-            re.search(r"^LIB_ONLY=\(\n(.*?)\n\)", text, re.MULTILINE | re.DOTALL).group(1).split()
-        )
+        match = re.search(r"^LIB_ONLY=\(\n(.*?)\n\)", text, re.MULTILINE | re.DOTALL)
+        assert match is not None
+        return match.group(1).split()
 
     def test_the_lib_only_list_should_be_the_fuzz_layer_of_the_architecture_test(self) -> None:
         # The architecture test fails when a module of an earlier layer uses a module of the last
         # layer outside test code, so only the unit tests and the `pub use` interface reach it.
         root = os.path.join(os.path.dirname(SCRIPT), "..", "crates", "sisuc")
         with open(os.path.join(root, "tests", "architecture.rs"), encoding="utf-8") as f:
-            layers = re.search(r"const LAYERS:.*?\n\];", f.read(), re.DOTALL).group(0)
+            layers_match = re.search(r"const LAYERS:.*?\n\];", f.read(), re.DOTALL)
+        assert layers_match is not None
+        layers = layers_match.group(0)
         last = re.findall(r'"(\w+)"', re.findall(r"&\[[^\[\]]*\],", layers)[-1])
         paths = []
         for module in last:

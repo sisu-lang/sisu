@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from typing import override
 
 SCRIPT = Path(__file__).resolve().parents[1] / ".agents/skills/review-sisu/scripts/build_sisu.sh"
 # A pre-commit hook runs these tests with GIT_DIR and its kin set to the outer repository.
@@ -25,6 +26,7 @@ chmod +x "$CARGO_TARGET_DIR/debug/sisu"
 
 
 class BuildSisu(unittest.TestCase):
+    @override
     def setUp(self) -> None:
         self.repo = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.repo)
@@ -49,7 +51,7 @@ class BuildSisu(unittest.TestCase):
             subprocess.run([*self.git, "add", "-A"], check=True, env=ENV)
             subprocess.run([*self.git, "commit", "-q", "-m", version], check=True, env=self.env)
 
-    def build(self, *refs):
+    def build(self, *refs: str) -> list[str]:
         return subprocess.run(
             ["bash", str(SCRIPT), str(self.repo), str(self.run_dir), *refs],
             capture_output=True,
@@ -58,12 +60,12 @@ class BuildSisu(unittest.TestCase):
             env=self.env,
         ).stdout.split()
 
-    def sha(self, ref):
+    def sha(self, ref: str) -> str:
         return subprocess.run(
             [*self.git[:3], "rev-parse", ref], capture_output=True, text=True, check=True, env=ENV
         ).stdout.strip()
 
-    def runs(self):
+    def runs(self) -> int:
         return len((self.repo / "count").read_text().splitlines())
 
     def test_each_commit_should_get_its_own_sisu_and_archives(self) -> None:

@@ -6,6 +6,7 @@ import os
 import subprocess
 import tempfile
 import unittest
+from collections.abc import Callable
 
 import comment_width
 import registry_debug_format
@@ -13,7 +14,7 @@ import session_url
 import test_names
 
 
-def run(main, text):
+def run(main: Callable[[list[str]], int], text: str) -> tuple[int, str]:
     """`main`'s exit code and output on one file holding `text`."""
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "f.rs")
@@ -65,7 +66,7 @@ HEADERS = (
 )
 
 
-def run_hook(script, text, name="f.rs", relative=False):
+def run_hook(script: str, text: str, name: str = "f.rs", relative: bool = False) -> tuple[int, str]:
     """The exit code and output of `scripts/<script>` on one file, `name`, holding `text`.
 
     With `relative`, the hook gets `name` as a relative path, as prek gives it.
@@ -199,7 +200,9 @@ class SessionUrl(unittest.TestCase):
         self.assertEqual(run(session_url.main, text), (0, ""))
 
 
-def run_test_names(text, path="crates/sisuc/src/f.rs", baseline=""):
+def run_test_names(
+    text: str, path: str = "crates/sisuc/src/f.rs", baseline: str = ""
+) -> tuple[int, str]:
     """test_names' exit code and output on one file at `path` holding `text`."""
     with tempfile.TemporaryDirectory() as d:
         full = os.path.join(d, path)

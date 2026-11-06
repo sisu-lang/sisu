@@ -12,6 +12,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any, override
 
 SCRIPT = Path(__file__).resolve().parent / "watch_pr.py"
 FAKE_GH = f"""#!{sys.executable}
@@ -26,7 +27,7 @@ print(json.dumps(answer))
 P = "repos/sisu-lang/sisu"
 
 
-def comment(id, login, body, updated="t1"):
+def comment(id: int, login: str, body: str, updated: str = "t1") -> dict[str, Any]:
     return {
         "id": id,
         "user": {"login": login},
@@ -39,6 +40,7 @@ def comment(id, login, body, updated="t1"):
 
 
 class WatchPr(unittest.TestCase):
+    @override
     def setUp(self) -> None:
         self.dir = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.dir)
@@ -46,7 +48,7 @@ class WatchPr(unittest.TestCase):
         gh.write_text(FAKE_GH)
         gh.chmod(gh.stat().st_mode | stat.S_IEXEC)
         self.state = self.dir / "state.json"
-        self.table = {
+        self.table: dict[str, Any] = {
             "user": {"login": "me"},
             f"{P}/pulls/7": {"head": {"sha": "abcdef0123"}},
             f"{P}/pulls/7/reviews": [],
@@ -61,7 +63,7 @@ class WatchPr(unittest.TestCase):
             },
         }
 
-    def watch(self):
+    def watch(self) -> subprocess.CompletedProcess[str]:
         (self.dir / "table.json").write_text(json.dumps(self.table))
         env = dict(
             os.environ,

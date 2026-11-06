@@ -6,25 +6,26 @@ import json
 import os
 import tempfile
 import unittest
+from typing import Any
 
 import nextest_filters as nf
 
 # A skipped suite has no `testcases` key.
-TESTS = {
+TESTS: dict[str, dict[str, Any]] = {
     "sisuc": {"testcases": {"check::tests::a_should_x": {}, "check::tests::b_should_y": {}}},
     "sisuc::cases": {"testcases": {"run::fib.sisu": {}}},
     "skipped": {},
 }
 
 
-def overrides(*filters, table="overrides", profile="default"):
+def overrides(*filters: str, table: str = "overrides", profile: str = "default") -> str:
     """A config with one `[[profile.<profile>.<table>]]` per filter, each filter on its own line."""
     return "".join(
         f"[[profile.{profile}.{table}]]\nfilter = '{each}'\npriority = 1\n\n" for each in filters
     )
 
 
-def problems(config, tests=TESTS):
+def problems(config: str, tests: dict[str, dict[str, Any]] = TESTS) -> list[str]:
     """What `check` finds for a config text and a nextest list of `tests` (a name per suite)."""
     with tempfile.TemporaryDirectory() as tmp:
         config_path = os.path.join(tmp, "nextest.toml")
@@ -36,11 +37,11 @@ def problems(config, tests=TESTS):
         return [line.replace(config_path, "CONFIG") for line in nf.check(config_path, list_path)]
 
 
-def no_match(line, leaf) -> str:
+def no_match(line: int, leaf: str) -> str:
     return f"CONFIG:{line}: filter leaf `test({leaf})` matches no test; the test was renamed or deleted"
 
 
-def other_kind(line, leaf) -> str:
+def other_kind(line: int, leaf: str) -> str:
     return (
         f"CONFIG:{line}: filter leaf `test({leaf})` is not a name leaf; "
         "use test(=name) or test(substring)"
@@ -97,7 +98,7 @@ class NextestFilters(unittest.TestCase):
         ]
         for row, filter_, missing in rows:
             with self.subTest(row=row):
-                expected = [] if missing is None else [no_match(2, missing)]
+                expected: list[str] = [] if missing is None else [no_match(2, missing)]
                 self.assertEqual(problems(overrides(filter_)), expected, row)
 
     def test_a_leaf_with_whitespace_should_be_checked(self) -> None:
@@ -190,7 +191,7 @@ class NextestFilters(unittest.TestCase):
                 self.assertEqual(problems(config), [no_match(line, "gone") for line in lines], row)
 
     def test_a_leaf_should_mean_what_nextest_reads_in_the_parsed_value(self) -> None:
-        only_a = {"sisuc": {"testcases": {"a": {}}}}
+        only_a: dict[str, dict[str, Any]] = {"sisuc": {"testcases": {"a": {}}}}
         escaped = '[[profile.default.overrides]]\nfilter = "test(\\u0061)"\n'
         self.assertEqual(problems(escaped, only_a), [], "an escape that spells a name that exists")
         self.assertEqual(
@@ -202,11 +203,12 @@ class NextestFilters(unittest.TestCase):
     def test_an_override_for_a_platform_should_not_be_checked(self) -> None:
         platform = "[[profile.default.overrides]]\nplatform = 'cfg(target_os = \"macos\")'\nfilter = 'test(gone)'\n"
         table = "[[profile.default.overrides]]\nplatform = { host = 'cfg(unix)' }\nfilter = 'test(gone)'\n"
-        for row, config, lines in [
+        rows: list[tuple[str, str, list[int]]] = [
             ("a platform string", platform, []),
             ("a platform table", table, []),
             ("a platform override and one without", platform + overrides("test(gone_)"), [5]),
-        ]:
+        ]
+        for row, config, lines in rows:
             with self.subTest(row=row):
                 self.assertEqual(problems(config), [no_match(line, "gone_") for line in lines], row)
 

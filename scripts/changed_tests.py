@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Sequence
 
 import test_names
 
@@ -18,7 +19,7 @@ HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 CLOSE = re.compile(r"\}\s*(?://.*|/\*.*)?$")
 
 
-def bodies(lines: list[str]) -> list[tuple[str, int, int]]:
+def bodies(lines: Sequence[str]) -> list[tuple[str, int, int]]:
     """(name, first line, last line), counted from 1, of each test that `test_names.tests()` finds.
     The body starts at the `fn` line. A `fn` line that ends with `}` is the whole body. Otherwise
     the body ends at the first later `}` line at the indent of the `fn` line. A comment can follow

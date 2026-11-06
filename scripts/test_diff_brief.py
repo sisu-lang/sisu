@@ -8,11 +8,14 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import override
 from unittest import mock
 
 SCRIPT = Path(__file__).resolve().parents[1] / ".agents/skills/review-sisu/scripts/diff_brief.py"
 spec = importlib.util.spec_from_file_location("diff_brief", SCRIPT)
+# pyrefly: ignore[bad-argument-type]  the script is in the repository, so the spec is found
 diff_brief = importlib.util.module_from_spec(spec)
+# pyrefly: ignore[missing-attribute]  as above, and a file spec has a loader
 spec.loader.exec_module(diff_brief)
 # A pre-commit hook runs these tests with GIT_DIR and its kin set to the outer repository.
 ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
@@ -21,6 +24,7 @@ ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 class Repo(unittest.TestCase):
     """A repository of three commits, base, mid and head, and a side commit off base."""
 
+    @override
     def setUp(self) -> None:
         self.repo = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.repo)
@@ -39,12 +43,12 @@ class Repo(unittest.TestCase):
             env=ENV,
         ).stdout.strip()
 
-    def sha(self, ref):
+    def sha(self, ref: str) -> str:
         return subprocess.run(
             [*self.git[:3], "rev-parse", ref], capture_output=True, text=True, check=True, env=ENV
         ).stdout.strip()
 
-    def rebase(self, text):
+    def rebase(self, text: str) -> str:
         """A side commit off base that writes `f`, and its copy on HEAD, as a rebase leaves it."""
         tree = subprocess.run(
             [*self.git[:3], "mktree"],
@@ -64,7 +68,7 @@ class Repo(unittest.TestCase):
         subprocess.run([*self.git, "cherry-pick", side], capture_output=True, check=True, env=ENV)
         return side
 
-    def blob(self, text):
+    def blob(self, text: str) -> str:
         return subprocess.run(
             [*self.git[:3], "hash-object", "-w", "--stdin"],
             input=text,
@@ -78,13 +82,13 @@ class Repo(unittest.TestCase):
 class LogMismatch(Repo):
     """log_mismatch on logs of the range base..HEAD."""
 
-    def mismatch(self, text):
+    def mismatch(self, text: str) -> str | None:
         log = Path(self.repo) / "mutation.log"
         log.write_text(text)
         with mock.patch.dict(os.environ, ENV, clear=True):
             return diff_brief.log_mismatch(log, self.repo, self.base, "HEAD")
 
-    def summary(self, sha) -> str:
+    def summary(self, sha: str) -> str:
         return f"mutation-test: PASS: 2 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {sha})\n"
 
     def test_a_summary_on_the_head_should_pass(self) -> None:
@@ -110,23 +114,26 @@ class LogMismatch(Repo):
         self.assertIsNone(self.mismatch(self.summary(self.mid)))
 
     def test_a_summary_on_the_base_should_fail(self) -> None:
-        self.assertIn(
-            f"measured {self.base[:8]}, which is not in", self.mismatch(self.summary(self.base))
-        )
+        why = self.mismatch(self.summary(self.base))
+        assert why is not None
+        self.assertIn(f"measured {self.base[:8]}, which is not in", why)
 
     def test_a_summary_off_the_range_should_fail(self) -> None:
-        self.assertIn(
-            f"measured {self.side[:8]}, which is not in", self.mismatch(self.summary(self.side))
-        )
+        why = self.mismatch(self.summary(self.side))
+        assert why is not None
+        self.assertIn(f"measured {self.side[:8]}, which is not in", why)
 
     def test_a_summary_on_uncommitted_changes_should_fail(self) -> None:
         why = self.mismatch(
             f"mutation-test: PASS: 2 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.head} with uncommitted changes)\n"
         )
+        assert why is not None
         self.assertIn("no summary line", why)
 
     def test_a_log_without_a_summary_should_fail(self) -> None:
-        self.assertIn("no summary line", self.mismatch("coverage\nmutants still running\n"))
+        why = self.mismatch("coverage\nmutants still running\n")
+        assert why is not None
+        self.assertIn("no summary line", why)
 
     def test_a_summary_on_a_commit_that_a_rebase_copied_into_the_range_should_pass(self) -> None:
         self.assertIsNone(self.mismatch(self.summary(self.rebase("x\n"))))
@@ -137,13 +144,15 @@ class LogMismatch(Repo):
         subprocess.run(
             [*self.git, "commit", "-q", "--amend", "-a", "-m", "changed"], check=True, env=ENV
         )
-        self.assertIn(f"measured {side[:8]}, which is not in", self.mismatch(self.summary(side)))
+        why = self.mismatch(self.summary(side))
+        assert why is not None
+        self.assertIn(f"measured {side[:8]}, which is not in", why)
 
 
 class CoverageMismatch(Repo):
     """coverage_mismatch on outputs of `make coverage` for the range base..HEAD."""
 
-    def mismatch(self, text):
+    def mismatch(self, text: str) -> str | None:
         path = Path(self.repo) / "coverage.txt"
         path.write_text(text)
         with mock.patch.dict(os.environ, ENV, clear=True):
@@ -154,22 +163,26 @@ class CoverageMismatch(Repo):
 
     def test_coverage_on_an_earlier_commit_of_the_range_should_fail(self) -> None:
         why = self.mismatch(f"coverage: measured (HEAD {self.mid})\nCoverage: 90%\n")
+        assert why is not None
         self.assertIn(f"measured {self.mid[:8]}, not the head {self.head[:8]}", why)
 
     def test_coverage_on_uncommitted_changes_should_fail(self) -> None:
         why = self.mismatch(
             f"coverage: measured (HEAD {self.head} with uncommitted changes)\nCoverage: 90%\n"
         )
+        assert why is not None
         self.assertIn("measured uncommitted changes", why)
 
     def test_coverage_without_a_coverage_line_should_fail(self) -> None:
-        self.assertIn("no coverage line", self.mismatch("Coverage: 90%\n"))
+        why = self.mismatch("Coverage: 90%\n")
+        assert why is not None
+        self.assertIn("no coverage line", why)
 
 
 class Brief(Repo):
     """The brief that main() writes; the test repository has no origin/main, so the script's own template is used."""
 
-    def brief(self, *args):
+    def brief(self, *args: str) -> str:
         self.run_dir = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.run_dir)
         out = self.run_dir / "brief.md"
@@ -269,6 +282,7 @@ class Brief(Repo):
         prior.write_text("Verdict: changes needed\n")
         run_dir = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, run_dir)
+        args: list[str]
         for args in ([], ["--round", "2", "--prior", str(prior), "--rulings", str(prior)]):
             out = run_dir / ("brief-2.md" if args else "brief.md")
             with (
@@ -365,6 +379,7 @@ class Brief(Repo):
 class RemovedTests(unittest.TestCase):
     """removed_tests and the Focus lists of a diff brief, on a repository whose head edits its tests."""
 
+    @override
     def setUp(self) -> None:
         self.repo = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.repo)
@@ -390,12 +405,12 @@ class RemovedTests(unittest.TestCase):
         (self.repo / "tests/gone.sisu").unlink()
         self.head = self.commit("head")
 
-    def write(self, files) -> None:
+    def write(self, files: dict[str, str]) -> None:
         for name, text in files.items():
             (self.repo / name).parent.mkdir(parents=True, exist_ok=True)
             (self.repo / name).write_text(text)
 
-    def commit(self, message):
+    def commit(self, message: str) -> str:
         subprocess.run([*self.git, "add", "-A"], check=True, env=ENV)
         subprocess.run([*self.git, "commit", "-q", "-m", message], check=True, env=ENV)
         return subprocess.run(

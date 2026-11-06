@@ -6,6 +6,7 @@ import re
 import subprocess
 import tempfile
 import unittest
+from typing import Any
 from unittest import mock
 
 import fuzz_program_plan as fp
@@ -15,13 +16,13 @@ WORKFLOW = os.path.join(
 )
 
 
-def steps():
+def steps() -> list[list[str]]:
     """The workflow's steps as lists of lines. A step starts at a line of six spaces and `- `, and
     ends before the next one or at the first line with less indent (the next job).
     """
     with open(WORKFLOW, encoding="utf-8") as f:
         lines = f.read().splitlines()
-    found = []
+    found: list[list[str] | None] = []
     for line in lines:
         if line.startswith("      - "):
             found.append([])
@@ -32,7 +33,7 @@ def steps():
     return [step for step in found if step is not None]
 
 
-def step_named(name):
+def step_named(name: str) -> tuple[list[str], list[str]]:
     """The step named `name` and the step after it."""
     found = steps()
     for i, step in enumerate(found):
@@ -41,17 +42,17 @@ def step_named(name):
     raise AssertionError(f"no step named {name}")
 
 
-def field(step, key):
+def field(step: list[str], key: str) -> str:
     """The value of `key:` on a line of the step that is not a comment."""
     values = [m[1] for line in step if (m := re.fullmatch(rf"\s*(?:- )?{key}: (.*)", line))]
     assert len(values) == 1, (key, values)
     return values[0]
 
 
-def run_block(step):
+def run_block(step: list[str]) -> str:
     """The text of the step's `run: |` block without its indent."""
     start = step.index("        run: |") + 1
-    block = []
+    block: list[str] = []
     for line in step[start:]:
         if line.strip() and not line.startswith(" " * 10):
             break
@@ -59,15 +60,20 @@ def run_block(step):
     return "\n".join(block) + "\n"
 
 
-def pull_request(labels, action="synchronize", added=None):
-    payload = {"action": action, "pull_request": {"labels": [{"name": n} for n in labels]}}
+def pull_request(
+    labels: list[str], action: str = "synchronize", added: str | None = None
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "action": action,
+        "pull_request": {"labels": [{"name": n} for n in labels]},
+    }
     if added is not None:
         payload["label"] = {"name": added}
     return payload
 
 
 class Labels(unittest.TestCase):
-    def plan(self, labels, **kw):
+    def plan(self, labels: list[str], **kw: str) -> tuple[int, bool] | None:
         return fp.plan("pull_request", pull_request(labels, **kw), {})
 
     def test_minutes_and_hours(self) -> None:
@@ -90,6 +96,7 @@ class Labels(unittest.TestCase):
             self.plan(["fuzz-program 45m", "fuzz-program"])
 
     def test_unrelated_labels_run_nothing(self) -> None:
+        labels: list[str]
         for labels in (
             [],
             ["bug"],
@@ -200,7 +207,7 @@ class Events(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "outside"):
             fp.plan("workflow_dispatch", {}, {"FUZZ_SECONDS": "30", "FUZZ_COVERAGE": "false"})
 
-    def main(self, labels):
+    def main(self, labels: list[str]) -> tuple[int, str]:
         """Runs main() on a pull_request event with `labels`; returns its status and output."""
         with tempfile.TemporaryDirectory() as tmp:
             event = os.path.join(tmp, "event.json")

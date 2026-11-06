@@ -12,7 +12,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any, override
 
 SCRIPT = Path(__file__).resolve().parent / "merge_pr.py"
 # A pre-commit hook runs these tests with GIT_DIR and the other GIT_ variables set to the outer repository.
@@ -35,6 +37,7 @@ print(json.dumps(answer))
 
 
 class MergePr(unittest.TestCase):
+    @override
     def setUp(self) -> None:
         self.dir = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.dir)
@@ -72,10 +75,10 @@ class MergePr(unittest.TestCase):
             MERGE_PR_POLL="0",
         )
 
-    def run_script(self, *args, **changes):
+    def run_script(self, *args: str, **changes: object) -> subprocess.CompletedProcess[str]:
         r = "repos/sisu-lang/sisu"
         done = {"name": "Test", "status": "completed", "conclusion": "success"}
-        table = {
+        table: dict[str, object] = {
             f"{r}/pulls/7": {
                 "state": "open",
                 "title": "Fix x",
@@ -104,10 +107,10 @@ class MergePr(unittest.TestCase):
             env=self.env,
         )
 
-    def checks(self, *runs, total=None):
+    def checks(self, *runs: Mapping[str, object], total: int | None = None) -> dict[str, Any]:
         return {"total_count": len(runs) if total is None else total, "check_runs": list(runs)}
 
-    def merges(self):
+    def merges(self) -> list[list[str]]:
         calls = [json.loads(line) for line in self.log.read_text().splitlines()]
         return [c for c in calls if "PUT" in c]
 

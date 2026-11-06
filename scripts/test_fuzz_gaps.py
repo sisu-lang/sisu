@@ -15,6 +15,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from collections.abc import Callable
+from typing import Any
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(HERE, "fuzz_gaps.py")
@@ -36,7 +38,9 @@ FN = "sisuc[abc]::conformance::f"
 FN_KEY = "conformance.rs\tsisuc::conformance::f"
 
 
-def record(file, name, count, line=1, region_count=None):
+def record(
+    file: str, name: str, count: int, line: int = 1, region_count: int | None = None
+) -> dict[str, Any]:
     region_count = count if region_count is None else region_count
     return {
         "name": name,
@@ -46,7 +50,7 @@ def record(file, name, count, line=1, region_count=None):
     }
 
 
-def export(*records):
+def export(*records: dict[str, Any]) -> dict[str, Any]:
     return {"data": [{"type": "llvm.coverage.json.export", "functions": list(records)}]}
 
 
@@ -59,15 +63,15 @@ ANCHORS = (
 LEGACY = "_ZN5sisuc1f17h0123456789abcdefE"
 
 
-def lacking(rec, field):
+def lacking(rec: dict[str, Any], field: str) -> dict[str, Any]:
     return {k: v for k, v in rec.items() if k != field}
 
 
-def altered(rec, **fields):
+def altered(rec: dict[str, Any], **fields: object) -> dict[str, Any]:
     return {**rec, **fields}
 
 
-def c_plus_plus_filt(text):
+def c_plus_plus_filt(text: str) -> str:
     """What `c++filt -s rust` prints for the text, or the text when the tool cannot run."""
     try:
         return subprocess.run(
@@ -81,7 +85,7 @@ def c_plus_plus_filt(text):
         return text
 
 
-def fake_tool(directory, script) -> None:
+def fake_tool(directory: str, script: str) -> None:
     path = os.path.join(directory, "c++filt")
     with open(path, "w", encoding="utf-8") as f:
         f.write("#!/bin/sh\ncat >/dev/null\n" + script)
@@ -91,9 +95,16 @@ def fake_tool(directory, script) -> None:
 class Run:
     """Writes the three inputs to a temporary directory, runs the script and keeps its result."""
 
-    def __init__(self, test, seeds, valid, known=NO_REASON, path=None) -> None:
+    def __init__(
+        self,
+        test: unittest.TestCase,
+        seeds: dict[str, Any] | str | None,
+        valid: dict[str, Any] | str | None,
+        known: str | None = NO_REASON,
+        path: Callable[[str], None] | None = None,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            names = {}
+            names: dict[str, str] = {}
             for label, content in (("seeds.json", seeds), ("valid.json", valid)):
                 names[label] = os.path.join(directory, label)
                 if content is None:
@@ -124,10 +135,16 @@ class Run:
 
 
 class Gaps(unittest.TestCase):
-    def reached(self, seeds, valid, known=NO_REASON, **kw):
+    def reached(
+        self,
+        seeds: list[dict[str, Any]],
+        valid: list[dict[str, Any]],
+        known: str | None = NO_REASON,
+        **kw: Callable[[str], None],
+    ) -> Run:
         return Run(self, export(*ANCHORS, *seeds), export(*ANCHORS, *valid), known, **kw)
 
-    def no_gap(self, run, name) -> None:
+    def no_gap(self, run: Run, name: str) -> None:
         self.assertEqual(run.code, 0, run.out)
         self.assertNotIn(name, run.out)
 
@@ -267,7 +284,7 @@ class Gaps(unittest.TestCase):
     def reached_rows(self) -> None:
         a, b, c = (f"sisuc[a]::m::g::<{t}>" for t in ("i32", "bool", "u8"))
         key = "m.rs\tsisuc::m::g"
-        rows = [
+        rows: list[tuple[list[tuple[str, int]], list[tuple[str, int]], int]] = [
             ([(a, 1), (b, 0)], [(c, 1)], 0),
             ([(b, 0), (a, 1)], [(c, 1)], 0),
             ([], [(a, 1), (b, 0)], 1),
@@ -356,7 +373,7 @@ class Gaps(unittest.TestCase):
             run = self.reached(seeds, valid)
             self.assertEqual(run.code, 1, run.out)
             self.assertEqual(run.lines.count(key), 1, run.out)
-        rows = [
+        rows: list[tuple[str, list[dict[str, Any]], list[dict[str, Any]], str]] = [
             ("a key that matches both definitions exits 2", seeds, valid, ""),
             (
                 "the lines are in valid only",
@@ -397,10 +414,10 @@ class Gaps(unittest.TestCase):
         known_key = f"{FN_KEY}\n"
         floor = "valid-program export reaches no function under "
 
-        def valid_with(*extra):
+        def valid_with(*extra: dict[str, Any]) -> Run:
             return Run(self, good, export(*ANCHORS, *extra))
 
-        cases = [
+        cases: list[tuple[str, Callable[[], Run], str]] = [
             ("a missing valid export", lambda: Run(self, good, None), "cannot read the export"),
             ("a missing seeds export", lambda: Run(self, None, good), "cannot read the export"),
             (
@@ -587,13 +604,14 @@ class Gaps(unittest.TestCase):
                     f"the {label} export reaches no function under {stage}",
                 )
             )
-        for label, value in (
+        values: list[tuple[str, object]] = [
             ("absent", None),
             ("empty", []),
             ("a string", "a.rs"),
             ("an integer item", [1]),
             ("an empty name", [""]),
-        ):
+        ]
+        for label, value in values:
             gap = record("a.rs", "sisuc[a]::real_gap", 1)
             gap = lacking(gap, "filenames") if value is None else altered(gap, filenames=value)
             cases.append(

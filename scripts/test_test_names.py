@@ -18,7 +18,7 @@ BASELINE_TEST = (
 )
 
 
-def run(argv, baseline):
+def run(argv: list[str], baseline: str) -> tuple[int, str]:
     """The exit code and output of `test_names.py ARGV` with `baseline` as its baseline file."""
     out = io.StringIO()
     with contextlib.redirect_stdout(out):

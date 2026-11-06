@@ -9,7 +9,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import Any
 
 import diag_diff as dd
 
@@ -23,7 +25,7 @@ W0001 = (
 )
 
 
-def fake_sisu(tmp, name, outputs):
+def fake_sisu(tmp: str, name: str, outputs: Mapping[str, str]) -> str:
     """A sisu stand-in that prints the JSON lines `outputs` gives a file's stem, or crashes."""
     path = os.path.join(tmp, name)
     cases = "".join(f"  {stem}) printf '%s\\n' '{out}' >&2;;\n" for stem, out in outputs.items())
@@ -133,7 +135,14 @@ class DiagDiff(unittest.TestCase):
         THEN the run with `--codes` reports none of them, and each other run reports each of them
         """
 
-        def diagnostic(message="m", label="l", other="o", fix="f", replacement="", safe=True):
+        def diagnostic(
+            message: str = "m",
+            label: str = "l",
+            other: str = "o",
+            fix: str = "f",
+            replacement: str = "",
+            safe: bool = True,
+        ) -> str:
             return json.dumps(
                 {
                     "kind": "diagnostic",
@@ -152,7 +161,7 @@ class DiagDiff(unittest.TestCase):
                 }
             )
 
-        changed = {
+        changed: dict[str, dict[str, Any]] = {
             "message": {"message": "n"},
             "label": {"label": "k"},
             "secondary": {"other": "p"},
@@ -166,11 +175,12 @@ class DiagDiff(unittest.TestCase):
                 open(os.path.join(tmp, f"{stem}.sisu"), "w").close()
             base = fake_sisu(tmp, "base", {stem: diagnostic() for stem in changed})
             head = fake_sisu(tmp, "head", {stem: diagnostic(**f) for stem, f in changed.items()})
+            flags: list[list[str]] = [["--codes"], [], ["--full"]]
             runs = [
                 subprocess.run(
                     [sys.executable, script, *flag, base, head, tmp], capture_output=True, text=True
                 )
-                for flag in (["--codes"], [], ["--full"])
+                for flag in flags
             ]
         self.assertEqual(
             (runs[0].returncode, runs[0].stdout), (0, "diag_diff: 6 programs, no differences\n")
@@ -192,9 +202,10 @@ class DiagDiff(unittest.TestCase):
 
     def test_command_line_should_bound_the_sisu_processes_by_jobs(self) -> None:
         script = os.path.join(os.path.dirname(os.path.abspath(dd.__file__)), "diag_diff.py")
-        for flag, limit in [([], 2), (["--jobs=1"], 1)]:
+        cases: list[tuple[list[str], int]] = [([], 2), (["--jobs=1"], 1)]
+        for flag, limit in cases:
 
-            def run(sisu, tmp, flag=flag) -> None:
+            def run(sisu: str, tmp: str, flag: list[str] = flag) -> None:
                 subprocess.run(
                     [sys.executable, script, *flag, sisu, sisu, tmp],
                     check=True,
@@ -204,7 +215,7 @@ class DiagDiff(unittest.TestCase):
             self.assertLessEqual(max(peak_runs(run)), limit, flag)
 
 
-def peak_runs(run):
+def peak_runs(run: Callable[[str, str], object]) -> list[int]:
     """The count of fake sisu runs at each start while `run(sisu, dir)` checks six programs."""
     with tempfile.TemporaryDirectory() as tmp:
         for n in range(6):

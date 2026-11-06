@@ -10,6 +10,7 @@ import stat
 import subprocess
 import tempfile
 import unittest
+from typing import Any, override
 
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fuzz_issue.sh")
 # The fake gh answers a list request with the JSON in $FAKE_ISSUES, and records the path of
@@ -27,6 +28,7 @@ echo "$FAKE_ISSUES"
 
 
 class FuzzIssue(unittest.TestCase):
+    @override
     def setUp(self) -> None:
         self.dir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.dir)
@@ -39,7 +41,12 @@ class FuzzIssue(unittest.TestCase):
         self.bin = bin_dir
         self.summary = os.path.join(self.dir, "summary.md")
 
-    def run_script(self, issues, summary=b"# Fuzzing: front_end\n", target="front_end"):
+    def run_script(
+        self,
+        issues: list[dict[str, Any]],
+        summary: bytes | None = b"# Fuzzing: front_end\n",
+        target: str = "front_end",
+    ) -> tuple[str, dict[str, Any]] | tuple[None, None]:
         if summary is not None:
             with open(self.summary, "wb") as f:
                 f.write(summary)
@@ -70,6 +77,7 @@ class FuzzIssue(unittest.TestCase):
         self,
     ) -> None:
         path, body = self.run_script([])
+        assert body is not None
         self.assertEqual(path, "repos/o/r/issues")
         self.assertEqual(body["title"], "Nightly fuzz failure: front_end")
         self.assertEqual(body["labels"], ["needs-triage", "bug", "fuzz"])
@@ -85,27 +93,33 @@ class FuzzIssue(unittest.TestCase):
             {"number": 7, "title": "Nightly fuzz failure: front_end"},
         ]
         path, body = self.run_script(issues)
+        assert body is not None
         self.assertEqual(path, "repos/o/r/issues/7/comments")
         self.assertEqual(list(body), ["body"])
 
     def test_a_pull_request_with_the_title_should_not_count_as_the_open_issue(self) -> None:
-        issues = [{"number": 7, "title": "Nightly fuzz failure: front_end", "pull_request": {}}]
+        issues: list[dict[str, Any]] = [
+            {"number": 7, "title": "Nightly fuzz failure: front_end", "pull_request": {}}
+        ]
         path, _ = self.run_script(issues)
         self.assertEqual(path, "repos/o/r/issues")
 
     def test_a_summary_with_shell_and_json_characters_should_arrive_unchanged(self) -> None:
         text = "- **crash**: `$(touch pwned)` \"q\" \\ 's' ${HOME}\n"
         _, body = self.run_script([], summary=text.encode())
+        assert body is not None
         self.assertIn(text, body["body"])
         self.assertFalse(os.path.exists(os.path.join(self.dir, "pwned")))
 
     def test_a_missing_summary_should_still_report_the_run(self) -> None:
         _, body = self.run_script([], summary=None)
+        assert body is not None
         self.assertIn("wrote no summary", body["body"])
         self.assertIn("https://example.test/run/1", body["body"])
 
     def test_a_long_summary_should_be_cut_below_the_api_limit(self) -> None:
         _, body = self.run_script([], summary=b"x" * 70000)
+        assert body is not None
         self.assertLess(len(body["body"]), 65536)
 
 

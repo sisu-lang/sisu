@@ -8,6 +8,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from typing import override
 
 import nightly_check as nc
 
@@ -38,7 +39,7 @@ OK_T = STRONG % "GLIBC_2.34"
 OK_P = NEEDED % "libc.so.6"
 
 
-def minos_text(cmd, line) -> str:
+def minos_text(cmd: str, line: str) -> str:
     return f"Load command 9\n      cmd {cmd}\n  cmdsize 32\n{line}\n"
 
 
@@ -157,6 +158,7 @@ class Tar(unittest.TestCase):
 
 
 class PackBase(unittest.TestCase):
+    @override
     def setUp(self) -> None:
         self.root = tempfile.mkdtemp(prefix="sisu-pack-")
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
@@ -169,11 +171,13 @@ class PackBase(unittest.TestCase):
         os.chmod(os.path.join(self.release, "sisu"), 0o755)
         self.write(self.third, "notices")
 
-    def write(self, path, text) -> None:
+    def write(self, path: str, text: str) -> None:
         with open(path, "w") as f:
             f.write(text)
 
-    def pack(self, target="x86_64-linux", env=None):
+    def pack(
+        self, target: str = "x86_64-linux", env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [sys.executable, CHECK, "pack", target, self.release, self.third, self.out],
             capture_output=True,
@@ -189,13 +193,17 @@ class Pack(PackBase):
         with tarfile.open(os.path.join(self.out, "sisu-x86_64-linux.tar.gz")) as tar:
             self.assertEqual(sorted(tar.getnames()), sorted(n.rstrip("/") for n in NAMES))
             for name in ("sisu", "libsisu_runtime_mimalloc.a", "libsisu_runtime_system.a"):
-                self.assertEqual(
-                    tar.extractfile("sisu/" + name).read(), ("content of " + name).encode(), name
-                )
-            self.assertEqual(tar.extractfile("sisu/THIRD-PARTY-LICENSES.txt").read(), b"notices")
+                member = tar.extractfile("sisu/" + name)
+                assert member is not None
+                self.assertEqual(member.read(), ("content of " + name).encode(), name)
+            notices = tar.extractfile("sisu/THIRD-PARTY-LICENSES.txt")
+            assert notices is not None
+            self.assertEqual(notices.read(), b"notices")
             self.assertTrue(tar.getmember("sisu/sisu").mode & stat.S_IXUSR)
+            licence = tar.extractfile("sisu/LICENSE")
+            assert licence is not None
             with open(os.path.join(SCRIPTS, "..", "LICENSE"), "rb") as f:
-                self.assertEqual(tar.extractfile("sisu/LICENSE").read(), f.read())
+                self.assertEqual(licence.read(), f.read())
 
     def test_pack_should_fail_on_a_missing_file(self) -> None:
         os.remove(os.path.join(self.release, "libsisu_runtime_system.a"))
@@ -210,14 +218,14 @@ class Pack(PackBase):
         self.assertIn("riscv-linux", done.stderr)
 
 
-def fake_tool(directory, name, body) -> None:
+def fake_tool(directory: str, name: str, body: str) -> None:
     path = os.path.join(directory, name)
     with open(path, "w") as f:
         f.write(f'#!/bin/sh\necho "{name} $*" >> "$LOG"\n{body}\n')
     os.chmod(path, 0o755)
 
 
-def breaks(call) -> str:
+def breaks(call: str) -> str:
     """Shell for a fake: fail with a message when $FAIL names this call."""
     return f'if [ "$FAIL" = {call} ]; then echo "{call} broke" >&2; exit 1; fi'
 
@@ -225,6 +233,7 @@ def breaks(call) -> str:
 class ToolBase(unittest.TestCase):
     """Runs nightly_check.py with fake tools first on PATH. A fake fails when $FAIL names its call."""
 
+    @override
     def setUp(self) -> None:
         self.root = tempfile.mkdtemp(prefix="sisu-tools-")
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
@@ -232,14 +241,16 @@ class ToolBase(unittest.TestCase):
         self.log = os.path.join(self.root, "log")
         os.makedirs(self.bin)
 
-    def check(self, *args, fail="", path=None, **env):
+    def check(
+        self, *args: str, fail: str = "", path: str | None = None, **env: str
+    ) -> subprocess.CompletedProcess[str]:
         path = path if path is not None else self.bin + os.pathsep + os.environ["PATH"]
         env = dict(os.environ, PATH=path, LOG=self.log, FAIL=fail, **env)
         return subprocess.run(
             [sys.executable, CHECK, *args], capture_output=True, text=True, env=env
         )
 
-    def calls(self):
+    def calls(self) -> list[str]:
         if not os.path.exists(self.log):
             return []
         with open(self.log) as f:
@@ -247,6 +258,7 @@ class ToolBase(unittest.TestCase):
 
 
 class MacOSTools(ToolBase):
+    @override
     def setUp(self) -> None:
         super().setUp()
         fake_tool(
@@ -274,7 +286,7 @@ esac""".format(breaks("ar-t"), breaks("ar-x")),
         )
         self.archives = [os.path.join(self.root, n) for n in ("libLLVMSupport.a", "libzstd.a")]
 
-    def macos(self, **kwargs):
+    def macos(self, **kwargs: str) -> subprocess.CompletedProcess[str]:
         return self.check("macos", "sisu", *self.archives, **kwargs)
 
     def test_macos_should_call_each_tool(self) -> None:
@@ -310,6 +322,7 @@ esac""".format(breaks("ar-t"), breaks("ar-x")),
 
 
 class LinuxAndVersionTools(ToolBase):
+    @override
     def setUp(self) -> None:
         super().setUp()
         fake_tool(
@@ -376,6 +389,7 @@ printf "sisu 0.1.0\\ncommit: abc1234\\n"''',
 
 
 class PackTools(PackBase):
+    @override
     def setUp(self) -> None:
         super().setUp()
         self.bin = os.path.join(self.root, "bin")
@@ -394,7 +408,7 @@ esac
 exec {real} "$@"'''.format(real=shutil.which("tar")),
         )
 
-    def pack_with(self, **extra):
+    def pack_with(self, **extra: str) -> subprocess.CompletedProcess[str]:
         # The caller's shell must not set COPYFILE_DISABLE for the test.
         env = {k: v for k, v in os.environ.items() if k != "COPYFILE_DISABLE"}
         env.update(PATH=self.bin + os.pathsep + os.environ["PATH"], LOG=self.log, **extra)
@@ -414,6 +428,7 @@ exec {real} "$@"'''.format(real=shutil.which("tar")),
 
 
 class Smoke(unittest.TestCase):
+    @override
     def setUp(self) -> None:
         self.root = tempfile.mkdtemp(prefix="sisu-smoke-")
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
@@ -423,26 +438,26 @@ class Smoke(unittest.TestCase):
         os.makedirs(self.bin)
         os.makedirs(self.programs)
 
-    def fake(self, body='cat "${4%.sisu}.out"') -> None:
+    def fake(self, body: str = 'cat "${4%.sisu}.out"') -> None:
         path = os.path.join(self.bin, "sisu")
         with open(path, "w") as f:
             f.write('#!/bin/sh\necho "$@" >> "$LOG"\n' + body + "\n")
         os.chmod(path, 0o755)
 
-    def program(self, name, out="hello\n") -> None:
+    def program(self, name: str, out: str | None = "hello\n") -> None:
         with open(os.path.join(self.programs, name + ".sisu"), "w") as f:
             f.write("fn main() {}\n")
         if out is not None:
             with open(os.path.join(self.programs, name + ".out"), "w") as f:
                 f.write(out)
 
-    def smoke(self):
+    def smoke(self) -> subprocess.CompletedProcess[str]:
         env = dict(os.environ, LOG=self.log)
         return subprocess.run(
             ["bash", SMOKE, self.bin, self.programs], env=env, capture_output=True, text=True
         )
 
-    def calls(self):
+    def calls(self) -> list[str]:
         if not os.path.exists(self.log):
             return []
         with open(self.log) as f:

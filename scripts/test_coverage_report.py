@@ -6,6 +6,8 @@ import json
 import os
 import tempfile
 import unittest
+from collections.abc import Callable
+from typing import Any
 
 import coverage_report as cr
 
@@ -13,7 +15,13 @@ ROOT = "/r"
 TOTALS = {"lines": {"percent": 87.34}, "regions": {"percent": 85.06}}
 
 
-def func(name, regions, file="/r/a.rs", count=None, files=None):
+def func(
+    name: str,
+    regions: list[tuple[int, ...]],
+    file: str = "/r/a.rs",
+    count: int | None = None,
+    files: list[str] | None = None,
+) -> dict[str, Any]:
     """A function record; each region is (l1, c1, l2, c2, count[, file_id[, kind]])."""
     return {
         "name": name,
@@ -25,16 +33,16 @@ def func(name, regions, file="/r/a.rs", count=None, files=None):
     }
 
 
-def export(*functions):
+def export(*functions: dict[str, Any]) -> dict[str, Any]:
     return {"data": [{"totals": TOTALS, "functions": list(functions)}]}
 
 
-def diff(path="a.rs", start=1, count=1) -> str:
+def diff(path: str = "a.rs", start: int = 1, count: int = 1) -> str:
     body = "".join("+x\n" for _ in range(count))
     return f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -0,0 +{start},{count} @@\n{body}"
 
 
-def lcov(**lines):
+def lcov(**lines: dict[int, int]) -> str:
     """lcov({"a.rs": {1: 1, 2: 0}}) as text, rooted at /r."""
     return "".join(
         f"SF:/r/{p}\n" + "".join(f"DA:{n},{h}\n" for n, h in da.items()) + "end_of_record\n"
@@ -42,11 +50,16 @@ def lcov(**lines):
     )
 
 
-def run(exp, lc="", df="", read=lambda p, n: f"line {n}"):
+def run(
+    exp: dict[str, Any],
+    lc: str = "",
+    df: str = "",
+    read: Callable[[str, int], str] = lambda p, n: f"line {n}",
+) -> str:
     return cr.report(exp, lc, df, ROOT, read)
 
 
-def sections(text):
+def sections(text: str) -> tuple[str, list[str], list[str]]:
     head, touching, other = text.split("\n\n")
     return head, touching.splitlines()[1:], other.splitlines()[1:]
 
@@ -80,7 +93,7 @@ class ChangedLines(unittest.TestCase):
         self.assertEqual(cr.changed_lines(d), {})
 
     def test_changed_lines_skips_unit_test_modules_in_their_own_file(self) -> None:
-        def added(path) -> str:
+        def added(path: str) -> str:
             return f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -0,0 +1 @@\n+x\n"
 
         d = "".join(
@@ -223,16 +236,16 @@ class Report(unittest.TestCase):
 
 
 class Main(unittest.TestCase):
-    def call(self, exp_text, lcov_text="", diff_text=""):
+    def call(self, exp_text: str, lcov_text: str = "", diff_text: str = "") -> tuple[int, str]:
         with tempfile.TemporaryDirectory() as d:
-            paths = []
+            paths: list[str] = []
             for name, text in (("c.json", exp_text), ("l.info", lcov_text), ("d.diff", diff_text)):
                 paths.append(os.path.join(d, name))
                 with open(paths[-1], "w") as f:
                     f.write(text)
             return self.run_main(paths)
 
-    def run_main(self, paths):
+    def run_main(self, paths: list[str]) -> tuple[int, str]:
         err = io.StringIO()
         with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
             code = cr.main(paths)

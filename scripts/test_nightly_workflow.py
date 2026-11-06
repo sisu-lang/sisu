@@ -12,6 +12,8 @@ import re
 import subprocess
 import tempfile
 import unittest
+from collections.abc import Callable
+from typing import Any
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 WORKFLOW = os.path.join(ROOT, ".github", "workflows", "nightly-build.yml")
@@ -169,7 +171,7 @@ TOKEN = re.compile(r"github\W*token|secrets\b|\b(?:GH|GITHUB)_TOKEN\b", re.IGNOR
 GATE = re.compile(r"continue-on-error|\|\|\s*(?:true\b|:|exit\s+0)|set\s+\+e")
 
 
-def workflow(test):
+def workflow(test: unittest.TestCase) -> list[str]:
     """The workflow's lines without comments. A missing file fails the test on an assertion."""
     if not os.path.isfile(WORKFLOW):
         test.fail(f"{WORKFLOW} does not exist")
@@ -177,10 +179,10 @@ def workflow(test):
         return [line for line in f.read().splitlines() if not line.lstrip().startswith("#")]
 
 
-def jobs(test):
+def jobs(test: unittest.TestCase) -> dict[str, list[str]]:
     """Job name -> its lines, from the line after the name to the line before the next job."""
-    found = {}
-    name = None
+    found: dict[str, list[str]] = {}
+    name: str | None = None
     in_jobs = False
     for line in workflow(test):
         if line == "jobs:":
@@ -196,12 +198,12 @@ def jobs(test):
     return found
 
 
-def top(test, key):
+def top(test: unittest.TestCase, key: str) -> list[str]:
     """The lines under a key at column 0."""
     lines = workflow(test)
     if f"{key}:" not in lines:
         test.fail(f"no {key}: in the workflow")
-    body = []
+    body: list[str] = []
     for line in lines[lines.index(f"{key}:") + 1 :]:
         if line.strip() and not line.startswith(" "):
             break
@@ -210,21 +212,21 @@ def top(test, key):
     return body
 
 
-def flow_list(text):
+def flow_list(text: str) -> list[str]:
     return [item.strip().strip("'") for item in text.strip()[1:-1].split(",") if item.strip()]
 
 
-def flow_map(text):
+def flow_map(text: str) -> dict[str, Any]:
     pairs = (pair.split(": ", 1) for pair in re.split(r",\s*", text.strip()[1:-1]))
     return {k: flow_map(v) if v.startswith("{") else v for k, v in pairs}
 
 
-def mapping(lines, indent):
+def mapping(lines: list[str], indent: int) -> dict[str, Any]:
     """The keys at `indent` of the lines. The lines below a key, deeper than `indent`, are its
     value: a mapping when the key has no value, the block text for `|` and `>`, else they join the
     value, as in a flow list on two lines.
     """
-    found = {}
+    found: dict[str, Any] = {}
     i = 0
     while i < len(lines):
         m = re.fullmatch(" " * indent + r"([^\s:#-][^:]*): ?(.*)", lines[i])
@@ -246,21 +248,21 @@ def mapping(lines, indent):
     return found
 
 
-def job_map(job):
+def job_map(job: list[str]) -> dict[str, Any]:
     return mapping(job, 4)
 
 
-def part(step, key):
+def part(step: dict[str, Any], key: str) -> dict[str, Any]:
     """The `with:` or `env:` of a step as a dict."""
     value = step.get(key)
     return value if isinstance(value, dict) else {}
 
 
-def steps(job):
+def steps(job: list[str]) -> list[dict[str, Any]]:
     """The steps of the job as dicts of their keys; `- {uses: x}` is a step too."""
     if "    steps:" not in job:
         return []
-    found = []
+    found: list[list[str]] = []
     for line in job[job.index("    steps:") + 1 :]:
         if not line.startswith("      "):
             break
@@ -268,7 +270,7 @@ def steps(job):
             found.append(["        " + line[8:]])
         elif found:
             found[-1].append(line)
-    parsed = []
+    parsed: list[dict[str, Any]] = []
     for lines in found:
         first = lines[0].strip()
         step = flow_map(first) if first.startswith("{") else {}
@@ -277,23 +279,23 @@ def steps(job):
     return parsed
 
 
-def run_lines(step):
+def run_lines(step: dict[str, Any]) -> list[str]:
     return str(step.get("run", "")).splitlines()
 
 
-def uses(job):
+def uses(job: list[str]) -> list[str]:
     """The `uses:` of the job and of its steps."""
     values = [job_map(job).get("uses")] + [step.get("uses") for step in steps(job)]
     return [value for value in values if value]
 
 
-def checkouts(job):
+def checkouts(job: list[str]) -> list[dict[str, Any]]:
     return [
         step for step in steps(job) if str(step.get("uses", "")).startswith("actions/checkout@")
     ]
 
 
-def unquote(value):
+def unquote(value: str) -> str:
     return value.strip("'")
 
 
@@ -324,7 +326,7 @@ class NightlyWorkflowTest(unittest.TestCase):
     def test_clean_machine_should_check_the_commit_of_the_install(self) -> None:
         st = steps(jobs(self)["clean-machine"])
 
-        def where(has):
+        def where(has: Callable[[dict[str, Any]], bool]) -> int:
             hits = [i for i, step in enumerate(st) if has(step)]
             self.assertEqual(len(hits), 1)
             return hits[0]
@@ -454,14 +456,14 @@ class NightlyWorkflowTest(unittest.TestCase):
     def test_matrices_should_have_the_rows_of_the_spec(self) -> None:
         found = jobs(self)
 
-        def rows(name):
+        def rows(name: str) -> list[dict[str, Any]]:
             return [
                 flow_map(m[1])
                 for line in found[name]
                 if (m := re.fullmatch(r"\s+- (\{.*\})", line))
             ]
 
-        def unquoted(maps):
+        def unquoted(maps: list[dict[str, Any]]) -> list[dict[str, str]]:
             return [{k: unquote(v) for k, v in row.items()} for row in maps]
 
         self.assertEqual(
@@ -530,7 +532,9 @@ class NightlyWorkflowTest(unittest.TestCase):
         with open(os.path.join(ROOT, "prek.toml"), encoding="utf-8") as f:
             text = f.read()
         block = text[text.index('id = "python-tests"') :]
-        pattern = re.search(r"^files = '(.*)'$", block, re.MULTILINE)[1]
+        match = re.search(r"^files = '(.*)'$", block, re.MULTILINE)
+        assert match is not None
+        pattern = match[1]
         for path in (
             "install.sh",
             ".github/workflows/nightly-build.yml",

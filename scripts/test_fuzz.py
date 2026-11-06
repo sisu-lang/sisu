@@ -13,6 +13,7 @@ import stat
 import subprocess
 import tempfile
 import unittest
+from typing import Any, override
 
 from test_fuzz_gaps import ANCHORS, export, record
 
@@ -56,6 +57,7 @@ exit 0
 
 
 class FuzzSummary(unittest.TestCase):
+    @override
     def setUp(self) -> None:
         self.repo = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.repo)
@@ -73,7 +75,7 @@ class FuzzSummary(unittest.TestCase):
         subprocess.run([*git, "init", "-q"], check=True, env=ENV)
         subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "base"], check=True, env=ENV)
 
-    def summary(self, replay):
+    def summary(self, replay: str) -> str:
         env = dict(ENV, PATH=f"{self.bin}:{ENV['PATH']}", FAKE_REPLAY=replay)
         run = subprocess.run(
             ["bash", "scripts/fuzz.sh", "1"],
@@ -250,7 +252,7 @@ NOT_PROGRAMS = {
 }
 
 
-def write_executable(directory, name, text) -> None:
+def write_executable(directory: str, name: str, text: str) -> None:
     path = os.path.join(directory, name)
     os.makedirs(directory, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
@@ -261,7 +263,7 @@ def write_executable(directory, name, text) -> None:
 class GapsRun:
     """The result of one run of --gaps: its status, output and what the fake tools saw."""
 
-    def __init__(self, repo, work, run) -> None:
+    def __init__(self, repo: str, work: str, run: subprocess.CompletedProcess[bytes]) -> None:
         self.code, self.stderr, self.stdout = (
             run.returncode,
             run.stderr.decode(),
@@ -272,7 +274,7 @@ class GapsRun:
         self.dirs = os.path.join(work, "dirs")
 
     @staticmethod
-    def read(path):
+    def read(path: str) -> str:
         """The text of the file, or an empty text when the run wrote no such file."""
         try:
             with open(path, encoding="utf-8") as f:
@@ -280,7 +282,7 @@ class GapsRun:
         except FileNotFoundError:
             return ""
 
-    def calls(self, target):
+    def calls(self, target: str) -> list[tuple[bool, list[str]]]:
         """The argument lists of the `cargo fuzz coverage` calls for `target`, and whether an old
         raw profile was there at the start of each.
         """
@@ -291,7 +293,7 @@ class GapsRun:
                 found.append((match[1] == "1", match[2].split()))
         return found
 
-    def files(self, name):
+    def files(self, name: str) -> tuple[list[tuple[str, bytes]], int]:
         """(relative path, content) of each regular file of the directory copied under `name`,
         and the number of directories under it.
         """
@@ -308,6 +310,7 @@ class GapsRun:
 
 
 class GapsCheck(unittest.TestCase):
+    @override
     def setUp(self) -> None:
         self.root = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.root)
@@ -336,7 +339,7 @@ class GapsCheck(unittest.TestCase):
         subprocess.run([*git, "init", "-q"], check=True, env=ENV)
         subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "base"], check=True, env=ENV)
 
-    def put(self, name, text) -> None:
+    def put(self, name: str, text: str) -> None:
         path = os.path.join(self.repo, name)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
@@ -344,15 +347,15 @@ class GapsCheck(unittest.TestCase):
 
     def gaps(
         self,
-        args=("--target", "program", "--gaps"),
-        seeds=None,
-        valid=None,
-        known="## a reason\n",
-        fail="",
-        summary=None,
-        old_profiles=False,
-        corpus=False,
-    ):
+        args: tuple[str, ...] = ("--target", "program", "--gaps"),
+        seeds: dict[str, Any] | None = None,
+        valid: dict[str, Any] | None = None,
+        known: str = "## a reason\n",
+        fail: str = "",
+        summary: str | None = None,
+        old_profiles: bool = False,
+        corpus: bool = False,
+    ) -> GapsRun:
         """Runs fuzz.sh with `args`. The fake llvm-cov prints `seeds` for the program target and
         `valid` for front_end, which both default to the three anchors.
         """
@@ -485,7 +488,7 @@ class GapsCheck(unittest.TestCase):
                 self.assertIn("--gaps", run.stderr)
                 self.assertEqual([line for line in run.log if line.startswith("coverage")], [])
 
-    def check_missing_directory(self, name) -> None:
+    def check_missing_directory(self, name: str) -> None:
         """Removes the directory tests/<name>, runs --gaps, and checks that it measures nothing."""
         shutil.rmtree(os.path.join(self.repo, "crates", "sisuc", "tests", name))
         run = self.gaps()
@@ -512,7 +515,7 @@ class GapsCheck(unittest.TestCase):
         self.assertNotEqual(run.code, 0, run.stdout + run.stderr)
         self.assertEqual([line for line in run.log if line.startswith("coverage front_end")], [])
 
-    def check_directory_without_program(self, name) -> None:
+    def check_directory_without_program(self, name: str) -> None:
         """Keeps one other file in tests/<name> and no program, as the real run-fail keeps its .out files."""
         root = os.path.join(self.repo, "crates", "sisuc", "tests", name)
         for directory, _, names in os.walk(root):

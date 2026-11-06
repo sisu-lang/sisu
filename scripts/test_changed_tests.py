@@ -2,6 +2,7 @@
 
 import os
 import unittest
+from collections.abc import Callable
 
 import changed_tests as ct
 import git_fixture
@@ -28,48 +29,48 @@ HELPER = "\nfn helper() {\n    two();\n}\n"
 FAR = THREE + "\n#[test]\nfn c_should_z() {\n    six();\n}\n"
 
 
-def changed_after(files, edit):
+def changed_after(files: dict[str, str], edit: Callable[[str], None]) -> set[tuple[str, str]]:
     """What `changed` finds after `edit(repo path)` changed the working tree of a repository."""
     with git_fixture.repo(files) as tmp:
         edit(tmp)
         return ct.changed("HEAD", tmp)
 
 
-def rewrite(new):
+def rewrite(new: str) -> Callable[[str], None]:
     """An edit that writes `new` over t.rs."""
     return lambda tmp: write(tmp, "t.rs", new)
 
 
-def move(tmp) -> None:
+def move(tmp: str) -> None:
     git_fixture.git(tmp, "mv", "t.rs", "u.rs")
 
 
-def move_and_edit(tmp) -> None:
+def move_and_edit(tmp: str) -> None:
     move(tmp)
     write(tmp, "u.rs", THREE.replace("four();", "five();"))
 
 
-def edit_next_to_a_non_utf8_file(tmp) -> None:
+def edit_next_to_a_non_utf8_file(tmp: str) -> None:
     write(tmp, "t.rs", THREE.replace("four", "five"))
     write(tmp, "x.sisu", b"a\n\xe9\n")
 
 
-def edit_with_diff_opts(tmp) -> None:
+def edit_with_diff_opts(tmp: str) -> None:
     os.environ["GIT_DIFF_OPTS"] = "--unified=7"  # `repo()` restores the environment at its exit
     write(tmp, "t.rs", THREE.replace("one", "uno"))
 
 
-def edit_a_sql_file_and_a_rust_test(tmp) -> None:
+def edit_a_sql_file_and_a_rust_test(tmp: str) -> None:
     write(tmp, "a.sql", "++ b.rs\nq\nz\nQ\n")
     write(tmp, "t.rs", THREE.replace("four", "five"))
 
 
-def edit_the_last_line_of_a_file_with_no_final_newline_and_another_file(tmp) -> None:
+def edit_the_last_line_of_a_file_with_no_final_newline_and_another_file(tmp: str) -> None:
     write(tmp, "t.rs", NO_NEWLINE + " // end")
     write(tmp, "u.rs", THREE.replace("four", "five"))
 
 
-def edit_a_rust_file_to_hold_a_non_utf8_byte(tmp) -> None:
+def edit_a_rust_file_to_hold_a_non_utf8_byte(tmp: str) -> None:
     write(tmp, "t.rs", THREE.replace("four();", "four(); // \u00e9").encode("latin-1"))
 
 

@@ -8,6 +8,8 @@ import subprocess
 import tempfile
 import time
 import unittest
+from collections.abc import Callable
+from typing import override
 
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "heavy-run.sh")
 # A pre-commit hook runs these tests with GIT_DIR and its kin set to the outer repository.
@@ -15,7 +17,7 @@ SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "heavy-run.sh"
 ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_") and k != "SISU_HEAVY_LOCK"}
 
 
-def wait_for(condition, what) -> None:
+def wait_for(condition: Callable[[], bool], what: str) -> None:
     deadline = time.monotonic() + 20
     while not condition():
         if time.monotonic() > deadline:
@@ -24,6 +26,7 @@ def wait_for(condition, what) -> None:
 
 
 class HeavyRun(unittest.TestCase):
+    @override
     def setUp(self) -> None:
         self.repo = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.repo)
@@ -31,10 +34,12 @@ class HeavyRun(unittest.TestCase):
         self.lock = os.path.join(self.repo, ".git", "sisu-heavy-run.lock")
         self.err = os.path.join(self.repo, "err")
 
-    def path(self, name):
+    def path(self, name: str) -> str:
         return os.path.join(self.repo, name)
 
-    def start(self, *command, cwd=None, env=None):
+    def start(
+        self, *command: str, cwd: str | None = None, env: dict[str, str] | None = None
+    ) -> subprocess.Popen[bytes]:
         with open(self.err, "w", encoding="utf-8") as err:
             run = subprocess.Popen(
                 ["bash", SCRIPT, *command],
@@ -47,12 +52,12 @@ class HeavyRun(unittest.TestCase):
         return run
 
     @staticmethod
-    def stop(run) -> None:
+    def stop(run: subprocess.Popen[bytes]) -> None:
         if run.poll() is None:
             os.killpg(run.pid, signal.SIGKILL)
         run.wait()
 
-    def stderr(self):
+    def stderr(self) -> str:
         with open(self.err, encoding="utf-8") as f:
             return f.read()
 
