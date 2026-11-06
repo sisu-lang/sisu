@@ -14,8 +14,11 @@ mod matching;
 mod math;
 mod rc;
 mod show;
-pub(crate) mod string;
+mod string;
 pub(crate) mod units;
+
+#[cfg(test)]
+pub(crate) use string::LEN_WORDS;
 
 use rustc_hash::FxHashMap;
 use std::cell::{Cell, RefCell};

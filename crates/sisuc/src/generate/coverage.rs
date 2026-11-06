@@ -24,14 +24,12 @@ use super::{
     generate,
 };
 use crate::check::{self, prelude_function_names};
-use crate::codegen::string::LEN_WORDS;
-use crate::codegen::{OptLevel, compile, target_machine};
+use crate::codegen::{LEN_WORDS, OptLevel, compile, target_machine};
 use crate::conformance::{RESOLVE_ALL_CALLS, holds_class};
 use crate::diagnostic::Severity;
 use crate::front_end::{PRELUDE_SOURCE, front_end, prelude_program};
 use crate::lang::STRING_CHAIN_LINKS;
-use crate::mir::lower::pattern::COPIED_UNDER;
-use crate::mir::params::TAIL_ARGUMENTS;
+use crate::mir::{COPIED_UNDER, TAIL_ARGUMENTS};
 use crate::symbol::Symbol;
 use crate::types::{Type, TypeKind};
 use crate::{ast, lexer, parser, tir};

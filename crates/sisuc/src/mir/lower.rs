@@ -30,7 +30,9 @@
 //! every counted operand before a later operand that can exit to a `let` local, so no temporary
 //! is owned across an exit.
 
-pub(crate) mod pattern;
+mod pattern;
+#[cfg(test)]
+pub(crate) use pattern::COPIED_UNDER;
 
 use std::iter::once;
 use std::ptr;

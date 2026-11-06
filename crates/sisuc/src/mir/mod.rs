@@ -66,16 +66,18 @@ mod certify;
 mod elaborate;
 mod hoist;
 mod liveness;
-pub(crate) mod lower;
+mod lower;
 mod ownership;
 mod pairs;
-pub(crate) mod params;
+mod params;
 mod print;
 mod reuse;
 
 pub(crate) use elaborate::flagged;
 #[cfg(test)]
-pub(crate) use lower::lower;
+pub(crate) use lower::{COPIED_UNDER, lower};
+#[cfg(test)]
+pub(crate) use params::TAIL_ARGUMENTS;
 pub(crate) use print::print;
 
 /// The mir of `program` as lowering leaves it under the assumed flags, before any pass: enough

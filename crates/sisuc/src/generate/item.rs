@@ -726,6 +726,7 @@ impl Gen<'_> {
                 g.w.text(&format!("print(\"@{} {{{}}}\")", site.marker, site.call));
             });
         }
+        self.print_gap_args();
         self.main_stmts();
         self.mut_epilogue();
         // Whether `main` calls the function of the conformances that follows it. The choice is
@@ -906,8 +907,8 @@ impl Gen<'_> {
         (text, n)
     }
 
-    /// Writes the head of `main` and opens its body. With `main_args`, `main` takes `gap_args` and
-    /// prints its length first. Both are known text, so `plain` holds `fn main() ` and no print.
+    /// Writes the head of `main` and opens its body. With `main_args`, `main` takes `gap_args`.
+    /// That text is known text, so `plain` holds `fn main() `.
     fn open_main(&mut self) {
         self.w.text("fn main(");
         if self.main_args {
@@ -915,6 +916,12 @@ impl Gen<'_> {
         }
         self.w.text(") ");
         self.open_body();
+    }
+
+    /// With `main_args`, writes the first statement of `main` after the known sites: it prints the
+    /// length of `gap_args`. Property 5 needs the known sites to print the first lines. The text
+    /// is known text, so `plain` holds no print.
+    fn print_gap_args(&mut self) {
         if self.main_args {
             self.known_text(|g| {
                 g.w.line();
@@ -1745,7 +1752,8 @@ impl Gen<'_> {
     ///   - `gap_tail`: a self call in tail position that passes a named argument;
     /// - a `never` part of a string, as a statement on a branch that does not run.
     ///
-    /// `main` takes `gap_args` in the programs of `MAIN_ARGS_GATE`. `open_main` writes it.
+    /// `main` takes `gap_args` in the programs of `MAIN_ARGS_GATE`. `open_main` and
+    /// `print_gap_args` write it.
     ///
     /// Each loop counts down from one and a `break` ends it, in at most two passes.
     /// An index is a literal.
