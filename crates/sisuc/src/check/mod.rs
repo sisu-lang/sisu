@@ -32,8 +32,10 @@ mod string;
 mod unused_names;
 
 use std::borrow::Cow;
+use std::iter::Peekable;
 use std::ops::Range;
 use std::rc::Rc;
+use std::slice;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -304,6 +306,37 @@ struct Signature {
 enum Declared<T> {
     Known(T),
     Broken,
+}
+
+/// The name of the top-level item `item`; an `extend` block has none of its own.
+fn item_name(item: &ast::Item) -> Option<&ast::Ident> {
+    match item {
+        ast::Item::Class(class) => Some(&class.name),
+        ast::Item::Function(f) => Some(&f.name),
+        ast::Item::Enum(e) => Some(&e.name),
+        ast::Item::Const(c) => Some(&c.name),
+        ast::Item::Interface(interface) => Some(&interface.name),
+        ast::Item::Alias(alias) => Some(&alias.name),
+        ast::Item::Extend(_) => None,
+    }
+}
+
+/// The kind of definition that a broken item of `kind` is. An `extend` block defines no name.
+fn broken_definition(kind: ast::BrokenKind) -> Option<Definition> {
+    match kind {
+        ast::BrokenKind::Function => Some(Definition::Function),
+        ast::BrokenKind::Class => Some(Definition::Class),
+        ast::BrokenKind::Interface => Some(Definition::Interface),
+        ast::BrokenKind::Enum => Some(Definition::Enum),
+        ast::BrokenKind::Constant => Some(Definition::Constant),
+        ast::BrokenKind::Alias => Some(Definition::Alias),
+        ast::BrokenKind::Extend => None,
+    }
+}
+
+/// Whether a table of top-level names holds a broken or rejected item for a name.
+fn is_broken<T>(declared: Option<&Declared<T>>) -> bool {
+    matches!(declared, Some(Declared::Broken))
 }
 
 struct ClassInfo {
@@ -1586,9 +1619,14 @@ impl Checker<'_> {
         let mut next_function = 0;
         // Source order among the constants.
         let mut order = 0;
+        let mut waiting = broken.iter().peekable();
         for (at, item) in items.iter().enumerate() {
             if at == user_items {
+                // No broken item is in the prelude, and its items must see their names in `first`.
+                self.take_broken(&mut waiting, None, &mut first);
                 self.prelude = self.item_counts(next_function);
+            } else if let Some(name) = item_name(item) {
+                self.take_broken(&mut waiting, Some(name.span.start()), &mut first);
             }
             match item {
                 ast::Item::Class(class) => {
@@ -1690,13 +1728,14 @@ impl Checker<'_> {
             }
         }
         if user_items == items.len() {
+            self.take_broken(&mut waiting, None, &mut first);
             self.prelude = self.item_counts(next_function);
         }
         // After the loop: the prelude's own items, which come last, would take the names back.
         for (kind, name) in rejected {
             self.poison_name(kind, name);
         }
-        self.poison_broken(broken, &mut first);
+        self.poison_broken(broken);
     }
 
     /// Records the alias `alias`, and its name as the first function, class, enum, constant or
@@ -1740,76 +1779,60 @@ impl Checker<'_> {
         }
     }
 
-    /// Poisons the name of each broken item, and reports it as `collect_names` reports an intact
-    /// item's: a name that the language or the prelude takes, and a name that another item has.
-    /// `first` holds the first item of each name. The broken items come in source order.
-    fn poison_broken(
+    /// Gives each broken item in `waiting` whose name starts before `before` (all of them when it
+    /// is `None`) the checks of an intact item: a name that the language or the prelude takes, and
+    /// a name that another item has. `first` holds the first item of each name. The broken items
+    /// come in source order, and `collect_names` takes each one just before the first intact item
+    /// that starts after it, so that a duplicate is reported against the first item of its name.
+    fn take_broken(
         &mut self,
-        broken: &[ast::Broken],
+        waiting: &mut Peekable<slice::Iter<'_, ast::Broken>>,
+        before: Option<usize>,
         first: &mut FxHashMap<Symbol, (Span, Definition)>,
     ) {
-        for broken in broken {
-            let kind = match broken.kind {
-                ast::BrokenKind::Function => Definition::Function,
-                ast::BrokenKind::Class => Definition::Class,
-                ast::BrokenKind::Interface => Definition::Interface,
-                ast::BrokenKind::Enum => Definition::Enum,
-                ast::BrokenKind::Constant => Definition::Constant,
-                ast::BrokenKind::Alias => Definition::Alias,
+        while let Some(broken) =
+            waiting.next_if(|b| before.is_none_or(|at| b.name.span.start() < at))
+        {
+            let Some(kind) = broken_definition(broken.kind) else {
                 // Its target is intact, and its parse error already fails the program. A method
                 // call on the target that finds no method is poisoned.
-                ast::BrokenKind::Extend => {
-                    self.broken_extensions.insert(broken.name.name);
-                    continue;
-                }
+                self.broken_extensions.insert(broken.name.name);
+                continue;
             };
             if !(self.built_in(&broken.name) || self.prelude_taken(kind, &broken.name)) {
-                self.broken_duplicate(first, kind, &broken.name);
+                self.first_definition(first, kind, None, &broken.name);
             }
-            self.poison_name(kind, broken.name.name);
         }
     }
 
-    /// Gives the broken item `name` of `kind` the duplicate check of an intact item. When a user's
-    /// item of the name starts before it, the broken item is reported against that one. When one
-    /// starts after it, that one is reported against the broken item, which takes its place in
-    /// `first`. Else the broken item joins `first`, also in the place of a prelude item.
-    fn broken_duplicate(
-        &mut self,
-        first: &mut FxHashMap<Symbol, (Span, Definition)>,
-        kind: Definition,
-        name: &ast::Ident,
-    ) {
-        match first.get(&name.name).copied() {
-            None => {
-                first.insert(name.name, (name.span, kind));
-            }
-            // The prelude's item of a language interface's name is no item of the user's.
-            Some((span, _)) if span.in_prelude() => {
-                first.insert(name.name, (name.span, kind));
-            }
-            Some((span, earlier)) if span.start() < name.span.start() => {
-                let earlier = Earlier::At {
-                    span,
-                    kind: earlier,
-                    owner: None,
-                };
-                self.report(defined_twice(kind, name, earlier));
-            }
-            Some((span, later_kind)) => {
-                let later = ast::Ident {
-                    name: name.name,
-                    span,
-                };
-                let earlier = Earlier::At {
-                    span: name.span,
-                    kind,
-                    owner: None,
-                };
-                self.report(defined_twice(later_kind, &later, earlier));
-                first.insert(name.name, (name.span, kind));
+    /// Poisons the name of each broken item.
+    fn poison_broken(&mut self, broken: &[ast::Broken]) {
+        for broken in broken {
+            if let Some(kind) = broken_definition(broken.kind) {
+                self.poison_name(kind, broken.name.name);
             }
         }
+    }
+
+    /// Whether a rejected or broken item poisons the top-level name `name`, so that a use of it
+    /// gives no more errors.
+    pub(super) fn poisoned(&self, name: Symbol) -> bool {
+        is_broken(self.class_ids.get(&name))
+            || is_broken(self.function_ids.get(&name))
+            || is_broken(self.enum_ids.get(&name))
+            || is_broken(self.interface_ids.get(&name))
+            || is_broken(self.constants.get(&name))
+            || is_broken(self.aliases.names.get(&name))
+    }
+
+    /// Whether a call or a read of the value `name` is poisoned. `Ok` and `Err`, when no user's
+    /// function or class takes them, belong to the prelude's `Result`.
+    pub(super) fn poisoned_use(&self, name: Symbol) -> bool {
+        self.poisoned(name)
+            || ((name == Symbol::OK || name == Symbol::ERR)
+                && !self.function_ids.contains_key(&name)
+                && !self.class_ids.contains_key(&name)
+                && is_broken(self.enum_ids.get(&Symbol::RESULT)))
     }
 
     /// Poisons the top-level name `name` of an item of `kind` that is rejected or broken: its
@@ -2362,6 +2385,8 @@ impl Checker<'_> {
                 let args = self.type_args(&ident(), &[Symbol::intern("T")], args, angles)?;
                 Some(optional_of(args.get()[0]))
             }
+            // A broken or rejected function or constant of the name has its own error.
+            _ if self.poisoned(name) => None,
             _ => {
                 let types =
                     ["i64", "u8", "f64", "bool", "char", "string"].map(|ty| (ty, Definition::Type));
@@ -2641,9 +2666,7 @@ impl Checker<'_> {
         // Whether the function takes arguments; a prelude function is a function too.
         let takes_arguments = match self.function_ids.get(&name) {
             Some(&Declared::Known(func)) => Some(!self.signatures[func.0].params.is_empty()),
-            // A broken function has no known parameters: no call is offered.
-            Some(Declared::Broken) => Some(true),
-            None => PRELUDE
+            _ => PRELUDE
                 .contains(&name.as_str())
                 .then(|| prelude::takes_arguments(name.as_str())),
         };

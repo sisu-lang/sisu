@@ -240,3 +240,6 @@ print(oa_none().oa[0] ?? $)
 for _x in $.wrap([1]) {}
 print($)
 print("x {$}")
+# A value as a name that is read, and as a name that is assigned.
+let _r = $
+$ = 1

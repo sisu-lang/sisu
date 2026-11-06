@@ -55,14 +55,9 @@ impl Checker<'_> {
             self.class_ids.get(&callee.name).copied(),
             self.function_ids.get(&callee.name).copied(),
         );
-        // A broken name, a constant's included, poisons every use, a built-in's too. The item's
-        // own error is reported; its arguments may hold more.
-        if matches!(
-            declared,
-            (Some(Declared::Broken), _) | (_, Some(Declared::Broken))
-        ) || matches!(self.constants.get(&callee.name), Some(Declared::Broken))
-            || matches!(self.interface_ids.get(&callee.name), Some(Declared::Broken))
-        {
+        // A broken or rejected name, a constant's included, poisons every use, a built-in's too.
+        // The item's own error is reported; its arguments may hold more.
+        if self.poisoned_use(callee.name) {
             self.stray(args);
             return Err(Poisoned::error());
         }
