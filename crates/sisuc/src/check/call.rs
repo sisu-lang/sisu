@@ -159,8 +159,15 @@ impl Checker<'_> {
         let name = callee.name.as_str();
         let unlabeled = args.iter().all(|arg| arg.label.is_none());
         let mut first_checked = None;
+        // The method of the class or the enum that holds the call, not the first argument's.
+        let own = (self.body.self_type).and_then(|ty| self.idiom_of(callee.name, ty));
         let rest = match args.split_first() {
             Some((first, rest)) if unlabeled => {
+                // The first argument is checked as a receiver. Stamp it for the method of `self`:
+                // when that method wins, the argument is at its `mut` parameter, if it has one.
+                if let Some(Idiom::Method(func, _)) = own {
+                    self.stamp_mut_params(&args[..1], &self.signatures[func.0].muts.clone());
+                }
                 let receiver = self.expr(&first.value, Some(UNKNOWN));
                 // When it fits the method of `self`, the call is most likely `self.name(args)`,
                 // as in a language that calls a bare method name on `this`.
@@ -216,11 +223,6 @@ impl Checker<'_> {
             }
             _ => args,
         };
-        // Not the first argument's method, but one of the class or the enum that holds the call.
-        let own = self
-            .body
-            .self_type
-            .and_then(|ty| self.idiom_of(callee.name, ty));
         if let Some(Idiom::Method(func, owner)) = own {
             let takes = self.method_arguments(func, owner, args, first_checked);
             // The first argument was checked without its parameter's type, so `takes` can be
@@ -398,6 +400,9 @@ impl Checker<'_> {
         first: Option<Checked>,
     ) -> bool {
         let owner = owner.get();
+        // An argument at a `mut` parameter gets the help of a place.
+        let muts = self.signatures[func.0].muts.clone();
+        self.stamp_mut_params(args, &muts);
         let sig = &self.signatures[func.0];
         if sig.type_params.len() > owner.len() {
             // The first argument is reported already.
@@ -711,11 +716,36 @@ impl Checker<'_> {
                 self.generated_display(span, receiver, site, args, listed)
             }
             None => {
+                if ty.is_none() {
+                    self.stamp_type_call(receiver_expr, method.name, args);
+                }
                 self.labels(args);
                 self.stray_call(ty, method.name, args);
                 Err(Poisoned::error())
             }
         }
+    }
+
+    /// Stamps the arguments of `Name.method(args)`, which E0105 reports. `Name` is a class or an
+    /// interface. An argument at a `mut` parameter of the method, or of the requirement, gets the
+    /// help of a place. A name that is none of them, or has no such method, stamps nothing.
+    fn stamp_type_call(&mut self, receiver: &ast::Expr, method: Symbol, args: &[ast::Arg]) {
+        let ExprKind::Name(name) = receiver.kind else {
+            return;
+        };
+        let muts = if let Some(&Declared::Known(id)) = self.class_ids.get(&name)
+            && let Some(&Declared::Known(func)) = self.classes[id.0].methods.get(&method)
+        {
+            self.signatures[func.0].muts.clone()
+        } else if let Some(&Declared::Known(id)) = self.interface_ids.get(&name)
+            && let Some(found) = (self.interfaces[id.0].requirements.iter())
+                .find(|requirement| requirement.name.name == method)
+        {
+            found.muts.clone()
+        } else {
+            return;
+        };
+        self.stamp_mut_params(args, &muts);
     }
 
     /// E0167 for each `mut` argument of the call `receiver.method(args)` of a method of the

@@ -132,8 +132,8 @@ impl Checker<'_> {
         }
     }
 
-    /// Stamps the arguments that sit at a `mut` parameter of any of the `found` candidates, when
-    /// the call picks none of them: each gets the help of a place.
+    /// Stamps the arguments at a `mut` parameter of any of the `found` candidates. The call
+    /// picks none of them. Each argument gets the help of a place.
     fn stamp_candidates(&mut self, found: &[Required], args: &[ast::Arg]) {
         for one in found {
             let muts = self.interfaces[one.interface.0].requirements[one.method]
