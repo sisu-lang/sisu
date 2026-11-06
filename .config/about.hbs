@@ -1,0 +1,14 @@
+The Rust crates that the sisu binaries and runtime archives use, by license.
+
+{{#each licenses}}
+================================================================================
+{{name}}
+
+Used by:
+{{#each used_by}}
+- {{crate.name}} {{crate.version}}
+{{/each}}
+
+{{{text}}}
+
+{{/each}}
