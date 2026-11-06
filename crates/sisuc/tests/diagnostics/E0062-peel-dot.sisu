@@ -4,7 +4,7 @@
 // THEN it reports E0062 with no fix, and a help that peels the layers that `?.` does not take
 // AND the `.` says "the extra layers", and the `?.` says "the other layers", with one `?? None` for each
 // AND an index, a slice, a `for` subject or a `mut` argument after the `.` gets the `if let` help instead
-// AND a `push` onto `[i64]??` gets the `if let` help and no fix: an unwrapped array is a copy, and the peeled `push` gives E0021
+// AND a `push` onto `[i64]??` gets the `if let` help and no fix: the peeled `push` gives E0021
 class Node {
     v: i64
     mut ys: [i64]
