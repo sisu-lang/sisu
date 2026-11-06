@@ -1167,15 +1167,15 @@ fn slice_at_last_use_should_move_its_base() {
     assert!(!f.contains("copy"), "{f}");
 }
 
-/// GIVEN `xs` that is used again after a range index of it
+/// GIVEN `t = xs[1..]`, `xs` printed after it, and `t` returned
 /// WHEN the function is built
 /// THEN the slice is taken from a copy of `xs`, which adds the reference that the slice holds
 #[test]
 fn slice_of_a_live_local_should_take_a_copy() {
     let printed = built(
-        "fn main() {\n    let xs = [1, 2, 3]\n    let t = xs[1..]\n    print(t)\n    print(xs)\n}",
+        "fn f(xs: [i64]) -> [i64] {\n    let t = xs[1..]\n    print(xs)\n    t\n}\nfn main() {\n    print(f([1, 2, 3]))\n}",
     );
-    has(&printed, "main", &["= copy xs#0", "slice move _[1..]"]);
+    has(&printed, "f", &["= copy xs#0", "slice move _[1..]"]);
 }
 
 /// GIVEN a start and an end that assign the locals that the slice reads

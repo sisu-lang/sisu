@@ -4,13 +4,14 @@
 //! A candidate is `t = copy p` where `t` is counted and is not `p.local`, `p.local` is not a
 //! `match` binding (it has no entry in `owners`), and `p.local` is not a member of a candidate
 //! still open at that statement. Its members are `t` and each `u` that an exact `u = move m` of a
-//! member `m` makes. It closes at a `release` of its last member in the same block, and is a pair
-//! when all of these hold:
+//! member `m` makes, or an exact `u = slice move m[..]` that is not `safe`. It closes at a
+//! `release` of its last member in the same block, and is a pair when all of these hold:
 //!
 //! 1. Every mention of every member, anywhere in the function, terminators included, falls
 //!    between the copy and that release.
-//! 2. Between them, a member is only read, moved on by `u = move m`, or written through by a
-//!    `take`, a store or a `make_unique` when its type is a class. A write into an array or a
+//! 2. Between them, a member is only read, moved on by `u = move m` or by a slice that is not
+//!    `safe`, or written through by a `take`, a store or a `make_unique` when its type is a
+//!    class. A write into an array or a
 //!    string copy is copy-on-write of a value with a second holder; as a borrow it would write
 //!    into `p`'s value in place.
 //! 3. Between them, nothing consumes, assigns, releases or writes `p.local`.
@@ -31,7 +32,11 @@
 //! or element on the path was replaced, and a field without `mut` never is, so the value lives as
 //! long as `t` is read. Later changes to an index local do not matter: the borrow read the
 //! element once, as the copy did. Each
-//! `u = move m` becomes `u = borrow m`, which holds the same pointer. The release becomes `end`
+//! `u = move m` becomes `u = borrow m`, which holds the same pointer. Each `u = slice move m[..]`
+//! becomes the same slice with `m` read in place, `u = slice m[..]`: the slice took the count of
+//! `m`, so it now holds none, and it shares the block that `m` borrows. A slice that is `safe`
+//! stays out, because codegen releases its base when a check fails, and a borrowed base has no
+//! count to release. The release becomes `end`
 //! of each member, last first: it released the count the copy added, which is no longer there.
 //! `owners` maps each member straight to `p.local`.
 
@@ -45,7 +50,7 @@ use crate::tir::TypeKind;
 enum Kind<'a> {
     /// `t = copy p`.
     Copy(LocalId, &'a Place),
-    /// `u = move m`.
+    /// `u = move m`, or `u = slice move m[..]` that is not `safe`.
     Step(LocalId, LocalId),
     Release(LocalId),
     /// Condition 4's clobbers.
@@ -58,7 +63,8 @@ struct Candidate {
     root: LocalId,
     /// Whether the copied place goes through a `mut` field or an element, so a clobber blocks it.
     unstable: bool,
-    /// Each member and the statement that made it: the copy, then each `u = move m`.
+    /// Each member and the statement that made it: the copy, then each step `u = move m` or
+    /// `u = slice move m[..]`.
     links: Vec<(usize, LocalId)>,
     /// The members' mentions seen since the copy, and over the whole function.
     seen: usize,
@@ -268,7 +274,15 @@ fn kind<'a>(function: &Function, stmt: &'a Statement) -> Kind<'a> {
     match stmt {
         Statement::Assign { dest, value } => match (value, *dest) {
             (Rvalue::Copy(place), Some(t)) => Kind::Copy(t, place),
-            (Rvalue::Use(Operand::Move(m)), Some(u)) => Kind::Step(u, *m),
+            (
+                Rvalue::Use(Operand::Move(m))
+                | Rvalue::Slice {
+                    base: Operand::Move(m),
+                    safe: false,
+                    ..
+                },
+                Some(u),
+            ) => Kind::Step(u, *m),
             (value, _) if value.may_call_written() => Kind::Clobber,
             (
                 Rvalue::Call { .. }
@@ -322,9 +336,38 @@ fn kind<'a>(function: &Function, stmt: &'a Statement) -> Kind<'a> {
     }
 }
 
-/// A pair's copy or chain step, as a borrow of the place it read.
+/// A pair's copy or chain step, as a borrow of the place it read. A slice step stays a slice that
+/// reads its base in place.
 fn borrowed(stmt: Statement) -> Statement {
     match stmt {
+        // A slice stays a slice: it reads the member in place, so it holds no count.
+        Statement::Assign {
+            dest,
+            value:
+                Rvalue::Slice {
+                    base: Operand::Move(local),
+                    start,
+                    end,
+                    inclusive,
+                    safe,
+                    span,
+                },
+        } => Statement::Assign {
+            dest,
+            value: Rvalue::Slice {
+                base: Operand::Read(Place {
+                    local,
+                    projections: Vec::new(),
+                    borrow: false,
+                    guard: false,
+                }),
+                start,
+                end,
+                inclusive,
+                safe,
+                span,
+            },
+        },
         Statement::Assign { dest, value } => {
             let place = match value {
                 Rvalue::Copy(place) => place,
@@ -368,7 +411,7 @@ fn borrowed(stmt: Statement) -> Statement {
                 | Rvalue::Is { .. }
                 | Rvalue::Print { .. }
                 | Rvalue::Dbg { .. } => {
-                    panic!("a pair's copy or chain step should be a copy or a move")
+                    panic!("a pair's step should be a copy, a move or a slice")
                 }
             };
             Statement::Assign {

@@ -2562,7 +2562,8 @@ impl Checker<'_> {
     /// Reports each argument already checked whose type is not what `want`, the call's context,
     /// makes of its parameter, once `ret` meets `want` or its payload with no argument's help.
     /// Such an argument is rejected, as a rule rejects its operand, and the later arguments
-    /// meet the context's types in place of the blamed arguments'. Reports nothing, and leaves
+    /// meet the context's types in place of the blamed arguments'. A `mut` argument gets E0170
+    /// in place of E0032, and `mut_final` does not report it again. Reports nothing, and leaves
     /// the bindings, when the context does not fit `ret` alone as a value of `ret` fits it, when
     /// the context fails a bound of a parameter that it binds (see `meets_bounds`), when an
     /// argument was rejected already, or when every argument fits.
@@ -2601,13 +2602,19 @@ impl Checker<'_> {
             return;
         }
         let mut blamed = false;
+        // The shapes of the `mut` arguments are in argument order: one cursor walks them.
+        let mut shapes = std::mem::take(&mut call.mut_shapes).into_iter().peekable();
+        let mut unblamed = Vec::new();
         for (i, arg) in args.iter().enumerate() {
+            let shape = shapes.next_if(|&(at, _)| at == i);
             // An argument of type `unit` or `never` binds only what no other does (see `last`).
             let got = call.slots[i].as_ref().and_then(type_of);
             let (Some(param), Some(got)) = (sig.params[i], got) else {
+                unblamed.extend(shape);
                 continue;
             };
             let Some(fit) = self.known(&context, param) else {
+                unblamed.extend(shape);
                 continue;
             };
             // As `against`: the type, or its payload wrapped, or an `any` that it converts to.
@@ -2616,10 +2623,17 @@ impl Checker<'_> {
                 || matches!(fit.kind(), TypeKind::Optional(inner) if inner == got)
                 || self.converts_to_any(got, fit)
             {
+                unblamed.extend(shape);
                 continue;
             }
-            let d = self.mismatch(arg.value.span, Some(&arg.value), fit, got);
-            self.diagnostics.push(d);
+            // A `mut` argument must have the parameter's type exactly: E0170 says so, and
+            // `mut_final` would skip it when the call has a parameter that no argument binds.
+            if let Some((site, (_, shape))) = sig.mut_site.zip(shape) {
+                self.report_mut_type(&arg.value, &shape, (site, i), (fit, param));
+            } else {
+                let d = self.mismatch(arg.value.span, Some(&arg.value), fit, got);
+                self.diagnostics.push(d);
+            }
             call.slots[i] = Some(Err(Poisoned {
                 ty: None,
                 mismatch: true,
@@ -2629,6 +2643,7 @@ impl Checker<'_> {
             }));
             blamed = true;
         }
+        call.mut_shapes = unblamed;
         if blamed {
             // A parameter that the context leaves open keeps what an argument bound.
             for (found, bound) in iter::zip(&mut context.found, &call.bindings.found) {

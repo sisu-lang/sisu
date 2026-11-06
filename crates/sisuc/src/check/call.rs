@@ -660,6 +660,8 @@ impl Checker<'_> {
                 // reads its receiver and writes nothing.
                 Some(ty) if !matches!(ty.kind(), TypeKind::Array(_)) => {
                     if let (Ok(read), Some(_)) = (&receiver, place) {
+                        #[cfg(test)]
+                        super::OWN_PUSH_READS.set(super::OWN_PUSH_READS.get() + 1);
                         self.read_pushed(read, receiver_expr);
                     }
                 }

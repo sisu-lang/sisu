@@ -4131,3 +4131,196 @@ fn out_after_an_end_should_be_accepted() {
     );
     assert_eq!(certify(&b.finish()), Ok(()));
 }
+
+/// `slice base[..]`, with the bounds left out.
+fn slice_of(base: Operand, safe: bool) -> Rvalue {
+    Rvalue::Slice {
+        base,
+        start: None,
+        end: None,
+        inclusive: false,
+        safe,
+        span: Span::new(0, 0),
+    }
+}
+
+/// `xs`, a parameter that `t` borrows, and `d`, a slice that reads `t` in place. Both are
+/// bound to `xs`.
+fn slice_rig() -> (Builder, LocalId, LocalId, LocalId) {
+    let mut b = Builder::new("f");
+    let xs = b.param("xs", Type::array(Type::I64));
+    let t = b.local("t", Type::array(Type::I64));
+    let d = b.local("d", Type::array(Type::I64));
+    b.owner(t, xs);
+    b.owner(d, xs);
+    (b, xs, t, d)
+}
+
+/// GIVEN `t = borrow xs` and `d = slice t` that reads the whole local `t`, and then `end d` and
+/// `end t`
+/// WHEN the function is certified
+/// THEN it is accepted: the slice holds no count, so nothing releases it
+#[test]
+fn certify_should_accept_a_slice_that_borrows_its_base() {
+    let (mut b, xs, t, d) = slice_rig();
+    b.block(
+        vec![
+            assign(t, Rvalue::Borrow(whole(xs))),
+            assign(d, slice_of(read(t), false)),
+            show(read(d)),
+            Statement::End(d),
+            Statement::End(t),
+            Statement::Release(xs),
+        ],
+        ret(),
+    );
+    assert_eq!(certify(&b.finish()), Ok(()));
+}
+
+/// GIVEN a slice that reads the borrow `t` in place, and a `release` of the slice
+/// WHEN the function is certified
+/// THEN it rejects the release of `d`: a slice that borrows holds no count to release
+#[test]
+fn certify_should_reject_a_release_of_a_slice_that_borrows() {
+    let (mut b, xs, t, d) = slice_rig();
+    b.block(
+        vec![
+            assign(t, Rvalue::Borrow(whole(xs))),
+            assign(d, slice_of(read(t), false)),
+            Statement::Release(d),
+            Statement::End(t),
+            Statement::Release(xs),
+        ],
+        ret(),
+    );
+    rejects(&b.finish(), 0, d, Rule::Consume);
+}
+
+/// GIVEN a slice that reads the borrow `t` in place, and a `use move` of the slice
+/// WHEN the function is certified
+/// THEN it rejects the move of `d`: a slice that borrows is no owner to move from
+#[test]
+fn certify_should_reject_a_move_of_a_slice_that_borrows() {
+    let (mut b, xs, t, d) = slice_rig();
+    let u = b.local("u", Type::array(Type::I64));
+    b.block(
+        vec![
+            assign(t, Rvalue::Borrow(whole(xs))),
+            assign(d, slice_of(read(t), false)),
+            assign(u, Rvalue::Use(Operand::Move(d))),
+            Statement::Release(u),
+            Statement::End(t),
+            Statement::Release(xs),
+        ],
+        ret(),
+    );
+    rejects(&b.finish(), 0, d, Rule::Consume);
+}
+
+/// GIVEN a `safe` slice that reads the whole local `t`: it releases its base when a check fails
+/// WHEN the function is certified
+/// THEN it rejects the read of `t`, which the slice would consume
+#[test]
+fn certify_should_reject_a_safe_slice_that_reads_a_whole_local() {
+    let (mut b, xs, t, d) = slice_rig();
+    b.block(
+        vec![
+            assign(t, Rvalue::Borrow(whole(xs))),
+            assign(d, slice_of(read(t), true)),
+            Statement::Release(d),
+            Statement::End(t),
+            Statement::Release(xs),
+        ],
+        ret(),
+    );
+    rejects(&b.finish(), 0, t, Rule::Consume);
+}
+
+/// GIVEN a slice of a borrow of `xs`, and a `make_unique xs` while the slice is read after it
+/// WHEN the function is certified
+/// THEN it rejects the read of `d`: the slice borrows from `xs`, so a write to `xs` ends it
+#[test]
+fn certify_should_reject_a_root_write_while_a_slice_borrows() {
+    let (mut b, xs, t, d) = slice_rig();
+    b.block(
+        vec![
+            assign(t, Rvalue::Borrow(whole(xs))),
+            assign(d, slice_of(read(t), false)),
+            Statement::End(t),
+            Statement::MakeUnique(whole(xs)),
+            show(read(d)),
+            Statement::End(d),
+            Statement::Release(xs),
+        ],
+        ret(),
+    );
+    rejects(&b.finish(), 0, d, Rule::Borrow);
+}
+
+/// GIVEN `t = borrow xs[0]` through an element, a slice of `t`, and a call before the slice is read
+/// WHEN the function is certified
+/// THEN it rejects the read of `d`: the call can replace the element, so the slice keeps the
+/// clobbers of its base
+#[test]
+fn slice_that_borrows_should_keep_its_bases_clobbers() {
+    let mut b = Builder::new("f");
+    let xs = b.param("xs", Type::array(Type::array(Type::I64)));
+    let t = b.local("t", Type::array(Type::I64));
+    let d = b.local("d", Type::array(Type::I64));
+    b.owner(t, xs);
+    b.owner(d, xs);
+    b.block(
+        vec![
+            assign(t, Rvalue::Borrow(first(xs))),
+            assign(d, slice_of(read(t), false)),
+            Statement::End(t),
+            call(vec![], vec![]),
+            show(read(d)),
+            Statement::End(d),
+            Statement::Release(xs),
+        ],
+        ret(),
+    );
+    rejects(&b.finish(), 0, d, Rule::Borrow);
+}
+
+/// GIVEN a slice whose base reads the element `xs[0]`, which is a projection, and a `release` of
+/// the slice
+/// WHEN the function is certified
+/// THEN it is accepted: only a whole local makes a slice borrow. No lowering makes this form; the
+/// row holds the check on projections
+#[test]
+fn certify_should_not_take_a_slice_through_a_projection_as_a_borrow() {
+    let mut b = Builder::new("f");
+    let xs = b.param("xs", Type::array(Type::array(Type::I64)));
+    let d = b.local("d", Type::array(Type::I64));
+    b.block(
+        vec![
+            assign(d, slice_of(Operand::Read(first(xs)), false)),
+            Statement::Release(d),
+            Statement::Release(xs),
+        ],
+        ret(),
+    );
+    assert_eq!(certify(&b.finish()), Ok(()));
+}
+
+/// GIVEN a slice that reads the borrow `t` in place, and a `make_unique` of the slice
+/// WHEN the function is certified
+/// THEN it rejects the write through `d`: a slice that borrows shares the block of `xs`
+#[test]
+fn certify_should_reject_a_write_through_a_slice_that_borrows() {
+    let (mut b, xs, t, d) = slice_rig();
+    b.block(
+        vec![
+            assign(t, Rvalue::Borrow(whole(xs))),
+            assign(d, slice_of(read(t), false)),
+            Statement::MakeUnique(whole(d)),
+            Statement::End(d),
+            Statement::End(t),
+            Statement::Release(xs),
+        ],
+        ret(),
+    );
+    rejects(&b.finish(), 0, d, Rule::WriteBorrowed);
+}

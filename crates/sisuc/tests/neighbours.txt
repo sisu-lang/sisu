@@ -27,6 +27,10 @@ class Fox: Pet {
     fn tail(self) -> i64 { 1 }
 }
 class Rock {}
+enum E {
+    A
+    fn push(self, x: i64) -> i64 { x }
+}
 class Bx {
     fn wrap<T>(self, v: T) -> T { v }
     fn none<T>(self) -> T? { None }
@@ -142,6 +146,11 @@ Rock()
 # A function name with no call, bare and indexed: no value, no place.
 nothing
 nothing[0]
+# A field whose chain ends in a name that holds no value: an unbound name, a type, or an enum
+# variant with a method. Each is no place.
+zz.x
+i64.x
+E.A
 
 [contexts]
 # Array literals beside a hint from another branch, with the value alone, first and last.
@@ -235,6 +244,11 @@ let _a = ob.wrap(ob)?.wrap($)
 let _a = $?.wrap(ob.wrap(1))
 match ob.wrap($) { _ => {} }
 print(oa_none().oa[0] ?? $)
+# A method named `push` called on each value, and a `push` or an assignment through a range: the
+# receiver is checked as a place, and as a value when it is no place.
+$.push(1)
+$[0..1].push(1)
+$[0..1] = [1]
 # A chain on each value as the subject of a `for`, which is indexed in its loop, and the value
 # printed or interpolated, which warns when it can be `None`.
 for _x in $.wrap([1]) {}
