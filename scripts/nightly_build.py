@@ -32,6 +32,7 @@ standard library only.
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -91,8 +92,14 @@ def released_commit(repo: str) -> tuple[list[str], str | None]:
     # paging
     commits = [c['sha'] for c in gh(f'repos/{repo}/commits?sha=main&per_page=100')]
     newest = nightly_releases(repo)
+    if not newest:
+        return commits, None
     # A release's tag is the only store of its commit: `nightly-<date>-<short sha>`.
-    return commits, newest[0]['tag_name'].rsplit('-', 1)[1] if newest else None
+    tag = newest[0]['tag_name']
+    short = tag.rsplit('-', 1)[1]
+    if not re.fullmatch('[0-9a-f]{7}', short):
+        sys.exit(f'nightly_build.py: the newest nightly tag {tag} does not end with a short SHA')
+    return commits, short
 
 
 def answer_of_main(repo: str) -> tuple[str, str | None]:

@@ -877,6 +877,9 @@ no new commit opens no issue.
   stderr and goes on with the other tags. A kill in `prune` is safe, because
   the next `prune` continues.
 - `report` needs the label `nightly-build`.
+- `pick` and `publish` fail when the newest `nightly-*` release has a tag that
+  does not end with a seven-character short SHA. The error names the tag. Delete
+  that release, or give it a correct tag.
 
 `publish` and `prune` have no time cap of their own. The `timeout-minutes` of
 each job is the limit.
