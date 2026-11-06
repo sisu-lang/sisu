@@ -795,11 +795,11 @@ GitHub API is in `scripts/nightly_build.py`. It has four commands: `pick`,
 | `report` | Opens or updates the issue `Nightly build failure`. |
 
 A run that finds no new green commit ends with success, and its job summary
-says `no new green commit`. A run that fails before `publish` publishes
-nothing, and the old nightly build stays latest. The next run picks the newest
+says `no new green commit`. A run that fails before the last step of
+`publish` publishes nothing, and the old nightly build stays latest. The next run picks the newest
 green commit again. A failed `live-check` or `prune` comes after the publish,
 so the new nightly build stays latest. The next `publish` deletes a draft that
-a killed `publish` leaves.
+a failed or killed `publish` leaves.
 
 GitHub disables a `schedule` trigger after 60 days without activity in the
 repository (see [the nightly job](#the-nightly-job)).
@@ -841,8 +841,8 @@ no new commit opens no issue.
     A new library needs a decision. It does not pass by itself.
   - `nightly_check.py macos`: `otool -L` lists only `/usr/lib/` and `/System/`
     paths. `codesign -v` passes. The `minos` of one member of
-    `libLLVMSupport.a` and of `libzstd.a` is at most 15.0. A rise of the floor
-    is the maintainer's decision.
+    `libLLVMSupport.a` and of `libzstd.a` is at most 15.0. A rise of the macOS
+    floor of 15 is the maintainer's decision.
   - `cargo about --fail`: for example, a crate has a license that
     `.config/about.toml` does not accept. On macOS, the step that appends the
     `zstd` license fails when Homebrew has no `LICENSE` for `zstd`.
@@ -925,11 +925,13 @@ bug gets published. So:
    1. Disable the workflow:
       `gh api --method PUT repos/sisu-lang/sisu/actions/workflows/nightly-build.yml/disable`.
       A disable does not stop a run in progress.
-   2. On the Actions tab, cancel each run in progress and wait until it stops.
-   3. Mark the previous nightly build as latest:
-      `gh api --method PATCH repos/sisu-lang/sisu/releases/<id> -f make_latest=true`.
-   4. When the fix merges, enable the workflow with the same `disable` call,
-      but with `enable` at the end of the path. Then do step 2.
+   2. On the Actions tab, cancel each queued run and each run in progress on
+      `main`. Wait until they stop.
+   3. Mark the newest nightly build without the bug as latest:
+      `gh release edit <tag> --repo sisu-lang/sisu --latest`.
+   4. When the fix merges, enable the workflow:
+      `gh api --method PUT repos/sisu-lang/sisu/actions/workflows/nightly-build.yml/enable`.
+   5. When CI passes, run the workflow by hand on `main`.
 
 ### The gap between the two downloads
 
