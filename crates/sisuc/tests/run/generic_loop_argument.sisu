@@ -1,0 +1,161 @@
+// GIVEN a `loop` argument of a generic call or constructor, whose first `break` value takes its
+// type from a written type that is not optional
+// WHEN the program runs
+// THEN each loop gives the value of the `break` that ran, at the written type
+// AND Valgrind and `--rc-checks` find every object freed exactly once
+class Box<T> {
+    item: T
+
+    fn own<U>(self, a: U) -> U {
+        a
+    }
+}
+
+interface Nm {
+    fn nm(self) -> string
+}
+
+class Cat: Nm {
+    fn nm(self) -> string { "cat" }
+}
+
+class Dog: Nm {
+    fn nm(self) -> string { "dog" }
+}
+
+class Holder {
+    r: Result<u8, i64>
+}
+
+enum Tree<T> {
+    Leaf(T)
+    Nil
+}
+
+fn id<T>(x: T) -> T {
+    x
+}
+
+fn pick<T>(a: T, _b: T) -> T {
+    a
+}
+
+fn takes(r: Result<u8, i64>) -> u8 {
+    if let Ok(x) = r { x } else { 0 }
+}
+
+// The first `break` is `1` when `c` is 0, else the second one gives `v`.
+fn in_return(c: i64, v: u8) -> Result<u8, string> {
+    return Ok(loop {
+        if c == 0 { break 1 }
+        break v
+    })
+}
+
+fn in_arm(on: bool, c: i64, v: u8) -> Result<u8, string> {
+    match on {
+        true => Ok(loop {
+            if c == 0 { break 2 }
+            break v
+        })
+        false => Err("off")
+    }
+}
+
+fn main() {
+    let v: u8 = 200
+    let s = "s" + "t"
+    let mut c = 1
+
+    // The seed's shape: a labelled loop in a block, with a literal first.
+    let a: Result<u8, [f64]> = Ok(({
+        let mut n = 2
+        l: loop {
+            if n == 0 { break l 0x72 }
+            n -= 1
+            if n == 5 { break l 9 }
+            break l v
+        }
+    }))
+    if let Ok(x) = a { print(x) }                                // 200
+
+    let b: Result<u8, i64> = Ok(loop { if c == 1 { break 3 }; break v })
+    if let Ok(x) = b { print(x) }                                // 3
+
+    let d: Result<i64, string> = Err(loop { if c == 0 { break "e" }; break s })
+    if let Err(x) = d { print(x) }                               // st
+
+    let e: Box<u8> = Box(item: loop { if c == 1 { break 4 }; break v })
+    print(e.item)                                                // 4
+
+    let f: Result<[u8], i64> = Ok(loop { if c == 1 { break [5] }; break [v] })
+    if let Ok(x) = f { print(x[0]) }                             // 5
+
+    let g: Result<u8?, i64> = Ok(loop { if c == 1 { break None }; break Some(v) })
+    if let Ok(x) = g { print(x ?? 6) }                           // 6
+
+    let h: u8 = id(loop { if c == 1 { break 7 }; break v })
+    print(h)                                                     // 7
+
+    let j: Result<u8, i64> = Ok(id(loop { if c == 1 { break 9 }; break v }))
+    if let Ok(x) = j { print(x) }                                // 9
+
+    let l: Result<u8, i64> = Ok(if c == 1 { loop { break 11 } } else { v })
+    if let Ok(x) = l { print(x) }                                // 11
+
+    let m: Result<u8, i64> = Ok(pick(loop { break 12 }, loop { break v }))
+    if let Ok(x) = m { print(x) }                                // 12
+
+    let o: [u8] = id([loop { break 13 }, 2])
+    print(o[0])                                                  // 13
+
+    // A `continue` and a statement before the `break` change nothing.
+    let q: Result<u8, i64> = Ok(loop {
+        c -= 1
+        if c == 0 { continue }
+        break 15
+    })
+    if let Ok(x) = q { print(x) }                                // 15
+
+    // Each place that gives the call its type.
+    print(takes(Ok(loop { if c == 0 { break 16 }; break 17 })))  // 17
+    print(takes(Holder(r: Ok(loop { break 18 })).r))             // 18
+    let mut r: Result<u8, i64> = Err(0)
+    r = Ok(loop { break 19 })
+    print(takes(r))                                              // 19
+    let rs: [Result<u8, i64>] = [Ok(loop { break 20 }), Err(1)]
+    print(takes(rs[0]))                                          // 20
+    let mut more: [Result<u8, i64>] = []
+    more.push(Ok(loop { break 21 }))
+    print(takes(more[0]))                                        // 21
+    let ts: [Tree<u8>] = [Tree.Leaf(loop { break 22 }), Tree.Nil]
+    if let Tree.Leaf(x) = ts[0] { print(x) }                       // 22
+    let u: u8 = e.own(loop { break 23 })
+    print(u)                                                     // 23
+    let w: Result<u8, i64> = if c != 0 { Ok(loop { break 24 }) } else { Err(1) }
+    print(takes(w))                                              // 24
+    let n: Result<u8, i64>? = Some(Ok(loop { break 25 }))
+    if let Some(x) = n { print(takes(x)) }                       // 25
+    let z: Result<u8, i64> = id(Ok(loop { break 26 }))
+    print(takes(z))                                              // 26
+    let tl: Result<string, i64> = Ok(loop { break "lo" + "op" })
+    if let Ok(x) = tl { print(x) }                               // loop
+
+    // A concrete argument after the loop meets the type that the context bound.
+    let la: u8 = pick(loop { if c == 0 { break 1 }; break 27 }, v)
+    print(la)                                                    // 27
+
+    // A `break` value converts to the written type.
+    let lb: Result<any Nm, i64> = Ok(loop { if c == 0 { break Cat() }; break Dog() })
+    if let Ok(x) = lb { print(x.nm()) }                          // dog
+    let lc: Result<u8?, i64> = Ok(loop { if c == 0 { break 1 }; break v })
+    if let Ok(x) = lc { print(x ?? 0) }                          // 200
+    let ld: Result<string?, i64> = Ok(loop { if c == 0 { break "e" }; break s })
+    if let Ok(x) = ld { print(x ?? "") }                         // st
+
+    if let Ok(x) = in_return(0, v) { print(x) }                  // 1
+    if let Ok(x) = in_return(1, v) { print(x) }                  // 200
+    if let Ok(x) = in_arm(true, 0, v) { print(x) }               // 2
+    if let Ok(x) = in_arm(true, 1, v) { print(x) }               // 200
+    if let Err(x) = in_arm(false, 0, v) { print(x) }             // off
+}

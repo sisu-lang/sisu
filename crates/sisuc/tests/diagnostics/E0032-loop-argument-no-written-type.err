@@ -1,0 +1,54 @@
+error[E0032]: expected `i64`, found `u8`
+  --> E0032-loop-argument-no-written-type.sisu:12:52
+   |
+12 |     let a = id(loop { if c == 0 { break 1 }; break v })
+   |                                   -------          ^
+   |                                   |
+   |                                   this `break` gave the loop the type `i64`
+   |
+help: if the types are right, convert it with `i64(...)`
+   |
+12 |     let a = id(loop { if c == 0 { break 1 }; break i64(v) })
+   |                                                    ++++ +
+
+error[E0032]: expected `i64`, found `u8`
+  --> E0032-loop-argument-no-written-type.sisu:13:54
+   |
+13 |     let b = pick(loop { if c == 0 { break 1 }; break v }, v)
+   |                                     -------          ^
+   |                                     |
+   |                                     this `break` gave the loop the type `i64`
+   |
+help: if the types are right, convert it with `i64(...)`
+   |
+13 |     let b = pick(loop { if c == 0 { break 1 }; break i64(v) }, v)
+   |                                                      ++++ +
+
+error[E0032]: expected `i64`, found `u8`
+  --> E0032-loop-argument-no-written-type.sisu:14:50
+   |
+14 |     let d = [loop { if c == 0 { break 1 }; break v }, v]
+   |                                 -------          ^
+   |                                 |
+   |                                 this `break` gave the loop the type `i64`
+   |
+help: if the types are right, convert it with `i64(...)`
+   |
+14 |     let d = [loop { if c == 0 { break 1 }; break i64(v) }, v]
+   |                                                  ++++ +
+
+error[E0032]: expected `i64`, found `u8`
+  --> E0032-loop-argument-no-written-type.sisu:15:49
+   |
+15 |     let e = loop { if c == 0 { break 1 }; break v }
+   |                                -------          ^
+   |                                |
+   |                                this `break` gave the loop the type `i64`
+   |
+help: if the types are right, convert it with `i64(...)`
+   |
+15 |     let e = loop { if c == 0 { break 1 }; break i64(v) }
+   |                                                 ++++ +
+
+sisu: 4 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032
