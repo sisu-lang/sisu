@@ -231,8 +231,8 @@ def mut_call_width(k):
 
 def mut_exits(k):
     # `many` has k `mut` parameters and k early returns, and each return stores every `mut`
-    # parameter, so `mir` and `codegen` grow with k squared (#502). `main` reads each local, so that no
-    # size has a W0014, and adds to `total` once, so that size 0 has no W0002.
+    # parameter, so `mir` and `codegen` grow with k squared (#502). `main` reads each local, so that
+    # no size has a W0014, and adds to `total` once, so that size 0 has no W0002.
     params = ''.join(f'mut x{tag(i)}: [i64], ' for i in range(k))
     returns = ''.join(f'    if x{tag(i)}[0] == stop {{\n        return\n    }}\n' for i in range(k))
     writes = ''.join(f'    x{tag(i)}[0] = 1\n' for i in range(k))
