@@ -79,7 +79,10 @@ class Linux(unittest.TestCase):
                 self.assertTrue(nc.linux_problems(OK_T, NEEDED % name))
 
     def test_linux_should_fail_on_output_with_no_glibc_reference(self):
-        self.assertTrue(nc.linux_problems('', ''))
+        self.assertTrue(nc.linux_problems('', OK_P))
+
+    def test_linux_should_fail_on_output_with_no_needed_line(self):
+        self.assertTrue(nc.linux_problems(OK_T, ''))
 
 
 class MacOS(unittest.TestCase):
@@ -215,7 +218,7 @@ class MacOSTools(ToolBase):
         fake_tool(self.bin, 'otool', r'''
 case "$1" in
 -L) %s
-    printf 'sisu:\n\t/usr/lib/libz.1.dylib (compatibility version 1.0.0)\n';;
+    printf 'sisu:\n\t%%s (compatibility version 1.0.0)\n' "${LOAD:-/usr/lib/libz.1.dylib}";;
 -l) %s
     printf '      cmd LC_BUILD_VERSION\n     minos %%s\n' "${MINOS:-15.0}";;
 esac''' % (breaks('otool-L'), breaks('otool-l')))
@@ -253,6 +256,11 @@ esac''' % (breaks('ar-t'), breaks('ar-x')))
                 self.assertEqual(done.returncode, 1)
                 self.assertIn(fail + ' broke', done.stderr)
 
+    def test_macos_should_fail_on_a_load_path_off_the_system(self):
+        done = self.macos(LOAD='/opt/homebrew/lib/libzstd.1.dylib')
+        self.assertEqual(done.returncode, 1)
+        self.assertIn('/opt/homebrew/lib/libzstd.1.dylib', done.stderr)
+
     def test_macos_should_fail_on_an_object_above_the_floor(self):
         done = self.macos(MINOS='16.0')
         self.assertEqual(done.returncode, 1)
@@ -267,9 +275,11 @@ case "$1" in
 -T) %s
     printf '%%s' "$OBJDUMP_T";;
 -p) %s
-    printf '  NEEDED               libc.so.6\n';;
+    printf '  NEEDED               %%s\n' "${NEEDED:-libc.so.6}";;
 esac''' % (breaks('objdump-T'), breaks('objdump-p')))
-        fake_tool(self.bin, 'sisu', breaks('sisu') + '\nprintf "sisu 0.1.0\\ncommit: abc1234\\n"')
+        fake_tool(self.bin, 'sisu', breaks('sisu') + '''
+if [ -n "$WARN" ]; then echo "$WARN" >&2; fi
+printf "sisu 0.1.0\\ncommit: abc1234\\n"''')
 
     def test_linux_should_fail_when_a_tool_fails(self):
         good = self.check('linux', 'sisu', OBJDUMP_T=OK_T)
@@ -279,6 +289,23 @@ esac''' % (breaks('objdump-T'), breaks('objdump-p')))
                 done = self.check('linux', 'sisu', fail=fail, OBJDUMP_T=OK_T)
                 self.assertEqual(done.returncode, 1)
                 self.assertIn(fail + ' broke', done.stderr)
+
+    def test_linux_should_fail_on_a_library_off_the_list_in_the_tool_output(self):
+        done = self.check('linux', 'sisu', OBJDUMP_T=OK_T, NEEDED='libfoo.so.1')
+        self.assertEqual(done.returncode, 1)
+        self.assertIn('libfoo.so.1', done.stderr)
+
+    def test_version_should_fail_on_another_commit(self):
+        sisu = os.path.join(self.bin, 'sisu')
+        done = self.check('version', sisu, 'fff1234')
+        self.assertEqual(done.returncode, 1)
+        self.assertIn('abc1234', done.stderr)
+
+    def test_version_should_fail_on_a_stderr_line(self):
+        sisu = os.path.join(self.bin, 'sisu')
+        done = self.check('version', sisu, 'abc1234def', WARN='weak version not found')
+        self.assertEqual(done.returncode, 1)
+        self.assertIn('weak version not found', done.stderr)
 
     def test_version_should_fail_when_the_tool_fails(self):
         sisu = os.path.join(self.bin, 'sisu')
@@ -292,7 +319,9 @@ esac''' % (breaks('objdump-T'), breaks('objdump-p')))
         os.makedirs(empty)
         for args in (('linux', 'sisu'), ('version', os.path.join(empty, 'no-sisu'), 'abc1234')):
             with self.subTest(args[0]):
-                self.assertEqual(self.check(*args, path=empty).returncode, 1)
+                done = self.check(*args, path=empty)
+                self.assertEqual(done.returncode, 1)
+                self.assertIn('cannot run', done.stderr)
 
 
 class PackTools(PackBase):
