@@ -295,15 +295,18 @@ const REACH: &[&str] = &[
 /// What `Gen::gap_forms` writes, and the key that each form marks. The nightly reads the seeds
 /// `0..FUZZ_SEEDS` and no others, so `generated_programs_should_reach_each_gap_rule` reads only
 /// those. They are in the universe as the `REACH` keys are.
-const WIDENS: &str = "reach: a `break` of `T` widens to the `T?` of its loop";
+const WIDENS: &str = "reach: a `break` value converts to the type that its loop grew to";
 const CROSSES: &str = "reach: the widening of a `break` crosses a nested loop";
+const OBJECT_IN_SOME: &str = "reach: the checker runs `object_in_some`";
+const OWN_PUSH: &str = "reach: a `.push` reads a place of a type that is no array";
+const PUSHED_VALUE: &str = "reach: the checker runs `pushed_value`";
 
 const GAP_RULES: &[&str] = &[
-    "reach: a class's own `push` is called on a place",
-    "reach: a class's own `?.push` is called on a place",
+    OWN_PUSH,
+    PUSHED_VALUE,
     WIDENS,
     CROSSES,
-    "reach: a literal `break` joins an optional `break` in a `let` with no written type",
+    OBJECT_IN_SOME,
     "reach: two `mut` arguments have one root local",
     "reach: a `string` field appends to itself",
     "reach: a program gets W0006",
@@ -2786,10 +2789,10 @@ impl Walk {
                 let own_push = func.0 < self.user_funcs
                     && self.function_names[func.0].rsplit('.').next() == Some("push");
                 if own_push && self.pushes.contains(&e.span.start()) {
-                    self.mark("reach: a class's own `push` is called on a place");
+                    self.mark(OWN_PUSH);
                 }
                 if own_push && self.safe_pushes.contains(&e.span.start()) {
-                    self.mark("reach: a class's own `?.push` is called on a place");
+                    self.mark(PUSHED_VALUE);
                 }
                 let name = &self.function_names[func.0];
                 let (operator, contains) = (
@@ -3162,9 +3165,7 @@ impl Walk {
                     self.mark(if breaks.crossed { CROSSES } else { WIDENS });
                 }
                 if breaks.literal_after && self.untyped_loops.contains(&e.span.start()) {
-                    self.mark(
-                        "reach: a literal `break` joins an optional `break` in a `let` with no written type",
-                    );
+                    self.mark(OBJECT_IN_SOME);
                 }
             }
             tir::ExprKind::Break { depth, value } => {
@@ -5916,59 +5917,220 @@ fn a_push_should_reach_a_local_an_element_and_a_guarded_field() {
     );
 }
 
-/// GIVEN a program with a loop that has a written `i64?` or `string?` and two `break`s
+/// GIVEN a program with a `loop` in the value of a `let` and breaks of the kinds in the table
 /// WHEN the walk reads it
-/// THEN the widening key is marked only for a `break` that the checker wraps, before a `break`
-/// that gives `None` and with no `break` out of an inner loop, and the crossing key only for the
-/// same with such a `break`. A written `Some(..)` or a `None` first gives the same typed tree, but
-/// `wrap_breaks` does nothing for it.
+/// THEN the key of a widening, of a crossing and of `object_in_some` are marked as the table
+/// says, each one when the checker did that work: a written `Some(..)` or a `None` first gives the
+/// typed tree of the checker's wrap, but `wrap_breaks` does nothing for it
 #[test]
-fn a_widening_key_should_mark_only_what_the_checker_wraps() {
-    let program = |ty: &str, breaks: &str| {
+#[expect(clippy::too_many_lines, reason = "one table of whole programs")]
+fn a_loop_key_should_mark_what_the_checker_did() {
+    /// The loop with two `break`s, and with three. The loops count down from one.
+    fn flat(breaks: &[&str]) -> String {
+        let (first, rest) = breaks.split_first().expect("a loop should have a break");
+        let (last, middle) = rest.split_last().expect("a loop should have two breaks");
+        let middle: String = (middle.iter())
+            .flat_map(|value| [" if c == 0 { break ", value, " }\n"])
+            .collect();
+        format!("loop {{\n if c == 0 {{ break {first} }}\n c -= 1\n{middle} break {last}\n}}")
+    }
+    /// A `main` with the `lets`, and `loop_text` as the value of a `let` with the written type
+    /// `ty`, or with none.
+    fn program(lets: &str, ty: Option<&str>, loop_text: &str) -> String {
+        let ty = ty.map_or(String::new(), |ty| format!(": {ty}"));
         format!(
-            "fn main() {{\n    let y: {ty} = ({{\n        let mut c = 1\n{breaks}\n    }})\n    print(y ?? 0)\n}}"
+            "fn main() {{\n{lets} let y{ty} = ({{\n let mut c = 1\n{loop_text}\n }})\n print(y ?? 0)\n}}"
         )
-    };
-    let flat = |first: &str, second: &str| {
-        program(
-            "i64?",
-            &format!(
-                "        loop {{\n            if c == 0 {{ break {first} }}\n            c -= 1\n            break {second}\n        }}"
-            ),
-        )
-    };
-    let crossed = program(
-        "i64?",
-        "        outer: loop {\n            if c == 0 { break 1 }\n            c -= 1\n            let mut d = 1\n            loop {\n                if d == 0 { break }\n                d -= 1\n                break outer None\n            }\n        }",
+    }
+    let typed = |loop_text: &str| program(" let o: i64? = 2\n", Some("i64?"), loop_text);
+    let untyped = |loop_text: &str| program(" let o: u8? = 200\n let v: u8 = 1\n", None, loop_text);
+    let crossed = "outer: loop {\n if c == 0 { break 1 }\n c -= 1\n let mut d = 1\n loop {\n if d == 0 { break }\n d -= 1\n break outer None\n }\n}";
+    let value_inside = "outer: loop {\n if c == 0 { break None }\n c -= 1\n let mut d = 1\n loop {\n if d == 0 { break }\n d -= 1\n break outer 1\n }\n}";
+    let none_first = "outer: loop {\n let mut d = 1\n loop {\n if d == 0 { break }\n d -= 1\n if c == 2 { c = 1; break }\n break outer None\n }\n if c == 1 { c = 0; break 1 }\n break None\n}";
+    let inner_loop = "loop {\n let mut d = 1\n loop {\n if d == 0 { break }\n d -= 1\n break\n }\n if c == 0 { break 1 }\n c -= 1\n break None\n}";
+    let joined_to_any = "interface I {}\nclass A {}\nextend A: I {}\n";
+    let any_program = format!(
+        "{joined_to_any}fn main() {{\n let a: any I = A()\n let y = ({{\n let mut c = 1\n{}\n }})\n print(y.is_some())\n}}",
+        flat(&["A()", "a"])
     );
-    for (row, source, widens, crosses) in [
-        ("a value, then None", flat("1", "None"), true, false),
+    let rows: Vec<(&str, String, bool, bool, bool)> = vec![
+        ("no loop", "fn main() {}".to_string(), false, false, false),
+        ("1, None", typed(&flat(&["1", "None"])), true, false, false),
         (
-            "a written Some, then None",
-            flat("Some(1)", "None"),
+            "Some(1), None",
+            typed(&flat(&["Some(1)", "None"])),
+            false,
             false,
             false,
         ),
-        ("None, then a value", flat("None", "1"), false, false),
         (
-            "a value, then None out of an inner loop",
-            crossed,
+            "Some (1), None",
+            typed(&flat(&["Some (1)", "None"])),
+            false,
+            false,
+            false,
+        ),
+        (
+            "Option.Some(1), None",
+            typed(&flat(&["Option.Some(1)", "None"])),
+            false,
+            false,
+            false,
+        ),
+        ("None, 1", typed(&flat(&["None", "1"])), false, false, false),
+        (
+            "None, 1, None",
+            typed(&flat(&["None", "1", "None"])),
+            false,
+            false,
+            false,
+        ),
+        (
+            "o, 1, None",
+            typed(&flat(&["o", "1", "None"])),
+            false,
+            false,
+            false,
+        ),
+        ("1, o", typed(&flat(&["1", "o"])), true, false, false),
+        (
+            "1, Some(2)",
+            typed(&flat(&["1", "Some(2)"])),
+            true,
+            false,
+            false,
+        ),
+        (
+            "an inner loop that no break leaves",
+            typed(inner_loop),
+            true,
+            false,
+            false,
+        ),
+        ("crossed", typed(crossed), false, true, false),
+        (
+            "crossed, the value inside",
+            typed(value_inside),
+            false,
+            false,
+            false,
+        ),
+        (
+            "crossed, None first in the text",
+            typed(none_first),
+            false,
+            false,
+            false,
+        ),
+        (
+            "a written u8?",
+            program(" let o: u8? = 200\n", Some("u8?"), &flat(&["o", "6"])),
+            false,
+            false,
+            false,
+        ),
+        (
+            "untyped, o, 6",
+            untyped(&flat(&["o", "6"])),
+            false,
             false,
             true,
         ),
-    ] {
+        (
+            "untyped, o, Some(6)",
+            untyped(&flat(&["o", "Some(6)"])),
+            false,
+            false,
+            false,
+        ),
+        (
+            "untyped, o, v",
+            untyped(&flat(&["o", "v"])),
+            false,
+            false,
+            true,
+        ),
+        (
+            "untyped, Some(1), 2",
+            untyped(&flat(&["Some(1)", "2"])),
+            false,
+            false,
+            true,
+        ),
+        ("a join to any", any_program, true, false, false),
+    ];
+    for (row, source, widens, crosses, object_in_some) in rows {
         let mut walk = Walk::default();
         walk.program(&source);
-        assert_eq!(
-            walk.seen.contains(WIDENS),
-            widens,
-            "widening key, row `{row}`"
-        );
-        assert_eq!(
-            walk.seen.contains(CROSSES),
-            crosses,
-            "crossing key, row `{row}`"
-        );
+        for (key, want) in [
+            (WIDENS, widens),
+            (CROSSES, crosses),
+            (OBJECT_IN_SOME, object_in_some),
+        ] {
+            assert_eq!(walk.seen.contains(key), want, "row `{row}`, key `{key}`");
+        }
+    }
+}
+
+/// GIVEN a program with one call of a method named `push`, on the receivers of the table
+/// WHEN the walk reads it
+/// THEN the key of a `push` that reads a place of a type that is no array, and the key of the
+/// call of `pushed_value` are marked as the table says
+#[test]
+fn a_push_key_should_mark_what_the_checker_did() {
+    let program = |statement: &str| {
+        format!(
+            "class T {{\n mut n: i64\n fn push(self, x: i64) -> i64 {{\n self.n += x\n self.n\n }}\n}}\nclass H {{\n mut held: T?\n kept: T\n}}\nenum E {{\n A\n fn push(self, x: i64) -> i64 {{ x }}\n}}\nfn mk() -> T {{ T(n: 0) }}\nfn main() {{\n let t = T(n: 0)\n let ts = [t]\n let maybe: T? = t\n let h = H(held: t, kept: t)\n let mut xs = [1]\n let mut ys: [i64]? = [1]\n {statement}\n}}"
+        )
+    };
+    let rows = [
+        ("no call", "fn main() {}".to_string(), false, false),
+        ("a class, on a local", program("t.push(1)"), true, false),
+        (
+            "a class, on an element",
+            program("ts[0].push(1)"),
+            true,
+            false,
+        ),
+        (
+            "a class, on a field",
+            program("h.kept.push(1)"),
+            true,
+            false,
+        ),
+        (
+            "a class, through ?. on a local",
+            program("maybe?.push(1)"),
+            false,
+            true,
+        ),
+        (
+            "a class, through ?. on a field",
+            program("h.held?.push(1)"),
+            false,
+            true,
+        ),
+        (
+            "a class, on a value that is no place",
+            program("mk().push(1)"),
+            false,
+            false,
+        ),
+        ("an enum variant", program("E.A.push(1)"), false, false),
+        ("an array, on a local", program("xs.push(1)"), false, false),
+        (
+            "an optional array, on a local",
+            program("ys?.push(1)"),
+            false,
+            false,
+        ),
+    ];
+    for (row, source, own, pushed) in rows {
+        let mut walk = Walk::default();
+        walk.program(&source);
+        for (key, want) in [(OWN_PUSH, own), (PUSHED_VALUE, pushed)] {
+            assert_eq!(walk.seen.contains(key), want, "row `{row}`, key `{key}`");
+        }
     }
 }
 
