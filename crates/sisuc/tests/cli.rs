@@ -1925,7 +1925,8 @@ fn emit_ir_should_size_each_enum_by_its_variant_count_and_largest_payload() {
 /// absent
 /// WHEN it runs `build` and `run`, with the default allocator and with `--allocator system`
 /// THEN each run exits 1 and stderr says the runtime library is not found, with the archive of the
-/// allocator
+/// allocator, and says to run the Sisu install line again or to run `cargo build --workspace` in a
+/// clone
 ///
 /// A `sisu` with no runtime library beside it says so before it compiles: with no
 /// temporary directory, a compile would fail at the object file first.
@@ -1961,6 +1962,12 @@ fn build_and_run_should_report_a_missing_runtime_library_before_they_compile() {
             "/libsisu_runtime_mimalloc.a;"
         };
         assert!(stderr.contains(archive), "{args:?}: {stderr}");
+        assert!(
+            stderr.contains(
+                "run the Sisu install line again, or run `cargo build --workspace` in a clone"
+            ),
+            "{args:?}: {stderr}"
+        );
     }
 }
 
