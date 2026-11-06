@@ -4,8 +4,9 @@
 
 use super::*;
 use Code::{
-    ArgumentCount, ArgumentNeedsLabel, LabeledArgument, Mismatch, MissingField, NoValue,
-    NotConform, PrintArgument, TypeArgument, TypeArguments, UnknownType,
+    ArgumentCount, ArgumentNeedsLabel, AssignToExpression, BindingNotFound, LabeledArgument,
+    MayBeNone, Mismatch, MissingField, NoValue, NotConform, PrintArgument, TypeArgument,
+    TypeArguments, UnknownType,
 };
 
 /// The declarations `decls`, then a function `f` whose body is the statement `body`, then `main`.
@@ -424,6 +425,85 @@ fn a_failed_construction_should_not_type_a_call_whose_bound_or_written_list_fail
                 "d16",
                 "let s: string = A(a: Node(), b: \"x\")",
                 &[(NotConform, CALL), (Mismatch, CALL + 16)],
+            ),
+        ],
+    );
+}
+
+#[test]
+fn a_class_construction_through_an_alias_should_not_keep_its_type_when_a_bound_fails() {
+    let decls = "class Node {}\nclass Bq2<T: Eq> {\n    a: T\n    b: i64\n}\ntype A<T> = Bq2<T>";
+    rows(
+        decls,
+        "f()",
+        &[
+            // The bound that the alias's body puts on `T` fails, and an argument has no value.
+            (
+                "d17",
+                "let s: string = A(a: Node(), b: missing)",
+                &[(NotConform, CALL), (BindingNotFound, CALL + 16)],
+            ),
+        ],
+    );
+}
+
+#[test]
+fn a_some_through_an_alias_should_keep_the_alias_type_when_it_fails() {
+    let decls = "type G<T> = T\ntype W<T> = [T]?\ntype O = i64?\ntype P<T> = T?\ntype MM<T> = T??";
+    rows(
+        decls,
+        "f()",
+        &[
+            (
+                "s1",
+                "let s: string = W<i64>.Some(1, 2)",
+                &[(ArgumentCount, CALL), (Mismatch, CALL)],
+            ),
+            (
+                "s2",
+                "let s: string = O.Some(1, 2)",
+                &[(ArgumentCount, CALL), (Mismatch, CALL)],
+            ),
+            (
+                "s3",
+                "let s: string = G<i64?>.Some(1, 2)",
+                &[(ArgumentCount, CALL), (Mismatch, CALL)],
+            ),
+            (
+                "s4",
+                "let s: string = W<i64>.Some(n: [1])",
+                &[(Mismatch, CALL), (LabeledArgument, CALL + 12)],
+            ),
+            (
+                "s5",
+                "let s: string = O.Some(n: 1)",
+                &[(Mismatch, CALL), (LabeledArgument, CALL + 7)],
+            ),
+            (
+                "s6",
+                "let s: string = W<i64>.Some(\"a\")",
+                &[(Mismatch, CALL), (Mismatch, CALL + 12)],
+            ),
+            (
+                "s7",
+                "let s: string = O.Some(\"a\")",
+                &[(Mismatch, CALL), (Mismatch, CALL + 7)],
+            ),
+            // An E0062 comes first at its start (see `order`).
+            (
+                "s8",
+                "W<i64>.Some(1, 2).push(\"a\")",
+                &[(MayBeNone, 5), (ArgumentCount, 5), (AssignToExpression, 5)],
+            ),
+            (
+                "s9",
+                "let s: string = P<i64>.Some(1, 2)",
+                &[(ArgumentCount, CALL), (Mismatch, CALL)],
+            ),
+            (
+                "s10",
+                "let s: string = MM<i64>.Some(n: Some(1))",
+                &[(Mismatch, CALL), (LabeledArgument, CALL + 13)],
             ),
         ],
     );

@@ -23,6 +23,15 @@
 // WHEN `sisu check` runs on it
 // THEN it reports the mismatch of that type
 // AND when a bound of the list fails, or the list fails, it reports no mismatch
+//
+// GIVEN a construction through an alias whose bound fails, and an argument that fails
+// WHEN `sisu check` runs on it
+// THEN it reports the bound and the argument, and no mismatch: the corrected call is `Error`
+//
+// GIVEN `Some` through an alias of an optional type that fixes its payload, and the call fails on
+// its count, its label or its argument, in a `let`, or as the receiver of `push`
+// WHEN `sisu check` runs on it
+// THEN it reports the mismatch of the alias's type, as the corrected call does
 class Node {
     v: i64
     fn ys(self, n: i64) -> [string] { [] }
@@ -73,6 +82,16 @@ enum Eq2<T: Eq> {
     V(T)
 }
 type C = E<i64>
+class Bq2<T: Eq> {
+    a: T
+    b: i64
+}
+type A<T> = Bq2<T>
+type G<T> = T
+type W<T> = [T]?
+type O = i64?
+type P<T> = T?
+type MM<T> = T??
 interface Keep {
     fn keep<U: Eq>(self, x: U) -> [U]
 }
@@ -305,5 +324,38 @@ fn d14_variant_bound_fails() {
 }
 fn d15_class_list_fails() {
     let _s: string = B<Nope>()
+}
+fn d17_alias_class_bound_fails() {
+    let _s: string = A(a: Node(), b: missing)
+}
+fn s1_alias_closed_by_list_count() {
+    let _s: string = W<i64>.Some(1, 2)
+}
+fn s2_alias_closed_count() {
+    let _s: string = O.Some(1, 2)
+}
+fn s3_alias_identity_count() {
+    let _s: string = G<i64?>.Some(1, 2)
+}
+fn s4_alias_closed_by_list_label() {
+    let _s: string = W<i64>.Some(n: [1])
+}
+fn s5_alias_closed_label() {
+    let _s: string = O.Some(n: 1)
+}
+fn s6_alias_closed_by_list_wrong_argument() {
+    let _s: string = W<i64>.Some("a")
+}
+fn s7_alias_closed_wrong_argument() {
+    let _s: string = O.Some("a")
+}
+fn s8_alias_closed_by_list_push() {
+    W<i64>.Some(1, 2).push("a")
+}
+fn s9_alias_open_by_list_count() {
+    let _s: string = P<i64>.Some(1, 2)
+}
+fn s10_alias_nested_label() {
+    let _s: string = MM<i64>.Some(n: Some(1))
 }
 fn main() {}
