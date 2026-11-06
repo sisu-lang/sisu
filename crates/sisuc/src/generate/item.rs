@@ -1555,11 +1555,12 @@ impl Gen<'_> {
     /// declarations and the statements, so the older keys still show that the random rules run.
     /// The forms are:
     /// - `push` of a class, called on a local, a local that holds an optional, an element and a
-    ///   field, and through `?.` on a field that holds an optional;
+    ///   field;
+    /// - `push` of a class through `?.`, on a field that holds an optional;
     /// - `push` of an enum variant, a method of the enum;
     /// - a `loop` that gives a `u8?` and then a literal, in a `let` with no written type;
-    /// - a `loop` whose `break` of `T` widens to the `T?` of the loop, and one where a `break` in
-    ///   an inner loop gives the outer loop `None`;
+    /// - a `loop` whose `break` of `T` widens to the `T?` of the loop;
+    /// - a `loop` where a `break` in an inner loop gives the outer loop `None`;
     /// - a call with two `mut` arguments that are elements of one array;
     /// - a `string` field that appends to itself with `+=` and with `a.f = a.f + e`;
     /// - a `match` with an arm that no value reaches (W0006), and a statement with an
