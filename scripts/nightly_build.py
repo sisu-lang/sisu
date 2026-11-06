@@ -95,14 +95,32 @@ def pick() -> int:
     return 0
 
 
+def publish(sha: str) -> int:
+    return 0
+
+
+def prune() -> int:
+    return 0
+
+
+def report() -> int:
+    return 0
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawTextHelpFormatter)
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('pick', help='choose the commit of the nightly build')
+    publisher = commands.add_parser('publish', help='publish the draft release of a nightly build')
+    publisher.add_argument('--sha', required=True)
+    commands.add_parser('prune', help='delete the nightly builds beyond the 14 newest')
+    commands.add_parser('report', help='open or update the issue of a failed run')
     args = parser.parse_args(argv)
     try:
-        return {'pick': pick}[args.command]()
+        if args.command == 'publish':
+            return publish(args.sha)
+        return {'pick': pick, 'prune': prune, 'report': report}[args.command]()
     except subprocess.CalledProcessError as e:
         print(f'{" ".join(e.cmd[:3])}: {e.stderr.strip() or e}', file=sys.stderr)
         return 1
