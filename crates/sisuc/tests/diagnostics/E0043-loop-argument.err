@@ -1,0 +1,14 @@
+error[E0043]: expression has no value
+ --> E0043-loop-argument.sisu:6:33
+  |
+6 |     let a: Result<u8, i64> = Ok(loop { break })
+  |                                 ^^^^^^^^^^^^^^
+
+error[E0043]: expression has no value
+ --> E0043-loop-argument.sisu:7:20
+  |
+7 |     let b: u8 = id(loop { break })
+  |                    ^^^^^^^^^^^^^^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0043

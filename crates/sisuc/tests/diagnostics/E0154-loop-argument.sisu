@@ -1,0 +1,16 @@
+interface Nm {
+    fn nm(self) -> string
+}
+
+class Lone {
+    n: i64
+}
+
+fn named<T: Nm>(a: T) -> T {
+    a
+}
+
+fn main() {
+    let a: Lone = named(loop { break Lone(n: 1) })
+    print(a.n)
+}

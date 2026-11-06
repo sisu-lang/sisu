@@ -1,0 +1,41 @@
+interface Nm {
+    fn nm(self) -> string
+}
+
+class Cat: Nm {
+    fn nm(self) -> string { "cat" }
+}
+
+class Dog: Nm {
+    fn nm(self) -> string { "dog" }
+}
+
+fn id<T>(x: T) -> T {
+    x
+}
+
+fn pick<T>(a: T, _b: T) -> T {
+    a
+}
+
+fn opt<T>(a: T) -> T? {
+    Some(a)
+}
+
+fn main() {
+    let c = 1
+    let v: u8 = 7
+    let o: u8? = 7
+    let a: u8? = id(loop { if c == 1 { break 8 }; break None })
+    let b: u8?? = opt(loop { break 14 })
+    let d: u8? = pick(Some(1), v)
+    let e = o ?? id(loop { break 1 })
+    let f: any Nm = id(loop { if c == 0 { break Cat() }; break Dog() })
+    let g = loop { if c == 0 { break v }; break id(loop { break 1 }) }
+    print(a ?? 0)
+    print((b ?? None) ?? 0)
+    print(d ?? 0)
+    print(e)
+    print(f.nm())
+    print(g)
+}

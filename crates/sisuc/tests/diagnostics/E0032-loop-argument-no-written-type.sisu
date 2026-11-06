@@ -1,0 +1,20 @@
+fn id<T>(x: T) -> T {
+    x
+}
+
+fn pick<T>(a: T, _b: T) -> T {
+    a
+}
+
+fn main() {
+    let c = 1
+    let v: u8 = 7
+    let a = id(loop { if c == 0 { break 1 }; break v })
+    let b = pick(loop { if c == 0 { break 1 }; break v }, v)
+    let d = [loop { if c == 0 { break 1 }; break v }, v]
+    let e = loop { if c == 0 { break 1 }; break v }
+    print(a)
+    print(b)
+    print(d.len())
+    print(e)
+}
