@@ -132,5 +132,21 @@ class DiagDiff(unittest.TestCase):
             self.assertEqual(reported, set(changed))
 
 
+    def test_jobs_should_bound_the_sisu_processes_that_run_at_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for n in range(6):
+                open(os.path.join(tmp, f'p{n}.sisu'), 'w').close()
+            # Each run marks itself, counts the runs that have a mark, waits, and removes its mark.
+            sisu = os.path.join(tmp, 'sisu')
+            with open(sisu, 'w', encoding='utf-8') as f:
+                f.write(f'#!/bin/sh\nd={tmp}\ntouch "$d/run.$$"\n'
+                        f'ls "$d" | grep -c "^run" >> "$d/counts"\nsleep 0.1\nrm "$d/run.$$"\n')
+            os.chmod(sisu, 0o755)
+            with contextlib.redirect_stdout(io.StringIO()):
+                dd.main(sisu, sisu, tmp, jobs=2)
+            counts = [int(n) for n in Path(tmp, 'counts').read_text().split()]
+        self.assertEqual(len(counts), 12)
+        self.assertLessEqual(max(counts), 2)
+
 if __name__ == '__main__':
     unittest.main()
