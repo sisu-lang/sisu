@@ -941,11 +941,14 @@ impl Checker<'_> {
                 .zip(&shown)
                 .enumerate()
                 .map(|(i, ((arg, &param), text))| {
-                    if muts.get(i) == Some(&true)
-                        && let Some(checked) =
+                    if muts.get(i) == Some(&true) {
+                        if let Some(checked) =
                             self.mut_argument(arg, i, param, (&mut_site, &mut parts))
-                    {
-                        return checked;
+                        {
+                            return checked;
+                        }
+                        // A value at a `mut` parameter: its help is the one of a place.
+                        self.body.mut_values.insert(arg.value.span);
                     }
                     if let (Some(want), Some(text)) = (param, text) {
                         self.show(arg.value.span, want, text);

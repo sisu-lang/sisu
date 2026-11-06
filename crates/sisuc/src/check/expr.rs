@@ -36,6 +36,8 @@ impl Checker<'_> {
         // The chain that an index ends runs only through field bases, method receivers and
         // indexed bases; any other expression inside it is an ordinary read.
         let outer = self.body.indexed;
+        self.body.indexed |=
+            !self.body.mut_values.is_empty() && self.body.mut_values.contains(&e.span);
         self.body.indexed &= matches!(
             e.kind,
             ExprKind::Field { .. } | ExprKind::MethodCall { .. } | ExprKind::Index { .. }

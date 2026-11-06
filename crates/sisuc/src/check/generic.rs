@@ -2187,7 +2187,12 @@ impl Checker<'_> {
                 } else {
                     // No `mut`: E0166 is the report, and the place still binds, so that the
                     // other arguments are no cascade.
-                    self.unmarked_place(arg, i, parts, Some((&mut call, sig.params[i])))
+                    let slot = self.unmarked_place(arg, i, parts, Some((&mut call, sig.params[i])));
+                    if slot.is_none() {
+                        // A value at a `mut` parameter: its help is the one of a place.
+                        self.body.mut_values.insert(arg.value.span);
+                    }
+                    slot
                 };
                 call.slots[i] = slot;
             }

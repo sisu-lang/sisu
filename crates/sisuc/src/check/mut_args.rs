@@ -332,6 +332,7 @@ impl Checker<'_> {
     /// local as the cascade of the call's error.
     pub(super) fn stamp_marked(&mut self, args: &[ast::Arg]) {
         for arg in args.iter().filter(|arg| arg.mut_keyword.is_some()) {
+            self.body.mut_values.insert(arg.value.span);
             self.stamp_push(&arg.value);
         }
     }
