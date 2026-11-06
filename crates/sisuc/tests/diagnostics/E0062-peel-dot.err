@@ -1,0 +1,1255 @@
+error[E0062]: `c` may be `None`
+  --> E0062-peel-dot.sisu:17:11
+   |
+17 |     print(c.get())
+   |           ^
+   |
+   = help: peel the extra layer first: `(c ?? None)?.get`
+
+error[E0062]: `c?.` leaves a `Node?`, which may be `None`
+  --> E0062-peel-dot.sisu:21:11
+   |
+21 |     print(c?.get())
+   |           ^
+   |
+   = help: peel the other layer first: `(c ?? None)?.get`
+
+error[E0062]: `c` may be `None`
+  --> E0062-peel-dot.sisu:25:5
+   |
+25 |     c.ys.push(1)
+   |     ^
+   |
+   = help: peel the extra layer first: `(c ?? None)?.ys`
+
+error[E0062]: `c?.` leaves a `Node?`, which may be `None`
+  --> E0062-peel-dot.sisu:29:5
+   |
+29 |     c?.ys.push(1)
+   |     ^
+   |
+   = help: peel the other layer first: `(c ?? None)?.ys`
+
+error[E0062]: `c` may be `None`
+  --> E0062-peel-dot.sisu:33:5
+   |
+33 |     c.v = 2
+   |     ^
+   |
+   = help: peel the extra layer first: `(c ?? None)?.v`
+
+error[E0001]: cannot assign to `v`
+  --> E0062-peel-dot.sisu:33:5
+   |
+11 |     v: i64
+   |     - declared without `mut` here
+...
+33 |     c.v = 2
+   |     ^^^^^^^
+   |
+help: mark the field `mut`
+   |
+11 |     mut v: i64
+   |     +++
+
+error[E0062]: `xs` may be `None`
+  --> E0062-peel-dot.sisu:37:11
+   |
+37 |     print(xs.len())
+   |           ^^
+   |
+   = help: peel the extra layer first: `(xs ?? None)?.len`
+
+error[E0062]: `c?.` leaves a `Node??`, which may be `None`
+  --> E0062-peel-dot.sisu:41:11
+   |
+41 |     print(c?.v)
+   |           ^
+   |
+   = help: peel the other layers first: `((c ?? None) ?? None)?.v`
+
+error[E0062]: `c` may be `None`
+  --> E0062-peel-dot.sisu:45:11
+   |
+45 |     print(c.v)
+   |           ^
+   |
+   = help: peel the extra layers first: `((c ?? None) ?? None)?.v`
+
+warning[W0002]: `x` is never reassigned, so its `mut` changes nothing for the caller
+  --> E0062-peel-dot.sisu:68:26
+   |
+68 |     fn putg<U>(self, mut x: U) {}
+   |                          ^ never reassigned
+
+error[E0070]: `bumpm` is a method, not a function
+  --> E0062-peel-dot.sisu:72:9
+   |
+72 |         bumpm(c.m.v)
+   |         ^^^^^
+   |
+help: try calling `bumpm` as a method of `self`
+   |
+72 |         self.bumpm(c.m.v)
+   |         +++++
+
+error[E0062]: `c` may be `None`
+  --> E0062-peel-dot.sisu:72:15
+   |
+72 |         bumpm(c.m.v)
+   |               ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0070]: `bumpm` is a method, not a function
+  --> E0062-peel-dot.sisu:75:9
+   |
+75 |         bumpm(c.m.v)
+   |         ^^^^^
+   |
+help: try calling `bumpm` as a method of `self`
+   |
+75 |         self.bumpm(c.m.v)
+   |         +++++
+
+error[E0062]: `c` may be `None`
+  --> E0062-peel-dot.sisu:75:15
+   |
+75 |         bumpm(c.m.v)
+   |               ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0070]: `bumpm` is a method, not a function
+  --> E0062-peel-dot.sisu:78:9
+   |
+78 |         bumpm(x: c.m.v)
+   |         ^^^^^
+   |
+help: try calling `bumpm` as a method of `self`
+   |
+78 |         self.bumpm(x: c.m.v)
+   |         +++++
+
+error[E0062]: `c` may be `None`
+  --> E0062-peel-dot.sisu:78:18
+   |
+78 |         bumpm(x: c.m.v)
+   |                  ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0070]: `putg` is a method, not a function
+  --> E0062-peel-dot.sisu:81:9
+   |
+81 |         putg(c.m.v)
+   |         ^^^^
+   |
+help: try calling `putg` as a method of `self`
+   |
+81 |         self.putg(c.m.v)
+   |         +++++
+
+error[E0062]: `c` may be `None`
+  --> E0062-peel-dot.sisu:81:14
+   |
+81 |         putg(c.m.v)
+   |              ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0070]: `readm` is a method, not a function
+  --> E0062-peel-dot.sisu:84:9
+   |
+84 |         readm(c.m.v)
+   |         ^^^^^
+   |
+help: try calling `readm` as a method of `self`
+   |
+84 |         self.readm(c.m.v)
+   |         +++++
+
+error[E0062]: `c` may be `None`
+  --> E0062-peel-dot.sisu:84:15
+   |
+84 |         readm(c.m.v)
+   |               ^
+   |
+   = help: peel the extra layer first: `(c ?? None)?.m`
+
+error[E0062]: `c` may be `None`
+  --> E0062-peel-dot.sisu:93:11
+   |
+93 |     print(c.v)
+   |           ^
+   |
+   = help: peel the extra layer first: `(c ?? None)?.v`
+
+error[E0062]: `c` may be `None`
+  --> E0062-peel-dot.sisu:97:11
+   |
+97 |     print(c.get())
+   |           ^
+   |
+   = help: peel the extra layer first: `(c ?? None)?.get`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:101:11
+    |
+101 |     print(c.ys[0])
+    |           ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:105:14
+    |
+105 |     for y in c.ys {
+    |              ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:111:11
+    |
+111 |     print(c.all()[0])
+    |           ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:115:14
+    |
+115 |     for y in c.all() {
+    |              ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:121:11
+    |
+121 |     print(c.ys[0..1])
+    |           ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:125:5
+    |
+125 |     c.v = 1
+    |     ^
+    |
+    = help: peel the extra layer first: `(c ?? None)?.v`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:129:5
+    |
+129 |     c.v += 1
+    |     ^
+    |
+    = help: peel the extra layer first: `(c ?? None)?.v`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:133:5
+    |
+133 |     c.ys[0] = 1
+    |     ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:137:5
+    |
+137 |     c.ys.push(1)
+    |     ^
+    |
+    = help: peel the extra layer first: `(c ?? None)?.ys`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:141:14
+    |
+141 |     bump(mut c.v)
+    |              ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `xs` may be `None`
+   --> E0062-peel-dot.sisu:145:5
+    |
+145 |     xs.push(1)
+    |     ^^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:149:5
+    |
+149 |     c.n.v = 1
+    |     ^
+    |
+    = help: peel the extra layer first: `(c ?? None)?.n`
+
+error[E0062]: `c.n` may be `None`
+   --> E0062-peel-dot.sisu:149:5
+    |
+149 |     c.n.v = 1
+    |     ^^^
+    |
+    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: to do nothing when it is `None`, use `?.`
+    |
+149 |     c.n?.v = 1
+    |        +
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:153:14
+    |
+153 |     bump(mut c.m.v)
+    |              ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:157:5
+    |
+157 |     c.q.push(1)
+    |     ^
+    |
+    = help: peel the extra layer first: `(c ?? None)?.q`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:161:14
+    |
+161 |     print(xs[c.v])
+    |              ^
+    |
+    = help: peel the extra layer first: `(c ?? None)?.v`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:165:5
+    |
+165 |     c.m.ys.push(1)
+    |     ^
+    |
+    = help: peel the extra layer first: `(c ?? None)?.m`
+
+error[E0055]: this call takes no labels on its arguments
+   --> E0062-peel-dot.sisu:177:10
+    |
+177 |     bump(x: mut c.m.v)
+    |          ^
+    |
+    = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:177:17
+    |
+177 |     bump(x: mut c.m.v)
+    |                 ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0055]: this call takes no labels on its arguments
+   --> E0062-peel-dot.sisu:181:13
+    |
+181 |     t.bumpm(x: mut c.m.v)
+    |             ^
+    |
+    = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:181:20
+    |
+181 |     t.bumpm(x: mut c.m.v)
+    |                    ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0167]: `Leaf(…)` takes no `mut` argument: it copies each value into its field
+   --> E0062-peel-dot.sisu:185:21
+    |
+185 |     let l = Leaf(v: mut c.m.v, ys: [])
+    |                     ^^^ no `mut` here
+    |
+    = help: a `mut` field can change after the object is made
+help: remove `mut`
+    |
+185 -     let l = Leaf(v: mut c.m.v, ys: [])
+185 +     let l = Leaf(v: c.m.v, ys: [])
+    |
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:185:25
+    |
+185 |     let l = Leaf(v: mut c.m.v, ys: [])
+    |                         ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0055]: this call takes no labels on its arguments
+   --> E0062-peel-dot.sisu:189:10
+    |
+189 |     bump(x: c.m.v)
+    |          ^
+    |
+    = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:189:13
+    |
+189 |     bump(x: c.m.v)
+    |             ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0053]: `bump` takes 1 argument, found 2
+   --> E0062-peel-dot.sisu:193:5
+    |
+193 |     bump(mut c.m.v, 1)
+    |     ^^^^^^^^^^^^^^^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:193:14
+    |
+193 |     bump(mut c.m.v, 1)
+    |              ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0053]: `Bumper.bumpm` takes 1 argument, found 2
+   --> E0062-peel-dot.sisu:197:5
+    |
+197 |     t.bumpm(mut c.m.v, 1)
+    |     ^^^^^^^^^^^^^^^^^^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:197:17
+    |
+197 |     t.bumpm(mut c.m.v, 1)
+    |                 ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0052]: cannot find function `ste`
+   --> E0062-peel-dot.sisu:201:5
+    |
+201 |     ste(mut c.m.v)
+    |     ^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:201:13
+    |
+201 |     ste(mut c.m.v)
+    |             ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0063]: `Bumper` has no method `ste`
+   --> E0062-peel-dot.sisu:205:7
+    |
+205 |     t.ste(mut c.m.v)
+    |       ^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:205:15
+    |
+205 |     t.ste(mut c.m.v)
+    |               ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0167]: argument 1 of `xs.push` is not `mut`
+   --> E0062-peel-dot.sisu:209:13
+    |
+209 |     xs.push(mut c.m.v)
+    |             ^^^ not a `mut` parameter
+    |
+help: remove `mut`
+    |
+209 -     xs.push(mut c.m.v)
+209 +     xs.push(c.m.v)
+    |
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:209:17
+    |
+209 |     xs.push(mut c.m.v)
+    |                 ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0167]: argument 1 of `print` is not `mut`
+   --> E0062-peel-dot.sisu:213:11
+    |
+213 |     print(mut c.m.v)
+    |           ^^^ not a `mut` parameter
+    |
+help: remove `mut`
+    |
+213 -     print(mut c.m.v)
+213 +     print(c.m.v)
+    |
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:213:15
+    |
+213 |     print(mut c.m.v)
+    |               ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:217:14
+    |
+217 |     bump(mut c.m.v)
+    |              ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:221:10
+    |
+221 |     bump(c.m.v)
+    |          ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0166]: the parameter `x` of `bump` is `mut`, so its argument needs `mut`
+   --> E0062-peel-dot.sisu:221:10
+    |
+ 88 | fn bump(mut x: i64) {
+    |             - declared `mut` here
+...
+221 |     bump(c.m.v)
+    |          ^^^^^ needs `mut`
+
+error[E0055]: this call takes no labels on its arguments
+   --> E0062-peel-dot.sisu:225:10
+    |
+225 |     read(x: c.m.v)
+    |          ^
+    |
+    = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:225:13
+    |
+225 |     read(x: c.m.v)
+    |             ^
+    |
+    = help: peel the extra layer first: `(c ?? None)?.m`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:229:21
+    |
+229 |     let l = Leaf(v: c.m.v, ys: [])
+    |                     ^
+    |
+    = help: peel the extra layer first: `(c ?? None)?.m`
+
+error[E0055]: this call takes no labels on its arguments
+   --> E0062-peel-dot.sisu:248:10
+    |
+248 |     bump(x: mut c.v)
+    |          ^
+    |
+    = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:248:17
+    |
+248 |     bump(x: mut c.v)
+    |                 ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0055]: this call takes no labels on its arguments
+   --> E0062-peel-dot.sisu:252:10
+    |
+252 |     bump(x: mut c.m.v)
+    |          ^
+    |
+    = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:252:17
+    |
+252 |     bump(x: mut c.m.v)
+    |                 ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0055]: this call takes no labels on its arguments
+   --> E0062-peel-dot.sisu:256:10
+    |
+256 |     u.bp(x: mut c.m.v)
+    |          ^
+    |
+    = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:256:17
+    |
+256 |     u.bp(x: mut c.m.v)
+    |                 ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0167]: `Shape.Circle(…)` takes no `mut` argument: it copies each value into its field
+   --> E0062-peel-dot.sisu:260:29
+    |
+260 |     let s = Shape.Circle(r: mut c.m.v)
+    |                             ^^^ no `mut` here
+    |
+    = help: an enum value never changes after it is built
+help: remove `mut`
+    |
+260 -     let s = Shape.Circle(r: mut c.m.v)
+260 +     let s = Shape.Circle(r: c.m.v)
+    |
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:260:33
+    |
+260 |     let s = Shape.Circle(r: mut c.m.v)
+    |                                 ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0055]: this call takes no labels on its arguments
+   --> E0062-peel-dot.sisu:264:14
+    |
+264 |     t?.bumpm(x: mut c.m.v)
+    |              ^
+    |
+    = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:264:21
+    |
+264 |     t?.bumpm(x: mut c.m.v)
+    |                     ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0055]: this call takes no labels on its arguments
+   --> E0062-peel-dot.sisu:268:11
+    |
+268 |     b.put(x: mut c.m.v)
+    |           ^
+    |
+    = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:268:18
+    |
+268 |     b.put(x: mut c.m.v)
+    |                  ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0053]: `bump` takes 1 argument, found 2
+   --> E0062-peel-dot.sisu:293:5
+    |
+293 |     bump(c.m.v, 1)
+    |     ^^^^^^^^^^^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:293:10
+    |
+293 |     bump(c.m.v, 1)
+    |          ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0053]: `Bumper.bumpm` takes 1 argument, found 2
+   --> E0062-peel-dot.sisu:297:5
+    |
+297 |     t.bumpm(c.m.v, 1)
+    |     ^^^^^^^^^^^^^^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:297:13
+    |
+297 |     t.bumpm(c.m.v, 1)
+    |             ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0053]: `take` takes 1 argument, found 2
+   --> E0062-peel-dot.sisu:301:5
+    |
+301 |     take(c.m.v, 1)
+    |     ^^^^^^^^^^^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:301:10
+    |
+301 |     take(c.m.v, 1)
+    |          ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0137]: `take` takes 1 type argument, but 2 were given
+   --> E0062-peel-dot.sisu:305:9
+    |
+305 |     take<i64, i64>(c.m.v)
+    |         ^^^^^^^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:305:20
+    |
+305 |     take<i64, i64>(c.m.v)
+    |                    ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0166]: the parameter `x` of `take` is `mut`, so its argument needs `mut`
+   --> E0062-peel-dot.sisu:305:20
+    |
+288 | fn take<T>(mut x: T?) {
+    |                - declared `mut` here
+...
+305 |     take<i64, i64>(c.m.v)
+    |                    ^^^^^ needs `mut`
+
+error[E0053]: `Bp.bp` takes 1 argument, found 2
+   --> E0062-peel-dot.sisu:309:5
+    |
+309 |     u.bp(c.m.v, 1)
+    |     ^^^^^^^^^^^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:309:10
+    |
+309 |     u.bp(c.m.v, 1)
+    |          ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0053]: `Box<i64>.put` takes 1 argument, found 2
+   --> E0062-peel-dot.sisu:313:5
+    |
+313 |     b.put(c.m.v, 1)
+    |     ^^^^^^^^^^^^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:313:11
+    |
+313 |     b.put(c.m.v, 1)
+    |           ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0055]: this call takes no labels on its arguments
+   --> E0062-peel-dot.sisu:317:10
+    |
+317 |     take(x: c.m.v)
+    |          ^
+    |
+    = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:317:13
+    |
+317 |     take(x: c.m.v)
+    |             ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0053]: `Bp.bp` takes 1 argument, found 2
+   --> E0062-peel-dot.sisu:321:5
+    |
+321 |     u.bp(c.m.v, 1)
+    |     ^^^^^^^^^^^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:321:10
+    |
+321 |     u.bp(c.m.v, 1)
+    |          ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0053]: `Bumper.bumpm` takes 1 argument, found 2
+   --> E0062-peel-dot.sisu:325:5
+    |
+325 |     t?.bumpm(c.m.v, 1)
+    |     ^^^^^^^^^^^^^^^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:325:14
+    |
+325 |     t?.bumpm(c.m.v, 1)
+    |              ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0053]: `bump` takes 1 argument, found 2
+   --> E0062-peel-dot.sisu:329:5
+    |
+329 |     bump(c.m.v, 1)
+    |     ^^^^^^^^^^^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:329:10
+    |
+329 |     bump(c.m.v, 1)
+    |          ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0137]: `put` takes 1 type argument, but 2 were given
+   --> E0062-peel-dot.sisu:333:13
+    |
+333 |     Bx().put<i64, i64>(c.m.v, 1)
+    |             ^^^^^^^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:333:24
+    |
+333 |     Bx().put<i64, i64>(c.m.v, 1)
+    |                        ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0166]: the parameter `x` of `Bx.put` is `mut`, so its argument needs `mut`
+   --> E0062-peel-dot.sisu:333:24
+    |
+283 |     fn put<T>(self, mut x: T?, n: i64) {
+    |                         - declared `mut` here
+...
+333 |     Bx().put<i64, i64>(c.m.v, 1)
+    |                        ^^^^^ needs `mut`
+
+error[E0053]: `exchange` takes 2 arguments, found 3
+   --> E0062-peel-dot.sisu:337:13
+    |
+337 |     let y = exchange(c.m.v, 1, 2)
+    |             ^^^^^^^^^^^^^^^^^^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:337:22
+    |
+337 |     let y = exchange(c.m.v, 1, 2)
+    |                      ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0053]: `bump` takes 1 argument, found 2
+   --> E0062-peel-dot.sisu:341:5
+    |
+341 |     bump(y: c.m.v, 1)
+    |     ^^^^^^^^^^^^^^^^^
+
+error[E0055]: this call takes no labels on its arguments
+   --> E0062-peel-dot.sisu:341:10
+    |
+341 |     bump(y: c.m.v, 1)
+    |          ^
+    |
+    = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:341:13
+    |
+341 |     bump(y: c.m.v, 1)
+    |             ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0156]: `bp` on `U` could come from `Bp` or `Bq`
+   --> E0062-peel-dot.sisu:345:7
+    |
+345 |     u.bp(c.m.v)
+    |       ^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:345:10
+    |
+345 |     u.bp(c.m.v)
+    |          ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0120]: `grow` is a method; call it on a value: `e.grow()`
+   --> E0062-peel-dot.sisu:349:8
+    |
+349 |     Sh.grow(c.m.v)
+    |        ^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:349:13
+    |
+349 |     Sh.grow(c.m.v)
+    |             ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0053]: `bump` takes 1 argument, found 2
+   --> E0062-peel-dot.sisu:354:5
+    |
+354 |     bump(c.m.v, c.m.v)
+    |     ^^^^^^^^^^^^^^^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:354:10
+    |
+354 |     bump(c.m.v, c.m.v)
+    |          ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:354:17
+    |
+354 |     bump(c.m.v, c.m.v)
+    |                 ^
+    |
+    = help: peel the extra layer first: `(c ?? None)?.m`
+
+error[E0053]: `bump` takes 1 argument, found 2
+   --> E0062-peel-dot.sisu:358:5
+    |
+358 |     bump(c.m.v + 1, 2)
+    |     ^^^^^^^^^^^^^^^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:358:10
+    |
+358 |     bump(c.m.v + 1, 2)
+    |          ^
+    |
+    = help: peel the extra layer first: `(c ?? None)?.m`
+
+error[E0105]: `bump` is a function, not a value
+   --> E0062-peel-dot.sisu:362:13
+    |
+362 |     let f = bump
+    |             ^^^^
+    |
+    = help: call it with its arguments
+
+error[E0052]: cannot find function `f`
+   --> E0062-peel-dot.sisu:363:5
+    |
+363 |     f(c.m.v, 1)
+    |     ^
+    |
+help: a function with a similar name exists: `f1`
+    |
+363 |     f1(c.m.v, 1)
+    |      +
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:363:7
+    |
+363 |     f(c.m.v, 1)
+    |       ^
+    |
+    = help: peel the extra layer first: `(c ?? None)?.m`
+
+error[E0070]: `bumpm` is a method, not a function
+   --> E0062-peel-dot.sisu:371:5
+    |
+371 |     bumpm(t, c.m.v)
+    |     ^^^^^
+    |
+help: try calling `bumpm` as a method, then fix its arguments
+    |
+371 -     bumpm(t, c.m.v)
+371 +     t.bumpm(c.m.v)
+    |
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:371:14
+    |
+371 |     bumpm(t, c.m.v)
+    |              ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0070]: `bumpm` is a method, not a function
+   --> E0062-peel-dot.sisu:375:5
+    |
+375 |     bumpm(t, c.m.v)
+    |     ^^^^^
+    |
+    = help: `t` may be `None`: to call `bumpm` only when it is present, unwrap it with `if let`
+help: to skip the call when `t` is `None`, call `bumpm` with `?.`, then fix its arguments
+    |
+375 -     bumpm(t, c.m.v)
+375 +     t?.bumpm(c.m.v)
+    |
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:375:14
+    |
+375 |     bumpm(t, c.m.v)
+    |              ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0070]: `bumpm` is a method, not a function
+   --> E0062-peel-dot.sisu:379:5
+    |
+379 |     bumpm(t, c.m.v)
+    |     ^^^^^
+    |
+help: try calling `bumpm` as a method, then fix its arguments
+    |
+379 -     bumpm(t, c.m.v)
+379 +     t.bumpm(c.m.v)
+    |
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:379:14
+    |
+379 |     bumpm(t, c.m.v)
+    |              ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0070]: `bumpm` is a method, not a function
+   --> E0062-peel-dot.sisu:383:5
+    |
+383 |     bumpm(t, c.m.v, 1)
+    |     ^^^^^
+    |
+help: try calling `bumpm` as a method, then fix its arguments
+    |
+383 -     bumpm(t, c.m.v, 1)
+383 +     t.bumpm(c.m.v, 1)
+    |
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:383:14
+    |
+383 |     bumpm(t, c.m.v, 1)
+    |              ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0105]: `Tree` is a type, not a value
+   --> E0062-peel-dot.sisu:387:5
+    |
+387 |     Tree.bumpm(c.m.v)
+    |     ^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:387:16
+    |
+387 |     Tree.bumpm(c.m.v)
+    |                ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0105]: `Bp` is an interface, not a value
+   --> E0062-peel-dot.sisu:391:5
+    |
+391 |     Bp.bp(c.m.v)
+    |     ^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:391:11
+    |
+391 |     Bp.bp(c.m.v)
+    |           ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0070]: `readm` is a method, not a function
+   --> E0062-peel-dot.sisu:395:5
+    |
+395 |     readm(t, c.m.v)
+    |     ^^^^^
+    |
+help: try calling `readm` as a method, then fix its arguments
+    |
+395 -     readm(t, c.m.v)
+395 +     t.readm(c.m.v)
+    |
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:395:14
+    |
+395 |     readm(t, c.m.v)
+    |              ^
+    |
+    = help: peel the extra layer first: `(c ?? None)?.m`
+
+error[E0105]: `Tree` is a type, not a value
+   --> E0062-peel-dot.sisu:399:5
+    |
+399 |     Tree.readm(c.m.v)
+    |     ^^^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:399:16
+    |
+399 |     Tree.readm(c.m.v)
+    |                ^
+    |
+    = help: peel the extra layer first: `(c ?? None)?.m`
+
+warning[W0002]: `y` is never reassigned, so its `mut` changes nothing for the caller
+   --> E0062-peel-dot.sisu:407:30
+    |
+407 |     fn put(self, x: i64, mut y: i64) {}
+    |                              ^ never reassigned
+
+error[E0070]: `put` is a method, not a function
+   --> E0062-peel-dot.sisu:409:9
+    |
+409 |         put(r, c.m.v)
+    |         ^^^
+    |
+help: try calling `put` as a method, then fix its arguments
+    |
+409 -         put(r, c.m.v)
+409 +         r.put(c.m.v)
+    |
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:409:16
+    |
+409 |         put(r, c.m.v)
+    |                ^
+    |
+    = help: peel the extra layer first: `(c ?? None)?.m`
+
+warning[W0002]: `x` is never reassigned, so its `mut` changes nothing for the caller
+   --> E0062-peel-dot.sisu:414:24
+    |
+414 |     fn bumpm(self, mut x: Tree, y: i64) {}
+    |                        ^ never reassigned
+    |
+    = help: the fields of a class object change without `mut`
+
+error[E0070]: `bumpm` is a method, not a function
+   --> E0062-peel-dot.sisu:416:9
+    |
+416 |         bumpm(c.m, d.m.v)
+    |         ^^^^^
+    |
+help: try calling `bumpm` as a method of `self`
+    |
+416 |         self.bumpm(c.m, d.m.v)
+    |         +++++
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:416:15
+    |
+416 |         bumpm(c.m, d.m.v)
+    |               ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `d` may be `None`
+   --> E0062-peel-dot.sisu:416:20
+    |
+416 |         bumpm(c.m, d.m.v)
+    |                    ^
+    |
+    = help: peel the extra layer first: `(d ?? None)?.m`
+
+error[E0070]: `put` is a method, not a function
+   --> E0062-peel-dot.sisu:428:9
+    |
+428 |         put(c.m.v)
+    |         ^^^
+    |
+help: try calling `put` as a method of `self`
+    |
+428 |         self.put(c.m.v)
+    |         +++++
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:428:13
+    |
+428 |         put(c.m.v)
+    |             ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0070]: `put` is a method, not a function
+   --> E0062-peel-dot.sisu:433:5
+    |
+433 |     put(b, c.m.v)
+    |     ^^^
+    |
+help: try calling `put` as a method, then fix its arguments
+    |
+433 -     put(b, c.m.v)
+433 +     b.put(c.m.v)
+    |
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:433:12
+    |
+433 |     put(b, c.m.v)
+    |            ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0105]: `Gc` is a type, not a value
+   --> E0062-peel-dot.sisu:437:5
+    |
+437 |     Gc.put(c.m.v)
+    |     ^^
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:437:12
+    |
+437 |     Gc.put(c.m.v)
+    |            ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+warning[W0002]: `x` is never reassigned, so its `mut` changes nothing for the caller
+   --> E0062-peel-dot.sisu:442:21
+    |
+442 |     fn em(self, mut x: i64) {}
+    |                     ^ never reassigned
+
+error[E0070]: `em` is a method, not a function
+   --> E0062-peel-dot.sisu:444:9
+    |
+444 |         em(c.m.v)
+    |         ^^
+    |
+help: try calling `em` as a method of `self`
+    |
+444 |         self.em(c.m.v)
+    |         +++++
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:444:12
+    |
+444 |         em(c.m.v)
+    |            ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0070]: `em` is a method, not a function
+   --> E0062-peel-dot.sisu:449:5
+    |
+449 |     em(e, c.m.v)
+    |     ^^
+    |
+help: try calling `em` as a method, then fix its arguments
+    |
+449 -     em(e, c.m.v)
+449 +     e.em(c.m.v)
+    |
+
+error[E0062]: `c` may be `None`
+   --> E0062-peel-dot.sisu:449:11
+    |
+449 |     em(e, c.m.v)
+    |           ^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+sisu: 148 errors, 4 warnings
+sisu: for more on a code, run `sisu explain <code>`: E0001, E0052, E0053, E0055, E0062, E0063, E0070, E0105, E0120, E0137, E0156, E0166, E0167, W0002

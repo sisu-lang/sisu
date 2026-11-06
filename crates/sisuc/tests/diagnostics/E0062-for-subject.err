@@ -1,0 +1,157 @@
+error[E0062]: `c` may be `None`
+  --> E0062-for-subject.sisu:20:14
+   |
+20 |     for y in c.ys {
+   |              ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `c` may be `None`
+  --> E0062-for-subject.sisu:26:14
+   |
+26 |     bump(mut c.m.v)
+   |              ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0070]: `bumpm` is a method, not a function
+  --> E0062-for-subject.sisu:34:9
+   |
+34 |         bumpm(c.v)
+   |         ^^^^^
+   |
+help: try calling `bumpm` as a method of `self`
+   |
+34 |         self.bumpm(c.v)
+   |         +++++
+
+error[E0062]: `c` may be `None`
+  --> E0062-for-subject.sisu:34:15
+   |
+34 |         bumpm(c.v)
+   |               ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0055]: this call takes no labels on its arguments
+  --> E0062-for-subject.sisu:39:10
+   |
+39 |     bump(x: mut c.v)
+   |          ^
+   |
+   = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0062]: `c` may be `None`
+  --> E0062-for-subject.sisu:39:17
+   |
+39 |     bump(x: mut c.v)
+   |                 ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0055]: this call takes no labels on its arguments
+  --> E0062-for-subject.sisu:43:10
+   |
+43 |     bump(x: mut c.m.v)
+   |          ^
+   |
+   = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0062]: `c` may be `None`
+  --> E0062-for-subject.sisu:43:17
+   |
+43 |     bump(x: mut c.m.v)
+   |                 ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0167]: `Leaf(…)` takes no `mut` argument: it copies each value into its field
+  --> E0062-for-subject.sisu:47:21
+   |
+47 |     let l = Leaf(v: mut c.v)
+   |                     ^^^ no `mut` here
+   |
+   = help: a `mut` field can change after the object is made
+help: remove `mut`
+   |
+47 -     let l = Leaf(v: mut c.v)
+47 +     let l = Leaf(v: c.v)
+   |
+
+error[E0062]: `c` may be `None`
+  --> E0062-for-subject.sisu:47:25
+   |
+47 |     let l = Leaf(v: mut c.v)
+   |                         ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0055]: this call takes no labels on its arguments
+  --> E0062-for-subject.sisu:51:10
+   |
+51 |     bump(x: c.v)
+   |          ^
+   |
+   = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0062]: `c` may be `None`
+  --> E0062-for-subject.sisu:51:13
+   |
+51 |     bump(x: c.v)
+   |             ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0053]: `bump` takes 1 argument, found 2
+  --> E0062-for-subject.sisu:55:5
+   |
+55 |     bump(mut c.v, 1)
+   |     ^^^^^^^^^^^^^^^^
+
+error[E0062]: `c` may be `None`
+  --> E0062-for-subject.sisu:55:14
+   |
+55 |     bump(mut c.v, 1)
+   |              ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0053]: `bump` takes 1 argument, found 2
+  --> E0062-for-subject.sisu:63:5
+   |
+63 |     bump(c.v, 1)
+   |     ^^^^^^^^^^^^
+
+error[E0062]: `c` may be `None`
+  --> E0062-for-subject.sisu:63:10
+   |
+63 |     bump(c.v, 1)
+   |          ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0137]: `take` takes 1 type argument, but 2 were given
+  --> E0062-for-subject.sisu:67:9
+   |
+67 |     take<i64, i64>(c.v)
+   |         ^^^^^^^^^^
+
+error[E0062]: `c` may be `None`
+  --> E0062-for-subject.sisu:67:20
+   |
+67 |     take<i64, i64>(c.v)
+   |                    ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0166]: the parameter `x` of `take` is `mut`, so its argument needs `mut`
+  --> E0062-for-subject.sisu:67:20
+   |
+58 | fn take<T>(mut x: T?) {
+   |                - declared `mut` here
+...
+67 |     take<i64, i64>(c.v)
+   |                    ^^^ needs `mut`
+
+sisu: 19 errors
+sisu: for more on a code, run `sisu explain <code>`: E0053, E0055, E0062, E0070, E0137, E0166, E0167

@@ -1,0 +1,452 @@
+// GIVEN a `.` on an optional of an optional, in a function for each case
+// AND a `?.` on the same value, which has the same help
+// WHEN `sisu check` runs on it
+// THEN it reports E0062 with no fix, and a help that peels the layers that `?.` does not take
+// AND the `.` says "the extra layers", and the `?.` says "the other layers", with one `?? None` for each
+// AND an index, a slice or a `for` subject after the `.` gets the `if let` help instead
+// AND so does an argument with `mut`, or at a `mut` parameter, also in a call that fails
+// AND so does one at a `mut` parameter of a method that a call written as a function names
+// AND a `push` onto `[i64]??` gets the `if let` help and no fix: the peeled `push` gives E0021
+class Node {
+    v: i64
+    mut ys: [i64]
+    fn get(self) -> i64 { self.v }
+}
+
+fn f1(c: Node??) {
+    print(c.get())
+}
+
+fn f2(c: Node??) {
+    print(c?.get())
+}
+
+fn f3(c: Node??) {
+    c.ys.push(1)
+}
+
+fn f4(c: Node??) {
+    c?.ys.push(1)
+}
+
+fn f5(c: Node??) {
+    c.v = 2
+}
+
+fn f6(xs: [i64]??) {
+    print(xs.len())
+}
+
+fn f7(c: Node???) {
+    print(c?.v)
+}
+
+fn f8(c: Node???) {
+    print(c.v)
+}
+
+class Pusher {
+    mut count: i64
+    fn push(self, x: i64) {}
+}
+
+class Leaf {
+    mut v: i64
+    mut ys: [i64]
+}
+
+class Tree {
+    mut v: i64
+    mut ys: [i64]
+    mut n: Tree?
+    mut m: Leaf
+    mut q: Pusher
+    fn all(self) -> [i64] { self.ys }
+    fn get(self) -> i64 { self.v }
+    fn bumpm(self, mut x: i64) { x += 1 }
+    fn readm(self, x: i64) {}
+    fn putg<U>(self, mut x: U) {}
+    // GIVEN a method of `self` called as a function, in a method of its class
+    // THEN the value at a `mut` parameter gets the `if let` help, and one at a plain parameter the peel help
+    fn e1(self, c: Tree??) {
+        bumpm(c.m.v)
+    }
+    fn e2(self, c: Tree???) {
+        bumpm(c.m.v)
+    }
+    fn e3(self, c: Tree??) {
+        bumpm(x: c.m.v)
+    }
+    fn e8(self, c: Tree??) {
+        putg(c.m.v)
+    }
+    fn g1(self, c: Tree??) {
+        readm(c.m.v)
+    }
+}
+
+fn bump(mut x: i64) {
+    x += 1
+}
+
+fn r1(c: Tree??) {
+    print(c.v)
+}
+
+fn r2(c: Tree??) {
+    print(c.get())
+}
+
+fn r3(c: Tree??) {
+    print(c.ys[0])
+}
+
+fn r4(c: Tree??) {
+    for y in c.ys {
+        print(y)
+    }
+}
+
+fn r5(c: Tree??) {
+    print(c.all()[0])
+}
+
+fn r6(c: Tree??) {
+    for y in c.all() {
+        print(y)
+    }
+}
+
+fn s1(c: Tree??) {
+    print(c.ys[0..1])
+}
+
+fn w1(c: Tree??) {
+    c.v = 1
+}
+
+fn w2(c: Tree??) {
+    c.v += 1
+}
+
+fn w3(c: Tree??) {
+    c.ys[0] = 1
+}
+
+fn w4(c: Tree??) {
+    c.ys.push(1)
+}
+
+fn w5(c: Tree??) {
+    bump(mut c.v)
+}
+
+fn w6(mut xs: [i64]??) {
+    xs.push(1)
+}
+
+fn w7(c: Tree??) {
+    c.n.v = 1
+}
+
+fn w8(c: Tree??) {
+    bump(mut c.m.v)
+}
+
+fn g5(c: Tree??) {
+    c.q.push(1)
+}
+
+fn g6(c: Tree??, xs: [i64]) {
+    print(xs[c.v])
+}
+
+fn g7(c: Tree??) {
+    c.m.ys.push(1)
+}
+
+class Bumper {
+    fn bumpm(self, mut x: i64) {
+        x += 1
+    }
+}
+
+fn read(x: i64) {}
+
+fn q3(c: Tree??) {
+    bump(x: mut c.m.v)
+}
+
+fn m3(t: Bumper, c: Tree??) {
+    t.bumpm(x: mut c.m.v)
+}
+
+fn k3(c: Tree??) {
+    let l = Leaf(v: mut c.m.v, ys: [])
+}
+
+fn v3(c: Tree??) {
+    bump(x: c.m.v)
+}
+
+fn n3(c: Tree??) {
+    bump(mut c.m.v, 1)
+}
+
+fn n4(t: Bumper, c: Tree??) {
+    t.bumpm(mut c.m.v, 1)
+}
+
+fn u3(c: Tree??) {
+    ste(mut c.m.v)
+}
+
+fn u4(t: Bumper, c: Tree??) {
+    t.ste(mut c.m.v)
+}
+
+fn p3(mut xs: [i64], c: Tree??) {
+    xs.push(mut c.m.v)
+}
+
+fn p4(c: Tree??) {
+    print(mut c.m.v)
+}
+
+fn e3(c: Tree??) {
+    bump(mut c.m.v)
+}
+
+fn e4(c: Tree??) {
+    bump(c.m.v)
+}
+
+fn r7(c: Tree??) {
+    read(x: c.m.v)
+}
+
+fn r8(c: Tree??) {
+    let l = Leaf(v: c.m.v, ys: [])
+}
+
+enum Shape {
+    Circle(r: i64)
+}
+
+interface Bp {
+    fn bp(self, mut x: i64)
+}
+
+class Box<T> {
+    v: T
+    fn put(self, mut x: T) {
+        x = self.v
+    }
+}
+
+fn d3(c: Tree???) {
+    bump(x: mut c.v)
+}
+
+fn d4(c: Tree???) {
+    bump(x: mut c.m.v)
+}
+
+fn f7b<U: Bp>(u: U, c: Tree??) {
+    u.bp(x: mut c.m.v)
+}
+
+fn f11(c: Tree??) {
+    let s = Shape.Circle(r: mut c.m.v)
+}
+
+fn f13(t: Bumper?, c: Tree??) {
+    t?.bumpm(x: mut c.m.v)
+}
+
+fn f15(b: Box<i64>, c: Tree??) {
+    b.put(x: mut c.m.v)
+}
+
+interface Bq {
+    fn bp(self, mut x: i64)
+}
+
+enum Sh {
+    Dot
+    fn grow(self, mut x: i64) {
+        x += 1
+    }
+}
+
+class Bx {
+    fn put<T>(self, mut x: T?, n: i64) {
+        x = None
+    }
+}
+
+fn take<T>(mut x: T?) {
+    x = None
+}
+
+fn x1(c: Tree??) {
+    bump(c.m.v, 1)
+}
+
+fn x2(t: Bumper, c: Tree??) {
+    t.bumpm(c.m.v, 1)
+}
+
+fn x3(c: Tree??) {
+    take(c.m.v, 1)
+}
+
+fn x4(c: Tree??) {
+    take<i64, i64>(c.m.v)
+}
+
+fn x5<U: Bp>(u: U, c: Tree??) {
+    u.bp(c.m.v, 1)
+}
+
+fn x6(b: Box<i64>, c: Tree??) {
+    b.put(c.m.v, 1)
+}
+
+fn x7(c: Tree??) {
+    take(x: c.m.v)
+}
+
+fn x9(u: any Bp, c: Tree??) {
+    u.bp(c.m.v, 1)
+}
+
+fn x10(t: Bumper?, c: Tree??) {
+    t?.bumpm(c.m.v, 1)
+}
+
+fn x11(c: Tree???) {
+    bump(c.m.v, 1)
+}
+
+fn x13(c: Tree??) {
+    Bx().put<i64, i64>(c.m.v, 1)
+}
+
+fn x14(c: Tree??) {
+    let y = exchange(c.m.v, 1, 2)
+}
+
+fn x15(c: Tree??) {
+    bump(y: c.m.v, 1)
+}
+
+fn y4<U: Bp & Bq>(u: U, c: Tree??) {
+    u.bp(c.m.v)
+}
+
+fn n13(c: Tree??) {
+    Sh.grow(c.m.v)
+}
+
+// Each argument below keeps the peel help: no `mut` parameter is known for it.
+fn z1(c: Tree??) {
+    bump(c.m.v, c.m.v)
+}
+
+fn z2(c: Tree??) {
+    bump(c.m.v + 1, 2)
+}
+
+fn z3(c: Tree??) {
+    let f = bump
+    f(c.m.v, 1)
+}
+
+// GIVEN a method called as a function, E0070, and a method called as `Name.method(..)`, E0105
+// WHEN the value is at a `mut` parameter of the method
+// THEN it gets the `if let` help, as for a call that finds the method
+// AND a value at a plain parameter keeps the peel help, also where the receiver's method wins
+fn row_e4(t: Tree, c: Tree??) {
+    bumpm(t, c.m.v)
+}
+
+fn row_e5(t: Tree?, c: Tree??) {
+    bumpm(t, c.m.v)
+}
+
+fn row_e6(t: Tree, c: Tree???) {
+    bumpm(t, c.m.v)
+}
+
+fn row_e7(t: Tree, c: Tree??) {
+    bumpm(t, c.m.v, 1)
+}
+
+fn row_q1(c: Tree??) {
+    Tree.bumpm(c.m.v)
+}
+
+fn row_q2(c: Tree??) {
+    Bp.bp(c.m.v)
+}
+
+fn row_g2(t: Tree, c: Tree??) {
+    readm(t, c.m.v)
+}
+
+fn row_g3(c: Tree??) {
+    Tree.readm(c.m.v)
+}
+
+class Rd {
+    fn put(self, x: i64) {}
+}
+
+class Wr {
+    fn put(self, x: i64, mut y: i64) {}
+    fn g4(self, r: Rd, c: Tree??) {
+        put(r, c.m.v)
+    }
+}
+
+class Wr4 {
+    fn bumpm(self, mut x: Tree, y: i64) {}
+    fn g5(self, c: Tree??, d: Tree??) {
+        bumpm(c.m, d.m.v)
+    }
+}
+
+// GIVEN the method of a generic class, or of an enum, called as a function
+// THEN the value at a `mut` parameter gets the `if let` help
+class Gc<T> {
+    v: T
+    fn put(self, mut x: T) {
+        x = self.v
+    }
+    fn e10(self, c: Tree??) {
+        put(c.m.v)
+    }
+}
+
+fn row_e11(b: Gc<i64>, c: Tree??) {
+    put(b, c.m.v)
+}
+
+fn row_q3(c: Tree??) {
+    Gc.put(c.m.v)
+}
+
+enum En {
+    A
+    fn em(self, mut x: i64) {}
+    fn e12(self, c: Tree??) {
+        em(c.m.v)
+    }
+}
+
+fn row_e13(e: En, c: Tree??) {
+    em(e, c.m.v)
+}
+
+fn main() {}

@@ -4,20 +4,39 @@
 
 use super::alias::Through;
 use super::any::is_target;
-use super::generic::{GenericSig, Site, mark, mismatched};
+use super::generic::{GenericSig, Site, mark, mismatched, written_args};
 use super::mut_args::Callee;
-use super::{Checked, Checker, DiagnosticKind, Poisoned, optional_of, type_of};
+use super::{
+    Checked, Checker, DiagnosticKind, Poisoned, has_remedy_flag, optional_of, spread, type_of,
+};
 use crate::ast;
 use crate::diagnostic::{Definition, suggestion};
 use crate::source::Span;
 use crate::symbol::Symbol;
-use crate::tir::{self, Type, TypeKind};
+use crate::tir::{self, Type, TypeArgs, TypeKind};
 
 impl Checker<'_> {
     /// `Some(args)`, which `site` writes, or `Option.Some(args)` when `member` is its `Some`:
-    /// the call of `Some<T>(x: T) -> T?`, which converts `x` to the optional once. Through an alias
-    /// of an optional type that takes parameters, the call binds them: `through` says its type.
+    /// the call of `Some<T>(x: T) -> T?`, which converts `x` to the optional once. `through` is the
+    /// alias that the path names. An alias with no parameter fixes the type of the call. An alias
+    /// that takes parameters, the `open` ones, has them bound by the call.
     pub(super) fn some(
+        &mut self,
+        span: Span,
+        site: Site<'_>,
+        member: Option<&ast::Ident>,
+        args: &[ast::Arg],
+        through: Option<&Through>,
+    ) -> Checked {
+        let checked = self.some_of(span, site, member, args, through);
+        if checked.is_err() {
+            self.body.failed_some_spans.insert(span);
+        }
+        checked
+    }
+
+    /// `some`, before it records a `Some` that gave an error.
+    fn some_of(
         &mut self,
         span: Span,
         site: Site<'_>,
@@ -39,10 +58,13 @@ impl Checker<'_> {
                 labeled: false,
             },
         );
-        let Some(labeled) = self.positional_shape(span, &path, 1, args) else {
-            return Err(Poisoned::error());
-        };
         let open = through.filter(|t| !t.params.is_empty());
+        let Some(labeled) = self.positional_shape(span, &path, 1, args) else {
+            let (declared, _, ret) = some_shape(open);
+            let fixed = closed_alias(through)
+                .or_else(|| self.counted_result(Some(ret), &declared, &[], &[], site));
+            return Err(Poisoned::of(fixed));
+        };
         // An alias `type M<T> = T?` is `Option` over its parameter: an expected optional fixes
         // the parameter as it fixes the one of `Some`.
         let plain = open.is_none_or(|t| {
@@ -50,7 +72,7 @@ impl Checker<'_> {
                 if t.params.len() == 1 && p == Type::intern(TypeKind::Param(t.params[0], 0)))
         });
         let hinted = self.hinted(span, None).1.is_some();
-        let (arg, found) = match site.expected.map(|ty| (ty, ty.kind())) {
+        let (arg, found, list) = match site.expected.map(|ty| (ty, ty.kind())) {
             // An expected `T?` fixes `T`, so a literal in the argument takes that type: the
             // generic call would type an `if` of integer literals by their default first.
             Some((want, TypeKind::Optional(payload)))
@@ -76,21 +98,17 @@ impl Checker<'_> {
                                 && is_target(payload))
                             && !self.converts_to_any(got, payload) =>
                     {
-                        (checked, optional_of(got))
+                        (checked, optional_of(got), TypeArgs::NONE)
                     }
-                    _ => (mark(self.settled(e, checked, Some(payload))), want),
+                    _ => (
+                        mark(self.settled(e, checked, Some(payload))),
+                        want,
+                        TypeArgs::NONE,
+                    ),
                 }
             }
             _ => {
-                let param = Symbol::intern("T");
-                let ty = Type::intern(TypeKind::Param(param, 0));
-                let (declared, payload, ret) = match open {
-                    Some(t) => match t.ty.kind() {
-                        TypeKind::Optional(payload) => (t.params.clone(), payload, t.ty),
-                        _ => unreachable!("an alias that builds `Some` should name an optional"),
-                    },
-                    None => (vec![param], ty, optional_of(ty)),
-                };
+                let (declared, payload, ret) = some_shape(open);
                 let sig = GenericSig {
                     name: site.name,
                     variant: member,
@@ -114,18 +132,52 @@ impl Checker<'_> {
                 }
                 let arg = (args.into_iter().next())
                     .expect("`Some` should have the one argument it checked");
-                (arg, found)
+                (arg, found, list)
             }
         };
         let failed = labeled || mismatched(&arg);
+        // The `?.` fix of an E0062 in the argument would make the payload, and so the `Some`, one
+        // optional deeper. The flag follows only when the argument alone binds the type.
+        let flagged = has_remedy_flag(&arg);
         match arg {
             Ok(inner) if !failed => Ok(tir::Expr::new(
                 tir::ExprKind::Wrap(Box::new(inner)),
                 found,
                 span,
             )),
-            _ => Err(Poisoned::of((!failed).then_some(found))),
+            _ => {
+                // The arguments bind the rest of the type, and they may be the fault.
+                let fixed = if failed || flagged {
+                    self.failed_some((through, open), site, list.get())
+                } else {
+                    None
+                };
+                let found = if failed { fixed } else { Some(found) };
+                spread(Err(Poisoned::of(found)), flagged && fixed.is_none())
+            }
         }
+    }
+
+    /// The type of a `Some` at `site`, through `through`, whose argument fails. `open` is
+    /// `through` when it takes parameters. `list` is the type arguments that the arguments
+    /// bound. An alias with no open parameter fixes the type, as does a written list; else
+    /// `None`, as the arguments may be the fault.
+    fn failed_some(
+        &mut self,
+        (through, open): (Option<&Through>, Option<&Through>),
+        site: Site<'_>,
+        list: &[Type],
+    ) -> Option<Type> {
+        closed_alias(through).or_else(|| {
+            let (declared, _, ret) = some_shape(open);
+            self.fixed_result(
+                Some(ret),
+                declared.len(),
+                &[],
+                &[],
+                written_args(site, list, 0),
+            )
+        })
     }
 
     /// `Option.member`, or `Option.member(args)` when `call` gives the arguments and the span of
@@ -208,10 +260,30 @@ impl Checker<'_> {
     }
 }
 
+/// The type that `through`, an alias with no open parameter, names: it fixes the type of a `Some`
+/// through it, whatever the arguments are.
+fn closed_alias(through: Option<&Through>) -> Option<Type> {
+    through.filter(|t| t.params.is_empty()).map(|t| t.ty)
+}
+
 /// `ty` without its optional layers.
 fn beneath(ty: Type) -> Type {
     match ty.kind() {
         TypeKind::Optional(payload) => beneath(payload),
         _ => ty,
+    }
+}
+
+/// The type parameters of `Some`, the type of its payload and its result: the alias's `open`
+/// parameters and type, else `T`, `T` and `T?`.
+fn some_shape(open: Option<&Through>) -> (Vec<Symbol>, Type, Type) {
+    let Some(t) = open else {
+        let param = Symbol::intern("T");
+        let ty = Type::intern(TypeKind::Param(param, 0));
+        return (vec![param], ty, optional_of(ty));
+    };
+    match t.ty.kind() {
+        TypeKind::Optional(payload) => (t.params.clone(), payload, t.ty),
+        _ => unreachable!("an alias that builds `Some` should name an optional"),
     }
 }

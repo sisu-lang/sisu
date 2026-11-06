@@ -88,7 +88,7 @@ error[E0062]: `c` may be `None`
 61 |     let n = c.name()
    |             ^
    |
-   = help: unwrap it with `if let`, `let ... else` or `?? return`
+   = help: peel the extra layer first: `(c ?? None)?.name`
 
 error[E0156]: `name` on `Circle` could come from `Label` or `Code`
   --> E0062-member-ambiguous-on-payload.sisu:61:15

@@ -1,10 +1,10 @@
 //! Methods on a type parameter: a call on a value of type `T` names a requirement of the
 //! interfaces that `T`'s bounds give, and is an `InterfaceCall` that `mono` resolves.
 
-use super::generic::{GenericSig, Site, mismatched, named_params};
+use super::generic::{GenericSig, Site, mismatched, named_params, written_args};
 use super::interface::Required;
 use super::mut_args::{MutParts, MutSite, site_of};
-use super::{Checked, Checker, Poisoned};
+use super::{Checked, Checker, Poisoned, has_remedy_flag, spread};
 use crate::ast;
 use crate::diagnostic::{Definition, DiagnosticKind};
 use crate::source::Span;
@@ -38,6 +38,7 @@ impl Checker<'_> {
             return self.call_of_rejected_method(site.name, args);
         }
         let Some(picked) = self.pick_required(ty, site, span, &found) else {
+            self.stamp_candidates(&found, args);
             self.labels(args);
             self.stray(args);
             return Err(Poisoned::error());
@@ -62,17 +63,10 @@ impl Checker<'_> {
         let bounds = requirement.bounds.clone();
         let mut owner = vec![ty];
         owner.extend_from_slice(iargs.get());
+        self.stamp_mut_params(args, &muts);
         if params.len() != args.len() {
-            self.stray(args);
-            if !self.misread_in(args) {
-                self.report(DiagnosticKind::ArgumentCount {
-                    name,
-                    want: params.len(),
-                    found: args.len(),
-                    at: span,
-                });
-            }
-            return Err(Poisoned::error());
+            let fixed = self.counted_result(ret, &declared, &owner, &bounds, site);
+            return self.wrong_count(span, name, params.len(), args, fixed);
         }
         let mut_site = MutSite {
             callee: &name,
@@ -98,11 +92,15 @@ impl Checker<'_> {
             result.as_ref().ok().and_then(|(_, _, ret)| *ret),
         );
         self.marks(args, &mut parts, &mut_site, (&params, list), met);
-        let (checked, list, ret) = result?;
+        let (checked, list, solved) = result?;
         let (iargs, types) = list.get().split_at(owner.len());
         let (iargs, types) = (TypeArgs::intern(iargs), TypeArgs::intern(types));
         let parts = self.mut_overlaps(parts);
         let failed = labeled || checked.iter().any(mismatched);
+        // A result that names a type parameter may take the type of an argument. The `?.` fix of
+        // an E0062 in that argument would make it optional, unless it is optional already. The
+        // flag follows only when the arguments alone bind the result.
+        let flagged = ret.is_some() && checked.iter().any(has_remedy_flag);
         let method =
             u32::try_from(method).expect("an interface should have fewer than 2^32 requirements");
         let call = move |args| tir::ExprKind::InterfaceCall {
@@ -112,15 +110,36 @@ impl Checker<'_> {
             types,
             args,
         };
-        match (std::iter::once(receiver).chain(checked).collect(), ret) {
-            (Ok(args), Some(ret)) if !failed && parts.is_empty() => {
-                Ok(self.spilled(span, ret, args, call))
+        match (std::iter::once(receiver).chain(checked).collect(), solved) {
+            (Ok(args), Some(solved)) if !failed && parts.is_empty() => {
+                Ok(self.spilled(span, solved, args, call))
             }
-            (Ok(args), Some(ret)) if !failed => {
-                let call = tir::Expr::new(call(args), ret, span);
+            (Ok(args), Some(solved)) if !failed => {
+                let call = tir::Expr::new(call(args), solved, span);
                 Ok(self.mut_call(call, parts))
             }
-            (_, ret) => Err(Poisoned::of(ret.filter(|_| !failed))),
+            (_, solved) => {
+                // The arguments bind the rest of the result, and they may be the fault.
+                let fixed = if failed || flagged {
+                    let written = written_args(site, list.get(), owner.len());
+                    self.fixed_result(ret, declared.len(), &owner, &[], written)
+                } else {
+                    None
+                };
+                let result = if failed { fixed } else { solved };
+                spread(Err(Poisoned::of(result)), flagged && fixed.is_none())
+            }
+        }
+    }
+
+    /// Stamps the arguments at a `mut` parameter of any of the `found` candidates. The call
+    /// picks none of them. Each argument gets the help of a place.
+    fn stamp_candidates(&mut self, found: &[Required], args: &[ast::Arg]) {
+        for one in found {
+            let muts = self.interfaces[one.interface.0].requirements[one.method]
+                .muts
+                .clone();
+            self.stamp_mut_params(args, &muts);
         }
     }
 

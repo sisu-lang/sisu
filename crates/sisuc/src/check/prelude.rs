@@ -5,7 +5,7 @@
 use super::array::pair;
 use super::expr::{path, typed};
 use super::mut_args::Callee;
-use super::{Checked, Checker, Poisoned, type_of};
+use super::{Checked, Checker, Poisoned, has_remedy_flag, spread, type_of};
 use crate::ast;
 use crate::diagnostic::{DiagnosticKind, Expected, MismatchFix, PrintProblem};
 use crate::source::Span;
@@ -47,10 +47,11 @@ impl Checker<'_> {
 
     /// `print(x)` or `eprint(x)`, by `stream`.
     fn print(&mut self, span: Span, args: &[ast::Arg], stream: Stream) -> Checked {
-        let (arg, checked, labeled) = match self.shown(span, args, stream.name(), None) {
-            Ok(shown) => shown,
-            Err(failed) => return failed,
-        };
+        let (arg, checked, labeled) =
+            match self.shown(span, args, stream.name(), (None, Some(Type::UNIT))) {
+                Ok(shown) => shown,
+                Err(failed) => return failed,
+            };
         self.warn_if_optional(&arg.value, &checked);
         let kind = checked
             .ok()
@@ -59,7 +60,7 @@ impl Checker<'_> {
                 stream,
                 operand: Box::new(operand),
             });
-        typed(span, Type::UNIT, labeled, kind)
+        typed(span, Type::UNIT, false, kind)
     }
 
     /// `dbg(x)`, of the type of `x`, which it checks against `expected`. It does not warn when
@@ -67,7 +68,7 @@ impl Checker<'_> {
     /// `Body::quiet_at`), so is `x`.
     fn dbg(&mut self, span: Span, args: &[ast::Arg], expected: Option<Type>) -> Checked {
         let outer = self.pass_quiet(span, args.first().map(|a| a.value.span), expected);
-        let shown = self.shown(span, args, "dbg", expected);
+        let shown = self.shown(span, args, "dbg", (expected, None));
         self.body.quiet_at = outer;
         let (arg, checked, labeled) = match shown {
             Ok(shown) => shown,
@@ -77,6 +78,9 @@ impl Checker<'_> {
             return Err(Poisoned::error());
         };
         self.dbg_shown.push((self.body.owner, ty, span));
+        // `dbg<T>(x: T) -> T` has the type of its argument. An E0062 in it would make it optional,
+        // unless the argument is optional already.
+        let flagged = has_remedy_flag(&checked);
         let kind = checked
             .ok()
             .filter(|_| !labeled)
@@ -85,19 +89,21 @@ impl Checker<'_> {
                 text: self.source.text(arg.value.span).to_string(),
                 operand: Box::new(operand),
             });
-        typed(span, ty, labeled, kind)
+        spread(typed(span, ty, labeled, kind), flagged)
     }
 
     /// The argument of a call of `function` (`print`, `eprint` or `dbg`) at `span`, checked with
     /// `expected`, with whether the arguments had a label. Every type shows through `Display` but
     /// `unit` and `never`. `Err` is the call's own result when its argument is wrong, which this
-    /// has reported.
+    /// has reported. `context` holds two parts: the type `expected` that the argument must have,
+    /// and the type `ret` of the call when it fails. `dbg` has the type of its argument, so its
+    /// `ret` is none.
     fn shown<'a>(
         &mut self,
         span: Span,
         args: &'a [ast::Arg],
         function: &'static str,
-        expected: Option<Type>,
+        (expected, ret): (Option<Type>, Option<Type>),
     ) -> Result<(&'a ast::Arg, Checked, bool), Checked> {
         // Not `value()`: a `unit` argument needs this code, not "expression has no value".
         let wrong = |problem, at| {
@@ -112,7 +118,7 @@ impl Checker<'_> {
         let [arg] = args else {
             self.diagnostics.push(wrong(PrintProblem::Count, span));
             self.stray(args);
-            return Err(Err(Poisoned::error()));
+            return Err(Err(Poisoned::of(ret)));
         };
         self.refuse_mut(args, Callee::Unnamed(&function));
         let checked = self.expr(&arg.value, expected);
@@ -126,20 +132,22 @@ impl Checker<'_> {
             _ => return Ok((arg, checked, labeled)),
         };
         self.diagnostics.push(error);
-        Err(Err(Poisoned::error()))
+        Err(Err(Poisoned::of(ret)))
     }
 
     /// Warns when `checked`, the check of the printed `value`, is an optional: the text may be
     /// `None`. Only the type of `value` itself counts, not a type that it holds.
     pub(super) fn warn_if_optional(&mut self, value: &ast::Expr, checked: &Checked) {
-        // `Some(x)` is never `None`.
-        if matches!(
-            checked,
-            Ok(tir::Expr {
-                kind: tir::ExprKind::Wrap(_),
-                ..
-            })
-        ) {
+        // `Some(x)` is never `None`, also when it gave an error.
+        if self.body.failed_some_spans.contains(&value.span)
+            || matches!(
+                checked,
+                Ok(tir::Expr {
+                    kind: tir::ExprKind::Wrap(_),
+                    ..
+                })
+            )
+        {
             return;
         }
         if matches!(
@@ -158,7 +166,7 @@ impl Checker<'_> {
         self.body.exits += 1;
         let labeled = self.labels(args);
         let [arg] = args else {
-            return self.argument_count("panic", 1, span, args);
+            return self.argument_count("panic", 1, span, args, Type::NEVER);
         };
         self.refuse_mut(args, Callee::Unnamed(&"panic"));
         let message = self.message(&arg.value);
@@ -188,7 +196,7 @@ impl Checker<'_> {
                     tir::ExprKind::Concat { lhs, rhs }
                 })
             }),
-            _ => return self.argument_count("todo", 1, span, args),
+            _ => return self.argument_count("todo", 1, span, args, Type::NEVER),
         };
         panics(keyword, labeled, message)
     }
@@ -196,19 +204,21 @@ impl Checker<'_> {
     /// `read_line()`, of type `string?`; it takes no arguments.
     fn read_line(&mut self, span: Span, args: &[ast::Arg]) -> Checked {
         if !args.is_empty() {
-            return self.argument_count("read_line", 0, span, args);
+            return self.argument_count("read_line", 0, span, args, Type::optional(Type::STRING));
         }
         let ty = Type::optional(Type::STRING);
         typed(span, ty, false, Some(tir::ExprKind::ReadLine))
     }
 
-    /// `name`'s count error: it takes `want` arguments, and `args` is not that many.
+    /// `name`'s count error: it takes `want` arguments, and `args` is not that many. The call has
+    /// the type `ret`.
     fn argument_count(
         &mut self,
         name: &str,
         want: usize,
         span: Span,
         args: &[ast::Arg],
+        ret: Type,
     ) -> Checked {
         self.report(DiagnosticKind::ArgumentCount {
             name: name.to_string(),
@@ -217,7 +227,7 @@ impl Checker<'_> {
             at: span,
         });
         self.stray(args);
-        Err(Poisoned::error())
+        Err(Poisoned::typed(ret))
     }
 
     /// A `panic` or `todo` message, an expression of type `string`. A value that interpolation
@@ -249,11 +259,9 @@ impl Checker<'_> {
 /// The panic with `message`, which reports at the start of `span`; `labeled` when its
 /// arguments had a label.
 fn panics(span: Span, labeled: bool, message: Checked) -> Checked {
-    // A message that failed is the failure of this rule, so the call is `Error`.
-    let failed = labeled || message.is_err();
     let kind = message
         .ok()
         .filter(|_| !labeled)
         .map(|message| tir::ExprKind::Panic(Box::new(message)));
-    typed(span, Type::NEVER, failed, kind)
+    typed(span, Type::NEVER, false, kind)
 }

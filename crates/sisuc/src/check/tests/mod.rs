@@ -16,6 +16,7 @@ mod conformances;
 mod constants;
 mod enums;
 mod extend;
+mod failed_calls;
 mod floats;
 mod for_loops;
 mod generics;
@@ -35,6 +36,7 @@ mod strings;
 mod u8;
 mod unused;
 mod unused_names;
+mod unwrapped;
 
 /// The `PARAM_STEPS` that checking the four language interfaces takes, which every test's count
 /// holds: `Self` and one more step for each.
@@ -489,14 +491,14 @@ fn if_with_failed_and_never_branches_is_error() {
     );
 }
 
-/// A rule that fails makes its expression `Error`. Each row binds the failed expression
-/// and uses it where a typed result would cascade into a second error.
+/// A rule that fails makes its expression `Error`. A call whose callee fixes its result type keeps
+/// it (see `failed_calls`). Each row binds the failed expression and uses it where a typed result
+/// would cascade into a second error.
 #[test]
 fn failed_rule_should_make_its_expression_error() {
     const MISMATCH: Code = Code::Mismatch;
-    const F: &str = "fn f(a: i64) -> i64 { a }\n";
     with_prelude();
-    let rows: [(&str, String, Code, (usize, usize)); 15] = [
+    let rows: [(&str, String, Code, (usize, usize)); 11] = [
         (
             "unary",
             "fn main() {\n    let x = -true\n    print(x == false)\n}".into(),
@@ -544,30 +546,6 @@ fn failed_rule_should_make_its_expression_error() {
             "class C {}\nfn main() {\n    let x = [C()].contains(C())\n    print(x + 1)\n}".into(),
             Code::NotConform,
             (3, 13),
-        ),
-        (
-            "call arity",
-            format!("{F}fn main() {{\n    let x = f()\n    print(x == false)\n}}"),
-            Code::ArgumentCount,
-            (3, 13),
-        ),
-        (
-            "call argument",
-            format!("{F}fn main() {{\n    let x = f(true)\n    print(x == false)\n}}"),
-            MISMATCH,
-            (3, 15),
-        ),
-        (
-            "print arity",
-            "fn main() {\n    let x = print(1, 2)\n    print(x)\n}".into(),
-            Code::PrintArgument,
-            (2, 13),
-        ),
-        (
-            "print unit argument",
-            "fn main() {\n    let x = print(print(1))\n    print(x)\n}".into(),
-            Code::PrintArgument,
-            (2, 19),
         ),
         (
             "if branches",
@@ -778,8 +756,12 @@ fn a_never_value_that_failed_should_give_e0043_after_the_other_error() {
         ("let x = return \"a\"", None, &[Code::Mismatch]),
         ("let x = id(return \"a\")", None, &[Code::Mismatch]),
         ("let x = [return \"a\"]", None, &[Code::Mismatch]),
-        // Unchanged: a call with a mismatched argument is untyped, so its block is not `never`.
-        ("let x = { panic(5) }", None, &[Code::Mismatch]),
+        // A call with a mismatched argument keeps its type, so its block is `never`.
+        (
+            "let x = { panic(5) }",
+            Some("{ panic(5) }"),
+            &[Code::NoValue, Code::Mismatch],
+        ),
         // Unchanged: a `break` or `continue` outside a loop is the one report of its block.
         ("let x = { break }", None, &[Code::JumpOutsideLoop]),
         ("let x = { continue }", None, &[Code::JumpOutsideLoop]),
@@ -2787,23 +2769,23 @@ fn label_outside_constructor() {
     );
 }
 
-/// A labeled argument fails the call: it is `Error`, so a later use draws nothing.
+/// A labeled argument fails the call, which keeps its result type: a later use is checked.
 #[test]
-fn labeled_call_is_error() {
+fn a_labeled_call_should_keep_its_result_type() {
     codes(
         "fn f(a: i64) -> i64 { a }\nfn main() {\n    print(f(a: 1) + true)\n}",
-        &[(Code::LabeledArgument, (3, 13))],
+        &[(Code::LabeledArgument, (3, 13)), (Code::Mismatch, (3, 21))],
     );
 }
 
-/// A constructor whose own rule fails is `Error`; one with an `Error` argument keeps its
-/// class, so a later use is still checked.
+/// A constructor keeps its class when its own rule fails and when an argument fails, so a later
+/// use is still checked.
 #[test]
-fn constructor_is_error_only_when_its_rule_fails() {
+fn a_constructor_should_keep_its_class_when_it_fails() {
     let class = "class P {\n    x: i64\n    y: i64\n}\n";
     codes(
         &format!("{class}fn main() {{\n    print(P(x: 1).x + true)\n}}"),
-        &[(Code::MissingField, (6, 11))],
+        &[(Code::MissingField, (6, 11)), (Code::Mismatch, (6, 23))],
     );
     codes(
         &format!("{class}fn main() {{\n    print(P(x: nope, y: 1).x + true)\n}}"),
@@ -3733,7 +3715,7 @@ fn optional_self_field_is_reported_at_its_path() {
 /// statement in a body where `m` is an `N?`.
 #[test]
 fn may_be_none_in_an_assignment_target_should_offer_the_fix() {
-    for stmt in ["m.v = 1", "m.v += 1", "m.get().v = 1", "m.o.v = 1"] {
+    for stmt in ["m.v = 1", "m.v += 1", "m.get().v = 1"] {
         let src = format!(
             "class N {{\n    mut v: i64\n    mut items: [i64]\n    o: N?\n    fn get(self) -> N {{\n        self\n    }}\n}}\nfn f(m: N?) {{\n    {stmt}\n}}\nfn main() {{}}"
         );
@@ -3746,6 +3728,33 @@ fn may_be_none_in_an_assignment_target_should_offer_the_fix() {
         // The fixed target must parse.
         applied(&src, &d);
     }
+}
+
+/// `m.o.v = 1` has a second E0062, at the optional field `m.o`, after the one at `m`. Each has
+/// its fix.
+#[test]
+fn may_be_none_in_an_assignment_target_should_offer_the_fix_at_each_optional() {
+    let src =
+        "class N {\n    mut v: i64\n    o: N?\n}\nfn f(m: N?) {\n    m.o.v = 1\n}\nfn main() {}";
+    let found: Vec<_> = diags(src)
+        .iter()
+        .map(|d| (d.code(), at(src, d.span()), fixes(src, d)))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            (
+                Code::MayBeNone,
+                (6, 5),
+                vec![(false, vec![(6, 6, ".", "?.".to_owned())])]
+            ),
+            (
+                Code::MayBeNone,
+                (6, 5),
+                vec![(false, vec![(6, 8, ".", "?.".to_owned())])]
+            ),
+        ]
+    );
 }
 
 /// An optional array has no field to hold an array. A `.` checks the field on the array, so the
@@ -3787,14 +3796,14 @@ fn push_onto_an_optional_array_should_offer_unwrap_help_only_for_a_stored_array(
             "fn f(xs: [i64]?) {\n    xs.push(2)\n}\nfn main() {}",
             (2, 5, "xs"),
             false,
-            &[(Code::AssignToImmutable, (2, 5)), (Code::MayBeNone, (2, 5))],
+            &[(Code::MayBeNone, (2, 5)), (Code::AssignToImmutable, (2, 5))],
         ),
         (
             "immutable local",
             "fn main() {\n    let xs: [i64]? = [1]\n    xs.push(2)\n}",
             (3, 5, "xs"),
             false,
-            &[(Code::AssignToImmutable, (3, 5)), (Code::MayBeNone, (3, 5))],
+            &[(Code::MayBeNone, (3, 5)), (Code::AssignToImmutable, (3, 5))],
         ),
         (
             "field of optional array type",
@@ -3895,7 +3904,6 @@ fn may_be_none_before_an_index_should_have_no_fix() {
         "m.items[0] = 1",
         "m.items[0] += 1",
         "m.get().items[0] = 1",
-        "m.o.items[0] = 1",
         "print(m.items[0])",
         "print(m.get().items[0])",
     ] {
@@ -3906,6 +3914,19 @@ fn may_be_none_before_an_index_should_have_no_fix() {
         let d = diagnostic(&src, Code::MayBeNone, (10, col, "m"), &[]);
         assert!(d.fixes().is_empty(), "{stmt}: {d:?}");
     }
+}
+
+/// `m.o.items[0] = 1` has a second E0062, at the optional field `m.o`. Neither has a fix.
+#[test]
+fn may_be_none_before_an_index_should_have_no_fix_at_each_optional() {
+    let src = "class N {\n    mut items: [i64]\n    o: N?\n}\nfn f(m: N?) {\n    m.o.items[0] = 1\n}\nfn main() {}";
+    let ds = diags(src);
+    let found: Vec<_> = ds.iter().map(|d| (d.code(), at(src, d.span()))).collect();
+    assert_eq!(
+        found,
+        [(Code::MayBeNone, (6, 5)), (Code::MayBeNone, (6, 5))]
+    );
+    assert!(ds.iter().all(|d| d.fixes().is_empty()), "{ds:?}");
 }
 
 /// Inside an assignment target, an argument or an index is an ordinary read, so its own
@@ -4013,6 +4034,11 @@ fn may_be_none_in_and_after_an_assignment_target_should_offer_the_fix() {
             ),
             (
                 Code::MayBeNone,
+                (6, 5),
+                vec![(false, vec![(6, 16, ".", "?.".to_owned())])]
+            ),
+            (
+                Code::MayBeNone,
                 (7, 11),
                 vec![(false, vec![(7, 17, ".", "?.".to_owned())])]
             ),
@@ -4091,9 +4117,9 @@ fn assign_while_let_binding() {
 }
 
 /// A `None` that its rule rejects fails that rule: what the rule makes is `Error`, so a
-/// later use draws nothing.
+/// later use draws nothing. A call that rejects it keeps its result type instead.
 #[test]
-fn rejected_none_reports_once() {
+fn a_rejected_none_should_be_reported_once() {
     let cases = [
         (
             "fn main() {\n    let x = !None\n    print(x + 1)\n}",
@@ -4104,10 +4130,6 @@ fn rejected_none_reports_once() {
             (2, 16),
         ),
         (
-            "fn f(x: i64) -> i64 { x }\nfn main() {\n    let r = f(None)\n    print(r && true)\n}",
-            (3, 15),
-        ),
-        (
             "fn main() {\n    let y = None + 1\n    print(y && true)\n}",
             (2, 13),
         ),
@@ -4115,6 +4137,10 @@ fn rejected_none_reports_once() {
     for (src, pos) in cases {
         codes(src, &[(Code::Mismatch, pos)]);
     }
+    codes(
+        "fn f(x: i64) -> i64 { x }\nfn main() {\n    let r = f(None)\n    print(r && true)\n}",
+        &[(Code::Mismatch, (3, 15)), (Code::Mismatch, (4, 11))],
+    );
     // Each `None` is its own mistake; the `if` that holds them fails the rule too.
     let nested = [
         (

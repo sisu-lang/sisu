@@ -1,0 +1,426 @@
+error[E0062]: `c` may be `None`
+  --> E0062-index-continues.sisu:12:5
+   |
+12 |     c.yss[0].push("a")
+   |     ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0001]: cannot change `yss`
+  --> E0062-index-continues.sisu:12:5
+   |
+ 7 |     yss: [[i64]]
+   |     --- declared without `mut` here
+...
+12 |     c.yss[0].push("a")
+   |     ^^^^^^^^ `push` changes `yss`
+   |
+help: mark the field `mut`
+   |
+ 7 |     mut yss: [[i64]]
+   |     +++
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-index-continues.sisu:12:19
+   |
+12 |     c.yss[0].push("a")
+   |                   ^^^
+
+error[E0062]: `c` may be `None`
+  --> E0062-index-continues.sisu:16:5
+   |
+16 |     c.yss[0] = ["a"]
+   |     ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0001]: cannot assign to an element of `yss`
+  --> E0062-index-continues.sisu:16:5
+   |
+ 7 |     yss: [[i64]]
+   |     --- declared without `mut` here
+...
+16 |     c.yss[0] = ["a"]
+   |     ^^^^^^^^^^^^^^^^
+   |
+help: mark the field `mut`
+   |
+ 7 |     mut yss: [[i64]]
+   |     +++
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-index-continues.sisu:16:17
+   |
+16 |     c.yss[0] = ["a"]
+   |                 ^^^
+
+error[E0062]: `c` may be `None`
+  --> E0062-index-continues.sisu:20:5
+   |
+20 |     c.yss[0][0] = "a"
+   |     ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0001]: cannot assign to an element of `yss`
+  --> E0062-index-continues.sisu:20:5
+   |
+ 7 |     yss: [[i64]]
+   |     --- declared without `mut` here
+...
+20 |     c.yss[0][0] = "a"
+   |     ^^^^^^^^^^^^^^^^^
+   |
+help: mark the field `mut`
+   |
+ 7 |     mut yss: [[i64]]
+   |     +++
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-index-continues.sisu:20:19
+   |
+20 |     c.yss[0][0] = "a"
+   |                   ^^^
+
+error[E0062]: `c` may be `None`
+  --> E0062-index-continues.sisu:24:5
+   |
+24 |     c.yss[0][0] += "a"
+   |     ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0001]: cannot assign to an element of `yss`
+  --> E0062-index-continues.sisu:24:5
+   |
+ 7 |     yss: [[i64]]
+   |     --- declared without `mut` here
+...
+24 |     c.yss[0][0] += "a"
+   |     ^^^^^^^^^^^^^^^^^^
+   |
+help: mark the field `mut`
+   |
+ 7 |     mut yss: [[i64]]
+   |     +++
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-index-continues.sisu:24:20
+   |
+24 |     c.yss[0][0] += "a"
+   |                    ^^^
+
+error[E0062]: `c` may be `None`
+  --> E0062-index-continues.sisu:28:21
+   |
+28 |     let s: string = c.yss[0][0]
+   |                     ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0032]: expected `string`, found `i64`
+  --> E0062-index-continues.sisu:28:21
+   |
+28 |     let s: string = c.yss[0][0]
+   |                     ^^^^^^^^^^^
+
+error[E0062]: `c` may be `None`
+  --> E0062-index-continues.sisu:32:5
+   |
+32 |     c.oys[0].push("a")
+   |     ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `c.oys` may be `None`
+  --> E0062-index-continues.sisu:32:5
+   |
+32 |     c.oys[0].push("a")
+   |     ^^^^^
+
+error[E0001]: cannot change `oys`
+  --> E0062-index-continues.sisu:32:5
+   |
+ 8 |     oys: [[i64]]?
+   |     --- declared without `mut` here
+...
+32 |     c.oys[0].push("a")
+   |     ^^^^^^^^ `push` changes `oys`
+   |
+help: mark the field `mut`
+   |
+ 8 |     mut oys: [[i64]]?
+   |     +++
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-index-continues.sisu:32:19
+   |
+32 |     c.oys[0].push("a")
+   |                   ^^^
+
+error[E0001]: cannot change `yss`
+  --> E0062-index-continues.sisu:36:5
+   |
+ 7 |     yss: [[i64]]
+   |     --- declared without `mut` here
+...
+36 |     c.yss[0].push("a")
+   |     ^^^^^^^^ `push` changes `yss`
+   |
+help: mark the field `mut`
+   |
+ 7 |     mut yss: [[i64]]
+   |     +++
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-index-continues.sisu:36:19
+   |
+36 |     c.yss[0].push("a")
+   |                   ^^^
+
+error[E0001]: cannot assign to an element of `yss`
+  --> E0062-index-continues.sisu:40:5
+   |
+ 7 |     yss: [[i64]]
+   |     --- declared without `mut` here
+...
+40 |     c.yss[0] = ["a"]
+   |     ^^^^^^^^^^^^^^^^
+   |
+help: mark the field `mut`
+   |
+ 7 |     mut yss: [[i64]]
+   |     +++
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-index-continues.sisu:40:17
+   |
+40 |     c.yss[0] = ["a"]
+   |                 ^^^
+
+error[E0001]: cannot assign to an element of `yss`
+  --> E0062-index-continues.sisu:44:5
+   |
+ 7 |     yss: [[i64]]
+   |     --- declared without `mut` here
+...
+44 |     c.yss[0][0] = "a"
+   |     ^^^^^^^^^^^^^^^^^
+   |
+help: mark the field `mut`
+   |
+ 7 |     mut yss: [[i64]]
+   |     +++
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-index-continues.sisu:44:19
+   |
+44 |     c.yss[0][0] = "a"
+   |                   ^^^
+
+error[E0001]: cannot assign to an element of `yss`
+  --> E0062-index-continues.sisu:48:5
+   |
+ 7 |     yss: [[i64]]
+   |     --- declared without `mut` here
+...
+48 |     c.yss[0][0] += "a"
+   |     ^^^^^^^^^^^^^^^^^^
+   |
+help: mark the field `mut`
+   |
+ 7 |     mut yss: [[i64]]
+   |     +++
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-index-continues.sisu:48:20
+   |
+48 |     c.yss[0][0] += "a"
+   |                    ^^^
+
+error[E0032]: expected `string`, found `i64`
+  --> E0062-index-continues.sisu:52:21
+   |
+52 |     let s: string = c.yss[0][0]
+   |                     ^^^^^^^^^^^
+
+error[E0062]: `c.oys` may be `None`
+  --> E0062-index-continues.sisu:56:5
+   |
+56 |     c.oys[0].push("a")
+   |     ^^^^^
+
+error[E0001]: cannot change `oys`
+  --> E0062-index-continues.sisu:56:5
+   |
+ 8 |     oys: [[i64]]?
+   |     --- declared without `mut` here
+...
+56 |     c.oys[0].push("a")
+   |     ^^^^^^^^ `push` changes `oys`
+   |
+help: mark the field `mut`
+   |
+ 8 |     mut oys: [[i64]]?
+   |     +++
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-index-continues.sisu:56:19
+   |
+56 |     c.oys[0].push("a")
+   |                   ^^^
+
+error[E0062]: `c?.yss` may be `None`
+  --> E0062-index-continues.sisu:60:5
+   |
+60 |     c?.yss[0].push("a")
+   |     ^^^^^^
+   |
+   = help: unwrap `c` with `if let`, `let ... else` or `?? return`
+
+error[E0001]: cannot change `yss`
+  --> E0062-index-continues.sisu:60:5
+   |
+ 7 |     yss: [[i64]]
+   |     --- declared without `mut` here
+...
+60 |     c?.yss[0].push("a")
+   |     ^^^^^^^^^ `push` changes `yss`
+   |
+help: mark the field `mut`
+   |
+ 7 |     mut yss: [[i64]]
+   |     +++
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-index-continues.sisu:60:20
+   |
+60 |     c?.yss[0].push("a")
+   |                    ^^^
+
+error[E0062]: `c?.yss` may be `None`
+  --> E0062-index-continues.sisu:64:5
+   |
+64 |     c?.yss[0] = ["a"]
+   |     ^^^^^^
+   |
+   = help: unwrap `c` with `if let`, `let ... else` or `?? return`
+
+error[E0001]: cannot assign to an element of `yss`
+  --> E0062-index-continues.sisu:64:5
+   |
+ 7 |     yss: [[i64]]
+   |     --- declared without `mut` here
+...
+64 |     c?.yss[0] = ["a"]
+   |     ^^^^^^^^^^^^^^^^^
+   |
+help: mark the field `mut`
+   |
+ 7 |     mut yss: [[i64]]
+   |     +++
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-index-continues.sisu:64:18
+   |
+64 |     c?.yss[0] = ["a"]
+   |                  ^^^
+
+error[E0062]: `c?.yss` may be `None`
+  --> E0062-index-continues.sisu:68:5
+   |
+68 |     c?.yss[0][0] = "a"
+   |     ^^^^^^
+   |
+   = help: unwrap `c` with `if let`, `let ... else` or `?? return`
+
+error[E0001]: cannot assign to an element of `yss`
+  --> E0062-index-continues.sisu:68:5
+   |
+ 7 |     yss: [[i64]]
+   |     --- declared without `mut` here
+...
+68 |     c?.yss[0][0] = "a"
+   |     ^^^^^^^^^^^^^^^^^^
+   |
+help: mark the field `mut`
+   |
+ 7 |     mut yss: [[i64]]
+   |     +++
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-index-continues.sisu:68:20
+   |
+68 |     c?.yss[0][0] = "a"
+   |                    ^^^
+
+error[E0062]: `c?.yss` may be `None`
+  --> E0062-index-continues.sisu:72:5
+   |
+72 |     c?.yss[0][0] += "a"
+   |     ^^^^^^
+   |
+   = help: unwrap `c` with `if let`, `let ... else` or `?? return`
+
+error[E0001]: cannot assign to an element of `yss`
+  --> E0062-index-continues.sisu:72:5
+   |
+ 7 |     yss: [[i64]]
+   |     --- declared without `mut` here
+...
+72 |     c?.yss[0][0] += "a"
+   |     ^^^^^^^^^^^^^^^^^^^
+   |
+help: mark the field `mut`
+   |
+ 7 |     mut yss: [[i64]]
+   |     +++
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-index-continues.sisu:72:21
+   |
+72 |     c?.yss[0][0] += "a"
+   |                     ^^^
+
+error[E0062]: `c?.yss` may be `None`
+  --> E0062-index-continues.sisu:76:21
+   |
+76 |     let s: string = c?.yss[0][0]
+   |                     ^^^^^^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0032]: expected `string`, found `i64`
+  --> E0062-index-continues.sisu:76:21
+   |
+76 |     let s: string = c?.yss[0][0]
+   |                     ^^^^^^^^^^^^
+
+error[E0062]: `c?.oys` may be `None`
+  --> E0062-index-continues.sisu:80:5
+   |
+80 |     c?.oys[0].push("a")
+   |     ^^^^^^
+
+error[E0001]: cannot change `oys`
+  --> E0062-index-continues.sisu:80:5
+   |
+ 8 |     oys: [[i64]]?
+   |     --- declared without `mut` here
+...
+80 |     c?.oys[0].push("a")
+   |     ^^^^^^^^^ `push` changes `oys`
+   |
+help: mark the field `mut`
+   |
+ 8 |     mut oys: [[i64]]?
+   |     +++
+
+error[E0032]: expected `i64`, found `string`
+  --> E0062-index-continues.sisu:80:20
+   |
+80 |     c?.oys[0].push("a")
+   |                    ^^^
+
+sisu: 47 errors
+sisu: for more on a code, run `sisu explain <code>`: E0001, E0032, E0062

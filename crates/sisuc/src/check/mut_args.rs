@@ -332,7 +332,18 @@ impl Checker<'_> {
     /// local as the cascade of the call's error.
     pub(super) fn stamp_marked(&mut self, args: &[ast::Arg]) {
         for arg in args.iter().filter(|arg| arg.mut_keyword.is_some()) {
+            self.body.mut_values.insert(arg.value.span);
             self.stamp_push(&arg.value);
+        }
+    }
+
+    /// Stamps each argument of `args` at a `mut` parameter of `muts`, for every call whose callee
+    /// is known. A value at a `mut` parameter gets the help of a place. A call that fails early
+    /// checks its arguments as values, so this runs before the call tests the count and the types.
+    /// `muts` can be shorter than `args`, when the count is wrong.
+    pub(super) fn stamp_mut_params(&mut self, args: &[ast::Arg], muts: &[bool]) {
+        for (arg, _) in args.iter().zip(muts).filter(|&(_, &mutable)| mutable) {
+            self.body.mut_values.insert(arg.value.span);
         }
     }
 

@@ -1,0 +1,170 @@
+warning[W0002]: `v` is never reassigned, so its `mut` changes nothing for the caller
+  --> E0021-push-failed-call.sisu:18:13
+   |
+18 | fn bump(mut v: i64, n: i64) -> [string] { [] }
+   |             ^ never reassigned
+
+error[E0053]: `g` takes 1 argument, found 2
+  --> E0021-push-failed-call.sisu:21:5
+   |
+21 |     g(1, x).push("a")
+   |     ^^^^^^^
+
+error[E0021]: cannot push to a temporary value
+  --> E0021-push-failed-call.sisu:21:5
+   |
+21 |     g(1, x).push("a")
+   |     ^^^^^^^ this value is not stored in a variable
+   |
+   = help: store it in a `let mut` variable first
+
+error[E0053]: `Node.ys` takes 1 argument, found 2
+  --> E0021-push-failed-call.sisu:24:5
+   |
+24 |     c.ys(1, 2).push("a")
+   |     ^^^^^^^^^^
+
+error[E0021]: cannot push to a temporary value
+  --> E0021-push-failed-call.sisu:24:5
+   |
+24 |     c.ys(1, 2).push("a")
+   |     ^^^^^^^^^^ this value is not stored in a variable
+   |
+   = help: store it in a `let mut` variable first
+
+error[E0021]: cannot push to a temporary value
+  --> E0021-push-failed-call.sisu:27:5
+   |
+27 |     g("s").push("a")
+   |     ^^^^^^ this value is not stored in a variable
+   |
+   = help: store it in a `let mut` variable first
+
+error[E0032]: expected `i64`, found `string`
+  --> E0021-push-failed-call.sisu:27:7
+   |
+27 |     g("s").push("a")
+   |       ^^^
+
+error[E0021]: cannot push to a temporary value
+  --> E0021-push-failed-call.sisu:30:5
+   |
+30 |     g(m: 1).push("a")
+   |     ^^^^^^^ this value is not stored in a variable
+   |
+   = help: store it in a `let mut` variable first
+
+error[E0055]: this call takes no labels on its arguments
+  --> E0021-push-failed-call.sisu:30:7
+   |
+30 |     g(m: 1).push("a")
+   |       ^
+   |
+   = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0021]: cannot push to a temporary value
+  --> E0021-push-failed-call.sisu:33:5
+   |
+33 |     c.ys("s").push("a")
+   |     ^^^^^^^^^ this value is not stored in a variable
+   |
+   = help: store it in a `let mut` variable first
+
+error[E0032]: expected `i64`, found `string`
+  --> E0021-push-failed-call.sisu:33:10
+   |
+33 |     c.ys("s").push("a")
+   |          ^^^
+
+error[E0053]: `h` takes 1 argument, found 2
+  --> E0021-push-failed-call.sisu:36:5
+   |
+36 |     h(1, 2).push("a")
+   |     ^^^^^^^
+
+error[E0021]: cannot push to a temporary value
+  --> E0021-push-failed-call.sisu:36:5
+   |
+36 |     h(1, 2).push("a")
+   |     ^^^^^^^ this value is not stored in a variable
+   |
+   = help: store it in a `let mut` variable first
+
+error[E0053]: `gen` takes 1 argument, found 2
+  --> E0021-push-failed-call.sisu:39:5
+   |
+39 |     gen(1, 2).push("a")
+   |     ^^^^^^^^^
+
+error[E0053]: `gen` takes 1 argument, found 2
+  --> E0021-push-failed-call.sisu:42:5
+   |
+42 |     gen<i64>(1, 2).push("a")
+   |     ^^^^^^^^^^^^^^
+
+error[E0021]: cannot push to a temporary value
+  --> E0021-push-failed-call.sisu:42:5
+   |
+42 |     gen<i64>(1, 2).push("a")
+   |     ^^^^^^^^^^^^^^ this value is not stored in a variable
+   |
+   = help: store it in a `let mut` variable first
+
+error[E0021]: cannot push to a temporary value
+  --> E0021-push-failed-call.sisu:45:5
+   |
+45 |     gen<i64>("s").push("a")
+   |     ^^^^^^^^^^^^^ this value is not stored in a variable
+   |
+   = help: store it in a `let mut` variable first
+
+error[E0032]: expected `i64`, found `string`
+  --> E0021-push-failed-call.sisu:45:14
+   |
+45 |     gen<i64>("s").push("a")
+   |              ^^^
+
+error[E0053]: `Node.zs` takes 1 argument, found 2
+  --> E0021-push-failed-call.sisu:48:5
+   |
+48 |     c.zs(1, 2).push("a")
+   |     ^^^^^^^^^^
+
+error[E0021]: cannot push to a temporary value
+  --> E0021-push-failed-call.sisu:48:5
+   |
+48 |     c.zs(1, 2).push("a")
+   |     ^^^^^^^^^^ this value is not stored in a variable
+   |
+   = help: store it in a `let mut` variable first
+
+error[E0053]: `bump` takes 2 arguments, found 3
+  --> E0021-push-failed-call.sisu:52:5
+   |
+52 |     bump(mut v, 1, 2).push("a")
+   |     ^^^^^^^^^^^^^^^^^
+
+error[E0021]: cannot push to a temporary value
+  --> E0021-push-failed-call.sisu:52:5
+   |
+52 |     bump(mut v, 1, 2).push("a")
+   |     ^^^^^^^^^^^^^^^^^ this value is not stored in a variable
+   |
+   = help: store it in a `let mut` variable first
+
+error[E0021]: cannot push to a temporary value
+  --> E0021-push-failed-call.sisu:55:5
+   |
+55 |     g(zz).push("a")
+   |     ^^^^^ this value is not stored in a variable
+   |
+   = help: store it in a `let mut` variable first
+
+error[E0033]: cannot find binding `zz`
+  --> E0021-push-failed-call.sisu:55:7
+   |
+55 |     g(zz).push("a")
+   |       ^^
+
+sisu: 23 errors, 1 warning
+sisu: for more on a code, run `sisu explain <code>`: E0021, E0032, E0033, E0053, E0055, W0002

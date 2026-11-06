@@ -367,7 +367,7 @@ impl Checker<'_> {
                 found: args.len(),
                 at: span,
             };
-            return self.rejected(d.into(), args);
+            return self.rejected(d.into(), args, Some(ty));
         }
         let kind = receiver.ok().map(|r| node(Box::new(r)));
         typed(span, ty, false, kind)

@@ -248,7 +248,9 @@ parameter, so `[T]` for `T` weighs 1. A call through a bound reaches every
 conformance of its interface. A cycle with a total weight above zero is the
 error ([ADR 0023](adr/0023-generics-are-monomorphized-and-checked-at-the-definition.md)). The checker
 reports every error in one run: an expression that already failed gets the
-poison type, so one mistake produces one diagnostic. A program with no errors comes out as the
+poison type, so one mistake produces one diagnostic. A failed call keeps the
+result type that its callee gives when the arguments do not decide it. Then the
+checker still checks the code that uses the value. A program with no errors comes out as the
 typed tree, `tir`, which `mir` is built from. A type in `tir` is a
 4-byte `Type` handle into one table (`types.rs`), as a name is a `Symbol`;
 its `kind()` gives the structure, and equal structures get the same handle.

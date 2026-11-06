@@ -187,16 +187,28 @@ fn string_get_through_safe_access_should_be_an_optional_string() {
 /// THEN it reports E0062 at the receiver, once, as `len()` does, and not E0023 at the range
 #[test]
 fn string_get_on_an_optional_string_should_be_e0062_at_the_receiver() {
+    // The `get` of a range gives a `string?`, which `print` warns about, as it does after the
+    // unwrap that the help names.
     let rows = [
-        ("local", "o.get(1..3)", (5, 11)),
-        ("field", "c.o.get(1..3)", (5, 11)),
-        ("len", "o.len()", (5, 11)),
+        ("local", "o.get(1..3)", (5, 11), Some(Code::PrintsOptional)),
+        (
+            "field",
+            "c.o.get(1..3)",
+            (5, 11),
+            Some(Code::PrintsOptional),
+        ),
+        ("len", "o.len()", (5, 11), None),
     ];
-    for (row, call, at) in rows {
+    for (row, call, at, warned) in rows {
         let src = format!(
             "class C {{ o: string? }}\nfn main() {{\n    let o: string? = \"abc\"\n    let c = C(o: o)\n    print({call})\n}}"
         );
-        codes_row(row, &src, &[(Code::MayBeNone, at)]);
+        let wanted: Vec<_> = [Code::MayBeNone]
+            .into_iter()
+            .chain(warned)
+            .map(|code| (code, at))
+            .collect();
+        codes_row(row, &src, &wanted);
     }
 }
 
@@ -800,7 +812,7 @@ fn get_with_a_range_should_report_only_true_errors() {
             "wrong count",
             "fn f(n: i64) -> string {\n    return \"x\"\n}\n\nfn main() {\n    print(f(1, 2).get(..) ?? \"\")\n}"
                 .to_string(),
-            vec![(Code::ArgumentCount, (6, 11))],
+            vec![(Code::ArgumentCount, (6, 11)), (RANGE, (6, 23))],
         ),
         (
             "unknown receiver",

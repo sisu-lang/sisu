@@ -107,7 +107,7 @@ error[E0062]: `c` may be `None`
 58 |     c.xs.push("a")
    |     ^
    |
-   = help: unwrap it with `if let`, `let ... else` or `?? return`
+   = help: peel the extra layer first: `(c ?? None)?.xs`
 
 error[E0032]: expected `i64`, found `string`
   --> E0062-push-on-payload.sisu:58:15
@@ -189,16 +189,6 @@ error[E0021]: cannot push to a temporary value
    |
    = help: store it in a `let mut` variable first
 
-error[E0001]: cannot change `xs`
-  --> E0062-push-on-payload.sisu:78:5
-   |
-77 | fn missing_argument(xs: [i64]?) {
-   |                     -- declared as a parameter here
-78 |     xs.push()
-   |     ^^ `push` changes `xs`
-   |
-   = help: copy it into a variable: `let mut xs = xs`
-
 error[E0062]: `xs` may be `None`
   --> E0062-push-on-payload.sisu:78:5
    |
@@ -209,6 +199,16 @@ help: to do nothing when it is `None`, use `?.`
    |
 78 |     xs?.push()
    |       +
+
+error[E0001]: cannot change `xs`
+  --> E0062-push-on-payload.sisu:78:5
+   |
+77 | fn missing_argument(xs: [i64]?) {
+   |                     -- declared as a parameter here
+78 |     xs.push()
+   |     ^^ `push` changes `xs`
+   |
+   = help: copy it into a variable: `let mut xs = xs`
 
 error[E0053]: `[i64].push` takes 1 argument, found 0
   --> E0062-push-on-payload.sisu:78:5
@@ -397,6 +397,12 @@ error[E0062]: `c?.xss` may be `None`
     |
     = help: unwrap `c` with `if let`, `let ... else` or `?? return`
 
+error[E0032]: expected `i64`, found `string`
+   --> E0062-push-on-payload.sisu:133:20
+    |
+133 |     c?.xss[0].push("a")
+    |                    ^^^
+
 error[E0062]: `c?.xs` may be `None`
    --> E0062-push-on-payload.sisu:137:5
     |
@@ -518,16 +524,6 @@ help: if a `None` result is fine, use `?.`
 178 |     b?.s.push(1)
     |      +
 
-error[E0001]: cannot change `xs`
-   --> E0062-push-on-payload.sisu:182:5
-    |
-181 | fn local_optional_array(xs: [i64]?) {
-    |                         -- declared as a parameter here
-182 |     xs.push(1)
-    |     ^^ `push` changes `xs`
-    |
-    = help: copy it into a variable: `let mut xs = xs`
-
 error[E0062]: `xs` may be `None`
    --> E0062-push-on-payload.sisu:182:5
     |
@@ -540,11 +536,11 @@ help: to do nothing when it is `None`, use `?.`
     |       +
 
 error[E0001]: cannot change `xs`
-   --> E0062-push-on-payload.sisu:186:5
+   --> E0062-push-on-payload.sisu:182:5
     |
-185 | fn count_two_local(xs: [i64]?) {
-    |                    -- declared as a parameter here
-186 |     xs.push(1, 2)
+181 | fn local_optional_array(xs: [i64]?) {
+    |                         -- declared as a parameter here
+182 |     xs.push(1)
     |     ^^ `push` changes `xs`
     |
     = help: copy it into a variable: `let mut xs = xs`
@@ -560,21 +556,21 @@ help: to do nothing when it is `None`, use `?.`
 186 |     xs?.push(1, 2)
     |       +
 
+error[E0001]: cannot change `xs`
+   --> E0062-push-on-payload.sisu:186:5
+    |
+185 | fn count_two_local(xs: [i64]?) {
+    |                    -- declared as a parameter here
+186 |     xs.push(1, 2)
+    |     ^^ `push` changes `xs`
+    |
+    = help: copy it into a variable: `let mut xs = xs`
+
 error[E0053]: `[i64].push` takes 1 argument, found 2
    --> E0062-push-on-payload.sisu:186:5
     |
 186 |     xs.push(1, 2)
     |     ^^^^^^^^^^^^^
-
-error[E0001]: cannot change `xss`
-   --> E0062-push-on-payload.sisu:190:5
-    |
-189 | fn index_local_optional(xss: [[i64]?]) {
-    |                         --- declared as a parameter here
-190 |     xss[0].push("a")
-    |     ^^^^^^ `push` changes `xss`
-    |
-    = help: copy it into a variable: `let mut xss = xss`
 
 error[E0062]: this value may be `None`
    --> E0062-push-on-payload.sisu:190:5
@@ -587,21 +583,21 @@ help: to do nothing when it is `None`, use `?.`
 190 |     xss[0]?.push("a")
     |           +
 
+error[E0001]: cannot change `xss`
+   --> E0062-push-on-payload.sisu:190:5
+    |
+189 | fn index_local_optional(xss: [[i64]?]) {
+    |                         --- declared as a parameter here
+190 |     xss[0].push("a")
+    |     ^^^^^^ `push` changes `xss`
+    |
+    = help: copy it into a variable: `let mut xss = xss`
+
 error[E0032]: expected `i64`, found `string`
    --> E0062-push-on-payload.sisu:190:17
     |
 190 |     xss[0].push("a")
     |                 ^^^
-
-error[E0001]: cannot change `xs`
-   --> E0062-push-on-payload.sisu:194:5
-    |
-193 | fn alias_local_wrong(xs: M<[i64]>) {
-    |                      -- declared as a parameter here
-194 |     xs.push("a")
-    |     ^^ `push` changes `xs`
-    |
-    = help: copy it into a variable: `let mut xs = xs`
 
 error[E0062]: `xs` may be `None`
    --> E0062-push-on-payload.sisu:194:5
@@ -614,11 +610,29 @@ help: to do nothing when it is `None`, use `?.`
 194 |     xs?.push("a")
     |       +
 
+error[E0001]: cannot change `xs`
+   --> E0062-push-on-payload.sisu:194:5
+    |
+193 | fn alias_local_wrong(xs: M<[i64]>) {
+    |                      -- declared as a parameter here
+194 |     xs.push("a")
+    |     ^^ `push` changes `xs`
+    |
+    = help: copy it into a variable: `let mut xs = xs`
+
 error[E0032]: expected `i64`, found `string`
    --> E0062-push-on-payload.sisu:194:13
     |
 194 |     xs.push("a")
     |             ^^^
+
+error[E0062]: `xs` may be `None`
+   --> E0062-push-on-payload.sisu:198:5
+    |
+198 |     xs.push(1)
+    |     ^^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
 
 error[E0001]: cannot change `xs`
    --> E0062-push-on-payload.sisu:198:5
@@ -631,9 +645,9 @@ error[E0001]: cannot change `xs`
     = help: copy it into a variable: `let mut xs = xs`
 
 error[E0062]: `xs` may be `None`
-   --> E0062-push-on-payload.sisu:198:5
+   --> E0062-push-on-payload.sisu:202:5
     |
-198 |     xs.push(1)
+202 |     xs.push("a")
     |     ^^
     |
     = help: unwrap it with `if let`, `let ... else` or `?? return`
@@ -648,19 +662,19 @@ error[E0001]: cannot change `xs`
     |
     = help: copy it into a variable: `let mut xs = xs`
 
-error[E0062]: `xs` may be `None`
-   --> E0062-push-on-payload.sisu:202:5
-    |
-202 |     xs.push("a")
-    |     ^^
-    |
-    = help: unwrap it with `if let`, `let ... else` or `?? return`
-
 error[E0032]: expected `i64`, found `string`
    --> E0062-push-on-payload.sisu:202:13
     |
 202 |     xs.push("a")
     |             ^^^
+
+error[E0062]: `xs` may be `None`
+   --> E0062-push-on-payload.sisu:206:5
+    |
+206 |     xs.push()
+    |     ^^
+    |
+    = help: unwrap it with `if let`, `let ... else` or `?? return`
 
 error[E0001]: cannot change `xs`
    --> E0062-push-on-payload.sisu:206:5
@@ -672,19 +686,11 @@ error[E0001]: cannot change `xs`
     |
     = help: copy it into a variable: `let mut xs = xs`
 
-error[E0062]: `xs` may be `None`
-   --> E0062-push-on-payload.sisu:206:5
-    |
-206 |     xs.push()
-    |     ^^
-    |
-    = help: unwrap it with `if let`, `let ... else` or `?? return`
-
 error[E0053]: `[i64].push` takes 1 argument, found 0
    --> E0062-push-on-payload.sisu:206:5
     |
 206 |     xs.push()
     |     ^^^^^^^^^
 
-sisu: 75 errors
+sisu: 76 errors
 sisu: for more on a code, run `sisu explain <code>`: E0001, E0021, E0032, E0033, E0049, E0053, E0055, E0062, E0063

@@ -40,7 +40,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::ast;
 use crate::conformance::{self, StuckChoices};
 use crate::diagnostic::{
-    BuiltIn, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, Expected, Literal,
+    BuiltIn, Code, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, Expected, Literal,
     MainForm, MismatchFix, MismatchSource, Severity, Unbuilt, UnknownForm, suggestion,
 };
 use crate::front_end::PreludeProgram;
@@ -69,10 +69,46 @@ use unused_names::{Owner, Pending, Use, Used};
 /// arguments are each checked against their own parameter, so one bad argument does not
 /// excuse another.
 ///
+/// A failed call keeps the result type that its callee fixes: a function, a method, a
+/// constructor, a variant, a built-in method or a prelude function. The receiver's type
+/// arguments and the written ones are put in the result (`Checker::fixed_result`).
+///
+/// A callee whose result names a parameter that only the arguments bind gives `Error`, as `dbg`,
+/// `get` and a conversion do. So does a call whose written type arguments fail, and a call that
+/// gives a bound to its own parameter when that bound fails or no list is written: the corrected
+/// call is `Error` then (`Checker::counted_result`).
+///
+/// A construction of a generic class or variant keeps the type that its written list, or its
+/// alias, fixes. It is `Error` when that list fails, or fails a bound.
+///
 /// A generic call that cannot meet its context is `Error` too, but it keeps the type it found
 /// in `found`. A block, a branch and a safe call keep that field for the code that uses the value.
 /// A value in which a generic call kept its E0050 has `kept` set. A block, a branch, unary `-`,
 /// a number operator, and a call that fails on an unbound parameter, keep that field too.
+///
+/// A value that an E0062 typed has `unwrapped` set (see `Flag`). A value built from it has
+/// the flag too.
+///
+/// A place that makes a new `Poisoned` from a value with the remedy flag keeps the right state.
+/// A new value that is the same value copies the state. A new value built from it sets `Built`.
+/// Only the `.` that reports E0062 sets `Member`, and only when its value has no remedy flag.
+///
+/// The flag spreads through `!`, unary `-`, each operator but `==` and `!=`, a block and a join.
+/// It spreads through an `if` condition, `Some`, and both sides of `??`. It spreads through a
+/// generic call, method, constructor, variant or interface call whose result names a type
+/// parameter. It spreads through `dbg` and a slice. A `.` or a method call on a flagged base,
+/// an index on a base with the remedy flag, and a `?.` after a flagged optional, keep it too.
+/// A `?.` is built from its member or its scrutinee when either has the remedy flag, else it is
+/// its scrutinee again.
+///
+/// A rule that fails on a member of an optional type under both remedies builds from any flag
+/// (`is_unwrapped`). These rules are an operator, `!`, unary `-`, a field, a method call, a
+/// slice and a place. A rule whose type depends on the remedy reads the remedy flag
+/// (`has_remedy_flag`). These rules are a `let`, a `for`, a join, `Some`, `??`, a pattern, an
+/// index, `?.` and E0124.
+///
+/// The remedy flag is `unwrapped` set, except for a member of an optional type. That member has
+/// the same type under the `if let` unwrap and under the `?.` fix.
 struct Poisoned {
     ty: Option<Type>,
     /// Whether the expected type passed down was rejected (a `None` that is not optional, a
@@ -88,6 +124,23 @@ struct Poisoned {
     /// type, so it holds the code that uses it to nothing. That code adds no report for the
     /// default type of an operator.
     kept: bool,
+    /// The value is typed by the unwrap that the help of its E0062 names. It comes from a `.` on
+    /// an optional, and has the type that the member has on the payload. The `?.` fix of the
+    /// E0062 would make the value optional. So a check that fires only because the value is not
+    /// optional (E0044, E0048, E0049, E0051) or not matchable (E0124) skips it. A `let` or a
+    /// `for` binds `Error` for it, as its optionality depends on the remedy.
+    unwrapped: Flag,
+}
+
+/// How a value got its `Poisoned::unwrapped` flag.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Flag {
+    /// Not typed by an E0062.
+    No,
+    /// The member itself, from the `.` that reported the E0062 (see `Poisoned::unwrapped`).
+    Member,
+    /// Built from a flagged value, as `spread` does.
+    Built,
 }
 
 /// The result type of a generic call that cannot meet its context (see `report_unbound`). The
@@ -117,6 +170,16 @@ impl Poisoned {
             mismatch: false,
             found: None,
             kept: false,
+            unwrapped: Flag::No,
+        }
+    }
+
+    /// A failed `.` on an optional, whose member has the type `ty` on the payload (see
+    /// `Poisoned::unwrapped`).
+    fn unwrapped(ty: Option<Type>) -> Self {
+        Self {
+            unwrapped: Flag::Member,
+            ..Self::of(ty)
         }
     }
 
@@ -132,6 +195,50 @@ impl Poisoned {
 /// Whether a generic call in `checked` kept its E0050 (see `Poisoned::kept`).
 fn is_kept<T>(checked: &Result<T, Poisoned>) -> bool {
     matches!(checked, Err(Poisoned { kept: true, .. }))
+}
+
+/// Whether `checked` is typed by the unwrap of an E0062 (see `Poisoned::unwrapped`).
+fn is_unwrapped<T>(checked: &Result<T, Poisoned>) -> bool {
+    matches!(
+        checked,
+        Err(Poisoned {
+            unwrapped: Flag::Member | Flag::Built,
+            ..
+        })
+    )
+}
+
+/// Whether `checked` is flagged, and not a member of an optional type. The type of such a value
+/// depends on the remedy: the `?.` fix would make it optional. A member of an optional type is
+/// the same under both remedies.
+fn has_remedy_flag<T>(checked: &Result<T, Poisoned>) -> bool {
+    match checked {
+        Err(Poisoned {
+            unwrapped: Flag::Built,
+            ..
+        }) => true,
+        Err(Poisoned {
+            unwrapped: Flag::Member,
+            ty,
+            ..
+        }) => !ty.is_some_and(|ty| matches!(ty.kind(), TypeKind::Optional(_))),
+        _ => false,
+    }
+}
+
+/// `checked`, built from a flagged value when `from` is. Under the `?.` fix of an operand's E0062,
+/// the result of some rules is optional. Those rules pass the flag on, so their result gets no
+/// report that it is not optional. A result that both remedies give the same, such as `==`, does
+/// not.
+fn spread<T>(checked: Result<T, Poisoned>, from: bool) -> Result<T, Poisoned> {
+    checked.map_err(|poisoned| Poisoned {
+        unwrapped: if from && poisoned.unwrapped == Flag::No {
+            Flag::Built
+        } else {
+            poisoned.unwrapped
+        },
+        ..poisoned
+    })
 }
 
 type Checked = Result<tir::Expr, Poisoned>;
@@ -965,6 +1072,13 @@ struct Body {
     /// The method is missing, or it is a field or a variant (`report_lookup_failure`). The
     /// check of a `.` on an optional reads it, to report E0062 only when the member is found.
     failed_lookups: FxHashSet<Span>,
+    /// The span of each `Some` that gave an error: it is never `None`, whatever type the error
+    /// gives it, so printing it gets no W0015 (`warn_if_optional`).
+    failed_some_spans: FxHashSet<Span>,
+    /// The span of each argument value that is written with `mut`, or is at a `mut` parameter of
+    /// a callee that the call knows. `expr` checks such a value as the base of an index
+    /// (`indexed`). The `?.` fix of an E0062 in it leads to a path that is no place (E0170).
+    mut_values: FxHashSet<Span>,
     /// The target of the compound assignment being checked, whose reads are not reads: they
     /// only give the value back to the target.
     quiet: Option<Span>,
@@ -1096,7 +1210,7 @@ pub(crate) fn check<'src>(
     checker.report_loops();
     let classes = checker.classes.iter().map(lower_class).collect();
     let mut diagnostics = std::mem::take(&mut checker.diagnostics).into_vec();
-    diagnostics.sort_by_key(|d| d.span().start());
+    diagnostics.sort_by_key(order);
     let errors = error_spans(&diagnostics);
     // A function with an error of its own is skipped, so that its errors stand alone.
     let warnings: Vec<Diagnostic> = functions
@@ -1126,7 +1240,7 @@ pub(crate) fn check<'src>(
         })
         .collect();
     diagnostics.extend(warnings);
-    diagnostics.sort_by_key(|d| d.span().start());
+    diagnostics.sort_by_key(order);
     let failed = diagnostics.iter().any(|d| d.severity() == Severity::Error);
     // A use in a failed expression may not be recorded, so an error stops the pass. Only the
     // parser sees an item that fails to parse.
@@ -1135,7 +1249,7 @@ pub(crate) fn check<'src>(
     } else {
         diagnostics.extend(checker.unjudged());
     }
-    diagnostics.sort_by_key(|d| d.span().start());
+    diagnostics.sort_by_key(order);
     let broken = !program.broken.is_empty()
         || items.iter().any(|item| match item {
             ast::Item::Class(class) => !class.broken_methods.is_empty(),
@@ -1195,6 +1309,15 @@ pub(crate) fn check_alone(
         &crate::front_end::prelude_program(""),
         source,
         parsed,
+    )
+}
+
+/// The key that orders diagnostics: where each starts, and at one start each E0062 before the
+/// rest, whichever check ran first.
+fn order(diagnostic: &Diagnostic) -> (usize, bool) {
+    (
+        diagnostic.span().start(),
+        diagnostic.code() != Code::MayBeNone,
     )
 }
 
