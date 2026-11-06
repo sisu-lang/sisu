@@ -1074,11 +1074,17 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// itself, `null` for `None`; an enum goes to its helper by address; the payload of any other
     /// optional is counted only when the optional holds a value, one layer at a time.
     fn retain_or_release(&self, kind: Helper, value: BasicValueEnum<'ctx>, ty: Type) {
+        if ty.is_counted(&self.program.enums) {
+            self.count_counted(kind, value, ty);
+        }
+    }
+
+    /// `retain_or_release` of a value of the counted type `ty`. `is_counted` walks all the layers
+    /// of an optional, so `retain_or_release` asks it once, and an optional layer here does not
+    /// ask it again: the payload of a counted optional is counted.
+    fn count_counted(&self, kind: Helper, value: BasicValueEnum<'ctx>, ty: Type) {
         if counted_core(ty).is_some() {
             self.count_object(kind, ty, self.counted_pointer(ty, value));
-            return;
-        }
-        if !ty.is_counted(&self.program.enums) {
             return;
         }
         match ty.kind() {
@@ -1094,7 +1100,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                     .expect(POSITIONED);
                 self.builder.position_at_end(some);
                 let value = self.optional_value(ty, value, "payload");
-                self.retain_or_release(kind, value, payload);
+                self.count_counted(kind, value, payload);
                 self.branch_to(done);
                 self.builder.position_at_end(done);
             }
