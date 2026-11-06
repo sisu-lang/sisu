@@ -13,6 +13,7 @@ import sys
 import tempfile
 import time
 import unittest
+import uuid
 
 ARTIFACTS = os.environ.get('SISU_ARTIFACTS')
 LINUX = sys.platform.startswith('linux')
@@ -36,14 +37,19 @@ def install(home, path=None):
                           capture_output=True, text=True, timeout=300, check=False)
 
 
-def docker(image, command):
+def docker(image, command, timeout=600):
     """Runs `sh -c command` in the image with ARTIFACTS at /dl. The pull is quiet, so that its
-    progress does not reach the stderr of the test."""
+    progress does not reach the stderr of the test. A timeout kills the docker client, not the
+    container, so the container has a name and `docker rm -f` removes it at the end."""
     subprocess.run(['docker', 'pull', '-q', image], capture_output=True, check=True, timeout=600)
-    return subprocess.run(
-        ['docker', 'run', '--rm', '-v', f'{ARTIFACTS}:/dl:ro', '-e', 'SISU_DOWNLOAD_DIR=/dl', image,
-         'sh', '-c', command],
-        capture_output=True, text=True, timeout=600, check=False)
+    name = f'sisu-installer-{uuid.uuid4().hex}'
+    try:
+        return subprocess.run(
+            ['docker', 'run', '--rm', '--name', name, '-v', f'{ARTIFACTS}:/dl:ro', '-e',
+             'SISU_DOWNLOAD_DIR=/dl', image, 'sh', '-c', command],
+            capture_output=True, text=True, timeout=timeout, check=False)
+    finally:
+        subprocess.run(['docker', 'rm', '-f', name], capture_output=True, check=False)
 
 
 def write(path, text, mode=0o644):
@@ -83,19 +89,22 @@ class InstallerRealTest(unittest.TestCase):
                     self.fail(f'the program ended before it printed `ready`; stderr: {seen!r}')
                 seen += chunk
 
+    def assert_one_sentence(self, result, words):
+        """The installer stopped: exit 125 means that Docker did not start the container, and the
+        line must start with the prefix of `die` in install.sh, so that no Docker error passes."""
+        self.assertNotIn(result.returncode, (0, 125), result.stderr)
+        lines = result.stderr.strip().splitlines()
+        self.assertEqual(len(lines), 1, result.stderr)
+        self.assertTrue(lines[0].startswith('install.sh: '), lines[0])
+        self.assertIn(words, lines[0])
+
     @unittest.skipUnless(LINUX, 'Linux only')
     def test_alpine_should_stop_with_one_sentence(self):
-        result = docker('alpine:3', 'sh /dl/install.sh')
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(len(result.stderr.strip().splitlines()), 1, result.stderr)
-        self.assertIn('musl', result.stderr)
+        self.assert_one_sentence(docker('alpine:3', 'sh /dl/install.sh'), 'musl')
 
     @unittest.skipUnless(LINUX, 'Linux only')
     def test_old_glibc_should_stop_with_one_sentence(self):
-        result = docker('ubuntu:20.04', 'sh /dl/install.sh')
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(len(result.stderr.strip().splitlines()), 1, result.stderr)
-        self.assertIn('glibc 2.31', result.stderr)
+        self.assert_one_sentence(docker('ubuntu:20.04', 'sh /dl/install.sh'), 'glibc 2.31')
 
     @unittest.skipUnless(LINUX, 'Linux only')
     def test_ubuntu_without_a_compiler_should_install_and_name_the_command(self):

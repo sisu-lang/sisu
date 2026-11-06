@@ -228,7 +228,7 @@ jobs:
           sisu run orders.sisu > "$GITHUB_WORKSPACE/orders.actual"
       - run: diff orders.actual site/programs/run/orders.out
 
-  # It runs only when the last job of the chain succeeded, and it is the last step of its job.
+  # The `timeout-minutes` of the job is the time limit of the whole step, because no step follows it.
   prune:
     needs: [publish, live-check]
     runs-on: ubuntu-26.04
