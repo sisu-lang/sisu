@@ -12,7 +12,6 @@ use super::mut_args::Callee;
 use super::unused_names::Used;
 use super::{
     Checked, Checker, Declared, Definition, DiagnosticKind, Poisoned, has_remedy_flag, own_args,
-    spread,
 };
 use crate::ast;
 use crate::diagnostic::{BuiltIn, Unbuilt, VariantLabels, suggestion};
@@ -479,7 +478,8 @@ impl Checker<'_> {
         };
         let failed = labeled || args.iter().any(mismatched);
         // A generic variant's result names the enum's parameters. The `?.` fix of an E0062 in an
-        // argument would make that argument, and so the result, optional.
+        // argument would make that argument, and so the result, optional. The flag follows only
+        // when the arguments alone bind the type.
         let flagged = args.iter().any(has_remedy_flag);
         // The bounds that the alias's body puts on its parameters, on what they are bound to.
         let held = through.is_none_or(|t| self.use_checks(&t.checks, list, span) == Some(true));
@@ -489,15 +489,8 @@ impl Checker<'_> {
             })),
             _ => {
                 // The arguments bind the rest of the type, and they may be the fault.
-                let ty = if !held {
-                    None
-                } else if failed {
-                    let written = written_args(site, list.get(), 0);
-                    self.fixed_result(Some(ret), declared.len(), &[], &[], written)
-                } else {
-                    Some(ty)
-                };
-                spread(Err(Poisoned::of(ty)), flagged)
+                let written = written_args(site, list.get(), 0);
+                self.failed_build((held, failed, flagged), (ty, ret, declared.len()), written)
             }
         }
     }

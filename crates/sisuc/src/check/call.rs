@@ -904,7 +904,6 @@ impl Checker<'_> {
         let labeled = self.labels(args);
         let sig = &self.signatures[func.0];
         let (name, params, ret) = (sig.name.clone(), sig.params.clone(), sig.ret);
-        let returns_param = ret.is_some_and(Type::has_param);
         let (muts, names) = site_of(&sig.muts, &sig.param_names, args);
         let mut_site = MutSite {
             callee: &name,
@@ -985,8 +984,9 @@ impl Checker<'_> {
         let parts = self.mut_overlaps(parts);
         let failed = labeled || checked.iter().any(mismatched);
         // A result that names a type parameter may take the type of an argument. The `?.` fix of
-        // an E0062 in that argument would make it optional, unless it is optional already.
-        let flagged = returns_param && checked.iter().any(has_remedy_flag);
+        // an E0062 in that argument would make it optional, unless it is optional already. The
+        // flag follows only when the arguments alone bind the result.
+        let flagged = ret.is_some() && checked.iter().any(has_remedy_flag);
         match (receiver.into_iter().chain(checked).collect(), solved) {
             (Ok(args), Some(solved)) if !failed && parts.is_empty() => Ok(self.spilled(
                 span,
@@ -1000,13 +1000,14 @@ impl Checker<'_> {
             }
             (_, solved) => {
                 // The arguments bind the rest of the result, and they may be the fault.
-                let ret = if failed {
+                let fixed = if failed || flagged {
                     let written = written_args(site, types.get(), owner.len());
                     self.fixed_result(ret, declared.len(), owner, &[], written)
                 } else {
-                    solved
+                    None
                 };
-                spread(Err(Poisoned::of(ret)), flagged)
+                let result = if failed { fixed } else { solved };
+                spread(Err(Poisoned::of(result)), flagged && fixed.is_none())
             }
         }
     }
@@ -1186,6 +1187,7 @@ impl Checker<'_> {
                 return Err(Poisoned::error());
             };
             let failed = args.iter().any(mismatched);
+            // The flag follows only when the arguments alone bind the type.
             let flagged = args.iter().any(has_remedy_flag);
             // The bounds that the alias's body puts on its parameters, on what they are bound to.
             let held = quiet
@@ -1197,15 +1199,9 @@ impl Checker<'_> {
                 Ok(_) => Err(Poisoned::error()),
                 Err(_) => {
                     // The arguments bind the rest of the type, and they may be the fault.
-                    let ty = if !held {
-                        None
-                    } else if failed {
-                        let written = written_args(site, list.get(), 0);
-                        self.fixed_result(Some(ret), declared.len(), &[], &[], written)
-                    } else {
-                        Some(ty)
-                    };
-                    spread(Err(Poisoned::of(ty)), flagged)
+                    let written = written_args(site, list.get(), 0);
+                    let state = (held, failed, flagged);
+                    self.failed_build(state, (ty, ret, declared.len()), written)
                 }
             };
         }

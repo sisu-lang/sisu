@@ -1072,6 +1072,9 @@ struct Body {
     /// The method is missing, or it is a field or a variant (`report_lookup_failure`). The
     /// check of a `.` on an optional reads it, to report E0062 only when the member is found.
     failed_lookups: FxHashSet<Span>,
+    /// The span of each `Some` that gave an error: it is never `None`, whatever type the error
+    /// gives it, so printing it gets no W0015 (`warn_if_optional`).
+    failed_some_spans: FxHashSet<Span>,
     /// The target of the compound assignment being checked, whose reads are not reads: they
     /// only give the value back to the target.
     quiet: Option<Span>,

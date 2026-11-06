@@ -863,7 +863,12 @@ impl Checker<'_> {
                 if change != Change::Push {
                     self.stamp_root(base);
                 }
+                // The base of a `mut` argument is checked as the base of an index is: a `?.` fix
+                // there leads to a path that is no place (E0170).
+                let outer = self.body.indexed;
+                self.body.indexed |= change == Change::MutArg;
                 let checked = self.value(base, None);
+                self.body.indexed = outer;
                 let mut guard = None;
                 // `?.` takes the object out of its optional, where the place starts. The write
                 // of the place is the branch where the object is present.

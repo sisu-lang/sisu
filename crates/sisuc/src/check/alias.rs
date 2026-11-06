@@ -797,14 +797,15 @@ impl Checker<'_> {
         member: &ast::Ident,
         call: Option<(&[ast::Arg], Span)>,
     ) -> Checked {
-        if !through.params.is_empty() {
-            return self.option_path(span, site, member, call, Some(through));
-        }
         // The value is `Option`'s, but a message names the alias, as the user wrote it.
-        let site = Site {
-            written: &[],
-            expected: Some(through.ty),
-            ..site
+        let site = if through.params.is_empty() {
+            Site {
+                written: &[],
+                expected: Some(through.ty),
+                ..site
+            }
+        } else {
+            site
         };
         self.option_path(span, site, member, call, Some(through))
     }

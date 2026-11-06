@@ -138,14 +138,16 @@ impl Checker<'_> {
     /// Warns when `checked`, the check of the printed `value`, is an optional: the text may be
     /// `None`. Only the type of `value` itself counts, not a type that it holds.
     pub(super) fn warn_if_optional(&mut self, value: &ast::Expr, checked: &Checked) {
-        // `Some(x)` is never `None`.
-        if matches!(
-            checked,
-            Ok(tir::Expr {
-                kind: tir::ExprKind::Wrap(_),
-                ..
-            })
-        ) {
+        // `Some(x)` is never `None`, also when it gave an error.
+        if self.body.failed_some_spans.contains(&value.span)
+            || matches!(
+                checked,
+                Ok(tir::Expr {
+                    kind: tir::ExprKind::Wrap(_),
+                    ..
+                })
+            )
+        {
             return;
         }
         if matches!(

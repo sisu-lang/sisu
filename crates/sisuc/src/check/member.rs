@@ -251,7 +251,9 @@ impl Checker<'_> {
     /// `receiver`, whose type is `payload?`, as `find_field` finds them. A `.` checks the member
     /// as `?.` does, on the payload with no value. E0062 follows only when the field is found.
     /// A field that is missing, or of the wrong kind, is the error: the `?.` fix would lead to
-    /// it. A `payload` that is optional too gets no `?.` fix: `?.` takes one layer only.
+    /// it. A `payload` that is optional too gets no `?.` fix: `?.` takes one layer only. Its help
+    /// peels the other layers first (`UnwrapHelp::Peel`), unless an index follows (`indexed`) or
+    /// the field is a `mut` argument: the peeled `?.` fails there.
     pub(super) fn field_of_payload(
         &mut self,
         payload: Type,
@@ -268,7 +270,12 @@ impl Checker<'_> {
         };
         // A path through `?.` is a place that cannot be a `mut` argument (E0170).
         let fix = payload_fix(payload, self.body.indexed) && !matches!(access, Access::Mut);
-        let unwrap = self.peel_or(payload, (receiver, name), UnwrapHelp::It);
+        // The peeled `?.` fails before an index and as a `mut` argument, as the `?.` fix does.
+        let unwrap = if self.body.indexed || matches!(access, Access::Mut) {
+            UnwrapHelp::It
+        } else {
+            self.peel_or(payload, (receiver, name), UnwrapHelp::It)
+        };
         self.diagnostics
             .push(may_be_none(receiver, name, fix, write, unwrap));
         Some(found)
@@ -489,7 +496,9 @@ impl Checker<'_> {
     /// of the name failed (`Body::failed_lookups`). A method that is missing, or a field,
     /// stands alone: the `?.` fix would lead to it. `indexed` is `Body::indexed` of the call:
     /// an index follows it in its chain. The result is poisoned, with the type of the call that
-    /// was checked, so the chain goes on as it would after the unwrap that the help names.
+    /// was checked, so the chain goes on as it would after the unwrap that the help names. A
+    /// `payload` that is optional too gets the peel help, unless a `push` writes or an index
+    /// follows: the peeled `?.` fails there.
     pub(super) fn method_of_payload(
         &mut self,
         span: Span,
@@ -508,10 +517,11 @@ impl Checker<'_> {
             let write = name.name.as_str() == "push" && matches!(inner.kind(), TypeKind::Array(_));
             let unwrap = if write {
                 self.pushed_array_unwrap(receiver, &value)
-            } else {
+            } else if indexed {
                 UnwrapHelp::It
+            } else {
+                self.peel_or(payload, (receiver, name), UnwrapHelp::It)
             };
-            let unwrap = self.peel_or(payload, (receiver, name), unwrap);
             let fix = payload_fix(payload, indexed);
             let d = may_be_none(receiver, name, fix, write, unwrap);
             self.diagnostics.push(d);

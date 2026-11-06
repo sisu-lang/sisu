@@ -17,9 +17,26 @@ use crate::tir::{self, Type, TypeArgs, TypeKind};
 
 impl Checker<'_> {
     /// `Some(args)`, which `site` writes, or `Option.Some(args)` when `member` is its `Some`:
-    /// the call of `Some<T>(x: T) -> T?`, which converts `x` to the optional once. Through an alias
-    /// of an optional type that takes parameters, the call binds them: `through` says its type.
+    /// the call of `Some<T>(x: T) -> T?`, which converts `x` to the optional once. `through` is the
+    /// alias that the path names. An alias with no parameter fixes the type of the call. An alias
+    /// that takes parameters, the `open` ones, has them bound by the call.
     pub(super) fn some(
+        &mut self,
+        span: Span,
+        site: Site<'_>,
+        member: Option<&ast::Ident>,
+        args: &[ast::Arg],
+        through: Option<&Through>,
+    ) -> Checked {
+        let checked = self.some_of(span, site, member, args, through);
+        if checked.is_err() {
+            self.body.failed_some_spans.insert(span);
+        }
+        checked
+    }
+
+    /// `some`, before it records a `Some` that gave an error.
+    fn some_of(
         &mut self,
         span: Span,
         site: Site<'_>,
@@ -120,7 +137,7 @@ impl Checker<'_> {
         };
         let failed = labeled || mismatched(&arg);
         // The `?.` fix of an E0062 in the argument would make the payload, and so the `Some`, one
-        // optional deeper.
+        // optional deeper. The flag follows only when the argument alone binds the type.
         let flagged = has_remedy_flag(&arg);
         match arg {
             Ok(inner) if !failed => Ok(tir::Expr::new(
@@ -130,27 +147,29 @@ impl Checker<'_> {
             )),
             _ => {
                 // The arguments bind the rest of the type, and they may be the fault.
-                let found = if failed {
-                    self.failed_some(through, site, list.get())
+                let fixed = if failed || flagged {
+                    self.failed_some((through, open), site, list.get())
                 } else {
-                    Some(found)
+                    None
                 };
-                spread(Err(Poisoned::of(found)), flagged)
+                let found = if failed { fixed } else { Some(found) };
+                spread(Err(Poisoned::of(found)), flagged && fixed.is_none())
             }
         }
     }
 
-    /// The type of a `Some` at `site`, through `through`, whose argument fails. `list` is the type
-    /// arguments that the arguments bound. An alias with no open parameter fixes the type, as does
-    /// a written list; else `None`, as the arguments may be the fault.
+    /// The type of a `Some` at `site`, through `through`, whose argument fails. `open` is
+    /// `through` when it takes parameters. `list` is the type arguments that the arguments
+    /// bound. An alias with no open parameter fixes the type, as does a written list; else
+    /// `None`, as the arguments may be the fault.
     fn failed_some(
         &mut self,
-        through: Option<&Through>,
+        (through, open): (Option<&Through>, Option<&Through>),
         site: Site<'_>,
         list: &[Type],
     ) -> Option<Type> {
         closed_alias(through).or_else(|| {
-            let (declared, _, ret) = some_shape(through.filter(|t| !t.params.is_empty()));
+            let (declared, _, ret) = some_shape(open);
             self.fixed_result(
                 Some(ret),
                 declared.len(),

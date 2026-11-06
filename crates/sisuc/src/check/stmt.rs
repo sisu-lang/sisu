@@ -754,7 +754,11 @@ impl Checker<'_> {
     /// The header of `for x in e`, and the type of `x`: the element type, `None` (`Error`) when
     /// `e` is no array.
     fn for_array(&mut self, span: Span, e: &ast::Expr) -> (Option<ForHeader>, Option<Type>) {
+        // The subject is indexed in the loop: a `?.` fix of an E0062 in it leads to a `for` on an
+        // optional, as an index does.
+        let outer = std::mem::replace(&mut self.body.indexed, true);
         let checked = self.value(e, None);
+        self.body.indexed = outer;
         let (element, d) = match type_of(&checked).map(|ty| (ty, ty.kind())) {
             // The elements of a value that an E0062 typed depend on the remedy.
             Some((_, TypeKind::Array(element))) => {

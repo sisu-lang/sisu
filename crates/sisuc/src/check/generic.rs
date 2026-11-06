@@ -19,7 +19,7 @@ use super::stmt::BlockSoFar;
 use super::{
     Binding, Checked, Checker, Declared, Definition, DiagnosticKind, Flag, Misfit, Poisoned,
     UNKNOWN, as_optional, built_in_type, has_remedy_flag, is_kept, optional_of, own_args, payload,
-    type_of,
+    spread, type_of,
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{ArgumentsForm, Diagnostic, Expected, MainForm, Unwrap};
@@ -2103,6 +2103,34 @@ impl Checker<'_> {
         } else {
             Some(ret)
         }
+    }
+
+    /// The result of a construction of a generic class or enum whose arguments `Err`. `state` says
+    /// whether an alias bound `held`, whether the call `failed`, and whether an argument has the
+    /// remedy flag (`has_remedy_flag`). `ty` is the type that the arguments bound, `ret` the type
+    /// with its parameters (`declared` of them) and `written` the written type arguments.
+    ///
+    /// A failed call has the type that `fixed_result` gives, and the flag follows only when it
+    /// gives none: then the arguments alone bind the type, and the remedy changes it.
+    pub(super) fn failed_build(
+        &mut self,
+        (held, failed, flagged): (bool, bool, bool),
+        (ty, ret, declared): (Type, Type, usize),
+        written: &[Type],
+    ) -> Checked {
+        let fixed = if held && (failed || flagged) {
+            self.fixed_result(Some(ret), declared, &[], &[], written)
+        } else {
+            None
+        };
+        let ty = if !held {
+            None
+        } else if failed {
+            fixed
+        } else {
+            Some(ty)
+        };
+        spread(Err(Poisoned::of(ty)), flagged && fixed.is_none())
     }
 
     /// `generic_call`, before what ranking kept is dropped.

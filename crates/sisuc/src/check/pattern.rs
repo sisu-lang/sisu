@@ -491,13 +491,6 @@ impl Checker<'_> {
                 );
             }
             ast::PatternKind::Name(name) => Some(name.clone()),
-            ast::PatternKind::Wild if flagged => {
-                let name = ast::Ident {
-                    name: Symbol::intern("_"),
-                    span: pattern.span,
-                };
-                return (checked, LetValue::Unwrap { name, bound: None }, false);
-            }
             ast::PatternKind::Wild => Some(ast::Ident {
                 name: Symbol::intern("_"),
                 span: pattern.span,
