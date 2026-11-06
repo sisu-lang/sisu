@@ -807,3 +807,6 @@ _Avoid_: self-hosting (the compiler is still written in Rust), bootstrap
 A build of `sisu` and its runtime archives from the newest `main` commit whose
 CI passed, published once a day as a GitHub release. Sisu has no other releases.
 _Avoid_: nightly (alone), release (alone), snapshot
+
+**Install line**:
+The `curl | sh` command that runs `install.sh` from `releases/latest/download/`.

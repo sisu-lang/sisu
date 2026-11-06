@@ -12,8 +12,8 @@ hooks = [
   # program reads or writes them: tabs, `\r`, `\0`, and a last line with no newline.
   { id = "trailing-whitespace", exclude = '^(crates/sisuc/tests|site/programs)/run(-fail)?/.*\.(in|out|err)$' },
   # `no_trailing_newline.sisu`, `eof-quote.sisu`, `E0093-end-of-file.sisu` and `W0007-places.sisu` must not end in a newline, and the stderr snapshots end in one blank line.
-  # `.config/notices/LLVM-LICENSE.txt` keeps the text as LLVM wrote it, with its blank last line.
-  { id = "end-of-file-fixer", exclude = '^(crates/sisuc/tests/(diagnostics/(.*\.err|no_trailing_newline\.sisu|eof-quote\.sisu|E0093-end-of-file\.sisu|W0007-places\.sisu)|run(-fail)?/.*\.(in|out|err))|site/programs/((diagnostics|explanations)/.*\.err|run(-fail)?/.*\.(in|out|err))|\.config/notices/LLVM-LICENSE\.txt)$' },
+  # `.config/notices/LLVM-LICENSE.txt` and `LLVM-EMBEDDED.txt` keep the text as LLVM wrote it.
+  { id = "end-of-file-fixer", exclude = '^(crates/sisuc/tests/(diagnostics/(.*\.err|no_trailing_newline\.sisu|eof-quote\.sisu|E0093-end-of-file\.sisu|W0007-places\.sisu)|run(-fail)?/.*\.(in|out|err))|site/programs/((diagnostics|explanations)/.*\.err|run(-fail)?/.*\.(in|out|err))|\.config/notices/LLVM-(LICENSE|EMBEDDED)\.txt)$' },
   { id = "mixed-line-ending", exclude = '^(crates/sisuc/tests|site/programs)/run(-fail)?/.*\.(in|out|err)$' },
   # Without the flag the hook checks nothing outside a merge, so a rebase or CI misses markers.
   { id = "check-merge-conflict", args = ["--assume-in-merge"] },

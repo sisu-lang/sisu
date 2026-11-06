@@ -795,11 +795,11 @@ GitHub API is in `scripts/nightly_build.py`. It has four commands: `pick`,
 | `report` | Opens or updates the issue `Nightly build failure`. |
 
 A run that finds no new green commit ends with success, and its job summary
-says `no new green commit`. A run that fails before the last step of
-`publish` publishes nothing, and the old nightly build stays latest. The next run picks the newest
-green commit again. A failed `live-check` or `prune` comes after the publish,
-so the new nightly build stays latest. The next `publish` deletes a draft that
-a failed or killed `publish` leaves.
+says `no new green commit`. A run that fails before the last step of `publish`
+publishes nothing, and the old nightly build stays latest. The next run picks
+the newest green commit again. A failed `live-check` or `prune` comes after the
+publish, so the new nightly build stays latest. The next `publish` deletes a
+draft that a failed or killed `publish` leaves.
 
 GitHub disables a `schedule` trigger after 60 days without activity in the
 repository (see [the nightly job](#the-nightly-job)).
@@ -844,8 +844,12 @@ no new commit opens no issue.
     `libLLVMSupport.a` and of `libzstd.a` is at most 15.0. A rise of the macOS
     floor of 15 is the maintainer's decision.
   - `cargo about --fail`: for example, a crate has a license that
-    `.config/about.toml` does not accept. On macOS, the step that appends the
-    `zstd` license fails when Homebrew has no `LICENSE` for `zstd`.
+    `.config/about.toml` does not accept. The same step fails when the
+    toolchain has no `share/doc/rust/COPYRIGHT-library.html`. The third-party
+    file also holds the notices of LLVM's embedded code
+    (`.config/notices/LLVM-EMBEDDED.txt`) and those of Rust's standard
+    library. On macOS, the step that appends the `zstd` license fails when
+    Homebrew has no `LICENSE` for `zstd`.
   - `nightly_check.py pack`: the tarball must hold exactly the directory
     `sisu/` with `sisu`, both runtime archives, `LICENSE` and
     `THIRD-PARTY-LICENSES.txt`. A `._` file is an error.
