@@ -405,8 +405,9 @@ impl Checker<'_> {
     }
 
     /// The type of the expression `arg`, checked on its own for its own mistakes, and whether
-    /// it failed. The range arm uses both. The function and `self` arms use only the check: its
-    /// errors are their report.
+    /// it failed. The range arm uses both. The function, `self` and temporary arms use only the
+    /// check: the function and `self` arms report its errors alone, and the temporary arm adds
+    /// E0169.
     ///
     /// It failed when it reported an error. It failed too when its type is unknown and an error
     /// was reported before it: its type comes from a local that failed. With no earlier error, an
