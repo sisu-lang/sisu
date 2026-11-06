@@ -1,7 +1,8 @@
-"""Rejects a changed sentence of over 25 words in a comment, a docstring or Markdown. Also rejects a
-changed Python or shell comment or docstring line of over 100 columns. `CODING_STANDARDS.md`
-(Writing) sets the sentence limit. A sentence that a change touches counts in full, also over
-wrapped lines.
+"""Reject a changed sentence of over 25 words in a comment, a docstring or Markdown.
+
+Also reject a changed Python or shell comment or docstring line of over 100 columns.
+`CODING_STANDARDS.md` (Writing) sets the sentence limit. A sentence that a change touches counts in
+full, also over wrapped lines.
 
 The check cannot tell an instruction, which has a limit of 20 words, from a description. It also
 does not read diagnostic text in Rust strings or a comment after code. A review checks those.
@@ -17,6 +18,7 @@ import re
 import subprocess
 import sys
 import tokenize
+from pathlib import Path
 
 SENTENCE = 25
 WIDTH = 100
@@ -24,7 +26,9 @@ WIDTH = 100
 CODE_SPAN = re.compile(r"`[^`]*`")
 LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 # Each of these starts a new block, because the line before it often has no full stop.
-STARTS_BLOCK = re.compile(r"([-*+] |\d+[.)] |GIVEN\b|WHEN\b|THEN\b|AND\b|BUT\b|Examples\b|Scenario\b)")
+STARTS_BLOCK = re.compile(
+    r"([-*+] |\d+[.)] |GIVEN\b|WHEN\b|THEN\b|AND\b|BUT\b|Examples\b|Scenario\b)"
+)
 FENCE = re.compile(r"\s*(```|~~~)")
 # A semicolon or a colon also ends a count, so that a false alarm stays rare.
 ENDS_SENTENCE = re.compile(r"[.!?;:][)\]\"'*_]*$")
@@ -34,7 +38,7 @@ HUNK = re.compile(r"@@ -\S+ \+(\d+)(?:,(\d+))? @@")
 
 
 def outside_fences(numbered: list[tuple[int, str]]) -> list[tuple[int, str]]:
-    """The lines that are not in a fenced code block."""
+    """Return the lines that are not in a fenced code block."""
     kept = []
     fenced = False
     for n, text in numbered:
@@ -46,19 +50,28 @@ def outside_fences(numbered: list[tuple[int, str]]) -> list[tuple[int, str]]:
 
 
 def python_prose(lines: list[str]) -> list[tuple[int, str]]:
-    """The whole-line comments and the docstrings of Python source. Nothing if it does not parse."""
+    """Return the whole-line comments and the docstrings of Python source.
+
+    The result is empty when the source does not parse.
+    """
     source = "".join(lines)
     found = []
     try:
-        for token in tokenize.generate_tokens(io.StringIO(source).readline):
-            if token.type == tokenize.COMMENT and token.line.lstrip().startswith("#") and not token.string.startswith("#!"):
-                found.append((token.start[0], token.string.lstrip("#").strip()))
+        found.extend(
+            (token.start[0], token.string.lstrip("#").strip())
+            for token in tokenize.generate_tokens(io.StringIO(source).readline)
+            if token.type == tokenize.COMMENT
+            and token.line.lstrip().startswith("#")
+            and not token.string.startswith("#!")
+        )
         nodes = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
         for node in ast.walk(ast.parse(source)):
             if isinstance(node, nodes) and ast.get_docstring(node, clean=False) is not None:
                 first = node.body[0]
-                for n in range(first.lineno, first.end_lineno + 1):
-                    found.append((n, lines[n - 1].strip().strip('"').strip("'").strip()))
+                found.extend(
+                    (n, lines[n - 1].strip().strip('"').strip("'").strip())
+                    for n in range(first.lineno, (first.end_lineno or first.lineno) + 1)
+                )
     except (SyntaxError, tokenize.TokenError):
         return []
     return sorted(found)
@@ -73,30 +86,37 @@ def prose(path: str, lines: list[str]) -> list[tuple[int, str]]:
         body = numbered
         if lines and lines[0].startswith("---"):
             end = next((i for i, line in enumerate(lines[1:], 1) if line.startswith("---")), 0)
-            body = numbered[end + 1:]
+            body = numbered[end + 1 :]
         return outside_fences(body)
     if path.endswith(".py"):
         return outside_fences(python_prose(lines))
     if path.endswith(".rs"):
-        comments = [(n, t.lstrip().lstrip("/!").strip()) for n, t in numbered if t.lstrip().startswith("//")]
+        comments = [
+            (n, t.lstrip().lstrip("/!").strip()) for n, t in numbered if t.lstrip().startswith("//")
+        ]
         return outside_fences(comments)
     if path.endswith(".sh"):
-        return [(n, t.lstrip().lstrip("#").strip()) for n, t in numbered
-                if t.lstrip().startswith("#") and not t.startswith("#!")]
+        return [
+            (n, t.lstrip().lstrip("#").strip())
+            for n, t in numbered
+            if t.lstrip().startswith("#") and not t.startswith("#!")
+        ]
     return []
 
 
 def long_sentences(numbered: list[tuple[int, str]], changed: set[int]) -> list[tuple[int, int]]:
-    """Each sentence over the limit with a changed line, as (first line, words). A gap in the line
-    numbers, an empty line, a line of `NOT_PROSE` or a line that `STARTS_BLOCK` matches ends the
-    sentence."""
+    """Return each sentence over the limit with a changed line, as (first line, words).
+
+    A gap in the line numbers, an empty line, a line of `NOT_PROSE` or a line that `STARTS_BLOCK`
+    matches ends the sentence.
+    """
     found = []
     words = 0
     first = 0
     touched = False
     last = None
 
-    def end():
+    def end() -> None:
         nonlocal words, touched
         if words > SENTENCE and touched:
             found.append((first, words))
@@ -126,8 +146,10 @@ def long_sentences(numbered: list[tuple[int, str]], changed: set[int]) -> list[t
 def findings(path: str, lines: list[str], changed: set[int]) -> list[str]:
     """One line for each limit that a changed line breaks."""
     numbered = prose(path, lines)
-    out = [f"{path}:{n}: a sentence has {words} words; the limit is {SENTENCE}: split it"
-           for n, words in long_sentences(numbered, changed)]
+    out = [
+        f"{path}:{n}: a sentence has {words} words; the limit is {SENTENCE}: split it"
+        for n, words in long_sentences(numbered, changed)
+    ]
     if path.endswith((".py", ".sh")):
         for n, _ in numbered:
             columns = len(lines[n - 1].rstrip("\n"))
@@ -137,10 +159,14 @@ def findings(path: str, lines: list[str], changed: set[int]) -> list[str]:
 
 
 def changed_lines(ref: str) -> dict[str, set[int]]:
-    """The line numbers that differ from `ref`, for the absolute path of each file. A rename counts
-    only the lines that it changes, so Git must see the whole diff and not one path."""
-    top = subprocess.run(["git", "rev-parse", "--show-toplevel"],
-                         capture_output=True, text=True, check=True).stdout.rstrip("\n")
+    """Return the line numbers that differ from `ref`, for the absolute path of each file.
+
+    A rename counts only the lines that it changes, so Git must see the whole diff and not one
+    path.
+    """
+    top = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True
+    ).stdout.rstrip("\n")
     # The flags hold the output in one form, whatever the user's Git settings and attributes are.
     # shortcut: Git still quotes a name with a tab or a quotation mark, so that file is not read.
     # No file here has such a name. Read `--name-status -z` if one comes.
@@ -148,10 +174,26 @@ def changed_lines(ref: str) -> dict[str, set[int]]:
     # No filter applies here. Compare with the file on disk if one comes.
     # shortcut: `--text` keeps the whole diff of a binary file in memory, about 14 times its size.
     # The largest tracked file here is 430 KB. Limit the diff to file types if a large one comes.
-    command = ["git", "-c", "core.quotePath=false", "diff", "-M", "--no-relative", "--no-color", "--no-ext-diff",
-               "--no-textconv", "--text", "--unified=0", "--inter-hunk-context=0", "--src-prefix=a/",
-               "--dst-prefix=b/", ref]
-    diff = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True).stdout
+    command = [
+        "git",
+        "-c",
+        "core.quotePath=false",
+        "diff",
+        "-M",
+        "--no-relative",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--text",
+        "--unified=0",
+        "--inter-hunk-context=0",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+        ref,
+    ]
+    diff = subprocess.run(
+        command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True
+    ).stdout
     changed: dict[str, set[int]] = {}
     current: set[int] = set()
     in_header = False
@@ -161,7 +203,7 @@ def changed_lines(ref: str) -> dict[str, set[int]]:
             in_header = True
         elif in_header and line.startswith("+++ b/"):
             # Git ends the name with a tab when the name holds a space.
-            changed[os.path.join(top, line[6:].rstrip("\t"))] = current
+            changed[str(Path(top) / line[6:].rstrip("\t"))] = current
         elif hunk := HUNK.match(line):
             in_header = False
             first = int(hunk[1])
@@ -170,12 +212,15 @@ def changed_lines(ref: str) -> dict[str, set[int]]:
 
 
 def main(argv: list[str]) -> int:
+    """Check each path in `argv`, and return 1 when a changed line breaks a limit."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--diff", metavar="REF", required=True)
     parser.add_argument("paths", nargs="*")
     args = parser.parse_args(argv)
     # The diff of a merge holds what the other branch changed.
-    merging = subprocess.run(["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"], capture_output=True, check=False)
+    merging = subprocess.run(
+        ["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"], capture_output=True, check=False
+    )
     if merging.returncode == 0:
         return 0
     bad = 0
@@ -184,7 +229,7 @@ def main(argv: list[str]) -> int:
         ours = changed.get(os.path.realpath(path))
         if not ours:
             continue
-        with open(path, encoding="utf-8") as f:
+        with Path(path).open(encoding="utf-8") as f:
             lines = f.readlines()
         for line in findings(path, lines, ours):
             print(line)
