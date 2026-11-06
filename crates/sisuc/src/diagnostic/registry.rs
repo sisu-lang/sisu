@@ -2286,12 +2286,12 @@ pub(crate) enum MatchIdiomForm {
 pub(crate) enum ForeignPattern {
     /// Labels on the sub-patterns; `labels` are each `label: ` the fix deletes.
     Labels { form: String, labels: Vec<Span> },
-    /// Rust's braces, `Rect { w, h }`; `replace` is what the fix replaces with `(w, h)`, from the
-    /// end of the name through the `}`.
+    /// Rust's braces, `Rect { w, h }`; `fix` is what the fix replaces, from the end of the name
+    /// through the `}`, and the `(w, h)` that replaces it. It is `None` when a comment lies
+    /// between the `{`, the sub-patterns and the `}`, which the fix would delete.
     Braces {
         form: String,
-        replace: Span,
-        fields: String,
+        fix: Option<(Span, String)>,
     },
     /// Type arguments, `Option<i64>.Some(v)`; the fix deletes them. The type of the matched
     /// value gives them.
@@ -5806,15 +5806,16 @@ impl From<DiagnosticKind> for Diagnostic {
                         })
                         .collect(),
                 }),
-                ForeignPattern::Braces {
-                    form,
-                    replace,
-                    fields,
-                } => Diagnostic::coded(code, at, format!("write `{form}`")).with_fix(unsafe_fix(
-                    &format!("write `{form}`"),
-                    replace,
-                    &fields,
-                )),
+                ForeignPattern::Braces { form, fix } => {
+                    let message = format!("write `{form}`");
+                    let found = Diagnostic::coded(code, at, message.as_str());
+                    match fix {
+                        Some((replace, fields)) => {
+                            found.with_fix(unsafe_fix(&message, replace, &fields))
+                        }
+                        None => found,
+                    }
+                }
                 ForeignPattern::TypeArgs => {
                     Diagnostic::coded(code, at, "a pattern takes no type arguments")
                         .with_help("the type of the matched value gives the type arguments")

@@ -3,6 +3,7 @@
 use std::borrow::Cow;
 use std::cell::OnceCell;
 use std::cmp::Ordering;
+use std::iter;
 use std::mem;
 use std::ops::Range;
 
@@ -69,6 +70,7 @@ pub(crate) fn parse(lexed: Lexed<'_>, prelude: bool) -> Parsed {
         breaks: &breaks,
         recovered: Vec::new(),
         header: false,
+        sub_pattern: false,
         warnings,
         labels: Vec::new(),
         loops: Vec::new(),
@@ -635,6 +637,9 @@ struct Parser<'a> {
     /// Whether the parser reads the head of a `for`, `if`, `while` or `match`, outside any
     /// bracket or block in it. There, a `{` after `..` opens the body, not the end of the range.
     header: bool,
+    /// Whether the pattern being read is a sub-pattern, inside `( )` or `{ }`. Only there can a
+    /// `,`, `)` or `}` end a pattern.
+    sub_pattern: bool,
     /// The lexer's warnings, which `program` reports whether or not their item is broken.
     warnings: Vec<Diagnostic>,
     /// The loop labels open around the next token, innermost last: from each one's `name:` to the
@@ -1934,6 +1939,7 @@ impl<'a> Parser<'a> {
             breaks: self.breaks,
             recovered: Vec::new(),
             header: false,
+            sub_pattern: false,
             warnings: Vec::new(),
             labels: Vec::new(),
             loops: Vec::new(),
@@ -3019,9 +3025,10 @@ impl<'a> Parser<'a> {
     }
 
     /// Rust's `Rect { w, h }`, or with labels, `Rect { w: x, h: y }`, at the next token, after the
-    /// pattern `path`: its error, when a pattern can end at the `}`. Else the `{` is not part of a
-    /// pattern: it stays the next token, `path` is the whole pattern, and the caller reports the
-    /// `{`.
+    /// pattern `path`: its error, when a pattern can end at the `}` that closes the `{`. Else the
+    /// `{` is not part of a pattern: it stays the next token, `path` is the whole pattern, and the
+    /// caller reports the `{`, before it reads anything inside the braces. A lexer error in the
+    /// braces comes first, because it is the earlier error.
     fn braced_pattern(
         &mut self,
         path: Span,
@@ -3029,20 +3036,43 @@ impl<'a> Parser<'a> {
         reach: &mut Height,
     ) -> Result<Option<Diagnostic>, Diagnostic> {
         let open = self.pos;
-        let (patterns, _, braces) = self.sub_patterns(base, reach, &TokenKind::RBrace)?;
-        if !self.pattern_ends() {
-            self.pos = open;
-            *reach = base;
+        let mut depth = 0;
+        let close = self.tokens[open..]
+            .iter()
+            .position(|t| {
+                // The scan starts on the `{`, and the lexer rejects a closer with no opener.
+                depth = nested(&t.kind, depth).unwrap_or(0);
+                depth == 0
+            })
+            .map(|at| open + at);
+        let end = close.map_or(usize::MAX, |at| self.tokens[at].span.end());
+        if let Some(lexed) = self.lexer_in(self.tokens[open].span.start()..end).next() {
+            return Err(lexed.clone());
+        }
+        if !close.is_some_and(|at| self.pattern_ends(at + 1)) {
             return Ok(None);
         }
-        // The message goes on one line, but the fix replaces the source as written.
-        let fields = Self::listed(&patterns, |span| Cow::Borrowed(self.source.text(span)));
+        let (patterns, _, braces) = self.sub_patterns(base, reach, &TokenKind::RBrace)?;
+        // The fix replaces the source as written, so it would delete a comment in a gap: between
+        // the `{`, the sub-patterns (a label is in a gap) and the `}`.
+        let after = iter::once(braces.start() + 1).chain(patterns.iter().map(|p| p.span.end()));
+        let next = patterns
+            .iter()
+            .map(|p| p.span.start())
+            .chain(iter::once(braces.end() - 1));
+        let fix = after
+            .zip(next)
+            .all(|(after, next)| self.removal_end(after, next) == next)
+            .then(|| {
+                // The message goes on one line.
+                let fields = Self::listed(&patterns, |span| Cow::Borrowed(self.source.text(span)));
+                (Span::new(path.end(), braces.end()), fields)
+            });
         Ok(Some(
             DiagnosticKind::PatternForm {
                 form: ForeignPattern::Braces {
                     form: self.one_line_form(path, &patterns),
-                    replace: Span::new(path.end(), braces.end()),
-                    fields,
+                    fix,
                 },
                 at: braces,
             }
@@ -3050,28 +3080,35 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    /// Whether a pattern can end before the next token. The token is `=` (a `let`, an `if let` or
-    /// a `while let`), `:` (the type of a `let` pattern), `=>`, `->`, `if` or `|` (a match arm),
-    /// or `,`, `)` or `}` (a sub-pattern; a `|` also joins the alternatives of a sub-pattern). A
-    /// line break and then `=>` or `|` also ends an arm's pattern, because neither can start a
-    /// statement. An `if` after a line break starts a statement, so it is no end.
-    fn pattern_ends(&self) -> bool {
-        match self.peek().kind {
+    /// Whether a pattern can end before the token at index `at`. The token is `=` (a `let`, an
+    /// `if let` or a `while let`), `:` (the type of a `let` pattern), `=>`, `->`, `if` or `|` (a
+    /// match arm), or, in a sub-pattern, `,`, `)` or `}` (a `|` also joins the alternatives of a
+    /// sub-pattern). A line break and then `=>` or `|`, or in a sub-pattern `,` or `}`, also ends
+    /// a pattern, because none of them can start a statement. An `if` after a line break starts
+    /// a statement, so it is no end.
+    fn pattern_ends(&self, at: usize) -> bool {
+        match &self.tokens[at].kind {
             TokenKind::Eq
             | TokenKind::FatArrow
             | TokenKind::Arrow
             | TokenKind::If
             | TokenKind::Pipe
-            | TokenKind::Comma
-            | TokenKind::RParen
-            | TokenKind::RBrace
             | TokenKind::Colon => true,
-            TokenKind::Newline => self.tokens[self.pos..]
-                .iter()
-                .find(|t| t.kind != TokenKind::Newline)
-                .is_some_and(|t| matches!(t.kind, TokenKind::FatArrow | TokenKind::Pipe)),
+            TokenKind::Comma | TokenKind::RParen | TokenKind::RBrace => self.sub_pattern,
+            TokenKind::Newline => {
+                let next = &self.tokens[self.after_line_breaks(at)].kind;
+                matches!(next, TokenKind::FatArrow | TokenKind::Pipe)
+                    || (self.sub_pattern && matches!(next, TokenKind::Comma | TokenKind::RBrace))
+            }
             _ => false,
         }
+    }
+
+    /// The index of the first token at or after `at` that is no line break. `Eof` is none, so the
+    /// search ends there. A `;` that separates is no line break.
+    fn after_line_breaks(&self, at: usize) -> usize {
+        let skipped = self.tokens[at..].iter().take_while(|t| t.is_line_break());
+        at + skipped.count()
     }
 
     /// The error for a string pattern with an interpolation, at the next token, the string's
@@ -3291,7 +3328,14 @@ impl<'a> Parser<'a> {
             if let Some(label) = self.pattern_label() {
                 labels.push(label);
             }
-            fields.push(self.child(base, reach, Self::pattern)?);
+            let outer = mem::replace(&mut self.sub_pattern, true);
+            let field = self.child(base, reach, Self::pattern);
+            self.sub_pattern = outer;
+            fields.push(field?);
+            // A `{ }` list can end its last sub-pattern with a line break before the `}`.
+            while self.peek().is_line_break() {
+                self.bump();
+            }
             if self.eat(&TokenKind::Comma).is_none() {
                 break;
             }
@@ -3414,14 +3458,22 @@ impl<'a> Parser<'a> {
         let next = &self.tokens[self.pos + 1];
         let text = self.source.text(token.span);
         let (form, at) = match (&token.kind, &next.kind) {
-            (TokenKind::Ident(_), kind) if text == "case" && *kind != TokenKind::FatArrow => {
+            (TokenKind::Ident(_), _) if text == "case" => {
+                // A comment or a line break after `case` does not end the arm: `case` and a line
+                // break and then `=>` is a binding. A `;` ends it.
+                let mut at = self.after_line_breaks(self.pos + 1);
+                let next = &self.tokens[at];
+                if next.kind == TokenKind::FatArrow {
+                    return None;
+                }
                 // Swift's `case let .some(x)` also loses its `let` and its `.`. A `let` is not
                 // `Eof`, so the token after it exists.
                 let end = self.removal_end(token.span.end(), next.span.start());
                 let mut remove = vec![Span::new(token.span.start(), end)];
                 let mut after = next;
                 if next.kind == TokenKind::Let {
-                    after = &self.tokens[self.pos + 2];
+                    at = self.after_line_breaks(at + 1);
+                    after = &self.tokens[at];
                     let end = self.removal_end(next.span.end(), after.span.start());
                     remove.push(Span::new(next.span.start(), end));
                 }
@@ -7257,6 +7309,7 @@ mod tests {
             breaks: &lexed.breaks,
             recovered: Vec::new(),
             header: false,
+            sub_pattern: false,
             warnings: Vec::new(),
             labels: Vec::new(),
             loops: Vec::new(),
