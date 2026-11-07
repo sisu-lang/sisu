@@ -1,0 +1,38 @@
+error[E0117]: `W` is a variant of `Holder`; write `Holder.W`
+  --> E0117-type-arguments.sisu:16:14
+   |
+16 |     let _a = W<i64>.Some(1)
+   |              ^
+
+error[E0117]: `W` is a variant of `Holder`; write `Holder.W`
+  --> E0117-type-arguments.sisu:17:14
+   |
+17 |     let _b = W<i64>.x
+   |              ^
+
+error[E0117]: `W` is a variant of `Holder`; write `Holder.W`
+  --> E0117-type-arguments.sisu:18:14
+   |
+18 |     let _c = W<i64, u8>.y.z
+   |              ^
+
+error[E0117]: `V` is a variant of `Wrap`; write `Wrap.V`
+  --> E0117-type-arguments.sisu:19:14
+   |
+19 |     let _d = V<i64>.x
+   |              ^
+
+error[E0117]: `W` is a variant of `Holder`; write `Holder.W`
+  --> E0117-type-arguments.sisu:20:14
+   |
+20 |     let _e = W<i64>.m()
+   |              ^
+
+error[E0117]: `W` is a variant of `Holder`; write `Holder.W`
+  --> E0117-type-arguments.sisu:21:5
+   |
+21 |     W<i64>.x = 1
+   |     ^
+
+sisu: 6 errors
+sisu: for more on a code, run `sisu explain <code>`: E0117

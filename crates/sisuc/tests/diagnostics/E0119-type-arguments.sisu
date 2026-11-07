@@ -1,0 +1,8 @@
+// GIVEN `Ok`, `Err` and `Some`, written with type arguments and a member after them
+// WHEN `sisu check` runs on it
+// THEN it reports E0119 for each, and no text names `Result`
+fn main() {
+    let _a = Ok<i64, string>.x
+    let _b = Err<i64, string>.x
+    let _c = Some<i64>.x
+}

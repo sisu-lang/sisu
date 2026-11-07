@@ -1,0 +1,38 @@
+error[E0105]: `bool` is a type, not a value
+ --> E0105-type-call.sisu:6:14
+  |
+6 |     let _a = bool(1)
+  |              ^^^^
+
+error[E0105]: `bool` is a type, not a value
+ --> E0105-type-call.sisu:7:14
+  |
+7 |     let _b = bool<i64>(1)
+  |              ^^^^
+
+error[E0137]: `bool` takes no type arguments
+ --> E0105-type-call.sisu:7:18
+  |
+7 |     let _b = bool<i64>(1)
+  |                  ^^^^^
+  |
+help: remove the type arguments
+  |
+7 -     let _b = bool<i64>(1)
+7 +     let _b = bool(1)
+  |
+
+error[E0105]: `Option` is a type, not a value
+ --> E0105-type-call.sisu:8:14
+  |
+8 |     let _c = Option(1)
+  |              ^^^^^^
+
+error[E0105]: `Option` is a type, not a value
+ --> E0105-type-call.sisu:9:14
+  |
+9 |     let _d = Option<i64>(1)
+  |              ^^^^^^
+
+sisu: 5 errors
+sisu: for more on a code, run `sisu explain <code>`: E0105, E0137

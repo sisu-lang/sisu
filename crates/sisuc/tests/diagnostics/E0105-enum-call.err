@@ -1,0 +1,78 @@
+error[E0115]: `Empty` needs at least one variant
+  --> E0105-enum-call.sisu:15:6
+   |
+15 | enum Empty {
+   |      ^^^^^
+
+error[E0105]: `Color` is an enum, not a value
+  --> E0105-enum-call.sisu:19:14
+   |
+19 |     let _a = Color(1)
+   |              ^^^^^
+   |
+   = help: write a variant, such as `Color.Red`
+
+error[E0105]: `Color` is an enum, not a value
+  --> E0105-enum-call.sisu:20:14
+   |
+20 |     let _b = Color()
+   |              ^^^^^
+   |
+   = help: write a variant, such as `Color.Red`
+
+error[E0105]: `Color` is an enum, not a value
+  --> E0105-enum-call.sisu:21:14
+   |
+21 |     let _c = Color<i64>(1)
+   |              ^^^^^
+   |
+   = help: write a variant, such as `Color.Red`
+
+error[E0137]: `Color` takes no type arguments
+  --> E0105-enum-call.sisu:21:19
+   |
+21 |     let _c = Color<i64>(1)
+   |                   ^^^^^
+   |
+help: remove the type arguments
+   |
+21 -     let _c = Color<i64>(1)
+21 +     let _c = Color(1)
+   |
+
+error[E0105]: `Box` is an enum, not a value
+  --> E0105-enum-call.sisu:22:14
+   |
+22 |     let _d = Box<i64>(1)
+   |              ^^^
+   |
+   = help: write a variant, such as `Box.Full`
+
+error[E0105]: `Empty` is an enum, not a value
+  --> E0105-enum-call.sisu:23:14
+   |
+23 |     let _e = Empty(1)
+   |              ^^^^^
+
+error[E0105]: `Color` is an enum, not a value
+  --> E0105-enum-call.sisu:24:14
+   |
+24 |     let _f = Color(zzz)
+   |              ^^^^^
+   |
+   = help: write a variant, such as `Color.Red`
+
+error[E0033]: cannot find binding `zzz`
+  --> E0105-enum-call.sisu:24:20
+   |
+24 |     let _f = Color(zzz)
+   |                    ^^^
+
+error[E0105]: `Result` is an enum, not a value
+  --> E0105-enum-call.sisu:25:14
+   |
+25 |     let _g = Result(1)
+   |              ^^^^^^
+
+sisu: 10 errors
+sisu: for more on a code, run `sisu explain <code>`: E0033, E0105, E0115, E0137

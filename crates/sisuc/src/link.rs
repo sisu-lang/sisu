@@ -66,6 +66,12 @@ fn on_path(program: &str) -> bool {
         .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
 }
 
+/// The command in a clone that builds the runtime archive for the profile of the running `sisu`:
+/// `debug` is true for a debug build.
+const fn rebuild_command(_debug: bool) -> &'static str {
+    "cargo build --workspace"
+}
+
 /// The runtime archive on `allocator`. It is next to `sisu`, in a Cargo target directory or in an
 /// install: `libsisu_runtime_mimalloc.a` or `libsisu_runtime_system.a`.
 pub(crate) fn runtime_library(allocator: Allocator) -> Result<PathBuf, String> {
@@ -79,8 +85,20 @@ pub(crate) fn runtime_library(allocator: Allocator) -> Result<PathBuf, String> {
     } else {
         Err(format!(
             "runtime library not found at {}; run the Sisu install line again, or run \
-             `cargo build --workspace` in a clone",
-            path.display()
+             `{}` in a clone",
+            path.display(),
+            rebuild_command(cfg!(debug_assertions))
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rebuild_command_should_name_the_profile_of_the_running_sisu() {
+        assert_eq!(rebuild_command(true), "cargo build --workspace");
+        assert_eq!(rebuild_command(false), "cargo build --workspace --release");
     }
 }

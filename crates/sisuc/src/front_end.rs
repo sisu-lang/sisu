@@ -504,11 +504,19 @@ mod tests {
         )
     }
 
+    /// `body` as the body of `main`, after the enum `E` with the variants `P(i64)` and
+    /// `Q(i64, i64)` and the binding `let mut y = 1`.
+    fn in_variants(body: &str) -> String {
+        format!(
+            "enum E {{\n    P(i64)\n    Q(i64, i64)\n}}\n\nfn main() {{\n    let mut y = 1\n{body}\n}}\n"
+        )
+    }
+
     /// GIVEN each fix of the checker that removes a keyword, a label or an alternative, with a
     /// comment in the gap before the next token
     /// WHEN the fix is applied after `sound_fixes`
     /// THEN the removal ends where the comment starts, so the fix keeps the comment and, but for
-    /// W0006, stays safe
+    /// E0055 and W0006, stays safe
     #[test]
     #[expect(clippy::too_many_lines, reason = "one row of the table for each case")]
     fn a_checker_removal_should_keep_a_comment_in_its_gap() {
@@ -614,6 +622,50 @@ mod tests {
                 Code::MutSelf,
                 in_extend("// c\n        self, k: i64"),
                 true,
+            ),
+            // E0055 of a label stays unsafe. The removal stops at a comment after the label, after
+            // the `:` or after a `mut`. A comment before the `:` splits it in two edits.
+            (
+                in_variants("    let e = E.P(x: // c\n        1)\n    print(e)"),
+                Code::LabeledArgument,
+                in_variants("    let e = E.P(// c\n        1)\n    print(e)"),
+                false,
+            ),
+            (
+                in_main("    let o = Some(x: // c\n        1)\n    print(o)"),
+                Code::LabeledArgument,
+                in_main("    let o = Some(// c\n        1)\n    print(o)"),
+                false,
+            ),
+            (
+                in_main("    let o = Some(x // c\n        : 1)\n    print(o)"),
+                Code::LabeledArgument,
+                in_main("    let o = Some(// c\n        1)\n    print(o)"),
+                false,
+            ),
+            (
+                in_main("    let o = Some(x // c\n        : // d\n        1)\n    print(o)"),
+                Code::LabeledArgument,
+                in_main("    let o = Some(// c\n        // d\n        1)\n    print(o)"),
+                false,
+            ),
+            (
+                in_variants("    let e = E.Q(a: // c\n        1, b: 2)\n    print(e)"),
+                Code::LabeledArgument,
+                in_variants("    let e = E.Q(// c\n        1, 2)\n    print(e)"),
+                false,
+            ),
+            (
+                in_variants("    let e = E.P(x: mut // c\n        y)\n    print(e)"),
+                Code::LabeledArgument,
+                in_variants("    let e = E.P(// c\n        y)\n    print(e)"),
+                false,
+            ),
+            (
+                in_variants("    let e = E.P(x: // c\n        mut y)\n    print(e)"),
+                Code::LabeledArgument,
+                in_variants("    let e = E.P(// c\n        mut y)\n    print(e)"),
+                false,
             ),
             // W0006 of an alternative stays unsafe. The first one removes forward and stops at the
             // comment. A later one removes forward, when a comment lies before it and another
@@ -776,6 +828,7 @@ mod tests {
     /// THEN the text and the safety are as before: the removal reaches the next token, and the
     /// side of an alternative's removal does not change
     #[test]
+    #[expect(clippy::too_many_lines, reason = "one row of the table for each case")]
     fn a_checker_removal_with_no_comment_in_its_gap_should_reach_the_next_token() {
         let rows = [
             (
@@ -819,6 +872,37 @@ mod tests {
                 Code::MutSelf,
                 in_extend("self"),
                 true,
+            ),
+            // E0055: the removal of a label reaches the value, whatever the white space is between.
+            (
+                in_main("    let o = Some(x: 1)\n    print(o)"),
+                Code::LabeledArgument,
+                in_main("    let o = Some(1)\n    print(o)"),
+                false,
+            ),
+            (
+                in_main("    let o = Some(x:\n        1)\n    print(o)"),
+                Code::LabeledArgument,
+                in_main("    let o = Some(1)\n    print(o)"),
+                false,
+            ),
+            (
+                in_main("    let o = Some(x : 1)\n    print(o)"),
+                Code::LabeledArgument,
+                in_main("    let o = Some(1)\n    print(o)"),
+                false,
+            ),
+            (
+                in_variants("    let e = E.P(x: mut y)\n    print(e)"),
+                Code::LabeledArgument,
+                in_variants("    let e = E.P(y)\n    print(e)"),
+                false,
+            ),
+            (
+                in_variants("    let e = E.P(mut x: y)\n    print(e)"),
+                Code::LabeledArgument,
+                in_variants("    let e = E.P(mut y)\n    print(e)"),
+                false,
             ),
             // W0006: a later alternative removes backward, so `|` goes with it, whatever the white
             // space is on its two sides.
@@ -2038,9 +2122,9 @@ fn main() {
         use Code::{
             AssignToFunction as Assign, BindingNotFound as NoBind, BraceOnNewLine as Brace,
             BuiltInName as Built, CannotInfer as Infer, DefinedTwice as Twice,
-            FunctionNotFound as NoFn, InterfaceAsType as IfaceType, Mismatch,
-            NotAnInterface as NotIface, PrintArgument as Print, TypeAsValue as AsValue,
-            UnknownType as NoType, VariantForm as Variant,
+            InterfaceAsType as IfaceType, Mismatch, NotAnInterface as NotIface,
+            PrintArgument as Print, TypeAsValue as AsValue, UnknownType as NoType,
+            VariantForm as Variant,
         };
         let rows: &[(&str, &str, &[Found])] = &[
             (
@@ -2076,7 +2160,7 @@ fn main() {
             (
                 "intact enum called",
                 "enum E { A }\nfn main() { E(1) }\n",
-                &[(NoFn, (2, 13))],
+                &[(AsValue, (2, 13))],
             ),
             (
                 "duplicate class read: the first stays",
@@ -2091,7 +2175,7 @@ fn main() {
             (
                 "duplicate enum called",
                 "enum E { A }\nenum E { B }\nfn main() { E(1) }\n",
-                &[(Twice, (2, 6)), (NoFn, (3, 13))],
+                &[(Twice, (2, 6)), (AsValue, (3, 13))],
             ),
             (
                 "intact class Result, read of Ok",

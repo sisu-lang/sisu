@@ -1,0 +1,24 @@
+error[E0117]: `W` is a variant of `Holder`; write `Holder.W`
+  --> E0117-call-type-arguments.sisu:10:14
+   |
+10 |     let _a = W<i64>(1)
+   |              ^
+   |
+help: write `Holder.W`
+   |
+10 |     let _a = Holder.W<i64>(1)
+   |              +++++++
+
+error[E0117]: `W` is a variant of `Holder`; write `Holder.W`
+  --> E0117-call-type-arguments.sisu:11:14
+   |
+11 |     let _b = W.Some(1)
+   |              ^
+   |
+help: write `Holder.W`
+   |
+11 |     let _b = Holder.W.Some(1)
+   |              +++++++
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0117

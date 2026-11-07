@@ -12,7 +12,7 @@ error[E0032]: an array's `get` takes an `i64`, not a range
 3 |     print(oo.get(..) ?? 0)
   |                  ^^ this is a range
   |
-  = help: use `xs[a..b]`, which stops the program when the range is out of bounds
+  = help: index the array with `[a..b]`, which stops the program when the range is out of bounds
 
 sisu: 2 errors
 sisu: for more on a code, run `sisu explain <code>`: E0032, E0062

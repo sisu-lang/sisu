@@ -643,7 +643,7 @@ error[E0032]: an array's `get` takes an `i64`, not a range
 178 |     print(oo.get(..) ?? 0)
     |                  ^^ this is a range
     |
-    = help: use `xs[a..b]`, which stops the program when the range is out of bounds
+    = help: index the array with `[a..b]`, which stops the program when the range is out of bounds
 
 error[E0062]: `s` may be `None`
    --> E0062-member-on-payload.sisu:182:5
@@ -703,7 +703,7 @@ error[E0032]: an array's `get` takes an `i64`, not a range
 198 |     print(ys.get(..1) ?? 0)
     |                  ^^^ this is a range
     |
-    = help: use `xs[a..b]`, which stops the program when the range is out of bounds
+    = help: index the array with `[a..b]`, which stops the program when the range is out of bounds
 
 error[E0053]: `Node?.to_string` takes 0 arguments, found 1
    --> E0062-member-on-payload.sisu:210:11

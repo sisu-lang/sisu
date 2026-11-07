@@ -1,0 +1,20 @@
+error[E0120]: `em` is a method of `En`; call it on a value
+  --> E0120-method-forms.sisu:23:17
+   |
+23 |     let _a = En.em
+   |                 ^^
+
+error[E0120]: `em` is a method of `Gen`; call it on a value
+  --> E0120-method-forms.sisu:24:23
+   |
+24 |     let _b = Gen<i64>.em(1, 2)
+   |                       ^^
+
+error[E0120]: `em` is a method of `Al`; call it on a value
+  --> E0120-method-forms.sisu:25:17
+   |
+25 |     let _c = Al.em(mut y)
+   |                 ^^
+
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0120

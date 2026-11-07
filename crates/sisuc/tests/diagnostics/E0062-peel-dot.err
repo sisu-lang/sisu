@@ -872,7 +872,7 @@ error[E0062]: `c` may be `None`
     |
     = help: unwrap it with `if let`, `let ... else` or `?? return`
 
-error[E0120]: `grow` is a method; call it on a value: `e.grow()`
+error[E0120]: `grow` is a method of `Sh`; call it on a value
    --> E0062-peel-dot.sisu:349:8
     |
 349 |     Sh.grow(c.m.v)
