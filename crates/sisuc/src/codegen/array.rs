@@ -860,6 +860,11 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// `@sisu_rc.eq.[T](a, b)`: see `eq_entry` for the same block and `null`; otherwise the
     /// lengths, then each pair of elements by `T`'s `==`, up to the first difference.
     fn define_array_eq(&self, element: Type, function: FunctionValue<'ctx>) {
+        let function = if self.grows_stack(element) {
+            self.on_stack_with_room(function)
+        } else {
+            function
+        };
         let (a, b, equal, unequal) = self.eq_entry(
             function,
             Type::intern(TypeKind::Array(element)),

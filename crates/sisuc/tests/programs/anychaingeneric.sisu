@@ -1,0 +1,18 @@
+// A chain of 300 000 generic enum values with `T = any Display`, each in a box that the next one
+// holds, run under a 256 KiB stack.
+enum Wrap<T> {
+    End
+    Next(T)
+}
+
+fn main() {
+    let first: Wrap<any Display> = Wrap.End
+    let mut a: any Display = first
+    let mut i = 0
+    while i < 300_000 {
+        i += 1
+        let next: Wrap<any Display> = Wrap.Next(a)
+        a = next
+    }
+    print(1)
+}

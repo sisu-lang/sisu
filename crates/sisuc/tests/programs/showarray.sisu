@@ -1,0 +1,18 @@
+// A chain of 100 000 enum values, each in a one-element array that the next one holds, run under a
+// 256 KiB stack. The text of the chain goes through the show helper of the array for each link.
+enum T {
+    N([T])
+}
+
+fn build(n: i64) -> T {
+    let mut t = T.N([])
+    for _ in 0..n {
+        t = T.N([t])
+    }
+    t
+}
+
+fn main() {
+    let a = build(100000)
+    print(a.to_string().len())
+}

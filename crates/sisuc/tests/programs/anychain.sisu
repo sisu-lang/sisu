@@ -1,0 +1,17 @@
+// A chain of 300 000 enum values, each in an `any Display` box that the next one holds, run under
+// a 256 KiB stack. The drop of the box is not a loop over the links, so it needs a frame for each
+// level until the depth limit, and then defers the rest.
+enum Link {
+    End
+    Next(any Display)
+}
+
+fn main() {
+    let mut a = Link.End
+    let mut i = 0
+    while i < 300_000 {
+        i += 1
+        a = Link.Next(a)
+    }
+    print(1)
+}

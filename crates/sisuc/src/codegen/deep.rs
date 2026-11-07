@@ -1,7 +1,8 @@
 //! Deep drops (ADR 0038): which drop functions count the drop depth, and the drop weight of
 //! each. A drop function that counts adds its weight to the global `@sisu_rc.depth` while it
 //! runs. At `DEPTH_LIMIT` it defers its block to the runtime's queue instead. The drop that
-//! brings the depth back to 0 empties the queue when `@sisu_rc.deferred` is set.
+//! brings the depth back to 0 empties the queue when `@sisu_rc.deferred` is set. The drop
+//! functions that can count are those of a class and an array, and the drop glue of an `any` box.
 //!
 //! The walks here follow the nesting of the source types: a chain of enums that each hold the
 //! next, or nested arrays. They call themselves once for each level, so each recursive step
@@ -13,8 +14,8 @@ use std::cell::Cell;
 use inkwell::basic_block::BasicBlock;
 use inkwell::module::Linkage;
 use inkwell::types::BasicTypeEnum;
-use inkwell::values::{FunctionValue, GlobalValue};
-use inkwell::{GlobalVisibility, IntPredicate};
+use inkwell::values::{BasicMetadataValueEnum, FunctionValue, GlobalValue};
+use inkwell::{AddressSpace, GlobalVisibility, IntPredicate};
 
 use super::rc::param;
 use super::{Codegen, POSITIONED};
@@ -158,6 +159,15 @@ impl Codegen<'_, '_> {
         weight
     }
 
+    /// The drop weight of the drop glue of an `any` box that holds a `value`, or `None` when the
+    /// glue does not count. It counts when `value` is a recursing part, as an array element is.
+    /// The memos have no key for a box: the box of `[T]` frees one block more than the array
+    /// `[T]`, and `recursing` and `part_frames` keep the answers that this reads.
+    pub(super) fn box_drop_weight(&self, value: Type) -> Option<u32> {
+        self.recursing(None, value)
+            .then(|| 1 + self.part_frames(value))
+    }
+
     /// The type that the memos use for the drop function of `ty`, a class or an array: a class
     /// of a cycle is the first class of the cycle.
     fn drop_key(&self, ty: Type) -> Type {
@@ -211,6 +221,9 @@ impl Codegen<'_, '_> {
                 }
             }
             TypeKind::Enum(id, _) => self.enum_frames(id),
+            // `release` calls a drop function through the table. It counts the next frames if
+            // it counts. If it does not, what it holds is bounded and ends the chain: those
+            // frames come once, at the end, and the margin of `DEPTH_LIMIT` holds them.
             _ => 1,
         })
     }
@@ -280,9 +293,22 @@ impl<'ctx> Codegen<'ctx, '_> {
         drop: FunctionValue<'ctx>,
         ty: Type,
     ) -> Option<BasicBlock<'ctx>> {
-        if !self.counts(ty) {
-            return None;
-        }
+        self.counts(ty)
+            .then(|| self.begin_counting_drop(drop, self.drop_weight(ty)))
+    }
+
+    /// `begin_drop` for `drop`, the drop glue of an `any` box that holds a `value`.
+    pub(super) fn begin_box_drop(
+        &self,
+        drop: FunctionValue<'ctx>,
+        value: Type,
+    ) -> Option<BasicBlock<'ctx>> {
+        self.box_drop_weight(value)
+            .map(|weight| self.begin_counting_drop(drop, weight))
+    }
+
+    /// The code of `begin_drop` for a drop function that counts and has the drop weight `weight`.
+    fn begin_counting_drop(&self, drop: FunctionValue<'ctx>, weight: u32) -> BasicBlock<'ctx> {
         let (i64_type, bool_type) = (self.context.i64_type(), self.context.bool_type());
         let depth = self
             .drop_global("sisu_rc.depth", i64_type.into())
@@ -290,7 +316,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         let deferred = self
             .drop_global("sisu_rc.deferred", bool_type.into())
             .as_pointer_value();
-        let weight = i64_type.const_int(u64::from(self.drop_weight(ty)), false);
+        let weight = i64_type.const_int(u64::from(weight), false);
         let block = |name| self.context.append_basic_block(drop, name);
         let (defer, run) = (block("defer"), block("run"));
         let current = self
@@ -346,7 +372,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             .build_int_add(current.into_int_value(), weight, "depth.new")
             .expect(POSITIONED);
         self.store(depth, raised.into());
-        Some(exit)
+        exit
     }
 
     /// Ends the body of a drop function that `begin_drop` started: a return when `exit` is
@@ -358,6 +384,96 @@ impl<'ctx> Codegen<'ctx, '_> {
                 self.builder.build_return(None).expect(POSITIONED);
             }
         }
+    }
+
+    /// Whether a show or `==` helper of an array of `element` must grow the stack (ADR 0047). The
+    /// show glue of a box that holds an `element` uses the same rule. It is so when a value of
+    /// `element` can lead back to the helper through an array or a box. Those are the recursing
+    /// parts of a drop. A class is one of them, because a written `eq` can recurse through an
+    /// array of its class.
+    pub(super) fn grows_stack(&self, element: Type) -> bool {
+        self.recursing(None, element)
+    }
+
+    /// Gives `function`, which has no body yet, a body that runs a new function on a stack with
+    /// room, through `sisu_stack_grow`. The result is that new function. It takes the same
+    /// parameters and gives the same result, so its caller defines it as it would `function`.
+    /// `sisu_stack_grow` takes one pointer, so a stack struct holds the parameters and the result,
+    /// and a thunk reads them.
+    pub(super) fn on_stack_with_room(&self, function: FunctionValue<'ctx>) -> FunctionValue<'ctx> {
+        let name = function.get_name().to_string_lossy().into_owned();
+        let add = |suffix: &str, ty| {
+            let name = format!("{name}.{suffix}");
+            self.module.add_function(&name, ty, Some(Linkage::Internal))
+        };
+        let body = add("body", function.get_type());
+        let ptr = self.context.ptr_type(AddressSpace::default());
+        let thunk = add(
+            "thunk",
+            self.context.void_type().fn_type(&[ptr.into()], false),
+        );
+        let result = function.get_type().get_return_type();
+        let fields: Vec<BasicTypeEnum<'ctx>> = function
+            .get_param_iter()
+            .map(|parameter| parameter.get_type())
+            .chain(result)
+            .collect();
+        let env_type = self.context.struct_type(&fields, false);
+        let field = |env, index: usize| {
+            let index = u32::try_from(index).expect("a helper should take few parameters");
+            self.builder
+                .build_struct_gep(env_type, env, index, "env.field")
+                .expect("the stack struct should have a field for each part")
+        };
+        let parameters = function.count_params() as usize;
+
+        let entry = self.context.append_basic_block(function, "entry");
+        self.builder.position_at_end(entry);
+        let env = self
+            .builder
+            .build_alloca(env_type, "env")
+            .expect(POSITIONED);
+        for (index, parameter) in function.get_param_iter().enumerate() {
+            self.store(field(env, index), parameter);
+        }
+        let thunk_pointer = thunk.as_global_value().as_pointer_value();
+        self.call(
+            self.runtime("sisu_stack_grow"),
+            &[thunk_pointer.into(), env.into()],
+        );
+        match result {
+            Some(result) => {
+                let value = self
+                    .builder
+                    .build_load(result, field(env, parameters), "result")
+                    .expect(POSITIONED);
+                self.builder.build_return(Some(&value)).expect(POSITIONED);
+            }
+            None => {
+                self.builder.build_return(None).expect(POSITIONED);
+            }
+        }
+
+        let entry = self.context.append_basic_block(thunk, "entry");
+        self.builder.position_at_end(entry);
+        let env = param(thunk);
+        let arguments: Vec<BasicMetadataValueEnum<'ctx>> = (0..parameters)
+            .map(|index| {
+                self.builder
+                    .build_load(fields[index], field(env, index), "argument")
+                    .expect(POSITIONED)
+                    .into()
+            })
+            .collect();
+        let call = self
+            .builder
+            .build_call(body, &arguments, "")
+            .expect(POSITIONED);
+        if let Some(value) = call.try_as_basic_value().basic() {
+            self.store(field(env, parameters), value);
+        }
+        self.builder.build_return(None).expect(POSITIONED);
+        body
     }
 
     /// Makes `sisu_rc.depth` and `sisu_rc.deferred` for a split build, before any function: unit 0

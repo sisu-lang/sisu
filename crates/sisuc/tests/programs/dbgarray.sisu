@@ -1,0 +1,20 @@
+// A chain of 2 500 enum values, each in a one-element array that the next one holds, run under a
+// 256 KiB stack. `dbg` writes it through the show helper of the array for each link. Its text grows
+// with the square of the depth, so the chain is short: 2 500 links overflow the stack at `-O0`.
+enum T {
+    N([T])
+}
+
+fn build(n: i64) -> T {
+    let mut t = T.N([])
+    for _ in 0..n {
+        t = T.N([t])
+    }
+    t
+}
+
+fn main() {
+    let a = build(2500)
+    dbg(a)
+    print(1)
+}

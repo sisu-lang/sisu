@@ -1,0 +1,22 @@
+// Chains of 100 000 enum values, each in a one-element array that the next one holds, run under a
+// 256 KiB stack. `==` and `contains` on them go through the `==` helper of the array for each link.
+enum T {
+    N([T])
+}
+
+fn build(n: i64) -> T {
+    let mut t = T.N([])
+    for _ in 0..n {
+        t = T.N([t])
+    }
+    t
+}
+
+fn main() {
+    let a = build(100000)
+    let b = build(100000)
+    let c = build(99999)
+    print(a == b)
+    print(a == c)
+    print([a].contains(b))
+}

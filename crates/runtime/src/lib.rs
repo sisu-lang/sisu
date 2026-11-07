@@ -4,6 +4,7 @@ pub mod args;
 pub mod deferred;
 pub mod float;
 pub mod show;
+pub mod stack;
 pub mod stdin;
 pub mod text;
 

@@ -15,7 +15,7 @@ How the Sisu compiler turns source text into a native executable, one stage at a
   <section class="ph"><div class="w">
     <h1>How the compiler works</h1>
     <p class="lede"><code>sisu</code> compiles one Sisu source file into one native executable. It is a pipeline: each stage takes what the stage before it produced and hands on something closer to machine code.</p>
-    <p class="meta">From docs/architecture.md and the ADRs at commit 501fe4ea · x86-64 and ARM64 Linux, ARM64 macOS</p>
+    <p class="meta">From docs/architecture.md and the ADRs at commit 749bcbf0 · x86-64 and ARM64 Linux, ARM64 macOS</p>
   </div></section>
   <!-- source: docs/architecture.md (intro), README.md (x86-64 and ARM64 Linux, ARM64 macOS) -->
 
@@ -136,10 +136,11 @@ How the Sisu compiler turns source text into a native executable, one stage at a
       <!-- source: site/programs/mir/, docs/adr/0025-mir-holds-every-count.md, docs/adr/0005-reference-counting.md, docs/adr/0007-arrays-are-values.md, docs/adr/0008-weak-references.md (status planned per site.js AREAS / roadmap), docs/adr/0021-a-loop-makes-its-written-arrays-unique-before-it-starts.md, docs/adr/0042-a-slice-shares-its-block.md, docs/adr/0043-mut-parameters-copy-in-and-out.md, docs/benchmarks.md (quicksort on an array value), GLOSSARY.md (Last use, Copy-on-write) -->
 
       <h2 id="runtime">The runtime</h2>
-      <p><code>sisu-runtime</code> is a Rust library with a C ABI, which the two static archives <code>sisu-runtime-mimalloc</code> and <code>sisu-runtime-system</code> link; every program links one. Generated code calls it for many things, among them these three:</p>
+      <p><code>sisu-runtime</code> is a Rust library with a C ABI, which the two static archives <code>sisu-runtime-mimalloc</code> and <code>sisu-runtime-system</code> link; every program links one. Generated code calls it for many things, among them these four:</p>
       <ul>
         <li><strong>Input and output.</strong> Sisu code reaches the operating system only through the runtime. Standard output goes through a buffer the runtime owns, and <code>main</code> flushes it before it returns. Text crosses the boundary as a pointer and a length. The runtime never builds or reads a Sisu object, so an object's layout lives in one place: codegen.</li>
         <li><strong>Memory.</strong> <code>sisu_alloc</code>, <code>sisu_realloc</code> and <code>sisu_free</code> allocate and free objects, arrays and strings.</li>
+        <li><strong>Deep values.</strong> <code>sisu_stack_grow</code> runs a generated show or <code>==</code> helper on a new stack segment when the stack is low, so a deep chain of values does not overflow it.</li>
         <li><strong>Panics.</strong> A panic prints the file, line and column where it happened to standard error, and exits with code 101. A failed read or write has no location to print.</li>
       </ul>
       <figure class="code"><figcaption class="cap">div_zero.sisu</figcaption><pre data-lang="sisu">
