@@ -1636,7 +1636,7 @@ fn keyword_or_ident(text: &str) -> TokenKind {
 }
 
 /// The keyword that `text` spells, if any. It does not intern a name.
-fn keyword(text: &str) -> Option<TokenKind> {
+pub(crate) fn keyword(text: &str) -> Option<TokenKind> {
     Some(match text {
         "fn" => TokenKind::Fn,
         "let" => TokenKind::Let,

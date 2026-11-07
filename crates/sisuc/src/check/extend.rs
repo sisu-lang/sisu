@@ -37,6 +37,8 @@ pub(super) struct Extension {
     pub(super) assoc: std::rc::Rc<Choices>,
     /// The first method of each name.
     pub(super) methods: FxHashMap<Symbol, tir::FuncId>,
+    /// Whether a method of the block fails to parse, so the block is not an empty one.
+    pub(super) has_broken_method: bool,
     /// Whether the type already conforms to the interface, so that the block's methods answer no
     /// call: its conformance is reported (E0153).
     pub(super) duplicate: bool,
@@ -151,6 +153,7 @@ impl<'a> Checker<'_> {
                 interface: interface.flatten(),
                 assoc,
                 methods,
+                has_broken_method: !extend.broken_methods.is_empty(),
                 duplicate: false,
             });
             self.record_block_bounds(at);
