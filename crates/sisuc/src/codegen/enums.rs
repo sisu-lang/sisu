@@ -622,9 +622,6 @@ impl<'ctx> Codegen<'ctx, '_> {
         let TypeKind::Optional(inner) = ty.kind() else {
             unreachable!("only a boxed optional field should be read by its storage")
         };
-        let llvm_ty = self.llvm_type(ty).expect(
-            "the checker should give every payload field a value type, never `unit` or `never`",
-        );
         let boxed = self
             .builder
             .build_load(self.context.ptr_type(AddressSpace::default()), slot, "box")
@@ -648,7 +645,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         let present = self.optional(ty, self.context.bool_type().const_int(1, false), value);
         self.branch_to(done);
         self.builder.position_at_end(done);
-        self.phi(llvm_ty, &[(none, absent), (present, some)])
+        self.phi(none.get_type(), &[(none, absent), (present, some)])
     }
 
     /// The value of variant `variant` of enum `id` with the evaluated `values` as its fields:
