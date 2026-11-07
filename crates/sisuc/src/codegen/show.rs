@@ -434,6 +434,12 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// `@sisu_show.<T>(sink, value)`: writes a value of an array, a class or an enum type, as
     /// `mode` says. The value is the pointer of an array or an object, or the address of an enum.
     pub(super) fn define_show(&self, function: FunctionValue<'ctx>, ty: Type, mode: Mode) {
+        let function = match ty.kind() {
+            TypeKind::Array(element) if self.grows_stack(element) => {
+                self.on_stack_with_room(function)
+            }
+            _ => function,
+        };
         let entry = self.context.append_basic_block(function, "entry");
         self.builder.position_at_end(entry);
         let sink = param(function);

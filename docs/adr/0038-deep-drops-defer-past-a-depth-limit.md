@@ -24,7 +24,9 @@ The rule has four parts:
   two or more classes frees the other objects of the cycle in its drain, with
   their fields. So it counts when a class of its cycle has a recursing part,
   and all classes of the cycle share one drop weight. A class with a drop
-  block counts too, when drop blocks land.
+  block counts too, when drop blocks land. The drop glue of an `any` box is a
+  drop function with its own weight: it counts when the boxed type is a
+  recursing part, as an array element is. A chain can go through boxes alone.
 - **One reach flag for each enum component** (ADR 0019). The flag is clear
   when each payload field of each member, `?` stripped, is not counted, is a
   `string`, is an enum of the same component, or is an enum of another
@@ -96,7 +98,8 @@ captures and each kind that a later milestone adds, with no new rule.
   Its cost is a few instructions in each counting drop function.
 - **A stack that grows on the heap**, as Rust's `stacker` crate does:
   rejected. It keeps a strict depth-first order, but its memory grows with
-  the depth of the value.
+  the depth of the value. Show and `==` cannot defer their work, so they use
+  this option ([ADR 0047](0047-deep-show-and-equality-grow-the-stack.md)).
 - **Leave it**, with the limit that ADR 0005 and ADR 0019 state: rejected. A
   valid program crashes with no message.
 
