@@ -625,6 +625,18 @@ mod tests {
         }
     }
 
+    /// A lexer error is a mark at its own start. A fix that deletes it takes no other mark, so
+    /// the fix stays safe.
+    #[test]
+    fn a_fix_over_its_own_lexer_error_should_stay_safe() {
+        let src = "fn main() {\n    print(1 $)\n}\n";
+        let d = (front_end(src).1.into_iter().next()).expect("the lexer error should be reported");
+        let at = d.span();
+        let d = d.with_safe_fix_for_test(&[(at, "")]);
+        let sound = sound_fixes(src, std::slice::from_ref(&d));
+        assert_eq!(fix_edits(&sound[0]).map(|(safe, _)| safe), Some(true));
+    }
+
     /// The W0007 diagnostics among `ds`.
     fn semicolons(ds: &[Diagnostic]) -> Vec<&Diagnostic> {
         (ds.iter())
