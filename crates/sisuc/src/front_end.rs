@@ -150,11 +150,12 @@ fn internal_error(d: &Diagnostic) -> ! {
 /// parsing worse than it does, and with each fix unsafe that edits over a comment or another
 /// lexer error: a fix that is shown never breaks the syntax, and a safe one never takes text it
 /// was not about. A checker fix is not judged: the checker runs only on items that parse, and
-/// the fuzz target asserts that every fix shown keeps the syntax, the checker's included. One
-/// case is judged, and demoted: a fix with an edit on each side of a dropped `;`, which puts the
-/// `;` in new text. Finding it is cheap: a few binary searches in the sorted marks for each fix.
-/// Only judging it costs a parse, and it is judged only when a dropped `;` lies between the
-/// edits. Then all fixes of that diagnostic are judged.
+/// the fuzz target asserts that every fix shown keeps the syntax, the checker's included. Two
+/// cases are judged. One is a fix at the end of a line (`ends_a_line`), which can change where a
+/// statement ends. The other, also demoted, is a fix with an edit on each side of a dropped
+/// `;`, which puts the `;` in new text. Finding them is cheap: a few binary searches in the sorted
+/// marks for each fix, and a look at the blanks around each edit. Only judging one costs a parse,
+/// and then all fixes of that diagnostic are judged.
 /// Judging one lexes and parses the whole source again, so judging every checker fix made N
 /// warnings cost N parses. For the same reason only the first `JUDGED` syntax fixes are judged;
 /// later ones are dropped. On clean syntax a W0007 fix is kept as it is: neither judged, counted
@@ -197,7 +198,8 @@ pub(crate) fn sound_fixes(source: &str, diagnostics: &[Diagnostic]) -> Vec<Diagn
             let own = d.span().start();
             let reported = reported.contains(&(d.code(), d.span()));
             // A fix beside one that spans a `;` is judged too: that costs work and no result.
-            if reported || d.fixes().iter().any(|fix| around(fix, own)) {
+            let unsure = |fix: &Fix| around(fix, own) || ends_a_line(source, fix);
+            if reported || d.fixes().iter().any(unsure) {
                 d.retain_fixes(|fix| {
                     judged += 1;
                     judged <= JUDGED && syntax_errors(&fix.apply(source)) <= before
@@ -217,6 +219,15 @@ pub(crate) fn sound_fixes(source: &str, diagnostics: &[Diagnostic]) -> Vec<Diagn
 thread_local! {
     /// How many marks the scan of `sound_fixes` has looked at on this thread.
     static MARK_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Whether an edit of `fix` has only blanks or a comment after it on its line. What it changes may
+/// be what lets a statement go on past the line break, as the `>` of `fn main<T>\n()` does.
+fn ends_a_line(source: &str, fix: &Fix) -> bool {
+    fix.edits().iter().any(|edit| {
+        let after = source[edit.span().end()..].trim_start_matches([' ', '\t']);
+        after.starts_with(['\n', '\r']) || after.starts_with("//")
+    })
 }
 
 /// Whether the sorted `marks`, each once, hold a mark in `range` other than `own`. It looks at
@@ -561,6 +572,34 @@ mod tests {
         assert_eq!(ds.len(), 2, "{ds:?}");
         for d in &ds {
             assert_eq!(kept(src, d), [true]);
+        }
+    }
+
+    /// A `>` at a line's end lets the statement go on past the line break. A checker fix that
+    /// removes it can stop the two lines from parsing. The diagnostic stays, without the fix.
+    /// Where the two lines still parse, the fix stays.
+    #[test]
+    fn a_checker_fix_should_be_dropped_when_it_breaks_a_line() {
+        let call = |value: &str| format!("fn f() {{}}\nfn main() {{\n    {value}\n}}\n");
+        let variant =
+            |value: &str| format!("enum E {{\n    A\n}}\nfn main() {{\n    let _ = {value}\n}}\n");
+        let rows = [
+            ("fn main<T>\n() {\n}\n".to_string(), false),
+            ("fn main<T> // c\n() {\n}\n".to_string(), false),
+            ("fn main<T>\t\n() {\n}\n".to_string(), false),
+            ("fn main<T>\r\n() {\r\n}\r\n".to_string(), false),
+            ("fn main<T>() {\n}\n".to_string(), true),
+            ("fn main<\nT>() {\n}\n".to_string(), true),
+            (call("f<i64>\n    ()"), false),
+            (variant("E<i64>.A"), true),
+            (variant("E<i64>\n    .A"), true),
+        ];
+        for (src, kept) in rows {
+            let shown = sound_fixes(&src, &front_end(&src).1);
+            let d = (shown.iter())
+                .find(|d| matches!(d.code(), Code::MainSignature | Code::TypeArguments))
+                .unwrap_or_else(|| panic!("{src}: {shown:?}"));
+            assert_eq!(!d.fixes().is_empty(), kept, "{src}");
         }
     }
 

@@ -14,6 +14,37 @@ fn codes_over(prelude: &str, src: &str) -> Vec<(Code, (usize, usize))> {
     ds.iter().map(|d| (d.code(), at(src, d.span()))).collect()
 }
 
+/// An `extend` block whose method fails to parse is not an empty block, which the compiler would
+/// fill: the only error is the method's, and its fix leaves the block's other reports.
+#[test]
+fn a_broken_method_should_keep_its_block_from_being_generated() {
+    let flag = |list: &str, method: &str| {
+        format!(
+            "enum Node {{\n    N\n}}\n\nenum Flag{list} {{\n    On(Node)\n}}\n\nextend Flag: Eq {{\n    {method}\n {{\n        true\n    }}\n}}\n\nfn main() {{}}\n"
+        )
+    };
+    let eq = "fn eq(self, other: Self) -> bool";
+    assert_eq!(
+        codes_over(PRELUDE_SOURCE, &flag("", eq)),
+        [(Code::BraceOnNewLine, (11, 2))]
+    );
+    assert_eq!(
+        codes_over(PRELUDE_SOURCE, &flag(": Eq", eq)),
+        [
+            (Code::ConformsTwice, (9, 14)),
+            (Code::BraceOnNewLine, (11, 2))
+        ]
+    );
+    // A broken method of another name leaves `eq` missing, as its fixed form does.
+    assert_eq!(
+        codes_over(PRELUDE_SOURCE, &flag("", "fn other(self) -> bool")),
+        [
+            (Code::ConformanceBody, (9, 14)),
+            (Code::BraceOnNewLine, (11, 2))
+        ]
+    );
+}
+
 /// A user's `extend` of a built-in type stays E0155 when the prelude has such blocks: only the
 /// prelude's target is taken.
 #[test]

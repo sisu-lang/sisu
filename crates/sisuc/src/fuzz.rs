@@ -332,6 +332,32 @@ mod tests {
         assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 
+    /// Fixes beside a line break, which the fuzz target found. A fix must keep the syntax, and a
+    /// safe one must keep every report of another code.
+    #[test]
+    fn front_end_should_pass_on_a_fix_beside_a_line_break() {
+        let rows = [
+            "fn main<T>\n() {\n    print(1)\n}\n",
+            "fn f() {}\nfn main() {\n    f<i64>\n    ()\n}\n",
+            "enum E {\n    A(i64)\n}\nfn main() {\n    let _ = E.A<i64>\n    (1)\n}\n",
+            "enum Node {\n    N\n}\n\nenum Flag: Eq {\n    On(Node)\n    Off\n}\n\nextend Flag: Eq {\n    fn eq(self, other: Self) -> bool\n {\n        true\n    }\n}\n\nfn main() {}\n",
+            "enum T{P}fn a(){P<i>.S}",
+        ];
+        let failures: Vec<String> = crate::on_compiler_stack(|| {
+            rows.iter()
+                .filter_map(|src| {
+                    let caught = std::panic::catch_unwind(|| front_end(src.as_bytes()));
+                    let payload = caught.err()?;
+                    let message = (payload.downcast_ref::<String>().map(String::as_str))
+                        .or_else(|| payload.downcast_ref::<&str>().copied())
+                        .unwrap_or_default();
+                    Some(format!("{src:?}: {message}"))
+                })
+                .collect()
+        });
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
     #[test]
     fn every_seed_should_pass() {
         let mut found = Vec::new();
