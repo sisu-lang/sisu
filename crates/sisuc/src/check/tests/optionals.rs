@@ -792,8 +792,9 @@ fn a_none_beside_an_exit_should_act_as_a_plain_none() {
     assert!(unequal.is_empty(), "{}", unequal.join("\n"));
 }
 
-/// A value beside an exit acts as the value alone. These two calls took their type from the
-/// exit's branch before, and both compiled. Each now gives the code of its plain form.
+/// A value beside an exit acts as the value alone. These calls took their type from the `if`
+/// that holds the exit, not from the exit's branch, and all compiled. Each now gives the code of
+/// its plain form.
 #[test]
 fn a_value_beside_an_exit_should_act_as_the_value_alone() {
     super::with_prelude();
@@ -805,6 +806,10 @@ fn a_value_beside_an_exit_should_act_as_the_value_alone() {
         (
             "let _ = pick(Some(1), if c { Some(Some(1)) } else { todo(\"x\") })",
             "let _ = pick(Some(1), Some(Some(1)))",
+        ),
+        (
+            "let _ = pick(if c { Some(Some(1)) } else { todo(\"x\") }, u)",
+            "let _ = pick(Some(Some(1)), u)",
         ),
     ] {
         let codes = error_codes(&with_exit_body(with_exit));
@@ -822,6 +827,12 @@ fn a_loop_with_a_break_should_give_its_branch_a_type() {
         type_at(&with_body(&format!("let r = {value}")), value),
         "i64?"
     );
+    // The `loop` also gives a branch a type when a call takes the `if`.
+    let src = format!(
+        "fn id<T>(a: T) -> T {{ a }}\n{}",
+        with_exit_body("let _ = id(if c { None } else { loop { break 1 } })")
+    );
+    assert!(error_codes(&src).is_empty(), "{src}");
 }
 
 /// A `break` with no value gives the `loop` the type `unit`, which is no value. The second error

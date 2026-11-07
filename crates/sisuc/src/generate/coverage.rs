@@ -5403,7 +5403,8 @@ fn the_walker_reports_unbounded_loops_and_stray_indexes() {
 #[test]
 fn the_walker_should_list_a_loop_whose_panic_can_jump() {
     // Only `loop { panic("x") }` ends at its first step, because its message is a literal. A
-    // call of another function, or a message that jumps, is listed.
+    // call of another function, or a message that jumps, is listed. This holds for a message
+    // with an interpolation too: `panic("a{o ?? continue}")` compiles and does not stop.
     let program = "fn main() {
     let c = true
     let o: string? = None
@@ -5411,13 +5412,16 @@ fn the_walker_should_list_a_loop_whose_panic_can_jump() {
         panic(\"x\")
     }
     loop {
-        print(1)
+        print(\"x\")
     }
     loop {
         panic(if c { continue } else { \"x\" })
     }
     loop {
         panic(o ?? continue)
+    }
+    loop {
+        panic(\"a{o ?? continue}\")
     }
 }
 ";
@@ -5434,9 +5438,10 @@ fn the_walker_should_list_a_loop_whose_panic_can_jump() {
     assert_eq!(
         listed,
         [
-            "print(1)",
+            "print(\"x\")",
             "panic(if c { continue } else { \"x\" })",
-            "panic(o ?? continue)"
+            "panic(o ?? continue)",
+            "panic(\"a{o ?? continue}\")"
         ],
         "{:?}",
         walk.unbounded
