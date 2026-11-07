@@ -313,6 +313,7 @@ impl Checker<'_> {
                 label,
                 keyword,
                 body,
+                ..
             } => self.loop_expr(e.span, (*keyword, label.as_ref()), body, expected),
             ExprKind::Return { .. } | ExprKind::Break { .. } | ExprKind::Continue { .. } => {
                 failed_jump(self.jump_expr(e))

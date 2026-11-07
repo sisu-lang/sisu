@@ -1,6 +1,7 @@
 //! The front end: from source to the checked program.
 
 use std::iter;
+use std::ops::Range;
 
 use rustc_hash::FxHashSet;
 
@@ -149,57 +150,141 @@ fn internal_error(d: &Diagnostic) -> ! {
 /// parsing worse than it does, and with each fix unsafe that edits over a comment or another
 /// lexer error: a fix that is shown never breaks the syntax, and a safe one never takes text it
 /// was not about. A checker fix is not judged: the checker runs only on items that parse, and
-/// the fuzz target asserts that every fix shown keeps the syntax, the checker's included.
+/// the fuzz target asserts that every fix shown keeps the syntax, the checker's included. One
+/// case is judged, and demoted: a fix with an edit on each side of a dropped `;`, which puts the
+/// `;` in new text. Finding it is cheap: a few binary searches in the sorted marks for each fix.
+/// Only judging it costs a parse, and it is judged only when a dropped `;` lies between the
+/// edits. Then all fixes of that diagnostic are judged.
 /// Judging one lexes and parses the whole source again, so judging every checker fix made N
 /// warnings cost N parses. For the same reason only the first `JUDGED` syntax fixes are judged;
-/// later ones are dropped. A W0007 fix is safe by construction (`lexer::separate`), so it is kept
-/// as it is: neither judged, counted nor demoted.
+/// later ones are dropped. On clean syntax a W0007 fix is kept as it is: neither judged, counted
+/// nor demoted. Beside a syntax error it stays only if the token kinds and the lexer codes of the
+/// fixed source stay the same. That judgement has its own count, and it also stops at `JUDGED`.
 pub(crate) fn sound_fixes(source: &str, diagnostics: &[Diagnostic]) -> Vec<Diagnostic> {
     let mut sound = diagnostics.to_vec();
-    // Skipping the reparse for W0007s alone only saves work, so no test pins it.
+    // On clean syntax a W0007 fix is kept unjudged; beside a syntax error it stays only if the
+    // tokens and the lexer codes stay (`keep_lexing_semicolon_fixes`).
     let syntax_fix = |d: &Diagnostic| d.code() != Code::RedundantSemicolon;
-    // Judging a fix lexes and parses `source` again, so skip that when no diagnostic has one.
-    if sound.iter().any(|d| syntax_fix(d) && !d.fixes().is_empty()) {
+    let failed = sound.iter().any(|d| d.severity() == Severity::Error);
+    // Judging a fix lexes and parses `source` again, so skip that when no fix needs it: a syntax
+    // fix, or a W0007 fix of a source that failed. A source with only warnings skips too.
+    if sound
+        .iter()
+        .any(|d| (syntax_fix(d) || failed) && !d.fixes().is_empty())
+    {
         let syntax = syntax(source);
         let before = badness(&syntax);
+        if before != (false, 0) {
+            keep_lexing_semicolon_fixes(source, &mut sound);
+        }
         // Past a bracket error, the worst there is, no fix is worse: only the parser's reports
         // are judged.
         let reported: FxHashSet<(Code, Span)> = (syntax.iter().flatten())
             .map(|d| (d.code(), d.span()))
             .collect();
         let marks = marks(source);
+        let semicolons: Vec<usize> = (marks.iter().copied())
+            .filter(|&at| source.as_bytes().get(at) == Some(&b';'))
+            .collect();
         let mut judged = 0;
+        // A dropped `;` between the edits of one fix lands in new text, where it can be an error.
+        let around = |fix: &Fix, own: usize| {
+            let start = fix.edits().iter().map(|e| e.span().start()).min();
+            let end = fix.edits().iter().map(|e| e.span().end()).max();
+            (start.zip(end)).is_some_and(|(start, end)| other_mark_in(&semicolons, own, start..end))
+        };
         for d in sound.iter_mut().filter(|d| syntax_fix(d)) {
-            if reported.contains(&(d.code(), d.span())) {
+            let own = d.span().start();
+            let reported = reported.contains(&(d.code(), d.span()));
+            // A fix beside one that spans a `;` is judged too: that costs work and no result.
+            if reported || d.fixes().iter().any(|fix| around(fix, own)) {
                 d.retain_fixes(|fix| {
                     judged += 1;
                     judged <= JUDGED && syntax_errors(&fix.apply(source)) <= before
                 });
             }
-            let own = d.span().start();
             d.demote_fixes(|fix| {
-                let taken = |at: usize| fix.edits().iter().any(|e| e.span().range().contains(&at));
-                marks.iter().any(|&at| at != own && taken(at))
+                let taken =
+                    (fix.edits().iter()).any(|e| other_mark_in(&marks, own, e.span().range()));
+                taken || around(fix, own)
             });
         }
     }
     sound
 }
 
-/// How many syntax fixes `sound_fixes` judges.
+#[cfg(test)]
+thread_local! {
+    /// How many marks the scan of `sound_fixes` has looked at on this thread.
+    static MARK_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Whether the sorted `marks`, each once, hold a mark in `range` other than `own`. It looks at
+/// one mark in the range past the search, and at a second only when the first is `own`.
+fn other_mark_in(marks: &[usize], own: usize, range: Range<usize>) -> bool {
+    let from = marks.partition_point(|&at| {
+        #[cfg(test)]
+        MARK_READS.set(MARK_READS.get() + 1);
+        at < range.start
+    });
+    for &at in &marks[from..] {
+        #[cfg(test)]
+        MARK_READS.set(MARK_READS.get() + 1);
+        if at >= range.end {
+            return false;
+        }
+        if at != own {
+            return true;
+        }
+    }
+    false
+}
+
+/// How many syntax fixes `sound_fixes` judges, and how many W0007 fixes, with a count of their own.
 // shortcut: a fix past the cap is dropped, not judged; judge only the edited item if files with
 // more fixable syntax errors turn up.
 const JUDGED: usize = 100;
 
-/// Where each comment and each lexer error of `source` starts: text that the parser never sees,
-/// so that no rule behind a fix knows it is there.
+/// Drops each W0007 fix in `diagnostics` that changes how `source` lexes: it keeps a fix only if
+/// the fixed source gives the same token kinds and the same lexer codes. A fixed source that does
+/// not lex counts as different. At most `JUDGED` fixes are judged, with a count of their own, and
+/// the later ones are dropped. It lexes and does not parse.
+fn keep_lexing_semicolon_fixes(source: &str, diagnostics: &mut [Diagnostic]) {
+    let same = |a: &lexer::Lexed<'_>, b: &lexer::Lexed<'_>| {
+        (a.tokens.iter().map(|t| &t.kind)).eq(b.tokens.iter().map(|t| &t.kind))
+            && (a.diagnostics.iter().map(Diagnostic::code))
+                .eq(b.diagnostics.iter().map(Diagnostic::code))
+    };
+    // A source that does not lex has no W0007.
+    let Ok(lexed) = lexer::lex(source) else {
+        return;
+    };
+    let mut judged = 0;
+    for d in diagnostics
+        .iter_mut()
+        .filter(|d| d.code() == Code::RedundantSemicolon)
+    {
+        d.retain_fixes(|fix| {
+            judged += 1;
+            judged <= JUDGED
+                && lexer::lex(&fix.apply(source)).is_ok_and(|fixed| same(&lexed, &fixed))
+        });
+    }
+}
+
+/// Where each comment, each lexer error and each dropped `;` of `source` starts, sorted and each
+/// once: text that the parser never sees, so that no rule behind a fix knows it is there.
 fn marks(source: &str) -> Vec<usize> {
-    match lexer::lex(source) {
+    let mut marks = match lexer::lex(source) {
         Err(d) => vec![d.span().start()],
-        Ok(lexed) => (lexed.diagnostics.iter().map(|d| d.span().start()))
+        Ok(lexed) => (lexed.diagnostics.iter().chain(&lexed.warnings))
+            .map(|d| d.span().start())
             .chain(lexed.comments)
             .collect(),
-    }
+    };
+    marks.sort_unstable();
+    marks.dedup();
+    marks
 }
 
 /// What the lexer and the parser report about `source`; `Err` holds the bracket error that
@@ -239,8 +324,88 @@ pub(crate) fn checked_with(prelude: &str, source: &str) -> (Option<tir::Program>
     checked_timed(prelude, source, &mut Timings::off())
 }
 
+/// The sources that the W0007 tests and the fuzz tests share.
+#[cfg(test)]
+pub(crate) mod w0007_rows {
+    use crate::diagnostic::Code;
+
+    /// A `;` first on its line, after a token that cannot end a statement. Without it, the
+    /// source has more syntax errors than with it.
+    pub(crate) const NO_FIX_NEEDED: [&str; 5] = [
+        "fn f() ->\n; Box<i64>\n{}",
+        "fn main() {}\nfn f() ->\n; Array<i64>\n{\n    return []\n}\n",
+        "fn main() {}\nextend\n;Box<i64>\n{ }\n",
+        "extend\n;b<c>\n{}",
+        "fn f() ->\n;b<c>\n{}",
+    ];
+
+    /// The same, where the source with no `;` has no more syntax errors than with it.
+    pub(crate) const NO_FIX_HARMLESS: [&str; 3] = [
+        "type M =\n; Option<i64>\n\nextend Option<i64> {}\n\nextend M {}\n\nfn main() {}\n",
+        "fn main() {\n    let x =\n    ; y\n}\n",
+        "fn main() {\n    let a = 1 &\n    ; { }\n}\n",
+    ];
+
+    /// A syntax error, and a `;` whose fix changes how the file lexes. The flag says that the
+    /// token kinds stay and only the lexer codes change.
+    pub(crate) const CHANGES_THE_LEXING: [(&str, bool); 6] = [
+        ("fn f;fn g<T\nU>() {}", false),
+        ("fn f();fn g<T\nU>() {}", false),
+        ("fn f;enum F<T\nU> {}", false),
+        ("fn f ; type A: B\nC", false),
+        ("fn f;type A = Box<i64>\n& C", false),
+        ("fn main() {}\na.b<c>();enum B<C>\n{}", true),
+    ];
+
+    /// A fix of another diagnostic that takes a `;` which the parser never sees.
+    pub(crate) const TAKES_A_DROPPED_SEMICOLON: [&str; 3] = [
+        "fn main() {\n    let n = 0.5\n    while n !=\n; f64.nan {\n    }\n}\n",
+        "fn main() {\n    let n = 0.5\n    while n !=\n;; f64.nan {\n    }\n}\n",
+        "fn main() {\n    let n = 0.5\n    while n ==\n; f64.nan {\n    }\n}\n",
+    ];
+
+    /// A fix with one edit on each side of a dropped `;`, and the code of its diagnostic. The flag
+    /// says that the fixed source keeps the syntax, so the fix stays and is unsafe.
+    pub(crate) const AROUND_A_DROPPED_SEMICOLON: [(&str, Code, bool); 6] = [
+        (
+            "fn main() {\n    let n = 0.5\n    let v = -\n    ; n != f64.nan\n}\n",
+            Code::NanComparison,
+            false,
+        ),
+        (
+            "fn main() {\n    let n = 0.5\n    while -\n; n != f64.nan {\n    }\n}\n",
+            Code::NanComparison,
+            false,
+        ),
+        (
+            "fn main() {\n    let m = 0.5\n    let n = 0.5\n    let v = m +\n; n != f64.nan\n}\n",
+            Code::NanComparison,
+            false,
+        ),
+        (
+            "fn main() {\n    let n: i64 = 1\n    let x: f64 = -\n    ; n\n}\n",
+            Code::Mismatch,
+            false,
+        ),
+        (
+            "fn main() {\n    let k = 1\n    let o: i64? = Some(2)\n    let Some(v) = match k\n;  { _ => o } else { return }\n    print(v)\n}\n",
+            Code::LetElseValueEndsInBrace,
+            true,
+        ),
+        (
+            "fn main() {\n    let n = 0.5\n    let v = { print(1);\n    n } != f64.nan\n}\n",
+            Code::NanComparison,
+            true,
+        ),
+    ];
+}
+
 #[cfg(test)]
 mod tests {
+    use super::w0007_rows::{
+        AROUND_A_DROPPED_SEMICOLON, CHANGES_THE_LEXING, NO_FIX_HARMLESS, NO_FIX_NEEDED,
+        TAKES_A_DROPPED_SEMICOLON,
+    };
     use super::*;
     use crate::diagnostic::Code;
     use crate::diagnostic::explanations::{apply_fix, fix_edits};
@@ -450,6 +615,13 @@ mod tests {
                 true,
             ),
             ("fn main() {\n    todo!$()\n}\n", Code::TodoForm, false),
+            // Lexer errors come before warnings, so the `$` comes before the earlier `;` and
+            // `marks` must sort them.
+            (
+                "fn main() {\n    print(1);\n    todo!$()\n}\n",
+                Code::TodoForm,
+                false,
+            ),
         ] {
             let ds = sound_fixes(src, &front_end(src).1);
             let d = ds
@@ -458,6 +630,255 @@ mod tests {
                 .expect("the diagnostic should be reported");
             assert_eq!(fix_edits(d).map(|(s, _)| s), Some(safe), "{src}");
         }
+    }
+
+    /// A lexer error is a mark at its own start. A fix that deletes it takes no other mark, so
+    /// the fix stays safe.
+    #[test]
+    fn a_fix_over_its_own_lexer_error_should_stay_safe() {
+        let src = "fn main() {\n    print(1 $)\n}\n";
+        let d = (front_end(src).1.into_iter().next()).expect("the lexer error should be reported");
+        let at = d.span();
+        let d = d.with_safe_fix_for_test(&[(at, "")]);
+        let sound = sound_fixes(src, std::slice::from_ref(&d));
+        assert_eq!(fix_edits(&sound[0]).map(|(safe, _)| safe), Some(true));
+    }
+
+    /// The W0007 diagnostics among `ds`.
+    fn semicolons(ds: &[Diagnostic]) -> Vec<&Diagnostic> {
+        (ds.iter())
+            .filter(|d| d.code() == Code::RedundantSemicolon)
+            .collect()
+    }
+
+    /// The token kinds and the lexer codes of `src`; `None` when the lexer stops at a bracket.
+    fn lexing(src: &str) -> Option<(Vec<lexer::TokenKind>, Vec<Code>)> {
+        lexer::lex(src).ok().map(|l| {
+            (
+                l.tokens.iter().map(|t| t.kind.clone()).collect(),
+                l.diagnostics.iter().map(Diagnostic::code).collect(),
+            )
+        })
+    }
+
+    /// A `;` first on its line after an unfinished statement ends it. Removing the `;` would
+    /// keep it open, so the warning has no fix.
+    #[test]
+    fn a_w0007_after_a_token_that_cannot_end_a_statement_should_have_no_fix() {
+        for src in NO_FIX_NEEDED.into_iter().chain(NO_FIX_HARMLESS) {
+            let all = front_end(src).1;
+            let found = semicolons(&all);
+            assert!(!found.is_empty(), "{src:?}: no W0007");
+            for d in found {
+                assert!(d.fixes().is_empty(), "{src:?}: the W0007 has a fix");
+            }
+        }
+        for src in NO_FIX_NEEDED {
+            let without = src.replacen(';', "", 1);
+            assert!(
+                syntax_errors(&without) > syntax_errors(src),
+                "{src:?}: removing the `;` should add a syntax error"
+            );
+        }
+    }
+
+    /// Only the first `;` of a run holds the statement open. The others are redundant with it.
+    #[test]
+    fn a_second_semicolon_after_such_a_token_should_keep_its_fix() {
+        let src = "fn main() {\n    let x =\n    ;; y\n}\n";
+        let all = front_end(src).1;
+        let fixes: Vec<bool> = (semicolons(&all).iter())
+            .map(|d| !d.fixes().is_empty())
+            .collect();
+        assert_eq!(fixes, [false, true]);
+    }
+
+    /// Beside a syntax error, a W0007 fix stays only if the file lexes as before.
+    #[test]
+    fn a_w0007_fix_that_changes_the_tokens_should_go_beside_a_syntax_error() {
+        for (src, only_codes) in CHANGES_THE_LEXING {
+            let all = front_end(src).1;
+            let [w] = semicolons(&all)[..] else {
+                panic!("{src:?}: one W0007 wanted")
+            };
+            let [fix] = w.fixes() else {
+                panic!("{src:?}: the W0007 should have a fix")
+            };
+            let (before, after) = (lexing(src), lexing(&fix.apply(src)));
+            let kinds =
+                |l: &Option<(Vec<lexer::TokenKind>, Vec<Code>)>| l.as_ref().map(|l| l.0.clone());
+            let codes =
+                |l: &Option<(Vec<lexer::TokenKind>, Vec<Code>)>| l.as_ref().map(|l| l.1.clone());
+            if only_codes {
+                assert_eq!(kinds(&before), kinds(&after), "{src:?}");
+                assert_ne!(codes(&before), codes(&after), "{src:?}");
+            } else {
+                assert_ne!(kinds(&before), kinds(&after), "{src:?}");
+            }
+            let sound = sound_fixes(src, &all);
+            let spans =
+                |ds: &[Diagnostic]| -> Vec<_> { ds.iter().map(|d| (d.code(), d.span())).collect() };
+            assert_eq!(spans(&sound), spans(&all), "{src:?}");
+            let [kept] = semicolons(&sound)[..] else {
+                panic!("{src:?}: one W0007 wanted")
+            };
+            assert!(kept.fixes().is_empty(), "{src:?}: the W0007 keeps its fix");
+        }
+    }
+
+    /// A fix that leaves the tokens and the lexer codes as they were stays, as it does on clean
+    /// syntax.
+    #[test]
+    fn a_w0007_fix_that_keeps_the_tokens_should_stay_beside_a_syntax_error() {
+        for src in [
+            "fn main() {\n    let a = 1;\n    let = 2\n}\n",
+            "fn f() {}; fn h() {}\nfn g {}\n",
+        ] {
+            assert_ne!(syntax_errors(src), (false, 0), "{src:?}: no syntax error");
+            let sound = sound_fixes(src, &front_end(src).1);
+            let found = semicolons(&sound);
+            assert!(!found.is_empty(), "{src:?}: no W0007");
+            for d in found {
+                assert!(!d.fixes().is_empty(), "{src:?}: the W0007 lost its fix");
+            }
+        }
+    }
+
+    /// Beside a syntax error, the first `JUDGED` W0007 fixes are judged and the next is dropped.
+    #[test]
+    fn a_w0007_fix_should_be_judged_up_to_the_cap_beside_a_syntax_error() {
+        let lines = "    print(1);\n".repeat(JUDGED + 1);
+        let src = format!("fn main() {{\n{lines}    let = 2\n}}\n");
+        let sound = sound_fixes(&src, &front_end(&src).1);
+        let fixed: Vec<bool> = (semicolons(&sound).iter())
+            .map(|d| !d.fixes().is_empty())
+            .collect();
+        assert_eq!(fixed.len(), JUDGED + 1);
+        assert!(fixed[..JUDGED].iter().all(|&f| f));
+        assert!(!fixed[JUDGED]);
+    }
+
+    /// A W0007 fix does not take the cap of another syntax fix.
+    #[test]
+    fn a_w0007_fix_should_not_take_the_cap_of_another_syntax_fix() {
+        let lines = "    print(1);\n".repeat(150);
+        let src = format!("fn main() {{\n{lines}    print(0X1)\n}}\n");
+        let sound = sound_fixes(&src, &front_end(&src).1);
+        let d = (sound.iter())
+            .find(|d| d.code() == Code::BasePrefixUpperCase)
+            .expect("the E0075 should be reported");
+        assert!(!d.fixes().is_empty(), "the E0075 lost its fix");
+    }
+
+    /// The fix of the W0005 replaces text up to the `nan`, so it takes a `;` that the parser
+    /// never sees. It stays shown, and it is not safe.
+    #[test]
+    fn a_fix_that_takes_a_dropped_semicolon_should_be_unsafe() {
+        for src in TAKES_A_DROPPED_SEMICOLON {
+            let sound = sound_fixes(src, &front_end(src).1);
+            let d = (sound.iter())
+                .find(|d| d.code() == Code::NanComparison)
+                .unwrap_or_else(|| panic!("{src:?}: no W0005"));
+            assert_eq!(fix_edits(d).map(|(safe, _)| safe), Some(false), "{src:?}");
+        }
+    }
+
+    /// The diagnostic of `code` in `src` after `sound_fixes`, and whether the W0007 is still there.
+    fn judged_with_semicolon(src: &str, code: Code) -> (Diagnostic, bool) {
+        let sound = sound_fixes(src, &front_end(src).1);
+        let kept = !semicolons(&sound).is_empty();
+        let d = (sound.into_iter())
+            .find(|d| d.code() == code)
+            .unwrap_or_else(|| panic!("{src:?}: no {code:?}"));
+        (d, kept)
+    }
+
+    /// A fix with an edit on each side of a dropped `;` puts the `;` in new text, where the
+    /// parser reads it. The fix goes when that breaks the syntax.
+    #[test]
+    fn a_fix_around_a_dropped_semicolon_should_go_when_it_breaks_the_syntax() {
+        for (src, code, keeps) in AROUND_A_DROPPED_SEMICOLON {
+            if keeps {
+                continue;
+            }
+            let (d, semicolon) = judged_with_semicolon(src, code);
+            assert!(semicolon, "{src:?}: the W0007 went");
+            assert!(d.fixes().is_empty(), "{src:?}: the {code:?} keeps its fix");
+        }
+    }
+
+    /// A fix around a dropped `;` that keeps the syntax can still change another report, so it
+    /// stays shown and is not safe.
+    #[test]
+    fn a_fix_around_a_dropped_semicolon_should_be_unsafe_when_it_keeps_the_syntax() {
+        for (src, code, keeps) in AROUND_A_DROPPED_SEMICOLON {
+            if !keeps {
+                continue;
+            }
+            let (d, semicolon) = judged_with_semicolon(src, code);
+            assert!(semicolon, "{src:?}: the W0007 went");
+            assert_eq!(fix_edits(&d).map(|(safe, _)| safe), Some(false), "{src:?}");
+        }
+    }
+
+    /// A comment between the edits is not a dropped `;`, so the fix stays safe.
+    #[test]
+    fn a_fix_with_only_a_comment_between_its_edits_should_stay_safe() {
+        let src = "fn main() {\n    let n = 0.5\n    let v = - // c\n    n != f64.nan\n}\n";
+        let (d, _) = judged_with_semicolon(src, Code::NanComparison);
+        assert_eq!(fix_edits(&d).map(|(safe, _)| safe), Some(true), "{src:?}");
+    }
+
+    /// A dropped `;` before the first edit or after the last is not between the edits, so the fix
+    /// stays safe.
+    #[test]
+    fn a_fix_with_a_dropped_semicolon_outside_its_edits_should_stay_safe() {
+        for src in [
+            "fn main() {\n    let n = 0.5\n    print(1);\n    let v = n != f64.nan\n}\n",
+            "fn main() {\n    let n = 0.5\n    let v = n != f64.nan\n    print(1);\n}\n",
+            "fn main() {\n    let n = 0.5\n    let v = n != f64.nan;\n}\n",
+        ] {
+            let (d, semicolon) = judged_with_semicolon(src, Code::NanComparison);
+            assert!(semicolon, "{src:?}: no W0007");
+            assert_eq!(fix_edits(&d).map(|(safe, _)| safe), Some(true), "{src:?}");
+        }
+    }
+
+    /// A fix around a dropped `;` is judged, so it counts against the cap like any judged fix.
+    #[test]
+    fn a_fix_around_a_dropped_semicolon_should_count_against_the_cap() {
+        let src: String = (0..=JUDGED)
+            .map(|n| format!("fn g{n}() {{\n    let n = 0.5\n    let v = {{ print(1);\n    n }} != f64.nan\n}}\n"))
+            .chain(["fn main() {}\n".to_string()])
+            .collect();
+        let ds = sound_fixes(&src, &front_end(&src).1);
+        let mut fixed = (ds.iter())
+            .filter(|d| d.code() == Code::NanComparison)
+            .map(|d| !d.fixes().is_empty());
+        assert_eq!(fixed.clone().count(), JUDGED + 1);
+        assert!(fixed.clone().take(JUDGED).all(|f| f));
+        assert_eq!(fixed.next_back(), Some(false));
+    }
+
+    /// The scan of the marks does about one search for each fix: the work for a file of `n` fixes
+    /// and `n` dropped `;`s grows slower than `n^2`. A walk of all marks for each fix gives 4
+    /// times the reads from `n` to `2n`, and a binary search about 2.2. `assert_subquadratic`
+    /// fits the log factor, and its bound of 3 sits between them. `n` is 200, far above the 4
+    /// that it needs.
+    #[test]
+    fn the_scan_of_the_marks_should_be_near_linear() {
+        let reads = |n: usize| {
+            let lets = (0..n)
+                .map(|i| format!("    let _v{i} = n != f64.nan;\n"))
+                .collect::<Vec<_>>()
+                .concat();
+            let src = format!("fn main() {{\n    let n = 0.5\n{lets}}}\n");
+            let ds = front_end(&src).1;
+            MARK_READS.set(0);
+            sound_fixes(&src, &ds);
+            MARK_READS.get()
+        };
+        crate::mir::tests::assert_subquadratic(reads(200), reads(400));
     }
 
     /// The text of `src` after the one fix of the first diagnostic of `code`, and whether the fix
@@ -2623,15 +3044,24 @@ fn main() {
         );
     }
 
-    /// A W0007 fix is not judged, so it does not count against `JUDGED`.
+    /// On clean syntax, a W0007 fix is not judged, so it does not count against `JUDGED`. A source
+    /// with a type error still has no syntax error to judge a fix against.
     #[test]
-    fn sound_fixes_keep_every_redundant_semicolon_fix() {
-        let src = format!("fn main() {{\n{}}}\n", "    print(1);\n".repeat(150));
-        let shown = sound_fixes(&src, &front_end(&src).1);
-        assert_eq!(shown.len(), 150);
-        for d in &shown {
-            assert_eq!(d.code(), Code::RedundantSemicolon);
-            assert!(fix_edits(d).is_some_and(|(safe, _)| safe), "{d:?}");
+    fn sound_fixes_should_keep_every_redundant_semicolon_fix_on_clean_syntax() {
+        let clean = format!("fn main() {{\n{}}}\n", "    print(1);\n".repeat(150));
+        let typed = format!(
+            "fn main() {{\n{}    let z: string = 1\n}}\n",
+            "    print(1);\n".repeat(150)
+        );
+        for src in [clean, typed] {
+            let shown = sound_fixes(&src, &front_end(&src).1);
+            let semicolons: Vec<_> = (shown.iter())
+                .filter(|d| d.code() == Code::RedundantSemicolon)
+                .collect();
+            assert_eq!(semicolons.len(), 150, "{src}");
+            for d in semicolons {
+                assert!(fix_edits(d).is_some_and(|(safe, _)| safe), "{d:?}");
+            }
         }
     }
 
@@ -2654,7 +3084,6 @@ fn main() {
             "fn main() { return;else { } }\n",
             "class C;fn main() {}\n",
             "fn main() {\n    if c;\n    ; { }\n}\n",
-            "fn main() {\n    let a = 1 &\n    ; { }\n}\n",
         ]
         .map(String::from)
         .into();
@@ -3341,5 +3770,26 @@ fn main() {
         assert_eq!(field("E<W<i64>>", "A"), (true, tir::Rank::Assoc));
         assert_eq!(field("E<Q>", "A"), (false, tir::Rank::Assoc));
         assert_eq!(field("Wrap<E<W<i64>>>", "X"), (false, tir::Rank::Never));
+    }
+
+    /// A mark counts from the start of the range up to, but not including, its end. The mark
+    /// `own` never counts.
+    #[test]
+    fn other_mark_in_should_find_another_mark_from_the_range_start_up_to_its_end() {
+        let rows: [(&[usize], usize, Range<usize>, bool); 6] = [
+            (&[5], 0, 5..6, true),
+            (&[5], 0, 4..5, false),
+            (&[5], 0, 6..7, false),
+            (&[5], 0, 5..5, false),
+            (&[5], 5, 5..6, false),
+            (&[5, 6], 5, 5..7, true),
+        ];
+        for (marks, own, range, wanted) in rows {
+            assert_eq!(
+                other_mark_in(marks, own, range.clone()),
+                wanted,
+                "marks {marks:?}, own {own}, range {range:?}"
+            );
+        }
     }
 }

@@ -1603,6 +1603,17 @@ impl Walk {
     /// Checks that a `loop` counts down as a `while` does: `let mut c = n` before it, with `n`
     /// at most `MAX_BOUND`, `if c == 0 { break [v] }` first in its body and `c -= 1` next.
     fn loop_bound(&mut self, before: Option<&ast::Stmt>, e: &ast::Expr, body: &ast::Block) {
+        // A `loop` whose first statement is a call of `panic` with a literal message ends the
+        // run at its first step. Another message could jump, as `panic(o ?? continue)` does.
+        if let Some(ast::StmtKind::Expr(first)) = body.stmts.first().map(|stmt| &stmt.kind)
+            && let ast::ExprKind::Call { callee, args, .. } = &first.kind
+            && callee.name.as_str() == "panic"
+            && let [arg] = &args[..]
+            && matches!(arg.value.kind, ast::ExprKind::Str(_))
+        {
+            self.counted.insert(e.span.start());
+            return;
+        }
         let guard = body.stmts.first().and_then(|stmt| {
             if let ast::StmtKind::Expr(guard) = &stmt.kind
                 && let ast::ExprKind::If {
@@ -2250,8 +2261,14 @@ impl Walk {
                     self.ast_expr(&arm.body);
                 }
             }
-            ast::ExprKind::Loop { label, body, .. } => {
+            ast::ExprKind::Loop {
+                label,
+                body,
+                breaks,
+                ..
+            } => {
                 self.mark("ast::ExprKind::Loop");
+                self.mark(&format!("ast::ExprKind::Loop.breaks = {breaks}"));
                 if !self.counted.contains(&e.span.start()) {
                     self.unbounded
                         .push(format!("a `loop` at byte {}", e.span.start()));
@@ -5380,6 +5397,54 @@ fn the_walker_reports_unbounded_loops_and_stray_indexes() {
             "a `loop`",
             "a `loop`"
         ]
+    );
+}
+
+#[test]
+fn the_walker_should_list_a_loop_whose_panic_can_jump() {
+    // Only `loop { panic("x") }` ends at its first step, because its message is a literal. A
+    // call of another function, or a message that jumps, is listed. This holds for a message
+    // with an interpolation too: `panic("a{o ?? continue}")` compiles and does not stop.
+    let program = "fn main() {
+    let c = true
+    let o: string? = None
+    loop {
+        panic(\"x\")
+    }
+    loop {
+        print(\"x\")
+    }
+    loop {
+        panic(if c { continue } else { \"x\" })
+    }
+    loop {
+        panic(o ?? continue)
+    }
+    loop {
+        panic(\"a{o ?? continue}\")
+    }
+}
+";
+    let mut walk = Walk::default();
+    walk.program(program);
+    let listed: Vec<&str> = walk
+        .unbounded
+        .iter()
+        .filter_map(|loop_| {
+            let at: usize = loop_.rsplit_once(' ')?.1.parse().ok()?;
+            Some(program[at..].lines().nth(1)?.trim())
+        })
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            "print(\"x\")",
+            "panic(if c { continue } else { \"x\" })",
+            "panic(o ?? continue)",
+            "panic(\"a{o ?? continue}\")"
+        ],
+        "{:?}",
+        walk.unbounded
     );
 }
 
