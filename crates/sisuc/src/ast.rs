@@ -709,6 +709,8 @@ impl fmt::Display for Part {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Arg {
     pub(crate) label: Option<Ident>,
+    /// The `:` after the label: `Some` when `label` is.
+    pub(crate) colon: Option<Span>,
     /// The `mut` before the value, or before the label (`mut cells: xs`).
     pub(crate) mut_keyword: Option<Span>,
     pub(crate) value: Expr,
@@ -1458,6 +1460,7 @@ mod tests {
                     angles: sp(),
                     args: vec![Arg {
                         label: None,
+                        colon: None,
                         mut_keyword: None,
                         value: name("x"),
                     }],

@@ -6,10 +6,8 @@ error[E0055]: `E.P` takes no labels
    |
 help: remove the labels
    |
-10 -     let e = E.P(x // c
-11 -         : 1)
-10 +     let e = E.P(// c
-11 +         1)
+10 ~     let e = E.P(// c
+11 ~         1)
    |
 
 sisu: 1 error

@@ -16,7 +16,7 @@ use super::{
 use crate::ast;
 use crate::diagnostic::{BuiltIn, Unbuilt, VariantLabels, suggestion};
 use crate::graph::components;
-use crate::source::Span;
+use crate::source::{Span, removal_end};
 use crate::symbol::Symbol;
 use crate::tir::{self, EnumId, Rank, Type, TypeArgs, TypeKind};
 
@@ -510,14 +510,24 @@ impl Checker<'_> {
         want: usize,
         args: &[ast::Arg],
     ) -> Option<bool> {
-        // Each `label: ` and the space after it, which the fix deletes.
-        let labels: Vec<_> = args
-            .iter()
-            .filter_map(|arg| {
-                let label = arg.label.as_ref()?;
-                Some(Span::new(label.span.start(), arg.value.span.start()))
-            })
-            .collect();
+        // Each `label: ` and the white space after it, which the fix deletes. A comment between
+        // the label and the `:`, or after the `:`, stays: the cut stops at it, so a comment before
+        // the `:` makes two cuts.
+        let comments = self.source.comments;
+        let mut labels = Vec::new();
+        for arg in args {
+            let (Some(label), Some(colon)) = (&arg.label, arg.colon) else {
+                continue;
+            };
+            let before = removal_end(comments, label.span.end(), colon.start());
+            let after = removal_end(comments, colon.end(), arg.value.span.start());
+            if before == colon.start() {
+                labels.push(Span::new(label.span.start(), after));
+            } else {
+                labels.push(Span::new(label.span.start(), before));
+                labels.push(Span::new(colon.start(), after));
+            }
+        }
         let labeled = !labels.is_empty();
         if let Some(first) = args.iter().find_map(|arg| arg.label.as_ref()) {
             self.report(DiagnosticKind::LabeledArgument {

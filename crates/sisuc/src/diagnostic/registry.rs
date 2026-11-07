@@ -1701,8 +1701,8 @@ pub(crate) struct TypedLiteral {
     pub(crate) annotate: Option<(usize, String)>,
 }
 
-/// The variant `path` (`Expr.Num`) whose payload declares no labels, and each `label: ` of a call
-/// of it, which its fix deletes.
+/// The variant `path` (`Expr.Num`) whose payload declares no labels, and the spans of each
+/// `label: ` of a call of it, which its fix deletes: two spans where a comment lies before the `:`.
 pub(crate) struct VariantLabels {
     pub(crate) path: String,
     pub(crate) labels: Vec<Span>,
