@@ -99,6 +99,9 @@ const SMALL_STACK: &[&str] = &[
     "nestedenums",
     "chainwrapped",
     "chainrepeat",
+    "anychain",
+    "anychainoptional",
+    "anychaingeneric",
 ];
 
 /// GIVEN the `tests/programs` directory
@@ -1007,6 +1010,33 @@ fn generic_class_through_an_array_should_drop_in_a_small_stack() {
 #[test]
 fn repeated_deep_drops_should_free_every_object() {
     assert_small_stack_checks_at_both("chainrepeat", "1\n");
+}
+
+/// GIVEN the `anychain` program, which builds a chain of 300 000 enum values, each in an
+///   `any Display` box that the next one holds
+/// WHEN it runs under a 256 KiB stack, with and without `-O2`, built with `--rc-checks`
+/// THEN it exits 0, prints `1` and frees every object
+#[test]
+fn chain_through_an_any_box_should_drop_in_a_small_stack() {
+    assert_small_stack_checks_at_both("anychain", "1\n");
+}
+
+/// GIVEN the `anychainoptional` program, which builds a chain of 300 000 enum values, each in an
+///   optional `any Display` box that the next one holds
+/// WHEN it runs under a 256 KiB stack, with and without `-O2`, built with `--rc-checks`
+/// THEN it exits 0, prints `1` and frees every object
+#[test]
+fn chain_through_an_optional_any_box_should_drop_in_a_small_stack() {
+    assert_small_stack_checks_at_both("anychainoptional", "1\n");
+}
+
+/// GIVEN the `anychaingeneric` program, which builds a chain of 300 000 `Wrap<any Display>` values,
+///   each in a box that the next one holds
+/// WHEN it runs under a 256 KiB stack, with and without `-O2`, built with `--rc-checks`
+/// THEN it exits 0, prints `1` and frees every object
+#[test]
+fn chain_through_a_generic_enum_of_an_any_box_should_drop_in_a_small_stack() {
+    assert_small_stack_checks_at_both("anychaingeneric", "1\n");
 }
 
 /// Runs `<name>.sisu` at `-O2` under the small stack and checks that it exits 0 and prints
