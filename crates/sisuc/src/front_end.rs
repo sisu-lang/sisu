@@ -3764,4 +3764,25 @@ fn main() {
         assert_eq!(field("E<Q>", "A"), (false, tir::Rank::Assoc));
         assert_eq!(field("Wrap<E<W<i64>>>", "X"), (false, tir::Rank::Never));
     }
+
+    /// A mark counts from the start of the range up to, but not including, its end. The mark
+    /// `own` never counts.
+    #[test]
+    fn other_mark_in_should_find_another_mark_from_the_range_start_up_to_its_end() {
+        let rows: [(&[usize], usize, Range<usize>, bool); 6] = [
+            (&[5], 0, 5..6, true),
+            (&[5], 0, 4..5, false),
+            (&[5], 0, 6..7, false),
+            (&[5], 0, 5..5, false),
+            (&[5], 5, 5..6, false),
+            (&[5, 6], 5, 5..7, true),
+        ];
+        for (marks, own, range, wanted) in rows {
+            assert_eq!(
+                other_mark_in(marks, own, range.clone()),
+                wanted,
+                "marks {marks:?}, own {own}, range {range:?}"
+            );
+        }
+    }
 }
