@@ -82,6 +82,28 @@ the checker makes the program handle `None`.
 Sisu is a passion project at an early stage. Any change may break programs
 that compiled before it. See [Status](#status).
 
+## Install
+
+Sisu runs on x86-64 and ARM64 Linux with glibc 2.35 or newer, and on ARM64
+macOS 15 or newer. It links each program with `cc`, so you need a C compiler on
+`PATH`. These lines install the newest nightly build and run a program:
+
+```console
+$ curl -fsSL https://github.com/sisu-lang/sisu/releases/latest/download/install.sh | sh
+$ export PATH="$HOME/.sisu/bin:$PATH"
+$ curl -fsSLO https://github.com/sisu-lang/sisu/releases/latest/download/orders.sisu
+$ sisu run orders.sisu
+```
+
+The first line, run again, updates Sisu. It checks the tarball against the
+release's `SHA256SUMS`, which shows that the file is whole and comes from the
+same release. It does not show who made the release. A bug report gives the
+output of `sisu --version --verbose`. To keep `sisu` on `PATH` in a new shell,
+add the `export` line to your shell's start-up file.
+
+To work on Sisu itself, build it from a clone:
+[Developing Sisu](docs/development.md).
+
 ## What Sisu values
 
 The goal is that people are productive in Sisu. Four values serve that goal, in
@@ -238,7 +260,8 @@ editors and agents, and marks each fix as safe or unsafe.
 
 ## Status
 
-Sisu has no releases and runs on x86-64 and ARM64 Linux and ARM64 macOS only.
+Sisu has only nightly builds. It runs only on x86-64 and ARM64 Linux and ARM64
+macOS.
 Today it compiles:
 
 - functions, and the types `i64`, `f64`, `u8`, `bool` and `char`
@@ -266,7 +289,8 @@ The compiler, `sisu`, is written in Rust and uses LLVM for code generation.
 
 | You want to | Read |
 | --- | --- |
-| Build Sisu and compile a program | [Developing Sisu](docs/development.md) |
+| Install Sisu and run a program | [Install](#install) |
+| Build Sisu from a clone | [Developing Sisu](docs/development.md) |
 | See how the compiler is put together | [Architecture](docs/architecture.md) |
 | See what is planned | [Roadmap](docs/roadmap.md) |
 | Compare Sisu's speed, memory and binary size with other languages | [Benchmarks](docs/benchmarks.md) |

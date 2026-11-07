@@ -1565,15 +1565,17 @@ stretch goals" with no date. Each gap gets a milestone once a definition of
   The C FFI, binary file formats and hashing need `i32`, `u32`, `u64` and
   `f32`. "Integer widths and wrapping" in "Open decisions" covers only part of
   this.
-- **Distributing `sisu`.** Nothing installs Sisu outside a clone. `sisu`
-  finds `libsisu_runtime_mimalloc.a` and `libsisu_runtime_system.a` only next
-  to its own executable in a Cargo target directory (`link.rs`), and it links
-  with `cc`, so users need a C toolchain.
-  The release binary links LLVM statically but needs glibc, libstdc++,
-  libgcc_s, libm, zlib and zstd. A compiled program needs glibc and
-  libgcc_s. A first release ships the two runtime archives beside `sisu` and
-  finds them there, and is built on an old glibc with libstdc++, zlib and zstd
-  linked statically, then tested on a clean machine. A fully static `sisu` built
+- **Distributing `sisu`.** One line installs the newest nightly build on x86-64
+  and ARM64 Linux and ARM64 macOS ([The nightly
+  build](development.md#the-nightly-build)). The tarball holds `sisu`, the two
+  runtime archives and the license files. `sisu` finds the archives beside its
+  own executable (`link.rs`), and it links with `cc`, so users need a C
+  toolchain. The Linux `sisu` is built on Ubuntu 22.04. It links LLVM statically
+  but needs glibc, libstdc++, libgcc_s, libm, zlib and zstd. A compiled program
+  needs glibc and libgcc_s. A stable release needs a version string that tells
+  it from a nightly build. `releases/latest/download/` must then mean the stable
+  release, so nightly builds stop marking themselves latest and get another
+  install path. Static linking is a separate item. A fully static `sisu` built
   against musl needs LLVM built from source against musl. Static compiled
   programs need the runtime built for `x86_64-unknown-linux-musl` and a link
   against musl's C library.

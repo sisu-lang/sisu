@@ -122,22 +122,17 @@ Sisu is a small, statically typed language that compiles to native x86-64 and AR
   </div></section>
 
   <section class="s" aria-labelledby="h-try"><div class="w try">
-    <div><h2 id="h-try">Build it and run a program</h2><p>Sisu has no releases yet. You build the compiler from source, on x86-64 or ARM64 Linux or an ARM64 Mac. To try it, you need:</p>
-      <ul>
-        <li>The Rust toolchain; rustup installs the pinned version</li>
-        <li>GNU Make, and a C compiler on <code>PATH</code> as <code>cc</code></li>
-        <li>On Ubuntu: <code>libzstd-dev</code>, <code>libxml2-dev</code>, <code>zlib1g-dev</code>, and on ARM64 also <code>libffi-dev</code>; on macOS, Homebrew's <code>zstd</code></li>
-      </ul>
-      <a class="more" href="contribute.html#build">To contribute: the full setup and checks</a>
+    <div><h2 id="h-try">Install it and run a program</h2><p>Sisu runs on x86-64 and ARM64 Linux with glibc 2.35 or newer, and on ARM64 macOS 15 or newer. It links each program with <code>cc</code>, so you need a C compiler on <code>PATH</code>. These lines install the newest nightly build and run a program.</p>
+      <p>The first line, run again, updates Sisu. It checks the tarball against the release's <code>SHA256SUMS</code>, which shows that the file is whole and comes from the same release. It does not show who made the release. A bug report gives the output of <code>sisu --version --verbose</code>. To keep <code>sisu</code> on <code>PATH</code> in a new shell, add the <code>export</code> line to your shell's start-up file.</p>
+      <a class="more" href="contribute.html#build">To contribute: build it from a clone</a>
     </div>
     <figure class="code"><figcaption class="cap">terminal</figcaption><pre data-lang="sh">
-$ git clone https://github.com/sisu-lang/sisu
-$ cd sisu
-$ scripts/install-llvm.sh   # once per clone: LLVM 23 into .llvm/23
-$ make build
-$ target/debug/sisu build crates/sisuc/tests/run/fib.sisu
-$ ./fib
-{{text ../crates/sisuc/tests/run/fib.out}}</pre></figure>
+$ curl -fsSL https://github.com/sisu-lang/sisu/releases/latest/download/install.sh | sh
+$ export PATH="$HOME/.sisu/bin:$PATH"
+$ curl -fsSLO https://github.com/sisu-lang/sisu/releases/latest/download/orders.sisu
+$ sisu run orders.sisu
+{{text programs/run/orders.out}}</pre></figure>
+    <!-- source: README.md (Install), install.sh (the supported systems), site/programs/run/orders.out -->
   </div></section>
 
   <section class="s tint" aria-labelledby="h-open"><div class="w cta">
