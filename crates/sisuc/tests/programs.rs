@@ -3,6 +3,7 @@
 //! rules of the `cases` harness.
 
 use std::ffi::{OsStr, OsString};
+use std::fmt::Write as _;
 use std::fs::{self, File};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::process::ExitStatusExt;
@@ -2370,6 +2371,87 @@ fn build_tmp(name: &str, source: &str) -> (Output, PathBuf) {
         .output()
         .expect("sisu starts");
     (out, exe)
+}
+
+/// The source of a chain of enums `E0` to `E<top>`, each with four fields of the one before.
+/// Its `main` compares a value of `E<top>`.
+fn wide_enum_source(top: usize) -> String {
+    let mut source = String::from("enum E0 {\n    A\n    V(i64, i64, i64, i64)\n}\n");
+    for level in 1..=top {
+        let below = level - 1;
+        writeln!(
+            source,
+            "enum E{level} {{\n    A\n    V(E{below}, E{below}, E{below}, E{below})\n}}"
+        )
+        .expect("writing to a `String` should not fail");
+    }
+    write!(
+        source,
+        "fn main() {{\n    let e = E{top}.A\n    print(e == E{top}.A)\n}}\n"
+    )
+    .expect("writing to a `String` should not fail");
+    source
+}
+
+/// Builds `source` at `-O2` with 1 GiB of address space, runs the program, and checks that it
+/// exits 0 and prints `true`. `ulimit -v` has an effect on Linux only.
+#[cfg(target_os = "linux")]
+fn assert_builds_at_o2_in_bounded_memory(name: &str, source: &str) {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let file = dir.join(format!("{name}.sisu"));
+    fs::write(&file, source).expect("writes");
+    let exe = dir.join(name);
+    // It is absent on the first run, so a failure here is expected and harmless.
+    drop(fs::remove_file(&exe));
+    let out = Command::new("sh")
+        .args([
+            "-c",
+            r#"ulimit -c 0 && ulimit -v 1048576 && exec "$0" "$@""#,
+        ])
+        .arg(env!("CARGO_BIN_EXE_sisu"))
+        .arg("build")
+        .arg("-O2")
+        .arg(&file)
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("sh starts");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{:?}: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(&exe).output().expect("the program starts");
+    assert_eq!(run.status.code(), Some(0), "{:?}", run.status);
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "true\n",
+        "the program should compare its value"
+    );
+}
+
+/// GIVEN a chain of enums whose last one holds 171 KiB
+/// WHEN `sisu build -O2` runs with 1 GiB of address space
+/// THEN it exits 0, and the program prints `true`
+#[cfg(target_os = "linux")]
+#[test]
+fn a_wide_enum_should_build_at_o2_in_bounded_memory() {
+    assert_builds_at_o2_in_bounded_memory("wide_enum_o2", &wide_enum_source(6));
+}
+
+/// GIVEN an enum with one variant of 10 000 `i64` fields
+/// WHEN `sisu build -O2` runs with 1 GiB of address space
+/// THEN it exits 0, and the program prints `true`
+#[cfg(target_os = "linux")]
+#[test]
+fn a_variant_with_many_fields_should_build_at_o2_in_bounded_memory() {
+    let fields = vec!["i64"; 10_000].join(", ");
+    let source = format!(
+        "enum W {{\n    A\n    V({fields})\n}}\nfn main() {{\n    let w = W.A\n    print(w == W.A)\n}}\n"
+    );
+    assert_builds_at_o2_in_bounded_memory("wide_variant_o2", &source);
 }
 
 /// GIVEN a program that assigns to an immutable binding
