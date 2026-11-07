@@ -719,3 +719,229 @@ fn dot_call_on_optional_should_keep_may_be_none_beside_an_uninferred_parameter()
         &[(Code::MayBeNone, (5, 13)), (Code::CannotInfer, (5, 15))],
     );
 }
+
+/// The codes of the errors of `src`, sorted by the start of their span. A warning, such as the
+/// W0003 of `todo`, is left out.
+fn error_codes(src: &str) -> Vec<Code> {
+    let mut ds = diags(src);
+    ds.sort_by_key(|d| (d.span().start(), d.code().as_str()));
+    ds.iter()
+        .map(Diagnostic::code)
+        .filter(|code| code.severity() == Severity::Error)
+        .collect()
+}
+
+/// A program with the locals `c`, `d` and `u` and the generic `pick`, then `statement` in `main`.
+fn with_exit_body(statement: &str) -> String {
+    format!(
+        "fn pick<T>(a: T, b: T) -> T {{ a }}\nfn main() {{\n    let c = true\n    let d = false\n    let x: i64?? = None\n    let u: i64? = 1\n    {statement}\n}}"
+    )
+}
+
+/// Each form that never ends, as the `else` block of an `if`.
+const EXITS: [&str; 7] = [
+    "todo(\"x\")",
+    "panic(\"x\")",
+    "loop { }",
+    "return",
+    "if c { todo(\"x\") } else { panic(\"x\") }",
+    "print(\"a\"); todo(\"x\")",
+    "({ return })",
+];
+
+/// A value that never ends gives no type, so `if c { None } else { <exit> }` acts as a plain
+/// `None` at each place. Both forms give the same errors.
+#[test]
+fn a_none_beside_an_exit_should_act_as_a_plain_none() {
+    super::with_prelude();
+    let positions = [
+        "let _ = $",
+        "let _ = [1, $]",
+        "let _ = [$, 1]",
+        "let _ = pick(1, $)",
+        "let _ = pick($, 1)",
+        "let _ = if d { 1 } else { $ }",
+        "let _ = if d { $ } else { 1 }",
+        "let _ = match d { true => 1; false => $ }",
+        "let _ = $ ?? 1",
+        "let _ = x ?? $ ?? 1",
+        "let _: i64? = $",
+        "print($)",
+    ];
+    let mut unequal = Vec::new();
+    for position in positions {
+        // An operator takes the `if` in parentheses.
+        let place = |value: &str| {
+            let value = if position.contains("??") {
+                format!("({value})")
+            } else {
+                value.to_owned()
+            };
+            with_exit_body(&position.replace('$', &value))
+        };
+        let plain = error_codes(&place("None"));
+        for exit in EXITS {
+            let beside = error_codes(&place(&format!("if c {{ None }} else {{ {exit} }}")));
+            if beside != plain {
+                unequal.push(format!(
+                    "position `{position}`, exit `{exit}`: {beside:?}, but a plain `None` gives {plain:?}"
+                ));
+            }
+        }
+    }
+    assert!(unequal.is_empty(), "{}", unequal.join("\n"));
+}
+
+/// A `break` that leaves a `loop` gives its value, or none. The branch is a value then, and the
+/// `loop` ends in no exit. Its codes stay as they are.
+#[test]
+fn a_loop_with_a_break_should_give_its_branch_a_type() {
+    super::with_prelude();
+    let value = "if c { None } else { loop { break 1 } }";
+    assert_eq!(
+        type_at(&with_body(&format!("let r = {value}")), value),
+        "i64?"
+    );
+    // A `break` with no value gives the `loop` the type `unit`, which is no value.
+    for statement in [
+        "let _ = if c { None } else { loop { break } }",
+        "let _ = if c { None } else { outer: loop { loop { break outer } } }",
+    ] {
+        assert_eq!(
+            error_codes(&with_exit_body(statement)),
+            [Code::NoValue, Code::CannotInfer],
+            "{statement}"
+        );
+    }
+}
+
+/// A `None` beside an exit that gives no type still has no type to take: the same error as a
+/// `let _ = None`, at the `None`.
+#[test]
+fn a_none_beside_an_exit_should_keep_its_true_errors() {
+    super::with_prelude();
+    let rows: [(&str, &[(Code, &str)]); 4] = [
+        (
+            "let _ = if c { None } else { todo(\"x\") }",
+            &[(Code::CannotInfer, "None"), (Code::TodoLeft, "todo")],
+        ),
+        (
+            "let _ = if c { None } else { panic(\"x\") }",
+            &[(Code::CannotInfer, "None")],
+        ),
+        (
+            "let _ = if c { None } else { loop { } }",
+            &[(Code::CannotInfer, "None")],
+        ),
+        (
+            "let _ = if c { todo(\"x\") } else { None }",
+            &[(Code::TodoLeft, "todo"), (Code::CannotInfer, "None")],
+        ),
+    ];
+    for (statement, expected) in rows {
+        codes_texts(&with_exit_body(statement), statement, expected);
+    }
+}
+
+/// A position, the codes of a plain `None` there, and the codes of the `if` with each of `EXITS`.
+type SpellingRow<'a> = (&'a str, &'a [Code], [&'a [Code]; 7]);
+
+/// A rule on how `None` is written (`1 == None` is E0044) does not reach an `if` that holds a
+/// `None`: the `if` is no bare `None`.
+#[test]
+fn a_rule_on_the_spelling_of_none_should_not_reach_an_if() {
+    super::with_prelude();
+    assert_eq!(
+        error_codes(&with_exit_body("let _ = 1 == None")),
+        [Code::NeverNone]
+    );
+    // Each row: the position, the codes of a plain `None` there, and the codes of the `if` with
+    // each exit.
+    let rows: [SpellingRow<'_>; 5] = [
+        ("let _ = 1 == $", &[Code::NeverNone], [&[]; 7]),
+        (
+            "let _ = $ == 1",
+            &[Code::NeverNone],
+            [
+                &[Code::CannotInfer],
+                &[Code::CannotInfer],
+                &[Code::CannotInfer],
+                &[],
+                &[Code::CannotInfer],
+                &[Code::CannotInfer],
+                &[Code::CannotInfer],
+            ],
+        ),
+        (
+            "let _ = $ != 1",
+            &[Code::NeverNone],
+            [
+                &[Code::CannotInfer],
+                &[Code::CannotInfer],
+                &[Code::CannotInfer],
+                &[],
+                &[Code::CannotInfer],
+                &[Code::CannotInfer],
+                &[Code::CannotInfer],
+            ],
+        ),
+        ("let _ = u == $", &[], [&[]; 7]),
+        (
+            "let _ = $ is Some",
+            &[Code::IsTestsNone, Code::VariantForm],
+            [&[Code::CannotInfer, Code::VariantForm]; 7],
+        ),
+    ];
+    for (position, plain, beside) in rows {
+        let place = |value: &str| with_exit_body(&position.replace('$', value));
+        assert_eq!(error_codes(&place("None")), plain, "{position}");
+        for (exit, expected) in EXITS.into_iter().zip(beside) {
+            let value = format!("(if c {{ None }} else {{ {exit} }})");
+            assert_eq!(
+                error_codes(&place(&value)),
+                expected,
+                "{position}, exit `{exit}`"
+            );
+        }
+    }
+}
+
+/// A block that a statement before its tail makes never has a type to the checker, and gives its
+/// `None` none: E0050 stays. Each program also warns of its dead code, and without the dead code
+/// the error goes. These rows stay as they are, because `block_rank` reads the tail alone.
+#[test]
+fn a_block_made_never_before_its_tail_should_keep_its_error() {
+    super::with_prelude();
+    for (statement, warning) in [
+        (
+            "let _ = if d { 1 } else if c { None } else { todo(\"x\"); print(\"a\") }",
+            Code::UnreachableCode,
+        ),
+        (
+            "let _ = if d { 1 } else if c { None } else { while true { } }",
+            Code::WhileTrue,
+        ),
+        (
+            "let _ = if d { 1 } else if c { None } else { loop { }; print(\"a\") }",
+            Code::UnreachableCode,
+        ),
+    ] {
+        let mut codes: Vec<_> = diags(&with_exit_body(statement))
+            .iter()
+            .map(Diagnostic::code)
+            .collect();
+        codes.sort_by_key(|code| code.as_str());
+        let mut expected = vec![Code::CannotInfer, warning];
+        if statement.contains("todo") {
+            expected.push(Code::TodoLeft);
+        }
+        expected.sort_by_key(|code| code.as_str());
+        assert_eq!(codes, expected, "{statement}");
+    }
+    let src = "fn f(c: bool, d: bool) -> i64 {\n    let _ = if d { 1 } else if c { None } else { return 1; let y = 1 }\n    2\n}\nfn main() {\n    print(f(true, false))\n}";
+    assert_eq!(error_codes(src), [Code::CannotInfer]);
+    assert!(
+        diags(src).iter().any(|d| d.code() == Code::UnreachableCode),
+        "the dead `let` should warn"
+    );
+}

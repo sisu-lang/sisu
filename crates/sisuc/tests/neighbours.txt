@@ -89,6 +89,12 @@ MM<Fox>.None
 OP.None
 { None }
 if d { None } else { None }
+# A `None` beside a branch that never ends gives no type, as the `None` alone gives none. A block
+# of exits only is such a branch too.
+if c { None } else { todo("x") }
+if c { None } else { loop { } }
+if c { todo("x") } else { panic("x") }
+if c { None } else { todo("x"); print("a") }
 nothing()
 ob?.none()
 Bx().none()

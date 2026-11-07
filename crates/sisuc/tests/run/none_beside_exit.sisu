@@ -1,0 +1,109 @@
+// GIVEN an `if`, an `if let` or a `match` with a branch that is `None` and a branch that never ends
+//       (`todo`, `panic`, a `loop` with no `break` that leaves it, or a block that only returns),
+//       beside a branch with a value
+// WHEN the value is a let, an element of an array, an argument of a generic call or a side of `==`
+// AND the branch that never ends is not taken
+// THEN the `None` gives the join its optional type, as a plain `None` does, and the branch that
+//      never ends gives no type
+// AND the branch that never ends may be a branch of an `if` that is itself a branch
+// AND a literal takes the type of its sibling, and `[]` takes the type of its sibling array
+// AND a generic call chooses `T` as it does for the plain `None`: `second` and `h` give the same
+//     value for the plain form and for the form with an exit
+
+fn pick<T>(a: T, _b: T) -> T { a }
+fn second<T>(_a: T, b: T) -> T { b }
+fn h<T>(a: T, _b: T?) -> T { a }
+
+fn form(o: i64??) -> string {
+    match o {
+        None => "none"
+        Some(None) => "some none"
+        Some(Some(n)) => "some some {n}"
+    }
+}
+
+fn row18(c: bool) {
+    let r = if let _v88 = (if c { Option.Some(1) } else { None }) {
+        (if c { 7 } else { None })
+    } else if c {
+        None
+    } else {
+        todo("s")
+    }
+    print("{r ?? 9}") // 7
+}
+
+fn main() {
+    let c = true
+    let d = false
+    let o: i64? = Some(5)
+    let x: u8 = 3
+
+    let r1 = if c { 1 } else if d { None } else { todo("a") }
+    print("{r1 ?? 9}") // 1
+    let r2 = if d { 1 } else if c { None } else { panic("b") }
+    print("{r2 ?? 9}") // 9
+    let r3 = if d { 1 } else if c { None } else { loop { } }
+    print("{r3 ?? 9}") // 9
+    let r4 = if d { 1 } else if c { None } else { loop { return } }
+    print("{r4 ?? 9}") // 9
+    // The inner `break` leaves the inner loop, so the outer loop never ends.
+    let r5 = if d { 1 } else if c { None } else { loop { loop { break } } }
+    print("{r5 ?? 9}") // 9
+    let r6 = if d { 1 } else if c { None } else { loop { while c { break } } }
+    print("{r6 ?? 9}") // 9
+    let r7 = if d { 1 } else if d { todo("g") } else { None }
+    print("{r7 ?? 9}") // 9
+    // The control has no exit. The next form takes the same type.
+    let r8 = if c { if d { None } else { 7 } } else { 1 }
+    print("{r8 ?? 9}") // 7
+    let r8b = if d { if d { None } else { todo("h") } } else { 1 }
+    print("{r8b ?? 9}") // 1
+    let r9 = if d { 1 } else if d { None } else if d { todo("i") } else { None }
+    print("{r9 ?? 9}") // 9
+    // A branch of exits only is itself a branch that never ends.
+    let r10 = if d { 1 } else if c { None } else if d { todo("j") } else { panic("j") }
+    print("{r10 ?? 9}") // 9
+    let r11 = if d { 1 } else if c { None } else { print("no"); todo("k") }
+    print("{r11 ?? 9}") // 9
+    let r12 = if d { 1 } else { if let _a = o { None } else { todo("l") } }
+    print("{r12 ?? 9}") // 9
+    let r13 = if d {
+        1
+    } else {
+        match o {
+            Some(_) => None
+            None => todo("m")
+        }
+    }
+    print("{r13 ?? 9}") // 9
+
+    let a14 = [1, if c { None } else { todo("n") }]
+    print("{a14.len()} {a14[0] ?? 9} {a14[1] ?? 9}") // 2 1 9
+    let b14 = [if c { None } else { todo("o") }, 1]
+    print("{b14.len()} {b14[0] ?? 9} {b14[1] ?? 9}") // 2 9 1
+    let p15: i64? = pick(1, if c { None } else { todo("p") })
+    print("{p15 ?? 9}") // 1
+    // The literal takes the `u8` of `x`, so the sum has the type `u8`.
+    let e16 = [if c { 1 } else { todo("q") }, x]
+    print("{e16[0] + x}") // 4
+    let r17 = [[1.5], if c { [] } else { todo("r") }]
+    print("{r17[1].len()}") // 0
+    row18(c)
+    let r19 = if d { 1 } else if c { None } else { ({ return }) }
+    print("{r19 ?? 9}") // 9
+    let a19 = [1, if c { None } else { ({ return }) }]
+    print("{a19.len()}") // 2
+    let r20 = if d { 1 } else if c { None } else { if d { return } else { return } }
+    print("{r20 ?? 9}") // 9
+    let r21 = if d { 1 } else if c { None } else { loop { panic("u") } }
+    print("{r21 ?? 9}") // 9
+    print("{1 == (if c { None } else { todo("v") })}") // false
+
+    let v23: i64?? = second(if c { Some(1) } else { todo("w") }, None)
+    let w23: i64?? = second(Some(1), None)
+    print("{form(v23)} {form(w23)}") // none none
+    let v24: i64? = h(if c { 1 } else { todo("y") }, None)
+    let w24: i64? = h(1, None)
+    print("{v24 ?? 9} {w24 ?? 9} {v24 == w24}") // 1 1 true
+}

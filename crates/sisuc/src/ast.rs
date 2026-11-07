@@ -549,11 +549,13 @@ pub(crate) enum ExprKind {
         arms: Vec<Arm>,
         close: Span,
     },
-    /// `loop { body }`; `keyword` is the `loop` token's span.
+    /// `loop { body }`; `keyword` is the `loop` token's span. `breaks`: whether a `break` in the
+    /// body leaves this loop, by its label or as the innermost loop.
     Loop {
         label: Option<Ident>,
         keyword: Span,
         body: Block,
+        breaks: bool,
     },
     /// `{ ... }` where an expression belongs: its value is its last expression.
     Block(Block),

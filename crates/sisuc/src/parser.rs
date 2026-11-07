@@ -4815,6 +4815,7 @@ impl<'a> Parser<'a> {
                 label,
                 keyword,
                 body,
+                breaks: false,
             },
         })
     }
@@ -5505,6 +5506,44 @@ mod tests {
             "{rhs:?}"
         );
         assert!(rhs.is_jump());
+    }
+
+    /// The `breaks` of the loops in `block`, outer loop first.
+    fn loop_breaks(block: &Block, found: &mut Vec<bool>) {
+        for stmt in &block.stmts {
+            match &stmt.kind {
+                StmtKind::Expr(Expr {
+                    kind: ExprKind::Loop { body, breaks, .. },
+                    ..
+                }) => {
+                    found.push(*breaks);
+                    loop_breaks(body, found);
+                }
+                StmtKind::While { body, .. } => loop_breaks(body, found),
+                _ => {}
+            }
+        }
+    }
+
+    /// GIVEN a `loop` with a `break`, a `return` or a `continue` in its body, or in a loop in it
+    /// WHEN the parser reads it
+    /// THEN a `loop` records `breaks` only when a `break` leaves that loop
+    #[test]
+    fn a_loop_should_record_whether_a_break_leaves_it() {
+        for (src, expected) in [
+            ("loop { }", vec![false]),
+            ("loop { break }", vec![true]),
+            ("loop { return }", vec![false]),
+            ("loop { loop { break } }", vec![false, true]),
+            ("outer: loop { loop { break outer } }", vec![true, false]),
+            ("loop { while c { break } }", vec![false]),
+            ("loop { continue }", vec![false]),
+        ] {
+            let function = first_fn(&format!("fn main() {{ {src} }}"));
+            let mut found = Vec::new();
+            loop_breaks(&function.body, &mut found);
+            assert_eq!(found, expected, "{src}");
+        }
     }
 
     /// GIVEN `a ?? return b ?? c`
