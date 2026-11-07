@@ -1009,8 +1009,15 @@ impl Checker<'_> {
                         bound.order.push(name.name);
                         bound.locals.push(local);
                     }
+                    // A name that is not a variant here starts with an upper-case letter.
+                    let mut lower = text.to_string();
+                    if let Some(first) = text.chars().next() {
+                        lower.replace_range(..first.len_utf8(), &first.to_lowercase().to_string());
+                    }
                     DiagnosticKind::NotVariantHere {
                         name: text.to_string(),
+                        // A keyword cannot be a binding, so the fix would not parse.
+                        binding: crate::lexer::keyword(&lower).is_none().then_some(lower),
                         at: name.span,
                     }
                 };

@@ -1208,8 +1208,13 @@ pub(crate) enum DiagnosticKind {
     PatternForm { form: ForeignPattern, at: Span },
     /// The scrutinee at `at`, of type `ty`, which `match` cannot take.
     CannotMatch { ty: String, at: Span },
-    /// The upper-case name `name`, at `at`, in a pattern where no enum is expected.
-    NotVariantHere { name: String, at: Span },
+    /// The upper-case name `name`, at `at`, in a pattern where no enum is expected. `binding` is
+    /// the name with its first letter in lower case, or `None` when that spells a keyword.
+    NotVariantHere {
+        name: String,
+        binding: Option<String>,
+        at: Span,
+    },
     /// The constant `name`, at `at`, written as a pattern. `guard` is the guard the help shows:
     /// a name and the guard that compares it with the constant, `n if n == LIMIT`, or in words
     /// in an arm with `|`; only in a `match` arm, and not for a range bound, where `n == LIMIT`
@@ -5855,19 +5860,12 @@ impl From<DiagnosticKind> for Diagnostic {
                 Diagnostic::coded(code, at, format!("cannot `match` on `{ty}`"))
                     .with_help("`match` takes enums, optionals, integers, `bool`, `char` and `string`")
             }
-            DiagnosticKind::NotVariantHere { name, at } => {
-                let mut lower = name.clone();
-                // A name that is not a variant here starts with an upper-case letter.
-                if let Some(first) = name.chars().next() {
-                    lower.replace_range(..first.len_utf8(), &first.to_lowercase().to_string());
-                }
+            DiagnosticKind::NotVariantHere { name, binding, at } => {
                 let d = Diagnostic::coded(code, at, format!("`{name}` is not a variant here"))
                     .with_help("a binding starts with a lower-case letter");
-                // A keyword cannot be a binding, so the fix would not parse.
-                if crate::lexer::keyword(&lower).is_some() {
-                    d
-                } else {
-                    d.with_fix(unsafe_fix(&format!("write `{lower}`"), at, &lower))
+                match binding {
+                    Some(lower) => d.with_fix(unsafe_fix(&format!("write `{lower}`"), at, &lower)),
+                    None => d,
                 }
             }
             DiagnosticKind::ConstantInPattern { name, at, guard } => {
