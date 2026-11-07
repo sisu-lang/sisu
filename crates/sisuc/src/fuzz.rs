@@ -217,8 +217,8 @@ fn assert_safe_fixes(source: &str, diagnostics: &[Diagnostic]) {
 }
 
 /// Asserts that no fix shown leaves `source` lexing or parsing worse than it does:
-/// `sound_fixes` drops such a fix of a lexer or parser diagnostic, but shows the checker's
-/// unjudged.
+/// `sound_fixes` drops such a fix of a lexer or parser diagnostic. It also drops such a checker
+/// fix at the end of a line or around a dropped `;`, and shows the other checker fixes unjudged.
 fn assert_fixes_keep_syntax(source: &str, diagnostics: &[Diagnostic]) {
     let before = crate::front_end::syntax_errors(source);
     let shown = diagnostics
@@ -685,7 +685,7 @@ mod tests {
         assert_safe_fixes(src, &ds);
     }
 
-    /// `sound_fixes` shows a checker fix unjudged, so the fuzz target judges it.
+    /// `sound_fixes` shows most checker fixes unjudged, so the fuzz target judges them.
     #[test]
     #[should_panic(expected = "NeverReassigned: a fix breaks the syntax")]
     fn rejects_a_checker_fix_that_breaks_the_syntax() {

@@ -5861,9 +5861,14 @@ impl From<DiagnosticKind> for Diagnostic {
                 if let Some(first) = name.chars().next() {
                     lower.replace_range(..first.len_utf8(), &first.to_lowercase().to_string());
                 }
-                Diagnostic::coded(code, at, format!("`{name}` is not a variant here"))
-                    .with_help("a binding starts with a lower-case letter")
-                    .with_fix(unsafe_fix(&format!("write `{lower}`"), at, &lower))
+                let d = Diagnostic::coded(code, at, format!("`{name}` is not a variant here"))
+                    .with_help("a binding starts with a lower-case letter");
+                // A keyword cannot be a binding, so the fix would not parse.
+                if crate::lexer::keyword(&lower).is_some() {
+                    d
+                } else {
+                    d.with_fix(unsafe_fix(&format!("write `{lower}`"), at, &lower))
+                }
             }
             DiagnosticKind::ConstantInPattern { name, at, guard } => {
                 let d = Diagnostic::coded(

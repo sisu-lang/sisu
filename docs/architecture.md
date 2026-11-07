@@ -572,10 +572,10 @@ as text or JSON, counts them and ends with the summary. Before it writes one,
 `front_end::sound_fixes` drops any fix of a lexer or parser diagnostic whose
 result would lex or parse worse than the input, and makes unsafe any safe fix
 whose edits cover a comment or another lexer error, text no rule sees. Each
-judgement parses the source again, so it judges only the first 100 syntax
-fixes and drops the rest. It judges a checker fix only at the end of a line,
-where the fix can change where a statement ends: judging every one would cost
-a parse for each, and the checker runs only on items that parse. The fuzz
+judgement parses the source again, so it judges only the first 100 fixes and
+drops the rest. It judges a checker fix only at a line's end or around a
+dropped `;`, where the fix can change where a statement ends. Judging every one
+would cost a parse for each, and the checker runs only on items that parse. The fuzz
 target checks that no fix shown makes the syntax worse. The explanations in
 [`docs/diagnostics`](diagnostics/README.md) are what `sisu explain` prints.
 

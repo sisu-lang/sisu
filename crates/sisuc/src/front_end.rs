@@ -251,7 +251,7 @@ fn other_mark_in(marks: &[usize], own: usize, range: Range<usize>) -> bool {
     false
 }
 
-/// How many syntax fixes `sound_fixes` judges, and how many W0007 fixes, with a count of their own.
+/// How many fixes `sound_fixes` judges, and how many W0007 fixes, with a count of their own.
 // shortcut: a fix past the cap is dropped, not judged; judge only the edited item if files with
 // more fixable syntax errors turn up.
 const JUDGED: usize = 100;
