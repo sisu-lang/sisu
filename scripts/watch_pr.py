@@ -2,14 +2,14 @@
 
 Usage: python3 scripts/watch_pr.py PR [STATE_FILE]
 
-An event is a new review with text, or a new or edited inline or issue comment, from someone
-other than you; the first failed check of the head; or the end of all checks of the head with
-none failed. CodeRabbit's "review in progress" note is not an event; the review that replaces it
-is. After a failed check, a rerun that passes is an event. Each list reads 100 items. Each line
-holds the first 300 characters of the body and the URL of the full text. STATE_FILE (by default
-$TMPDIR/watch-pr-<PR>.json) keeps the events already printed, so the next run prints only newer
-ones. Run it with `run_in_background` and the sandbox off (`gh api` is REST and needs the
-network), then run it again after each event. Exit status: 0 an event, 1 the time limit.
+An event is a new review with text, or a new inline or issue comment, from someone other than you;
+an edit of one of these outside its HTML comments; the first failed check of the head; or the end of
+all checks of the head with none failed. CodeRabbit's "review in progress" note is not an event; the
+review that replaces it is. After a failed check, a rerun that passes is an event. Each list reads
+100 items. Each line holds the first 300 characters of the body and the URL of the full text.
+STATE_FILE (by default $TMPDIR/watch-pr-<PR>.json) keeps the events already printed, so the next run
+prints only newer ones. Run it with `run_in_background` and the sandbox off (`gh api` is REST and
+needs the network), then run it again after each event. Exit status: 0 an event, 1 the time limit.
 """
 
 import hashlib
@@ -59,28 +59,31 @@ def text(body: str | None, width: int = 300) -> str:
     return " ".join(body.split())[:width]
 
 
+def digest(body: str | None) -> str:
+    """Return a short hash of the body outside its HTML comments, where bots keep hidden state."""
+    shown = re.sub(r"<!--.*?-->", " ", body or "", flags=re.DOTALL)
+    return hashlib.sha256(" ".join(shown.split()).encode()).hexdigest()[:12]
+
+
 def events(pr: str, me: str) -> list[tuple[str, str]]:
-    """Return each event now on the pull request, as (key, line). An edit gives a new key."""
-    found: list[tuple[str, str]] = []
-    for review in gh(f"{REPO}/pulls/{pr}/reviews?per_page=100", ""):
-        if review["user"]["login"] != me and review["body"]:
-            # A review has no edit time: a hash of its body makes an edit a new key.
-            digest = hashlib.sha256(review["body"].encode()).hexdigest()[:12]
-            found.append(
-                (
-                    f"review {review['id']} {review['state']} {digest}",
-                    (
-                        f"review {review['id']} {review['state']} {review['user']['login']}: "
-                        f"{text(review['body'])} {review['html_url']}"
-                    ),
-                )
-            )
+    """Return each event now on the pull request, as (key, line)."""
+    found: list[tuple[str, str]] = [
+        (
+            f"review {review['id']} {review['state']} {digest(review['body'])}",
+            (
+                f"review {review['id']} {review['state']} {review['user']['login']}: "
+                f"{text(review['body'])} {review['html_url']}"
+            ),
+        )
+        for review in gh(f"{REPO}/pulls/{pr}/reviews?per_page=100", "")
+        if review["user"]["login"] != me and review["body"]
+    ]
     for c in gh(f"{REPO}/pulls/{pr}/comments?per_page=100", ""):
         if c["user"]["login"] != me:
             line = c.get("line") or c.get("original_line")
             found.append(
                 (
-                    f"inline {c['id']} {c['updated_at']}",
+                    f"inline {c['id']} {digest(c['body'])}",
                     (
                         f"inline {c['id']} {c['user']['login']} {c['path']}:{line}: "
                         f"{text(c['body'])} {c['html_url']}"
@@ -89,7 +92,7 @@ def events(pr: str, me: str) -> list[tuple[str, str]]:
             )
     found.extend(
         (
-            f"comment {c['id']} {c['updated_at']}",
+            f"comment {c['id']} {digest(c['body'])}",
             f"comment {c['id']} {c['user']['login']}: {text(c['body'])} {c['html_url']}",
         )
         for c in gh(f"{REPO}/issues/{pr}/comments?per_page=100", "")

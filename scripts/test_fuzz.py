@@ -23,6 +23,7 @@ SCRIPT = Path(__file__).absolute().parent / "fuzz.sh"
 ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 # The fake cargo fuzz run (the one with --jobs) writes a crash input and fails, as libFuzzer does.
 # A replay of that input prints the bytes of $FAKE_REPLAY, which a test sets with printf escapes.
+# Before the crash, the run prints the bytes of $FAKE_JOBS: its job lines.
 FAKE_CARGO = """#!/usr/bin/env bash
 [[ $1 == fuzz ]] || exit 1
 case $2 in
@@ -30,6 +31,7 @@ build) exit 0 ;;
 --version) echo "cargo-fuzz 0.0.0"; exit 0 ;;
 esac
 if [[ " $* " == *" --jobs "* ]]; then
+  printf "${FAKE_JOBS:-}"
   sleep 0.05
   mkdir -p fuzz/artifacts/front_end
   echo x >fuzz/artifacts/front_end/crash-abc
@@ -76,10 +78,10 @@ class FuzzSummary(unittest.TestCase):
         subprocess.run([*git, "init", "-q"], check=True, env=ENV)
         subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "base"], check=True, env=ENV)
 
-    def summary(self, replay: str) -> str:
-        env = dict(ENV, PATH=f"{self.bin}:{ENV['PATH']}", FAKE_REPLAY=replay)
+    def summary(self, replay: str, jobs: str = "", seconds: str = "1") -> str:
+        env = dict(ENV, PATH=f"{self.bin}:{ENV['PATH']}", FAKE_REPLAY=replay, FAKE_JOBS=jobs)
         run = subprocess.run(
-            ["bash", "scripts/fuzz.sh", "1"],
+            ["bash", "scripts/fuzz.sh", seconds],
             cwd=self.repo,
             capture_output=True,
             env=env,
@@ -137,6 +139,33 @@ class FuzzSummary(unittest.TestCase):
         text = self.summary(r"\377\000 AddressSanitizer: stack-overflow\n")
         self.assertNotIn("Panic at", text)
         self.assertIn("is a stack overflow or another fatal signal", text)
+
+    @staticmethod
+    def job(executions: int, seconds: int) -> str:
+        return (
+            f"#{executions}: cov: 9 ft: 9 corp: 9 exec/s: 1 oom/timeout/crash: 0/0/0 "
+            rf"time: {seconds}s job: 1 dft_time: 0\n"
+        )
+
+    def test_a_short_first_pass_should_be_reported_with_no_warning(self) -> None:
+        # A child's line starts `#<n>\t` and has no `time:`, so it does not count as a job.
+        jobs = rf"#5\tNEW cov: 3\n{self.job(2, 40)}{self.job(9, 300)}"
+        text = self.summary("x", jobs, "300")
+        self.assertIn("- First pass over the corpus: about 40 s.\n", text)
+        self.assertNotIn("new inputs", text)
+
+    def test_a_first_pass_over_half_the_run_should_warn_about_new_inputs(self) -> None:
+        text = self.summary("x", self.job(155, 151), "300")
+        self.assertIn("- First pass over the corpus: about 151 s.\n", text)
+        self.assertIn("so this run tried few new inputs", text)
+
+    def test_a_first_pass_of_exactly_half_the_run_should_not_warn(self) -> None:
+        self.assertNotIn("new inputs", self.summary("x", self.job(155, 150), "300"))
+
+    def test_a_run_with_no_finished_job_should_say_the_new_inputs_are_not_known(self) -> None:
+        text = self.summary("x", "", "300")
+        self.assertIn("- No job finished, so the number of new inputs is not known.\n", text)
+        self.assertNotIn("First pass", text)
 
 
 class ProgramSeeds(unittest.TestCase):
