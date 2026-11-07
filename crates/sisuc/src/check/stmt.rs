@@ -1628,8 +1628,9 @@ impl Checker<'_> {
     /// Adds `name` to the innermost scope as a new local; `keyword` is the `mut` of a
     /// `let mut`. It replaces a binding of that name in the scope, except that a parameter whose
     /// name another parameter has is reported and poisoned. A name that milestone 8's prelude
-    /// takes is reported, and so is a user's local that an enum takes; the binding still takes
-    /// the name. A local of the prelude's own code may have an enum's name.
+    /// takes is reported, and so is a user's local that an intact enum takes. A poisoned enum
+    /// does not exist, so it takes nothing. The binding still takes the name. A local of the
+    /// prelude's own code may have an enum's name.
     pub(super) fn declare(
         &mut self,
         name: &ast::Ident,
@@ -1639,7 +1640,8 @@ impl Checker<'_> {
     ) -> tir::LocalId {
         if !self.reserved(name)
             && !name.span.in_prelude()
-            && (self.enum_ids.contains_key(&name.name) || self.alias_unhideable(name.name))
+            && (matches!(self.enum_ids.get(&name.name), Some(Declared::Known(_)))
+                || self.alias_unhideable(name.name))
         {
             self.report(DiagnosticKind::EnumNamedLocal {
                 name: name.name.to_string(),

@@ -4524,7 +4524,9 @@ impl Checker<'_> {
         };
         match params {
             Some(0) => self.not_generic(n, angles),
-            None if PRELUDE.contains(&n.as_str()) || built_in_type(n.as_str()).is_some() => {
+            None if (PRELUDE.contains(&n.as_str()) || built_in_type(n.as_str()).is_some())
+                && !self.poisoned_use(n) =>
+            {
                 self.not_generic(n, angles);
             }
             None if self.lookup(n).is_some()

@@ -4,11 +4,5 @@ error[E0026]: `None` is a keyword; a variant cannot take its name
 2 |     None
   |     ^^^^
 
-error[E0116]: `Light` names an enum
- --> E0026-none-variant-uses.sisu:6:9
-  |
-6 |     let Light = 1
-  |         ^^^^^
-
-sisu: 2 errors
-sisu: for more on a code, run `sisu explain <code>`: E0026, E0116
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0026
