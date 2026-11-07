@@ -670,6 +670,9 @@ struct LoopPart {
     /// Whether the next token is in the loop's header (`while`, `while let` and `for`; a `loop`
     /// has none). A `break` there is E0082.
     header: bool,
+    /// Whether a `break` has left this loop. A parse that is read again can leave it `true` after
+    /// the `break` is gone, and `loop_expr` then keeps the rank that it had before.
+    left: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -2598,6 +2601,7 @@ impl<'a> Parser<'a> {
                     return Err(error);
                 }
                 let named = label.as_ref().map(|label| label.name);
+                self.mark_left(named);
                 ExprKind::Break {
                     label,
                     keyword: keyword.span,
@@ -2684,6 +2688,20 @@ impl<'a> Parser<'a> {
         .into()
     }
 
+    /// Marks the loop that a `break` with loop label `label` leaves: the innermost one when the
+    /// `break` has no label. It walks the open loops of the jump, so its cost is bounded by the
+    /// nesting limit.
+    fn mark_left(&mut self, label: Option<Symbol>) {
+        let mut parts = self.loops.iter_mut().rev();
+        let target = match label {
+            None => parts.next(),
+            Some(label) => parts.find(|part| part.label == Some(label)),
+        };
+        if let Some(part) = target {
+            part.left = true;
+        }
+    }
+
     /// Whether a `break` with loop label `label` (the innermost loop, when it has none) leaves
     /// from the body of its loop, with no loop header on its way out. It walks the open loops of
     /// the jump, so its cost is bounded by the nesting limit.
@@ -2732,6 +2750,7 @@ impl<'a> Parser<'a> {
         self.loops.push(LoopPart {
             label: label.map(|label| label.name),
             header,
+            left: false,
         });
     }
 
@@ -4802,7 +4821,7 @@ impl<'a> Parser<'a> {
         self.open_loop(label.as_ref(), false);
         let body = self.child(base, &mut reach, Self::block);
         // The loop part and the loop label close with the body, also when it fails to parse.
-        self.loops.pop();
+        let breaks = self.loops.pop().is_some_and(|part| part.left);
         if label.is_some() {
             self.labels.pop();
         }
@@ -4815,7 +4834,7 @@ impl<'a> Parser<'a> {
                 label,
                 keyword,
                 body,
-                breaks: false,
+                breaks,
             },
         })
     }

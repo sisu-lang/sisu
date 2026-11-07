@@ -1909,7 +1909,7 @@ impl Gen<'_> {
     }
 
     /// A branch of an `if` after the first: a value, or now and then a panic: a call of
-    /// `panic` or `todo`, or an index past the end of an array.
+    /// `panic`, alone or in a `loop`, a call of `todo`, or an index past the end of an array.
     fn branch(&mut self, ty: &Ty, max: u64) -> Info {
         // A panic ends the run, and a run takes hundreds of these branches, so it comes once
         // in 64.
@@ -1928,8 +1928,15 @@ impl Gen<'_> {
                 self.w.text(&todo);
             }
             pick if pick == 0 || ty.least() >= MAX_SIZE => {
+                // A `loop` that panics at its first step ends the run as the plain `panic` does,
+                // and no `break` leaves it.
+                let looped = self.pick(2) == 0;
                 let message = self.message();
-                self.w.text(&format!("panic({message})"));
+                self.w.text(&if looped {
+                    format!("loop {{ panic({message}) }}")
+                } else {
+                    format!("panic({message})")
+                });
             }
             _ => {
                 // `[e][1]`: index 1 out of bounds for length 1.
@@ -2940,18 +2947,24 @@ mod tests {
 
     #[test]
     fn a_panicking_branch_should_take_each_form_but_index_no_optional_of_an_optional() {
-        // A first byte of 63 makes the branch panic; the second picks the form.
+        // A first byte of 63 makes the branch panic; the second picks the form, and the third
+        // picks a `loop` around a `panic` when it is even.
         let nested = Ty::Optional(Box::new(Ty::Optional(Box::new(Ty::I64))));
-        for (ty, form, text) in [
-            (&Ty::I64, 0, "panic(\"\")"),
-            (&Ty::I64, 1, "todo"),
-            (&Ty::I64, 2, "([0][1])"),
-            (&nested, 2, "panic(\"\")"),
+        for (ty, form, looped, text) in [
+            (&Ty::I64, 0, 1, "panic(\"\")"),
+            (&Ty::I64, 0, 0, "loop { panic(\"\") }"),
+            (&Ty::I64, 1, 0, "todo"),
+            (&Ty::I64, 2, 0, "([0][1])"),
+            (&nested, 2, 1, "panic(\"\")"),
+            (&nested, 2, 0, "loop { panic(\"\") }"),
         ] {
-            let bytes = [63, form];
+            let bytes = [63, form, looped];
             let mut g = Gen::new(&bytes);
             g.branch(ty, MAX_SIZE);
-            assert_eq!(g.w.out.program, text, "{ty}, form {form}");
+            assert_eq!(
+                g.w.out.program, text,
+                "{ty}, form {form}, loop byte {looped}"
+            );
         }
     }
 

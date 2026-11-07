@@ -1603,6 +1603,14 @@ impl Walk {
     /// Checks that a `loop` counts down as a `while` does: `let mut c = n` before it, with `n`
     /// at most `MAX_BOUND`, `if c == 0 { break [v] }` first in its body and `c -= 1` next.
     fn loop_bound(&mut self, before: Option<&ast::Stmt>, e: &ast::Expr, body: &ast::Block) {
+        // A `loop` whose first statement is a call of `panic` ends the run at its first step.
+        if let Some(ast::StmtKind::Expr(first)) = body.stmts.first().map(|stmt| &stmt.kind)
+            && let ast::ExprKind::Call { callee, .. } = &first.kind
+            && callee.name.as_str() == "panic"
+        {
+            self.counted.insert(e.span.start());
+            return;
+        }
         let guard = body.stmts.first().and_then(|stmt| {
             if let ast::StmtKind::Expr(guard) = &stmt.kind
                 && let ast::ExprKind::If {
@@ -2250,8 +2258,14 @@ impl Walk {
                     self.ast_expr(&arm.body);
                 }
             }
-            ast::ExprKind::Loop { label, body, .. } => {
+            ast::ExprKind::Loop {
+                label,
+                body,
+                breaks,
+                ..
+            } => {
                 self.mark("ast::ExprKind::Loop");
+                self.mark(&format!("ast::ExprKind::Loop.breaks = {breaks}"));
                 if !self.counted.contains(&e.span.start()) {
                     self.unbounded
                         .push(format!("a `loop` at byte {}", e.span.start()));

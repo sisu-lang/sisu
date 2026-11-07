@@ -6312,6 +6312,8 @@ const PARITY_ROWS: &[ParityRow<'static>] = &[
     ("", "let x: i64? = None\nprint(x == { mk2() })"),
     ("", "print(1 == if true { mk2() } else { mk2() })"),
     ("", "print(1 == if true { 1 } else { mk2() })"),
+    // The `never` branch gives the join no type, so the join acts as the other branch.
+    ("", "print(1 == if true { mk2() } else { panic(\"x\") })"),
     ("", "print(1 == match 1 { _ => mk2() })"),
     ("", "print(1 == (mk2()))"),
     ("", "let o = mko()\nprint(1 == o?.m())"),
@@ -6623,11 +6625,6 @@ const KEPT_E0050_ROWS: &[(ParityRow<'static>, &[Code])] = &[
     // No context at all: nothing to misfit.
     (("", "print(mk2() == mk2())"), &[Code::CannotInfer]),
     (("", "print(-mk2())"), &[Code::CannotInfer]),
-    // The `never` branch gives the join no type, so the comparison has no type to report.
-    (
-        ("", "print(1 == if true { mk2() } else { panic(\"x\") })"),
-        &[Code::CannotInfer],
-    ),
     // An `Error` branch may be the mistake, so the join reports nothing more.
     (
         ("", "print(1 == if true { mk2() } else { nope })"),

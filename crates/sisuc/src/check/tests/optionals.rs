@@ -856,35 +856,12 @@ fn a_rule_on_the_spelling_of_none_should_not_reach_an_if() {
         [Code::NeverNone]
     );
     // Each row: the position, the codes of a plain `None` there, and the codes of the `if` with
-    // each exit.
+    // each exit. A side of `==` or `!=` that holds an exit gives no type, so the other side
+    // decides. Nothing decides the type of the `None` in `is Some`.
     let rows: [SpellingRow<'_>; 5] = [
         ("let _ = 1 == $", &[Code::NeverNone], [&[]; 7]),
-        (
-            "let _ = $ == 1",
-            &[Code::NeverNone],
-            [
-                &[Code::CannotInfer],
-                &[Code::CannotInfer],
-                &[Code::CannotInfer],
-                &[],
-                &[Code::CannotInfer],
-                &[Code::CannotInfer],
-                &[Code::CannotInfer],
-            ],
-        ),
-        (
-            "let _ = $ != 1",
-            &[Code::NeverNone],
-            [
-                &[Code::CannotInfer],
-                &[Code::CannotInfer],
-                &[Code::CannotInfer],
-                &[],
-                &[Code::CannotInfer],
-                &[Code::CannotInfer],
-                &[Code::CannotInfer],
-            ],
-        ),
+        ("let _ = $ == 1", &[Code::NeverNone], [&[]; 7]),
+        ("let _ = $ != 1", &[Code::NeverNone], [&[]; 7]),
         ("let _ = u == $", &[], [&[]; 7]),
         (
             "let _ = $ is Some",

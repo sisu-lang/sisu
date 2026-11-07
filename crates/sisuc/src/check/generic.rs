@@ -1911,8 +1911,14 @@ pub(super) struct Ranked {
     scalar: bool,
     /// For a `Concrete` value: whether its type comes from a `loop`, whose `break` values take a
     /// type that the call's context binds first (see `infer_call`). Ranking does not read `break`
-    /// values.
+    /// values. The claim holds only for a bare `loop` argument. `combine` takes the flag from the
+    /// first `Concrete` part, and `combine_branches` drops a part that never ends, so
+    /// `pick(if c { loop { } } else { loop { } }, 1)` has no such flag.
     holds_loop: bool,
+    /// Whether the value never ends and gives no type: `todo`, a call of `panic`, a `loop` that
+    /// no `break` leaves, a block that ends in a jump, or a branch of these only. Every reader but
+    /// `combine_branches` reads `rank` alone, so such a value is `Concrete` for them.
+    never: bool,
 }
 
 impl Ranked {
@@ -1923,6 +1929,7 @@ impl Ranked {
         nested: false,
         scalar: false,
         holds_loop: false,
+        never: false,
     };
     const LITERAL: Self = Self {
         rank: Rank::Literal,
@@ -1931,6 +1938,12 @@ impl Ranked {
         nested: false,
         scalar: true,
         holds_loop: false,
+        never: false,
+    };
+    /// A value that never ends (see `never`). It ranks `Concrete`, as it always did.
+    const NEVER: Self = Self {
+        never: true,
+        ..Self::CONCRETE
     };
     const WAITS: Self = Self {
         rank: Rank::Waits,
@@ -1939,6 +1952,7 @@ impl Ranked {
         nested: false,
         scalar: false,
         holds_loop: false,
+        never: false,
     };
 
     /// The rank that joins and operators order siblings by. They type a `Literal` value with
@@ -1992,11 +2006,14 @@ fn combine(parts: impl IntoIterator<Item = Ranked>) -> Ranked {
 }
 
 /// `combine` of the values of `branches`: each is `None` when its branch ends in an exit, else
-/// the rank of its value. `Concrete` when no branch has a value.
+/// the rank of its value. A value that never ends gives no type, so it counts as an exit. The
+/// result never ends when no branch has a value. The iterator stays lazy: ranking a branch has
+/// effects (see `tail_rank`).
 fn combine_branches(branches: impl IntoIterator<Item = Option<Ranked>>) -> Ranked {
     let mut any = false;
-    let found = combine(branches.into_iter().flatten().inspect(|_| any = true));
-    if any { found } else { Ranked::CONCRETE }
+    let values = branches.into_iter().flatten().filter(|part| !part.never);
+    let found = combine(values.inspect(|_| any = true));
+    if any { found } else { Ranked::NEVER }
 }
 
 /// Whether `checked`, an argument, was rejected by its parameter's type (see `mark`).
@@ -3536,6 +3553,8 @@ impl Checker<'_> {
                     Ranked::CONCRETE
                 }
             }
+            // A user item cannot be named `panic` (E0034), and `call` tries the prelude first.
+            K::Call { callee, .. } if callee.name.as_str() == "panic" => Ranked::NEVER,
             K::MethodCall { .. } | K::Call { .. } => match self.call_shape(e) {
                 Some((shape, args)) => {
                     let ranked = self.rank_call(shape, args, fit);
@@ -3584,11 +3603,13 @@ impl Checker<'_> {
             }
             K::Block(block) => self
                 .block_rank(block, fit, |_| None)
-                .unwrap_or(Ranked::CONCRETE),
-            K::Loop { .. } => Ranked {
+                .unwrap_or(Ranked::NEVER),
+            K::Loop { breaks, .. } => Ranked {
                 holds_loop: true,
+                never: !breaks,
                 ..Ranked::CONCRETE
             },
+            K::Todo { .. } => Ranked::NEVER,
             K::Int { .. }
             | K::Float(_)
             | K::Bool(_)
@@ -3597,7 +3618,6 @@ impl Checker<'_> {
             | K::Interpolate(_)
             | K::Name(_)
             | K::Applied { .. }
-            | K::Todo { .. }
             | K::SelfValue
             | K::NoneLit
             | K::Field { safe: true, .. }
