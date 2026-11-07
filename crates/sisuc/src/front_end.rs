@@ -190,7 +190,13 @@ pub(crate) fn sound_fixes(source: &str, diagnostics: &[Diagnostic]) -> Vec<Diagn
         for d in sound.iter_mut().filter(|d| syntax_fix(d)) {
             let own = d.span().start();
             let reported = reported.contains(&(d.code(), d.span()));
-            let spans = |fix: &Fix| marks.iter().any(|&at| at != own && around(fix, at));
+            let spans = |fix: &Fix| {
+                marks.iter().any(|&at| {
+                    #[cfg(test)]
+                    MARK_READS.set(MARK_READS.get() + 1);
+                    at != own && around(fix, at)
+                })
+            };
             if reported || d.fixes().iter().any(spans) {
                 d.retain_fixes(|fix| {
                     if !reported && !spans(fix) {
@@ -202,13 +208,21 @@ pub(crate) fn sound_fixes(source: &str, diagnostics: &[Diagnostic]) -> Vec<Diagn
             }
             d.demote_fixes(|fix| {
                 let taken = |at: usize| fix.edits().iter().any(|e| e.span().range().contains(&at));
-                marks
-                    .iter()
-                    .any(|&at| at != own && (taken(at) || around(fix, at)))
+                marks.iter().any(|&at| {
+                    #[cfg(test)]
+                    MARK_READS.set(MARK_READS.get() + 1);
+                    at != own && (taken(at) || around(fix, at))
+                })
             });
         }
     }
     sound
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many marks the scan of `sound_fixes` has looked at on this thread.
+    static MARK_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// How many syntax fixes `sound_fixes` judges, and how many W0007 fixes, with a count of their own.
@@ -785,11 +799,49 @@ mod tests {
         for src in [
             "fn main() {\n    let n = 0.5\n    print(1);\n    let v = n != f64.nan\n}\n",
             "fn main() {\n    let n = 0.5\n    let v = n != f64.nan\n    print(1);\n}\n",
+            "fn main() {\n    let n = 0.5\n    let v = n != f64.nan;\n}\n",
         ] {
             let (d, semicolon) = judged_with_semicolon(src, Code::NanComparison);
             assert!(semicolon, "{src:?}: no W0007");
             assert_eq!(fix_edits(&d).map(|(safe, _)| safe), Some(true), "{src:?}");
         }
+    }
+
+    /// A fix around a dropped `;` is judged, so it counts against the cap like any judged fix.
+    #[test]
+    fn a_fix_around_a_dropped_semicolon_should_count_against_the_cap() {
+        let src: String = (0..=JUDGED)
+            .map(|n| format!("fn g{n}() {{\n    let n = 0.5\n    let v = {{ print(1);\n    n }} != f64.nan\n}}\n"))
+            .chain(["fn main() {}\n".to_string()])
+            .collect();
+        let ds = sound_fixes(&src, &front_end(&src).1);
+        let mut fixed = (ds.iter())
+            .filter(|d| d.code() == Code::NanComparison)
+            .map(|d| !d.fixes().is_empty());
+        assert_eq!(fixed.clone().count(), JUDGED + 1);
+        assert!(fixed.clone().take(JUDGED).all(|f| f));
+        assert_eq!(fixed.next_back(), Some(false));
+    }
+
+    /// The scan of the marks does about one search for each fix: the work for a file of `n` fixes
+    /// and `n` dropped `;`s grows slower than `n^2`. A walk of all marks for each fix gives 4
+    /// times the reads from `n` to `2n`, and a binary search about 2.2. `assert_subquadratic`
+    /// fits the log factor, and its bound of 3 sits between them. `n` is 200, far above the 4
+    /// that it needs.
+    #[test]
+    fn the_scan_of_the_marks_should_be_near_linear() {
+        let reads = |n: usize| {
+            let lets = (0..n)
+                .map(|i| format!("    let _v{i} = n != f64.nan;\n"))
+                .collect::<Vec<_>>()
+                .concat();
+            let src = format!("fn main() {{\n    let n = 0.5\n{lets}}}\n");
+            let ds = front_end(&src).1;
+            MARK_READS.set(0);
+            sound_fixes(&src, &ds);
+            MARK_READS.get()
+        };
+        crate::mir::tests::assert_subquadratic(reads(200), reads(400));
     }
 
     /// The text of `src` after the one fix of the first diagnostic of `code`, and whether the fix
