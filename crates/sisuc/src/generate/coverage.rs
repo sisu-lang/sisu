@@ -1603,10 +1603,13 @@ impl Walk {
     /// Checks that a `loop` counts down as a `while` does: `let mut c = n` before it, with `n`
     /// at most `MAX_BOUND`, `if c == 0 { break [v] }` first in its body and `c -= 1` next.
     fn loop_bound(&mut self, before: Option<&ast::Stmt>, e: &ast::Expr, body: &ast::Block) {
-        // A `loop` whose first statement is a call of `panic` ends the run at its first step.
+        // A `loop` whose first statement is a call of `panic` with a literal message ends the
+        // run at its first step. Another message could jump, as `panic(o ?? continue)` does.
         if let Some(ast::StmtKind::Expr(first)) = body.stmts.first().map(|stmt| &stmt.kind)
-            && let ast::ExprKind::Call { callee, .. } = &first.kind
+            && let ast::ExprKind::Call { callee, args, .. } = &first.kind
             && callee.name.as_str() == "panic"
+            && let [arg] = &args[..]
+            && matches!(arg.value.kind, ast::ExprKind::Str(_))
         {
             self.counted.insert(e.span.start());
             return;

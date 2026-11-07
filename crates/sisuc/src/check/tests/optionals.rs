@@ -792,8 +792,28 @@ fn a_none_beside_an_exit_should_act_as_a_plain_none() {
     assert!(unequal.is_empty(), "{}", unequal.join("\n"));
 }
 
-/// A `break` that leaves a `loop` gives its value, or none. The branch is a value then, and the
-/// `loop` ends in no exit. Its codes stay as they are.
+/// A value beside an exit acts as the value alone. These two calls took their type from the
+/// exit's branch before, and both compiled. Each now gives the code of its plain form.
+#[test]
+fn a_value_beside_an_exit_should_act_as_the_value_alone() {
+    super::with_prelude();
+    for (with_exit, plain) in [
+        (
+            "let _: i64?? = pick(1, if c { Some(1) } else { todo(\"x\") })",
+            "let _: i64?? = pick(1, Some(1))",
+        ),
+        (
+            "let _ = pick(Some(1), if c { Some(Some(1)) } else { todo(\"x\") })",
+            "let _ = pick(Some(1), Some(Some(1)))",
+        ),
+    ] {
+        let codes = error_codes(&with_exit_body(with_exit));
+        assert_eq!(codes, [Code::Mismatch], "{with_exit}");
+        assert_eq!(codes, error_codes(&with_exit_body(plain)), "{plain}");
+    }
+}
+
+/// A `break` that leaves a `loop` gives its value, so the branch is a value.
 #[test]
 fn a_loop_with_a_break_should_give_its_branch_a_type() {
     super::with_prelude();
@@ -802,7 +822,13 @@ fn a_loop_with_a_break_should_give_its_branch_a_type() {
         type_at(&with_body(&format!("let r = {value}")), value),
         "i64?"
     );
-    // A `break` with no value gives the `loop` the type `unit`, which is no value.
+}
+
+/// A `break` with no value gives the `loop` the type `unit`, which is no value. The second error
+/// is a cascade of the first. It is kept as it was, and is not a wanted result.
+#[test]
+fn a_loop_with_a_break_and_no_value_should_keep_its_two_errors() {
+    super::with_prelude();
     for statement in [
         "let _ = if c { None } else { loop { break } }",
         "let _ = if c { None } else { outer: loop { loop { break outer } } }",
@@ -889,18 +915,19 @@ fn a_rule_on_the_spelling_of_none_should_not_reach_an_if() {
 #[test]
 fn a_block_made_never_before_its_tail_should_keep_its_error() {
     super::with_prelude();
-    for (statement, warning) in [
+    // The wanted codes of each row, in the order of their numbers.
+    for (statement, wanted) in [
         (
             "let _ = if d { 1 } else if c { None } else { todo(\"x\"); print(\"a\") }",
-            Code::UnreachableCode,
+            [Code::CannotInfer, Code::UnreachableCode, Code::TodoLeft].as_slice(),
         ),
         (
             "let _ = if d { 1 } else if c { None } else { while true { } }",
-            Code::WhileTrue,
+            &[Code::CannotInfer, Code::WhileTrue],
         ),
         (
             "let _ = if d { 1 } else if c { None } else { loop { }; print(\"a\") }",
-            Code::UnreachableCode,
+            &[Code::CannotInfer, Code::UnreachableCode],
         ),
     ] {
         let mut codes: Vec<_> = diags(&with_exit_body(statement))
@@ -908,12 +935,7 @@ fn a_block_made_never_before_its_tail_should_keep_its_error() {
             .map(Diagnostic::code)
             .collect();
         codes.sort_by_key(|code| code.as_str());
-        let mut expected = vec![Code::CannotInfer, warning];
-        if statement.contains("todo") {
-            expected.push(Code::TodoLeft);
-        }
-        expected.sort_by_key(|code| code.as_str());
-        assert_eq!(codes, expected, "{statement}");
+        assert_eq!(codes, wanted, "{statement}");
     }
     let src = "fn f(c: bool, d: bool) -> i64 {\n    let _ = if d { 1 } else if c { None } else { return 1; let y = 1 }\n    2\n}\nfn main() {\n    print(f(true, false))\n}";
     assert_eq!(error_codes(src), [Code::CannotInfer]);
