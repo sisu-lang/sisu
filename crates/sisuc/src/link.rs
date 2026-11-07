@@ -66,10 +66,14 @@ fn on_path(program: &str) -> bool {
         .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
 }
 
-/// The command in a clone that builds the runtime archive for the profile of the running `sisu`:
-/// `debug` is true for a debug build.
-const fn rebuild_command(_debug: bool) -> &'static str {
-    "cargo build --workspace"
+/// The command in a clone that builds the runtime archive where the running `sisu` looks for it:
+/// `cargo build` fills `target/debug` for a debug `sisu` and `target/release` for a release one.
+const fn rebuild_command(debug: bool) -> &'static str {
+    if debug {
+        "cargo build --workspace"
+    } else {
+        "cargo build --workspace --release"
+    }
 }
 
 /// The runtime archive on `allocator`. It is next to `sisu`, in a Cargo target directory or in an
