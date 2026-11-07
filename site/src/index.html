@@ -5,8 +5,8 @@ Sisu is a small, statically typed language that compiles to native x86-64 and AR
     <section class="hero">
       <div>
         <span class="pill">Early and experimental · Linux and ARM64 macOS</span>
-        <h1>Readable code that compiles to native programs.</h1>
-        <p class="lede">Sisu is a small, statically typed language. A function that can fail says so in its type. There is no null. The variable decides what can change, so a copy stays a copy. Errors point at the cause and show the fix.</p>
+        <h1>Simple to write. Fast to run.</h1>
+        <p class="lede">Sisu is a small, statically typed language that compiles to native code. There are few rules to learn, so you can write real programs on your first day. A function that can fail says so in its type, there is no null, and a copy stays a copy. Errors point at the cause and show the fix.</p>
         <div class="acts"><a class="btn go" href="#h-try">Install it</a><a class="btn alt" href="tour.html">Take the tour</a><a class="btn alt" href="status.html">See what works</a></div>
       </div>
       <div class="snip">
@@ -55,18 +55,18 @@ Aino</pre></figure></div>
         <div class="snip"><p class="step"><b>02</b> <code>sisu check</code> says</p>
           <figure class="code"><figcaption class="cap">error</figcaption><pre>{{diag programs/diagnostics/invite.err}}</pre></figure></div>
       </div>
-      <h3 class="snip-h">A new variant</h3>
+      <h3 class="snip-h">A value that you change in a loop</h3>
       <div class="errs">
         <div class="snip"><p class="step"><b>01</b> You write</p>
-          <figure class="code"><figcaption class="cap">area.sisu</figcaption><pre data-lang="sisu" data-mark="4">
-{{text programs/diagnostics/area.sisu}}</pre></figure></div>
+          <figure class="code"><figcaption class="cap">sum.sisu</figcaption><pre data-lang="sisu" data-mark="4">
+{{text programs/diagnostics/sum.sisu}}</pre></figure></div>
         <div class="snip"><p class="step"><b>02</b> <code>sisu check</code> says</p>
-          <figure class="code"><figcaption class="cap">error</figcaption><pre>{{diag programs/diagnostics/area.err}}</pre></figure></div>
+          <figure class="code"><figcaption class="cap">error</figcaption><pre>{{diag programs/diagnostics/sum.err}}</pre></figure></div>
       </div>
     </div>
     <p class="after"><code>sisu explain E0062</code> tells more about a code. <a href="diagnostics.html">All {{diagnostic-count}} codes</a></p>
   </div></section>
-  <!-- source: site/programs/diagnostics/guests.err, invite.err, area.err (real sisu output), docs/adr/0013-diagnostics-have-stable-codes.md, docs/diagnostics/README.md (Applying fixes) -->
+  <!-- source: site/programs/diagnostics/guests.err, invite.err, sum.err (real sisu output), docs/adr/0013-diagnostics-have-stable-codes.md, docs/diagnostics/README.md (Applying fixes) -->
   <section class="s tint" aria-labelledby="h-try"><div class="w try">
     <div><h2 id="h-try">Install it and run a program</h2><p>Sisu runs on x86-64 and ARM64 Linux with glibc 2.35 or newer, and on ARM64 macOS 15 or newer. It links each program with <code>cc</code>, so you need a C compiler on <code>PATH</code>. These lines install the newest nightly build and run a program.</p>
       <p>The first line, run again, updates Sisu. It checks the tarball against the release's <code>SHA256SUMS</code>, which shows that the file is whole and comes from the same release. It does not show who made the release. A bug report gives the output of <code>sisu --version --verbose</code>. To keep <code>sisu</code> on <code>PATH</code> in a new shell, add the <code>export</code> line to your shell's start-up file.</p>

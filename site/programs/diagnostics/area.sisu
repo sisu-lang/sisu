@@ -1,7 +1,7 @@
 enum Shape {
     Circle(r: f64)
     Rect(w: f64, h: f64)
-    Point                 // a new variant
+    Point
 }
 
 fn area(s: Shape) -> f64 {
@@ -12,5 +12,8 @@ fn area(s: Shape) -> f64 {
 }
 
 fn main() {
-    print("{area(Shape.Rect(w: 2.0, h: 3.0)):.2}")
+    let shapes = [Shape.Circle(r: 1.0), Shape.Rect(w: 2.0, h: 3.0), Shape.Point]
+    for s in shapes {
+        print("{area(s):.2}")
+    }
 }

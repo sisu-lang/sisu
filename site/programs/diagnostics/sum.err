@@ -1,0 +1,16 @@
+error[E0001]: cannot assign to `total`
+ --> sum.sisu:4:9
+  |
+2 |     let total = 0
+  |         ----- declared with `let` here
+3 |     for price in [120, 450, 80] {
+4 |         total += price
+  |         ^^^^^^^^^^^^^^ cannot assign twice
+  |
+help: declare it with `let mut`
+  |
+2 |     let mut total = 0
+  |         +++
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0001
