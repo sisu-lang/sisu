@@ -8,7 +8,7 @@ on:
       seconds:
         description: Seconds to fuzz, from 60 to 14400
         type: number
-        default: 1800
+        default: 3600
       coverage:
         description: Also measure line coverage per compiler stage, and check the generator gaps
         type: boolean
@@ -92,11 +92,9 @@ jobs:
           key: fuzz-program-corpus-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: fuzz-program-corpus-
       # The fuzzer first runs each corpus input and each of the 128 seeds once, one at a time, and
-      # -max_total_time does not stop that pass. On CI a corpus input takes about 1.25 s, and a seed
-      # takes about twice that by estimate. The 1.25 s holds for today's short corpus. New finds
-      # are mutants of the full-size seeds, so the corpus costs more as nights pass. At 500
-      # full-size inputs the first pass may take most of the 30 minutes (an estimate). So a run
-      # keeps 500 inputs at random and removes the others. cmin and the cache then see only those
+      # -max_total_time does not stop that pass. It took 16 and 18 minutes in the runs of 2026-11-06
+      # and 2026-11-07. New finds are mutants of the full-size seeds, so the pass can get longer as
+      # nights pass. So a run keeps 500 inputs at random and removes the others. cmin and the cache then see only those
       # and the new finds, so each run starts with at most 500 corpus inputs and the 128 seeds. A
       # removed input is lost; the fuzzer can find its coverage again.
       # CORPUS_PASS_MINUTES in scripts/fuzz_program_plan.py is the time of this pass.

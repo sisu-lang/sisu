@@ -4,7 +4,7 @@ The plan says how long to fuzz, whether to measure coverage, and the time limits
 step and of the job. The script writes `seconds=`, `coverage=`, `fuzz_minutes=` and `minutes=`
 to $GITHUB_OUTPUT, or nothing when the event asks for no run.
 
-- schedule: 1800 s, and coverage.
+- schedule: 3600 s, and coverage.
 - workflow_dispatch: the inputs, passed in FUZZ_SECONDS and FUZZ_COVERAGE.
 - pull_request: the pull request's one label `fuzz-program` (2 h), `fuzz-program <n>m` or
   `fuzz-program <n>h`, and coverage always. A `labeled` event runs only when the label it added
@@ -26,7 +26,8 @@ from typing import Any
 
 LABEL = re.compile(r"fuzz-program(?: ([0-9]+)([mh]))?")
 BARE_LABEL = 2 * 3600
-NIGHTLY = 1800
+# The first pass counts toward this time. With 1800 s, it left about 12 minutes for new inputs.
+NIGHTLY = 3600
 LEAST = 60
 # GitHub-hosted jobs stop after 6 hours. 4 hours of fuzzing leaves 75 minutes for the build,
 # crash replays, tmin, cmin, setup and the cache, and 45 for --coverage and --gaps: 360 of 360.
@@ -41,11 +42,8 @@ GAPS_MINUTES = 15
 CMIN_MINUTES = 20
 # The fuzzer first runs each corpus input and each of the 128 seeds once, one at a time, and
 # -max_total_time does not stop that pass. The 500 inputs that the Sample the corpus step keeps
-# take about 10 minutes: run 42015848679 ran 990 inputs in 20.3 minutes. A seed costs more than a
-# corpus input. Locally a seed takes 1.24 s, against about 0.6 s for a corpus input. So expect
-# about 2.5 s on CI, or about 5 minutes for the 128 seeds. The corpus time holds for today's
-# short corpus. New finds are mutants of the full-size seeds, so the corpus costs more as nights
-# pass. At 500 full-size inputs the first pass may take most of the 30 minutes (an estimate).
+# and the seeds took 16 minutes in run 42211713811 and 18 minutes in run 42344737745. New finds
+# are mutants of the full-size seeds, so the pass can get longer as nights pass.
 CORPUS_PASS_MINUTES = 30
 
 
