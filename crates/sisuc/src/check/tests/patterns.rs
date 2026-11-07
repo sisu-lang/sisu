@@ -253,6 +253,28 @@ fn pattern_names() {
     );
 }
 
+/// E0125 offers the lower-case name as a binding, and a keyword cannot be one.
+#[test]
+fn a_name_that_lowers_to_a_keyword_should_get_no_fix() {
+    let rows = [
+        ("If", false),
+        ("True", false),
+        ("Import", false),
+        ("Stopped", true),
+    ];
+    for (name, has_fix) in rows {
+        let src = format!(
+            "fn main() {{\n    match 1 {{\n        {name} => print(1)\n        _ => print(2)\n    }}\n}}\n"
+        );
+        let ds = diags(&src);
+        let [d] = ds.as_slice() else {
+            panic!("{name}: {ds:?}");
+        };
+        assert_eq!(d.code(), Code::NotVariantHere, "{name}");
+        assert_eq!(!d.fixes().is_empty(), has_fix, "{name}");
+    }
+}
+
 #[test]
 fn a_bad_pattern_should_report_its_code_at_its_position() {
     // Each row: the scrutinee, the arm on line 15, and the code it reports there.

@@ -332,16 +332,17 @@ mod tests {
         assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 
-    /// Fixes beside a line break, which the fuzz target found. A fix must keep the syntax, and a
-    /// safe one must keep every report of another code.
+    /// Inputs that the fuzz target found. A fix must keep the syntax, and a safe one must keep
+    /// every report of another code.
     #[test]
-    fn front_end_should_pass_on_a_fix_beside_a_line_break() {
+    fn front_end_should_pass_on_an_input_it_failed_on() {
         let rows = [
             "fn main<T>\n() {\n    print(1)\n}\n",
             "fn f() {}\nfn main() {\n    f<i64>\n    ()\n}\n",
             "enum E {\n    A(i64)\n}\nfn main() {\n    let _ = E.A<i64>\n    (1)\n}\n",
-            "enum Node {\n    N\n}\n\nenum Flag: Eq {\n    On(Node)\n    Off\n}\n\nextend Flag: Eq {\n    fn eq(self, other: Self) -> bool\n {\n        true\n    }\n}\n\nfn main() {}\n",
+            "interface I {\n    fn a(self) -> i64\n}\n\nenum Flag: Eq {\n    On(any I)\n    Off\n}\n\nextend Flag: Eq {\n    fn eq(self, other: Self) -> bool\n {\n        true\n    }\n}\n\nfn main() {}\n",
             "enum T{P}fn a(){P<i>.S}",
+            "fn main() {\n    match 1 {\n        If => print(1)\n        _ => print(2)\n    }\n}\n",
         ];
         let failures: Vec<String> = crate::on_compiler_stack(|| {
             rows.iter()
