@@ -1222,8 +1222,9 @@ fn a_read_or_write_of_a_hidden_name_should_give_no_second_error() {
     }
 }
 
-/// A type argument after a poisoned name in a pattern: the poison local is no value, so the call
-/// reports no `E0137`, and an error beside it stays. In each row: the program and its errors.
+/// A type argument after a poisoned name in a pattern: the local that hides it is no value, so
+/// the call reports no `E0137`, and an error beside it stays. In each row: the program and its
+/// errors.
 #[test]
 fn a_type_argument_call_of_a_hidden_name_should_give_no_second_error() {
     for (row, src, expected) in [
@@ -1424,8 +1425,6 @@ fn a_local_that_is_a_value_should_keep_its_type_argument_error() {
                 (Code::TypeArguments, (6, 27)),
             ][..],
         ),
-        // The rows below are the ones a local made by a `mut` parameter or a repeated parameter
-        // turned into no value.
         (
             "a mut parameter of an unknown type",
             "enum Foo\n{ A }\n\nfn f(mut Foo: Zzz) {\n    let _a = Foo<i64>(1)\n}\nfn main() {}\n",
