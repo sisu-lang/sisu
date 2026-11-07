@@ -1,0 +1,12 @@
+// GIVEN a variant written with no enum, with type arguments and a call
+// AND a variant written with no enum, with a member that is called
+// WHEN `sisu check` runs on it
+// THEN it reports E0117 for each, with the safe fix that writes the enum: its syntax is right
+enum Holder {
+    W(i64)
+}
+
+fn main() {
+    let _a = W<i64>(1)
+    let _b = W.Some(1)
+}

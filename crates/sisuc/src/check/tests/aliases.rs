@@ -1081,3 +1081,92 @@ fn a_construction_through_an_alias_should_report_the_outer_call_that_cannot_infe
         &[],
     );
 }
+
+/// GIVEN an unknown name in the body of an alias, where the nearest alias would make a cycle
+/// WHEN the checker reports E0030
+/// THEN it suggests no alias that reaches the alias
+#[test]
+fn an_alias_body_should_not_suggest_an_alias_that_makes_a_cycle() {
+    for (src, pos) in [
+        ("type Box = Bax", (1, 12, "Bax")),
+        ("type Box = [Bax]", (1, 13, "Bax")),
+        ("type Box<T> = Bax<T>", (1, 15, "Bax")),
+        ("type Box = Option<Bax>", (1, 19, "Bax")),
+        ("type Box = any Bax", (1, 16, "Bax")),
+        ("type Aa = Bb\ntype Bb = Ab", (2, 11, "Ab")),
+        ("type Bb = Ab\ntype Aa = Bb", (1, 11, "Ab")),
+        ("type Aa = [Bb]\ntype Bb = Ab", (2, 11, "Ab")),
+        ("type Aa = Bb\ntype Bb = Cc\ntype Cc = Ab", (3, 11, "Ab")),
+        // Two aliases name `Base`, and `Top` names both: the walk meets `Top` twice.
+        (
+            "class Pair<A, B> {}\ntype Top = Pair<Mid1, Mid2>\ntype Mid1 = Base\ntype Mid2 = Base\ntype Base = Basx",
+            (5, 13, "Basx"),
+        ),
+    ] {
+        suggests_nothing(&format!("{src}\nfn main() {{}}"), Code::UnknownType, pos);
+    }
+    // A second alias of a name is the alias itself: E0034 stays, and the name is no candidate.
+    let src = "type Box = i64\ntype Box = Bax\nfn main() {}";
+    let ds = diags(src);
+    let d = ds
+        .iter()
+        .find(|d| d.code() == Code::UnknownType)
+        .expect("the unknown name should be reported");
+    assert_eq!(at(src, d.span()), (2, 12), "{ds:?}");
+    assert!(d.fixes().is_empty(), "{d:?}");
+}
+
+/// GIVEN an unknown name in the body of an alias that is in a cycle
+/// WHEN the checker walks the aliases that reach the body
+/// THEN the walk ends, and the checker reports the cycle and the unknown name
+#[test]
+fn the_walk_of_an_alias_cycle_should_end() {
+    let src = "class Foo<A, B> {}\ntype Aa = Foo<Bb, Ac>\ntype Bb = Aa\nfn main() {}";
+    let codes: Vec<Code> = diags(src).iter().map(Diagnostic::code).collect();
+    assert_eq!(codes, [Code::AliasCycle, Code::UnknownType]);
+}
+
+/// GIVEN an unknown name where an alias makes no cycle, in an alias body or elsewhere
+/// WHEN the checker reports E0030
+/// THEN it suggests the alias, as it did
+#[test]
+fn an_unknown_type_should_keep_each_suggestion_that_makes_no_cycle() {
+    for (src, pos, candidate) in [
+        ("type Bax2 = i64\ntype Box = Bax", (2, 12, "Bax"), "Bax2"),
+        ("type Box = Bax\ntype Bax2 = i64", (1, 12, "Bax"), "Bax2"),
+        ("type Box = i64\ntype Aa = Bax", (2, 11, "Bax"), "Box"),
+        (
+            "class Foo<A, B> {}\ntype Box = i64\ntype Aa = Foo<Box, Bax>",
+            (3, 20, "Bax"),
+            "Box",
+        ),
+        ("type Box = i64\nfn f(x: Bax) {}", (2, 9, "Bax"), "Box"),
+        (
+            "type Box = i64\nclass C {\n    x: Bax\n}",
+            (3, 8, "Bax"),
+            "Box",
+        ),
+        ("class Box {\n    x: Bax\n}", (2, 8, "Bax"), "Box"),
+        (
+            "interface Bax2 {}\ntype Box = any Bax",
+            (2, 16, "Bax"),
+            "Bax2",
+        ),
+    ] {
+        suggests(
+            &format!("{src}\nfn main() {{}}"),
+            Code::UnknownType,
+            pos,
+            candidate,
+        );
+    }
+    // The alias that fails resolves, and the function after it still gets its suggestion.
+    let src = "type Box = Bax\nfn f(x: Bax) {}\nfn main() {}";
+    let ds = diags(src);
+    assert_eq!(ds.len(), 2, "{ds:?}");
+    assert!(fixes(src, &ds[0]).is_empty(), "{ds:?}");
+    assert_eq!(
+        fixes(src, &ds[1]),
+        [(false, vec![(2, 9, "Bax", "Box".to_owned())])]
+    );
+}

@@ -1,0 +1,22 @@
+// GIVEN a variant of one enum, written with no enum but with type arguments
+// AND a call, a member, a method call and an assignment after the type arguments
+// AND the same for a variant of a generic enum
+// WHEN `sisu check` runs on it
+// THEN it reports E0117 for each, and names the enum in its help
+// AND it gives no fix: `Holder.W<i64>` followed by `.` does not parse
+enum Holder {
+    W
+}
+
+enum Wrap<T> {
+    V(T)
+}
+
+fn main() {
+    let _a = W<i64>.Some(1)
+    let _b = W<i64>.x
+    let _c = W<i64, u8>.y.z
+    let _d = V<i64>.x
+    let _e = W<i64>.m()
+    W<i64>.x = 1
+}

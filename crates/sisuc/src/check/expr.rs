@@ -191,10 +191,21 @@ impl Checker<'_> {
                 name,
                 types,
                 angles,
-            } => match self.named_args(name, types, *angles, false) {
-                Some(value) => Err(value),
-                None => self.name(name.span, name.name, None),
-            },
+            } => {
+                if let Some(value) = self.named_args(name, types, *angles, false) {
+                    return Err(value);
+                }
+                let reported = self.diagnostics.len();
+                let checked = self.name(name.span, name.name, None);
+                // The type arguments follow the name, so `Holder.W<i64>` followed by `.` does not
+                // parse: the fix of a bare variant would break the syntax.
+                for d in &mut self.diagnostics[reported..] {
+                    if d.code() == Code::BareVariant {
+                        d.retain_fixes(|_| false);
+                    }
+                }
+                checked
+            }
             ExprKind::Todo { keyword, args } => self.todo(e.span, *keyword, args),
             ExprKind::SelfValue => {
                 let Some(ty) = self.body.self_type else {

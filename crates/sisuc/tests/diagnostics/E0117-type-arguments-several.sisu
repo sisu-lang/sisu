@@ -1,0 +1,15 @@
+// GIVEN a variant that two enums have, written with no enum but with type arguments
+// WHEN `sisu check` runs on it
+// THEN it reports E0117, and its help names both enums
+// AND it gives no fix
+enum A {
+    W
+}
+
+enum B {
+    W
+}
+
+fn main() {
+    let _a = W<i64>.x
+}

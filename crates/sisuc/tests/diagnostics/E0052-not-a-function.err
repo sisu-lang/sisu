@@ -1,0 +1,82 @@
+error[E0030]: cannot find type `Zzz`
+ --> E0052-not-a-function.sisu:9:10
+  |
+9 | const J: Zzz = 1
+  |          ^^^
+  |
+  = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums and arrays such as `[i64]`
+
+error[E0052]: `W` is a type parameter, not a function
+  --> E0052-not-a-function.sisu:14:9
+   |
+14 |         W(w)
+   |         ^
+
+error[E0052]: `k` is a binding, not a function
+  --> E0052-not-a-function.sisu:20:5
+   |
+20 |     k(1)
+   |     ^
+
+error[E0052]: `x` is a binding, not a function
+  --> E0052-not-a-function.sisu:24:5
+   |
+24 |     x(1)
+   |     ^
+
+error[E0052]: `k2` is a binding, not a function
+  --> E0052-not-a-function.sisu:28:5
+   |
+28 |     k2(1)
+   |     ^^
+
+error[E0052]: `U` is a type parameter, not a function
+  --> E0052-not-a-function.sisu:32:5
+   |
+32 |     U(x)
+   |     ^
+
+error[E0052]: `K` is a constant, not a function
+  --> E0052-not-a-function.sisu:37:5
+   |
+37 |     K(x)
+   |     ^
+
+error[E0052]: `K` is a constant, not a function
+  --> E0052-not-a-function.sisu:41:5
+   |
+41 |     K(1)
+   |     ^
+
+error[E0052]: `K` is a constant, not a function
+  --> E0052-not-a-function.sisu:42:5
+   |
+42 |     K()
+   |     ^
+
+error[E0052]: `K` is a constant, not a function
+  --> E0052-not-a-function.sisu:43:5
+   |
+43 |     K(zzz, yyy)
+   |     ^
+
+error[E0033]: cannot find binding `zzz`
+  --> E0052-not-a-function.sisu:43:7
+   |
+43 |     K(zzz, yyy)
+   |       ^^^
+
+error[E0033]: cannot find binding `yyy`
+  --> E0052-not-a-function.sisu:43:12
+   |
+43 |     K(zzz, yyy)
+   |            ^^^
+
+error[E0052]: `J` is a constant, not a function
+  --> E0052-not-a-function.sisu:44:5
+   |
+44 |     J(1)
+   |     ^
+
+sisu: 13 errors
+sisu: for more on a code, run `sisu explain <code>`: E0030, E0033, E0052

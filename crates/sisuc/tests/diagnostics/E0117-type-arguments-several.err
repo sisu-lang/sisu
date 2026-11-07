@@ -1,0 +1,10 @@
+error[E0117]: `W` is a variant of several enums
+  --> E0117-type-arguments-several.sisu:14:14
+   |
+14 |     let _a = W<i64>.x
+   |              ^
+   |
+   = help: write one of `A.W`, `B.W`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0117
