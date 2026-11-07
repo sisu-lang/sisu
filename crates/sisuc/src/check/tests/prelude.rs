@@ -955,6 +955,272 @@ fn a_poisoned_name_in_a_pattern_should_give_no_second_error() {
         &match_one("Foo(x)"),
         &[(Code::Mismatch, (3, 9))],
     );
+    front_end_row(
+        "a qualified name is no poisoned name, at an enum",
+        &broken(
+            "enum Z { Q }\nfn f(z: Z) {\n    match z {\n        Z.Foo => {}\n        _ => {}\n    }\n}\nfn main() {}",
+        ),
+        &[
+            (Code::BraceOnNewLine, (2, 1)),
+            (Code::UnknownVariant, (7, 11)),
+        ],
+    );
+    front_end_row(
+        "a qualified name is no poisoned name, at a names-only position",
+        &broken(
+            "enum Z { Q }\nfn main() {\n    let o: f64? = None\n    match o {\n        Z.Foo(x) => print(x)\n        _ => {}\n    }\n}",
+        ),
+        &[
+            (Code::BraceOnNewLine, (2, 1)),
+            (Code::OnlyNamePosition, (8, 9)),
+        ],
+    );
+}
+
+/// A poisoned name in a pattern hides any outer local of that name: a read or a write of it in
+/// the arm reports nothing, but a true error beside it stays.
+#[test]
+#[expect(clippy::too_many_lines, reason = "one row for each case of the table")]
+fn a_poisoned_name_in_a_pattern_should_hide_an_outer_local() {
+    // A function with the parameter `{name}: string`, the extra parameters `extra` and `body`.
+    let in_f = |base: &str, name: &str, extra: &str, body: &str| {
+        format!("{base}fn f({name}: string{extra}) {{\n{body}\n}}\nfn main() {{}}")
+    };
+    let in_main = |base: &str, body: &str| format!("{base}fn main() {{\n{body}\n}}");
+    // `match 1` with the arm `{arm}` and then `_ => {}`.
+    let m = |arm: &str| format!("    match 1 {{\n        {arm}\n        _ => {{}}\n    }}");
+    let m_on = |subject: &str, arm: &str| {
+        format!("    match {subject} {{\n        {arm}\n        _ => {{}}\n    }}")
+    };
+    let o = ", o: i64?";
+    let (e, c) = (BROKEN_ENUM, REJECTED_CONST);
+
+    // The outer local is hidden.
+    for (row, src, expected) in [
+        (
+            "upper-case, bare",
+            in_f(e, "Foo", "", &m("Foo => { let _a: i64 = Foo }")),
+            E_BROKEN,
+        ),
+        (
+            "constant, bare",
+            in_f(c, "print", "", &m("print => { let _a: i64 = print }")),
+            E_CONST,
+        ),
+        (
+            "constant, alternative",
+            in_f(c, "print", "", &m("print | 2 => { let _a: i64 = print }")),
+            E_CONST,
+        ),
+        (
+            "upper-case, twice in an alternative",
+            in_f(e, "Foo", "", &m("Foo | Foo => { let _a: i64 = Foo }")),
+            E_BROKEN,
+        ),
+        (
+            "guard",
+            in_f(e, "Foo", "", &m("Foo if Foo == 1 => {}")),
+            E_BROKEN,
+        ),
+        (
+            "if let",
+            in_f(
+                e,
+                "Foo",
+                o,
+                "    if let Some(Foo) = o { let _a: i64 = Foo }",
+            ),
+            E_BROKEN,
+        ),
+        (
+            "write to an outer parameter",
+            in_f(e, "Foo", "", &m("Foo => { Foo = \"a\" }")),
+            E_BROKEN,
+        ),
+        (
+            "let else",
+            in_f(
+                e,
+                "Foo",
+                o,
+                "    let Some(Foo) = o else { return }\n    let _a: i64 = Foo",
+            ),
+            E_BROKEN,
+        ),
+        (
+            "while let",
+            in_f(
+                e,
+                "Foo",
+                o,
+                "    while let Some(Foo) = o { let _a: i64 = Foo }",
+            ),
+            E_BROKEN,
+        ),
+    ] {
+        front_end_row(row, &src, expected);
+    }
+
+    // The outer local is hidden, and the first error of the pattern stays.
+    for (row, src, expected) in [
+        (
+            "unknown subject",
+            in_f(e, "Foo", "", &m_on("zz", "Foo => { let _a: i64 = Foo }")),
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::BindingNotFound, (5, 11)),
+            ][..],
+        ),
+        (
+            "if let on a value that is not optional",
+            in_f(e, "Foo", "", "    if let Foo = 1 { let _a: i64 = Foo }"),
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::UnwrapNeedsOptional, (5, 18)),
+            ][..],
+        ),
+        (
+            "f64 subject",
+            in_f(e, "Foo", "", &m_on("1.5", "Foo => { let _a: i64 = Foo }")),
+            &[(Code::BraceOnNewLine, (2, 1)), (Code::CannotMatch, (5, 11))][..],
+        ),
+        (
+            "Some with two sub-patterns",
+            in_f(
+                e,
+                "Foo",
+                o,
+                &m_on("o", "Some(Foo, 1) => { let _a: i64 = Foo }"),
+            ),
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::SubpatternCount, (6, 9)),
+            ][..],
+        ),
+        (
+            "unknown variant with a sub-pattern",
+            in_f(e, "Foo", "", &m("Bar(Foo) => { let _a: i64 = Foo }")),
+            &[(Code::BraceOnNewLine, (2, 1)), (Code::Mismatch, (6, 9))][..],
+        ),
+        (
+            "write, unknown subject",
+            in_f(e, "Foo", "", &m_on("zz", "Foo => { Foo = 1 }")),
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::BindingNotFound, (5, 11)),
+            ][..],
+        ),
+    ] {
+        front_end_row(row, &src, expected);
+    }
+
+    // What must stay.
+    for (row, src, expected) in [
+        (
+            "no E0136 for the alternative",
+            in_f(e, "Foo", "", &m("Foo | 2 => {}")),
+            E_BROKEN,
+        ),
+        (
+            "a write gives no E0001",
+            in_main(e, &m("Foo => { Foo = 2 }")),
+            E_BROKEN,
+        ),
+        (
+            "a write to a constant gives no E0001",
+            in_main(c, &m("print => { print = 2 }")),
+            E_CONST,
+        ),
+        (
+            "a write in an if let gives no E0001",
+            in_main(
+                e,
+                "    let o: i64? = None\n    if let Some(Foo) = o { Foo = 2 }",
+            ),
+            E_BROKEN,
+        ),
+        (
+            "+=",
+            in_main(e, &m("Foo => { Foo += 2 }")),
+            E_BROKEN,
+        ),
+        (
+            "an index write",
+            in_main(e, &m("Foo => { Foo[0] = 2 }")),
+            E_BROKEN,
+        ),
+        (
+            "a mut argument gives no E0169",
+            format!(
+                "{e}fn g(mut x: i64) {{ x = 1 }}\n{}",
+                in_main("", &m("Foo => { g(mut Foo) }"))
+            ),
+            E_BROKEN,
+        ),
+        (
+            "let mut gives no W0002",
+            [
+                e,
+                "enum W { P }\nfn f(w: W) {\n    let mut Foo = w else { return }\n    print(Foo)\n}\nfn main() {}",
+            ]
+            .concat(),
+            E_BROKEN,
+        ),
+    ] {
+        front_end_row(row, &src, expected);
+    }
+
+    // What must stay: a true error beside the poisoned name.
+    for (row, src, expected) in [
+        (
+            "an error after the arm",
+            in_f(
+                e,
+                "Foo",
+                "",
+                &format!("{}\n    let _a: i64 = Foo", m("Foo => {}")),
+            ),
+            &[(Code::BraceOnNewLine, (2, 1)), (Code::Mismatch, (9, 19))][..],
+        ),
+        (
+            "an error in the else block",
+            in_f(
+                e,
+                "Foo",
+                o,
+                "    let Some(Foo) = o else {\n        let _b: i64 = Foo\n        return\n    }",
+            ),
+            &[(Code::BraceOnNewLine, (2, 1)), (Code::Mismatch, (6, 23))][..],
+        ),
+        (
+            "the call form binds no name",
+            in_f(e, "Foo", "", &m("Foo(x) => { let _a: i64 = Foo }")),
+            &[(Code::BraceOnNewLine, (2, 1)), (Code::Mismatch, (6, 35))][..],
+        ),
+        (
+            "a range bound binds no name",
+            in_f(e, "Foo", "", &m("0..Foo => { let _a: i64 = Foo }")),
+            &[(Code::BraceOnNewLine, (2, 1)), (Code::Mismatch, (6, 35))][..],
+        ),
+        (
+            "a name that one alternative lacks",
+            in_main(e, "    match 1 {\n        Foo | x => print(x)\n    }"),
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::AlternativeBindings, (6, 9)),
+            ][..],
+        ),
+        (
+            "a name that one alternative lacks, the other order",
+            in_main(e, "    match 1 {\n        x | Foo => print(x)\n    }"),
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::AlternativeBindings, (6, 13)),
+            ][..],
+        ),
+    ] {
+        front_end_row(row, &src, expected);
+    }
 }
 
 /// A user's item named `Option` or `Result` leaves the name to the built-in type, as an item
