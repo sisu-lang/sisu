@@ -76,6 +76,10 @@ pre-commit hook runs it on the report of your last `make test` with
 rest. Neither CI nor the hook fails on a slow test: wall-clock time depends on
 the machine and its load.
 
+The pre-commit hook also runs `crates/sisuc/tests/architecture.rs` when a commit
+changes a file that the test reads. CI's lint job skips that hook, because its
+test job runs the test.
+
 After the tests pass, `make test` checks each `test(...)` leaf of a filter in
 `.config/nextest.toml`, and CI does the same. A leaf that matches no test, such
 as one left after a rename, fails the target, because its override then does
@@ -805,8 +809,9 @@ at random and removes the others. Each run then starts with at most 500
 corpus inputs and the seeds.
 The run saves the corpus inputs and its new finds, and the next run samples
 them again. A removed input is lost; the fuzzer can find its coverage again. The
-summary's executions count only the fuzzing after the first pass: few
-executions, or `unknown`, mean the run spent its time on its corpus. The job
+summary's executions count only the fuzzing after the first pass. The summary
+also gives the time of that pass. It says when the pass took over half of the
+run or no job finished, because such a run tried few or no new inputs. The job
 summary also gives the corpus size before and after cmin and whether cmin
 finished within its 2400 s. A cmin that does not finish leaves the corpus as it
 was and puts a warning on the run, because the run stays green.

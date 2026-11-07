@@ -61,6 +61,17 @@ entry = "cargo shear --deny-warnings"
 files = '(\.rs|Cargo\.toml)$'
 pass_filenames = false
 
+# The layer rules between the compiler's modules. Clippy does not see them, so without this hook
+# a commit breaks a rule and only `make test` finds it. It needs no runtime, so no nextest. The test
+# also reads docs/register.md and the manifests. CI's test job runs it, so CI's lint job skips it.
+[[repos.hooks]]
+id = "architecture"
+name = "architecture test (layers)"
+language = "system"
+entry = "cargo test -q -p sisuc --locked --test architecture"
+files = '^(crates/sisuc/(src/.*\.rs|tests/architecture\.rs)|crates/[^/]+/Cargo\.toml|Cargo\.(toml|lock)|docs/register\.md)$'
+pass_filenames = false
+
 [[repos.hooks]]
 id = "expect-messages"
 name = "expect messages say should"
