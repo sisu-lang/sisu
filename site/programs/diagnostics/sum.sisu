@@ -1,0 +1,7 @@
+fn main() {
+    let total = 0
+    for price in [120, 450, 80] {
+        total += price
+    }
+    print(total)
+}

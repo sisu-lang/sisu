@@ -448,7 +448,7 @@ ASSETS = [
     "sisu-aarch64-linux.tar.gz",
     "sisu-aarch64-macos.tar.gz",
     "install.sh",
-    "orders.sisu",
+    "welcome.sisu",
     "SHA256SUMS",
 ]
 # The artifacts of the workflow: one per tarball, and `release-files` holds the other three.

@@ -5,77 +5,81 @@ Sisu is a small, statically typed language that compiles to native x86-64 and AR
     <section class="hero">
       <div>
         <span class="pill">Early and experimental · Linux and ARM64 macOS</span>
-        <h1>Sisu learns from the languages we admire.</h1>
-        <p class="lede">Python shows that code can be simple and easy to read. Rust shows that a compiler can rule out whole kinds of bugs. Swift shows that memory can be safe without a garbage collector. Sisu brings these lessons together in one small, statically typed language that compiles to native code.</p>
-        <div class="acts"><a class="btn go" href="tour.html">Take the tour</a><a class="btn alt" href="status.html">See what works</a></div>
+        <h1>Simple to write. Fast to run.</h1>
+        <p class="lede">Sisu is a small, statically typed language that compiles to native code. There are few rules to learn, so you can write real programs on your first day. A function that can fail says so in its type, there is no null, and a copy stays a copy. Errors point at the cause and show the fix.</p>
+        <div class="acts"><a class="btn go" href="#h-try">Install it</a><a class="btn alt" href="tour.html">Take the tour</a><a class="btn alt" href="status.html">See what works</a></div>
       </div>
-      <div class="hero-code">
-        <figure class="code"><figcaption class="cap">orders.sisu</figcaption><pre data-lang="sisu">
-{{text programs/run/orders.sisu}}</pre></figure>
-        <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
-{{text programs/run/orders.out}}</pre></figure>
+      <div class="snip">
+        <p class="step">Add up the numbers in a file</p>
+        <figure class="code"><figcaption class="cap">total.sisu</figcaption><pre data-lang="sisu" data-mark="4">
+{{text programs/pending/total.sisu}}</pre></figure>
+        <figure class="code"><figcaption class="cap">terminal</figcaption><pre data-lang="sh">
+$ sisu run total.sisu prices.txt
+7050
+$ sisu run total.sisu notes.txt
+error: not a number: kymmenen</pre></figure>
+        <p class="snip-note"><code>?</code> passes a failure up to the caller. <code>?? fail</code> turns a word that is not a number into a failure with a message.</p>
       </div>
     </section>
   </div>
-
-  <section class="s tint" aria-labelledby="h-from"><div class="w">
-    <div class="s-h"><h2 id="h-from">What Sisu takes from each language</h2></div>
-    <div class="feats">
-      <div><p class="from">From Python</p><h3>Readability</h3><ul>
-        <li>Minimal syntax</li>
-        <li>One obvious way to do a thing</li>
-      </ul></div>
-      <div><p class="from">From Rust</p><h3>Correctness</h3><ul>
-        <li>Immutable by default</li>
-        <li>Invalid states are unrepresentable</li>
-        <li>No null: optionals instead</li>
-        <li>Error messages that help you fix the code</li>
-      </ul></div>
-      <div><p class="from">From Swift</p><h3>Memory safety, simply</h3><ul>
-        <li>Reference counting: no garbage collector, no borrow checker</li>
-        <li>An object of a class is shared, and counted. Arrays, strings and enums behave as copies.</li>
-        <li>Until <code>weak</code> fields arrive, a cycle of objects is never freed</li>
-      </ul></div>
-    </div>
-    <div class="try demo">
-      <div><h3>How values work</h3>
-        <p>An array behaves as a copy. <code>taxed</code> changes and <code>prices</code> stays the same, and no memory is copied until a write needs it.</p>
-        <p>A <code>mut</code> parameter changes the caller's array, and the call writes <code>mut</code> too, so you see which arguments change. A range index such as <code>taxed[0..2]</code> shares the elements of the array.</p>
-        <p>Reference counting frees each array when nothing uses it any more.</p>
-        <a class="more" href="tour.html#arrays">More on arrays in the tour</a>
-      </div>
-      <div class="hero-code">
-        <figure class="code"><figcaption class="cap">prices.sisu</figcaption><pre data-lang="sisu">
-{{text programs/run/prices.sisu}}</pre></figure>
+  <!-- source: site/programs/pending/total.sisu, docs/reference/errors.md (The ? operator, A main that fails), docs/reference/types.md (Parsing a string) -->
+  <section class="s tint" aria-labelledby="h-copy"><div class="w">
+    <div class="snip row">
+      <div><h2 id="h-copy">Change a copy. The original stays.</h2>
+        <p class="snip-note"><code>let mut copy = team</code> gives a copy. A write to <code>copy</code>, at any depth, never changes <code>team</code>. A <code>let</code> value never changes.</p>
+        <p class="snip-note">There is no shared object that changes behind your back, and no borrow checker.</p></div>
+      <div><figure class="code"><figcaption class="cap">team.sisu</figcaption><pre data-lang="sisu" data-mark="12">
+{{text programs/pending/team.sisu}}</pre></figure>
         <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
-{{text programs/run/prices.out}}</pre></figure>
+Ilse
+Aino</pre></figure></div>
+    </div>
+  </div></section>
+  <!-- source: site/programs/pending/team.sisu, docs/adr/0046-structs-replace-classes.md -->
+  <section class="s" aria-labelledby="h-errors"><div class="w">
+    <div class="s-h"><h2 id="h-errors">The compiler shows the fix</h2><p>Each error has a stable code and points at the code that caused it. When the fix is clear, the error shows it. With <code>--format json</code>, each fix also says if it is safe to apply.</p></div>
+    <div class="pairs">
+      <h3 class="snip-h">A value that can be missing</h3>
+      <div class="errs">
+        <div class="snip"><p class="step"><b>01</b> You write</p>
+          <figure class="code"><figcaption class="cap">guests.sisu</figcaption><pre data-lang="sisu" data-mark="4">
+{{text programs/diagnostics/guests.sisu}}</pre></figure></div>
+        <div class="snip"><p class="step"><b>02</b> <code>sisu check</code> says</p>
+          <figure class="code"><figcaption class="cap">error</figcaption><pre>{{diag programs/diagnostics/guests.err}}</pre></figure></div>
+      </div>
+      <h3 class="snip-h">A call that changes an argument</h3>
+      <div class="errs">
+        <div class="snip"><p class="step"><b>01</b> You write</p>
+          <figure class="code"><figcaption class="cap">invite.sisu</figcaption><pre data-lang="sisu" data-mark="7">
+{{text programs/diagnostics/invite.sisu}}</pre></figure></div>
+        <div class="snip"><p class="step"><b>02</b> <code>sisu check</code> says</p>
+          <figure class="code"><figcaption class="cap">error</figcaption><pre>{{diag programs/diagnostics/invite.err}}</pre></figure></div>
+      </div>
+      <h3 class="snip-h">A value that you change in a loop</h3>
+      <div class="errs">
+        <div class="snip"><p class="step"><b>01</b> You write</p>
+          <figure class="code"><figcaption class="cap">sum.sisu</figcaption><pre data-lang="sisu" data-mark="4">
+{{text programs/diagnostics/sum.sisu}}</pre></figure></div>
+        <div class="snip"><p class="step"><b>02</b> <code>sisu check</code> says</p>
+          <figure class="code"><figcaption class="cap">error</figcaption><pre>{{diag programs/diagnostics/sum.err}}</pre></figure></div>
       </div>
     </div>
-    <!-- source: docs/adr/0007-arrays-are-values.md, docs/adr/0042-a-slice-shares-its-block.md, docs/adr/0043-mut-parameters-copy-in-and-out.md, docs/reference/values.md, site/programs/run/prices.sisu -->
+    <p class="after"><code>sisu explain E0062</code> tells more about a code. <a href="diagnostics.html">All {{diagnostic-count}} codes</a></p>
   </div></section>
-
-  <section class="s" aria-labelledby="h-errors"><div class="w">
-    <div class="s-h"><h2 id="h-errors">Errors that help you fix the code</h2><p>Each error has a stable code and points at the code that caused it. When the fix is clear, the error shows it. With <code>--format json</code>, each fix also says if it is safe to apply.</p></div>
-    <div class="errs">
-      <figure class="code"><figcaption class="cap">A <code>match</code> that misses a variant</figcaption><pre>{{diag programs/diagnostics/area.err}}</pre></figure>
-      <figure class="code"><figcaption class="cap">A change to a <code>let</code> binding</figcaption><pre>{{diag programs/diagnostics/rounds.err}}</pre></figure>
+  <!-- source: site/programs/diagnostics/guests.err, invite.err, sum.err (real sisu output), docs/adr/0013-diagnostics-have-stable-codes.md, docs/diagnostics/README.md (Applying fixes) -->
+  <section class="s tint" aria-labelledby="h-try"><div class="w try">
+    <div><h2 id="h-try">Install it and run a program</h2><p>Sisu runs on x86-64 and ARM64 Linux with glibc 2.35 or newer, and on ARM64 macOS 15 or newer. It links each program with <code>cc</code>, so you need a C compiler on <code>PATH</code>. These lines install the newest nightly build and run a program.</p>
+      <p>The first line, run again, updates Sisu. It checks the tarball against the release's <code>SHA256SUMS</code>, which shows that the file is whole and comes from the same release. It does not show who made the release. A bug report gives the output of <code>sisu --version --verbose</code>. To keep <code>sisu</code> on <code>PATH</code> in a new shell, add the <code>export</code> line to your shell's start-up file.</p>
+      <a class="more" href="contribute.html#build">To contribute: build it from a clone</a>
     </div>
-    <p class="after"><code>sisu explain E0130</code> tells more about a code. <a href="diagnostics.html">All {{diagnostic-count}} codes</a></p>
+    <figure class="code"><figcaption class="cap">terminal</figcaption><pre data-lang="sh">
+$ curl -fsSL https://github.com/sisu-lang/sisu/releases/latest/download/install.sh | sh
+$ export PATH="$HOME/.sisu/bin:$PATH"
+$ curl -fsSLO https://github.com/sisu-lang/sisu/releases/latest/download/welcome.sisu
+$ sisu run welcome.sisu
+{{text programs/run/welcome.out}}</pre></figure>
+    <!-- source: README.md (Install), install.sh (the supported systems), site/programs/run/welcome.out -->
   </div></section>
-  <!-- source: site/programs/diagnostics/area.err, site/programs/diagnostics/rounds.err (real sisu output), docs/adr/0013-diagnostics-have-stable-codes.md, docs/diagnostics/README.md (Applying fixes) -->
-
-  <section class="s tint" aria-labelledby="h-values"><div class="w">
-    <div class="s-h"><h2 id="h-values">What Sisu values, in order</h2><p>When two values pull apart, the higher one wins.</p></div>
-    <ol class="values">
-      <li><b>Correctness</b><p>The language makes wrong programs hard to write. Mistakes are caught early, at compile time where possible.</p></li>
-      <li><b>Simplicity</b><p>Few concepts, rules without special cases, every effect visible where it happens.</p></li>
-      <li><b>Readability</b><p>Code that reads top to bottom. Errors in plain words.</p></li>
-      <li><b>Performance</b><p>Native code with predictable memory. Optimizations never change what a program means.</p></li>
-    </ol>
-    <p class="after"><a href="decisions.html#values">Why this order</a> · <a href="benchmarks.html">How fast Sisu is today</a></p>
-  </div></section>
-  <!-- source: docs/adr/0006-values-correctness-simplicity-readability-performance.md, README.md "What Sisu values" -->
-
   <section class="s" aria-labelledby="h-stand"><div class="w">
     <div class="s-h"><h2 id="h-stand">Where Sisu stands</h2><p>Each row is one area of the project. The bar shows how much of it works today; open a row for the full list. Planned work can change and has no promised date.</p></div>
     <div class="legend" aria-hidden="true">
@@ -88,56 +92,56 @@ Sisu is a small, statically typed language that compiles to native x86-64 and AR
     </div>
     <p class="after">The <a href="status.html">status page</a> links each feature to its design notes. The board is generated at each build, from commit {{commit}}.</p>
   </div></section>
-
-  <section class="s tint" aria-labelledby="h-how"><div class="w">
-    <div class="s-h"><h2 id="h-how">How a program becomes native code</h2><p><code>sisu</code> turns one source file into one executable. Each stage hands the next a simpler form of the program.</p></div>
-    <ol class="flow cards">
-      <li><a href="architecture.html#lexer"><b>Lexer</b><span class="io">text <em>→</em> tokens</span><span class="what">Splits the UTF-8 source into names, numbers and symbols.</span></a></li>
-      <li><a href="architecture.html#parser"><b>Parser</b><span class="io">tokens <em>→</em> AST</span><span class="what">Builds the syntax tree: the program as you wrote it.</span></a></li>
-      <li><a href="architecture.html#checker"><b>Checker</b><span class="io">AST <em>→</em> TIR</span><span class="what">Resolves every name and types every expression. Rewrites shorthand such as <code>for</code> and <code>??</code> into simpler forms, and reports every error in one run. Its output is the typed tree, TIR.</span></a></li>
-      <li><a href="architecture.html#mono"><b>Mono</b><span class="io">TIR <em>→</em> TIR</span><span class="what">Copies each generic function, class and enum once for each list of type arguments the program uses, so the stages after it see only concrete types.</span></a></li>
-      <li><a href="architecture.html#mir"><b>MIR</b><span class="io">TIR <em>→</em> MIR</span><span class="what">A mid-level form in which each reference-count change is a statement of its own. A value moves at its last use, so an array can change in place with no copy. Debug builds of <code>sisu</code> check each function.</span></a></li>
-      <li><a href="architecture.html#codegen"><b>Codegen</b><span class="io">MIR <em>→</em> LLVM IR</span><span class="what">Writes the program in LLVM's language. A large program splits into units that build on separate threads.</span></a></li>
-      <li><a href="architecture.html#llvm"><b>LLVM</b><span class="io">LLVM IR <em>→</em> objects</span><span class="what">Optimizes each unit and writes x86-64 or ARM64 machine code.</span></a></li>
-      <li><a href="architecture.html#link"><b>Link</b><span class="io">objects <em>→</em> executable</span><span class="what">The system C compiler, <code>cc</code>, links the objects with the Sisu runtime.</span></a></li>
+  <section class="s tint" aria-labelledby="h-values"><div class="w">
+    <div class="s-h"><h2 id="h-values">What Sisu values, in order</h2><p>When two values pull apart, the higher one wins.</p></div>
+    <ol class="values">
+      <li><b>Correctness</b><p>The language makes wrong programs hard to write. Mistakes are caught early, at compile time where possible.</p></li>
+      <li><b>Simplicity</b><p>Few concepts, rules without special cases, every effect visible where it happens.</p></li>
+      <li><b>Readability</b><p>Code that reads top to bottom. Errors in plain words.</p></li>
+      <li><b>Performance</b><p>Native code with predictable memory. Optimizations never change what a program means.</p></li>
     </ol>
-    <details class="mir">
-      <summary>See the MIR: a last use moves the array, so the write needs no copy</summary>
-      <p>In MIR, each change to a reference count is a statement. <code>copy</code> adds 1 to the count, and <code>release</code> takes 1 away. <code>move</code> hands the reference over and does not change the count. <code>make_unique</code> copies the array when the count is more than 1, and does nothing when the count is 1. The write after it then changes an array that only <code>ys</code> holds.</p>
-      <div class="errs">
-        <div><p><code>let mut ys = xs</code> is the last use of <code>xs</code>, so <code>xs</code> moves into <code>ys</code>. The count stays at 1, and the write changes the array in place.</p>
-          <figure class="code"><figcaption class="cap">last_use.sisu</figcaption><pre data-lang="sisu">
-{{text programs/mir/last_use.sisu}}</pre></figure>
-          <figure class="code"><figcaption class="cap"><code>sisu build --emit mir last_use.sisu</code></figcaption><pre data-lang="out">
-{{text programs/mir/last_use.mir}}</pre></figure></div>
-        <div><p>Here <code>print(xs)</code> reads <code>xs</code> again, so <code>let mut ys = xs</code> is a <code>copy</code>. The count is 2, and <code>make_unique</code> copies the array before the write.</p>
-          <figure class="code"><figcaption class="cap">read_again.sisu</figcaption><pre data-lang="sisu">
-{{text programs/mir/read_again.sisu}}</pre></figure>
-          <figure class="code"><figcaption class="cap"><code>sisu build --emit mir read_again.sisu</code></figcaption><pre data-lang="out">
-{{text programs/mir/read_again.mir}}</pre></figure></div>
-      </div>
-    </details>
-    <!-- source: docs/adr/0007-arrays-are-values.md, docs/adr/0025-mir-holds-every-count.md, docs/architecture.md (mir), site/programs/mir/ -->
-    <p class="flow-note">All stages run in one process, with LLVM linked in as a library. Only the link step calls another program. <a class="more" href="architecture.html">More on the architecture</a></p>
+    <p class="after"><a href="decisions.html#values">Why this order</a> · <a href="benchmarks.html">How fast Sisu is today</a></p>
   </div></section>
-
-  <section class="s" aria-labelledby="h-try"><div class="w try">
-    <div><h2 id="h-try">Install it and run a program</h2><p>Sisu runs on x86-64 and ARM64 Linux with glibc 2.35 or newer, and on ARM64 macOS 15 or newer. It links each program with <code>cc</code>, so you need a C compiler on <code>PATH</code>. These lines install the newest nightly build and run a program.</p>
-      <p>The first line, run again, updates Sisu. It checks the tarball against the release's <code>SHA256SUMS</code>, which shows that the file is whole and comes from the same release. It does not show who made the release. A bug report gives the output of <code>sisu --version --verbose</code>. To keep <code>sisu</code> on <code>PATH</code> in a new shell, add the <code>export</code> line to your shell's start-up file.</p>
-      <a class="more" href="contribute.html#build">To contribute: build it from a clone</a>
+  <!-- source: docs/adr/0006-values-correctness-simplicity-readability-performance.md, README.md "What Sisu values" -->
+  <section class="s" aria-labelledby="h-from"><div class="w">
+    <div class="s-h"><h2 id="h-from">What Sisu takes from each language</h2></div>
+    <div class="feats">
+      <div><p class="from">From Python</p><h3>Readability</h3><ul>
+        <li>Minimal syntax</li>
+        <li>One obvious way to do a thing</li>
+      </ul></div>
+      <div><p class="from">From Rust</p><h3>Correctness</h3><ul>
+        <li>Immutable by default</li>
+        <li>Enums that rule out combinations of values that are not valid</li>
+        <li>No null: optionals instead</li>
+        <li>Error messages that help you fix the code</li>
+      </ul></div>
+      <div><p class="from">From Swift</p><h3>Memory safety, simply</h3><ul>
+        <li>Reference counting: no garbage collector, no borrow checker</li>
+        <li>Every value behaves as a copy: structs, arrays, strings and enums</li>
+        <li>Values cannot form a cycle, so no memory leaks from one</li>
+      </ul></div>
     </div>
-    <figure class="code"><figcaption class="cap">terminal</figcaption><pre data-lang="sh">
-$ curl -fsSL https://github.com/sisu-lang/sisu/releases/latest/download/install.sh | sh
-$ export PATH="$HOME/.sisu/bin:$PATH"
-$ curl -fsSLO https://github.com/sisu-lang/sisu/releases/latest/download/orders.sisu
-$ sisu run orders.sisu
-{{text programs/run/orders.out}}</pre></figure>
-    <!-- source: README.md (Install), install.sh (the supported systems), site/programs/run/orders.out -->
   </div></section>
-
-  <section class="s tint" aria-labelledby="h-open"><div class="w cta">
+  <!-- source: docs/adr/0005-reference-counting.md, docs/adr/0007-arrays-are-values.md, docs/adr/0046-structs-replace-classes.md -->
+  <section class="s tint" aria-labelledby="h-how"><div class="w">
+    <div class="s-h"><h2 id="h-how">How a program becomes native code</h2><p><code>sisu</code> turns one source file into one executable, in one process, with LLVM linked in as a library. Each stage hands the next a simpler form of the program.</p></div>
+    <ol class="stages">
+      <li><a href="architecture.html#lexer">Lexer</a></li>
+      <li><a href="architecture.html#parser">Parser</a></li>
+      <li><a href="architecture.html#checker">Checker</a></li>
+      <li><a href="architecture.html#mono">Mono</a></li>
+      <li><a href="architecture.html#mir">MIR</a></li>
+      <li><a href="architecture.html#codegen">Codegen</a></li>
+      <li><a href="architecture.html#llvm">LLVM</a></li>
+      <li><a href="architecture.html#link">Link</a></li>
+    </ol>
+    <p class="flow-note"><a class="more" href="architecture.html">More on the architecture</a></p>
+  </div></section>
+  <!-- source: docs/architecture.md (The stages) -->
+  <section class="s" aria-labelledby="h-open"><div class="w cta">
     <div style="max-width:60ch"><h2 id="h-open">Built in the open</h2><p>One person builds Sisu, in public, one reviewed pull request at a time. Every design choice is written down with its reasons.</p>
       <p>You can help without knowing the compiler. A small program that gives a wrong answer or crashes <code>sisu</code> can become a test case. An error message that misleads you, or a page that is wrong, is a bug to report. Start with an issue: <a href="contribute.html#help">what help fits</a>.</p></div>
     <div class="acts"><a class="btn go" href="contribute.html">How to contribute</a><a class="btn alt" href="decisions.html">Design decisions</a></div>
-  </div><div class="w"><p class="after">The hand-written text on this page was checked against the repository at commit 2a7e73e.</p></div></section>
+  </div><div class="w"><p class="after">The hand-written text on this page was checked against the repository at commit f5bd0ed.</p></div></section>
 </main>

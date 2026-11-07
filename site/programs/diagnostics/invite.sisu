@@ -1,0 +1,9 @@
+fn invite(mut guests: [string], name: string) {
+    guests.push(name)
+}
+
+fn main() {
+    let mut guests = ["Aino"]
+    invite(guests, "Eino")
+    print(guests)
+}

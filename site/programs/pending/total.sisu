@@ -1,0 +1,11 @@
+fn total(path: string) -> i64 | string {
+    let mut sum = 0
+    for word in read_file(path)?.words() {
+        sum += i64(word) ?? fail "not a number: {word}"
+    }
+    sum
+}
+
+fn main(args: [string]) -> unit | string {
+    print(total(args[0])?)
+}

@@ -55,7 +55,7 @@ ASSETS = [
     "sisu-aarch64-linux.tar.gz",
     "sisu-aarch64-macos.tar.gz",
     "install.sh",
-    "orders.sisu",
+    "welcome.sisu",
     "SHA256SUMS",
 ]
 

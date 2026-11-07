@@ -117,7 +117,23 @@ How the Sisu compiler turns source text into a native executable, one stage at a
       <h3>What last use buys</h3>
       <p>When a local is read for the last time, its reference moves instead of being shared. So in <code>xs = f(xs)</code>, when nothing else holds the array, <code>f</code> holds the only reference and its writes happen in place. This is a language rule, not an optimizer pass, and it never causes an error. The quicksort benchmark shows it: Sisu holds 83.8 MiB, against C's 77.6 MiB for its one array of 10 000 000 integers; the extra 6 MiB is mimalloc's own.</p>
       <p>A loop goes one step further. When it writes a local array that nothing in the loop shares, the compiler makes the array unique once, before the first iteration. The writes inside the loop then skip the count check.</p>
-      <!-- source: docs/adr/0005-reference-counting.md, docs/adr/0007-arrays-are-values.md, docs/adr/0008-weak-references.md (status planned per site.js AREAS / roadmap), docs/adr/0021-a-loop-makes-its-written-arrays-unique-before-it-starts.md, docs/adr/0042-a-slice-shares-its-block.md, docs/adr/0043-mut-parameters-copy-in-and-out.md, docs/benchmarks.md (quicksort on an array value), GLOSSARY.md (Last use, Copy-on-write) -->
+      <details class="mir">
+        <summary>See the MIR: a last use moves the array, so the write needs no copy</summary>
+        <p>In MIR, each change to a reference count is a statement. <code>copy</code> adds 1 to the count, and <code>release</code> takes 1 away. <code>move</code> hands the reference over and does not change the count. <code>make_unique</code> copies the array when the count is more than 1, and does nothing when the count is 1. The write after it then changes an array that only <code>ys</code> holds.</p>
+        <div class="errs">
+          <div><p><code>let mut ys = xs</code> is the last use of <code>xs</code>, so <code>xs</code> moves into <code>ys</code>. The count stays at 1, and the write changes the array in place.</p>
+            <figure class="code"><figcaption class="cap">last_use.sisu</figcaption><pre data-lang="sisu">
+  {{text programs/mir/last_use.sisu}}</pre></figure>
+            <figure class="code"><figcaption class="cap"><code>sisu build --emit mir last_use.sisu</code></figcaption><pre data-lang="out">
+  {{text programs/mir/last_use.mir}}</pre></figure></div>
+          <div><p>Here <code>print(xs)</code> reads <code>xs</code> again, so <code>let mut ys = xs</code> is a <code>copy</code>. The count is 2, and <code>make_unique</code> copies the array before the write.</p>
+            <figure class="code"><figcaption class="cap">read_again.sisu</figcaption><pre data-lang="sisu">
+  {{text programs/mir/read_again.sisu}}</pre></figure>
+            <figure class="code"><figcaption class="cap"><code>sisu build --emit mir read_again.sisu</code></figcaption><pre data-lang="out">
+  {{text programs/mir/read_again.mir}}</pre></figure></div>
+        </div>
+      </details>
+      <!-- source: site/programs/mir/, docs/adr/0025-mir-holds-every-count.md, docs/adr/0005-reference-counting.md, docs/adr/0007-arrays-are-values.md, docs/adr/0008-weak-references.md (status planned per site.js AREAS / roadmap), docs/adr/0021-a-loop-makes-its-written-arrays-unique-before-it-starts.md, docs/adr/0042-a-slice-shares-its-block.md, docs/adr/0043-mut-parameters-copy-in-and-out.md, docs/benchmarks.md (quicksort on an array value), GLOSSARY.md (Last use, Copy-on-write) -->
 
       <h2 id="runtime">The runtime</h2>
       <p><code>sisu-runtime</code> is a Rust library with a C ABI, which the two static archives <code>sisu-runtime-mimalloc</code> and <code>sisu-runtime-system</code> link; every program links one. Generated code calls it for many things, among them these three:</p>
