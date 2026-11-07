@@ -18,6 +18,8 @@ mod string;
 pub(crate) mod units;
 
 #[cfg(test)]
+pub(crate) use rc::CLASS_DRAINS;
+#[cfg(test)]
 pub(crate) use string::LEN_WORDS;
 
 use rustc_hash::FxHashMap;

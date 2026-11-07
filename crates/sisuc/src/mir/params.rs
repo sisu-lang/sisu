@@ -291,8 +291,9 @@ thread_local! {
 
 #[cfg(test)]
 thread_local! {
-    /// How many times `tail_argument` has run on this thread: a self call in tail position passed
-    /// an argument.
+    /// How many times `tail_argument` has run on this thread: once for each argument that a tail
+    /// call passes as a named local. The callee is any function of the caller's recursive
+    /// component, so a mutual tail call ticks it too.
     pub(crate) static TAIL_ARGUMENTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 

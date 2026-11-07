@@ -55,7 +55,8 @@ use crate::tir::{
 
 #[cfg(test)]
 thread_local! {
-    /// How many times `copied_under` has run on this thread: a counted binding under a boxed `F?`.
+    /// How many times `copied_under` has run on this thread. It runs once for a `Some` pattern at
+    /// a boxed `F?` field, and once for each pattern under it. The payload type does not matter.
     pub(crate) static COPIED_UNDER: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 

@@ -17,5 +17,5 @@ front_end.rs	sisuc::front_end::syntax_errors
 lib.rs	sisuc::check_bytes
 source.rs	<sisuc::source::LineIndex>::line_start
 source.rs	<sisuc::source::LineIndex>::render_line
-## Only a program with no generic item and no recorded prelude use reaches this check. No generated program is one: 64 seeds at 13 lengths, from 0 to 4096 bytes, gave none, and `tests/run` reaches it.
+## Only a program with no generic item and no recorded prelude use reaches this check. No fixed seed is one. In one sample, 6 of 6257 generated inputs were, and `tests/run` reaches it.
 mono.rs	sisuc::mono::prelude_method_of_outside_type

@@ -24,7 +24,7 @@ use super::{
     generate,
 };
 use crate::check::{self, prelude_function_names};
-use crate::codegen::{LEN_WORDS, OptLevel, compile, target_machine};
+use crate::codegen::{CLASS_DRAINS, LEN_WORDS, OptLevel, compile, target_machine};
 use crate::conformance::{RESOLVE_ALL_CALLS, holds_class};
 use crate::diagnostic::Severity;
 use crate::front_end::{PRELUDE_SOURCE, front_end, prelude_program};
@@ -4333,7 +4333,7 @@ fn a_leading_push_should_wait_for_the_growth_that_a_block_left() {
         215, 215, 215, 215, 215, 215, 10, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215, 215,
     ];
     let program = generate(INPUT).program;
-    assert!(program.contains("fn main("), "{program}");
+    assert!(program.contains("fn main()"), "{program}");
 }
 
 /// GIVEN `f1`, `f2` and `f3`, of which `f2` has a `mut` parameter
@@ -5618,12 +5618,12 @@ fn an_expression_stays_within_its_most() {
 }
 
 #[test]
-fn a_program_spends_no_more_than_its_fuel() {
+fn a_program_should_spend_no_more_than_its_fuel() {
     // Holding fuel back for `main` keeps the total `FUEL`: the cost reserve for `main`'s
     // statements assumes no more.
     for data in seeds() {
         let mut g = Gen::new(&data);
-        g.program();
+        g.program(false);
         assert!(g.fuel <= FUEL, "{} left of {FUEL}", g.fuel);
     }
 }
@@ -6588,12 +6588,15 @@ fn lowering_key(point: &str) -> String {
 }
 
 /// The points of `LOWERING_POINTS` that the build of `source` marks. It builds the module as
-/// `codegen::tests::compiled` does. Each IR needle is a line that only that function writes.
+/// `codegen::tests::compiled` does. A counter proves that its function ran. An IR needle matches
+/// one kind of line. So no text of the program can match it, such as a string constant or the name
+/// of a user function.
 fn lowered(source: &str) -> FxHashSet<&'static str> {
     STRING_CHAIN_LINKS.set(0);
     TAIL_ARGUMENTS.set(0);
     COPIED_UNDER.set(0);
     LEN_WORDS.set(0);
+    CLASS_DRAINS.set(0);
     let (program, diagnostics) = crate::front_end::checked(source);
     let program = program.unwrap_or_else(|| panic!("{diagnostics:?}\n{source}"));
     let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
@@ -6610,18 +6613,23 @@ fn lowered(source: &str) -> FxHashSet<&'static str> {
         false,
     );
     let ir = module.print_to_string().to_string();
+    // A `define` line of a helper. A string constant is a line that starts with `@`.
     let defines = |name: &str| {
         (ir.lines()).any(|line| line.starts_with("define") && line.contains(&format!("@{name}")))
     };
+    // A block label starts its line. A string constant starts with `@`, and a branch is indented.
+    let label = |name: &str| ir.lines().any(|line| line.starts_with(name));
+    // A call of the runtime function. A user function is `@sisu.<name>`, and a string constant
+    // starts with `@`, so neither is an indented line that holds `call` and `@sisu_args_len(`.
+    let calls_args_len = (ir.lines()).any(|line| {
+        line.starts_with(' ') && line.contains("call ") && line.contains("@sisu_args_len(")
+    });
     let mut marked = FxHashSet::default();
     for (point, hit) in [
         ("box reuse", defines("sisu_rc.reuse.")),
-        ("layered box compare", ir.contains("layer.flags")),
-        ("main args", ir.contains("sisu_args_len")),
-        (
-            "class ring drain",
-            ir.contains("define internal void @sisu_rc.drain.GapHen("),
-        ),
+        ("layered box compare", label("layer.flags")),
+        ("main args", calls_args_len),
+        ("class ring drain", CLASS_DRAINS.get() > 0),
         ("words count", LEN_WORDS.get() > 0),
         ("string chain", STRING_CHAIN_LINKS.get() > 0),
         ("tail argument", TAIL_ARGUMENTS.get() > 0),
@@ -6709,7 +6717,33 @@ fn main() { print(GapLayered.Next(Some(GapLayered.End)) == GapLayered.Next(None)
             "fn main(a: [string]) { print(a.len()) }".to_string(),
             &["main args"],
         ),
-        ("main takes no args", "fn main() {}".to_string(), &[]),
+        (
+            "a string constant spells the define of a reuse helper",
+            r#"fn main() { print("define internal ptr @sisu_rc.reuse.GapTerm(") }"#.to_string(),
+            &[],
+        ),
+        (
+            "a chain of three values with a written less",
+            "class Gn: Ord {
+    n: i64
+    fn eq(self, o: Gn) -> bool { self.n == o.n }
+    fn less(self, o: Gn) -> bool { self.n < o.n }
+}
+fn gap_sorted<T: Ord>(a: T, b: T, c: T) -> bool { a < b < c }
+fn main() { print(gap_sorted(Gn(n: 1), Gn(n: 2), Gn(n: 3))) }"
+                .to_string(),
+            &[],
+        ),
+        (
+            "a tail call passes only literals",
+            "fn t(n: i64) -> i64 {
+    if n == 0 { return 0 }
+    t(0)
+}
+fn main() { print(t(1)) }"
+                .to_string(),
+            &[],
+        ),
         (
             "a string constant spells layer.flags",
             r#"fn main() { print("layer.flags") }"#.to_string(),
@@ -7961,7 +7995,7 @@ fn depth(pattern: &str) -> usize {
 }
 
 #[test]
-fn an_element_takes_an_assignment_only_where_it_holds_no_class() {
+fn an_element_should_take_an_assignment_only_where_it_holds_no_class() {
     // Decision 4: `ks[i] = e` would store a `K0` in the heap, and `es[i] = e` an `E0`, which
     // may hold one; `ss[i] = e` stores a `string`.
     let mut assigned = FxHashSet::default();
@@ -8025,7 +8059,7 @@ fn a_variant_should_be_recursive_when_it_holds_its_enum() {
     search_seeds(SEEDS, |n| {
         let data = seed(n);
         let mut g = Gen::new(&data);
-        g.program();
+        g.program(false);
         for (id, e) in g.scope.enums.iter().enumerate() {
             let own = |ty: &Ty| matches!(ty, Ty::Enum { id: own, .. } if *own == id);
             for variant in &e.variants {
@@ -8111,7 +8145,7 @@ fn a_field_type_past_most_is_an_i64() {
 }
 
 #[test]
-fn a_field_cap_past_most_is_an_i64() {
+fn a_field_cap_past_most_should_be_an_i64() {
     // `class K1 { g: K0, g: string }`, the string's cap 32: after a `K0` of 67 it reaches
     // `MOST`, after one of 68 it is past it, and an `i64` takes its place.
     for (held, fits) in [(67, true), (68, false)] {
@@ -8138,7 +8172,7 @@ fn check_declared_types(n: u64) -> (usize, usize) {
     let (mut optional_classes, mut enum_classes) = (0, 0);
     let data = seed(n);
     let mut g = Gen::new(&data);
-    g.program();
+    g.program(false);
     let text = &g.w.out.program;
     for class in &g.scope.classes {
         let caps: u64 = class.fields.iter().map(|field| field.cap).sum();
@@ -8989,7 +9023,7 @@ fn a_panic_site_should_not_follow_a_return() {
     let mut returning = 0;
     search_seeds(256, |n| {
         let g = generate(&seed(n));
-        let main = g.program.split("fn main(").nth(1).unwrap_or_default();
+        let main = g.program.split("fn main() ").nth(1).unwrap_or_default();
         let main = main.split("\nfn k").next().unwrap_or_default();
         if main.contains("return") {
             returning += 1;

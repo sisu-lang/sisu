@@ -709,10 +709,19 @@ so a fixed form cannot pass it. Do these steps in this order:
 4. A draw moves what each later part of a seed writes. When a pinned test must
    stay on its seed, draw from another stream, as `mut_pick` does. Or gate on
    the whole input, as `leaves` does. Do not loosen a test to fit a moved seed.
-5. When the feature adds a capability that no variant shows, add a key to
+5. Teach the walkers of `generate/coverage.rs` the feature. `universe()` reads
+   each variant of the enums in `ast.rs`, `tir.rs` and `types.rs`. A new variant
+   needs an arm in `ast_expr`, `tir_expr` or `ty`. Those matches have no `_`
+   arm, so the build asks for the arm. A built-in method that lowers to an
+   existing variant can have a row in `RECEIVERS`. With a row, each receiver
+   must be generated. With no row, the bare variant must still appear, but no
+   receiver is demanded. `universe()` also reads `CONVERSIONS` and `TEXT`. A
+   method in `prelude.sisu` or in `METHODS` of `check/number.rs` needs no row,
+   because `universe()` reads it.
+6. When the feature adds a capability that no variant shows, add a key to
    `REACH` (`generate/coverage.rs`) and mark it in `Walk`. A variant that no
    valid program holds goes into `EXCLUDED`, with its reason.
-6. Run `make test` and `make fuzz-gaps`. When a gap stays, because no drawn rule
+7. Run `make test` and `make fuzz-gaps`. When a gap stays, because no drawn rule
    reaches the function within the seeds, use the steps in the next section.
 
 ### Add a fixed form for a generator gap
@@ -737,8 +746,9 @@ in this order:
    only guesses at that decision, and a near form passes it. A module that cannot
    call `check` keeps a counter, as `RESOLVE_ALL_CALLS` does. `Walk::program`
    resets the counter and turns its count into a point. A point in `mir`, `lang`
-   or codegen is a counter too, or a needle in the IR that only that function
-   writes. Add it to `LOWERING_POINTS`, and make `lowered` mark it.
+   or codegen is a counter too. Use a needle in the IR only when no text of the
+   program can write it. Add the point to `LOWERING_POINTS`, and make `lowered`
+   mark it.
 4. Add a row to `gap_point_keys_should_mark_what_the_checker_did`, or to
    `lowering_points_should_mark_what_the_compiler_did` for a point of lowering:
    a whole program that reaches the point. Add a near program that does not
@@ -752,8 +762,12 @@ in this order:
    `a_failure_should_print_the_program`. Update the counts in their comments too.
 7. Remove the key from `fuzz/known_gaps.txt`. `make fuzz-gaps` must exit 0.
 
-A mark must be something that only that function writes, and a near program
-must not set it. A near program also tests that the form takes the path you
+A mark must prove that the function ran. A counter does. A needle in the IR
+must not match text of the program, such as a string constant. It must not
+match a name that the program chooses, such as a user function or a type.
+`lowered` matches a line of one kind: a `define` line, a block label at the
+start of a line, or an indented `call` line. A near program that spells the
+needle must not set the mark. A near program also tests that the form takes the path you
 expect. For example, `"a" < "b" < "c"` goes to `check::string_chain` and never
 reaches `lang::compare`, so that chain needs a generic function. And
 `sisu_words_count` is no mark for `len_words`, because `words` calls it too.

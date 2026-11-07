@@ -1418,7 +1418,7 @@ mod tests {
     /// Whether the text of `g` shows that its O0 run reaches every marked line of `shapes`: its
     /// `main` ends with the call of `shapes`, has no `return`, and the program has no panic site.
     fn reaches_shapes(g: &Generated) -> bool {
-        let main = item_text(&g.program, "fn main(").unwrap_or_default();
+        let main = item_text(&g.program, "fn main()").unwrap_or_default();
         main.ends_with("    shapes()\n}") && !main.contains("return") && panic_sites(g) == 0
     }
 
@@ -1535,7 +1535,7 @@ mod tests {
         let mut found = None;
         search_seeds(0, |n| {
             let mut g = generate(&seed(n));
-            let main = item_text(&g.program, "fn main(").unwrap_or_default();
+            let main = item_text(&g.program, "fn main()").unwrap_or_default();
             if !g.expected.is_empty() && main.ends_with(call) {
                 let at = (g
                     .program

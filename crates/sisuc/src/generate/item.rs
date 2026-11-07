@@ -682,8 +682,9 @@ fn gap_tail(s: string, n: i64) -> string {
 
 impl Gen<'_> {
     /// Writes the program, and returns its cost (decision 5), its known sites (decision 3) and the
-    /// lines that the marked statements of `shapes` print (`Generated::expected`).
-    pub(crate) fn program(&mut self) -> (u64, Vec<Known>, Vec<String>) {
+    /// lines that the marked statements of `shapes` print (`Generated::expected`). With
+    /// `main_args`, `main` takes `gap_args` and prints its length (`MAIN_ARGS_GATE`).
+    pub(crate) fn program(&mut self, main_args: bool) -> (u64, Vec<Known>, Vec<String>) {
         // Half the fuel is `main`'s, which the items before it would otherwise often spend.
         let reserve = self.fuel / 2;
         self.fuel -= reserve;
@@ -713,7 +714,7 @@ impl Gen<'_> {
         }
         self.mut_functions();
         self.fuel += reserve;
-        self.open_main();
+        self.open_main(main_args);
         let sites: Vec<KnownSite> = (0..self.rewrite_pick(MAX_KNOWN + 1))
             .map(|n| self.known_site(n))
             .collect();
@@ -726,7 +727,7 @@ impl Gen<'_> {
                 g.w.text(&format!("print(\"@{} {{{}}}\")", site.marker, site.call));
             });
         }
-        self.print_gap_args();
+        self.print_gap_args(main_args);
         self.main_stmts();
         self.mut_epilogue();
         // Whether `main` calls the function of the conformances that follows it. The choice is
@@ -909,9 +910,9 @@ impl Gen<'_> {
 
     /// Writes the head of `main` and opens its body. With `main_args`, `main` takes `gap_args`.
     /// That text is known text, so `plain` holds `fn main() `.
-    fn open_main(&mut self) {
+    fn open_main(&mut self, main_args: bool) {
         self.w.text("fn main(");
-        if self.main_args {
+        if main_args {
             self.known_text(|g| g.w.text("gap_args: [string]"));
         }
         self.w.text(") ");
@@ -921,8 +922,8 @@ impl Gen<'_> {
     /// With `main_args`, writes the first statement of `main` after the known sites: it prints the
     /// length of `gap_args`. Property 5 needs the known sites to print the first lines. The text
     /// is known text, so `plain` holds no print.
-    fn print_gap_args(&mut self) {
-        if self.main_args {
+    fn print_gap_args(&mut self, main_args: bool) {
+        if main_args {
             self.known_text(|g| {
                 g.w.line();
                 g.w.text("print(gap_args.len())");
