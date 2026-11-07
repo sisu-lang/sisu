@@ -118,12 +118,12 @@ $ sisu run welcome.sisu
       </ul></div>
       <div><p class="from">From Swift</p><h3>Memory safety, simply</h3><ul>
         <li>Reference counting: no garbage collector, no borrow checker</li>
-        <li>An object of a class is shared, and counted. Arrays, strings and enums behave as copies.</li>
-        <li>Until <code>weak</code> fields arrive, a cycle of objects is never freed</li>
+        <li>Every value behaves as a copy: structs, arrays, strings and enums</li>
+        <li>Values cannot form a cycle, so no memory leaks from one</li>
       </ul></div>
     </div>
   </div></section>
-  <!-- source: docs/adr/0005-reference-counting.md, docs/adr/0007-arrays-are-values.md, docs/adr/0008-weak-references.md -->
+  <!-- source: docs/adr/0005-reference-counting.md, docs/adr/0007-arrays-are-values.md, docs/adr/0046-structs-replace-classes.md -->
   <section class="s tint" aria-labelledby="h-how"><div class="w">
     <div class="s-h"><h2 id="h-how">How a program becomes native code</h2><p><code>sisu</code> turns one source file into one executable, in one process, with LLVM linked in as a library. Each stage hands the next a simpler form of the program.</p></div>
     <ol class="stages">
@@ -143,5 +143,5 @@ $ sisu run welcome.sisu
     <div style="max-width:60ch"><h2 id="h-open">Built in the open</h2><p>One person builds Sisu, in public, one reviewed pull request at a time. Every design choice is written down with its reasons.</p>
       <p>You can help without knowing the compiler. A small program that gives a wrong answer or crashes <code>sisu</code> can become a test case. An error message that misleads you, or a page that is wrong, is a bug to report. Start with an issue: <a href="contribute.html#help">what help fits</a>.</p></div>
     <div class="acts"><a class="btn go" href="contribute.html">How to contribute</a><a class="btn alt" href="decisions.html">Design decisions</a></div>
-  </div><div class="w"><p class="after">The hand-written text on this page was checked against the repository at commit 4252104.</p></div></section>
+  </div><div class="w"><p class="after">The hand-written text on this page was checked against the repository at commit f5bd0ed.</p></div></section>
 </main>
