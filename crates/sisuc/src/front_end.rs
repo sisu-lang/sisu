@@ -1,6 +1,7 @@
 //! The front end: from source to the checked program.
 
 use std::iter;
+use std::ops::Range;
 
 use rustc_hash::FxHashSet;
 
@@ -151,7 +152,9 @@ fn internal_error(d: &Diagnostic) -> ! {
 /// was not about. A checker fix is not judged: the checker runs only on items that parse, and
 /// the fuzz target asserts that every fix shown keeps the syntax, the checker's included. One
 /// case is judged, and demoted: a fix with an edit on each side of a dropped `;`, which puts the
-/// `;` in new text. It costs little, because it needs a dropped `;` between the edits of one fix.
+/// `;` in new text. Finding it is cheap: a few binary searches in the sorted marks for each fix.
+/// Only judging it costs a parse, and it is judged only when a dropped `;` lies between the
+/// edits. Then all fixes of that diagnostic are judged.
 /// Judging one lexes and parses the whole source again, so judging every checker fix made N
 /// warnings cost N parses. For the same reason only the first `JUDGED` syntax fixes are judged;
 /// later ones are dropped. On clean syntax a W0007 fix is kept as it is: neither judged, counted
@@ -180,39 +183,30 @@ pub(crate) fn sound_fixes(source: &str, diagnostics: &[Diagnostic]) -> Vec<Diagn
             .map(|d| (d.code(), d.span()))
             .collect();
         let marks = marks(source);
+        let semicolons: Vec<usize> = (marks.iter().copied())
+            .filter(|&at| source.as_bytes().get(at) == Some(&b';'))
+            .collect();
         let mut judged = 0;
         // A dropped `;` between the edits of one fix lands in new text, where it can be an error.
-        let around = |fix: &Fix, at: usize| {
-            source.as_bytes().get(at) == Some(&b';')
-                && (fix.edits().iter()).any(|e| e.span().start() <= at)
-                && (fix.edits().iter()).any(|e| e.span().end() > at)
+        let around = |fix: &Fix, own: usize| {
+            let start = fix.edits().iter().map(|e| e.span().start()).min();
+            let end = fix.edits().iter().map(|e| e.span().end()).max();
+            (start.zip(end)).is_some_and(|(start, end)| other_mark_in(&semicolons, own, start..end))
         };
         for d in sound.iter_mut().filter(|d| syntax_fix(d)) {
             let own = d.span().start();
             let reported = reported.contains(&(d.code(), d.span()));
-            let spans = |fix: &Fix| {
-                marks.iter().any(|&at| {
-                    #[cfg(test)]
-                    MARK_READS.set(MARK_READS.get() + 1);
-                    at != own && around(fix, at)
-                })
-            };
-            if reported || d.fixes().iter().any(spans) {
+            // A fix beside one that spans a `;` is judged too: that costs work and no result.
+            if reported || d.fixes().iter().any(|fix| around(fix, own)) {
                 d.retain_fixes(|fix| {
-                    if !reported && !spans(fix) {
-                        return true;
-                    }
                     judged += 1;
                     judged <= JUDGED && syntax_errors(&fix.apply(source)) <= before
                 });
             }
             d.demote_fixes(|fix| {
-                let taken = |at: usize| fix.edits().iter().any(|e| e.span().range().contains(&at));
-                marks.iter().any(|&at| {
-                    #[cfg(test)]
-                    MARK_READS.set(MARK_READS.get() + 1);
-                    at != own && (taken(at) || around(fix, at))
-                })
+                let taken =
+                    (fix.edits().iter()).any(|e| other_mark_in(&marks, own, e.span().range()));
+                taken || around(fix, own)
             });
         }
     }
@@ -223,6 +217,27 @@ pub(crate) fn sound_fixes(source: &str, diagnostics: &[Diagnostic]) -> Vec<Diagn
 thread_local! {
     /// How many marks the scan of `sound_fixes` has looked at on this thread.
     static MARK_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Whether the sorted `marks`, each once, hold a mark in `range` other than `own`. It looks at
+/// one mark in the range past the search, and at a second only when the first is `own`.
+fn other_mark_in(marks: &[usize], own: usize, range: Range<usize>) -> bool {
+    let from = marks.partition_point(|&at| {
+        #[cfg(test)]
+        MARK_READS.set(MARK_READS.get() + 1);
+        at < range.start
+    });
+    for &at in &marks[from..] {
+        #[cfg(test)]
+        MARK_READS.set(MARK_READS.get() + 1);
+        if at >= range.end {
+            return false;
+        }
+        if at != own {
+            return true;
+        }
+    }
+    false
 }
 
 /// How many syntax fixes `sound_fixes` judges, and how many W0007 fixes, with a count of their own.
@@ -257,16 +272,19 @@ fn keep_lexing_semicolon_fixes(source: &str, diagnostics: &mut [Diagnostic]) {
     }
 }
 
-/// Where each comment, each lexer error and each dropped `;` of `source` starts: text that the
-/// parser never sees, so that no rule behind a fix knows it is there.
+/// Where each comment, each lexer error and each dropped `;` of `source` starts, sorted and each
+/// once: text that the parser never sees, so that no rule behind a fix knows it is there.
 fn marks(source: &str) -> Vec<usize> {
-    match lexer::lex(source) {
+    let mut marks = match lexer::lex(source) {
         Err(d) => vec![d.span().start()],
         Ok(lexed) => (lexed.diagnostics.iter().chain(&lexed.warnings))
             .map(|d| d.span().start())
             .chain(lexed.comments)
             .collect(),
-    }
+    };
+    marks.sort_unstable();
+    marks.dedup();
+    marks
 }
 
 /// What the lexer and the parser report about `source`; `Err` holds the bracket error that
