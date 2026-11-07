@@ -1930,7 +1930,7 @@ impl Gen<'_> {
             pick if pick == 0 || ty.least() >= MAX_SIZE => {
                 // A `loop` that panics at its first step ends the run as the plain `panic` does,
                 // and no `break` leaves it.
-                let looped = self.pick(2) == 0;
+                let looped = self.pick(2) == 1;
                 let message = self.message();
                 self.w.text(&if looped {
                     format!("loop {{ panic({message}) }}")
@@ -2948,15 +2948,15 @@ mod tests {
     #[test]
     fn a_panicking_branch_should_take_each_form_but_index_no_optional_of_an_optional() {
         // A first byte of 63 makes the branch panic; the second picks the form, and the third
-        // picks a `loop` around a `panic` when it is even.
+        // picks a `loop` around a `panic` when it is odd.
         let nested = Ty::Optional(Box::new(Ty::Optional(Box::new(Ty::I64))));
         for (ty, form, looped, text) in [
-            (&Ty::I64, 0, 1, "panic(\"\")"),
-            (&Ty::I64, 0, 0, "loop { panic(\"\") }"),
+            (&Ty::I64, 0, 0, "panic(\"\")"),
+            (&Ty::I64, 0, 1, "loop { panic(\"\") }"),
             (&Ty::I64, 1, 0, "todo"),
             (&Ty::I64, 2, 0, "([0][1])"),
-            (&nested, 2, 1, "panic(\"\")"),
-            (&nested, 2, 0, "loop { panic(\"\") }"),
+            (&nested, 2, 0, "panic(\"\")"),
+            (&nested, 2, 1, "loop { panic(\"\") }"),
         ] {
             let bytes = [63, form, looped];
             let mut g = Gen::new(&bytes);
