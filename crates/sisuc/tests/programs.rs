@@ -3,7 +3,6 @@
 //! rules of the `cases` harness.
 
 use std::ffi::{OsStr, OsString};
-use std::fmt::Write as _;
 use std::fs::{self, File};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::process::ExitStatusExt;
@@ -2474,6 +2473,8 @@ fn build_tmp(name: &str, source: &str) -> (Output, PathBuf) {
 /// A function builds a full value of each one, and `main` compares two values of `E<top>`.
 #[cfg(target_os = "linux")]
 fn wide_enum_source(top: usize) -> String {
+    use std::fmt::Write as _;
+
     let mut source = String::from(
         "enum E0 {\n    A\n    V(i64, i64, i64, i64)\n}\nfn e0() -> E0 {\n    E0.V(1, 2, 3, 4)\n}\n",
     );
