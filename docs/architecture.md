@@ -484,6 +484,12 @@ allocates one block sized for the most text each part can give, plus the width
 of each padded part, then writes the parts into it, padding each part in place. With `--rc-checks`, these helpers check each count before they
 change it, and `main` calls `sisu_rc_check_exit` before it returns.
 
+**Large values** (`codegen/layout.rs`, [ADR 0048](adr/0048-a-large-value-stays-in-memory.md)).
+A value of an LLVM struct type over 256 bytes stays in memory: in codegen it is a
+pointer to a stack slot, and each copy is a `memcpy`. A parameter over the limit
+is a pointer to the caller's memory. A result over the limit goes to a pointer
+that the caller gives as the last argument (`codegen/abi.rs`).
+
 **LLVM 23**. A debug build of `sisu` verifies the module first; a release
 build does not. Runs the `mem2reg` pass, which turns stack slots into registers,
 or with `-O2` or `-O3` the `default<O2>` or `default<O3>` pipeline. Then it

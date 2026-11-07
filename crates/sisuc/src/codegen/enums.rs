@@ -346,7 +346,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// The address of the tag of the enum `id` at `value_addr`.
-    fn tag_ptr(&self, id: EnumId, value_addr: PointerValue<'ctx>) -> PointerValue<'ctx> {
+    pub(super) fn tag_ptr(&self, id: EnumId, value_addr: PointerValue<'ctx>) -> PointerValue<'ctx> {
         self.builder
             .build_struct_gep(self.tagged_type(id), value_addr, 0, "tag")
             .expect("an enum's struct should have the tag at element 0")
@@ -570,10 +570,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.llvm_type(ty)
                 .expect("the checker should give every optional a value type")
         };
-        let value = self
-            .builder
-            .build_load(llvm_ty, address, "optional")
-            .expect(POSITIONED);
+        let value = self.value_at(llvm_ty, address, "optional");
         if boxed {
             return self
                 .builder
@@ -606,16 +603,10 @@ impl<'ctx> Codegen<'ctx, '_> {
                 return self.load_words(place, None);
             }
             if layout.shape.is_some() && !payload.boxed {
-                let stored = self
-                    .builder
-                    .build_load(layout.ty, place, "field")
-                    .expect(POSITIONED);
+                let stored = self.copied_at(layout.ty, place, "field");
                 return self.narrow(ty, stored, "field");
             }
-            return self
-                .builder
-                .build_load(llvm_ty, place, "field")
-                .expect(POSITIONED);
+            return self.copied_at(llvm_ty, place, "field");
         };
         self.boxed_value(self.field_slot(value_addr, id, variant, field), ty)
     }
@@ -639,6 +630,8 @@ impl<'ctx> Codegen<'ctx, '_> {
             .build_load(self.context.ptr_type(AddressSpace::default()), slot, "box")
             .expect(POSITIONED)
             .into_pointer_value();
+        // It can take instructions, which go before the branch: a phi comes first in its block.
+        let none = self.empty(ty);
         let function = self.current_function();
         let (absent, some) = (
             self.current_block(),
@@ -651,14 +644,11 @@ impl<'ctx> Codegen<'ctx, '_> {
         let inner_ty = self
             .llvm_type(inner)
             .expect("the checker should box only a field of an enum type or its optional");
-        let value = self
-            .builder
-            .build_load(inner_ty, self.box_value(boxed_enum(ty), boxed), "boxed")
-            .expect(POSITIONED);
+        let value = self.copied_at(inner_ty, self.box_value(boxed_enum(ty), boxed), "boxed");
         let present = self.optional(ty, self.context.bool_type().const_int(1, false), value);
         self.branch_to(done);
         self.builder.position_at_end(done);
-        self.phi(llvm_ty, &[(self.empty(ty), absent), (present, some)])
+        self.phi(llvm_ty, &[(none, absent), (present, some)])
     }
 
     /// The value of variant `variant` of enum `id` with the evaluated `values` as its fields:
@@ -679,7 +669,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         }
         let (ty, tag) = (layout.ty.into_struct_type(), layout.tag);
         let slot = self.entry_alloca(ty.into(), "variant");
-        self.store(slot, ty.const_zero().into());
+        self.store_zero(slot, ty.into());
         let tag_value = u64::try_from(variant).expect("a variant index should fit in a `u64`");
         self.store(
             self.tag_ptr(id, slot),
@@ -700,9 +690,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 self.store(place, value);
             }
         }
-        self.builder
-            .build_load(ty, slot, "variant")
-            .expect(POSITIONED)
+        self.value_at(ty.into(), slot, "variant")
     }
 
     /// `variant` of the `Option`-shaped enum `id`. The payload-free variant is the empty value
@@ -805,6 +793,9 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// A scratch slot holding the enum `value`, for a helper that takes its address.
     pub(super) fn enum_slot(&self, value: BasicValueEnum<'ctx>) -> PointerValue<'ctx> {
+        if self.memory_type(value).is_some() {
+            return value.into_pointer_value();
+        }
         let slot = self.entry_alloca(value.get_type(), "enum");
         self.store(slot, value);
         slot
@@ -1108,10 +1099,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             .expect(POSITIONED)
             .into_pointer_value();
         let value_ty = self.enums[id.0].ty;
-        let value = self
-            .builder
-            .build_load(value_ty, self.box_value(id, boxed), "value")
-            .expect(POSITIONED);
+        let value = self.value_at(value_ty, self.box_value(id, boxed), "value");
         self.store(out, value);
         self.store(slot, ptr_type.const_null().into());
         let count = self.load_count(boxed, "count");
@@ -1229,7 +1217,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             let moved = self.load_place(self.types[binding.0], address, "moved", None);
             self.store(slot, moved);
             if kept[value] {
-                self.store(address, ty.const_zero());
+                self.store_zero(address, ty);
             }
         }
         for (address, ty) in rest {
@@ -1238,7 +1226,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         // No `--rc-checks` moved mark is set: `check_not_moved` (rc.rs) skips enums.
         if self.flagged[scrutinee.0] {
             let (slot, ty) = self.slot(scrutinee);
-            self.store(slot, ty.const_zero());
+            self.store_zero(slot, ty);
         }
     }
 
@@ -1362,9 +1350,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         let llvm_ty = self
             .llvm_type(ty)
             .expect("an inline link should be of an enum type or its optional");
-        self.builder
-            .build_load(llvm_ty, place, "link")
-            .expect(POSITIONED)
+        self.copied_at(llvm_ty, place, "link")
     }
 
     /// The enum and the two values' addresses of link `field` of variant `variant`, a box or an

@@ -93,7 +93,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             .builder
             .build_struct_gep(self.value_box(ty), block, 1, "boxed")
             .expect("a box should hold its value after its count");
-        self.builder.build_store(slot, value).expect(POSITIONED);
+        self.store(slot, value);
         block
     }
 
@@ -341,10 +341,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         // The out pointers follow the receiver and the value parameters.
         let values = params.len();
         params.extend(self.out_param_types(&function.muts));
-        let fn_type = match self.llvm_type(function.ret) {
-            Some(ret) => ret.fn_type(&params, false),
-            None => self.context.void_type().fn_type(&params, false),
-        };
+        let fn_type = self.function_type(Some(function.ret), params);
         let glue = self
             .module
             .add_function(&name, fn_type, Some(Linkage::Internal));
@@ -386,11 +383,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 self.release(args[i], local.ty);
             }
         }
-        match result {
-            Some(value) => self.builder.build_return(Some(&value)),
-            None => self.builder.build_return(None),
-        }
-        .expect(POSITIONED);
+        self.return_value(result);
         glue
     }
 
@@ -517,10 +510,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             vec![self.context.ptr_type(AddressSpace::default()).into()];
         params.extend(args.iter().flat_map(|&(_, ty)| self.param_types(ty)));
         params.extend(self.out_param_types(muts));
-        let fn_type = match ret.and_then(|ret| self.llvm_type(ret)) {
-            Some(ret) => ret.fn_type(&params, false),
-            None => self.context.void_type().fn_type(&params, false),
-        };
+        let fn_type = self.function_type(ret, params);
         let mut call_args: Vec<BasicMetadataValueEnum<'ctx>> = vec![data.into()];
         call_args.extend(args.iter().flat_map(|&(arg, ty)| self.split(ty, arg)));
         if muts.contains(&true) {
@@ -531,12 +521,18 @@ impl<'ctx> Codegen<'ctx, '_> {
             );
             *self.last_outs.borrow_mut() = slots;
         }
-        let result = self
+        let result_slot = ret.and_then(|ret| self.result_slot(ret));
+        if let Some((slot, _)) = result_slot {
+            call_args.push(slot.into());
+        }
+        let call = self
             .builder
             .build_indirect_call(fn_type, entry, &call_args, "dyn")
-            .expect(POSITIONED)
-            .try_as_basic_value()
-            .basic()?;
+            .expect(POSITIONED);
+        if let Some((slot, ty)) = result_slot {
+            return Some(self.in_memory(slot, ty));
+        }
+        let result = call.try_as_basic_value().basic()?;
         if let Some(ret) = ret {
             self.assume_len(ret, result);
         }

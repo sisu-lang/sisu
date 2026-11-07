@@ -2,9 +2,10 @@
 //!
 //! Codegen lays out an enum as `{ tag, [n x iA] }`: `n` units of the largest payload alignment
 //! `A`. `n` is a `u32`, and it is at most the payload size in bytes. A payload under
-//! `PAYLOAD_LIMIT` bytes thus always fits, and one of that size or more may not. `oversized`
-//! finds the enums that may not fit, so that the front end reports them and codegen never sees
-//! one.
+//! `PAYLOAD_LIMIT` bytes thus always has an LLVM type, and one of that size or more may not.
+//! `oversized` finds the enums that may have none, so that the front end reports them and codegen
+//! never sees one. The limit promises only the type: a value lives on the stack (ADR 0048), so a
+//! value near the size of the stack overflows it when the program runs.
 //!
 //! The sizes here are upper bounds that follow the layout rules of `codegen::enums` and
 //! `codegen::layout`. An optional adds one alignment unit, as when it keeps a flag beside its

@@ -15,6 +15,11 @@ argument names, holds or is held by. The `mut` argument is one of the same call,
 or of a call nested in a later argument. So `f(xs, mut xs)` gives `f` the old
 `xs` in its first parameter, whatever `f` writes to its second.
 
+Codegen passes a value over 256 bytes through a pointer, and returns it through
+a pointer that the caller gives
+([ADR 0048](0048-a-large-value-stays-in-memory.md)). Who owns the value does not
+change.
+
 A counted parameter is borrowed when the function only reads it: the caller
 holds its reference for the whole call, and neither side counts it. A
 parameter is owned when the function consumes it, which is any of these uses:

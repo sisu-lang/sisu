@@ -6,7 +6,7 @@ use inkwell::AddressSpace;
 use inkwell::attributes::{Attribute, AttributeLoc};
 use inkwell::context::{AsContextRef, ContextRef};
 use inkwell::module::Module;
-use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
+use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType};
 use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue};
 
 use super::Codegen;
@@ -522,6 +522,9 @@ pub(super) const RANGE_STRING: u64 = 16;
 /// string, or the optional of one, crosses as three scalar parameters: its block, its data and
 /// its length. LLVM puts `range` only on an integer, so it is never one struct parameter.
 /// The out pointers of the `mut` parameters follow the value parameters (`out_param_types`).
+/// A value that stays in memory (`by_memory`) crosses as one pointer to it, which the callee reads
+/// and does not write. A result of that kind has no LLVM return value: the last parameter points
+/// to the place for it (`function_type`).
 impl<'ctx> Codegen<'ctx, '_> {
     /// The LLVM types of the parameters that one value of type `ty` takes, in order.
     pub(super) fn param_types(&self, ty: Type) -> Vec<BasicMetadataTypeEnum<'ctx>> {
@@ -533,7 +536,27 @@ impl<'ctx> Codegen<'ctx, '_> {
         let part = self
             .llvm_type(ty)
             .expect("the checker should reject a `unit` or `never` parameter, so each parameter has a value type");
+        if self.by_memory(part) {
+            return vec![self.context.ptr_type(AddressSpace::default()).into()];
+        }
         vec![part.into()]
+    }
+
+    /// The LLVM type of a function that returns a `ret`, with the parameters `params`.
+    pub(super) fn function_type(
+        &self,
+        ret: Option<Type>,
+        mut params: Vec<BasicMetadataTypeEnum<'ctx>>,
+    ) -> FunctionType<'ctx> {
+        let void = self.context.void_type();
+        match ret.and_then(|ret| self.llvm_type(ret)) {
+            Some(ret) if self.by_memory(ret) => {
+                params.push(self.context.ptr_type(AddressSpace::default()).into());
+                void.fn_type(&params, false)
+            }
+            Some(ret) => ret.fn_type(&params, false),
+            None => void.fn_type(&params, false),
+        }
     }
 
     /// The parameters that `muts` (one flag for each parameter) gives a function after its value
@@ -558,7 +581,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     ) -> Vec<BasicMetadataValueEnum<'ctx>> {
         debug_assert_eq!(
             self.llvm_type(ty),
-            Some(value.get_type()),
+            Some(self.memory_type(value).unwrap_or_else(|| value.get_type())),
             "a value should have the LLVM type of its Sisu type"
         );
         if three_words(ty) {
@@ -592,7 +615,10 @@ impl<'ctx> Codegen<'ctx, '_> {
                 parts[2].into_int_value(),
             );
         }
-        parts[0]
+        match self.llvm_type(ty).filter(|&part| self.by_memory(part)) {
+            Some(part) => self.in_memory(parts[0].into_pointer_value(), part),
+            None => parts[0],
+        }
     }
 
     /// The values of the parameters of `function` from the `first`, one for each of `tys`:

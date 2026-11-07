@@ -1,0 +1,12 @@
+wide_enum_shapes.sisu:84:9: pack(1) = Four(
+    Four(S("n1", [1], "x", "y"), A, S("n2", [2], "x", "y"), A),
+    Empty,
+    Four(S("n1", [1], "x", "y"), A, S("n2", [2], "x", "y"), A),
+    Four(S("n1", [1], "x", "y"), A, S("n2", [2], "x", "y"), A)
+)
+wide_enum_shapes.sisu:87:15: xs[1] = Four(
+    Four(S("n3", [3], "x", "y"), A, S("n4", [4], "x", "y"), A),
+    Empty,
+    Four(S("n3", [3], "x", "y"), A, S("n4", [4], "x", "y"), A),
+    Four(S("n3", [3], "x", "y"), A, S("n4", [4], "x", "y"), A)
+)

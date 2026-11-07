@@ -2374,29 +2374,32 @@ fn build_tmp(name: &str, source: &str) -> (Output, PathBuf) {
 }
 
 /// The source of a chain of enums `E0` to `E<top>`, each with four fields of the one before.
-/// Its `main` compares a value of `E<top>`.
+/// A function builds a full value of each one, and `main` compares two values of `E<top>`.
 fn wide_enum_source(top: usize) -> String {
-    let mut source = String::from("enum E0 {\n    A\n    V(i64, i64, i64, i64)\n}\n");
+    let mut source = String::from(
+        "enum E0 {\n    A\n    V(i64, i64, i64, i64)\n}\nfn e0() -> E0 {\n    E0.V(1, 2, 3, 4)\n}\n",
+    );
     for level in 1..=top {
         let below = level - 1;
         writeln!(
             source,
-            "enum E{level} {{\n    A\n    V(E{below}, E{below}, E{below}, E{below})\n}}"
+            "enum E{level} {{\n    A\n    V(E{below}, E{below}, E{below}, E{below})\n}}\n\
+             fn e{level}() -> E{level} {{\n    E{level}.V(e{below}(), E{below}.A, E{below}.A, E{below}.A)\n}}"
         )
         .expect("writing to a `String` should not fail");
     }
     write!(
         source,
-        "fn main() {{\n    let e = E{top}.A\n    print(e == E{top}.A)\n}}\n"
+        "fn main() {{\n    print(e{top}() == e{top}())\n}}\n"
     )
     .expect("writing to a `String` should not fail");
     source
 }
 
-/// Builds `source` at `-O2` with 1 GiB of address space, runs the program, and checks that it
-/// exits 0 and prints `true`. `ulimit -v` has an effect on Linux only.
+/// Builds `source` with `flags` and 1 GiB of address space, runs the program, and checks that
+/// it exits 0 and prints `true`. `ulimit -v` has an effect on Linux only.
 #[cfg(target_os = "linux")]
-fn assert_builds_at_o2_in_bounded_memory(name: &str, source: &str) {
+fn assert_builds_in_bounded_memory(name: &str, source: &str, flags: &[&str]) {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     let file = dir.join(format!("{name}.sisu"));
     fs::write(&file, source).expect("writes");
@@ -2410,7 +2413,7 @@ fn assert_builds_at_o2_in_bounded_memory(name: &str, source: &str) {
         ])
         .arg(env!("CARGO_BIN_EXE_sisu"))
         .arg("build")
-        .arg("-O2")
+        .args(flags)
         .arg(&file)
         .arg("-o")
         .arg(&exe)
@@ -2438,7 +2441,18 @@ fn assert_builds_at_o2_in_bounded_memory(name: &str, source: &str) {
 #[cfg(target_os = "linux")]
 #[test]
 fn a_wide_enum_should_build_at_o2_in_bounded_memory() {
-    assert_builds_at_o2_in_bounded_memory("wide_enum_o2", &wide_enum_source(6));
+    assert_builds_in_bounded_memory("wide_enum_o2", &wide_enum_source(6), &["-O2"]);
+}
+
+/// GIVEN a chain of enums whose last one holds 683 KiB, too large for a frame under Valgrind
+/// WHEN `sisu build` runs with 1 GiB of address space, at each optimization level
+/// THEN it exits 0, and the program prints `true`
+#[cfg(target_os = "linux")]
+#[test]
+fn a_very_wide_enum_should_build_and_run_in_bounded_memory() {
+    let source = wide_enum_source(7);
+    assert_builds_in_bounded_memory("very_wide_enum_o0", &source, &[]);
+    assert_builds_in_bounded_memory("very_wide_enum_o2", &source, &["-O2"]);
 }
 
 /// GIVEN an enum with one variant of 10 000 `i64` fields
@@ -2451,7 +2465,7 @@ fn a_variant_with_many_fields_should_build_at_o2_in_bounded_memory() {
     let source = format!(
         "enum W {{\n    A\n    V({fields})\n}}\nfn main() {{\n    let w = W.A\n    print(w == W.A)\n}}\n"
     );
-    assert_builds_at_o2_in_bounded_memory("wide_variant_o2", &source);
+    assert_builds_in_bounded_memory("wide_variant_o2", &source, &["-O2"]);
 }
 
 /// GIVEN a program that assigns to an immutable binding

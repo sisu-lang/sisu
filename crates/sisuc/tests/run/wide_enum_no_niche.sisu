@@ -1,0 +1,337 @@
+// 256 variants fill the tag, so an optional of the enum is a flag and a value.
+enum Inner {
+    A
+    V(i64, i64, i64, i64, i64, i64, i64, i64)
+}
+
+enum Full {
+    V0(Inner, Inner, Inner, Inner, Inner, Inner, Inner, string)
+    V1
+    V2
+    V3
+    V4
+    V5
+    V6
+    V7
+    V8
+    V9
+    V10
+    V11
+    V12
+    V13
+    V14
+    V15
+    V16
+    V17
+    V18
+    V19
+    V20
+    V21
+    V22
+    V23
+    V24
+    V25
+    V26
+    V27
+    V28
+    V29
+    V30
+    V31
+    V32
+    V33
+    V34
+    V35
+    V36
+    V37
+    V38
+    V39
+    V40
+    V41
+    V42
+    V43
+    V44
+    V45
+    V46
+    V47
+    V48
+    V49
+    V50
+    V51
+    V52
+    V53
+    V54
+    V55
+    V56
+    V57
+    V58
+    V59
+    V60
+    V61
+    V62
+    V63
+    V64
+    V65
+    V66
+    V67
+    V68
+    V69
+    V70
+    V71
+    V72
+    V73
+    V74
+    V75
+    V76
+    V77
+    V78
+    V79
+    V80
+    V81
+    V82
+    V83
+    V84
+    V85
+    V86
+    V87
+    V88
+    V89
+    V90
+    V91
+    V92
+    V93
+    V94
+    V95
+    V96
+    V97
+    V98
+    V99
+    V100
+    V101
+    V102
+    V103
+    V104
+    V105
+    V106
+    V107
+    V108
+    V109
+    V110
+    V111
+    V112
+    V113
+    V114
+    V115
+    V116
+    V117
+    V118
+    V119
+    V120
+    V121
+    V122
+    V123
+    V124
+    V125
+    V126
+    V127
+    V128
+    V129
+    V130
+    V131
+    V132
+    V133
+    V134
+    V135
+    V136
+    V137
+    V138
+    V139
+    V140
+    V141
+    V142
+    V143
+    V144
+    V145
+    V146
+    V147
+    V148
+    V149
+    V150
+    V151
+    V152
+    V153
+    V154
+    V155
+    V156
+    V157
+    V158
+    V159
+    V160
+    V161
+    V162
+    V163
+    V164
+    V165
+    V166
+    V167
+    V168
+    V169
+    V170
+    V171
+    V172
+    V173
+    V174
+    V175
+    V176
+    V177
+    V178
+    V179
+    V180
+    V181
+    V182
+    V183
+    V184
+    V185
+    V186
+    V187
+    V188
+    V189
+    V190
+    V191
+    V192
+    V193
+    V194
+    V195
+    V196
+    V197
+    V198
+    V199
+    V200
+    V201
+    V202
+    V203
+    V204
+    V205
+    V206
+    V207
+    V208
+    V209
+    V210
+    V211
+    V212
+    V213
+    V214
+    V215
+    V216
+    V217
+    V218
+    V219
+    V220
+    V221
+    V222
+    V223
+    V224
+    V225
+    V226
+    V227
+    V228
+    V229
+    V230
+    V231
+    V232
+    V233
+    V234
+    V235
+    V236
+    V237
+    V238
+    V239
+    V240
+    V241
+    V242
+    V243
+    V244
+    V245
+    V246
+    V247
+    V248
+    V249
+    V250
+    V251
+    V252
+    V253
+    V254
+    V255
+}
+
+fn one() -> Full {
+    Full.V0(Inner.A, Inner.A, Inner.A, Inner.V(1, 2, 3, 4, 5, 6, 7, 8), Inner.A, Inner.A, Inner.A, "full {args_count()}")
+}
+
+fn args_count() -> i64 {
+    7
+}
+
+fn give(n: i64) -> Full? {
+    if n == 0 { None } else if n == 1 { Some(Full.V255) } else { Some(one()) }
+}
+
+fn twice(x: Full?) -> Full?? {
+    Some(x)
+}
+
+fn main() {
+    print(give(0) == None)
+    print(give(1) == Some(Full.V255))
+    print(give(2) == Some(one()))
+    print(give(2) == give(1))
+    let g = give(2)
+    if let Some(v) = g {
+        print(v == one())
+    }
+    print((give(0) ?? Full.V1) == Full.V1)
+    let t = twice(give(2))
+    print(t == Some(Some(one())))
+    print(twice(None) == Some(None))
+    let mut xs = [give(0), give(1), give(2)]
+    xs[0] = give(2)
+    xs.push(give(1))
+    print(xs.len())
+    print(xs.contains(Some(one())))
+    print("{xs[2]}".len())
+    let every = [
+        Full.V1, Full.V2, Full.V3, Full.V4, Full.V5, Full.V6, Full.V7, Full.V8, Full.V9,
+        Full.V10, Full.V11, Full.V12, Full.V13, Full.V14, Full.V15, Full.V16, Full.V17, Full.V18,
+        Full.V19, Full.V20, Full.V21, Full.V22, Full.V23, Full.V24, Full.V25, Full.V26, Full.V27,
+        Full.V28, Full.V29, Full.V30, Full.V31, Full.V32, Full.V33, Full.V34, Full.V35, Full.V36,
+        Full.V37, Full.V38, Full.V39, Full.V40, Full.V41, Full.V42, Full.V43, Full.V44, Full.V45,
+        Full.V46, Full.V47, Full.V48, Full.V49, Full.V50, Full.V51, Full.V52, Full.V53, Full.V54,
+        Full.V55, Full.V56, Full.V57, Full.V58, Full.V59, Full.V60, Full.V61, Full.V62, Full.V63,
+        Full.V64, Full.V65, Full.V66, Full.V67, Full.V68, Full.V69, Full.V70, Full.V71, Full.V72,
+        Full.V73, Full.V74, Full.V75, Full.V76, Full.V77, Full.V78, Full.V79, Full.V80, Full.V81,
+        Full.V82, Full.V83, Full.V84, Full.V85, Full.V86, Full.V87, Full.V88, Full.V89, Full.V90,
+        Full.V91, Full.V92, Full.V93, Full.V94, Full.V95, Full.V96, Full.V97, Full.V98, Full.V99,
+        Full.V100, Full.V101, Full.V102, Full.V103, Full.V104, Full.V105, Full.V106, Full.V107,
+        Full.V108, Full.V109, Full.V110, Full.V111, Full.V112, Full.V113, Full.V114, Full.V115,
+        Full.V116, Full.V117, Full.V118, Full.V119, Full.V120, Full.V121, Full.V122, Full.V123,
+        Full.V124, Full.V125, Full.V126, Full.V127, Full.V128, Full.V129, Full.V130, Full.V131,
+        Full.V132, Full.V133, Full.V134, Full.V135, Full.V136, Full.V137, Full.V138, Full.V139,
+        Full.V140, Full.V141, Full.V142, Full.V143, Full.V144, Full.V145, Full.V146, Full.V147,
+        Full.V148, Full.V149, Full.V150, Full.V151, Full.V152, Full.V153, Full.V154, Full.V155,
+        Full.V156, Full.V157, Full.V158, Full.V159, Full.V160, Full.V161, Full.V162, Full.V163,
+        Full.V164, Full.V165, Full.V166, Full.V167, Full.V168, Full.V169, Full.V170, Full.V171,
+        Full.V172, Full.V173, Full.V174, Full.V175, Full.V176, Full.V177, Full.V178, Full.V179,
+        Full.V180, Full.V181, Full.V182, Full.V183, Full.V184, Full.V185, Full.V186, Full.V187,
+        Full.V188, Full.V189, Full.V190, Full.V191, Full.V192, Full.V193, Full.V194, Full.V195,
+        Full.V196, Full.V197, Full.V198, Full.V199, Full.V200, Full.V201, Full.V202, Full.V203,
+        Full.V204, Full.V205, Full.V206, Full.V207, Full.V208, Full.V209, Full.V210, Full.V211,
+        Full.V212, Full.V213, Full.V214, Full.V215, Full.V216, Full.V217, Full.V218, Full.V219,
+        Full.V220, Full.V221, Full.V222, Full.V223, Full.V224, Full.V225, Full.V226, Full.V227,
+        Full.V228, Full.V229, Full.V230, Full.V231, Full.V232, Full.V233, Full.V234, Full.V235,
+        Full.V236, Full.V237, Full.V238, Full.V239, Full.V240, Full.V241, Full.V242, Full.V243,
+        Full.V244, Full.V245, Full.V246, Full.V247, Full.V248, Full.V249, Full.V250, Full.V251,
+        Full.V252, Full.V253, Full.V254, Full.V255
+    ]
+    print(every.len())
+    let n: Full?? = None
+    print(n == None)
+}
