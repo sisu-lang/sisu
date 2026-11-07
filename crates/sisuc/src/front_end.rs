@@ -776,13 +776,18 @@ mod tests {
         assert_eq!(fix_edits(&d).map(|(safe, _)| safe), Some(true), "{src:?}");
     }
 
-    /// A dropped `;` before the first edit is not between the edits, so the fix stays safe.
+    /// A dropped `;` before the first edit or after the last is not between the edits, so the fix
+    /// stays safe.
     #[test]
     fn a_fix_with_a_dropped_semicolon_outside_its_edits_should_stay_safe() {
-        let src = "fn main() {\n    let n = 0.5\n    print(1);\n    let v = n != f64.nan\n}\n";
-        let (d, semicolon) = judged_with_semicolon(src, Code::NanComparison);
-        assert!(semicolon, "{src:?}: no W0007");
-        assert_eq!(fix_edits(&d).map(|(safe, _)| safe), Some(true), "{src:?}");
+        for src in [
+            "fn main() {\n    let n = 0.5\n    print(1);\n    let v = n != f64.nan\n}\n",
+            "fn main() {\n    let n = 0.5\n    let v = n != f64.nan\n    print(1);\n}\n",
+        ] {
+            let (d, semicolon) = judged_with_semicolon(src, Code::NanComparison);
+            assert!(semicolon, "{src:?}: no W0007");
+            assert_eq!(fix_edits(&d).map(|(safe, _)| safe), Some(true), "{src:?}");
+        }
     }
 
     /// The text of `src` after the one fix of the first diagnostic of `code`, and whether the fix
