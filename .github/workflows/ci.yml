@@ -38,8 +38,11 @@ jobs:
           enable-cache: true
       # Clippy compiles sisuc, which links LLVM.
       - uses: ./.github/actions/install-llvm
-      # The same hooks a local commit runs, over every tracked file.
+      # The same hooks a local commit runs, over every tracked file. The test job runs the
+      # architecture test.
       - run: prek run --all-files --show-diff-on-failure
+        env:
+          SKIP: architecture
 
   test:
     name: Test

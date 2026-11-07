@@ -27,12 +27,11 @@ print(json.dumps(answer))
 P = "repos/sisu-lang/sisu"
 
 
-def comment(comment_id: int, login: str, body: str, updated: str = "t1") -> dict[str, Any]:
+def comment(comment_id: int, login: str, body: str) -> dict[str, Any]:
     return {
         "id": comment_id,
         "user": {"login": login},
         "body": body,
-        "updated_at": updated,
         "path": "a.rs",
         "line": 3,
         "html_url": f"u{comment_id}",
@@ -99,8 +98,48 @@ class WatchPr(unittest.TestCase):
         note = "<!-- This is an auto-generated comment: review in progress by coderabbit.ai -->"
         self.table[f"{P}/issues/7/comments"] = [comment(5, "coderabbitai[bot]", note)]
         self.assertEqual(self.watch().returncode, 1)
-        self.table[f"{P}/issues/7/comments"] = [comment(5, "coderabbitai[bot]", "Summary", "t2")]
+        self.table[f"{P}/issues/7/comments"] = [comment(5, "coderabbitai[bot]", "Summary")]
         self.assertEqual(self.watch().stdout, "comment 5 coderabbitai[bot]: Summary u5\n")
+
+    def test_watch_should_stay_asleep_on_an_edit_of_hidden_text_only(self) -> None:
+        for path in (f"{P}/pulls/7/comments", f"{P}/issues/7/comments"):
+            with self.subTest(path=path):
+                self.state.unlink(missing_ok=True)
+                self.table[path] = [comment(5, "bot", "Summary <!-- state a -->")]
+                self.assertEqual(self.watch().returncode, 0)
+                self.table[path] = [comment(5, "bot", "Summary <!-- state b -->")]
+                self.assertEqual(self.watch().returncode, 1)
+                self.table[path] = []
+
+    def test_watch_should_wake_on_an_edit_past_the_printed_text(self) -> None:
+        long = "a" * 400
+        for path in (f"{P}/pulls/7/comments", f"{P}/issues/7/comments"):
+            with self.subTest(path=path):
+                self.state.unlink(missing_ok=True)
+                self.table[path] = [comment(5, "bot", long)]
+                self.assertEqual(self.watch().returncode, 0)
+                self.table[path] = [comment(5, "bot", long + " more")]
+                self.assertEqual(self.watch().returncode, 0)
+                self.table[path] = []
+
+    def test_watch_should_wake_on_an_edit_between_angle_brackets(self) -> None:
+        for path in (f"{P}/pulls/7/comments", f"{P}/issues/7/comments"):
+            with self.subTest(path=path):
+                self.state.unlink(missing_ok=True)
+                self.table[path] = [comment(5, "bot", "Use Vec<String> here")]
+                self.assertEqual(self.watch().returncode, 0)
+                self.table[path] = [comment(5, "bot", "Use Vec<u8> here")]
+                self.assertEqual(self.watch().returncode, 0)
+                self.table[path] = []
+
+    def test_watch_should_judge_a_review_edit_by_the_same_rule_as_a_comment(self) -> None:
+        review = {"id": 9, "user": {"login": "bot"}, "state": "COMMENTED", "html_url": "r9"}
+        self.table[f"{P}/pulls/7/reviews"] = [dict(review, body="Vec<u8> <!-- state a -->")]
+        self.assertEqual(self.watch().returncode, 0)
+        self.table[f"{P}/pulls/7/reviews"] = [dict(review, body="Vec<u8> <!-- state b -->")]
+        self.assertEqual(self.watch().returncode, 1)
+        self.table[f"{P}/pulls/7/reviews"] = [dict(review, body="Vec<i8> <!-- state b -->")]
+        self.assertEqual(self.watch().returncode, 0)
 
     def test_watch_should_wake_on_an_edited_review(self) -> None:
         review = {"id": 9, "user": {"login": "bot"}, "state": "COMMENTED", "html_url": "r9"}

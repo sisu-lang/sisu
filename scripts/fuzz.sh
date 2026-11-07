@@ -335,12 +335,23 @@ fi
 # Fork mode interleaves the children's output, whose lines start `#<n>\t`; the parent's
 # status lines start `#<n>: cov:`, and the last one holds the total.
 executions=$(awk '/^#[0-9]+: cov:/ { n = substr($1, 2, length($1) - 2) } END { print (n == "" ? "unknown" : n) }' "$log")
+# libFuzzer runs the whole corpus before job 1 (FuzzerFork.cpp, FuzzWithFork). A parent line gives
+# the time since the start. So the first such line shows about when that pass ended.
+first_pass=$(awk '/^#[0-9]+: cov:/ { for (i = 1; i < NF; i++) if ($i == "time:") { print substr($(i + 1), 1, length($(i + 1)) - 1); exit } }' "$log")
 
 {
     echo "# Fuzzing: ${target}"
     echo
     echo "- Fuzzed for ${elapsed} s (asked for ${seconds} s)."
     echo "- Executions in processed jobs: ${executions}."
+    if [[ -z $first_pass ]]; then
+        echo "- No job finished, so the number of new inputs is not known."
+    else
+        echo "- First pass over the corpus: about ${first_pass} s."
+        if ((first_pass * 2 > seconds)); then
+            echo "- The first pass took over half of the run, so this run tried few new inputs. Ask for more seconds."
+        fi
+    fi
     echo "- cargo-fuzz exit status: ${status}."
     if [[ $log_complete == false ]]; then
         echo "- \`fuzz.log\` is incomplete: writing it failed."
