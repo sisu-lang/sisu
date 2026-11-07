@@ -1,0 +1,26 @@
+// GIVEN a method of an enum that the program names through the enum, with no call
+// AND the same through an enum with type arguments, with a call of the wrong shape
+// AND the same through an alias of the enum, with a call
+// WHEN `sisu check` runs on it
+// THEN it reports E0120 for each, and the message names the enum as the program writes it
+// AND the message writes no call and no value that the program does not have
+enum En {
+    A
+    fn em(self, mut x: i64) {
+        x += 1
+    }
+}
+
+enum Gen<T> {
+    B(T)
+    fn em(self, x: i64, y: i64) {}
+}
+
+type Al = En
+
+fn main() {
+    let mut y = 1
+    let _a = En.em
+    let _b = Gen<i64>.em(1, 2)
+    let _c = Al.em(mut y)
+}

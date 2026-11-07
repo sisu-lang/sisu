@@ -4702,19 +4702,20 @@ impl<'a> Parser<'a> {
                 .tokens
                 .get(self.pos + 1)
                 .is_some_and(|t| t.kind == TokenKind::Colon);
-        let label = if labeled {
+        let (label, colon) = if labeled {
             let label = self.ident("a label")?;
-            self.bump();
+            let colon = self.bump().span;
             if let Some(error) = self.label_not_on_loop() {
                 return Err(error);
             }
             mut_keyword = mut_keyword.or_else(|| self.eat(&TokenKind::Mut).map(|t| t.span));
-            Some(label)
+            (Some(label), Some(colon))
         } else {
-            None
+            (None, None)
         };
         Ok(Arg {
             label,
+            colon,
             mut_keyword,
             value: self.expr()?,
         })

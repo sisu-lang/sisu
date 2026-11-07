@@ -1,0 +1,10 @@
+// GIVEN the name of a built-in type or of `Option`, called as if it were a function
+// AND the same with type arguments
+// WHEN `sisu check` runs on it
+// THEN it reports E0105 for each, and the message says that the name is a type
+fn main() {
+    let _a = bool(1)
+    let _b = bool<i64>(1)
+    let _c = Option(1)
+    let _d = Option<i64>(1)
+}

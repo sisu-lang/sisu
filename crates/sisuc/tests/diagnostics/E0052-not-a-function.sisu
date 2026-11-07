@@ -1,0 +1,45 @@
+// GIVEN a call of a constant, of a binding, of a parameter and of a type parameter
+// AND a type parameter of a function and one of a class
+// AND a constant that has the name of a type parameter, and a local that hides a constant
+// AND a call of a constant with an unknown argument, and a constant with an unknown type
+// WHEN `sisu check` runs on it
+// THEN it reports E0052 for each, and the message says what the name is
+// AND it suggests no function
+const K = 1
+const J: Zzz = 1
+const k2 = 1
+
+class Owner<W> {
+    fn m(self, w: W) {
+        W(w)
+    }
+}
+
+fn binding() {
+    let k = 1
+    k(1)
+}
+
+fn parameter(x: i64) {
+    x(1)
+}
+
+fn hides(k2: i64) {
+    k2(1)
+}
+
+fn type_parameter<U>(x: U) {
+    U(x)
+}
+
+fn constant_first<K>(x: K) {
+    print(K)
+    K(x)
+}
+
+fn main() {
+    K(1)
+    K()
+    K(zzz, yyy)
+    J(1)
+}

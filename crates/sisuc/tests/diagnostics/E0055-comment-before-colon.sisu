@@ -1,0 +1,13 @@
+// GIVEN a label with a comment between the label and its colon
+// WHEN `sisu check` runs on it
+// THEN it reports E0055 with an unsafe fix that has two edits
+// AND the edits keep the comment, and they remove the label and the colon
+enum E {
+    P(i64)
+}
+
+fn main() {
+    let e = E.P(x // c
+        : 1)
+    print(e)
+}

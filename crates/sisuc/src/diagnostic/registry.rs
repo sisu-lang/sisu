@@ -105,7 +105,7 @@ codes! {
     SafeAccessNotOptional = "E0049",
     CannotInfer | CannotInferParam | CannotInferSome | CannotInferResult = "E0050",
     UnwrapNeedsOptional = "E0051",
-    FunctionNotFound = "E0052",
+    FunctionNotFound | NotAFunction = "E0052",
     ArgumentCount = "E0053",
     AlreadyConverted = "E0054",
     LabeledArgument = "E0055",
@@ -157,7 +157,7 @@ codes! {
     ExponentNeedsDigits = "E0102",
     FloatOutOfRange = "E0103",
     NotExactlyF64 = "E0104",
-    TypeAsValue | FunctionAsValue | InterfaceAsValue = "E0105",
+    TypeAsValue | FunctionAsValue | InterfaceAsValue | EnumAsValue = "E0105",
     MathIdiom = "E0106",
     PowerOperator = "E0107",
     MalformedFormatSpec = "E0108",
@@ -836,6 +836,13 @@ pub(crate) enum DiagnosticKind {
         at: Span,
         suggestion: Option<Suggestion>,
     },
+    /// A call at `at` of `name`, which is `what` and no function: a binding, a constant or a type
+    /// parameter.
+    NotAFunction {
+        name: String,
+        what: &'static str,
+        at: Span,
+    },
     /// A call at `at` of `name`, which takes `want` arguments, with `found`.
     ArgumentCount {
         name: String,
@@ -1104,6 +1111,13 @@ pub(crate) enum DiagnosticKind {
     },
     /// The interface `name`, at `at`, read as a value.
     InterfaceAsValue { name: String, at: Span },
+    /// The enum `name`, at `at`, called as a function. `variant` is the first variant of the
+    /// enum, written with the enum, for the help.
+    EnumAsValue {
+        name: String,
+        variant: Option<String>,
+        at: Span,
+    },
     /// The function `name`, at `at`, read as a value. `takes_arguments` when it has parameters.
     FunctionAsValue {
         name: String,
@@ -1701,8 +1715,8 @@ pub(crate) struct TypedLiteral {
     pub(crate) annotate: Option<(usize, String)>,
 }
 
-/// The variant `path` (`Expr.Num`) whose payload declares no labels, and each `label: ` of a call
-/// of it, which its fix deletes.
+/// The variant `path` (`Expr.Num`) whose payload declares no labels, and the spans of each
+/// `label: ` of a call of it, which its fix deletes: two spans where a comment lies before the `:`.
 pub(crate) struct VariantLabels {
     pub(crate) path: String,
     pub(crate) labels: Vec<Span>,
@@ -4760,6 +4774,9 @@ impl From<DiagnosticKind> for Diagnostic {
                 at,
                 suggestion,
             ),
+            DiagnosticKind::NotAFunction { name, what, at } => {
+                Diagnostic::coded(code, at, format!("`{name}` is {what}, not a function"))
+            }
             DiagnosticKind::ArgumentCount {
                 name,
                 want,
@@ -5044,12 +5061,16 @@ impl From<DiagnosticKind> for Diagnostic {
                     .with_help(format!("write a range, such as `{example}`"))
             }
             DiagnosticKind::ArrayGetTakesIndex { at, base } => {
-                // `base[a..b]` on an optional array is E0062, and Sisu has no `?[`.
-                let base = base.as_deref().unwrap_or("xs");
+                // With no `base`, a `?.` or an optional touched the array, and the program has no
+                // name to write: `base[a..b]` on an optional array is E0062, and Sisu has no `?[`.
+                let range = match base {
+                    Some(base) => format!("use `{base}[a..b]`"),
+                    None => "index the array with `[a..b]`".to_owned(),
+                };
                 Diagnostic::coded(code, at, "an array's `get` takes an `i64`, not a range")
                     .with_label("this is a range")
                     .with_help(format!(
-                        "use `{base}[a..b]`, which stops the program when the range is out of bounds"
+                        "{range}, which stops the program when the range is out of bounds"
                     ))
             }
             DiagnosticKind::SumNeedsNumbers {
@@ -5467,6 +5488,13 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::InterfaceAsValue { name, at } => {
                 Diagnostic::coded(code, at, format!("`{name}` is an interface, not a value"))
             }
+            DiagnosticKind::EnumAsValue { name, variant, at } => {
+                let d = Diagnostic::coded(code, at, format!("`{name}` is an enum, not a value"));
+                match variant {
+                    Some(variant) => d.with_help(format!("write a variant, such as `{variant}`")),
+                    None => d,
+                }
+            }
             DiagnosticKind::FunctionAsValue {
                 name,
                 at,
@@ -5743,7 +5771,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 at,
             } => {
                 let message = if method {
-                    format!("`{name}` is a method; call it on a value: `e.{name}()`")
+                    format!("`{name}` is a method of `{enum_name}`; call it on a value")
                 } else {
                     format!("`{name}` is a variant; build it with `{enum_name}.{name}`")
                 };

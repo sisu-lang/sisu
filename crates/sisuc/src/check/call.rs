@@ -241,6 +241,23 @@ impl Checker<'_> {
             return Err(Poisoned::error());
         }
         self.reject_array_lacking(callee, first_checked.as_ref(), rest)?;
+        let kind =
+            self.not_a_function(callee)
+                .unwrap_or_else(|| DiagnosticKind::FunctionNotFound {
+                    name: callee.name.to_string(),
+                    at: callee.span,
+                    suggestion: self.function_suggestion(callee),
+                });
+        self.report(kind);
+        // No `labels`: the name may have meant a class, whose constructor takes them.
+        self.stray(rest);
+        Err(Poisoned::error())
+    }
+
+    /// The function, class or conversion with a name like `callee`, or another language's name
+    /// for one, as a fix. After an unlabeled `break`, an open loop label is not a candidate.
+    fn function_suggestion(&self, callee: &ast::Ident) -> Option<Suggestion> {
+        let name = callee.name.as_str();
         let at_start = self.starts_break_value(callee.span);
         let functions = self
             .function_ids
@@ -250,21 +267,59 @@ impl Checker<'_> {
             .chain(["i64", "u8", "f64", "char", "string"])
             .filter(|function| !(at_start && self.is_open_label(function)))
             .map(|function| (function, Definition::Function));
-        let suggestion = match alias(name).filter(|p| !(at_start && self.is_open_label(p))) {
+        match alias(name).filter(|p| !(at_start && self.is_open_label(p))) {
             Some(prelude) => Some(Suggestion {
                 kind: Definition::Function,
                 name: prelude.to_string(),
             }),
             None => suggestion(name, functions.chain(self.class_names())),
+        }
+    }
+
+    /// What the name `callee` is when it is no function: a binding of an open scope, a constant,
+    /// a type parameter, an enum, or a type with no constructor. A binding hides a constant, and
+    /// a constant hides a type parameter, as they do in a value.
+    fn not_a_function(&self, callee: &ast::Ident) -> Option<DiagnosticKind> {
+        let (name, at) = (callee.name, callee.span);
+        let what = if self
+            .body
+            .scopes
+            .iter()
+            .any(|scope| scope.contains_key(&name))
+        {
+            "a binding"
+        } else if self.constants.contains_key(&name) {
+            "a constant"
+        } else if self.body.type_param(name).is_some() {
+            "a type parameter"
+        } else if let Some(found) = self.enum_ids.get(&name) {
+            // The prelude's enums, as `Result`, name no variant that the program wrote.
+            let variant = match found {
+                Declared::Known(id) if !self.enums[id.0].name.span.in_prelude() => {
+                    (self.enums[id.0].variants.first())
+                        .map(|first| format!("{name}.{}", first.name.name))
+                }
+                _ => None,
+            };
+            return Some(DiagnosticKind::EnumAsValue {
+                name: name.to_string(),
+                variant,
+                at,
+            });
+        } else if built_in_type(name.as_str()).is_some() || name == Symbol::OPTION {
+            return Some(DiagnosticKind::TypeAsValue {
+                name: name.to_string(),
+                at,
+                alias: None,
+            });
+        } else {
+            return None;
         };
-        self.report(DiagnosticKind::FunctionNotFound {
-            name: callee.name.to_string(),
-            at: callee.span,
-            suggestion,
-        });
-        // No `labels`: the name may have meant a class, whose constructor takes them.
-        self.stray(rest);
-        Err(Poisoned::error())
+        Some(DiagnosticKind::NotAFunction {
+            name: name.to_string(),
+            what,
+            at,
+        })
     }
 
     /// Reports the call `callee(first, rest...)` when `first` is an array, or an optional one, that

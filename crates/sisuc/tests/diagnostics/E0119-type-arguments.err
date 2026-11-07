@@ -1,0 +1,20 @@
+error[E0119]: `Ok` needs its payload: `Ok(...)`
+ --> E0119-type-arguments.sisu:5:14
+  |
+5 |     let _a = Ok<i64, string>.x
+  |              ^^
+
+error[E0119]: `Err` needs its payload: `Err(...)`
+ --> E0119-type-arguments.sisu:6:14
+  |
+6 |     let _b = Err<i64, string>.x
+  |              ^^^
+
+error[E0119]: `Some` needs its payload: `Some(...)`
+ --> E0119-type-arguments.sisu:7:14
+  |
+7 |     let _c = Some<i64>.x
+  |              ^^^^
+
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0119

@@ -585,3 +585,16 @@ fn a_some_of_a_failed_call_should_not_hide_a_later_mismatch() {
         &[(ArgumentCount, (0, 18)), (Mismatch, (4, 21))],
     );
 }
+
+/// GIVEN a local and a method of one name, and a call of that name with a value of the class
+/// WHEN the checker reports the call
+/// THEN it says that the name is a method and keeps the fix, because the hint comes first
+#[test]
+fn a_call_of_a_local_that_is_also_a_method_should_offer_the_method() {
+    let src = "class Num {\n    fn value(self) -> i64 {\n        1\n    }\n}\nfn f(value: i64, n: Num) {\n    value(n)\n}\nfn main() {}";
+    let d = diagnostic(src, Code::MethodAsFunction, (7, 5, "value"), &[]);
+    assert_eq!(
+        applied(src, &d),
+        "class Num {\n    fn value(self) -> i64 {\n        1\n    }\n}\nfn f(value: i64, n: Num) {\n    n.value()\n}\nfn main() {}"
+    );
+}

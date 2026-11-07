@@ -929,10 +929,7 @@ fn type_arguments_in_expressions_should_be_reported_at_the_list() {
         ),
         (
             "enum E { A }\nfn g() { E<i64>() }",
-            vec![
-                (Code::FunctionNotFound, (2, 10)),
-                (Code::TypeArguments, (2, 11)),
-            ],
+            vec![(Code::TypeAsValue, (2, 10)), (Code::TypeArguments, (2, 11))],
         ),
         (
             "enum E { A(i64) }\nfn g() -> E { E.A<i64>(1) }",

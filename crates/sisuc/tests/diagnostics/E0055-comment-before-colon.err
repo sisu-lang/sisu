@@ -1,0 +1,14 @@
+error[E0055]: `E.P` takes no labels
+  --> E0055-comment-before-colon.sisu:10:17
+   |
+10 |     let e = E.P(x // c
+   |                 ^
+   |
+help: remove the labels
+   |
+10 ~     let e = E.P(// c
+11 ~         1)
+   |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0055

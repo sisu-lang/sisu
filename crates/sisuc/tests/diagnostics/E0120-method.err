@@ -1,4 +1,4 @@
-error[E0120]: `eval` is a method; call it on a value: `e.eval()`
+error[E0120]: `eval` is a method of `Expr`; call it on a value
   --> E0120-method.sisu:11:16
    |
 11 |     print(Expr.eval(e))
