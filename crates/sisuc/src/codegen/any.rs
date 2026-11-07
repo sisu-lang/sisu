@@ -98,7 +98,9 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// `@sisu_any.drop.<T>(box)`: the drop of a box that holds a `ty`, for slot 0 of a table:
-    /// releases the value, and frees the box. An object's drop is its class helper.
+    /// releases the value, and frees the box. It counts the drop depth when the value can recurse
+    /// (ADR 0038), because a chain can go through boxes alone. An object's drop is its class
+    /// helper.
     fn drop_glue(&self, ty: Type) -> FunctionValue<'ctx> {
         if is_object(ty) {
             return self.helper(Helper::Drop, ty);
@@ -115,6 +117,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         );
         let entry = self.context.append_basic_block(glue, "entry");
         self.builder.position_at_end(entry);
+        let exit = self.begin_box_drop(glue, ty);
         let data = glue
             .get_nth_param(0)
             .expect("a drop glue should take its box")
@@ -122,7 +125,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.release(self.data_value(ty, data), ty);
         let (size, align) = self.heap_size(&HeapBlock::Value(ty));
         self.call(self.free, &[data.into(), size.into(), align.into()]);
-        self.builder.build_return(None).expect(POSITIONED);
+        self.end_drop(exit);
         glue
     }
 

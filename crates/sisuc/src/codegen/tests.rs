@@ -5199,6 +5199,52 @@ fn recursing_should_follow_the_spec_table() {
     });
 }
 
+/// The drop glue of an `any` box has its own weight: the box of `[Link]` opens `release.[Link]`
+/// and then `drop.[Link]` counts, but the array opens the frames of `Link`, and each `?` adds
+/// none. The glue of a box whose value is bounded does not count.
+#[test]
+fn box_drop_weight_should_be_separate_from_the_array_it_holds() {
+    let src = "enum Link {
+    End
+    Next(any Display)
+}
+
+fn main() {}";
+    with_codegen(src, |codegen| {
+        let id = codegen.program.enums.iter().position(|e| e.name == "Link");
+        let id = id.expect("the program should declare enum Link");
+        let link = Type::intern(TypeKind::Enum(EnumId(id), TypeArgs::NONE));
+        let array = Type::intern(TypeKind::Array(link));
+        assert_eq!(
+            codegen.drop_weight(array),
+            3,
+            "drop.[Link], release.Link, release.any"
+        );
+        assert_eq!(
+            codegen.box_drop_weight(array),
+            Some(2),
+            "the glue, release.[Link], then drop.[Link] counts"
+        );
+        assert_eq!(
+            codegen.drop_weight(array),
+            3,
+            "the box should leave the entry of the array as it was"
+        );
+        assert_eq!(
+            codegen.box_drop_weight(link),
+            Some(3),
+            "the glue, release.Link, release.any"
+        );
+        assert_eq!(
+            codegen.box_drop_weight(Type::intern(TypeKind::Optional(link))),
+            Some(3),
+            "a `?` should add no frame"
+        );
+        assert_eq!(codegen.box_drop_weight(Type::STRING), None);
+        assert_eq!(codegen.box_drop_weight(Type::I64), None);
+    });
+}
+
 /// `drop_weight` counts the frames from a counting drop function to the next one. `class A {
 /// _next: [A] }` has `drop.A`, `release.[A]`, then `drop.[A]` counts. A string adds `release`
 /// and `drop`; a class whose drop does not count adds its own weight.

@@ -1,7 +1,8 @@
 //! Deep drops (ADR 0038): which drop functions count the drop depth, and the drop weight of
 //! each. A drop function that counts adds its weight to the global `@sisu_rc.depth` while it
 //! runs. At `DEPTH_LIMIT` it defers its block to the runtime's queue instead. The drop that
-//! brings the depth back to 0 empties the queue when `@sisu_rc.deferred` is set.
+//! brings the depth back to 0 empties the queue when `@sisu_rc.deferred` is set. The drop
+//! functions that can count are those of a class and an array, and the drop glue of an `any` box.
 //!
 //! The walks here follow the nesting of the source types: a chain of enums that each hold the
 //! next, or nested arrays. They call themselves once for each level, so each recursive step
@@ -158,6 +159,15 @@ impl Codegen<'_, '_> {
         weight
     }
 
+    /// The drop weight of the drop glue of an `any` box that holds a `value`, or `None` when the
+    /// glue does not count. It counts when `value` is a recursing part, as an array element is.
+    /// The memos have no key for a box: the box of `[T]` frees one block more than the array
+    /// `[T]`, and `recursing` and `part_frames` keep the answers that this reads.
+    pub(super) fn box_drop_weight(&self, value: Type) -> Option<u32> {
+        self.recursing(None, value)
+            .then(|| 1 + self.part_frames(value))
+    }
+
     /// The type that the memos use for the drop function of `ty`, a class or an array: a class
     /// of a cycle is the first class of the cycle.
     fn drop_key(&self, ty: Type) -> Type {
@@ -211,6 +221,9 @@ impl Codegen<'_, '_> {
                 }
             }
             TypeKind::Enum(id, _) => self.enum_frames(id),
+            // `release` calls a drop function through the table. It counts the next frames if
+            // it counts. If it does not, what it holds is bounded and ends the chain: those
+            // frames come once, at the end, and the margin of `DEPTH_LIMIT` holds them.
             _ => 1,
         })
     }
@@ -280,9 +293,22 @@ impl<'ctx> Codegen<'ctx, '_> {
         drop: FunctionValue<'ctx>,
         ty: Type,
     ) -> Option<BasicBlock<'ctx>> {
-        if !self.counts(ty) {
-            return None;
-        }
+        self.counts(ty)
+            .then(|| self.begin_counting_drop(drop, self.drop_weight(ty)))
+    }
+
+    /// `begin_drop` for `drop`, the drop glue of an `any` box that holds a `value`.
+    pub(super) fn begin_box_drop(
+        &self,
+        drop: FunctionValue<'ctx>,
+        value: Type,
+    ) -> Option<BasicBlock<'ctx>> {
+        self.box_drop_weight(value)
+            .map(|weight| self.begin_counting_drop(drop, weight))
+    }
+
+    /// The code of `begin_drop` for a drop function that counts and has the drop weight `weight`.
+    fn begin_counting_drop(&self, drop: FunctionValue<'ctx>, weight: u32) -> BasicBlock<'ctx> {
         let (i64_type, bool_type) = (self.context.i64_type(), self.context.bool_type());
         let depth = self
             .drop_global("sisu_rc.depth", i64_type.into())
@@ -290,7 +316,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         let deferred = self
             .drop_global("sisu_rc.deferred", bool_type.into())
             .as_pointer_value();
-        let weight = i64_type.const_int(u64::from(self.drop_weight(ty)), false);
+        let weight = i64_type.const_int(u64::from(weight), false);
         let block = |name| self.context.append_basic_block(drop, name);
         let (defer, run) = (block("defer"), block("run"));
         let current = self
@@ -346,7 +372,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             .build_int_add(current.into_int_value(), weight, "depth.new")
             .expect(POSITIONED);
         self.store(depth, raised.into());
-        Some(exit)
+        exit
     }
 
     /// Ends the body of a drop function that `begin_drop` started: a return when `exit` is

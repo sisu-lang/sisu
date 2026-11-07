@@ -24,7 +24,9 @@ The rule has four parts:
   two or more classes frees the other objects of the cycle in its drain, with
   their fields. So it counts when a class of its cycle has a recursing part,
   and all classes of the cycle share one drop weight. A class with a drop
-  block counts too, when drop blocks land.
+  block counts too, when drop blocks land. The drop glue of an `any` box is a
+  drop function with its own weight: it counts when the boxed type is a
+  recursing part, as an array element is. A chain can go through boxes alone.
 - **One reach flag for each enum component** (ADR 0019). The flag is clear
   when each payload field of each member, `?` stripped, is not counted, is a
   `string`, is an enum of the same component, or is an enum of another
