@@ -51,7 +51,7 @@ otherwise the block has no value.
 **Separator**:
 What ends one statement, field, variant or arm and starts the next: a
 line break, or a `;` between two of them on one line. Any other `;` is
-redundant: the compiler warns about it, and its fix removes it.
+redundant: the compiler warns about it, and its fix, when it has one, removes it.
 _Avoid_: terminator (no Sisu line needs a `;` at its end)
 
 **Unused value**:

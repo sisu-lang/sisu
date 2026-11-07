@@ -63,6 +63,9 @@ unremarked.
   `;` separates, and the parser reports the `.`. This keeps the safe-fix rule
   true by construction: removing a W0007 `;` leaves a line break or nothing
   where nothing was needed.
+  A `;` can also end a statement still open at it, and removing that `;`
+  changes how the rest lexes. So a `;` first on its line after an unfinished
+  statement has no fix, and beside a syntax error `sound_fixes` judges the fix.
 - [ADR 0001](0001-newline-terminated-statements.md)'s consequence on
   one-item-per-line constructs is amended: a field, a variant or an arm ends
   at its newline, or at a `;` before the next one on the same line.
