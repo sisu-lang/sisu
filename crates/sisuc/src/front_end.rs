@@ -2843,7 +2843,7 @@ fn main() {
     /// On clean syntax, a W0007 fix is not judged, so it does not count against `JUDGED`. A source
     /// with a type error still has no syntax error to judge a fix against.
     #[test]
-    fn sound_fixes_keep_every_redundant_semicolon_fix() {
+    fn sound_fixes_should_keep_every_redundant_semicolon_fix_on_clean_syntax() {
         let clean = format!("fn main() {{\n{}}}\n", "    print(1);\n".repeat(150));
         let typed = format!(
             "fn main() {{\n{}    let z: string = 1\n}}\n",

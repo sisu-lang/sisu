@@ -706,7 +706,6 @@ crates/sisuc/src/front_end.rs::semicolon_after_an_item
 crates/sisuc/src/front_end.rs::skip_before_an_unnamed_segment_is_its_error
 crates/sisuc/src/front_end.rs::skipped_text_after_a_constant_lies_in_it
 crates/sisuc/src/front_end.rs::skipped_text_before_a_cut_lies_in_the_item
-crates/sisuc/src/front_end.rs::sound_fixes_keep_every_redundant_semicolon_fix
 crates/sisuc/src/front_end.rs::spec_sample_reports_three_errors
 crates/sisuc/src/front_end.rs::spec_sample_with_quote
 crates/sisuc/src/front_end.rs::unclosed_interpolation_keeps_later_items
