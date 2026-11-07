@@ -280,9 +280,11 @@ pub(crate) fn checked_with(prelude: &str, source: &str) -> (Option<tir::Program>
 /// The sources that the W0007 tests and the fuzz tests share.
 #[cfg(test)]
 pub(crate) mod w0007_rows {
+    use crate::diagnostic::Code;
+
     /// A `;` first on its line, after a token that cannot end a statement. Without it, the
     /// source has more syntax errors than with it.
-    pub(crate) const NO_FIX_A: [&str; 5] = [
+    pub(crate) const NO_FIX_NEEDED: [&str; 5] = [
         "fn f() ->\n; Box<i64>\n{}",
         "fn main() {}\nfn f() ->\n; Array<i64>\n{\n    return []\n}\n",
         "fn main() {}\nextend\n;Box<i64>\n{ }\n",
@@ -291,7 +293,7 @@ pub(crate) mod w0007_rows {
     ];
 
     /// The same, where the source with no `;` has no more syntax errors than with it.
-    pub(crate) const NO_FIX_B: [&str; 3] = [
+    pub(crate) const NO_FIX_HARMLESS: [&str; 3] = [
         "type M =\n; Option<i64>\n\nextend Option<i64> {}\n\nextend M {}\n\nfn main() {}\n",
         "fn main() {\n    let x =\n    ; y\n}\n",
         "fn main() {\n    let a = 1 &\n    ; { }\n}\n",
@@ -314,11 +316,49 @@ pub(crate) mod w0007_rows {
         "fn main() {\n    let n = 0.5\n    while n !=\n;; f64.nan {\n    }\n}\n",
         "fn main() {\n    let n = 0.5\n    while n ==\n; f64.nan {\n    }\n}\n",
     ];
+
+    /// A fix with one edit on each side of a dropped `;`, and the code of its diagnostic. The flag
+    /// says that the fixed source keeps the syntax, so the fix stays and is unsafe.
+    pub(crate) const AROUND_A_DROPPED_SEMICOLON: [(&str, Code, bool); 6] = [
+        (
+            "fn main() {\n    let n = 0.5\n    let v = -\n    ; n != f64.nan\n}\n",
+            Code::NanComparison,
+            false,
+        ),
+        (
+            "fn main() {\n    let n = 0.5\n    while -\n; n != f64.nan {\n    }\n}\n",
+            Code::NanComparison,
+            false,
+        ),
+        (
+            "fn main() {\n    let m = 0.5\n    let n = 0.5\n    let v = m +\n; n != f64.nan\n}\n",
+            Code::NanComparison,
+            false,
+        ),
+        (
+            "fn main() {\n    let n: i64 = 1\n    let x: f64 = -\n    ; n\n}\n",
+            Code::Mismatch,
+            false,
+        ),
+        (
+            "fn main() {\n    let k = 1\n    let o: i64? = Some(2)\n    let Some(v) = match k\n;  { _ => o } else { return }\n    print(v)\n}\n",
+            Code::LetElseValueEndsInBrace,
+            true,
+        ),
+        (
+            "fn main() {\n    let n = 0.5\n    let v = { print(1);\n    n } != f64.nan\n}\n",
+            Code::NanComparison,
+            true,
+        ),
+    ];
 }
 
 #[cfg(test)]
 mod tests {
-    use super::w0007_rows::{CHANGES_THE_LEXING, NO_FIX_A, NO_FIX_B, TAKES_A_DROPPED_SEMICOLON};
+    use super::w0007_rows::{
+        AROUND_A_DROPPED_SEMICOLON, CHANGES_THE_LEXING, NO_FIX_HARMLESS, NO_FIX_NEEDED,
+        TAKES_A_DROPPED_SEMICOLON,
+    };
     use super::*;
     use crate::diagnostic::Code;
     use crate::diagnostic::explanations::{apply_fix, fix_edits};
@@ -559,7 +599,7 @@ mod tests {
     /// keep it open, so the warning has no fix.
     #[test]
     fn a_w0007_after_a_token_that_cannot_end_a_statement_should_have_no_fix() {
-        for src in NO_FIX_A.into_iter().chain(NO_FIX_B) {
+        for src in NO_FIX_NEEDED.into_iter().chain(NO_FIX_HARMLESS) {
             let all = front_end(src).1;
             let found = semicolons(&all);
             assert!(!found.is_empty(), "{src:?}: no W0007");
@@ -567,7 +607,7 @@ mod tests {
                 assert!(d.fixes().is_empty(), "{src:?}: the W0007 has a fix");
             }
         }
-        for src in NO_FIX_A {
+        for src in NO_FIX_NEEDED {
             let without = src.replacen(';', "", 1);
             assert!(
                 syntax_errors(&without) > syntax_errors(src),
@@ -675,6 +715,61 @@ mod tests {
                 .unwrap_or_else(|| panic!("{src:?}: no W0005"));
             assert_eq!(fix_edits(d).map(|(safe, _)| safe), Some(false), "{src:?}");
         }
+    }
+
+    /// The diagnostic of `code` in `src` after `sound_fixes`, and whether the W0007 is still there.
+    fn judged_with_semicolon(src: &str, code: Code) -> (Diagnostic, bool) {
+        let sound = sound_fixes(src, &front_end(src).1);
+        let kept = !semicolons(&sound).is_empty();
+        let d = (sound.into_iter())
+            .find(|d| d.code() == code)
+            .unwrap_or_else(|| panic!("{src:?}: no {code:?}"));
+        (d, kept)
+    }
+
+    /// A fix with an edit on each side of a dropped `;` puts the `;` in new text, where the
+    /// parser reads it. The fix goes when that breaks the syntax.
+    #[test]
+    fn a_fix_around_a_dropped_semicolon_should_go_when_it_breaks_the_syntax() {
+        for (src, code, keeps) in AROUND_A_DROPPED_SEMICOLON {
+            if keeps {
+                continue;
+            }
+            let (d, semicolon) = judged_with_semicolon(src, code);
+            assert!(semicolon, "{src:?}: the W0007 went");
+            assert!(d.fixes().is_empty(), "{src:?}: the {code:?} keeps its fix");
+        }
+    }
+
+    /// A fix around a dropped `;` that keeps the syntax can still change another report, so it
+    /// stays shown and is not safe.
+    #[test]
+    fn a_fix_around_a_dropped_semicolon_should_be_unsafe_when_it_keeps_the_syntax() {
+        for (src, code, keeps) in AROUND_A_DROPPED_SEMICOLON {
+            if !keeps {
+                continue;
+            }
+            let (d, semicolon) = judged_with_semicolon(src, code);
+            assert!(semicolon, "{src:?}: the W0007 went");
+            assert_eq!(fix_edits(&d).map(|(safe, _)| safe), Some(false), "{src:?}");
+        }
+    }
+
+    /// A comment between the edits is not a dropped `;`, so the fix stays safe.
+    #[test]
+    fn a_fix_with_only_a_comment_between_its_edits_should_stay_safe() {
+        let src = "fn main() {\n    let n = 0.5\n    let v = - // c\n    n != f64.nan\n}\n";
+        let (d, _) = judged_with_semicolon(src, Code::NanComparison);
+        assert_eq!(fix_edits(&d).map(|(safe, _)| safe), Some(true), "{src:?}");
+    }
+
+    /// A dropped `;` before the first edit is not between the edits, so the fix stays safe.
+    #[test]
+    fn a_fix_with_a_dropped_semicolon_outside_its_edits_should_stay_safe() {
+        let src = "fn main() {\n    let n = 0.5\n    print(1);\n    let v = n != f64.nan\n}\n";
+        let (d, semicolon) = judged_with_semicolon(src, Code::NanComparison);
+        assert!(semicolon, "{src:?}: no W0007");
+        assert_eq!(fix_edits(&d).map(|(safe, _)| safe), Some(true), "{src:?}");
     }
 
     /// The text of `src` after the one fix of the first diagnostic of `code`, and whether the fix

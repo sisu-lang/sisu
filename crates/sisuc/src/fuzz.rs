@@ -300,7 +300,8 @@ mod tests {
     #[test]
     fn front_end_should_pass_on_a_redundant_semicolon_that_ends_an_open_statement() {
         use crate::front_end::w0007_rows::{
-            CHANGES_THE_LEXING, NO_FIX_A, TAKES_A_DROPPED_SEMICOLON,
+            AROUND_A_DROPPED_SEMICOLON, CHANGES_THE_LEXING, NO_FIX_NEEDED,
+            TAKES_A_DROPPED_SEMICOLON,
         };
         let more = [
             "a +\n;fn g<T\nU>() {}",
@@ -310,11 +311,13 @@ mod tests {
             "type A =\n;b<c>\ny",
             "->\n;type A = Box<i64>\n- 1",
             "extend\n;x: Box<i64>\n{}",
+            "fn main() { let x = 0X1; ( ] }",
         ];
         let rows = (CHANGES_THE_LEXING.iter().map(|r| r.0))
-            .chain(NO_FIX_A)
+            .chain(NO_FIX_NEEDED)
             .chain(more)
-            .chain(TAKES_A_DROPPED_SEMICOLON);
+            .chain(TAKES_A_DROPPED_SEMICOLON)
+            .chain(AROUND_A_DROPPED_SEMICOLON.iter().map(|r| r.0));
         let failures: Vec<String> = crate::on_compiler_stack(|| {
             rows.filter_map(|src| {
                 let caught = std::panic::catch_unwind(|| front_end(src.as_bytes()));
