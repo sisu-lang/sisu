@@ -1,0 +1,17 @@
+// A chain of 100 000 enum values, each in an `any Display` box that the next one holds, run under
+// a 256 KiB stack. The text of the chain goes through the show glue of the box for each link.
+enum Link {
+    End
+    Next(any Display)
+}
+
+fn main() {
+    let mut a = Link.End
+    let mut i = 0
+    while i < 100_000 {
+        i += 1
+        a = Link.Next(a)
+    }
+    let s = "{a}"
+    print(s.len())
+}

@@ -1,0 +1,63 @@
+// Chains of 100 000 links of each other shape that goes through an array or a box, run under a
+// 256 KiB stack: nested arrays, optional elements, an array in a generic enum, and an array in a
+// box. `print` and `==` must not need a frame for each link.
+enum Nested {
+    N([[Nested]])
+}
+
+enum Elements {
+    N([Elements?])
+}
+
+enum Wrap<X> {
+    E
+    V(X)
+}
+
+enum Generic {
+    N(Wrap<[Generic]>)
+}
+
+enum Boxed {
+    End
+    N(any Display)
+}
+
+fn nested(n: i64) -> Nested {
+    let mut t = Nested.N([])
+    for _ in 0..n {
+        t = Nested.N([[t]])
+    }
+    t
+}
+
+fn elements(n: i64) -> Elements {
+    let mut t = Elements.N([])
+    for _ in 0..n {
+        t = Elements.N([Some(t)])
+    }
+    t
+}
+
+fn generic(n: i64) -> Generic {
+    let mut t = Generic.N(Wrap.E)
+    for _ in 0..n {
+        t = Generic.N(Wrap.V([t]))
+    }
+    t
+}
+
+fn main() {
+    let n = 100000
+    print(nested(n))
+    print(nested(n) == nested(n))
+    print(elements(n).to_string().len())
+    print(elements(n) == elements(n))
+    print(generic(n).to_string().len())
+    print(generic(n) == generic(n))
+    let mut boxed = Boxed.End
+    for _ in 0..n {
+        boxed = Boxed.N([boxed])
+    }
+    print("{boxed}".len())
+}
