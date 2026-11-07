@@ -105,7 +105,7 @@ codes! {
     SafeAccessNotOptional = "E0049",
     CannotInfer | CannotInferParam | CannotInferSome | CannotInferResult = "E0050",
     UnwrapNeedsOptional = "E0051",
-    FunctionNotFound = "E0052",
+    FunctionNotFound | NotAFunction = "E0052",
     ArgumentCount = "E0053",
     AlreadyConverted = "E0054",
     LabeledArgument = "E0055",
@@ -157,7 +157,7 @@ codes! {
     ExponentNeedsDigits = "E0102",
     FloatOutOfRange = "E0103",
     NotExactlyF64 = "E0104",
-    TypeAsValue | FunctionAsValue | InterfaceAsValue = "E0105",
+    TypeAsValue | FunctionAsValue | InterfaceAsValue | EnumAsValue = "E0105",
     MathIdiom = "E0106",
     PowerOperator = "E0107",
     MalformedFormatSpec = "E0108",
@@ -836,6 +836,13 @@ pub(crate) enum DiagnosticKind {
         at: Span,
         suggestion: Option<Suggestion>,
     },
+    /// A call at `at` of `name`, which is `what` and no function: a binding, a constant or a type
+    /// parameter.
+    NotAFunction {
+        name: String,
+        what: &'static str,
+        at: Span,
+    },
     /// A call at `at` of `name`, which takes `want` arguments, with `found`.
     ArgumentCount {
         name: String,
@@ -1104,6 +1111,13 @@ pub(crate) enum DiagnosticKind {
     },
     /// The interface `name`, at `at`, read as a value.
     InterfaceAsValue { name: String, at: Span },
+    /// The enum `name`, at `at`, called as a function. `variant` is the first variant of the
+    /// enum, written with the enum, for the help.
+    EnumAsValue {
+        name: String,
+        variant: Option<String>,
+        at: Span,
+    },
     /// The function `name`, at `at`, read as a value. `takes_arguments` when it has parameters.
     FunctionAsValue {
         name: String,
@@ -4760,6 +4774,9 @@ impl From<DiagnosticKind> for Diagnostic {
                 at,
                 suggestion,
             ),
+            DiagnosticKind::NotAFunction { name, what, at } => {
+                Diagnostic::coded(code, at, format!("`{name}` is {what}, not a function"))
+            }
             DiagnosticKind::ArgumentCount {
                 name,
                 want,
@@ -5470,6 +5487,13 @@ impl From<DiagnosticKind> for Diagnostic {
             ),
             DiagnosticKind::InterfaceAsValue { name, at } => {
                 Diagnostic::coded(code, at, format!("`{name}` is an interface, not a value"))
+            }
+            DiagnosticKind::EnumAsValue { name, variant, at } => {
+                let d = Diagnostic::coded(code, at, format!("`{name}` is an enum, not a value"));
+                match variant {
+                    Some(variant) => d.with_help(format!("write a variant, such as `{variant}`")),
+                    None => d,
+                }
             }
             DiagnosticKind::FunctionAsValue {
                 name,

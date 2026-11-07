@@ -930,16 +930,11 @@ error[E0105]: `bump` is a function, not a value
     |
     = help: call it with its arguments
 
-error[E0052]: cannot find function `f`
+error[E0052]: `f` is a binding, not a function
    --> E0062-peel-dot.sisu:363:5
     |
 363 |     f(c.m.v, 1)
     |     ^
-    |
-help: a function with a similar name exists: `f1`
-    |
-363 |     f1(c.m.v, 1)
-    |      +
 
 error[E0062]: `c` may be `None`
    --> E0062-peel-dot.sisu:363:7
