@@ -5397,6 +5397,49 @@ fn the_walker_reports_unbounded_loops_and_stray_indexes() {
     );
 }
 
+#[test]
+fn the_walker_should_list_a_loop_whose_panic_can_jump() {
+    // Only `loop { panic("x") }` ends at its first step, because its message is a literal. A
+    // call of another function, or a message that jumps, is listed.
+    let program = "fn main() {
+    let c = true
+    let o: string? = None
+    loop {
+        panic(\"x\")
+    }
+    loop {
+        print(1)
+    }
+    loop {
+        panic(if c { continue } else { \"x\" })
+    }
+    loop {
+        panic(o ?? continue)
+    }
+}
+";
+    let mut walk = Walk::default();
+    walk.program(program);
+    let listed: Vec<&str> = walk
+        .unbounded
+        .iter()
+        .filter_map(|loop_| {
+            let at: usize = loop_.rsplit_once(' ')?.1.parse().ok()?;
+            Some(program[at..].lines().nth(1)?.trim())
+        })
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            "print(1)",
+            "panic(if c { continue } else { \"x\" })",
+            "panic(o ?? continue)"
+        ],
+        "{:?}",
+        walk.unbounded
+    );
+}
+
 /// What `expr` writes for `ty` within `max`, nested `nesting` deep, the size it counts and the
 /// elements it knows of, over 4,096 short inputs.
 fn written(ty: &Ty, max: u64, nesting: u32) -> impl Iterator<Item = (String, u64, u64)> {
