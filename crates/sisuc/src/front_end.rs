@@ -239,8 +239,48 @@ pub(crate) fn checked_with(prelude: &str, source: &str) -> (Option<tir::Program>
     checked_timed(prelude, source, &mut Timings::off())
 }
 
+/// The sources that the W0007 tests and the fuzz tests share.
+#[cfg(test)]
+pub(crate) mod w0007_rows {
+    /// A `;` first on its line, after a token that cannot end a statement. Without it, the
+    /// source has more syntax errors than with it.
+    pub(crate) const NO_FIX_A: [&str; 5] = [
+        "fn f() ->\n; Box<i64>\n{}",
+        "fn main() {}\nfn f() ->\n; Array<i64>\n{\n    return []\n}\n",
+        "fn main() {}\nextend\n;Box<i64>\n{ }\n",
+        "extend\n;b<c>\n{}",
+        "fn f() ->\n;b<c>\n{}",
+    ];
+
+    /// The same, where the source with no `;` has no more syntax errors than with it.
+    pub(crate) const NO_FIX_B: [&str; 3] = [
+        "type M =\n; Option<i64>\n\nextend Option<i64> {}\n\nextend M {}\n\nfn main() {}\n",
+        "fn main() {\n    let x =\n    ; y\n}\n",
+        "fn main() {\n    let a = 1 &\n    ; { }\n}\n",
+    ];
+
+    /// A syntax error, and a `;` whose fix changes how the file lexes. The flag says that the
+    /// token kinds stay and only the lexer codes change.
+    pub(crate) const CHANGES_THE_LEXING: [(&str, bool); 6] = [
+        ("fn f;fn g<T\nU>() {}", false),
+        ("fn f();fn g<T\nU>() {}", false),
+        ("fn f;enum F<T\nU> {}", false),
+        ("fn f ; type A: B\nC", false),
+        ("fn f;type A = Box<i64>\n& C", false),
+        ("fn main() {}\na.b<c>();enum B<C>\n{}", true),
+    ];
+
+    /// A fix of another diagnostic that takes a `;` which the parser never sees.
+    pub(crate) const TAKES_A_DROPPED_SEMICOLON: [&str; 3] = [
+        "fn main() {\n    let n = 0.5\n    while n !=\n; f64.nan {\n    }\n}\n",
+        "fn main() {\n    let n = 0.5\n    while n !=\n;; f64.nan {\n    }\n}\n",
+        "fn main() {\n    let n = 0.5\n    while n ==\n; f64.nan {\n    }\n}\n",
+    ];
+}
+
 #[cfg(test)]
 mod tests {
+    use super::w0007_rows::{CHANGES_THE_LEXING, NO_FIX_A, NO_FIX_B, TAKES_A_DROPPED_SEMICOLON};
     use super::*;
     use crate::diagnostic::Code;
     use crate::diagnostic::explanations::{apply_fix, fix_edits};
@@ -457,6 +497,145 @@ mod tests {
                 .find(|d| d.code() == code)
                 .expect("the diagnostic should be reported");
             assert_eq!(fix_edits(d).map(|(s, _)| s), Some(safe), "{src}");
+        }
+    }
+
+    /// The W0007 diagnostics among `ds`.
+    fn semicolons(ds: &[Diagnostic]) -> Vec<&Diagnostic> {
+        (ds.iter())
+            .filter(|d| d.code() == Code::RedundantSemicolon)
+            .collect()
+    }
+
+    /// The token kinds and the lexer codes of `src`; `None` when the lexer stops at a bracket.
+    fn lexing(src: &str) -> Option<(Vec<lexer::TokenKind>, Vec<Code>)> {
+        lexer::lex(src).ok().map(|l| {
+            (
+                l.tokens.iter().map(|t| t.kind.clone()).collect(),
+                l.diagnostics.iter().map(Diagnostic::code).collect(),
+            )
+        })
+    }
+
+    /// A `;` first on its line after an unfinished statement ends it. Removing the `;` would
+    /// keep it open, so the warning has no fix.
+    #[test]
+    fn a_w0007_after_a_token_that_cannot_end_a_statement_should_have_no_fix() {
+        for src in NO_FIX_A.into_iter().chain(NO_FIX_B) {
+            let all = front_end(src).1;
+            let found = semicolons(&all);
+            assert!(!found.is_empty(), "{src:?}: no W0007");
+            for d in found {
+                assert!(d.fixes().is_empty(), "{src:?}: the W0007 has a fix");
+            }
+        }
+        for src in NO_FIX_A {
+            let without = src.replacen(';', "", 1);
+            assert!(
+                syntax_errors(&without) > syntax_errors(src),
+                "{src:?}: removing the `;` should add a syntax error"
+            );
+        }
+    }
+
+    /// Only the first `;` of a run holds the statement open. The others are redundant with it.
+    #[test]
+    fn a_second_semicolon_after_such_a_token_should_keep_its_fix() {
+        let src = "fn main() {\n    let x =\n    ;; y\n}\n";
+        let all = front_end(src).1;
+        let fixes: Vec<bool> = (semicolons(&all).iter())
+            .map(|d| !d.fixes().is_empty())
+            .collect();
+        assert_eq!(fixes, [false, true]);
+    }
+
+    /// Beside a syntax error, a W0007 fix stays only if the file lexes as before.
+    #[test]
+    fn a_w0007_fix_that_changes_the_tokens_should_go_beside_a_syntax_error() {
+        for (src, only_codes) in CHANGES_THE_LEXING {
+            let all = front_end(src).1;
+            let [w] = semicolons(&all)[..] else {
+                panic!("{src:?}: one W0007 wanted")
+            };
+            let [fix] = w.fixes() else {
+                panic!("{src:?}: the W0007 should have a fix")
+            };
+            let (before, after) = (lexing(src), lexing(&fix.apply(src)));
+            let kinds =
+                |l: &Option<(Vec<lexer::TokenKind>, Vec<Code>)>| l.as_ref().map(|l| l.0.clone());
+            let codes =
+                |l: &Option<(Vec<lexer::TokenKind>, Vec<Code>)>| l.as_ref().map(|l| l.1.clone());
+            if only_codes {
+                assert_eq!(kinds(&before), kinds(&after), "{src:?}");
+                assert_ne!(codes(&before), codes(&after), "{src:?}");
+            } else {
+                assert_ne!(kinds(&before), kinds(&after), "{src:?}");
+            }
+            let sound = sound_fixes(src, &all);
+            let spans =
+                |ds: &[Diagnostic]| -> Vec<_> { ds.iter().map(|d| (d.code(), d.span())).collect() };
+            assert_eq!(spans(&sound), spans(&all), "{src:?}");
+            let [kept] = semicolons(&sound)[..] else {
+                panic!("{src:?}: one W0007 wanted")
+            };
+            assert!(kept.fixes().is_empty(), "{src:?}: the W0007 keeps its fix");
+        }
+    }
+
+    /// A fix that leaves the tokens and the lexer codes as they were stays, as it does on clean
+    /// syntax.
+    #[test]
+    fn a_w0007_fix_that_keeps_the_tokens_should_stay_beside_a_syntax_error() {
+        for src in [
+            "fn main() {\n    let a = 1;\n    let = 2\n}\n",
+            "fn f() {}; fn h() {}\nfn g {}\n",
+        ] {
+            assert_ne!(syntax_errors(src), (false, 0), "{src:?}: no syntax error");
+            let sound = sound_fixes(src, &front_end(src).1);
+            let found = semicolons(&sound);
+            assert!(!found.is_empty(), "{src:?}: no W0007");
+            for d in found {
+                assert!(!d.fixes().is_empty(), "{src:?}: the W0007 lost its fix");
+            }
+        }
+    }
+
+    /// Beside a syntax error, the first `JUDGED` W0007 fixes are judged and the next is dropped.
+    #[test]
+    fn a_w0007_fix_should_be_judged_up_to_the_cap_beside_a_syntax_error() {
+        let lines = "    print(1);\n".repeat(JUDGED + 1);
+        let src = format!("fn main() {{\n{lines}    let = 2\n}}\n");
+        let sound = sound_fixes(&src, &front_end(&src).1);
+        let fixed: Vec<bool> = (semicolons(&sound).iter())
+            .map(|d| !d.fixes().is_empty())
+            .collect();
+        assert_eq!(fixed.len(), JUDGED + 1);
+        assert!(fixed[..JUDGED].iter().all(|&f| f));
+        assert!(!fixed[JUDGED]);
+    }
+
+    /// A W0007 fix does not take the cap of another syntax fix.
+    #[test]
+    fn a_w0007_fix_should_not_take_the_cap_of_another_syntax_fix() {
+        let lines = "    print(1);\n".repeat(150);
+        let src = format!("fn main() {{\n{lines}    print(0X1)\n}}\n");
+        let sound = sound_fixes(&src, &front_end(&src).1);
+        let d = (sound.iter())
+            .find(|d| d.code() == Code::BasePrefixUpperCase)
+            .expect("the E0075 should be reported");
+        assert!(!d.fixes().is_empty(), "the E0075 lost its fix");
+    }
+
+    /// The fix of the W0005 replaces text up to the `nan`, so it takes a `;` that the parser
+    /// never sees. It stays shown, and it is not safe.
+    #[test]
+    fn a_fix_that_takes_a_dropped_semicolon_should_be_unsafe() {
+        for src in TAKES_A_DROPPED_SEMICOLON {
+            let sound = sound_fixes(src, &front_end(src).1);
+            let d = (sound.iter())
+                .find(|d| d.code() == Code::NanComparison)
+                .unwrap_or_else(|| panic!("{src:?}: no W0005"));
+            assert_eq!(fix_edits(d).map(|(safe, _)| safe), Some(false), "{src:?}");
         }
     }
 
@@ -2623,15 +2802,24 @@ fn main() {
         );
     }
 
-    /// A W0007 fix is not judged, so it does not count against `JUDGED`.
+    /// On clean syntax, a W0007 fix is not judged, so it does not count against `JUDGED`. A source
+    /// with a type error still has no syntax error to judge a fix against.
     #[test]
     fn sound_fixes_keep_every_redundant_semicolon_fix() {
-        let src = format!("fn main() {{\n{}}}\n", "    print(1);\n".repeat(150));
-        let shown = sound_fixes(&src, &front_end(&src).1);
-        assert_eq!(shown.len(), 150);
-        for d in &shown {
-            assert_eq!(d.code(), Code::RedundantSemicolon);
-            assert!(fix_edits(d).is_some_and(|(safe, _)| safe), "{d:?}");
+        let clean = format!("fn main() {{\n{}}}\n", "    print(1);\n".repeat(150));
+        let typed = format!(
+            "fn main() {{\n{}    let z: string = 1\n}}\n",
+            "    print(1);\n".repeat(150)
+        );
+        for src in [clean, typed] {
+            let shown = sound_fixes(&src, &front_end(&src).1);
+            let semicolons: Vec<_> = (shown.iter())
+                .filter(|d| d.code() == Code::RedundantSemicolon)
+                .collect();
+            assert_eq!(semicolons.len(), 150, "{src}");
+            for d in semicolons {
+                assert!(fix_edits(d).is_some_and(|(safe, _)| safe), "{d:?}");
+            }
         }
     }
 
@@ -2654,7 +2842,6 @@ fn main() {
             "fn main() { return;else { } }\n",
             "class C;fn main() {}\n",
             "fn main() {\n    if c;\n    ; { }\n}\n",
-            "fn main() {\n    let a = 1 &\n    ; { }\n}\n",
         ]
         .map(String::from)
         .into();

@@ -295,6 +295,40 @@ mod tests {
         });
     }
 
+    /// A `;` that ends a statement still open at it: removing it changes how the file lexes. The
+    /// fixes shown must keep the syntax, and the safe ones must keep every other report.
+    #[test]
+    fn front_end_should_pass_on_a_redundant_semicolon_that_ends_an_open_statement() {
+        use crate::front_end::w0007_rows::{
+            CHANGES_THE_LEXING, NO_FIX_A, TAKES_A_DROPPED_SEMICOLON,
+        };
+        let more = [
+            "a +\n;fn g<T\nU>() {}",
+            "->\n;type A: B\nC",
+            "fn f() ->\n;??\ny",
+            "type A =\n; ??\ny",
+            "type A =\n;b<c>\ny",
+            "->\n;type A = Box<i64>\n- 1",
+            "extend\n;x: Box<i64>\n{}",
+        ];
+        let rows = (CHANGES_THE_LEXING.iter().map(|r| r.0))
+            .chain(NO_FIX_A)
+            .chain(more)
+            .chain(TAKES_A_DROPPED_SEMICOLON);
+        let failures: Vec<String> = crate::on_compiler_stack(|| {
+            rows.filter_map(|src| {
+                let caught = std::panic::catch_unwind(|| front_end(src.as_bytes()));
+                let payload = caught.err()?;
+                let message = (payload.downcast_ref::<String>().map(String::as_str))
+                    .or_else(|| payload.downcast_ref::<&str>().copied())
+                    .unwrap_or_default();
+                Some(format!("{src:?}: {message}"))
+            })
+            .collect()
+        });
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
     #[test]
     fn every_seed_should_pass() {
         let mut found = Vec::new();
