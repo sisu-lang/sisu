@@ -779,7 +779,7 @@ case in `tests/run`.
 ### The nightly program job
 
 The `Fuzz programs` workflow (`.github/workflows/fuzz-program.yml`) runs
-every night at 03:53 UTC for 30 minutes, and then measures `--coverage` (30
+every night at 03:53 UTC for 60 minutes. It then measures `--coverage` (30
 minutes at most) and `--gaps` (15 minutes at most). It works as
 [the front-end job](#the-nightly-job) does, with its own corpus cache,
 `fuzz-program-corpus-`, and its own concurrency group per ref, so neither job
@@ -790,14 +790,13 @@ or is stopped at its time limit, its `report` job opens an issue titled `Nightly
 comments on the open one, as for the front end. A failed `plan` job opens one
 too. Nothing blocks a merge.
 
-Program inputs are slow: a corpus input takes about 1.25 s, and a seed about
-twice that by estimate. The 1.25 s holds for today's short corpus. New finds
-are mutants of the full-size seeds, so the corpus costs more as nights pass. At
-500 full-size inputs the first pass may take most of the 30 minutes (an
-estimate). Fork mode first runs each
-restored corpus input and each of the 128 seeds once, one at a time, and
-`-max_total_time` does not stop that pass. The pass also counts toward the
-fuzz time. So after the restore, the "Sample the corpus" step keeps 500 inputs
+Program inputs are slow. Fork mode first runs each restored corpus input and
+each of the 128 seeds once, one at a time. `-max_total_time` does not stop
+that pass. The pass also counts toward the fuzz time. With 500 corpus inputs,
+it took 16 and 18 minutes in the runs of 2026-11-06 and 2026-11-07. Those runs
+fuzzed for 30 minutes, which left about 12 minutes for new inputs, so the job
+now fuzzes for 60. New finds are mutants of the full-size seeds, so the pass
+can get longer as nights pass. So after the restore, the "Sample the corpus" step keeps 500 inputs
 at random and removes the others. Each run then starts with at most 500
 corpus inputs and the seeds.
 The run saves the corpus inputs and its new finds, and the next run samples
