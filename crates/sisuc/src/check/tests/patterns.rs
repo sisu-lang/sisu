@@ -253,18 +253,20 @@ fn pattern_names() {
     );
 }
 
-/// E0125 offers the lower-case name as a binding, and a keyword cannot be one.
+/// E0125 offers the lower-case name. A keyword cannot be a binding, but `true` and `false` are
+/// patterns, and the fix is right on a `bool`.
 #[test]
 fn a_name_that_lowers_to_a_keyword_should_get_no_fix() {
     let rows = [
-        ("If", false),
-        ("True", false),
-        ("Import", false),
-        ("Stopped", true),
+        ("1", "If", false),
+        ("1", "Import", false),
+        ("1", "Stopped", true),
+        ("1 == 1", "True", true),
+        ("1 == 1", "False", true),
     ];
-    for (name, has_fix) in rows {
+    for (scrutinee, name, has_fix) in rows {
         let src = format!(
-            "fn main() {{\n    match 1 {{\n        {name} => print(1)\n        _ => print(2)\n    }}\n}}\n"
+            "fn main() {{\n    match {scrutinee} {{\n        {name} => print(1)\n        _ => print(2)\n    }}\n}}\n"
         );
         let ds = diags(&src);
         let [d] = ds.as_slice() else {
