@@ -829,7 +829,7 @@ nightly runs:
 
 ```console
 $ gh api --method POST repos/sisu-lang/sisu/actions/workflows/fuzz-program.yml/dispatches \
-    -f ref=main -f 'inputs[seconds]=1800' -f 'inputs[coverage]=true'
+    -f ref=main -f 'inputs[seconds]=3600' -f 'inputs[coverage]=true'
 ```
 
 Then read the `Generator gaps` section of the job summary. With a new gap, the
