@@ -930,7 +930,7 @@ impl Checker<'_> {
 
     /// The name pattern `name` at a position of type `ty`: a variant of `ty`'s enum, else a
     /// binding, unless it is a constant or an upper-case name, which `ty` has no variant of. Such
-    /// a name that is poisoned gives no error and binds nothing.
+    /// a name that is poisoned gives no error and hides any outer local of that name.
     fn name_pattern(
         &mut self,
         name: &ast::Ident,
@@ -963,8 +963,9 @@ impl Checker<'_> {
         // A name the prelude takes is a binding, which `declare` reports.
         if reserved_name(name.name).is_none() {
             let constant = self.constants.contains_key(&name.name);
-            // A poisoned name gives no error, and binds nothing: its reads are poisoned too.
+            // A poisoned name gives no error.
             if (constant || text.starts_with(char::is_uppercase)) && self.poisoned_use(name.name) {
+                self.hide_local(name);
                 return None;
             }
             if constant {
@@ -1306,7 +1307,7 @@ impl Checker<'_> {
 
     /// The variant that `qualifier.name(fields)` (`parens` is `None` without parentheses)
     /// names at a position of type `ty`, an enum or a type `==` compares, and its field types;
-    /// `None` when it was reported.
+    /// `None` when it was reported, or when the name is poisoned.
     fn variant_pattern(
         &mut self,
         span: Span,
@@ -1503,10 +1504,23 @@ impl Checker<'_> {
         agrees.then_some(local)
     }
 
+    /// Hides any outer local of the poisoned name `name` from the reads and writes in its scope.
+    /// `bound` does not hold it, so an alternative of an `|` that lacks the name is good.
+    fn hide_local(&mut self, name: &ast::Ident) {
+        self.insert_local(name, None, super::BindingKind::Var, None);
+    }
+
     /// Declares the names in `p`, a pattern that failed, as `Error`, so that uses of them
-    /// report nothing more. An upper-case name is taken for a variant and binds nothing.
+    /// report nothing more. An upper-case name is taken for a variant and binds nothing; a
+    /// poisoned one hides any outer local of that name.
     fn poison(&mut self, p: &ast::Pattern, keyword: &'static str, bound: &mut Bound<'_>) {
         match &p.kind {
+            ast::PatternKind::Name(name)
+                if name.name.as_str().starts_with(char::is_uppercase)
+                    && self.poisoned_use(name.name) =>
+            {
+                self.hide_local(name);
+            }
             ast::PatternKind::Name(name)
                 if !name.name.as_str().starts_with(char::is_uppercase)
                     && !bound.names.contains_key(&name.name) =>
