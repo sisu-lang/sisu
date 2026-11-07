@@ -29,17 +29,18 @@ BARE_LABEL = 2 * 3600
 # The first pass counts toward this time. With 1800 s, it left about 12 minutes for new inputs.
 NIGHTLY = 3600
 LEAST = 60
-# GitHub-hosted jobs stop after 6 hours. 4 hours of fuzzing leaves 75 minutes for the build,
+# GitHub-hosted jobs stop after 6 hours. 220 minutes of fuzzing leaves 95 minutes for the build,
 # crash replays, tmin, cmin, setup and the cache, and 45 for --coverage and --gaps: 360 of 360.
-MOST = 4 * 3600
+MOST = 220 * 60
 # The Coverage step's timeout-minutes in fuzz-program.yml; keep the two equal. Coverage measured
 # 7.5 minutes on 654 inputs.
 COVERAGE_MINUTES = 30
 # The Generator gaps step's timeout-minutes in fuzz-program.yml; keep the two equal. The value is
 # not yet measured: read the step's first real duration against it.
 GAPS_MINUTES = 15
-# The bound of the Minimize the corpus step in fuzz-program.yml; keep the two equal.
-CMIN_MINUTES = 20
+# The bound of the Minimize the corpus step in fuzz-program.yml; keep the two equal. In run
+# 42357511459, a bound of 20 minutes stopped cmin on 1,285 inputs, so it removed none.
+CMIN_MINUTES = 40
 # The fuzzer first runs each corpus input and each of the 128 seeds once, one at a time, and
 # -max_total_time does not stop that pass. The 500 inputs that the Sample the corpus step keeps
 # and the seeds took 16 minutes in run 42211713811 and 18 minutes in run 42344737745. New finds
@@ -60,7 +61,7 @@ def label_seconds(name: str) -> int | None:
 def in_range(seconds: int) -> int:
     """Return `seconds` when the fuzz time is in range, and raise ValueError when it is not."""
     if not LEAST <= seconds <= MOST:
-        raise ValueError(f"a fuzz time of {seconds} s is outside {LEAST} s to {MOST // 3600} h")
+        raise ValueError(f"a fuzz time of {seconds} s is outside {LEAST} s to {MOST // 60} min")
     return seconds
 
 

@@ -808,7 +808,8 @@ them again. A removed input is lost; the fuzzer can find its coverage again. The
 summary's executions count only the fuzzing after the first pass: few
 executions, or `unknown`, mean the run spent its time on its corpus. The job
 summary also gives the corpus size before and after cmin and whether cmin
-finished within its 1200 s. A cmin that runs out leaves the corpus as it was.
+finished within its 2400 s. A cmin that does not finish leaves the corpus as it
+was and puts a warning on the run, because the run stays green.
 
 A first job, `scripts/fuzz_program_plan.py`, decides how long to fuzz and
 whether to measure coverage, and sets the time limits of the fuzz step and of
@@ -840,8 +841,8 @@ To fuzz a branch, open a pull request and add one label `fuzz-program`
 `fuzz-program 45m`. The run starts when the label is added and again on each
 push, which cancels the run in progress. Removing the label stops later
 pushes from starting runs; cancel a run in progress from the Actions tab. Any
-`<n>m` or `<n>h` from 1 minute to 4 hours works, which leaves the job inside
-GitHub's 6-hour limit, and each label must first exist in the repository. A
+`<n>m` or `<n>h` from 1 minute to 220 minutes works, which leaves the job inside
+GitHub's 6-hour limit. Each label must first exist in the repository. A
 pull request with two such labels fails the plan, and adding any other label
 starts nothing. A labeled run always ends with `--coverage`, and with `--gaps` when the fuzz
 step passed. It puts its stage lines in the job summary, and its gap section

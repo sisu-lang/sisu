@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       seconds:
-        description: Seconds to fuzz, from 60 to 14400
+        description: Seconds to fuzz, from 60 to 13200
         type: number
         default: 3600
       coverage:
@@ -33,7 +33,7 @@ env:
 # runs only after the fuzz step failed, or tolerates failure. The fuzz step has its own limit
 # (fuzz_minutes() in the plan): 15 min of build, the fuzzing or the corpus pass, 17 of crash
 # replays and 3 to stop. A fuzz step that passes its limit fails, and the later steps still
-# run, so its log and the corpus are kept. Then the job has 15 min of tmin, 20 of cmin, 5 of
+# run, so its log and the corpus are kept. Then the job has 15 min of tmin, 40 of cmin, 5 of
 # setup and the cache, 30 of coverage and 15 of gaps (minutes() in the plan). The 5 minutes are
 # an estimate; when they run over, the job loses Generator gaps first and then Coverage, which
 # run last.
@@ -172,15 +172,17 @@ jobs:
             echo "The fuzzer failed before writing a summary; see the log of the fuzz step." >>"$GITHUB_STEP_SUMMARY"
           fi
       # cmin runs last and bounded. A killed or failed cmin leaves the corpus as it was; the
-      # sample step caps it next run. The summary's sizes and outcome show it.
+      # sample step caps it next run. The summary's sizes and outcome show it, and a warning
+      # marks the run, because the run stays green.
       # CMIN_MINUTES in scripts/fuzz_program_plan.py; keep the two equal.
       - name: Minimize the corpus
         if: always() && steps.fuzz.outcome != 'skipped'
         continue-on-error: true
         run: |
           before=$(find fuzz/corpus/program -type f 2>/dev/null | wc -l)
+          bound=2400
           status=0
-          timeout -k 10 1200 scripts/fuzz.sh --target program --cmin >cmin.txt 2>&1 || status=$?
+          timeout -k 10 "$bound" scripts/fuzz.sh --target program --cmin >cmin.txt 2>&1 || status=$?
           cat cmin.txt
           after=$(find fuzz/corpus/program -type f 2>/dev/null | wc -l)
           # cargo-fuzz 0.13.2 exits 0 after a failed merge, having printed this line.
@@ -190,10 +192,13 @@ jobs:
                else
                  outcome="finished"
                fi ;;
-            124) outcome="was stopped at its 1200 s bound" ;;
-            137) outcome="was killed (1200 s bound or out of memory)" ;;
+            124) outcome="was stopped at its ${bound} s bound" ;;
+            137) outcome="was killed (${bound} s bound or out of memory)" ;;
             *) outcome="failed with exit status ${status}" ;;
           esac
+          if [ "$outcome" != finished ]; then
+            echo "::warning title=Corpus not minimized::cmin ${outcome}. The corpus has ${after} inputs, and the next run keeps at most 500 at random."
+          fi
           {
             echo
             echo "## Corpus"
