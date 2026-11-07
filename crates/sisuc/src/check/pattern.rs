@@ -18,6 +18,7 @@ use crate::diagnostic::{
     BadRange, Definition, DiagnosticKind, Expected, GuardHelp, MismatchSource, Plain, Unwrap,
     suggestion,
 };
+use crate::lexer::{self, TokenKind};
 use crate::source::{Span, removal_end};
 use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeKind};
@@ -1009,8 +1010,20 @@ impl Checker<'_> {
                         bound.order.push(name.name);
                         bound.locals.push(local);
                     }
+                    // A name that is not a variant here starts with an upper-case letter.
+                    let mut lower = text.to_string();
+                    if let Some(first) = text.chars().next() {
+                        lower.replace_range(..first.len_utf8(), &first.to_lowercase().to_string());
+                    }
+                    // Another keyword is no binding, so the fix would not parse. `true` and `false`
+                    // are patterns: `True` on a `bool` is likely one of them.
+                    let parses = matches!(
+                        lexer::keyword(&lower),
+                        None | Some(TokenKind::True | TokenKind::False)
+                    );
                     DiagnosticKind::NotVariantHere {
                         name: text.to_string(),
+                        binding: parses.then_some(lower),
                         at: name.span,
                     }
                 };

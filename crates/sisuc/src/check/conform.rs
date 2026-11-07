@@ -527,7 +527,7 @@ impl Checker<'_> {
             }
             Source::Block(block) => {
                 let ext = &self.extensions[block];
-                ext.methods.is_empty()
+                ext.methods.is_empty() && !ext.has_broken_method
             }
         }
     }

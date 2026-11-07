@@ -217,8 +217,8 @@ fn assert_safe_fixes(source: &str, diagnostics: &[Diagnostic]) {
 }
 
 /// Asserts that no fix shown leaves `source` lexing or parsing worse than it does:
-/// `sound_fixes` drops such a fix of a lexer or parser diagnostic, but shows the checker's
-/// unjudged.
+/// `sound_fixes` drops such a fix of a lexer or parser diagnostic. It also drops such a checker
+/// fix at the end of a line or around a dropped `;`, and shows the other checker fixes unjudged.
 fn assert_fixes_keep_syntax(source: &str, diagnostics: &[Diagnostic]) {
     let before = crate::front_end::syntax_errors(source);
     let shown = diagnostics
@@ -328,6 +328,33 @@ mod tests {
                 Some(format!("{src:?}: {message}"))
             })
             .collect()
+        });
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    /// Inputs that the fuzz target found. A fix must keep the syntax, and a safe one must keep
+    /// every report of another code.
+    #[test]
+    fn front_end_should_pass_on_an_input_it_failed_on() {
+        let rows = [
+            "fn main<T>\n() {\n    print(1)\n}\n",
+            "fn f() {}\nfn main() {\n    f<i64>\n    ()\n}\n",
+            "enum E {\n    A(i64)\n}\nfn main() {\n    let _ = E.A<i64>\n    (1)\n}\n",
+            "interface I {\n    fn a(self) -> i64\n}\n\nenum Flag: Eq {\n    On(any I)\n    Off\n}\n\nextend Flag: Eq {\n    fn eq(self, other: Self) -> bool\n {\n        true\n    }\n}\n\nfn main() {}\n",
+            "enum T{P}fn a(){P<i>.S}",
+            "fn main() {\n    match 1 {\n        If => print(1)\n        _ => print(2)\n    }\n}\n",
+        ];
+        let failures: Vec<String> = crate::on_compiler_stack(|| {
+            rows.iter()
+                .filter_map(|src| {
+                    let caught = std::panic::catch_unwind(|| front_end(src.as_bytes()));
+                    let payload = caught.err()?;
+                    let message = (payload.downcast_ref::<String>().map(String::as_str))
+                        .or_else(|| payload.downcast_ref::<&str>().copied())
+                        .unwrap_or_default();
+                    Some(format!("{src:?}: {message}"))
+                })
+                .collect()
         });
         assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
@@ -658,7 +685,7 @@ mod tests {
         assert_safe_fixes(src, &ds);
     }
 
-    /// `sound_fixes` shows a checker fix unjudged, so the fuzz target judges it.
+    /// `sound_fixes` shows most checker fixes unjudged, so the fuzz target judges them.
     #[test]
     #[should_panic(expected = "NeverReassigned: a fix breaks the syntax")]
     fn rejects_a_checker_fix_that_breaks_the_syntax() {
