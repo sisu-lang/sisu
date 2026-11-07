@@ -2428,7 +2428,7 @@ impl Checker<'_> {
                 let enums = self.enum_ids.keys().map(|e| (e.as_str(), Definition::Enum));
                 let interfaces =
                     (self.interface_ids.keys()).map(|i| (i.as_str(), Definition::Interface));
-                let aliases = (self.aliases.names.keys()).map(|a| (a.as_str(), Definition::Alias));
+                let aliases = self.alias_candidates();
                 let candidates = (types.into_iter().chain(classes).chain(enums))
                     .chain(interfaces)
                     .chain(aliases);

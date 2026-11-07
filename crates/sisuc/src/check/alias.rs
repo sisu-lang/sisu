@@ -13,7 +13,7 @@
 
 use std::rc::Rc;
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::expr::{bare_none, none_literal};
 use super::generic::{Site, type_meets};
@@ -23,7 +23,7 @@ use super::{
     own_args, tail, value_span,
 };
 use crate::ast;
-use crate::diagnostic::NestingForm;
+use crate::diagnostic::{Definition, NestingForm};
 use crate::graph::{components, cycle_through};
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -141,6 +141,10 @@ pub(super) struct Aliases {
     pub(super) names: FxHashMap<Symbol, Declared<usize>>,
     /// Every alias in source order, so a second alias of a name has a body of its own.
     pub(super) infos: Vec<AliasInfo>,
+    /// For each alias, the aliases whose bodies name it.
+    users: Vec<Vec<usize>>,
+    /// The alias whose body is being resolved.
+    resolving: Option<usize>,
     /// What every substitution of an alias body has built, for the whole check.
     memo: SharedMemo,
     /// How many entries the memo held when the outermost written type that resolves began.
@@ -238,6 +242,13 @@ impl Checker<'_> {
         let edges: Vec<Vec<usize>> = (refs.iter())
             .map(|out| out.iter().map(|&(to, _)| to).collect())
             .collect();
+        let mut users = vec![Vec::new(); count];
+        for (user, out) in edges.iter().enumerate() {
+            for &named in out {
+                users[named].push(user);
+            }
+        }
+        self.aliases.users = users;
         let component = components(&edges);
         let mut size = vec![0; count];
         for &c in &component {
@@ -293,6 +304,7 @@ impl Checker<'_> {
         // no other part of the declaration that names it.
         let written = self.written.take();
         let base = self.aliases.base.take();
+        let outer = self.aliases.resolving.replace(id);
         let from = self.queued();
         let fresh = Body {
             alias: Some(Vec::new()),
@@ -305,10 +317,41 @@ impl Checker<'_> {
         self.keep_at(from..self.queued(), Slot::Alias(id));
         self.written = written;
         self.aliases.base = base;
+        self.aliases.resolving = outer;
         body.map(|body| Resolved {
             body,
             checks: state.alias.unwrap_or_default().into(),
         })
+    }
+
+    /// The names that make a cycle when the body being resolved writes them: the alias itself,
+    /// and each alias that names it, also through other aliases. Empty outside an alias body.
+    pub(super) fn cyclic_names(&self) -> FxHashSet<Symbol> {
+        let mut names = FxHashSet::default();
+        let Some(id) = self.aliases.resolving else {
+            return names;
+        };
+        let mut seen = vec![false; self.aliases.infos.len()];
+        seen[id] = true;
+        let mut stack = vec![id];
+        while let Some(alias) = stack.pop() {
+            names.insert(self.aliases.infos[alias].name.name);
+            for &user in &self.aliases.users[alias] {
+                if !std::mem::replace(&mut seen[user], true) {
+                    stack.push(user);
+                }
+            }
+        }
+        names
+    }
+
+    /// The aliases that a suggestion for an unknown type may name: not one that the body being
+    /// resolved reaches, as the fix would make a cycle.
+    pub(super) fn alias_candidates(&self) -> impl Iterator<Item = (&str, Definition)> {
+        let cyclic = self.cyclic_names();
+        (self.aliases.names.keys())
+            .filter(move |name| !cyclic.contains(*name))
+            .map(|name| (name.as_str(), Definition::Alias))
     }
 
     /// Makes the alias `id` `Error`, as an alias is whose bounds fail where it is declared.
