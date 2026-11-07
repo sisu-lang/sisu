@@ -1097,6 +1097,11 @@ fn an_alias_body_should_not_suggest_an_alias_that_makes_a_cycle() {
         ("type Bb = Ab\ntype Aa = Bb", (1, 11, "Ab")),
         ("type Aa = [Bb]\ntype Bb = Ab", (2, 11, "Ab")),
         ("type Aa = Bb\ntype Bb = Cc\ntype Cc = Ab", (3, 11, "Ab")),
+        // Two aliases name `Base`, and `Top` names both: the walk meets `Top` twice.
+        (
+            "class Pair<A, B> {}\ntype Top = Pair<Mid1, Mid2>\ntype Mid1 = Base\ntype Mid2 = Base\ntype Base = Basx",
+            (5, 13, "Basx"),
+        ),
     ] {
         suggests_nothing(&format!("{src}\nfn main() {{}}"), Code::UnknownType, pos);
     }
