@@ -117,12 +117,12 @@ class Labels(unittest.TestCase):
 
 
 class Events(unittest.TestCase):
-    def test_nightly_run_should_get_65_minutes_of_fuzz_step_in_150(self) -> None:
-        self.assertEqual(fp.fuzz_minutes(1800), 65)
-        self.assertEqual(fp.minutes(1800, coverage=True), 150)
+    def test_nightly_run_should_get_95_minutes_of_fuzz_step_in_180(self) -> None:
+        self.assertEqual(fp.fuzz_minutes(fp.NIGHTLY), 95)
+        self.assertEqual(fp.minutes(fp.NIGHTLY, coverage=True), 180)
 
     def test_schedule_should_measure_coverage(self) -> None:
-        self.assertEqual(fp.plan("schedule", {}, {}), (1800, True))
+        self.assertEqual(fp.plan("schedule", {}, {}), (3600, True))
 
     def test_fuzz_step_should_have_time_for_the_corpus_pass_of_a_short_run(self) -> None:
         # 15 of build, 30 of corpus pass, 17 of crash replays and 3 to stop.
