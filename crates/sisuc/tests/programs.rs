@@ -3,6 +3,7 @@
 //! rules of the `cases` harness.
 
 use std::ffi::{OsStr, OsString};
+use std::fmt::Write as _;
 use std::fs::{self, File};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::process::ExitStatusExt;
@@ -2467,6 +2468,101 @@ fn build_tmp(name: &str, source: &str) -> (Output, PathBuf) {
         .output()
         .expect("sisu starts");
     (out, exe)
+}
+
+/// The source of a chain of enums `E0` to `E<top>`, each with four fields of the one before.
+/// A function builds a full value of each one, and `main` compares two values of `E<top>`.
+fn wide_enum_source(top: usize) -> String {
+    let mut source = String::from(
+        "enum E0 {\n    A\n    V(i64, i64, i64, i64)\n}\nfn e0() -> E0 {\n    E0.V(1, 2, 3, 4)\n}\n",
+    );
+    for level in 1..=top {
+        let below = level - 1;
+        writeln!(
+            source,
+            "enum E{level} {{\n    A\n    V(E{below}, E{below}, E{below}, E{below})\n}}\n\
+             fn e{level}() -> E{level} {{\n    E{level}.V(e{below}(), E{below}.A, E{below}.A, E{below}.A)\n}}"
+        )
+        .expect("writing to a `String` should not fail");
+    }
+    write!(
+        source,
+        "fn main() {{\n    print(e{top}() == e{top}())\n}}\n"
+    )
+    .expect("writing to a `String` should not fail");
+    source
+}
+
+/// Builds `source` with `flags` and 1 GiB of address space, runs the program, and checks that
+/// it exits 0 and prints `true`. `ulimit -v` has an effect on Linux only.
+#[cfg(target_os = "linux")]
+fn assert_builds_in_bounded_memory(name: &str, source: &str, flags: &[&str]) {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let file = dir.join(format!("{name}.sisu"));
+    fs::write(&file, source).expect("writes");
+    let exe = dir.join(name);
+    // It is absent on the first run, so a failure here is expected and harmless.
+    drop(fs::remove_file(&exe));
+    let out = Command::new("sh")
+        .args([
+            "-c",
+            r#"ulimit -c 0 && ulimit -v 1048576 && exec "$0" "$@""#,
+        ])
+        .arg(env!("CARGO_BIN_EXE_sisu"))
+        .arg("build")
+        .args(flags)
+        .arg(&file)
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("sh starts");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{:?}: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(&exe).output().expect("the program starts");
+    assert_eq!(run.status.code(), Some(0), "{:?}", run.status);
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "true\n",
+        "the program should compare its value"
+    );
+}
+
+/// GIVEN a chain of enums whose last one holds 171 KiB
+/// WHEN `sisu build -O2` runs with 1 GiB of address space
+/// THEN it exits 0, and the program prints `true`
+#[cfg(target_os = "linux")]
+#[test]
+fn a_wide_enum_should_build_at_o2_in_bounded_memory() {
+    assert_builds_in_bounded_memory("wide_enum_o2", &wide_enum_source(6), &["-O2"]);
+}
+
+/// GIVEN a chain of enums whose last one holds 683 KiB, too large for a frame under Valgrind
+/// WHEN `sisu build` runs with 1 GiB of address space, at each optimization level
+/// THEN it exits 0, and the program prints `true`
+#[cfg(target_os = "linux")]
+#[test]
+fn a_very_wide_enum_should_build_and_run_in_bounded_memory() {
+    let source = wide_enum_source(7);
+    assert_builds_in_bounded_memory("very_wide_enum_o0", &source, &[]);
+    assert_builds_in_bounded_memory("very_wide_enum_o2", &source, &["-O2"]);
+}
+
+/// GIVEN an enum with one variant of 10 000 `i64` fields
+/// WHEN `sisu build -O2` runs with 1 GiB of address space
+/// THEN it exits 0, and the program prints `true`
+#[cfg(target_os = "linux")]
+#[test]
+fn a_variant_with_many_fields_should_build_at_o2_in_bounded_memory() {
+    let fields = vec!["i64"; 10_000].join(", ");
+    let source = format!(
+        "enum W {{\n    A\n    V({fields})\n}}\nfn main() {{\n    let w = W.A\n    print(w == W.A)\n}}\n"
+    );
+    assert_builds_in_bounded_memory("wide_variant_o2", &source, &["-O2"]);
 }
 
 /// GIVEN a program that assigns to an immutable binding

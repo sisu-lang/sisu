@@ -11,9 +11,9 @@ The design decisions behind Sisu, each written down as a short record with its r
   <section class="ph"><div class="w">
     <h1>Design decisions</h1>
     <p class="lede">Every design choice in Sisu is written down with its reasons, as a short decision record. This page lists them all.</p>
-    <p class="meta">{{adr-count}} records · at commit 749bcbf0</p>
+    <p class="meta">{{adr-count}} records · at commit fd85e98c</p>
   </div></section>
-  <!-- source: docs/adr/ (47 files, 0001 to 0047), README.md ("Read why a design choice was made") -->
+  <!-- source: docs/adr/ (48 files, 0001 to 0048), README.md ("Read why a design choice was made") -->
 
   <div class="w doc">
     <nav class="toc" aria-label="On this page"><h2>On this page</h2><ol>
@@ -127,8 +127,9 @@ The design decisions behind Sisu, each written down as a short record with its r
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0033-every-language-feature-has-a-generator-rule.md"><span class="num">0033</span><b>Every language feature has a generator rule</b><span>A feature is done only when the program fuzzer generates it, and a unit test fails when a variant has no generated program.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0041-special-cases-are-attributes-not-compiler-name-lists.md"><span class="num">0041</span><b>Special cases are attributes, not compiler name lists</b><span>When a check treats some library code in a different way, the declaration carries an attribute, such as <code>@discardable</code>, that user code can use too.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0045-codegen-units-split-by-default.md"><span class="num">0045</span><b>A large program splits into codegen units by default</b><span>LLVM optimizes and writes each codegen unit on its own thread; small callees are copied at <code>-O2</code>, and <code>--codegen-units 1</code> gives one module and the fastest program.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0048-a-large-value-stays-in-memory.md"><span class="num">0048</span><b>A large value stays in memory</b><span>A value over 256 bytes is a pointer to a stack slot, so a large enum builds in bounded memory; a smaller one is an LLVM value, as before.</span></a></li>
       </ul>
-      <!-- source: docs/adr/0026-one-compiler-crate.md, docs/adr/0033-every-language-feature-has-a-generator-rule.md, docs/adr/0041-special-cases-are-attributes-not-compiler-name-lists.md, docs/adr/0045-codegen-units-split-by-default.md -->
+      <!-- source: docs/adr/0026-one-compiler-crate.md, docs/adr/0033-every-language-feature-has-a-generator-rule.md, docs/adr/0041-special-cases-are-attributes-not-compiler-name-lists.md, docs/adr/0045-codegen-units-split-by-default.md, docs/adr/0048-a-large-value-stays-in-memory.md -->
 
       <h2 id="avoided">What Sisu deliberately avoids</h2>
       <p>These come from the roadmap's <a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#deliberately-avoided">Deliberately avoided</a> list.</p>

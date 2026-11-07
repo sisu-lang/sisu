@@ -1,0 +1,83 @@
+// A recursive enum of over 256 bytes with a boxed `Node?` field and a boxed `Node??` field. A read
+// of such a field joins a `None` and a boxed value, and each of them stays in memory.
+enum C0 {
+    S(string, [i64], string, string)
+}
+
+enum C1 {
+    V(C0, C0, C0, C0)
+}
+
+enum C2 {
+    V(C1, C1, C1, C1)
+}
+
+enum Node {
+    Leaf
+    Link(Node?, C2)
+    Twice(Node??, C2)
+}
+
+enum Pack<T> {
+    Empty
+    Held(Pack<T>?, T)
+}
+
+fn pad(n: i64) -> C2 {
+    let text = "n" + n.to_string()
+    let c0 = C0.S(text, [n], text, text)
+    let c1 = C1.V(c0, c0, c0, c0)
+    C2.V(c1, c1, c1, c1)
+}
+
+fn next(n: Node) -> Node? {
+    match n {
+        Node.Leaf => None
+        Node.Link(rest, _) => rest
+        Node.Twice(_, _) => None
+    }
+}
+
+fn twice(n: Node) -> Node?? {
+    match n {
+        Node.Twice(rest, _) => rest
+        _ => None
+    }
+}
+
+fn replace(mut o: Node?, n: Node) {
+    o = n
+}
+
+fn main() {
+    let one = Node.Link(Node.Leaf, pad(1))
+    let two = Node.Link(one, pad(2))
+    let end = Node.Link(None, pad(3))
+    print(next(two) == one)
+    print(next(end) == None)
+    print(next(end) == next(two))
+    print(two == two)
+    print(two == one)
+
+    let some = Node.Twice(next(two), pad(4))
+    let some_none = Node.Twice(next(end), pad(5))
+    print(twice(some) == next(two))
+    print(twice(some_none) == next(end))
+    print(twice(two) == None)
+    print(some == some_none)
+
+    let mut slot = next(end)
+    replace(mut slot, two)
+    print(slot == two)
+    let mut each = [next(two), next(end)]
+    each[1] = next(one)
+    print(each[0] == one)
+    print(each[1] == Node.Leaf)
+
+    let inner = Pack.Held(Pack.Empty, pad(6))
+    let outer = Pack.Held(inner, pad(7))
+    match outer {
+        Pack.Held(rest, _) => print(rest == inner)
+        Pack.Empty => print(false)
+    }
+}

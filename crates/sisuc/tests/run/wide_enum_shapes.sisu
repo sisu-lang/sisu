@@ -1,0 +1,91 @@
+// A generic enum, a recursive enum, a `mut` parameter, `dbg` and `exchange`, each at 1 KiB and more.
+enum Pack<T> {
+    Empty
+    Four(T, T, T, T)
+}
+
+enum Inner {
+    A
+    S(string, [i64], string, string)
+}
+
+enum Tree {
+    Leaf(Pack<Pack<Inner>>)
+    Node(Tree, Pack<Pack<Inner>>, Tree)
+}
+
+fn inner(n: i64) -> Inner {
+    Inner.S("n{n}", [n], "x", "y")
+}
+
+fn pack(n: i64) -> Pack<Pack<Inner>> {
+    let p = Pack.Four(inner(n), Inner.A, inner(n + 1), Inner.A)
+    Pack.Four(p, Pack<Inner>.Empty, p, p)
+}
+
+fn tree(d: i64) -> Tree {
+    if d == 0 { Tree.Leaf(pack(d)) } else { Tree.Node(tree(d - 1), pack(d), tree(d - 1)) }
+}
+
+fn count(t: Tree) -> i64 {
+    match t {
+        Tree.Leaf(_) => 1
+        Tree.Node(l, _, r) => count(l) + 1 + count(r)
+    }
+}
+
+fn pick<T>(a: T, b: T, first: bool) -> T {
+    if first { a } else { b }
+}
+
+fn swap_in(mut a: Pack<Pack<Inner>>, mut b: Pack<Pack<Inner>>) {
+    let old = a
+    a = b
+    b = old
+}
+
+fn set_optional(mut o: Tree?, t: Tree) {
+    o = Some(t)
+}
+
+fn main() {
+    let t = tree(3)
+    print(count(t))
+    print(t == tree(3))
+    print(t == tree(2))
+    print("{t}".len())
+    let u = pick(t, tree(1), false)
+    print(count(u))
+    let mut a = pack(1)
+    let mut b = pack(2)
+    swap_in(mut a, mut b)
+    print(a == pack(2))
+    print(b == pack(1))
+    let mut o: Tree? = None
+    set_optional(mut o, tree(1))
+    print(count(o ?? tree(0)))
+    let mut total = 0
+    let mut i = 0
+    while i < 4 {
+        let held = if i % 2 == 0 { pack(i) } else { Pack.Empty }
+        match held {
+            Pack.Empty => total += 1
+            Pack.Four(x, _, _, _) => {
+                if x == Pack.Four(inner(i), Inner.A, inner(i + 1), Inner.A) {
+                    total += 100
+                } else {
+                    total += 10
+                }
+            }
+        }
+        i += 1
+    }
+    print(total)
+    dbg(pack(1))
+    let xs = [pack(3); 2]
+    print(xs[0] == xs[1])
+    print(dbg(xs[1]) == pack(3))
+    let exchanged = exchange(mut a, pack(9))
+    print(exchanged == pack(2))
+    print(a == pack(9))
+}

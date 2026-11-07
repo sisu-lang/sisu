@@ -1481,6 +1481,41 @@ fn class_should_get_no_eq_helper_and_its_array_should_call_the_written_eq() {
     assert!(helper.contains("call i1 @sisu.C.eq("), "{helper}");
 }
 
+/// GIVEN programs that use an enum of 2 KiB or more at each site
+///   (local, call, array, optional, `match` and box)
+/// WHEN they compile
+/// THEN only an `alloca` or a `getelementptr` names the type of such an enum
+///
+/// A first-class value of such a type costs LLVM time and memory for each of its elements.
+/// Instruction selection crashes at 65 536 of them.
+#[test]
+fn wide_enum_should_stay_in_memory_at_each_site() {
+    let programs = [
+        include_str!("../../tests/run/wide_enum.sisu"),
+        include_str!("../../tests/run/wide_enum_local.sisu"),
+        include_str!("../../tests/run/wide_enum_call.sisu"),
+        include_str!("../../tests/run/wide_enum_array.sisu"),
+        include_str!("../../tests/run/wide_enum_optional.sisu"),
+        include_str!("../../tests/run/wide_enum_match.sisu"),
+        include_str!("../../tests/run/wide_enum_any.sisu"),
+    ];
+    for program in programs {
+        let context = Context::create();
+        let ir = compiled(&context, program).print_to_string().to_string();
+        let wide = ["E3", "E4", "E5", "E6", "E7"].map(|name| format!("%sisu.{name}"));
+        for line in ir.lines() {
+            let in_memory = line.starts_with('%')
+                || line.contains(" = alloca ")
+                || line.contains(" = getelementptr ");
+            let named = wide.iter().any(|name| {
+                line.split(|c: char| !(c.is_alphanumeric() || matches!(c, '%' | '.')))
+                    .any(|word| word == name)
+            });
+            assert!(in_memory || !named, "{line}");
+        }
+    }
+}
+
 /// `x == None` on a counted optional tests whether it holds a value, so it needs no `eq` helper,
 /// which a class has none of: the pointer is tested against `null`.
 #[test]
