@@ -1,0 +1,5 @@
+fn main() {
+    let names = ["Aino", "Eino", "Kalle"]
+    print(names.get(1) ?? "nobody")
+    print(names.get(7) ?? "nobody")    // no element 7: get gives None
+}

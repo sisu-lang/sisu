@@ -1,0 +1,13 @@
+fn discount(mut prices: [i64], percent: i64) {
+    for i in 0..prices.len() {
+        prices[i] -= prices[i] * percent / 100
+    }
+}
+
+fn main() {
+    let prices = [3900, 1250, 1800]
+    let mut sale = prices
+    discount(mut sale, 20)    // `mut`: this call changes sale
+    print(prices)
+    print(sale)
+}

@@ -26,7 +26,9 @@
     : esc(line);
   document.querySelectorAll('pre[data-lang]').forEach(pre => {
     const f = { sisu: hl, sh, out: esc }[pre.dataset.lang] || esc;
-    pre.innerHTML = pre.textContent.replace(/^\n|\n$/g, '').split('\n').map(l => `<span class="ln">${f(l)}</span>`).join('');
+    // data-mark="3" marks line 3, the line that the text beside the code talks about.
+    const mark = Number(pre.dataset.mark);
+    pre.innerHTML = pre.textContent.replace(/^\n|\n$/g, '').split('\n').map((l, i) => `<span class="ln${i + 1 === mark ? ' hl' : ''}">${f(l)}</span>`).join('');
   });
 
   // Diagnostics index search: a code prefix, or a prefix of a title word for every word typed.

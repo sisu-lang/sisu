@@ -150,7 +150,7 @@ A tour of the Sisu language as it works today, one small program at a time.
       <!-- source: docs/adr/0007-arrays-are-values.md, docs/adr/0042-a-slice-shares-its-block.md, docs/roadmap.md ("What works today": copy-on-write arrays, slices), crates/sisuc/tests/run/copies.sisu, docs/adr/0043-mut-parameters-copy-in-and-out.md, crates/sisuc/tests/run/mut_local.sisu, docs/reference/arrays.md (Methods, Range indexes), docs/reference/functions.md (mut parameters) -->
 
       <h2 id="overflow">Integers panic on overflow</h2>
-      <p>Integer arithmetic that overflows stops the program with a panic that names the line. A wrong answer is never silent. Division by zero panics the same way, and every panic exits with status 101.</p>
+      <p>Integer arithmetic that overflows stops the program with a panic that names the line. Arithmetic never wraps silently. Division by zero panics the same way, and every panic exits with status 101.</p>
       <figure class="code"><figcaption class="cap">factorial.sisu</figcaption><pre data-lang="sisu">
 {{text programs/run-fail/factorial.sisu}}</pre></figure>
       <figure class="code"><figcaption class="cap">terminal</figcaption><pre data-lang="sh">
