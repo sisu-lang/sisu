@@ -321,6 +321,1221 @@ fn an_item_with_a_prelude_function_name_should_poison_its_uses() {
     }
 }
 
+/// `codes_row` for a program that may hold a broken item, which `checked` does not parse.
+fn front_end_row(row: &str, src: &str, expected: &[Wanted]) {
+    let ds = front_end::front_end(src).1;
+    let found: Vec<_> = ds.iter().map(|d| (d.code(), at(src, d.span()))).collect();
+    assert_eq!(found, expected, "row `{row}`");
+}
+
+/// A rejected enum: `E0034` at 1:6.
+const REJECTED_ENUM: &str = "enum print {\n    A\n}\n\n";
+/// A rejected constant: `E0034` at 1:7.
+const REJECTED_CONST: &str = "const print = 1\n\n";
+/// A broken enum: `E0004` at 2:1.
+const BROKEN_ENUM: &str = "enum Foo\n{ A }\n\n";
+/// A broken interface: `E0004` at 2:1.
+const BROKEN_INTERFACE: &str = "interface Foo\n{}\n\n";
+/// A broken function: `E0004` at 2:1.
+const BROKEN_FN: &str = "fn foo()\n{}\n\n";
+/// The only error of a rejected enum.
+const E_ENUM: &[Wanted] = &[(Code::DefinedTwice, (1, 6))];
+/// The only error of a rejected constant.
+const E_CONST: &[Wanted] = &[(Code::DefinedTwice, (1, 7))];
+/// The only error of a broken item.
+const E_BROKEN: &[Wanted] = &[(Code::BraceOnNewLine, (2, 1))];
+
+/// The arm `{pattern} => {}`, or `pattern` itself when it holds the `=>` already.
+fn arm(pattern: &str) -> String {
+    if pattern.contains("=>") {
+        pattern.to_string()
+    } else {
+        format!("{pattern} => {{}}")
+    }
+}
+
+/// A `main` that matches `1` with the arm `{pattern} => {}` and then `_ => {}`.
+fn match_one(pattern: &str) -> String {
+    format!(
+        "fn main() {{\n    match 1 {{\n        {}\n        _ => {{}}\n    }}\n}}",
+        arm(pattern)
+    )
+}
+
+/// A function over a `Z` that matches it with the arm `{pattern} => {}` and then `_ => {}`.
+fn match_enum(pattern: &str) -> String {
+    format!(
+        "enum Z {{ Q }}\nfn f(z: Z) {{\n    match z {{\n        {}\n        _ => {{}}\n    }}\n}}\nfn main() {{}}",
+        arm(pattern)
+    )
+}
+
+/// A function over an `i64?` that matches it with the arm `{pattern} => {}` and then `_ => {}`.
+fn match_option(pattern: &str) -> String {
+    format!(
+        "fn main() {{\n    let o: i64? = None\n    match o {{\n        {}\n        _ => {{}}\n    }}\n}}",
+        arm(pattern)
+    )
+}
+
+/// A `main` that declares `let o: {ty} = None` and then runs `statement`.
+fn with_o(ty: &str, statement: &str) -> String {
+    format!("fn main() {{\n    let o: {ty} = None\n    {statement}\n}}")
+}
+
+/// A generic call of a poisoned name reads neither the built-in nor the item: it gives no
+/// `E0137` beside the rejection. A local of that name is not poisoned and keeps its error.
+#[test]
+fn a_generic_call_of_a_poisoned_name_should_give_no_second_error() {
+    let call = "fn main() {\n    print<i64>(1, 2)\n}";
+    front_end_row(
+        "rejected enum, call",
+        &[REJECTED_ENUM, call].concat(),
+        E_ENUM,
+    );
+    front_end_row(
+        "rejected constant, call",
+        &[REJECTED_CONST, call].concat(),
+        E_CONST,
+    );
+    front_end_row(
+        "rejected constant, path",
+        &[
+            REJECTED_CONST,
+            "fn main() {\n    let _a = print<i64>.x(1)\n}",
+        ]
+        .concat(),
+        E_CONST,
+    );
+    front_end_row(
+        "a local keeps its error",
+        &[
+            REJECTED_CONST,
+            "fn main() {\n    let print = 1\n    print(print<i64>(2))\n}",
+        ]
+        .concat(),
+        &[(Code::DefinedTwice, (1, 7)), (Code::TypeArguments, (5, 11))],
+    );
+    front_end_row(
+        "no poison stays",
+        "fn main() {\n    print<i64>(1)\n}",
+        &[(Code::TypeArguments, (2, 10))],
+    );
+    front_end_row(
+        "rejected function",
+        &["fn print() {}\n\n", call].concat(),
+        &[(Code::DefinedTwice, (1, 4))],
+    );
+    front_end_row(
+        "a parameter keeps its error",
+        &[
+            REJECTED_CONST,
+            "fn f(print: i64) {\n    let _a = print<i64>(2)\n}\nfn main() {}",
+        ]
+        .concat(),
+        &[(Code::DefinedTwice, (1, 7)), (Code::TypeArguments, (4, 14))],
+    );
+    front_end_row(
+        "a local keeps its error, path",
+        &[
+            REJECTED_CONST,
+            "fn main() {\n    let print = 1\n    let _a = print<i64>.x(2)\n}",
+        ]
+        .concat(),
+        &[(Code::DefinedTwice, (1, 7)), (Code::TypeArguments, (5, 14))],
+    );
+    front_end_row(
+        "intact enum named i64, generic call",
+        "enum i64 { A }\n\nfn main() {\n    i64<i64>(1)\n}",
+        &[
+            (Code::BuiltInName, (1, 6)),
+            (Code::TypeArguments, (4, 8)),
+            (Code::AlreadyConverted, (4, 14)),
+        ],
+    );
+    front_end_row(
+        "intact enum named Result, generic call",
+        "enum Result { A }\n\nfn main() {\n    Ok<i64>(1)\n}",
+        &[(Code::BuiltInName, (1, 6)), (Code::TypeArguments, (4, 7))],
+    );
+}
+
+/// A local that takes the name of a poisoned enum gives no `E0116`: the enum does not exist. An
+/// intact enum, and a duplicate one, still clash.
+#[test]
+fn a_local_with_a_poisoned_enum_name_should_give_no_second_error() {
+    let rejected = |body: &str| [REJECTED_ENUM, body].concat();
+    let broken = |body: &str| [BROKEN_ENUM, body].concat();
+    front_end_row(
+        "rejected enum, let",
+        &rejected("fn main() {\n    let print = 1\n}"),
+        E_ENUM,
+    );
+    front_end_row(
+        "rejected enum, parameter",
+        &rejected("fn f(print: i64) {}\nfn main() {}"),
+        E_ENUM,
+    );
+    front_end_row(
+        "rejected enum, for",
+        &rejected("fn main() {\n    for print in [1] {}\n}"),
+        E_ENUM,
+    );
+    front_end_row(
+        "rejected enum, if let",
+        &rejected(&with_o("i64?", "if let Some(print) = o {}")),
+        E_ENUM,
+    );
+    front_end_row(
+        "broken enum, let",
+        &broken("fn main() {\n    let Foo = 1\n}"),
+        E_BROKEN,
+    );
+    front_end_row(
+        "broken enum, parameter",
+        &broken("fn f(Foo: i64) {}\nfn main() {}"),
+        E_BROKEN,
+    );
+    front_end_row(
+        "intact enum stays",
+        "enum Foo { A }\n\nfn main() {\n    let Foo = 1\n}",
+        &[(Code::EnumNamedLocal, (4, 9))],
+    );
+    front_end_row(
+        "a local of a rejected enum's name keeps its type",
+        &rejected("fn main() {\n    let print = 1\n    let _a: string = print\n}"),
+        &[(Code::DefinedTwice, (1, 6)), (Code::Mismatch, (7, 22))],
+    );
+    front_end_row(
+        "a local of a broken enum's name keeps its type",
+        &broken("fn main() {\n    let Foo = 1\n    let _a: string = Foo\n}"),
+        &[(Code::BraceOnNewLine, (2, 1)), (Code::Mismatch, (6, 22))],
+    );
+    front_end_row(
+        "duplicate enum, let",
+        "enum Foo { A }\nconst Foo = 1\n\nfn main() {\n    let Foo = 1\n}",
+        &[(Code::DefinedTwice, (2, 7)), (Code::EnumNamedLocal, (5, 9))],
+    );
+    front_end_row(
+        "broken enum, if let",
+        &broken(&with_o("i64?", "if let Foo = o {}")),
+        E_BROKEN,
+    );
+    front_end_row(
+        "broken enum, let else",
+        &broken(&with_o("i64?", "let Foo = o else { return }")),
+        E_BROKEN,
+    );
+    front_end_row(
+        "rejected enum, if let bare",
+        &rejected(&with_o("i64?", "if let print = o {}")),
+        E_ENUM,
+    );
+    front_end_row(
+        "rejected enum, let else",
+        &rejected(&with_o("i64?", "let print = o else { return }")),
+        E_ENUM,
+    );
+    front_end_row(
+        "rejected enum, let else some",
+        &rejected(&with_o("i64?", "let Some(print) = o else { return }")),
+        E_ENUM,
+    );
+    front_end_row(
+        "rejected enum, while let",
+        &rejected(&with_o("i64?", "while let Some(print) = o {}")),
+        E_ENUM,
+    );
+}
+
+/// A bare or call-form name that is poisoned in a pattern gives no `E0125`, `E0126`, `E0118`,
+/// `E0032`, `E0011` or `E0127` beside the first error. A real variant of that name, a
+/// constant that is not poisoned and a name in a range keep their meaning.
+#[test]
+#[expect(clippy::too_many_lines, reason = "one row for each case of the table")]
+fn a_poisoned_name_in_a_pattern_should_give_no_second_error() {
+    let w_call = |arm: &str, rest: &str| {
+        format!(
+            "enum W {{\n    Foo(i64)\n    Bar\n}}\nfn f(w: W) {{\n    match w {{\n        {arm}\n        {rest}\n    }}\n}}\nfn main() {{}}"
+        )
+    };
+    let broken = |body: &str| [BROKEN_ENUM, body].concat();
+    let rejected_const = |body: &str| [REJECTED_CONST, body].concat();
+    let rejected_enum = |body: &str| [REJECTED_ENUM, body].concat();
+
+    // Poisoned names that give only the first error.
+    front_end_row("broken enum, bare", &broken(&match_one("Foo")), E_BROKEN);
+    front_end_row(
+        "broken interface, bare",
+        &[BROKEN_INTERFACE, &match_one("Foo")].concat(),
+        E_BROKEN,
+    );
+    front_end_row(
+        "broken enum, enum position",
+        &broken(&match_enum("Foo")),
+        E_BROKEN,
+    );
+    front_end_row(
+        "broken enum, sub-pattern",
+        &broken(&match_option("Some(Foo)")),
+        E_BROKEN,
+    );
+    front_end_row(
+        "broken enum, alternative",
+        &broken(&match_one("Foo | 2")),
+        E_BROKEN,
+    );
+    front_end_row(
+        "broken enum, if let",
+        &broken(&with_o("i64?", "if let Some(Foo) = o {}")),
+        E_BROKEN,
+    );
+    front_end_row(
+        "rejected constant, bare",
+        &rejected_const(&match_one("print")),
+        E_CONST,
+    );
+    front_end_row(
+        "rejected constant, enum position",
+        &rejected_const(&match_enum("print")),
+        E_CONST,
+    );
+    front_end_row(
+        "rejected constant, sub-pattern",
+        &rejected_const(&match_option("Some(print)")),
+        E_CONST,
+    );
+    front_end_row(
+        "rejected constant, alternative",
+        &rejected_const(&match_one("print | 2")),
+        E_CONST,
+    );
+    front_end_row(
+        "rejected constant, range bound",
+        &rejected_const(&match_one("0..print")),
+        E_CONST,
+    );
+    front_end_row(
+        "rejected enum, range bound",
+        &rejected_enum(&match_one("0..print")),
+        E_ENUM,
+    );
+    front_end_row(
+        "broken enum, range bound",
+        &broken(&match_one("0..Foo")),
+        E_BROKEN,
+    );
+    front_end_row(
+        "broken enum, call form",
+        &broken(
+            "fn main() {\n    match 1 {\n        Foo(x) => print(x)\n        _ => {}\n    }\n}",
+        ),
+        E_BROKEN,
+    );
+    front_end_row(
+        "rejected constant, call form",
+        &rejected_const(
+            "fn main() {\n    match 1 {\n        print(x) => {}\n        _ => {}\n    }\n}",
+        ),
+        E_CONST,
+    );
+    front_end_row(
+        "broken enum, call form at an enum",
+        &broken(&match_enum("Foo(x)")),
+        E_BROKEN,
+    );
+    front_end_row(
+        "broken enum, call form in a sub-pattern",
+        &broken(&match_option("Some(Foo(x))")),
+        E_BROKEN,
+    );
+    front_end_row(
+        "broken enum, while let",
+        &broken(&with_o("i64?", "while let Some(Foo) = o {}")),
+        E_BROKEN,
+    );
+    front_end_row(
+        "broken enum, let else some",
+        &broken(&with_o("i64?", "let Some(Foo) = o else { return }")),
+        E_BROKEN,
+    );
+    front_end_row(
+        "broken enum, let else call form",
+        &broken(&with_o(
+            "i64?",
+            "let Foo(x) = o else { return }\n    print(x)",
+        )),
+        E_BROKEN,
+    );
+    front_end_row(
+        "rejected constant, let else some",
+        &rejected_const(&with_o("i64?", "let Some(print) = o else { return }")),
+        E_CONST,
+    );
+    front_end_row(
+        "broken enum, if let call form",
+        &broken(&with_o("i64?", "if let Foo(x) = o { print(x) }")),
+        E_BROKEN,
+    );
+    front_end_row(
+        "broken enum, if let range",
+        &broken(&with_o("i64?", "if let 0..Foo = o {}")),
+        E_BROKEN,
+    );
+    front_end_row(
+        "broken enum, let else range",
+        &broken(&with_o("i64?", "let 0..Foo = o else { return }")),
+        E_BROKEN,
+    );
+    front_end_row(
+        "broken enum, match on o, bare",
+        &broken(&match_option("Foo")),
+        E_BROKEN,
+    );
+    front_end_row(
+        "broken enum, match on o, call form",
+        &broken(&match_option("Foo(x) => print(x)")),
+        E_BROKEN,
+    );
+    front_end_row(
+        "broken enum, match on o, range",
+        &broken(&match_option("0..Foo")),
+        E_BROKEN,
+    );
+    front_end_row(
+        "broken enum, range of poisoned names",
+        &broken(&match_one("Foo..Foo")),
+        E_BROKEN,
+    );
+    front_end_row(
+        "broken enum, inclusive range",
+        &broken(&match_one("0..=Foo")),
+        E_BROKEN,
+    );
+    front_end_row(
+        "broken enum, range at an enum",
+        &broken(&match_enum("0..Foo")),
+        E_BROKEN,
+    );
+    front_end_row(
+        "broken function, range bound",
+        &[BROKEN_FN, &match_one("0..foo")].concat(),
+        E_BROKEN,
+    );
+    front_end_row(
+        "broken function, call form",
+        &[
+            BROKEN_FN,
+            "fn main() {\n    match 1 {\n        foo(x) => print(x)\n        _ => {}\n    }\n}",
+        ]
+        .concat(),
+        E_BROKEN,
+    );
+
+    // Positions that take only names.
+    let names_only = |ty: &str, arms: &str| {
+        broken(&format!(
+            "fn main() {{\n    let o: {ty} = None\n    match o {{\n        {arms}\n        _ => {{}}\n    }}\n}}"
+        ))
+    };
+    front_end_row(
+        "names only, call form",
+        &names_only("f64?", "Foo(x) => print(x)"),
+        E_BROKEN,
+    );
+    front_end_row(
+        "names only, call form under Some",
+        &names_only("f64?", "Some(Foo(x)) => print(x)"),
+        E_BROKEN,
+    );
+    front_end_row(
+        "names only, call form at an array",
+        &names_only("[i64]?", "Foo(x) => print(x)"),
+        E_BROKEN,
+    );
+    front_end_row(
+        "names only, let else",
+        &broken(&with_o(
+            "f64?",
+            "let Foo(x) = o else { return }\n    print(x)",
+        )),
+        E_BROKEN,
+    );
+    front_end_row(
+        "names only, in a payload",
+        &broken(
+            "enum V { P(f64) }\nfn f(v: V) {\n    match v {\n        P(Foo(x)) => print(x)\n    }\n}\nfn main() {}",
+        ),
+        E_BROKEN,
+    );
+    front_end_row(
+        "names only, rejected constant",
+        &rejected_const(&with_o(
+            "f64?",
+            "match o {\n        print(x) => {}\n        _ => {}\n    }",
+        )),
+        E_CONST,
+    );
+
+    // What must stay.
+    let real = |arm: &str, rest: &str| broken(&w_call(arm, rest));
+    front_end_row(
+        "a real variant, call form",
+        &real("Foo(x) => print(x)", "Bar => {}"),
+        E_BROKEN,
+    );
+    front_end_row(
+        "a real variant, x has its type",
+        &real("Foo(x) => { let _s: string = x }", "Bar => {}"),
+        &[(Code::BraceOnNewLine, (2, 1)), (Code::Mismatch, (10, 38))],
+    );
+    front_end_row(
+        "a real variant, wrong payload",
+        &real("Foo(x, y) => print(x)", "Bar => {}"),
+        &[
+            (Code::BraceOnNewLine, (2, 1)),
+            (Code::SubpatternCount, (10, 9)),
+        ],
+    );
+    front_end_row(
+        "a real variant, bare, wrong form",
+        &real("Foo => {}", "Bar => {}"),
+        &[(Code::BraceOnNewLine, (2, 1)), (Code::VariantForm, (10, 9))],
+    );
+    let optional = |arm: &str| {
+        broken(&format!(
+            "enum W {{\n    Foo(i64)\n}}\nfn f(w: W?) {{\n    match w {{\n        {arm}\n        _ => {{}}\n    }}\n}}\nfn main() {{}}"
+        ))
+    };
+    front_end_row(
+        "a real variant under an optional, call form",
+        &optional("Foo(x) => print(x)"),
+        E_BROKEN,
+    );
+    front_end_row(
+        "a real variant under an optional, x has its type",
+        &optional("Foo(x) => { let _s: string = x }"),
+        &[(Code::BraceOnNewLine, (2, 1)), (Code::Mismatch, (9, 38))],
+    );
+    front_end_row(
+        "a real variant, bare, coverage",
+        &broken(
+            "enum W {\n    Foo\n    Bar\n}\nfn f(w: W) {\n    match w {\n        Foo => {}\n    }\n}\nfn main() {}",
+        ),
+        &[
+            (Code::BraceOnNewLine, (2, 1)),
+            (Code::NonExhaustive, (9, 5)),
+        ],
+    );
+    front_end_row(
+        "a real variant, bare under an optional, coverage",
+        &broken(
+            "enum W {\n    Foo\n    Bar\n}\nfn f(w: W?) {\n    match w {\n        Foo => {}\n        None => {}\n    }\n}\nfn main() {}",
+        ),
+        &[
+            (Code::BraceOnNewLine, (2, 1)),
+            (Code::NonExhaustive, (9, 5)),
+        ],
+    );
+    front_end_row(
+        "range, first bound poisoned, second a name",
+        &broken(&match_one("Foo..k")),
+        &[(Code::BraceOnNewLine, (2, 1)), (Code::Expected, (6, 14))],
+    );
+    front_end_row(
+        "range, second bound poisoned, first a name",
+        &broken(&match_one("k..Foo")),
+        &[(Code::BraceOnNewLine, (2, 1)), (Code::Expected, (6, 9))],
+    );
+    front_end_row(
+        "range, a constant keeps its error",
+        &[BROKEN_ENUM, "const K = 1\n\n", &match_one("Foo..K")].concat(),
+        &[
+            (Code::BraceOnNewLine, (2, 1)),
+            (Code::ConstantInPattern, (8, 14)),
+        ],
+    );
+    front_end_row(
+        "range at a names-only position keeps E0127",
+        &broken(
+            "fn main() {\n    let o: f64? = None\n    match o {\n        0..Foo => {}\n        _ => {}\n    }\n}",
+        ),
+        &[
+            (Code::BraceOnNewLine, (2, 1)),
+            (Code::OnlyNamePosition, (7, 9)),
+        ],
+    );
+    front_end_row(
+        "a name in one alternative keeps E0136",
+        &broken(&match_one("Foo(x) | 2")),
+        &[
+            (Code::BraceOnNewLine, (2, 1)),
+            (Code::AlternativeBindings, (6, 18)),
+        ],
+    );
+    front_end_row(
+        "rejected enum, binding, _ is unreached",
+        &rejected_enum(&match_one("print")),
+        &[(Code::DefinedTwice, (1, 6)), (Code::UnreachableArm, (8, 9))],
+    );
+    front_end_row(
+        "rejected enum, binding at an enum",
+        &rejected_enum(&match_enum("print")),
+        &[(Code::DefinedTwice, (1, 6)), (Code::UnreachableArm, (9, 9))],
+    );
+    front_end_row(
+        "rejected enum, binding in a sub-pattern",
+        &rejected_enum(&match_option("Some(print)")),
+        E_ENUM,
+    );
+    front_end_row(
+        "rejected enum, binding in an alternative",
+        &rejected_enum(&match_one("print | 2")),
+        &[
+            (Code::DefinedTwice, (1, 6)),
+            (Code::AlternativeBindings, (7, 17)),
+        ],
+    );
+    front_end_row(
+        "duplicate enum, bare",
+        &["enum Foo { A }\nconst Foo = 1\n\n", &match_one("Foo")].concat(),
+        &[(Code::DefinedTwice, (2, 7)), (Code::NotVariantHere, (6, 9))],
+    );
+    front_end_row(
+        "duplicate constant, bare",
+        &["const foo = 1\nconst foo = 2\n\n", &match_one("foo")].concat(),
+        &[
+            (Code::DefinedTwice, (2, 7)),
+            (Code::ConstantInPattern, (6, 9)),
+        ],
+    );
+    front_end_row(
+        "intact enum named Result, call form",
+        "enum Result { A }\n\nfn main() {\n    match 1 {\n        Ok(x) => print(x)\n        _ => {}\n    }\n}",
+        &[(Code::BuiltInName, (1, 6)), (Code::Mismatch, (5, 9))],
+    );
+    front_end_row(
+        "lower-case binding, alternative",
+        &[BROKEN_FN, &match_one("foo | 2")].concat(),
+        &[
+            (Code::BraceOnNewLine, (2, 1)),
+            (Code::AlternativeBindings, (6, 15)),
+        ],
+    );
+    front_end_row(
+        "lower-case binding, bare",
+        &[BROKEN_FN, &match_one("foo")].concat(),
+        &[
+            (Code::BraceOnNewLine, (2, 1)),
+            (Code::UnreachableArm, (7, 9)),
+        ],
+    );
+    front_end_row(
+        "no poison, upper-case",
+        &match_one("Foo"),
+        &[(Code::NotVariantHere, (3, 9))],
+    );
+    front_end_row(
+        "no poison, constant",
+        &["const K = 1\n\n", &match_one("K")].concat(),
+        &[(Code::ConstantInPattern, (5, 9))],
+    );
+    front_end_row(
+        "no poison, range bound on a constant",
+        &["const K = 1\n\n", &match_one("0..K")].concat(),
+        &[(Code::ConstantInPattern, (5, 12))],
+    );
+    front_end_row(
+        "no poison, range bound on a name",
+        &match_one("0..k"),
+        &[(Code::Expected, (3, 12))],
+    );
+    front_end_row(
+        "no poison, call form",
+        &match_one("Foo(x)"),
+        &[(Code::Mismatch, (3, 9))],
+    );
+    front_end_row(
+        "a qualified name is no poisoned name, at an enum",
+        &broken(
+            "enum Z { Q }\nfn f(z: Z) {\n    match z {\n        Z.Foo => {}\n        _ => {}\n    }\n}\nfn main() {}",
+        ),
+        &[
+            (Code::BraceOnNewLine, (2, 1)),
+            (Code::UnknownVariant, (7, 11)),
+        ],
+    );
+    front_end_row(
+        "a qualified name is no poisoned name, at a names-only position",
+        &broken(
+            "enum Z { Q }\nfn main() {\n    let o: f64? = None\n    match o {\n        Z.Foo(x) => print(x)\n        _ => {}\n    }\n}",
+        ),
+        &[
+            (Code::BraceOnNewLine, (2, 1)),
+            (Code::OnlyNamePosition, (8, 9)),
+        ],
+    );
+}
+
+/// A read or a write of a poisoned name reports no second error. A true error beside it stays.
+#[test]
+#[expect(clippy::too_many_lines, reason = "one row for each case of the table")]
+fn a_read_or_write_of_a_hidden_name_should_give_no_second_error() {
+    // A function with the parameter `{name}: string`, the extra parameters `extra` and `body`.
+    let in_f = |base: &str, name: &str, extra: &str, body: &str| {
+        format!("{base}fn f({name}: string{extra}) {{\n{body}\n}}\nfn main() {{}}")
+    };
+    let in_main = |base: &str, body: &str| format!("{base}fn main() {{\n{body}\n}}");
+    // `match 1` with the arm `{arm}` and then `_ => {}`.
+    let m = |arm: &str| format!("    match 1 {{\n        {arm}\n        _ => {{}}\n    }}");
+    let m_on = |subject: &str, arm: &str| {
+        format!("    match {subject} {{\n        {arm}\n        _ => {{}}\n    }}")
+    };
+    let o = ", o: i64?";
+    let (e, c) = (BROKEN_ENUM, REJECTED_CONST);
+
+    // The outer local is hidden.
+    for (row, src, expected) in [
+        (
+            "upper-case, bare",
+            in_f(e, "Foo", "", &m("Foo => { let _a: i64 = Foo }")),
+            E_BROKEN,
+        ),
+        (
+            "constant, bare",
+            in_f(c, "print", "", &m("print => { let _a: i64 = print }")),
+            E_CONST,
+        ),
+        (
+            "constant, alternative",
+            in_f(c, "print", "", &m("print | 2 => { let _a: i64 = print }")),
+            E_CONST,
+        ),
+        (
+            "upper-case, twice in an alternative",
+            in_f(e, "Foo", "", &m("Foo | Foo => { let _a: i64 = Foo }")),
+            E_BROKEN,
+        ),
+        (
+            "guard",
+            in_f(e, "Foo", "", &m("Foo if Foo == 1 => {}")),
+            E_BROKEN,
+        ),
+        (
+            "if let",
+            in_f(
+                e,
+                "Foo",
+                o,
+                "    if let Some(Foo) = o { let _a: i64 = Foo }",
+            ),
+            E_BROKEN,
+        ),
+        (
+            "write to an outer parameter",
+            in_f(e, "Foo", "", &m("Foo => { Foo = \"a\" }")),
+            E_BROKEN,
+        ),
+        (
+            "let else",
+            in_f(
+                e,
+                "Foo",
+                o,
+                "    let Some(Foo) = o else { return }\n    let _a: i64 = Foo",
+            ),
+            E_BROKEN,
+        ),
+        (
+            "while let",
+            in_f(
+                e,
+                "Foo",
+                o,
+                "    while let Some(Foo) = o { let _a: i64 = Foo }",
+            ),
+            E_BROKEN,
+        ),
+    ] {
+        front_end_row(row, &src, expected);
+    }
+
+    // The outer local is hidden, and the first error of the pattern stays.
+    for (row, src, expected) in [
+        (
+            "unknown subject",
+            in_f(e, "Foo", "", &m_on("zz", "Foo => { let _a: i64 = Foo }")),
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::BindingNotFound, (5, 11)),
+            ][..],
+        ),
+        (
+            "if let on a value that is not optional",
+            in_f(e, "Foo", "", "    if let Foo = 1 { let _a: i64 = Foo }"),
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::UnwrapNeedsOptional, (5, 18)),
+            ][..],
+        ),
+        (
+            "f64 subject",
+            in_f(e, "Foo", "", &m_on("1.5", "Foo => { let _a: i64 = Foo }")),
+            &[(Code::BraceOnNewLine, (2, 1)), (Code::CannotMatch, (5, 11))][..],
+        ),
+        (
+            "Some with two sub-patterns",
+            in_f(
+                e,
+                "Foo",
+                o,
+                &m_on("o", "Some(Foo, 1) => { let _a: i64 = Foo }"),
+            ),
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::SubpatternCount, (6, 9)),
+            ][..],
+        ),
+        (
+            "unknown variant with a sub-pattern",
+            in_f(e, "Foo", "", &m("Bar(Foo) => { let _a: i64 = Foo }")),
+            &[(Code::BraceOnNewLine, (2, 1)), (Code::Mismatch, (6, 9))][..],
+        ),
+        (
+            "write, unknown subject",
+            in_f(e, "Foo", "", &m_on("zz", "Foo => { Foo = 1 }")),
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::BindingNotFound, (5, 11)),
+            ][..],
+        ),
+    ] {
+        front_end_row(row, &src, expected);
+    }
+
+    // What must stay.
+    for (row, src, expected) in [
+        (
+            "no E0136 for the alternative",
+            in_f(e, "Foo", "", &m("Foo | 2 => {}")),
+            E_BROKEN,
+        ),
+        (
+            "a write gives no E0001",
+            in_main(e, &m("Foo => { Foo = 2 }")),
+            E_BROKEN,
+        ),
+        (
+            "a write to a constant gives no E0001",
+            in_main(c, &m("print => { print = 2 }")),
+            E_CONST,
+        ),
+        (
+            "a write in an if let gives no E0001",
+            in_main(
+                e,
+                "    let o: i64? = None\n    if let Some(Foo) = o { Foo = 2 }",
+            ),
+            E_BROKEN,
+        ),
+        (
+            "+=",
+            in_main(e, &m("Foo => { Foo += 2 }")),
+            E_BROKEN,
+        ),
+        (
+            "an index write",
+            in_main(e, &m("Foo => { Foo[0] = 2 }")),
+            E_BROKEN,
+        ),
+        (
+            "a mut argument gives no E0169",
+            format!(
+                "{e}fn g(mut x: i64) {{ x = 1 }}\n{}",
+                in_main("", &m("Foo => { g(mut Foo) }"))
+            ),
+            E_BROKEN,
+        ),
+        (
+            "let mut gives no W0002",
+            [
+                e,
+                "enum W { P }\nfn f(w: W) {\n    let mut Foo = w else { return }\n    print(Foo)\n}\nfn main() {}",
+            ]
+            .concat(),
+            E_BROKEN,
+        ),
+    ] {
+        front_end_row(row, &src, expected);
+    }
+
+    // What must stay: a true error beside the poisoned name.
+    for (row, src, expected) in [
+        (
+            "an error after the arm",
+            in_f(
+                e,
+                "Foo",
+                "",
+                &format!("{}\n    let _a: i64 = Foo", m("Foo => {}")),
+            ),
+            &[(Code::BraceOnNewLine, (2, 1)), (Code::Mismatch, (9, 19))][..],
+        ),
+        (
+            "an error in the else block",
+            in_f(
+                e,
+                "Foo",
+                o,
+                "    let Some(Foo) = o else {\n        let _b: i64 = Foo\n        return\n    }",
+            ),
+            &[(Code::BraceOnNewLine, (2, 1)), (Code::Mismatch, (6, 23))][..],
+        ),
+        (
+            "the call form binds no name",
+            in_f(e, "Foo", "", &m("Foo(x) => { let _a: i64 = Foo }")),
+            &[(Code::BraceOnNewLine, (2, 1)), (Code::Mismatch, (6, 35))][..],
+        ),
+        (
+            "a range bound binds no name",
+            in_f(e, "Foo", "", &m("0..Foo => { let _a: i64 = Foo }")),
+            &[(Code::BraceOnNewLine, (2, 1)), (Code::Mismatch, (6, 35))][..],
+        ),
+        (
+            "a name that one alternative lacks",
+            in_main(e, "    match 1 {\n        Foo | x => print(x)\n    }"),
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::AlternativeBindings, (6, 9)),
+            ][..],
+        ),
+        (
+            "a name that one alternative lacks, the other order",
+            in_main(e, "    match 1 {\n        x | Foo => print(x)\n    }"),
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::AlternativeBindings, (6, 13)),
+            ][..],
+        ),
+    ] {
+        front_end_row(row, &src, expected);
+    }
+}
+
+/// A type argument after a poisoned name in a pattern: the local that hides it is no value, so
+/// the call reports no `E0137`, and an error beside it stays. In each row: the program and its
+/// errors.
+#[test]
+fn a_type_argument_call_of_a_hidden_name_should_give_no_second_error() {
+    for (row, src, expected) in [
+        (
+            "a generic class, a constructor call",
+            "class Foo<T>\n{ }\n\nfn f() {\n    match 1 {\n        Foo => {\n print(Foo<i64>(1))\n }\n        _ => {}\n    }\n}\nfn main() {}\n",
+            &[(Code::BraceOnNewLine, (2, 1))][..],
+        ),
+        (
+            "a broken enum",
+            "enum Foo\n{ A }\n\nfn f() {\n    match 1 {\n        Foo => {\n print(Foo<i64>(1))\n }\n        _ => {}\n    }\n}\nfn main() {}\n",
+            &[(Code::BraceOnNewLine, (2, 1))][..],
+        ),
+        (
+            "after let else",
+            "enum Foo\n{ A }\n\nfn f(o: i64?) {\n    let Some(Foo) = o else { return }\n print(Foo<i64>(1))\n}\nfn main() {}\n",
+            &[(Code::BraceOnNewLine, (2, 1))][..],
+        ),
+        (
+            "a path with type arguments",
+            "class Foo<T>\n{ }\n\nfn f() {\n    match 1 {\n        Foo => {\n print(Foo<i64>.make())\n }\n        _ => {}\n    }\n}\nfn main() {}\n",
+            &[(Code::BraceOnNewLine, (2, 1))][..],
+        ),
+        (
+            "a broken generic function",
+            "fn Foo<T>(x: T)\n{ }\n\nfn f() {\n    match 1 {\n        Foo => {\n print(Foo<i64>(1))\n }\n        _ => {}\n    }\n}\nfn main() {}\n",
+            &[(Code::BraceOnNewLine, (2, 1))][..],
+        ),
+        (
+            "a broken alias",
+            "type Foo =\n\nfn f() {\n    match 1 {\n        Foo => {\n print(Foo<i64>(1))\n }\n        _ => {}\n    }\n}\nfn main() {}\n",
+            &[(Code::Expected, (3, 1))][..],
+        ),
+        (
+            "at an unknown subject, whose E0033 stays",
+            "enum Foo\n{ A }\n\nfn f() {\n    match zz {\n        Foo => {\n print(Foo<i64>(1))\n }\n        _ => {}\n    }\n}\nfn main() {}\n",
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::BindingNotFound, (5, 11)),
+            ][..],
+        ),
+        (
+            "over a typed parameter",
+            "enum Foo\n{ A }\n\nfn f(Foo: i64) {\n    match 1 {\n        Foo => {\n print(Foo<i64>(1))\n }\n        _ => {}\n    }\n}\nfn main() {}\n",
+            &[(Code::BraceOnNewLine, (2, 1))][..],
+        ),
+        (
+            "an error in the arguments stays",
+            "enum Foo\n{ A }\n\nfn f() {\n    match 1 {\n        Foo => { let _a = Foo<i64>(zz) }\n        _ => {}\n    }\n}\nfn main() {}\n",
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::BindingNotFound, (6, 36)),
+            ][..],
+        ),
+        (
+            "the misread list gives no E0053",
+            "enum Foo\n{ A }\n\nfn g3(a: bool, b: bool) {}\nfn f(x: i64, y: i64) {\n    match 1 {\n        Foo => { g3(Foo<x, y>(1)) }\n        _ => {}\n    }\n}\nfn main() {}\n",
+            &[(Code::BraceOnNewLine, (2, 1))][..],
+        ),
+        (
+            "a poisoned constant",
+            "const k =\n\nfn f() {\n match 1 {\n k => { let _a = k<i64>(1) }\n _ => {}\n }\n}\nfn main() {}\n",
+            &[(Code::Expected, (3, 1))][..],
+        ),
+        (
+            "the hiding local replaces a value of the same scope",
+            "enum Foo\n{ A }\n\nfn f(o: i64?) {\n let Foo = 1\n let Some(Foo) = o else { return }\n let _a = Foo<i64>(1)\n}\nfn main() {}\n",
+            &[(Code::BraceOnNewLine, (2, 1))][..],
+        ),
+    ] {
+        front_end_row(row, src, expected);
+    }
+}
+
+/// A local that is a value keeps the `E0137` of a type argument after its name. This holds
+/// whatever else is wrong with it. In each row: the program and its errors.
+#[test]
+#[expect(clippy::too_many_lines, reason = "one row for each case of the table")]
+fn a_local_that_is_a_value_should_keep_its_type_argument_error() {
+    for (row, src, expected) in [
+        (
+            "a bare name at a good if let subject",
+            "enum Foo\n{ A }\n\nfn f(o: i64?) {\n if let Foo = o { let _a = Foo<i64>(1) }\n}\nfn main() {}\n",
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::TypeArguments, (5, 28)),
+            ][..],
+        ),
+        (
+            "a bare name at a good let else subject",
+            "enum Foo\n{ A }\n\nfn f(o: i64?) {\n let Foo = o else { return }\n let _a = Foo<i64>(1)\n}\nfn main() {}\n",
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::TypeArguments, (6, 11)),
+            ][..],
+        ),
+        (
+            "the end of the match ends the hiding",
+            "enum Foo\n{ A }\n\nfn f(Foo: i64) {\n    match 1 {\n        Foo => {}\n        _ => {}\n    }\n    let _a = Foo<i64>(1)\n}\nfn main() {}\n",
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::TypeArguments, (9, 14)),
+            ][..],
+        ),
+        (
+            "a later arm has no hiding local",
+            "enum Foo\n{ A }\n\nfn f(Foo: i64) {\n match 1 {\n Foo => {}\n _ => { let _a = Foo<i64>(1) }\n }\n}\nfn main() {}\n",
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::TypeArguments, (7, 18)),
+            ][..],
+        ),
+        (
+            "a typed mut parameter",
+            "enum Foo\n{ A }\n\nfn f(mut Foo: i64) {\n    let _a = Foo<i64>(1)\n}\nfn main() {}\n",
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::NeverReassigned, (4, 10)),
+                (Code::TypeArguments, (5, 14)),
+            ][..],
+        ),
+        (
+            "a failed let mut",
+            "enum Foo\n{ A }\n\nfn f() {\n    let mut Foo = zz\n    let _a = Foo<i64>(1)\n}\nfn main() {}\n",
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::NeverReassigned, (5, 13)),
+                (Code::BindingNotFound, (5, 19)),
+                (Code::TypeArguments, (6, 14)),
+            ][..],
+        ),
+        (
+            "a repeated parameter of a name that is not poisoned",
+            "fn f(x: i64, x: i64) {\n    let _a = x<i64>(1)\n}\nfn main() {}\n",
+            &[
+                (Code::AlreadyDeclared, (1, 14)),
+                (Code::TypeArguments, (2, 14)),
+            ][..],
+        ),
+        (
+            "a typed let inside the hiding scope",
+            "enum Foo\n{ A }\n\nfn f(o: i64?) {\n    if let Some(Foo) = o {\n        let Foo = 1\n        print(Foo<i64>(2))\n    }\n}\nfn main() {}\n",
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::TypeArguments, (7, 15)),
+            ][..],
+        ),
+        (
+            "a typed let after let else",
+            "enum Foo\n{ A }\n\nfn f(o: i64?) {\n    let Some(Foo) = o else { return }\n    let Foo = 1\n    print(Foo<i64>(2))\n}\nfn main() {}\n",
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::TypeArguments, (7, 11)),
+            ][..],
+        ),
+        (
+            "a failed let of a name that is not poisoned",
+            "enum Foo\n{ A }\n\nfn main() {\n    let x = zz\n    print(x<i64>(2))\n}\n",
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::BindingNotFound, (5, 13)),
+                (Code::TypeArguments, (6, 11)),
+            ][..],
+        ),
+        (
+            "a failed let of a poisoned name",
+            "const print = 1\n\nfn main() {\n    let print = zz\n    print(print<i64>(2))\n}\n",
+            &[
+                (Code::DefinedTwice, (1, 7)),
+                (Code::BindingNotFound, (4, 17)),
+                (Code::TypeArguments, (5, 11)),
+            ][..],
+        ),
+        (
+            "a parameter of an unknown type",
+            "enum Foo\n{ A }\n\nfn f(Foo: Zzz) {\n let _a = Foo<i64>(1)\n}\nfn main() {}\n",
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::UnknownType, (4, 11)),
+                (Code::TypeArguments, (5, 11)),
+            ][..],
+        ),
+        (
+            "a for over an unknown name",
+            "enum Foo\n{ A }\n\nfn f() {\n for Foo in zz {\n let _a = Foo<i64>(1)\n }\n}\nfn main() {}\n",
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::BindingNotFound, (5, 13)),
+                (Code::TypeArguments, (6, 11)),
+            ][..],
+        ),
+        (
+            "a broken lower-case function name, a true binding",
+            "fn foo<T>(x: T)\n{}\n\nfn f() {\n    match zz {\n        foo => { let _a = foo<i64>(1) }\n        _ => {}\n    }\n}\nfn main() {}\n",
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::BindingNotFound, (5, 11)),
+                (Code::TypeArguments, (6, 27)),
+            ][..],
+        ),
+        (
+            "a mut parameter of an unknown type",
+            "enum Foo\n{ A }\n\nfn f(mut Foo: Zzz) {\n    let _a = Foo<i64>(1)\n}\nfn main() {}\n",
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::NeverReassigned, (4, 10)),
+                (Code::UnknownType, (4, 15)),
+                (Code::TypeArguments, (5, 14)),
+            ][..],
+        ),
+        (
+            "a mut parameter of the poisoned type",
+            "enum Foo\n{ A }\n\nfn f(mut Foo: Foo) {\n    let _a = Foo<i64>(1)\n}\nfn main() {}\n",
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::NeverReassigned, (4, 10)),
+                (Code::TypeArguments, (5, 14)),
+            ][..],
+        ),
+        (
+            "a repeated parameter",
+            "enum Foo\n{ A }\n\nfn f(Foo: i64, Foo: i64) {\n    let _a = Foo<i64>(1)\n}\nfn main() {}\n",
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::AlreadyDeclared, (4, 16)),
+                (Code::TypeArguments, (5, 14)),
+            ][..],
+        ),
+        (
+            "a repeated mut parameter",
+            "enum Foo\n{ A }\n\nfn f(mut Foo: i64, mut Foo: i64) {\n    let _a = Foo<i64>(1)\n}\nfn main() {}\n",
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::AlreadyDeclared, (4, 24)),
+                (Code::TypeArguments, (5, 14)),
+            ][..],
+        ),
+        (
+            "a typed parameter, then a repeated mut one",
+            "enum Foo\n{ A }\n\nfn f(Foo: i64, mut Foo: i64) {\n let _a = Foo<i64>(1)\n}\nfn main() {}\n",
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::AlreadyDeclared, (4, 20)),
+                (Code::TypeArguments, (5, 11)),
+            ][..],
+        ),
+        (
+            "a mut parameter of a poisoned constant's name, a path",
+            "const print = 1\n\nfn f(mut print: Zzz) {\n let _a = print<i64>.x(1)\n}\nfn main() {}\n",
+            &[
+                (Code::DefinedTwice, (1, 7)),
+                (Code::NeverReassigned, (3, 10)),
+                (Code::UnknownType, (3, 17)),
+                (Code::TypeArguments, (4, 11)),
+            ][..],
+        ),
+    ] {
+        front_end_row(row, src, expected);
+    }
+}
+
+/// A poisoned constant in a failed pattern gives no second error for a write to its name, and an
+/// intact constant keeps its own. In each row: the program and its errors.
+#[test]
+fn a_poisoned_constant_in_a_failed_pattern_should_give_no_second_error() {
+    for (row, src, expected) in [
+        (
+            "a write to a rejected constant at an unknown subject",
+            "const print = 1\n\nfn f() {\n    match zz {\n        print => { print = 2 }\n        _ => {}\n    }\n}\nfn main() {}\n",
+            &[
+                (Code::DefinedTwice, (1, 7)),
+                (Code::BindingNotFound, (4, 11)),
+            ][..],
+        ),
+        (
+            "a write to a broken constant at an unknown subject",
+            "const k =\n\nfn f() {\n    match zz {\n        k => { k = 2 }\n        _ => {}\n    }\n}\nfn main() {}\n",
+            &[(Code::Expected, (3, 1)), (Code::BindingNotFound, (4, 11))][..],
+        ),
+        (
+            "a write to a broken constant in a variant with a wrong count",
+            "const k =\n\nenum E { V(i64) }\nfn f(e: E) {\n    match e {\n        V(k, 1) => { k = 2 }\n        _ => {}\n    }\n}\nfn main() {}\n",
+            &[(Code::Expected, (3, 1)), (Code::SubpatternCount, (6, 9))][..],
+        ),
+        (
+            "a let mut of a broken constant with an unknown value",
+            "const k =\n\nfn f() {\n    let mut k = zz else { return }\n}\nfn main() {}\n",
+            &[(Code::Expected, (3, 1)), (Code::BindingNotFound, (4, 17))][..],
+        ),
+        (
+            "an intact constant keeps its write error",
+            "const k = 1\n\nfn f() {\n    match zz {\n        k => { k = 2 }\n        _ => {}\n    }\n}\nfn main() {}\n",
+            &[
+                (Code::BindingNotFound, (4, 11)),
+                (Code::AssignToImmutable, (5, 16)),
+            ][..],
+        ),
+        (
+            "a broken function name is a true binding",
+            "fn foo()\n{}\n\nfn f() {\n    match zz {\n        foo => { foo = 2 }\n        _ => {}\n    }\n}\nfn main() {}\n",
+            &[
+                (Code::BraceOnNewLine, (2, 1)),
+                (Code::BindingNotFound, (5, 11)),
+                (Code::AssignToImmutable, (6, 18)),
+            ][..],
+        ),
+    ] {
+        front_end_row(row, src, expected);
+    }
+}
+
 /// A user's item named `Option` or `Result` leaves the name to the built-in type, as an item
 /// named `i64` does: the built-in type and its constructors keep their meaning, so the uses of the
 /// name add no error beside `E0026`. In each row: the program and the place of `E0026`.
