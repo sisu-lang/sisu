@@ -5747,7 +5747,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 at,
             } => {
                 let message = if method {
-                    format!("`{name}` is a method; call it on a value: `e.{name}()`")
+                    format!("`{name}` is a method of `{enum_name}`; call it on a value")
                 } else {
                     format!("`{name}` is a variant; build it with `{enum_name}.{name}`")
                 };
