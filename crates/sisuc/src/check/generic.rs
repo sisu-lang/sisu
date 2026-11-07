@@ -4529,6 +4529,11 @@ impl Checker<'_> {
             {
                 self.not_generic(n, angles);
             }
+            // The poison local that a pattern leaves for a poisoned name is no value.
+            None if self.poisoned_use(n)
+                && self.lookup(n).is_some_and(|b| {
+                    b.ty.is_none() && b.kind == super::BindingKind::Var && b.keyword.is_none()
+                }) => {}
             None if self.lookup(n).is_some()
                 || matches!(self.constants.get(&n), Some(Declared::Known(_))) =>
             {

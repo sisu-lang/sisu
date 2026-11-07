@@ -1511,12 +1511,13 @@ impl Checker<'_> {
     }
 
     /// Declares the names in `p`, a pattern that failed, as `Error`, so that uses of them
-    /// report nothing more. An upper-case name is taken for a variant and binds nothing; a
-    /// poisoned one hides any outer local of that name.
+    /// report nothing more. An upper-case name is taken for a variant and binds nothing. A
+    /// poisoned one, or a poisoned constant, hides any outer local of that name.
     fn poison(&mut self, p: &ast::Pattern, keyword: &'static str, bound: &mut Bound<'_>) {
         match &p.kind {
             ast::PatternKind::Name(name)
-                if name.name.as_str().starts_with(char::is_uppercase)
+                if (self.constants.contains_key(&name.name)
+                    || name.name.as_str().starts_with(char::is_uppercase))
                     && self.poisoned_use(name.name) =>
             {
                 self.hide_local(name);
