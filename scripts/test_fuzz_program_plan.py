@@ -80,13 +80,13 @@ class Labels(unittest.TestCase):
         self.assertEqual(self.plan(["bug", "fuzz-program 2h"]), (7200, True))
         # The bounds themselves are allowed.
         self.assertEqual(self.plan(["fuzz-program 1m"]), (60, True))
-        self.assertEqual(self.plan(["fuzz-program 4h"]), (14400, True))
+        self.assertEqual(self.plan(["fuzz-program 220m"]), (13200, True))
 
     def test_a_bare_label_fuzzes_two_hours(self) -> None:
         self.assertEqual(self.plan(["fuzz-program"]), (7200, True))
 
     def test_out_of_range_fails(self) -> None:
-        for label in ("fuzz-program 0m", "fuzz-program 6h", "fuzz-program 241m"):
+        for label in ("fuzz-program 0m", "fuzz-program 6h", "fuzz-program 4h", "fuzz-program 221m"):
             with self.subTest(label), self.assertRaisesRegex(ValueError, "outside"):
                 self.plan([label])
 
@@ -117,9 +117,9 @@ class Labels(unittest.TestCase):
 
 
 class Events(unittest.TestCase):
-    def test_nightly_run_should_get_95_minutes_of_fuzz_step_in_180(self) -> None:
+    def test_nightly_run_should_get_95_minutes_of_fuzz_step_in_200(self) -> None:
         self.assertEqual(fp.fuzz_minutes(fp.NIGHTLY), 95)
-        self.assertEqual(fp.minutes(fp.NIGHTLY, coverage=True), 180)
+        self.assertEqual(fp.minutes(fp.NIGHTLY, coverage=True), 200)
 
     def test_schedule_should_measure_coverage(self) -> None:
         self.assertEqual(fp.plan("schedule", {}, {}), (3600, True))
@@ -127,6 +127,13 @@ class Events(unittest.TestCase):
     def test_fuzz_step_should_have_time_for_the_corpus_pass_of_a_short_run(self) -> None:
         # 15 of build, 30 of corpus pass, 17 of crash replays and 3 to stop.
         self.assertEqual(fp.fuzz_minutes(60), 65)
+
+    def test_cmin_should_stop_at_the_planned_bound_and_warn_when_it_does_not_finish(self) -> None:
+        cmin, _ = step_named("Minimize the corpus")
+        block = run_block(cmin)
+        self.assertIn(f"bound={fp.CMIN_MINUTES * 60}\n", block)
+        self.assertRegex(block, r'timeout -k 10 "\$bound" scripts/fuzz\.sh --target program --cmin')
+        self.assertRegex(block, r'if \[ "\$outcome" != finished \]; then\n\s*echo "::warning ')
 
     def test_the_longest_run_should_leave_time_for_gaps(self) -> None:
         self.assertLessEqual(fp.minutes(fp.MOST, coverage=True), 360)
@@ -227,7 +234,7 @@ class Events(unittest.TestCase):
     def test_main_writes_the_outputs(self) -> None:
         self.assertEqual(
             self.main(["fuzz-program 45m"]),
-            (0, "seconds=2700\ncoverage=true\nfuzz_minutes=80\nminutes=165\n"),
+            (0, "seconds=2700\ncoverage=true\nfuzz_minutes=80\nminutes=185\n"),
         )
 
     def test_main_plans_no_run_for_an_unlabeled_pull_request(self) -> None:
