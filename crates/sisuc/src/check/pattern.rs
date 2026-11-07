@@ -1508,6 +1508,9 @@ impl Checker<'_> {
     /// `bound` does not hold it, so an alternative of an `|` that lacks the name is good.
     fn hide_local(&mut self, name: &ast::Ident) {
         self.insert_local(name, None, super::BindingKind::Var, None);
+        if let Some(b) = self.lookup(name.name) {
+            b.hides_name = true;
+        }
     }
 
     /// Declares the names in `p`, a pattern that failed, as `Error`, so that uses of them

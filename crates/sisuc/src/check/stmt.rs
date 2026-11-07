@@ -1702,6 +1702,7 @@ impl Checker<'_> {
             loop_named: false,
             read: false,
             mut_param: false,
+            hides_name: false,
             also: Vec::new(),
             shown: None,
         };

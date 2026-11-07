@@ -445,6 +445,8 @@ struct Binding {
     read: bool,
     /// Whether the binding is a `mut` parameter, whose store-back reads it.
     mut_param: bool,
+    /// A pattern made this local to hide a poisoned name: it is no value.
+    hides_name: bool,
     /// Where each later alternative of an or-pattern binds the name again.
     also: Vec<Span>,
     /// The type of the annotation as written, when it names an alias.
