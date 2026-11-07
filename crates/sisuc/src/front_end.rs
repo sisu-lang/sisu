@@ -149,7 +149,9 @@ fn internal_error(d: &Diagnostic) -> ! {
 /// parsing worse than it does, and with each fix unsafe that edits over a comment or another
 /// lexer error: a fix that is shown never breaks the syntax, and a safe one never takes text it
 /// was not about. A checker fix is not judged: the checker runs only on items that parse, and
-/// the fuzz target asserts that every fix shown keeps the syntax, the checker's included.
+/// the fuzz target asserts that every fix shown keeps the syntax, the checker's included. One
+/// case is judged, and demoted: a fix with an edit on each side of a dropped `;`, which puts the
+/// `;` in new text. It costs little, because it needs a dropped `;` between the edits of one fix.
 /// Judging one lexes and parses the whole source again, so judging every checker fix made N
 /// warnings cost N parses. For the same reason only the first `JUDGED` syntax fixes are judged;
 /// later ones are dropped. On clean syntax a W0007 fix is kept as it is: neither judged, counted
@@ -179,17 +181,28 @@ pub(crate) fn sound_fixes(source: &str, diagnostics: &[Diagnostic]) -> Vec<Diagn
             .collect();
         let marks = marks(source);
         let mut judged = 0;
+        // A dropped `;` between the edits of one fix lands in new text, where it can be an error.
+        let around = |fix: &Fix, at: usize| {
+            source.as_bytes().get(at) == Some(&b';')
+                && (fix.edits().iter()).any(|e| e.span().start() <= at)
+                && (fix.edits().iter()).any(|e| e.span().end() > at)
+        };
         for d in sound.iter_mut().filter(|d| syntax_fix(d)) {
-            if reported.contains(&(d.code(), d.span())) {
-                d.retain_fixes(|fix| {
-                    judged += 1;
-                    judged <= JUDGED && syntax_errors(&fix.apply(source)) <= before
-                });
-            }
             let own = d.span().start();
+            let reported = reported.contains(&(d.code(), d.span()));
+            d.retain_fixes(|fix| {
+                let spans = marks.iter().any(|&at| at != own && around(fix, at));
+                if !reported && !spans {
+                    return true;
+                }
+                judged += 1;
+                judged <= JUDGED && syntax_errors(&fix.apply(source)) <= before
+            });
             d.demote_fixes(|fix| {
                 let taken = |at: usize| fix.edits().iter().any(|e| e.span().range().contains(&at));
-                marks.iter().any(|&at| at != own && taken(at))
+                marks
+                    .iter()
+                    .any(|&at| at != own && (taken(at) || around(fix, at)))
             });
         }
     }
