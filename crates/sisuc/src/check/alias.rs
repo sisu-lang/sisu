@@ -345,8 +345,8 @@ impl Checker<'_> {
         names
     }
 
-    /// The aliases that a suggestion for an unknown type may name: not one that the body being
-    /// resolved reaches, as the fix would make a cycle.
+    /// The aliases that a suggestion for an unknown type may name: not one that reaches the body
+    /// being resolved, as the fix would make a cycle.
     pub(super) fn alias_candidates(&self) -> impl Iterator<Item = (&str, Definition)> {
         let cyclic = self.cyclic_names();
         (self.aliases.names.keys())

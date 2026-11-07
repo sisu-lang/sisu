@@ -1084,7 +1084,7 @@ fn a_construction_through_an_alias_should_report_the_outer_call_that_cannot_infe
 
 /// GIVEN an unknown name in the body of an alias, where the nearest alias would make a cycle
 /// WHEN the checker reports E0030
-/// THEN it suggests no alias that the alias reaches, or that reaches the alias
+/// THEN it suggests no alias that reaches the alias
 #[test]
 fn an_alias_body_should_not_suggest_an_alias_that_makes_a_cycle() {
     for (src, pos) in [
@@ -1114,6 +1114,16 @@ fn an_alias_body_should_not_suggest_an_alias_that_makes_a_cycle() {
         .expect("the unknown name should be reported");
     assert_eq!(at(src, d.span()), (2, 12), "{ds:?}");
     assert!(d.fixes().is_empty(), "{d:?}");
+}
+
+/// GIVEN an unknown name in the body of an alias that is in a cycle
+/// WHEN the checker walks the aliases that reach the body
+/// THEN the walk ends, and the checker reports the cycle and the unknown name
+#[test]
+fn the_walk_of_an_alias_cycle_should_end() {
+    let src = "class Foo<A, B> {}\ntype Aa = Foo<Bb, Ac>\ntype Bb = Aa\nfn main() {}";
+    let codes: Vec<Code> = diags(src).iter().map(Diagnostic::code).collect();
+    assert_eq!(codes, [Code::AliasCycle, Code::UnknownType]);
 }
 
 /// GIVEN an unknown name where an alias makes no cycle, in an alias body or elsewhere
