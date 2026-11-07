@@ -1276,8 +1276,9 @@ pub(crate) enum DiagnosticKind {
     /// that removing it would join them.
     RedundantSemicolon {
         at: Span,
-        /// What the fix removes: the `;`, and the blanks after it at the start of a line.
-        remove: Span,
+        /// What the fix removes: the `;`, and the blanks after it at the start of a line. `None`
+        /// means no fix.
+        remove: Option<Span>,
         space: bool,
     },
     /// The pattern at `at` of `keyword`, which every value of its enum matches. `plain` says what
@@ -5966,11 +5967,15 @@ impl From<DiagnosticKind> for Diagnostic {
                 .with_fix(unsafe_fix(&format!("remove the {what}"), remove, ""))
             }
             DiagnosticKind::RedundantSemicolon { at, remove, space } => {
-                Diagnostic::coded(code, at, "unnecessary `;`").with_fix(safe_fix(
-                    "remove the `;`",
-                    remove,
-                    if space { " " } else { "" },
-                ))
+                let warning = Diagnostic::coded(code, at, "unnecessary `;`");
+                match remove {
+                    Some(remove) => warning.with_fix(safe_fix(
+                        "remove the `;`",
+                        remove,
+                        if space { " " } else { "" },
+                    )),
+                    None => warning,
+                }
             }
             DiagnosticKind::AlwaysMatches { keyword, at, plain } => match keyword {
                 Unwrap::IfLet | Unwrap::LetElse => {

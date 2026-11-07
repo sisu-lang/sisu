@@ -152,16 +152,26 @@ fn internal_error(d: &Diagnostic) -> ! {
 /// the fuzz target asserts that every fix shown keeps the syntax, the checker's included.
 /// Judging one lexes and parses the whole source again, so judging every checker fix made N
 /// warnings cost N parses. For the same reason only the first `JUDGED` syntax fixes are judged;
-/// later ones are dropped. A W0007 fix is safe by construction (`lexer::separate`), so it is kept
-/// as it is: neither judged, counted nor demoted.
+/// later ones are dropped. On clean syntax a W0007 fix is kept as it is: neither judged, counted
+/// nor demoted. Beside a syntax error it stays only if the token kinds and the lexer codes of the
+/// fixed source stay the same. That judgement has its own count, and it also stops at `JUDGED`.
 pub(crate) fn sound_fixes(source: &str, diagnostics: &[Diagnostic]) -> Vec<Diagnostic> {
     let mut sound = diagnostics.to_vec();
-    // Skipping the reparse for W0007s alone only saves work, so no test pins it.
+    // On clean syntax a W0007 fix is kept unjudged; beside a syntax error it stays only if the
+    // tokens and the lexer codes stay (`keep_lexing_semicolon_fixes`).
     let syntax_fix = |d: &Diagnostic| d.code() != Code::RedundantSemicolon;
-    // Judging a fix lexes and parses `source` again, so skip that when no diagnostic has one.
-    if sound.iter().any(|d| syntax_fix(d) && !d.fixes().is_empty()) {
+    let failed = sound.iter().any(|d| d.severity() == Severity::Error);
+    // Judging a fix lexes and parses `source` again, so skip that when no fix needs it: a syntax
+    // fix, or a W0007 fix of a source that failed. A source with only warnings skips too.
+    if sound
+        .iter()
+        .any(|d| (syntax_fix(d) || failed) && !d.fixes().is_empty())
+    {
         let syntax = syntax(source);
         let before = badness(&syntax);
+        if before != (false, 0) {
+            keep_lexing_semicolon_fixes(source, &mut sound);
+        }
         // Past a bracket error, the worst there is, no fix is worse: only the parser's reports
         // are judged.
         let reported: FxHashSet<(Code, Span)> = (syntax.iter().flatten())
@@ -186,17 +196,45 @@ pub(crate) fn sound_fixes(source: &str, diagnostics: &[Diagnostic]) -> Vec<Diagn
     sound
 }
 
-/// How many syntax fixes `sound_fixes` judges.
+/// How many syntax fixes `sound_fixes` judges, and how many W0007 fixes, with a count of their own.
 // shortcut: a fix past the cap is dropped, not judged; judge only the edited item if files with
 // more fixable syntax errors turn up.
 const JUDGED: usize = 100;
 
-/// Where each comment and each lexer error of `source` starts: text that the parser never sees,
-/// so that no rule behind a fix knows it is there.
+/// Drops each W0007 fix in `diagnostics` that changes how `source` lexes: it keeps a fix only if
+/// the fixed source gives the same token kinds and the same lexer codes. A fixed source that does
+/// not lex counts as different. At most `JUDGED` fixes are judged, with a count of their own, and
+/// the later ones are dropped. It lexes and does not parse.
+fn keep_lexing_semicolon_fixes(source: &str, diagnostics: &mut [Diagnostic]) {
+    let same = |a: &lexer::Lexed<'_>, b: &lexer::Lexed<'_>| {
+        (a.tokens.iter().map(|t| &t.kind)).eq(b.tokens.iter().map(|t| &t.kind))
+            && (a.diagnostics.iter().map(Diagnostic::code))
+                .eq(b.diagnostics.iter().map(Diagnostic::code))
+    };
+    // A source that does not lex has no W0007.
+    let Ok(lexed) = lexer::lex(source) else {
+        return;
+    };
+    let mut judged = 0;
+    for d in diagnostics
+        .iter_mut()
+        .filter(|d| d.code() == Code::RedundantSemicolon)
+    {
+        d.retain_fixes(|fix| {
+            judged += 1;
+            judged <= JUDGED
+                && lexer::lex(&fix.apply(source)).is_ok_and(|fixed| same(&lexed, &fixed))
+        });
+    }
+}
+
+/// Where each comment, each lexer error and each dropped `;` of `source` starts: text that the
+/// parser never sees, so that no rule behind a fix knows it is there.
 fn marks(source: &str) -> Vec<usize> {
     match lexer::lex(source) {
         Err(d) => vec![d.span().start()],
-        Ok(lexed) => (lexed.diagnostics.iter().map(|d| d.span().start()))
+        Ok(lexed) => (lexed.diagnostics.iter().chain(&lexed.warnings))
+            .map(|d| d.span().start())
             .chain(lexed.comments)
             .collect(),
     }

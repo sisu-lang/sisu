@@ -485,13 +485,18 @@ pub(crate) fn lex(source: &str) -> Result<Lexed<'_>, Diagnostic> {
 enum Judgement {
     Separator,
     Redundant,
+    /// Redundant, but it ends a statement that its removal would keep open: no fix.
+    Joined,
     Kept,
 }
 
 /// Judges each `;` in `separators`, those that `lex` found in statement context: a separator
 /// becomes a `Newline` with the `;`'s span, a redundant one is dropped with a W0007, and any
 /// other stays for the parser to report. Removing a redundant `;` leaves tokens that the parser
-/// reads the same, so its fix is safe. Without a `;` in a block, there is nothing to judge.
+/// reads the same, so its fix is safe. A `;` first on its line after an unfinished statement has
+/// no fix, because it ends a statement that the removal would keep open. A `;` after `{` is not
+/// that case: it keeps its fix. Beside a syntax error, `sound_fixes` judges the fix. Without a `;`
+/// in a block, there is nothing to judge.
 fn separate(source: &str, tokens: &mut Vec<Token>, separators: &[Separator]) -> Vec<Diagnostic> {
     let mut warnings = Vec::new();
     if separators.is_empty() {
@@ -511,24 +516,25 @@ fn separate(source: &str, tokens: &mut Vec<Token>, separators: &[Separator]) -> 
             .count();
         // Every `;` after the first is redundant: it leaves the first its neighbours.
         let between_items = separators[found].between_items;
-        let redundant = match judge(source, tokens, i..end, between_items, &mut statements) {
-            Judgement::Separator => {
-                tokens[i].kind = TokenKind::Newline;
-                i + 1
-            }
-            Judgement::Redundant => i,
-            Judgement::Kept => i + 1,
-        };
+        let (redundant, joined) =
+            match judge(source, tokens, i..end, between_items, &mut statements) {
+                Judgement::Separator => {
+                    tokens[i].kind = TokenKind::Newline;
+                    (i + 1, false)
+                }
+                Judgement::Redundant => (i, false),
+                Judgement::Joined => (i, true),
+                Judgement::Kept => (i + 1, false),
+            };
         // Only blanks before the run: removing a `;` there must not widen the indentation.
         let line_start = source.as_bytes()[..start]
             .iter()
             .rev()
             .take_while(|&&b| b != b'\n')
             .all(|&b| b == b' ' || b == b'\t');
-        warnings.extend(
-            (tokens[redundant..end].iter().enumerate())
-                .map(|(k, t)| redundant_semicolon(source, t.span, k == 0, line_start)),
-        );
+        warnings.extend((tokens[redundant..end].iter().enumerate()).map(|(k, t)| {
+            redundant_semicolon(source, t.span, k == 0, line_start, k > 0 || !joined)
+        }));
         indices.start = end;
     }
     let mut dropped = warnings.iter().map(Diagnostic::span).peekable();
@@ -542,8 +548,9 @@ fn separate(source: &str, tokens: &mut Vec<Token>, separators: &[Separator]) -> 
 /// `??` before the run
 /// closes a type annotation, which ends a statement as at a line's end.
 /// The rules, in order: a `.` after the run is a continuation unless the `;` is needed to end the
-/// statement; a `;` that joins two lines into a different statement stays; a `;` next to a line
-/// break, a `{`, a `}`, an `else` or an item that needs no separator is redundant.
+/// statement; a `;` that joins two lines into a different statement stays; a `;` first on its line
+/// after an unfinished statement is `Joined`; a `;` next to a line break, a `{`, a `}`, an `else`
+/// or an item that needs no separator is redundant.
 fn judge(
     source: &str,
     tokens: &[Token],
@@ -576,9 +583,15 @@ fn judge(
         } else {
             Judgement::Kept
         }
-    } else if prev.is_some_and(|p| !ends && !matches!(p.kind, LBrace | Newline)) && !break_before {
-        // Without the `;`, the lines would join into a different statement.
-        Judgement::Kept
+    } else if prev.is_some_and(|p| !ends && !matches!(p.kind, LBrace | Newline)) {
+        // The `;` ends a statement that is still open at it. On the same line, the lines would
+        // join into a different statement without it. At the start of a line, they join with or
+        // without it, but the `;` still ends what the removal would keep open.
+        if break_before {
+            Judgement::Joined
+        } else {
+            Judgement::Kept
+        }
     } else if next == Some(&Else)
         || break_before
         || break_after
@@ -606,8 +619,15 @@ fn judge(
 /// joins no two tokens. Of `;`s that touch, only the first removed leaves the space, so removing
 /// them all leaves one. When `line_start`, only blanks come before its run on the line. Then each
 /// `;` of the run also takes the blanks after it: each owns the blanks that follow it, so the edits
-/// never overlap, and the line keeps its indentation, whichever fixes apply.
-fn redundant_semicolon(source: &str, at: Span, first: bool, line_start: bool) -> Diagnostic {
+/// never overlap, and the line keeps its indentation, whichever fixes apply. When `fixable` is
+/// false, the warning has no fix.
+fn redundant_semicolon(
+    source: &str,
+    at: Span,
+    first: bool,
+    line_start: bool,
+    fixable: bool,
+) -> Diagnostic {
     let solid = |b: Option<&u8>| b.is_some_and(|b| !b.is_ascii_whitespace());
     let bytes = source.as_bytes();
     let before = at.start().checked_sub(1).and_then(|b| bytes.get(b));
@@ -624,6 +644,7 @@ fn redundant_semicolon(source: &str, at: Span, first: bool, line_start: bool) ->
         0
     };
     let remove = Span::new(at.start(), at.end() + blanks);
+    let remove = fixable.then_some(remove);
     DiagnosticKind::RedundantSemicolon { at, remove, space }.into()
 }
 
