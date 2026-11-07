@@ -190,14 +190,16 @@ pub(crate) fn sound_fixes(source: &str, diagnostics: &[Diagnostic]) -> Vec<Diagn
         for d in sound.iter_mut().filter(|d| syntax_fix(d)) {
             let own = d.span().start();
             let reported = reported.contains(&(d.code(), d.span()));
-            d.retain_fixes(|fix| {
-                let spans = marks.iter().any(|&at| at != own && around(fix, at));
-                if !reported && !spans {
-                    return true;
-                }
-                judged += 1;
-                judged <= JUDGED && syntax_errors(&fix.apply(source)) <= before
-            });
+            let spans = |fix: &Fix| marks.iter().any(|&at| at != own && around(fix, at));
+            if reported || d.fixes().iter().any(spans) {
+                d.retain_fixes(|fix| {
+                    if !reported && !spans(fix) {
+                        return true;
+                    }
+                    judged += 1;
+                    judged <= JUDGED && syntax_errors(&fix.apply(source)) <= before
+                });
+            }
             d.demote_fixes(|fix| {
                 let taken = |at: usize| fix.edits().iter().any(|e| e.span().range().contains(&at));
                 marks
