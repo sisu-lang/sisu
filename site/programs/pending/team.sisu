@@ -1,0 +1,15 @@
+struct Person {
+    name: string
+}
+
+struct Team {
+    leader: Person
+}
+
+fn main() {
+    let team = Team(leader: Person(name: "Ilse"))
+    let mut copy = team
+    copy.leader.name = "Aino"    // changes copy, not team
+    print(team.leader.name)
+    print(copy.leader.name)
+}

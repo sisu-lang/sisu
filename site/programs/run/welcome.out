@@ -1,0 +1,5 @@
+Hei friend, welcome to Sisu!
+
+sisu compiled welcome.sisu to native code and ran it.
+Run it with your name:  sisu run welcome.sisu Aino
+Then take the tour:     https://sisu-lang.github.io/sisu/tour.html

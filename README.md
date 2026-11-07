@@ -91,8 +91,8 @@ macOS 15 or newer. It links each program with `cc`, so you need a C compiler on
 ```console
 $ curl -fsSL https://github.com/sisu-lang/sisu/releases/latest/download/install.sh | sh
 $ export PATH="$HOME/.sisu/bin:$PATH"
-$ curl -fsSLO https://github.com/sisu-lang/sisu/releases/latest/download/orders.sisu
-$ sisu run orders.sisu
+$ curl -fsSLO https://github.com/sisu-lang/sisu/releases/latest/download/welcome.sisu
+$ sisu run welcome.sisu
 ```
 
 The first line, run again, updates Sisu. It checks the tarball against the

@@ -1,7 +1,0 @@
-fn main() {
-    let mut words = 0
-    while let line = read_line() {    // None at the end of input
-        words += line.words().len()
-    }
-    print("{words} words")
-}

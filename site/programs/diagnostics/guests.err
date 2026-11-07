@@ -1,0 +1,14 @@
+error[E0062]: `first` may be `None`
+ --> guests.sisu:4:13
+  |
+4 |     print("{first.len()} letters")
+  |             ^^^^^
+  |
+  = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+  |
+4 |     print("{first?.len()} letters")
+  |                  +
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0062

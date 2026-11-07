@@ -1,0 +1,5 @@
+fn main() {
+    let guests = ["Aino", "Eino"]
+    let first = guests.first()
+    print("{first.len()} letters")
+}

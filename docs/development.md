@@ -876,7 +876,7 @@ The `Nightly build` workflow (`.github/workflows/nightly-build.yml`) builds
 `sisu` for x86-64 Linux, ARM64 Linux and ARM64 macOS from the newest `main`
 commit whose `ci.yml` push run passed. It publishes the builds as a GitHub
 release `nightly-<YYYY-MM-DD>-<short SHA>`, marked latest. The release holds
-the three tarballs, `install.sh`, `orders.sisu` and `SHA256SUMS`. The install
+the three tarballs, `install.sh`, `welcome.sisu` and `SHA256SUMS`. The install
 line runs `install.sh` from `releases/latest/download/`. The term for a
 published build is "nightly build" (`GLOSSARY.md`).
 
@@ -890,7 +890,7 @@ GitHub API is in `scripts/nightly_build.py`. It has four commands: `pick`,
 | --- | --- |
 | `pick` | Chooses the commit. It takes the newest `main` commit that has a successful `ci.yml` push run. That commit must be newer than the commit of the newest `nightly-*` release. Its `.github/workflows/` tree must equal the one at the head of `main`. It writes the answer to the job summary. |
 | `build` | Builds, checks and packs one tarball for each of the three targets. |
-| `checksums` | Writes `SHA256SUMS` with three lines. It uploads that file, `install.sh` and `orders.sisu`. |
+| `checksums` | Writes `SHA256SUMS` with three lines. It uploads that file, `install.sh` and `welcome.sisu`. |
 | `clean-machine` | Runs `install.sh` and the site's programs on eight clean systems. |
 | `installer-tests` | Runs the installer tests that need a broken or an unsupported machine. |
 | `publish` | Creates a draft release, uploads the six files and publishes the draft. |
@@ -974,7 +974,7 @@ no new commit opens no issue.
   fails when two artifacts hold one file name. That check comes before any
   write to the releases. The error names the file and both paths.
 - `live-check` fails when an install line fails, or when the output of
-  `orders.sisu` differs from `site/programs/run/orders.out`. It almost always
+  `welcome.sisu` differs from `site/programs/run/welcome.out`. It almost always
   means a URL or upload problem. It does not roll back. The nightly build stays
   published.
 - `prune` fails when a `gh release delete` call fails. It names the tag on
@@ -991,7 +991,7 @@ each job is the limit.
 Three failures have no bad build behind them:
 
 - A by-hand re-run of a failed `live-check` after a newer nightly build is
-  published compares the new asset with the old `orders.out`.
+  published compares the new asset with the old `welcome.out`.
 - A pull request behind `main` runs the merged workflow of `main` on the head
   of the pull request. Update the branch to end it. A run by hand on a branch
   runs the file of that branch.

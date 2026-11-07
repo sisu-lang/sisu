@@ -6,62 +6,67 @@ Sisu is a small, statically typed language that compiles to native x86-64 and AR
       <div>
         <span class="pill">Early and experimental · Linux and ARM64 macOS</span>
         <h1>Readable code that compiles to native programs.</h1>
-        <p class="lede">Sisu is a small, statically typed language. A value that can be missing has an optional type, so there is no null. A function changes an array argument only when the call says <code>mut</code>. Errors point at the cause and often show the fix. Memory is freed by reference counting, with no garbage collector and no borrow checker.</p>
+        <p class="lede">Sisu is a small, statically typed language. A function that can fail says so in its type. There is no null. The variable decides what can change, so a copy stays a copy. Errors point at the cause and show the fix.</p>
         <div class="acts"><a class="btn go" href="#h-try">Install it</a><a class="btn alt" href="tour.html">Take the tour</a><a class="btn alt" href="status.html">See what works</a></div>
       </div>
       <div class="snip">
-        <h2 class="snip-h">You see what changes</h2>
-        <figure class="code"><figcaption class="cap">sale.sisu</figcaption><pre data-lang="sisu" data-mark="10">
-{{text programs/run/sale.sisu}}</pre></figure>
-        <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
-{{text programs/run/sale.out}}</pre></figure>
-        <p class="snip-note"><code>let mut sale = prices</code> behaves as a copy, so <code>prices</code> stays the same. A call that changes an array writes <code>mut</code>. Prices are in cents. <a href="tour.html#arrays">Arrays in the tour</a></p>
+        <p class="step">Add up the numbers in a file</p>
+        <figure class="code"><figcaption class="cap">total.sisu</figcaption><pre data-lang="sisu" data-mark="4">
+{{text programs/pending/total.sisu}}</pre></figure>
+        <figure class="code"><figcaption class="cap">terminal</figcaption><pre data-lang="sh">
+$ sisu run total.sisu prices.txt
+7050
+$ sisu run total.sisu notes.txt
+error: not a number: kymmenen</pre></figure>
+        <p class="snip-note"><code>?</code> passes a failure up to the caller. <code>?? fail</code> turns a word that is not a number into a failure with a message.</p>
       </div>
     </section>
   </div>
-  <!-- source: site/programs/run/sale.sisu, docs/adr/0007-arrays-are-values.md, docs/adr/0043-mut-parameters-copy-in-and-out.md, docs/adr/0005-reference-counting.md -->
-  <section class="s tint" aria-labelledby="h-small"><div class="w">
-    <div class="s-h"><h2 id="h-small">Small programs, one idea each</h2><p>Each program on this page compiles with today's <code>sisu</code>, and the tests check its output.</p></div>
-    <div class="snips">
-      <div class="snip row">
-        <div><h3 class="snip-h">Read the input</h3>
-        <p class="snip-note"><code>read_line()</code> gives a <code>string?</code>: the next line, or <code>None</code> at the end of the input. <code>while let</code> runs the loop while a line comes. <a href="tour.html#optionals">Optionals in the tour</a></p></div>
-        <div><figure class="code"><figcaption class="cap">words.sisu</figcaption><pre data-lang="sisu" data-mark="3">
-{{text programs/run/words.sisu}}</pre></figure>
-        <figure class="code"><figcaption class="cap">output, for two lines of input</figcaption><pre data-lang="out">
-{{text programs/run/words.out}}</pre></figure></div>
-      </div>
-      <div class="snip row">
-        <div><h3 class="snip-h">No null</h3>
-        <p class="snip-note"><code>names.get(7)</code> gives <code>None</code>, and <code>??</code> says what a missing value means. <code>names[7]</code> stops the program with a panic that names the line. <a href="tour.html#optionals">Optionals in the tour</a></p></div>
-        <div><figure class="code"><figcaption class="cap">names.sisu</figcaption><pre data-lang="sisu" data-mark="4">
-{{text programs/run/names.sisu}}</pre></figure>
+  <!-- source: site/programs/pending/total.sisu, docs/reference/errors.md (The ? operator, A main that fails), docs/reference/types.md (Parsing a string) -->
+  <section class="s tint" aria-labelledby="h-copy"><div class="w">
+    <div class="snip row">
+      <div><h2 id="h-copy">Change a copy. The original stays.</h2>
+        <p class="snip-note"><code>let mut copy = team</code> gives a copy. A write to <code>copy</code>, at any depth, never changes <code>team</code>. A <code>let</code> value never changes.</p>
+        <p class="snip-note">There is no shared object that changes behind your back, and no borrow checker.</p></div>
+      <div><figure class="code"><figcaption class="cap">team.sisu</figcaption><pre data-lang="sisu" data-mark="12">
+{{text programs/pending/team.sisu}}</pre></figure>
         <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
-{{text programs/run/names.out}}</pre></figure></div>
-      </div>
-      <div class="snip row">
-        <div><h3 class="snip-h">Keep the first of each</h3>
-        <p class="snip-note"><code>seen</code> starts empty and grows with <code>push</code>. <code>contains</code> compares with <code>==</code>. <a href="tour.html#arrays">Arrays in the tour</a></p></div>
-        <div><figure class="code"><figcaption class="cap">unique.sisu</figcaption><pre data-lang="sisu" data-mark="5">
-{{text programs/run/unique.sisu}}</pre></figure>
-        <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
-{{text programs/run/unique.out}}</pre></figure></div>
-      </div>
+Ilse
+Aino</pre></figure></div>
     </div>
   </div></section>
-  <!-- source: site/programs/run/words.sisu, site/programs/run/names.sisu, site/programs/run/unique.sisu, docs/reference/io.md, docs/reference/types.md (Optionals), docs/reference/arrays.md -->
+  <!-- source: site/programs/pending/team.sisu, docs/adr/0046-structs-replace-classes.md -->
   <section class="s" aria-labelledby="h-errors"><div class="w">
-    <div class="s-h"><h2 id="h-errors">The compiler shows what a change breaks</h2><p>Add a variant to an enum, and each <code>match</code> that does not handle it is an error. Each error has a stable code and points at the code that caused it. When the fix is clear, the error shows it. With <code>--format json</code>, each fix also says if it is safe to apply.</p></div>
-    <div class="errs">
-      <div class="snip"><p class="step"><b>01</b> Add a variant</p>
-        <figure class="code"><figcaption class="cap">area.sisu</figcaption><pre data-lang="sisu" data-mark="4">
+    <div class="s-h"><h2 id="h-errors">The compiler shows the fix</h2><p>Each error has a stable code and points at the code that caused it. When the fix is clear, the error shows it. With <code>--format json</code>, each fix also says if it is safe to apply.</p></div>
+    <div class="pairs">
+      <h3 class="snip-h">A value that can be missing</h3>
+      <div class="errs">
+        <div class="snip"><p class="step"><b>01</b> You write</p>
+          <figure class="code"><figcaption class="cap">guests.sisu</figcaption><pre data-lang="sisu" data-mark="4">
+{{text programs/diagnostics/guests.sisu}}</pre></figure></div>
+        <div class="snip"><p class="step"><b>02</b> <code>sisu check</code> says</p>
+          <figure class="code"><figcaption class="cap">error</figcaption><pre>{{diag programs/diagnostics/guests.err}}</pre></figure></div>
+      </div>
+      <h3 class="snip-h">A call that changes an argument</h3>
+      <div class="errs">
+        <div class="snip"><p class="step"><b>01</b> You write</p>
+          <figure class="code"><figcaption class="cap">invite.sisu</figcaption><pre data-lang="sisu" data-mark="7">
+{{text programs/diagnostics/invite.sisu}}</pre></figure></div>
+        <div class="snip"><p class="step"><b>02</b> <code>sisu check</code> says</p>
+          <figure class="code"><figcaption class="cap">error</figcaption><pre>{{diag programs/diagnostics/invite.err}}</pre></figure></div>
+      </div>
+      <h3 class="snip-h">A new variant</h3>
+      <div class="errs">
+        <div class="snip"><p class="step"><b>01</b> You write</p>
+          <figure class="code"><figcaption class="cap">area.sisu</figcaption><pre data-lang="sisu" data-mark="4">
 {{text programs/diagnostics/area.sisu}}</pre></figure></div>
-      <div class="snip"><p class="step"><b>02</b> <code>sisu check area.sisu</code></p>
-        <figure class="code"><figcaption class="cap">error</figcaption><pre>{{diag programs/diagnostics/area.err}}</pre></figure></div>
+        <div class="snip"><p class="step"><b>02</b> <code>sisu check</code> says</p>
+          <figure class="code"><figcaption class="cap">error</figcaption><pre>{{diag programs/diagnostics/area.err}}</pre></figure></div>
+      </div>
     </div>
-    <p class="after"><code>sisu explain E0130</code> tells more about a code. <a href="diagnostics.html">All {{diagnostic-count}} codes</a></p>
+    <p class="after"><code>sisu explain E0062</code> tells more about a code. <a href="diagnostics.html">All {{diagnostic-count}} codes</a></p>
   </div></section>
-  <!-- source: site/programs/diagnostics/area.err (real sisu output), docs/adr/0013-diagnostics-have-stable-codes.md, docs/diagnostics/README.md (Applying fixes) -->
+  <!-- source: site/programs/diagnostics/guests.err, invite.err, area.err (real sisu output), docs/adr/0013-diagnostics-have-stable-codes.md, docs/diagnostics/README.md (Applying fixes) -->
   <section class="s tint" aria-labelledby="h-try"><div class="w try">
     <div><h2 id="h-try">Install it and run a program</h2><p>Sisu runs on x86-64 and ARM64 Linux with glibc 2.35 or newer, and on ARM64 macOS 15 or newer. It links each program with <code>cc</code>, so you need a C compiler on <code>PATH</code>. These lines install the newest nightly build and run a program.</p>
       <p>The first line, run again, updates Sisu. It checks the tarball against the release's <code>SHA256SUMS</code>, which shows that the file is whole and comes from the same release. It does not show who made the release. A bug report gives the output of <code>sisu --version --verbose</code>. To keep <code>sisu</code> on <code>PATH</code> in a new shell, add the <code>export</code> line to your shell's start-up file.</p>
@@ -70,10 +75,10 @@ Sisu is a small, statically typed language that compiles to native x86-64 and AR
     <figure class="code"><figcaption class="cap">terminal</figcaption><pre data-lang="sh">
 $ curl -fsSL https://github.com/sisu-lang/sisu/releases/latest/download/install.sh | sh
 $ export PATH="$HOME/.sisu/bin:$PATH"
-$ curl -fsSLO https://github.com/sisu-lang/sisu/releases/latest/download/orders.sisu
-$ sisu run orders.sisu
-{{text programs/run/orders.out}}</pre></figure>
-    <!-- source: README.md (Install), install.sh (the supported systems), site/programs/run/orders.out -->
+$ curl -fsSLO https://github.com/sisu-lang/sisu/releases/latest/download/welcome.sisu
+$ sisu run welcome.sisu
+{{text programs/run/welcome.out}}</pre></figure>
+    <!-- source: README.md (Install), install.sh (the supported systems), site/programs/run/welcome.out -->
   </div></section>
   <section class="s" aria-labelledby="h-stand"><div class="w">
     <div class="s-h"><h2 id="h-stand">Where Sisu stands</h2><p>Each row is one area of the project. The bar shows how much of it works today; open a row for the full list. Planned work can change and has no promised date.</p></div>

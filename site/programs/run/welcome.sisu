@@ -1,0 +1,8 @@
+fn main(args: [string]) {
+    let name = args.get(0) ?? "friend"
+    print("Hei {name}, welcome to Sisu!")
+    print("")
+    print("sisu compiled welcome.sisu to native code and ran it.")
+    print("Run it with your name:  sisu run welcome.sisu Aino")
+    print("Then take the tour:     https://sisu-lang.github.io/sisu/tour.html")
+}

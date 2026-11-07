@@ -125,7 +125,7 @@ COMMIT_CHECK = (
 )
 INSTALL = "SISU_DOWNLOAD_DIR=$PWD/dl sh dl/install.sh"
 SMOKE = 'scripts/nightly_smoke.sh "$HOME/.sisu/bin" site/programs/run'
-DIFF = "diff orders.actual site/programs/run/orders.out"
+DIFF = "diff welcome.actual site/programs/run/welcome.out"
 CHECKS = [
     ("python3 scripts/nightly_check.py version target/release/sisu " + PICKED, None),
     ("python3 scripts/nightly_check.py linux target/release/sisu", "runner.os == 'Linux'"),
