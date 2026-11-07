@@ -711,8 +711,9 @@ so a fixed form cannot pass it. Do these steps in this order:
    the whole input, as `leaves` does. Do not loosen a test to fit a moved seed.
 5. Teach the walkers of `generate/coverage.rs` the feature. `universe()` reads
    each variant of the enums in `ast.rs`, `tir.rs` and `types.rs`. A new variant
-   needs an arm in `ast_expr`, `tir_expr` or `ty`. Those matches have no `_`
-   arm, so the build asks for the arm. A built-in method that lowers to an
+   needs an arm in the walker of its enum, such as `ast_expr`, `ast_stmt`,
+   `ast_pattern`, `tir_expr`, `tir_block`, `tir_pattern` or `ty`. Those matches
+   have no `_` arm, so the build asks for the arm. A built-in method that lowers to an
    existing variant can have a row in `RECEIVERS`. With a row, each receiver
    must be generated. With no row, the bare variant must still appear, but no
    receiver is demanded. `universe()` also reads `CONVERSIONS` and `TEXT`. A

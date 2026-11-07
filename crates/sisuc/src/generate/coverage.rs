@@ -6750,8 +6750,8 @@ fn main() { print(t(1)) }"
             &[],
         ),
         (
-            "a string constant spells sisu_args_len",
-            r#"fn main() { print("sisu_args_len") }"#.to_string(),
+            "a string constant spells the call of sisu_args_len",
+            r#"fn main() { print("  %0 = call i64 @sisu_args_len(i32 %1)") }"#.to_string(),
             &[],
         ),
         (
@@ -7001,6 +7001,24 @@ fn main_should_take_args_only_in_the_gated_programs() {
         gated |= holds;
     }
     assert!(gated, "no seed of 0..{FUZZ_SEEDS} is gated");
+}
+
+/// GIVEN each seed of `0..FUZZ_SEEDS`
+/// WHEN `program` writes it with and without `gap_args`
+/// THEN the cost and the unread bytes of `u` and `ru` are the same, so the gate makes no draw
+#[test]
+fn the_gate_of_main_args_should_make_no_draw() {
+    for n in 0..FUZZ_SEEDS {
+        let data = seed(n);
+        let reversed: Vec<u8> = data.iter().rev().copied().collect();
+        let [(cost, read, rewrites), gated] = [false, true].map(|main_args| {
+            let mut g = Gen::new(&data);
+            g.ru = Unstructured::new(&reversed);
+            let (cost, _, _) = g.program(main_args);
+            (cost, g.u.len(), g.ru.len())
+        });
+        assert_eq!((cost, read, rewrites), gated, "seed {n}");
+    }
 }
 
 /// GIVEN the programs of the seeds `0..FUZZ_SEEDS`
@@ -9023,7 +9041,7 @@ fn a_panic_site_should_not_follow_a_return() {
     let mut returning = 0;
     search_seeds(256, |n| {
         let g = generate(&seed(n));
-        let main = g.program.split("fn main() ").nth(1).unwrap_or_default();
+        let main = g.program.split("fn main(").nth(1).unwrap_or_default();
         let main = main.split("\nfn k").next().unwrap_or_default();
         if main.contains("return") {
             returning += 1;
