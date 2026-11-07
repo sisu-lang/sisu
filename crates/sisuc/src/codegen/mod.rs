@@ -167,6 +167,7 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
             slots: Vec::new(),
             outs: Vec::new(),
             last_outs: RefCell::new(Vec::new()),
+            memory_values: RefCell::new(FxHashMap::default()),
             flagged: Vec::new(),
             types: Vec::new(),
             caller: Cell::new(None),
@@ -439,6 +440,8 @@ struct Codegen<'ctx, 'src> {
     /// The out slots of the last call that passed any, indexed by the callee's parameter: `Some`
     /// for a `mut` parameter. `Out` loads from them. Each slot is an `alloca` in the entry block.
     last_outs: RefCell<Vec<Option<PointerValue<'ctx>>>>,
+    /// The LLVM type of each value that stays in memory, by its pointer (`by_memory`).
+    memory_values: RefCell<FxHashMap<PointerValue<'ctx>, BasicTypeEnum<'ctx>>>,
     /// The current function's flagged locals, indexed by `LocalId`: a `Move` of one leaves the
     /// zero value in its slot (every local is flagged under the RC checks, which test it).
     flagged: Vec<bool>,
@@ -503,7 +506,8 @@ impl<'ctx> Codegen<'ctx, '_> {
         let (ptr, ty) = self.slot(local);
         // Name the load after the local (the alloca carries its name).
         let name = ptr.get_name().to_string_lossy();
-        self.builder.build_load(ty, ptr, &name).expect(POSITIONED)
+        // A statement uses its operands before it writes any local.
+        self.value_at(ty, ptr, &name)
     }
 
     /// `Move`: the value of `local`, whose reference leaves its slot without a retain. A
@@ -512,11 +516,13 @@ impl<'ctx> Codegen<'ctx, '_> {
     fn move_local(&self, local: LocalId) -> BasicValueEnum<'ctx> {
         self.check_not_moved(local);
         let (ptr, ty) = self.slot(local);
-        let value = self.builder.build_load(ty, ptr, "moved").expect(POSITIONED);
         if self.flagged[local.0] {
-            self.store(ptr, ty.const_zero());
+            let value = self.copied_at(ty, ptr, "moved");
+            self.store_zero(ptr, ty);
+            value
+        } else {
+            self.value_at(ty, ptr, "moved")
         }
-        value
     }
 
     /// A new object of `class` with count 1, whose fields are the evaluated `args`.
@@ -588,12 +594,22 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// `Call`: `func` applied to the evaluated `args`; `None` for a `unit` result. The caller
     /// adds the two location arguments of a prelude function. The helpers of `to_string` and `eq`
-    /// call `call_written` instead. The count of `args` is checked.
+    /// call `call_written` instead. A result that stays in memory goes to a scratch slot, whose
+    /// pointer this adds as the last argument. The count of `args` is checked.
     fn call_value(
         &self,
         func: FuncId,
         args: &[BasicMetadataValueEnum<'ctx>],
     ) -> Option<BasicValueEnum<'ctx>> {
+        let ret = self.mir.functions[func.0].ret;
+        let result_slot = self.result_slot(ret);
+        let with_slot;
+        let args = if let Some((slot, _)) = result_slot {
+            with_slot = [args, &[slot.into()]].concat();
+            &with_slot
+        } else {
+            args
+        };
         debug_assert_eq!(
             args.len(),
             self.functions[func.0].count_params() as usize,
@@ -605,14 +621,41 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.mir.functions[func.0].name,
             self.unit.index
         );
-        let result = self
+        let call = self
             .builder
             .build_call(self.functions[func.0], args, "call")
-            .expect(POSITIONED)
-            .try_as_basic_value()
-            .basic()?;
-        self.assume_len(self.mir.functions[func.0].ret, result);
+            .expect(POSITIONED);
+        if let Some((slot, ty)) = result_slot {
+            return Some(self.in_memory(slot, ty));
+        }
+        let result = call.try_as_basic_value().basic()?;
+        self.assume_len(ret, result);
         Some(result)
+    }
+
+    /// A scratch slot for the result of a call that returns a `ret`, and its LLVM type, when the
+    /// result stays in memory.
+    fn result_slot(&self, ret: Type) -> Option<(PointerValue<'ctx>, BasicTypeEnum<'ctx>)> {
+        let ty = self.llvm_type(ret).filter(|&ty| self.by_memory(ty))?;
+        Some((self.entry_alloca(ty, "result"), ty))
+    }
+
+    /// Returns `value` from the current function: a value that stays in memory goes to the place
+    /// that the last parameter points to.
+    fn return_value(&self, value: Option<BasicValueEnum<'ctx>>) {
+        if let Some(value) = value.filter(|&value| self.memory_type(value).is_some()) {
+            let place = self
+                .current_function()
+                .get_last_param()
+                .expect("a function that returns a value in memory should take its place")
+                .into_pointer_value();
+            self.store(place, value);
+            self.builder.build_return(None).expect(POSITIONED);
+            return;
+        }
+        self.builder
+            .build_return(value.as_ref().map(|v| -> &dyn BasicValue<'_> { v }))
+            .expect(POSITIONED);
     }
 
     /// Whether this unit may refer to function `func`: it defines it, or the unit that does
@@ -704,10 +747,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             params.push(ptr_type.into());
             params.push(self.context.i64_type().into());
         }
-        let fn_type = match self.llvm_type(f.ret) {
-            Some(ret) => ret.fn_type(&params, false),
-            None => self.context.void_type().fn_type(&params, false),
-        };
+        let fn_type = self.function_type(Some(f.ret), params);
         // `mono` names a method of a conformance block with its interface (`C.Label.name`), so
         // two blocks that each hold `name` get two symbols.
         let placement = self.unit.placement[index];
@@ -794,8 +834,11 @@ impl<'ctx> Codegen<'ctx, '_> {
         let values: usize = tys.iter().map(|&ty| self.param_types(ty).len()).sum();
         self.outs = Self::out_pointers(function, values, &f.muts);
         self.caller.set(f.prelude.then(|| {
-            // The location follows the Sisu parameters, so it is the last two.
-            let hidden = |from_end| function.get_nth_param(function.count_params() - from_end);
+            // The location follows the Sisu parameters, so it is the last two before a pointer
+            // to the result, when the result stays in memory.
+            let after = u32::from(self.llvm_type(f.ret).is_some_and(|ty| self.by_memory(ty)));
+            let hidden =
+                |from_end| function.get_nth_param(function.count_params() - after - from_end);
             (
                 hidden(2)
                     .expect("a prelude function should have its location pointer")
@@ -931,10 +974,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 otherwise,
             } => self.switch_value(operand, arms, *otherwise),
             Terminator::Return(value) => {
-                let value = value.as_ref().map(|value| self.operand(value).0);
-                self.builder
-                    .build_return(value.as_ref().map(|v| -> &dyn BasicValue<'_> { v }))
-                    .expect(POSITIONED);
+                self.return_value(value.as_ref().map(|value| self.operand(value).0));
             }
             Terminator::Panic { message, span } => {
                 self.panic_value(self.operand(message).0, *span);
@@ -1470,10 +1510,14 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// The value a place held before an assignment.
     fn load(&self, ty: BasicTypeEnum<'ctx>, ptr: PointerValue<'ctx>) -> BasicValueEnum<'ctx> {
-        self.builder.build_load(ty, ptr, "old").expect(POSITIONED)
+        self.copied_at(ty, ptr, "old")
     }
 
     fn store(&self, ptr: PointerValue<'ctx>, value: BasicValueEnum<'ctx>) {
+        if let Some(ty) = self.memory_type(value) {
+            self.copy_memory(ptr, value.into_pointer_value(), ty);
+            return;
+        }
         self.builder.build_store(ptr, value).expect(POSITIONED);
     }
 
@@ -1623,7 +1667,13 @@ impl<'ctx> Codegen<'ctx, '_> {
         for (value, block) in incoming {
             phi.add_incoming(&[(value, *block)]);
         }
-        phi.as_basic_value()
+        let stored = incoming
+            .first()
+            .and_then(|(value, _)| self.memory_type(value.as_basic_value_enum()));
+        match stored {
+            Some(stored) => self.in_memory(phi.as_basic_value().into_pointer_value(), stored),
+            None => phi.as_basic_value(),
+        }
     }
 }
 

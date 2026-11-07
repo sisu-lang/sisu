@@ -1,0 +1,147 @@
+// A counted enum of 1 KiB at each kind of place, so that a count goes wrong or a value leaks
+// when a copy in memory takes a reference that it does not give back.
+enum C0 {
+    A
+    S(string, [i64], string, string)
+}
+
+enum C1 {
+    A
+    V(C0, C0, C0, C0)
+}
+
+enum C2 {
+    A
+    V(C1, C1, C1, C1)
+}
+
+enum List {
+    Nil
+    Cons(C2, List)
+}
+
+interface Holds {
+    fn held(self, other: C2) -> C2
+}
+
+class Holder: Holds {
+    mut c: C2
+
+    fn held(self, other: C2) -> C2 {
+        let old = self.c
+        self.c = other
+        old
+    }
+}
+
+fn c0(n: i64) -> C0 {
+    C0.S("a{n}", [n, n + 1], "b", "c{n}")
+}
+
+fn c1(n: i64) -> C1 {
+    C1.V(c0(n), C0.A, c0(n + 1), c0(n + 2))
+}
+
+fn make(n: i64) -> C2 {
+    if n < 0 {
+        C2.A
+    } else {
+        C2.V(c1(n), C1.A, c1(n + 3), c1(n + 6))
+    }
+}
+
+fn weight0(c: C0) -> i64 {
+    match c {
+        C0.A => 0
+        C0.S(a, b, c, d) => a.len() + b.len() + c.len() + d.len()
+    }
+}
+
+fn weight1(c: C1) -> i64 {
+    match c {
+        C1.A => 0
+        C1.V(a, b, c, d) => weight0(a) + weight0(b) + weight0(c) + weight0(d)
+    }
+}
+
+fn weight(c: C2) -> i64 {
+    match c {
+        C2.A => 0
+        C2.V(a, b, c, d) => weight1(a) + weight1(b) + weight1(c) + weight1(d)
+    }
+}
+
+fn id<T>(x: T) -> T {
+    x
+}
+
+fn replace(mut c: C2, n: i64) -> C2 {
+    let old = c
+    c = make(n)
+    old
+}
+
+fn first_part(c: C2) -> C1 {
+    match c {
+        C2.A => C1.A
+        C2.V(a, _, _, _) => a
+    }
+}
+
+fn length(list: List) -> i64 {
+    match list {
+        List.Nil => 0
+        List.Cons(c, rest) => weight(c) + length(rest)
+    }
+}
+
+fn main() {
+    let mut c = make(0)
+    for i in 0..3 {
+        c = if i == 1 { C2.A } else { make(i) }
+    }
+    print(weight(c))
+    print(weight(id(make(5))))
+    let old = replace(mut c, 100)
+    print(weight(old))
+    print(weight(c))
+    print(weight1(first_part(c)))
+
+    let mut xs = [make(1), make(2)]
+    xs.push(make(3))
+    xs.push(xs[0])
+    xs[1] = xs[2]
+    xs[2] = make(40)
+    print(xs.len())
+    for x in xs {
+        print(weight(x))
+    }
+    print(xs.contains(make(1)))
+    print(xs.contains(C2.A))
+    print(weight(xs.get(1) ?? C2.A))
+    print(xs.get(9) == None)
+    let filled = [make(7); 3]
+    print(weight(filled[2]))
+
+    let mut list = List.Nil
+    for i in 0..3 {
+        list = List.Cons(make(i), list)
+    }
+    print(length(list))
+
+    let some: C2? = Some(make(8))
+    print(some == Some(make(8)))
+    print(some == None)
+    print(weight(some ?? C2.A))
+
+    let small = make(9)
+    let text = "{small}"
+    print(text.len())
+    let boxed: any Display = small
+    print("{boxed}".len())
+
+    let holds: any Holds = Holder(c: make(10))
+    print(weight(holds.held(make(11))))
+    let _ = holds.held(make(12))
+    print(weight(holds.held(C2.A)))
+}

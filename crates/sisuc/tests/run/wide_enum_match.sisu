@@ -1,0 +1,136 @@
+// A match reads each payload field, inline and in a box.
+enum E0 {
+    A
+    V(i64, i64, i64, i64)
+}
+
+enum E1 {
+    A
+    V(E0, E0, E0, E0)
+}
+
+enum E2 {
+    A
+    V(E1, E1, E1, E1)
+}
+
+enum E3 {
+    A
+    V(E2, E2, E2, E2)
+}
+
+enum E4 {
+    A
+    V(E3, E3, E3, E3)
+}
+
+enum E5 {
+    A
+    V(E4, E4, E4, E4)
+}
+
+fn e0(n: i64) -> E0 {
+    if n < 0 {
+        return E0.A
+    }
+    E0.V(n, n + 1, n + 2, n + 3)
+}
+
+fn e1(n: i64) -> E1 {
+    if n < 0 {
+        return E1.A
+    }
+    E1.V(e0(n), e0(n + 4), e0(n + 8), e0(n + 12))
+}
+
+fn e2(n: i64) -> E2 {
+    if n < 0 {
+        return E2.A
+    }
+    E2.V(e1(n), e1(n + 16), e1(n + 32), e1(n + 48))
+}
+
+fn e3(n: i64) -> E3 {
+    if n < 0 {
+        return E3.A
+    }
+    E3.V(e2(n), e2(n + 64), e2(n + 128), e2(n + 192))
+}
+
+fn e4(n: i64) -> E4 {
+    if n < 0 {
+        return E4.A
+    }
+    E4.V(e3(n), e3(n + 256), e3(n + 512), e3(n + 768))
+}
+
+fn e5(n: i64) -> E5 {
+    if n < 0 {
+        return E5.A
+    }
+    E5.V(e4(n), e4(n + 1024), e4(n + 2048), e4(n + 3072))
+}
+
+fn sum0(e: E0) -> i64 {
+    match e {
+        E0.A => 0
+        E0.V(a, b, c, d) => a + b + c + d
+    }
+}
+
+fn sum1(e: E1) -> i64 {
+    match e {
+        E1.A => 0
+        E1.V(a, b, c, d) => sum0(a) + sum0(b) + sum0(c) + sum0(d)
+    }
+}
+
+fn sum2(e: E2) -> i64 {
+    match e {
+        E2.A => 0
+        E2.V(a, b, c, d) => sum1(a) + sum1(b) + sum1(c) + sum1(d)
+    }
+}
+
+fn sum3(e: E3) -> i64 {
+    match e {
+        E3.A => 0
+        E3.V(a, b, c, d) => sum2(a) + sum2(b) + sum2(c) + sum2(d)
+    }
+}
+
+fn sum4(e: E4) -> i64 {
+    match e {
+        E4.A => 0
+        E4.V(a, b, c, d) => sum3(a) + sum3(b) + sum3(c) + sum3(d)
+    }
+}
+
+enum Chain {
+    End
+    Next(E3, Chain)
+}
+
+fn total(c: Chain) -> i64 {
+    match c {
+        Chain.End => 0
+        Chain.Next(e, rest) => sum3(e) + total(rest)
+    }
+}
+
+fn first(e: E5) -> E4 {
+    match e {
+        E5.A => E4.A
+        E5.V(a, _, _, _) => a
+    }
+}
+
+fn main() {
+    print(sum4(first(e5(0))))
+    print(sum4(first(E5.A)))
+    print(total(Chain.Next(e3(1), Chain.Next(e3(2), Chain.End))))
+    let e = e5(3)
+    if let E5.V(_, b, _, _) = e {
+        print(sum4(b))
+    }
+}

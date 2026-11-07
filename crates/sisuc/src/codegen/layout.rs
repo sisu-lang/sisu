@@ -155,7 +155,115 @@ pub(super) fn next_niche(program: &Program, niche: Niche) -> Option<Niche> {
     fits.then_some(Niche { storage, empty })
 }
 
+/// The largest value, in bytes, that codegen keeps as an LLVM value. A larger one stays in memory
+/// (`Codegen::by_memory`). Measured with an enum of `i64` fields, in a loop and in a recursion, at
+/// this size both ways run at the same speed. Below it, memory runs slower: up to 3.9 times when
+/// calls do not inline. Above it, an LLVM value builds slower with no gain at run time: 2.5 times
+/// at 256 bytes and 11 times at 1 KiB, in a program of 300 functions. It must stay at 24 or more,
+/// because the words of a string or an array (`three_words`) are read from an LLVM value. Other
+/// aggregates can use this rule when they land (ADR 0046).
+const LARGEST_LLVM_VALUE: u64 = 256;
+
 impl<'ctx> Codegen<'ctx, '_> {
+    /// Whether a value of the LLVM type `ty` stays in memory: the `BasicValueEnum` of such a value
+    /// is a pointer to it, with its type in `memory_values`. LLVM splits a first-class aggregate
+    /// into one value for each element, which costs time and memory for each byte of a large
+    /// enum. Instruction selection crashes at 65 536 elements.
+    pub(super) fn by_memory(&self, ty: BasicTypeEnum<'ctx>) -> bool {
+        ty.is_struct_type() && self.target_data.get_abi_size(&ty) > LARGEST_LLVM_VALUE
+    }
+
+    /// The value of type `ty` that stays at `place`, which nothing writes while the value is in
+    /// use.
+    pub(super) fn in_memory(
+        &self,
+        place: PointerValue<'ctx>,
+        ty: BasicTypeEnum<'ctx>,
+    ) -> BasicValueEnum<'ctx> {
+        self.memory_values.borrow_mut().insert(place, ty);
+        place.into()
+    }
+
+    /// The type of `value` when it stays in memory, as `in_memory` says.
+    pub(super) fn memory_type(&self, value: BasicValueEnum<'ctx>) -> Option<BasicTypeEnum<'ctx>> {
+        let BasicValueEnum::PointerValue(place) = value else {
+            return None;
+        };
+        self.memory_values.borrow().get(&place).copied()
+    }
+
+    /// The value of type `ty` at `place`, which nothing writes or frees before the value's last
+    /// use.
+    pub(super) fn value_at(
+        &self,
+        ty: BasicTypeEnum<'ctx>,
+        place: PointerValue<'ctx>,
+        name: &str,
+    ) -> BasicValueEnum<'ctx> {
+        if self.by_memory(ty) {
+            return self.in_memory(place, ty);
+        }
+        self.builder.build_load(ty, place, name).expect(POSITIONED)
+    }
+
+    /// The value of type `ty` at `place`, which can change or go after this: a load, or a copy
+    /// into a scratch slot.
+    pub(super) fn copied_at(
+        &self,
+        ty: BasicTypeEnum<'ctx>,
+        place: PointerValue<'ctx>,
+        name: &str,
+    ) -> BasicValueEnum<'ctx> {
+        if self.by_memory(ty) {
+            let slot = self.entry_alloca(ty, name);
+            self.copy_memory(slot, place, ty);
+            return self.in_memory(slot, ty);
+        }
+        self.builder.build_load(ty, place, name).expect(POSITIONED)
+    }
+
+    /// Copies the value of type `ty` at `from` to `to`, which is the same place or does not
+    /// overlap it.
+    pub(super) fn copy_memory(
+        &self,
+        to: PointerValue<'ctx>,
+        from: PointerValue<'ctx>,
+        ty: BasicTypeEnum<'ctx>,
+    ) {
+        let align = self.target_data.get_abi_alignment(&ty);
+        let size = self
+            .context
+            .i64_type()
+            .const_int(self.target_data.get_abi_size(&ty), false);
+        self.builder
+            .build_memcpy(to, align, from, align, size)
+            .expect("the alignment of a type should be a power of two");
+    }
+
+    /// Stores the zero value of the LLVM type `ty` at `place`.
+    pub(super) fn store_zero(&self, place: PointerValue<'ctx>, ty: BasicTypeEnum<'ctx>) {
+        if !self.by_memory(ty) {
+            self.store(place, ty.const_zero());
+            return;
+        }
+        let i64_type = self.context.i64_type();
+        self.builder
+            .build_memset(
+                place,
+                self.target_data.get_abi_alignment(&ty),
+                self.context.i8_type().const_zero(),
+                i64_type.const_int(self.target_data.get_abi_size(&ty), false),
+            )
+            .expect("the alignment of a type should be a power of two");
+    }
+
+    /// A scratch slot of type `ty` that holds its zero value.
+    fn zeroed_slot(&self, ty: BasicTypeEnum<'ctx>, name: &str) -> PointerValue<'ctx> {
+        let slot = self.entry_alloca(ty, name);
+        self.store_zero(slot, ty);
+        slot
+    }
+
     /// The LLVM type of a value of `ty`; `None` for `unit` and `never`, which have no value.
     pub(super) fn llvm_type(&self, ty: Type) -> Option<BasicTypeEnum<'ctx>> {
         match ty.kind() {
@@ -272,9 +380,14 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// The `None` of the optional `ty`: its niche's empty value, or `{ false, 0 }`.
     pub(super) fn empty(&self, ty: Type) -> BasicValueEnum<'ctx> {
-        match self.optional_niche(ty) {
-            Some(niche) => self.empty_value(niche),
-            None => self.optional_pair(Self::payload_of(ty)).const_zero().into(),
+        if let Some(niche) = self.optional_niche(ty) {
+            return self.empty_value(niche);
+        }
+        let pair = self.optional_pair(Self::payload_of(ty)).into();
+        if self.by_memory(pair) {
+            self.in_memory(self.zeroed_slot(pair, "none"), pair)
+        } else {
+            pair.const_zero()
         }
     }
 
@@ -292,6 +405,14 @@ impl<'ctx> Codegen<'ctx, '_> {
                 .into(),
             Storage::Tag(id) => {
                 let layout = self.enum_layout(id);
+                if self.by_memory(layout.ty) {
+                    let slot = self.zeroed_slot(layout.ty, "empty");
+                    self.store(
+                        self.tag_ptr(id, slot),
+                        layout.tag.const_int(empty, false).into(),
+                    );
+                    return self.in_memory(slot, layout.ty);
+                }
                 let ty = layout.ty.into_struct_type();
                 let fields: Vec<BasicValueEnum<'_>> =
                     std::iter::once(layout.tag.const_int(empty, false).into())
@@ -315,7 +436,23 @@ impl<'ctx> Codegen<'ctx, '_> {
         value: BasicValueEnum<'ctx>,
         name: &str,
     ) -> IntValue<'ctx> {
-        let Some(niche) = self.optional_niche(ty) else {
+        let niche = self.optional_niche(ty);
+        if self.memory_type(value).is_some() {
+            let place = value.into_pointer_value();
+            return match niche {
+                Some(niche) => self.holds_at(niche, place, name),
+                None => self
+                    .builder
+                    .build_load(
+                        self.context.bool_type(),
+                        self.pair_field(ty, place, 0),
+                        name,
+                    )
+                    .expect(POSITIONED)
+                    .into_int_value(),
+            };
+        }
+        let Some(niche) = niche else {
             return self
                 .builder
                 .build_extract_value(value.into_struct_value(), 0, name)
@@ -405,7 +542,14 @@ impl<'ctx> Codegen<'ctx, '_> {
     ) -> BasicValueEnum<'ctx> {
         let payload = Self::payload_of(ty);
         if self.optional_niche(ty).is_none() {
-            let pair = self.optional_pair(payload).const_zero();
+            let pair = self.optional_pair(payload);
+            if self.by_memory(pair.into()) {
+                let slot = self.entry_alloca(pair.into(), "some");
+                self.store(self.pair_field(ty, slot, 0), flag.into());
+                self.store(self.pair_field(ty, slot, 1), value);
+                return self.in_memory(slot, pair.into());
+            }
+            let pair = pair.const_zero();
             let pair = self
                 .builder
                 .build_insert_value(pair, flag, 0, "some")
@@ -420,9 +564,27 @@ impl<'ctx> Codegen<'ctx, '_> {
         if flag.get_zero_extended_constant() == Some(1) {
             return value;
         }
-        self.builder
+        let chosen = self
+            .builder
             .build_select(flag, value, self.empty(ty), "wrap")
-            .expect(POSITIONED)
+            .expect(POSITIONED);
+        match self.memory_type(value) {
+            Some(stored) => self.in_memory(chosen.into_pointer_value(), stored),
+            None => chosen,
+        }
+    }
+
+    /// The address of element `index` of the `{ flag, value }` pair of the optional `ty` at
+    /// `place`.
+    fn pair_field(&self, ty: Type, place: PointerValue<'ctx>, index: u32) -> PointerValue<'ctx> {
+        self.builder
+            .build_struct_gep(
+                self.optional_pair(Self::payload_of(ty)),
+                place,
+                index,
+                "pair",
+            )
+            .expect("an optional with no niche should be a `{ flag, value }` pair")
     }
 
     /// The value that `value`, of the optional `ty`, holds; meaningful only when `has_value`.
@@ -434,6 +596,13 @@ impl<'ctx> Codegen<'ctx, '_> {
         name: &str,
     ) -> BasicValueEnum<'ctx> {
         if self.optional_niche(ty).is_none() {
+            if self.memory_type(value).is_some() {
+                let payload = self
+                    .llvm_type(Self::payload_of(ty))
+                    .expect("the payload of an optional should have a value type");
+                let place = self.pair_field(ty, value.into_pointer_value(), 1);
+                return self.value_at(payload, place, name);
+            }
             return self
                 .builder
                 .build_extract_value(value.into_struct_value(), 1, name)
@@ -586,6 +755,10 @@ impl<'ctx> Codegen<'ctx, '_> {
         value: BasicValueEnum<'ctx>,
         tag: MetadataValue<'ctx>,
     ) {
+        if self.memory_type(value).is_some() {
+            self.store(ptr, value);
+            return;
+        }
         let store = self.builder.build_store(ptr, value).expect(POSITIONED);
         store
             .set_metadata(tag, self.tbaa_kind)
@@ -915,6 +1088,9 @@ impl<'ctx> Codegen<'ctx, '_> {
         let llvm_ty = self
             .llvm_type(ty)
             .expect("the checker should give every field a value type, never `unit` or `never`");
+        if self.by_memory(llvm_ty) {
+            return self.copied_at(llvm_ty, place, name);
+        }
         match tag {
             Some(tag) => self.load_tagged(llvm_ty, place, name, tag),
             None => self

@@ -1,0 +1,69 @@
+// An enum of 171 KiB, copied by value: codegen must not copy it as one LLVM aggregate.
+enum E0 {
+    A
+    V(i64, i64, i64, i64)
+}
+
+enum E1 {
+    A
+    V(E0, E0, E0, E0)
+}
+
+enum E2 {
+    A
+    V(E1, E1, E1, E1)
+}
+
+enum E3 {
+    A
+    V(E2, E2, E2, E2)
+}
+
+enum E4 {
+    A
+    V(E3, E3, E3, E3)
+}
+
+enum E5 {
+    A
+    V(E4, E4, E4, E4)
+}
+
+enum E6 {
+    A
+    V(E5, E5, E5, E5)
+}
+
+fn e0() -> E0 {
+    E0.V(1, 2, 3, 4)
+}
+
+fn e1() -> E1 {
+    E1.V(e0(), E0.A, E0.A, E0.A)
+}
+
+fn e2() -> E2 {
+    E2.V(e1(), E1.A, E1.A, E1.A)
+}
+
+fn e3() -> E3 {
+    E3.V(e2(), E2.A, E2.A, E2.A)
+}
+
+fn e4() -> E4 {
+    E4.V(e3(), E3.A, E3.A, E3.A)
+}
+
+fn e5() -> E5 {
+    E5.V(e4(), E4.A, E4.A, E4.A)
+}
+
+fn e6() -> E6 {
+    E6.V(e5(), E5.A, E5.A, E5.A)
+}
+
+fn main() {
+    let e = E6.A
+    print(e == E6.A)
+    print(e6() == e)
+}

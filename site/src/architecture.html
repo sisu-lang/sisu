@@ -15,7 +15,7 @@ How the Sisu compiler turns source text into a native executable, one stage at a
   <section class="ph"><div class="w">
     <h1>How the compiler works</h1>
     <p class="lede"><code>sisu</code> compiles one Sisu source file into one native executable. It is a pipeline: each stage takes what the stage before it produced and hands on something closer to machine code.</p>
-    <p class="meta">From docs/architecture.md and the ADRs at commit 749bcbf0 · x86-64 and ARM64 Linux, ARM64 macOS</p>
+    <p class="meta">From docs/architecture.md and the ADRs at commit fd85e98c · x86-64 and ARM64 Linux, ARM64 macOS</p>
   </div></section>
   <!-- source: docs/architecture.md (intro), README.md (x86-64 and ARM64 Linux, ARM64 macOS) -->
 
@@ -90,6 +90,7 @@ How the Sisu compiler turns source text into a native executable, one stage at a
         <li>An array is one counted block: the count, the length, the capacity, then the elements. An array value is three words: the block, its first element and its length. A slice of an array is a value whose first element and length lie inside the block of its parent.</li>
         <li>A string is one counted block: the count, the length, the capacity, then the UTF-8 bytes. A string value is three words in the same way.</li>
         <li>An enum value has no heap block of its own: it is a tag and its variant's payload, held inline. A field that would make an enum contain itself goes behind a counted box.</li>
+        <li>A value over 256 bytes, such as a large enum, stays in memory: codegen holds a pointer to a stack slot and copies it with <code>memcpy</code>. A function takes such a value as a pointer, and writes such a result to a pointer that its caller gives.</li>
         <li>An <code>any</code> value is two pointers: the data and a table of methods. A class object is its own data. Any other value goes into a counted box that every copy of the <code>any</code> value shares.</li>
       </ul>
       <p>For each type it emits the helpers that retain, release and compare it. It tags loads and stores with type-based alias information, so LLVM knows that writing a field or an element leaves every count and length alone. A length load also tells LLVM that a length is never negative. MIR tests the arms of a <code>match</code> in order, and <code>codegen/matching.rs</code> traps after the last one. The checker has proved that some arm matches, and a bug in the checker must not become undefined behaviour.</p>
