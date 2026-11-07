@@ -519,6 +519,10 @@ GitHub disables a `schedule` trigger in a public repository after 60 days
 without activity in it. That stop sends no failure email: the only sign is a
 missing nightly run. Re-enable the workflow on the Actions tab.
 
+GitHub starts a scheduled run late. From 2026-10-24 to 2026-11-06, the scheduled
+runs of this repository started 4.5 to 8 hours after their cron times. Treat a
+nightly run as missing only when it has not started by 12:00 UTC.
+
 ### Fix a fuzz failure
 
 Download `fuzz-minimized`, or `fuzz-failure` when minimizing failed, and
@@ -821,6 +825,17 @@ by hand with `workflow_dispatch` takes the seconds to fuzz, 60 to 14,400, and
 whether to run `--coverage` and `--gaps`. GitHub offers that only for a
 workflow already on `main`.
 
+A run by hand measures no coverage unless you ask for it. To run what the
+nightly runs:
+
+```console
+$ gh api --method POST repos/sisu-lang/sisu/actions/workflows/fuzz-program.yml/dispatches \
+    -f ref=main -f 'inputs[seconds]=1800' -f 'inputs[coverage]=true'
+```
+
+Then read the `Generator gaps` section of the job summary. With a new gap, the
+run and the step still show success.
+
 To fuzz a branch, open a pull request and add one label `fuzz-program`
 (2 hours), `fuzz-program <n>m` or `fuzz-program <n>h`, such as
 `fuzz-program 45m`. The run starts when the label is added and again on each
@@ -866,7 +881,8 @@ line runs `install.sh` from `releases/latest/download/`. The term for a
 published build is "nightly build" (`GLOSSARY.md`).
 
 The workflow runs at 02:17 UTC, by hand with `workflow_dispatch`, and on a
-pull request that changes its files (see "Dry run"). The logic that needs the
+pull request that changes its files (see "Dry run"). GitHub can delay the 02:17
+run by hours (see [the nightly job](#the-nightly-job)). The logic that needs the
 GitHub API is in `scripts/nightly_build.py`. It has four commands: `pick`,
 `publish`, `prune` and `report`. The jobs run in this order:
 
