@@ -1221,6 +1221,141 @@ fn a_poisoned_name_in_a_pattern_should_hide_an_outer_local() {
     ] {
         front_end_row(row, &src, expected);
     }
+
+    // A type-argument use of the name, and a write, in the scope of the poisoned name: the poison
+    // local is no value, and a poisoned constant binds nothing at an `Error` position.
+    for (row, src, expected) in [
+        (
+            "g-ctor",
+            "class Foo<T>\n{ }\n\nfn f() {\n    match 1 {\n        Foo => {\n print(Foo<i64>(1))\n }\n        _ => {}\n    }\n}\nfn main() {}\n".to_string(),
+            &[(Code::BraceOnNewLine, (2, 1))][..],
+        ),
+        (
+            "a-typeargs",
+            "enum Foo\n{ A }\n\nfn g(mut x: i64) { x = 1 }\nfn g2<T>(x: T) -> T { x }\nfn f() {\n    match 1 {\n        Foo => {\n print(Foo<i64>(1))\n }\n        _ => {}\n    }\n}\nfn main() {}\n".to_string(),
+            &[(Code::BraceOnNewLine, (2, 1))][..],
+        ),
+        (
+            "e-typeargs",
+            "enum Foo\n{ A }\n\nfn g(mut x: i64) { x = 1 }\nfn g2<T>(x: T) -> T { x }\nfn f(o: i64?) {\n    let Some(Foo) = o else { return }\n print(Foo<i64>(1))\n}\nfn main() {}\n".to_string(),
+            &[(Code::BraceOnNewLine, (2, 1))][..],
+        ),
+        (
+            "g-path",
+            "class Foo<T>\n{ }\n\nfn f() {\n    match 1 {\n        Foo => {\n print(Foo<i64>.make())\n }\n        _ => {}\n    }\n}\nfn main() {}\n".to_string(),
+            &[(Code::BraceOnNewLine, (2, 1))][..],
+        ),
+        (
+            "gf-call",
+            "fn Foo<T>(x: T)\n{ }\n\nfn f() {\n    match 1 {\n        Foo => {\n print(Foo<i64>(1))\n }\n        _ => {}\n    }\n}\nfn main() {}\n".to_string(),
+            &[(Code::BraceOnNewLine, (2, 1))][..],
+        ),
+        (
+            "al-ta",
+            "type Foo =\n\nfn f() {\n    match 1 {\n        Foo => {\n print(Foo<i64>(1))\n }\n        _ => {}\n    }\n}\nfn main() {}\n".to_string(),
+            &[(Code::Expected, (3, 1))][..],
+        ),
+        (
+            "s-typeargs",
+            "enum Foo\n{ A }\n\nfn g(mut x: i64) { x = 1 }\nfn g2<T>(x: T) -> T { x }\nfn f() {\n    match zz {\n        Foo => {\n print(Foo<i64>(1))\n }\n        _ => {}\n    }\n}\nfn main() {}\n".to_string(),
+            &[(Code::BraceOnNewLine, (2, 1)), (Code::BindingNotFound, (7, 11))][..],
+        ),
+        (
+            "p-subj-write",
+            "const print = 1\n\nfn f() {\n    match zz {\n        print => { print = 2 }\n        _ => {}\n    }\n}\nfn main() {}\n".to_string(),
+            &[(Code::DefinedTwice, (1, 7)), (Code::BindingNotFound, (4, 11))][..],
+        ),
+        (
+            "k-subj-write",
+            "const k =\n\nfn f() {\n    match zz {\n        k => { k = 2 }\n        _ => {}\n    }\n}\nfn main() {}\n".to_string(),
+            &[(Code::Expected, (3, 1)), (Code::BindingNotFound, (4, 11))][..],
+        ),
+        (
+            "o-typeargs",
+            "enum Foo\n{ A }\n\nfn g(mut x: i64) { x = 1 }\nfn g2<T>(x: T) -> T { x }\nfn f(Foo: i64) {\n    match 1 {\n        Foo => {\n print(Foo<i64>(1))\n }\n        _ => {}\n    }\n}\nfn main() {}\n".to_string(),
+            &[(Code::BraceOnNewLine, (2, 1))][..],
+        ),
+        (
+            "k-field",
+            "const k =\n\nenum E { V(i64) }\nfn f(e: E) {\n    match e {\n        V(k, 1) => { k = 2 }\n        _ => {}\n    }\n}\nfn main() {}\n".to_string(),
+            &[(Code::Expected, (3, 1)), (Code::SubpatternCount, (6, 9))][..],
+        ),
+        (
+            "k-letmut",
+            "const k =\n\nfn f() {\n    let mut k = zz else { return }\n}\nfn main() {}\n".to_string(),
+            &[(Code::Expected, (3, 1)), (Code::BindingNotFound, (4, 17))][..],
+        ),
+        (
+            "ta-zz",
+            "enum Foo\n{ A }\n\nfn f() {\n    match 1 {\n        Foo => { let _a = Foo<i64>(zz) }\n        _ => {}\n    }\n}\nfn main() {}\n".to_string(),
+            &[(Code::BraceOnNewLine, (2, 1)), (Code::BindingNotFound, (6, 36))][..],
+        ),
+        (
+            "g3-misread",
+            "enum Foo\n{ A }\n\nfn g3(a: bool, b: bool) {}\nfn f(x: i64, y: i64) {\n    match 1 {\n        Foo => { g3(Foo<x, y>(1)) }\n        _ => {}\n    }\n}\nfn main() {}\n".to_string(),
+            &[(Code::BraceOnNewLine, (2, 1))][..],
+        ),
+
+    ] {
+        front_end_row(row, &src, expected);
+    }
+
+    // What must stay: a local that is a value, a true binding, and a good position.
+    for (row, src, expected) in [
+        (
+            "r-later-typed",
+            "enum Foo\n{ A }\n\nfn f(o: i64?) {\n    let Some(Foo) = o else { return }\n    let Foo = 1\n    print(Foo<i64>(2))\n}\nfn main() {}\n".to_string(),
+            &[(Code::BraceOnNewLine, (2, 1)), (Code::TypeArguments, (7, 11))][..],
+        ),
+        (
+            "r-error-let-not-poisoned",
+            "enum Foo\n{ A }\n\nfn main() {\n    let x = zz\n    print(x<i64>(2))\n}\n".to_string(),
+            &[(Code::BraceOnNewLine, (2, 1)), (Code::BindingNotFound, (5, 13)), (Code::TypeArguments, (6, 11))][..],
+        ),
+        (
+            "p-good-write",
+            "const print = 1\n\nfn f() {\n    match 1 {\n        print => { print = 2 }\n        _ => {}\n    }\n}\nfn main() {}\n".to_string(),
+            &[(Code::DefinedTwice, (1, 7))][..],
+        ),
+        (
+            "r-error-let",
+            "const print = 1\n\nfn main() {\n    let print = zz\n    print(print<i64>(2))\n}\n".to_string(),
+            &[(Code::DefinedTwice, (1, 7)), (Code::BindingNotFound, (4, 17)), (Code::TypeArguments, (5, 11))][..],
+        ),
+        (
+            "err-1",
+            "enum Foo\n{ A }\n\nfn f(Foo: Zzz) {\n let _a = Foo<i64>(1)\n}\nfn main() {}\n".to_string(),
+            &[(Code::BraceOnNewLine, (2, 1)), (Code::UnknownType, (4, 11)), (Code::TypeArguments, (5, 11))][..],
+        ),
+        (
+            "err-3",
+            "enum Foo\n{ A }\n\nfn f() {\n for Foo in zz {\n let _a = Foo<i64>(1)\n }\n}\nfn main() {}\n".to_string(),
+            &[(Code::BraceOnNewLine, (2, 1)), (Code::BindingNotFound, (5, 13)), (Code::TypeArguments, (6, 11))][..],
+        ),
+        (
+            "fn-subj-ta",
+            "fn foo<T>(x: T)\n{}\n\nfn f() {\n    match zz {\n        foo => { let _a = foo<i64>(1) }\n        _ => {}\n    }\n}\nfn main() {}\n".to_string(),
+            &[(Code::BraceOnNewLine, (2, 1)), (Code::BindingNotFound, (5, 11)), (Code::TypeArguments, (6, 27))][..],
+        ),
+        (
+            "fn-subj-write",
+            "fn foo()\n{}\n\nfn f() {\n    match zz {\n        foo => { foo = 2 }\n        _ => {}\n    }\n}\nfn main() {}\n".to_string(),
+            &[(Code::BraceOnNewLine, (2, 1)), (Code::BindingNotFound, (5, 11)), (Code::AssignToImmutable, (6, 18))][..],
+        ),
+        (
+            "intact-const",
+            "const k = 1\n\nfn f() {\n    match zz {\n        k => { k = 2 }\n        _ => {}\n    }\n}\nfn main() {}\n".to_string(),
+            &[(Code::BindingNotFound, (4, 11)), (Code::AssignToImmutable, (5, 16))][..],
+        ),
+        (
+            "after-arm",
+            "enum Foo\n{ A }\n\nfn f(Foo: i64) {\n    match 1 {\n        Foo => {}\n        _ => {}\n    }\n    let _a = Foo<i64>(1)\n}\nfn main() {}\n".to_string(),
+            &[(Code::BraceOnNewLine, (2, 1)), (Code::TypeArguments, (9, 14))][..],
+        ),
+
+    ] {
+        front_end_row(row, &src, expected);
+    }
 }
 
 /// A user's item named `Option` or `Result` leaves the name to the built-in type, as an item
