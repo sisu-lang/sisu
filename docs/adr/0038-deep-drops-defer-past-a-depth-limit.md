@@ -98,7 +98,8 @@ captures and each kind that a later milestone adds, with no new rule.
   Its cost is a few instructions in each counting drop function.
 - **A stack that grows on the heap**, as Rust's `stacker` crate does:
   rejected. It keeps a strict depth-first order, but its memory grows with
-  the depth of the value.
+  the depth of the value. Show and `==` cannot defer their work, so they use
+  this option ([ADR 0047](0047-deep-show-and-equality-grow-the-stack.md)).
 - **Leave it**, with the limit that ADR 0005 and ADR 0019 state: rejected. A
   valid program crashes with no message.
 

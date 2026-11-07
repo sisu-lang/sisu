@@ -282,9 +282,15 @@ impl<'ctx> Codegen<'ctx, '_> {
         let glue = self
             .module
             .add_function(&name, fn_type, Some(Linkage::Internal));
-        let entry = self.context.append_basic_block(glue, "entry");
+        // An object's text ends at the object, so only a box can be a link of a chain.
+        let body = if !is_object(ty) && self.grows_stack(ty) {
+            self.on_stack_with_room(glue)
+        } else {
+            glue
+        };
+        let entry = self.context.append_basic_block(body, "entry");
         self.builder.position_at_end(entry);
-        let (sink, data) = (glue.get_nth_param(0), glue.get_nth_param(1));
+        let (sink, data) = (body.get_nth_param(0), body.get_nth_param(1));
         let (Some(sink), Some(data)) = (sink, data) else {
             unreachable!("a show glue should have its parameters");
         };
@@ -296,16 +302,16 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.builder.build_return(None).expect(POSITIONED);
             return glue;
         }
-        let quoted = glue
+        let quoted = body
             .get_nth_param(2)
             .expect("a show glue should have its `quoted`")
             .into_int_value();
         // `show_value` takes `quoted` as a constant, so the glue has a branch for each.
         let (plain, marked) = (
-            self.context.append_basic_block(glue, "plain"),
-            self.context.append_basic_block(glue, "quoted"),
+            self.context.append_basic_block(body, "plain"),
+            self.context.append_basic_block(body, "quoted"),
         );
-        let done = self.context.append_basic_block(glue, "done");
+        let done = self.context.append_basic_block(body, "done");
         self.branch_on(quoted, marked, plain);
         for (block, flag) in [(plain, false), (marked, true)] {
             self.builder.position_at_end(block);
