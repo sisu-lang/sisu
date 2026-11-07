@@ -535,7 +535,10 @@ which `chars()` and `string(cs)` call, and `sisu_words_count` and
 expression, calls only `sisu_words_count`. `stdin.rs` holds `sisu_read_line`,
 which `read_line()` calls. `args.rs` holds `sisu_args_len` and `sisu_arg`,
 which the generated `main` calls to build `args` when `sisu.main` takes it.
-`deferred.rs` holds the queue of deferred drops: `sisu_drop_defer` puts a
+`stack.rs` holds `sisu_stack_grow`, which runs a generated show or `==` helper
+on a new stack segment when the stack is low
+([ADR 0047](adr/0047-deep-show-and-equality-grow-the-stack.md)). `deferred.rs`
+holds the queue of deferred drops: `sisu_drop_defer` puts a
 block and its drop function at the back, and `sisu_drop_drain` drops each one
 in order until the queue is empty.
 `print(x)` and `"{x}"` share one formatter per

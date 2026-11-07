@@ -162,6 +162,13 @@ pub(super) const RUNTIME: &[RuntimeFn] = &[
         ret: None,
         attrs: NONE,
     },
+    // stack.rs
+    RuntimeFn {
+        name: "sisu_stack_grow",
+        params: &[Abi::Ptr, Abi::Ptr],
+        ret: None,
+        attrs: NONE,
+    },
     // float.rs
     RuntimeFn {
         name: "sisu_write_f64",

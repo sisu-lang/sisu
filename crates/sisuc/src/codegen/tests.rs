@@ -1474,7 +1474,8 @@ fn class_should_get_no_eq_helper_and_its_array_should_call_the_written_eq() {
     )
     .print_to_string()
     .to_string();
-    let array = function_body(&written, "define internal i1 @\"sisu_rc.eq.[C]\"(ptr");
+    // A written `eq` can recurse through an array of its class, so this helper grows the stack.
+    let array = function_body(&written, "define internal i1 @\"sisu_rc.eq.[C].body\"(ptr");
     assert!(array.contains("call i1 @sisu_rc.eq.C("), "{array}");
     let helper = function_body(&written, "define internal i1 @sisu_rc.eq.C(ptr");
     assert!(helper.contains("call i1 @sisu.C.eq("), "{helper}");
@@ -1591,8 +1592,9 @@ fn same_pointer_shortcut_should_be_taken_only_when_equality_is_reflexive() {
     for (helper, reflexive) in [
         ("@\"sisu_rc.eq.[i64]\"(ptr", true),
         ("@\"sisu_rc.eq.[f64]\"(ptr", false),
-        ("@\"sisu_rc.eq.[Node]\"(ptr", false),
-        ("@\"sisu_rc.eq.[Node?]\"(ptr", false),
+        // A written `eq` can recurse through an array of its class, so these grow the stack.
+        ("@\"sisu_rc.eq.[Node].body\"(ptr", false),
+        ("@\"sisu_rc.eq.[Node?].body\"(ptr", false),
     ] {
         let body = function_body(&ir, &format!("define internal i1 {helper}"));
         // The shortcut is a pointer comparison against another pointer, not against `null`.
@@ -5231,6 +5233,110 @@ fn recursing_should_follow_the_spec_table() {
         }
         // An array element has no holder: a class there is never a link.
         assert!(codegen.recursing(None, a));
+    });
+}
+
+/// GIVEN a leaf array, an array of a recursive enum, and boxes of a number and of a recursive enum
+/// WHEN the program shows and compares them
+/// THEN only the helpers that a chain can go through call `sisu_stack_grow`
+///
+/// `sisu_stack_grow` has a cost at each call, so a leaf array must not pay it.
+#[test]
+fn stack_growth_should_guard_only_the_helpers_of_a_chain() {
+    let src = "enum Tree {
+    Leaf
+    Node([Tree])
+}
+
+enum Link {
+    End
+    Next(any Display)
+}
+
+fn main() {
+    print([1, 2] == [1, 2])
+    print([1])
+    print(Tree.Node([]) == Tree.Leaf)
+    print(Tree.Node([]))
+    let number: any Display = 1
+    print(number)
+    let link: any Display = Link.End
+    print(link)
+}";
+    let context = Context::create();
+    let ir = compiled(&context, src).print_to_string().to_string();
+    for name in [
+        "\"sisu_rc.eq.[Tree]\"",
+        "\"sisu_show.[Tree]\"",
+        "sisu_any.show.Link",
+        "sisu_any.show.dbg.Link",
+    ] {
+        let wanted = format!("@sisu_stack_grow(ptr @{}", thunk_of(name));
+        assert!(definition(&ir, name).contains(&wanted), "{name} in\n{ir}");
+    }
+    for name in [
+        "\"sisu_rc.eq.[i64]\"",
+        "\"sisu_show.[i64]\"",
+        "sisu_any.show.i64",
+        "sisu_rc.eq.Tree",
+        "sisu_show.Tree",
+    ] {
+        let body = definition(&ir, name);
+        assert!(!body.contains("sisu_stack_grow"), "{name} in\n{ir}");
+    }
+}
+
+/// The name of the thunk of the helper `name`, which LLVM prints in quotes when `name` has them.
+fn thunk_of(name: &str) -> String {
+    match name.strip_suffix('"') {
+        Some(quoted) => format!("{quoted}.thunk\""),
+        None => format!("{name}.thunk"),
+    }
+}
+
+/// The drop glue of an `any` box has its own weight: the box of `[Link]` opens `release.[Link]`
+/// and then `drop.[Link]` counts, but the array opens the frames of `Link`, and each `?` adds
+/// none. The glue of a box whose value is bounded does not count.
+#[test]
+fn box_drop_weight_should_be_separate_from_the_array_it_holds() {
+    let src = "enum Link {
+    End
+    Next(any Display)
+}
+
+fn main() {}";
+    with_codegen(src, |codegen| {
+        let id = codegen.program.enums.iter().position(|e| e.name == "Link");
+        let id = id.expect("the program should declare enum Link");
+        let link = Type::intern(TypeKind::Enum(EnumId(id), TypeArgs::NONE));
+        let array = Type::intern(TypeKind::Array(link));
+        assert_eq!(
+            codegen.drop_weight(array),
+            3,
+            "drop.[Link], release.Link, release.any"
+        );
+        assert_eq!(
+            codegen.box_drop_weight(array),
+            Some(2),
+            "the glue, release.[Link], then drop.[Link] counts"
+        );
+        assert_eq!(
+            codegen.drop_weight(array),
+            3,
+            "the box should leave the entry of the array as it was"
+        );
+        assert_eq!(
+            codegen.box_drop_weight(link),
+            Some(3),
+            "the glue, release.Link, release.any"
+        );
+        assert_eq!(
+            codegen.box_drop_weight(Type::intern(TypeKind::Optional(link))),
+            Some(3),
+            "a `?` should add no frame"
+        );
+        assert_eq!(codegen.box_drop_weight(Type::STRING), None);
+        assert_eq!(codegen.box_drop_weight(Type::I64), None);
     });
 }
 

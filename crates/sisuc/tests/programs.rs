@@ -100,6 +100,14 @@ const SMALL_STACK: &[&str] = &[
     "nestedenums",
     "chainwrapped",
     "chainrepeat",
+    "anychain",
+    "anychainoptional",
+    "anychaingeneric",
+    "showarray",
+    "eqarray",
+    "anyshow",
+    "dbgarray",
+    "deepshapes",
 ];
 
 /// GIVEN the `tests/programs` directory
@@ -1008,6 +1016,95 @@ fn generic_class_through_an_array_should_drop_in_a_small_stack() {
 #[test]
 fn repeated_deep_drops_should_free_every_object() {
     assert_small_stack_checks_at_both("chainrepeat", "1\n");
+}
+
+/// GIVEN the `anychain` program, which builds a chain of 300 000 enum values, each in an
+///   `any Display` box that the next one holds
+/// WHEN it runs under a 256 KiB stack, with and without `-O2`, built with `--rc-checks`
+/// THEN it exits 0, prints `1` and frees every object
+#[test]
+fn chain_through_an_any_box_should_drop_in_a_small_stack() {
+    assert_small_stack_checks_at_both("anychain", "1\n");
+}
+
+/// GIVEN the `anychainoptional` program, which builds a chain of 300 000 enum values, each in an
+///   optional `any Display` box that the next one holds
+/// WHEN it runs under a 256 KiB stack, with and without `-O2`, built with `--rc-checks`
+/// THEN it exits 0, prints `1` and frees every object
+#[test]
+fn chain_through_an_optional_any_box_should_drop_in_a_small_stack() {
+    assert_small_stack_checks_at_both("anychainoptional", "1\n");
+}
+
+/// GIVEN the `anychaingeneric` program, which builds a chain of 300 000 `Wrap<any Display>` values,
+///   each in a box that the next one holds
+/// WHEN it runs under a 256 KiB stack, with and without `-O2`, built with `--rc-checks`
+/// THEN it exits 0, prints `1` and frees every object
+#[test]
+fn chain_through_a_generic_enum_of_an_any_box_should_drop_in_a_small_stack() {
+    assert_small_stack_checks_at_both("anychaingeneric", "1\n");
+}
+
+/// GIVEN the `showarray` program, which builds a chain of 100 000 enum values through arrays
+/// AND prints the length of its text
+/// WHEN it runs under a 256 KiB stack, with and without `-O2`
+/// THEN it exits 0 and prints `500005`
+#[test]
+fn printing_a_chain_through_an_array_should_fit_a_small_stack() {
+    assert_small_stack_prints_at_both("showarray", "500005\n");
+}
+
+/// GIVEN the `eqarray` program, which builds chains of 100 000 and 99 999 values through arrays
+/// AND compares them with `==` and `contains`
+/// WHEN it runs under a 256 KiB stack, with and without `-O2`
+/// THEN it exits 0 and prints `true`, `false` and `true`
+#[test]
+fn equal_chains_through_an_array_should_compare_in_a_small_stack() {
+    assert_small_stack_prints_at_both("eqarray", "true\nfalse\ntrue\n");
+}
+
+/// GIVEN the `anyshow` program, which builds a chain of 100 000 enum values through `any` boxes
+/// AND prints the length of its text
+/// WHEN it runs under a 256 KiB stack, with and without `-O2`
+/// THEN it exits 0 and prints `600003`: 6 bytes for each link, and 3 for `End`
+#[test]
+fn printing_a_chain_through_an_any_box_should_fit_a_small_stack() {
+    assert_small_stack_prints_at_both("anyshow", "600003\n");
+}
+
+/// GIVEN the `dbgarray` program, which runs `dbg` on a chain of 2 500 enum values, each in a
+///   one-element array that the next one holds
+/// WHEN it runs under a 256 KiB stack at `-O0`, with standard error in a file
+/// THEN it exits 0 and prints `1`
+/// AND the file holds the whole text, more than 100 MB
+#[test]
+fn dbg_of_a_chain_through_an_array_should_fit_a_small_stack() {
+    let exe = compile_to_tmp(Path::new(PROGRAMS), "dbgarray", false, &[]);
+    let text = exe.with_extension("text");
+    let out = Command::new("sh")
+        .args(["-c", r#"ulimit -c 0 && ulimit -s 256 && exec "$0" 2>"$1""#])
+        .arg(&exe)
+        .arg(&text)
+        .output()
+        .expect("sh starts");
+    assert_eq!(out.status.code(), Some(0), "{:?}", out.status);
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "1\n");
+    let bytes = fs::metadata(&text).expect("sh should make the file").len();
+    fs::remove_file(&text).expect("the test should remove its file");
+    assert!(bytes > 100_000_000, "the text has {bytes} bytes");
+}
+
+/// GIVEN the `deepshapes` program, with chains of 100 000 links through nested arrays
+/// AND through optional elements, an array in a generic enum and an array in a box
+/// WHEN it runs under a 256 KiB stack, with and without `-O2`
+/// THEN it exits 0 and prints the text of the nested chain
+/// AND `==` gives `true` for each shape, and each text has the length of its links
+#[test]
+fn chains_of_every_shape_should_print_and_compare_in_a_small_stack() {
+    const LINKS: usize = 100_000;
+    let nested = "N([[".repeat(LINKS) + "N([])" + &"]])".repeat(LINKS);
+    let expected = format!("{nested}\ntrue\n500005\ntrue\n800004\ntrue\n500003\n");
+    assert_small_stack_prints_at_both("deepshapes", &expected);
 }
 
 /// Runs `<name>.sisu` at `-O2` under the small stack and checks that it exits 0 and prints
