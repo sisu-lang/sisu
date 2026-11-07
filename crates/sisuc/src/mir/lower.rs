@@ -31,6 +31,8 @@
 //! is owned across an exit.
 
 mod pattern;
+#[cfg(test)]
+pub(crate) use pattern::COPIED_UNDER;
 
 use std::iter::once;
 use std::ptr;

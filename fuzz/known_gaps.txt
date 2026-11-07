@@ -17,22 +17,5 @@ front_end.rs	sisuc::front_end::syntax_errors
 lib.rs	sisuc::check_bytes
 source.rs	<sisuc::source::LineIndex>::line_start
 source.rs	<sisuc::source::LineIndex>::render_line
-## Only a program with no generic item and no recorded prelude use reaches this check, and each fixed seed records a prelude use.
+## Only a program with no generic item and no recorded prelude use reaches this check. No fixed seed is one. In one sample, 6 of 6257 generated inputs were, and `tests/run` reaches it.
 mono.rs	sisuc::mono::prelude_method_of_outside_type
-## Not yet analysed: PR 2 gives each of these a rule or its own reason.
-codegen/enums.rs	<sisuc::codegen::Codegen>::define_reuse
-codegen/enums.rs	<sisuc::codegen::Codegen>::layer_boxes
-codegen/enums.rs	<sisuc::codegen::Codegen>::layer_place
-codegen/enums.rs	<sisuc::codegen::Codegen>::load_layer_flag
-codegen/io.rs	<sisuc::codegen::Codegen>::args
-codegen/rc.rs	<sisuc::codegen::Codegen>::define_class_drain
-codegen/rc.rs	<sisuc::codegen::rc::ClassCycles>::position
-codegen/string.rs	<sisuc::codegen::Codegen>::len_words
-lang.rs	<sisuc::lang::Cx>::fresh
-lang.rs	sisuc::lang::and
-lang.rs	sisuc::lang::block
-lang.rs	sisuc::lang::chain
-lang.rs	sisuc::lang::compare
-lang.rs	sisuc::lang::read
-mir/lower/pattern.rs	<sisuc::mir::lower::Lowering>::copied_under
-mir/params.rs	<sisuc::mir::params::Walk>::tail_argument

@@ -9,6 +9,7 @@ use std::fmt::Write as _;
 use std::rc::Rc;
 
 use arbitrary::Unstructured;
+use inkwell::context::Context;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::item::{MAX_ALIASES, MAX_INTERFACES, MAX_KNOWN, MAX_REQUIREMENTS, MOST};
@@ -18,11 +19,17 @@ use super::scope::{
 };
 use super::stmt::MAX_BLOCKS;
 use super::writer::{Rewrite, Site, Writer, allowed};
-use super::{Answer, BUDGET, Cost, DEPTHS, FUEL, Gen, MAX_BOUND, MAX_NESTING, MAX_SIZE, generate};
+use super::{
+    Answer, BUDGET, Cost, DEPTHS, FUEL, Gen, MAIN_ARGS_GATE, MAX_BOUND, MAX_NESTING, MAX_SIZE,
+    generate,
+};
 use crate::check::{self, prelude_function_names};
+use crate::codegen::{CLASS_DRAINS, LEN_WORDS, OptLevel, compile, target_machine};
 use crate::conformance::{RESOLVE_ALL_CALLS, holds_class};
 use crate::diagnostic::Severity;
 use crate::front_end::{PRELUDE_SOURCE, front_end, prelude_program};
+use crate::lang::STRING_CHAIN_LINKS;
+use crate::mir::{COPIED_UNDER, TAIL_ARGUMENTS};
 use crate::symbol::Symbol;
 use crate::types::{Type, TypeKind};
 use crate::{ast, lexer, parser, tir};
@@ -5611,12 +5618,12 @@ fn an_expression_stays_within_its_most() {
 }
 
 #[test]
-fn a_program_spends_no_more_than_its_fuel() {
+fn a_program_should_spend_no_more_than_its_fuel() {
     // Holding fuel back for `main` keeps the total `FUEL`: the cost reserve for `main`'s
     // statements assumes no more.
     for data in seeds() {
         let mut g = Gen::new(&data);
-        g.program();
+        g.program(false);
         assert!(g.fuel <= FUEL, "{} left of {FUEL}", g.fuel);
     }
 }
@@ -6561,6 +6568,362 @@ fn main() { print(b(Eye(v: 1)).seen()) }",
     }
 }
 
+/// The points of lowering and of the runtime that the forms of `LOWERING_GAP_ITEMS` reach.
+/// `lowered` marks a point by a needle in the printed module, or by a counter when the module
+/// cannot show it.
+const LOWERING_POINTS: &[&str] = &[
+    "box reuse",
+    "layered box compare",
+    "main args",
+    "class ring drain",
+    "words count",
+    "string chain",
+    "tail argument",
+    "copied under",
+];
+
+/// The key that marks `point` of `LOWERING_POINTS`.
+fn lowering_key(point: &str) -> String {
+    format!("reach: the compiler reaches `{point}`")
+}
+
+/// The points of `LOWERING_POINTS` that the build of `source` marks. It builds the module as
+/// `codegen::tests::compiled` does. A counter proves that its function ran. An IR needle matches
+/// one kind of line. So no text of the program can match it, such as a string constant or the name
+/// of a user function.
+fn lowered(source: &str) -> FxHashSet<&'static str> {
+    STRING_CHAIN_LINKS.set(0);
+    TAIL_ARGUMENTS.set(0);
+    COPIED_UNDER.set(0);
+    LEN_WORDS.set(0);
+    CLASS_DRAINS.set(0);
+    let (program, diagnostics) = crate::front_end::checked(source);
+    let program = program.unwrap_or_else(|| panic!("{diagnostics:?}\n{source}"));
+    let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
+    let mir = crate::mir::build(&program);
+    let machine = target_machine(OptLevel::O0).expect("the host should be a target");
+    let context = Context::create();
+    let module = compile(
+        &context,
+        &program,
+        &mir,
+        "test.sisu",
+        source,
+        &machine,
+        false,
+    );
+    let ir = module.print_to_string().to_string();
+    // A `define` line of a helper. A string constant is a line that starts with `@`.
+    let defines = |name: &str| {
+        (ir.lines()).any(|line| line.starts_with("define") && line.contains(&format!("@{name}")))
+    };
+    // A block label starts its line. A string constant starts with `@`, and a branch is indented.
+    let label = |name: &str| ir.lines().any(|line| line.starts_with(name));
+    // A call of the runtime function. A user function is `@sisu.<name>`, and a string constant
+    // starts with `@`, so neither is an indented line that holds `call` and `@sisu_args_len(`.
+    let calls_args_len = (ir.lines()).any(|line| {
+        line.starts_with(' ') && line.contains("call ") && line.contains("@sisu_args_len(")
+    });
+    let mut marked = FxHashSet::default();
+    for (point, hit) in [
+        ("box reuse", defines("sisu_rc.reuse.")),
+        ("layered box compare", label("layer.flags")),
+        ("main args", calls_args_len),
+        ("class ring drain", CLASS_DRAINS.get() > 0),
+        ("words count", LEN_WORDS.get() > 0),
+        ("string chain", STRING_CHAIN_LINKS.get() > 0),
+        ("tail argument", TAIL_ARGUMENTS.get() > 0),
+        ("copied under", COPIED_UNDER.get() > 0),
+    ] {
+        if hit {
+            marked.insert(point);
+        }
+    }
+    marked
+}
+
+/// GIVEN whole programs, each with the points of `LOWERING_POINTS` that its build reaches and no
+/// others
+/// WHEN the build reads each program
+/// THEN the points that it marks are those points: a point that a near program marks, or one that
+/// no program marks, fails its row
+#[test]
+#[expect(clippy::too_many_lines, reason = "one table of whole programs")]
+fn lowering_points_should_mark_what_the_compiler_did() {
+    let term = "enum GapTerm {
+    Num(i64)
+    Neg(GapTerm)
+}
+";
+    let rows: Vec<(&str, String, &[&str])> = vec![
+        ("no lowering form", "fn main() {}".to_string(), &[]),
+        (
+            "a match builds the enum from its parts",
+            format!(
+                "{term}fn gap_flip(e: GapTerm) -> GapTerm {{
+    match e {{
+        Neg(x) => GapTerm.Neg(gap_flip(x))
+        other => other
+    }}
+}}
+fn gap_depth(e: GapTerm) -> i64 {{
+    match e {{
+        Num(n) => n
+        Neg(x) => 1 + gap_depth(x)
+    }}
+}}
+fn main() {{ print(gap_depth(gap_flip(GapTerm.Neg(GapTerm.Num(1))))) }}"
+            ),
+            &["box reuse"],
+        ),
+        (
+            "a match takes the enum apart and builds nothing",
+            format!(
+                "{term}fn gap_unwrap(e: GapTerm) -> GapTerm {{
+    match e {{
+        Neg(x) => x
+        other => other
+    }}
+}}
+fn main() {{
+    let t = gap_unwrap(GapTerm.Neg(GapTerm.Num(1)))
+    print(t == GapTerm.Num(1))
+}}"
+            ),
+            &[],
+        ),
+        (
+            "== on a variant that holds Self??",
+            "enum GapLayered {
+    End
+    Next(GapLayered??)
+}
+fn main() { print(GapLayered.Next(Some(Some(GapLayered.End))) == GapLayered.Next(None)) }"
+                .to_string(),
+            &["layered box compare"],
+        ),
+        (
+            "== on a variant that holds Self?",
+            "enum GapLayered {
+    End
+    Next(GapLayered?)
+}
+fn main() { print(GapLayered.Next(Some(GapLayered.End)) == GapLayered.Next(None)) }"
+                .to_string(),
+            &[],
+        ),
+        (
+            "main takes args",
+            "fn main(a: [string]) { print(a.len()) }".to_string(),
+            &["main args"],
+        ),
+        (
+            "a string constant spells the define of a reuse helper",
+            r#"fn main() { print("define internal ptr @sisu_rc.reuse.GapTerm(") }"#.to_string(),
+            &[],
+        ),
+        (
+            "a chain of three values with a written less",
+            "class Gn: Ord {
+    n: i64
+    fn eq(self, o: Gn) -> bool { self.n == o.n }
+    fn less(self, o: Gn) -> bool { self.n < o.n }
+}
+fn gap_sorted<T: Ord>(a: T, b: T, c: T) -> bool { a < b < c }
+fn main() { print(gap_sorted(Gn(n: 1), Gn(n: 2), Gn(n: 3))) }"
+                .to_string(),
+            &[],
+        ),
+        (
+            "a tail call passes only literals",
+            "fn t(n: i64) -> i64 {
+    if n == 0 { return 0 }
+    t(0)
+}
+fn main() { print(t(1)) }"
+                .to_string(),
+            &[],
+        ),
+        (
+            "a string constant spells layer.flags",
+            r#"fn main() { print("layer.flags") }"#.to_string(),
+            &[],
+        ),
+        (
+            "a string constant spells the call of sisu_args_len",
+            r#"fn main() { print("  %0 = call i64 @sisu_args_len(i32 %1)") }"#.to_string(),
+            &[],
+        ),
+        (
+            "a user function is named sisu_args_len",
+            "fn sisu_args_len() -> i64 { 7 }
+fn main() { print(sisu_args_len()) }"
+                .to_string(),
+            &[],
+        ),
+        (
+            "a string constant spells the drain of GapHen",
+            r#"fn main() { print("define internal void @sisu_rc.drain.GapHen(") }"#.to_string(),
+            &[],
+        ),
+        (
+            "a recursive enum is named GapHen",
+            "enum GapHen {
+    End
+    Next(GapHen)
+}
+fn main() {
+    let h = GapHen.Next(GapHen.End)
+    print(h == GapHen.End)
+}"
+            .to_string(),
+            &[],
+        ),
+        (
+            "two classes hold each other",
+            "class GapHen {
+    egg: GapEgg?
+}
+class GapEgg {
+    _hen: GapHen?
+}
+fn main() {
+    let gap_hen = GapHen(egg: GapEgg(_hen: None))
+    print(gap_hen.egg == None)
+}"
+            .to_string(),
+            &["class ring drain"],
+        ),
+        (
+            "a class holds itself",
+            "class GapHen {
+    egg: GapHen?
+}
+fn main() {
+    let gap_hen = GapHen(egg: None)
+    print(gap_hen.egg == None)
+}"
+            .to_string(),
+            &[],
+        ),
+        (
+            "the word count of a string",
+            r#"fn main() { print("a b".words().len()) }"#.to_string(),
+            &["words count"],
+        ),
+        (
+            "the words of a string",
+            r#"fn main() { print("a b".words()) }"#.to_string(),
+            &[],
+        ),
+        (
+            "a chain of three strings in a generic function",
+            r#"fn gap_sorted<T: Ord>(a: T, b: T, c: T) -> bool { a < b < c }
+fn main() { print(gap_sorted("a", "b", "c")) }"#
+                .to_string(),
+            &["string chain"],
+        ),
+        (
+            "a chain of three concrete strings",
+            r#"fn main() { print("a" < "b" < "c") }"#.to_string(),
+            &[],
+        ),
+        (
+            "a chain of three numbers in a generic function",
+            "fn gap_sorted<T: Ord>(a: T, b: T, c: T) -> bool { a < b < c }
+fn main() { print(gap_sorted(1, 2, 3)) }"
+                .to_string(),
+            &[],
+        ),
+        (
+            "a link of two strings in a generic function",
+            r#"fn gap_less<T: Ord>(a: T, b: T) -> bool { a < b }
+fn main() { print(gap_less("a", "b")) }"#
+                .to_string(),
+            &[],
+        ),
+        (
+            "a tail call passes a named argument",
+            r#"fn gap_tail(s: string, n: i64) -> string {
+    if n == 0 { return s }
+    gap_tail(s, n - 1)
+}
+fn main() { print(gap_tail("t", 2)) }"#
+                .to_string(),
+            &["tail argument"],
+        ),
+        (
+            "a self call is no tail call",
+            r#"fn c(s: string, n: i64) -> i64 {
+    if n == 0 { return s.len() }
+    1 + c(s, n - 1)
+}
+fn main() { print(c("t", 2)) }"#
+                .to_string(),
+            &[],
+        ),
+        (
+            "a consuming match binds under a boxed optional",
+            r#"enum GapRun {
+    Cell(string, GapRun?)
+}
+fn gap_cells(l: GapRun) -> i64 {
+    match l {
+        Cell(s, None) => s.len()
+        Cell(_, Some(rest)) => 1 + gap_cells(rest)
+    }
+}
+fn main() { print(gap_cells(GapRun.Cell("x", Some(GapRun.Cell("y", None))))) }"#
+                .to_string(),
+            &["copied under"],
+        ),
+        (
+            "a consuming match binds under an inline optional",
+            r#"enum GapRun {
+    Cell(string?)
+}
+fn gap_cells(l: GapRun) -> i64 {
+    match l {
+        Cell(None) => 0
+        Cell(Some(s)) => s.len()
+    }
+}
+fn main() { print(gap_cells(GapRun.Cell(Some("x")))) }"#
+                .to_string(),
+            &[],
+        ),
+        (
+            "a consuming match binds the boxed optional itself",
+            r#"enum GapRun {
+    Cell(string, GapRun?)
+}
+fn gap_more(r: GapRun?) -> i64 {
+    if r == None { 0 } else { 1 }
+}
+fn gap_cells(l: GapRun) -> i64 {
+    match l {
+        Cell(s, rest) => s.len() + gap_more(rest)
+    }
+}
+fn main() { print(gap_cells(GapRun.Cell("x", Some(GapRun.Cell("y", None))))) }"#
+                .to_string(),
+            &[],
+        ),
+    ];
+    for (row, source, want) in rows {
+        let seen = lowered(&source);
+        let mut got: Vec<&str> = LOWERING_POINTS
+            .iter()
+            .copied()
+            .filter(|point| seen.contains(point))
+            .collect();
+        got.sort_unstable();
+        let mut want = want.to_vec();
+        want.sort_unstable();
+        assert_eq!(got, want, "row `{row}`");
+    }
+}
+
 /// GIVEN the programs of the seeds `0..FUZZ_SEEDS`, which the nightly reads and no others
 /// WHEN the walk reads them in order
 /// THEN each key of `GAP_RULES` and of `GAP_POINTS` is marked, and the walk stops once all are
@@ -6588,10 +6951,81 @@ fn generated_programs_should_reach_each_gap_rule() {
     );
 }
 
+/// GIVEN the programs of the seeds `0..FUZZ_SEEDS`, which the nightly reads and no others
+/// WHEN the build reads them in order
+/// THEN each point of `LOWERING_POINTS` is marked, and the walk stops once all are
+#[test]
+fn generated_programs_should_reach_each_lowering_rule() {
+    let mut seen: FxHashSet<&str> = FxHashSet::default();
+    for n in 0..FUZZ_SEEDS {
+        seen.extend(lowered(&generate(&seed(n)).program));
+        if seen.len() == LOWERING_POINTS.len() {
+            break;
+        }
+    }
+    let missing: Vec<String> = (LOWERING_POINTS.iter())
+        .filter(|point| !seen.contains(*point))
+        .map(|point| lowering_key(point))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "no program of the seeds 0..{FUZZ_SEEDS} holds: {missing:#?}"
+    );
+}
+
+/// GIVEN the programs of the seeds `0..FUZZ_SEEDS`
+/// WHEN the fold of the bytes of a seed, modulo 8, is `MAIN_ARGS_GATE`
+/// THEN its `program` holds `fn main(gap_args: [string])` and `print(gap_args.len())`, and no
+/// other `program` does; every `plain` holds `fn main() ` and no `gap_args`; and at least one seed
+/// holds the form
+#[test]
+fn main_should_take_args_only_in_the_gated_programs() {
+    let mut gated = false;
+    for n in 0..FUZZ_SEEDS {
+        let data = seed(n);
+        let generated = generate(&data);
+        let fold = data.iter().fold(0, |fold, byte| fold ^ byte);
+        let holds = fold % 8 == MAIN_ARGS_GATE;
+        assert_eq!(
+            generated.program.contains("fn main(gap_args: [string])"),
+            holds,
+            "seed {n}"
+        );
+        assert_eq!(
+            generated.program.contains("print(gap_args.len())"),
+            holds,
+            "seed {n}"
+        );
+        assert!(generated.plain.contains("fn main() "), "seed {n}");
+        assert!(!generated.plain.contains("gap_args"), "seed {n}");
+        gated |= holds;
+    }
+    assert!(gated, "no seed of 0..{FUZZ_SEEDS} is gated");
+}
+
+/// GIVEN each seed of `0..FUZZ_SEEDS`
+/// WHEN `program` writes it with and without `gap_args`
+/// THEN the cost and the unread bytes of `u` and `ru` are the same, so the gate makes no draw
+#[test]
+fn the_gate_of_main_args_should_make_no_draw() {
+    for n in 0..FUZZ_SEEDS {
+        let data = seed(n);
+        let reversed: Vec<u8> = data.iter().rev().copied().collect();
+        let [(cost, read, rewrites), gated] = [false, true].map(|main_args| {
+            let mut g = Gen::new(&data);
+            g.ru = Unstructured::new(&reversed);
+            let (cost, _, _) = g.program(main_args);
+            (cost, g.u.len(), g.ru.len())
+        });
+        assert_eq!((cost, read, rewrites), gated, "seed {n}");
+    }
+}
+
 /// GIVEN the programs of the seeds `0..FUZZ_SEEDS`
 /// WHEN a program holds `fn shapes()`
-/// THEN its `program` holds `PushTally`, `twice_set(mut slots[0]`, `gap_chain(`, `GapBound` and
-/// `gap_boxed(`, and its `plain` holds none of them, and at least one seed holds them
+/// THEN its `program` holds `PushTally`, `twice_set(mut slots[0]`, `gap_chain(`, `GapBound`,
+/// `gap_boxed(`, `GapTerm`, `GapLayered`, `GapHen`, `GapRun`, `gap_sorted(` and `gap_tail(`.
+/// Its `plain` holds none of them. At least one seed holds them
 #[test]
 fn plain_text_should_leave_out_the_gap_forms() {
     let mut seen = false;
@@ -6607,6 +7041,12 @@ fn plain_text_should_leave_out_the_gap_forms() {
             "gap_chain(",
             "GapBound",
             "gap_boxed(",
+            "GapTerm",
+            "GapLayered",
+            "GapHen",
+            "GapRun",
+            "gap_sorted(",
+            "gap_tail(",
         ] {
             assert!(generated.program.contains(form), "seed {n}: `{form}`");
             assert!(!generated.plain.contains(form), "seed {n}: `{form}`");
@@ -7573,7 +8013,7 @@ fn depth(pattern: &str) -> usize {
 }
 
 #[test]
-fn an_element_takes_an_assignment_only_where_it_holds_no_class() {
+fn an_element_should_take_an_assignment_only_where_it_holds_no_class() {
     // Decision 4: `ks[i] = e` would store a `K0` in the heap, and `es[i] = e` an `E0`, which
     // may hold one; `ss[i] = e` stores a `string`.
     let mut assigned = FxHashSet::default();
@@ -7637,7 +8077,7 @@ fn a_variant_should_be_recursive_when_it_holds_its_enum() {
     search_seeds(SEEDS, |n| {
         let data = seed(n);
         let mut g = Gen::new(&data);
-        g.program();
+        g.program(false);
         for (id, e) in g.scope.enums.iter().enumerate() {
             let own = |ty: &Ty| matches!(ty, Ty::Enum { id: own, .. } if *own == id);
             for variant in &e.variants {
@@ -7723,7 +8163,7 @@ fn a_field_type_past_most_is_an_i64() {
 }
 
 #[test]
-fn a_field_cap_past_most_is_an_i64() {
+fn a_field_cap_past_most_should_be_an_i64() {
     // `class K1 { g: K0, g: string }`, the string's cap 32: after a `K0` of 67 it reaches
     // `MOST`, after one of 68 it is past it, and an `i64` takes its place.
     for (held, fits) in [(67, true), (68, false)] {
@@ -7750,7 +8190,7 @@ fn check_declared_types(n: u64) -> (usize, usize) {
     let (mut optional_classes, mut enum_classes) = (0, 0);
     let data = seed(n);
     let mut g = Gen::new(&data);
-    g.program();
+    g.program(false);
     let text = &g.w.out.program;
     for class in &g.scope.classes {
         let caps: u64 = class.fields.iter().map(|field| field.cap).sum();
@@ -8601,7 +9041,7 @@ fn a_panic_site_should_not_follow_a_return() {
     let mut returning = 0;
     search_seeds(256, |n| {
         let g = generate(&seed(n));
-        let main = g.program.split("fn main() ").nth(1).unwrap_or_default();
+        let main = g.program.split("fn main(").nth(1).unwrap_or_default();
         let main = main.split("\nfn k").next().unwrap_or_default();
         if main.contains("return") {
             returning += 1;

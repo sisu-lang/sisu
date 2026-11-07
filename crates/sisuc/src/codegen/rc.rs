@@ -167,6 +167,13 @@ pub(super) fn counted_core(ty: Type) -> Option<Type> {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// How many times `define_class_drain` has run on this thread. The helper name is no mark: a
+    /// program can spell it, and a recursive enum with the same name gets a `drain` of its own.
+    pub(crate) static CLASS_DRAINS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl<'ctx> Codegen<'ctx, '_> {
     /// Declares `sisu_rc.<kind>.<name>` on first use and queues its body: `kind` is `retain`,
     /// `release`, `drop`, `eq`, `unique`, `walk`, `drain`, `eq_component`, `unbox`, `free` or
@@ -482,6 +489,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// frees. It scans the heads from the first for each object, so it costs the number of
     /// objects times the number of classes in the cycle, as the drain of an enum component does.
     fn define_class_drain(&self, function: FunctionValue<'ctx>, ty: Type) {
+        #[cfg(test)]
+        CLASS_DRAINS.set(CLASS_DRAINS.get() + 1);
         let TypeKind::Class(first, _) = ty.kind() else {
             unreachable!("only a class type should reach the class helper bodies")
         };

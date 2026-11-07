@@ -761,7 +761,6 @@ crates/sisuc/src/generate/coverage.rs::a_chain_counts_each_node_within_its_room
 crates/sisuc/src/generate/coverage.rs::a_chain_ends_in_a_variant_within_its_room
 crates/sisuc/src/generate/coverage.rs::a_constant_string_stays_within_its_most
 crates/sisuc/src/generate/coverage.rs::a_declared_type_leaves_arrays_among_the_types
-crates/sisuc/src/generate/coverage.rs::a_field_cap_past_most_is_an_i64
 crates/sisuc/src/generate/coverage.rs::a_field_type_past_most_is_an_i64
 crates/sisuc/src/generate/coverage.rs::a_fill_counts_each_copy
 crates/sisuc/src/generate/coverage.rs::a_generated_panic_is_rare
@@ -770,7 +769,6 @@ crates/sisuc/src/generate/coverage.rs::a_mutable_array_of_large_elements_holds_f
 crates/sisuc/src/generate/coverage.rs::a_panicking_index_builds_its_array_within_the_cap
 crates/sisuc/src/generate/coverage.rs::a_part_holds_at_most_its_whole_or_a_class_its_own
 crates/sisuc/src/generate/coverage.rs::a_part_whose_spec_does_not_fit_is_written_without_it
-crates/sisuc/src/generate/coverage.rs::a_program_spends_no_more_than_its_fuel
 crates/sisuc/src/generate/coverage.rs::a_return_gives_a_value_where_its_function_returns_one
 crates/sisuc/src/generate/coverage.rs::a_split_counts_what_its_parts_can_take
 crates/sisuc/src/generate/coverage.rs::a_string_appends_itself_only_within_its_room
@@ -781,7 +779,6 @@ crates/sisuc/src/generate/coverage.rs::a_while_condition_runs_once_more_than_its
 crates/sisuc/src/generate/coverage.rs::an_array_literal_counts_its_slots_and_elements
 crates/sisuc/src/generate/coverage.rs::an_array_of_class_objects_is_never_a_fill
 crates/sisuc/src/generate/coverage.rs::an_element_appends_another_only_within_the_room
-crates/sisuc/src/generate/coverage.rs::an_element_takes_an_assignment_only_where_it_holds_no_class
 crates/sisuc/src/generate/coverage.rs::an_element_takes_at_most_its_base
 crates/sisuc/src/generate/coverage.rs::an_enum_match_ends_in_a_catch_all_only_where_its_arms_leave_a_value
 crates/sisuc/src/generate/coverage.rs::an_expression_stays_within_its_most

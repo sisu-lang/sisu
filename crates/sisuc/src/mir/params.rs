@@ -289,6 +289,14 @@ thread_local! {
     pub(super) static FOLLOWED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+#[cfg(test)]
+thread_local! {
+    /// How many times `tail_argument` has run on this thread: once for each argument that a tail
+    /// call passes as a named local. The callee is any function of the caller's recursive
+    /// component, so a mutual tail call ticks it too.
+    pub(crate) static TAIL_ARGUMENTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// The program's graph of consuming uses, and the search's state.
 struct Graph {
     edges: Vec<Vec<usize>>,
@@ -431,6 +439,8 @@ impl Walk<'_> {
 
     /// The tail rule for `local`, passed at the callee's node `param`.
     fn tail_argument(&mut self, local: LocalId, param: usize, borrows: &[bool]) {
+        #[cfg(test)]
+        TAIL_ARGUMENTS.set(TAIL_ARGUMENTS.get() + 1);
         let function = self.function;
         if local.0 < function.params {
             self.graph.edge(self.node(local), param);

@@ -174,8 +174,17 @@ fn chain(
     block(lets, rest, span).kind
 }
 
+#[cfg(test)]
+thread_local! {
+    /// How many links of a chain of `string`s `compare` has built on this thread. Only a
+    /// `Generated` chain of three operands or more builds one.
+    pub(crate) static STRING_CHAIN_LINKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// The comparison `a op b` of two operands in one `Compare`.
 fn compare(op: CompareOp, a: Expr, b: Expr, span: Span) -> Expr {
+    #[cfg(test)]
+    STRING_CHAIN_LINKS.set(STRING_CHAIN_LINKS.get() + 1);
     Expr::new(
         ExprKind::Compare {
             operands: vec![a, b],

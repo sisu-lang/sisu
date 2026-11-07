@@ -124,6 +124,13 @@ const LINE: u64 = 12;
 /// a `while` runs once more than its body.
 const STATEMENT_MOST: u64 = (MAX_BOUND + 1) * (MAX_BOUND + 1) * (MAX_BOUND + 1);
 
+/// The remainder, modulo 8, of the XOR of all input bytes that gives `main` the parameter
+/// `gap_args`. The gate makes no draw, and the gate writes only known text, which `plain` leaves
+/// out. So a gated seed keeps every choice that it had, and its `plain` is the same. Seed 1 has the
+/// remainder 1, so `seed_1_program_passes` and `seed_1_rewritten_passes` run the form with the
+/// properties 1 to 3. The value 1 is not 5, the gate of `leaves`.
+pub(crate) const MAIN_ARGS_GATE: u8 = 1;
+
 /// Accepts every byte string. When `data` runs out, every choice is the smallest valid one.
 pub(crate) fn generate(data: &[u8]) -> Generated {
     // The rewrites and the known sites read the bytes from the end, the program from the start.
@@ -149,7 +156,8 @@ pub(crate) fn generate(data: &[u8]) -> Generated {
     // jump in `coalesce` is tuned to the same seeds.
     let fold = data.iter().fold(0, |fold, byte| fold ^ byte);
     g.leaves = fold % 8 == 5;
-    let (cost, known, expected) = g.program();
+    // The gate of `main_args` is `MAIN_ARGS_GATE`.
+    let (cost, known, expected) = g.program(fold % 8 == MAIN_ARGS_GATE);
     // Only the tests read the cost.
     #[cfg(not(test))]
     let _ = cost;

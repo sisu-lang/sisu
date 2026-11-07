@@ -665,9 +665,9 @@ stops the script with exit 2. A failed `find`, build, `cargo fuzz coverage` or
 the comparison and writes no section. On CI the step then writes a section that
 says the check did not finish. A broken measurement is never a pass.
 
-When a gap is new, do one of two things. Add a generator rule that makes the
-seeds reach the function
-([ADR 0033](adr/0033-every-language-feature-has-a-generator-rule.md)), or add
+When a gap is new, do one of two things. Add a generator rule or a fixed form
+that makes the seeds reach the function
+([ADR 0033](adr/0033-every-language-feature-has-a-generator-rule.md)). Or add
 its key to `fuzz/known_gaps.txt` under a reason. The list has sections. A
 section is a line `## <reason>`, and then one key on each line: the file, a
 TAB, and the name, as the check prints it. A key has no line number, so an edit
@@ -691,16 +691,53 @@ The check has three limits:
   and multi-unit builds reach is outside the check, and every run of the
   program target still reaches it.
 
-### Add a generator rule
+### Add a rule for a new language feature
 
-A rule makes the fixed seeds reach a function. Do these steps in this order:
+A language feature is an AST, `tir` or type variant, an operator, a prelude
+function or a built-in method. It needs a drawn rule: the bytes of the input
+choose it, so it combines with the other rules and can find bugs.
+`every_variant_should_be_generated` fails `make test` until a seed's program
+holds the feature. That test reads `plain`, which has no form of `gap_forms`,
+so a fixed form cannot pass it. Do these steps in this order:
+
+1. Add a case that holds the feature to `crates/sisuc/tests/run`.
+2. Write the rule in `crates/sisuc/src/generate/`. Use `expr.rs` for an
+   expression of a wanted type, `stmt.rs` for a statement and `item.rs` for an
+   item. Use `generic.rs` for a generic form and `mut_call.rs` for a `mut` call.
+3. Keep choice 0 the smallest valid choice, because every choice is 0 when the
+   bytes run out.
+4. A draw moves what each later part of a seed writes. When a pinned test must
+   stay on its seed, draw from another stream, as `mut_pick` does. Or gate on
+   the whole input, as `leaves` does. Do not loosen a test to fit a moved seed.
+5. Teach the walkers of `generate/coverage.rs` the feature. `universe()` reads
+   each variant of the enums in `ast.rs`, `tir.rs` and `types.rs`. A new variant
+   needs an arm in the walker of its enum, such as `ast_expr`, `ast_stmt`,
+   `ast_pattern`, `tir_expr`, `tir_block`, `tir_pattern` or `ty`. Those matches
+   have no `_` arm, so the build asks for the arm. A built-in method that lowers to an
+   existing variant can have a row in `RECEIVERS`. With a row, each receiver
+   must be generated. With no row, the bare variant must still appear, but no
+   receiver is demanded. `universe()` also reads `CONVERSIONS` and `TEXT`. A
+   method in `prelude.sisu` or in `METHODS` of `check/number.rs` needs no row,
+   because `universe()` reads it.
+6. When the feature adds a capability that no variant shows, add a key to
+   `REACH` (`generate/coverage.rs`) and mark it in `Walk`. A variant that no
+   valid program holds goes into `EXCLUDED`, with its reason.
+7. Run `make test` and `make fuzz-gaps`. When a gap stays, because no drawn rule
+   reaches the function within the seeds, use the steps in the next section.
+
+### Add a fixed form for a generator gap
+
+A fixed form makes the seeds reach a function. It always writes the same text,
+so it finds fewer bugs than a drawn rule. Use it only for a gap. Do these steps
+in this order:
 
 1. Add a case that holds the construct to `crates/sisuc/tests/run`. The
    reference then reaches the function, so the check can see a gap.
 2. Write the construct in `Gen::gap_forms` (`crates/sisuc/src/generate/item.rs`).
-   An item goes into `GENERIC_GAP_ITEMS` or `ANY_GAP_ITEMS`, or into the text at
-   the top of `gap_forms` when it is neither generic nor `any`. A statement goes
-   into the list of lines in `gap_forms`. Add it to the comment above `gap_forms`.
+   An item goes into `GENERIC_GAP_ITEMS`, `ANY_GAP_ITEMS` or
+   `LOWERING_GAP_ITEMS`, or into the text at the top of `gap_forms` when it fits
+   none of them. A statement goes into the list of lines in `gap_forms`. Add it
+   to the comment above `gap_forms`.
    Use fixed text and draw no byte from the seed, because a draw moves what each
    later part of a seed writes. The coverage test leaves this text out, so the
    form cannot hide an older key.
@@ -709,16 +746,32 @@ A rule makes the fixed seeds reach a function. Do these steps in this order:
    point to `GAP_POINTS` (`generate/coverage.rs`). A search of the program's text
    only guesses at that decision, and a near form passes it. A module that cannot
    call `check` keeps a counter, as `RESOLVE_ALL_CALLS` does. `Walk::program`
-   resets the counter and turns its count into a point.
-4. Add a row to `gap_point_keys_should_mark_what_the_checker_did`: a whole
-   program that reaches the point. Add a near program that does not reach it.
-5. Run `generated_programs_should_reach_each_gap_rule`. It reads only the seeds
-   that the nightly reads. Remove the form for a moment: the test must fail.
+   resets the counter and turns its count into a point. A point in `mir`, `lang`
+   or codegen is a counter too. Use a needle in the IR only when no text of the
+   program can write it. Add the point to `LOWERING_POINTS`, and make `lowered`
+   mark it.
+4. Add a row to `gap_point_keys_should_mark_what_the_checker_did`, or to
+   `lowering_points_should_mark_what_the_compiler_did` for a point of lowering:
+   a whole program that reaches the point. Add a near program that does not
+   reach it.
+5. Run `generated_programs_should_reach_each_gap_rule` and
+   `generated_programs_should_reach_each_lowering_rule`. They read only the
+   seeds that the nightly reads. Remove the form for a moment: the test must fail.
 6. When the form prints a line, update the two pins in
    `crates/sisuc/src/fuzz_program.rs`: the count of lines in
    `a_budget_program_should_finish_within_the_limit`, and the stdout in
    `a_failure_should_print_the_program`. Update the counts in their comments too.
 7. Remove the key from `fuzz/known_gaps.txt`. `make fuzz-gaps` must exit 0.
+
+A mark must prove that the function ran. A counter does. A needle in the IR
+must not match text of the program, such as a string constant. It must not
+match a name that the program chooses, such as a user function or a type.
+`lowered` matches a line of one kind: a `define` line, a block label at the
+start of a line, or an indented `call` line. A near program that spells the
+needle must not set the mark. A near program also tests that the form takes the path you
+expect. For example, `"a" < "b" < "c"` goes to `check::string_chain` and never
+reaches `lang::compare`, so that chain needs a generic function. And
+`sisu_words_count` is no mark for `len_words`, because `words` calls it too.
 
 When the form finds a compiler bug, fix the bug in the same work, with its own
 case in `tests/run`.

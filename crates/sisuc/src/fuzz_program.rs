@@ -751,8 +751,9 @@ mod tests {
     };
     use crate::diagnostic::Severity;
     use crate::fresh_names;
+    use crate::generate::coverage::FUZZ_SEEDS;
     use crate::generate::coverage::{SEARCH_SEEDS, item_text, search_seeds};
-    use crate::generate::{BoundSite, Generated, coverage, generate};
+    use crate::generate::{BoundSite, Generated, MAIN_ARGS_GATE, coverage, generate};
 
     /// A directory of the test's own, removed when dropped.
     struct Scratch(PathBuf);
@@ -1417,7 +1418,7 @@ mod tests {
     /// Whether the text of `g` shows that its O0 run reaches every marked line of `shapes`: its
     /// `main` ends with the call of `shapes`, has no `return`, and the program has no panic site.
     fn reaches_shapes(g: &Generated) -> bool {
-        let main = item_text(&g.program, "fn main()").unwrap_or_default();
+        let main = item_text(&g.program, "fn main(").unwrap_or_default();
         main.ends_with("    shapes()\n}") && !main.contains("return") && panic_sites(g) == 0
     }
 
@@ -1534,7 +1535,7 @@ mod tests {
         let mut found = None;
         search_seeds(0, |n| {
             let mut g = generate(&seed(n));
-            let main = item_text(&g.program, "fn main()").unwrap_or_default();
+            let main = item_text(&g.program, "fn main(").unwrap_or_default();
             if !g.expected.is_empty() && main.ends_with(call) {
                 let at = (g
                     .program
@@ -1724,6 +1725,24 @@ mod tests {
             .expect("SISU_FUZZ_SEED should name a seed number");
         seed_passes(n, false);
         seed_passes(n, true);
+    }
+
+    /// GIVEN the first seed of `0..FUZZ_SEEDS` whose `main` takes `gap_args` and has a known value
+    /// site
+    /// WHEN the full judge reads the program, with all properties
+    /// THEN it passes, because `main` prints the length of `gap_args` after the known sites
+    #[test]
+    fn a_gated_main_should_pass_every_property() {
+        let gated = |n: u64| {
+            let data = seed(n);
+            let fold = data.iter().fold(0, |fold, byte| fold ^ byte);
+            fold % 8 == MAIN_ARGS_GATE
+                && (generate(&data).known.iter()).any(|k| matches!(k.answer, Answer::Value(_)))
+        };
+        let n = (0..FUZZ_SEEDS)
+            .find(|&n| gated(n))
+            .expect("some gated seed should hold a known value site");
+        crate::on_compiler_stack(|| program(&seed(n), &runtime()));
     }
 
     #[test]
@@ -2163,12 +2182,12 @@ mod tests {
         let Run { exit, stdout, .. } = o0_run(&g);
         assert_eq!(exit, Exit::Code(0), "{}", g.program);
         // One line from each pass of the innermost loop: every loop ran to its bound. The
-        // forty-nine more lines are the two that `lang_both` prints, the two that print an
-        // `any` value, the eight that print what `put` wrote through `any`, the thirty-three
-        // that `gap_forms` prints, the three that `nest` prints and the one that prints its result.
+        // fifty-six more lines are these. Two come from `lang_both`. Two print an `any` value.
+        // Eight print what `put` wrote through `any`. Forty come from `gap_forms`. Three come from
+        // `nest`. One prints its result.
         assert_eq!(
             String::from_utf8_lossy(&stdout).lines().count(),
-            8 * 8 * 8 + 49
+            8 * 8 * 8 + 56
         );
     }
 
@@ -2231,13 +2250,13 @@ mod tests {
         assert_record(&stderr, "property 3: ", &g, &scratch.0);
         let builds = [
             stderr.find("==> stdin\n"),
-            // Output without a final line break gets one. The empty input's program prints the
-            // two lines of `lang_both`, the two of the `any` values, the eight of `put` through
-            // `any`, the thirty-three of `gap_forms`, the three of `nest` and the one that prints
+            // Output without a final line break gets one. The empty input's program prints these
+            // lines. Two come from `lang_both`. Two come from the `any` values. Eight come from
+            // `put` through `any`. Forty come from `gap_forms`. Three come from `nest`. One prints
             // its result.
             stderr.find("==> program -O2 stdout\nforced\n==> program -O2 stderr\n"),
             stderr.find(
-                "==> program --rc-checks stdout\nRanked\n[1, 2]\nEye\n[\"s\", 'c', 5, Wide(1)]\n@d0 9\n@d1 4\n@d2 12\n@d3 13\n@d4 15\n@d5 15\n@d6 17\n@d7 17\n4\n5\n6\n1\n1\n2\n6\n4\nb\n[11, 22]\nabc\n1\n[5, 14]\n1\n7\n7\n1\n1\ntrue\n1\n1\n1\n1\n[1]\ntrue\ntrue\n4\n7\n13\n16\n19\n21\n22\nA(A(End))\ntrue\nfalse\n2\n==> program --rc-checks stderr\n",
+                "==> program --rc-checks stdout\nRanked\n[1, 2]\nEye\n[\"s\", 'c', 5, Wide(1)]\n@d0 9\n@d1 4\n@d2 12\n@d3 13\n@d4 15\n@d5 15\n@d6 17\n@d7 17\n4\n5\n6\n1\n1\n2\n6\n4\nb\n[11, 22]\nabc\n1\n[5, 14]\n1\n7\n7\n1\n1\ntrue\n1\n1\n1\n1\n[1]\ntrue\ntrue\n4\n7\n13\n16\n19\n21\n22\n2\nfalse\nfalse\n2\ntrue\n2\nt\nA(A(End))\ntrue\nfalse\n2\n==> program --rc-checks stderr\n",
             ),
             stderr.find("program fuzzer: property 3 failed"),
         ];
