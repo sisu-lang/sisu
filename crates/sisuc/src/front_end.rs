@@ -615,6 +615,13 @@ mod tests {
                 true,
             ),
             ("fn main() {\n    todo!$()\n}\n", Code::TodoForm, false),
+            // Lexer errors come before warnings, so the `$` comes before the earlier `;` and
+            // `marks` must sort them.
+            (
+                "fn main() {\n    print(1);\n    todo!$()\n}\n",
+                Code::TodoForm,
+                false,
+            ),
         ] {
             let ds = sound_fixes(src, &front_end(src).1);
             let d = ds
