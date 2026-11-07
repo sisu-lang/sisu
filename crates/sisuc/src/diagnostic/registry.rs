@@ -5044,12 +5044,16 @@ impl From<DiagnosticKind> for Diagnostic {
                     .with_help(format!("write a range, such as `{example}`"))
             }
             DiagnosticKind::ArrayGetTakesIndex { at, base } => {
-                // `base[a..b]` on an optional array is E0062, and Sisu has no `?[`.
-                let base = base.as_deref().unwrap_or("xs");
+                // With no `base`, a `?.` or an optional touched the array, and the program has no
+                // name to write: `base[a..b]` on an optional array is E0062, and Sisu has no `?[`.
+                let range = match base {
+                    Some(base) => format!("use `{base}[a..b]`"),
+                    None => "index the array with `[a..b]`".to_owned(),
+                };
                 Diagnostic::coded(code, at, "an array's `get` takes an `i64`, not a range")
                     .with_label("this is a range")
                     .with_help(format!(
-                        "use `{base}[a..b]`, which stops the program when the range is out of bounds"
+                        "{range}, which stops the program when the range is out of bounds"
                     ))
             }
             DiagnosticKind::SumNeedsNumbers {
