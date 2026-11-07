@@ -6711,6 +6711,41 @@ fn main() { print(GapLayered.Next(Some(GapLayered.End)) == GapLayered.Next(None)
         ),
         ("main takes no args", "fn main() {}".to_string(), &[]),
         (
+            "a string constant spells layer.flags",
+            r#"fn main() { print("layer.flags") }"#.to_string(),
+            &[],
+        ),
+        (
+            "a string constant spells sisu_args_len",
+            r#"fn main() { print("sisu_args_len") }"#.to_string(),
+            &[],
+        ),
+        (
+            "a user function is named sisu_args_len",
+            "fn sisu_args_len() -> i64 { 7 }
+fn main() { print(sisu_args_len()) }"
+                .to_string(),
+            &[],
+        ),
+        (
+            "a string constant spells the drain of GapHen",
+            r#"fn main() { print("define internal void @sisu_rc.drain.GapHen(") }"#.to_string(),
+            &[],
+        ),
+        (
+            "a recursive enum is named GapHen",
+            "enum GapHen {
+    End
+    Next(GapHen)
+}
+fn main() {
+    let h = GapHen.Next(GapHen.End)
+    print(h == GapHen.End)
+}"
+            .to_string(),
+            &[],
+        ),
+        (
             "two classes hold each other",
             "class GapHen {
     egg: GapEgg?
