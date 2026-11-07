@@ -345,7 +345,7 @@ first_pass=$(awk '/^#[0-9]+: cov:/ { for (i = 1; i < NF; i++) if ($i == "time:")
     echo "- Fuzzed for ${elapsed} s (asked for ${seconds} s)."
     echo "- Executions in processed jobs: ${executions}."
     if [[ -z $first_pass ]]; then
-        echo "- No job finished, so this run tried no new inputs."
+        echo "- No job finished, so the number of new inputs is not known."
     else
         echo "- First pass over the corpus: about ${first_pass} s."
         if ((first_pass * 2 > seconds)); then

@@ -810,8 +810,9 @@ corpus inputs and the seeds.
 The run saves the corpus inputs and its new finds, and the next run samples
 them again. A removed input is lost; the fuzzer can find its coverage again. The
 summary's executions count only the fuzzing after the first pass. The summary
-also gives the time of that pass. It says when the pass took over half of the
-run or no job finished, because such a run tried few or no new inputs. The job
+also gives the time of that pass. It warns when the pass took over half of the
+run, because such a run tried few new inputs. It also says when no job finished,
+because the number of new inputs is then not known. The job
 summary also gives the corpus size before and after cmin and whether cmin
 finished within its 2400 s. A cmin that does not finish leaves the corpus as it
 was and puts a warning on the run, because the run stays green.

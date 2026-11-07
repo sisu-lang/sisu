@@ -162,9 +162,9 @@ class FuzzSummary(unittest.TestCase):
     def test_a_first_pass_of_exactly_half_the_run_should_not_warn(self) -> None:
         self.assertNotIn("new inputs", self.summary("x", self.job(155, 150), "300"))
 
-    def test_a_run_with_no_finished_job_should_say_it_tried_no_new_inputs(self) -> None:
+    def test_a_run_with_no_finished_job_should_say_the_new_inputs_are_not_known(self) -> None:
         text = self.summary("x", "", "300")
-        self.assertIn("- No job finished, so this run tried no new inputs.\n", text)
+        self.assertIn("- No job finished, so the number of new inputs is not known.\n", text)
         self.assertNotIn("First pass", text)
 
 
