@@ -74,6 +74,9 @@ thread_local! {
     /// the enums that `components` builds the table from. It also counts each call of the one
     /// lookup helper, `member_position`, and not the steps inside it.
     static MEMBER_SCANS: Cell<usize> = const { Cell::new(0) };
+    /// How many blocks `tail_return` has walked, and how many statements it has read, on this
+    /// thread.
+    static TAIL_STEPS: Cell<usize> = const { Cell::new(0) };
 }
 
 impl<'ctx, 'src> Codegen<'ctx, 'src> {
@@ -1794,6 +1797,8 @@ fn tail_return<'f>(
             return None;
         };
         let next = &f.blocks[to.0];
+        #[cfg(test)]
+        TAIL_STEPS.set(TAIL_STEPS.get() + 1 + next.stmts.len());
         if !next.stmts.iter().all(mir::cleanup) {
             return None;
         }

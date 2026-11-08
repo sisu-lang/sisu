@@ -4105,18 +4105,44 @@ fn return_block_over_the_copy_limit_should_not_be_copied() {
     assert_eq!(returns_of_shared_cleanup(TAIL_COPY_LIMIT + 1), 1);
 }
 
-/// The size of the module grows with the sum of the arms and the strings, not with their
-/// product: the copy of the cleanup is bounded for each call.
+/// A function of `arms` calls and `locals` strings: arm `j` passes the string `j % locals` to `g`.
+/// With `locals` fixed at the limit, each call copies a return block of that size.
+fn cleanup_arms(arms: usize, locals: usize) -> String {
+    let lets = (0..locals)
+        .map(|i| format!("    let s{i} = \"x\" + k.to_string()\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    let cases = (1..=arms)
+        .map(|j| format!("        {j} => g({j}, s{})\n", j % locals))
+        .collect::<Vec<_>>()
+        .concat();
+    format!(
+        "fn g(k: i64, s: string) -> string {{\n    s + k.to_string()\n}}\n\nfn f(k: i64) -> string {{\n{lets}    match k {{\n{cases}        _ => \"\"\n    }}\n}}\n\nfn main() {{\n    print(f((read_line() ?? \"\").len()).len())\n}}\n"
+    )
+}
+
+/// The steps of `tail_return` for `src`: the blocks it walks and the statements it reads.
+fn tail_steps(src: &str) -> usize {
+    TAIL_STEPS.set(0);
+    let context = Context::create();
+    compiled(&context, src);
+    TAIL_STEPS.get()
+}
+
+/// `n` calls reach one return block of `n` cleanup statements, which is over the limit. Each call
+/// must stop at the size of the block, and not read its statements: reading them makes the walk
+/// `n` times `n`.
 #[test]
-fn shared_cleanup_should_make_the_module_grow_in_linear_size() {
-    let size = |n: usize| {
-        let context = Context::create();
-        compiled(&context, &shared_cleanup(n))
-            .print_to_string()
-            .to_bytes()
-            .len()
-    };
-    assert_near_linear(size(100), size(200), size(300));
+fn tail_return_should_not_read_the_statements_of_a_block_over_the_limit() {
+    let steps = |n: usize| tail_steps(&shared_cleanup(n));
+    assert_near_linear(steps(100), steps(200), steps(300));
+}
+
+/// `n` calls each copy a return block of `TAIL_COPY_LIMIT` statements: the steps grow with `n`.
+#[test]
+fn tail_return_should_walk_in_linear_steps_when_each_call_copies() {
+    let steps = |n: usize| tail_steps(&cleanup_arms(n, TAIL_COPY_LIMIT));
+    assert_near_linear(steps(100), steps(200), steps(300));
 }
 
 /// A call into a `let` before an endless loop: the block of the call goes to a block that goes
