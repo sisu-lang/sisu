@@ -26,6 +26,13 @@ pub(crate) fn link(objects: &[PathBuf], linking: &Linking<'_>) -> Result<(), Str
     if let Some(linker) = linker {
         cc.arg(format!("-fuse-ld={linker}"));
     }
+    // The runtime archive holds the DWARF of Rust's standard library, and Sisu emits no debug info
+    // of its own. `-S` drops it, and the symbol table stays, so Valgrind keeps the names. Linux
+    // only: `ld64` does not copy DWARF, and nobody has checked `-S` there. When Sisu emits its own
+    // debug info, this flag must go or become conditional.
+    if cfg!(target_os = "linux") {
+        cc.arg("-Wl,-S");
+    }
     // `output`, not `status`: cc's messages go into the tool error, so stderr stays one format.
     let out = cc
         .args(objects)
