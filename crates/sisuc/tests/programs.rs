@@ -2403,6 +2403,7 @@ fn build_should_name_a_linker_that_is_missing_from_path() {
 /// WHEN it is built with `--linker mold --timings`
 /// THEN it exits 1 and the first stderr line names the linker
 /// AND no stage of the front end ran
+/// AND the message holds no verbose line of gcc's `collect2`
 ///
 /// The test looks for `timings: lex`, not `timings: codegen`: the line `timings: codegen units`
 /// also starts with `timings: codegen`.
@@ -2433,6 +2434,13 @@ fn build_should_find_a_missing_linker_before_the_front_end() {
     assert!(
         !stderr.lines().any(|line| line.starts_with("timings: lex")),
         "the front end ran: {stderr}"
+    );
+    // gcc's `collect2` reads `--version` as a request for verbose output.
+    assert!(
+        !stderr
+            .lines()
+            .any(|line| line.starts_with("collect2 version") || line.starts_with("[cannot find")),
+        "the message holds collect2's verbose lines: {stderr}"
     );
     assert_empty(&empty);
 }

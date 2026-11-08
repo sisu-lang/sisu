@@ -2340,6 +2340,42 @@ fn assert_empty(tmp: &Path) {
     assert!(left.is_empty(), "left in {}: {left:?}", tmp.display());
 }
 
+/// GIVEN a program with a type error
+/// AND `PATH` holds only `cc`
+/// WHEN it is run with `--linker mold`
+/// THEN it exits 1 and the first stderr line names the linker
+/// AND the front end did not run: stderr holds no diagnostic
+///
+/// `sisu run` takes no `--timings`, so the type error shows whether the front end ran.
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "the linker probe runs on Linux only"
+)]
+fn run_should_find_a_missing_linker_before_the_front_end() {
+    let tmp = scratch_path::empty_dir("run_missing_linker_tmp");
+    let out = sisu_run(&tmp)
+        .args(["--linker", "mold", "-e", "fn main() { let x: i64 = \"a\" }"])
+        .env("PATH", scratch_path::only_cc("run_missing_linker_path"))
+        .env_remove("COMPILER_PATH")
+        .output()
+        .expect("sisu starts");
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        stderr.lines().next(),
+        Some("sisu: linker ld.mold not found on PATH; cc failed: exit status: 1")
+    );
+    assert!(!stderr.contains("E0032"), "the front end ran: {stderr}");
+    assert!(
+        !stderr
+            .lines()
+            .any(|line| line.starts_with("collect2 version") || line.starts_with("[cannot find")),
+        "the message holds collect2's verbose lines: {stderr}"
+    );
+    assert_empty(&tmp);
+}
+
 /// GIVEN a program with a warning, and a stderr that is `/dev/full`
 /// WHEN `sisu` checks it, builds it, or runs it
 /// THEN it exits 1 and not with an abort, the program does not run, and `run` leaves no directory
