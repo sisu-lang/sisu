@@ -56,6 +56,7 @@ STAGES = [
 LLVM_STAGES = ("optimize", "object")
 # The shapes that the sweep also builds at -O2, as the case `<shape> -O2`. Under callgrind, -O2
 # costs much more than -O0, so the list holds the shapes that give the -O2 passes the most work.
+# `mut call width` is not in it: under callgrind, its -O2 build at 8n ran for more than 25 minutes.
 O2_SHAPES = ("functions", "statements", "interpolations", "prints", "nested array ==")
 O2_SUFFIX = " -O2"
 # At -O2, the stages before codegen do the same work as at -O0, so a -O2 case judges only these.
@@ -497,7 +498,7 @@ def looks_fixed(verdict: str, ratios: list[Fraction | None]) -> bool:
     if verdict in ("not judged", "no ratio", AS_AT_O0):
         return True
     r1, _, r3 = ratios
-    # pyrefly: ignore[unsupported-operation]  the verdicts above are the only ones with a None ratio
+    # pyrefly: ignore[unsupported-operation]  only the verdicts in the line above have a None ratio
     return r3 < KEPT_R3 or (r3 < STEEP and r3 < r1 - FALL_FIXED)
 
 

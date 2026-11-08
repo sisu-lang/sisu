@@ -513,14 +513,14 @@ arms. `scripts/scaling.py` builds each of 28 shapes into an executable at
 size 0 and at four sizes that double: n, 2n, 4n and 8n. Each build has one
 codegen unit. It counts the instructions of each stage under callgrind: `lex`,
 `parse`, `check`, `mono`, `mir`, `codegen`, `optimize` (the LLVM passes) and
-`object` (the machine code). The shapes in `O2_SHAPES` are also built at
-`-O2`, as the case `<shape> -O2`. A `-O2` case judges only `codegen`,
-`optimize` and `object`, because the stages before them do the same work at
-each level. The count does not depend on the load of the machine. It also changes a little with
+`object` (the machine code). The shapes in `O2_SHAPES` are also built at `-O2`,
+as the case `<shape> -O2`. A `-O2` case judges only `codegen`, `optimize` and
+`object`, because the stages before them do the same work at each level. The
+count does not depend on the load of the machine. It also changes a little with
 the file paths and the C library. So on another machine, such as the runner of
 the nightly job, a ratio near a number of the rule can fall on the other side.
-It needs `valgrind`, and a full run takes
-about 12 minutes on the machine above.
+It needs `valgrind`, and a full run takes about 12 minutes on the machine
+above.
 
 The script prints one table for each shape. It also writes `table.md` and
 `counts.json` to `target/scaling/`. `ARGS='--shapes functions,fields'`

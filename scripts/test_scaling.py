@@ -817,7 +817,9 @@ class ScalingTest(unittest.TestCase):
         WHEN each row is read
         THEN its case is a shape, or a shape of O2_SHAPES with ` -O2`
         AND its stage is a stage that the case judges, and its issue is a positive integer
+        AND each shape of O2_SHAPES is a shape
         """
+        self.assertLessEqual(set(sc.O2_SHAPES), set(sc.SHAPES))
         for shape, stage, issue in sc.KNOWN:
             with self.subTest(shape=shape, stage=stage):
                 if shape.endswith(sc.O2_SUFFIX):
