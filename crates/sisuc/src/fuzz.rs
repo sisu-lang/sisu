@@ -61,6 +61,7 @@ pub(crate) fn assert_compiles(program: &Program, source: &str) {
             "input.sisu",
             source,
             &machine,
+            codegen::OptLevel::O0,
             rc_checks,
         );
         assert_verified(&module, rc_checks);

@@ -39,8 +39,8 @@ use inkwell::targets::{
 };
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
 use inkwell::values::{
-    BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, GlobalValue, IntValue,
-    MetadataValue, PointerValue,
+    BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, GlobalValue,
+    InstructionOpcode, IntValue, MetadataValue, PointerValue,
 };
 use inkwell::{AddressSpace, GlobalVisibility, IntPredicate, OptimizationLevel};
 
@@ -62,6 +62,13 @@ use crate::tir::{
 /// The `expect` message for a builder call: codegen positions the builder before it emits code.
 const POSITIONED: &str =
     "the builder should be positioned in a block while a function body is emitted";
+
+/// At `-O0`, a block ends with a `br` to a new block after this many statements and parts (see
+/// `cut_long_block`). LLVM's fast instruction selector gives the rest of a block to the slow one
+/// at the first instruction it cannot select, such as an `insertvalue`. The slow selector and the
+/// fast register allocator then take time that grows faster than the size of the block. A short
+/// block bounds that time.
+const BLOCK_CUT: u32 = 256;
 
 #[cfg(test)]
 thread_local! {
@@ -94,6 +101,7 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
         path: &'src str,
         source: &'src str,
         machine: &TargetMachine,
+        level: OptLevel,
         rc_checks: bool,
     ) -> Self {
         let module = context.create_module("main");
@@ -175,6 +183,8 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
             types: Vec::new(),
             caller: Cell::new(None),
             blocks: Vec::new(),
+            level,
+            since_cut: Cell::new(0),
         }
     }
 }
@@ -187,6 +197,10 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
 /// first.
 // `scripts/scaling.py` reads this function's instruction count.
 #[inline(never)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a program needs its mir, its place, its text, the target and the level"
+)]
 pub(crate) fn compile<'ctx>(
     context: &'ctx Context,
     program: &Program,
@@ -194,6 +208,7 @@ pub(crate) fn compile<'ctx>(
     path: &str,
     source: &str,
     machine: &TargetMachine,
+    level: OptLevel,
     rc_checks: bool,
 ) -> Module<'ctx> {
     compile_unit(
@@ -205,6 +220,7 @@ pub(crate) fn compile<'ctx>(
         path,
         source,
         machine,
+        level,
         rc_checks,
     )
 }
@@ -278,10 +294,11 @@ pub(crate) fn compile_unit<'ctx>(
     path: &str,
     source: &str,
     machine: &TargetMachine,
+    level: OptLevel,
     rc_checks: bool,
 ) -> Module<'ctx> {
     let mut codegen = Codegen::new(
-        context, program, mir, analyses, unit, path, source, machine, rc_checks,
+        context, program, mir, analyses, unit, path, source, machine, level, rc_checks,
     );
     codegen.lay_out_types();
     if unit.is_split() {
@@ -456,6 +473,10 @@ struct Codegen<'ctx, 'src> {
     caller: Cell<Option<(PointerValue<'ctx>, IntValue<'ctx>)>>,
     /// The current function's blocks, indexed by `BlockId`.
     blocks: Vec<BasicBlock<'ctx>>,
+    /// The optimization level of the build: at `-O0`, `cut_long_block` cuts long blocks.
+    level: OptLevel,
+    /// The statements and parts emitted since the builder moved to a mir block or to a cut.
+    since_cut: Cell<u32>,
 }
 
 impl<'ctx> Codegen<'ctx, '_> {
@@ -865,11 +886,14 @@ impl<'ctx> Codegen<'ctx, '_> {
                     .expect("both blocks should belong to the function");
             }
             self.builder.position_at_end(block);
+            self.since_cut.set(0);
             for stmt in &data.stmts {
+                self.cut_long_block();
                 self.statement(stmt);
             }
             if let Some((stmts, term)) = tail_return(f, &ends, data) {
                 for stmt in stmts {
+                    self.cut_long_block();
                     self.statement(stmt);
                 }
                 self.terminator(term);
@@ -1101,7 +1125,12 @@ impl<'ctx> Codegen<'ctx, '_> {
                 self.concat(lhs, self.operand(rhs).0)
             }
             Rvalue::Interpolate { parts, formats, .. } => {
-                let parts: Vec<_> = parts.iter().map(|part| self.operand(part)).collect();
+                let parts: Vec<_> = (parts.iter())
+                    .map(|part| {
+                        self.cut_long_block();
+                        self.operand(part)
+                    })
+                    .collect();
                 // Text, numbers, `bool` and `char` go in one block of known size; a compound part
                 // goes through a sink.
                 let text = if parts.iter().all(|&(_, ty)| text_part(ty)) {
@@ -1206,7 +1235,12 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// The values of `operands`, left to right.
     fn values(&self, operands: &[Operand]) -> Vec<BasicValueEnum<'ctx>> {
-        operands.iter().map(|op| self.operand(op).0).collect()
+        (operands.iter())
+            .map(|op| {
+                self.cut_long_block();
+                self.operand(op).0
+            })
+            .collect()
     }
 
     /// The object that an operand of `is` holds: an object, or the data of an `any` value, which
@@ -1652,6 +1686,24 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder.position_at_end(ok);
     }
 
+    /// Counts one more statement or part in the current block. At `-O0`, after `BLOCK_CUT` of
+    /// them, the block ends with a `br` to a new block, and codegen goes on there. Call it only
+    /// where the block has no terminator and no `phi` will take it as an incoming block.
+    fn cut_long_block(&self) {
+        if self.level != OptLevel::O0 {
+            return;
+        }
+        let count = self.since_cut.get();
+        if count < BLOCK_CUT {
+            self.since_cut.set(count + 1);
+            return;
+        }
+        let next = (self.context).append_basic_block(self.current_function(), "cut");
+        self.branch_to(next);
+        self.builder.position_at_end(next);
+        self.since_cut.set(1);
+    }
+
     fn branch_to(&self, block: BasicBlock<'ctx>) {
         self.builder
             .build_unconditional_branch(block)
@@ -1890,21 +1942,52 @@ fn text_part(ty: Type) -> bool {
     )
 }
 
-/// Verifies `module` in a debug build, then runs the pipeline. A release build does not verify,
-/// because the verifier takes about 180 ms of a 143k-line build. The tests that run `sisu` run a
-/// debug build, so it verifies each module that they build. No verifier runs after the pipeline: a
-/// pass that broke the IR reaches instruction selection, which would be an LLVM bug.
+/// Verifies `module` in a debug build, then runs the pipeline. At `-O0`, it first makes each
+/// function that is too large for `mem2reg` `optnone` (see `MEM2REG_LIMIT`). A release build does
+/// not verify, because the verifier takes about 180 ms of a 143k-line build. The tests that run
+/// `sisu` run a debug build, so it verifies each module that they build. No verifier runs after the
+/// pipeline: a pass that broke the IR reaches instruction selection, which would be an LLVM bug.
 pub(crate) fn optimize(
     module: &Module<'_>,
     machine: &TargetMachine,
     level: OptLevel,
 ) -> Result<(), String> {
+    if level == OptLevel::O0 {
+        skip_mem2reg_of_large_functions(module);
+    }
     if cfg!(debug_assertions) {
         module.verify().map_err(|e| e.to_string())?;
     }
     module
         .run_passes(pipeline(level), machine, PassBuilderOptions::create())
         .map_err(|e| e.to_string())
+}
+
+/// At `-O0`, a function is `optnone` when the allocas of its entry block times its blocks are
+/// more than this limit. `mem2reg` takes time that grows with that product. On a `main` with 8000
+/// mutable locals, it took 2.8 s, and at the limit it takes about 30 ms. A function over the limit
+/// keeps its allocas, loads and stores. That code is slower, but `-O0` is for a fast build.
+const MEM2REG_LIMIT: usize = 5_000_000;
+
+/// Marks each function of `module` over `MEM2REG_LIMIT` `optnone`, so that `mem2reg` skips it.
+/// LLVM requires `noinline` with `optnone`.
+fn skip_mem2reg_of_large_functions(module: &Module<'_>) {
+    let context = module.get_context();
+    let [optnone, noinline] = ["optnone", "noinline"]
+        .map(|name| context.create_enum_attribute(Attribute::get_named_enum_kind_id(name), 0));
+    for function in module.get_functions() {
+        let Some(entry) = function.get_first_basic_block() else {
+            continue;
+        };
+        let allocas =
+            std::iter::successors(entry.get_first_instruction(), |i| i.get_next_instruction())
+                .filter(|i| i.get_opcode() == InstructionOpcode::Alloca)
+                .count();
+        if allocas * function.count_basic_blocks() as usize > MEM2REG_LIMIT {
+            function.add_attribute(AttributeLoc::Function, optnone);
+            function.add_attribute(AttributeLoc::Function, noinline);
+        }
+    }
 }
 
 /// Compiles `module`, which `optimize` ran, to object code for `machine`, in memory.

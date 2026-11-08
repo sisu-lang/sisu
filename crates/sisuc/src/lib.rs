@@ -480,6 +480,7 @@ fn each_unit<T: Send>(
                         input.path,
                         input.source,
                         &machine,
+                        input.level,
                         input.rc_checks,
                     ),
                     Some(analyses) => codegen::compile_unit(
@@ -491,6 +492,7 @@ fn each_unit<T: Send>(
                         input.path,
                         input.source,
                         &machine,
+                        input.level,
                         input.rc_checks,
                     ),
                 });

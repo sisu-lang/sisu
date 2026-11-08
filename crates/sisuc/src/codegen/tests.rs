@@ -44,6 +44,24 @@ fn compiled_over<'ctx>(
     rc_checks: bool,
     edit: impl FnOnce(&mut mir::Program),
 ) -> Module<'ctx> {
+    compiled_over_at(context, prelude, src, OptLevel::O0, rc_checks, edit)
+}
+
+/// `compiled`, for a build at `level`. The module is not optimized.
+fn compiled_at<'ctx>(context: &'ctx Context, src: &str, level: OptLevel) -> Module<'ctx> {
+    let prelude = crate::front_end::PRELUDE_SOURCE;
+    compiled_over_at(context, prelude, src, level, false, |_| {})
+}
+
+/// `compiled_over`, for a build at `level`.
+fn compiled_over_at<'ctx>(
+    context: &'ctx Context,
+    prelude: &str,
+    src: &str,
+    level: OptLevel,
+    rc_checks: bool,
+    edit: impl FnOnce(&mut mir::Program),
+) -> Module<'ctx> {
     let program = parse_ok(src);
     let (program, diagnostics) = crate::check::check(
         &program,
@@ -55,7 +73,7 @@ fn compiled_over<'ctx>(
     let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
     let mut mir = mir::build(&program);
     edit(&mut mir);
-    let machine = target_machine(OptLevel::O0).expect("the host is a target");
+    let machine = target_machine(level).expect("the host is a target");
     let module = compile(
         context,
         &program,
@@ -63,6 +81,7 @@ fn compiled_over<'ctx>(
         "test.sisu",
         src,
         &machine,
+        level,
         rc_checks,
     );
     if let Err(e) = module.verify() {
@@ -472,7 +491,16 @@ fn enum_layouts(src: &str) -> Vec<Compared> {
     let measured = payload_limit::measure(&program.enums);
     let mir = mir::build(&program);
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
-    let module = compile(&context, &program, &mir, "test.sisu", src, &machine, false);
+    let module = compile(
+        &context,
+        &program,
+        &mir,
+        "test.sisu",
+        src,
+        &machine,
+        OptLevel::O0,
+        false,
+    );
     let data = machine.get_target_data();
     let mut found = Vec::new();
     for (e, bound) in program.enums.iter().zip(measured) {
@@ -1279,6 +1307,191 @@ fn trim_should_call_one_function_per_type() {
     );
 }
 
+/// A program that compares two distinct arrays `depth` layers deep, so that LLVM cannot fold the
+/// comparison to `true`.
+fn nested_eq_program(depth: usize) -> String {
+    let literal = format!("{}1{}", "[".repeat(depth), "]".repeat(depth));
+    format!("fn main() {{\n    let a = {literal}\n    let b = {literal}\n    print(a == b)\n}}")
+}
+
+/// The symbol of the `==` helper of the array of `i64` that is `depth` layers deep.
+fn nested_eq_helper(depth: usize) -> String {
+    format!("sisu_rc.eq.{}i64{}", "[".repeat(depth), "]".repeat(depth))
+}
+
+/// The `==` helper of an array 8 or more layers deep is `noinline`, and the helper of a smaller
+/// array is not: the cap starts at the eighth layer
+#[test]
+fn eq_helper_of_a_deep_array_should_not_be_inlined() {
+    let context = Context::create();
+    let module = compiled(&context, &nested_eq_program(9));
+    let noinline = Attribute::get_named_enum_kind_id("noinline");
+    for (depth, expected) in [(7, false), (8, true), (9, true)] {
+        let symbol = nested_eq_helper(depth);
+        let function = module
+            .get_function(&symbol)
+            .unwrap_or_else(|| panic!("{symbol} is not in the module"));
+        assert_eq!(
+            function
+                .get_enum_attribute(AttributeLoc::Function, noinline)
+                .is_some(),
+            expected,
+            "noinline on {symbol}"
+        );
+    }
+}
+
+/// At `-O2`, the helpers of the layers below 8 go into the helper of layer 8. Each helper from
+/// layer 8 up stays a function of its own
+#[test]
+fn eq_chain_of_a_deep_array_should_stay_in_separate_functions_at_o2() {
+    let context = Context::create();
+    let module = compiled(&context, &nested_eq_program(40));
+    let machine = target_machine(OptLevel::O2).expect("the host is a target");
+    optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
+    let ir = module.print_to_string().to_string();
+    let defined: Vec<&str> = ir
+        .lines()
+        .filter(|l| l.starts_with("define ") && l.contains("@\"sisu_rc.eq."))
+        .collect();
+    assert_eq!(defined.len(), 33, "the eq helpers defined:\n{defined:#?}");
+    for depth in 8..=40 {
+        let symbol = format!("@\"{}\"(", nested_eq_helper(depth));
+        assert!(
+            defined.iter().any(|l| l.contains(&symbol)),
+            "{symbol} is not defined:\n{defined:#?}"
+        );
+    }
+}
+
+/// A `main` of `n` `print` statements.
+fn prints_program(n: usize) -> String {
+    let mut src = String::from("fn main() {\n");
+    for i in 0..n {
+        writeln!(src, "    print({i})").expect("writing to a `String` should not fail");
+    }
+    src + "}"
+}
+
+/// A `main` with one string of `n` interpolated `i64` parts.
+fn interpolation_program(n: usize) -> String {
+    format!(
+        "fn main() {{\n    let x = 1\n    let s = \"{}\"\n    print(s.len())\n}}",
+        "{x}".repeat(n)
+    )
+}
+
+/// The most calls of `callee` that one basic block of `@sisu.main` holds.
+fn most_calls_in_one_block(ir: &str, callee: &str) -> usize {
+    let call = format!("@{callee}(");
+    let mut most = 0;
+    let mut count = 0;
+    for line in function_body(ir, "@sisu.main(").lines() {
+        if !line.starts_with(' ') && line.contains(':') {
+            count = 0;
+        } else if line.contains(&call) {
+            count += 1;
+            most = most.max(count);
+        }
+    }
+    most
+}
+
+#[test]
+fn long_block_should_be_cut_at_o0() {
+    const LIMIT: usize = BLOCK_CUT as usize;
+    let context = Context::create();
+    for (src, callee) in [
+        (prints_program(2000), "sisu_print_int"),
+        (interpolation_program(2000), "sisu_write_int"),
+    ] {
+        let ir = compiled(&context, &src).print_to_string().to_string();
+        let most = most_calls_in_one_block(&ir, callee);
+        assert!(
+            (1..=LIMIT + 1).contains(&most),
+            "one block of @sisu.main holds {most} calls of {callee}"
+        );
+    }
+}
+
+#[test]
+fn long_block_should_not_be_cut_at_o2() {
+    let context = Context::create();
+    let module = compiled_at(&context, &prints_program(2000), OptLevel::O2);
+    let main = module
+        .get_function("sisu.main")
+        .expect("the module should define `sisu.main`");
+    assert_eq!(main.count_basic_blocks(), 1);
+}
+
+/// A `main` that declares `n` mutable locals, then adds 1 to each of them.
+fn mut_locals_program(n: usize) -> String {
+    let mut src = String::from("fn main() {\n");
+    for i in 0..n {
+        writeln!(src, "    let mut _x{i} = {i}").expect("writing to a `String` should not fail");
+    }
+    for i in 0..n {
+        writeln!(src, "    _x{i} += 1").expect("writing to a `String` should not fail");
+    }
+    src + "    print(_x0)\n}"
+}
+
+/// `src`, built and optimized at `level`.
+fn optimized_at<'ctx>(context: &'ctx Context, src: &str, level: OptLevel) -> Module<'ctx> {
+    let module = compiled_at(context, src, level);
+    let machine = target_machine(level).expect("the host is a target");
+    optimize(&module, &machine, level).expect("the module should optimize");
+    module
+}
+
+/// Whether `function` is `optnone`.
+fn is_optnone(function: FunctionValue<'_>) -> bool {
+    let optnone = Attribute::get_named_enum_kind_id("optnone");
+    (function.get_enum_attribute(AttributeLoc::Function, optnone)).is_some()
+}
+
+/// The allocas of `sisu.main` in `module`, and whether it is `optnone`.
+fn main_allocas(module: &Module<'_>) -> (usize, bool) {
+    let main = module
+        .get_function("sisu.main")
+        .expect("the module should define `sisu.main`");
+    let allocas = (instructions(main).iter())
+        .filter(|i| i.get_opcode() == InstructionOpcode::Alloca)
+        .count();
+    (allocas, is_optnone(main))
+}
+
+/// The `main` of 2000 mutable locals has 4000 allocas and more than 4000 blocks. `mem2reg` would
+/// take time that grows with the allocas times the blocks, so at `-O0` the function is `optnone`.
+#[test]
+fn function_too_large_for_mem2reg_should_be_optnone_at_o0() {
+    let context = Context::create();
+    let module = optimized_at(&context, &mut_locals_program(2000), OptLevel::O0);
+    let (allocas, optnone) = main_allocas(&module);
+    assert!(optnone, "`sisu.main` is not `optnone`");
+    assert!(allocas >= 2000, "`sisu.main` keeps {allocas} allocas");
+}
+
+#[test]
+fn small_function_should_keep_mem2reg_at_o0() {
+    let context = Context::create();
+    let module = optimized_at(&context, &mut_locals_program(10), OptLevel::O0);
+    let (allocas, optnone) = main_allocas(&module);
+    assert!(!optnone, "`sisu.main` is `optnone`");
+    assert_eq!(allocas, 0, "`mem2reg` should promote each alloca");
+}
+
+#[test]
+fn function_too_large_for_mem2reg_should_not_be_optnone_at_o2() {
+    let context = Context::create();
+    let module = optimized_at(&context, &mut_locals_program(2000), OptLevel::O2);
+    let optnone: Vec<_> = (module.get_functions())
+        .filter(|&f| is_optnone(f))
+        .map(|f| f.get_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(optnone.is_empty(), "`optnone` at `-O2`: {optnone:?}");
+}
+
 /// A new block has room for exactly its length: `[v; n]` stores `n` into both the length and
 /// the capacity, whatever `n` is.
 #[test]
@@ -1808,6 +2021,7 @@ fn niche_should_run_out_past_its_storage() {
         "test.sisu",
         &src,
         &machine,
+        OptLevel::O0,
         false,
     );
     codegen.lay_out_types();
@@ -3123,6 +3337,7 @@ fn binary_should_take_and_and_or_as_the_eager_operations_of_two_computed_bools()
         "test.sisu",
         src,
         &machine,
+        OptLevel::O0,
         false,
     );
     let bool_type = context.bool_type();
@@ -4879,7 +5094,16 @@ fn mono_counts(src: &str) -> ((usize, usize), (usize, usize)) {
     let mir = mir::build(&program);
     let context = Context::create();
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
-    let module = compile(&context, &program, &mir, "test.sisu", src, &machine, false);
+    let module = compile(
+        &context,
+        &program,
+        &mir,
+        "test.sisu",
+        src,
+        &machine,
+        OptLevel::O0,
+        false,
+    );
     module.verify().expect("the module should verify");
     (after_mono, (HOLDS_STEPS.get(), WALK_VISITS.get()))
 }
@@ -5175,7 +5399,16 @@ fn lay_out_enums_should_panic_on_an_enum_that_holds_itself_inline() {
     let mir = mir::build(&program);
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
     let context = Context::create();
-    compile(&context, &program, &mir, "test.sisu", src, &machine, false);
+    compile(
+        &context,
+        &program,
+        &mir,
+        "test.sisu",
+        src,
+        &machine,
+        OptLevel::O0,
+        false,
+    );
 }
 
 /// Converting an object to an `any` value makes no allocation: the value is the object's pointer
@@ -5254,6 +5487,7 @@ fn with_codegen(src: &str, check: impl FnOnce(&Codegen<'_, '_>)) {
         "test.sisu",
         src,
         &machine,
+        OptLevel::O0,
         false,
     );
     check(&codegen);
@@ -6072,6 +6306,7 @@ fn convention_should_give_one_type_per_part() {
         "test.sisu",
         src,
         &machine,
+        OptLevel::O0,
         false,
     );
     codegen.lay_out_types();
@@ -6676,6 +6911,7 @@ fn compiled_units_at<'ctx>(
                 "test.sisu",
                 src,
                 &machine,
+                level,
                 false,
             );
             if let Err(e) = module.verify() {

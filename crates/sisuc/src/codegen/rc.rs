@@ -24,6 +24,29 @@ use crate::tir::{
     ClassId, EnumId, FuncId, InterfaceId, LocalId, Program, Type, TypeArgs, TypeKind,
 };
 
+/// The `==` helper of an array with this many array layers or more gets `noinline` (see
+/// `array_layers`). LLVM always inlines a helper that has one caller. Without the cap, the helpers
+/// of a deep array become one function: a loop nest as deep as the array. The loop passes then
+/// take time that grows with the square of that depth. The cap keeps the nest of one function
+/// short.
+const EQ_INLINE_LAYERS: u32 = 8;
+
+/// The number of array layers of `ty` down its element chain. A `?` between two arrays does not
+/// end the chain: `[[i64?]]` has 2.
+fn array_layers(mut ty: Type) -> u32 {
+    let mut layers = 0;
+    loop {
+        match ty.kind() {
+            TypeKind::Array(element) => {
+                layers += 1;
+                ty = element;
+            }
+            TypeKind::Optional(payload) => ty = payload,
+            _ => return layers,
+        }
+    }
+}
+
 /// A kind of helper that a counted type has.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum Helper {
@@ -265,7 +288,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             .module
             .add_function(&symbol, fn_type, Some(Linkage::Internal));
         match kind {
-            Helper::Eq => self.mark_len_params(function, 0, &[ty, ty]),
+            Helper::Eq => self.mark_eq(function, ty),
             Helper::Show(_) => self.mark_len_params(function, 1, &[ty]),
             Helper::Trim => self.mark_trim(function, ty),
             Helper::Retain
@@ -285,12 +308,26 @@ impl<'ctx> Codegen<'ctx, '_> {
         function
     }
 
+    /// Gives the `==` helper of the type `ty` the facts of a value's length. An array of
+    /// `EQ_INLINE_LAYERS` layers or more also gets `noinline`.
+    fn mark_eq(&self, function: FunctionValue<'ctx>, ty: Type) {
+        self.mark_len_params(function, 0, &[ty, ty]);
+        if array_layers(ty) >= EQ_INLINE_LAYERS {
+            self.mark_noinline(function);
+        }
+    }
+
     /// Gives `@sisu_rc.trim.[T]` and `@sisu_rc.trim.string`, which take a value of the type `ty`,
     /// the facts of a value's length, and `noinline`. The trim point tests the common case itself,
     /// so the optimizer keeps this call out of line there: the size tests and the copy would be
     /// repeated at each point.
     fn mark_trim(&self, function: FunctionValue<'ctx>, ty: Type) {
         self.mark_len_params(function, 0, &[ty]);
+        self.mark_noinline(function);
+    }
+
+    /// Gives `function` the attribute `noinline`.
+    fn mark_noinline(&self, function: FunctionValue<'ctx>) {
         function.add_attribute(
             AttributeLoc::Function,
             self.context
