@@ -105,7 +105,7 @@ rejects gives exit 1 and `sisu: ...` on stderr, not IR. Both `--emit` modes
 take `--rc-checks`. To get the IR of the count checks:
 
 ```console
-$ timeout 20 $S build --rc-checks --emit ir-raw $D/p.sisu > $D/prc.ll
+$ timeout 20 $S build --rc-checks --emit ir-raw $D/p.sisu > $D/prc.ll; echo $?   # check the exit code first
 $ $L/opt -passes=lint -disable-output $D/prc.ll
 $ $L/opt -passes=simplifycfg $D/prc.ll -S | $L/opt -passes=lint -disable-output
 ```
