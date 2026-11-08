@@ -2153,6 +2153,7 @@ fn build_should_not_copy_the_runtime_debug_info() {
             exe.display()
         );
     }
+    // `defined_symbols` asserts that `nm` lists `sisu_alloc`.
     support::defined_symbols(&exe);
 }
 

@@ -2176,12 +2176,10 @@ fn build_one(dir: &Path, output: &str) -> Output {
 /// GIVEN a file `out` that holds text and has mode 0o444, in a directory that can be written
 /// WHEN `sisu build` writes to `out` with the default linker
 /// THEN it exits 0 and `out` runs
-/// AND `sisu build -o /dev/null` exits 0
 ///
 /// The linker replaces an output that cannot be written through its writable directory. So the
 /// early check refuses only when neither the file nor the directory can be written. The test
-/// fails when the check looks at the file alone. An existing output that is not a regular file,
-/// such as `/dev/null`, is checked on itself and not on its directory `/dev`.
+/// fails when the check looks at the file alone.
 #[test]
 fn build_should_replace_a_read_only_output_file_in_a_directory_it_can_write() {
     use std::os::unix::fs::PermissionsExt;
@@ -2199,11 +2197,23 @@ fn build_should_replace_a_read_only_output_file_in_a_directory_it_can_write() {
     );
     let run = Command::new(dir.join("out")).output().expect("out starts");
     assert_eq!(String::from_utf8_lossy(&run.stdout), "1\n");
+}
+
+/// GIVEN the output `/dev/null`, in the directory `/dev` that a normal user cannot write
+/// WHEN `sisu build` writes to it
+/// THEN it exits 0
+///
+/// An existing output such as `/dev/null` can pass its own write check even when its directory
+/// cannot be written. The test fails when the check looks at the directory alone.
+#[test]
+fn build_should_accept_an_output_that_is_not_a_regular_file() {
+    let dir = scratch_path::empty_dir("output_not_a_regular_file");
+    fs::write(dir.join("one.sisu"), "fn main() {\n    print(1)\n}\n").expect("writes");
     let out = build_one(&dir, "/dev/null");
     assert_eq!(
         out.status.code(),
         Some(0),
-        "/dev/null: {}",
+        "{}",
         String::from_utf8_lossy(&out.stderr)
     );
 }
