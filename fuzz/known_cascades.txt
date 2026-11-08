@@ -1,0 +1,16 @@
+# The known cascades of the single-mistake test (property 7 of the program fuzzer).
+# A cascade is an error that follows from an edit of one mistake, and that is not one of
+# the errors of that mistake.
+# Each line is a pair `<kind> <code>`: the kind of the mistake and the code of the extra error.
+# The kinds are literal, callee, local, argument and declaration.
+# A pair in this file passes. A pair that is not in this file fails property 7.
+# The nightly summary reports each pair that no input of the run gave.
+# Later steps of the diagnostics foundation remove pairs from this file. They add none.
+#
+# Repro: `break yy` with an unknown name gives E0033 at `yy` and E0050 at `None`.
+#   fn main() {
+#       let zz: i64? = 1
+#       let a = loop { if true { break yy }
+#   break None }
+#   }
+local E0050

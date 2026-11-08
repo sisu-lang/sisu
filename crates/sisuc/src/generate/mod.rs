@@ -21,6 +21,8 @@ use arbitrary::Unstructured;
 use scope::{Scope, Ty};
 use writer::Writer;
 
+pub(crate) use mistake::{Kind, Mistake};
+
 pub(crate) struct Generated {
     pub(crate) program: String,
     /// `program` with the rewrites of decision 2, which must print the same.
@@ -38,7 +40,7 @@ pub(crate) struct Generated {
         not(test),
         expect(dead_code, reason = "Task 2, Step 5 reads the mistakes")
     )]
-    pub(crate) mistakes: Vec<mistake::Mistake>,
+    pub(crate) mistakes: Vec<Mistake>,
     /// The program's cost, as decision 5 counts it.
     #[cfg(test)]
     pub(crate) cost: u64,
@@ -366,7 +368,7 @@ impl<'a> Gen<'a> {
     }
 
     /// Records a site of property 7 in the function being written.
-    fn record(&mut self, kind: mistake::Kind, at: std::ops::Range<usize>, error: usize) {
+    fn record(&mut self, kind: Kind, at: std::ops::Range<usize>, error: usize) {
         let function = self.scope.func;
         self.w.record(mistake::MistakeSite {
             kind,

@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 
 use crate::codegen::OptLevel;
 use crate::diagnostic::{Diagnostic, Severity};
-use crate::generate::{self, Answer, BoundSite, Generated, Known};
+use crate::generate::{self, Answer, BoundSite, Generated, Kind, Known, Mistake};
 use crate::report::{Format, Reporter};
 use crate::source::LineIndex;
 use crate::timings::Timings;
@@ -368,6 +368,29 @@ fn judge_bounds(g: &Generated) -> Result<(), Failure> {
         .try_for_each(|site| judge_site(g, site))
 }
 
+/// Property 7 for `g`: each mistake alone, then the control. Each known pair that it allows
+/// is appended to `seen`, as `<kind> <code>\n`, when `seen` names a file.
+#[cfg_attr(not(test), expect(dead_code, reason = "Task 2, Step 5 calls it"))]
+#[expect(unused_variables, reason = "Task 2, Step 5 reads them")]
+#[expect(clippy::unnecessary_wraps, reason = "Task 2, Step 5 returns a failure")]
+fn judge_mistakes(g: &Generated, seen: Option<&Path>) -> Result<(), Failure> {
+    Ok(())
+}
+
+/// The checker's errors on `g.program` with each of `mistakes` applied, against their errors.
+#[cfg_attr(not(test), expect(dead_code, reason = "Task 2, Step 5 calls it"))]
+#[expect(unused_variables, reason = "Task 2, Step 5 reads them")]
+#[expect(clippy::unnecessary_wraps, reason = "Task 2, Step 5 returns a failure")]
+fn judge_edit(g: &Generated, mistakes: &[&Mistake], seen: Option<&Path>) -> Result<(), Failure> {
+    Ok(())
+}
+
+/// The pairs of `fuzz/known_cascades.txt` (`include_str!`), parsed once.
+#[cfg_attr(not(test), expect(dead_code, reason = "Task 2, Step 5 calls it"))]
+fn known_cascades() -> &'static [(Kind, String)] {
+    &[]
+}
+
 /// Properties 1 and 2: `source` checks with no error, W0010 or W0011, and its MIR certifies and its
 /// module verifies, without and with `--rc-checks` (`fuzz::assert_compiles` panics if not).
 fn checked(name: &str, source: &str) -> Result<Program, Failure> {
@@ -697,6 +720,8 @@ enum Force {
     Conforming,
     /// The build step panics on a thread of its own, as a codegen worker would.
     WorkerPanic,
+    /// Each check of two mistakes together sees no error.
+    QuietControl,
 }
 
 #[cfg(test)]
@@ -746,14 +771,16 @@ mod tests {
     use super::dbg_location;
     use super::{
         Answer, BUILDS, Exit, FORCE, Force, Known, LIMIT, Run, build, builds, checked, is_marked,
-        judge, judge_bounds, judge_builds, judge_known, judge_marked, judge_pair, judge_source,
-        program, program_in, run, runtime,
+        judge, judge_bounds, judge_builds, judge_edit, judge_known, judge_marked, judge_mistakes,
+        judge_pair, judge_source, known_cascades, program, program_in, run, runtime,
     };
     use crate::diagnostic::Severity;
     use crate::fresh_names;
     use crate::generate::coverage::FUZZ_SEEDS;
     use crate::generate::coverage::{SEARCH_SEEDS, item_text, search_seeds};
-    use crate::generate::{BoundSite, Generated, MAIN_ARGS_GATE, coverage, generate};
+    use crate::generate::{
+        BoundSite, Generated, Kind, MAIN_ARGS_GATE, Mistake, coverage, generate,
+    };
 
     /// A directory of the test's own, removed when dropped.
     struct Scratch(PathBuf);
@@ -1970,176 +1997,390 @@ mod tests {
         );
     }
 
-    /// Property 6 for every bound site of the seeds `from..from + 2`, which the replacement of that
-    /// site must break and nothing else. Two seeds for each test, so that each stays within its
-    /// time budget (the slowest takes 0.8 s alone) and nextest runs them in parallel. The 32 tests
-    /// together take the 64 seeds that `coverage::seeds` gives.
-    fn seeds_should_report_only_their_bound(from: u64) {
+    /// A program with the `mistakes` of property 7 and no bound site.
+    fn with_mistakes(program: &str, mistakes: Vec<Mistake>) -> Generated {
+        Generated {
+            bound_sites: Vec::new(),
+            mistakes,
+            ..with_site(program, 0..0, "")
+        }
+    }
+
+    /// The offset of the `n`th occurrence of `text` in `program`, counted from 0.
+    fn nth(program: &str, text: &str, n: usize) -> usize {
+        program
+            .match_indices(text)
+            .nth(n)
+            .unwrap_or_else(|| panic!("the program should hold {n} + 1 times {text:?}"))
+            .0
+    }
+
+    /// The mistake of `kind` that replaces `old` at `start` by `by`, with `errors` before the edit.
+    fn mistake(
+        kind: Kind,
+        (start, old): (usize, &str),
+        by: &str,
+        errors: &[(&'static str, usize)],
+    ) -> Mistake {
+        Mistake {
+            kind,
+            function: None,
+            at: start..start + old.len(),
+            by: by.to_string(),
+            errors: errors.to_vec(),
+        }
+    }
+
+    const LITERAL: &str = "fn main() {\n    let v1: i64 = 5\n    print(v1)\n}\n";
+    const CALLEE: &str =
+        "fn f1(depth: i64) -> i64 {\n    depth\n}\nfn main() {\n    print((f1(3)))\n}\n";
+    const TWO: &str =
+        "fn f1(depth: i64) -> i64 {\n    5\n}\nfn main() {\n    let v1 = f1(3)\n    print(v1)\n}\n";
+    const KNOWN: &str = "fn main() {\n    let zz: i64? = 1\n    let a = loop { if true { break zz }\n break None }\n}\n";
+
+    /// A literal mistake of `LITERAL`: `true` for the `5`.
+    fn literal_mistake() -> Mistake {
+        let at = nth(LITERAL, "5", 0);
+        mistake(Kind::Literal, (at, "5"), "true", &[("E0032", at)])
+    }
+
+    /// The two mistakes of `TWO`: `5` in `f1`, and the call of `f1` in `main`, replaced by `by`.
+    fn two_mistakes(by: &str) -> [Mistake; 2] {
+        let (five, call) = (nth(TWO, "5", 0), nth(TWO, "f1", 1));
+        [
+            Mistake {
+                function: Some(0),
+                ..mistake(Kind::Literal, (five, "5"), "true", &[("E0032", five)])
+            },
+            mistake(Kind::Callee, (call, "f1"), by, &[("E0052", call)]),
+        ]
+    }
+
+    /// The mistake of `KNOWN` that has a known cascade: `yy` for the `zz` of `break zz`.
+    fn known_mistake() -> Mistake {
+        let at = nth(KNOWN, "zz", 1);
+        mistake(Kind::Local, (at, "zz"), "yy", &[("E0033", at)])
+    }
+
+    #[test]
+    fn property_7_should_pass_a_literal_mistake() {
+        let g = with_mistakes(LITERAL, vec![literal_mistake()]);
+        judge_mistakes(&g, None).expect("one E0032 at the literal should pass");
+    }
+
+    #[test]
+    fn property_7_should_pass_a_callee_mistake() {
+        let at = nth(CALLEE, "f1", 1);
+        let m = mistake(Kind::Callee, (at, "f1"), "missing", &[("E0052", at)]);
+        judge_mistakes(&with_mistakes(CALLEE, vec![m]), None)
+            .expect("one E0052 at the callee should pass");
+    }
+
+    #[test]
+    fn property_7_should_pass_a_local_mistake_in_parentheses() {
+        let program = "fn main() {\n    let v1 = 1\n    print((v1))\n}\n";
+        let at = nth(program, "v1", 1);
+        let m = mistake(Kind::Local, (at, "v1"), "missing", &[("E0033", at)]);
+        judge_mistakes(&with_mistakes(program, vec![m]), None)
+            .expect("an E0033 at the parenthesis before the name should pass");
+    }
+
+    #[test]
+    fn property_7_should_pass_an_argument_mistake_in_parentheses() {
+        let (call, arg) = (nth(CALLEE, "f1", 1), nth(CALLEE, "3", 0));
+        let m = mistake(Kind::Argument, (arg, "3"), "", &[("E0053", call)]);
+        judge_mistakes(&with_mistakes(CALLEE, vec![m]), None)
+            .expect("an E0053 at the parenthesis before the call should pass");
+    }
+
+    #[test]
+    fn property_7_should_pass_a_declaration_mistake_with_two_uses() {
+        let program = "fn main() {\n    let v1 = [1]\n    print(v1)\n    print(\"{v1}\")\n}\n";
+        let (first, uses) = (
+            nth(program, "v1", 0),
+            [nth(program, "v1", 1), nth(program, "v1", 2)],
+        );
+        let errors = uses.map(|at| ("E0033", at));
+        let m = mistake(Kind::Declaration, (first, "v1"), "missing", &errors);
+        judge_mistakes(&with_mistakes(program, vec![m]), None)
+            .expect("one E0033 at each use should pass");
+    }
+
+    #[test]
+    fn property_7_should_fail_when_the_edit_gives_no_error() {
+        FORCE.set(Some(Force::Conforming));
+        let g = with_mistakes(LITERAL, vec![literal_mistake()]);
+        let failure = judge_mistakes(&g, None).expect_err("an edit with no error should fail");
+        assert_eq!(failure.property, 7);
+        assert!(
+            failure.detail.contains("reports no error"),
+            "{}",
+            failure.detail
+        );
+    }
+
+    #[test]
+    fn property_7_should_report_both_mistakes_of_the_control() {
+        let [a, b] = two_mistakes("missing");
+        judge_edit(&with_mistakes(TWO, vec![]), &[&a, &b], None)
+            .expect("E0032 and E0052 together should pass");
+    }
+
+    #[test]
+    fn property_7_should_check_the_control() {
+        FORCE.set(Some(Force::QuietControl));
+        let g = with_mistakes(TWO, Vec::from(two_mistakes("missing")));
+        let failure = judge_mistakes(&g, None).expect_err("a quiet control should fail");
+        assert_eq!(failure.property, 7);
+        assert!(
+            failure.detail.contains("reports no error"),
+            "{}",
+            failure.detail
+        );
+    }
+
+    #[test]
+    fn property_7_should_fail_when_the_control_misses_an_error() {
+        // The callee keeps its own name, so the second edit gives no error.
+        let [a, b] = two_mistakes("f1");
+        let failure = judge_edit(&with_mistakes(TWO, vec![]), &[&a, &b], None)
+            .expect_err("a missing E0052 should fail");
+        assert_eq!(failure.property, 7);
+        assert!(
+            failure.detail.contains("misses E0052"),
+            "{}",
+            failure.detail
+        );
+    }
+
+    #[test]
+    fn property_7_should_pass_a_known_pair() {
+        let g = with_mistakes(KNOWN, vec![known_mistake()]);
+        judge_mistakes(&g, None).expect("`local E0050` is in the baseline");
+    }
+
+    #[test]
+    fn property_7_should_fail_a_new_pair() {
+        // `n.nope` stands in for a checker that adds E0063 to an unknown local.
+        let program = "fn main() {\n    let n = 1\n    let b = n\n    print(b)\n}\n";
+        let at = program.find("= n").expect("the program should read `n`") + 2;
+        let m = mistake(Kind::Local, (at, "n"), "yy + n.nope", &[("E0033", at)]);
+        let failure = judge_mistakes(&with_mistakes(program, vec![m]), None)
+            .expect_err("a new pair should fail");
+        assert_eq!(failure.property, 7);
+        assert!(
+            failure.detail.contains("`local E0063`")
+                && failure.detail.contains("fuzz/known_cascades.txt"),
+            "{}",
+            failure.detail
+        );
+        assert_eq!(
+            failure.broken.as_deref(),
+            Some("fn main() {\n    let n = 1\n    let b = yy + n.nope\n    print(b)\n}\n")
+        );
+    }
+
+    #[test]
+    fn property_7_should_write_each_known_pair_that_it_allows() {
+        let scratch = Scratch::new();
+        let seen = scratch.0.join("seen.txt");
+        let g = with_mistakes(KNOWN, vec![known_mistake()]);
+        judge_mistakes(&g, Some(&seen)).expect("`local E0050` is in the baseline");
+        assert_eq!(
+            fs::read_to_string(&seen).ok().as_deref(),
+            Some("local E0050\n")
+        );
+    }
+
+    #[test]
+    fn the_known_cascades_should_parse() {
+        let pairs = known_cascades();
+        assert!(
+            pairs.contains(&(Kind::Local, "E0050".to_string())),
+            "{pairs:?}"
+        );
+        for (_, code) in pairs {
+            let digits = code.strip_prefix('E').unwrap_or("");
+            assert!(
+                digits.len() == 4 && digits.bytes().all(|b| b.is_ascii_digit()),
+                "{code}"
+            );
+        }
+    }
+
+    /// Properties 6 and 7 for every site of the seeds `from..from + 2`. The replacement of a bound
+    /// site must break its bound and nothing else. Each mistake alone, then the control, must give
+    /// its errors and nothing else. Two seeds for each test, so that each stays within its time
+    /// budget and nextest runs them in parallel. The 32 tests together take the 64 seeds that
+    /// `coverage::seeds` gives. Each program is generated once.
+    fn seeds_should_report_only_their_errors(from: u64) {
         const _: () = assert!(coverage::SEEDS == 64, "add or drop a test of two seeds");
         for n in from..from + 2 {
-            judge_bounds(&generate(&seed(n)))
+            let g = generate(&seed(n));
+            judge_bounds(&g)
+                .and_then(|()| judge_mistakes(&g, None))
                 .unwrap_or_else(|f| panic!("seed {n}: property {}: {}", f.property, f.detail));
         }
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_0_and_1_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(0);
+    fn the_sites_of_seeds_0_and_1_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(0);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_2_and_3_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(2);
+    fn the_sites_of_seeds_2_and_3_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(2);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_4_and_5_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(4);
+    fn the_sites_of_seeds_4_and_5_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(4);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_6_and_7_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(6);
+    fn the_sites_of_seeds_6_and_7_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(6);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_8_and_9_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(8);
+    fn the_sites_of_seeds_8_and_9_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(8);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_10_and_11_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(10);
+    fn the_sites_of_seeds_10_and_11_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(10);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_12_and_13_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(12);
+    fn the_sites_of_seeds_12_and_13_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(12);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_14_and_15_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(14);
+    fn the_sites_of_seeds_14_and_15_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(14);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_16_and_17_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(16);
+    fn the_sites_of_seeds_16_and_17_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(16);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_18_and_19_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(18);
+    fn the_sites_of_seeds_18_and_19_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(18);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_20_and_21_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(20);
+    fn the_sites_of_seeds_20_and_21_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(20);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_22_and_23_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(22);
+    fn the_sites_of_seeds_22_and_23_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(22);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_24_and_25_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(24);
+    fn the_sites_of_seeds_24_and_25_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(24);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_26_and_27_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(26);
+    fn the_sites_of_seeds_26_and_27_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(26);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_28_and_29_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(28);
+    fn the_sites_of_seeds_28_and_29_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(28);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_30_and_31_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(30);
+    fn the_sites_of_seeds_30_and_31_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(30);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_32_and_33_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(32);
+    fn the_sites_of_seeds_32_and_33_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(32);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_34_and_35_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(34);
+    fn the_sites_of_seeds_34_and_35_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(34);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_36_and_37_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(36);
+    fn the_sites_of_seeds_36_and_37_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(36);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_38_and_39_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(38);
+    fn the_sites_of_seeds_38_and_39_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(38);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_40_and_41_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(40);
+    fn the_sites_of_seeds_40_and_41_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(40);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_42_and_43_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(42);
+    fn the_sites_of_seeds_42_and_43_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(42);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_44_and_45_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(44);
+    fn the_sites_of_seeds_44_and_45_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(44);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_46_and_47_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(46);
+    fn the_sites_of_seeds_46_and_47_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(46);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_48_and_49_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(48);
+    fn the_sites_of_seeds_48_and_49_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(48);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_50_and_51_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(50);
+    fn the_sites_of_seeds_50_and_51_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(50);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_52_and_53_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(52);
+    fn the_sites_of_seeds_52_and_53_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(52);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_54_and_55_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(54);
+    fn the_sites_of_seeds_54_and_55_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(54);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_56_and_57_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(56);
+    fn the_sites_of_seeds_56_and_57_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(56);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_58_and_59_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(58);
+    fn the_sites_of_seeds_58_and_59_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(58);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_60_and_61_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(60);
+    fn the_sites_of_seeds_60_and_61_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(60);
     }
 
     #[test]
-    fn the_bound_sites_of_seeds_62_and_63_should_report_only_their_bound() {
-        seeds_should_report_only_their_bound(62);
+    fn the_sites_of_seeds_62_and_63_should_report_only_their_errors() {
+        seeds_should_report_only_their_errors(62);
     }
 
     /// How many of `g`'s known answers are panics.
