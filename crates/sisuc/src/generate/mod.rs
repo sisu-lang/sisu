@@ -7,6 +7,7 @@
 mod expr;
 mod generic;
 mod item;
+mod mistake;
 mod mut_call;
 mod scope;
 mod stmt;
@@ -32,6 +33,12 @@ pub(crate) struct Generated {
     pub(crate) expected: Vec<String>,
     /// The bound sites of `program`, in the order it holds them (property 6).
     pub(crate) bound_sites: Vec<BoundSite>,
+    /// At most one mistake of each kind, in kind order (property 7).
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "Task 2, Step 5 reads the mistakes")
+    )]
+    pub(crate) mistakes: Vec<mistake::Mistake>,
     /// The program's cost, as decision 5 counts it.
     #[cfg(test)]
     pub(crate) cost: u64,
@@ -178,6 +185,7 @@ pub(crate) fn generate(data: &[u8]) -> Generated {
         known,
         expected,
         bound_sites: g.bound_sites,
+        mistakes: Vec::new(),
         #[cfg(test)]
         cost,
         #[cfg(test)]

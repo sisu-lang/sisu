@@ -5,6 +5,7 @@
 use std::fmt::Write as _;
 use std::ops::Range;
 
+use super::mistake::MistakeSite;
 use super::scope::{Ty, fresh_name};
 
 /// Text written into both copies.
@@ -12,6 +13,12 @@ use super::scope::{Ty, fresh_name};
 pub(crate) struct Piece {
     pub(crate) program: String,
     pub(crate) rewritten: String,
+    /// The sites of property 7 in `program`, in the order they were recorded.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "Task 1, Step 5 reads the sites")
+    )]
+    pub(crate) sites: Vec<MistakeSite>,
 }
 
 /// The rewrites of decision 2, each of which keeps what the program prints.
@@ -128,6 +135,20 @@ impl Writer {
         self.line();
         self.text("}");
     }
+
+    /// Records `site`, which `choose` may turn into a mistake.
+    #[expect(
+        unused_variables,
+        clippy::unused_self,
+        clippy::needless_pass_by_value,
+        clippy::needless_pass_by_ref_mut,
+        reason = "Task 1, Step 5 records the sites"
+    )]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "Task 1, Step 5 records the sites")
+    )]
+    pub(crate) fn record(&mut self, site: MistakeSite) {}
 
     /// Writes into `piece` from now on, and returns what was written so far.
     pub(crate) fn swap(&mut self, piece: Piece) -> Piece {
@@ -324,7 +345,35 @@ impl Writer {
 
 #[cfg(test)]
 mod tests {
-    use super::Writer;
+    use super::super::mistake::{Kind, MistakeSite};
+    use super::{Piece, Writer};
+
+    /// GIVEN a site at `0..1` recorded in a side piece, which the writer then pastes after `ab`
+    /// WHEN the paste is done
+    /// THEN the site is at `2..3`, and its error at 2
+    #[test]
+    fn paste_should_move_the_sites_of_its_piece() {
+        let mut w = Writer::default();
+        w.text("ab");
+        let outer = w.swap(Piece::default());
+        w.text("c");
+        let site = MistakeSite {
+            kind: Kind::Local,
+            at: 0..1,
+            error: 0,
+            function: None,
+        };
+        w.record(site.clone());
+        let piece = w.swap(outer);
+        w.paste(&piece);
+        assert_eq!(w.out.program, "abc");
+        let moved = MistakeSite {
+            at: 2..3,
+            error: 2,
+            ..site
+        };
+        assert_eq!(w.out.sites, [moved]);
+    }
 
     /// GIVEN S31's `f(mut xs, g(mut xs))`, whose other argument can change `xs`, and
     /// `f(mut xs, 1)`, whose other argument cannot
