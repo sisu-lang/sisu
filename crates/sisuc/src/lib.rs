@@ -437,6 +437,9 @@ struct UnitInput<'src> {
     source: &'src str,
     level: OptLevel,
     rc_checks: bool,
+    /// Whether the values of the IR keep their names, such as `%call`. Only the IR text shows them.
+    #[expect(dead_code, reason = "the next commit reads it")]
+    keep_names: bool,
 }
 
 /// Builds each of `units` and runs `finish` on its index, its module and its target machine, and
@@ -527,6 +530,7 @@ fn emit_ir(
             source,
             level,
             rc_checks,
+            keep_names: true,
         },
         units,
         timings,
@@ -617,6 +621,7 @@ fn emit_ir_raw(
             source,
             level: OptLevel::O0,
             rc_checks,
+            keep_names: true,
         },
         units,
         timings,
@@ -880,6 +885,7 @@ fn compile(
             source,
             level,
             rc_checks,
+            keep_names: false,
         },
         &units,
         timings,
@@ -996,6 +1002,50 @@ fn create_object(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The IR text of a program with a call and a `let`, built as one unit through `each_unit`.
+    fn printed_unit(keep_names: bool) -> String {
+        let source = "fn twice(n: i64) -> i64 {\n    n * 2\n}\n\
+                      fn main() {\n    let a = twice(3)\n    let s = \"x\"\n    let t = s\n    \
+                      print(a)\n    print(t)\n}\n";
+        let mut timings = Timings::off();
+        let (program, diagnostics) =
+            front_end::front_end_timed(front_end::PRELUDE_SOURCE, source, &mut timings);
+        let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+        let mir = mir::build(&program);
+        let level = OptLevel::O0;
+        let units = codegen::units::split(&mir, &program, Some(1), level);
+        let input = UnitInput {
+            program: &program,
+            mir: &mir,
+            path: "test.sisu",
+            source,
+            level,
+            rc_checks: false,
+            keep_names,
+        };
+        let mut printed = each_unit(&input, &units, &mut timings, |_, module, _, _| {
+            Ok(module.print_to_string().to_string())
+        });
+        printed.remove(0).expect("the unit builds")
+    }
+
+    /// Proves that a unit of `sisu build` has no names for its local values, which saves LLVM the
+    /// work to make and to intern them.
+    #[test]
+    fn build_units_should_carry_no_value_names() {
+        let ir = printed_unit(false);
+        assert!(!ir.contains("%call ="), "{ir}");
+        assert!(!ir.contains("%moved ="), "{ir}");
+    }
+
+    /// Proves that a unit of `--emit ir` and `--emit ir-raw` keeps the names that the tests read.
+    #[test]
+    fn ir_units_should_keep_value_names() {
+        let ir = printed_unit(true);
+        assert!(ir.contains("%call ="), "{ir}");
+        assert!(ir.contains("%moved ="), "{ir}");
+    }
 
     #[test]
     fn release_should_drop_the_value_outside_the_command_line_tool() {
