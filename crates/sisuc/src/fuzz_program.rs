@@ -2472,6 +2472,30 @@ mod tests {
         );
     }
 
+    /// GIVEN a control of a `literal` and a `local` mistake, and an extra E0032 that both know
+    /// WHEN `judge_edit` checks it with a `seen` file
+    /// THEN it passes and writes no line, because it cannot tell which kind gave the error.
+    #[test]
+    fn property_7_should_not_write_a_pair_that_two_kinds_know() {
+        let program = "fn f1(depth: i64) -> i64 {\n    5\n}\nfn main() {\n    let zz: u8 = 1\n    let a = [[if true { loop { break zz } } else { 2 }], [u8(3) ?? 4]]\n}\n";
+        let five = nth(program, "5", 0);
+        let literal = Mistake {
+            function: Some(0),
+            ..mistake(Kind::Literal, (five, "5"), "true", &[("E0032", five)])
+        };
+        let zz = nth(program, "zz", 1);
+        let local = mistake(Kind::Local, (zz, "zz"), "yy", &[("E0033", zz)]);
+        let scratch = Scratch::new();
+        let seen = scratch.0.join("seen.txt");
+        judge_edit(
+            &with_mistakes(program, vec![]),
+            &[&literal, &local],
+            Some(&seen),
+        )
+        .expect("`literal E0032` and `local E0032` are in the baseline");
+        assert_eq!(fs::read_to_string(&seen).unwrap_or_default(), "");
+    }
+
     /// GIVEN a local mistake that renames the first use, with its E0033 expected at the second
     /// WHEN `judge_mistakes` checks it
     /// THEN it fails with "misses", because the error at the first use is not at an offset that
