@@ -1336,6 +1336,56 @@ fn eq_chain_of_a_deep_array_should_stay_in_separate_functions_at_o2() {
     }
 }
 
+/// A `main` of `n` `print` statements.
+fn prints_program(n: usize) -> String {
+    let mut src = String::from("fn main() {\n");
+    for i in 0..n {
+        writeln!(src, "    print({i})").expect("writing to a `String` should not fail");
+    }
+    src + "}"
+}
+
+/// A `main` with one string of `n` interpolated `i64` parts.
+fn interpolation_program(n: usize) -> String {
+    format!(
+        "fn main() {{\n    let x = 1\n    let s = \"{}\"\n    print(s.len())\n}}",
+        "{x}".repeat(n)
+    )
+}
+
+/// The most calls of `callee` that one basic block of `@sisu.main` holds.
+fn most_calls_in_one_block(ir: &str, callee: &str) -> usize {
+    let call = format!("@{callee}(");
+    let mut most = 0;
+    let mut count = 0;
+    for line in function_body(ir, "@sisu.main(").lines() {
+        if !line.starts_with(' ') && line.contains(':') {
+            count = 0;
+        } else if line.contains(&call) {
+            count += 1;
+            most = most.max(count);
+        }
+    }
+    most
+}
+
+#[test]
+fn long_block_should_be_cut_at_o0() {
+    const LIMIT: usize = 256;
+    let context = Context::create();
+    for (src, callee) in [
+        (prints_program(2000), "sisu_print_int"),
+        (interpolation_program(2000), "sisu_write_int"),
+    ] {
+        let ir = compiled(&context, &src).print_to_string().to_string();
+        let most = most_calls_in_one_block(&ir, callee);
+        assert!(
+            (1..=LIMIT + 1).contains(&most),
+            "one block of @sisu.main holds {most} calls of {callee}"
+        );
+    }
+}
+
 /// A new block has room for exactly its length: `[v; n]` stores `n` into both the length and
 /// the capacity, whatever `n` is.
 #[test]
