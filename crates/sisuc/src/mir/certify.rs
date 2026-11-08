@@ -814,8 +814,8 @@ pub(super) fn statement<'a>(
 /// The place `value` borrows: the place of a `borrow`, or the whole local that a slice reads in
 /// place, as pair removal leaves it. Such a slice is not `safe` and holds no count, so it is a
 /// borrow of that local. A slice of a projection is no borrow, and no lowering makes one. A `safe`
-/// slice is no borrow, because it releases its base when a check fails. Other rvalues give `None`:
-/// `Clobbers::new` lists each of them, so a new one is placed there.
+/// slice is no borrow, because it releases its base when a check fails. The match lists each
+/// rvalue, as `Clobbers::new` does, so a new one must be placed here too.
 fn borrowed_place(value: &Rvalue) -> Option<&Place> {
     match value {
         Rvalue::Borrow(place) => Some(place),
@@ -824,7 +824,40 @@ fn borrowed_place(value: &Rvalue) -> Option<&Place> {
             safe: false,
             ..
         } if place.projections.is_empty() => Some(place),
-        _ => None,
+        Rvalue::Slice { .. }
+        | Rvalue::Use(_)
+        | Rvalue::Copy(_)
+        | Rvalue::CopyStr(_)
+        | Rvalue::Unwrap(_)
+        | Rvalue::Call { .. }
+        | Rvalue::New { .. }
+        | Rvalue::Variant { .. }
+        | Rvalue::ArrayLit(_)
+        | Rvalue::ArrayFill { .. }
+        | Rvalue::Wrap(_)
+        | Rvalue::ToAny(_)
+        | Rvalue::Trim(_)
+        | Rvalue::DynCall { .. }
+        | Rvalue::Concat { .. }
+        | Rvalue::Interpolate { .. }
+        | Rvalue::ReadLine
+        | Rvalue::Out { .. }
+        | Rvalue::SetOut { .. }
+        | Rvalue::Chars(_)
+        | Rvalue::Bytes(_)
+        | Rvalue::Words(_)
+        | Rvalue::FromChars(_)
+        | Rvalue::Len(_)
+        | Rvalue::LenWords(_)
+        | Rvalue::Convert(_)
+        | Rvalue::Math { .. }
+        | Rvalue::Unary { .. }
+        | Rvalue::Binary { .. }
+        | Rvalue::Compare { .. }
+        | Rvalue::Equal { .. }
+        | Rvalue::Is { .. }
+        | Rvalue::Print { .. }
+        | Rvalue::Dbg { .. } => None,
     }
 }
 
