@@ -86,6 +86,14 @@ pub(crate) fn choose(sites: &[MistakeSite], program: &str, data: &[u8]) -> Vec<M
             (&program[range.clone()], range.start)
         })
         .collect();
+    // Where each `{` and `}` is, so that a declaration reads to the end of its block.
+    let braces: Vec<(usize, bool)> = (lexed.tokens.iter())
+        .filter_map(|token| match token.kind {
+            TokenKind::LBrace => Some((token.span.range().start, true)),
+            TokenKind::RBrace => Some((token.span.range().start, false)),
+            _ => None,
+        })
+        .collect();
     // The spellings, so that the search for a fresh name probes once for each candidate.
     let spellings: FxHashSet<&str> = idents.iter().map(|&(ident, _)| ident).collect();
     let hash = fnv1a(data);
@@ -96,7 +104,7 @@ pub(crate) fn choose(sites: &[MistakeSite], program: &str, data: &[u8]) -> Vec<M
             let count = u64::try_from(of_kind.len()).ok().filter(|&n| n > 0)?;
             let pick = hash.rotate_left(13 * kind as u32) % count;
             let site = of_kind[usize::try_from(pick).ok()?];
-            edit(site, program, &idents, &spellings)
+            edit(site, program, &idents, &braces, &spellings)
         })
         .collect()
 }
@@ -106,6 +114,7 @@ fn edit(
     site: &MistakeSite,
     program: &str,
     idents: &[(&str, usize)],
+    braces: &[(usize, bool)],
     spellings: &FxHashSet<&str>,
 ) -> Option<Mistake> {
     let text = &program[site.at.clone()];
@@ -131,9 +140,11 @@ fn edit(
         Kind::Local => (fresh(), vec![("E0033", site.at.start)]),
         Kind::Argument => (String::new(), vec![("E0053", site.error)]),
         Kind::Declaration => {
-            // Each read of the local is an error; with none, the edit gives none.
+            // Each read of the local in its block is an error; with none, the edit gives none.
+            // Another function may reuse the name (`nest` declares `v0`, `v1`, ...).
+            let end = block_end(braces, site.at.end);
             let uses: Vec<_> = (idents.iter())
-                .filter(|&&(ident, start)| ident == text && start >= site.at.end)
+                .filter(|&&(ident, start)| ident == text && (site.at.end..end).contains(&start))
                 .map(|&(_, start)| ("E0033", start))
                 .collect();
             if uses.is_empty() {
@@ -149,6 +160,21 @@ fn edit(
         by,
         errors,
     })
+}
+
+/// The offset of the `}` that closes the block which holds `from`, or `usize::MAX` when none does.
+fn block_end(braces: &[(usize, bool)], from: usize) -> usize {
+    let mut depth = 0_usize;
+    for &(at, open) in braces.iter().filter(|&&(at, _)| at >= from) {
+        if open {
+            depth += 1;
+        } else if let Some(inner) = depth.checked_sub(1) {
+            depth = inner;
+        } else {
+            return at;
+        }
+    }
+    usize::MAX
 }
 
 /// The 64-bit FNV-1a hash of `data`.
