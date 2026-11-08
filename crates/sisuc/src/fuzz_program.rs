@@ -298,6 +298,8 @@ fn judge(g: &Generated, runtime: &Path, dir: &Path) -> Result<(), (Failure, Stri
     judge_bounds(g).map_err(|f| (f, String::new()))?;
     let seen = std::env::var_os("SISU_FUZZ_CASCADES");
     judge_mistakes(g, seen.as_deref().map(Path::new)).map_err(|f| (f, String::new()))?;
+    // The checks passed, so a later panic has no broken copy to leave.
+    note_broken(None);
     let stdin = dir.join("stdin.txt");
     fs::write(&stdin, &g.stdin).expect("the fuzzer should write the stdin to its own directory");
     let runs = judge_source("program", &g.program, &program, runtime, dir, &stdin)?;
@@ -358,7 +360,6 @@ fn judge_site(g: &Generated, site: &BoundSite) -> Result<(), Failure> {
         "the forced checker panic in property 6"
     );
     let (_, diagnostics) = front_end::front_end(&broken);
-    note_broken(None);
     let mut errors = diagnostics
         .iter()
         .filter(|d| d.severity() == Severity::Error)
@@ -441,7 +442,6 @@ fn judge_edit(g: &Generated, mistakes: &[&Mistake], seen: Option<&Path>) -> Resu
         "the forced checker panic in property 7"
     );
     let (_, diagnostics) = front_end::front_end(&changed);
-    note_broken(None);
     #[cfg_attr(not(test), expect(unused_mut, reason = "only a test forces a failure"))]
     let mut errors: Vec<&Diagnostic> = (diagnostics.iter())
         .filter(|d| d.severity() == Severity::Error)
