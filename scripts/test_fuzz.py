@@ -206,6 +206,114 @@ class ProgramSeeds(unittest.TestCase):
             self.assertTrue(lines[1].endswith(" 128 128"), lines[1])
 
 
+# The fake cargo of the known-cascades warning. Its `fuzz run` appends the lines of $FAKE_CASCADES
+# to the file $SISU_FUZZ_CASCADES, as the single-mistake check does, and exits with $FAKE_STATUS.
+# Its `fuzz build` fails when $FAKE_BUILD_FAILS is set. The program target runs before it, so a run
+# that did not fuzz gives no line.
+CASCADES_CARGO = """#!/usr/bin/env bash
+if [[ $1 == fuzz && $2 == run ]]; then
+  if [[ -n ${SISU_FUZZ_CASCADES:-} ]]; then printf "${FAKE_CASCADES:-}" >>"$SISU_FUZZ_CASCADES"; fi
+  exit "${FAKE_STATUS:-0}"
+fi
+[[ $1 == fuzz && $2 == build && -n ${FAKE_BUILD_FAILS:-} ]] && exit 1
+[[ $1 == fuzz && $2 == --version ]] && echo "cargo-fuzz 0.0.0"
+exit 0
+"""
+BASELINE = "# a comment\nlocal E0050\n\ncallee E0099\n"
+WARNING = """## Known cascades
+
+Warning: no input of this run gave these pairs of `fuzz/known_cascades.txt`. \
+A pair that no nightly run gives can go:
+
+- `callee E0099`
+"""
+
+
+class KnownCascades(unittest.TestCase):
+    def fuzz(
+        self,
+        *args: str,
+        cascades: str = "",
+        status: int = 0,
+        build_fails: bool = False,
+        baseline: str = BASELINE,
+    ) -> tuple[int, str, str]:
+        """Runs fuzz.sh in a small repository. Returns its status, its output and summary.md."""
+        with tempfile.TemporaryDirectory() as repo:
+            scripts = Path(repo, "scripts")
+            scripts.mkdir()
+            for name in ("fuzz.sh", "fuzz_seeds.py"):
+                shutil.copy(SCRIPT.parent / name, scripts)
+            Path(repo, "fuzz").mkdir()
+            Path(repo, "crates", "sisuc", "tests").mkdir(parents=True)
+            with Path(repo, "fuzz", "known_cascades.txt").open("w", encoding="utf-8") as f:
+                f.write(baseline)
+            write_executable(Path(repo, "bin"), "cargo", CASCADES_CARGO)
+            git = ["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@t"]
+            subprocess.run([*git, "init", "-q"], check=True, env=ENV)
+            subprocess.run(
+                [*git, "commit", "-q", "--allow-empty", "-m", "base"], check=True, env=ENV
+            )
+            env = dict(
+                ENV,
+                PATH=f"{repo}/bin:{ENV['PATH']}",
+                FAKE_CASCADES=cascades,
+                FAKE_STATUS=str(status),
+            )
+            if build_fails:
+                env["FAKE_BUILD_FAILS"] = "1"
+            run = subprocess.run(
+                ["bash", "scripts/fuzz.sh", *args, "1"],
+                cwd=repo,
+                capture_output=True,
+                env=env,
+                timeout=60,
+                check=False,
+            )
+            with Path(repo, "fuzz", "artifacts", "summary.md").open(encoding="utf-8") as f:
+                summary = f.read()
+            return run.returncode, run.stdout.decode(errors="replace"), summary
+
+    def test_a_known_pair_that_no_input_gave_should_warn(self) -> None:
+        code, out, summary = self.fuzz("--target", "program", cascades="local E0050\n", status=3)
+        self.assertEqual(code, 3)
+        self.assertIn(WARNING, summary)
+        self.assertNotIn("`local E0050`", summary)
+        self.assertIn(WARNING, out)
+
+    def test_each_known_pair_that_occurred_should_give_no_warning(self) -> None:
+        code, _, summary = self.fuzz(
+            "--target", "program", cascades="callee E0099\nlocal E0050\nlocal E0050\n"
+        )
+        self.assertEqual(code, 0)
+        self.assertIn(
+            "## Known cascades\n\nEach pair of `fuzz/known_cascades.txt` occurred.\n", summary
+        )
+        self.assertNotIn("Warning", summary)
+
+    def test_a_baseline_line_with_extra_white_space_should_match_its_pair(self) -> None:
+        # parse_cascades (fuzz_program.rs) splits a line on white space, so the script must too.
+        _, _, summary = self.fuzz(
+            "--target",
+            "program",
+            cascades="local E0050\ncallee E0099\n",
+            baseline="  local   E0050 \r\ncallee\tE0099 \n",
+        )
+        self.assertIn("Each pair of `fuzz/known_cascades.txt` occurred.", summary)
+        self.assertNotIn("Warning", summary)
+
+    def test_a_run_that_did_not_fuzz_should_have_no_cascade_section(self) -> None:
+        code, out, summary = self.fuzz("--target", "program", build_fails=True)
+        self.assertNotEqual(code, 0)
+        self.assertNotIn("## Known cascades", summary)
+        self.assertNotIn("## Known cascades", out)
+
+    def test_the_front_end_target_should_have_no_cascade_section(self) -> None:
+        code, _, summary = self.fuzz()
+        self.assertEqual(code, 0)
+        self.assertNotIn("## Known cascades", summary)
+
+
 # The fake tools of the gap check. Each writes to $FAKE_LOG what it saw, so that a test can tell
 # a run that stopped at a tool from one that never reached it. $FAKE_FAIL names the step to fail:
 # "coverage program", "coverage front_end" or "llvm-cov".

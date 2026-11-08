@@ -920,8 +920,8 @@ impl Gen<'_> {
     }
 
     /// With `main_args`, writes the first statement of `main` after the known sites: it prints the
-    /// length of `gap_args`. Property 5 needs the known sites to print the first lines. The text
-    /// is known text, so `plain` holds no print.
+    /// length of `gap_args`. The answer check needs the known sites to print the first lines. The
+    /// text is known text, so `plain` holds no print.
     fn print_gap_args(&mut self, main_args: bool) {
         if main_args {
             self.known_text(|g| {
@@ -997,6 +997,7 @@ impl Gen<'_> {
         });
         self.scope.func = Some(self.scope.funcs.len() - 1);
         self.scope.open();
+        let plain = self.plain_owner(owner.as_ref());
         if let Some(class) = owner {
             let size = class.floor();
             self.scope.vars.push(param("self".to_string(), class, size));
@@ -1024,7 +1025,11 @@ impl Gen<'_> {
         self.stmts(false);
         if ret != Ty::Unit {
             self.w.line();
-            self.expr(&ret, ret_size);
+            if plain {
+                self.declared(&ret, ret_size);
+            } else {
+                self.expr(&ret, ret_size);
+            }
         }
         self.w.close();
         self.scope.close();
@@ -1298,13 +1303,13 @@ impl Gen<'_> {
     /// with `i64`, and the class with `string` as well. And `fn shapes()`, which calls each method
     /// on a value of each type and the generic functions with both types, and builds the class. A
     /// call on a type with two conformances to one interface is picked by the type of its result.
-    /// A method with an `i64` or `string` result holds a value of its own (`Values`), and each call
+    /// A method with an `i64` or `string` result holds a value of its own (`Values`). Each call
     /// that prints a result writes `@d<n> <value>`: the calls in `shapes`, and in the generic
-    /// functions it calls. A requirement with a `mut` parameter writes a value of its own to it,
-    /// and each call of it passes a place and prints the place after the call as `@d<n> <value>`
-    /// as well. Gives the lines that `shapes` prints (property 5). The other methods
+    /// functions it calls. A requirement with a `mut` parameter writes a value of its own to it.
+    /// Each call of it passes a place and prints the place after the call as `@d<n> <value>`
+    /// as well. Gives the lines that `shapes` prints (the answer check). The other methods
     /// hold the smallest value of their result. Each interface is used, so none is reported.
-    /// Records the bound sites of its calls (property 6).
+    /// Records the bound sites of its calls (the bound check).
     fn shapes(&mut self, declared: &[Shape]) -> Vec<String> {
         let mut calls = Calls::default();
         let once = |k: usize| Conformed {

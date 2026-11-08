@@ -3,6 +3,7 @@
 
 use std::ops::Range;
 
+use super::mistake::Kind;
 use super::mut_call::Place;
 use super::scope::{Nodes, RESULT, Scope, Ty, Var};
 use super::stmt::MAX_BLOCKS;
@@ -685,6 +686,7 @@ impl Gen<'_> {
             .iter()
             .all(|field| field.ty.least() <= field.cap);
         let infer = fits && self.scope.classes[id].inferable && self.pick(2) == 0;
+        let plain = self.plain_owner(Some(ty));
         let name = if infer { ty.bare() } else { ty.to_string() };
         // An alias of the class builds it as the class does, with the alias's fixed arguments.
         let name = if infer {
@@ -704,7 +706,11 @@ impl Gen<'_> {
             }
             self.w.text(&format!("{name}: "));
             self.synth = infer;
-            parts.push(self.expr(&field, cap));
+            parts.push(if infer || !plain {
+                self.expr(&field, cap)
+            } else {
+                self.declared(&field, cap)
+            });
         }
         self.w.text(")");
         Info::of(&parts, size, true)
@@ -1204,14 +1210,53 @@ impl Gen<'_> {
 
     pub(crate) fn name(&mut self, ty: &Ty, max: u64) -> Info {
         let pick = self.pick(names(&self.scope, ty, max).count());
-        let (name, info) = names(&self.scope, ty, max)
+        let (name, info, local) = names(&self.scope, ty, max)
             .nth(pick)
             .expect("the rule should be chosen only when a name fits");
+        let start = self.here();
         self.w.text(name);
+        let end = self.here();
+        if local {
+            self.record(Kind::Local, start..end, start);
+        }
         info
     }
 
+    /// `expr`, for a place that requires the type `ty`, which a literal of another type breaks.
+    /// If `ty` is `i64`, `u8`, `bool`, `char` or `string`, and the value is one literal, this
+    /// records the site (the single-mistake check).
+    pub(crate) fn declared(&mut self, ty: &Ty, max: u64) -> Info {
+        if !matches!(ty, Ty::I64 | Ty::U8 | Ty::Bool | Ty::Char | Ty::String) {
+            return self.expr(ty, max);
+        }
+        let start = self.here();
+        self.last_literal = None;
+        let info = self.expr(ty, max);
+        let at = start..self.here();
+        if self.last_literal.as_ref() == Some(&at) {
+            self.record(Kind::Literal, at, start);
+        }
+        info
+    }
+
+    /// Whether the methods of `owner`, if any, are those of a class that is no instance of a
+    /// generic class: the type of a parameter or a field there is written as it is.
+    pub(crate) fn plain_owner(&self, owner: Option<&Ty>) -> bool {
+        match owner {
+            None => true,
+            Some(Ty::Class { id, .. }) => self.scope.classes[*id].applied.is_none(),
+            Some(_) => false,
+        }
+    }
+
     pub(crate) fn literal(&mut self, ty: &Ty, max: u64) -> Info {
+        let start = self.here();
+        let info = self.written_literal(ty, max);
+        self.last_literal = Some(start..self.here());
+        info
+    }
+
+    fn written_literal(&mut self, ty: &Ty, max: u64) -> Info {
         match ty {
             Ty::I64 => {
                 let (text, value) = self.int_literal();
@@ -1740,22 +1785,35 @@ impl Gen<'_> {
         };
         let mut parts = Vec::new();
         let owner = self.scope.funcs[callee].owner.clone();
+        // Where the call starts: before `((` of a method, else before its name.
+        let call = self.here();
         if let Some(Ty::Class { id, .. }) = owner {
             self.w.text("((");
             parts.push(self.receiver(id, safe));
             self.w.text(if safe { ")?." } else { ")." });
         }
         let name = self.scope.funcs[callee].name.clone();
-        self.w.text(&format!("{name}({depth}"));
+        let name_at = self.here();
+        self.w.text(&format!("{name}("));
+        let depth_at = self.here();
+        self.w.text(&depth);
+        let depth_end = self.here();
+        if owner.is_none() {
+            self.record(Kind::Callee, name_at..name_at + name.len(), name_at);
+        }
         // `depth - 1` is arithmetic the generator does not know the value of (decision 2).
         self.effect |= self.scope.func.is_some();
         let params = self.scope.funcs[callee].params.clone();
         let muts = self.scope.funcs[callee].muts.clone();
         let nests = !places.is_empty() && !self.nested;
+        let plain = self.plain_owner(owner.as_ref());
         let mut places = places.iter();
+        // Where the last `, ` of the arguments starts.
+        let mut last_comma = None;
         let args = |g: &mut Self| -> Vec<Info> {
             let mut infos = Vec::new();
             for ((ty, size), mutable) in params.iter().zip(muts) {
+                last_comma = Some(g.here());
                 g.w.text(", ");
                 if mutable.is_some() {
                     let place = places
@@ -1765,6 +1823,8 @@ impl Gen<'_> {
                     g.write_place(place, locals);
                 } else if let Some(info) = nests.then(|| g.nested_mut_call(ty, *size)).flatten() {
                     infos.push(info);
+                } else if plain {
+                    infos.push(g.declared(ty, *size));
                 } else {
                     infos.push(g.expr(ty, *size));
                 }
@@ -1776,6 +1836,10 @@ impl Gen<'_> {
         } else {
             args(self)
         });
+        // The edit of the single-mistake check removes the last argument, or the depth if it is
+        // the only one.
+        let removed = last_comma.map_or(depth_at..depth_end, |comma| comma..self.here());
+        self.record(Kind::Argument, removed, call);
         self.w.text(")");
         if owner.is_some() {
             self.w.text(")");
@@ -2433,9 +2497,13 @@ impl Gen<'_> {
     }
 }
 
-/// The locals, then the constants, of type `ty` that hold at most `max` chars, and what a read
-/// of each is.
-fn names<'s>(scope: &'s Scope, ty: &'s Ty, max: u64) -> impl Iterator<Item = (&'s str, Info)> {
+/// The locals, then the constants, of type `ty` that hold at most `max` chars. Each comes with
+/// what a read of it is, and whether it is a local.
+fn names<'s>(
+    scope: &'s Scope,
+    ty: &'s Ty,
+    max: u64,
+) -> impl Iterator<Item = (&'s str, Info, bool)> {
     let vars = scope
         .vars
         .iter()
@@ -2445,7 +2513,7 @@ fn names<'s>(scope: &'s Scope, ty: &'s Ty, max: u64) -> impl Iterator<Item = (&'
                 pure: !var.mutable,
                 ..Info::leaf(var.size)
             };
-            (var.name.as_str(), info)
+            (var.name.as_str(), info, true)
         });
     let consts = scope
         .consts
@@ -2453,7 +2521,7 @@ fn names<'s>(scope: &'s Scope, ty: &'s Ty, max: u64) -> impl Iterator<Item = (&'
         .filter(move |c| c.ty == *ty && c.size <= max)
         .map(|c| {
             let value = matches!(c.ty, Ty::I64 | Ty::U8).then_some(c.value);
-            (c.name.as_str(), Info::literal(c.size, value))
+            (c.name.as_str(), Info::literal(c.size, value), false)
         });
     vars.chain(consts)
 }

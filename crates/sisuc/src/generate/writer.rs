@@ -5,6 +5,7 @@
 use std::fmt::Write as _;
 use std::ops::Range;
 
+use super::mistake::MistakeSite;
 use super::scope::{Ty, fresh_name};
 
 /// Text written into both copies.
@@ -12,6 +13,8 @@ use super::scope::{Ty, fresh_name};
 pub(crate) struct Piece {
     pub(crate) program: String,
     pub(crate) rewritten: String,
+    /// The sites of the single-mistake check in `program`, in the order they were recorded.
+    pub(crate) sites: Vec<MistakeSite>,
 }
 
 /// The rewrites of decision 2, each of which keeps what the program prints.
@@ -57,8 +60,8 @@ pub(crate) struct Site {
     pub(crate) last: bool,
 }
 
-/// Whether `rewrite` keeps the meaning at `site`: the condition of each rewrite of the spec's
-/// property 4.
+/// Whether `rewrite` keeps the meaning at `site`: the condition of each rewrite that the
+/// rewrite check needs, from the spec.
 pub(crate) fn allowed(rewrite: Rewrite, site: &Site) -> bool {
     match rewrite {
         // A block in a `const` does not fold (E0086), and a block is no place.
@@ -129,6 +132,11 @@ impl Writer {
         self.text("}");
     }
 
+    /// Records `site`, which `choose` may turn into a mistake.
+    pub(crate) fn record(&mut self, site: MistakeSite) {
+        self.out.sites.push(site);
+    }
+
     /// Writes into `piece` from now on, and returns what was written so far.
     pub(crate) fn swap(&mut self, piece: Piece) -> Piece {
         std::mem::replace(&mut self.out, piece)
@@ -136,8 +144,17 @@ impl Writer {
 
     /// Writes `piece`, which was written elsewhere, into both copies.
     pub(crate) fn paste(&mut self, piece: &Piece) {
+        let base = self.out.program.len();
         self.out.program.push_str(&piece.program);
         self.out.rewritten.push_str(&piece.rewritten);
+        // The sites of the piece move up by the program it was pasted onto.
+        self.out
+            .sites
+            .extend(piece.sites.iter().map(|site| MistakeSite {
+                at: site.at.start + base..site.at.end + base,
+                error: site.error + base,
+                ..site.clone()
+            }));
     }
 
     /// Where the rewritten copy ends.
@@ -324,7 +341,35 @@ impl Writer {
 
 #[cfg(test)]
 mod tests {
-    use super::Writer;
+    use super::super::mistake::{Kind, MistakeSite};
+    use super::{Piece, Writer};
+
+    /// GIVEN a site at `0..1` recorded in a side piece, which the writer then pastes after `ab`
+    /// WHEN the paste is done
+    /// THEN the site is at `2..3`, and its error at 2
+    #[test]
+    fn paste_should_move_the_sites_of_its_piece() {
+        let mut w = Writer::default();
+        w.text("ab");
+        let outer = w.swap(Piece::default());
+        w.text("c");
+        let site = MistakeSite {
+            kind: Kind::Local,
+            at: 0..1,
+            error: 0,
+            function: None,
+        };
+        w.record(site.clone());
+        let piece = w.swap(outer);
+        w.paste(&piece);
+        assert_eq!(w.out.program, "abc");
+        let moved = MistakeSite {
+            at: 2..3,
+            error: 2,
+            ..site
+        };
+        assert_eq!(w.out.sites, [moved]);
+    }
 
     /// GIVEN S31's `f(mut xs, g(mut xs))`, whose other argument can change `xs`, and
     /// `f(mut xs, 1)`, whose other argument cannot
