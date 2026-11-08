@@ -36,15 +36,15 @@ row in `probes.md`.
 
 - **Number-type lists.** The `matches!` patterns, `|` patterns and slices
   that name two or more number types (`Type::I64`, `Type::U8`, `Type::F64`,
-  `TypeKind::*`). A list can span lines, one type on each line, so search
-  for each name and group the hits into lists by hand:
+  `TypeKind::*`). A list that names `Unit`, `Never` or `Param` lists each
+  leaf kind on purpose (#361), so it does not count. A table counts each
+  list in it: the four rows of the conversion table in `check/mod.rs` are
+  four lists. The script finds the lists, also when a list spans lines, and
+  skips test code. It prints each list, then the total:
 
   ```console
-  $ grep -rnE --include=*.rs '(Type|TypeKind)::(I64|U8|F64)\b' crates/sisuc/src | grep -v '/tests/'
+  $ python3 -I .agents/skills/audit-sisu/scripts/number_lists.py . HEAD | tail -1
   ```
-
-  The search also finds the lines of inline `#[cfg(test)] mod tests`
-  blocks. Drop each hit below that line of its file before you count.
 
 - **Module order.** The entries of `BACK_EDGES` in
   `crates/sisuc/tests/architecture.rs`. The test holds the rule, so only
