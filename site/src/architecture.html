@@ -46,7 +46,7 @@ How the Sisu compiler turns source text into a native executable, one stage at a
       <!-- source: AGENTS.md (crates), docs/architecture.md (Driver, Runtime), crates/sisuc/src/main.rs -->
 
       <h2 id="pipeline">The pipeline</h2>
-      <p>All stages run in one process, with LLVM linked in as a library. Only the link step calls another program.</p>
+      <p>All stages run in one process, with LLVM linked in as a library. Only the linker check and the link step call another program: <code>cc</code>.</p>
       <ol class="flow">
         <li><b>Lexer</b><span class="io">text <em>→</em> tokens</span><span class="what">Splits the UTF-8 source into names, numbers and symbols.</span></li>
         <li><b>Parser</b><span class="io">tokens <em>→</em> AST</span><span class="what">Builds the syntax tree: the program as you wrote it.</span></li>
@@ -102,7 +102,7 @@ How the Sisu compiler turns source text into a native executable, one stage at a
 
       <h3 id="link">Link</h3>
       <p class="files"><code>crates/sisuc/src/link.rs</code></p>
-      <p>Before it reads the source, the driver checks that the runtime archive exists. It checks that the output's directory and the temporary directory exist and can be written. On Linux, it also checks that <code>cc</code> finds the linker that <code>--linker</code> names. A failed check stops the build at once, not after the compile. <code>--allocator</code> picks the archive: <code>libsisu_runtime_mimalloc.a</code> by default, <code>libsisu_runtime_system.a</code> for <code>--allocator system</code>. The link step then writes the object code of each codegen unit to a fresh temporary file and runs <code>cc</code> on them with that archive. <code>cc</code> adds the C startup code and libc and writes the executable, through its default linker or the one <code>--linker</code> names. On Linux, <code>cc</code> also gets <code>-Wl,-S</code>: Sisu emits no debug information, so the linker does not copy the runtime archive's own. The temporary files are removed whether or not the link succeeds.</p>
+      <p>Before it reads the source, the driver checks that the runtime archive exists, and that the output's directory and the temporary directory exist. The temporary directory must be writable. For the output, either the existing file or its directory must be writable, and a link is not checked. On Linux, it also checks that <code>cc</code> finds the linker that <code>--linker</code> names. A failed check stops the build at once, not after the compile. <code>--allocator</code> picks the archive: <code>libsisu_runtime_mimalloc.a</code> by default, <code>libsisu_runtime_system.a</code> for <code>--allocator system</code>. The link step then writes the object code of each codegen unit to a fresh temporary file and runs <code>cc</code> on them with that archive. <code>cc</code> adds the C startup code and libc and writes the executable, through its default linker or the one <code>--linker</code> names. On Linux, <code>cc</code> also gets <code>-Wl,-S</code>: Sisu emits no debug information, so the linker does not copy the runtime archive's own. The temporary files are removed whether or not the link succeeds.</p>
       <!-- source: docs/architecture.md (The stages), docs/roadmap.md (mid-level IR, mir), src/index.html (flow), docs/development.md (Look inside the compiler), sisu --help -->
 
       <h2 id="memory">Memory</h2>
