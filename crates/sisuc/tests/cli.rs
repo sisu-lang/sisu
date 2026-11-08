@@ -2527,6 +2527,36 @@ fn run_should_find_a_missing_linker_before_the_front_end() {
     assert_empty(&tmp);
 }
 
+/// GIVEN a program with a type error
+/// AND `TMPDIR` set to a path that does not exist
+/// WHEN it is run
+/// THEN it exits 1 and the first stderr line names the temporary directory
+/// AND the front end did not run: stderr holds no diagnostic
+///
+/// `sisu run` takes no `--timings`, so the type error shows whether the front end ran.
+#[test]
+fn run_should_find_a_missing_temporary_directory_before_the_front_end() {
+    let dir = scratch_path::empty_dir("run_missing_temp_dir_before_front_end");
+    let absent = dir.join("absent");
+    let out = sisu_run(&absent)
+        .args(["-e", "fn main() { let x: i64 = \"a\" }"])
+        .output()
+        .expect("sisu starts");
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        stderr.lines().next(),
+        Some(
+            format!(
+                "sisu: temporary directory {} does not exist",
+                absent.display()
+            )
+            .as_str()
+        )
+    );
+    assert!(!stderr.contains("E0032"), "the front end ran: {stderr}");
+}
+
 /// GIVEN a program with a warning, and a stderr that is `/dev/full`
 /// WHEN `sisu` checks it, builds it, or runs it
 /// THEN it exits 1 and not with an abort, the program does not run, and `run` leaves no directory
