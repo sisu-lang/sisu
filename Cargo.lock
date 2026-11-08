@@ -497,6 +497,7 @@ dependencies = [
  "clap",
  "datatest-stable",
  "inkwell",
+ "libc",
  "libtest-mimic",
  "mimalloc",
  "pulldown-cmark",

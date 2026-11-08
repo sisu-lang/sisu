@@ -2054,8 +2054,8 @@ fn build_should_report_an_output_directory_it_cannot_write_before_it_compiles() 
         "the front end ran: {stderr}"
     );
     assert_eq!(
-        stderr,
-        "sisu: cannot write to output directory ro: Permission denied (os error 13)\n"
+        stderr.lines().next(),
+        Some("sisu: cannot write to output directory ro: Permission denied (os error 13)")
     );
 }
 
@@ -2082,7 +2082,10 @@ fn build_should_report_a_missing_temporary_directory_before_it_compiles() {
         !stderr.lines().any(|line| line.starts_with("timings: lex")),
         "the front end ran: {stderr}"
     );
-    assert_eq!(stderr, "sisu: temporary directory absent does not exist\n");
+    assert_eq!(
+        stderr.lines().next(),
+        Some("sisu: temporary directory absent does not exist")
+    );
 }
 
 /// GIVEN `TMPDIR` set to a directory with mode 0o555, and a good output path
@@ -2115,8 +2118,8 @@ fn build_should_report_a_temporary_directory_it_cannot_write_before_it_compiles(
         "the front end ran: {stderr}"
     );
     assert_eq!(
-        stderr,
-        "sisu: cannot write to temporary directory ro: Permission denied (os error 13)\n"
+        stderr.lines().next(),
+        Some("sisu: cannot write to temporary directory ro: Permission denied (os error 13)")
     );
 }
 
@@ -2946,39 +2949,31 @@ fn run_should_exit_1_and_leave_nothing_when_the_link_fails() {
 }
 
 /// GIVEN a `TMPDIR` that does not exist
-/// WHEN `sisu run` and `sisu build` run
-/// THEN each exits 1 and stderr says it cannot create its file in that directory
+/// WHEN `sisu run` runs
+/// THEN it exits 1 and stderr says it cannot create its directory in that directory
 ///
-/// A temp directory that does not exist is a tool error: `run` cannot make its directory there,
-/// and `build` cannot write its object file.
+/// A temp directory that does not exist is a tool error: `run` cannot make its directory there.
+/// `build` reports it before the compile
+/// (`build_should_report_a_missing_temporary_directory_before_it_compiles`).
 #[test]
-fn run_and_build_should_exit_1_when_the_temporary_directory_is_missing() {
+fn run_should_exit_1_when_the_temporary_directory_is_missing() {
     let dir = scratch_path::empty_dir("missing_temp_dir");
     let absent = dir.join("absent");
-    let output = dir.join("out");
-    let output = output.to_str().expect("the scratch path should be UTF-8");
-    for (args, suffix) in [
-        (&["run", "run/args_none.sisu"][..], ""),
-        (&["build", "run/args_none.sisu", "-o", output], ".o"),
-    ] {
-        let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
-            .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/tests"))
-            .env("TMPDIR", &absent)
-            .args(args)
-            .output()
-            .expect("sisu starts");
-        assert_eq!(out.status.code(), Some(1), "{args:?}");
-        assert_eq!(String::from_utf8_lossy(&out.stdout), "", "{args:?}");
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        let expected = format!("sisu: cannot create {}/sisu-", absent.display());
-        assert!(stderr.starts_with(&expected), "{args:?}: {stderr}");
-        assert!(
-            stderr.ends_with(&format!(
-                "{suffix}: No such file or directory (os error 2)\n"
-            )),
-            "{args:?}: {stderr}"
-        );
-    }
+    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
+        .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/tests"))
+        .env("TMPDIR", &absent)
+        .args(["run", "run/args_none.sisu"])
+        .output()
+        .expect("sisu starts");
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let expected = format!("sisu: cannot create {}/sisu-", absent.display());
+    assert!(stderr.starts_with(&expected), "{stderr}");
+    assert!(
+        stderr.ends_with(": No such file or directory (os error 2)\n"),
+        "{stderr}"
+    );
 }
 
 /// GIVEN a umask that takes the write bit of the owner

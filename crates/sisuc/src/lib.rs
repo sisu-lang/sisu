@@ -28,9 +28,10 @@ mod timings;
 mod tir;
 mod types;
 
-use std::ffi::OsString;
+use std::ffi::{CString, OsString};
 use std::fs;
 use std::io::{self, ErrorKind, IsTerminal, Read, Stderr, Write};
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -709,6 +710,7 @@ fn build(
     let allocator = backend.allocator.unwrap_or_default();
     let runtime = match link::runtime_library(allocator).and_then(|runtime| {
         check_output(output)?;
+        check_temp_dir()?;
         Ok(runtime)
     }) {
         Ok(runtime) => runtime,
@@ -747,29 +749,72 @@ fn build(
     }
 }
 
-/// Checks, without compiling, that `ld` can create `output`: its directory exists and it is not
-/// a directory.
+/// Checks, without compiling, that `ld` can create `output`: its directory exists and can be
+/// written, and it is not a directory. An existing output file only needs to be writable: `ld`
+/// opens it and does not touch its directory.
 fn check_output(output: &Path) -> Result<(), String> {
     let parent = match output.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
         _ => Path::new("."),
     };
-    let shown = parent.display();
-    match fs::metadata(parent) {
-        Ok(meta) if meta.is_dir() => {}
-        Ok(_) => return Err(format!("output directory {shown} is not a directory")),
-        Err(e) if e.kind() == ErrorKind::NotFound => {
-            return Err(format!("output directory {shown} does not exist"));
-        }
-        Err(e) => return Err(format!("cannot access output directory {shown}: {e}")),
-    }
+    check_directory(parent, "output directory")?;
     if output.is_dir() {
         return Err(format!(
             "output {} is a directory",
             output.to_string_lossy()
         ));
     }
-    Ok(())
+    if output.is_file() {
+        check_access(output, libc::W_OK, "output file")
+    } else {
+        check_access(parent, libc::W_OK | libc::X_OK, "output directory")
+    }
+}
+
+/// Checks, without compiling, that the temporary directory exists and can be written: `compile`
+/// writes an object file there for each codegen unit.
+fn check_temp_dir() -> Result<(), String> {
+    let dir = std::env::temp_dir();
+    check_directory(&dir, "temporary directory")?;
+    check_access(&dir, libc::W_OK | libc::X_OK, "temporary directory")
+}
+
+/// Checks that `dir` exists and is a directory. `what` names it in the message.
+fn check_directory(dir: &Path, what: &str) -> Result<(), String> {
+    let shown = dir.display();
+    match fs::metadata(dir) {
+        Ok(meta) if meta.is_dir() => Ok(()),
+        Ok(_) => Err(format!("{what} {shown} is not a directory")),
+        Err(e) if e.kind() == ErrorKind::NotFound => Err(format!("{what} {shown} does not exist")),
+        Err(e) => Err(format!("cannot access {what} {shown}: {e}")),
+    }
+}
+
+/// Checks that the process can use `path` as `mode` says (`libc::W_OK`, `libc::X_OK`), with its
+/// effective user and group IDs, not the real ones. `what` names it in the message. Search
+/// permission (`X_OK`) is part of the check for a directory: without it nothing in it can be
+/// created.
+#[expect(
+    unsafe_code,
+    reason = "faccessat has no equivalent in std, and it takes the effective IDs into account"
+)]
+fn check_access(path: &Path, mode: libc::c_int, what: &str) -> Result<(), String> {
+    let shown = path.display();
+    let Ok(c_path) = CString::new(path.as_os_str().as_bytes()) else {
+        return Err(format!(
+            "cannot write to {what} {shown}: it holds a NUL byte"
+        ));
+    };
+    // SAFETY: `c_path` is a NUL-terminated string that lives for the whole call, and `faccessat`
+    // reads it and nothing else.
+    let status =
+        unsafe { libc::faccessat(libc::AT_FDCWD, c_path.as_ptr(), mode, libc::AT_EACCESS) };
+    if status == 0 {
+        Ok(())
+    } else {
+        let e = io::Error::last_os_error();
+        Err(format!("cannot write to {what} {shown}: {e}"))
+    }
 }
 
 /// Runs the front end on `source` and reports every diagnostic. Returns the program unless a
