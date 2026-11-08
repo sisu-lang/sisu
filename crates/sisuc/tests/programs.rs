@@ -14,7 +14,7 @@ use std::thread;
 mod scratch_path;
 mod support;
 
-use scratch_path::{empty_dir, only_cc};
+use scratch_path::{empty_dir, failing_cc, only_cc};
 use support::fixture;
 use support::selfhost;
 
@@ -2108,6 +2108,67 @@ fn require_mimalloc_should_accept_a_default_build_and_refuse_a_system_build() {
     assert!(message.contains("does not link mimalloc"), "{message}");
 }
 
+/// The section table of `path`, from `readelf -S --wide`. The command must exit 0.
+fn readelf_sections(path: &Path) -> String {
+    let out = Command::new("readelf")
+        .args(["-S", "--wide"])
+        .arg(path)
+        .output()
+        .expect("readelf starts");
+    assert!(
+        out.status.success(),
+        "`readelf -S --wide {}` failed: {:?}\n{}",
+        path.display(),
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// Whether `sections` lists a section called `name`, as a whole word: `.debug_line` is not
+/// `.debug_line_str`.
+fn has_section(sections: &str, name: &str) -> bool {
+    sections
+        .split(|c: char| c.is_whitespace() || c == ']')
+        .any(|word| word == name)
+}
+
+/// GIVEN the `hello` case of `tests/run`, and a runtime archive that holds `.debug_info`
+/// WHEN it is built
+/// THEN the executable has no `.debug_info` and no `.debug_line` section
+/// AND its symbol table still defines `sisu_alloc`
+///
+/// Sisu emits no debug info, so the sections are the DWARF of Rust's standard library from the
+/// runtime archive. The linker spends most of its time on them. The test does not look for every
+/// name that starts with `.debug_`: `.debug_gdb_scripts` is not debug info and stays. The Valgrind
+/// guard reads the symbol table, so the symbols must stay.
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "reads ELF sections; the flag is Linux only"
+)]
+fn build_should_not_copy_the_runtime_debug_info() {
+    let archive =
+        Path::new(env!("CARGO_BIN_EXE_sisu")).with_file_name("libsisu_runtime_mimalloc.a");
+    assert!(
+        has_section(&readelf_sections(&archive), ".debug_info"),
+        "{} holds no `.debug_info`, so this test cannot show that the build drops it",
+        archive.display()
+    );
+    let source = fs::read_to_string(Path::new(RUN).join("hello.sisu")).expect("reads the case");
+    let exe = compile_tmp("runtime_debug_info", &source, false);
+    let sections = readelf_sections(&exe);
+    for name in [".debug_info", ".debug_line"] {
+        assert!(
+            !has_section(&sections, name),
+            "{} holds a {name} section",
+            exe.display()
+        );
+    }
+    // `defined_symbols` asserts that `nm` lists `sisu_alloc`.
+    support::defined_symbols(&exe);
+}
+
 /// GIVEN a `run` case that passes
 /// WHEN the harness runs it
 /// THEN the case directory holds the `-O2` executable on mimalloc, and it links mimalloc
@@ -2410,6 +2471,136 @@ fn build_should_name_a_linker_that_is_missing_from_path() {
     assert_empty(&empty);
 }
 
+/// GIVEN the `loops` case of `tests/run`
+/// AND `PATH` holds only `cc`
+/// WHEN it is built with `--linker mold --timings`
+/// THEN it exits 1 and the first stderr line names the linker
+/// AND no stage of the front end ran
+/// AND the message holds no verbose line of gcc's `collect2`
+///
+/// The test looks for `timings: lex`, not `timings: codegen`: the line `timings: codegen units`
+/// also starts with `timings: codegen`.
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "the linker probe runs on Linux only"
+)]
+fn build_should_find_a_missing_linker_before_the_front_end() {
+    let empty = empty_dir("no_linker_before_front_end");
+    let exe = empty.join("loops");
+    let out = support::sisu(
+        Path::new(RUN),
+        "loops.sisu",
+        &exe,
+        &["--linker", "mold", "--timings"],
+    )
+    .env("PATH", only_cc("only_cc_before_front_end"))
+    .env_remove("COMPILER_PATH")
+    .output()
+    .expect("sisu starts");
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        stderr.lines().next(),
+        Some("sisu: linker ld.mold not found on PATH; cc failed: exit status: 1")
+    );
+    assert!(
+        !stderr.lines().any(|line| line.starts_with("timings: lex")),
+        "the front end ran: {stderr}"
+    );
+    // gcc's `collect2` reads `--version` as a request for verbose output.
+    assert!(
+        !stderr
+            .lines()
+            .any(|line| line.starts_with("collect2 version") || line.starts_with("[cannot find")),
+        "the message holds collect2's verbose lines: {stderr}"
+    );
+    assert_empty(&empty);
+}
+
+/// GIVEN the `loops` case of `tests/run`
+/// AND a `PATH` with no `cc`
+/// WHEN it is built with `--linker mold --timings`
+/// THEN it exits 1, stderr says that `cc` cannot run, and no stage of the front end ran
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "the linker probe runs on Linux only"
+)]
+fn linker_check_should_report_a_cc_that_cannot_run_before_the_front_end() {
+    let empty = empty_dir("no_cc_before_front_end");
+    let out = support::sisu(
+        Path::new(RUN),
+        "loops.sisu",
+        &empty.join("loops"),
+        &["--linker", "mold", "--timings"],
+    )
+    .env("PATH", empty_dir("no_cc_before_front_end_path"))
+    .env_remove("COMPILER_PATH")
+    .output()
+    .expect("sisu starts");
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        stderr.lines().next(),
+        Some("sisu: cannot run cc: No such file or directory (os error 2)")
+    );
+    assert!(
+        !stderr.lines().any(|line| line.starts_with("timings: lex")),
+        "the front end ran: {stderr}"
+    );
+    assert_empty(&empty);
+}
+
+/// GIVEN the `loops` case of `tests/run`
+/// AND a `PATH` whose `cc` writes two lines to stderr and exits 1, as a `cc` that is not gcc does
+/// WHEN it is built with `--linker mold --timings`
+/// THEN it exits 1, stderr names the linker and then holds both lines of `cc`
+/// AND no stage of the front end ran
+///
+/// Only the first two lines of gcc's `collect2` are dropped; the message of another `cc` is kept.
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "the linker probe runs on Linux only"
+)]
+fn linker_check_should_keep_each_line_of_a_cc_that_is_not_gcc() {
+    let empty = empty_dir("other_cc_before_front_end");
+    let out = support::sisu(
+        Path::new(RUN),
+        "loops.sisu",
+        &empty.join("loops"),
+        &["--linker", "mold", "--timings"],
+    )
+    .env(
+        "PATH",
+        failing_cc(
+            "other_cc_before_front_end_path",
+            "fake cc: first line\nfake cc: second line",
+        ),
+    )
+    .env_remove("COMPILER_PATH")
+    .output()
+    .expect("sisu starts");
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let lines: Vec<&str> = stderr.lines().take(3).collect();
+    assert_eq!(
+        lines,
+        [
+            "sisu: linker ld.mold not found on PATH; cc failed: exit status: 1",
+            "fake cc: first line",
+            "fake cc: second line",
+        ],
+        "{stderr}"
+    );
+    assert!(
+        !stderr.lines().any(|line| line.starts_with("timings: lex")),
+        "the front end ran: {stderr}"
+    );
+    assert_empty(&empty);
+}
+
 fn assert_empty(dir: &Path) {
     let left: Vec<_> = fs::read_dir(dir).expect("reads").collect();
     assert!(left.is_empty(), "sisu left {left:?}");
@@ -2443,26 +2634,30 @@ fn build_should_keep_an_existing_object_file_next_to_the_source() {
 }
 
 /// GIVEN a source file
-/// AND a linker that `cc` cannot find
+/// AND a `cc` on `PATH` that writes a line to stderr and exits 1
 /// WHEN `sisu build` runs with an empty `TMPDIR`
 /// THEN it exits 1 and says that `cc` failed
 /// AND no object file is left in `TMPDIR` or next to the source
+///
+/// The test gives no `--linker`: `sisu` finds a missing linker before the compile, so the link
+/// would not run.
 #[test]
 fn failed_link_should_leave_no_object_file() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("link_fails.sisu"), "fn main() {}\n").expect("writes");
-    // With only `cc` on `PATH`, `cc` fails to find `ld.mold`, for any user.
     let output = empty_dir("link_fails").join("out");
     let tmp = empty_dir("link_fails_tmp");
-    let out = support::sisu(dir, "link_fails.sisu", &output, &["--linker", "mold"])
+    let bin = failing_cc("link_fails_path", "fake cc: the link fails");
+    let out = support::sisu(dir, "link_fails.sisu", &output, &[])
         .env("TMPDIR", &tmp)
-        .env("PATH", only_cc("link_fails_path"))
+        .env("PATH", &bin)
         .env_remove("COMPILER_PATH")
         .output()
         .expect("sisu starts");
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("cc failed: "), "{stderr}");
+    assert!(stderr.contains("fake cc: the link fails"), "{stderr}");
     assert_empty(&tmp);
     assert!(!dir.join("link_fails.o").exists());
 }

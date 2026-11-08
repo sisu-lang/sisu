@@ -493,7 +493,9 @@ pointer to a stack slot, and each copy is a `memcpy`. A parameter over the limit
 is a pointer to the caller's memory. A result over the limit goes to a pointer
 that the caller gives as the last argument (`codegen/abi.rs`).
 
-**LLVM 23**. A debug build of `sisu` verifies the module first; a release
+**LLVM 23**. When `sisu` builds an executable, the LLVM context of each
+unit discards the names of values, such as `%call`. Only the IR text shows
+them, so `--emit ir` and `--emit ir-raw` keep them. A debug build of `sisu` verifies the module first; a release
 build does not. Runs the `mem2reg` pass, which turns stack slots into registers,
 or with `-O2` or `-O3` the `default<O2>` or `default<O3>` pipeline. Then it
 emits object code for the machine `sisu` runs on, x86-64 or ARM64.
@@ -510,13 +512,19 @@ only when another unit refers to it; all others are internal. The units are
 named and linked in unit order, so the executable does not depend on the
 threads.
 
-**Link step** (`link.rs`). Before it compiles, the driver checks that
-the runtime archive and the output's directory exist, so a missing one fails
-at once. `--allocator` picks the archive: `libsisu_runtime_mimalloc.a` by
+**Link step** (`link.rs`). Before it reads the source, the driver checks
+that the runtime archive exists, and that the output's directory and the
+temporary directory exist. The temporary directory must be writable. For the
+output, either the existing file or its directory must be writable, and a
+symbolic link is not checked. On Linux, it also checks that
+`cc` finds the linker that `--linker` names. A failed check stops the build at once, not after the
+compile. `--allocator` picks the archive: `libsisu_runtime_mimalloc.a` by
 default, `libsisu_runtime_system.a` for `--allocator system`. The link step
 writes the object code of each codegen unit to a fresh temporary file and
 runs `cc` on them together with that archive. `cc` adds the C startup code and libc and writes the
-executable, through its default linker or the one `--linker` names. The
+executable, through its default linker or the one `--linker` names. On Linux,
+`cc` also gets `-Wl,-S`: Sisu emits no debug information, so the linker does
+not copy the runtime archive's own. The
 temporary files are removed whether or not the link succeeds.
 
 **Runtime** (`crates/runtime`). A Rust library with a C ABI. The two static

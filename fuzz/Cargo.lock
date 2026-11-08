@@ -405,6 +405,7 @@ dependencies = [
  "arbitrary",
  "clap",
  "inkwell",
+ "libc",
  "mimalloc",
  "rustc-hash",
  "serde",

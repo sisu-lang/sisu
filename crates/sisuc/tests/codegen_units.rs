@@ -7,6 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+#[expect(dead_code, reason = "this binary uses only part of the shared helpers")]
 mod scratch_path;
 #[expect(dead_code, reason = "this binary uses only part of the shared helpers")]
 mod support;
@@ -827,9 +828,13 @@ fn a_count_above_the_functions_should_build_and_run() {
 }
 
 /// GIVEN a program of 3 functions, where `main` calls each of the other two twice
-/// AND a `PATH` with only `cc`, which cannot find the linker `mold`, and an empty `TMPDIR`
-/// WHEN `sisu build --codegen-units 3 --linker mold` runs
-/// THEN it exits 1 and `TMPDIR` holds no object file, so the link error removed all three
+/// AND a `PATH` whose `cc` writes a line to stderr and exits 1, and an empty `TMPDIR`
+/// WHEN `sisu build --codegen-units 3` runs
+/// THEN it exits 1 with the line of `cc`, so the link ran
+/// AND `TMPDIR` holds no object file, so the link error removed all three
+///
+/// The test gives no `--linker`: `sisu` finds a missing linker before the compile, so the link
+/// would not run.
 #[test]
 fn failed_link_of_a_split_build_should_remove_every_object() {
     let source = "fn one() -> i64 {\n    1\n}\n\nfn two() -> i64 {\n    2\n}\n\nfn main() {\n    print(one() + one())\n    print(two() + two())\n}\n";
@@ -840,20 +845,21 @@ fn failed_link_of_a_split_build_should_remove_every_object() {
     // The premise: the build has 3 units, so the failed link has 3 objects to remove.
     let ir = emit(&dir, "link", &["--emit", "ir-raw", "--codegen-units", "3"]);
     assert_eq!(units(&ir).len(), 3, "{ir}");
-    let only_cc = scratch_path::only_cc("split_link_failure_path");
+    let failing_cc = scratch_path::failing_cc("split_link_failure_path", "fake cc: the link fails");
     let tmp = scratch_path::empty_dir("split_link_failure_tmp");
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
         .current_dir(&dir)
-        .env("PATH", &only_cc)
+        .env("PATH", &failing_cc)
         .env("TMPDIR", &tmp)
         .env_remove("COMPILER_PATH")
-        .args(["build", "--codegen-units", "3", "--linker", "mold"])
+        .args(["build", "--codegen-units", "3"])
         .args(["link.sisu", "-o", "link-out"])
         .output()
         .expect("sisu starts");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(1), "{stderr}");
     assert!(stderr.contains("cc failed"), "{stderr}");
+    assert!(stderr.contains("fake cc: the link fails"), "{stderr}");
     let left: Vec<_> = fs::read_dir(&tmp)
         .expect("reads TMPDIR")
         .map(|entry| entry.expect("reads an entry").file_name())

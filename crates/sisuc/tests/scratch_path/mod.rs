@@ -22,3 +22,21 @@ pub(crate) fn only_cc(name: &str) -> PathBuf {
     std::os::unix::fs::symlink(cc, dir.join("cc")).expect("links cc");
     dir
 }
+
+/// A directory that holds only a `cc` script that writes `stderr` and exits 1, so the linker
+/// check or the link fails. With no `--linker`, `sisu` runs no linker check, so the link runs.
+pub(crate) fn failing_cc(name: &str, stderr: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    // The text goes into single quotes in the script.
+    assert!(!stderr.contains('\''), "no ' in the text of the fake cc");
+    let dir = empty_dir(name);
+    let cc = dir.join("cc");
+    fs::write(
+        &cc,
+        format!("#!/bin/sh\nprintf '%s\\n' '{stderr}' >&2\nexit 1\n"),
+    )
+    .expect("writes cc");
+    fs::set_permissions(&cc, fs::Permissions::from_mode(0o755)).expect("makes cc run");
+    dir
+}

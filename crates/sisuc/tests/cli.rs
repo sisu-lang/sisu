@@ -1633,27 +1633,29 @@ fn format_flag_should_exit_2_with_clap_text_when_it_is_misused() {
     ]);
 }
 
-/// GIVEN a `PATH` with only `cc`, which cannot find the linker `mold`
-/// WHEN `sisu build --format json --linker mold` runs
-/// THEN it exits 1 and every stderr line is JSON, the last line is the summary, and one
-/// `tool_error`
-/// holds the exit status and the output of `cc`
+/// GIVEN a `PATH` whose `cc` writes two lines to stderr and exits 1
+/// WHEN `sisu build --format json` runs
+/// THEN it exits 1, every stderr line is JSON, and the last line is the summary
+/// AND one `tool_error` holds the exit status and the two lines of `cc`
+///
+/// The test gives no `--linker`: `sisu` finds a missing linker before the compile, so the link
+/// would not run.
 #[test]
 fn build_with_json_format_should_report_a_link_failure_as_one_tool_error() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("json_link_failure.sisu"), "fn main() {}\n").expect("writes");
-    // With only `cc` on `PATH`, `cc` fails to find `ld.mold`, for any user.
-    let only_cc = scratch_path::only_cc("json_link_failure_path");
+    let failing_cc = scratch_path::failing_cc(
+        "json_link_failure_path",
+        "fake cc: the link fails\nfake cc: second line",
+    );
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
         .current_dir(dir)
-        .env("PATH", &only_cc)
+        .env("PATH", &failing_cc)
         .env_remove("COMPILER_PATH")
         .args([
             "build",
             "--format",
             "json",
-            "--linker",
-            "mold",
             "json_link_failure.sisu",
             "-o",
             "json_link_failure_out",
@@ -1683,9 +1685,11 @@ fn build_with_json_format_should_report_a_link_failure_as_one_tool_error() {
     let (status, detail) = message
         .split_once('\n')
         .expect("cc's output after a newline");
-    assert!(status.ends_with("cc failed: exit status: 1"), "{message}");
-    assert!(!detail.is_empty(), "{message}");
-    assert_eq!(detail, detail.trim(), "{message}");
+    assert_eq!(status, "cc failed: exit status: 1", "{message}");
+    assert_eq!(
+        detail, "fake cc: the link fails\nfake cc: second line",
+        "{message}"
+    );
 }
 
 /// GIVEN an output path that is the input file
@@ -2009,6 +2013,326 @@ fn build_should_report_a_bad_output_path_before_it_compiles() {
         assert_eq!(out.status.code(), Some(1), "{output}");
         assert_eq!(String::from_utf8_lossy(&out.stderr), expected);
     }
+}
+
+/// Takes write permission from `dir`. Returns `false` when the user can still create a file in it,
+/// as root can: the test then cannot show an unwritable directory.
+fn make_unwritable(dir: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(dir, fs::Permissions::from_mode(0o555)).expect("locks the directory");
+    let probe = dir.join("probe");
+    if fs::write(&probe, "").is_ok() {
+        fs::remove_file(&probe).expect("removes the probe");
+        return false;
+    }
+    true
+}
+
+/// GIVEN a directory with mode 0o555
+/// WHEN `sisu build --timings` writes its output into it
+/// THEN it exits 1 and stderr names the output directory
+/// AND no stage of the front end ran
+///
+/// An output directory that cannot be written is reported before the compile, not by the linker
+/// after it. The test looks for `timings: lex`, a line that comes before the codegen.
+#[test]
+fn build_should_report_an_output_directory_it_cannot_write_before_it_compiles() {
+    let dir = scratch_path::empty_dir("unwritable_output_dir");
+    let locked = dir.join("ro");
+    fs::create_dir(&locked).expect("creates");
+    fs::write(dir.join("one.sisu"), "fn main() {\n    print(1)\n}\n").expect("writes");
+    if !make_unwritable(&locked) {
+        eprintln!("skipped: the user can write in a directory with mode 0o555");
+        return;
+    }
+    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
+        .current_dir(&dir)
+        .args(["build", "--timings", "one.sisu", "-o", "ro/one"])
+        .output()
+        .expect("sisu starts");
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.lines().any(|line| line.starts_with("timings: lex")),
+        "the front end ran: {stderr}"
+    );
+    assert_eq!(
+        stderr.lines().next(),
+        Some("sisu: cannot write to output directory ro: Permission denied (os error 13)")
+    );
+}
+
+/// GIVEN `TMPDIR` set to a path that does not exist, and a good output path
+/// WHEN `sisu build --timings` runs
+/// THEN it exits 1, stdout is empty and stderr names the temporary directory
+/// AND no stage of the front end ran
+///
+/// A temporary directory that is missing is reported before the compile, not by the write of the
+/// first object after it.
+#[test]
+fn build_should_report_a_missing_temporary_directory_before_it_compiles() {
+    let dir = scratch_path::empty_dir("temp_dir_missing_before_compile");
+    fs::write(dir.join("one.sisu"), "fn main() {\n    print(1)\n}\n").expect("writes");
+    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
+        .current_dir(&dir)
+        .env("TMPDIR", "absent")
+        .args(["build", "--timings", "one.sisu", "-o", "one"])
+        .output()
+        .expect("sisu starts");
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.lines().any(|line| line.starts_with("timings: lex")),
+        "the front end ran: {stderr}"
+    );
+    assert_eq!(
+        stderr.lines().next(),
+        Some("sisu: temporary directory absent does not exist")
+    );
+}
+
+/// GIVEN `TMPDIR` set to a directory with mode 0o555, and a good output path
+/// WHEN `sisu build --timings` runs
+/// THEN it exits 1, stdout is empty and stderr names the temporary directory
+/// AND no stage of the front end ran
+///
+/// A temporary directory that cannot be written is reported before the compile, not by the write
+/// of the first object after it.
+#[test]
+fn build_should_report_a_temporary_directory_it_cannot_write_before_it_compiles() {
+    let dir = scratch_path::empty_dir("unwritable_temp_dir");
+    let locked = dir.join("ro");
+    fs::create_dir(&locked).expect("creates");
+    fs::write(dir.join("one.sisu"), "fn main() {\n    print(1)\n}\n").expect("writes");
+    if !make_unwritable(&locked) {
+        eprintln!("skipped: the user can write in a directory with mode 0o555");
+        return;
+    }
+    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
+        .current_dir(&dir)
+        .env("TMPDIR", "ro")
+        .args(["build", "--timings", "one.sisu", "-o", "one"])
+        .output()
+        .expect("sisu starts");
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.lines().any(|line| line.starts_with("timings: lex")),
+        "the front end ran: {stderr}"
+    );
+    assert_eq!(
+        stderr.lines().next(),
+        Some("sisu: cannot write to temporary directory ro: Permission denied (os error 13)")
+    );
+}
+
+/// GIVEN a directory with mode 0o555 that holds a file `out` that can be written
+/// WHEN `sisu build` writes to `<dir>/out` with the default linker
+/// THEN it exits 0 and `out` runs
+///
+/// This test guards the check of the output directory. A linker opens an existing output for
+/// writing and does not touch its directory. A check of the directory would refuse a build that
+/// works. The test passes before the check exists.
+#[test]
+fn build_should_overwrite_a_writable_output_file_in_a_directory_it_cannot_write() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = scratch_path::empty_dir("writable_output_in_locked_dir");
+    let locked = dir.join("ro");
+    fs::create_dir(&locked).expect("creates");
+    fs::write(locked.join("out"), "").expect("writes");
+    fs::write(dir.join("one.sisu"), "fn main() {\n    print(1)\n}\n").expect("writes");
+    if !make_unwritable(&locked) {
+        eprintln!("skipped: the user can write in a directory with mode 0o555");
+        return;
+    }
+    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
+        .current_dir(&dir)
+        .args(["build", "one.sisu", "-o", "ro/out"])
+        .output()
+        .expect("sisu starts");
+    // Unlock first, so that the next run can remove the directory even if an assertion fails.
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).expect("unlocks");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(locked.join("out"))
+        .output()
+        .expect("out starts");
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "1\n");
+}
+
+/// Runs `sisu build one.sisu -o <output>` in `dir`, with the default linker.
+fn build_one(dir: &Path, output: &str) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_sisu"))
+        .current_dir(dir)
+        .args(["build", "one.sisu", "-o", output])
+        .output()
+        .expect("sisu starts")
+}
+
+/// GIVEN a file `out` that holds text and has mode 0o444, in a directory that can be written
+/// WHEN `sisu build` writes to `out` with the default linker
+/// THEN it exits 0 and `out` runs
+///
+/// The linker replaces an output that cannot be written through its writable directory. So the
+/// early check refuses only when neither the file nor the directory can be written. The test
+/// fails when the check looks at the file alone.
+#[test]
+fn build_should_replace_a_read_only_output_file_in_a_directory_it_can_write() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = scratch_path::empty_dir("read_only_output_in_writable_dir");
+    fs::write(dir.join("one.sisu"), "fn main() {\n    print(1)\n}\n").expect("writes");
+    fs::write(dir.join("out"), "old\n").expect("writes");
+    fs::set_permissions(dir.join("out"), fs::Permissions::from_mode(0o444)).expect("locks");
+    let out = build_one(&dir, "out");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(dir.join("out")).output().expect("out starts");
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "1\n");
+}
+
+/// GIVEN the output `/dev/null`, in the directory `/dev` that a normal user cannot write
+/// WHEN `sisu build` writes to it
+/// THEN it exits 0
+///
+/// An existing output such as `/dev/null` can pass its own write check even when its directory
+/// cannot be written. The test fails when the check looks at the directory alone.
+#[test]
+fn build_should_accept_an_output_that_is_not_a_regular_file() {
+    let dir = scratch_path::empty_dir("output_not_a_regular_file");
+    fs::write(dir.join("one.sisu"), "fn main() {\n    print(1)\n}\n").expect("writes");
+    let out = build_one(&dir, "/dev/null");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// GIVEN a file `out` with mode 0o444, in a directory with mode 0o555
+/// WHEN `sisu build --timings` writes to `ro/out`
+/// THEN it exits 1 and stderr names the output file
+/// AND no stage of the front end ran
+///
+/// Neither the file nor its directory can be written, so the build cannot work. The test needs a
+/// user that is not root. It passes before the rule for a file that cannot be written changes,
+/// and it guards that rule.
+#[test]
+fn build_should_report_a_read_only_output_file_in_a_read_only_directory_before_it_compiles() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = scratch_path::empty_dir("read_only_output_in_read_only_dir");
+    let locked = dir.join("ro");
+    fs::create_dir(&locked).expect("creates");
+    fs::write(dir.join("one.sisu"), "fn main() {\n    print(1)\n}\n").expect("writes");
+    fs::write(locked.join("out"), "old\n").expect("writes");
+    fs::set_permissions(locked.join("out"), fs::Permissions::from_mode(0o444)).expect("locks");
+    if !make_unwritable(&locked) {
+        eprintln!("skipped: the user can write in a directory with mode 0o555");
+        return;
+    }
+    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
+        .current_dir(&dir)
+        .args(["build", "--timings", "one.sisu", "-o", "ro/out"])
+        .output()
+        .expect("sisu starts");
+    // Unlock first, so that the next run can remove the directory even if an assertion fails.
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).expect("unlocks");
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.lines().any(|line| line.starts_with("timings: lex")),
+        "the front end ran: {stderr}"
+    );
+    assert_eq!(
+        stderr.lines().next(),
+        Some("sisu: cannot write to output file ro/out: Permission denied (os error 13)")
+    );
+}
+
+/// GIVEN a link `ro/out` to a file that does not exist yet, in a writable directory
+/// AND `ro` has mode 0o555
+/// WHEN `sisu build` writes to `ro/out` with the default linker
+/// THEN it exits 0 and the target runs
+///
+/// The linker opens the target of a link. It does not touch the directory of the link. So an
+/// output that is a link gets no early check. The test needs a user that is not root.
+#[test]
+fn build_should_follow_an_output_link_into_a_directory_it_can_write() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = scratch_path::empty_dir("output_link_in_read_only_dir");
+    let locked = dir.join("ro");
+    fs::create_dir(&locked).expect("creates");
+    fs::create_dir(dir.join("real")).expect("creates");
+    fs::write(dir.join("one.sisu"), "fn main() {\n    print(1)\n}\n").expect("writes");
+    std::os::unix::fs::symlink("../real/target", locked.join("out")).expect("links");
+    if !make_unwritable(&locked) {
+        eprintln!("skipped: the user can write in a directory with mode 0o555");
+        return;
+    }
+    let out = build_one(&dir, "ro/out");
+    // Unlock first, so that the next run can remove the directory even if an assertion fails.
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).expect("unlocks");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(dir.join("real/target"))
+        .output()
+        .expect("the target starts");
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "1\n");
+}
+
+/// GIVEN `TMPDIR` set to the empty string, and a current directory that can be written
+/// WHEN `sisu build` and `sisu run` run
+/// THEN each exits 0 and the program prints 1
+///
+/// An empty `TMPDIR` means the current directory, so `sisu` accepts it and reports no error.
+#[test]
+fn build_and_run_should_accept_an_empty_temporary_directory() {
+    let dir = scratch_path::empty_dir("empty_temp_dir");
+    fs::write(dir.join("one.sisu"), "fn main() {\n    print(1)\n}\n").expect("writes");
+    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
+        .current_dir(&dir)
+        .env("TMPDIR", "")
+        .args(["build", "one.sisu", "-o", "one"])
+        .output()
+        .expect("sisu starts");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "build: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
+        .current_dir(&dir)
+        .env("TMPDIR", "")
+        .args(["run", "one.sisu"])
+        .output()
+        .expect("sisu starts");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "run: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "1\n");
 }
 
 /// GIVEN `--rc-checks`, `-O2`, `-O3` and `--linker`, placed before or after the file
@@ -2338,6 +2662,87 @@ fn assert_empty(tmp: &Path) {
         .map(|entry| entry.expect("reads an entry").file_name())
         .collect();
     assert!(left.is_empty(), "left in {}: {left:?}", tmp.display());
+}
+
+/// GIVEN a program with a type error
+/// AND `PATH` holds only `cc`
+/// WHEN it is run with `--linker mold`
+/// THEN it exits 1 and the first stderr line names the linker
+/// AND the front end did not run: stderr holds no diagnostic
+///
+/// `sisu run` takes no `--timings`, so the type error shows whether the front end ran.
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "the linker probe runs on Linux only"
+)]
+fn run_should_find_a_missing_linker_before_the_front_end() {
+    let tmp = scratch_path::empty_dir("run_missing_linker_tmp");
+    let out = sisu_run(&tmp)
+        .args(["--linker", "mold", "-e", "fn main() { let x: i64 = \"a\" }"])
+        .env("PATH", scratch_path::only_cc("run_missing_linker_path"))
+        .env_remove("COMPILER_PATH")
+        .output()
+        .expect("sisu starts");
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        stderr.lines().next(),
+        Some("sisu: linker ld.mold not found on PATH; cc failed: exit status: 1")
+    );
+    assert!(!stderr.contains("E0032"), "the front end ran: {stderr}");
+    assert!(
+        !stderr
+            .lines()
+            .any(|line| line.starts_with("collect2 version") || line.starts_with("[cannot find")),
+        "the message holds collect2's verbose lines: {stderr}"
+    );
+    assert_empty(&tmp);
+}
+
+/// GIVEN a program with a type error
+/// AND `TMPDIR` set to a path that does not exist, and to a directory with mode 0o555
+/// WHEN it is run
+/// THEN it exits 1, stdout is empty and the first stderr line names the temporary directory
+/// AND the front end did not run: stderr holds no diagnostic
+///
+/// `sisu run` takes no `--timings`, so the type error shows whether the front end ran. The row
+/// for the directory with mode 0o555 needs a user that is not root.
+#[test]
+fn run_should_find_a_bad_temporary_directory_before_the_front_end() {
+    let dir = scratch_path::empty_dir("run_bad_temp_dir_before_front_end");
+    let absent = dir.join("absent");
+    let locked = dir.join("ro");
+    fs::create_dir(&locked).expect("creates");
+    let mut rows = vec![(
+        absent.clone(),
+        format!(
+            "sisu: temporary directory {} does not exist",
+            absent.display()
+        ),
+    )];
+    if make_unwritable(&locked) {
+        rows.push((
+            locked.clone(),
+            format!(
+                "sisu: cannot write to temporary directory {}: Permission denied (os error 13)",
+                locked.display()
+            ),
+        ));
+    } else {
+        eprintln!("skipped: the user can write in a directory with mode 0o555");
+    }
+    for (tmp, expected) in rows {
+        let out = sisu_run(&tmp)
+            .args(["-e", "fn main() { let x: i64 = \"a\" }"])
+            .output()
+            .expect("sisu starts");
+        assert_eq!(out.status.code(), Some(1), "{tmp:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "", "{tmp:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(stderr.lines().next(), Some(expected.as_str()), "{tmp:?}");
+        assert!(!stderr.contains("E0032"), "the front end ran: {stderr}");
+    }
 }
 
 /// GIVEN a program with a warning, and a stderr that is `/dev/full`
@@ -2759,42 +3164,6 @@ fn run_should_exit_1_and_leave_nothing_when_the_link_fails() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.starts_with("sisu: cannot run cc: "), "{stderr}");
     assert_empty(&tmp);
-}
-
-/// GIVEN a `TMPDIR` that does not exist
-/// WHEN `sisu run` and `sisu build` run
-/// THEN each exits 1 and stderr says it cannot create its file in that directory
-///
-/// A temp directory that does not exist is a tool error: `run` cannot make its directory there,
-/// and `build` cannot write its object file.
-#[test]
-fn run_and_build_should_exit_1_when_the_temporary_directory_is_missing() {
-    let dir = scratch_path::empty_dir("missing_temp_dir");
-    let absent = dir.join("absent");
-    let output = dir.join("out");
-    let output = output.to_str().expect("the scratch path should be UTF-8");
-    for (args, suffix) in [
-        (&["run", "run/args_none.sisu"][..], ""),
-        (&["build", "run/args_none.sisu", "-o", output], ".o"),
-    ] {
-        let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
-            .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/tests"))
-            .env("TMPDIR", &absent)
-            .args(args)
-            .output()
-            .expect("sisu starts");
-        assert_eq!(out.status.code(), Some(1), "{args:?}");
-        assert_eq!(String::from_utf8_lossy(&out.stdout), "", "{args:?}");
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        let expected = format!("sisu: cannot create {}/sisu-", absent.display());
-        assert!(stderr.starts_with(&expected), "{args:?}: {stderr}");
-        assert!(
-            stderr.ends_with(&format!(
-                "{suffix}: No such file or directory (os error 2)\n"
-            )),
-            "{args:?}: {stderr}"
-        );
-    }
 }
 
 /// GIVEN a umask that takes the write bit of the owner

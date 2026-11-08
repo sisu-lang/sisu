@@ -28,9 +28,10 @@ mod timings;
 mod tir;
 mod types;
 
-use std::ffi::OsString;
+use std::ffi::{CString, OsString};
 use std::fs;
 use std::io::{self, ErrorKind, IsTerminal, Read, Stderr, Write};
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -436,6 +437,8 @@ struct UnitInput<'src> {
     source: &'src str,
     level: OptLevel,
     rc_checks: bool,
+    /// Whether the values of the IR keep their names, such as `%call`. Only the IR text shows them.
+    keep_names: bool,
 }
 
 /// Builds each of `units` and runs `finish` on its index, its module and its target machine, and
@@ -466,6 +469,9 @@ fn each_unit<T: Send>(
             let mut unit_timings = parent.for_unit();
             let result = codegen::create_target_machine(input.level).and_then(|machine| {
                 let context = Context::create();
+                if !input.keep_names {
+                    discard_value_names(&context);
+                }
                 let module = unit_timings.time(timings::Stage::Codegen, || match &analyses {
                     None => codegen::compile(
                         &context,
@@ -502,6 +508,20 @@ fn each_unit<T: Send>(
     results
 }
 
+/// Makes `context` give no name to a local value (such as `%call`), as LLVM then skips the work to
+/// make and to intern each name. A global value keeps its name. The names show only in the IR text.
+/// Call it before codegen makes a value: a name that a value has already keeps it.
+#[expect(
+    unsafe_code,
+    reason = "inkwell has no call for `LLVMContextSetDiscardValueNames`, so this calls its llvm-sys"
+)]
+fn discard_value_names(context: &Context) {
+    use inkwell::context::AsContextRef;
+
+    // SAFETY: `context` is a live context for the length of the call.
+    unsafe { inkwell::llvm_sys::core::LLVMContextSetDiscardValueNames(context.as_ctx_ref(), 1) };
+}
+
 /// Prints the module for `source` before and after the pipeline, once it passes the checker. With
 /// `units`, each codegen unit prints in turn (`join_units`).
 fn emit_ir(
@@ -526,6 +546,7 @@ fn emit_ir(
             source,
             level,
             rc_checks,
+            keep_names: true,
         },
         units,
         timings,
@@ -616,6 +637,7 @@ fn emit_ir_raw(
             source,
             level: OptLevel::O0,
             rc_checks,
+            keep_names: true,
         },
         units,
         timings,
@@ -709,6 +731,7 @@ fn build(
     let allocator = backend.allocator.unwrap_or_default();
     let runtime = match link::runtime_library(allocator).and_then(|runtime| {
         check_output(output)?;
+        check_temp_dir()?;
         Ok(runtime)
     }) {
         Ok(runtime) => runtime,
@@ -717,6 +740,10 @@ fn build(
             return ExitCode::FAILURE;
         }
     };
+    if let Err(message) = link::probe_linker(backend.linker.as_deref()) {
+        reporter.tool_error(&message);
+        return ExitCode::FAILURE;
+    }
     let Some((path, source)) = read_source(reporter, input) else {
         return ExitCode::FAILURE;
     };
@@ -743,29 +770,88 @@ fn build(
     }
 }
 
-/// Checks, without compiling, that `ld` can create `output`: its directory exists and it is not
-/// a directory.
+/// Checks, without compiling, that `ld` can create `output`: its directory exists, and it is not
+/// a directory. What else it checks depends on what `output` is, because the linkers differ:
+/// - Nothing there: the directory needs write and search permission.
+/// - A link: no check. GNU `ld` (bfd and gold) opens the target and does not touch the directory
+///   of the link. A dangling link can point into another directory. mold and lld replace the
+///   link through its directory, so the linker decides.
+/// - Another entry: `ld` writes it, or replaces it through its directory. The check fails only
+///   when neither can be done.
+///
+/// An output in a sticky directory, such as `/tmp`, that another user owns passes this check and
+/// can still fail late.
 fn check_output(output: &Path) -> Result<(), String> {
     let parent = match output.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
         _ => Path::new("."),
     };
-    let shown = parent.display();
-    match fs::metadata(parent) {
-        Ok(meta) if meta.is_dir() => {}
-        Ok(_) => return Err(format!("output directory {shown} is not a directory")),
-        Err(e) if e.kind() == ErrorKind::NotFound => {
-            return Err(format!("output directory {shown} does not exist"));
-        }
-        Err(e) => return Err(format!("cannot access output directory {shown}: {e}")),
-    }
+    check_directory(parent, "output directory")?;
     if output.is_dir() {
         return Err(format!(
             "output {} is a directory",
             output.to_string_lossy()
         ));
     }
-    Ok(())
+    let directory = || check_access(parent, libc::W_OK | libc::X_OK, "output directory");
+    match fs::symlink_metadata(output) {
+        Err(_) => directory(),
+        Ok(meta) if meta.is_symlink() => Ok(()),
+        Ok(_) => check_access(output, libc::W_OK, "output file")
+            .or_else(|file_error| directory().map_err(|_| file_error)),
+    }
+}
+
+/// Checks, without compiling, that the temporary directory exists and can be written: `compile`
+/// writes an object file there for each codegen unit.
+fn check_temp_dir() -> Result<(), String> {
+    let dir = std::env::temp_dir();
+    // An empty `TMPDIR` is the current directory.
+    let dir = if dir.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        &dir
+    };
+    check_directory(dir, "temporary directory")?;
+    check_access(dir, libc::W_OK | libc::X_OK, "temporary directory")
+}
+
+/// Checks that `dir` exists and is a directory. `what` names it in the message.
+fn check_directory(dir: &Path, what: &str) -> Result<(), String> {
+    let shown = dir.display();
+    match fs::metadata(dir) {
+        Ok(meta) if meta.is_dir() => Ok(()),
+        Ok(_) => Err(format!("{what} {shown} is not a directory")),
+        Err(e) if e.kind() == ErrorKind::NotFound => Err(format!("{what} {shown} does not exist")),
+        Err(e) => Err(format!("cannot access {what} {shown}: {e}")),
+    }
+}
+
+/// Checks that the process can use `path` as `mode` says (`libc::W_OK`, `libc::X_OK`), with its
+/// effective user and group IDs, not the real ones. `what` names it in the message. Search
+/// permission (`X_OK`) is part of the check for a directory: without it nothing in it can be
+/// created.
+#[expect(
+    unsafe_code,
+    reason = "faccessat has no equivalent in std, and it takes the effective IDs into account"
+)]
+fn check_access(path: &Path, mode: libc::c_int, what: &str) -> Result<(), String> {
+    let shown = path.display();
+    let Ok(c_path) = CString::new(path.as_os_str().as_bytes()) else {
+        return Err(format!(
+            "cannot write to {what} {shown}: it holds a NUL byte"
+        ));
+    };
+    // SAFETY: `c_path` is a NUL-terminated string that lives for the whole call, and `faccessat`
+    // reads it and nothing else.
+    let status =
+        unsafe { libc::faccessat(libc::AT_FDCWD, c_path.as_ptr(), mode, libc::AT_EACCESS) };
+    if status == 0 {
+        Ok(())
+    } else {
+        let e = io::Error::last_os_error();
+        Err(format!("cannot write to {what} {shown}: {e}"))
+    }
 }
 
 /// Runs the front end on `source` and reports every diagnostic. Returns the program unless a
@@ -815,6 +901,7 @@ fn compile(
             source,
             level,
             rc_checks,
+            keep_names: false,
         },
         &units,
         timings,
@@ -931,6 +1018,47 @@ fn create_object(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The IR text of a program with a call and a `let`, built as one unit through `each_unit`.
+    fn printed_unit(keep_names: bool) -> String {
+        let source = "fn twice(n: i64) -> i64 {\n    n * 2\n}\n\
+                      fn main() {\n    let a = twice(3)\n    let s = \"x\"\n    let t = s\n    \
+                      print(a)\n    print(t)\n}\n";
+        let mut timings = Timings::off();
+        let (program, diagnostics) =
+            front_end::front_end_timed(front_end::PRELUDE_SOURCE, source, &mut timings);
+        let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+        let mir = mir::build(&program);
+        let level = OptLevel::O0;
+        let units = codegen::units::split(&mir, &program, Some(1), level);
+        let input = UnitInput {
+            program: &program,
+            mir: &mir,
+            path: "test.sisu",
+            source,
+            level,
+            rc_checks: false,
+            keep_names,
+        };
+        let mut printed = each_unit(&input, &units, &mut timings, |_, module, _, _| {
+            Ok(module.print_to_string().to_string())
+        });
+        printed.remove(0).expect("the unit builds")
+    }
+
+    #[test]
+    fn build_units_should_carry_no_value_names() {
+        let ir = printed_unit(false);
+        assert!(!ir.contains("%call ="), "{ir}");
+        assert!(!ir.contains("%moved ="), "{ir}");
+    }
+
+    #[test]
+    fn ir_units_should_keep_value_names() {
+        let ir = printed_unit(true);
+        assert!(ir.contains("%call ="), "{ir}");
+        assert!(ir.contains("%moved ="), "{ir}");
+    }
 
     #[test]
     fn release_should_drop_the_value_outside_the_command_line_tool() {
