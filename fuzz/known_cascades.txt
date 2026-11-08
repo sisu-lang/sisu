@@ -30,3 +30,65 @@ local E0032
 #       2.5 } } }))
 #   }
 callee E0032
+# Fuzz input crash-23b5839b (not a fixed seed): the negation of an unknown name gives E0033 at the
+# name. The negation then has the type `i64`, so a method of `f64` on it gives E0063.
+#   fn main() {
+#       let x = (-(missing)).is_nan()
+#   }
+local E0063
+# Fuzz input crash-9b2adc73 (not a fixed seed): a literal of the wrong type in a block gives E0032
+# at the literal. The negation of the loop then has the type `i64`, so the `f64` after it gives
+# E0032.
+#   fn main() {
+#       let a = [-({ loop { break { let c: char = true
+#       1.5 } } }), 2.5]
+#   }
+literal E0032
+# Fuzz input crash-8ee8a86b (not a fixed seed): a local with another name leaves its use unknown,
+# which gives E0033. The `??` has no type for its left side, so a literal at its right side
+# gets the type `i64` and gives E0032.
+#   fn main() {
+#       let missing: u8 = 7
+#       let x = v1 ?? (if true { missing } else { 17 % 7 })
+#   }
+declaration E0032
+# Fuzz input crash-942984aa (not a fixed seed): a call with a missing argument gives E0053. The
+# argument that is left has no expected type, so its literal gets the type `i64`, and it gives
+# E0032 where a `u8` is needed.
+#   const c: u8 = 7
+#   fn f(a: u8, b: bool) {}
+#   fn main() {
+#       f(match true { true => c
+#       false => 8 })
+#   }
+argument E0032
+# Fuzz input crash-9e4e00cc (not a fixed seed): an unknown name in a `loop` gives E0033. The call
+# `i64(..)` is then not optional, so the `??` after it gives E0048.
+#   fn main() {
+#       let x = i64(loop { break missing }) ?? 0
+#   }
+local E0048
+# Fuzz input crash-441b7c22 (not a fixed seed): a local with another name leaves its use
+# unknown, which gives E0033. The negation of the unknown name has the type `i64`, so a method
+# of `f64` on it gives E0063.
+#   fn main() {
+#       let missing = 1.5
+#       let x = (-(v1)).is_nan()
+#   }
+declaration E0063
+# Fuzz input crash-6c10a6be (not a fixed seed): a literal of the wrong type in a block gives
+# E0032 at the literal. The negation of the loop then has the type `i64`, so a method of `f64`
+# on it gives E0063.
+#   fn main() {
+#       let x = (-({ loop { break { let c: char = true
+#       1.5 } } })).is_nan()
+#   }
+literal E0063
+# Fuzz input crash-c70ff286 (not a fixed seed): a local with another name leaves its use
+# unknown, which gives E0033. The conversion `i64(..)` of an unknown value is then not optional,
+# so the `??` after it gives E0048.
+#   fn main() {
+#       let missing = 1.5
+#       let x = i64(v1) ?? 0
+#   }
+declaration E0048

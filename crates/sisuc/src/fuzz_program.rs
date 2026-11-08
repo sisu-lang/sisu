@@ -2386,22 +2386,22 @@ mod tests {
 
     #[test]
     fn property_7_should_fail_a_new_pair() {
-        // `n.nope` stands in for a checker that adds E0063 to an unknown local.
+        // `n[0]` stands in for a checker that adds E0068 to an unknown local.
         let program = "fn main() {\n    let n = 1\n    let b = n\n    print(b)\n}\n";
         let at = program.find("= n").expect("the program should read `n`") + 2;
-        let m = mistake(Kind::Local, (at, "n"), "yy + n.nope", &[("E0033", at)]);
+        let m = mistake(Kind::Local, (at, "n"), "yy + n[0]", &[("E0033", at)]);
         let failure = judge_mistakes(&with_mistakes(program, vec![m]), None)
             .expect_err("a new pair should fail");
         assert_eq!(failure.property, 7);
         assert!(
-            failure.detail.contains("`local E0063`")
+            failure.detail.contains("`local E0068`")
                 && failure.detail.contains("fuzz/known_cascades.txt"),
             "{}",
             failure.detail
         );
         assert_eq!(
             failure.broken.as_deref(),
-            Some("fn main() {\n    let n = 1\n    let b = yy + n.nope\n    print(b)\n}\n")
+            Some("fn main() {\n    let n = 1\n    let b = yy + n[0]\n    print(b)\n}\n")
         );
     }
 
