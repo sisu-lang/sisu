@@ -1450,7 +1450,7 @@ mod tests {
     }
 
     #[test]
-    fn known_value_should_match() {
+    fn known_value_should_pass_only_when_it_matches() {
         let site = [value("k0", "42")];
         assert_eq!(known(&ran(0, "@k0 42\n", ""), &site), None);
         assert_eq!(
@@ -1462,7 +1462,7 @@ mod tests {
     const OVERFLOW: &str = "sisu: panic at input.sisu:9:5: integer overflow\n";
 
     #[test]
-    fn known_panic_should_be_the_last_line() {
+    fn known_panic_should_pass_only_with_its_message_on_the_last_line() {
         let site = [panics("k0", "integer overflow")];
         let stderr = format!("x\n{OVERFLOW}");
         assert_eq!(known(&ran(101, "@k0 panics\n", &stderr), &site), None);
@@ -2148,8 +2148,8 @@ mod tests {
         seed_passes(59, false);
     }
 
-    /// `program` end to end, all six builds and every check but the single-mistake check: it passes
-    /// and leaves no directory behind. Of the seeds under 4000 with rewrites, a value site and a
+    /// `program` end to end, all eight builds and every check: it passes and leaves no directory
+    /// behind. Of the seeds under 4000 with rewrites, a value site and a
     /// panic site that its run reaches, seed 3934 has the shortest program. So its builds are
     /// quick.
     #[test]

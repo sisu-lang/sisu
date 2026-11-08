@@ -584,11 +584,11 @@ must pass seven properties. Each one has the name of its check:
    calls prints none.
 6. The bound check. A broken bound gives E0154 and nothing else. A bound site is
    an argument of a call of a bounded generic function or class. Its parameter
-   is the bare type parameter, and no earlier argument names that type
-   parameter. For each bound site, a copy of the program has that argument
-   replaced by a value that does not conform to the bound. The copy also ends
-   with `class NoBound {}`. The checker, alone, with no build, reports at least
-   one error. Each error is E0154, and each starts at the replaced argument. Any
+   is a bare type parameter, and no earlier argument names that type parameter.
+   For each bound site, a copy of the program has that argument replaced by a
+   value that does not conform to the bound. The copy also ends with
+   `class NoBound {}`. The checker, alone, with no build, reports at least one
+   error. Each error is E0154, and each starts at the replaced argument. Any
    other error is a cascade, as in issue #283. The bound check runs after the
    clean check, before the builds.
 7. The single-mistake check. One injected mistake gives its errors and nothing
@@ -616,11 +616,11 @@ must pass seven properties. Each one has the name of its check:
    is in `fuzz/known_cascades.txt`, and a pair that is not in the file fails.
    A checker fix removes pairs. Only a new cascade that a fuzz run finds adds
    one. The single-mistake check runs after the bound check, before the builds.
-   A fuzz run sets the variable `SISU_FUZZ_CASCADES` to a file, and the property
-   writes there each pair of the baseline that it allows. The summary of the run
-   names each pair of the baseline that no input gave, as a warning in the
-   section "Known cascades". The warning does not change the exit status. The
-   fixed-seed tests do not warn.
+   A fuzz run sets the variable `SISU_FUZZ_CASCADES` to a file, and the
+   single-mistake check writes there each pair of the baseline that it allows.
+   The summary of the run names each pair of the baseline that no input gave,
+   as a warning in the section "Known cascades". The warning does not change
+   the exit status. The fixed-seed tests do not warn.
 
 Name the target with `--target`, before the other arguments:
 
@@ -633,10 +633,10 @@ $ scripts/fuzz.sh --target program --coverage
 $ make fuzz-gaps                     # scripts/fuzz.sh --target program --gaps
 ```
 
-To check one seed of the series that the unit tests generate from, with
-the clean, verify and exit checks, name it in `SISU_FUZZ_SEED`. A failure of the
+To check one seed of the series that the unit tests generate from, with the
+clean, verify and exit checks, name it in `SISU_FUZZ_SEED`. A failure of the
 clean check shows only the errors, and W0010 or W0011, not the warnings that the
-property allows:
+clean check allows:
 
 ```console
 $ SISU_FUZZ_SEED=72 cargo nextest run -p sisuc --lib seed_from_env --run-ignored only
@@ -672,15 +672,15 @@ core, where one input took about 0.2 s on one thread, nine tenths of it
 linking.
 
 A replay prints the failure to stderr: the failed check as
-`<check>: <what disagreed>`, such as `the exit check: ...`, or
-`compiler panic`. Then come the program, the rewritten copy and the standard
-input, each under a `==> <name>` line, then each build's exit status, stdout
-and stderr. It also writes `program.sisu`, `rewritten.sisu`, `stdin.txt` and
-`failure.txt` to `fuzz/artifacts/program/<input name>.dump/`. A failure of the
-bound check or the single-mistake check also writes `broken.sisu`, the broken
-copy that failed. Run `sisu check` on it to see the checker's diagnostics. A checker panic during one of these two checks also writes
-`broken.sisu`: the program that the checker panicked on. The replays after a
-fuzz run write the same directories.
+`<check>: <what disagreed>`, such as `the exit check: ...`, or `compiler panic`.
+Then come the program, the rewritten copy and the standard input, each under a
+`==> <name>` line, then each build's exit status, stdout and stderr. It also
+writes `program.sisu`, `rewritten.sisu`, `stdin.txt` and `failure.txt` to
+`fuzz/artifacts/program/<input name>.dump/`. A failure of the bound check or the
+single-mistake check also writes `broken.sisu`, the broken copy that failed. Run
+`sisu check` on it to see the checker's diagnostics. A checker panic during one
+of these two checks also writes `broken.sisu`: the program that the checker
+panicked on. The replays after a fuzz run write the same directories.
 
 `--coverage` works for either target. It runs `cargo fuzz coverage` over the
 target's corpus and seeds, then prints the line coverage of each compiler
