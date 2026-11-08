@@ -23,8 +23,8 @@ The decision has four parts:
 - **`Reported`.** It is a zero-size token. Only the function that adds an error
   and the function `proof` make one. A poisoned value and a poisoned declaration
   hold one, so a rejection has a message. `proof` is a promise that an error
-  exists by the end of the check. A debug build checks it, as rustc's
-  `delayed_bug` does. The token does not prevent a second report. Its known
+  exists by the end of the check, as rustc's `delayed_bug` is. A debug build
+  checks it. The token does not prevent a second report. Its known
   limit: a rollback can drop the report that made a token.
 
 ## Considered options
@@ -40,8 +40,8 @@ The decision has four parts:
   sees only the whole program. It cannot tell which check rejected with no
   message.
 - **A rule that drops a later error by its text, as Go does
-  (`go/types/errors.go`)**: rejected. It hides a true error that has the same
-  text.
+  (`go/types/errors.go`)**: rejected. It hides a true error whose text holds
+  one of its words ("invalid operand", "invalid type").
 
 ## Consequences
 
