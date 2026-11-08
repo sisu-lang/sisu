@@ -592,8 +592,9 @@ must pass seven properties:
    Property 6 runs after property 1, before the builds.
 7. One injected mistake gives its errors and nothing else (`GLOSSARY.md`). The
    generator records the places where it knows the errors of one edit, and
-   picks at most one of each kind for each program. The checker, alone, with no build, must report these
-   errors for a copy of the program with that one edit:
+   picks at most one of each kind for each program. The checker, alone, with
+   no build, must report these errors for a copy of the program with that one
+   edit:
    - `literal`: a literal at a declared `let`, a parameter, a field or a return
      becomes a literal of another type. The error is E0032 at the literal.
    - `callee`: the name of a function call becomes an unknown name. The error
@@ -610,14 +611,13 @@ must pass seven properties:
    at the first parenthesis that wraps the expression. Then comes the control.
    The first two mistakes of two different functions, together, must give the
    errors of both. So a checker that goes quiet after one error fails. An extra
-   error is a cascade (`GLOSSARY.md`). It passes when its pair `<kind> <code>` is in
-   `fuzz/known_cascades.txt`, and a pair that is not in the file fails. A fix
-   that removes a cascade removes its pair. Later steps of the diagnostics
-   foundation remove pairs and add none. Property 7 runs after property 6,
-   before the builds. A fuzz run sets the variable `SISU_FUZZ_CASCADES` to a
+   error is a cascade (`GLOSSARY.md`). It passes when its pair `<kind> <code>`
+   is in `fuzz/known_cascades.txt`, and a pair that is not in the file fails.
+   A checker fix removes pairs. Only a new cascade that a fuzz run finds adds
+   one. Property 7 runs after property 6, before the builds. A fuzz run sets the variable `SISU_FUZZ_CASCADES` to a
    file, and the property writes there each pair of the baseline that it
-   allows. The summary of the run names each pair of the
-   baseline that no input gave, as a warning in the section "Known cascades".
+   allows. The summary of the run names each pair of the baseline that no input
+   gave, as a warning in the section "Known cascades".
    The warning does not change the exit status. The fixed-seed tests do not
    warn.
 
@@ -677,8 +677,9 @@ each build's exit status, stdout and stderr. It also writes `program.sisu`,
 `rewritten.sisu`, `stdin.txt` and `failure.txt` to
 `fuzz/artifacts/program/<input name>.dump/`. A failed property 6 or 7 also writes
 `broken.sisu`, the broken copy that failed, which shows the checker's
-diagnostics when you run `sisu check` on it. The replays after a fuzz run
-write the same directories.
+diagnostics when you run `sisu check` on it. A checker panic during property 6
+or 7 also writes `broken.sisu`: the program that the checker panicked on. The
+replays after a fuzz run write the same directories.
 
 `--coverage` works for either target. It runs `cargo fuzz coverage` over the
 target's corpus and seeds, then prints the line coverage of each compiler
@@ -912,10 +913,15 @@ resolve it first.
    then fix the root cause. A runtime fix also runs `make miri`. For property 6,
    the case is `broken.sisu`, cut down to the call: it becomes a case of
    `crates/sisuc/tests/diagnostics/`, and the checker's output must be the one
-   E0154 at the replaced argument. For property 7, a failure "reports the new
-   pair" is a new cascade: add its pair to `fuzz/known_cascades.txt`, with a
-   comment line for the input and a repro. A failure "misses" or with a wrong
-   offset is a generator recording bug: see step 4.
+   E0154 at the replaced argument.
+
+   For property 7, run `sisu check` on `broken.sisu`, then use step 2 to
+   decide. A new pair whose extra error follows from a guess (`GLOSSARY.md`,
+   "Cascade") is a new cascade: add it to `fuzz/known_cascades.txt` with a
+   comment line and a repro. An extra error that the source states is a
+   generator bug, an unrecorded true error. A failure "misses" is a checker bug
+   when the source states the error there, because the checker went quiet. It
+   is a generator recording bug when the expected offset or site is wrong.
 4. For a generator bug, add a test in `crates/sisuc/src/generate/coverage.rs`
    that fails on it, then fix the generator. Never steer the generator around
    a compiler bug.

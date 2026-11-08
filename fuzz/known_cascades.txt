@@ -5,7 +5,7 @@
 # The kinds are literal, callee, local, argument and declaration.
 # A pair in this file passes. A pair that is not in this file fails property 7.
 # The nightly summary reports each pair that no input of the run gave.
-# Later steps of the diagnostics foundation remove pairs from this file. They add none.
+# A checker fix removes pairs from this file. Only a new cascade that a fuzz run finds adds one.
 # A comment line starts with `#` in its first column. A pair line has no comment after it.
 # Any other line that is not empty stops the fuzzer with its number.
 #
@@ -92,9 +92,9 @@ literal E0063
 #       let x = i64(v1) ?? 0
 #   }
 declaration E0048
-# Review probe, input 269 (not a fixed seed): an unknown name in the value of `i64(..)` gives
-# E0033. The conversion is then not optional, so `if let` on it gives E0051. It is the same
-# cause as `local E0048`.
+# Found by a review probe, not by a fixed seed or a fuzz input (probe input 269): an unknown
+# name in the value of `i64(..)` gives E0033. The conversion is then not optional, so `if let`
+# on it gives E0051. It is the same cause as `local E0048`.
 #   fn main() {
 #       if let v = i64(missing) { print(v) }
 #   }

@@ -772,7 +772,8 @@ than one true error.
 **Injected mistake**:
 One edit that the program fuzzer makes to a valid generated program. The
 generator knows the errors that the edit must give. Property 7 checks that the
-checker gives these errors and no *cascade*.
+checker gives these errors and no *cascade* that `fuzz/known_cascades.txt` does
+not list.
 
 **Expected type**:
 The type that the context asks of an expression. It is *required*: a mismatch is
