@@ -203,6 +203,18 @@ mod tests {
         assert_eq!(mistake.errors, [("E0033", call), ("E0033", part)]);
     }
 
+    /// GIVEN two functions that each declare and read `v1`, as `main` and the fixed `nest` do
+    /// WHEN the declaration of the first one is edited
+    /// THEN the errors are the reads in its own block, found in a nested block too, and not the
+    /// reads of the other function
+    #[test]
+    fn choose_should_find_the_uses_of_a_declared_local_in_its_block_only() {
+        let program = "fn f1() {\n    let v1 = [1]\n    if true {\n        print(v1)\n    }\n}\nfn main() {\n    let v1 = [2]\n    print(v1)\n}\n";
+        let mistake = one(Kind::Declaration, program, "v1").expect("a mistake");
+        let read = program.find("print(v1)").expect("the read") + "print(".len();
+        assert_eq!(mistake.errors, [("E0033", read)]);
+    }
+
     #[test]
     fn choose_should_drop_a_declared_local_with_no_use() {
         let program = "fn main() {\n    let v1 = [1]\n}\n";
