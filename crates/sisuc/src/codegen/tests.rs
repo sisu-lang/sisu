@@ -1424,6 +1424,74 @@ fn long_block_should_not_be_cut_at_o2() {
     assert_eq!(main.count_basic_blocks(), 1);
 }
 
+/// A `main` that declares `n` mutable locals, then adds 1 to each of them.
+fn mut_locals_program(n: usize) -> String {
+    let mut src = String::from("fn main() {\n");
+    for i in 0..n {
+        writeln!(src, "    let mut _x{i} = {i}").expect("writing to a `String` should not fail");
+    }
+    for i in 0..n {
+        writeln!(src, "    _x{i} += 1").expect("writing to a `String` should not fail");
+    }
+    src + "    print(_x0)\n}"
+}
+
+/// `src`, built and optimized at `level`.
+fn optimized_at<'ctx>(context: &'ctx Context, src: &str, level: OptLevel) -> Module<'ctx> {
+    let module = compiled_at(context, src, level);
+    let machine = target_machine(level).expect("the host is a target");
+    optimize(&module, &machine, level).expect("the module should optimize");
+    module
+}
+
+/// Whether `function` is `optnone`.
+fn is_optnone(function: FunctionValue<'_>) -> bool {
+    let optnone = Attribute::get_named_enum_kind_id("optnone");
+    (function.get_enum_attribute(AttributeLoc::Function, optnone)).is_some()
+}
+
+/// The allocas of `sisu.main` in `module`, and whether it is `optnone`.
+fn main_allocas(module: &Module<'_>) -> (usize, bool) {
+    let main = module
+        .get_function("sisu.main")
+        .expect("the module should define `sisu.main`");
+    let allocas = (instructions(main).iter())
+        .filter(|i| i.get_opcode() == InstructionOpcode::Alloca)
+        .count();
+    (allocas, is_optnone(main))
+}
+
+/// The `main` of 2000 mutable locals has 4000 allocas and more than 4000 blocks. `mem2reg` would
+/// take time that grows with the allocas times the blocks, so at `-O0` the function is `optnone`.
+#[test]
+fn function_too_large_for_mem2reg_should_be_optnone_at_o0() {
+    let context = Context::create();
+    let module = optimized_at(&context, &mut_locals_program(2000), OptLevel::O0);
+    let (allocas, optnone) = main_allocas(&module);
+    assert!(optnone, "`sisu.main` is not `optnone`");
+    assert!(allocas >= 2000, "`sisu.main` keeps {allocas} allocas");
+}
+
+#[test]
+fn small_function_should_keep_mem2reg_at_o0() {
+    let context = Context::create();
+    let module = optimized_at(&context, &mut_locals_program(10), OptLevel::O0);
+    let (allocas, optnone) = main_allocas(&module);
+    assert!(!optnone, "`sisu.main` is `optnone`");
+    assert_eq!(allocas, 0, "`mem2reg` should promote each alloca");
+}
+
+#[test]
+fn function_too_large_for_mem2reg_should_not_be_optnone_at_o2() {
+    let context = Context::create();
+    let module = optimized_at(&context, &mut_locals_program(2000), OptLevel::O2);
+    let optnone: Vec<_> = (module.get_functions())
+        .filter(|&f| is_optnone(f))
+        .map(|f| f.get_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(optnone.is_empty(), "`optnone` at `-O2`: {optnone:?}");
+}
+
 /// A new block has room for exactly its length: `[v; n]` stores `n` into both the length and
 /// the capacity, whatever `n` is.
 #[test]
