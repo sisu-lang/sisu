@@ -717,6 +717,16 @@ fn build(
             return ExitCode::FAILURE;
         }
     };
+    // shortcut: Linux only. Apple's clang looks for `ld64.<name>`, and nobody has checked that it
+    // accepts `--version`; macOS keeps the late check in `link`. Probe on macOS after a check on
+    // a Mac.
+    if cfg!(target_os = "linux")
+        && let Some(linker) = &backend.linker
+        && let Err(message) = link::probe_linker(linker)
+    {
+        reporter.tool_error(&message);
+        return ExitCode::FAILURE;
+    }
     let Some((path, source)) = read_source(reporter, input) else {
         return ExitCode::FAILURE;
     };

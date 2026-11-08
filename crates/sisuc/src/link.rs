@@ -2,7 +2,7 @@
 //! compiler drives the linker, so it also adds the C startup code and libc.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 
 use crate::Allocator;
 
@@ -40,6 +40,27 @@ pub(crate) fn link(objects: &[PathBuf], linking: &Linking<'_>) -> Result<(), Str
     if out.status.success() {
         return Ok(());
     }
+    Err(cc_failure(&out, linker))
+}
+
+/// Checks, without linking, that `cc` finds `linker`: `cc -fuse-ld=<linker> -Wl,--version` runs
+/// the linker and prints its version. Found before the compile, not by the link after it.
+pub(crate) fn probe_linker(linker: &str) -> Result<(), String> {
+    let out = Command::new("cc")
+        .arg(format!("-fuse-ld={linker}"))
+        .arg("-Wl,--version")
+        .output()
+        .map_err(|e| format!("cannot run cc: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(cc_failure(&out, Some(linker)))
+    }
+}
+
+/// The message for a `cc` that failed: its status, a note when `linker` is not on PATH, and its
+/// stderr.
+fn cc_failure(out: &Output, linker: Option<&str>) -> String {
     let mut message = format!("cc failed: {}", out.status);
     // A missing `ld.lld` makes gcc say only "cannot find 'ld'", which names the wrong program.
     // `cc` also finds linkers off PATH, so the check waits until it has failed. Clang on macOS
@@ -55,8 +76,8 @@ pub(crate) fn link(objects: &[PathBuf], linking: &Linking<'_>) -> Result<(), Str
         message = format!("linker {program} not found on PATH; {message}");
     }
     match String::from_utf8_lossy(&out.stderr).trim() {
-        "" => Err(message),
-        detail => Err(format!("{message}\n{detail}")),
+        "" => message,
+        detail => format!("{message}\n{detail}"),
     }
 }
 
