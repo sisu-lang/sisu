@@ -1279,6 +1279,63 @@ fn trim_should_call_one_function_per_type() {
     );
 }
 
+/// A program that compares two distinct arrays `depth` layers deep, so that LLVM cannot fold the
+/// comparison to `true`.
+fn nested_eq_program(depth: usize) -> String {
+    let literal = format!("{}1{}", "[".repeat(depth), "]".repeat(depth));
+    format!("fn main() {{\n    let a = {literal}\n    let b = {literal}\n    print(a == b)\n}}")
+}
+
+/// The symbol of the `==` helper of the array of `i64` that is `depth` layers deep.
+fn nested_eq_helper(depth: usize) -> String {
+    format!("sisu_rc.eq.{}i64{}", "[".repeat(depth), "]".repeat(depth))
+}
+
+/// The `==` helper of an array 8 or more layers deep is `noinline`, and the helper of a smaller
+/// array is not: the cap starts at the eighth layer
+#[test]
+fn eq_helper_of_a_deep_array_should_not_be_inlined() {
+    let context = Context::create();
+    let module = compiled(&context, &nested_eq_program(9));
+    let noinline = Attribute::get_named_enum_kind_id("noinline");
+    for (depth, expected) in [(7, false), (8, true), (9, true)] {
+        let symbol = nested_eq_helper(depth);
+        let function = module
+            .get_function(&symbol)
+            .unwrap_or_else(|| panic!("{symbol} is not in the module"));
+        assert_eq!(
+            function
+                .get_enum_attribute(AttributeLoc::Function, noinline)
+                .is_some(),
+            expected,
+            "noinline on {symbol}"
+        );
+    }
+}
+
+/// At `-O2`, the helpers of the layers below 8 go into the helper of layer 8. Each helper from
+/// layer 8 up stays a function of its own
+#[test]
+fn eq_chain_of_a_deep_array_should_stay_in_separate_functions_at_o2() {
+    let context = Context::create();
+    let module = compiled(&context, &nested_eq_program(40));
+    let machine = target_machine(OptLevel::O2).expect("the host is a target");
+    optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
+    let ir = module.print_to_string().to_string();
+    let defined: Vec<&str> = ir
+        .lines()
+        .filter(|l| l.starts_with("define ") && l.contains("@\"sisu_rc.eq."))
+        .collect();
+    assert_eq!(defined.len(), 33, "the eq helpers defined:\n{defined:#?}");
+    for depth in 8..=40 {
+        let symbol = format!("@\"{}\"(", nested_eq_helper(depth));
+        assert!(
+            defined.iter().any(|l| l.contains(&symbol)),
+            "{symbol} is not defined:\n{defined:#?}"
+        );
+    }
+}
+
 /// A new block has room for exactly its length: `[v; n]` stores `n` into both the length and
 /// the capacity, whatever `n` is.
 #[test]
