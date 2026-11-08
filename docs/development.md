@@ -606,14 +606,15 @@ must pass seven properties:
      one E0033 at each use.
 
    An error matches an expected error with its code that starts at its offset,
-   or at a run of `(` that ends there: the checker starts an E0033 or an E0053
-   at the first parenthesis that wraps the expression. Then the control: the
-   first two mistakes of two different functions, together, must give the
-   errors of both, so a checker that goes quiet after one error fails. An extra
+   or at a run of `(` that ends there. The checker starts an E0033 or an E0053
+   at the first parenthesis that wraps the expression. Then comes the control.
+   The first two mistakes of two different functions, together, must give the
+   errors of both. So a checker that goes quiet after one error fails. An extra
    error is a cascade. It passes when its pair `<kind> <code>` is in
    `fuzz/known_cascades.txt`, and a pair that is not in the file fails. A fix
-   that removes a cascade removes its pair, and no change adds one. Property 7
-   runs after property 6, before the builds.
+   that removes a cascade removes its pair. Later steps of the diagnostics
+   foundation remove pairs and add none. Property 7 runs after property 6,
+   before the builds.
 
 Name the target with `--target`, before the other arguments:
 

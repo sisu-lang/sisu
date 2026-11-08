@@ -25,6 +25,8 @@ use std::sync::{Arc, LazyLock, Mutex, Once};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use rustc_hash::FxHashMap;
+
 use crate::codegen::OptLevel;
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::generate::{self, Answer, BoundSite, Generated, Kind, Known, Mistake};
@@ -103,7 +105,7 @@ struct Run {
 struct Failure {
     property: u8,
     detail: String,
-    /// The broken copy of a failed property 6, for the dump.
+    /// The broken copy of a failed property 6 or 7, for the dump.
     broken: Option<String>,
 }
 
@@ -125,7 +127,7 @@ struct Current {
     dir: PathBuf,
     /// Set by a property failure before its panic: the property line and the failed builds.
     failure: Option<(String, String)>,
-    /// The broken copy that failed property 6.
+    /// The broken copy that failed property 6 or 7.
     broken: Option<String>,
 }
 
@@ -392,6 +394,9 @@ fn judge_mistakes(g: &Generated, seen: Option<&Path>) -> Result<(), Failure> {
 /// The checker's errors on `g.program` with each of `mistakes` applied, against their errors. An
 /// expected error matches an error with its code that starts at its offset, or at a run of `(`
 /// that ends there. Each error matches at most one. Any other error is a cascade.
+///
+/// The matching is linear: the expected errors are counted by code and offset, and each error
+/// looks up the offsets of the run of `(` that starts at it.
 fn judge_edit(g: &Generated, mistakes: &[&Mistake], seen: Option<&Path>) -> Result<(), Failure> {
     // From the last edit to the first, so that an edit leaves the offsets before it as they are.
     let mut edits = mistakes.to_vec();
@@ -415,7 +420,7 @@ fn judge_edit(g: &Generated, mistakes: &[&Mistake], seen: Option<&Path>) -> Resu
         errors.clear();
     }
     // Each expected error: its code and its offset in `changed`, after the edits before it.
-    let mut expected: Vec<(&str, usize)> = (mistakes.iter())
+    let expected: Vec<(&str, usize)> = (mistakes.iter())
         .flat_map(|m| &m.errors)
         .map(|&(code, at)| {
             let shifted = (edits.iter().filter(|e| e.at.end <= at))
@@ -423,23 +428,36 @@ fn judge_edit(g: &Generated, mistakes: &[&Mistake], seen: Option<&Path>) -> Resu
             (code, shifted)
         })
         .collect();
+    let mut unmatched: FxHashMap<(&str, usize), usize> = FxHashMap::default();
+    for &key in &expected {
+        *unmatched.entry(key).or_default() += 1;
+    }
     let mut extra = Vec::new();
     for error in &errors {
         let (code, start) = (error.code().as_str(), error.span().start());
-        let found = expected.iter().position(|&(want, at)| {
-            let run = changed.as_bytes().get(start..at);
-            want == code && run.is_some_and(|run| run.iter().all(|&b| b == b'('))
-        });
-        match found {
-            Some(i) => drop(expected.remove(i)),
-            None => extra.push(code),
+        // The offsets of the run of `(` that starts at the error, and the one after it.
+        let mut at = start;
+        let found = loop {
+            if let Some(count) = unmatched.get_mut(&(code, at)).filter(|count| **count > 0) {
+                *count -= 1;
+                break true;
+            }
+            if changed.as_bytes().get(at) != Some(&b'(') {
+                break false;
+            }
+            at += 1;
+        };
+        if !found {
+            extra.push(code);
         }
     }
     let all_errors = errors.len();
-    let known = |code: &str, m: &Mistake| known_cascades().contains(&(m.kind, code.to_string()));
+    let known = |code: &str, m: &Mistake| {
+        (known_cascades().iter()).any(|(kind, known)| *kind == m.kind && known == code)
+    };
     let what = if all_errors == 0 {
         Some("reports no error".to_string())
-    } else if let Some(&(code, at)) = expected.first() {
+    } else if let Some(&(code, at)) = (expected.iter()).find(|key| unmatched[key] > 0) {
         let (line, col) = LineIndex::new(&changed).line_col(&changed, at);
         Some(format!("misses {code} at {line}:{col}"))
     } else if let Some(code) = extra
@@ -457,19 +475,7 @@ fn judge_edit(g: &Generated, mistakes: &[&Mistake], seen: Option<&Path>) -> Resu
         None
     };
     if let Some(what) = what {
-        let index = LineIndex::new(&g.program);
-        let mut detail = String::new();
-        for m in mistakes {
-            let (line, col) = index.line_col(&g.program, m.at.start);
-            let old = &g.program[m.at.clone()];
-            let kind = m.kind.name();
-            writeln!(
-                detail,
-                "`{}` replaces `{old}` at {line}:{col} ({kind})",
-                m.by
-            )
-            .expect("a write to a string should not fail");
-        }
+        let detail = describe(g, mistakes);
         let rendered = render("broken", &changed, &diagnostics);
         return Err(Failure {
             broken: Some(changed),
@@ -477,49 +483,81 @@ fn judge_edit(g: &Generated, mistakes: &[&Mistake], seen: Option<&Path>) -> Resu
         });
     }
     if let Some(seen) = seen {
+        // A pair that more than one mistake knows has an unknown cause, so it is not seen.
         let lines: Vec<String> = (extra.iter())
-            .flat_map(|code| {
-                (mistakes.iter())
-                    .filter(|m| known(code, m))
-                    .map(move |m| format!("{} {code}\n", m.kind.name()))
+            .filter_map(|code| {
+                let mut knowers = mistakes.iter().filter(|m| known(code, m));
+                let (first, second) = (knowers.next()?, knowers.next());
+                second
+                    .is_none()
+                    .then(|| format!("{} {code}\n", first.kind.name()))
             })
             .collect();
-        let appended = lines.first().map_or(Ok(()), |_| {
-            let mut file = OpenOptions::new().append(true).create(true).open(seen)?;
-            // One `write_all` of one line each, because more than one fuzz process appends.
-            lines
-                .iter()
-                .try_for_each(|line| file.write_all(line.as_bytes()))
-        });
-        appended.unwrap_or_else(|e| panic!("the fuzzer should append to {}: {e}", seen.display()));
+        append_lines(seen, &lines);
     }
     Ok(())
 }
 
+/// Each of `mistakes` as a line: "`<by>` replaces `<old>` at <line>:<col> (<kind>)", with the
+/// position in `g.program`.
+fn describe(g: &Generated, mistakes: &[&Mistake]) -> String {
+    let index = LineIndex::new(&g.program);
+    let mut detail = String::new();
+    for m in mistakes {
+        let (line, col) = index.line_col(&g.program, m.at.start);
+        let old = &g.program[m.at.clone()];
+        let kind = m.kind.name();
+        writeln!(
+            detail,
+            "`{}` replaces `{old}` at {line}:{col} ({kind})",
+            m.by
+        )
+        .expect("a write to a string should not fail");
+    }
+    detail
+}
+
+/// Appends `lines` to the file `seen`, which it makes when it is not there. It opens the file
+/// only when there is a line. Each line is one `write_all`, because more than one fuzz process
+/// appends to the file.
+fn append_lines(seen: &Path, lines: &[String]) {
+    let appended = lines.first().map_or(Ok(()), |_| {
+        let mut file = OpenOptions::new().append(true).create(true).open(seen)?;
+        lines
+            .iter()
+            .try_for_each(|line| file.write_all(line.as_bytes()))
+    });
+    appended.unwrap_or_else(|e| panic!("the fuzzer should append to {}: {e}", seen.display()));
+}
+
 /// The pairs of `fuzz/known_cascades.txt`, parsed once.
 fn known_cascades() -> &'static [(Kind, String)] {
-    static PAIRS: LazyLock<Vec<(Kind, String)>> = LazyLock::new(|| {
-        let text = include_str!("../../../fuzz/known_cascades.txt");
-        (text.lines().enumerate())
-            .filter(|(_, line)| !line.trim().is_empty() && !line.starts_with('#'))
-            .map(|(n, line)| {
-                let mut words = line.split_whitespace();
-                let pair = (
-                    words.next().and_then(Kind::named),
-                    words.next(),
-                    words.next(),
-                );
-                let (Some(kind), Some(code), None) = pair else {
-                    panic!(
-                        "fuzz/known_cascades.txt line {} is not `<kind> <code>`: {line}",
-                        n + 1
-                    )
-                };
-                (kind, code.to_string())
-            })
-            .collect()
-    });
+    static PAIRS: LazyLock<Vec<(Kind, String)>> =
+        LazyLock::new(|| parse_cascades(include_str!("../../../fuzz/known_cascades.txt")));
     &PAIRS
+}
+
+/// The pairs of `text`, one `<kind> <code>` on each line that is not empty and does not start with
+/// `#`. A line of another form panics with its number.
+fn parse_cascades(text: &str) -> Vec<(Kind, String)> {
+    (text.lines().enumerate())
+        .filter(|(_, line)| !line.trim().is_empty() && !line.starts_with('#'))
+        .map(|(n, line)| {
+            let mut words = line.split_whitespace();
+            let pair = (
+                words.next().and_then(Kind::named),
+                words.next(),
+                words.next(),
+            );
+            let (Some(kind), Some(code), None) = pair else {
+                panic!(
+                    "fuzz/known_cascades.txt line {} is not `<kind> <code>`: {line}",
+                    n + 1
+                )
+            };
+            (kind, code.to_string())
+        })
+        .collect()
 }
 
 /// Properties 1 and 2: `source` checks with no error, W0010 or W0011, and its MIR certifies and its
@@ -847,7 +885,8 @@ enum Force {
     Stdout,
     /// The build step panics, as a compiler bug would.
     CompilerPanic,
-    /// Each bound site's replacement conforms to its bound.
+    /// Each bound site's replacement conforms to its bound, and each mistake's edit is not
+    /// applied.
     Conforming,
     /// The build step panics on a thread of its own, as a codegen worker would.
     WorkerPanic,
@@ -903,7 +942,8 @@ mod tests {
     use super::{
         Answer, BUILDS, Exit, FORCE, Force, Known, LIMIT, Run, build, builds, checked, is_marked,
         judge, judge_bounds, judge_builds, judge_edit, judge_known, judge_marked, judge_mistakes,
-        judge_pair, judge_source, known_cascades, program, program_in, run, runtime,
+        judge_pair, judge_source, known_cascades, parse_cascades, program, program_in, run,
+        runtime,
     };
     use crate::diagnostic::Severity;
     use crate::fresh_names;
@@ -2315,11 +2355,37 @@ mod tests {
     fn property_7_should_write_each_known_pair_that_it_allows() {
         let scratch = Scratch::new();
         let seen = scratch.0.join("seen.txt");
+        // A line of another fuzz process, which the append must keep.
+        fs::write(&seen, "literal E0032\n").expect("the test should write the file");
         let g = with_mistakes(KNOWN, vec![known_mistake()]);
         judge_mistakes(&g, Some(&seen)).expect("`local E0050` is in the baseline");
         assert_eq!(
             fs::read_to_string(&seen).ok().as_deref(),
-            Some("local E0050\n")
+            Some("literal E0032\nlocal E0050\n")
+        );
+    }
+
+    /// GIVEN a control where only the `local` mistake knows the extra E0050
+    /// WHEN `judge_mistakes` checks it with a `seen` file
+    /// THEN it passes, and the file holds `local E0050` for the mistake alone and for the control.
+    #[test]
+    fn property_7_should_pass_a_control_whose_pair_is_known_for_one_kind() {
+        let program = format!("fn f1(depth: i64) -> i64 {{\n    5\n}}\n{KNOWN}");
+        let five = nth(&program, "5", 0);
+        let literal = Mistake {
+            function: Some(0),
+            ..mistake(Kind::Literal, (five, "5"), "true", &[("E0032", five)])
+        };
+        let zz = nth(&program, "zz", 1);
+        let local = mistake(Kind::Local, (zz, "zz"), "yy", &[("E0033", zz)]);
+        let scratch = Scratch::new();
+        let seen = scratch.0.join("seen.txt");
+        let g = with_mistakes(&program, vec![literal, local]);
+        judge_mistakes(&g, Some(&seen)).expect("`local E0050` is known for the local kind");
+        // Once from the mistake alone, and once from the control, where only one kind knows it.
+        assert_eq!(
+            fs::read_to_string(&seen).ok().as_deref(),
+            Some("local E0050\nlocal E0050\n")
         );
     }
 
@@ -2345,6 +2411,12 @@ mod tests {
         judge_edit(&with_mistakes(&program, vec![]), &[&a, &b], Some(&seen))
             .expect("`local E0050` is in the baseline");
         assert_eq!(fs::read_to_string(&seen).unwrap_or_default(), "");
+    }
+
+    #[test]
+    #[should_panic(expected = "line 2")]
+    fn parse_cascades_should_name_the_line_of_a_bad_pair() {
+        parse_cascades("# a comment\nlocal E0050 extra\n");
     }
 
     #[test]
