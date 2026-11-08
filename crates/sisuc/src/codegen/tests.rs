@@ -4036,6 +4036,138 @@ fn partition_makes_its_array_unique_once() {
     assert!(bounds <= 2, "{bounds} bounds checks in\n{partition}");
 }
 
+/// A tail call whose result is an array is a loop at `-O2`. Both branches of the `if` join in
+/// one return block, and `-O2` splits the array slot into one `phi` for each field. Codegen
+/// returns the call's value in the call's own block, so that `-O2` still sees `ret %call`.
+#[test]
+fn tail_call_returning_an_array_should_be_a_loop_at_o2() {
+    let context = Context::create();
+    let module = compiled(
+        &context,
+        "fn walk(acc: [i64], n: i64) -> [i64] {\n    if n == 0 {\n        acc\n    } else {\n        walk(acc, n - 1)\n    }\n}\n\nfn main() {\n    let k = (read_line() ?? \"\").len()\n    print(walk([1; k + 2], 100_000).len())\n}",
+    );
+    keep_functions(&module, "walk");
+    let machine = target_machine(OptLevel::O2).expect("the host is a target");
+    optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
+    let ir = module.print_to_string().to_string();
+    let walk = function_body(&ir, "@sisu.walk(");
+    assert!(
+        !walk.contains("@sisu.walk("),
+        "walk should loop, not call itself:\n{walk}"
+    );
+}
+
+/// A function of `locals` strings and `locals + 1` arms. Arm `j` passes the string `j` to `g`,
+/// so the other strings stay live after the call. The last arm makes a text. All arms join in
+/// one return block that holds one `release?` for each string.
+fn shared_cleanup(locals: usize) -> String {
+    let lets = (1..=locals)
+        .map(|i| format!("    let s{i} = \"x\" + k.to_string()\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    let arms = (1..=locals)
+        .map(|j| format!("        {j} => g({j}, s{j})\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    format!(
+        "fn g(k: i64, s: string) -> string {{\n    s + k.to_string()\n}}\n\nfn f(k: i64) -> string {{\n{lets}    match k {{\n{arms}        _ => \"\"\n    }}\n}}\n\nfn main() {{\n    print(f((read_line() ?? \"\").len()).len())\n}}\n"
+    )
+}
+
+/// The `ret` instructions in the function `f` of the module that `shared_cleanup(locals)` makes.
+fn returns_of_shared_cleanup(locals: usize) -> usize {
+    let context = Context::create();
+    let ir = compiled(&context, &shared_cleanup(locals))
+        .print_to_string()
+        .to_string();
+    function_body(&ir, "@sisu.f(")
+        .lines()
+        .filter(|line| line.trim_start().starts_with("ret "))
+        .count()
+}
+
+/// A return block with as many cleanup statements as the limit allows is copied into the block
+/// of each call that reaches it: each of the arms with a call has its own `ret`, and the
+/// last arm uses the shared one.
+#[test]
+fn return_block_within_the_copy_limit_should_be_copied_into_each_call_block() {
+    assert_eq!(
+        returns_of_shared_cleanup(TAIL_COPY_LIMIT),
+        TAIL_COPY_LIMIT + 1
+    );
+}
+
+/// A return block with one cleanup statement more than the limit is not copied, so the work stays
+/// linear. The function has one `ret`.
+#[test]
+fn return_block_over_the_copy_limit_should_not_be_copied() {
+    assert_eq!(returns_of_shared_cleanup(TAIL_COPY_LIMIT + 1), 1);
+}
+
+/// A function of `arms` calls in an `else if` chain, with `TAIL_COPY_LIMIT` strings. Arm `j`
+/// passes the string `j % TAIL_COPY_LIMIT` to `g` and returns the result, so the other strings
+/// stay live after the call. The arms join through a chain of empty `goto` blocks into one return
+/// block that releases each string.
+fn elif_arms(arms: usize) -> String {
+    let lets = (0..TAIL_COPY_LIMIT)
+        .map(|i| format!("    let s{i} = \"x\" + k.to_string()\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    let chain = (1..=arms)
+        .map(|j| {
+            format!(
+                "if k == {j} {{\n        g({j}, s{})\n    }}",
+                j % TAIL_COPY_LIMIT
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" else ");
+    format!(
+        "fn g(k: i64, s: string) -> string {{\n    s + k.to_string()\n}}\n\nfn f(k: i64) -> string {{\n{lets}    {chain} else {{\n        \"\"\n    }}\n}}\n\nfn main() {{\n    print(f((read_line() ?? \"\").len()).len())\n}}\n"
+    )
+}
+
+/// The steps of `tail_return` for `src`: the blocks it walks and the statements it reads.
+fn tail_steps(src: &str) -> usize {
+    TAIL_STEPS.set(0);
+    let context = Context::create();
+    compiled(&context, src);
+    TAIL_STEPS.get()
+}
+
+/// `n` calls reach one return block of `n` cleanup statements, which is over the limit. Each call
+/// must stop at the size of the block, and not read its statements: reading them makes the walk
+/// `n` times `n`.
+#[test]
+fn tail_return_should_not_read_the_statements_of_a_block_over_the_limit() {
+    let steps = |n: usize| tail_steps(&shared_cleanup(n));
+    assert_near_linear(steps(100), steps(200), steps(300));
+}
+
+/// `n` arms of an `else if` chain each call and return the result, and each copies a return block
+/// of `TAIL_COPY_LIMIT` statements. The arms join through a chain of `n` empty `goto` blocks. A
+/// walk that follows the chain again for each block makes the steps `n` times `n`. The memo of
+/// `empty_goto_ends` keeps them linear. At 20, 40 and 60 arms the steps are 265, 525 and 785.
+/// Without the memo they are 436, 1266 and 2496. The size stays at 60: an `else if` chain of 100
+/// arms overflows the stack of a test thread in a debug build.
+#[test]
+fn empty_goto_chain_should_be_walked_in_linear_steps_when_each_arm_calls() {
+    let steps = |n: usize| tail_steps(&elif_arms(n));
+    assert_near_linear(steps(20), steps(40), steps(60));
+}
+
+/// A call into a `let` before an endless loop: the block of the call goes to a block that goes
+/// to itself and never reaches a `return`. The walk from the call must stop.
+#[test]
+fn call_before_an_endless_loop_should_compile() {
+    let context = Context::create();
+    let module = compiled(
+        &context,
+        "fn g(n: i64) -> [i64] {\n    [n]\n}\n\nfn f(n: i64) -> [i64] {\n    let _a = g(n)\n    loop {}\n}\n\nfn main() {\n    if (read_line() ?? \"\").len() > 5 {\n        print(f(1).len())\n    }\n    print(1)\n}",
+    );
+    assert!(module.get_function("sisu.f").is_some());
+}
+
 /// `ys[i % ys.len()]` with a non-negative `i` is in range only because a length is never
 /// negative: the `!range` on the length load lets `-O2` drop its bounds check.
 #[test]

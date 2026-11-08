@@ -1,0 +1,218 @@
+// The shapes of `tests/programs/tailreturns.sisu` with 10 calls each. The case checks that the
+// statements that codegen copies into a call's block keep the reference counts balanced. The
+// last functions leave an owned value live on the call path, so that the copied `release?`
+// releases it: without the copy, `--rc-checks` finds a live object at exit.
+fn walk_array(acc: [i64], n: i64) -> [i64] {
+    if n == 0 {
+        acc
+    } else {
+        walk_array(acc, n - 1)
+    }
+}
+
+fn walk_string(acc: string, n: i64) -> string {
+    if n == 0 {
+        acc
+    } else {
+        walk_string(acc, n - 1)
+    }
+}
+
+fn walk_optional_array(acc: [i64]?, n: i64) -> [i64]? {
+    if n == 0 {
+        acc
+    } else {
+        walk_optional_array(acc, n - 1)
+    }
+}
+
+fn walk_optional_int(x: i64?, n: i64) -> i64? {
+    if n == 0 {
+        x
+    } else {
+        walk_optional_int(x, n - 1)
+    }
+}
+
+fn walk_match(acc: [i64], n: i64) -> [i64] {
+    match n {
+        0 => acc
+        _ => walk_match(acc, n - 1)
+    }
+}
+
+fn walk_else_if(acc: [i64], n: i64) -> [i64] {
+    if n == 0 {
+        acc
+    } else if n == -1 {
+        []
+    } else {
+        walk_else_if(acc, n - 1)
+    }
+}
+
+fn walk_nested(acc: [i64], n: i64) -> [i64] {
+    if n == 0 {
+        acc
+    } else {
+        if n == -1 {
+            []
+        } else {
+            walk_nested(acc, n - 1)
+        }
+    }
+}
+
+fn walk_match_if(acc: [i64], n: i64) -> [i64] {
+    match n {
+        0 => acc
+        _ => if n < 0 { [] } else { walk_match_if(acc, n - 1) }
+    }
+}
+
+fn walk_scope(acc: [i64], n: i64) -> [i64] {
+    if n == 0 {
+        acc
+    } else {
+        let t = acc
+        if n == -1 {
+            []
+        } else {
+            walk_scope(t, n - 1)
+        }
+    }
+}
+
+fn walk_long_else_if(acc: [i64], n: i64) -> [i64] {
+    if n == 0 {
+        acc
+    } else if n == -1 {
+        []
+    } else if n == -2 {
+        []
+    } else if n == -3 {
+        []
+    } else if n == -4 {
+        []
+    } else if n == -5 {
+        []
+    } else if n == -6 {
+        []
+    } else if n == -7 {
+        []
+    } else if n == -8 {
+        []
+    } else if n == -9 {
+        []
+    } else {
+        walk_long_else_if(acc, n - 1)
+    }
+}
+
+fn walk_deep_nest(acc: [i64], n: i64) -> [i64] {
+    if n == 0 {
+        acc
+    } else {
+        if n == -1 {
+            []
+        } else {
+            if n == -2 {
+                []
+            } else {
+                if n == -3 {
+                    []
+                } else {
+                    if n == -4 {
+                        []
+                    } else {
+                        if n == -5 {
+                            []
+                        } else {
+                            if n == -6 {
+                                []
+                            } else {
+                                if n == -7 {
+                                    []
+                                } else {
+                                    if n == -8 {
+                                        []
+                                    } else {
+                                        if n == -9 {
+                                            []
+                                        } else {
+                                            walk_deep_nest(acc, n - 1)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+enum Box {
+    Of([i64])
+}
+
+extend Box {
+    fn walk(self, n: i64) -> [i64] {
+        if n == 0 {
+            match self {
+                Box.Of(a) => a
+            }
+        } else {
+            self.walk(n - 1)
+        }
+    }
+}
+
+fn make(n: i64) -> [string] {
+    ["é", n.to_string()]
+}
+
+fn pick(acc: [string], n: i64) -> [string] {
+    let other = ["kept", n.to_string()]
+    if n == 0 {
+        acc
+    } else if n == 1 {
+        other
+    } else {
+        make(n)
+    }
+}
+
+fn ends(acc: [string]?, n: i64) -> [string] {
+    match acc {
+        Some(a) => if n == 0 { a } else { make(n) }
+        None => make(n)
+    }
+}
+
+fn main() {
+    let k = (read_line() ?? "").len()
+    print(walk_array([1; k + 2], 10).len())  // 2
+    print(walk_string("ab" + k.to_string(), 10).len())  // 3
+    print((walk_optional_array(Some([1; k + 2]), 10) ?? []).len())  // 2
+    print(walk_optional_int(Some(k + 2), 10) ?? 0)  // 2
+    print(walk_match([1; k + 2], 10).len())  // 2
+    print(walk_else_if([1; k + 2], 10).len())  // 2
+    print(walk_nested([1; k + 2], 10).len())  // 2
+    print(walk_match_if([1; k + 2], 10).len())  // 2
+    print(Box.Of([1; k + 2]).walk(10).len())  // 2
+    print(walk_scope([1; k + 2], 10).len())  // 2
+    print(walk_long_else_if([1; k + 2], 10).len())  // 2
+    print(walk_deep_nest([1; k + 2], 10).len())  // 2
+    // Each n prints three lines:
+    // 0: ["own"]  ["some"]  ["é", "0"]
+    // 1: ["kept", "1"]  ["é", "1"]  ["é", "1"]
+    // 2: ["é", "2"] three times
+    // 3: ["é", "3"] three times
+    for n in 0..4 {
+        print(pick(["own"], n))
+        print(ends(Some(["some"]), n))
+        print(ends(None, n))
+    }
+}

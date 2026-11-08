@@ -80,6 +80,7 @@ const SMALL_STACK: &[&str] = &[
     "eqtrail",
     "tailfresh",
     "tailpass",
+    "tailreturns",
     "showright",
     "showleft",
     "showmutual",
@@ -1137,6 +1138,17 @@ fn tail_call_with_a_fresh_string_should_run_in_a_small_stack() {
 #[test]
 fn tail_call_with_a_borrowed_string_should_run_in_a_small_stack() {
     assert_small_stack_prints_at_o2("tailpass", "2\n");
+}
+
+/// GIVEN the `tailreturns` program, whose twelve functions each make 100 000 tail calls
+/// AND each call returns an aggregate: an array, a string or an optional
+/// AND the results join through `match`, `else if`, a nested `if`, a method or a nested scope
+/// AND two functions have ten `else if` arms or ten nested `if`s
+/// WHEN it is built with `-O2` and runs under a 256 KiB stack
+/// THEN it exits 0 and prints each result
+#[test]
+fn tail_call_returning_an_aggregate_should_run_in_a_small_stack() {
+    assert_small_stack_prints_at_o2("tailreturns", "2\n3\n2\n2\n2\n2\n2\n2\n2\n2\n2\n2\n");
 }
 
 /// GIVEN the `tailpass` program with 100 000 nested calls
