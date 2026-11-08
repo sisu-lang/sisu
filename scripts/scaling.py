@@ -56,7 +56,7 @@ STAGES = [
 LLVM_STAGES = ("optimize", "object")
 # The shapes that the sweep also builds at -O2, as the case `<shape> -O2`. Under callgrind, -O2
 # costs much more than -O0, so the list holds the shapes that give the -O2 passes the most work.
-# `mut call width` is not in it: under callgrind, its -O2 build at 8n ran for more than 25 minutes.
+# `mut call width` is not in it (#621): under callgrind, its -O2 build at 8n ran over 25 minutes.
 O2_SHAPES = ("functions", "statements", "interpolations", "prints", "nested array ==")
 O2_SUFFIX = " -O2"
 # At -O2, the stages before codegen do the same work as at -O0, so a -O2 case judges only these.
