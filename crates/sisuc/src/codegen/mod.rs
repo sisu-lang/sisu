@@ -1761,9 +1761,9 @@ pub(crate) fn keep_functions(module: &Module<'_>, names: &str) {
 }
 
 /// The most statements that `tail_return` copies for one call, and the most blocks that hold
-/// statements that it walks. A long list of cleanup statements means that a live value is
-/// released after the call, so the call cannot be a tail call. The limit keeps the work linear in
-/// the size of the function.
+/// statements that it walks. The limit keeps the work linear in the size of the function. A call
+/// with more cleanup statements after it stays a call. This is so even when each one releases
+/// nothing at run time, such as a `release?` of a value that the call moved.
 const TAIL_COPY_LIMIT: usize = 8;
 
 /// For each block of `f`, the first block that its chain of empty `goto` blocks reaches. A block

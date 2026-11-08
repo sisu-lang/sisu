@@ -4097,9 +4097,8 @@ fn return_block_within_the_copy_limit_should_be_copied_into_each_call_block() {
     );
 }
 
-/// A return block with one cleanup statement more than the limit is not copied: a long list
-/// means that a live value is released after the call, so no call is a tail call. The function
-/// has one `ret`.
+/// A return block with one cleanup statement more than the limit is not copied, so the work stays
+/// linear. The function has one `ret`.
 #[test]
 fn return_block_over_the_copy_limit_should_not_be_copied() {
     assert_eq!(returns_of_shared_cleanup(TAIL_COPY_LIMIT + 1), 1);
