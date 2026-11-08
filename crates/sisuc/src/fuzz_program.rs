@@ -340,6 +340,11 @@ fn judge_site(g: &Generated, site: &BoundSite) -> Result<(), Failure> {
         broken = g.program.clone() + generate::NO_BOUND_CLASS;
     }
     let (_, diagnostics) = front_end::front_end(&broken);
+    #[cfg(test)]
+    assert!(
+        FORCE.get() != Some(Force::CheckerPanic),
+        "the forced checker panic in property 6"
+    );
     let mut errors = diagnostics
         .iter()
         .filter(|d| d.severity() == Severity::Error)
@@ -416,6 +421,11 @@ fn judge_edit(g: &Generated, mistakes: &[&Mistake], seen: Option<&Path>) -> Resu
         changed = g.program.clone();
     }
     let (_, diagnostics) = front_end::front_end(&changed);
+    #[cfg(test)]
+    assert!(
+        FORCE.get() != Some(Force::CheckerPanic),
+        "the forced checker panic in property 7"
+    );
     #[cfg_attr(not(test), expect(unused_mut, reason = "only a test forces a failure"))]
     let mut errors: Vec<&Diagnostic> = (diagnostics.iter())
         .filter(|d| d.severity() == Severity::Error)
@@ -898,6 +908,8 @@ enum Force {
     WorkerPanic,
     /// Each check of two mistakes together sees no error.
     QuietControl,
+    /// The checker panics, as a compiler bug would, in property 6 and in property 7.
+    CheckerPanic,
 }
 
 #[cfg(test)]
@@ -3156,5 +3168,72 @@ mod tests {
         let failure = read("failure.txt");
         assert!(failure.starts_with("property 6: "), "{failure}");
         assert_eq!(read("program.sisu"), g.program);
+    }
+
+    /// The first seed of the series with a mistake and no bound site. So property 7 is the first
+    /// property that runs the checker on a copy.
+    fn mistake_seed() -> u64 {
+        (0..64)
+            .find(|&n| {
+                let g = generate(&seed(n));
+                g.bound_sites.is_empty() && !g.mistakes.is_empty()
+            })
+            .expect("a seed of the first 64 should have a mistake and no bound site")
+    }
+
+    /// Reads `name` of the dump in `scratch`.
+    fn dump_file(scratch: &Path, name: &str) -> String {
+        fs::read_to_string(scratch.join("dump").join(name))
+            .unwrap_or_else(|e| panic!("the dump should hold {name}: {e}"))
+    }
+
+    /// A checker panic in property 6 leaves the copy that the checker read, in `broken.sisu`.
+    #[test]
+    fn a_checker_panic_in_a_bound_check_should_leave_the_broken_copy_in_the_dump() {
+        if env::var_os(CHILD).is_some() {
+            crate::on_compiler_stack(|| {
+                FORCE.set(Some(Force::CheckerPanic));
+                program(&seed(bound_seed()), &runtime());
+            });
+            return;
+        }
+        let scratch = Scratch::new();
+        let out = child(
+            "a_checker_panic_in_a_bound_check_should_leave_the_broken_copy_in_the_dump",
+            &scratch.0,
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{stderr}");
+        let g = generate(&seed(bound_seed()));
+        assert_record(&stderr, "compiler panic\n==> program\n", &g, &scratch.0);
+        assert_eq!(
+            dump_file(&scratch.0, "broken.sisu"),
+            g.broken(&g.bound_sites[0])
+        );
+    }
+
+    /// A checker panic in property 7 leaves the copy with the first mistake, in `broken.sisu`.
+    #[test]
+    fn a_checker_panic_in_a_mistake_check_should_leave_the_broken_copy_in_the_dump() {
+        if env::var_os(CHILD).is_some() {
+            crate::on_compiler_stack(|| {
+                FORCE.set(Some(Force::CheckerPanic));
+                program(&seed(mistake_seed()), &runtime());
+            });
+            return;
+        }
+        let scratch = Scratch::new();
+        let out = child(
+            "a_checker_panic_in_a_mistake_check_should_leave_the_broken_copy_in_the_dump",
+            &scratch.0,
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{stderr}");
+        let g = generate(&seed(mistake_seed()));
+        assert_record(&stderr, "compiler panic\n==> program\n", &g, &scratch.0);
+        let m = &g.mistakes[0];
+        let mut changed = g.program.clone();
+        changed.replace_range(m.at.clone(), &m.by);
+        assert_eq!(dump_file(&scratch.0, "broken.sisu"), changed);
     }
 }
