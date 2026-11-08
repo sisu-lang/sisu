@@ -43,7 +43,7 @@ row in `probes.md`.
   skips test code. It prints each list, then the total:
 
   ```console
-  $ python3 -I .agents/skills/audit-sisu/scripts/number_lists.py . HEAD | tail -1
+  $ python3 -I .agents/skills/audit-sisu/scripts/number_lists.py . HEAD
   ```
 
 - **Module order.** The entries of `BACK_EDGES` in
@@ -57,7 +57,7 @@ row in `probes.md`.
   Where cell of that row. A caller that the row does not name is new debt:
 
   ```console
-  $ grep -n 'function_type(' crates/sisuc/src/codegen/*.rs | grep -v 'fn function_type'
+  $ grep -rn --include=*.rs 'function_type(' crates/sisuc/src/codegen | grep -v 'fn function_type'
   ```
 
 ## A new hub
