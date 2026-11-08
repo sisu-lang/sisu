@@ -28,6 +28,8 @@ pub(crate) fn only_cc(name: &str) -> PathBuf {
 pub(crate) fn failing_cc(name: &str, stderr: &str) -> PathBuf {
     use std::os::unix::fs::PermissionsExt as _;
 
+    // The text goes into single quotes in the script.
+    assert!(!stderr.contains('\''), "no ' in the text of the fake cc");
     let dir = empty_dir(name);
     let cc = dir.join("cc");
     fs::write(

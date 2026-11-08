@@ -513,7 +513,7 @@ threads.
 that the runtime archive exists, and that the output's directory and the
 temporary directory exist. The temporary directory must be writable. For the
 output, either the existing file or its directory must be writable, and a
-link is not checked. On Linux, it also checks that
+symbolic link is not checked. On Linux, it also checks that
 `cc` finds the linker that `--linker` names. A failed check stops the build at once, not after the
 compile. `--allocator` picks the archive: `libsisu_runtime_mimalloc.a` by
 default, `libsisu_runtime_system.a` for `--allocator system`. The link step

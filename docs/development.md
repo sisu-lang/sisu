@@ -170,8 +170,8 @@ yourself. A program built without the flag fails under Valgrind on mimalloc's
 startup read and shows none of its Sisu allocations
 ([ADR 0031](adr/0031-compiled-programs-allocate-with-mimalloc.md)).
 On Linux, `sisu` links with `-Wl,-S`, which drops the debug information of
-the runtime archive. So Valgrind and `addr2line` show a runtime frame by its
-function name, with no file and line.
+the runtime archive. So Valgrind shows a runtime frame by its function name,
+with no file and line, and `addr2line` gives `??:?` for it.
 
 mimalloc reads the `MIMALLOC_*` variables of the environment, in `sisu` itself
 and in a default build. An option such as `MIMALLOC_VERBOSE=1` can write to
