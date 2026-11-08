@@ -483,14 +483,15 @@ fn judge_edit(g: &Generated, mistakes: &[&Mistake], seen: Option<&Path>) -> Resu
         });
     }
     if let Some(seen) = seen {
-        // A pair that more than one mistake knows has an unknown cause, so it is not seen.
+        // The pair is true when one kind knows the code, whichever mistake gave the error.
+        // No shipped pair is known for two kinds, so a code of two kinds has no test.
         let lines: Vec<String> = (extra.iter())
             .filter_map(|code| {
-                let mut knowers = mistakes.iter().filter(|m| known(code, m));
-                let (first, second) = (knowers.next()?, knowers.next());
-                second
-                    .is_none()
-                    .then(|| format!("{} {code}\n", first.kind.name()))
+                let mut kinds = mistakes.iter().filter(|m| known(code, m)).map(|m| m.kind);
+                let first = kinds.next()?;
+                kinds
+                    .all(|kind| kind == first)
+                    .then(|| format!("{} {code}\n", first.name()))
             })
             .collect();
         append_lines(seen, &lines);
@@ -2389,11 +2390,12 @@ mod tests {
         );
     }
 
-    /// GIVEN a control of two mistakes whose kinds both know the extra E0050
+    /// GIVEN a control of two `local` mistakes, so that one kind knows the extra E0050
     /// WHEN `judge_edit` checks it with a `seen` file
-    /// THEN it passes and writes no line, because it cannot tell which mistake gave the error.
+    /// THEN it passes and writes `local E0050` for each extra error, which is true whichever
+    /// mistake gave the error.
     #[test]
-    fn property_7_should_not_write_a_pair_that_both_mistakes_of_a_control_know() {
+    fn property_7_should_write_a_pair_that_one_kind_knows_for_both_mistakes_of_a_control() {
         let function = "fn f1(depth: i64) -> i64 {\n    let zz: i64? = 1\n    let a = loop { if true { break zz }\n break None }\n    depth\n}\n";
         let program = format!("{function}{KNOWN}");
         let local = |n, function| Mistake {
@@ -2410,7 +2412,29 @@ mod tests {
         let seen = scratch.0.join("seen.txt");
         judge_edit(&with_mistakes(&program, vec![]), &[&a, &b], Some(&seen))
             .expect("`local E0050` is in the baseline");
-        assert_eq!(fs::read_to_string(&seen).unwrap_or_default(), "");
+        assert_eq!(
+            fs::read_to_string(&seen).ok().as_deref(),
+            Some("local E0050\nlocal E0050\n"),
+            "one line for each of the two extra errors"
+        );
+    }
+
+    /// GIVEN a local mistake that renames the first use, with its E0033 expected at the second
+    /// WHEN `judge_mistakes` checks it
+    /// THEN it fails with "misses", because the error at the first use is not at an offset that
+    /// the walk over `(` can reach.
+    #[test]
+    fn property_7_should_fail_an_error_before_its_expected_offset() {
+        let program = "fn main() {\n    let v1 = 1\n    print(v1)\n    print(v1)\n}\n";
+        let (first, second) = (nth(program, "v1", 1), nth(program, "v1", 2));
+        let m = mistake(Kind::Local, (first, "v1"), "missing", &[("E0033", second)]);
+        let failure = judge_mistakes(&with_mistakes(program, vec![m]), None)
+            .expect_err("an error before its expected offset should not match");
+        assert!(
+            failure.detail.contains("misses E0033"),
+            "{}",
+            failure.detail
+        );
     }
 
     #[test]

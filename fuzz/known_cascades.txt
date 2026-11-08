@@ -6,8 +6,8 @@
 # A pair in this file passes. A pair that is not in this file fails property 7.
 # The nightly summary reports each pair that no input of the run gave.
 # Later steps of the diagnostics foundation remove pairs from this file. They add none.
-# A pair line has no leading space and no comment after it. A comment line starts with `#`.
-# Any other line stops the fuzzer with its number.
+# A comment line starts with `#` in its first column. A pair line has no comment after it.
+# Any other line that is not empty stops the fuzzer with its number.
 #
 # Repro: `break yy` with an unknown name gives E0033 at `yy` and E0050 at `None`.
 #   fn main() {
