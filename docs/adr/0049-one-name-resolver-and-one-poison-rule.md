@@ -40,8 +40,8 @@ The decision has four parts:
   sees only the whole program. It cannot tell which check rejected with no
   message.
 - **A rule that drops a later error by its text, as Go does
-  (`go/types/errors.go`)**: rejected. It hides a true error whose text holds
-  one of its words ("invalid operand", "invalid type").
+  (`go/types/errors.go`)**: rejected. It hides a true error when its text holds
+  "invalid operand" or "invalid type".
 
 ## Consequences
 

@@ -710,8 +710,8 @@ _Avoid_: atom, interned string
 
 **Poisoned value**:
 The result of an expression that broke a rule. Its error is reported already, so
-each check that reads it stays silent about it. It is *typed* when the source
-states its type apart from the poisoned part, and *untyped* otherwise.
+each check that reads it stays silent about that error. It is *typed* when the
+source states its type apart from the poisoned part, and *untyped* otherwise.
 _Avoid_: failed value, poison type, error type
 
 **Diagnostic**:
@@ -734,7 +734,7 @@ A secondary label marks a reason, such as the declaration that sets the expected
 type.
 
 **Note**:
-An explanation in a diagnostic with no span.
+Text in a diagnostic, with no span, that says why.
 
 **Fix**:
 An edit to the source, with a message, that resolves a diagnostic. A fix is
