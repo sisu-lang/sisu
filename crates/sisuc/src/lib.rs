@@ -438,7 +438,6 @@ struct UnitInput<'src> {
     level: OptLevel,
     rc_checks: bool,
     /// Whether the values of the IR keep their names, such as `%call`. Only the IR text shows them.
-    #[expect(dead_code, reason = "the next commit reads it")]
     keep_names: bool,
 }
 
@@ -470,6 +469,9 @@ fn each_unit<T: Send>(
             let mut unit_timings = parent.for_unit();
             let result = codegen::create_target_machine(input.level).and_then(|machine| {
                 let context = Context::create();
+                if !input.keep_names {
+                    discard_value_names(&context);
+                }
                 let module = unit_timings.time(timings::Stage::Codegen, || match &analyses {
                     None => codegen::compile(
                         &context,
@@ -504,6 +506,19 @@ fn each_unit<T: Send>(
     let (results, recorded): (Vec<_>, Vec<_>) = built.into_iter().unzip();
     timings.merge_units(recorded);
     results
+}
+
+/// Makes `context` give no name to a local value (such as `%call`), as LLVM then skips the work to
+/// make and to intern each name. A global value keeps its name. The names show only in the IR text.
+#[expect(
+    unsafe_code,
+    reason = "inkwell has no call for `LLVMContextSetDiscardValueNames`, so this calls its llvm-sys"
+)]
+fn discard_value_names(context: &Context) {
+    use inkwell::context::AsContextRef;
+
+    // SAFETY: `context` is a live context, and no value exists in it yet, so no name is lost.
+    unsafe { inkwell::llvm_sys::core::LLVMContextSetDiscardValueNames(context.as_ctx_ref(), 1) };
 }
 
 /// Prints the module for `source` before and after the pipeline, once it passes the checker. With
