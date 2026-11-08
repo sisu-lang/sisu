@@ -231,7 +231,12 @@ A pair that no nightly run gives can go:
 
 class KnownCascades(unittest.TestCase):
     def fuzz(
-        self, *args: str, cascades: str = "", status: int = 0, build_fails: bool = False
+        self,
+        *args: str,
+        cascades: str = "",
+        status: int = 0,
+        build_fails: bool = False,
+        baseline: str = BASELINE,
     ) -> tuple[int, str, str]:
         """Runs fuzz.sh in a small repository. Returns its status, its output and summary.md."""
         with tempfile.TemporaryDirectory() as repo:
@@ -242,7 +247,7 @@ class KnownCascades(unittest.TestCase):
             Path(repo, "fuzz").mkdir()
             Path(repo, "crates", "sisuc", "tests").mkdir(parents=True)
             with Path(repo, "fuzz", "known_cascades.txt").open("w", encoding="utf-8") as f:
-                f.write(BASELINE)
+                f.write(baseline)
             write_executable(Path(repo, "bin"), "cargo", CASCADES_CARGO)
             git = ["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@t"]
             subprocess.run([*git, "init", "-q"], check=True, env=ENV)
@@ -284,6 +289,17 @@ class KnownCascades(unittest.TestCase):
         self.assertIn(
             "## Known cascades\n\nEach pair of `fuzz/known_cascades.txt` occurred.\n", summary
         )
+        self.assertNotIn("Warning", summary)
+
+    def test_a_baseline_line_with_extra_white_space_should_match_its_pair(self) -> None:
+        # parse_cascades (fuzz_program.rs) splits a line on white space, so the script must too.
+        _, _, summary = self.fuzz(
+            "--target",
+            "program",
+            cascades="local E0050\ncallee E0099\n",
+            baseline="  local   E0050 \r\ncallee\tE0099 \n",
+        )
+        self.assertIn("Each pair of `fuzz/known_cascades.txt` occurred.", summary)
         self.assertNotIn("Warning", summary)
 
     def test_a_run_that_did_not_fuzz_should_have_no_cascade_section(self) -> None:
