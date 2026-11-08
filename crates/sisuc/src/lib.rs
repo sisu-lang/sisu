@@ -749,9 +749,13 @@ fn build(
     }
 }
 
-/// Checks, without compiling, that `ld` can create `output`: its directory exists and can be
-/// written, and it is not a directory. An existing output file only needs to be writable: `ld`
-/// opens it and does not touch its directory.
+/// Checks, without compiling, that `ld` can create `output`: its directory exists, and it is not
+/// a directory. What else it checks depends on what `output` is, because the linkers differ:
+/// - Nothing there: the directory needs write and search permission.
+/// - A link: no check. `ld` opens the target and does not touch the directory of the link, and a
+///   dangling link can point into another directory.
+/// - Another entry: `ld` writes it, or replaces it through its directory. The check fails only
+///   when neither can be done.
 fn check_output(output: &Path) -> Result<(), String> {
     let parent = match output.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
@@ -764,10 +768,12 @@ fn check_output(output: &Path) -> Result<(), String> {
             output.to_string_lossy()
         ));
     }
-    if output.is_file() {
-        check_access(output, libc::W_OK, "output file")
-    } else {
-        check_access(parent, libc::W_OK | libc::X_OK, "output directory")
+    let directory = || check_access(parent, libc::W_OK | libc::X_OK, "output directory");
+    match fs::symlink_metadata(output) {
+        Err(_) => directory(),
+        Ok(meta) if meta.is_symlink() => Ok(()),
+        Ok(_) => check_access(output, libc::W_OK, "output file")
+            .or_else(|file_error| directory().map_err(|_| file_error)),
     }
 }
 
@@ -775,8 +781,14 @@ fn check_output(output: &Path) -> Result<(), String> {
 /// writes an object file there for each codegen unit.
 fn check_temp_dir() -> Result<(), String> {
     let dir = std::env::temp_dir();
-    check_directory(&dir, "temporary directory")?;
-    check_access(&dir, libc::W_OK | libc::X_OK, "temporary directory")
+    // An empty `TMPDIR` is the current directory.
+    let dir = if dir.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        &dir
+    };
+    check_directory(dir, "temporary directory")?;
+    check_access(dir, libc::W_OK | libc::X_OK, "temporary directory")
 }
 
 /// Checks that `dir` exists and is a directory. `what` names it in the message.
