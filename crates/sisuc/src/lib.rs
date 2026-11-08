@@ -780,6 +780,10 @@ fn build(
 ///   link through its directory, so the linker decides.
 /// - Another entry: `ld` writes it, or replaces it through its directory. The check fails only
 ///   when neither can be done.
+/// - Another entry on macOS: Apple's `ld64` refuses an output that it cannot write, so the file
+///   must be writable. `ld64` removes a regular file first, and ignores a failure. When the
+///   directory cannot be written, the file stays and keeps its mode, so it must already be
+///   executable.
 ///
 /// An output in a sticky directory, such as `/tmp`, that another user owns passes this check and
 /// can still fail late.
@@ -799,6 +803,19 @@ fn check_output(output: &Path) -> Result<(), String> {
     match fs::symlink_metadata(output) {
         Err(_) => directory(),
         Ok(meta) if meta.is_symlink() => Ok(()),
+        Ok(meta) if cfg!(target_os = "macos") => {
+            check_access(output, libc::W_OK, "output file")?;
+            if meta.is_file()
+                && check_access(output, libc::X_OK, "output file").is_err()
+                && let Err(dir_error) = directory()
+            {
+                return Err(format!(
+                    "output file {} is not executable, and ld cannot replace it: {dir_error}",
+                    output.display()
+                ));
+            }
+            Ok(())
+        }
         Ok(_) => check_access(output, libc::W_OK, "output file")
             .or_else(|file_error| directory().map_err(|_| file_error)),
     }
