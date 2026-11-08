@@ -4108,7 +4108,7 @@ fn return_block_over_the_copy_limit_should_not_be_copied() {
 /// A function of `arms` calls in an `else if` chain, with `TAIL_COPY_LIMIT` strings. Arm `j`
 /// passes the string `j % TAIL_COPY_LIMIT` to `g` and returns the result, so the other strings
 /// stay live after the call. The arms join through a chain of empty `goto` blocks into one return
-/// block that holds a `release?` for each string.
+/// block that releases each string.
 fn elif_arms(arms: usize) -> String {
     let lets = (0..TAIL_COPY_LIMIT)
         .map(|i| format!("    let s{i} = \"x\" + k.to_string()\n"))
