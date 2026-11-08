@@ -1,6 +1,6 @@
 # The known cascades of the single-mistake test (property 7 of the program fuzzer).
-# A cascade is an error that follows from an edit of one mistake, and that is not one of
-# the errors of that mistake.
+# A cascade (GLOSSARY.md) is an error that follows from a guess about code that failed.
+# Here it is an error that an injected mistake gives besides its own errors.
 # Each line is a pair `<kind> <code>`: the kind of the mistake and the code of the extra error.
 # The kinds are literal, callee, local, argument and declaration.
 # A pair in this file passes. A pair that is not in this file fails property 7.
@@ -92,3 +92,10 @@ literal E0063
 #       let x = i64(v1) ?? 0
 #   }
 declaration E0048
+# Review probe, input 269 (not a fixed seed): an unknown name in the value of `i64(..)` gives
+# E0033. The conversion is then not optional, so `if let` on it gives E0051. It is the same
+# cause as `local E0048`.
+#   fn main() {
+#       if let v = i64(missing) { print(v) }
+#   }
+local E0051

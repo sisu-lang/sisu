@@ -769,6 +769,11 @@ _Avoid_: follow-on error, knock-on error
 An error that follows from what the source states. One repair can remove more
 than one true error.
 
+**Injected mistake**:
+One edit that the program fuzzer makes to a valid generated program. The
+generator knows the errors that the edit must give. Property 7 checks that the
+checker gives these errors and no *cascade*.
+
 **Expected type**:
 The type that the context asks of an expression. It is *required*: a mismatch is
 an error. Or it is *hinted*: it guides a literal. A poisoned context asks for

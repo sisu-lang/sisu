@@ -590,9 +590,9 @@ must pass seven properties:
    build, reports at least one error. Each error is E0154, and each starts at
    the replaced argument. Any other error is a cascade, as in issue #283.
    Property 6 runs after property 1, before the builds.
-7. One mistake gives its errors and nothing else. The generator records the
-   places where it knows the errors of one edit, and picks at most one of each
-   kind for each program. The checker, alone, with no build, must report these
+7. One injected mistake gives its errors and nothing else (`GLOSSARY.md`). The
+   generator records the places where it knows the errors of one edit, and
+   picks at most one of each kind for each program. The checker, alone, with no build, must report these
    errors for a copy of the program with that one edit:
    - `literal`: a literal at a declared `let`, a parameter, a field or a return
      becomes a literal of another type. The error is E0032 at the literal.
@@ -610,7 +610,7 @@ must pass seven properties:
    at the first parenthesis that wraps the expression. Then comes the control.
    The first two mistakes of two different functions, together, must give the
    errors of both. So a checker that goes quiet after one error fails. An extra
-   error is a cascade. It passes when its pair `<kind> <code>` is in
+   error is a cascade (`GLOSSARY.md`). It passes when its pair `<kind> <code>` is in
    `fuzz/known_cascades.txt`, and a pair that is not in the file fails. A fix
    that removes a cascade removes its pair. Later steps of the diagnostics
    foundation remove pairs and add none. Property 7 runs after property 6,
@@ -912,7 +912,10 @@ resolve it first.
    then fix the root cause. A runtime fix also runs `make miri`. For property 6,
    the case is `broken.sisu`, cut down to the call: it becomes a case of
    `crates/sisuc/tests/diagnostics/`, and the checker's output must be the one
-   E0154 at the replaced argument.
+   E0154 at the replaced argument. For property 7, a failure "reports the new
+   pair" is a new cascade: add its pair to `fuzz/known_cascades.txt`, with a
+   comment line for the input and a repro. A failure "misses" or with a wrong
+   offset is a generator recording bug: see step 4.
 4. For a generator bug, add a test in `crates/sisuc/src/generate/coverage.rs`
    that fails on it, then fix the generator. Never steer the generator around
    a compiler bug.
