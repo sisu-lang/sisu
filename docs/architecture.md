@@ -247,8 +247,9 @@ parameter, with a weight: the depth at which the argument nests the
 parameter, so `[T]` for `T` weighs 1. A call through a bound reaches every
 conformance of its interface. A cycle with a total weight above zero is the
 error ([ADR 0023](adr/0023-generics-are-monomorphized-and-checked-at-the-definition.md)). The checker
-reports every error in one run: an expression that already failed returns a
-poisoned value. The goal is that one mistake gives only true errors
+goes on after an error. A second mistake in one expression can wait for the
+next run. Most expressions that fail return a poisoned value. The goal is that
+one mistake gives only true errors
 ([ADR 0049](adr/0049-one-name-resolver-and-one-poison-rule.md)). A failed call
 keeps the result type that its callee gives when the arguments do not decide
 it. Then the checker still checks the code that uses the value. A program with
