@@ -4036,6 +4036,27 @@ fn partition_makes_its_array_unique_once() {
     assert!(bounds <= 2, "{bounds} bounds checks in\n{partition}");
 }
 
+/// A tail call whose result is an array is a loop at `-O2`. Both branches of the `if` join in
+/// one return block, and `-O2` splits the array slot into one `phi` for each field. Codegen
+/// returns the call's value in the call's own block, so that `-O2` still sees `ret %call`.
+#[test]
+fn tail_call_returning_an_array_should_be_a_loop_at_o2() {
+    let context = Context::create();
+    let module = compiled(
+        &context,
+        "fn walk(acc: [i64], n: i64) -> [i64] {\n    if n == 0 {\n        acc\n    } else {\n        walk(acc, n - 1)\n    }\n}\n\nfn main() {\n    let k = (read_line() ?? \"\").len()\n    print(walk([1; k + 2], 100_000).len())\n}",
+    );
+    keep_functions(&module, "walk");
+    let machine = target_machine(OptLevel::O2).expect("the host is a target");
+    optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
+    let ir = module.print_to_string().to_string();
+    let walk = function_body(&ir, "@sisu.walk(");
+    assert!(
+        !walk.contains("@sisu.walk("),
+        "walk should loop, not call itself:\n{walk}"
+    );
+}
+
 /// `ys[i % ys.len()]` with a non-negative `i` is in range only because a length is never
 /// negative: the `!range` on the length load lets `-O2` drop its bounds check.
 #[test]
