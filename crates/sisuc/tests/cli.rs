@@ -2135,7 +2135,8 @@ fn build_should_report_a_temporary_directory_it_cannot_write_before_it_compiles(
 ///
 /// This test guards the check of the output directory. A linker opens an existing output for
 /// writing and does not touch its directory. A check of the directory would refuse a build that
-/// works. The test passes before the check exists.
+/// works. The test passes before the check exists. On macOS, `ld64` keeps the mode of the file
+/// it writes into, so there the file starts executable.
 #[test]
 fn build_should_overwrite_a_writable_output_file_in_a_directory_it_cannot_write() {
     use std::os::unix::fs::PermissionsExt;
@@ -2144,6 +2145,12 @@ fn build_should_overwrite_a_writable_output_file_in_a_directory_it_cannot_write(
     let locked = dir.join("ro");
     fs::create_dir(&locked).expect("creates");
     fs::write(locked.join("out"), "").expect("writes");
+    let mode = if cfg!(target_os = "macos") {
+        0o755
+    } else {
+        0o644
+    };
+    fs::set_permissions(locked.join("out"), fs::Permissions::from_mode(mode)).expect("sets mode");
     fs::write(dir.join("one.sisu"), "fn main() {\n    print(1)\n}\n").expect("writes");
     if !make_unwritable(&locked) {
         eprintln!("skipped: the user can write in a directory with mode 0o555");
@@ -2183,7 +2190,8 @@ fn build_one(dir: &Path, output: &str) -> Output {
 ///
 /// The linker replaces an output that cannot be written through its writable directory. So the
 /// early check refuses only when neither the file nor the directory can be written. The test
-/// fails when the check looks at the file alone.
+/// fails when the check looks at the file alone. Not on macOS: `ld64` refuses such a file.
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn build_should_replace_a_read_only_output_file_in_a_directory_it_can_write() {
     use std::os::unix::fs::PermissionsExt;
@@ -2201,6 +2209,90 @@ fn build_should_replace_a_read_only_output_file_in_a_directory_it_can_write() {
     );
     let run = Command::new(dir.join("out")).output().expect("out starts");
     assert_eq!(String::from_utf8_lossy(&run.stdout), "1\n");
+}
+
+/// GIVEN a file `out` that holds text and has mode 0o444, in a directory that can be written
+/// WHEN `sisu build --timings` writes to `out` on macOS
+/// THEN it exits 1 and stderr names the output file
+/// AND no stage of the front end ran
+///
+/// Apple's `ld64` refuses an existing output that it cannot write, and does not replace it
+/// through its directory. The test needs a user that is not root.
+#[cfg(target_os = "macos")]
+#[test]
+fn build_should_report_a_read_only_output_file_before_it_compiles_on_macos() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = scratch_path::empty_dir("read_only_output_macos");
+    fs::write(dir.join("one.sisu"), "fn main() {\n    print(1)\n}\n").expect("writes");
+    fs::write(dir.join("out"), "old\n").expect("writes");
+    fs::set_permissions(dir.join("out"), fs::Permissions::from_mode(0o444)).expect("locks");
+    if fs::OpenOptions::new()
+        .write(true)
+        .open(dir.join("out"))
+        .is_ok()
+    {
+        eprintln!("skipped: the user can write a file with mode 0o444");
+        return;
+    }
+    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
+        .current_dir(&dir)
+        .args(["build", "--timings", "one.sisu", "-o", "out"])
+        .output()
+        .expect("sisu starts");
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.lines().any(|line| line.starts_with("timings: lex")),
+        "the front end ran: {stderr}"
+    );
+    assert_eq!(
+        stderr.lines().next(),
+        Some("sisu: cannot write to output file out: Permission denied (os error 13)")
+    );
+}
+
+/// GIVEN a directory with mode 0o555 that holds a file `out` with mode 0o644
+/// WHEN `sisu build --timings` writes to `ro/out` on macOS
+/// THEN it exits 1 and stderr says that `ro/out` is not executable
+/// AND no stage of the front end ran
+///
+/// Apple's `ld64` cannot remove `out` from the locked directory, so it writes into the file and
+/// keeps mode 0o644. Without the check, the build exits 0 and gives a file that cannot run.
+#[cfg(target_os = "macos")]
+#[test]
+fn build_should_report_an_output_file_it_cannot_make_executable_before_it_compiles_on_macos() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = scratch_path::empty_dir("non_executable_output_macos");
+    let locked = dir.join("ro");
+    fs::create_dir(&locked).expect("creates");
+    fs::write(locked.join("out"), "").expect("writes");
+    fs::write(dir.join("one.sisu"), "fn main() {\n    print(1)\n}\n").expect("writes");
+    if !make_unwritable(&locked) {
+        eprintln!("skipped: the user can write in a directory with mode 0o555");
+        return;
+    }
+    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
+        .current_dir(&dir)
+        .args(["build", "--timings", "one.sisu", "-o", "ro/out"])
+        .output()
+        .expect("sisu starts");
+    // Unlock first, so that the next run can remove the directory even if an assertion fails.
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).expect("unlocks");
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.lines().any(|line| line.starts_with("timings: lex")),
+        "the front end ran: {stderr}"
+    );
+    assert_eq!(
+        stderr.lines().next(),
+        Some(
+            "sisu: output file ro/out is not executable, and ld cannot replace it: cannot write \
+             to output directory ro: Permission denied (os error 13)"
+        )
+    );
 }
 
 /// GIVEN the output `/dev/null`, in the directory `/dev` that a normal user cannot write
