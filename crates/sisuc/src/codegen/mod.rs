@@ -39,8 +39,8 @@ use inkwell::targets::{
 };
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
 use inkwell::values::{
-    BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, GlobalValue, IntValue,
-    MetadataValue, PointerValue,
+    BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, GlobalValue,
+    InstructionOpcode, IntValue, MetadataValue, PointerValue,
 };
 use inkwell::{AddressSpace, GlobalVisibility, IntPredicate, OptimizationLevel};
 
@@ -1942,21 +1942,52 @@ fn text_part(ty: Type) -> bool {
     )
 }
 
-/// Verifies `module` in a debug build, then runs the pipeline. A release build does not verify,
-/// because the verifier takes about 180 ms of a 143k-line build. The tests that run `sisu` run a
-/// debug build, so it verifies each module that they build. No verifier runs after the pipeline: a
-/// pass that broke the IR reaches instruction selection, which would be an LLVM bug.
+/// Verifies `module` in a debug build, then runs the pipeline. At `-O0`, it first makes each
+/// function that is too large for `mem2reg` `optnone` (see `MEM2REG_LIMIT`). A release build does
+/// not verify, because the verifier takes about 180 ms of a 143k-line build. The tests that run
+/// `sisu` run a debug build, so it verifies each module that they build. No verifier runs after the
+/// pipeline: a pass that broke the IR reaches instruction selection, which would be an LLVM bug.
 pub(crate) fn optimize(
     module: &Module<'_>,
     machine: &TargetMachine,
     level: OptLevel,
 ) -> Result<(), String> {
+    if level == OptLevel::O0 {
+        skip_mem2reg_of_large_functions(module);
+    }
     if cfg!(debug_assertions) {
         module.verify().map_err(|e| e.to_string())?;
     }
     module
         .run_passes(pipeline(level), machine, PassBuilderOptions::create())
         .map_err(|e| e.to_string())
+}
+
+/// At `-O0`, a function is `optnone` when the allocas of its entry block times its blocks are
+/// more than this limit. `mem2reg` takes time that grows with that product. On a `main` with 8000
+/// mutable locals, it took 2.8 s, and at the limit it takes about 30 ms. A function over the limit
+/// keeps its allocas, loads and stores. That code is slower, but `-O0` is for a fast build.
+const MEM2REG_LIMIT: usize = 5_000_000;
+
+/// Marks each function of `module` over `MEM2REG_LIMIT` `optnone`, so that `mem2reg` skips it.
+/// LLVM requires `noinline` with `optnone`.
+fn skip_mem2reg_of_large_functions(module: &Module<'_>) {
+    let context = module.get_context();
+    let [optnone, noinline] = ["optnone", "noinline"]
+        .map(|name| context.create_enum_attribute(Attribute::get_named_enum_kind_id(name), 0));
+    for function in module.get_functions() {
+        let Some(entry) = function.get_first_basic_block() else {
+            continue;
+        };
+        let allocas =
+            std::iter::successors(entry.get_first_instruction(), |i| i.get_next_instruction())
+                .filter(|i| i.get_opcode() == InstructionOpcode::Alloca)
+                .count();
+        if allocas * function.count_basic_blocks() as usize > MEM2REG_LIMIT {
+            function.add_attribute(AttributeLoc::Function, optnone);
+            function.add_attribute(AttributeLoc::Function, noinline);
+        }
+    }
 }
 
 /// Compiles `module`, which `optimize` ran, to object code for `machine`, in memory.
