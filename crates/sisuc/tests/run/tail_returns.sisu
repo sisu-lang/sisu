@@ -1,5 +1,7 @@
 // The shapes of `tests/programs/tailreturns.sisu` with 10 calls each. The case checks that the
-// statements that codegen copies into a call's block keep the reference counts balanced.
+// statements that codegen copies into a call's block keep the reference counts balanced. The
+// last functions leave an owned value live on the call path, so that the copied `release?`
+// releases it: without the copy, `--rc-checks` finds a live object at exit.
 fn walk_array(acc: [i64], n: i64) -> [i64] {
     if n == 0 {
         acc
@@ -68,6 +70,19 @@ fn walk_match_if(acc: [i64], n: i64) -> [i64] {
     }
 }
 
+fn walk_scope(acc: [i64], n: i64) -> [i64] {
+    if n == 0 {
+        acc
+    } else {
+        let t = acc
+        if n == -1 {
+            []
+        } else {
+            walk_scope(t, n - 1)
+        }
+    }
+}
+
 enum Box {
     Of([i64])
 }
@@ -84,6 +99,28 @@ extend Box {
     }
 }
 
+fn make(n: i64) -> [string] {
+    ["é", n.to_string()]
+}
+
+fn pick(acc: [string], n: i64) -> [string] {
+    let other = ["kept", n.to_string()]
+    if n == 0 {
+        acc
+    } else if n == 1 {
+        other
+    } else {
+        make(n)
+    }
+}
+
+fn ends(acc: [string]?, n: i64) -> [string] {
+    match acc {
+        Some(a) => if n == 0 { a } else { make(n) }
+        None => make(n)
+    }
+}
+
 fn main() {
     let k = (read_line() ?? "").len()
     print(walk_array([1; k + 2], 10).len())  // 2
@@ -95,4 +132,15 @@ fn main() {
     print(walk_nested([1; k + 2], 10).len())  // 2
     print(walk_match_if([1; k + 2], 10).len())  // 2
     print(Box.Of([1; k + 2]).walk(10).len())  // 2
+    print(walk_scope([1; k + 2], 10).len())  // 2
+    // Each n prints three lines:
+    // 0: ["own"]  ["some"]  ["é", "0"]
+    // 1: ["kept", "1"]  ["é", "1"]  ["é", "1"]
+    // 2: ["é", "2"] three times
+    // 3: ["é", "3"] three times
+    for n in 0..4 {
+        print(pick(["own"], n))
+        print(ends(Some(["some"]), n))
+        print(ends(None, n))
+    }
 }

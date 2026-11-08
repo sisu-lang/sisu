@@ -4057,6 +4057,81 @@ fn tail_call_returning_an_array_should_be_a_loop_at_o2() {
     );
 }
 
+/// A function of `locals` strings and `locals + 1` arms. Arm `j` passes the string `j` to `g`,
+/// so the other strings stay live after the call. The last arm makes a text. All arms join in
+/// one return block that holds one `release?` for each string.
+fn shared_cleanup(locals: usize) -> String {
+    let lets = (1..=locals)
+        .map(|i| format!("    let s{i} = \"x\" + k.to_string()\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    let arms = (1..=locals)
+        .map(|j| format!("        {j} => g({j}, s{j})\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    format!(
+        "fn g(k: i64, s: string) -> string {{\n    s + k.to_string()\n}}\n\nfn f(k: i64) -> string {{\n{lets}    match k {{\n{arms}        _ => \"\"\n    }}\n}}\n\nfn main() {{\n    print(f((read_line() ?? \"\").len()).len())\n}}\n"
+    )
+}
+
+/// The `ret` instructions in the function `f` of the module that `shared_cleanup(locals)` makes.
+fn returns_of_shared_cleanup(locals: usize) -> usize {
+    let context = Context::create();
+    let ir = compiled(&context, &shared_cleanup(locals))
+        .print_to_string()
+        .to_string();
+    function_body(&ir, "@sisu.f(")
+        .lines()
+        .filter(|line| line.trim_start().starts_with("ret "))
+        .count()
+}
+
+/// The most statements that `define` copies into the block of a call. It is the limit of
+/// `TAIL_COPY_LIMIT`.
+const COPY_LIMIT: usize = 8;
+
+/// A return block with as many cleanup statements as the limit allows is copied into the block
+/// of each call that reaches it: each of the arms with a call has its own `ret`, and the
+/// last arm uses the shared one.
+#[test]
+fn return_block_within_the_copy_limit_should_be_copied_into_each_call_block() {
+    assert_eq!(returns_of_shared_cleanup(COPY_LIMIT), COPY_LIMIT + 1);
+}
+
+/// A return block with one cleanup statement more than the limit is not copied: a long list
+/// means that a live value is released after the call, so no call is a tail call. The function
+/// has one `ret`.
+#[test]
+fn return_block_over_the_copy_limit_should_not_be_copied() {
+    assert_eq!(returns_of_shared_cleanup(COPY_LIMIT + 1), 1);
+}
+
+/// The size of the module grows with the sum of the arms and the strings, not with their
+/// product: the copy of the cleanup is bounded for each call.
+#[test]
+fn shared_cleanup_should_make_the_module_grow_in_linear_size() {
+    let size = |n: usize| {
+        let context = Context::create();
+        compiled(&context, &shared_cleanup(n))
+            .print_to_string()
+            .to_bytes()
+            .len()
+    };
+    assert_near_linear(size(100), size(200), size(300));
+}
+
+/// A call into a `let` before an endless loop: the block of the call goes to a block that goes
+/// to itself and never reaches a `return`. The walk from the call must stop.
+#[test]
+fn call_before_an_endless_loop_should_compile() {
+    let context = Context::create();
+    let module = compiled(
+        &context,
+        "fn g(n: i64) -> [i64] {\n    [n]\n}\n\nfn f(n: i64) -> [i64] {\n    let _a = g(n)\n    loop {}\n}\n\nfn main() {\n    if (read_line() ?? \"\").len() > 5 {\n        print(f(1).len())\n    }\n    print(1)\n}",
+    );
+    assert!(module.get_function("sisu.f").is_some());
+}
+
 /// `ys[i % ys.len()]` with a non-negative `i` is in range only because a length is never
 /// negative: the `!range` on the length load lets `-O2` drop its bounds check.
 #[test]

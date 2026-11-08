@@ -1,6 +1,7 @@
-// Nine functions that each make 100 000 tail calls whose result is an LLVM aggregate: an array, a
+// Ten functions that each make 100 000 tail calls whose result is an LLVM aggregate: an array, a
 // string, two optionals, and results that join through `match`, `else if`, a nested `if`, a
-// `match` arm with an `if`, and a method. At -O2 each recursion is a loop, so the small stack holds.
+// `match` arm with an `if`, a method, and a nested scope. At -O2 each recursion is a loop, so the
+// small stack holds.
 fn walk_array(acc: [i64], n: i64) -> [i64] {
     if n == 0 {
         acc
@@ -69,6 +70,19 @@ fn walk_match_if(acc: [i64], n: i64) -> [i64] {
     }
 }
 
+fn walk_scope(acc: [i64], n: i64) -> [i64] {
+    if n == 0 {
+        acc
+    } else {
+        let t = acc
+        if n == -1 {
+            []
+        } else {
+            walk_scope(t, n - 1)
+        }
+    }
+}
+
 enum Box {
     Of([i64])
 }
@@ -96,4 +110,5 @@ fn main() {
     print(walk_nested([1; k + 2], 100_000).len())  // 2
     print(walk_match_if([1; k + 2], 100_000).len())  // 2
     print(Box.Of([1; k + 2]).walk(100_000).len())  // 2
+    print(walk_scope([1; k + 2], 100_000).len())  // 2
 }
