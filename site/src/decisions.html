@@ -13,7 +13,7 @@ The design decisions behind Sisu, each written down as a short record with its r
     <p class="lede">Every design choice in Sisu is written down with its reasons, as a short decision record. This page lists them all.</p>
     <p class="meta">{{adr-count}} records · at commit fd85e98c</p>
   </div></section>
-  <!-- source: docs/adr/ (48 files, 0001 to 0048), README.md ("Read why a design choice was made") -->
+  <!-- source: docs/adr/ (49 files, 0001 to 0049), README.md ("Read why a design choice was made") -->
 
   <div class="w doc">
     <nav class="toc" aria-label="On this page"><h2>On this page</h2><ol>
@@ -108,10 +108,11 @@ The design decisions behind Sisu, each written down as a short record with its r
       <h2 id="errors">Errors and diagnostics</h2>
       <ul class="rows">
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0003-arithmetic-panics.md"><span class="num">0003</span><b>Integer overflow panics instead of wrapping</b><span>Overflow, division by zero and dividing the smallest <code>i64</code> by -1 stop the program with a panic that names the source location.</span></a></li>
-        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0013-diagnostics-have-stable-codes.md"><span class="num">0013</span><b>Diagnostics have stable codes</b><span>Every error and warning has a code that is never reused, one wording, and an explanation that a test compiles.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0013-diagnostics-have-stable-codes.md"><span class="num">0013</span><b>Diagnostics have stable codes<small>amended by 0049</small></b><span>Every error and warning has a code that is never reused, one wording, and an explanation that a test compiles.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0049-one-name-resolver-and-one-poison-rule.md"><span class="num">0049</span><b>One name resolver and one poison rule</b><span>One function in the checker decides what a name means. A poisoned value has a type only when the source states it apart from the poisoned part.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0040-a-failure-the-caller-can-handle-is-a-value-not-a-panic.md"><span class="num">0040</span><b>A failure the caller can handle is a value, not a panic</b><span>A function whose failure the caller can check gives a total result, an optional or a <code>Result</code>. A panic stays only where every value is worse.</span></a></li>
       </ul>
-      <!-- source: docs/adr/0003-arithmetic-panics.md, docs/adr/0013-diagnostics-have-stable-codes.md, docs/adr/0040-a-failure-the-caller-can-handle-is-a-value-not-a-panic.md -->
+      <!-- source: docs/adr/0003-arithmetic-panics.md, docs/adr/0013-diagnostics-have-stable-codes.md, docs/adr/0049-one-name-resolver-and-one-poison-rule.md, docs/adr/0040-a-failure-the-caller-can-handle-is-a-value-not-a-panic.md -->
 
       <h2 id="runtime">Runtime, I/O and concurrency</h2>
       <ul class="rows">
