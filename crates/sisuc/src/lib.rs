@@ -510,6 +510,7 @@ fn each_unit<T: Send>(
 
 /// Makes `context` give no name to a local value (such as `%call`), as LLVM then skips the work to
 /// make and to intern each name. A global value keeps its name. The names show only in the IR text.
+/// Call it before codegen makes a value: a name that a value has already keeps it.
 #[expect(
     unsafe_code,
     reason = "inkwell has no call for `LLVMContextSetDiscardValueNames`, so this calls its llvm-sys"
@@ -517,7 +518,7 @@ fn each_unit<T: Send>(
 fn discard_value_names(context: &Context) {
     use inkwell::context::AsContextRef;
 
-    // SAFETY: `context` is a live context, and no value exists in it yet, so no name is lost.
+    // SAFETY: `context` is a live context for the length of the call.
     unsafe { inkwell::llvm_sys::core::LLVMContextSetDiscardValueNames(context.as_ctx_ref(), 1) };
 }
 
@@ -1045,8 +1046,6 @@ mod tests {
         printed.remove(0).expect("the unit builds")
     }
 
-    /// Proves that a unit of `sisu build` has no names for its local values, which saves LLVM the
-    /// work to make and to intern them.
     #[test]
     fn build_units_should_carry_no_value_names() {
         let ir = printed_unit(false);
@@ -1054,7 +1053,6 @@ mod tests {
         assert!(!ir.contains("%moved ="), "{ir}");
     }
 
-    /// Proves that a unit of `--emit ir` and `--emit ir-raw` keeps the names that the tests read.
     #[test]
     fn ir_units_should_keep_value_names() {
         let ir = printed_unit(true);
