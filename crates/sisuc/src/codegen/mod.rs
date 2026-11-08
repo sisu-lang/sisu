@@ -74,8 +74,8 @@ thread_local! {
     /// the enums that `components` builds the table from. It also counts each call of the one
     /// lookup helper, `member_position`, and not the steps inside it.
     static MEMBER_SCANS: Cell<usize> = const { Cell::new(0) };
-    /// How many blocks `tail_return` has walked, and how many statements it has read, on this
-    /// thread.
+    /// How many blocks `tail_return` and `empty_goto_ends` have walked, and how many statements
+    /// `tail_return` has read, on this thread.
     static TAIL_STEPS: Cell<usize> = const { Cell::new(0) };
 }
 
@@ -1789,6 +1789,8 @@ fn empty_goto_ends(f: &mir::Function) -> Vec<usize> {
                     on_path[block] = true;
                     block = to.0;
                 }
+                // Any terminator other than an empty `goto` ends the chain, so a new kind of
+                // terminator falls in this arm correctly.
                 _ => break block,
             }
         };
@@ -1806,9 +1808,10 @@ fn empty_goto_ends(f: &mir::Function) -> Vec<usize> {
 /// The statements and the terminator that follow the call that ends `data`, when only cleanup
 /// follows it. These are in the blocks that `data` reaches by `goto`, up to a `return` of the
 /// call's result. `ends` is `empty_goto_ends(f)`: the walk steps over the empty blocks of a chain
-/// at once, so a long chain of `else if` arms costs nothing. The result is `None` in three cases.
+/// at once, so a long chain of `else if` arms costs one step. The result is `None` in five cases.
 /// Another statement is in the way. The `return` is more than `TAIL_COPY_LIMIT` statements away.
-/// There is no call.
+/// There is no call. A cycle of empty `goto` blocks has no `return`. A block ends in a terminator
+/// that is not a `goto` or a `return` of the result.
 ///
 /// `mir::cleanup` in `mir/params.rs` owns the rule for the statements that may follow a tail
 /// call.
@@ -1842,7 +1845,8 @@ fn tail_return<'f>(
         let next = &f.blocks[ends[to.0]];
         #[cfg(test)]
         TAIL_STEPS.set(TAIL_STEPS.get() + 1);
-        // An empty `goto` block here is a cycle.
+        // An empty `goto` block here is a cycle. This ends it at once. The comment above the
+        // loop, "A step that goes on holds a statement", needs this: an empty block adds none.
         if next.stmts.is_empty() && matches!(next.term, Terminator::Goto(_)) {
             return None;
         }

@@ -4105,19 +4105,26 @@ fn return_block_over_the_copy_limit_should_not_be_copied() {
     assert_eq!(returns_of_shared_cleanup(TAIL_COPY_LIMIT + 1), 1);
 }
 
-/// A function of `arms` calls and `locals` strings: arm `j` passes the string `j % locals` to `g`.
-/// With `locals` fixed at the limit, each call copies a return block of that size.
-fn cleanup_arms(arms: usize, locals: usize) -> String {
-    let lets = (0..locals)
+/// A function of `arms` calls in an `else if` chain, with `TAIL_COPY_LIMIT` strings. Arm `j`
+/// passes the string `j % TAIL_COPY_LIMIT` to `g` and returns the result, so the other strings
+/// stay live after the call. The arms join through a chain of empty `goto` blocks into one return
+/// block that holds a `release?` for each string.
+fn elif_arms(arms: usize) -> String {
+    let lets = (0..TAIL_COPY_LIMIT)
         .map(|i| format!("    let s{i} = \"x\" + k.to_string()\n"))
         .collect::<Vec<_>>()
         .concat();
-    let cases = (1..=arms)
-        .map(|j| format!("        {j} => g({j}, s{})\n", j % locals))
+    let chain = (1..=arms)
+        .map(|j| {
+            format!(
+                "if k == {j} {{\n        g({j}, s{})\n    }}",
+                j % TAIL_COPY_LIMIT
+            )
+        })
         .collect::<Vec<_>>()
-        .concat();
+        .join(" else ");
     format!(
-        "fn g(k: i64, s: string) -> string {{\n    s + k.to_string()\n}}\n\nfn f(k: i64) -> string {{\n{lets}    match k {{\n{cases}        _ => \"\"\n    }}\n}}\n\nfn main() {{\n    print(f((read_line() ?? \"\").len()).len())\n}}\n"
+        "fn g(k: i64, s: string) -> string {{\n    s + k.to_string()\n}}\n\nfn f(k: i64) -> string {{\n{lets}    {chain} else {{\n        \"\"\n    }}\n}}\n\nfn main() {{\n    print(f((read_line() ?? \"\").len()).len())\n}}\n"
     )
 }
 
@@ -4138,11 +4145,16 @@ fn tail_return_should_not_read_the_statements_of_a_block_over_the_limit() {
     assert_near_linear(steps(100), steps(200), steps(300));
 }
 
-/// `n` calls each copy a return block of `TAIL_COPY_LIMIT` statements: the steps grow with `n`.
+/// `n` arms of an `else if` chain each call and return the result, and each copies a return block
+/// of `TAIL_COPY_LIMIT` statements. The arms join through a chain of `n` empty `goto` blocks. A
+/// walk that follows the chain again for each block makes the steps `n` times `n`. The memo of
+/// `empty_goto_ends` keeps them linear. At 20, 40 and 60 arms the steps are 265, 525 and 785.
+/// Without the memo they are 436, 1266 and 2496. The size stays at 60: an `else if` chain of 100
+/// arms overflows the stack of a test thread in a debug build.
 #[test]
-fn tail_return_should_walk_in_linear_steps_when_each_call_copies() {
-    let steps = |n: usize| tail_steps(&cleanup_arms(n, TAIL_COPY_LIMIT));
-    assert_near_linear(steps(100), steps(200), steps(300));
+fn empty_goto_chain_should_be_walked_in_linear_steps_when_each_arm_calls() {
+    let steps = |n: usize| tail_steps(&elif_arms(n));
+    assert_near_linear(steps(20), steps(40), steps(60));
 }
 
 /// A call into a `let` before an endless loop: the block of the call goes to a block that goes
