@@ -106,6 +106,8 @@ take `--rc-checks`. To get the IR of the count checks:
 
 ```console
 $ timeout 20 $S build --rc-checks --emit ir-raw $D/p.sisu > $D/prc.ll
+$ $L/opt -passes=lint -disable-output $D/prc.ll
+$ $L/opt -passes=simplifycfg $D/prc.ll -S | $L/opt -passes=lint -disable-output
 ```
 
 The optimized half of `--emit ir` starts after the line `; after default<O2>`.

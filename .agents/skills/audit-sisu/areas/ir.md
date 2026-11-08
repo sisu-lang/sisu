@@ -11,7 +11,7 @@ probes, run the commands in the toolbox, "IR":
 
 - `build --emit ir-raw` exits 1 for a program `check` accepts: the verifier rejected codegen's module. That is `crash`.
 - Lint flags an operation: a lead. It becomes `unsound` when you show a Sisu program reaches that block. A hit only in a block behind a constant branch (`br i1 false`) is `slow` at most: codegen emits dead code. Lint after `simplifycfg` removes most of those.
-- Lint the `--rc-checks` IR of each probe too (toolbox, "IR"), with the same two `opt` commands. Lint it after `simplifycfg`: the raw IR keeps dead branches such as `br i1 true`, and the plain lint reports the null loads in them.
+- Lint the `--rc-checks` IR of each probe too, with the two `opt` commands on `$D/prc.ll` (toolbox, "IR"). Lint it after `simplifycfg`: the raw IR keeps dead branches such as `br i1 true`, and the plain lint reports the null loads in them.
 
 Every flag is a promise LLVM may exploit: `nsw`, `nuw`, `exact`,
 `inbounds`, `nonnull`, `noalias`, `dereferenceable`, `noundef`,
