@@ -59,7 +59,8 @@ fn build(reporter: &mut Report, source: &Source, backend: &Backend) -> Option<(P
     let runtime = link::runtime_library(backend.allocator.unwrap_or_default())
         .inspect_err(|message| reporter.tool_error(message))
         .ok()?;
-    link::probe_linker(backend.linker.as_deref())
+    crate::check_temp_dir()
+        .and_then(|()| link::probe_linker(backend.linker.as_deref()))
         .inspect_err(|message| reporter.tool_error(message))
         .ok()?;
     let (name, text) = read_source(reporter, source)?;
