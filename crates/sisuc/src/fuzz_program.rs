@@ -2323,6 +2323,30 @@ mod tests {
         );
     }
 
+    /// GIVEN a control of two mistakes whose kinds both know the extra E0050
+    /// WHEN `judge_edit` checks it with a `seen` file
+    /// THEN it passes and writes no line, because it cannot tell which mistake gave the error.
+    #[test]
+    fn property_7_should_not_write_a_pair_that_both_mistakes_of_a_control_know() {
+        let function = "fn f1(depth: i64) -> i64 {\n    let zz: i64? = 1\n    let a = loop { if true { break zz }\n break None }\n    depth\n}\n";
+        let program = format!("{function}{KNOWN}");
+        let local = |n, function| Mistake {
+            function,
+            ..mistake(
+                Kind::Local,
+                (nth(&program, "zz", n), "zz"),
+                "yy",
+                &[("E0033", nth(&program, "zz", n))],
+            )
+        };
+        let (a, b) = (local(1, Some(0)), local(3, None));
+        let scratch = Scratch::new();
+        let seen = scratch.0.join("seen.txt");
+        judge_edit(&with_mistakes(&program, vec![]), &[&a, &b], Some(&seen))
+            .expect("`local E0050` is in the baseline");
+        assert_eq!(fs::read_to_string(&seen).unwrap_or_default(), "");
+    }
+
     #[test]
     fn the_known_cascades_should_parse() {
         let pairs = known_cascades();
