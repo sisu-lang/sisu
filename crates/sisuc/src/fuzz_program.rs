@@ -179,6 +179,18 @@ fn program_in(data: &[u8], runtime: &Path, tmp: &Path) {
     }
 }
 
+/// Sets the copy that the checker reads next, or none. A checker panic then leaves it in the dump
+/// as `broken.sisu`. Nothing is set when no input is being judged.
+fn note_broken(text: Option<&str>) {
+    if let Some(current) = CURRENT
+        .lock()
+        .expect("the lock should not be poisoned")
+        .as_mut()
+    {
+        current.broken = text.map(str::to_string);
+    }
+}
+
 /// Sets the input that the panic hook records.
 fn set_current(current: Option<Current>) {
     *CURRENT.lock().expect("the lock should not be poisoned") = current;
@@ -339,12 +351,14 @@ fn judge_site(g: &Generated, site: &BoundSite) -> Result<(), Failure> {
         // The argument as it was, which conforms: the property must fail.
         broken = g.program.clone() + generate::NO_BOUND_CLASS;
     }
+    note_broken(Some(&broken));
     let (_, diagnostics) = front_end::front_end(&broken);
     #[cfg(test)]
     assert!(
         FORCE.get() != Some(Force::CheckerPanic),
         "the forced checker panic in property 6"
     );
+    note_broken(None);
     let mut errors = diagnostics
         .iter()
         .filter(|d| d.severity() == Severity::Error)
@@ -420,12 +434,14 @@ fn judge_edit(g: &Generated, mistakes: &[&Mistake], seen: Option<&Path>) -> Resu
         // The program as it was, which has no error: the property must fail.
         changed = g.program.clone();
     }
+    note_broken(Some(&changed));
     let (_, diagnostics) = front_end::front_end(&changed);
     #[cfg(test)]
     assert!(
         FORCE.get() != Some(Force::CheckerPanic),
         "the forced checker panic in property 7"
     );
+    note_broken(None);
     #[cfg_attr(not(test), expect(unused_mut, reason = "only a test forces a failure"))]
     let mut errors: Vec<&Diagnostic> = (diagnostics.iter())
         .filter(|d| d.severity() == Severity::Error)
