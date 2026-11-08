@@ -104,7 +104,7 @@ Each new or changed diagnostic must earn its place:
   wrote, no compiler-internal terms.
 - The primary span covers the offending code.
 - It offers a fix only when the fix is obvious and simple.
-- One mistake gives one diagnostic, not a cascade.
+- One mistake gives only true errors, not a cascade (`GLOSSARY.md`).
 - The trigger fits the message. Try inputs at the edge of the trigger,
   for example the same line after a complete construct instead of an
   incomplete one. Each input the trigger matches makes the message true;
@@ -244,9 +244,11 @@ Your final reply is the report. It has these parts, in this order:
    ```
 
    A finding is blocking when it means wrong behavior, a crash, a leak,
-   unsound IR, a wrong diagnostic code or span, a cascade, diagnostic
-   wording that is wrong, misleading, vague or full of jargon, semantics
-   the target leaves undefined, a task no reviewer can check, or a broken
+   unsound IR, or a wrong diagnostic code or span. It is also blocking when
+   it means a cascade that the diff adds. It is also blocking when it means
+   diagnostic wording that is wrong, misleading, vague or full of jargon. It
+   is also blocking when it means semantics the target leaves undefined, or
+   a task no reviewer can check. It is also blocking when it means a broken
    rule of `CODING_STANDARDS.md` that it does not itself call a nit. A
    test over its time budget, text over the "Writing" limits, and a
    departure from `rust-best-practices` are nits. A design clearly more complex than the
