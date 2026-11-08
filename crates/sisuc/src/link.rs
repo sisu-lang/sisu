@@ -2,7 +2,7 @@
 //! compiler drives the linker, so it also adds the C startup code and libc.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, ExitStatus};
 
 use crate::Allocator;
 
@@ -40,28 +40,50 @@ pub(crate) fn link(objects: &[PathBuf], linking: &Linking<'_>) -> Result<(), Str
     if out.status.success() {
         return Ok(());
     }
-    Err(cc_failure(&out, linker))
+    Err(cc_failure(
+        out.status,
+        &String::from_utf8_lossy(&out.stderr),
+        linker,
+    ))
 }
 
 /// Checks, without linking, that `cc` finds `linker`: `cc -fuse-ld=<linker> -Wl,--version` runs
-/// the linker and prints its version. Found before the compile, not by the link after it.
-pub(crate) fn probe_linker(linker: &str) -> Result<(), String> {
+/// the linker and prints its version. Found before the compile, not by the link after it. Always
+/// `Ok` without a linker.
+pub(crate) fn probe_linker(linker: Option<&str>) -> Result<(), String> {
+    // shortcut: Linux only. Apple's clang looks for `ld64.<name>`, and nobody has checked that it
+    // accepts `--version`; macOS keeps the late check in `link`. Probe on macOS after a check on
+    // a Mac.
+    let Some(linker) = linker.filter(|_| cfg!(target_os = "linux")) else {
+        return Ok(());
+    };
     let out = Command::new("cc")
         .arg(format!("-fuse-ld={linker}"))
         .arg("-Wl,--version")
         .output()
         .map_err(|e| format!("cannot run cc: {e}"))?;
     if out.status.success() {
-        Ok(())
-    } else {
-        Err(cc_failure(&out, Some(linker)))
+        return Ok(());
     }
+    // gcc's `collect2` reads `--version` as verbose: it prints its version and then the whole
+    // linker command line, which is not part of the failure.
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let mut lines = stderr.lines();
+    let mut kept = Vec::new();
+    while let Some(line) = lines.next() {
+        if line.starts_with("collect2 version ") {
+            lines.next();
+        } else {
+            kept.push(line);
+        }
+    }
+    Err(cc_failure(out.status, &kept.join("\n"), Some(linker)))
 }
 
-/// The message for a `cc` that failed: its status, a note when `linker` is not on PATH, and its
-/// stderr.
-fn cc_failure(out: &Output, linker: Option<&str>) -> String {
-    let mut message = format!("cc failed: {}", out.status);
+/// The message for a `cc` that failed with `status` and `stderr`: its status, a note when
+/// `linker` is not on PATH, and its stderr.
+fn cc_failure(status: ExitStatus, stderr: &str, linker: Option<&str>) -> String {
+    let mut message = format!("cc failed: {status}");
     // A missing `ld.lld` makes gcc say only "cannot find 'ld'", which names the wrong program.
     // `cc` also finds linkers off PATH, so the check waits until it has failed. Clang on macOS
     // looks for `ld64.<name>`.
@@ -75,7 +97,7 @@ fn cc_failure(out: &Output, linker: Option<&str>) -> String {
     {
         message = format!("linker {program} not found on PATH; {message}");
     }
-    match String::from_utf8_lossy(&out.stderr).trim() {
+    match stderr.trim() {
         "" => message,
         detail => format!("{message}\n{detail}"),
     }
