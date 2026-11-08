@@ -1224,7 +1224,7 @@ impl Gen<'_> {
 
     /// `expr`, for a place that requires the type `ty`, which a literal of another type breaks.
     /// If `ty` is `i64`, `u8`, `bool`, `char` or `string`, and the value is one literal, this
-    /// records the site (property 7).
+    /// records the site (the single-mistake check).
     pub(crate) fn declared(&mut self, ty: &Ty, max: u64) -> Info {
         if !matches!(ty, Ty::I64 | Ty::U8 | Ty::Bool | Ty::Char | Ty::String) {
             return self.expr(ty, max);
@@ -1836,7 +1836,8 @@ impl Gen<'_> {
         } else {
             args(self)
         });
-        // The edit of property 7 removes the last argument, or the depth if it is the only one.
+        // The edit of the single-mistake check removes the last argument, or the depth if it is
+        // the only one.
         let removed = last_comma.map_or(depth_at..depth_end, |comma| comma..self.here());
         self.record(Kind::Argument, removed, call);
         self.w.text(")");

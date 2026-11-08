@@ -555,46 +555,47 @@ input it reads, and a rewritten copy that must print the same
 generator lives in `crates/sisuc/src/generate/`, and the runner that judges
 the program in `crates/sisuc/src/fuzz_program.rs`. Both compile only in tests
 and under the `fuzz` feature, never into the released `sisu`. Each program
-must pass seven properties:
+must pass seven properties. Each one has the name of its check:
 
-1. It checks clean. Warnings are allowed.
-2. Its mir builds and certifies, and LLVM verifies its module, without and
-   with `--rc-checks`.
-3. Its O0, `-O2` and `--rc-checks` builds each run and exit 0 or 101, never by
-   a signal or past 10 s, and agree on stdout, stderr and exit code. The
-   `--rc-checks` build reports no count fault, and no leak when it exits 0:
-   a panic exits at once, before the leak check.
-4. The rewritten copy runs as the program does. Panic locations and the
-   `<file>:<line>:<col>: ` that starts each `dbg` line are left out of the
-   comparison; the text and the value of a `dbg` line are compared. So no
-   rewrite changes the argument of a `dbg`.
-5. The program prints the integer answers the generator worked out itself, or
-   panics with the overflow or division by zero it expects. Each method that
-   the generator writes for an interface with an `i64` or `string` result (or
-   a `T` result, when the argument of the conformance is one of them) returns
-   a value that no other method returns. Each call of such a method in
-   `shapes`, or in a generic function that it calls, prints a line
+1. The clean check. It checks clean. Warnings are allowed.
+2. The verify check. Its mir builds and certifies, and LLVM verifies its module,
+   without and with `--rc-checks`.
+3. The exit check. Its O0, `-O2` and `--rc-checks` builds each run and exit 0 or
+   101, never by a signal or past 10 s. They agree on stdout, stderr and exit
+   code. The `--rc-checks` build reports no count fault, and no leak when it
+   exits 0: a panic exits at once, before the leak check.
+4. The rewrite check. The rewritten copy runs as the program does. Panic
+   locations and the `<file>:<line>:<col>: ` that starts each `dbg` line are
+   left out of the comparison; the text and the value of a `dbg` line are
+   compared. So no rewrite changes the argument of a `dbg`.
+5. The answer check. The program prints the integer answers the generator worked
+   out itself, or panics with the overflow or division by zero it expects. Each
+   method that the generator writes for an interface with an `i64` or `string`
+   result returns a value that no other method returns. A `T` result counts too,
+   when the argument of the conformance is one of them. Each call of such a
+   method in `shapes`, or in a generic function that it calls, prints a line
    `@d<n> <value>`. An interface can also hold a requirement with a `mut`
    parameter of `i64`. Each method that meets it writes a value of its own to
-   that parameter, and each such call in `shapes`, or in a generic function that
-   it calls, passes a place and prints it after the call as `@d<n> <value>`.
-   The calls through `any` and through generic functions that take a `mut`
-   parameter print their lines in the same way. These lines are, in order, a
-   prefix of the values that a correct dispatch reaches; a `main` that returns
-   before the calls prints none.
-6. A broken bound gives E0154 and nothing else. For each bound site, an
-   argument of a call of a bounded generic function or class whose parameter
-   is the bare type parameter that no earlier argument names, a copy of the
-   program has that argument replaced by a value that does not conform to the
-   bound, and `class NoBound {}` at its end. The checker, alone, with no
-   build, reports at least one error. Each error is E0154, and each starts at
-   the replaced argument. Any other error is a cascade, as in issue #283.
-   Property 6 runs after property 1, before the builds.
-7. One injected mistake gives its errors and nothing else (`GLOSSARY.md`). The
-   generator records the places where it knows the errors of one edit, and
-   picks at most one of each kind for each program. The checker, alone, with
-   no build, must report these errors for a copy of the program with that one
-   edit:
+   that parameter. Each such call in `shapes`, or in a generic function that it
+   calls, passes a place and prints it after the call as `@d<n> <value>`. The
+   calls through `any` and through generic functions that take a `mut` parameter
+   print their lines in the same way. These lines are, in order, a prefix of the
+   values that a correct dispatch reaches; a `main` that returns before the
+   calls prints none.
+6. The bound check. A broken bound gives E0154 and nothing else. A bound site is
+   an argument of a call of a bounded generic function or class. Its parameter
+   is the bare type parameter, and no earlier argument names that type
+   parameter. For each bound site, a copy of the program has that argument
+   replaced by a value that does not conform to the bound. The copy also ends
+   with `class NoBound {}`. The checker, alone, with no build, reports at least
+   one error. Each error is E0154, and each starts at the replaced argument. Any
+   other error is a cascade, as in issue #283. The bound check runs after the
+   clean check, before the builds.
+7. The single-mistake check. One injected mistake gives its errors and nothing
+   else (`GLOSSARY.md`). The generator records the places where it knows the
+   errors of one edit, and picks at most one of each kind for each program. The
+   checker, alone, with no build, must report these errors for a copy of the
+   program with that one edit:
    - `literal`: a literal at a declared `let`, a parameter, a field or a return
      becomes a literal of another type. The error is E0032 at the literal.
    - `callee`: the name of a function call becomes an unknown name. The error
@@ -614,12 +615,12 @@ must pass seven properties:
    error is a cascade (`GLOSSARY.md`). It passes when its pair `<kind> <code>`
    is in `fuzz/known_cascades.txt`, and a pair that is not in the file fails.
    A checker fix removes pairs. Only a new cascade that a fuzz run finds adds
-   one. Property 7 runs after property 6, before the builds. A fuzz run sets
-   the variable `SISU_FUZZ_CASCADES` to a file, and the property writes there
-   each pair of the baseline that it allows. The summary of the run names each
-   pair of the baseline that no input gave, as a warning in the section "Known
-   cascades". The warning does not change the exit status. The fixed-seed
-   tests do not warn.
+   one. The single-mistake check runs after the bound check, before the builds.
+   A fuzz run sets the variable `SISU_FUZZ_CASCADES` to a file, and the property
+   writes there each pair of the baseline that it allows. The summary of the run
+   names each pair of the baseline that no input gave, as a warning in the
+   section "Known cascades". The warning does not change the exit status. The
+   fixed-seed tests do not warn.
 
 Name the target with `--target`, before the other arguments:
 
@@ -633,20 +634,20 @@ $ make fuzz-gaps                     # scripts/fuzz.sh --target program --gaps
 ```
 
 To check one seed of the series that the unit tests generate from, with
-properties 1 to 3, name it in `SISU_FUZZ_SEED`. A failure of property 1 shows
-only the errors, and W0010 or W0011, not the warnings that the property
-allows:
+the clean, verify and exit checks, name it in `SISU_FUZZ_SEED`. A failure of the
+clean check shows only the errors, and W0010 or W0011, not the warnings that the
+property allows:
 
 ```console
 $ SISU_FUZZ_SEED=72 cargo nextest run -p sisuc --lib seed_from_env --run-ignored only
 ```
 
-To check property 7 over the 128 seeds of the fuzz run, run the test below.
-It prints the mistakes of each kind, the programs with a control and the
+To run the single-mistake check over the 128 seeds of the fuzz run, run the test
+below. It prints the mistakes of each kind, the programs with a control and the
 time. It lists every failure, not only the first:
 
 ```console
-$ cargo nextest run -p sisuc --lib property_7_should_hold_for_the_fuzz_seeds --run-ignored only --no-capture
+$ cargo nextest run -p sisuc --lib single_mistake_check_should_hold_for_the_fuzz_seeds --run-ignored only --no-capture
 ```
 
 The script first builds the runtime archive in release mode and points
@@ -670,16 +671,16 @@ smaller, the rate was about 2 a second per core when busy and 5 on an idle
 core, where one input took about 0.2 s on one thread, nine tenths of it
 linking.
 
-A replay prints the failure to stderr: the failed property as
-`property <n>: <what disagreed>`, or `compiler panic`, then the program, the
-rewritten copy and the standard input, each under a `==> <name>` line, then
-each build's exit status, stdout and stderr. It also writes `program.sisu`,
-`rewritten.sisu`, `stdin.txt` and `failure.txt` to
-`fuzz/artifacts/program/<input name>.dump/`. A failed property 6 or 7 also writes
-`broken.sisu`, the broken copy that failed, which shows the checker's
-diagnostics when you run `sisu check` on it. A checker panic during property 6
-or 7 also writes `broken.sisu`: the program that the checker panicked on. The
-replays after a fuzz run write the same directories.
+A replay prints the failure to stderr: the failed check as
+`<check>: <what disagreed>`, such as `the exit check: ...`, or
+`compiler panic`. Then come the program, the rewritten copy and the standard
+input, each under a `==> <name>` line, then each build's exit status, stdout
+and stderr. It also writes `program.sisu`, `rewritten.sisu`, `stdin.txt` and
+`failure.txt` to `fuzz/artifacts/program/<input name>.dump/`. A failure of the
+bound check or the single-mistake check also writes `broken.sisu`, the broken
+copy that failed. Run `sisu check` on it to see the checker's diagnostics. A checker panic during one of these two checks also writes
+`broken.sisu`: the program that the checker panicked on. The replays after a
+fuzz run write the same directories.
 
 `--coverage` works for either target. It runs `cargo fuzz coverage` over the
 target's corpus and seeds, then prints the line coverage of each compiler
@@ -910,18 +911,19 @@ resolve it first.
 3. For a compiler or runtime bug, `program.sisu` becomes a `run/` or
    `run-fail/` case, and `stdin.txt`, when it is not empty, its `<name>.in`.
    Check its `.out` by hand, as `CODING_STANDARDS.md` asks, see the case fail,
-   then fix the root cause. A runtime fix also runs `make miri`. For property 6,
-   the case is `broken.sisu`, cut down to the call: it becomes a case of
+   then fix the root cause. A runtime fix also runs `make miri`. For the bound
+   check, the case is `broken.sisu`, cut down to the call: it becomes a case of
    `crates/sisuc/tests/diagnostics/`, and the checker's output must be the one
    E0154 at the replaced argument.
 
-   For property 7, run `sisu check` on `broken.sisu`, then use step 2 to
-   decide. A new pair whose extra error follows from a guess (`GLOSSARY.md`,
-   "Cascade") is a new cascade: add it to `fuzz/known_cascades.txt` with a
-   comment line and a repro. An extra error that the source states is a
-   generator bug, an unrecorded true error. A failure "misses" is a checker bug
-   when the source states the error there, because the checker went quiet. It
-   is a generator recording bug when the expected offset or site is wrong.
+   For the single-mistake check, run `sisu check` on `broken.sisu`, then use
+   step 2 to decide. A new pair whose extra error follows from a guess
+   (`GLOSSARY.md`, "Cascade") is a new cascade: add it to
+   `fuzz/known_cascades.txt` with a comment line and a repro. An extra error
+   that the source states is a generator bug, an unrecorded true error. A
+   failure "misses" is a checker bug when the source states the error there,
+   because the checker went quiet. It is a generator recording bug when the
+   expected offset or site is wrong.
 4. For a generator bug, add a test in `crates/sisuc/src/generate/coverage.rs`
    that fails on it, then fix the generator. Never steer the generator around
    a compiler bug.

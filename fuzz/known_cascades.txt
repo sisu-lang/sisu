@@ -1,9 +1,9 @@
-# The known cascades of the single-mistake test (property 7 of the program fuzzer).
+# The known cascades of the single-mistake check of the program fuzzer.
 # A cascade (GLOSSARY.md) is an error that follows from a guess about code that failed.
 # Here it is an error that an injected mistake gives besides its own errors.
 # Each line is a pair `<kind> <code>`: the kind of the mistake and the code of the extra error.
 # The kinds are literal, callee, local, argument and declaration.
-# A pair in this file passes. A pair that is not in this file fails property 7.
+# A pair in this file passes. A pair that is not in this file fails the single-mistake check.
 # The nightly summary reports each pair that no input of the run gave.
 # A checker fix removes pairs from this file. Only a new cascade that a fuzz run finds adds one.
 # A comment line starts with `#` in its first column. A pair line has no comment after it.

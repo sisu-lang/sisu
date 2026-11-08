@@ -1,4 +1,4 @@
-//! Property 7, the single-mistake test: the sites where the generator knows the errors of one
+//! The single-mistake check: the sites where the generator knows the errors of one
 //! edit, and the choice of at most one mistake of each kind. The writer records each site while it
 //! writes the text (`Writer::record`); `choose` turns the sites of a program into edits.
 
@@ -8,7 +8,8 @@ use rustc_hash::FxHashSet;
 
 use crate::lexer::{self, TokenKind};
 
-/// The kinds of property 7, in the order of the spec's table. The bound kind is property 6.
+/// The kinds of the single-mistake check, in the order of the spec's table. The bound check
+/// has its own sites.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Kind {
     Literal,

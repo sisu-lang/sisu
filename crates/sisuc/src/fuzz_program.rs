@@ -1,20 +1,20 @@
 //! The entry point of the program fuzz target: generates a Sisu program from the input bytes,
 //! builds it and its rewritten copy at O0, at `-O2` in one codegen unit, with `--rc-checks` and at
 //! `-O2` in four codegen units, runs each build and panics on a breach of a property (ADR 0033).
-//! Properties 1 and 2 are that the program checks clean and compiles to a module LLVM verifies.
-//! Property 3 is that every build exits 0 or 101, and all four the same way. Property 4 is that
-//! the rewritten copy runs as the program does. Property 5 is that the program prints the known
-//! integer answers. Each call of an interface's requirement, in `shapes` or in a generic function
-//! it calls, prints the values of the method it should reach. One value is its result, where the
-//! method has an `i64` or `string` result. A `T` result counts when the argument of the
-//! conformance is one of them. The other value is the one that the method writes to a `mut`
-//! parameter. Property 6 is that a copy where one argument breaks the bound of its type
-//! parameter gets only E0154, at that argument. Property 7 is that a copy of the program with
-//! one mistake gives the errors of that mistake and no other. A copy with two mistakes in two
-//! functions gives the errors of both. A pair `<kind> <code>` in `fuzz/known_cascades.txt` is a
-//! known extra error.
+//! Each property has the name of its check. The clean check is that the program checks clean. The
+//! verify check is that it compiles to a module LLVM verifies. The exit check is that every build
+//! exits 0 or 101, and all four the same way. The rewrite check is that the rewritten copy runs as
+//! the program does. The answer check is that the program prints the known integer answers. Each
+//! call of an interface's requirement, in `shapes` or in a generic function it calls, prints the
+//! values of the method it should reach. One value is its result, where the method has an `i64` or
+//! `string` result. A `T` result counts when the argument of the conformance is one of them. The
+//! other value is the one that the method writes to a `mut` parameter. The bound check is that a
+//! copy where one argument breaks the bound of its type parameter gets only E0154, at that
+//! argument. The single-mistake check is that a copy of the program with one injected mistake
+//! gives the errors of that mistake and no other. A copy with two mistakes in two functions gives
+//! the errors of both. A pair `<kind> <code>` in `fuzz/known_cascades.txt` is a known extra error.
 
-use std::fmt::Write as _;
+use std::fmt::{self, Write as _};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write as _};
 use std::os::unix::process::ExitStatusExt;
@@ -100,17 +100,48 @@ struct Run {
     stderr: Vec<u8>,
 }
 
-/// A breach of property `property`.
+/// A property that `judge` checks, by the name of its check. The verify check has no variant:
+/// `fuzz::assert_compiles` panics when it fails.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Property {
+    /// The program and its rewritten copy check clean.
+    Clean,
+    /// Every build exits 0 or 101, and all four the same way.
+    Exit,
+    /// The rewritten copy runs as the program does.
+    Rewrite,
+    /// The program prints the answers that the generator worked out.
+    Answer,
+    /// A broken bound gives only E0154, at its argument.
+    Bound,
+    /// One injected mistake gives its errors and no other.
+    SingleMistake,
+}
+
+impl fmt::Display for Property {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Property::Clean => "the clean check",
+            Property::Exit => "the exit check",
+            Property::Rewrite => "the rewrite check",
+            Property::Answer => "the answer check",
+            Property::Bound => "the bound check",
+            Property::SingleMistake => "the single-mistake check",
+        })
+    }
+}
+
+/// A breach of `property`.
 #[derive(Debug)]
 struct Failure {
-    property: u8,
+    property: Property,
     detail: String,
-    /// The broken copy of a failed property 6 or 7, for the dump.
+    /// The broken copy of a failure of the bound check or the single-mistake check, for the dump.
     broken: Option<String>,
 }
 
 impl Failure {
-    fn new(property: u8, detail: String) -> Failure {
+    fn new(property: Property, detail: String) -> Failure {
         Failure {
             property,
             detail,
@@ -127,8 +158,8 @@ struct Current {
     dir: PathBuf,
     /// Set by a property failure before its panic: the property line and the failed builds.
     failure: Option<(String, String)>,
-    /// The broken copy that property 6 or 7 checks now, or the one that failed it. None before
-    /// and after those checks.
+    /// The broken copy that the bound check or the single-mistake check checks now, or the one that
+    /// failed it. None before and after those checks.
     broken: Option<String>,
 }
 
@@ -173,10 +204,10 @@ fn program_in(data: &[u8], runtime: &Path, tmp: &Path) {
             .expect("the lock should not be poisoned")
             .as_mut()
         {
-            current.failure = Some((format!("property {property}: {}", failure.detail), builds));
+            current.failure = Some((format!("{property}: {}", failure.detail), builds));
             current.broken = failure.broken;
         }
-        panic!("program fuzzer: property {property} failed");
+        panic!("program fuzzer: {property} failed");
     }
 }
 
@@ -290,8 +321,8 @@ fn section(out: &mut String, name: &str, text: &[u8]) {
     }
 }
 
-/// Properties 1 to 7 for `g`, built in `dir`. Property 7 runs after property 6, before the builds.
-/// A failure comes with the record of the builds that showed it.
+/// The checks for `g`, built in `dir`. The single-mistake check runs after the bound check, before
+/// the builds. A failure comes with the record of the builds that showed it.
 fn judge(g: &Generated, runtime: &Path, dir: &Path) -> Result<(), (Failure, String)> {
     let program = checked("program", &g.program).map_err(|f| (f, String::new()))?;
     let rewritten = checked("rewritten", &g.rewritten).map_err(|f| (f, String::new()))?;
@@ -311,7 +342,7 @@ fn judge(g: &Generated, runtime: &Path, dir: &Path) -> Result<(), (Failure, Stri
     judge_marked(&runs, &g.expected).map_err(|f| (f, record("program", &runs)))
 }
 
-/// Property 3 for `source`, checked as `program`: its four builds in `dir`, run with `stdin`,
+/// The exit check for `source`, checked as `program`: its four builds in `dir`, run with `stdin`,
 /// which it gives back.
 fn judge_source(
     name: &str,
@@ -342,10 +373,10 @@ fn render(name: &str, source: &str, diagnostics: &[Diagnostic]) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Property 6: in the copy of the program where `site` breaks the bound of its type parameter, the
-/// checker reports an error, each error is E0154, and each starts at the replaced argument. Any
-/// other error is a cascade, as #283 was. Warnings do not count: a program with an error has none
-/// of its own.
+/// The bound check takes the copy of the program where `site` breaks the bound of its type
+/// parameter. In it, the checker reports an error, each error is E0154, and each starts at the
+/// replaced argument. Any other error is a cascade, as #283 was. Warnings do not count: a program
+/// with an error has none of its own.
 fn judge_site(g: &Generated, site: &BoundSite) -> Result<(), Failure> {
     #[cfg_attr(not(test), expect(unused_mut, reason = "only a test forces a failure"))]
     let mut broken = g.broken(site);
@@ -358,7 +389,7 @@ fn judge_site(g: &Generated, site: &BoundSite) -> Result<(), Failure> {
     #[cfg(test)]
     assert!(
         FORCE.get() != Some(Force::CheckerPanic),
-        "the forced checker panic in property 6"
+        "the forced checker panic in the bound check"
     );
     let (_, diagnostics) = front_end::front_end(&broken);
     let mut errors = diagnostics
@@ -377,7 +408,7 @@ fn judge_site(g: &Generated, site: &BoundSite) -> Result<(), Failure> {
     Err(Failure {
         broken: Some(broken.clone()),
         ..Failure::new(
-            6,
+            Property::Bound,
             format!(
                 "the checker {what}, where `{}` replaces `{replaced}` at {line}:{col}, \
                  to break the bound `{}`\n{}",
@@ -389,16 +420,17 @@ fn judge_site(g: &Generated, site: &BoundSite) -> Result<(), Failure> {
     })
 }
 
-/// Property 6 for every bound site of `g`.
+/// The bound check for every bound site of `g`.
 fn judge_bounds(g: &Generated) -> Result<(), Failure> {
     g.bound_sites
         .iter()
         .try_for_each(|site| judge_site(g, site))
 }
 
-/// Property 7 for `g`: each mistake alone, then the control (the first two mistakes of different
-/// functions, together). Each must give exactly its errors. A known cascade passes. Each known pair
-/// that it allows is appended to `seen`, as `<kind> <code>\n`, when `seen` names a file.
+/// The single-mistake check for `g`: each mistake alone, then the control (the first two mistakes
+/// of different functions, together). Each must give exactly its errors. A known cascade passes.
+/// Each known pair that it allows is appended to `seen`, as `<kind> <code>\n`, when `seen` names a
+/// file.
 fn judge_mistakes(g: &Generated, seen: Option<&Path>) -> Result<(), Failure> {
     g.mistakes
         .iter()
@@ -440,7 +472,7 @@ fn judge_edit(g: &Generated, mistakes: &[&Mistake], seen: Option<&Path>) -> Resu
     #[cfg(test)]
     assert!(
         FORCE.get() != Some(Force::CheckerPanic),
-        "the forced checker panic in property 7"
+        "the forced checker panic in the single-mistake check"
     );
     let (_, diagnostics) = front_end::front_end(&changed);
     #[cfg_attr(not(test), expect(unused_mut, reason = "only a test forces a failure"))]
@@ -507,11 +539,11 @@ fn judge_edit(g: &Generated, mistakes: &[&Mistake], seen: Option<&Path>) -> Resu
         None
     };
     if let Some(what) = what {
-        let detail = describe(g, mistakes);
         let rendered = render("broken", &changed, &diagnostics);
+        let detail = format!("{}the checker {what}\n{rendered}", describe(g, mistakes));
         return Err(Failure {
             broken: Some(changed),
-            ..Failure::new(7, format!("{detail}the checker {what}\n{rendered}"))
+            ..Failure::new(Property::SingleMistake, detail)
         });
     }
     if let Some(seen) = seen {
@@ -593,8 +625,9 @@ fn parse_cascades(text: &str) -> Vec<(Kind, String)> {
         .collect()
 }
 
-/// Properties 1 and 2: `source` checks with no error, W0010 or W0011, and its MIR certifies and its
-/// module verifies, without and with `--rc-checks` (`fuzz::assert_compiles` panics if not).
+/// The clean check and the verify check: `source` checks with no error, W0010 or W0011, and its MIR
+/// certifies and its module verifies, without and with `--rc-checks` (`fuzz::assert_compiles`
+/// panics if not).
 fn checked(name: &str, source: &str) -> Result<Program, Failure> {
     // Every generated function returns and every generated loop ends, so none may call itself
     // on every path, and no loop condition may stay unchanged.
@@ -608,7 +641,7 @@ fn checked(name: &str, source: &str) -> Result<Program, Failure> {
             .cloned()
             .collect();
         let rendered = render(name, source, &failing);
-        Failure::new(1, format!("{what}\n{rendered}"))
+        Failure::new(Property::Clean, format!("{what}\n{rendered}"))
     };
     let Some(program) = program else {
         return Err(failure(format!("the checker rejects the {name}")));
@@ -722,10 +755,10 @@ fn exit(status: ExitStatus) -> Exit {
     }
 }
 
-/// Property 3: each build exits 0 or with a Sisu panic, 101, so the `--rc-checks` build reports
+/// The exit check: each build exits 0 or with a Sisu panic, 101, so the `--rc-checks` build reports
 /// no count fault or leak (102); and the four agree on exit, stdout and stderr exactly.
 fn judge_builds(runs: &[Run; 4]) -> Result<(), Failure> {
-    let fail = |detail: String| Err(Failure::new(3, detail));
+    let fail = |detail: String| Err(Failure::new(Property::Exit, detail));
     for ((build, _), run) in BUILDS.iter().zip(runs) {
         if !matches!(run.exit, Exit::Code(0 | 101)) {
             return fail(format!("the {build} build exits with {:?}", run.exit));
@@ -745,8 +778,8 @@ fn judge_builds(runs: &[Run; 4]) -> Result<(), Failure> {
     Ok(())
 }
 
-/// Property 4: the program and its rewritten copy, each run the same way, exit the same way and
-/// print the same, but for where a panic happened.
+/// The rewrite check: the program and its rewritten copy, each run the same way, exit the same way
+/// and print the same, but for where a panic happened.
 fn judge_pair(program: &Run, rewritten: &Run) -> Result<(), Failure> {
     let differs = [
         ("exit", program.exit != rewritten.exit),
@@ -755,7 +788,7 @@ fn judge_pair(program: &Run, rewritten: &Run) -> Result<(), Failure> {
     ];
     match differs.iter().find(|(_, differs)| *differs) {
         Some((what, _)) => Err(Failure::new(
-            4,
+            Property::Rewrite,
             format!("the program and its rewritten copy differ in {what}"),
         )),
         None => Ok(()),
@@ -821,12 +854,12 @@ fn dbg_location(line: &[u8]) -> usize {
     }
 }
 
-/// Property 5: `run`, the program's O0 run, prints each known value site's line as the first
+/// The answer check: `run`, the program's O0 run, prints each known value site's line as the first
 /// lines of its stdout, in order; and a panic site, when its `@k<n> panics` line is the last,
 /// panics with the expected message, while a run that does not reach it panics before it.
 /// Only those exact lines are read, so another line that starts with `@` changes nothing.
 fn judge_known(run: &Run, known: &[Known]) -> Result<(), Failure> {
-    let fail = |detail: String| Err(Failure::new(5, detail));
+    let fail = |detail: String| Err(Failure::new(Property::Answer, detail));
     let stdout = String::from_utf8_lossy(&run.stdout);
     let stderr = String::from_utf8_lossy(&run.stderr);
     let mut lines = stdout.lines();
@@ -867,15 +900,15 @@ fn is_marked(line: &str) -> bool {
         .is_some_and(|(number, _)| !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit()))
 }
 
-/// Property 5 for the calls of requirements: in each build of the program, the marked lines of
-/// stdout (`is_marked`) are the first lines of `expected`, in order. A run that returns or panics
-/// before `shapes` prints none, and one that stops inside it prints a prefix, so a shorter list
-/// passes. A wrong value, a wrong order or an extra line fails, and the failure gives the first
-/// line that differs and the line expected there.
+/// The answer check for the calls of requirements: in each build of the program, the marked lines
+/// of stdout (`is_marked`) are the first lines of `expected`, in order. A run that returns or
+/// panics before `shapes` prints none, and one that stops inside it prints a prefix, so a shorter
+/// list passes. A wrong value, a wrong order or an extra line fails, and the failure gives the
+/// first line that differs and the line expected there.
 // shortcut: `main`'s statements can print a line that matches, for example two interpolated parts
 // `(char(e) ?? d)` with e = 64 and e = 100, then an integer part; no seed of 0..6000 does;
-// upgrade when a run reports a false property 5 failure (then give `shapes` its own output check,
-// for example after a fixed line that only `shapes` prints).
+// upgrade when a run reports a false failure of the answer check. Then give `shapes` its own
+// output check, for example after a fixed line that only `shapes` prints.
 fn judge_marked(runs: &[Run], expected: &[String]) -> Result<(), Failure> {
     for ((build, _), run) in BUILDS.iter().zip(runs) {
         let stdout = String::from_utf8_lossy(&run.stdout);
@@ -893,7 +926,7 @@ fn judge_marked(runs: &[Run], expected: &[String]) -> Result<(), Failure> {
                     expected.len()
                 ),
             };
-            return Err(Failure::new(5, detail));
+            return Err(Failure::new(Property::Answer, detail));
         }
     }
     Ok(())
@@ -925,7 +958,8 @@ enum Force {
     WorkerPanic,
     /// Each check of two mistakes together sees no error.
     QuietControl,
-    /// The checker panics, as a compiler bug would, in property 6 and in property 7.
+    /// The checker panics, as a compiler bug would, in the bound check and in the single-mistake
+    /// check.
     CheckerPanic,
 }
 
@@ -975,10 +1009,10 @@ mod tests {
 
     use super::dbg_location;
     use super::{
-        Answer, BUILDS, Exit, FORCE, Force, Known, LIMIT, Run, build, builds, checked, control_of,
-        is_marked, judge, judge_bounds, judge_builds, judge_edit, judge_known, judge_marked,
-        judge_mistakes, judge_pair, judge_source, known_cascades, parse_cascades, program,
-        program_in, run, runtime,
+        Answer, BUILDS, Exit, FORCE, Force, Known, LIMIT, Property, Run, build, builds, checked,
+        control_of, is_marked, judge, judge_bounds, judge_builds, judge_edit, judge_known,
+        judge_marked, judge_mistakes, judge_pair, judge_source, known_cascades, parse_cascades,
+        program, program_in, run, runtime,
     };
     use crate::diagnostic::Severity;
     use crate::fresh_names;
@@ -1035,14 +1069,14 @@ mod tests {
             assert_eq!(run.stdout, b"hi\n");
             assert_eq!(run.stderr, b"");
         }
-        judge_builds(&runs).expect("a clean program should pass property 3");
+        judge_builds(&runs).expect("a clean program should pass the exit check");
     }
 
     #[test]
     fn a_panic_should_pass_when_every_build_agrees() {
         let runs = runs_of("fn main() {\n    panic(\"x\")\n}\n", "", LIMIT);
         assert_eq!(exits(&runs), [Exit::Code(101); 4]);
-        judge_builds(&runs).expect("a panic in every build should pass property 3");
+        judge_builds(&runs).expect("a panic in every build should pass the exit check");
     }
 
     /// Review Focus 2: the overflow's value is never used, and `-O2` must keep its panic.
@@ -1084,11 +1118,11 @@ mod tests {
         let last = runs[2].stdout.len() - 2;
         runs[2].stdout[last] = b'8';
         let failure = judge_builds(&runs).expect_err("the last digit differs");
-        assert_eq!(failure.property, 3);
+        assert_eq!(failure.property, Property::Exit);
     }
 
     #[test]
-    fn a_hang_should_fail_property_3() {
+    fn a_hang_should_fail_the_exit_check() {
         let source = "fn main() {\n    while true {\n    }\n}\n";
         let scratch = Scratch::new();
         let program = checked("program", source).expect("the test's program should check clean");
@@ -1100,7 +1134,7 @@ mod tests {
         assert_eq!(hung.exit, Exit::TimedOut);
         let failure =
             judge_builds(&[hung, clean(), clean(), clean()]).expect_err("a hang should fail");
-        assert_eq!(failure.property, 3);
+        assert_eq!(failure.property, Property::Exit);
     }
 
     /// A run past its limit is killed and reaped: no zombie is left behind.
@@ -1172,12 +1206,12 @@ mod tests {
             let mut runs = [clean(), clean(), clean(), clean()];
             change(&mut runs);
             let failure = judge_builds(&runs).expect_err(case);
-            assert_eq!(failure.property, 3, "{case}");
+            assert_eq!(failure.property, Property::Exit, "{case}");
         }
     }
 
-    /// A split build that prints or exits otherwise than the other three fails property 3 and is
-    /// named: the comparison reaches the fourth build.
+    /// A split build that prints or exits otherwise than the other three fails the exit check and
+    /// is named: the comparison reaches the fourth build.
     #[test]
     fn judge_builds_should_catch_a_split_build_that_differs() {
         let cases: [(&str, Change); 2] = [
@@ -1188,7 +1222,7 @@ mod tests {
             let mut runs = [clean(), clean(), clean(), clean()];
             change(&mut runs);
             let failure = judge_builds(&runs).expect_err(case);
-            assert_eq!(failure.property, 3, "{case}");
+            assert_eq!(failure.property, Property::Exit, "{case}");
             assert!(
                 failure.detail.contains("-O2 --codegen-units 4"),
                 "{case}: {}",
@@ -1197,9 +1231,9 @@ mod tests {
         }
     }
 
-    /// Either copy failing to check fails property 1, before anything is built.
+    /// Either copy failing to check fails the clean check, before anything is built.
     #[test]
-    fn a_rejected_program_should_fail_property_1() {
+    fn a_rejected_program_should_fail_the_clean_check() {
         let clean = "fn main() {\n    print(1)\n}\n";
         let rejected = "fn main() {\n    print(x)\n}\n";
         for (program, rewritten) in [(rejected, clean), (clean, rejected)] {
@@ -1220,27 +1254,31 @@ mod tests {
             let scratch = Scratch::new();
             let (failure, builds) =
                 judge(&g, &runtime(), &scratch.0).expect_err("an unknown name should fail");
-            assert_eq!((failure.property, builds.as_str()), (1, ""), "{rewritten}");
+            assert_eq!(
+                (failure.property, builds.as_str()),
+                (Property::Clean, ""),
+                "{rewritten}"
+            );
         }
     }
 
-    /// The program has no error, so only its W0010 can fail property 1.
+    /// The program has no error, so only its W0010 can fail the clean check.
     #[test]
-    fn checked_should_fail_property_1_when_a_function_calls_itself_on_every_path() {
+    fn checked_should_fail_the_clean_check_when_a_function_calls_itself_on_every_path() {
         let Err(failure) = checked("program", "fn _f() {\n    _f()\n}\nfn main() {}\n") else {
             panic!("a function that calls itself on every path should fail");
         };
-        assert_eq!(failure.property, 1);
+        assert_eq!(failure.property, Property::Clean);
     }
 
-    /// The program has no error, so only its W0011 can fail property 1.
+    /// The program has no error, so only its W0011 can fail the clean check.
     #[test]
-    fn checked_should_fail_property_1_when_a_loop_condition_never_changes() {
+    fn checked_should_fail_the_clean_check_when_a_loop_condition_never_changes() {
         let source = "fn _f(n: i64) {\n    while n > 0 { print(n) }\n}\nfn main() {}\n";
         let Err(failure) = checked("program", source) else {
             panic!("a loop whose condition never changes should fail");
         };
-        assert_eq!(failure.property, 1);
+        assert_eq!(failure.property, Property::Clean);
     }
 
     #[test]
@@ -1264,15 +1302,15 @@ mod tests {
         }
     }
 
-    /// The property `judge_pair` finds broken, 0 for none.
-    fn pair(program: &Run, rewritten: &Run) -> u8 {
-        judge_pair(program, rewritten).map_or_else(|f| f.property, |()| 0)
+    /// The property `judge_pair` finds broken, if any.
+    fn pair(program: &Run, rewritten: &Run) -> Option<Property> {
+        judge_pair(program, rewritten).err().map(|f| f.property)
     }
 
     /// Review Focus 3: the copies' panics are at different places, with the same message,
     /// after a line the program printed to stderr.
     #[test]
-    fn pair_ignores_panic_locations() {
+    fn pair_should_ignore_panic_locations() {
         let program = ran(
             101,
             "1\n",
@@ -1283,11 +1321,11 @@ mod tests {
             "1\n",
             "e\nsisu: panic at input.sisu:17:19: integer overflow\n",
         );
-        assert_eq!(pair(&program, &rewritten), 0);
+        assert_eq!(pair(&program, &rewritten), None);
     }
 
-    /// Property 4: the line of a `dbg` loses its `<file>:<line>:<col>: `, in every line and in
-    /// both files; its text and its value still compare.
+    /// The rewrite check: the line of a `dbg` loses its `<file>:<line>:<col>: `, in every line and
+    /// in both files; its text and its value still compare.
     #[test]
     fn pair_should_ignore_dbg_locations_and_compare_the_rest() {
         let at = |file: &str, place: &str, text: &str| {
@@ -1303,20 +1341,28 @@ mod tests {
             "",
             &(at("rewritten", "13:25", "f(x)") + &at("rewritten", "9:1", "y")),
         );
-        assert_eq!(pair(&program, &moved), 0);
+        assert_eq!(pair(&program, &moved), None);
         let text = ran(
             0,
             "",
             &(at("rewritten", "13:25", "g(x)") + &at("rewritten", "9:1", "y")),
         );
-        assert_eq!(pair(&program, &text), 4, "the source text of a `dbg`");
+        assert_eq!(
+            pair(&program, &text),
+            Some(Property::Rewrite),
+            "the source text of a `dbg`"
+        );
         let value = ran(
             0,
             "",
             &(at("rewritten", "13:25", "f(x)") + &at("rewritten", "9:1", "y"))
                 .replace("= 1", "= 2"),
         );
-        assert_eq!(pair(&program, &value), 4, "the value of a `dbg`");
+        assert_eq!(
+            pair(&program, &value),
+            Some(Property::Rewrite),
+            "the value of a `dbg`"
+        );
     }
 
     /// A line is a `dbg` line only when it starts with a `.sisu` file name, a line and a column,
@@ -1346,36 +1392,42 @@ mod tests {
     }
 
     #[test]
-    fn pair_rejects_a_different_panic_message() {
+    fn pair_should_reject_a_different_panic_message() {
         let program = ran(101, "", "sisu: panic at input.sisu:3:5: integer overflow\n");
         let rewritten = ran(101, "", "sisu: panic at input.sisu:3:5: division by zero\n");
-        assert_eq!(pair(&program, &rewritten), 4);
+        assert_eq!(pair(&program, &rewritten), Some(Property::Rewrite));
     }
 
     /// Only a panic's own line loses its location: an `eprint` of the same text, or a line
     /// before the last, compares as written.
     #[test]
-    fn pair_compares_ordinary_stderr_exactly() {
+    fn pair_should_compare_ordinary_stderr_exactly() {
         let at = |place: &str| format!("sisu: panic at input.sisu:{place}: hello\n");
         let printed = (ran(0, "", &at("3:5")), ran(0, "", &at("7:9")));
-        assert_eq!(pair(&printed.0, &printed.1), 4);
+        assert_eq!(pair(&printed.0, &printed.1), Some(Property::Rewrite));
         let panic = "sisu: panic at input.sisu:9:1: integer overflow\n";
         let earlier = (
             ran(101, "", &(at("3:5") + panic)),
             ran(101, "", &(at("7:9") + panic)),
         );
-        assert_eq!(pair(&earlier.0, &earlier.1), 4);
+        assert_eq!(pair(&earlier.0, &earlier.1), Some(Property::Rewrite));
     }
 
     #[test]
-    fn pair_rejects_different_stdout() {
-        assert_eq!(pair(&ran(0, "1\n", ""), &ran(0, "2\n", "")), 4);
+    fn pair_should_reject_different_stdout() {
+        assert_eq!(
+            pair(&ran(0, "1\n", ""), &ran(0, "2\n", "")),
+            Some(Property::Rewrite)
+        );
     }
 
     #[test]
-    fn pair_rejects_a_different_exit() {
+    fn pair_should_reject_a_different_exit() {
         let panic = "sisu: panic at input.sisu:3:5: integer overflow\n";
-        assert_eq!(pair(&ran(0, "", panic), &ran(101, "", panic)), 4);
+        assert_eq!(
+            pair(&ran(0, "", panic), &ran(101, "", panic)),
+            Some(Property::Rewrite)
+        );
     }
 
     fn value(marker: &str, value: &str) -> Known {
@@ -1392,100 +1444,118 @@ mod tests {
         }
     }
 
-    /// The property `judge_known` finds broken, 0 for none.
-    fn known(run: &Run, known: &[Known]) -> u8 {
-        judge_known(run, known).map_or_else(|f| f.property, |()| 0)
+    /// The property `judge_known` finds broken, if any.
+    fn known(run: &Run, known: &[Known]) -> Option<Property> {
+        judge_known(run, known).err().map(|f| f.property)
     }
 
     #[test]
-    fn known_value_matches() {
+    fn known_value_should_match() {
         let site = [value("k0", "42")];
-        assert_eq!(known(&ran(0, "@k0 42\n", ""), &site), 0);
-        assert_eq!(known(&ran(0, "@k0 41\n", ""), &site), 5);
+        assert_eq!(known(&ran(0, "@k0 42\n", ""), &site), None);
+        assert_eq!(
+            known(&ran(0, "@k0 41\n", ""), &site),
+            Some(Property::Answer)
+        );
     }
 
     const OVERFLOW: &str = "sisu: panic at input.sisu:9:5: integer overflow\n";
 
     #[test]
-    fn known_panic_is_the_last_line() {
+    fn known_panic_should_be_the_last_line() {
         let site = [panics("k0", "integer overflow")];
         let stderr = format!("x\n{OVERFLOW}");
-        assert_eq!(known(&ran(101, "@k0 panics\n", &stderr), &site), 0);
+        assert_eq!(known(&ran(101, "@k0 panics\n", &stderr), &site), None);
         let divided = "sisu: panic at input.sisu:9:5: division by zero\n";
-        assert_eq!(known(&ran(101, "@k0 panics\n", divided), &site), 5);
-        assert_eq!(known(&ran(0, "@k0 panics\n", ""), &site), 5);
+        assert_eq!(
+            known(&ran(101, "@k0 panics\n", divided), &site),
+            Some(Property::Answer)
+        );
+        assert_eq!(
+            known(&ran(0, "@k0 panics\n", ""), &site),
+            Some(Property::Answer)
+        );
     }
 
     /// A panic before a value site's line cannot hide a wrong or missing value.
     #[test]
-    fn missing_known_value_fails() {
+    fn missing_known_value_should_fail() {
         let site = [value("k0", "42")];
-        assert_eq!(known(&ran(0, "", ""), &site), 5);
-        assert_eq!(known(&ran(101, "", OVERFLOW), &site), 5);
+        assert_eq!(known(&ran(0, "", ""), &site), Some(Property::Answer));
+        assert_eq!(
+            known(&ran(101, "", OVERFLOW), &site),
+            Some(Property::Answer)
+        );
     }
 
     /// A panic site not reached was cut off by an earlier panic.
     #[test]
-    fn unreached_panic_site_needs_a_panic() {
+    fn unreached_panic_site_should_need_a_panic() {
         let site = [panics("k0", "integer overflow")];
-        assert_eq!(known(&ran(101, "1\n", OVERFLOW), &site), 0);
-        assert_eq!(known(&ran(0, "1\n", ""), &site), 5);
-        assert_eq!(known(&ran(101, "@k0 panics\n", OVERFLOW), &site), 0);
-        assert_eq!(known(&ran(0, "@k0 panics\n", ""), &site), 5);
+        assert_eq!(known(&ran(101, "1\n", OVERFLOW), &site), None);
+        assert_eq!(known(&ran(0, "1\n", ""), &site), Some(Property::Answer));
+        assert_eq!(known(&ran(101, "@k0 panics\n", OVERFLOW), &site), None);
+        assert_eq!(
+            known(&ran(0, "@k0 panics\n", ""), &site),
+            Some(Property::Answer)
+        );
     }
 
     /// The program's own output may print `@` (`char(64)`): a value site's line is found by
     /// its place, the first lines, and its exact text, so no other line is read as one.
     #[test]
-    fn other_at_lines_are_ignored() {
+    fn other_at_lines_should_be_ignored() {
         let sites = [value("k0", "42"), value("k1", "7")];
         let stdout = "@k0 42\n@k1 7\n@\n@k0 41\n@k1\n";
-        assert_eq!(known(&ran(0, stdout, ""), &sites), 0);
-        assert_eq!(known(&ran(0, "@\n@k0 42\n@k1 7\n", ""), &sites), 5);
+        assert_eq!(known(&ran(0, stdout, ""), &sites), None);
+        assert_eq!(
+            known(&ran(0, "@\n@k0 42\n@k1 7\n", ""), &sites),
+            Some(Property::Answer)
+        );
     }
 
     /// What `judge_marked` says of builds that all print `stdout`, when `shapes` should print
-    /// `expected`: the failed property, 0 for none, and the failure's text.
-    fn marked(stdout: &str, expected: &[&str]) -> (u8, String) {
+    /// `expected`: the failed property, if any, and the failure's text.
+    fn marked(stdout: &str, expected: &[&str]) -> (Option<Property>, String) {
         let expected: Vec<String> = expected.iter().map(ToString::to_string).collect();
         let runs = [ran(0, stdout, ""), ran(0, stdout, ""), ran(0, stdout, "")];
         judge_marked(&runs, &expected)
-            .map_or_else(|f| (f.property, f.detail), |()| (0, String::new()))
+            .map_or_else(|f| (Some(f.property), f.detail), |()| (None, String::new()))
     }
 
     const LIST: [&str; 3] = ["@d0 Q0.r1", "@d1 N0.r1", "@d1 Q0.r1"];
 
     #[test]
     fn judge_marked_should_pass_when_stdout_prints_the_whole_list() {
-        assert_eq!(marked("@d0 Q0.r1\n@d1 N0.r1\n@d1 Q0.r1\n", &LIST).0, 0);
+        assert_eq!(marked("@d0 Q0.r1\n@d1 N0.r1\n@d1 Q0.r1\n", &LIST).0, None);
     }
 
     /// `main` can return or panic before `shapes`, and then no marked line prints.
     #[test]
     fn judge_marked_should_pass_when_stdout_prints_no_marked_line() {
-        assert_eq!(marked("", &LIST).0, 0);
-        assert_eq!(marked("@k0 7\nplain\n", &LIST).0, 0);
+        assert_eq!(marked("", &LIST).0, None);
+        assert_eq!(marked("@k0 7\nplain\n", &LIST).0, None);
     }
 
     /// A marked line is `@d`, digits and a space: another line that starts with `@d` is not one.
     #[test]
     fn judge_marked_should_not_read_a_line_without_digits_and_a_space_as_marked() {
         for line in ["@dx 1", "@d", "@d 1", "@d1", "@d1x 1", "d0 1"] {
-            assert_eq!(marked(&format!("{line}\n"), &[]).0, 0, "{line}");
+            assert_eq!(marked(&format!("{line}\n"), &[]).0, None, "{line}");
         }
-        assert_eq!(marked("@d0 x\n", &[]).0, 5);
+        assert_eq!(marked("@d0 x\n", &[]).0, Some(Property::Answer));
     }
 
     /// A panic inside `shapes` stops it after some marked lines.
     #[test]
     fn judge_marked_should_pass_when_stdout_prints_a_prefix_of_the_list() {
-        assert_eq!(marked("@d0 Q0.r1\n@d1 N0.r1\n", &LIST).0, 0);
+        assert_eq!(marked("@d0 Q0.r1\n@d1 N0.r1\n", &LIST).0, None);
     }
 
     #[test]
     fn judge_marked_should_fail_when_a_value_is_wrong() {
         let (property, detail) = marked("@d0 Q0.r1\n@d1 Q0.r1\n", &LIST);
-        assert_eq!(property, 5);
+        assert_eq!(property, Some(Property::Answer));
         // The first line that differs is the second, where `N0.r1` was the value to print.
         assert!(
             detail.contains("`@d1 N0.r1`") && detail.contains("`@d1 Q0.r1`"),
@@ -1497,14 +1567,14 @@ mod tests {
     #[test]
     fn judge_marked_should_fail_when_two_lines_are_out_of_order() {
         let (property, detail) = marked("@d1 N0.r1\n@d0 Q0.r1\n@d1 Q0.r1\n", &LIST);
-        assert_eq!(property, 5);
+        assert_eq!(property, Some(Property::Answer));
         assert!(detail.contains("marked line 1"), "{detail}");
     }
 
     #[test]
     fn judge_marked_should_fail_when_a_line_is_extra() {
         let (property, detail) = marked("@d0 Q0.r1\n@d1 N0.r1\n@d1 Q0.r1\n@d2 Q0.r1\n", &LIST);
-        assert_eq!(property, 5);
+        assert_eq!(property, Some(Property::Answer));
         assert!(
             detail.contains("`@d2 Q0.r1`") && detail.contains("prints only 3 marked lines"),
             "{detail}"
@@ -1667,7 +1737,7 @@ mod tests {
             if holds(row, &g) && reaches_shapes(&g) {
                 let run = o0_run(&g);
                 // The text cannot show a panic before `shapes` on an overflow or an index
-                // (property 3), so a run that exits 101 is skipped. Any other exit, such as a
+                // (the exit check), so a run that exits 101 is skipped. Any other exit, such as a
                 // signal, is the bug that this test guards (#203): the count below reports it.
                 if run.exit != Exit::Code(101) {
                     found = Some((n, g, run));
@@ -1780,8 +1850,9 @@ mod tests {
                 let original = g.program.clone();
                 g.program.insert_str(at, "    return\n");
                 let run = o0_run(&g);
-                // A statement of `main` before the call can panic on an overflow or an index
-                // (property 3), so a run that exits 101 is skipped. Any other exit fails below.
+                // A statement of `main` before the call can panic on an overflow or an index, as
+                // the exit check allows. So a run that exits 101 is skipped. Any other exit fails
+                // below.
                 if run.exit != Exit::Code(101) {
                     found = Some((original, g, run));
                 }
@@ -1832,8 +1903,8 @@ mod tests {
 
     /// A program of the series where two methods of one requirement, on two types, swap their
     /// values: it checks clean and exits 0, as before, and only the marked lines show it. Its
-    /// call reaches the other type's value, so property 5 fails, and the failure names the first
-    /// marked line that differs.
+    /// call reaches the other type's value, so the answer check fails, and the failure names the
+    /// first marked line that differs.
     #[test]
     fn judge_marked_should_fail_when_two_methods_swap_their_values() {
         let (g, _) = dispatch_of(DISPATCHES[0]);
@@ -1850,8 +1921,8 @@ mod tests {
         });
         assert_eq!(run.exit, Exit::Code(0), "{source}");
         let failure = judge_marked(&[run], &g.expected)
-            .expect_err("two swapped methods should fail property 5");
-        assert_eq!(failure.property, 5);
+            .expect_err("two swapped methods should fail the answer check");
+        assert_eq!(failure.property, Property::Answer);
         assert!(
             failure.detail.contains("should print `@d"),
             "{}",
@@ -1874,7 +1945,7 @@ mod tests {
                     .detail
                     .contains(&format!("marked line {}", last + 1))
             ),
-            (5, true)
+            (Property::Answer, true)
         );
     }
 
@@ -1898,29 +1969,31 @@ mod tests {
         }
     }
 
-    /// The failed property of `judge` on `g`, 0 for none, and the record of the builds.
-    fn judged(g: &Generated) -> (u8, String) {
+    /// The failed property of `judge` on `g`, if any, and the record of the builds.
+    fn judged(g: &Generated) -> (Option<Property>, String) {
         let scratch = Scratch::new();
-        crate::on_compiler_stack(|| judge(g, &runtime(), &scratch.0))
-            .map_or_else(|(f, record)| (f.property, record), |()| (0, String::new()))
+        crate::on_compiler_stack(|| judge(g, &runtime(), &scratch.0)).map_or_else(
+            |(f, record)| (Some(f.property), record),
+            |()| (None, String::new()),
+        )
     }
 
     #[test]
     fn judge_should_pass_when_the_marked_lines_are_the_expected_ones() {
-        assert_eq!(judged(&printing(Vec::new(), &["@d0 a"])).0, 0);
+        assert_eq!(judged(&printing(Vec::new(), &["@d0 a"])).0, None);
     }
 
     #[test]
-    fn judge_should_fail_property_5_when_a_marked_line_is_not_the_expected_one() {
+    fn judge_should_fail_the_answer_check_when_a_marked_line_is_not_the_expected_one() {
         let (property, record) = judged(&printing(Vec::new(), &["@d0 b"]));
-        assert_eq!(property, 5);
+        assert_eq!(property, Some(Property::Answer));
         assert!(record.contains("==> program O0"), "{record}");
     }
 
     #[test]
-    fn judge_should_fail_property_5_when_a_known_value_is_not_printed() {
+    fn judge_should_fail_the_answer_check_when_a_known_value_is_not_printed() {
         let (property, record) = judged(&printing(vec![value("k0", "1")], &["@d0 a"]));
-        assert_eq!(property, 5);
+        assert_eq!(property, Some(Property::Answer));
         assert!(record.contains("==> program O0"), "{record}");
     }
 
@@ -1929,8 +2002,8 @@ mod tests {
         coverage::seed(n)
     }
 
-    /// The `n`th seed's program, or its rewritten copy, passes properties 1 to 3 through the
-    /// path `judge` takes. One test per source keeps each to four builds.
+    /// The `n`th seed's program, or its rewritten copy, passes the clean, verify and exit checks
+    /// through the path `judge` takes. One test per source keeps each to four builds.
     fn seed_passes(n: u64, rewritten: bool) {
         let g = generate(&seed(n));
         let (name, source) = if rewritten {
@@ -1940,12 +2013,12 @@ mod tests {
         };
         crate::on_compiler_stack(|| {
             let scratch = Scratch::new();
-            let program = checked(name, source)
-                .unwrap_or_else(|f| panic!("property {}: {}", f.property, f.detail));
+            let program =
+                checked(name, source).unwrap_or_else(|f| panic!("{}: {}", f.property, f.detail));
             let stdin = scratch.0.join("stdin.txt");
             fs::write(&stdin, &g.stdin).expect("the test should write the stdin");
             judge_source(name, source, &program, &runtime(), &scratch.0, &stdin)
-                .unwrap_or_else(|(f, record)| panic!("property 3: {}\n{record}", f.detail));
+                .unwrap_or_else(|(f, record)| panic!("the exit check: {}\n{record}", f.detail));
         });
     }
 
@@ -1962,14 +2035,14 @@ mod tests {
         seed_passes(n, true);
     }
 
-    /// The yield of property 7 over the fuzz seeds `0..FUZZ_SEEDS`, with every failure instead of
-    /// the first: `cargo nextest run -p sisuc --lib property_7_should_hold_for_the_fuzz_seeds
-    /// --run-ignored only --no-capture`. It prints the mistakes of each kind, the programs with a
-    /// control, the time, and the seed and first line of each failure. A new pair of the checker
-    /// goes into `fuzz/known_cascades.txt`.
+    /// The yield of the single-mistake check over the fuzz seeds `0..FUZZ_SEEDS`, with every
+    /// failure instead of the first: `cargo nextest run -p sisuc --lib
+    /// single_mistake_check_should_hold_for_the_fuzz_seeds --run-ignored only --no-capture`. It
+    /// prints the mistakes of each kind, the programs with a control, the time, and the seed and
+    /// first line of each failure. A new pair of the checker goes into `fuzz/known_cascades.txt`.
     #[test]
     #[ignore = "runs only on demand, over the seeds 0..FUZZ_SEEDS of the fuzz run"]
-    fn property_7_should_hold_for_the_fuzz_seeds() {
+    fn single_mistake_check_should_hold_for_the_fuzz_seeds() {
         let (mut generating, mut judging) = (Duration::ZERO, Duration::ZERO);
         let mut kinds = [0_usize; Kind::ALL.len()];
         let mut controls = 0;
@@ -2001,7 +2074,7 @@ mod tests {
         }
         assert!(
             failures.is_empty(),
-            "{} seeds fail property 7",
+            "{} seeds fail the single-mistake check",
             failures.len()
         );
     }
@@ -2075,9 +2148,10 @@ mod tests {
         seed_passes(59, false);
     }
 
-    /// `program` end to end, all six builds and properties 1 to 6: it passes and leaves no
-    /// directory behind. Of the seeds under 4000 with rewrites, a value site and a panic site
-    /// that its run reaches, seed 3934 has the shortest program, so its builds are quick.
+    /// `program` end to end, all six builds and every check but the single-mistake check: it passes
+    /// and leaves no directory behind. Of the seeds under 4000 with rewrites, a value site and a
+    /// panic site that its run reaches, seed 3934 has the shortest program. So its builds are
+    /// quick.
     #[test]
     fn program_should_pass_and_leave_no_directory_behind() {
         let tmp = Scratch::new();
@@ -2096,7 +2170,7 @@ mod tests {
 
     /// Seed 3934's one panic site is the last thing its O0 run prints, as the marker `item.rs`
     /// writes. `judge_known` takes a run without that line for an earlier panic, so with it
-    /// property 5 judged this panic site.
+    /// the answer check judged this panic site.
     #[test]
     fn a_seed_with_a_panic_site_should_print_its_marker_last() {
         let g = generate(&seed(3934));
@@ -2118,11 +2192,11 @@ mod tests {
 
     /// GIVEN the first seed whose O0 run exits 0 and prints a `dbg` line, and whose rewritten copy
     /// moves a line, so that the stderr of the two runs differs as written
-    /// WHEN property 4 compares the two runs
+    /// WHEN the rewrite check compares the two runs
     /// THEN it holds, since `unlocated` takes the `<file>:<line>:<col>: ` off each line: the text
     /// and the value of each line are the same, as no rewrite changes the argument of a `dbg`
     #[test]
-    fn a_seed_with_dbg_should_keep_property_4_across_its_rewrites() {
+    fn a_seed_with_dbg_should_pass_the_rewrite_check() {
         let mut found = None;
         search_seeds(0, |n| {
             let g = generate(&seed(n));
@@ -2144,7 +2218,7 @@ mod tests {
         });
         let (program, rewritten) =
             found.expect("some seed should run `dbg` and have a rewrite that moves a line");
-        assert_eq!(pair(&program, &rewritten), 0);
+        assert_eq!(pair(&program, &rewritten), None);
     }
 
     /// A program with one bound site: the argument at `at`, which `broken` replaces.
@@ -2178,14 +2252,14 @@ mod tests {
     }
 
     #[test]
-    fn property_6_should_hold_when_only_the_site_breaks_its_bound() {
+    fn bound_check_should_hold_when_only_the_site_breaks_its_bound() {
         judge_bounds(&eq_site("", "NoBound()")).expect("one E0154 at the argument should pass");
     }
 
     #[test]
-    fn property_6_should_fail_when_the_replacement_conforms() {
+    fn bound_check_should_fail_when_the_replacement_conforms() {
         let failure = judge_bounds(&eq_site("", "2")).expect_err("no error should fail");
-        assert_eq!(failure.property, 6);
+        assert_eq!(failure.property, Property::Bound);
         assert!(
             failure.detail.contains("reports no error"),
             "{}",
@@ -2208,10 +2282,10 @@ mod tests {
     }
 
     #[test]
-    fn property_6_should_fail_when_another_error_follows_the_one_at_the_site() {
+    fn bound_check_should_fail_when_another_error_follows_the_one_at_the_site() {
         let failure = judge_bounds(&eq_site("    let _: i64 = \"s\"\n", "NoBound()"))
             .expect_err("a second error elsewhere should fail");
-        assert_eq!(failure.property, 6);
+        assert_eq!(failure.property, Property::Bound);
         assert!(
             failure.detail.contains("not E0154 at the argument"),
             "{}",
@@ -2223,10 +2297,10 @@ mod tests {
     }
 
     #[test]
-    fn property_6_should_fail_when_the_error_at_the_site_is_not_e0154() {
+    fn bound_check_should_fail_when_the_error_at_the_site_is_not_e0154() {
         let failure = judge_bounds(&eq_site("", "nothing"))
             .expect_err("an unknown name at the site should fail");
-        assert_eq!(failure.property, 6);
+        assert_eq!(failure.property, Property::Bound);
         assert!(
             failure.detail.contains("not E0154 at the argument"),
             "{}",
@@ -2235,11 +2309,11 @@ mod tests {
     }
 
     #[test]
-    fn property_6_should_fail_when_another_e0154_is_not_at_the_site() {
+    fn bound_check_should_fail_when_another_e0154_is_not_at_the_site() {
         // The second call breaks the bound as well, so the checker reports E0154 twice.
         let failure = judge_bounds(&eq_site("    let _ = f(NoBound())\n", "NoBound()"))
             .expect_err("an E0154 at another argument should fail");
-        assert_eq!(failure.property, 6);
+        assert_eq!(failure.property, Property::Bound);
         assert!(
             failure.detail.contains("not E0154 at the argument"),
             "{}",
@@ -2247,7 +2321,7 @@ mod tests {
         );
     }
 
-    /// A program with the `mistakes` of property 7 and no bound site.
+    /// A program with the `mistakes` of the single-mistake check and no bound site.
     fn with_mistakes(program: &str, mistakes: Vec<Mistake>) -> Generated {
         Generated {
             bound_sites: Vec::new(),
@@ -2313,13 +2387,13 @@ mod tests {
     }
 
     #[test]
-    fn property_7_should_pass_a_literal_mistake() {
+    fn single_mistake_check_should_pass_a_literal_mistake() {
         let g = with_mistakes(LITERAL, vec![literal_mistake()]);
         judge_mistakes(&g, None).expect("one E0032 at the literal should pass");
     }
 
     #[test]
-    fn property_7_should_pass_a_callee_mistake() {
+    fn single_mistake_check_should_pass_a_callee_mistake() {
         let at = nth(CALLEE, "f1", 1);
         let m = mistake(Kind::Callee, (at, "f1"), "missing", &[("E0052", at)]);
         judge_mistakes(&with_mistakes(CALLEE, vec![m]), None)
@@ -2327,7 +2401,7 @@ mod tests {
     }
 
     #[test]
-    fn property_7_should_pass_a_local_mistake_in_parentheses() {
+    fn single_mistake_check_should_pass_a_local_mistake_in_parentheses() {
         let program = "fn main() {\n    let v1 = 1\n    print((v1))\n}\n";
         let at = nth(program, "v1", 1);
         let m = mistake(Kind::Local, (at, "v1"), "missing", &[("E0033", at)]);
@@ -2336,7 +2410,7 @@ mod tests {
     }
 
     #[test]
-    fn property_7_should_pass_an_argument_mistake_in_parentheses() {
+    fn single_mistake_check_should_pass_an_argument_mistake_in_parentheses() {
         let (call, arg) = (nth(CALLEE, "f1", 1), nth(CALLEE, "3", 0));
         let m = mistake(Kind::Argument, (arg, "3"), "", &[("E0053", call)]);
         judge_mistakes(&with_mistakes(CALLEE, vec![m]), None)
@@ -2344,7 +2418,7 @@ mod tests {
     }
 
     #[test]
-    fn property_7_should_pass_a_declaration_mistake_with_two_uses() {
+    fn single_mistake_check_should_pass_a_declaration_mistake_with_two_uses() {
         let program = "fn main() {\n    let v1 = [1]\n    print(v1)\n    print(\"{v1}\")\n}\n";
         let (first, uses) = (
             nth(program, "v1", 0),
@@ -2357,11 +2431,11 @@ mod tests {
     }
 
     #[test]
-    fn property_7_should_fail_when_the_edit_gives_no_error() {
+    fn single_mistake_check_should_fail_when_the_edit_gives_no_error() {
         FORCE.set(Some(Force::Conforming));
         let g = with_mistakes(LITERAL, vec![literal_mistake()]);
         let failure = judge_mistakes(&g, None).expect_err("an edit with no error should fail");
-        assert_eq!(failure.property, 7);
+        assert_eq!(failure.property, Property::SingleMistake);
         assert!(
             failure.detail.contains("reports no error"),
             "{}",
@@ -2374,7 +2448,7 @@ mod tests {
     /// WHEN `judge_mistakes` checks it
     /// THEN the second E0053 is an extra error: one expected error matches one error only
     #[test]
-    fn property_7_should_not_match_two_errors_to_one_expected_error() {
+    fn single_mistake_check_should_not_match_two_errors_to_one_expected_error() {
         let program =
             "fn f1(a: i64, b: i64) -> i64 {\n    1\n}\nfn main() {\n    print(f1(1, 2).max())\n}\n";
         let (call, comma) = (nth(program, "f1", 1), nth(program, ", 2", 0));
@@ -2389,18 +2463,18 @@ mod tests {
     }
 
     #[test]
-    fn property_7_should_report_both_mistakes_of_the_control() {
+    fn single_mistake_check_should_report_both_mistakes_of_the_control() {
         let [a, b] = two_mistakes("missing");
         judge_edit(&with_mistakes(TWO, vec![]), &[&a, &b], None)
             .expect("E0032 and E0052 together should pass");
     }
 
     #[test]
-    fn property_7_should_check_the_control() {
+    fn single_mistake_check_should_check_the_control() {
         FORCE.set(Some(Force::QuietControl));
         let g = with_mistakes(TWO, Vec::from(two_mistakes("missing")));
         let failure = judge_mistakes(&g, None).expect_err("a quiet control should fail");
-        assert_eq!(failure.property, 7);
+        assert_eq!(failure.property, Property::SingleMistake);
         assert!(
             failure.detail.contains("reports no error"),
             "{}",
@@ -2416,12 +2490,12 @@ mod tests {
     }
 
     #[test]
-    fn property_7_should_fail_when_the_control_misses_an_error() {
+    fn single_mistake_check_should_fail_when_the_control_misses_an_error() {
         // The callee keeps its own name, so the second edit gives no error.
         let [a, b] = two_mistakes("f1");
         let failure = judge_edit(&with_mistakes(TWO, vec![]), &[&a, &b], None)
             .expect_err("a missing E0052 should fail");
-        assert_eq!(failure.property, 7);
+        assert_eq!(failure.property, Property::SingleMistake);
         assert!(
             failure.detail.contains("misses E0052"),
             "{}",
@@ -2430,13 +2504,13 @@ mod tests {
     }
 
     #[test]
-    fn property_7_should_pass_a_known_pair() {
+    fn single_mistake_check_should_pass_a_known_pair() {
         let g = with_mistakes(KNOWN, vec![known_mistake()]);
         judge_mistakes(&g, None).expect("`local E0050` is in the baseline");
     }
 
     #[test]
-    fn property_7_should_fail_a_new_pair() {
+    fn single_mistake_check_should_fail_a_new_pair() {
         assert!(
             !known_cascades().contains(&(Kind::Local, "E0068".to_string())),
             "`local E0068` is now in the baseline: pick another code for the new pair"
@@ -2447,7 +2521,7 @@ mod tests {
         let m = mistake(Kind::Local, (at, "n"), "yy + n[0]", &[("E0033", at)]);
         let failure = judge_mistakes(&with_mistakes(program, vec![m]), None)
             .expect_err("a new pair should fail");
-        assert_eq!(failure.property, 7);
+        assert_eq!(failure.property, Property::SingleMistake);
         assert_eq!(
             failure.detail.lines().next(),
             Some("`yy + n[0]` replaces `n` at 3:13 (local)")
@@ -2465,7 +2539,7 @@ mod tests {
     }
 
     #[test]
-    fn property_7_should_write_each_known_pair_that_it_allows() {
+    fn single_mistake_check_should_write_each_known_pair_that_it_allows() {
         let scratch = Scratch::new();
         let seen = scratch.0.join("seen.txt");
         // A line of another fuzz process, which the append must keep.
@@ -2482,7 +2556,7 @@ mod tests {
     /// WHEN `judge_mistakes` checks it with a `seen` file
     /// THEN it passes, and the file holds `local E0050` for the mistake alone and for the control.
     #[test]
-    fn property_7_should_pass_a_control_whose_pair_is_known_for_one_kind() {
+    fn single_mistake_check_should_pass_a_control_whose_pair_is_known_for_one_kind() {
         let program = format!("fn f1(depth: i64) -> i64 {{\n    5\n}}\n{KNOWN}");
         let five = nth(&program, "5", 0);
         let literal = Mistake {
@@ -2507,7 +2581,8 @@ mod tests {
     /// THEN it passes and writes `local E0050` for each extra error, which is true whichever
     /// mistake gave the error.
     #[test]
-    fn property_7_should_write_a_pair_that_one_kind_knows_for_both_mistakes_of_a_control() {
+    fn single_mistake_check_should_write_a_pair_that_one_kind_knows_for_both_mistakes_of_a_control()
+    {
         let function = "fn f1(depth: i64) -> i64 {\n    let zz: i64? = 1\n    let a = loop { if true { break zz }\n break None }\n    depth\n}\n";
         let program = format!("{function}{KNOWN}");
         let local = |n, function| Mistake {
@@ -2535,7 +2610,7 @@ mod tests {
     /// WHEN `judge_edit` checks it with a `seen` file
     /// THEN it passes and writes no line, because it cannot tell which kind gave the error.
     #[test]
-    fn property_7_should_not_write_a_pair_that_two_kinds_know() {
+    fn single_mistake_check_should_not_write_a_pair_that_two_kinds_know() {
         let program = "fn f1(depth: i64) -> i64 {\n    5\n}\nfn main() {\n    let zz: u8 = 1\n    let a = [[if true { loop { break zz } } else { 2 }], [u8(3) ?? 4]]\n}\n";
         let five = nth(program, "5", 0);
         let literal = Mistake {
@@ -2560,7 +2635,7 @@ mod tests {
     /// THEN it fails with "misses", because the error at the first use is not at an offset that
     /// the walk over `(` can reach.
     #[test]
-    fn property_7_should_fail_an_error_before_its_expected_offset() {
+    fn single_mistake_check_should_fail_an_error_before_its_expected_offset() {
         let program = "fn main() {\n    let v1 = 1\n    print(v1)\n    print(v1)\n}\n";
         let (first, second) = (nth(program, "v1", 1), nth(program, "v1", 2));
         let m = mistake(Kind::Local, (first, "v1"), "missing", &[("E0033", second)]);
@@ -2595,10 +2670,10 @@ mod tests {
         }
     }
 
-    /// Properties 6 and 7 for every site of the seed `n`. The replacement of a bound site must
-    /// break its bound and nothing else. Each mistake alone, then the control, must give its errors
-    /// and nothing else. One seed for each test, so that each stays within its time budget and
-    /// nextest runs them in parallel. The 64 tests together take the 64 seeds that
+    /// The bound check and the single-mistake check for every site of the seed `n`. The replacement
+    /// of a bound site must break its bound and nothing else. Each mistake alone, then the control,
+    /// must give its errors and nothing else. One seed for each test, so that each stays within its
+    /// time budget and nextest runs them in parallel. The 64 tests together take the 64 seeds that
     /// `coverage::seeds` gives. Each program is generated once.
     fn seed_should_report_only_its_errors(n: u64) {
         const _: () = assert!(coverage::SEEDS == 64, "add or drop a test of a seed");
@@ -3036,7 +3111,7 @@ mod tests {
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(!out.status.success(), "{stderr}");
         let g = generate(&[]);
-        assert_record(&stderr, "property 3: ", &g, &scratch.0);
+        assert_record(&stderr, "the exit check: ", &g, &scratch.0);
         let builds = [
             stderr.find("==> stdin\n"),
             // Output without a final line break gets one. The empty input's program prints these
@@ -3047,7 +3122,7 @@ mod tests {
             stderr.find(
                 "==> program --rc-checks stdout\nRanked\n[1, 2]\nEye\n[\"s\", 'c', 5, Wide(1)]\n@d0 9\n@d1 4\n@d2 12\n@d3 13\n@d4 15\n@d5 15\n@d6 17\n@d7 17\n4\n5\n6\n1\n1\n2\n6\n4\nb\n[11, 22]\nabc\n1\n[5, 14]\n1\n7\n7\n1\n1\ntrue\n1\n1\n1\n1\n[1]\ntrue\ntrue\n4\n7\n13\n16\n19\n21\n22\n2\nfalse\nfalse\n2\ntrue\n2\nt\nA(A(End))\ntrue\nfalse\n2\n==> program --rc-checks stderr\n",
             ),
-            stderr.find("program fuzzer: property 3 failed"),
+            stderr.find("program fuzzer: the exit check failed"),
         ];
         assert!(
             builds.iter().all(Option::is_some) && builds.is_sorted(),
@@ -3055,7 +3130,7 @@ mod tests {
         );
         let failure = fs::read_to_string(scratch.0.join("dump/failure.txt"))
             .expect("the dump should hold failure.txt");
-        assert!(failure.starts_with("property 3: "), "{failure}");
+        assert!(failure.starts_with("the exit check: "), "{failure}");
     }
 
     /// libFuzzer's panic hook aborts, so the record must be written before the earlier hook runs.
@@ -3091,7 +3166,7 @@ mod tests {
             "{failure}"
         );
         assert!(failure.contains("fuzz_program.rs:"), "{failure}");
-        // The checks of properties 6 and 7 passed, so no broken copy is left to leave.
+        // The bound check and the single-mistake check passed, so no broken copy is left to leave.
         assert!(!dump.join("broken.sisu").exists());
     }
 
@@ -3154,8 +3229,8 @@ mod tests {
             .expect("a seed of the first 64 should have a bound site")
     }
 
-    /// A failed property 6 leaves the broken copy in the dump, and no build ran. The forced
-    /// replacement of the first bound site of `bound_seed` conforms, so the property fails.
+    /// A failure of the bound check leaves the broken copy in the dump, and no build ran. The
+    /// forced replacement of the first bound site of `bound_seed` conforms, so the property fails.
     #[test]
     fn a_failed_bound_should_leave_the_broken_copy_in_the_dump() {
         if env::var_os(CHILD).is_some() {
@@ -3173,7 +3248,7 @@ mod tests {
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(!out.status.success(), "{stderr}");
         let g = generate(&seed(bound_seed()));
-        assert_record(&stderr, "property 6: ", &g, &scratch.0);
+        assert_record(&stderr, "the bound check: ", &g, &scratch.0);
         let dump = scratch.0.join("dump");
         let read = |name: &str| {
             fs::read_to_string(dump.join(name))
@@ -3185,12 +3260,12 @@ mod tests {
             format!("{}class NoBound {{}}\n", g.program)
         );
         let failure = read("failure.txt");
-        assert!(failure.starts_with("property 6: "), "{failure}");
+        assert!(failure.starts_with("the bound check: "), "{failure}");
         assert_eq!(read("program.sisu"), g.program);
     }
 
-    /// The first seed of the series with a mistake and no bound site. So property 7 is the first
-    /// property that runs the checker on a copy.
+    /// The first seed of the series with a mistake and no bound site. So the single-mistake check
+    /// is the first check that runs the checker on a copy.
     fn mistake_seed() -> u64 {
         (0..64)
             .find(|&n| {
@@ -3206,7 +3281,7 @@ mod tests {
             .unwrap_or_else(|e| panic!("the dump should hold {name}: {e}"))
     }
 
-    /// A checker panic in property 6 leaves the copy that the checker read, in `broken.sisu`.
+    /// A checker panic in the bound check leaves the copy that the checker read, in `broken.sisu`.
     #[test]
     fn a_checker_panic_in_a_bound_check_should_leave_the_broken_copy_in_the_dump() {
         if env::var_os(CHILD).is_some() {
@@ -3231,7 +3306,8 @@ mod tests {
         );
     }
 
-    /// A checker panic in property 7 leaves the copy with the first mistake, in `broken.sisu`.
+    /// A checker panic in the single-mistake check leaves the copy with the first mistake, in
+    /// `broken.sisu`.
     #[test]
     fn a_checker_panic_in_a_mistake_check_should_leave_the_broken_copy_in_the_dump() {
         if env::var_os(CHILD).is_some() {

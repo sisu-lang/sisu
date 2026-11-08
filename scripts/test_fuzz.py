@@ -207,9 +207,9 @@ class ProgramSeeds(unittest.TestCase):
 
 
 # The fake cargo of the known-cascades warning. Its `fuzz run` appends the lines of $FAKE_CASCADES
-# to the file $SISU_FUZZ_CASCADES, as property 7 does, and exits with $FAKE_STATUS. Its `fuzz build`
-# fails when $FAKE_BUILD_FAILS is set. The program target runs before it, so a run that did not
-# fuzz gives no line.
+# to the file $SISU_FUZZ_CASCADES, as the single-mistake check does, and exits with $FAKE_STATUS.
+# Its `fuzz build` fails when $FAKE_BUILD_FAILS is set. The program target runs before it, so a run
+# that did not fuzz gives no line.
 CASCADES_CARGO = """#!/usr/bin/env bash
 if [[ $1 == fuzz && $2 == run ]]; then
   if [[ -n ${SISU_FUZZ_CASCADES:-} ]]; then printf "${FAKE_CASCADES:-}" >>"$SISU_FUZZ_CASCADES"; fi

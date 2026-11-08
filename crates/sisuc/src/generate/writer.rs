@@ -13,7 +13,7 @@ use super::scope::{Ty, fresh_name};
 pub(crate) struct Piece {
     pub(crate) program: String,
     pub(crate) rewritten: String,
-    /// The sites of property 7 in `program`, in the order they were recorded.
+    /// The sites of the single-mistake check in `program`, in the order they were recorded.
     pub(crate) sites: Vec<MistakeSite>,
 }
 
@@ -60,8 +60,8 @@ pub(crate) struct Site {
     pub(crate) last: bool,
 }
 
-/// Whether `rewrite` keeps the meaning at `site`: the condition of each rewrite of the spec's
-/// property 4.
+/// Whether `rewrite` keeps the meaning at `site`: the condition of each rewrite that the
+/// rewrite check needs, from the spec.
 pub(crate) fn allowed(rewrite: Rewrite, site: &Site) -> bool {
     match rewrite {
         // A block in a `const` does not fold (E0086), and a block is no place.

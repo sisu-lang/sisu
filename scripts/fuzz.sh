@@ -133,7 +133,7 @@ coverage() {
     if [[ $empty == true ]]; then exit 1; fi
     local reached=0 inputs=0 f
     if [[ $target == program ]]; then
-        # An input that fails property 1 is a crash, never a corpus entry, and the coverage run
+        # An input that fails the clean check is a crash, never a corpus entry, and the coverage run
         # above passed over every one of them: each reached codegen.
         for f in "$corpus"/* "$seeds"/*; do
             [[ -f $f ]] && inputs=$((inputs + 1))
@@ -214,8 +214,8 @@ seeds=$(mktemp -d)
 marker=$(mktemp)
 replay_out=$(mktemp)
 gaps_dir=
-# The pairs that property 7 of the program target gave (fuzz_program.rs). Only the fuzz command
-# gets this file: the build and the replays do not.
+# The pairs that the single-mistake check of the program target gave (fuzz_program.rs). Only the
+# fuzz command gets this file: the build and the replays do not.
 cascades=
 trap 'rm -rf "$seeds" "$marker" "$replay_out" "$gaps_dir" "$cascades"' EXIT
 if [[ $target == program ]]; then

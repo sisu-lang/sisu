@@ -33,9 +33,9 @@ pub(crate) struct Generated {
     /// The lines `@d<n> <value>` that the marked statements of `shapes` and of the functions it
     /// calls print, in the order a run of `shapes` to its end prints them.
     pub(crate) expected: Vec<String>,
-    /// The bound sites of `program`, in the order it holds them (property 6).
+    /// The bound sites of `program`, in the order it holds them (the bound check).
     pub(crate) bound_sites: Vec<BoundSite>,
-    /// At most one mistake of each kind, in kind order (property 7).
+    /// At most one mistake of each kind, in kind order (the single-mistake check).
     pub(crate) mistakes: Vec<Mistake>,
     /// The program's cost, as decision 5 counts it.
     #[cfg(test)]
@@ -58,7 +58,7 @@ pub(crate) struct Generated {
 
 /// An argument of a call of a bounded generic function or class, whose parameter is a bare type
 /// parameter `T` that no earlier argument names. Replaced by `broken`, it breaks the bound of `T`,
-/// and the checker must report that and nothing else (property 6).
+/// and the checker must report that and nothing else (the bound check).
 pub(crate) struct BoundSite {
     /// Where `program` holds the argument.
     pub(crate) at: std::ops::Range<usize>,
@@ -93,7 +93,7 @@ pub(crate) struct Known {
 }
 
 /// The line `main` prints just before the panic site `marker`: the one place its text is
-/// written, for the generator and for property 5.
+/// written, for the generator and for the answer check.
 pub(crate) fn panic_line(marker: &str) -> String {
     format!("@{marker} panics")
 }
@@ -133,7 +133,7 @@ const STATEMENT_MOST: u64 = (MAX_BOUND + 1) * (MAX_BOUND + 1) * (MAX_BOUND + 1);
 /// `gap_args`. The gate makes no draw, and the gate writes only known text, which `plain` leaves
 /// out. So a gated seed keeps every choice that it had, and its `plain` is the same. Seed 1 has the
 /// remainder 1, so `seed_1_program_passes` and `seed_1_rewritten_passes` run the form with the
-/// properties 1 to 3. The value 1 is not 5, the gate of `leaves`.
+/// clean, verify and exit checks. The value 1 is not 5, the gate of `leaves`.
 pub(crate) const MAIN_ARGS_GATE: u8 = 1;
 
 /// Accepts every byte string. When `data` runs out, every choice is the smallest valid one.
@@ -363,7 +363,7 @@ impl<'a> Gen<'a> {
         self.w.out.program.len()
     }
 
-    /// Records a site of property 7 in the function being written.
+    /// Records a site of the single-mistake check in the function being written.
     fn record(&mut self, kind: Kind, at: std::ops::Range<usize>, error: usize) {
         let function = self.scope.func;
         self.w.record(mistake::MistakeSite {
