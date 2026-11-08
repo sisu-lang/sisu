@@ -74,6 +74,9 @@ thread_local! {
     /// the enums that `components` builds the table from. It also counts each call of the one
     /// lookup helper, `member_position`, and not the steps inside it.
     static MEMBER_SCANS: Cell<usize> = const { Cell::new(0) };
+    /// How many blocks `tail_return` and `empty_goto_ends` have walked, and how many statements
+    /// `tail_return` has read, on this thread.
+    static TAIL_STEPS: Cell<usize> = const { Cell::new(0) };
 }
 
 impl<'ctx, 'src> Codegen<'ctx, 'src> {
@@ -848,6 +851,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                     .into_int_value(),
             )
         }));
+        let ends = empty_goto_ends(f);
         for (&block, data) in self.blocks.iter().zip(&f.blocks) {
             // The blocks an emitter adds go to the end of the function: moving each mir block
             // there before its code keeps the blocks in mir's order, each followed by its own.
@@ -864,7 +868,14 @@ impl<'ctx> Codegen<'ctx, '_> {
             for stmt in &data.stmts {
                 self.statement(stmt);
             }
-            self.terminator(&data.term);
+            if let Some((stmts, term)) = tail_return(f, &ends, data) {
+                for stmt in stmts {
+                    self.statement(stmt);
+                }
+                self.terminator(term);
+            } else {
+                self.terminator(&data.term);
+            }
         }
         self.caller.set(None);
     }
@@ -1747,6 +1758,122 @@ pub(crate) fn keep_functions(module: &Module<'_>, names: &str) {
             function.add_attribute(AttributeLoc::Function, noinline);
         }
     }
+}
+
+/// The most statements that `tail_return` copies for one call, and the most blocks that hold
+/// statements that it walks. The limit keeps the work linear in the size of the function. A call
+/// with more cleanup statements after it stays a call. This is so even when each one releases
+/// nothing at run time, such as a `release?` of a value that the call moved.
+const TAIL_COPY_LIMIT: usize = 8;
+
+/// For each block of `f`, the first block that its chain of empty `goto` blocks reaches. A block
+/// that is not an empty `goto` block is its own end. A chain that is a cycle ends at a block of
+/// the cycle, which is an empty `goto` block. Each block is walked once, so the work is linear.
+fn empty_goto_ends(f: &mir::Function) -> Vec<usize> {
+    let count = f.blocks.len();
+    let mut ends: Vec<Option<usize>> = vec![None; count];
+    let mut on_path = vec![false; count];
+    let mut path = Vec::new();
+    for start in 0..count {
+        let mut block = start;
+        let end = loop {
+            #[cfg(test)]
+            TAIL_STEPS.set(TAIL_STEPS.get() + 1);
+            if let Some(end) = ends[block] {
+                break end;
+            }
+            let data = &f.blocks[block];
+            match data.term {
+                Terminator::Goto(to) if data.stmts.is_empty() && !on_path[block] => {
+                    path.push(block);
+                    on_path[block] = true;
+                    block = to.0;
+                }
+                // Any terminator other than an empty `goto` ends the chain, so a new kind of
+                // terminator falls in this arm correctly.
+                _ => break block,
+            }
+        };
+        for block in path.drain(..) {
+            ends[block] = Some(end);
+            on_path[block] = false;
+        }
+        ends[start].get_or_insert(end);
+    }
+    ends.into_iter()
+        .map(|end| end.expect("every block should have its end"))
+        .collect()
+}
+
+/// The statements and the terminator that follow the call that ends `data`, when only cleanup
+/// follows it. These are in the blocks that `data` reaches by `goto`, up to a `return` of the
+/// call's result. `ends` is `empty_goto_ends(f)`: the walk steps over the empty blocks of a chain
+/// at once, so a long chain of `else if` arms costs one step. The result is `None` in five cases.
+/// Another statement is in the way. The `return` is more than `TAIL_COPY_LIMIT` statements away.
+/// There is no call. A cycle of empty `goto` blocks has no `return`. A block ends in a terminator
+/// that is not a `goto` or a `return` of the result.
+///
+/// `mir::cleanup` in `mir/params.rs` owns the rule for the statements that may follow a tail
+/// call.
+///
+/// `define` emits these in place of the `goto`. The call and its `ret` are then in one LLVM
+/// block. The `-O2` pass `TailCallElim` makes a loop of a tail call only when the call's block
+/// ends in `ret %call`. A result with several LLVM fields, such as an array, can join the
+/// branches of an `if` in one return block. SROA then makes one `phi` for each field. It builds
+/// the value again with `insertvalue` in the return block. The call is then not a tail call.
+/// A deep recursion then overflows the stack. The original return block stays for the other
+/// paths.
+fn tail_return<'f>(
+    f: &'f mir::Function,
+    ends: &[usize],
+    data: &'f mir::Block,
+) -> Option<(Vec<&'f Statement>, &'f Terminator)> {
+    let Some(Statement::Assign {
+        dest: Some(dest),
+        value: Rvalue::Call { .. },
+    }) = data.stmts.last()
+    else {
+        return None;
+    };
+    let mut stmts = Vec::new();
+    let mut term = &data.term;
+    // A step that goes on holds a statement, so the limit bounds the steps.
+    for _ in 0..=TAIL_COPY_LIMIT {
+        let Terminator::Goto(to) = term else {
+            return None;
+        };
+        let next = &f.blocks[ends[to.0]];
+        #[cfg(test)]
+        TAIL_STEPS.set(TAIL_STEPS.get() + 1);
+        // An empty `goto` block here is a cycle. This ends it at once. The comment above the
+        // loop, "A step that goes on holds a statement", needs this: an empty block adds none.
+        if next.stmts.is_empty() && matches!(next.term, Terminator::Goto(_)) {
+            return None;
+        }
+        // The size first, so that a call reads at most the limit.
+        if stmts.len() + next.stmts.len() > TAIL_COPY_LIMIT {
+            return None;
+        }
+        #[cfg(test)]
+        TAIL_STEPS.set(TAIL_STEPS.get() + next.stmts.len());
+        if !next.stmts.iter().all(mir::cleanup) {
+            return None;
+        }
+        stmts.extend(&next.stmts);
+        // Lowering writes an uncounted result, such as an `i64?`, as a read of the local.
+        let returns_result = match &next.term {
+            Terminator::Return(Some(Operand::Move(local))) => local == dest,
+            Terminator::Return(Some(Operand::Read(place))) => {
+                place.projections.is_empty() && place.local == *dest
+            }
+            _ => false,
+        };
+        if returns_result {
+            return Some((stmts, &next.term));
+        }
+        term = &next.term;
+    }
+    None
 }
 
 /// Whether an interpolation writes a part of type `ty` itself, in the one block of its result: a

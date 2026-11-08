@@ -21,3 +21,8 @@ source.rs	<sisuc::source::LineIndex>::line_start
 source.rs	<sisuc::source::LineIndex>::render_line
 ## Only a program with no generic item and no recorded prelude use reaches this check. No fixed seed is one. In one sample, 6 of 6257 generated inputs were, and `tests/run` reaches it.
 mono.rs	sisuc::mono::prelude_method_of_outside_type
+## Only a value over 256 bytes reaches these: it stays in memory (ADR 0048). The generator makes no type that large; the `wide_enum` cases of `tests/run` reach them.
+codegen/layout.rs	<sisuc::codegen::Codegen>::copy_memory
+codegen/layout.rs	<sisuc::codegen::Codegen>::in_memory
+codegen/layout.rs	<sisuc::codegen::Codegen>::pair_field
+codegen/layout.rs	<sisuc::codegen::Codegen>::zeroed_slot
