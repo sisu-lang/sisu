@@ -456,8 +456,9 @@ impl Walk<'_> {
     }
 }
 
-/// Whether a statement may sit between a tail call and its `return`.
-const fn cleanup(stmt: &Statement) -> bool {
+/// Whether a statement may sit between a tail call and its `return`. This is the one rule for
+/// the tail position; `codegen` uses it to copy the statements after a call into the call's block.
+pub(crate) const fn cleanup(stmt: &Statement) -> bool {
     matches!(
         stmt,
         Statement::ScopeRelease(_) | Statement::End(_) | Statement::Free(_)

@@ -864,11 +864,11 @@ impl<'ctx> Codegen<'ctx, '_> {
             for stmt in &data.stmts {
                 self.statement(stmt);
             }
-            if let Some(exit) = tail_return(f, data) {
-                for stmt in &exit.stmts {
+            if let Some((stmts, term)) = tail_return(f, data) {
+                for stmt in stmts {
                     self.statement(stmt);
                 }
-                self.terminator(&exit.term);
+                self.terminator(term);
             } else {
                 self.terminator(&data.term);
             }
@@ -1756,17 +1756,30 @@ pub(crate) fn keep_functions(module: &Module<'_>, names: &str) {
     }
 }
 
-/// The return block that `data` reaches by `goto`, through empty blocks. It is `None` unless
-/// `data` ends in a call. The return block must only release, and then return the call's result.
+/// The most blocks that `tail_return` walks, and the most statements that it copies, for one
+/// call. A long list of cleanup statements means that a live value is released after the call, so
+/// the call cannot be a tail call. The limit keeps the copies linear in the size of the function.
+const TAIL_COPY_LIMIT: usize = 8;
+
+/// The statements and the terminator that follow the call that ends `data`, when only cleanup
+/// follows it. These are in the blocks that `data` reaches by `goto`, up to a `return` of the
+/// call's result. The result is `None` in three cases. Another statement is in the way. The
+/// `return` is more than `TAIL_COPY_LIMIT` blocks or statements away. There is no call.
 ///
-/// `define` emits that block's code in place of the `goto`. The call and its `ret` are then in
-/// one LLVM block. The `-O2` pass `TailCallElim` makes a loop of a tail call only when the
-/// call's block ends in `ret %call`. A result with several LLVM fields, such as an array, can
-/// join the branches of an `if` in one return block. SROA then makes one `phi` for each field.
-/// It builds the value again with `insertvalue` in the return block. The call is then not a tail
-/// call, and a deep recursion overflows the stack. The original return block stays for the other
+/// `mir::cleanup` in `mir/params.rs` owns the rule for the statements that may follow a tail
+/// call.
+///
+/// `define` emits these in place of the `goto`. The call and its `ret` are then in one LLVM
+/// block. The `-O2` pass `TailCallElim` makes a loop of a tail call only when the call's block
+/// ends in `ret %call`. A result with several LLVM fields, such as an array, can join the
+/// branches of an `if` in one return block. SROA then makes one `phi` for each field. It builds
+/// the value again with `insertvalue` in the return block. The call is then not a tail call.
+/// A deep recursion then overflows the stack. The original return block stays for the other
 /// paths.
-fn tail_return<'f>(f: &'f mir::Function, data: &mir::Block) -> Option<&'f mir::Block> {
+fn tail_return<'f>(
+    f: &'f mir::Function,
+    data: &'f mir::Block,
+) -> Option<(Vec<&'f Statement>, &'f Terminator)> {
     let Some(Statement::Assign {
         dest: Some(dest),
         value: Rvalue::Call { .. },
@@ -1774,16 +1787,19 @@ fn tail_return<'f>(f: &'f mir::Function, data: &mir::Block) -> Option<&'f mir::B
     else {
         return None;
     };
+    let mut stmts = Vec::new();
     let mut term = &data.term;
-    // A chain of empty blocks is at most as long as the function; the bound stops a cycle.
-    for _ in 0..f.blocks.len() {
+    for _ in 0..TAIL_COPY_LIMIT {
         let Terminator::Goto(to) = term else {
             return None;
         };
         let next = &f.blocks[to.0];
-        if next.stmts.is_empty() && matches!(next.term, Terminator::Goto(_)) {
-            term = &next.term;
-            continue;
+        if !next.stmts.iter().all(mir::cleanup) {
+            return None;
+        }
+        stmts.extend(&next.stmts);
+        if stmts.len() > TAIL_COPY_LIMIT {
+            return None;
         }
         // Lowering writes an uncounted result, such as an `i64?`, as a read of the local.
         let returns_result = match &next.term {
@@ -1793,13 +1809,10 @@ fn tail_return<'f>(f: &'f mir::Function, data: &mir::Block) -> Option<&'f mir::B
             }
             _ => false,
         };
-        let only_releases = next.stmts.iter().all(|stmt| {
-            matches!(
-                stmt,
-                Statement::Release(_) | Statement::ScopeRelease(_) | Statement::End(_)
-            )
-        });
-        return (returns_result && only_releases).then_some(next);
+        if returns_result {
+            return Some((stmts, &next.term));
+        }
+        term = &next.term;
     }
     None
 }

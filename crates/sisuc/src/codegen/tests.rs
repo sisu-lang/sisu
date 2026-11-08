@@ -4086,16 +4086,15 @@ fn returns_of_shared_cleanup(locals: usize) -> usize {
         .count()
 }
 
-/// The most statements that `define` copies into the block of a call. It is the limit of
-/// `TAIL_COPY_LIMIT`.
-const COPY_LIMIT: usize = 8;
-
 /// A return block with as many cleanup statements as the limit allows is copied into the block
 /// of each call that reaches it: each of the arms with a call has its own `ret`, and the
 /// last arm uses the shared one.
 #[test]
 fn return_block_within_the_copy_limit_should_be_copied_into_each_call_block() {
-    assert_eq!(returns_of_shared_cleanup(COPY_LIMIT), COPY_LIMIT + 1);
+    assert_eq!(
+        returns_of_shared_cleanup(TAIL_COPY_LIMIT),
+        TAIL_COPY_LIMIT + 1
+    );
 }
 
 /// A return block with one cleanup statement more than the limit is not copied: a long list
@@ -4103,7 +4102,7 @@ fn return_block_within_the_copy_limit_should_be_copied_into_each_call_block() {
 /// has one `ret`.
 #[test]
 fn return_block_over_the_copy_limit_should_not_be_copied() {
-    assert_eq!(returns_of_shared_cleanup(COPY_LIMIT + 1), 1);
+    assert_eq!(returns_of_shared_cleanup(TAIL_COPY_LIMIT + 1), 1);
 }
 
 /// The size of the module grows with the sum of the arms and the strings, not with their
