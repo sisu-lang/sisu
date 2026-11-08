@@ -15,7 +15,7 @@ How the Sisu compiler turns source text into a native executable, one stage at a
   <section class="ph"><div class="w">
     <h1>How the compiler works</h1>
     <p class="lede"><code>sisu</code> compiles one Sisu source file into one native executable. It is a pipeline: each stage takes what the stage before it produced and hands on something closer to machine code.</p>
-    <p class="meta">From docs/architecture.md and the ADRs at commit fd85e98c · x86-64 and ARM64 Linux, ARM64 macOS</p>
+    <p class="meta">From docs/architecture.md and the ADRs at commit 0720170b · x86-64 and ARM64 Linux, ARM64 macOS</p>
   </div></section>
   <!-- source: docs/architecture.md (intro), README.md (x86-64 and ARM64 Linux, ARM64 macOS) -->
 
@@ -97,12 +97,12 @@ How the Sisu compiler turns source text into a native executable, one stage at a
 
       <h3 id="llvm">LLVM</h3>
       <p class="files">LLVM 23, linked as a library</p>
-      <p>A plain build runs only the <code>mem2reg</code> pass, which turns stack slots into registers. With <code>-O2</code> or <code>-O3</code> it runs LLVM's <code>default&lt;O2&gt;</code> or <code>default&lt;O3&gt;</code> pipeline. Then LLVM writes x86-64 or ARM64 object code for the machine <code>sisu</code> runs on.</p>
+      <p>When <code>sisu</code> builds an executable, the LLVM context of each unit discards the names of values, such as <code>%call</code>. Only the IR text shows them, so <code>--emit ir</code> and <code>--emit ir-raw</code> keep them. A plain build runs only the <code>mem2reg</code> pass, which turns stack slots into registers. With <code>-O2</code> or <code>-O3</code> it runs LLVM's <code>default&lt;O2&gt;</code> or <code>default&lt;O3&gt;</code> pipeline. Then LLVM writes x86-64 or ARM64 object code for the machine <code>sisu</code> runs on.</p>
       <p>A large program splits into codegen units: LLVM modules that codegen, the optimizer and the object writer handle on their own threads. The count comes only from the size of the program, at most 8 by default (<code>--codegen-units</code> takes 1 to 64). The core count and the threads do not change it, so a build for one target gives the same executable on any number of cores. A function with one call site stays with its caller, and at <code>-O2</code> a unit gets a copy of each small function of another unit that it calls, so LLVM can still inline them. <code>--codegen-units 1</code> builds one module and gives the fastest program (<a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0045-codegen-units-split-by-default.md">ADR 0045</a>).</p>
 
       <h3 id="link">Link</h3>
       <p class="files"><code>crates/sisuc/src/link.rs</code></p>
-      <p>Before it compiles, the driver checks that the runtime archive and the output's directory exist, so a missing one fails at once. <code>--allocator</code> picks the archive: <code>libsisu_runtime_mimalloc.a</code> by default, <code>libsisu_runtime_system.a</code> for <code>--allocator system</code>. The link step then writes the object code of each codegen unit to a fresh temporary file and runs <code>cc</code> on them with that archive. <code>cc</code> adds the C startup code and libc and writes the executable, through its default linker or the one <code>--linker</code> names. The temporary files are removed whether or not the link succeeds.</p>
+      <p>Before it reads the source, the driver checks that the runtime archive exists. It checks that the output's directory and the temporary directory exist and can be written. On Linux, it also checks that <code>cc</code> finds the linker that <code>--linker</code> names. A failed check stops the build at once, not after the compile. <code>--allocator</code> picks the archive: <code>libsisu_runtime_mimalloc.a</code> by default, <code>libsisu_runtime_system.a</code> for <code>--allocator system</code>. The link step then writes the object code of each codegen unit to a fresh temporary file and runs <code>cc</code> on them with that archive. <code>cc</code> adds the C startup code and libc and writes the executable, through its default linker or the one <code>--linker</code> names. On Linux, <code>cc</code> also gets <code>-Wl,-S</code>: Sisu emits no debug information, so the linker does not copy the runtime archive's own. The temporary files are removed whether or not the link succeeds.</p>
       <!-- source: docs/architecture.md (The stages), docs/roadmap.md (mid-level IR, mir), src/index.html (flow), docs/development.md (Look inside the compiler), sisu --help -->
 
       <h2 id="memory">Memory</h2>

@@ -1348,8 +1348,10 @@ stderr as JSON Lines. `build`, `run` and `check` take it; `explain` does not.
 
 `sisu build --linker lld file.sisu` links with `ld.lld` instead of `cc`'s
 default linker; `bfd`, `gold` and `mold` work the same way. `sisu` passes the
-name to `cc -fuse-ld=`. When the link fails and `ld.<name>` (`ld64.<name>` on
-macOS) is not on `PATH`, the error names it, where gcc names only `ld`. `--linker` works only
+name to `cc -fuse-ld=`. On Linux, `sisu` first runs
+`cc -fuse-ld=<name> -Wl,--version`, so a linker that `cc` cannot find stops the
+build before the compile. When that check or the link fails and `ld.<name>`
+(`ld64.<name>` on macOS) is not on `PATH`, the error names it, where gcc names only `ld`. `--linker` works only
 when building an executable.
 `scripts/install-llvm.sh` puts `ld.lld` in `.llvm/23/bin`; the tests put that
 directory on `PATH`, or in gcc's `COMPILER_PATH`, for the `--linker lld` tests.
