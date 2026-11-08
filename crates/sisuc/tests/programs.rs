@@ -2398,6 +2398,45 @@ fn build_should_name_a_linker_that_is_missing_from_path() {
     assert_empty(&empty);
 }
 
+/// GIVEN the `loops` case of `tests/run`
+/// AND `PATH` holds only `cc`
+/// WHEN it is built with `--linker mold --timings`
+/// THEN it exits 1 and the first stderr line names the linker
+/// AND no stage of the front end ran
+///
+/// The test looks for `timings: lex`, not `timings: codegen`: the line `timings: codegen units`
+/// also starts with `timings: codegen`.
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "the linker probe runs on Linux only"
+)]
+fn build_should_find_a_missing_linker_before_the_front_end() {
+    let empty = empty_dir("no_linker_before_front_end");
+    let exe = empty.join("loops");
+    let out = support::sisu(
+        Path::new(RUN),
+        "loops.sisu",
+        &exe,
+        &["--linker", "mold", "--timings"],
+    )
+    .env("PATH", only_cc("only_cc_before_front_end"))
+    .env_remove("COMPILER_PATH")
+    .output()
+    .expect("sisu starts");
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        stderr.lines().next(),
+        Some("sisu: linker ld.mold not found on PATH; cc failed: exit status: 1")
+    );
+    assert!(
+        !stderr.lines().any(|line| line.starts_with("timings: lex")),
+        "the front end ran: {stderr}"
+    );
+    assert_empty(&empty);
+}
+
 fn assert_empty(dir: &Path) {
     let left: Vec<_> = fs::read_dir(dir).expect("reads").collect();
     assert!(left.is_empty(), "sisu left {left:?}");
@@ -2431,26 +2470,39 @@ fn build_should_keep_an_existing_object_file_next_to_the_source() {
 }
 
 /// GIVEN a source file
-/// AND a linker that `cc` cannot find
+/// AND a `cc` on `PATH` that writes a line to stderr and exits 1
 /// WHEN `sisu build` runs with an empty `TMPDIR`
 /// THEN it exits 1 and says that `cc` failed
 /// AND no object file is left in `TMPDIR` or next to the source
+///
+/// The test gives no `--linker`: `sisu` finds a missing linker before the compile, so the link
+/// would not run.
 #[test]
 fn failed_link_should_leave_no_object_file() {
+    use std::os::unix::fs::PermissionsExt as _;
+
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("link_fails.sisu"), "fn main() {}\n").expect("writes");
-    // With only `cc` on `PATH`, `cc` fails to find `ld.mold`, for any user.
     let output = empty_dir("link_fails").join("out");
     let tmp = empty_dir("link_fails_tmp");
-    let out = support::sisu(dir, "link_fails.sisu", &output, &["--linker", "mold"])
+    let bin = empty_dir("link_fails_path");
+    let cc = bin.join("cc");
+    fs::write(
+        &cc,
+        "#!/bin/sh\necho 'fake cc: the link fails' >&2\nexit 1\n",
+    )
+    .expect("writes");
+    fs::set_permissions(&cc, fs::Permissions::from_mode(0o755)).expect("makes cc run");
+    let out = support::sisu(dir, "link_fails.sisu", &output, &[])
         .env("TMPDIR", &tmp)
-        .env("PATH", only_cc("link_fails_path"))
+        .env("PATH", &bin)
         .env_remove("COMPILER_PATH")
         .output()
         .expect("sisu starts");
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("cc failed: "), "{stderr}");
+    assert!(stderr.contains("fake cc: the link fails"), "{stderr}");
     assert_empty(&tmp);
     assert!(!dir.join("link_fails.o").exists());
 }
