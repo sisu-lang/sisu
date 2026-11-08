@@ -352,12 +352,12 @@ fn judge_site(g: &Generated, site: &BoundSite) -> Result<(), Failure> {
         broken = g.program.clone() + generate::NO_BOUND_CLASS;
     }
     note_broken(Some(&broken));
-    let (_, diagnostics) = front_end::front_end(&broken);
     #[cfg(test)]
     assert!(
         FORCE.get() != Some(Force::CheckerPanic),
         "the forced checker panic in property 6"
     );
+    let (_, diagnostics) = front_end::front_end(&broken);
     note_broken(None);
     let mut errors = diagnostics
         .iter()
@@ -435,12 +435,12 @@ fn judge_edit(g: &Generated, mistakes: &[&Mistake], seen: Option<&Path>) -> Resu
         changed = g.program.clone();
     }
     note_broken(Some(&changed));
-    let (_, diagnostics) = front_end::front_end(&changed);
     #[cfg(test)]
     assert!(
         FORCE.get() != Some(Force::CheckerPanic),
         "the forced checker panic in property 7"
     );
+    let (_, diagnostics) = front_end::front_end(&changed);
     note_broken(None);
     #[cfg_attr(not(test), expect(unused_mut, reason = "only a test forces a failure"))]
     let mut errors: Vec<&Diagnostic> = (diagnostics.iter())
@@ -3090,6 +3090,8 @@ mod tests {
             "{failure}"
         );
         assert!(failure.contains("fuzz_program.rs:"), "{failure}");
+        // The checks of properties 6 and 7 passed, so no broken copy is left to leave.
+        assert!(!dump.join("broken.sisu").exists());
     }
 
     /// A panic on a thread that `program` did not start, as a codegen worker's, leaves the record
