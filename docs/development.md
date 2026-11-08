@@ -383,6 +383,15 @@ pushing, count the instructions of
 `target/release/sisu check target/codspeed/large/main.sisu` under callgrind,
 as `make callgrind` does.
 
+For any other command, `scripts/count_instructions.py` counts the instructions
+of the base and of the working tree. It builds the base in a temporary
+worktree into `target/count-base/`, and the working tree into `target/`. The
+base is by default where HEAD left `origin/main`:
+
+```console
+$ python3 scripts/count_instructions.py --base 5e50e545 -- check selfhost/lexer.sisu
+```
+
 Set these once in the CodSpeed UI: "Informational Status Checks on Failure"
 on, PR comment mode "On Change", threshold 10%. Do not make the check
 required.
