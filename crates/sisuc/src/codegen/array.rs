@@ -721,6 +721,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         let array = self.alloc_array(element, len, None);
         let data = self.array_data(element, array);
         for (index, value) in (0..).zip(values) {
+            self.cut_long_block();
             let slot = self.element_ptr(element, data, i64_type.const_int(index, false));
             self.store_tagged(slot, *value, self.element_tag);
         }

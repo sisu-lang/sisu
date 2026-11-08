@@ -6675,6 +6675,7 @@ fn lowered(source: &str) -> FxHashSet<&'static str> {
         "test.sisu",
         source,
         &machine,
+        OptLevel::O0,
         false,
     );
     let ir = module.print_to_string().to_string();

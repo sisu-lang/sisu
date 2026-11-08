@@ -380,6 +380,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         let mut formats_in_order = formats.iter().peekable();
         let mut len = i64_type.const_zero();
         for (i, &(value, ty)) in parts.iter().enumerate() {
+            self.cut_long_block();
             let format = formats_in_order.next_if(|format| format.part == i);
             let at = self.string_byte(bytes, len);
             let written = match ty {

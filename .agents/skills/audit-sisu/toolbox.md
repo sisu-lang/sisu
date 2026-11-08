@@ -101,9 +101,14 @@ $ timeout 120 valgrind --tool=callgrind --callgrind-out-file=$D/cg.out $D/p2   #
 ```
 
 `--emit ir-raw` runs LLVM's verifier before it prints: a module the verifier
-rejects gives exit 1 and `sisu: ...` on stderr, not IR. Neither `--emit`
-mode takes `--rc-checks`, so the IR of the count checks can only be tested
-by running `--rc-checks` builds.
+rejects gives exit 1 and `sisu: ...` on stderr, not IR. Both `--emit` modes
+take `--rc-checks`. To get the IR of the count checks:
+
+```console
+$ timeout 20 $S build --rc-checks --emit ir-raw $D/p.sisu > $D/prc.ll; echo $?   # check the exit code first
+$ $L/opt -passes=lint -disable-output $D/prc.ll
+$ $L/opt -passes=simplifycfg $D/prc.ll -S | $L/opt -passes=lint -disable-output
+```
 
 The optimized half of `--emit ir` starts after the line `; after default<O2>`.
 Each Sisu function `f` is `@sisu.f`, each method `@sisu.<Class>.<method>`, and
