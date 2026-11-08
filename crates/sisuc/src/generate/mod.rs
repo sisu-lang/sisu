@@ -36,10 +36,6 @@ pub(crate) struct Generated {
     /// The bound sites of `program`, in the order it holds them (property 6).
     pub(crate) bound_sites: Vec<BoundSite>,
     /// At most one mistake of each kind, in kind order (property 7).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "Task 2, Step 5 reads the mistakes")
-    )]
     pub(crate) mistakes: Vec<Mistake>,
     /// The program's cost, as decision 5 counts it.
     #[cfg(test)]

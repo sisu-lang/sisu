@@ -1,24 +1,27 @@
 //! The entry point of the program fuzz target: generates a Sisu program from the input bytes,
 //! builds it and its rewritten copy at O0, at `-O2` in one codegen unit, with `--rc-checks` and at
 //! `-O2` in four codegen units, runs each build and panics on a breach of a property (ADR 0033).
-//! Properties 1 and 2 are that the program checks clean and compiles to a module LLVM verifies;
-//! property 3 is that every build exits 0 or 101, and all four the same way; property 4 is that
-//! the rewritten copy runs as the program does; property 5 is that the program prints the known
-//! integer answers, and that each call of an interface's requirement, in `shapes` or in a generic
-//! function it calls, prints the values of the method it should reach: its result, where the method
-//! has an `i64` or `string` result (or a `T` result, when the argument of the conformance is one of
-//! them), and the value that it writes to a `mut` parameter; property 6 is that a copy of the
-//! program where one argument breaks the bound of its type parameter gets E0154 at that argument
-//! and no other error.
+//! Properties 1 and 2 are that the program checks clean and compiles to a module LLVM verifies.
+//! Property 3 is that every build exits 0 or 101, and all four the same way. Property 4 is that
+//! the rewritten copy runs as the program does. Property 5 is that the program prints the known
+//! integer answers. Each call of an interface's requirement, in `shapes` or in a generic function
+//! it calls, prints the values of the method it should reach. One value is its result, where the
+//! method has an `i64` or `string` result. A `T` result counts when the argument of the
+//! conformance is one of them. The other value is the one that the method writes to a `mut`
+//! parameter. Property 6 is that a copy where one argument breaks the bound of its type
+//! parameter gets only E0154, at that argument. Property 7 is that a copy of the program with
+//! one mistake gives the errors of that mistake and no other. A copy with two mistakes in two
+//! functions gives the errors of both. A pair `<kind> <code>` in `fuzz/known_cascades.txt` is a
+//! known extra error.
 
 use std::fmt::Write as _;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write as _};
 use std::os::unix::process::ExitStatusExt;
 use std::panic::PanicHookInfo;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
-use std::sync::{Arc, Mutex, Once};
+use std::sync::{Arc, LazyLock, Mutex, Once};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -272,13 +275,15 @@ fn section(out: &mut String, name: &str, text: &[u8]) {
     }
 }
 
-/// Properties 1 to 6 for `g`, built in `dir`. A failure comes with the record of the builds
-/// that showed it.
+/// Properties 1 to 7 for `g`, built in `dir`. Property 7 runs after property 6, before the builds.
+/// A failure comes with the record of the builds that showed it.
 fn judge(g: &Generated, runtime: &Path, dir: &Path) -> Result<(), (Failure, String)> {
     let program = checked("program", &g.program).map_err(|f| (f, String::new()))?;
     let rewritten = checked("rewritten", &g.rewritten).map_err(|f| (f, String::new()))?;
     // Only checks, so before the builds that take most of the time.
     judge_bounds(g).map_err(|f| (f, String::new()))?;
+    let seen = std::env::var_os("SISU_FUZZ_CASCADES");
+    judge_mistakes(g, seen.as_deref().map(Path::new)).map_err(|f| (f, String::new()))?;
     let stdin = dir.join("stdin.txt");
     fs::write(&stdin, &g.stdin).expect("the fuzzer should write the stdin to its own directory");
     let runs = judge_source("program", &g.program, &program, runtime, dir, &stdin)?;
@@ -368,27 +373,153 @@ fn judge_bounds(g: &Generated) -> Result<(), Failure> {
         .try_for_each(|site| judge_site(g, site))
 }
 
-/// Property 7 for `g`: each mistake alone, then the control. Each known pair that it allows
-/// is appended to `seen`, as `<kind> <code>\n`, when `seen` names a file.
-#[cfg_attr(not(test), expect(dead_code, reason = "Task 2, Step 5 calls it"))]
-#[expect(unused_variables, reason = "Task 2, Step 5 reads them")]
-#[expect(clippy::unnecessary_wraps, reason = "Task 2, Step 5 returns a failure")]
+/// Property 7 for `g`: each mistake alone, then the control (the first two mistakes of different
+/// functions, together). Each must give exactly its errors. A known cascade passes. Each known pair
+/// that it allows is appended to `seen`, as `<kind> <code>\n`, when `seen` names a file.
 fn judge_mistakes(g: &Generated, seen: Option<&Path>) -> Result<(), Failure> {
-    Ok(())
+    g.mistakes
+        .iter()
+        .try_for_each(|m| judge_edit(g, &[m], seen))?;
+    let control = g.mistakes.iter().enumerate().find_map(|(i, a)| {
+        let b = g.mistakes[i + 1..]
+            .iter()
+            .find(|b| b.function != a.function);
+        b.map(|b| [a, b])
+    });
+    control.map_or(Ok(()), |pair| judge_edit(g, &pair, seen))
 }
 
-/// The checker's errors on `g.program` with each of `mistakes` applied, against their errors.
-#[cfg_attr(not(test), expect(dead_code, reason = "Task 2, Step 5 calls it"))]
-#[expect(unused_variables, reason = "Task 2, Step 5 reads them")]
-#[expect(clippy::unnecessary_wraps, reason = "Task 2, Step 5 returns a failure")]
+/// The checker's errors on `g.program` with each of `mistakes` applied, against their errors. An
+/// expected error matches an error with its code that starts at its offset, or at a run of `(`
+/// that ends there. Each error matches at most one. Any other error is a cascade.
 fn judge_edit(g: &Generated, mistakes: &[&Mistake], seen: Option<&Path>) -> Result<(), Failure> {
+    // From the last edit to the first, so that an edit leaves the offsets before it as they are.
+    let mut edits = mistakes.to_vec();
+    edits.sort_by_key(|m| std::cmp::Reverse(m.at.start));
+    let mut changed = g.program.clone();
+    for m in &edits {
+        changed.replace_range(m.at.clone(), &m.by);
+    }
+    #[cfg(test)]
+    if FORCE.get() == Some(Force::Conforming) {
+        // The program as it was, which has no error: the property must fail.
+        changed = g.program.clone();
+    }
+    let (_, diagnostics) = front_end::front_end(&changed);
+    #[cfg_attr(not(test), expect(unused_mut, reason = "only a test forces a failure"))]
+    let mut errors: Vec<&Diagnostic> = (diagnostics.iter())
+        .filter(|d| d.severity() == Severity::Error)
+        .collect();
+    #[cfg(test)]
+    if FORCE.get() == Some(Force::QuietControl) && mistakes.len() == 2 {
+        errors.clear();
+    }
+    // Each expected error: its code and its offset in `changed`, after the edits before it.
+    let mut expected: Vec<(&str, usize)> = (mistakes.iter())
+        .flat_map(|m| &m.errors)
+        .map(|&(code, at)| {
+            let shifted = (edits.iter().filter(|e| e.at.end <= at))
+                .fold(at, |at, e| at - e.at.len() + e.by.len());
+            (code, shifted)
+        })
+        .collect();
+    let mut extra = Vec::new();
+    for error in &errors {
+        let (code, start) = (error.code().as_str(), error.span().start());
+        let found = expected.iter().position(|&(want, at)| {
+            let run = changed.as_bytes().get(start..at);
+            want == code && run.is_some_and(|run| run.iter().all(|&b| b == b'('))
+        });
+        match found {
+            Some(i) => drop(expected.remove(i)),
+            None => extra.push(code),
+        }
+    }
+    let all_errors = errors.len();
+    let known = |code: &str, m: &Mistake| known_cascades().contains(&(m.kind, code.to_string()));
+    let what = if all_errors == 0 {
+        Some("reports no error".to_string())
+    } else if let Some(&(code, at)) = expected.first() {
+        let (line, col) = LineIndex::new(&changed).line_col(&changed, at);
+        Some(format!("misses {code} at {line}:{col}"))
+    } else if let Some(code) = extra
+        .iter()
+        .find(|&&code| !mistakes.iter().any(|m| known(code, m)))
+    {
+        let pairs: Vec<String> = (mistakes.iter())
+            .map(|m| format!("`{} {code}`", m.kind.name()))
+            .collect();
+        Some(format!(
+            "reports the new pair {}, which is not in fuzz/known_cascades.txt",
+            pairs.join(" or ")
+        ))
+    } else {
+        None
+    };
+    if let Some(what) = what {
+        let index = LineIndex::new(&g.program);
+        let mut detail = String::new();
+        for m in mistakes {
+            let (line, col) = index.line_col(&g.program, m.at.start);
+            let old = &g.program[m.at.clone()];
+            let kind = m.kind.name();
+            writeln!(
+                detail,
+                "`{}` replaces `{old}` at {line}:{col} ({kind})",
+                m.by
+            )
+            .expect("a write to a string should not fail");
+        }
+        let rendered = render("broken", &changed, &diagnostics);
+        return Err(Failure {
+            broken: Some(changed),
+            ..Failure::new(7, format!("{detail}the checker {what}\n{rendered}"))
+        });
+    }
+    if let Some(seen) = seen {
+        let lines: Vec<String> = (extra.iter())
+            .flat_map(|code| {
+                (mistakes.iter())
+                    .filter(|m| known(code, m))
+                    .map(move |m| format!("{} {code}\n", m.kind.name()))
+            })
+            .collect();
+        let appended = lines.first().map_or(Ok(()), |_| {
+            let mut file = OpenOptions::new().append(true).create(true).open(seen)?;
+            // One `write_all` of one line each, because more than one fuzz process appends.
+            lines
+                .iter()
+                .try_for_each(|line| file.write_all(line.as_bytes()))
+        });
+        appended.unwrap_or_else(|e| panic!("the fuzzer should append to {}: {e}", seen.display()));
+    }
     Ok(())
 }
 
-/// The pairs of `fuzz/known_cascades.txt` (`include_str!`), parsed once.
-#[cfg_attr(not(test), expect(dead_code, reason = "Task 2, Step 5 calls it"))]
+/// The pairs of `fuzz/known_cascades.txt`, parsed once.
 fn known_cascades() -> &'static [(Kind, String)] {
-    &[]
+    static PAIRS: LazyLock<Vec<(Kind, String)>> = LazyLock::new(|| {
+        let text = include_str!("../../../fuzz/known_cascades.txt");
+        (text.lines().enumerate())
+            .filter(|(_, line)| !line.trim().is_empty() && !line.starts_with('#'))
+            .map(|(n, line)| {
+                let mut words = line.split_whitespace();
+                let pair = (
+                    words.next().and_then(Kind::named),
+                    words.next(),
+                    words.next(),
+                );
+                let (Some(kind), Some(code), None) = pair else {
+                    panic!(
+                        "fuzz/known_cascades.txt line {} is not `<kind> <code>`: {line}",
+                        n + 1
+                    )
+                };
+                (kind, code.to_string())
+            })
+            .collect()
+    });
+    &PAIRS
 }
 
 /// Properties 1 and 2: `source` checks with no error, W0010 or W0011, and its MIR certifies and its
@@ -2208,179 +2339,337 @@ mod tests {
         }
     }
 
-    /// Properties 6 and 7 for every site of the seeds `from..from + 2`. The replacement of a bound
-    /// site must break its bound and nothing else. Each mistake alone, then the control, must give
-    /// its errors and nothing else. Two seeds for each test, so that each stays within its time
-    /// budget and nextest runs them in parallel. The 32 tests together take the 64 seeds that
+    /// Properties 6 and 7 for every site of the seed `n`. The replacement of a bound site must
+    /// break its bound and nothing else. Each mistake alone, then the control, must give its errors
+    /// and nothing else. One seed for each test, so that each stays within its time budget and
+    /// nextest runs them in parallel. The 64 tests together take the 64 seeds that
     /// `coverage::seeds` gives. Each program is generated once.
-    fn seeds_should_report_only_their_errors(from: u64) {
-        const _: () = assert!(coverage::SEEDS == 64, "add or drop a test of two seeds");
-        for n in from..from + 2 {
-            let g = generate(&seed(n));
-            judge_bounds(&g)
-                .and_then(|()| judge_mistakes(&g, None))
-                .unwrap_or_else(|f| panic!("seed {n}: property {}: {}", f.property, f.detail));
-        }
+    fn seed_should_report_only_its_errors(n: u64) {
+        const _: () = assert!(coverage::SEEDS == 64, "add or drop a test of a seed");
+        let g = generate(&seed(n));
+        judge_bounds(&g)
+            .and_then(|()| judge_mistakes(&g, None))
+            .unwrap_or_else(|f| panic!("seed {n}: property {}: {}", f.property, f.detail));
     }
 
     #[test]
-    fn the_sites_of_seeds_0_and_1_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(0);
+    fn the_sites_of_seed_0_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(0);
     }
 
     #[test]
-    fn the_sites_of_seeds_2_and_3_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(2);
+    fn the_sites_of_seed_1_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(1);
     }
 
     #[test]
-    fn the_sites_of_seeds_4_and_5_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(4);
+    fn the_sites_of_seed_2_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(2);
     }
 
     #[test]
-    fn the_sites_of_seeds_6_and_7_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(6);
+    fn the_sites_of_seed_3_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(3);
     }
 
     #[test]
-    fn the_sites_of_seeds_8_and_9_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(8);
+    fn the_sites_of_seed_4_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(4);
     }
 
     #[test]
-    fn the_sites_of_seeds_10_and_11_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(10);
+    fn the_sites_of_seed_5_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(5);
     }
 
     #[test]
-    fn the_sites_of_seeds_12_and_13_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(12);
+    fn the_sites_of_seed_6_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(6);
     }
 
     #[test]
-    fn the_sites_of_seeds_14_and_15_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(14);
+    fn the_sites_of_seed_7_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(7);
     }
 
     #[test]
-    fn the_sites_of_seeds_16_and_17_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(16);
+    fn the_sites_of_seed_8_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(8);
     }
 
     #[test]
-    fn the_sites_of_seeds_18_and_19_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(18);
+    fn the_sites_of_seed_9_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(9);
     }
 
     #[test]
-    fn the_sites_of_seeds_20_and_21_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(20);
+    fn the_sites_of_seed_10_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(10);
     }
 
     #[test]
-    fn the_sites_of_seeds_22_and_23_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(22);
+    fn the_sites_of_seed_11_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(11);
     }
 
     #[test]
-    fn the_sites_of_seeds_24_and_25_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(24);
+    fn the_sites_of_seed_12_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(12);
     }
 
     #[test]
-    fn the_sites_of_seeds_26_and_27_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(26);
+    fn the_sites_of_seed_13_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(13);
     }
 
     #[test]
-    fn the_sites_of_seeds_28_and_29_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(28);
+    fn the_sites_of_seed_14_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(14);
     }
 
     #[test]
-    fn the_sites_of_seeds_30_and_31_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(30);
+    fn the_sites_of_seed_15_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(15);
     }
 
     #[test]
-    fn the_sites_of_seeds_32_and_33_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(32);
+    fn the_sites_of_seed_16_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(16);
     }
 
     #[test]
-    fn the_sites_of_seeds_34_and_35_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(34);
+    fn the_sites_of_seed_17_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(17);
     }
 
     #[test]
-    fn the_sites_of_seeds_36_and_37_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(36);
+    fn the_sites_of_seed_18_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(18);
     }
 
     #[test]
-    fn the_sites_of_seeds_38_and_39_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(38);
+    fn the_sites_of_seed_19_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(19);
     }
 
     #[test]
-    fn the_sites_of_seeds_40_and_41_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(40);
+    fn the_sites_of_seed_20_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(20);
     }
 
     #[test]
-    fn the_sites_of_seeds_42_and_43_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(42);
+    fn the_sites_of_seed_21_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(21);
     }
 
     #[test]
-    fn the_sites_of_seeds_44_and_45_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(44);
+    fn the_sites_of_seed_22_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(22);
     }
 
     #[test]
-    fn the_sites_of_seeds_46_and_47_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(46);
+    fn the_sites_of_seed_23_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(23);
     }
 
     #[test]
-    fn the_sites_of_seeds_48_and_49_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(48);
+    fn the_sites_of_seed_24_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(24);
     }
 
     #[test]
-    fn the_sites_of_seeds_50_and_51_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(50);
+    fn the_sites_of_seed_25_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(25);
     }
 
     #[test]
-    fn the_sites_of_seeds_52_and_53_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(52);
+    fn the_sites_of_seed_26_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(26);
     }
 
     #[test]
-    fn the_sites_of_seeds_54_and_55_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(54);
+    fn the_sites_of_seed_27_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(27);
     }
 
     #[test]
-    fn the_sites_of_seeds_56_and_57_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(56);
+    fn the_sites_of_seed_28_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(28);
     }
 
     #[test]
-    fn the_sites_of_seeds_58_and_59_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(58);
+    fn the_sites_of_seed_29_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(29);
     }
 
     #[test]
-    fn the_sites_of_seeds_60_and_61_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(60);
+    fn the_sites_of_seed_30_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(30);
     }
 
     #[test]
-    fn the_sites_of_seeds_62_and_63_should_report_only_their_errors() {
-        seeds_should_report_only_their_errors(62);
+    fn the_sites_of_seed_31_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(31);
+    }
+
+    #[test]
+    fn the_sites_of_seed_32_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(32);
+    }
+
+    #[test]
+    fn the_sites_of_seed_33_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(33);
+    }
+
+    #[test]
+    fn the_sites_of_seed_34_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(34);
+    }
+
+    #[test]
+    fn the_sites_of_seed_35_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(35);
+    }
+
+    #[test]
+    fn the_sites_of_seed_36_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(36);
+    }
+
+    #[test]
+    fn the_sites_of_seed_37_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(37);
+    }
+
+    #[test]
+    fn the_sites_of_seed_38_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(38);
+    }
+
+    #[test]
+    fn the_sites_of_seed_39_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(39);
+    }
+
+    #[test]
+    fn the_sites_of_seed_40_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(40);
+    }
+
+    #[test]
+    fn the_sites_of_seed_41_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(41);
+    }
+
+    #[test]
+    fn the_sites_of_seed_42_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(42);
+    }
+
+    #[test]
+    fn the_sites_of_seed_43_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(43);
+    }
+
+    #[test]
+    fn the_sites_of_seed_44_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(44);
+    }
+
+    #[test]
+    fn the_sites_of_seed_45_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(45);
+    }
+
+    #[test]
+    fn the_sites_of_seed_46_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(46);
+    }
+
+    #[test]
+    fn the_sites_of_seed_47_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(47);
+    }
+
+    #[test]
+    fn the_sites_of_seed_48_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(48);
+    }
+
+    #[test]
+    fn the_sites_of_seed_49_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(49);
+    }
+
+    #[test]
+    fn the_sites_of_seed_50_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(50);
+    }
+
+    #[test]
+    fn the_sites_of_seed_51_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(51);
+    }
+
+    #[test]
+    fn the_sites_of_seed_52_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(52);
+    }
+
+    #[test]
+    fn the_sites_of_seed_53_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(53);
+    }
+
+    #[test]
+    fn the_sites_of_seed_54_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(54);
+    }
+
+    #[test]
+    fn the_sites_of_seed_55_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(55);
+    }
+
+    #[test]
+    fn the_sites_of_seed_56_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(56);
+    }
+
+    #[test]
+    fn the_sites_of_seed_57_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(57);
+    }
+
+    #[test]
+    fn the_sites_of_seed_58_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(58);
+    }
+
+    #[test]
+    fn the_sites_of_seed_59_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(59);
+    }
+
+    #[test]
+    fn the_sites_of_seed_60_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(60);
+    }
+
+    #[test]
+    fn the_sites_of_seed_61_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(61);
+    }
+
+    #[test]
+    fn the_sites_of_seed_62_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(62);
+    }
+
+    #[test]
+    fn the_sites_of_seed_63_should_report_only_their_errors() {
+        seed_should_report_only_its_errors(63);
     }
 
     /// How many of `g`'s known answers are panics.

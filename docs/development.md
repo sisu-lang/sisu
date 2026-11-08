@@ -555,7 +555,7 @@ input it reads, and a rewritten copy that must print the same
 generator lives in `crates/sisuc/src/generate/`, and the runner that judges
 the program in `crates/sisuc/src/fuzz_program.rs`. Both compile only in tests
 and under the `fuzz` feature, never into the released `sisu`. Each program
-must pass six properties:
+must pass seven properties:
 
 1. It checks clean. Warnings are allowed.
 2. Its mir builds and certifies, and LLVM verifies its module, without and
@@ -590,6 +590,30 @@ must pass six properties:
    build, reports at least one error. Each error is E0154, and each starts at
    the replaced argument. Any other error is a cascade, as in issue #283.
    Property 6 runs after property 1, before the builds.
+7. One mistake gives its errors and nothing else. The generator records the
+   places where it knows the errors of one edit, and picks at most one of each
+   kind for each program. The checker, alone, with no build, must report these
+   errors for a copy of the program with that one edit:
+   - `literal`: a literal at a declared `let`, a parameter, a field or a return
+     becomes a literal of another type. The error is E0032 at the literal.
+   - `callee`: the name of a function call becomes an unknown name. The error
+     is E0052 at the name.
+   - `local`: a read of a local becomes an unknown name. The error is E0033 at
+     the name.
+   - `argument`: the last argument of a call with positional arguments is
+     removed. The error is E0053 at the call.
+   - `declaration`: a local with a use is declared with another name. There is
+     one E0033 at each use.
+
+   An error matches an expected error with its code that starts at its offset,
+   or at a run of `(` that ends there: the checker starts an E0033 or an E0053
+   at the first parenthesis that wraps the expression. Then the control: the
+   first two mistakes of two different functions, together, must give the
+   errors of both, so a checker that goes quiet after one error fails. An extra
+   error is a cascade. It passes when its pair `<kind> <code>` is in
+   `fuzz/known_cascades.txt`, and a pair that is not in the file fails. A fix
+   that removes a cascade removes its pair, and no change adds one. Property 7
+   runs after property 6, before the builds.
 
 Name the target with `--target`, before the other arguments:
 
@@ -637,7 +661,7 @@ A replay prints the failure to stderr: the failed property as
 rewritten copy and the standard input, each under a `==> <name>` line, then
 each build's exit status, stdout and stderr. It also writes `program.sisu`,
 `rewritten.sisu`, `stdin.txt` and `failure.txt` to
-`fuzz/artifacts/program/<input name>.dump/`. A failed property 6 also writes
+`fuzz/artifacts/program/<input name>.dump/`. A failed property 6 or 7 also writes
 `broken.sisu`, the broken copy that failed, which shows the checker's
 diagnostics when you run `sisu check` on it. The replays after a fuzz run
 write the same directories.

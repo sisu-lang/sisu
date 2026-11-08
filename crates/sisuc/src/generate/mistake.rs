@@ -30,7 +30,6 @@ impl Kind {
 
     /// The name in `fuzz/known_cascades.txt`: "literal", "callee", "local", "argument",
     /// "declaration".
-    #[cfg_attr(not(test), expect(dead_code, reason = "Task 2, Step 5 reads the name"))]
     pub(crate) fn name(self) -> &'static str {
         match self {
             Kind::Literal => "literal",
@@ -42,7 +41,6 @@ impl Kind {
     }
 
     /// The kind that `name` gives, if any.
-    #[cfg_attr(not(test), expect(dead_code, reason = "Task 2, Step 5 reads the name"))]
     pub(crate) fn named(name: &str) -> Option<Kind> {
         Kind::ALL.into_iter().find(|kind| kind.name() == name)
     }
@@ -252,8 +250,8 @@ mod tests {
 
     /// The hash of `ab` is `0x089c4407b545986a`. The site counts are 4, 4, 5, 5 and 4. With a
     /// rotation of 13 bits for each kind, the hash picks the sites 2, 3, 3, 1 and 1.
-    /// Other choices pick other sites. No hash picks 0 for each kind. No rotation picks 2 for
-    /// each kind. The sites in reverse order give 1, 0, 1, 3 and 2.
+    /// Other choices pick other sites. A hash of 0 picks 0 for each kind. Without the rotation,
+    /// the hash picks 2 for each kind. The sites in reverse order give 1, 0, 1, 3 and 2.
     #[test]
     fn choose_should_pick_each_site_by_the_hash_of_the_data() {
         let counts = [4, 4, 5, 5, 4];
