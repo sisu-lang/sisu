@@ -14,7 +14,7 @@ use std::thread;
 mod scratch_path;
 mod support;
 
-use scratch_path::{empty_dir, only_cc};
+use scratch_path::{empty_dir, failing_cc, only_cc};
 use support::fixture;
 use support::selfhost;
 
@@ -2506,6 +2506,89 @@ fn build_should_find_a_missing_linker_before_the_front_end() {
     assert_empty(&empty);
 }
 
+/// GIVEN the `loops` case of `tests/run`
+/// AND a `PATH` with no `cc`
+/// WHEN it is built with `--linker mold --timings`
+/// THEN it exits 1, stderr says that `cc` cannot run, and no stage of the front end ran
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "the linker probe runs on Linux only"
+)]
+fn linker_check_should_report_a_cc_that_cannot_run_before_the_front_end() {
+    let empty = empty_dir("no_cc_before_front_end");
+    let out = support::sisu(
+        Path::new(RUN),
+        "loops.sisu",
+        &empty.join("loops"),
+        &["--linker", "mold", "--timings"],
+    )
+    .env("PATH", empty_dir("no_cc_before_front_end_path"))
+    .env_remove("COMPILER_PATH")
+    .output()
+    .expect("sisu starts");
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        stderr.lines().next(),
+        Some("sisu: cannot run cc: No such file or directory (os error 2)")
+    );
+    assert!(
+        !stderr.lines().any(|line| line.starts_with("timings: lex")),
+        "the front end ran: {stderr}"
+    );
+    assert_empty(&empty);
+}
+
+/// GIVEN the `loops` case of `tests/run`
+/// AND a `PATH` whose `cc` writes two lines to stderr and exits 1, as a `cc` that is not gcc does
+/// WHEN it is built with `--linker mold --timings`
+/// THEN it exits 1, stderr names the linker and then holds both lines of `cc`
+/// AND no stage of the front end ran
+///
+/// Only the first two lines of gcc's `collect2` are dropped; the message of another `cc` is kept.
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "the linker probe runs on Linux only"
+)]
+fn linker_check_should_keep_each_line_of_a_cc_that_is_not_gcc() {
+    let empty = empty_dir("other_cc_before_front_end");
+    let out = support::sisu(
+        Path::new(RUN),
+        "loops.sisu",
+        &empty.join("loops"),
+        &["--linker", "mold", "--timings"],
+    )
+    .env(
+        "PATH",
+        failing_cc(
+            "other_cc_before_front_end_path",
+            "fake cc: first line\nfake cc: second line",
+        ),
+    )
+    .env_remove("COMPILER_PATH")
+    .output()
+    .expect("sisu starts");
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let lines: Vec<&str> = stderr.lines().take(3).collect();
+    assert_eq!(
+        lines,
+        [
+            "sisu: linker ld.mold not found on PATH; cc failed: exit status: 1",
+            "fake cc: first line",
+            "fake cc: second line",
+        ],
+        "{stderr}"
+    );
+    assert!(
+        !stderr.lines().any(|line| line.starts_with("timings: lex")),
+        "the front end ran: {stderr}"
+    );
+    assert_empty(&empty);
+}
+
 fn assert_empty(dir: &Path) {
     let left: Vec<_> = fs::read_dir(dir).expect("reads").collect();
     assert!(left.is_empty(), "sisu left {left:?}");
@@ -2548,20 +2631,11 @@ fn build_should_keep_an_existing_object_file_next_to_the_source() {
 /// would not run.
 #[test]
 fn failed_link_should_leave_no_object_file() {
-    use std::os::unix::fs::PermissionsExt as _;
-
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("link_fails.sisu"), "fn main() {}\n").expect("writes");
     let output = empty_dir("link_fails").join("out");
     let tmp = empty_dir("link_fails_tmp");
-    let bin = empty_dir("link_fails_path");
-    let cc = bin.join("cc");
-    fs::write(
-        &cc,
-        "#!/bin/sh\necho 'fake cc: the link fails' >&2\nexit 1\n",
-    )
-    .expect("writes");
-    fs::set_permissions(&cc, fs::Permissions::from_mode(0o755)).expect("makes cc run");
+    let bin = failing_cc("link_fails_path", "fake cc: the link fails");
     let out = support::sisu(dir, "link_fails.sisu", &output, &[])
         .env("TMPDIR", &tmp)
         .env("PATH", &bin)

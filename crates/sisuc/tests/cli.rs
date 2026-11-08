@@ -1633,27 +1633,29 @@ fn format_flag_should_exit_2_with_clap_text_when_it_is_misused() {
     ]);
 }
 
-/// GIVEN a `PATH` with only `cc`, which cannot find the linker `mold`
-/// WHEN `sisu build --format json --linker mold` runs
-/// THEN it exits 1 and every stderr line is JSON, the last line is the summary, and one
-/// `tool_error`
-/// holds the exit status and the output of `cc`
+/// GIVEN a `PATH` whose `cc` writes two lines to stderr and exits 1
+/// WHEN `sisu build --format json` runs
+/// THEN it exits 1, every stderr line is JSON, and the last line is the summary
+/// AND one `tool_error` holds the exit status and the two lines of `cc`
+///
+/// The test gives no `--linker`: `sisu` finds a missing linker before the compile, so the link
+/// would not run.
 #[test]
 fn build_with_json_format_should_report_a_link_failure_as_one_tool_error() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("json_link_failure.sisu"), "fn main() {}\n").expect("writes");
-    // With only `cc` on `PATH`, `cc` fails to find `ld.mold`, for any user.
-    let only_cc = scratch_path::only_cc("json_link_failure_path");
+    let failing_cc = scratch_path::failing_cc(
+        "json_link_failure_path",
+        "fake cc: the link fails\nfake cc: second line",
+    );
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
         .current_dir(dir)
-        .env("PATH", &only_cc)
+        .env("PATH", &failing_cc)
         .env_remove("COMPILER_PATH")
         .args([
             "build",
             "--format",
             "json",
-            "--linker",
-            "mold",
             "json_link_failure.sisu",
             "-o",
             "json_link_failure_out",
@@ -1683,9 +1685,11 @@ fn build_with_json_format_should_report_a_link_failure_as_one_tool_error() {
     let (status, detail) = message
         .split_once('\n')
         .expect("cc's output after a newline");
-    assert!(status.ends_with("cc failed: exit status: 1"), "{message}");
-    assert!(!detail.is_empty(), "{message}");
-    assert_eq!(detail, detail.trim(), "{message}");
+    assert_eq!(status, "cc failed: exit status: 1", "{message}");
+    assert_eq!(
+        detail, "fake cc: the link fails\nfake cc: second line",
+        "{message}"
+    );
 }
 
 /// GIVEN an output path that is the input file
