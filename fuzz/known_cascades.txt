@@ -16,3 +16,17 @@
 #   break None }
 #   }
 local E0050
+
+# Seed 77: an unknown name in a `loop` gives E0033 at the name. The array of the loop then has
+# the type `[i64]`, from its `else` branch. So the next array, of type `[u8]`, gives E0032.
+#   fn main() {
+#       let a = [[if true { loop { break missing } } else { 2 }], [u8(3) ?? 4]]
+#   }
+local E0032
+# Seed 81: a call of an unknown function in a `loop` gives E0052 at the name. The block of the
+# loop then has the type `i64`, so it gives E0032 where an `f64` is needed.
+#   fn main() {
+#       let x = 1.5 - (-({ loop { break { print(missing(1))
+#       2.5 } } }))
+#   }
+callee E0032

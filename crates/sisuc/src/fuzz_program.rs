@@ -382,13 +382,18 @@ fn judge_mistakes(g: &Generated, seen: Option<&Path>) -> Result<(), Failure> {
     g.mistakes
         .iter()
         .try_for_each(|m| judge_edit(g, &[m], seen))?;
-    let control = g.mistakes.iter().enumerate().find_map(|(i, a)| {
+    let control = control_of(g);
+    control.map_or(Ok(()), |pair| judge_edit(g, &pair, seen))
+}
+
+/// The control of `g`: its first two mistakes, in kind order, of different functions.
+fn control_of(g: &Generated) -> Option<[&Mistake; 2]> {
+    g.mistakes.iter().enumerate().find_map(|(i, a)| {
         let b = g.mistakes[i + 1..]
             .iter()
             .find(|b| b.function != a.function);
         b.map(|b| [a, b])
-    });
-    control.map_or(Ok(()), |pair| judge_edit(g, &pair, seen))
+    })
 }
 
 /// The checker's errors on `g.program` with each of `mistakes` applied, against their errors. An
@@ -936,15 +941,15 @@ mod tests {
     use std::os::unix::process::ExitStatusExt;
     use std::path::{Path, PathBuf};
     use std::process::{Command, Output};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
     use std::{env, fs};
 
     use super::dbg_location;
     use super::{
-        Answer, BUILDS, Exit, FORCE, Force, Known, LIMIT, Run, build, builds, checked, is_marked,
-        judge, judge_bounds, judge_builds, judge_edit, judge_known, judge_marked, judge_mistakes,
-        judge_pair, judge_source, known_cascades, parse_cascades, program, program_in, run,
-        runtime,
+        Answer, BUILDS, Exit, FORCE, Force, Known, LIMIT, Run, build, builds, checked, control_of,
+        is_marked, judge, judge_bounds, judge_builds, judge_edit, judge_known, judge_marked,
+        judge_mistakes, judge_pair, judge_source, known_cascades, parse_cascades, program,
+        program_in, run, runtime,
     };
     use crate::diagnostic::Severity;
     use crate::fresh_names;
@@ -1926,6 +1931,54 @@ mod tests {
             .expect("SISU_FUZZ_SEED should name a seed number");
         seed_passes(n, false);
         seed_passes(n, true);
+    }
+
+    /// The yield of property 7 over the fuzz seeds `0..FUZZ_SEEDS`, with every failure instead of
+    /// the first: `cargo nextest run -p sisuc --lib property_7_should_hold_for_the_fuzz_seeds
+    /// --run-ignored only --no-capture`. It prints the mistakes of each kind, the programs with a
+    /// control, the time, and the seed and first line of each failure. A new pair of the checker
+    /// goes into `fuzz/known_cascades.txt`.
+    #[test]
+    #[ignore = "runs only on demand, over the 128 fuzz seeds"]
+    fn property_7_should_hold_for_the_fuzz_seeds() {
+        let (mut generating, mut judging) = (Duration::ZERO, Duration::ZERO);
+        let mut kinds = [0_usize; Kind::ALL.len()];
+        let mut controls = 0;
+        let mut failures = Vec::new();
+        for n in 0..FUZZ_SEEDS {
+            let start = Instant::now();
+            let g = generate(&seed(n));
+            generating += start.elapsed();
+            for m in &g.mistakes {
+                kinds[Kind::ALL
+                    .iter()
+                    .position(|&kind| kind == m.kind)
+                    .unwrap_or(0)] += 1;
+            }
+            controls += usize::from(control_of(&g).is_some());
+            let start = Instant::now();
+            let result = judge_mistakes(&g, None);
+            judging += start.elapsed();
+            if let Err(f) = result {
+                let mut lines = f.detail.lines();
+                let first = lines.next().unwrap_or("");
+                let checker = (f.detail.lines()).find(|line| line.starts_with("the checker"));
+                failures.push(format!("seed {n}: {first} / {}", checker.unwrap_or("")));
+            }
+        }
+        for (kind, count) in Kind::ALL.iter().zip(kinds) {
+            println!("{}: {count} mistakes", kind.name());
+        }
+        println!("programs with a control: {controls} of {FUZZ_SEEDS}");
+        println!("generate: {generating:?}; judge_mistakes: {judging:?}");
+        for failure in &failures {
+            println!("{failure}");
+        }
+        assert!(
+            failures.is_empty(),
+            "{} seeds fail property 7",
+            failures.len()
+        );
     }
 
     /// GIVEN the first seed of `0..FUZZ_SEEDS` whose `main` takes `gap_args` and has a known value
