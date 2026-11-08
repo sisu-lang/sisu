@@ -165,6 +165,7 @@ pub(crate) fn generate(data: &[u8]) -> Generated {
     g.leaves = fold % 8 == 5;
     // The gate of `main_args` is `MAIN_ARGS_GATE`.
     let (cost, known, expected) = g.program(fold % 8 == MAIN_ARGS_GATE);
+    let mistakes = mistake::choose(&g.w.out.sites, &g.w.out.program, data);
     // Only the tests read the cost.
     #[cfg(not(test))]
     let _ = cost;
@@ -185,7 +186,7 @@ pub(crate) fn generate(data: &[u8]) -> Generated {
         known,
         expected,
         bound_sites: g.bound_sites,
-        mistakes: Vec::new(),
+        mistakes,
         #[cfg(test)]
         cost,
         #[cfg(test)]
@@ -302,6 +303,8 @@ struct Gen<'a> {
     returns: bool,
     /// The bound sites of `program`, in order.
     bound_sites: Vec<BoundSite>,
+    /// Where `program` holds the literal that `literal` wrote last, for `declared`.
+    last_literal: Option<std::ops::Range<usize>>,
     /// Where `program` holds the text of the known sites and of the forms of `gap_forms`, in
     /// order.
     #[cfg(test)]
@@ -349,11 +352,28 @@ impl<'a> Gen<'a> {
             effect: false,
             returns: false,
             bound_sites: Vec::new(),
+            last_literal: None,
             #[cfg(test)]
             known_text: Vec::new(),
             #[cfg(test)]
             mut_lens: Vec::new(),
         }
+    }
+
+    /// Where `program` ends now.
+    fn here(&self) -> usize {
+        self.w.out.program.len()
+    }
+
+    /// Records a site of property 7 in the function being written.
+    fn record(&mut self, kind: mistake::Kind, at: std::ops::Range<usize>, error: usize) {
+        let function = self.scope.func;
+        self.w.record(mistake::MistakeSite {
+            kind,
+            at,
+            error,
+            function,
+        });
     }
 
     /// One of `0..n`, `n > 0`, for a rewrite or a known site.

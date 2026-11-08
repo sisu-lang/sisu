@@ -2,6 +2,7 @@
 //! the body it is in (decision 5).
 
 use super::expr::{Info, array_size};
+use super::mistake::Kind;
 use super::scope::{Ty, Var};
 use super::writer::{Rewrite, Site, allowed};
 use super::{Gen, MAX_BOUND, MAX_LOOPS, MAX_SIZE};
@@ -396,7 +397,13 @@ impl Gen<'_> {
     pub(crate) fn let_typed(&mut self, ty: Ty, mutable: bool) {
         let name = self.scope.local();
         let keyword = if mutable { "let mut" } else { "let" };
-        self.w.text(&format!("{keyword} {name}"));
+        self.w.text(&format!("{keyword} "));
+        let start = self.here();
+        self.w.text(&name);
+        // `echo` is a name that `dbg` and others may use, so a rename of it is no mistake.
+        if name != "echo" {
+            self.record(Kind::Declaration, start..start + name.len(), start);
+        }
         // A value of a type the checker infers needs one where it is not written.
         let written = ty.inferred() || self.pick(2) == 1;
         if written {
@@ -410,7 +417,11 @@ impl Gen<'_> {
         }
         let (base, room, grow) = self.local_sizes(&ty, mutable);
         self.typed = written;
-        let init = self.expr(&ty, base);
+        let init = if written {
+            self.declared(&ty, base)
+        } else {
+            self.expr(&ty, base)
+        };
         let base = if mutable { base } else { init.size };
         let mut var = Self::sized_var(name, ty, mutable, (base, room, grow), self.cost.depth());
         var.len = init.len;

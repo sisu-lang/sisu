@@ -14,10 +14,6 @@ pub(crate) struct Piece {
     pub(crate) program: String,
     pub(crate) rewritten: String,
     /// The sites of property 7 in `program`, in the order they were recorded.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "Task 1, Step 5 reads the sites")
-    )]
     pub(crate) sites: Vec<MistakeSite>,
 }
 
@@ -137,18 +133,9 @@ impl Writer {
     }
 
     /// Records `site`, which `choose` may turn into a mistake.
-    #[expect(
-        unused_variables,
-        clippy::unused_self,
-        clippy::needless_pass_by_value,
-        clippy::needless_pass_by_ref_mut,
-        reason = "Task 1, Step 5 records the sites"
-    )]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "Task 1, Step 5 records the sites")
-    )]
-    pub(crate) fn record(&mut self, site: MistakeSite) {}
+    pub(crate) fn record(&mut self, site: MistakeSite) {
+        self.out.sites.push(site);
+    }
 
     /// Writes into `piece` from now on, and returns what was written so far.
     pub(crate) fn swap(&mut self, piece: Piece) -> Piece {
@@ -157,8 +144,17 @@ impl Writer {
 
     /// Writes `piece`, which was written elsewhere, into both copies.
     pub(crate) fn paste(&mut self, piece: &Piece) {
+        let base = self.out.program.len();
         self.out.program.push_str(&piece.program);
         self.out.rewritten.push_str(&piece.rewritten);
+        // The sites of the piece move up by the program it was pasted onto.
+        self.out
+            .sites
+            .extend(piece.sites.iter().map(|site| MistakeSite {
+                at: site.at.start + base..site.at.end + base,
+                error: site.error + base,
+                ..site.clone()
+            }));
     }
 
     /// Where the rewritten copy ends.

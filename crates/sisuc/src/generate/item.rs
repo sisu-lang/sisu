@@ -997,6 +997,7 @@ impl Gen<'_> {
         });
         self.scope.func = Some(self.scope.funcs.len() - 1);
         self.scope.open();
+        let plain = self.plain_owner(owner.as_ref());
         if let Some(class) = owner {
             let size = class.floor();
             self.scope.vars.push(param("self".to_string(), class, size));
@@ -1024,7 +1025,11 @@ impl Gen<'_> {
         self.stmts(false);
         if ret != Ty::Unit {
             self.w.line();
-            self.expr(&ret, ret_size);
+            if plain {
+                self.declared(&ret, ret_size);
+            } else {
+                self.expr(&ret, ret_size);
+            }
         }
         self.w.close();
         self.scope.close();

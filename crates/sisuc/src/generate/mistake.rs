@@ -4,12 +4,10 @@
 
 use std::ops::Range;
 
+use crate::lexer::{self, TokenKind};
+
 /// The kinds of property 7, in the order of the spec's table. The bound kind is property 6.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "Task 1, Step 5 constructs the kinds")
-)]
 pub(crate) enum Kind {
     Literal,
     Callee,
@@ -73,17 +71,90 @@ pub(crate) struct Mistake {
 
 /// At most one mistake of each kind, in kind order, from `sites` of `program`. The site of a
 /// kind is `sites_of_kind[hash.rotate_left(13 * kind as u32) % n]`, where `hash` is the 64-bit
-/// FNV-1a hash of `data`.
-#[expect(
-    unused_variables,
-    reason = "Task 1, Step 5 chooses the mistakes from the sites"
-)]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "Task 1, Step 5 calls it at the end of `generate`")
-)]
+/// FNV-1a hash of `data`. The choice reads no stream of the generator, so no program changes.
 pub(crate) fn choose(sites: &[MistakeSite], program: &str, data: &[u8]) -> Vec<Mistake> {
-    Vec::new()
+    // A program that does not lex has no mistake: the other properties report it.
+    let Ok(lexed) = lexer::lex(program) else {
+        return Vec::new();
+    };
+    // Each identifier token, as its text and where it starts.
+    let idents: Vec<(&str, usize)> = (lexed.tokens.iter())
+        .filter(|token| matches!(token.kind, TokenKind::Ident(_)))
+        .map(|token| {
+            let range = token.span.range();
+            (&program[range.clone()], range.start)
+        })
+        .collect();
+    let hash = fnv1a(data);
+    let kinds = [
+        Kind::Literal,
+        Kind::Callee,
+        Kind::Local,
+        Kind::Argument,
+        Kind::Declaration,
+    ];
+    kinds
+        .into_iter()
+        .filter_map(|kind| {
+            let of_kind: Vec<&MistakeSite> = sites.iter().filter(|s| s.kind == kind).collect();
+            let count = u64::try_from(of_kind.len()).ok().filter(|&n| n > 0)?;
+            let pick = hash.rotate_left(13 * kind as u32) % count;
+            let site = of_kind[usize::try_from(pick).ok()?];
+            edit(site, program, &idents)
+        })
+        .collect()
+}
+
+/// The edit of `site`, and the errors that it gives, or `None` when the edit gives none.
+fn edit(site: &MistakeSite, program: &str, idents: &[(&str, usize)]) -> Option<Mistake> {
+    let text = &program[site.at.clone()];
+    let fresh = || {
+        let mut name = "missing".to_string();
+        let mut n = 0;
+        while idents.iter().any(|(ident, _)| *ident == name) {
+            n += 1;
+            name = format!("missing{n}");
+        }
+        name
+    };
+    let (by, errors) = match site.kind {
+        Kind::Literal => {
+            let by = if matches!(text, "true" | "false") {
+                "\"x\""
+            } else {
+                "true"
+            };
+            (by.to_string(), vec![("E0032", site.at.start)])
+        }
+        Kind::Callee => (fresh(), vec![("E0052", site.at.start)]),
+        Kind::Local => (fresh(), vec![("E0033", site.at.start)]),
+        Kind::Argument => (String::new(), vec![("E0053", site.error)]),
+        Kind::Declaration => {
+            // Each read of the local is an error; with none, the edit gives none.
+            let uses: Vec<_> = (idents.iter())
+                .filter(|&&(ident, start)| ident == text && start >= site.at.end)
+                .map(|&(_, start)| ("E0033", start))
+                .collect();
+            if uses.is_empty() {
+                return None;
+            }
+            (fresh(), uses)
+        }
+    };
+    Some(Mistake {
+        kind: site.kind,
+        function: site.function,
+        at: site.at.clone(),
+        by,
+        errors,
+    })
+}
+
+/// The 64-bit FNV-1a hash of `data`.
+fn fnv1a(data: &[u8]) -> u64 {
+    data.iter().fold(0xcbf2_9ce4_8422_2325, |hash, &byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+    })
 }
 
 #[cfg(test)]
@@ -91,7 +162,7 @@ mod tests {
     use super::super::coverage;
     use super::super::generate;
     use super::*;
-    use crate::lexer::{self, Token, TokenKind};
+    use crate::lexer::Token;
 
     const READS: &str = "fn main() {\n    let v1 = [1]\n    print(v1)\n    print(\"{v1}\")\n}\n";
 
