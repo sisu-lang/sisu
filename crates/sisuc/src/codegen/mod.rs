@@ -851,6 +851,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                     .into_int_value(),
             )
         }));
+        let ends = empty_goto_ends(f);
         for (&block, data) in self.blocks.iter().zip(&f.blocks) {
             // The blocks an emitter adds go to the end of the function: moving each mir block
             // there before its code keeps the blocks in mir's order, each followed by its own.
@@ -867,7 +868,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             for stmt in &data.stmts {
                 self.statement(stmt);
             }
-            if let Some((stmts, term)) = tail_return(f, data) {
+            if let Some((stmts, term)) = tail_return(f, &ends, data) {
                 for stmt in stmts {
                     self.statement(stmt);
                 }
@@ -1759,15 +1760,55 @@ pub(crate) fn keep_functions(module: &Module<'_>, names: &str) {
     }
 }
 
-/// The most blocks that `tail_return` walks, and the most statements that it copies, for one
-/// call. A long list of cleanup statements means that a live value is released after the call, so
-/// the call cannot be a tail call. The limit keeps the copies linear in the size of the function.
+/// The most statements that `tail_return` copies for one call, and the most blocks that hold
+/// statements that it walks. A long list of cleanup statements means that a live value is
+/// released after the call, so the call cannot be a tail call. The limit keeps the work linear in
+/// the size of the function.
 const TAIL_COPY_LIMIT: usize = 8;
+
+/// For each block of `f`, the first block that its chain of empty `goto` blocks reaches. A block
+/// that is not an empty `goto` block is its own end. A chain that is a cycle ends at a block of
+/// the cycle, which is an empty `goto` block. Each block is walked once, so the work is linear.
+fn empty_goto_ends(f: &mir::Function) -> Vec<usize> {
+    let count = f.blocks.len();
+    let mut ends: Vec<Option<usize>> = vec![None; count];
+    let mut on_path = vec![false; count];
+    let mut path = Vec::new();
+    for start in 0..count {
+        let mut block = start;
+        let end = loop {
+            #[cfg(test)]
+            TAIL_STEPS.set(TAIL_STEPS.get() + 1);
+            if let Some(end) = ends[block] {
+                break end;
+            }
+            let data = &f.blocks[block];
+            match data.term {
+                Terminator::Goto(to) if data.stmts.is_empty() && !on_path[block] => {
+                    path.push(block);
+                    on_path[block] = true;
+                    block = to.0;
+                }
+                _ => break block,
+            }
+        };
+        for block in path.drain(..) {
+            ends[block] = Some(end);
+            on_path[block] = false;
+        }
+        ends[start].get_or_insert(end);
+    }
+    ends.into_iter()
+        .map(|end| end.expect("every block should have its end"))
+        .collect()
+}
 
 /// The statements and the terminator that follow the call that ends `data`, when only cleanup
 /// follows it. These are in the blocks that `data` reaches by `goto`, up to a `return` of the
-/// call's result. The result is `None` in three cases. Another statement is in the way. The
-/// `return` is more than `TAIL_COPY_LIMIT` blocks or statements away. There is no call.
+/// call's result. `ends` is `empty_goto_ends(f)`: the walk steps over the empty blocks of a chain
+/// at once, so a long chain of `else if` arms costs nothing. The result is `None` in three cases.
+/// Another statement is in the way. The `return` is more than `TAIL_COPY_LIMIT` statements away.
+/// There is no call.
 ///
 /// `mir::cleanup` in `mir/params.rs` owns the rule for the statements that may follow a tail
 /// call.
@@ -1781,6 +1822,7 @@ const TAIL_COPY_LIMIT: usize = 8;
 /// paths.
 fn tail_return<'f>(
     f: &'f mir::Function,
+    ends: &[usize],
     data: &'f mir::Block,
 ) -> Option<(Vec<&'f Statement>, &'f Terminator)> {
     let Some(Statement::Assign {
@@ -1792,20 +1834,28 @@ fn tail_return<'f>(
     };
     let mut stmts = Vec::new();
     let mut term = &data.term;
-    for _ in 0..TAIL_COPY_LIMIT {
+    // A step that goes on holds a statement, so the limit bounds the steps.
+    for _ in 0..=TAIL_COPY_LIMIT {
         let Terminator::Goto(to) = term else {
             return None;
         };
-        let next = &f.blocks[to.0];
+        let next = &f.blocks[ends[to.0]];
         #[cfg(test)]
-        TAIL_STEPS.set(TAIL_STEPS.get() + 1 + next.stmts.len());
+        TAIL_STEPS.set(TAIL_STEPS.get() + 1);
+        // An empty `goto` block here is a cycle.
+        if next.stmts.is_empty() && matches!(next.term, Terminator::Goto(_)) {
+            return None;
+        }
+        // The size first, so that a call reads at most the limit.
+        if stmts.len() + next.stmts.len() > TAIL_COPY_LIMIT {
+            return None;
+        }
+        #[cfg(test)]
+        TAIL_STEPS.set(TAIL_STEPS.get() + next.stmts.len());
         if !next.stmts.iter().all(mir::cleanup) {
             return None;
         }
         stmts.extend(&next.stmts);
-        if stmts.len() > TAIL_COPY_LIMIT {
-            return None;
-        }
         // Lowering writes an uncounted result, such as an `i64?`, as a read of the local.
         let returns_result = match &next.term {
             Terminator::Return(Some(Operand::Move(local))) => local == dest,
