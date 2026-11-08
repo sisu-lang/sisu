@@ -91,7 +91,7 @@ gitignored, and the docs do not link to it.
 - Link to a file that exists on `main` or that this change adds. Write a path
   that only another unmerged branch has as code, not as a link.
 - Use the terms in `GLOSSARY.md` as spelled there, for example `tir` and
-  poison type.
+  poisoned value.
 - A change that contradicts an ADR gets a new ADR that supersedes it. Do not
   edit the old ADR's decision.
 

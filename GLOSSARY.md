@@ -708,10 +708,11 @@ A name as the parser and checker hold it: a small integer that stands for the
 name's text. The lexer interns each name, so equal names get the same symbol.
 _Avoid_: atom, interned string
 
-**Poison type**:
-The type the checker gives an expression that already failed a rule, so that
-one mistake produces one diagnostic.
-_Avoid_: error type (ambiguous with diagnostics)
+**Poisoned value**:
+The result of an expression that broke a rule. Its error is reported already, so
+each check that reads it stays silent about that error. It is *typed* when the
+source states its type apart from the poisoned part, and *untyped* otherwise.
+_Avoid_: failed value, poison type, error type
 
 **Diagnostic**:
 An error or a warning the compiler reports about the source. An error stops
@@ -726,6 +727,14 @@ _Avoid_: error code (warnings have codes too)
 **Help**:
 Advice in a diagnostic that cannot be written as an edit, such as "optionals
 do not nest".
+
+**Label**:
+A span in a diagnostic, with a short text. The primary label marks the mistake.
+A secondary label marks a reason, such as the declaration that sets the expected
+type.
+
+**Note**:
+Text in a diagnostic, with no span, that says why.
 
 **Fix**:
 An edit to the source, with a message, that resolves a diagnostic. A fix is
@@ -743,15 +752,31 @@ _Avoid_: error index entry
 A function, class, enum, interface, constant, type alias or method that
 contains a syntax error. Its body is not checked, and a use of it is never
 reported as unknown or mistyped. It still takes its name: a second item of
-that name is defined twice (E0034). A language interface's name is the exception:
-it stays the language's. After a broken item of that name, a plain bound, a
-conformance or an `any` on it stays checked. A broken interface of that name, with
-no other broken item, leaves each use checked.
+that name is defined twice (E0034).
+
+**Poisoned item**:
+A broken item, a top-level name defined twice, or an alias whose target fails. A
+use of it gives no error. A language interface's name stays the language's: at a
+bound, a conformance, an inheritance list or an `any`, it names the prelude's
+interface.
 
 **Cascade**:
-A diagnostic that exists only because of another one. Sisu never reports
-one.
+An error that follows from a guess about code that failed, and not from what the
+source states.
 _Avoid_: follow-on error, knock-on error
+
+**True error**:
+An error that follows from what the source states. One repair can remove more
+than one true error.
+
+**Expected type**:
+The type that the context asks of an expression. It is *required*: a mismatch is
+an error. Or it is *hinted*: it guides a literal. A poisoned context asks for
+nothing.
+
+**Origin**:
+The declaration, earlier value or language rule that makes a context require or
+hint a type.
 
 **Foreign idiom**:
 A habit from another language, such as `var` or `len(xs)`, that has its own

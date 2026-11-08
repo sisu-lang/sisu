@@ -67,3 +67,12 @@ hiding.
   sites need no special cases for parentheses, comments or line breaks.
 - **A new code only when its explanation would differ.** Otherwise the rule
   becomes a new form of an existing code, with its own facts and message.
+
+## Amendment, 2026-11-08: the fourth rule, a cascade rests on a guess
+
+One mistake gives only true errors. An error is true when it follows from what
+the source states. A cascade is an error that follows from a guess about code
+that failed. Shared code, not review by hand, keeps this so: one name resolver
+and one poison rule ([ADR 0049](0049-one-name-resolver-and-one-poison-rule.md)).
+A change that adds a cascade blocks its review. An old cascade on a rare form is
+an ordinary issue.
