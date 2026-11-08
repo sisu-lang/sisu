@@ -509,14 +509,18 @@ check when its tool is not on `PATH`. It needs `perf` for the last column.
 `make scaling` finds the programs for which a compiler stage costs more than
 a fixed amount for each unit of input. A shape is a kind of program that
 grows in one direction, such as more functions, deeper nesting or more match
-arms. `scripts/scaling.py` compiles each of 25 shapes at size 0 and at four
-sizes that double: n, 2n, 4n and 8n. It counts the instructions of each stage
-under callgrind: `lex`, `parse`, `check`, `mono`, `mir` and `codegen`. The
+arms. `scripts/scaling.py` builds each of 28 shapes into an executable at
+size 0 and at four sizes that double: n, 2n, 4n and 8n. Each build has one
+codegen unit. It counts the instructions of each stage under callgrind: `lex`,
+`parse`, `check`, `mono`, `mir`, `codegen`, `optimize` (the LLVM passes) and
+`object` (the machine code). The shapes in `O2_SHAPES` are also built at `-O2`,
+as the case `<shape> -O2`. A `-O2` case judges only `codegen`, `optimize` and
+`object`, because the stages before them do the same work at each level. The
 count does not depend on the load of the machine. It also changes a little with
 the file paths and the C library. So on another machine, such as the runner of
 the nightly job, a ratio near a number of the rule can fall on the other side.
-It needs `valgrind`, and a full run takes
-about 5 minutes on the machine above.
+It needs `valgrind`, and a full run takes about 12 minutes on the machine
+above.
 
 The script prints one table for each shape. It also writes `table.md` and
 `counts.json` to `target/scaling/`. `ARGS='--shapes functions,fields'`
@@ -529,8 +533,10 @@ an earlier run and measures nothing.
   size. A sweep has three: r1 (n to 2n), r2 (2n to 4n) and r3 (4n to 8n). A
   linear stage has ratios near 2.0, and a quadratic stage near 4.0.
 - A stage is **judged** when its growth at 8n is positive and at least 1% of
-  the sum of the growth of the six stages at 8n. A stage that hardly grows
-  with the shape is not judged. Its counts are noise.
+  the growth of its group at 8n. The groups are the six stages
+  before `optimize`, and the two LLVM stages. The LLVM stages do much more
+  work, so one sum for all eight would hide the stages before them. A stage
+  that hardly grows with the shape is not judged. Its counts are noise.
 - A judged stage is **superlinear** when r3 > 2.3 and r2 ≥ 2.1, and when
   r3 ≥ r1 − 0.05 or r3 ≥ 3.0. The second test keeps a stage whose ratios
   fall a little toward 4.0.
@@ -554,11 +560,13 @@ on stdout. It exits with code 1 when:
 
 The pull request that fixes a known case removes its row. The gaps between
 the numbers keep a row from changing between known and fixed when a change
-moves a ratio a little. `KNOWN` has four rows, for `mir` and `codegen` in the
-shapes mut exits and owned exits (#502). Each `return` writes its own cleanup,
-so n exits and n values give n² statements. Real programs have few of these:
-no exit in the benchmark programs or the lexer has more than 4 cleanup
-statements.
+moves a ratio a little. `KNOWN` has 12 rows. Seven are for the shapes mut
+exits and owned exits (#502), in `mir`, `codegen` and the LLVM stages. Each
+`return` writes its own cleanup, so n exits and n values give n² statements.
+Real programs have few of these: no exit in the benchmark programs or the
+lexer has more than 4 cleanup statements. The other five rows are LLVM cases:
+interpolations -O2 (#611), a call with n arguments at -O0 (#612, in mut call
+width and mut returns), and float left (#613).
 
 Each `tir::Expr` holds its exit flag. The checker sets it once, when it makes
 the expression. So array literal depth (#344), type depth, method chain,

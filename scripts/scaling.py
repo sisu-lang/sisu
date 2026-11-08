@@ -5,9 +5,10 @@ Usage: python3 scripts/scaling.py [--shapes a,b] [--counts FILE] [--out target/s
        [--sisu target/release/sisu] [--time-bound SECONDS]
 
 A shape is a kind of program that grows in one direction. For each shape, the script makes the
-program at size 0 and at the sizes n, 2n, 4n and 8n. It runs `sisu build --emit ir-raw` on each
-under callgrind, and reads the instruction count of each stage function. It prints the growth of
-each stage (its count less its count at size 0), the ratio at each doubling, and the verdict.
+program at size 0 and at the sizes n, 2n, 4n and 8n. It builds each into an executable under
+callgrind, with one codegen unit, and reads the instruction count of each stage function. The
+shapes in `O2_SHAPES` are built at -O2 too, as the case `<shape> -O2`. It prints the growth of each
+stage (its count less its count at size 0), the ratio at each doubling, and the verdict.
 
 Before callgrind, `sisu check` runs on each shape at size 0 and at 8n. A shape that gives a
 diagnostic stops the run: without this check, the failure shows as a missing stage function.
@@ -45,7 +46,22 @@ STAGES = [
     ("mono", "sisuc::mono::instantiate"),
     ("mir", "sisuc::mir::build"),
     ("codegen", "sisuc::codegen::compile"),
+    # The LLVM stages count the LLVM C functions that `codegen::optimize` and `codegen::object_code`
+    # call: a release build can inline those two functions, and their own work is small.
+    ("optimize", "LLVMRunPasses"),
+    ("object", "LLVMTargetMachineEmitToMemoryBuffer"),
 ]
+# The stages that LLVM runs. They do far more work than the stages before them. So the 1% rule of
+# `judge` compares a stage with the stages of its own group: these two, or the six before them.
+LLVM_STAGES = ("optimize", "object")
+# The shapes that the sweep also builds at -O2, as the case `<shape> -O2`. Under callgrind, -O2
+# costs much more than -O0, so the list holds the shapes that give the -O2 passes the most work.
+# `mut call width` is not in it (#621): under callgrind, its -O2 build at 8n ran over 25 minutes.
+O2_SHAPES = ("functions", "statements", "interpolations", "prints", "nested array ==")
+O2_SUFFIX = " -O2"
+# At -O2, the stages before codegen do the same work as at -O0, so a -O2 case judges only these.
+O2_STAGES = ("codegen", "optimize", "object")
+AS_AT_O0 = "as at -O0"
 # The cases that are superlinear today, and the cases just under the rule that have a known cause:
 # (shape, stage, issue). The pull request that fixes a case removes its row.
 KNOWN = [
@@ -53,6 +69,14 @@ KNOWN = [
     ("mut exits", "codegen", 502),
     ("owned exits", "mir", 502),
     ("owned exits", "codegen", 502),
+    ("mut exits", "object", 502),
+    ("owned exits", "optimize", 502),
+    ("owned exits", "object", 502),
+    ("interpolations -O2", "optimize", 611),
+    ("interpolations -O2", "object", 611),
+    ("mut call width", "object", 612),
+    ("mut returns", "object", 612),
+    ("float left", "object", 613),
 ]
 ANNOTATE = ["callgrind_annotate", "--inclusive=yes", "--threshold=100", "--show=Ir", "--auto=no"]
 DIAGNOSTIC = re.compile(r"^(error|warning)\[([EW]\d{4})\]")
@@ -385,6 +409,24 @@ def alias_chain(k: int) -> str:
     )
 
 
+def prints(k: int) -> str:
+    """Return a program whose `main` is one block of `k` `print` statements."""
+    return "fn main() {\n" + "    print(1)\n" * k + "}\n"
+
+
+def mutable_locals(k: int) -> str:
+    """Return a program whose `main` has `k` mutable locals, and then adds 1 to each."""
+    lets = "".join(f"    let mut _x{tag(i)} = 0\n" for i in range(k))
+    adds = "".join(f"    _x{tag(i)} += 1\n" for i in range(k))
+    return "fn main() {\n" + lets + adds + '    print("done")\n}\n'
+
+
+def nested_array_eq(k: int) -> str:
+    """Return a program that compares two array literals of `k` nested layers with `==`."""
+    literal = "[" * k + "1" + "]" * k
+    return f"fn main() {{\n    let a = {literal}\n    let b = {literal}\n    print(a == b)\n}}\n"
+
+
 # The name of a shape, its `n` and the program at a size. The sizes are 0, n, 2n, 4n and 8n.
 SHAPES = {
     "functions": (250, functions),
@@ -412,6 +454,9 @@ SHAPES = {
     "owned exits": (25, owned_exits),
     "alias chain": (12, alias_chain),
     "optional depth": (24, optional_depth),
+    "prints": (250, prints),
+    "mutable locals": (250, mutable_locals),
+    "nested array ==": (5, nested_array_eq),
 }
 
 
@@ -429,7 +474,7 @@ def judge(growth: list[int], total_8n: int) -> tuple[str, list[Fraction | None]]
     """Return the verdict for one stage, and its three ratios as exact fractions.
 
     `growth` is the growth at n, 2n, 4n and 8n. `total_8n` is the sum of the growth at 8n of the
-    six stages. A ratio is None when its divisor is 0 or less.
+    stages of its group (see `LLVM_STAGES`). A ratio is None when its divisor is 0 or less.
 
     The verdict is `not judged` when the growth at 8n is not positive, or is under 1% of `total_8n`.
     Else it is `no ratio` when a ratio is None. Else it is `superlinear` or `linear`.
@@ -450,10 +495,10 @@ def looks_fixed(verdict: str, ratios: list[Fraction | None]) -> bool:
 
     The gap keeps a row from flapping when a change to the linear part moves a ratio a little.
     """
-    if verdict in ("not judged", "no ratio"):
+    if verdict in ("not judged", "no ratio", AS_AT_O0):
         return True
     r1, _, r3 = ratios
-    # pyrefly: ignore[unsupported-operation]  the verdicts above are the only ones with a None ratio
+    # pyrefly: ignore[unsupported-operation]  only the verdicts in the line above have a None ratio
     return r3 < KEPT_R3 or (r3 < STEEP and r3 < r1 - FALL_FIXED)
 
 
@@ -574,16 +619,25 @@ def load(path: Path) -> dict[str, Any]:
 
 
 def verdicts(counts: dict[str, Any]) -> dict[tuple[str, str], tuple[str, list[Fraction | None]]]:
-    """`judge` for each shape and stage of `counts`: {(shape, stage): (verdict, ratios)}."""
+    """`judge` for each case and stage of `counts`: {(case, stage): (verdict, ratios)}.
+
+    A case is a shape at -O0, or `<shape> -O2`. A stage that a -O2 case does not judge is AS_AT_O0.
+    """
     result: dict[tuple[str, str], tuple[str, list[Fraction | None]]] = {}
-    for shape, data in counts["shapes"].items():
+    for case, data in counts["shapes"].items():
         growth = {
             stage: [c - data["counts"][stage][0] for c in data["counts"][stage][1:]]
             for stage, _ in STAGES
         }
-        total = sum(g[3] for g in growth.values())
+        totals = {
+            llvm: sum(g[3] for stage, g in growth.items() if (stage in LLVM_STAGES) == llvm)
+            for llvm in (False, True)
+        }
         for stage, _ in STAGES:
-            result[shape, stage] = judge(growth[stage], total)
+            if case.endswith(O2_SUFFIX) and stage not in O2_STAGES:
+                result[case, stage] = (AS_AT_O0, [None, None, None])
+            else:
+                result[case, stage] = judge(growth[stage], totals[stage in LLVM_STAGES])
     return result
 
 
@@ -669,38 +723,39 @@ def measure(args: argparse.Namespace, counts: dict[str, Any]) -> None:
         ["valgrind", "--version"], "valgrind --version"
     ).stdout.splitlines()[0]
     for name in args.shapes or SHAPES:
-        n, make = SHAPES[name]
-        sizes = [0, n, 2 * n, 4 * n, 8 * n]
-        directory = Path(args.out) / name.replace(" ", "-")
-        directory.mkdir(parents=True, exist_ok=True)
-        files = [directory / f"size-{k}.sisu" for k in sizes]
-        for k, path in zip(sizes, files, strict=False):
-            path.write_text(make(k))
-        for k, path in ((sizes[0], files[0]), (sizes[-1], files[-1])):
-            check_clean(deadline, args.sisu, path, f"{name}, size {k}")
+        measure_shape(deadline, args, name, counts)
+
+
+def measure_shape(
+    deadline: Deadline, args: argparse.Namespace, name: str, counts: dict[str, Any]
+) -> None:
+    """Measure the shape `name` at -O0, and at -O2 when it is in O2_SHAPES."""
+    n, make = SHAPES[name]
+    sizes = [0, n, 2 * n, 4 * n, 8 * n]
+    directory = Path(args.out) / name.replace(" ", "-")
+    directory.mkdir(parents=True, exist_ok=True)
+    files = [directory / f"size-{k}.sisu" for k in sizes]
+    for k, path in zip(sizes, files, strict=False):
+        path.write_text(make(k))
+    for k, path in ((sizes[0], files[0]), (sizes[-1], files[-1])):
+        check_clean(deadline, args.sisu, path, f"{name}, size {k}")
+    levels = [("", [])] + ([(O2_SUFFIX, ["-O2"])] if name in O2_SHAPES else [])
+    for suffix, flags in levels:
+        case = name + suffix
         per_stage: dict[str, list[int]] = {stage: [] for stage, _ in STAGES}
         with tempfile.TemporaryDirectory() as tmp:
             profile = str(Path(tmp, "callgrind.out"))
             for k, path in zip(sizes, files, strict=False):
-                what = f"{name}, size {k}"
-                deadline.run(
-                    [
-                        "valgrind",
-                        "--tool=callgrind",
-                        f"--callgrind-out-file={profile}",
-                        args.sisu,
-                        "build",
-                        "--emit",
-                        "ir-raw",
-                        path,
-                    ],
-                    what,
-                    stdout=subprocess.DEVNULL,
-                )
+                what = f"{case}, size {k}"
+                # One codegen unit: the default number of units grows with the program, and each
+                # unit repeats some work, so the sizes would not split the same way.
+                build = ["build", *flags, "--codegen-units", "1", path, "-o", Path(tmp, "out")]
+                callgrind = ["valgrind", "--tool=callgrind", f"--callgrind-out-file={profile}"]
+                deadline.run([*callgrind, args.sisu, *build], what, stdout=subprocess.DEVNULL)
                 found = stage_counts(deadline.run([*ANNOTATE, profile], what).stdout)
                 for stage, count in found.items():
                     per_stage[stage].append(count)
-        counts["shapes"][name] = {"sizes": sizes, "counts": per_stage}
+        counts["shapes"][case] = {"sizes": sizes, "counts": per_stage}
 
 
 def shape_list(text: str) -> list[str]:
