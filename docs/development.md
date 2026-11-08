@@ -614,7 +614,12 @@ must pass seven properties:
    `fuzz/known_cascades.txt`, and a pair that is not in the file fails. A fix
    that removes a cascade removes its pair. Later steps of the diagnostics
    foundation remove pairs and add none. Property 7 runs after property 6,
-   before the builds.
+   before the builds. A fuzz run gives the property the file
+   `SISU_FUZZ_CASCADES`, and the property writes there each pair of the
+   baseline that it allows. The summary of the run names each pair of the
+   baseline that no input gave, as a warning in the section "Known cascades".
+   The warning does not change the exit status. The fixed-seed tests do not
+   warn.
 
 Name the target with `--target`, before the other arguments:
 
@@ -634,6 +639,14 @@ allows:
 
 ```console
 $ SISU_FUZZ_SEED=72 cargo nextest run -p sisuc --lib seed_from_env --run-ignored only
+```
+
+To check property 7 over the 128 seeds of the fuzz run, run the test below.
+It prints the mistakes of each kind, the programs with a control and the
+time. It lists every failure, not only the first:
+
+```console
+$ cargo nextest run -p sisuc --lib property_7_should_hold_for_the_fuzz_seeds --run-ignored only --no-capture
 ```
 
 The script first builds the runtime archive in release mode and points

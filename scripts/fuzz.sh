@@ -27,7 +27,9 @@
 # land in fuzz/artifacts/<target>/. Each new crash- input is then replayed once, and its
 # output appended to fuzz.log. The run exits 1 when it produced a crash-, timeout- or
 # oom- artifact, and otherwise with cargo-fuzz's status. summary.md gives the panic location
-# and the first line of the panic message of each replayed crash.
+# and the first line of the panic message of each replayed crash. The program target adds the
+# section "Known cascades": the pairs of fuzz/known_cascades.txt that no input of the run gave.
+# It is a warning, and the exit status stays the same.
 set -euo pipefail
 
 usage="usage: scripts/fuzz.sh [--target front_end|program] [seconds] | --replay <input> | --tmin <input> | --cmin | --coverage | --target program --gaps"
@@ -212,8 +214,12 @@ seeds=$(mktemp -d)
 marker=$(mktemp)
 replay_out=$(mktemp)
 gaps_dir=
-trap 'rm -rf "$seeds" "$marker" "$replay_out" "$gaps_dir"' EXIT
+# The pairs that property 7 of the program target gave (fuzz_program.rs). Only the fuzz command
+# gets this file: the build and the replays do not.
+cascades=
+trap 'rm -rf "$seeds" "$marker" "$replay_out" "$gaps_dir" "$cascades"' EXIT
 if [[ $target == program ]]; then
+    cascades=$(mktemp)
     python3 scripts/fuzz_seeds.py "$seeds"
 else
     copy_programs "$seeds" crates/sisuc/tests
@@ -256,9 +262,15 @@ jobs=$(nproc)
 if ((jobs < 2)); then jobs=2; fi
 cmd=(cargo fuzz run --sanitizer none --jobs "$jobs" "$target" "$corpus" "$seeds"
     -- ${dict:+-dict="$PWD/$dict"} -max_total_time="$seconds" "${limits[@]}")
+fuzz_env=()
+if [[ -n $cascades ]]; then fuzz_env=(SISU_FUZZ_CASCADES="$cascades"); fi
 logged cargo fuzz build --sanitizer none "$target"
 start=$SECONDS
-if ((status == 0)); then logged "${cmd[@]}"; fi
+fuzzed=false
+if ((status == 0)); then
+    fuzzed=true
+    logged env "${fuzz_env[@]}" "${cmd[@]}"
+fi
 elapsed=$((SECONDS - start))
 
 {
@@ -386,6 +398,29 @@ first_pass=$(awk '/^#[0-9]+: cov:/ { for (i = 1; i < NF; i++) if ($i == "time:")
         echo "${not_replayed} more crashes were not replayed. \`scripts/fuzz.sh --target ${target} --replay <path>\` replays any of them."
     fi
 } >fuzz/artifacts/summary.md
+
+# The pairs of the baseline that no input of this run gave. The section is written only when the
+# fuzz command ran: after a failed build, every pair would be missing. It does not change the
+# exit status, because a pair can be missing for a short run.
+if [[ $fuzzed == true && -n $cascades ]]; then
+    baseline=fuzz/known_cascades.txt
+    # A pair line is a line that is not a comment and not empty (fuzz_program.rs, parse_cascades).
+    missing=$(LC_ALL=C comm -23 \
+        <(awk '/^#/ || !NF { next } { print }' "$baseline" | LC_ALL=C sort -u) \
+        <(LC_ALL=C sort -u "$cascades"))
+    {
+        echo
+        echo "## Known cascades"
+        echo
+        if [[ -z $missing ]]; then
+            echo "Each pair of \`$baseline\` occurred."
+        else
+            echo "Warning: no input of this run gave these pairs of \`$baseline\`. A pair that no nightly run gives can go:"
+            echo
+            while IFS= read -r pair; do echo "- \`${pair}\`"; done <<<"$missing"
+        fi
+    } >>fuzz/artifacts/summary.md
+fi
 
 cat fuzz/artifacts/summary.md
 if ((${#failures[@]} > 0)); then
