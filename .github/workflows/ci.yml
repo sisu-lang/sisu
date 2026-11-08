@@ -221,7 +221,8 @@ jobs:
           scripts/coverage.sh "$BASE" | tee "$RUNNER_TEMP/coverage.txt"
       - id: summary
         continue-on-error: true
-        if: always()
+        # A newer push cancels this run; a cancelled run reports nothing.
+        if: ${{ !cancelled() }}
         env:
           STEPS: ${{ toJSON(steps) }}
         run: |
@@ -255,7 +256,7 @@ jobs:
           } >>"$GITHUB_STEP_SUMMARY"
       - id: comment
         continue-on-error: true
-        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]'
+        if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' }}
         env:
           GH_TOKEN: ${{ github.token }}
           LINE: ${{ steps.summary.outputs.line }}
