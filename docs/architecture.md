@@ -498,7 +498,14 @@ unit discards the names of values, such as `%call`. Only the IR text shows
 them, so `--emit ir` and `--emit ir-raw` keep them. A debug build of `sisu` verifies the module first; a release
 build does not. Runs the `mem2reg` pass, which turns stack slots into registers,
 or with `-O2` or `-O3` the `default<O2>` or `default<O3>` pipeline. Then it
-emits object code for the machine `sisu` runs on, x86-64 or ARM64.
+emits object code for the machine `sisu` runs on, x86-64 or ARM64. Three
+limits keep the build time linear in the size of a function. Without `-O`,
+codegen ends a block with a `br` after 256 statements. LLVM's fast instruction
+selector and register allocator slow down on a long block. Also without `-O`,
+`mem2reg` skips a function whose entry-block allocas times its blocks are more
+than 5,000,000: the function is `optnone`. The `==` helper of an array 8 or
+more layers deep is `noinline`. So `-O2` does not inline a deep chain of
+helpers into one loop nest.
 
 **Codegen units** (`codegen/units.rs`, [ADR 0045](adr/0045-codegen-units-split-by-default.md)).
 A large program splits into codegen units: one LLVM module each, which codegen,
