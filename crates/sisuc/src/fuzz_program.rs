@@ -489,7 +489,7 @@ fn judge_edit(g: &Generated, mistakes: &[&Mistake], seen: Option<&Path>) -> Resu
     }
     if let Some(seen) = seen {
         // The pair is true when one kind knows the code, whichever mistake gave the error.
-        // No shipped pair is known for two kinds, so a code of two kinds has no test.
+        // When two kinds know the code, the cause is not known, so no pair is written.
         let lines: Vec<String> = (extra.iter())
             .filter_map(|code| {
                 let mut kinds = mistakes.iter().filter(|m| known(code, m)).map(|m| m.kind);
@@ -1939,7 +1939,7 @@ mod tests {
     /// control, the time, and the seed and first line of each failure. A new pair of the checker
     /// goes into `fuzz/known_cascades.txt`.
     #[test]
-    #[ignore = "runs only on demand, over the 128 fuzz seeds"]
+    #[ignore = "runs only on demand, over the seeds 0..FUZZ_SEEDS of the fuzz run"]
     fn property_7_should_hold_for_the_fuzz_seeds() {
         let (mut generating, mut judging) = (Duration::ZERO, Duration::ZERO);
         let mut kinds = [0_usize; Kind::ALL.len()];
@@ -1950,18 +1950,14 @@ mod tests {
             let g = generate(&seed(n));
             generating += start.elapsed();
             for m in &g.mistakes {
-                kinds[Kind::ALL
-                    .iter()
-                    .position(|&kind| kind == m.kind)
-                    .unwrap_or(0)] += 1;
+                kinds[m.kind as usize] += 1;
             }
             controls += usize::from(control_of(&g).is_some());
             let start = Instant::now();
             let result = judge_mistakes(&g, None);
             judging += start.elapsed();
             if let Err(f) = result {
-                let mut lines = f.detail.lines();
-                let first = lines.next().unwrap_or("");
+                let first = f.detail.lines().next().unwrap_or("");
                 let checker = (f.detail.lines()).find(|line| line.starts_with("the checker"));
                 failures.push(format!("seed {n}: {first} / {}", checker.unwrap_or("")));
             }
@@ -2386,6 +2382,10 @@ mod tests {
 
     #[test]
     fn property_7_should_fail_a_new_pair() {
+        assert!(
+            !known_cascades().contains(&(Kind::Local, "E0068".to_string())),
+            "`local E0068` is now in the baseline: pick another code for the new pair"
+        );
         // `n[0]` stands in for a checker that adds E0068 to an unknown local.
         let program = "fn main() {\n    let n = 1\n    let b = n\n    print(b)\n}\n";
         let at = program.find("= n").expect("the program should read `n`") + 2;

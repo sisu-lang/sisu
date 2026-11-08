@@ -142,6 +142,8 @@ fn edit(
         Kind::Declaration => {
             // Each read of the local in its block is an error; with none, the edit gives none.
             // Another function may reuse the name (`nest` declares `v0`, `v1`, ...).
+            // The scan matches by spelling, so each declared name must be unique in its block. The
+            // generator's one `names` counter gives that.
             let end = block_end(braces, site.at.end);
             let uses: Vec<_> = (idents.iter())
                 .filter(|&&(ident, start)| ident == text && (site.at.end..end).contains(&start))

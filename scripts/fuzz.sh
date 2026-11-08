@@ -405,8 +405,9 @@ first_pass=$(awk '/^#[0-9]+: cov:/ { for (i = 1; i < NF; i++) if ($i == "time:")
 if [[ $fuzzed == true && -n $cascades ]]; then
     baseline=fuzz/known_cascades.txt
     # A pair line is a line that is not a comment and not empty (fuzz_program.rs, parse_cascades).
+    # The fuzzer splits it on white space, so the script prints its two words with one space.
     missing=$(LC_ALL=C comm -23 \
-        <(awk '/^#/ || !NF { next } { print }' "$baseline" | LC_ALL=C sort -u) \
+        <(awk '{ gsub(/\r/, "") } /^#/ || !NF { next } { print $1 " " $2 }' "$baseline" | LC_ALL=C sort -u) \
         <(LC_ALL=C sort -u "$cascades"))
     {
         echo

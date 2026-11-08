@@ -614,9 +614,9 @@ must pass seven properties:
    `fuzz/known_cascades.txt`, and a pair that is not in the file fails. A fix
    that removes a cascade removes its pair. Later steps of the diagnostics
    foundation remove pairs and add none. Property 7 runs after property 6,
-   before the builds. A fuzz run gives the property the file
-   `SISU_FUZZ_CASCADES`, and the property writes there each pair of the
-   baseline that it allows. The summary of the run names each pair of the
+   before the builds. A fuzz run sets the variable `SISU_FUZZ_CASCADES` to a
+   file, and the property writes there each pair of the baseline that it
+   allows. The summary of the run names each pair of the
    baseline that no input gave, as a warning in the section "Known cascades".
    The warning does not change the exit status. The fixed-seed tests do not
    warn.
