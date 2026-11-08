@@ -864,7 +864,14 @@ impl<'ctx> Codegen<'ctx, '_> {
             for stmt in &data.stmts {
                 self.statement(stmt);
             }
-            self.terminator(&data.term);
+            if let Some(exit) = tail_return(f, data) {
+                for stmt in &exit.stmts {
+                    self.statement(stmt);
+                }
+                self.terminator(&exit.term);
+            } else {
+                self.terminator(&data.term);
+            }
         }
         self.caller.set(None);
     }
@@ -1747,6 +1754,54 @@ pub(crate) fn keep_functions(module: &Module<'_>, names: &str) {
             function.add_attribute(AttributeLoc::Function, noinline);
         }
     }
+}
+
+/// The return block that `data` reaches by `goto`, through empty blocks. It is `None` unless
+/// `data` ends in a call. The return block must only release, and then return the call's result.
+///
+/// `define` emits that block's code in place of the `goto`. The call and its `ret` are then in
+/// one LLVM block. The `-O2` pass `TailCallElim` makes a loop of a tail call only when the
+/// call's block ends in `ret %call`. A result with several LLVM fields, such as an array, can
+/// join the branches of an `if` in one return block. SROA then makes one `phi` for each field.
+/// It builds the value again with `insertvalue` in the return block. The call is then not a tail
+/// call, and a deep recursion overflows the stack. The original return block stays for the other
+/// paths.
+fn tail_return<'f>(f: &'f mir::Function, data: &mir::Block) -> Option<&'f mir::Block> {
+    let Some(Statement::Assign {
+        dest: Some(dest),
+        value: Rvalue::Call { .. },
+    }) = data.stmts.last()
+    else {
+        return None;
+    };
+    let mut term = &data.term;
+    // A chain of empty blocks is at most as long as the function; the bound stops a cycle.
+    for _ in 0..f.blocks.len() {
+        let Terminator::Goto(to) = term else {
+            return None;
+        };
+        let next = &f.blocks[to.0];
+        if next.stmts.is_empty() && matches!(next.term, Terminator::Goto(_)) {
+            term = &next.term;
+            continue;
+        }
+        // Lowering writes an uncounted result, such as an `i64?`, as a read of the local.
+        let returns_result = match &next.term {
+            Terminator::Return(Some(Operand::Move(local))) => local == dest,
+            Terminator::Return(Some(Operand::Read(place))) => {
+                place.projections.is_empty() && place.local == *dest
+            }
+            _ => false,
+        };
+        let only_releases = next.stmts.iter().all(|stmt| {
+            matches!(
+                stmt,
+                Statement::Release(_) | Statement::ScopeRelease(_) | Statement::End(_)
+            )
+        });
+        return (returns_result && only_releases).then_some(next);
+    }
+    None
 }
 
 /// Whether an interpolation writes a part of type `ty` itself, in the one block of its result: a
