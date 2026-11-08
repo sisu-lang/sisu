@@ -193,8 +193,7 @@ sisu: panic at factorial.sisu:4:9: integer overflow
 
 ## Errors that help
 
-The checker reports independent errors in one run, without a cascade of
-follow-on errors. Each diagnostic has a stable code, points at the code, and
+The checker reports independent errors in one run. Each diagnostic has a stable code, points at the code, and
 offers a fix when it can:
 
 ```rust

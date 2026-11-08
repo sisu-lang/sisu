@@ -257,7 +257,7 @@ These came out of the milestone 2 design and are now part of its spec:
 - `==` compares classes structurally; `a is b` compares identity. Reversed in
   milestone 8: classes compare by identity
   ([ADR 0022](adr/0022-classes-compare-by-identity.md)).
-- The checker reports every error in one run, using a poison type.
+- The checker reports every error in one run, using poisoned values.
 - The checker builds a typed, desugared tree (`tir`) and codegen reads only
   that.
 - Reference counting (ADR 0005).
