@@ -383,6 +383,15 @@ pushing, count the instructions of
 `target/release/sisu check target/codspeed/large/main.sisu` under callgrind,
 as `make callgrind` does.
 
+For any other command, `scripts/count_instructions.py` counts the instructions
+of the base and of the working tree. It exports the base to a temporary
+directory and builds it into `target/count-base/`, and it builds the working
+tree into `target/`. The base is by default where HEAD left `origin/main`:
+
+```console
+$ python3 scripts/count_instructions.py --base 5e50e545 -- check selfhost/lexer.sisu
+```
+
 Set these once in the CodSpeed UI: "Informational Status Checks on Failure"
 on, PR comment mode "On Change", threshold 10%. Do not make the check
 required.
@@ -416,9 +425,9 @@ holds `table.md`, `counts.json` and the program of each shape at each size.
 A sweep that stops early still writes the shapes that it measured, then a line
 `scaling: <message>`. To run the sweep on
 your machine, use `make scaling`. In the job, each script has a total time
-bound. The job gives `--time-bound 300` to step 1 and `--time-bound 900` to
+bound. The job gives `--time-bound 300` to step 1 and `--time-bound 1800` to
 the sweep. A script that runs over exits with code 1. The bound is a guard
-against a hang. A local `make scaling` has a bound of 1800 seconds, the
+against a hang. A local `make scaling` has the same bound of 1800 seconds, the
 default of `scripts/scaling.py`.
 
 The scheduled run starts only from the default branch. After a change to the
@@ -1478,7 +1487,7 @@ must accept any syntax those programs use.
 | `fuzz` | The fuzz targets, `front_end` and `program`, in their own Cargo workspace, run by `scripts/fuzz.sh`. |
 | `ruff.toml`, `pyrefly.toml` | The rules for each tracked Python file: Ruff for lint and format, Pyrefly for types. The Python hooks of `prek.toml` run them (see `CODING_STANDARDS.md`, Python). |
 | `Makefile` | The entry point for the commands; `make help` lists its targets. |
-| `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `codspeed-prep.sh`, `fuzz.sh`, `fuzz_program_plan.py`, which plans each run of the program fuzz workflow, `fuzz_seeds.py`, which writes the program fuzzer's 128 seeds, `fuzz_gaps.py`, which finds the generator gaps, `text_limits.py`, which checks the sentence and comment limits on changed text, `watch_pr.py`, which waits for the next review with text, comment from someone other than you, or check result of a pull request, `diag_diff.py`, which compares the diagnostics of two `sisu` builds for a review, `golden_diff.py`, which checks that a re-bless only reworded expected files, `scaling.py`, which finds the shapes of program for which a compiler stage is superlinear, `merge_pr.py`, which squash-merges a pull request once its checks pass (`--cleanup` removes the worktree of one merged in the UI), and the scripts prek hooks run, such as `check-expect-messages.sh` and `slow_tests.py`. |
+| `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `codspeed-prep.sh`, `fuzz.sh`, `fuzz_program_plan.py`, which plans each run of the program fuzz workflow, `fuzz_seeds.py`, which writes the program fuzzer's 128 seeds, `fuzz_gaps.py`, which finds the generator gaps, `text_limits.py`, which checks the sentence and comment limits on changed text, `watch_pr.py`, which waits for the next review with text, comment from someone other than you, or check result of a pull request, `diag_diff.py`, which compares the diagnostics of two `sisu` builds for a review, `golden_diff.py`, which checks that a re-bless only reworded expected files, `count_instructions.py`, which counts the instructions of one `sisu` command on a base commit and on the working tree, `scaling.py`, which finds the shapes of program for which a compiler stage is superlinear, `merge_pr.py`, which squash-merges a pull request once its checks pass (`--cleanup` removes the worktree of one merged in the UI), and the scripts prek hooks run, such as `check-expect-messages.sh` and `slow_tests.py`. |
 | `scripts/nightly_build.py` | The steps of the nightly build workflow that use the GitHub API: `pick`, `publish`, `prune` and `report`. |
 | `scripts/nightly_check.py` | The checks of the nightly build: the binary's commit, its Linux and macOS libraries, and the tarball's names. |
 | `scripts/nightly_smoke.sh` | Runs each site program that has an `.out` file with both allocators, on a clean machine of the nightly build. |

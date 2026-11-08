@@ -5,7 +5,7 @@ name: Compile speed
 # that looks fixed, and on a check that fails. It never fails on a measured time: callgrind counts
 # do not depend on the load of the runner. They also change a little with the file paths and the C
 # library. So on another machine, such as the runner of this job, a ratio near a number of the
-# rule can fall on the other side. Each script has a total time bound (300 and 900 seconds). It
+# rule can fall on the other side. Each script has a total time bound (300 and 1800 seconds). It
 # stops with exit code 1 when it runs over, as a guard against a hang. GitHub mails a failed
 # scheduled run to the user who last changed the `cron` line, when that user has Actions
 # notifications on.
@@ -31,7 +31,7 @@ jobs:
   compile-speed:
     name: Check the compile-speed inputs and sweep the scaling
     runs-on: ubuntu-26.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -48,7 +48,7 @@ jobs:
         run: python3 scripts/compile_speed.py --check-only --time-bound 300
       # A failed check does not skip the sweep.
       - if: success() || steps.check.outcome == 'failure'
-        run: python3 scripts/scaling.py --time-bound 900
+        run: python3 scripts/scaling.py --time-bound 1800
       - name: Summary
         if: always()
         run: |
