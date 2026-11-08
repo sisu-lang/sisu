@@ -752,10 +752,14 @@ fn build(
 /// Checks, without compiling, that `ld` can create `output`: its directory exists, and it is not
 /// a directory. What else it checks depends on what `output` is, because the linkers differ:
 /// - Nothing there: the directory needs write and search permission.
-/// - A link: no check. `ld` opens the target and does not touch the directory of the link, and a
-///   dangling link can point into another directory.
+/// - A link: no check. GNU `ld` (bfd and gold) opens the target and does not touch the directory
+///   of the link. A dangling link can point into another directory. mold and lld replace the
+///   link through its directory, so the linker decides.
 /// - Another entry: `ld` writes it, or replaces it through its directory. The check fails only
 ///   when neither can be done.
+///
+/// An output in a sticky directory, such as `/tmp`, that another user owns passes this check and
+/// can still fail late.
 fn check_output(output: &Path) -> Result<(), String> {
     let parent = match output.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent,

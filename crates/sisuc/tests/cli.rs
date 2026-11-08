@@ -2176,10 +2176,12 @@ fn build_one(dir: &Path, output: &str) -> Output {
 /// GIVEN a file `out` that holds text and has mode 0o444, in a directory that can be written
 /// WHEN `sisu build` writes to `out` with the default linker
 /// THEN it exits 0 and `out` runs
+/// AND `sisu build -o /dev/null` exits 0
 ///
 /// The linker replaces an output that cannot be written through its writable directory. So the
 /// early check refuses only when neither the file nor the directory can be written. The test
-/// fails when the check looks at the file alone.
+/// fails when the check looks at the file alone. An existing output that is not a regular file,
+/// such as `/dev/null`, is checked on itself and not on its directory `/dev`.
 #[test]
 fn build_should_replace_a_read_only_output_file_in_a_directory_it_can_write() {
     use std::os::unix::fs::PermissionsExt;
@@ -2197,6 +2199,13 @@ fn build_should_replace_a_read_only_output_file_in_a_directory_it_can_write() {
     );
     let run = Command::new(dir.join("out")).output().expect("out starts");
     assert_eq!(String::from_utf8_lossy(&run.stdout), "1\n");
+    let out = build_one(&dir, "/dev/null");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "/dev/null: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 /// GIVEN a file `out` with mode 0o444, in a directory with mode 0o555
@@ -2280,9 +2289,9 @@ fn build_should_follow_an_output_link_into_a_directory_it_can_write() {
 /// WHEN `sisu build` and `sisu run` run
 /// THEN each exits 0 and the program prints 1
 ///
-/// An empty `TMPDIR` makes the temporary directory the current directory, so it is not an error.
+/// An empty `TMPDIR` means the current directory, so `sisu` accepts it and reports no error.
 #[test]
-fn build_and_run_should_use_the_current_directory_for_an_empty_temporary_directory() {
+fn build_and_run_should_accept_an_empty_temporary_directory() {
     let dir = scratch_path::empty_dir("empty_temp_dir");
     fs::write(dir.join("one.sisu"), "fn main() {\n    print(1)\n}\n").expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
