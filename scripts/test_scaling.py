@@ -25,40 +25,45 @@ import scaling as sc
 from compile_speed import Fail
 
 # These are lines of a real `callgrind_annotate --inclusive=yes --threshold=100 --show=Ir
-# --auto=no` run. The run was on the release `sisu build --emit ir-raw` of a program with 3
-# functions (valgrind 3.22.0). The text keeps the header, the total and one line for each of the
-# six stage functions. It keeps one closure of `check::check` and two lines of other functions.
-# The last line is a row of `lexer::lex` from the inlined file `core/src/convert/num.rs`. It has
-# no object field (80 instructions).
+# --auto=no` run. The run was on the release `sisu build --codegen-units 1 FILE -o OUT` of a program
+# with 3 functions (valgrind 3.22.0). The text keeps the header, the total and one line for each of
+# the eight stage functions. It keeps `codegen::optimize`, one closure of `check::check` and two
+# lines of other functions. The last line comes from an earlier run of `--emit ir-raw`: a row of
+# `lexer::lex` from the inlined file `core/src/convert/num.rs`. It has no object field.
 ANNOTATE = """\
 --------------------------------------------------------------------------------
 Ir
 --------------------------------------------------------------------------------
-7,489,418 (100.0%)  PROGRAM TOTALS
+11,894,135 (100.0%)  PROGRAM TOTALS
 
 --------------------------------------------------------------------------------
 Ir                  file:function
 --------------------------------------------------------------------------------
-4,817,152 (64.32%)  ???:0x000000000001f540 [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
-  355,831 ( 4.75%)  ???:sisuc::codegen::compile [/src/target/release/sisu]
-  306,067 ( 4.09%)  ???:sisuc::check::check [/src/target/release/sisu]
-  183,335 ( 2.45%)  ???:sisuc::lexer::lex [/src/target/release/sisu]
-  118,740 ( 1.59%)  ???:sisuc::parser::parse [/src/target/release/sisu]
-   61,582 ( 0.82%)  ???:sisuc::mir::build [/src/target/release/sisu]
-   47,035 ( 0.63%)  ???:<clap_builder::parser::parser::Parser>::get_matches_with [/src/target/release/sisu]
-   20,561 ( 0.27%)  ???:sisuc::mono::instantiate [/src/target/release/sisu]
-    7,069 ( 0.09%)  ???:<core::iter::adapters::filter_map::FilterMap<core::iter::adapters::enumerate::Enumerate<core::slice::iter::Iter<core::option::Option<sisuc::tir::Function>>>, sisuc::check::check::{closure#4}> as core::iter::traits::iterator::Iterator>::next [/src/target/release/sisu]
+5,301,604 (44.57%)  ???:0x000000000001f540 [/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2]
+3,179,028 (26.73%)  ???:LLVMTargetMachineEmitToMemoryBuffer [/src/target/release/sisu]
+1,528,602 (12.85%)  ???:sisuc::codegen::optimize [/src/target/release/sisu]
+1,522,912 (12.80%)  ???:LLVMRunPasses [/src/target/release/sisu]
+  364,516 ( 3.06%)  ???:sisuc::check::check [/src/target/release/sisu]
+  311,015 ( 2.61%)  ???:sisuc::codegen::compile [/src/target/release/sisu]
+  258,486 ( 2.17%)  ???:sisuc::lexer::lex [/src/target/release/sisu]
+  192,820 ( 1.62%)  ???:sisuc::parser::parse [/src/target/release/sisu]
+   50,907 ( 0.43%)  ???:<clap_builder::parser::parser::Parser>::get_matches_with [/src/target/release/sisu]
+   43,557 ( 0.37%)  ???:sisuc::mir::build [/src/target/release/sisu]
+   11,406 ( 0.10%)  ???:sisuc::mono::instantiate [/src/target/release/sisu]
+    9,705 ( 0.08%)  ???:<core::iter::adapters::filter_map::FilterMap<core::iter::adapters::enumerate::Enumerate<core::slice::iter::Iter<core::option::Option<sisuc::tir::Function>>>, sisuc::check::check::{closure#3}> as core::iter::traits::iterator::Iterator>::next [/src/target/release/sisu]
        80 ( 0.00%)  /home/mikko/.rustup/toolchains/1.99.0-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/convert/num.rs:sisuc::lexer::lex
 """
-MONO_LINE = "   20,561 ( 0.27%)  ???:sisuc::mono::instantiate [/src/target/release/sisu]\n"
-CHECK_LINE = "  306,067 ( 4.09%)  ???:sisuc::check::check [/src/target/release/sisu]\n"
+MONO_LINE = "   11,406 ( 0.10%)  ???:sisuc::mono::instantiate [/src/target/release/sisu]\n"
+CHECK_LINE = "  364,516 ( 3.06%)  ???:sisuc::check::check [/src/target/release/sisu]\n"
 EXPECTED_COUNTS = {
-    "lex": 183335,
-    "parse": 118740,
-    "check": 306067,
-    "mono": 20561,
-    "mir": 61582,
-    "codegen": 355831,
+    "lex": 258486,
+    "parse": 192820,
+    "check": 364516,
+    "mono": 11406,
+    "mir": 43557,
+    "codegen": 311015,
+    "optimize": 1522912,
+    "object": 3179028,
 }
 KNOWN_344 = [("array literal depth", "check", 344)]
 # The callgrind counts of commit 85c95105, where issue #344 is open.
@@ -101,6 +106,8 @@ Sizes: 0, 250, 500, 1000, 2000. Growth is the count less the count at size 0.
 | mono | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | mir | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | codegen | 0 | 0 | 0 | 0 | - | - | - | not judged |
+| optimize | 0 | 0 | 0 | 0 | - | - | - | not judged |
+| object | 0 | 0 | 0 | 0 | - | - | - | not judged |
 
 ## statements
 
@@ -114,6 +121,8 @@ Sizes: 0, 250, 500, 1000, 2000. Growth is the count less the count at size 0.
 | mono | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | mir | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | codegen | 0 | 0 | 0 | 0 | - | - | - | not judged |
+| optimize | 0 | 0 | 0 | 0 | - | - | - | not judged |
+| object | 0 | 0 | 0 | 0 | - | - | - | not judged |
 
 ## expression depth
 
@@ -127,6 +136,8 @@ Sizes: 0, 12, 24, 48, 96. Growth is the count less the count at size 0.
 | mono | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | mir | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | codegen | 0 | 0 | 0 | 0 | - | - | - | not judged |
+| optimize | 0 | 0 | 0 | 0 | - | - | - | not judged |
+| object | 0 | 0 | 0 | 0 | - | - | - | not judged |
 
 ## block depth
 
@@ -140,6 +151,8 @@ Sizes: 0, 12, 24, 48, 96. Growth is the count less the count at size 0.
 | mono | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | mir | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | codegen | 0 | 0 | 0 | 0 | - | - | - | not judged |
+| optimize | 0 | 0 | 0 | 0 | - | - | - | not judged |
+| object | 0 | 0 | 0 | 0 | - | - | - | not judged |
 
 ## generic call depth
 
@@ -153,6 +166,8 @@ Sizes: 0, 24, 48, 96, 192. Growth is the count less the count at size 0.
 | mono | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | mir | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | codegen | 0 | 0 | 0 | 0 | - | - | - | not judged |
+| optimize | 0 | 0 | 0 | 0 | - | - | - | not judged |
+| object | 0 | 0 | 0 | 0 | - | - | - | not judged |
 
 ## array literal depth
 
@@ -166,6 +181,8 @@ Sizes: 0, 24, 48, 96, 192. Growth is the count less the count at size 0.
 | mono | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | mir | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | codegen | 0 | 0 | 0 | 0 | - | - | - | not judged |
+| optimize | 0 | 0 | 0 | 0 | - | - | - | not judged |
+| object | 0 | 0 | 0 | 0 | - | - | - | not judged |
 
 ## array literal width
 
@@ -179,6 +196,8 @@ Sizes: 0, 250, 500, 1000, 2000. Growth is the count less the count at size 0.
 | mono | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | mir | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | codegen | 0 | 0 | 0 | 0 | - | - | - | not judged |
+| optimize | 0 | 0 | 0 | 0 | - | - | - | not judged |
+| object | 0 | 0 | 0 | 0 | - | - | - | not judged |
 
 ## match arms
 
@@ -192,6 +211,8 @@ Sizes: 0, 50, 100, 200, 400. Growth is the count less the count at size 0.
 | mono | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | mir | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | codegen | 0 | 0 | 0 | 0 | - | - | - | not judged |
+| optimize | 0 | 0 | 0 | 0 | - | - | - | not judged |
+| object | 0 | 0 | 0 | 0 | - | - | - | not judged |
 
 ## fields
 
@@ -205,6 +226,8 @@ Sizes: 0, 50, 100, 200, 400. Growth is the count less the count at size 0.
 | mono | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | mir | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | codegen | 0 | 0 | 0 | 0 | - | - | - | not judged |
+| optimize | 0 | 0 | 0 | 0 | - | - | - | not judged |
+| object | 0 | 0 | 0 | 0 | - | - | - | not judged |
 
 ## conformers
 
@@ -218,6 +241,8 @@ Sizes: 0, 50, 100, 200, 400. Growth is the count less the count at size 0.
 | mono | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | mir | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | codegen | 0 | 0 | 0 | 0 | - | - | - | not judged |
+| optimize | 0 | 0 | 0 | 0 | - | - | - | not judged |
+| object | 0 | 0 | 0 | 0 | - | - | - | not judged |
 
 ## type depth
 
@@ -231,6 +256,8 @@ Sizes: 0, 24, 48, 96, 192. Growth is the count less the count at size 0.
 | mono | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | mir | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | codegen | 0 | 0 | 0 | 0 | - | - | - | not judged |
+| optimize | 0 | 0 | 0 | 0 | - | - | - | not judged |
+| object | 0 | 0 | 0 | 0 | - | - | - | not judged |
 
 ## interpolations
 
@@ -244,6 +271,8 @@ Sizes: 0, 50, 100, 200, 400. Growth is the count less the count at size 0.
 | mono | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | mir | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | codegen | 0 | 0 | 0 | 0 | - | - | - | not judged |
+| optimize | 0 | 0 | 0 | 0 | - | - | - | not judged |
+| object | 0 | 0 | 0 | 0 | - | - | - | not judged |
 """
 
 
@@ -295,9 +324,9 @@ def stubs(
 
     `check` is shell text that runs first for each call of the stub `sisu`. A stub exits with
     code 2 when its arguments are not the ones that the script must give:
-    `sisu check FILE`, `sisu build --emit ir-raw FILE`, `valgrind --tool=callgrind
-    --callgrind-out-file=FILE SISU build --emit ir-raw FILE` and `callgrind_annotate
-    --inclusive=yes --threshold=100 --show=Ir --auto=no FILE`.
+    `sisu check FILE`, `valgrind --tool=callgrind --callgrind-out-file=FILE SISU build [-O2]
+    --codegen-units 1 FILE -o OUT` and `callgrind_annotate --inclusive=yes --threshold=100
+    --show=Ir --auto=no FILE`.
     """
     tmp = Path(tmp)
     bin_dir = tmp / "bin"
@@ -310,7 +339,6 @@ def stubs(
         f'echo "sisu $*" >> {log}\n'
         f'case "$1" in\n'
         f"  check) [ $# -eq 2 ] || {{ {bad}; }};;\n"
-        f'  build) [ $# -eq 4 ] && [ "$2 $3" = "--emit ir-raw" ] || {{ {bad}; }};;\n'
         f"  *) {bad};;\n"
         f"esac\n{check}\nexit 0\n",
     )
@@ -319,9 +347,11 @@ def stubs(
             bin_dir / "valgrind",
             f'echo "valgrind $*" >> {log}\n'
             'case "$1" in --version) echo valgrind-3.22.0; exit 0;; esac\n'
-            '[ $# -eq 7 ] && [ "$1" = --tool=callgrind ] && [ "$4 $5 $6" = "build --emit ir-raw" ] '
+            f'[ "$1" = --tool=callgrind ] && [ "$4" = build ] || {{ {bad}; }}\n'
+            'out="$2"; shift 4; [ "$1" = -O2 ] && shift\n'
+            '[ $# -eq 5 ] && [ "$1 $2" = "--codegen-units 1" ] && [ "$4" = -o ] '
             f"|| {{ {bad}; }}\n"
-            'case "$2" in --callgrind-out-file=*) : > "${2#*=}";; *) ' + bad + ";; esac\n"
+            'case "$out" in --callgrind-out-file=*) : > "${out#*=}";; *) ' + bad + ";; esac\n"
             "exit 0\n",
         )
     script(
@@ -512,7 +542,7 @@ class ScalingTest(unittest.TestCase):
         THEN it raises Fail and names the function
         AND it names each match by its file and function
         """
-        clone = "   306,067 ( 4.09%)  ???:sisuc::check::check.llvm.123 [/src/target/release/sisu]\n"
+        clone = "   364,516 ( 3.06%)  ???:sisuc::check::check.llvm.123 [/src/target/release/sisu]\n"
         with self.assertRaisesRegex(Fail, "sisuc::check::check .*2 times"):
             sc.stage_counts(ANNOTATE + clone)
         # The same function from two source files, as a build with debug information gives it.
@@ -562,8 +592,8 @@ class ScalingTest(unittest.TestCase):
         self.assertNotIn("## match arms", text)
         self.assertIn("\nscaling: match arms, size 0", text)
         counts = json.loads((self.out / "counts.json").read_text())
-        self.assertEqual(list(counts["shapes"]), ["functions"])
-        self.assertEqual(counts["shapes"]["functions"]["counts"]["check"], [306067] * 5)
+        self.assertEqual(list(counts["shapes"]), ["functions", "functions -O2"])
+        self.assertEqual(counts["shapes"]["functions"]["counts"]["check"], [364516] * 5)
         self.assertEqual(counts["valgrind"], "valgrind-3.22.0")
 
     def test_file_error_while_measuring_should_write_the_table_so_far(self) -> None:
@@ -571,7 +601,7 @@ class ScalingTest(unittest.TestCase):
         AND a regular file where the directory of the match arms shape belongs
         WHEN `scripts/scaling.py` runs
         THEN it exits with code 1
-        AND `counts.json` holds the functions shape only
+        AND `counts.json` holds the functions shape only, at -O0 and at -O2
         AND `table.md` has the rows of the functions shape and the `scaling:` line
         """
         self.out.mkdir()
@@ -580,7 +610,7 @@ class ScalingTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("scaling: ", err)
         counts = json.loads((self.out / "counts.json").read_text())
-        self.assertEqual(list(counts["shapes"]), ["functions"])
+        self.assertEqual(list(counts["shapes"]), ["functions", "functions -O2"])
         text = (self.out / "table.md").read_text()
         self.assertIn("## functions", text)
         self.assertIn("\nscaling: ", text)
@@ -600,7 +630,7 @@ class ScalingTest(unittest.TestCase):
         self.assertIn("scaling: cannot write the report", err)
 
     def test_each_shape_should_have_its_size_in_its_structure(self) -> None:
-        """GIVEN the 25 shapes
+        """GIVEN the 28 shapes
         WHEN each makes its program at size k
         THEN the repeated part of the program has a size of base + k
         AND the base is what the program at size 0 needs to check clean
@@ -632,6 +662,9 @@ class ScalingTest(unittest.TestCase):
             ("owned exits", 25),
             ("alias chain", 12),
             ("optional depth", 24),
+            ("prints", 250),
+            ("mutable locals", 250),
+            ("nested array ==", 5),
         ]
         self.assertEqual([(name, n) for name, (n, _) in sc.SHAPES.items()], sizes)
 
@@ -688,6 +721,9 @@ class ScalingTest(unittest.TestCase):
             "owned exits": (lambda t: t.count("return x"), 0),
             "alias chain": (lambda t: t.count("type A"), 1),
             "optional depth": (lambda t: line(t, "mut xs").count("?"), 1),
+            "prints": (lambda t: t.count("print(1)"), 0),
+            "mutable locals": (lambda t: min(t.count("let mut"), t.count("+= 1")), 0),
+            "nested array ==": (lambda t: depth(line(t, "let a"), "[", "]"), 0),
         }
         self.assertEqual(list(parts), list(sc.SHAPES))
         for name, (_, make) in sc.SHAPES.items():
@@ -697,7 +733,7 @@ class ScalingTest(unittest.TestCase):
                     self.assertEqual(measure(make(k)), base + k)
 
     def test_text_of_each_shape_should_grow_linearly_with_its_size(self) -> None:
-        """GIVEN the 25 shapes at their sizes 0, n, 2n, 4n and 8n
+        """GIVEN the 28 shapes at their sizes 0, n, 2n, 4n and 8n
         WHEN the bytes of each program are counted
         THEN the growth in bytes at each size is below 2.01 times the growth at half that size
         """
@@ -727,28 +763,67 @@ class ScalingTest(unittest.TestCase):
 
     def test_rule_should_find_issue_344_in_the_saved_counts(self) -> None:
         """GIVEN the callgrind counts of 85c95105, where #344 is open
+        AND LLVM stages with no growth, as the file comes from before those stages
         WHEN scaling.py reads them
         THEN array literal depth is superlinear in check only, and functions in no stage
         """
-        verdicts = sc.verdicts(sc.load(SAVED))
+        data = json.loads(SAVED.read_text())
+        for shape in data["shapes"].values():
+            for stage in sc.LLVM_STAGES:
+                shape["counts"][stage] = [1_000_000] * 5
+        saved = self.tmp / "saved.json"
+        saved.write_text(json.dumps(data))
+        verdicts = sc.verdicts(sc.load(saved))
         for stage, _ in sc.STAGES:
             array_superlinear = verdicts[("array literal depth", stage)][0] == "superlinear"
             self.assertEqual(array_superlinear, stage == "check", stage)
             self.assertNotEqual(verdicts[("functions", stage)][0], "superlinear", stage)
         with mock.patch.object(sc, "KNOWN", KNOWN_344):
             code, _, _ = run_main(
-                "--counts", str(SAVED), "--out", str(self.out), path=str(self.no_tools)
+                "--counts", str(saved), "--out", str(self.out), path=str(self.no_tools)
             )
         self.assertEqual(code, 0)
+
+    def test_verdicts_should_judge_each_group_and_level_apart(self) -> None:
+        """GIVEN a shape whose LLVM stages grow 100 times more than the stages before them
+        AND a mir stage that grows by 2% of the stages before codegen
+        AND the same shape at -O2, where check grows superlinearly
+        WHEN `verdicts` reads the counts
+        THEN mir is judged against its own group, and is linear
+        AND at -O2 only codegen, optimize and object are judged, and check is `as at -O0`
+        """
+        counts = {stage: [0] * 5 for stage, _ in sc.STAGES}
+        counts.update(
+            lex=[0, 1000, 2000, 4000, 8000],
+            mir=[0, 20, 40, 80, 160],
+            optimize=[0, 100_000, 200_000, 400_000, 800_000],
+            object=[0, 100_000, 200_000, 400_000, 800_000],
+        )
+        o2 = dict(counts, check=[0, 1000, 4000, 16000, 64000])
+        sizes = [0, 250, 500, 1000, 2000]
+        shapes = {
+            "functions": {"sizes": sizes, "counts": counts},
+            "functions -O2": {"sizes": sizes, "counts": o2},
+        }
+        got = {case: verdict for case, (verdict, _) in sc.verdicts({"shapes": shapes}).items()}
+        for stage in ("lex", "mir", "optimize", "object"):
+            self.assertEqual(got["functions", stage], "linear", stage)
+        for stage, _ in sc.STAGES:
+            want = {"codegen": "not judged", "optimize": "linear", "object": "linear"}
+            self.assertEqual(got["functions -O2", stage], want.get(stage, sc.AS_AT_O0), stage)
 
     def test_known_rows_should_name_a_shape_and_a_stage(self) -> None:
         """GIVEN the known list
         WHEN each row is read
-        THEN its shape is a shape, its stage is a stage and its issue is a positive integer
+        THEN its case is a shape, or a shape of O2_SHAPES with ` -O2`
+        AND its stage is a stage that the case judges, and its issue is a positive integer
         """
         for shape, stage, issue in sc.KNOWN:
             with self.subTest(shape=shape, stage=stage):
-                self.assertIn(shape, sc.SHAPES)
+                if shape.endswith(sc.O2_SUFFIX):
+                    self.assertIn(shape.removesuffix(sc.O2_SUFFIX), sc.O2_SHAPES)
+                    self.assertIn(stage, sc.O2_STAGES)
+                self.assertIn(shape.removesuffix(sc.O2_SUFFIX), sc.SHAPES)
                 self.assertIn(stage, [name for name, _ in sc.STAGES])
                 self.assertIsInstance(issue, int)
                 self.assertGreater(issue, 0)
@@ -934,12 +1009,14 @@ class ScalingTest(unittest.TestCase):
         """GIVEN a run of the functions shape with stubs that accept only the documented arguments
         WHEN `scripts/scaling.py` runs
         THEN it checks the sizes 0 and 2000, and measures the sizes 0, 250, 500, 1000 and 2000
-        AND each measurement is `sisu build --emit ir-raw` under callgrind, read by `callgrind_annotate`
+        AND it measures them at -O0 and then at -O2, as the shape is in O2_SHAPES
+        AND each measurement is a build with one codegen unit under callgrind, read by
+        `callgrind_annotate`
         """
         code, _, err = self.stub_run("functions")
         self.assertEqual((code, err), (0, ""))
         rows = self.log().splitlines()
-        size = re.compile(r"size-(\d+)\.sisu$")
+        size = re.compile(r"size-(\d+)\.sisu\b")
         # pyrefly: ignore[unsupported-operation]  every such row names a size-N.sisu file
         checks = [size.search(row)[1] for row in rows if row.startswith("sisu check ")]
         self.assertEqual(checks, ["0", "2000"])
@@ -947,12 +1024,14 @@ class ScalingTest(unittest.TestCase):
         self.assertEqual(
             # pyrefly: ignore[unsupported-operation]  as for `checks`
             [size.search(row)[1] for row in profiled],
-            ["0", "250", "500", "1000", "2000"],
+            ["0", "250", "500", "1000", "2000"] * 2,
         )
-        for row in profiled:
-            self.assertIn(" build --emit ir-raw ", row)
+        for row in profiled[:5]:
+            self.assertIn("/sisu build --codegen-units 1 ", row)
+        for row in profiled[5:]:
+            self.assertIn("/sisu build -O2 --codegen-units 1 ", row)
         annotated = [row for row in rows if row.startswith("callgrind_annotate ")]
-        self.assertEqual(len(annotated), 5)
+        self.assertEqual(len(annotated), 10)
 
     def test_unknown_shape_should_exit_with_code_2(self) -> None:
         """GIVEN a `--shapes` value with a name that is not a shape
