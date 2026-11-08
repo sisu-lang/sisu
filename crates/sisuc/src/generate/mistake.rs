@@ -450,10 +450,90 @@ mod tests {
         assert_eq!(kinds.len(), 5, "kinds found: {kinds:?}");
     }
 
-    #[test]
-    fn each_site_should_hold_the_text_of_its_kind() {
-        for n in 0..coverage::SEEDS {
+    /// The sites of the seeds `first..first + 16` hold the text of their kind. Four tests of 16
+    /// seeds each take the 64 seeds, so that each stays within the time budget of a unit test.
+    fn check_sixteen_seeds(first: u64) {
+        const _: () = assert!(coverage::SEEDS == 64, "add or drop a test of 16 seeds");
+        for n in first..first + 16 {
             check_text_of_kind(n);
         }
+    }
+
+    #[test]
+    fn each_site_of_the_first_16_seeds_should_hold_the_text_of_its_kind() {
+        check_sixteen_seeds(0);
+    }
+
+    #[test]
+    fn each_site_of_the_second_16_seeds_should_hold_the_text_of_its_kind() {
+        check_sixteen_seeds(16);
+    }
+
+    #[test]
+    fn each_site_of_the_third_16_seeds_should_hold_the_text_of_its_kind() {
+        check_sixteen_seeds(32);
+    }
+
+    #[test]
+    fn each_site_of_the_fourth_16_seeds_should_hold_the_text_of_its_kind() {
+        check_sixteen_seeds(48);
+    }
+
+    /// Whether the literal at `at` is an argument of a call of a free function `f<n>`: a comma
+    /// before it, and the `(` that is still open there follows a name `f<n>`.
+    fn free_function_argument(program: &str, tokens: &[Token], at: &Range<usize>) -> bool {
+        let before: Vec<&Token> = (tokens.iter())
+            .filter(|token| token.span.range().end <= at.start)
+            .collect();
+        if !matches!(before.last().map(|t| &t.kind), Some(TokenKind::Comma)) {
+            return false;
+        }
+        let mut open = 0_usize;
+        for (i, token) in before.iter().enumerate().rev() {
+            match token.kind {
+                TokenKind::RParen => open += 1,
+                TokenKind::LParen if open > 0 => open -= 1,
+                TokenKind::LParen => {
+                    let name = i.checked_sub(1).and_then(|i| before.get(i));
+                    return name.is_some_and(|t| {
+                        let digits = program[t.span.range()].strip_prefix('f');
+                        matches!(t.kind, TokenKind::Ident(_))
+                            && digits.is_some_and(|d| {
+                                !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit())
+                            })
+                    });
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// GIVEN the programs of the 64 seeds
+    /// WHEN the generator records the literal sites
+    /// THEN some literal mistake sits at an argument of a free function
+    /// AND some sits at the tail of a function, each with its E0032 at the literal
+    #[test]
+    fn literal_mistakes_should_sit_at_a_free_function_argument_and_at_a_function_tail() {
+        let (mut arguments, mut tails) = (0, 0);
+        for n in 0..coverage::SEEDS {
+            let g = generate(&coverage::seed(n));
+            let tokens = tokens(&g.program);
+            for m in g.mistakes.iter().filter(|m| m.kind == Kind::Literal) {
+                let argument = free_function_argument(&g.program, &tokens, &m.at);
+                let tail = g.program[..m.at.start].ends_with("\n    ")
+                    && g.program[m.at.end..].starts_with("\n}\n");
+                if argument || tail {
+                    assert_eq!(m.errors, [("E0032", m.at.start)], "seed {n}");
+                }
+                arguments += usize::from(argument);
+                tails += usize::from(tail);
+            }
+        }
+        assert!(
+            arguments > 0,
+            "no literal mistake at a free-function argument"
+        );
+        assert!(tails > 0, "no literal mistake at a function tail");
     }
 }
