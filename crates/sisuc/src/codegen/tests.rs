@@ -44,6 +44,24 @@ fn compiled_over<'ctx>(
     rc_checks: bool,
     edit: impl FnOnce(&mut mir::Program),
 ) -> Module<'ctx> {
+    compiled_over_at(context, prelude, src, OptLevel::O0, rc_checks, edit)
+}
+
+/// `compiled`, for a build at `level`. The module is not optimized.
+fn compiled_at<'ctx>(context: &'ctx Context, src: &str, level: OptLevel) -> Module<'ctx> {
+    let prelude = crate::front_end::PRELUDE_SOURCE;
+    compiled_over_at(context, prelude, src, level, false, |_| {})
+}
+
+/// `compiled_over`, for a build at `level`.
+fn compiled_over_at<'ctx>(
+    context: &'ctx Context,
+    prelude: &str,
+    src: &str,
+    level: OptLevel,
+    rc_checks: bool,
+    edit: impl FnOnce(&mut mir::Program),
+) -> Module<'ctx> {
     let program = parse_ok(src);
     let (program, diagnostics) = crate::check::check(
         &program,
@@ -55,7 +73,7 @@ fn compiled_over<'ctx>(
     let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
     let mut mir = mir::build(&program);
     edit(&mut mir);
-    let machine = target_machine(OptLevel::O0).expect("the host is a target");
+    let machine = target_machine(level).expect("the host is a target");
     let module = compile(
         context,
         &program,
@@ -63,6 +81,7 @@ fn compiled_over<'ctx>(
         "test.sisu",
         src,
         &machine,
+        level,
         rc_checks,
     );
     if let Err(e) = module.verify() {
@@ -472,7 +491,16 @@ fn enum_layouts(src: &str) -> Vec<Compared> {
     let measured = payload_limit::measure(&program.enums);
     let mir = mir::build(&program);
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
-    let module = compile(&context, &program, &mir, "test.sisu", src, &machine, false);
+    let module = compile(
+        &context,
+        &program,
+        &mir,
+        "test.sisu",
+        src,
+        &machine,
+        OptLevel::O0,
+        false,
+    );
     let data = machine.get_target_data();
     let mut found = Vec::new();
     for (e, bound) in program.enums.iter().zip(measured) {
@@ -1371,7 +1399,7 @@ fn most_calls_in_one_block(ir: &str, callee: &str) -> usize {
 
 #[test]
 fn long_block_should_be_cut_at_o0() {
-    const LIMIT: usize = 256;
+    const LIMIT: usize = BLOCK_CUT as usize;
     let context = Context::create();
     for (src, callee) in [
         (prints_program(2000), "sisu_print_int"),
@@ -1384,6 +1412,16 @@ fn long_block_should_be_cut_at_o0() {
             "one block of @sisu.main holds {most} calls of {callee}"
         );
     }
+}
+
+#[test]
+fn long_block_should_not_be_cut_at_o2() {
+    let context = Context::create();
+    let module = compiled_at(&context, &prints_program(2000), OptLevel::O2);
+    let main = module
+        .get_function("sisu.main")
+        .expect("the module should define `sisu.main`");
+    assert_eq!(main.count_basic_blocks(), 1);
 }
 
 /// A new block has room for exactly its length: `[v; n]` stores `n` into both the length and
@@ -1915,6 +1953,7 @@ fn niche_should_run_out_past_its_storage() {
         "test.sisu",
         &src,
         &machine,
+        OptLevel::O0,
         false,
     );
     codegen.lay_out_types();
@@ -3230,6 +3269,7 @@ fn binary_should_take_and_and_or_as_the_eager_operations_of_two_computed_bools()
         "test.sisu",
         src,
         &machine,
+        OptLevel::O0,
         false,
     );
     let bool_type = context.bool_type();
@@ -4986,7 +5026,16 @@ fn mono_counts(src: &str) -> ((usize, usize), (usize, usize)) {
     let mir = mir::build(&program);
     let context = Context::create();
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
-    let module = compile(&context, &program, &mir, "test.sisu", src, &machine, false);
+    let module = compile(
+        &context,
+        &program,
+        &mir,
+        "test.sisu",
+        src,
+        &machine,
+        OptLevel::O0,
+        false,
+    );
     module.verify().expect("the module should verify");
     (after_mono, (HOLDS_STEPS.get(), WALK_VISITS.get()))
 }
@@ -5282,7 +5331,16 @@ fn lay_out_enums_should_panic_on_an_enum_that_holds_itself_inline() {
     let mir = mir::build(&program);
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
     let context = Context::create();
-    compile(&context, &program, &mir, "test.sisu", src, &machine, false);
+    compile(
+        &context,
+        &program,
+        &mir,
+        "test.sisu",
+        src,
+        &machine,
+        OptLevel::O0,
+        false,
+    );
 }
 
 /// Converting an object to an `any` value makes no allocation: the value is the object's pointer
@@ -5361,6 +5419,7 @@ fn with_codegen(src: &str, check: impl FnOnce(&Codegen<'_, '_>)) {
         "test.sisu",
         src,
         &machine,
+        OptLevel::O0,
         false,
     );
     check(&codegen);
@@ -6179,6 +6238,7 @@ fn convention_should_give_one_type_per_part() {
         "test.sisu",
         src,
         &machine,
+        OptLevel::O0,
         false,
     );
     codegen.lay_out_types();
@@ -6783,6 +6843,7 @@ fn compiled_units_at<'ctx>(
                 "test.sisu",
                 src,
                 &machine,
+                level,
                 false,
             );
             if let Err(e) = module.verify() {

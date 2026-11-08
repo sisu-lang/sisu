@@ -63,6 +63,13 @@ use crate::tir::{
 const POSITIONED: &str =
     "the builder should be positioned in a block while a function body is emitted";
 
+/// At `-O0`, a block ends with a `br` to a new block after this many statements and parts (see
+/// `cut_long_block`). LLVM's fast instruction selector gives the rest of a block to the slow one
+/// at the first instruction it cannot select, such as an `insertvalue`. The slow selector and the
+/// fast register allocator then take time that grows faster than the size of the block. A short
+/// block bounds that time.
+const BLOCK_CUT: u32 = 256;
+
 #[cfg(test)]
 thread_local! {
     /// How many class fields and enum payload fields the reflexivity analysis has read on this
@@ -94,6 +101,7 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
         path: &'src str,
         source: &'src str,
         machine: &TargetMachine,
+        level: OptLevel,
         rc_checks: bool,
     ) -> Self {
         let module = context.create_module("main");
@@ -175,6 +183,8 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
             types: Vec::new(),
             caller: Cell::new(None),
             blocks: Vec::new(),
+            level,
+            since_cut: Cell::new(0),
         }
     }
 }
@@ -187,6 +197,10 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
 /// first.
 // `scripts/scaling.py` reads this function's instruction count.
 #[inline(never)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a program needs its mir, its place, its text, the target and the level"
+)]
 pub(crate) fn compile<'ctx>(
     context: &'ctx Context,
     program: &Program,
@@ -194,6 +208,7 @@ pub(crate) fn compile<'ctx>(
     path: &str,
     source: &str,
     machine: &TargetMachine,
+    level: OptLevel,
     rc_checks: bool,
 ) -> Module<'ctx> {
     compile_unit(
@@ -205,6 +220,7 @@ pub(crate) fn compile<'ctx>(
         path,
         source,
         machine,
+        level,
         rc_checks,
     )
 }
@@ -278,10 +294,11 @@ pub(crate) fn compile_unit<'ctx>(
     path: &str,
     source: &str,
     machine: &TargetMachine,
+    level: OptLevel,
     rc_checks: bool,
 ) -> Module<'ctx> {
     let mut codegen = Codegen::new(
-        context, program, mir, analyses, unit, path, source, machine, rc_checks,
+        context, program, mir, analyses, unit, path, source, machine, level, rc_checks,
     );
     codegen.lay_out_types();
     if unit.is_split() {
@@ -456,6 +473,10 @@ struct Codegen<'ctx, 'src> {
     caller: Cell<Option<(PointerValue<'ctx>, IntValue<'ctx>)>>,
     /// The current function's blocks, indexed by `BlockId`.
     blocks: Vec<BasicBlock<'ctx>>,
+    /// The optimization level of the build: at `-O0`, `cut_long_block` cuts long blocks.
+    level: OptLevel,
+    /// The statements and parts emitted since the builder moved to a mir block or to a cut.
+    since_cut: Cell<u32>,
 }
 
 impl<'ctx> Codegen<'ctx, '_> {
@@ -865,11 +886,14 @@ impl<'ctx> Codegen<'ctx, '_> {
                     .expect("both blocks should belong to the function");
             }
             self.builder.position_at_end(block);
+            self.since_cut.set(0);
             for stmt in &data.stmts {
+                self.cut_long_block();
                 self.statement(stmt);
             }
             if let Some((stmts, term)) = tail_return(f, &ends, data) {
                 for stmt in stmts {
+                    self.cut_long_block();
                     self.statement(stmt);
                 }
                 self.terminator(term);
@@ -1101,7 +1125,12 @@ impl<'ctx> Codegen<'ctx, '_> {
                 self.concat(lhs, self.operand(rhs).0)
             }
             Rvalue::Interpolate { parts, formats, .. } => {
-                let parts: Vec<_> = parts.iter().map(|part| self.operand(part)).collect();
+                let parts: Vec<_> = (parts.iter())
+                    .map(|part| {
+                        self.cut_long_block();
+                        self.operand(part)
+                    })
+                    .collect();
                 // Text, numbers, `bool` and `char` go in one block of known size; a compound part
                 // goes through a sink.
                 let text = if parts.iter().all(|&(_, ty)| text_part(ty)) {
@@ -1206,7 +1235,12 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// The values of `operands`, left to right.
     fn values(&self, operands: &[Operand]) -> Vec<BasicValueEnum<'ctx>> {
-        operands.iter().map(|op| self.operand(op).0).collect()
+        (operands.iter())
+            .map(|op| {
+                self.cut_long_block();
+                self.operand(op).0
+            })
+            .collect()
     }
 
     /// The object that an operand of `is` holds: an object, or the data of an `any` value, which
@@ -1650,6 +1684,24 @@ impl<'ctx> Codegen<'ctx, '_> {
             .expect(POSITIONED);
         self.builder.build_unreachable().expect(POSITIONED);
         self.builder.position_at_end(ok);
+    }
+
+    /// Counts one more statement or part in the current block. At `-O0`, after `BLOCK_CUT` of
+    /// them, the block ends with a `br` to a new block, and codegen goes on there. Call it only
+    /// where the block has no terminator and no `phi` will take it as an incoming block.
+    fn cut_long_block(&self) {
+        if self.level != OptLevel::O0 {
+            return;
+        }
+        let count = self.since_cut.get();
+        if count < BLOCK_CUT {
+            self.since_cut.set(count + 1);
+            return;
+        }
+        let next = (self.context).append_basic_block(self.current_function(), "cut");
+        self.branch_to(next);
+        self.builder.position_at_end(next);
+        self.since_cut.set(1);
     }
 
     fn branch_to(&self, block: BasicBlock<'ctx>) {

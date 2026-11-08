@@ -99,6 +99,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         // The formats are in part order, so one pass over them meets each in turn.
         let mut formats = formats.iter().peekable();
         for (i, &(value, ty)) in parts.iter().enumerate() {
+            self.cut_long_block();
             let format = formats.next_if(|format| format.part == i);
             let mark = format.and_then(|format| format.pad).map(|_| {
                 (self.show_call("sisu_show_mark", &[sink.into()]))
