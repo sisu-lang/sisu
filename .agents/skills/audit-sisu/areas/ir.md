@@ -37,8 +37,8 @@ Compare the `-O2` output of a probe with what it should cost:
 - a helper called where an inline sequence would do, or one emitted per type that could be shared.
 
 Start from `fib.sisu`, a prime sieve over a `[bool]`, nested loops summing
-a `[[i64]]`, building and walking a linked list, and the `-O2` build of
-each case in `tests/run`.
+a `[[i64]]`, and building and walking a linked list. Then read the `-O2`
+build of each case in `crates/sisuc/tests/run`.
 
 A `slow` finding gives the instruction count (callgrind, toolbox "IR")
 before and after the suggested fix. Measure the fix by editing the raw IR
