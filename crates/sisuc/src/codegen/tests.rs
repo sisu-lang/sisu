@@ -1516,6 +1516,37 @@ fn wide_enum_should_stay_in_memory_at_each_site() {
     }
 }
 
+/// GIVEN programs that copy an enum of over 256 bytes, which stays in memory
+/// WHEN they compile
+/// THEN no `memcpy` has the same place as its source and its destination
+///
+/// Valgrind on ARM64 reports such a copy as an overlap.
+#[test]
+fn wide_enum_copy_should_never_copy_a_place_onto_itself() {
+    let programs = [
+        include_str!("../../tests/run/wide_enum_boxed.sisu"),
+        include_str!("../../tests/run/wide_enum_no_niche.sisu"),
+        include_str!("../../tests/run/wide_enum_match.sisu"),
+        include_str!("../../tests/run/wide_enum_shapes.sisu"),
+    ];
+    for program in programs {
+        let context = Context::create();
+        let ir = compiled(&context, program).print_to_string().to_string();
+        let calls = ir
+            .lines()
+            .filter_map(|line| line.split_once("@llvm.memcpy"));
+        for (_, call) in calls {
+            let arguments = call.split_once('(').map_or("", |(_, arguments)| arguments);
+            let places: Vec<&str> = arguments
+                .split(", ")
+                .filter_map(|argument| argument.strip_prefix("ptr align "))
+                .filter_map(|argument| argument.split_once(' ').map(|(_, place)| place))
+                .collect();
+            assert!(places.len() != 2 || places[0] != places[1], "{call}");
+        }
+    }
+}
+
 /// `x == None` on a counted optional tests whether it holds a value, so it needs no `eq` helper,
 /// which a class has none of: the pointer is tested against `null`.
 #[test]

@@ -223,13 +223,17 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// Copies the value of type `ty` at `from` to `to`, which is the same place or does not
-    /// overlap it.
+    /// overlap it. A copy to the same place emits nothing: Valgrind on ARM64 reports a `memcpy`
+    /// onto itself as an overlap.
     pub(super) fn copy_memory(
         &self,
         to: PointerValue<'ctx>,
         from: PointerValue<'ctx>,
         ty: BasicTypeEnum<'ctx>,
     ) {
+        if to == from {
+            return;
+        }
         let align = self.target_data.get_abi_alignment(&ty);
         let size = self
             .context
