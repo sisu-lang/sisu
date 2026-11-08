@@ -614,12 +614,12 @@ must pass seven properties:
    error is a cascade (`GLOSSARY.md`). It passes when its pair `<kind> <code>`
    is in `fuzz/known_cascades.txt`, and a pair that is not in the file fails.
    A checker fix removes pairs. Only a new cascade that a fuzz run finds adds
-   one. Property 7 runs after property 6, before the builds. A fuzz run sets the variable `SISU_FUZZ_CASCADES` to a
-   file, and the property writes there each pair of the baseline that it
-   allows. The summary of the run names each pair of the baseline that no input
-   gave, as a warning in the section "Known cascades".
-   The warning does not change the exit status. The fixed-seed tests do not
-   warn.
+   one. Property 7 runs after property 6, before the builds. A fuzz run sets
+   the variable `SISU_FUZZ_CASCADES` to a file, and the property writes there
+   each pair of the baseline that it allows. The summary of the run names each
+   pair of the baseline that no input gave, as a warning in the section "Known
+   cascades". The warning does not change the exit status. The fixed-seed
+   tests do not warn.
 
 Name the target with `--target`, before the other arguments:
 

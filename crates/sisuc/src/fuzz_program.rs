@@ -127,7 +127,8 @@ struct Current {
     dir: PathBuf,
     /// Set by a property failure before its panic: the property line and the failed builds.
     failure: Option<(String, String)>,
-    /// The broken copy that failed property 6 or 7.
+    /// The broken copy that property 6 or 7 checks now, or the one that failed it. None before
+    /// and after those checks.
     broken: Option<String>,
 }
 
