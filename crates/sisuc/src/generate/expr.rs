@@ -1223,7 +1223,8 @@ impl Gen<'_> {
     }
 
     /// `expr`, for a place that requires the type `ty`, which a literal of another type breaks.
-    /// If `ty` is a scalar and the whole value is one literal, the site is recorded (property 7).
+    /// If `ty` is `i64`, `u8`, `bool`, `char` or `string`, and the value is one literal, this
+    /// records the site (property 7).
     pub(crate) fn declared(&mut self, ty: &Ty, max: u64) -> Info {
         if !matches!(ty, Ty::I64 | Ty::U8 | Ty::Bool | Ty::Char | Ty::String) {
             return self.expr(ty, max);

@@ -4,6 +4,8 @@
 
 use std::ops::Range;
 
+use rustc_hash::FxHashSet;
+
 use crate::lexer::{self, TokenKind};
 
 /// The kinds of property 7, in the order of the spec's table. The bound kind is property 6.
@@ -17,6 +19,15 @@ pub(crate) enum Kind {
 }
 
 impl Kind {
+    /// Every kind, in kind order.
+    pub(crate) const ALL: [Kind; 5] = [
+        Kind::Literal,
+        Kind::Callee,
+        Kind::Local,
+        Kind::Argument,
+        Kind::Declaration,
+    ];
+
     /// The name in `fuzz/known_cascades.txt`: "literal", "callee", "local", "argument",
     /// "declaration".
     #[cfg_attr(not(test), expect(dead_code, reason = "Task 2, Step 5 reads the name"))]
@@ -33,15 +44,7 @@ impl Kind {
     /// The kind that `name` gives, if any.
     #[cfg_attr(not(test), expect(dead_code, reason = "Task 2, Step 5 reads the name"))]
     pub(crate) fn named(name: &str) -> Option<Kind> {
-        [
-            Kind::Literal,
-            Kind::Callee,
-            Kind::Local,
-            Kind::Argument,
-            Kind::Declaration,
-        ]
-        .into_iter()
-        .find(|kind| kind.name() == name)
+        Kind::ALL.into_iter().find(|kind| kind.name() == name)
     }
 }
 
@@ -85,33 +88,33 @@ pub(crate) fn choose(sites: &[MistakeSite], program: &str, data: &[u8]) -> Vec<M
             (&program[range.clone()], range.start)
         })
         .collect();
+    // The spellings, so that the search for a fresh name probes once for each candidate.
+    let spellings: FxHashSet<&str> = idents.iter().map(|&(ident, _)| ident).collect();
     let hash = fnv1a(data);
-    let kinds = [
-        Kind::Literal,
-        Kind::Callee,
-        Kind::Local,
-        Kind::Argument,
-        Kind::Declaration,
-    ];
-    kinds
+    Kind::ALL
         .into_iter()
         .filter_map(|kind| {
             let of_kind: Vec<&MistakeSite> = sites.iter().filter(|s| s.kind == kind).collect();
             let count = u64::try_from(of_kind.len()).ok().filter(|&n| n > 0)?;
             let pick = hash.rotate_left(13 * kind as u32) % count;
             let site = of_kind[usize::try_from(pick).ok()?];
-            edit(site, program, &idents)
+            edit(site, program, &idents, &spellings)
         })
         .collect()
 }
 
 /// The edit of `site`, and the errors that it gives, or `None` when the edit gives none.
-fn edit(site: &MistakeSite, program: &str, idents: &[(&str, usize)]) -> Option<Mistake> {
+fn edit(
+    site: &MistakeSite,
+    program: &str,
+    idents: &[(&str, usize)],
+    spellings: &FxHashSet<&str>,
+) -> Option<Mistake> {
     let text = &program[site.at.clone()];
     let fresh = || {
         let mut name = "missing".to_string();
         let mut n = 0;
-        while idents.iter().any(|(ident, _)| *ident == name) {
+        while spellings.contains(name.as_str()) {
             n += 1;
             name = format!("missing{n}");
         }
@@ -186,14 +189,7 @@ mod tests {
 
     #[test]
     fn kind_named_should_find_each_name() {
-        let kinds = [
-            Kind::Literal,
-            Kind::Callee,
-            Kind::Local,
-            Kind::Argument,
-            Kind::Declaration,
-        ];
-        for kind in kinds {
+        for kind in Kind::ALL {
             assert_eq!(Kind::named(kind.name()), Some(kind));
         }
         assert_eq!(Kind::named("bound"), None);
@@ -246,12 +242,51 @@ mod tests {
 
     #[test]
     fn choose_should_take_at_most_one_site_of_each_kind() {
-        let program = "fn main() {\n    print(a)\n    print(b)\n    print(c)\n}\n";
-        let sites: Vec<MistakeSite> = ["a", "b", "c"]
+        let program = "fn main() {\n    print(v1)\n    print(v2)\n    print(v3)\n}\n";
+        let sites: Vec<MistakeSite> = ["v1", "v2", "v3"]
             .into_iter()
             .map(|name| site(Kind::Local, program, name, None))
             .collect();
         assert_eq!(choose(&sites, program, b"data").len(), 1);
+    }
+
+    /// The hash of `ab` is `0x089c4407b545986a`. The site counts are 4, 4, 5, 5 and 4. With a
+    /// rotation of 13 bits for each kind, the hash picks the sites 2, 3, 3, 1 and 1.
+    /// Other choices pick other sites. No hash picks 0 for each kind. No rotation picks 2 for
+    /// each kind. The sites in reverse order give 1, 0, 1, 3 and 2.
+    #[test]
+    fn choose_should_pick_each_site_by_the_hash_of_the_data() {
+        let counts = [4, 4, 5, 5, 4];
+        let picks = [2, 3, 3, 1, 1];
+        let mut program = String::from("fn main() {\n");
+        let mut sites = Vec::new();
+        for (kind, count) in Kind::ALL.into_iter().zip(counts) {
+            for n in 0..count {
+                let name = format!("{}{n}", kind.name());
+                let start = program.len() + "    ".len();
+                let line = format!("    {name}\n");
+                program += &line;
+                if kind == Kind::Declaration {
+                    // A read of the local, so that the edit gives an error.
+                    program += &line;
+                }
+                sites.push(MistakeSite {
+                    kind,
+                    at: start..start + name.len(),
+                    error: start,
+                    function: None,
+                });
+            }
+        }
+        program += "}\n";
+        let mistakes = choose(&sites, &program, b"ab");
+        let taken: Vec<&str> = mistakes.iter().map(|m| &program[m.at.clone()]).collect();
+        let wanted: Vec<String> = Kind::ALL
+            .into_iter()
+            .zip(picks)
+            .map(|(kind, pick)| format!("{}{pick}", kind.name()))
+            .collect();
+        assert_eq!(taken, wanted);
     }
 
     #[test]
@@ -314,11 +349,18 @@ mod tests {
                     }) || negative_number(&tokens, &m.at)
                 }
                 Kind::Argument => {
+                    // The call starts with `((` of a method, or with `f<n>`; the removed text
+                    // ends the arguments.
                     let call = &g.program[m.errors[0].1..];
+                    let callee = call
+                        .strip_prefix('f')
+                        .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()));
                     (text.starts_with(", ")
                         || text == "depth - 1"
                         || text.bytes().all(|b| b.is_ascii_digit()))
-                        && (call.starts_with("((") || call.starts_with('f'))
+                        && !text.is_empty()
+                        && g.program[m.at.end..].starts_with(')')
+                        && (call.starts_with("((") || callee)
                 }
             };
             assert!(ok, "seed {n}: {:?} replaces {text:?}", m.kind);
