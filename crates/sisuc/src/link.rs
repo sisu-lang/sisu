@@ -54,7 +54,10 @@ pub(crate) fn probe_linker(linker: Option<&str>) -> Result<(), String> {
     // shortcut: Linux only. Apple's clang looks for `ld64.<name>`, and nobody has checked that it
     // accepts `--version`; macOS keeps the late check in `link`. Probe on macOS after a check on
     // a Mac.
-    let Some(linker) = linker.filter(|_| cfg!(target_os = "linux")) else {
+    if !cfg!(target_os = "linux") {
+        return Ok(());
+    }
+    let Some(linker) = linker else {
         return Ok(());
     };
     let out = Command::new("cc")
@@ -68,16 +71,15 @@ pub(crate) fn probe_linker(linker: Option<&str>) -> Result<(), String> {
     // gcc's `collect2` reads `--version` as verbose: it prints its version and then the whole
     // linker command line, which is not part of the failure.
     let stderr = String::from_utf8_lossy(&out.stderr);
-    let mut lines = stderr.lines();
-    let mut kept = Vec::new();
-    while let Some(line) = lines.next() {
-        if line.starts_with("collect2 version ") {
-            lines.next();
-        } else {
-            kept.push(line);
-        }
-    }
-    Err(cc_failure(out.status, &kept.join("\n"), Some(linker)))
+    let kept = if stderr.starts_with("collect2 version ") {
+        stderr
+            .split_once('\n')
+            .and_then(|(_, rest)| rest.split_once('\n'))
+            .map_or("", |(_, rest)| rest)
+    } else {
+        &stderr
+    };
+    Err(cc_failure(out.status, kept, Some(linker)))
 }
 
 /// The message for a `cc` that failed with `status` and `stderr`: its status, a note when
