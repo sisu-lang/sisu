@@ -420,6 +420,24 @@ mod tests {
         }
     }
 
+    /// GIVEN the programs of the fixed seeds
+    /// WHEN the generator records the declaration sites
+    /// THEN some seed has a declaration mistake, and none renames `echo`, which `dbg` may use
+    #[test]
+    fn declaration_sites_should_name_a_local_other_than_echo() {
+        let mut names = Vec::new();
+        for n in 0..coverage::SEEDS {
+            let g = generate(&coverage::seed(n));
+            names.extend(
+                (g.mistakes.iter())
+                    .filter(|m| m.kind == Kind::Declaration)
+                    .map(|m| g.program[m.at.clone()].to_string()),
+            );
+        }
+        assert!(!names.is_empty(), "no seed has a declaration mistake");
+        assert!(!names.iter().any(|name| name == "echo"), "{names:?}");
+    }
+
     #[test]
     fn each_kind_should_have_a_site_in_some_seed() {
         let mut kinds = Vec::new();

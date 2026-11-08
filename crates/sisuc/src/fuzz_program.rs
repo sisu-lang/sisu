@@ -2340,6 +2340,25 @@ mod tests {
         );
     }
 
+    /// GIVEN an argument mistake whose call gives E0053, and a method call after it that gives
+    /// a second E0053 at the same offset
+    /// WHEN `judge_mistakes` checks it
+    /// THEN the second E0053 is an extra error: one expected error matches one error only
+    #[test]
+    fn property_7_should_not_match_two_errors_to_one_expected_error() {
+        let program =
+            "fn f1(a: i64, b: i64) -> i64 {\n    1\n}\nfn main() {\n    print(f1(1, 2).max())\n}\n";
+        let (call, comma) = (nth(program, "f1", 1), nth(program, ", 2", 0));
+        let m = mistake(Kind::Argument, (comma, ", 2"), "", &[("E0053", call)]);
+        let failure = judge_mistakes(&with_mistakes(program, vec![m]), None)
+            .expect_err("the second E0053 should be an extra error");
+        assert!(
+            failure.detail.contains("`argument E0053`"),
+            "{}",
+            failure.detail
+        );
+    }
+
     #[test]
     fn property_7_should_report_both_mistakes_of_the_control() {
         let [a, b] = two_mistakes("missing");
@@ -2355,6 +2374,13 @@ mod tests {
         assert_eq!(failure.property, 7);
         assert!(
             failure.detail.contains("reports no error"),
+            "{}",
+            failure.detail
+        );
+        // The failure is the control's, not the one of a single mistake.
+        assert_eq!(
+            failure.detail.matches(" replaces ").count(),
+            2,
             "{}",
             failure.detail
         );
@@ -2393,6 +2419,10 @@ mod tests {
         let failure = judge_mistakes(&with_mistakes(program, vec![m]), None)
             .expect_err("a new pair should fail");
         assert_eq!(failure.property, 7);
+        assert_eq!(
+            failure.detail.lines().next(),
+            Some("`yy + n[0]` replaces `n` at 3:13 (local)")
+        );
         assert!(
             failure.detail.contains("`local E0068`")
                 && failure.detail.contains("fuzz/known_cascades.txt"),
