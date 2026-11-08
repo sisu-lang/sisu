@@ -51,7 +51,14 @@ row in `probes.md`.
   count the entries. No debt row tracks them: compare the count with the
   last audit, and read the reason of each new entry.
 - **The other rows.** For each other debt row, check that its Rust items
-  still exist and that the problem it states is still there.
+  still exist and that the problem it states is still there. For the ADR
+  0029 row, each call of `function_type` in `codegen` puts a function's
+  parameters in order. The function that holds each call must be in the
+  Where cell of that row. A caller that the row does not name is new debt:
+
+  ```console
+  $ grep -n 'function_type(' crates/sisuc/src/codegen/*.rs | grep -v 'fn function_type'
+  ```
 
 ## A new hub
 
