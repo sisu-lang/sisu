@@ -2096,6 +2096,66 @@ fn require_mimalloc_should_accept_a_default_build_and_refuse_a_system_build() {
     assert!(message.contains("does not link mimalloc"), "{message}");
 }
 
+/// The section table of `path`, from `readelf -S --wide`. The command must exit 0.
+fn readelf_sections(path: &Path) -> String {
+    let out = Command::new("readelf")
+        .args(["-S", "--wide"])
+        .arg(path)
+        .output()
+        .expect("readelf starts");
+    assert!(
+        out.status.success(),
+        "`readelf -S --wide {}` failed: {:?}\n{}",
+        path.display(),
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// Whether `sections` lists a section called `name`, as a whole word: `.debug_line` is not
+/// `.debug_line_str`.
+fn has_section(sections: &str, name: &str) -> bool {
+    sections
+        .split(|c: char| c.is_whitespace() || c == ']')
+        .any(|word| word == name)
+}
+
+/// GIVEN the `hello` case of `tests/run`, and a runtime archive that holds `.debug_info`
+/// WHEN it is built
+/// THEN the executable has no `.debug_info` and no `.debug_line` section
+/// AND its symbol table still defines `sisu_alloc`
+///
+/// Sisu emits no debug info, so the sections are the DWARF of Rust's standard library from the
+/// runtime archive. The linker spends most of its time on them. The test does not look for every
+/// name that starts with `.debug_`: `.debug_gdb_scripts` is not debug info and stays. The Valgrind
+/// guard reads the symbol table, so the symbols must stay.
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "reads ELF sections; the flag is Linux only"
+)]
+fn build_should_not_copy_the_runtime_debug_info() {
+    let archive =
+        Path::new(env!("CARGO_BIN_EXE_sisu")).with_file_name("libsisu_runtime_mimalloc.a");
+    assert!(
+        has_section(&readelf_sections(&archive), ".debug_info"),
+        "{} holds no `.debug_info`, so this test cannot show that the build drops it",
+        archive.display()
+    );
+    let source = fs::read_to_string(Path::new(RUN).join("hello.sisu")).expect("reads the case");
+    let exe = compile_tmp("runtime_debug_info", &source, false);
+    let sections = readelf_sections(&exe);
+    for name in [".debug_info", ".debug_line"] {
+        assert!(
+            !has_section(&sections, name),
+            "{} holds a {name} section",
+            exe.display()
+        );
+    }
+    support::defined_symbols(&exe);
+}
+
 /// GIVEN a `run` case that passes
 /// WHEN the harness runs it
 /// THEN the case directory holds the `-O2` executable on mimalloc, and it links mimalloc

@@ -136,7 +136,7 @@ pub(crate) const VALGRIND_FLAGS: &[&str] = if cfg!(target_os = "linux") {
 /// The names that `nm --defined-only` lists for `exe`. It reads symbols, not bytes, so a program
 /// whose text holds a name does not list it; a stripped build, or a failed `nm`, stops the run.
 /// `sisu_alloc` must be among them, or the allocator that `exe` links is unknown.
-fn defined_symbols(exe: &Path) -> Vec<String> {
+pub(crate) fn defined_symbols(exe: &Path) -> Vec<String> {
     let out = Command::new("nm")
         .arg("--defined-only")
         .arg(exe)
