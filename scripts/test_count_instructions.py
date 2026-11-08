@@ -2,9 +2,9 @@
 
 Run: python3 -m unittest discover -s scripts -p 'test_count_instructions.py'.
 
-A test that runs `main` puts stub `git`, `cargo` and `valgrind` scripts in a directory, and makes
-that directory the whole PATH. Each stub logs its arguments to `log`. No test builds or runs a real
-compiler.
+A test that runs `main` puts stub `git`, `tar`, `cargo` and `valgrind` scripts in a directory, and
+makes that directory the whole PATH. Each stub logs its arguments to `log`. No test builds or runs
+a real compiler.
 """
 
 import contextlib
@@ -49,9 +49,11 @@ class CountInstructionsTest(unittest.TestCase):
             'case "$3" in\n'
             "  merge-base) echo 0123456789abcdef;;\n"
             "  rev-parse) echo abc1234;;\n"
-            '  worktree) case "$4" in add) /bin/mkdir -p "$6";; remove) /bin/rm -rf "$6";; esac;;\n'
+            '  archive) echo tar > "${4#--output=}";;\n'
             "esac\n",
         )
+        # The stub `tar` puts a file in the export, so a test can see that nothing is left.
+        script(bin_dir / "tar", f'echo "tar $*" >> {log}\n/bin/touch "$6/Cargo.toml"\n')
         fail = (
             '[ "$CARGO_TARGET_DIR" = "${CARGO_TARGET_DIR%count-base}" ] || exit 3\n'
             if base_build_fails
@@ -102,10 +104,10 @@ class CountInstructionsTest(unittest.TestCase):
     def test_main_should_count_the_base_and_the_working_tree(self) -> None:
         """GIVEN stub tools
         WHEN `count_instructions.py -- build x.sisu` runs
-        THEN it builds the merge base in a temporary worktree into target/count-base
+        THEN it exports the merge base and builds the export into target/count-base
         AND it builds the working tree into target/
         AND it runs the same arguments under callgrind with each `sisu`, and prints both totals
-        AND it removes the temporary worktree
+        AND it removes the export, and adds no worktree
         """
         code, out, err = self.run_main("--", "build", "x.sisu", path=self.stubs())
         self.assertEqual((code, err), (0, ""))
@@ -114,9 +116,11 @@ class CountInstructionsTest(unittest.TestCase):
             "base abc1234: 2,000\nworking tree: 1,000\nchange: -50.00% (2.0x fewer)\n",
         )
         rows = self.log.read_text().splitlines()
-        added = next(r for r in rows if " worktree add " in r)
-        tree = added.split()[-2]
-        self.assertTrue(added.endswith(" abc1234"))
+        exported = next(r for r in rows if " archive " in r)
+        tar = exported.split()[-2].removeprefix("--output=")
+        self.assertTrue(exported.endswith(" abc1234"))
+        tree = str(Path(tar).parent / "base")
+        self.assertIn(f"tar -x -m -f {tar} -C {tree}", rows)
         builds = [r for r in rows if r.startswith("cargo build ")]
         self.assertEqual(len(builds), 2)
         self.assertIn(f" in {tree} target={ci.BASE_TARGET} llvm=", builds[0])
@@ -126,14 +130,14 @@ class CountInstructionsTest(unittest.TestCase):
         self.assertEqual(len(profiled), 2)
         self.assertTrue(profiled[0].endswith(f"{ci.BASE_TARGET}/release/sisu build x.sisu"))
         self.assertTrue(profiled[1].endswith(f"{ci.ROOT}/target/release/sisu build x.sisu"))
-        self.assertIn(f"worktree remove --force {tree}", rows[rows.index(builds[0]) + 1])
-        self.assertFalse(Path(tree).exists())
+        self.assertFalse(Path(tar).parent.exists())
+        self.assertFalse(any(" worktree " in r for r in rows))
 
-    def test_main_should_remove_the_worktree_when_the_base_build_fails(self) -> None:
+    def test_main_should_remove_the_export_when_the_base_build_fails(self) -> None:
         """GIVEN a stub cargo that fails on the base
         WHEN `count_instructions.py --base abc -- check x.sisu` runs
         THEN it exits with code 1 and names the failed build
-        AND it removes the temporary worktree, and runs nothing under callgrind
+        AND it removes the export, and runs nothing under callgrind
         """
         code, out, err = self.run_main(
             "--base", "abc", "--", "check", "x.sisu", path=self.stubs(base_build_fails=True)
@@ -142,7 +146,8 @@ class CountInstructionsTest(unittest.TestCase):
         self.assertTrue(err.startswith("count_instructions: build abc1234: "))
         rows = self.log.read_text().splitlines()
         self.assertFalse(any(" merge-base " in r for r in rows))
-        self.assertTrue(any(" worktree remove --force " in r for r in rows))
+        tar = next(r for r in rows if " archive " in r).split()[-2].removeprefix("--output=")
+        self.assertFalse(Path(tar).parent.exists())
         self.assertFalse(any(r.startswith("valgrind ") for r in rows))
 
 

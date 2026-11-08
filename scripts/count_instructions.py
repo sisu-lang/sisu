@@ -4,9 +4,10 @@
 Usage: python3 scripts/count_instructions.py [--base REV] -- SISU_ARGS...
 
 The script builds the release `sisu` and runtime twice: from the working tree into `target/`, and
-from REV in a temporary worktree into `target/count-base/`. It runs `sisu SISU_ARGS` with each under
-callgrind, and prints the two totals and the change. REV is by default where HEAD left
-`origin/main`. Both runs start in the current directory, so the paths in SISU_ARGS are the same.
+from an export of REV in a temporary directory into `target/count-base/`. It runs `sisu SISU_ARGS`
+with each under callgrind, and prints the two totals and the change. REV is by default where HEAD
+left `origin/main`. Both runs start in the current directory, so the paths in SISU_ARGS are the
+same.
 
 Example: python3 scripts/count_instructions.py -- build -O2 nest.sisu -o "$TMPDIR/nest"
 
@@ -56,19 +57,17 @@ def count(deadline: Deadline, sisu: Path, args: list[str], what: str) -> int:
 
 
 def build_base(deadline: Deadline, rev: str) -> Path:
-    """Build `rev` in a temporary worktree into BASE_TARGET, and return its `sisu`."""
+    """Export `rev` to a temporary directory, build it into BASE_TARGET, and return its `sisu`."""
     env = dict(os.environ, CARGO_TARGET_DIR=str(BASE_TARGET))
-    # A new worktree has no `.llvm`; the prefix in the environment wins over `.cargo/config.toml`.
+    # An export has no `.llvm`; the prefix in the environment wins over `.cargo/config.toml`.
     env.setdefault("LLVM_SYS_231_PREFIX", str((ROOT / ".llvm" / "23").resolve()))
     with tempfile.TemporaryDirectory() as tmp:
-        tree = Path(tmp) / "base"
-        deadline.run(["git", "-C", ROOT, "worktree", "add", "--detach", tree, rev], "worktree add")
-        try:
-            deadline.run(BUILD, f"build {rev}", cwd=tree, env=env)
-        finally:
-            deadline.run(
-                ["git", "-C", ROOT, "worktree", "remove", "--force", tree], "worktree remove"
-            )
+        tar, tree = Path(tmp) / "base.tar", Path(tmp) / "base"
+        tree.mkdir()
+        deadline.run(["git", "-C", ROOT, "archive", f"--output={tar}", rev], "git archive")
+        # `-m` dates each file now: with the commit's time, cargo could take an older base as fresh.
+        deadline.run(["tar", "-x", "-m", "-f", tar, "-C", tree], "tar -x")
+        deadline.run(BUILD, f"build {rev}", cwd=tree, env=env)
     return BASE_TARGET / "release" / "sisu"
 
 

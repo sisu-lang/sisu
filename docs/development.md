@@ -384,9 +384,9 @@ pushing, count the instructions of
 as `make callgrind` does.
 
 For any other command, `scripts/count_instructions.py` counts the instructions
-of the base and of the working tree. It builds the base in a temporary
-worktree into `target/count-base/`, and the working tree into `target/`. The
-base is by default where HEAD left `origin/main`:
+of the base and of the working tree. It exports the base to a temporary
+directory and builds it into `target/count-base/`, and it builds the working
+tree into `target/`. The base is by default where HEAD left `origin/main`:
 
 ```console
 $ python3 scripts/count_instructions.py --base 5e50e545 -- check selfhost/lexer.sisu
