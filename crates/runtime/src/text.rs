@@ -449,8 +449,13 @@ mod tests {
     use super::{
         repair, sisu_pad, sisu_str_compare, sisu_utf8_count, sisu_utf8_decode, sisu_utf8_encode,
         sisu_utf8_len, sisu_word_next, sisu_words_count, sisu_write_bool, sisu_write_char,
-        sisu_write_int,
+        sisu_write_int, sisu_write_str,
     };
+
+    /// The number of bytes of `buffer` before `end`, which a writer returned for `buffer`.
+    fn written(buffer: &[u8], end: *mut u8) -> usize {
+        end.addr() - buffer.as_ptr().addr()
+    }
 
     /// `text` padded to `width` code points by `sisu_pad` with alignment `align`, in a buffer
     /// with room for exactly `text.len() + width` bytes.
@@ -459,8 +464,8 @@ mod tests {
         out[..text.len()].copy_from_slice(text.as_bytes());
         // SAFETY: `out` has room for `text.len() + width` bytes and starts with `text`.
         #[expect(unsafe_code, reason = "calls the runtime's C ABI function")]
-        let len = unsafe { sisu_pad(out.as_mut_ptr(), text.len(), width, align) };
-        out.truncate(len);
+        let end = unsafe { sisu_pad(out.as_mut_ptr(), text.len(), width, align) };
+        out.truncate(written(&out, end));
         String::from_utf8(out).expect("padding should keep the text UTF-8")
     }
 
@@ -482,9 +487,24 @@ mod tests {
         }
     }
 
+    /// The text is copied and the end is `out` plus its length; the text is empty, one byte, and
+    /// multi-byte.
+    #[test]
+    fn write_str_should_copy_the_text_and_return_its_end() {
+        for text in ["", "a", "日本x"] {
+            let mut out = vec![0; text.len()];
+            // SAFETY: `text` is readable for its length, and `out` has room for as many bytes
+            // and does not overlap it.
+            #[expect(unsafe_code, reason = "calls the runtime's C ABI function")]
+            let end = unsafe { sisu_write_str(text.as_ptr(), text.len(), out.as_mut_ptr()) };
+            assert_eq!(written(&out, end), text.len(), "{text:?}");
+            assert_eq!(out, text.as_bytes(), "{text:?}");
+        }
+    }
+
     /// `i64::MIN` fills the 20 bytes that an `i64` may take; the others take fewer.
     #[test]
-    fn write_int_extremes() {
+    fn write_int_should_write_the_extremes() {
         for (value, want) in [
             (i64::MIN, "-9223372036854775808"),
             (0, "0"),
@@ -493,31 +513,34 @@ mod tests {
             let mut out = [0; 20];
             // SAFETY: `out` has room for 20 bytes.
             #[expect(unsafe_code, reason = "calls the runtime's C ABI function")]
-            let len = unsafe { sisu_write_int(value, out.as_mut_ptr()) };
+            let end = unsafe { sisu_write_int(value, out.as_mut_ptr()) };
+            let len = written(&out, end);
             assert_eq!(&out[..len], want.as_bytes());
         }
     }
 
     /// `false` fills the 5 bytes that a `bool` may take.
     #[test]
-    fn write_bool_words() {
+    fn write_bool_should_write_the_words() {
         for (value, want) in [(true, "true"), (false, "false")] {
             let mut out = [0; 5];
             // SAFETY: `out` has room for 5 bytes.
             #[expect(unsafe_code, reason = "calls the runtime's C ABI function")]
-            let len = unsafe { sisu_write_bool(value, out.as_mut_ptr()) };
+            let end = unsafe { sisu_write_bool(value, out.as_mut_ptr()) };
+            let len = written(&out, end);
             assert_eq!(&out[..len], want.as_bytes());
         }
     }
 
     /// A `char` is written as its UTF-8 encoding, 1 to 4 bytes.
     #[test]
-    fn write_char_widths() {
+    fn write_char_should_write_one_to_four_bytes() {
         for c in ['a', 'ä', '€', '😀'] {
             let mut out = [0; 4];
             // SAFETY: `out` has room for 4 bytes.
             #[expect(unsafe_code, reason = "calls the runtime's C ABI function")]
-            let len = unsafe { sisu_write_char(u32::from(c), out.as_mut_ptr()) };
+            let end = unsafe { sisu_write_char(u32::from(c), out.as_mut_ptr()) };
+            let len = written(&out, end);
             assert_eq!(&out[..len], c.to_string().as_bytes());
         }
     }

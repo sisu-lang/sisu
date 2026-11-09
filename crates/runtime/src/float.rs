@@ -75,8 +75,8 @@ mod tests {
         let mut out = vec![0; 311 + usize::from(precision)];
         // SAFETY: `out` has room for `311 + precision` bytes.
         #[expect(unsafe_code, reason = "calls the runtime's C ABI function")]
-        let len = unsafe { sisu_write_f64_fixed(x, precision, out.as_mut_ptr()) };
-        out.truncate(len);
+        let end = unsafe { sisu_write_f64_fixed(x, precision, out.as_mut_ptr()) };
+        out.truncate(end.addr() - out.as_ptr().addr());
         String::from_utf8(out).expect("the text should be ASCII")
     }
 
@@ -118,7 +118,7 @@ mod tests {
 
     /// Interpolation writes the text `print` does; the longest fills the 24 bytes it is given.
     #[test]
-    fn write_f64_fills_its_bound() {
+    fn write_f64_should_fill_its_bound() {
         for (x, want) in [
             (-2.225_073_858_507_201_4e-308, "-2.2250738585072014e-308"),
             (1.0, "1.0"),
@@ -127,7 +127,8 @@ mod tests {
             let mut out = [0; FLOAT_BYTES];
             // SAFETY: `out` has room for 24 bytes.
             #[expect(unsafe_code, reason = "calls the runtime's C ABI function")]
-            let len = unsafe { sisu_write_f64(x, out.as_mut_ptr()) };
+            let end = unsafe { sisu_write_f64(x, out.as_mut_ptr()) };
+            let len = end.addr() - out.as_ptr().addr();
             assert_eq!(&out[..len], want.as_bytes());
         }
     }

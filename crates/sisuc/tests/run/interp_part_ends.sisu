@@ -1,0 +1,20 @@
+// Each part of an interpolation is written where the last part ended: text, an `i64`, a `u8`,
+// an `f64` with and without a precision, a `bool` and a `char`, each plain and padded, with
+// multi-byte text, an empty part, and a width below the length of its text.
+fn main() {
+    let empty = ""
+    let s = "日本" + "x"
+    let n = -9_223_372_036_854_775_807 - 1
+    let b: u8 = 255
+    let x = 2.675
+    let t = 1 < 2
+    let c = 'ä'
+    print("[{s}{n}{b}{x}{x:.2}{t}{c}]")
+    print("[{s:>6}|{n:<22}|{b:^5}|{x:>6}|{x:<8.1}|{t:^7}|{c:>3}]")
+    print("[{empty}{s:>2}{empty:^3}{c}{n:>1}]")
+    print("[{x:>5}{x:>5}{b}{t:<6}{t}]")
+    print("{s}")
+    print("{empty}")
+    print("{n:>22}")
+    print("{c}{s}")
+}
