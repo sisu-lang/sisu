@@ -165,19 +165,20 @@ slow-timeout = { period = "10s", terminate-after = 3 }
 filter = "package(sisuc) & (kind(test) | test(fuzz_program::) | test(codegen::asan_tests::) | test(printed_should_bound_the_text_of_the_longest_values))"
 setup = "build-runtime"
 
-# The Valgrind tests are the longest, so they start first. A Valgrind run of a case uses
-# at most about 80 MB, so no cap on how many run at once is needed.
+# The Valgrind and ASan tests are the longest, so they start first. A Valgrind run of a case uses
+# at most about 80 MB, and an ASan run at most about 100 MB (the `copies` case), so no cap on how
+# many run at once is needed.
 # The `bless_` tests, `same_named_cases_should_not_share_an_executable_when_run_at_once` and
-# `run_case_should_check_and_bless_its_err_file` call `support::run`, which runs Valgrind. So do
-# the two tests on invalid UTF-8 and on print buffers, and the seven `o2_calls_marker_` tests.
-# The four `selfhost_valgrind_` tests run the lexer in Sisu under Valgrind on two large inputs.
+# the `run_case_should_` tests call `support::run`, which runs ASan three times and Valgrind once.
+# So do the two tests on invalid UTF-8 and on print buffers, and the seven `o2_calls_marker_`
+# tests. The `asan_runs_should_` test starts the test binary again with `ASAN_OPTIONS` set. The
+# four `selfhost_valgrind_` tests run the lexer in Sisu under Valgrind on two large inputs.
 [[profile.default.overrides]]
 filter = "binary(programs) & (test(allocation_counts) | test(valgrind_run_should_report_a_leaked_cycle) | test(valgrind_runs_should_refuse_a_mimalloc_build_and_a_stripped_build) | test(read_line_should_return_long_lines_whole_across_buffer_refills) | test(bless_) | test(same_named_cases_should_not_share_an_executable_when_run_at_once) | test(invalid_utf8_should_become_the_replacement_character_in_input_and_arguments) | test(print_should_allocate_one_buffer_however_much_it_prints) | test(o2_calls_marker_) | test(selfhost_valgrind_) | test(run_case_should_) | test(asan_runs_should_))"
 priority = 100
 
-# Each case compiles twice and runs under Valgrind, so these are the longest tests and start
-# first; a Valgrind run of a case uses at most about 80 MB. A hang is killed after three
-# minutes.
+# A `run::` case compiles six times on Linux, and runs under ASan and under Valgrind, so these are
+# the longest tests and start first. A hang is killed after three minutes.
 [[profile.default.overrides]]
 filter = "binary(cases) & (test(run::) | test(run_fail::) | test(site_run::) | test(site_run_fail::))"
 priority = 100

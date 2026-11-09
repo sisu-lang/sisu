@@ -67,8 +67,19 @@ allocs` line in its summary counts the blocks the program allocated:
 $ timeout 120 valgrind --leak-check=full --errors-for-leak-kinds=definite,indirect,possible --error-exitcode=1 $D/pv   # or $D/pv2
 ```
 
-AddressSanitizer, with LeakSanitizer. `sisu` has no flag for it, so mark
-each function and instrument the raw IR with `opt`:
+AddressSanitizer, with LeakSanitizer. On Linux, `sisu` has a flag for it, and
+the link needs `libasan` from the C toolchain. The flag selects the System
+allocator:
+
+```console
+$ timeout 20 $S build --sanitize address $D/p.sisu -o $D/p.asan     # or add -O2
+$ ASAN_OPTIONS=fast_unwind_on_malloc=0 timeout 120 $D/p.asan
+```
+
+The option makes a leak report name the Sisu function that allocated. On
+macOS, `sisu` refuses the flag. There, mark each function and instrument the
+raw IR with `opt`. `make audit-setup` installs `opt` and `clang`, with the ASan
+runtime, for this:
 
 ```console
 $ timeout 20 $S build --emit ir-raw $D/p.sisu > $D/p.ll

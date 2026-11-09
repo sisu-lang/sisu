@@ -3,7 +3,7 @@
 This guide covers building `sisu`, compiling a Sisu program with it, and
 running the same checks as CI. Sisu builds and runs on x86-64 and ARM64 Linux and
 on ARM64 macOS. CI runs the tests on ARM64 Linux and ARM64 macOS on each push
-to `main`. On macOS the tests that need Valgrind, `/dev/full`, GNU ld or gcc
+to `main`. On macOS the tests that need Valgrind, ASan, `/dev/full`, GNU ld or gcc
 are skipped, and `make coverage`, `make mutation-test`, `make fuzz`,
 `make bench` and `make callgrind` do not work.
 
@@ -28,9 +28,11 @@ are skipped, and `make coverage`, `make mutation-test`, `make fuzz`,
   [cargo-mutants](https://mutants.rs) for the commands below.
 - [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) for
   `scripts/coverage.sh`.
-- On Linux, Valgrind. The end-to-end tests run each program under it to
-  catch leaks and memory errors. macOS has no Valgrind, so there the tests
-  run each program natively and do not check for leaks.
+- On Linux, Valgrind, and a `cc` that links `-fsanitize=address`, which needs
+  the ASan runtime (`libasan`) that goes with GCC. The end-to-end tests run
+  each program under AddressSanitizer (ASan), and once under Valgrind, to
+  catch leaks and memory errors. macOS has neither, so there the tests run
+  each program natively and do not check for leaks.
 - For `make miri`, a nightly toolchain with Miri:
   `rustup toolchain install nightly --component miri --component rust-src`.
 - [uv](https://docs.astral.sh/uv/), for `make site`, which builds the website.
@@ -100,7 +102,7 @@ The end-to-end cases are files. The `cases` test binary runs one test per
 
 | Directory | The program must | Expected output |
 | --- | --- | --- |
-| `run/` | exit 0 with empty stderr unless there is a `<name>.err`, in a plain and an `-O2` build, both also under Valgrind on Linux, in a `--rc-checks` build, and on Linux in an `-O2` build on mimalloc | `<name>.out`: stdout; optional `<name>.err`: stderr |
+| `run/` | exit 0 with empty stderr unless there is a `<name>.err`, in a plain and an `-O2` build; on Linux also in three ASan builds (plain, `-O2` and `--rc-checks`), in the `-O2` build under Valgrind, and in an `-O2` build on mimalloc; on macOS also in a `--rc-checks` build | `<name>.out`: stdout; optional `<name>.err`: stderr |
 | `run-fail/` | panic with exit code 101, the same in a plain and an `-O2` build | `<name>.out`: stdout; `<name>.err`: stderr |
 | `diagnostics/` | report diagnostics under `sisu check` (`sisu build --emit mir` for a code that only `mono` reports, such as E0163, because `check` does not run `mono`), exiting 1 if one is an error and 0 if all are warnings; a case named `<CODE>.sisu` or `<CODE>-<case>.sisu` reports that code | `<name>.err`: the diagnostics; `<name>.json`: the same under `--format json` |
 
@@ -131,9 +133,9 @@ The same binary checks every program that the website shows, under
 prints can fail it: bless the case, and read the diff.
 
 A `run/` or `run-fail/` case that reads standard input has a `<name>.in` beside
-it, which every run of the case gets on its standard input: plain, `-O2`, both
-Valgrind runs, `--rc-checks` and, on Linux, `-O2` on mimalloc. Without the
-file, standard input is empty. Write the file with `printf` or a script, byte
+it, which every run of the case gets on its standard input: plain, `-O2`, the
+ASan builds, the Valgrind run, `-O2` on mimalloc and, on macOS, `--rc-checks`.
+Without the file, standard input is empty. Write the file with `printf` or a script, byte
 for byte: the formatting hooks leave the `.in`, `.out` and `.err` files of
 these directories alone, so a `\r\n`, a lone `\r` or a last line without a
 newline stays as written. Input that is large or generated, such as a line
@@ -148,27 +150,60 @@ argument that holds a space, or that is not valid UTF-8, goes in a
 `programs.rs` test instead, which can pass any bytes.
 
 A `run/` case that writes to standard error on purpose, with `eprint`, has a
-`<name>.err` beside it. The plain, `-O2`, `--rc-checks` and, on Linux, `-O2` on
-mimalloc runs must all write exactly that to stderr. Without the file, stderr
-must stay empty. The Valgrind runs' stderr holds Valgrind's own log, so they
-check only stdout and the exit code. To add the file to a case, `touch` it
-like any expected file.
+`<name>.err` beside it. The plain, `-O2`, ASan and `-O2`-on-mimalloc runs on
+Linux, and the plain, `-O2` and `--rc-checks` runs on macOS, must all write
+exactly that to stderr. Without the file, stderr must stay empty. The Valgrind
+run's stderr holds Valgrind's own log, so it checks only stdout and the exit
+code. To add the file to a case, `touch` it like any expected file.
 
-The runs go in order: plain and `-O2` without Valgrind, then, on Linux, both
-under Valgrind, then `--rc-checks`, then, on Linux, `-O2` on mimalloc, and the
-first failure ends the case. On Linux the Valgrind runs build with
-`--allocator system`, because Valgrind sees no block that mimalloc hands out;
-the plain runs there are system builds too. So that `-O2` code also runs on
-mimalloc, the allocator that users get, Linux makes a further `-O2` build with
-no `--allocator` flag and checks that it links mimalloc. On macOS the `-O2`
-build is on mimalloc already.
-A double free usually aborts in the plain run on Linux, so Valgrind never
-reports it there; on macOS the plain runs use mimalloc, which does not check.
-To show what Valgrind says about a broken build, build the program with
+On Linux the harness makes six builds of a `run/` case and runs them in this
+order. The first failure ends the case.
+
+1. The three ASan builds (plain, `-O2` and `--rc-checks`, all with
+   `--sanitize address`). Each must exit 0.
+2. The plain build, which links mimalloc, and the `-O2` build, which links the
+   System allocator. Neither runs under a tool. Both must exit 0 and agree.
+3. A check that stdout and stderr of each ASan run equal those of the plain
+   run.
+4. The `-O2` build, under Valgrind.
+5. A further `-O2` build with no `--allocator` flag, which must link
+   mimalloc, and which must print what the plain run prints.
+
+ASan runs first because a double free or a wild write can end a plain run with
+a bare abort or a signal. Then the case fails with no report. A failed ASan
+run shows its report and names its build. A stack overflow shows as an ASan
+`stack-overflow` report and not as signal 11. The comparison of stderr in step
+3 is stronger than the Valgrind check, which never compares stderr.
+
+ASan and Valgrind find different faults, so the cases use both. ASan finds
+what Valgrind finds. It also finds an overrun of a stack array or of a global,
+and a use of a stack variable after its function returns. It costs far less CPU
+than Valgrind. Only Valgrind finds a read of uninitialized memory. So the `-O2`
+build runs once under Valgrind. That run misses an uninitialized read that only `-O0` code shows,
+and one in a `--rc-checks` build. The harness runs the 15 programs of
+`site/programs/run` in the same way.
+
+The three ASan builds and the Valgrind build use `--allocator system`, because
+ASan and Valgrind track `malloc` and see no block that mimalloc hands out.
+The plain build has no `--allocator` flag, so it runs on mimalloc, the
+allocator that users get. The extra `-O2` build runs `-O2` code on mimalloc.
+On macOS there is no ASan and no Valgrind: the plain, `-O2` and `--rc-checks`
+builds run natively on mimalloc.
+
+A double free fails an ASan run in the first step, with an
+`attempting double-free` report. The plain `-O0` run on mimalloc does not check
+for it, and an `-O2` build can remove the double free before any tool sees it. To show what
+Valgrind says about a broken build, build the program with
 `--allocator system` and run its binary under `valgrind --error-exitcode=1`
 yourself. A program built without the flag fails under Valgrind on mimalloc's
 startup read and shows none of its Sisu allocations
 ([ADR 0031](adr/0031-compiled-programs-allocate-with-mimalloc.md)).
+To see the ASan report of a case by hand, build it with `--sanitize address`
+and run the executable with `ASAN_OPTIONS=fast_unwind_on_malloc=0`. Without
+that option, the allocation stack of a leak report has no Sisu frame, because
+Sisu emits no frame pointers. The harness sets the option in place of the
+`ASAN_OPTIONS` of your environment, and it removes `LSAN_OPTIONS`. So an
+exported `ASAN_OPTIONS=detect_leaks=0` cannot hide a leak from `make test`.
 On Linux, `sisu` links with `-Wl,-S`, which drops the debug information of
 the runtime archive. So Valgrind shows a runtime frame by its function name,
 with no file and line, and `addr2line` gives `??:?` for it.
@@ -1423,8 +1458,23 @@ Linux.
 `sisu build --allocator system file.sisu` links the runtime on the System
 allocator, where a program otherwise allocates with mimalloc. Valgrind and ASan
 track `malloc` and see no block that mimalloc hands out, so a program you run
-under either by hand needs this build. `--allocator` works only when building
-an executable, and `sisu run` takes it too.
+under Valgrind by hand needs this build; `--sanitize address` selects it for
+you. `--allocator` works only when building an executable, and `sisu run`
+takes it too.
+
+`sisu build --sanitize address file.sisu` builds an executable that AddressSanitizer
+checks: it reports a memory error, and a leak at exit, and then fails.
+`sisu run` takes the flag too. The compiler runs LLVM's ASan pass on the module,
+and the link adds `-fsanitize=address`, so `cc` must find `libasan`; a missing
+`libasan` shows as the `cc failed` error. ASan sees only blocks from `malloc`.
+So the flag selects the System allocator when you give no `--allocator`, and
+`--allocator mimalloc` with it is a usage error. `--sanitize` works only on
+Linux and only when building an executable. A panic at `-O0` keeps exit code
+101 and prints no ASan report. At `-O2`, the last pointer to a live object can
+be dead when the panic runs. Then LeakSanitizer reports a leak and sets the
+exit code. To run a sanitized build by hand, set
+`ASAN_OPTIONS=fast_unwind_on_malloc=0`, so that a leak report names the Sisu
+function that allocated. `make test` builds every `run/` case this way on Linux.
 
 `sisu build --rc-checks file.sisu` builds an executable that checks its
 reference counts. Before each retain or release, it checks that the count is
@@ -1435,7 +1485,7 @@ A failed check prints a line that starts with `sisu: rc check:` and exits
 with code 102. `--rc-checks` works only when building an executable or with
 `--emit ir` and `--emit ir-raw`, which then print the module with the checks
 built in. A use after free often goes unseen: the
-freed memory may still hold a count of 1 or more. Valgrind finds those.
+freed memory may still hold a count of 1 or more. Valgrind and ASan find those.
 
 ## Add a diagnostic code
 

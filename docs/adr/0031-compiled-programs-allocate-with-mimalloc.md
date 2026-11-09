@@ -138,3 +138,13 @@ they touch memory the machine cannot back.
   program frees everything holds for a program built with `--allocator system`.
 - The compiler itself keeps glibc, and so do glibc's own allocations, such as
   stdio buffers.
+
+## Amendment, 2026-11-09: the plain run is on mimalloc, and ASan runs first
+
+The bullet on double frees named the plain runs of the Linux harness as system builds. That is no
+longer true. On Linux, the plain `-O0` run is now a default build, so it is on mimalloc and does not
+abort on a double free. The three ASan builds (`--sanitize address`, which selects the System
+allocator) run first. They are system builds, so ASan still finds a double free at `-O0`, and the
+case fails with ASan's report. The `-O2` build that runs once under Valgrind is a system build
+too. The `--rc-checks` runs on Linux are ASan builds now, so they are system builds. On macOS,
+every run still uses mimalloc and does not check for a double free.

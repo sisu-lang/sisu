@@ -536,7 +536,11 @@ written, a regular file must also be executable: `ld64` then writes into the
 file and keeps its mode. On Linux, it also checks that
 `cc` finds the linker that `--linker` names. A failed check stops the build at once, not after the
 compile. `--allocator` picks the archive: `libsisu_runtime_mimalloc.a` by
-default, `libsisu_runtime_system.a` for `--allocator system`. The link step
+default, `libsisu_runtime_system.a` for `--allocator system`. A build with
+`--sanitize address` uses the System archive, because ASan sees only blocks
+from `malloc`. In that build the optimizer first marks each function with a
+body `sanitize_address`. Then it runs the `asan` pass after its pipeline. `cc`
+gets `-fsanitize=address`, which links the ASan runtime. The link step
 writes the object code of each codegen unit to a fresh temporary file and
 runs `cc` on them together with that archive. `cc` adds the C startup code and libc and writes the
 executable, through its default linker or the one `--linker` names. On Linux,
