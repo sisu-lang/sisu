@@ -423,6 +423,21 @@ fn early_exit_releases_spilled_locals() {
     has(&printed, "h", &[&format!("_ = copy \"r\"{edge}")]);
 }
 
+/// A part that cannot fall through ends the interpolation. The edge of its `return` releases the
+/// temporaries of the parts before it, and no `interp` follows. The checker gives such a part
+/// the type `never`, so only the uncounted path of the part loop returns early.
+#[test]
+fn an_interpolation_part_that_returns_should_release_the_parts_before_it() {
+    let printed = built(
+        "fn f(c: bool) -> string {\n    let s = \"a\" + \"b\"\n    \"{s}{if c { return \"r\" } else { \"y\" }}{ { return \"q\"; \"z\" } }\"\n}\nfn main() {}",
+    );
+    let f = function(&printed, "f");
+    assert!(!f.contains("interp("), "{f}");
+    // The first `return` frees the spilled `s`; the second frees it and the `if` part.
+    assert_eq!(f.matches("release _\n    return move _").count(), 2, "{f}");
+    assert_eq!(f.matches("release _").count(), 3, "{f}");
+}
+
 /// Lowering creates a block only when an edge reaches it.
 #[test]
 fn every_block_is_reachable() {

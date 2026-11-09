@@ -1701,10 +1701,8 @@ impl Mentions {
             return 0;
         };
         let (start, end) = (self.span(first).0, self.span(last).1);
-        // A lowering temporary is past the `tir` locals, and no expression mentions it.
-        let Some(at) = self.at.get(local.0) else {
-            return 0;
-        };
+        // `local` is a `tir` local: an expression reads it whole, so `at` holds it.
+        let at = &self.at[local.0];
         let before = |bound: usize| {
             at.partition_point(|&position| {
                 #[cfg(test)]
