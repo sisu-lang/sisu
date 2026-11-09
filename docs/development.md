@@ -74,7 +74,9 @@ end-to-end test, on a GitHub-hosted runner. CI runs it after the tests. The
 pre-commit hook runs it on the report of your last `make test` with
 `--diff HEAD`, so it lists only the slow tests your change names and counts the
 rest. Neither CI nor the hook fails on a slow test: wall-clock time depends on
-the machine and its load.
+the machine and its load. A CI warning for a test you added or changed is a nit.
+The budget is for a CI runner, so a local time is only a hint. See one with
+`python3 scripts/slow_tests.py target/nextest/default/junit.xml --diff <base>`.
 
 The pre-commit hook also runs `crates/sisuc/tests/architecture.rs` when a commit
 changes a file that the test reads. CI's lint job skips that hook, because its
