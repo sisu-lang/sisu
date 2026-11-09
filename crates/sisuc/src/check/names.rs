@@ -4,7 +4,7 @@
 //! holds one map for each kind, and its fields are private: a reader asks a getter, so that a
 //! later change of the maps touches this module alone.
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::enums::reserved_name;
 use super::prelude::{self, PRELUDE};
@@ -137,6 +137,10 @@ pub(super) struct NameMaps {
     constants: FxHashMap<Symbol, Declared<ConstantId>>,
     /// Indexed by the place in `Aliases::infos`.
     aliases: FxHashMap<Symbol, Declared<usize>>,
+    /// The language interfaces that a program declares twice. `poison` keeps their names out of
+    /// `interfaces`, so a bound, a header and an `any` read the prelude's interface. This set tells
+    /// every other position that the name is poisoned.
+    language_poisoned: FxHashSet<Symbol>,
 }
 
 impl NameMaps {
@@ -222,6 +226,14 @@ impl NameMaps {
         }
         if let Some(alias) = self.aliases.get_mut(&name) {
             *alias = Declared::Broken;
+        }
+    }
+
+    /// Poisons `name` at every position but a bound when it is a language interface's name. A
+    /// program declares it twice, or declares it and another item of the name.
+    pub(super) fn poison_language(&mut self, name: Symbol) {
+        if is_language_interface(name.as_str()) {
+            self.language_poisoned.insert(name);
         }
     }
 
@@ -326,9 +338,10 @@ impl Checker<'_> {
                 matches!(self.names.constant(name), Some(Declared::Broken)),
                 ItemKind::Constant,
             ),
+            (self.alias_error(name), ItemKind::Alias),
             (
-                matches!(self.names.alias(name), Some(Declared::Broken)),
-                ItemKind::Alias,
+                self.names.language_poisoned.contains(&name),
+                ItemKind::Interface,
             ),
         ];
         kinds

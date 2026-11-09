@@ -1746,6 +1746,7 @@ impl Checker<'_> {
         }
         // After the loop: the prelude's own items, which come last, would take the names back.
         for (kind, name) in rejected {
+            self.names.poison_language(name);
             self.names.poison(kind, name);
         }
         self.poison_broken(broken);
@@ -1811,7 +1812,11 @@ impl Checker<'_> {
                 continue;
             };
             if !(self.built_in(&broken.name) || self.prelude_taken(kind, &broken.name)) {
+                let redeclared = redeclares(first, &broken.name);
                 self.first_definition(first, kind, None, &broken.name);
+                if redeclared {
+                    self.names.poison_language(broken.name.name);
+                }
             }
         }
     }
@@ -1851,9 +1856,9 @@ impl Checker<'_> {
         matches!(kind, Some(BuiltIn::Type))
     }
 
-    /// Whether `name` is the first function, class, enum or constant of its name; reports it when
-    /// not. A name that a prelude function takes is added to `rejected`, for `collect_names` to
-    /// poison.
+    /// Whether `name` is the first function, class, enum, interface, constant or alias of its name;
+    /// reports it when not. A name that a prelude function takes, and a name that another item of
+    /// the program has, is added to `rejected`, for `collect_names` to poison.
     fn first_callable(
         &mut self,
         first: &mut FxHashMap<Symbol, (Span, Definition)>,
@@ -1865,7 +1870,12 @@ impl Checker<'_> {
             rejected.push((kind, name.name));
             return false;
         }
-        self.first_definition(first, kind, None, name)
+        let redeclared = redeclares(first, name);
+        let is_first = self.first_definition(first, kind, None, name);
+        if redeclared {
+            rejected.push((kind, name.name));
+        }
+        is_first
     }
 
     /// Whether `name` is a prelude function's, which no top-level item of `kind` may take;
@@ -2740,6 +2750,13 @@ pub(crate) fn built_in_type(name: &str) -> Option<Type> {
 /// by name.
 fn is_language_interface(name: &str) -> bool {
     matches!(name, "Display" | "Eq" | "Ord" | "AnyObject")
+}
+
+/// Whether `name` is the second top-level item of its name that the program writes. `first` holds
+/// the first item of each name. The prelude's item of a name that the program took is no
+/// redeclaration.
+fn redeclares(first: &FxHashMap<Symbol, (Span, Definition)>, name: &ast::Ident) -> bool {
+    first.contains_key(&name.name) && !name.span.in_prelude()
 }
 
 /// `T` for a `T?`, else `ty`.
