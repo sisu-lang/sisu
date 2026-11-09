@@ -393,7 +393,7 @@ fn an_inherited_failed_bound_should_leave_only_its_error() {
 
 #[test]
 fn a_failed_bound_should_be_read_at_each_position() {
-    let rows: [(&str, &[Code]); 4] = [
+    let rows: [(&str, &[Code]); 9] = [
         // A closure is found before the bound that fails: the fact is read on each call.
         (
             "interface Holds<A> {\n    type Item\n}\ninterface Conv<A> {}\nfn g<A: Conv<T.Name>, T: Holds<R.Item>, V: Conv<T.Other>, R: Missing>(a: A, t: T, v: V, r: R) {}\n",
@@ -411,6 +411,29 @@ fn a_failed_bound_should_be_read_at_each_position() {
         (
             "interface R {\n    type A: Y\n}\nclass C<T: Missing>: R {\n    type A = T\n}\n",
             &[UnknownType, NotConform],
+        ),
+        // A bound adds an interface with a failed inheritance to a closure that was found before:
+        // `T` is unknown, so `T.Y` draws no error. Only the inheritance has one.
+        (
+            "interface Conv<A, B> {}\ninterface K { type B }\ninterface JJ<A>: Missing { type X }\nfn g<T: K & JJ<T.B>, U: Conv<T.X, T.Y>>(t: T, u: U) {}\n",
+            &[UnknownType],
+        ),
+        (
+            "interface Conv<A, B> {}\ninterface K { type B }\ninterface JJ<A>: Missing { type X }\nclass C<T: K & JJ<T.B>, U: Conv<T.X, T.Y>> {\n    t: T\n}\n",
+            &[UnknownType],
+        ),
+        (
+            "interface Conv<A, B> {}\ninterface K { type B }\ninterface M: Missing { type X }\ninterface JJ<A>: M {}\nfn g<T: K & JJ<T.B>, U: Conv<T.X, T.Y>>(t: T, u: U) {}\n",
+            &[UnknownType],
+        ),
+        (
+            "interface Conv<A, B> {}\ninterface K { type B }\ninterface JJ<A>: Missing { type X }\ninterface S<T: K & JJ<T.B>, U: Conv<T.X, T.Y>> {}\n",
+            &[UnknownType],
+        ),
+        // The control: the same shape with no failed inheritance keeps its error at `T.Y`.
+        (
+            "interface Conv<A, B> {}\ninterface K { type B }\ninterface JJ<A> { type X }\nfn g<T: K & JJ<T.B>, U: Conv<T.X, T.Y>>(t: T, u: U) {}\n",
+            &[UnknownType],
         ),
     ];
     for (form, want) in rows {
