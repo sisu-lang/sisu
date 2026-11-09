@@ -467,12 +467,13 @@ impl Checker<'_> {
             if let Err(j) = wide {
                 self.too_wide_assoc(ty, bounds[j].at);
             }
+            // An inheritance does not change in a body, so the closure is scanned once.
+            if self.closure_inherits_failed(&out) {
+                self.body.unknown_assoc.insert(ty);
+            }
             self.body.assoc_conforming.insert(ty, out);
         }
-        let closure = &self.body.assoc_conforming[&ty];
-        if self.interfaces[interface.0].assoc[k as usize].bounds.failed
-            || self.closure_inherits_failed(closure)
-        {
+        if self.interfaces[interface.0].assoc[k as usize].bounds.failed {
             self.body.unknown_assoc.insert(ty);
         }
         &self.body.assoc_conforming[&ty]

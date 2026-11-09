@@ -1197,6 +1197,10 @@ impl Checker<'_> {
             if let Err(k) = wide {
                 self.too_wide(place, k);
             }
+            // An inheritance does not change in a body, so the closure is scanned once.
+            if self.closure_inherits_failed(&out) && !self.body.unknown.contains(&place) {
+                self.body.unknown.push(place);
+            }
             self.body.conforming[place] = Some(out);
         }
         // Read on each call: a bound of the same wave can fail after the closure was found.
@@ -1205,11 +1209,8 @@ impl Checker<'_> {
             .bounds
             .get(place)
             .is_some_and(|bounds| bounds.failed);
-        if !self.body.unknown.contains(&place) {
-            let closure = self.body.conforming[place].as_deref().unwrap_or_default();
-            if failed || self.closure_inherits_failed(closure) {
-                self.body.unknown.push(place);
-            }
+        if failed && !self.body.unknown.contains(&place) {
+            self.body.unknown.push(place);
         }
         self.body.conforming[place]
             .as_deref()

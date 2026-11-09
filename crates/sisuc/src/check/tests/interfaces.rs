@@ -2424,9 +2424,10 @@ fn a_body_should_close_and_index_the_bounds_of_a_parameter_once() {
         CLOSURE_STEPS.get()
     };
     // The bound is read where it is declared and in the body, then a step for each requirement.
+    // Each of the two closures has one entry, which is scanned once for a failed inheritance.
     for distinct in [true, false] {
-        assert_eq!(steps(8, distinct), 2 + 8);
-        assert_eq!(steps(32, distinct), 2 + 32);
+        assert_eq!(steps(8, distinct), 2 + 2 + 8);
+        assert_eq!(steps(32, distinct), 2 + 2 + 32);
     }
     // A bound that each call of another generic function checks is read from the closure.
     let checks = |n: usize| {
