@@ -134,14 +134,19 @@ const fn rebuild_command(debug: bool) -> &'static str {
     }
 }
 
+/// The file name of the runtime archive on `allocator`.
+const fn archive_name(allocator: Allocator) -> &'static str {
+    match allocator {
+        Allocator::Mimalloc => "libsisu_runtime_mimalloc.a",
+        Allocator::System => "libsisu_runtime_system.a",
+    }
+}
+
 /// The runtime archive on `allocator`. It is next to `sisu`, in a Cargo target directory or in an
 /// install: `libsisu_runtime_mimalloc.a` or `libsisu_runtime_system.a`.
 pub(crate) fn runtime_library(allocator: Allocator) -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| format!("cannot locate sisu: {e}"))?;
-    let path = exe.with_file_name(match allocator {
-        Allocator::Mimalloc => "libsisu_runtime_mimalloc.a",
-        Allocator::System => "libsisu_runtime_system.a",
-    });
+    let path = exe.with_file_name(archive_name(allocator));
     if path.is_file() {
         Ok(path)
     } else {
@@ -152,6 +157,18 @@ pub(crate) fn runtime_library(allocator: Allocator) -> Result<PathBuf, String> {
             rebuild_command(cfg!(debug_assertions))
         ))
     }
+}
+
+/// The runtime archive on `allocator` for a unit test, which nextest's setup script builds: the
+/// test binary is `target/debug/deps/<name>`, so the archive is two levels up. `runtime_library`
+/// looks beside the test binary, where it is not.
+#[cfg(test)]
+pub(crate) fn test_runtime(allocator: Allocator) -> PathBuf {
+    let exe = std::env::current_exe().expect("the test binary should know its path");
+    exe.parent()
+        .and_then(Path::parent)
+        .expect("the test binary should be two levels inside the target directory")
+        .join(archive_name(allocator))
 }
 
 #[cfg(test)]

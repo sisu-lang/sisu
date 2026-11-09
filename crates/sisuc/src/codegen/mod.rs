@@ -2017,4 +2017,6 @@ pub(crate) fn object_code(
 }
 
 #[cfg(test)]
+mod asan_tests;
+#[cfg(test)]
 mod tests;
