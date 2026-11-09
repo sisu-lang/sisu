@@ -718,3 +718,83 @@ fn an_error_a_poisoned_name_cannot_remove_should_stay() {
     ];
     assert_rows(&rows);
 }
+
+/// GIVEN a generic alias, class, enum or interface that a program declares twice, or writes broken
+/// AND a use that writes `Missing`, a type that nothing declares, as its type argument
+/// WHEN `sisu check` runs on it, at a type or a bound
+/// THEN the error of the argument stays, as nothing a repair does can make it true
+/// AND no error for the number of arguments or for a bound comes from the poisoned name
+/// AND a call of the name stays as plan call 15 says: only the declaration's error.
+#[test]
+fn the_type_args_of_a_poisoned_name_should_keep_their_errors() {
+    let rows = [
+        row(
+            "alias, type",
+            "type N<T> = [T]\ntype N<T> = [T]\nfn g(x: N<Missing>) {}\nfn main() {}",
+            &["E0034 2:6", "E0030 3:11"],
+        ),
+        row(
+            "class, type",
+            "class N<T> {}\nclass N<T> {}\nfn g(x: N<Missing>) {}\nfn main() {}",
+            &["E0034 2:7", "E0030 3:11"],
+        ),
+        row(
+            "enum, type",
+            "enum N<T> { A }\nenum N<T> { B }\nfn g(x: N<Missing>) {}\nfn main() {}",
+            &["E0034 2:6", "E0030 3:11"],
+        ),
+        row(
+            "interface, type",
+            "interface N<T> {}\ninterface N<T> {}\nfn g(x: N<Missing>) {}\nfn main() {}",
+            &["E0034 2:11", "E0030 3:11"],
+        ),
+        row(
+            "interface, bound",
+            "interface N<T> {}\ninterface N<T> {}\nfn g<U: N<Missing>>(x: U) {}\nfn main() {}",
+            &["E0034 2:11", "E0030 3:11"],
+        ),
+        row(
+            "class, bound",
+            "class N<T> {}\nclass N<T> {}\nfn g<U: N<Missing>>(x: U) {}\nfn main() {}",
+            &["E0034 2:7", "E0030 3:11"],
+        ),
+        row(
+            "broken class, type",
+            "class N<T>\n{}\nfn g(x: N<Missing>) {}\nfn main() {}",
+            &["E0004 2:1", "E0030 3:11"],
+        ),
+        row(
+            "class, callee (control)",
+            "class N<T> {}\nclass N<T> {}\nfn main() { let _a = N<Missing>(1) }",
+            &["E0034 2:7"],
+        ),
+    ];
+    assert_rows(&rows);
+}
+
+/// GIVEN an alias whose target fails its bound where the target is declared
+/// AND a second alias that names the first, directly or inside an array
+/// WHEN `sisu check` runs on a read of the second alias
+/// THEN the only error is the bound's E0154, as for the first alias.
+#[test]
+fn an_alias_of_an_alias_with_a_failed_bound_should_give_only_that_error() {
+    let items = "interface I {}\nclass C<T: I> {}\ntype M = C<i64>\n";
+    let rows = [
+        row(
+            "direct (control)",
+            &format!("{items}fn main() {{ let x = M }}"),
+            &["E0154 3:12"],
+        ),
+        row(
+            "chain",
+            &format!("{items}type N = M\nfn main() {{ let x = N }}"),
+            &["E0154 3:12"],
+        ),
+        row(
+            "chain in an array",
+            &format!("{items}type N = [M]\nfn main() {{ let x = N }}"),
+            &["E0154 3:12"],
+        ),
+    ];
+    assert_rows(&rows);
+}
