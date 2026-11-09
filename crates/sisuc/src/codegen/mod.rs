@@ -1798,11 +1798,10 @@ pub(crate) fn pipeline(level: OptLevel) -> &'static str {
 
 /// The pipeline of a sanitized build: `pipeline`, then `asan`, as `clang` runs it. `asan` is a
 /// module pass, so the `-O0` pipeline wraps its `mem2reg` in `function(...)`.
-fn sanitized_pipeline(level: OptLevel) -> &'static str {
+fn sanitized_pipeline(level: OptLevel) -> String {
     match level {
-        OptLevel::O0 => "function(mem2reg),asan",
-        OptLevel::O2 => "default<O2>,asan",
-        OptLevel::O3 => "default<O3>,asan",
+        OptLevel::O0 => "function(mem2reg),asan".to_owned(),
+        OptLevel::O2 | OptLevel::O3 => format!("{},asan", pipeline(level)),
     }
 }
 
@@ -1975,10 +1974,10 @@ pub(crate) fn optimize(
     let passes = if sanitize.is_some() {
         sanitized_pipeline(level)
     } else {
-        pipeline(level)
+        pipeline(level).to_owned()
     };
     module
-        .run_passes(passes, machine, PassBuilderOptions::create())
+        .run_passes(&passes, machine, PassBuilderOptions::create())
         .map_err(|e| e.to_string())
 }
 
