@@ -685,9 +685,9 @@ impl<'a> Lowering<'a> {
             .or_else(|| local_of(e).map(|local| self.read(local)))
     }
 
-    /// `op`, an operand of a statement whose later operands are `later`. A read of a whole
-    /// source local that a later operand mentions is read into a temporary now, so the
-    /// statement sees the value the local had here ("When an operand reads").
+    /// `op`, an operand of a statement whose later operands are `later`. A later operand can
+    /// mention a whole source local that `op` reads. Then `op` is read into a temporary now, so
+    /// the statement sees the value the local had here.
     fn pinned(&mut self, op: Operand, later: &[&Expr]) -> Operand {
         let local = match &op {
             Operand::Use(local) | Operand::Guarded(local) => *local,
@@ -748,10 +748,9 @@ impl<'a> Lowering<'a> {
     /// caller releases the temporaries after the statement. An interpolation writes its parts
     /// into a new string and keeps none of them. So a part is read as `print` reads its operand,
     /// with one more rule: a part that is a whole source local is a borrow site, read in place
-    /// at the statement. A later part could change what the local holds ("When an operand
-    /// reads"). So when a later part mentions the local other than as a whole read, the part is
-    /// read into a temporary now. An uncounted part is pinned against the later parts, as for
-    /// any statement.
+    /// at the statement. A later part could change what the local holds (see `pinned`). So when
+    /// a later part mentions the local other than as a whole read, the part is read into a
+    /// temporary now. An uncounted part is pinned against the later parts, as for any statement.
     fn interpolation_parts(&mut self, es: &[&Expr]) -> Option<(Vec<Operand>, Vec<LocalId>)> {
         // For each part, the whole reads of its local among the later parts: one backward pass.
         let mut later_reads: FxHashMap<LocalId, usize> = FxHashMap::default();

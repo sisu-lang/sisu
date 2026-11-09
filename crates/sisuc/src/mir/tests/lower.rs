@@ -311,7 +311,7 @@ fn chain(objects: usize) -> String {
 fn a_part_that_a_later_part_changes_should_be_pinned() {
     let printed = built(
         "fn bump(mut s: string) -> i64 {\n    s = s + \"!\"\n    1\n}\n\
-         fn eat(s: string) -> i64 { s.len() }\n\
+         fn eat(s: string) -> i64 {\n    let owned = s\n    owned.len()\n}\n\
          fn inc(mut n: i64) -> i64 {\n    n += 10\n    0\n}\n\
          fn row5() {\n    let mut x = \"a\" + \"b\"\n    let t = \"{x}{bump(mut x)}{x}\"\n    print(t)\n}\n\
          fn row6() {\n    let y = \"c\" + \"d\"\n    let u = \"{y}{y}{eat(y)}\"\n    print(u)\n}\n\
@@ -403,8 +403,7 @@ fn interpolation_parts_should_lower_in_linear_steps() {
         let [(reads, probes), (reads2, probes2), (reads3, _)] =
             [50, 100, 150].map(|k| steps(source(k)));
         assert_near_linear_for(&format!("{shape}, local_of reads: "), reads, reads2, reads3);
-        assert!(probes > 0, "{shape}: no mention probe");
-        assert_subquadratic(probes, probes2);
+        assert_subquadratic_for(&format!("{shape}, mention probes: "), probes, probes2);
     }
 }
 
@@ -424,18 +423,24 @@ fn early_exit_releases_spilled_locals() {
 }
 
 /// A part that cannot fall through ends the interpolation. The edge of its `return` releases the
-/// temporaries of the parts before it, and no `interp` follows. The checker gives such a part
-/// the type `never`, so only the uncounted path of the part loop returns early.
+/// temporaries of the parts before it, and no `interp` follows. In `f` the checker gives the part
+/// the type `never`, so only the uncounted path of the part loop returns early. In `g` the
+/// unreachable `break "z"` gives the `loop` the type `string`, so the part is counted and the
+/// exit is in the counted path too.
 #[test]
 fn an_interpolation_part_that_returns_should_release_the_parts_before_it() {
     let printed = built(
-        "fn f(c: bool) -> string {\n    let s = \"a\" + \"b\"\n    \"{s}{if c { return \"r\" } else { \"y\" }}{ { return \"q\"; \"z\" } }\"\n}\nfn main() {}",
+        "fn f(c: bool) -> string {\n    let s = \"a\" + \"b\"\n    \"{s}{if c { return \"r\" } else { \"y\" }}{ { return \"q\"; \"z\" } }\"\n}\n\
+         fn g() -> string { \"{loop { return \"q\"; break \"z\" }}\" }\nfn main() {}",
     );
     let f = function(&printed, "f");
     assert!(!f.contains("interp("), "{f}");
     // The first `return` frees the spilled `s`; the second frees it and the `if` part.
     assert_eq!(f.matches("release _\n    return move _").count(), 2, "{f}");
     assert_eq!(f.matches("release _").count(), 3, "{f}");
+    let g = function(&printed, "g");
+    assert!(!g.contains("interp("), "g: {g}");
+    assert!(g.contains("_ = copy \"q\"\n    return move _"), "g: {g}");
 }
 
 /// Lowering creates a block only when an edge reaches it.

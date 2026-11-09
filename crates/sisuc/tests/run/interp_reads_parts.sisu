@@ -45,7 +45,8 @@ fn bump(mut s: string) -> i64 {
 }
 
 fn eat(s: string) -> i64 {
-    s.len()
+    let owned = s
+    owned.len()
 }
 
 fn len(s: string) -> i64 {
