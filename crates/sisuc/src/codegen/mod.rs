@@ -447,7 +447,7 @@ struct Codegen<'ctx, 'src> {
     source: &'src str,
     /// `%sisu.<Class>` and its field elements, indexed by `ClassId`.
     classes: Vec<ClassLayout<'ctx>>,
-    /// `%sisu.<Enum>` and its payload structs, indexed by `EnumId`.
+    /// The LLVM types of each enum, indexed by `EnumId`.
     enums: Vec<EnumLayout<'ctx>>,
     /// Indexed by `FuncId`.
     functions: Vec<FunctionValue<'ctx>>,

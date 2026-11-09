@@ -1,0 +1,231 @@
+// GIVEN enums with no field, with and without a written `Eq` or `Ord`, in arrays, optionals,
+//       generic enums, recursive enums and `any` values
+// AND `res`, `first_large`, `opt_kind` and `ret_opt` take or return such an enum, and recurse to
+//     a depth that `main` reads at run time; `depth` recurses on a tree
+// WHEN `main` compares them, matches them, calls array methods on them and passes them to `dbg`
+// THEN each `print` line shows the result, and each `dbg` call writes its line to standard error
+// AND `-O2` keeps the calls of these functions in `main`, because the compiler cannot know the
+//     depth: the markers below check this
+// o2-calls: main res 4
+// o2-calls: main first_large 1
+// o2-calls: main depth 2
+// o2-calls: main opt_kind 2
+// o2-calls: main ret_opt 1
+interface Shape {
+    fn size(self) -> i64
+}
+
+enum Kind: Shape {
+    Small
+    Large
+
+    fn size(self) -> i64 {
+        match self {
+            Kind.Small => 1
+            Kind.Large => 2
+        }
+    }
+}
+
+enum Level: Eq, Ord {
+    Low
+    High
+    fn less(self, other: Self) -> bool {
+        self.rank() < other.rank()
+    }
+    fn rank(self) -> i64 {
+        match self {
+            Level.Low => 0
+            Level.High => 1
+        }
+    }
+}
+
+enum Sign: Eq {
+    Neg
+    Pos
+    fn eq(self, _other: Self) -> bool {
+        true
+    }
+}
+
+enum Wrap {
+    W(Kind)
+}
+
+enum Pair2<T> {
+    P(T, T)
+}
+
+enum MaybeOpt {
+    Empty
+    Has(Kind?)
+}
+
+enum Tree {
+    Leaf(Kind)
+    Node(Tree, Kind, Tree)
+}
+
+class Cell {
+    mut k: Kind
+}
+
+// `!b` gives the other result, and the `match` turns it back.
+fn res(b: bool, levels: i64) -> Result<Kind, Kind> {
+    if levels == 0 {
+        if b { Ok(Kind.Small) } else { Err(Kind.Large) }
+    } else {
+        match res(!b, levels - 1) {
+            Ok(_) => Err(Kind.Large)
+            Err(_) => Ok(Kind.Small)
+        }
+    }
+}
+
+fn first_large(xs: [Kind?], levels: i64) -> i64 {
+    if levels > 1 {
+        // The two calls give the same index, so the larger of them is that index. Two calls, so
+        // that `-O2` cannot make a loop of them.
+        let a = first_large(xs, levels - 1)
+        let b = first_large(xs, levels - 2)
+        return if a < b { b } else { a }
+    }
+    let mut i = 0
+    for x in xs {
+        if x == Some(Kind.Large) {
+            return i
+        }
+        i += 1
+    }
+    -1
+}
+
+fn depth(t: Tree) -> i64 {
+    match t {
+        Tree.Leaf(Kind.Small) => 1
+        Tree.Leaf(Kind.Large) => 2
+        Tree.Node(Tree.Leaf(Kind.Large), Kind.Small, _) => 10
+        Tree.Node(l, _, r) => depth(l) + depth(r)
+    }
+}
+
+fn opt_kind(o: Kind?, levels: i64) -> string {
+    if levels > 1 {
+        // The two calls give the same text, so the longer of them is that text. Two calls, so
+        // that `-O2` cannot make a loop of them.
+        let a = opt_kind(o, levels - 1)
+        let b = opt_kind(o, levels - 2)
+        return if a.len() < b.len() { b } else { a }
+    }
+    let k = o else { return "none" }
+    match k {
+        Kind.Small if o != None => "small"
+        _ => "other"
+    }
+}
+
+// `!b` gives the other result, and the `match` turns it back.
+fn ret_opt(b: bool, levels: i64) -> Kind? {
+    if levels == 0 {
+        if b { Some(Kind.Small) } else { None }
+    } else {
+        match ret_opt(!b, levels - 1) {
+            Some(_) => None
+            None => Some(Kind.Small)
+        }
+    }
+}
+
+fn main() {
+    // Standard input is empty, so the depth is 0, but the compiler cannot know it.
+    let levels = (read_line() ?? "").len()
+    let ks = [Kind.Small, Kind.Large]
+    // nested pattern
+    print(depth(Tree.Node(Tree.Leaf(Kind.Large), Kind.Small, Tree.Leaf(Kind.Small))))   // 10
+    print(depth(Tree.Node(Tree.Leaf(Kind.Small), Kind.Large, Tree.Leaf(Kind.Large))))   // 3
+    // array of Kind?
+    let os: [Kind?] = [None, Some(Kind.Small), Some(Kind.Large)]
+    print(os)   // [None, Small, Large]
+    print(first_large(os, levels))   // 2
+    print(os == [None, Some(Kind.Small), Some(Kind.Large)])   // true
+    print(os.contains(Some(Kind.Large)))   // true
+    print(os.first().to_string())   // Some(None)
+    print(os.get(5).to_string())   // None
+    // contains
+    print(ks.contains(Kind.Large))   // true
+    print(ks.first().to_string())   // Small
+    print(ks.last() ?? Kind.Small)   // Large
+    // written Eq/Ord on fieldless enum
+    print(Level.Low < Level.High)   // true
+    print(Level.High < Level.Low)   // false
+    print(Level.Low == Level.Low)   // true
+    print([Level.Low, Level.High] == [Level.Low, Level.High])   // true
+    print([Level.Low].contains(Level.High))   // false
+    print(Sign.Neg == Sign.Pos)   // true: the written `eq` always gives `true`
+    print([Sign.Neg] == [Sign.Pos])   // true
+    print(Some(Sign.Neg) == Some(Sign.Pos))   // true
+    // generic with fieldless
+    match res(false, levels) {
+        Ok(x) => print("ok {x}")
+        Err(e) => print("err {e}")   // err Large
+    }
+    print(res(true, levels + 1) == res(true, levels + 2))   // true
+    print(res(true, levels))   // Ok(Small)
+    print(Pair2.P(Kind.Small, Kind.Large))   // P(Small, Large)
+    print(Pair2.P(Kind.Small, Kind.Large) == Pair2.P(Kind.Small, Kind.Large))   // true
+    // only payload is fieldless
+    let w = Wrap.W(Kind.Large)
+    print(w)   // W(Large)
+    print(w == Wrap.W(Kind.Small))   // false
+    match w {
+        Wrap.W(Kind.Large) => print("wl")   // wl
+        Wrap.W(_) => print("ws")
+    }
+    // Option-shaped with Kind? field
+    let mo = MaybeOpt.Has(None)
+    let mo2 = MaybeOpt.Has(Some(Kind.Small))
+    print(mo)   // Has(None)
+    print(mo2)   // Has(Small)
+    print(mo == mo2)   // false
+    print(MaybeOpt.Empty == MaybeOpt.Has(None))   // false
+    // dbg
+    let d = dbg(Kind.Large)
+    print(d)   // Large
+    dbg(os)
+    dbg(Some(Kind.Small))
+    dbg(true == false)
+    // let-else, guard, if let
+    print(opt_kind(Some(Kind.Small), levels))   // small
+    print(opt_kind(None, levels))   // none
+    if let Some(x) = ret_opt(true, levels) {
+        print(x)   // Small
+    }
+    // exchange and mut field
+    let cell = Cell(k: Kind.Small)
+    cell.k = Kind.Large
+    print(cell.k)   // Large
+    let mut e = Kind.Small
+    let old = exchange(mut e, Kind.Large)
+    print("{old} {e}")   // Small Large
+    // interpolation of optionals, to_string
+    let ok: Kind? = Some(Kind.Large)
+    print("{ok ?? Kind.Small} {ks}")   // Large [Small, Large]
+    // any through array. `-O2` makes this call direct; `fieldless_enum_positions.sisu` checks the
+    // call through the table at `-O2` (`o2-indirect-calls: size_of 1`).
+    let shapes: [any Shape] = [Kind.Small, Kind.Large]
+    let mut total = 0
+    for s in shapes {
+        total += s.size()
+    }
+    print(total)   // 3
+    // bool in arrays and nested optionals
+    let bs = [true, false]
+    print(bs == [true, false])   // true
+    print(bs.contains(false))   // true
+    let bb: bool?? = Some(None)
+    print(bb == Some(None))   // true
+    print(bb != Some(Some(true)))   // true
+    let bk = (Kind.Small == Kind.Large) == (Level.Low == Level.High)
+    print(bk)   // true
+}

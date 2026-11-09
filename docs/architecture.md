@@ -399,7 +399,8 @@ no other field, and no count, length or element.
 
 An enum value has no heap block of its own. It is a tag and its variant's
 payload, held inline in `%sisu.<Enum>`, with a struct `%sisu.<Enum>.<Variant>`
-per variant laid over the payload storage. A payload field that closes a cycle
+per variant laid over the payload storage. An enum with no field in any variant
+is its tag integer, with no struct. A payload field that closes a cycle
 holds a box instead: a counted heap block, `%sisu.box.<Enum>`, that holds a
 value of the enum. Each enum gets `sisu_rc.eq.<Enum>`, and an enum with a
 counted part also gets `sisu_rc.retain.<Enum>` and `sisu_rc.release.<Enum>`,

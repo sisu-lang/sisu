@@ -1868,7 +1868,7 @@ fn check_should_print_text_diagnostics_when_the_format_flag_is_absent() {
 /// WHEN they are built with `--emit ir`
 /// THEN each enum type has the smallest tag that holds its variants, and storage for its largest
 /// payload
-/// AND the enum with no fields has no storage
+/// AND the enum with no fields is its tag integer, with no type of its own
 #[test]
 fn emit_ir_should_size_each_enum_by_its_variant_count_and_largest_payload() {
     use std::fmt::Write as _;
@@ -1910,18 +1910,20 @@ fn emit_ir_should_size_each_enum_by_its_variant_count_and_largest_payload() {
         String::from_utf8_lossy(&out.stderr)
     );
     let ir = String::from_utf8_lossy(&out.stdout);
-    // The smallest tag that holds the variant count; storage sized and aligned for the largest
-    // payload, a `Pair?` at the 24 bytes of `%sisu.Pair` (its `None` is a spare tag) and a
-    // `%sisu.Trio` at 32 bytes; no storage when no variant has a field.
+    // The tag is the smallest that holds the variant count. The storage is sized and aligned for
+    // the largest payload. A `Pair?` takes the 24 bytes of `%sisu.Pair`, because its `None` is a
+    // spare tag. A `%sisu.Trio` takes 32 bytes. An enum with no field is its tag integer, and it
+    // has no type.
     for wanted in [
         "%sisu.Pair = type { i8, [2 x i64] }",
         "%sisu.Outer = type { i8, [3 x i64] }",
         "%sisu.Trio = type { i8, [3 x i64] }",
         "%sisu.Holder = type { i8, [4 x i64] }",
-        "%sisu.Light = type { i8 }",
-        "%sisu.Wide = type { i16 }",
     ] {
         assert!(ir.contains(wanted), "missing {wanted:?} in\n{ir}");
+    }
+    for unwanted in ["%sisu.Light = type", "%sisu.Wide = type"] {
+        assert!(!ir.contains(unwanted), "found {unwanted:?} in\n{ir}");
     }
 }
 

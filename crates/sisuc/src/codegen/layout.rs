@@ -396,7 +396,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// The empty value of `niche` in its storage. The empty value of an enum's tag has zero
-    /// storage after it.
+    /// storage after it. For an enum with no field, it is the tag.
     pub(super) fn empty_value(&self, Niche { storage, empty }: Niche) -> BasicValueEnum<'ctx> {
         match storage {
             Storage::Pointer | Storage::Value | Storage::Pair => {
@@ -409,6 +409,9 @@ impl<'ctx> Codegen<'ctx, '_> {
                 .into(),
             Storage::Tag(id) => {
                 let layout = self.enum_layout(id);
+                if layout.is_tag() {
+                    return layout.tag.const_int(empty, false).into();
+                }
                 if self.by_memory(layout.ty) {
                     let slot = self.zeroed_slot(layout.ty, "empty");
                     self.store(
@@ -526,6 +529,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                     .expect(POSITIONED);
             }
             Storage::Int(_) => value.into_int_value(),
+            Storage::Tag(id) if self.enum_layout(id).is_tag() => value.into_int_value(),
             Storage::Tag(_) => self
                 .builder
                 .build_extract_value(value.into_struct_value(), 0, "tag")
