@@ -52,7 +52,7 @@ impl Checker<'_> {
     /// `callee(args)`, which `site` writes with its type arguments.
     pub(super) fn call(&mut self, span: Span, site: Site<'_>, args: &[ast::Arg]) -> Checked {
         let callee = site.name;
-        let at = names::Site::new(Position::Callee, !site.written.is_empty());
+        let at = names::Site::new(Position::Callee, false);
         let answer = self.meaning(callee.name, at);
         match answer {
             // A broken or rejected name, a constant's included, poisons every use, a built-in's
@@ -242,7 +242,7 @@ impl Checker<'_> {
             return Err(Poisoned::error());
         }
         self.reject_array_lacking(callee, first_checked.as_ref(), rest)?;
-        let at = names::Site::new(Position::Callee, !site.written.is_empty());
+        let at = names::Site::new(Position::Callee, false);
         let kind = self
             .wrong_kind(callee.name, callee.span, at, answer)
             .unwrap_or_else(|| DiagnosticKind::FunctionNotFound {

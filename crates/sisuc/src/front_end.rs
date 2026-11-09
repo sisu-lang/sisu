@@ -2111,7 +2111,7 @@ fn main() {
     }
 
     /// A rejected item (a name that a prelude function takes, or a duplicate) poisons its name:
-    /// the item's own error is reported, and a use of the name gives no more errors.
+    /// the item's own error is reported, and a use of the name gives no error of its own.
     #[test]
     #[expect(clippy::too_many_lines, reason = "one table of rows")]
     fn a_use_of_a_rejected_name_should_give_no_second_error() {

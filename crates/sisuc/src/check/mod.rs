@@ -2264,7 +2264,7 @@ impl Checker<'_> {
             }
             c.type_args(&ident(), &[], args, angles).map(|_| ty)
         };
-        match self.meaning(name, names::Site::new(Position::Type, !args.is_empty())) {
+        match self.meaning(name, names::Site::new(Position::Type, false)) {
             Resolved::TypeParam(i) => {
                 let i =
                     u32::try_from(i).expect("a declaration should have fewer than 2^32 parameters");

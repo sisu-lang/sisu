@@ -19,7 +19,8 @@ use crate::tir::{self, Type};
 #[derive(Clone, Copy)]
 pub(super) struct ConstantId(pub(super) usize);
 
-/// Where a program writes a name. Each position tries the meanings of a name in its own order.
+/// Where a program writes a name. Each position tries the meanings of a name in an order of its
+/// own, and a path and a path call share one.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Position {
     /// A read of the name.
@@ -175,8 +176,8 @@ impl NameMaps {
     }
 
     /// Poisons the top-level name `name` of an item of `kind` that is rejected or broken: its
-    /// uses give no more errors. The kinds share a namespace, so an item of another kind with
-    /// this name is poisoned too.
+    /// uses give no error of their own. The kinds share a namespace, so an item of another kind
+    /// with this name is poisoned too.
     pub(super) fn poison(&mut self, kind: Definition, name: Symbol) {
         // The prelude's code reads a language interface by its name. No rejected or broken item
         // takes it, as no intact item of the user's does.
@@ -314,8 +315,8 @@ impl Body {
 }
 
 impl Checker<'_> {
-    /// The kind of the rejected or broken item that poisons the top-level name `name`, so that a
-    /// use of it gives no more errors.
+    /// The kind of the rejected or broken item that poisons the top-level name `name`. A use of
+    /// the name gives no error of its own.
     fn poison_kind(&self, name: Symbol) -> Option<ItemKind> {
         let kinds = [
             (
@@ -350,7 +351,7 @@ impl Checker<'_> {
     }
 
     /// Whether a rejected or broken item poisons the top-level name `name`, so that a use of it
-    /// gives no more errors.
+    /// gives no error of its own.
     pub(super) fn poisoned(&self, name: Symbol) -> bool {
         self.poison_kind(name).is_some()
     }
@@ -409,7 +410,8 @@ impl Checker<'_> {
         self.body.choosing.contains(&name) || self.body.assoc.get(name).is_some()
     }
 
-    /// What `name` stands for at `site`. Each position has its own order of answers.
+    /// What `name` stands for at `site`. Each position has an order of answers of its own, and a
+    /// path and a path call share one.
     pub(super) fn meaning(&self, name: Symbol, site: Site) -> Resolved {
         match site.at {
             Position::Value => self.value_meaning(name),
@@ -437,10 +439,8 @@ impl Checker<'_> {
         if let Some(b) = self.binding(name) {
             return self.local_answer(name, b);
         }
-        match self.names.constant(name) {
-            Some(Declared::Known(id)) => return Resolved::Constant(id),
-            Some(Declared::Broken) => return Resolved::Poisoned(ItemKind::Constant),
-            None => {}
+        if let Some(Declared::Known(id)) = self.names.constant(name) {
+            return Resolved::Constant(id);
         }
         if let Some(kind) = self.poison_kind_use(name) {
             return Resolved::Poisoned(kind);
@@ -610,7 +610,7 @@ impl Checker<'_> {
         }
         let constant = self.names.constant(name);
         if (constant.is_some() || name.as_str().starts_with(char::is_uppercase))
-            && let Some(kind) = self.poison_kind_use(name)
+            && let Some(kind) = self.poison_kind(name)
         {
             return Resolved::Poisoned(kind);
         }
@@ -635,10 +635,10 @@ impl Checker<'_> {
             }
             None => {}
         }
-        // A poisoned name that no local hides gives no more error.
-        let poison = self.poison_kind(name);
-        let early = poison.map(|_| self.binding(name));
-        if let (Some(kind), Some(None)) = (poison, early) {
+        // A poisoned name that no local hides gives no error of its own.
+        if let Some(kind) = self.poison_kind(name)
+            && self.binding(name).is_none()
+        {
             return Resolved::Poisoned(kind);
         }
         if name == Symbol::OPTION {
@@ -655,7 +655,7 @@ impl Checker<'_> {
         {
             return Resolved::Item(ItemId::Alias(id));
         }
-        let local = early.unwrap_or_else(|| self.binding(name));
+        let local = self.binding(name);
         if let (Some(id), None) = (alias, local) {
             return Resolved::Item(ItemId::Alias(id));
         }
