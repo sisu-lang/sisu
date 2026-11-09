@@ -114,13 +114,13 @@ impl Invocation {
         output_with_stdin(&mut command, &self.stdin)
     }
 
-    /// Runs `exe` with `ASAN_OPTIONS=fast_unwind_on_malloc=0`, which replaces any value in the
+    /// Runs `exe` with `ASAN_OPTIONS` set to [`ASAN_OPTIONS`], which replaces any value in the
     /// environment, and without `LSAN_OPTIONS`. The environment of the developer then cannot
-    /// turn off a report. The option gives a report whose stack holds the frames of the program.
+    /// turn off a report.
     pub(crate) fn run_asan(&self, exe: &Path) -> Output {
         let mut command = Command::new(exe);
         command
-            .env("ASAN_OPTIONS", "fast_unwind_on_malloc=0")
+            .env("ASAN_OPTIONS", ASAN_OPTIONS)
             .env_remove("LSAN_OPTIONS")
             .args(&self.args);
         output_with_stdin(&mut command, &self.stdin)
@@ -597,6 +597,11 @@ pub(crate) fn fixture(test: &str, files: &[(&str, &str)]) -> PathBuf {
 
 /// The builds `build` makes: the executable's name in the case directory, and `sisu`'s flags.
 pub(crate) type Build = (&'static str, &'static [&'static str]);
+/// The `ASAN_OPTIONS` of each run of a sanitized build. `fast_unwind_on_malloc=0` gives a report
+/// whose stack holds the frames of the program. GCC's `libasan` before GCC 13 does not check a use
+/// after return unless `detect_stack_use_after_return=1` is set.
+pub(crate) const ASAN_OPTIONS: &str = "fast_unwind_on_malloc=0:detect_stack_use_after_return=1";
+
 pub(crate) const ASAN_O0: Build = ("asan-O0", &["--sanitize", "address"]);
 pub(crate) const ASAN_O2: Build = ("asan-O2", &["--sanitize", "address", "-O2"]);
 pub(crate) const ASAN_RC: Build = ("asan-rc", &["--sanitize", "address", "--rc-checks"]);
