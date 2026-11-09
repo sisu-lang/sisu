@@ -108,10 +108,10 @@ fn failure_of(ir: &str, level: OptLevel, report: &str) -> Option<String> {
     let context = Context::create();
     let buffer =
         MemoryBuffer::create_from_memory_range_copy(format!("{PRELUDE}{ir}").as_bytes(), "asan");
-    let module = context
-        .create_module_from_ir(buffer)
-        .map_err(|e| format!("the IR does not parse: {e}"))
-        .ok()?;
+    let module = match context.create_module_from_ir(buffer) {
+        Ok(module) => module,
+        Err(e) => return Some(format!("the IR does not parse: {e}")),
+    };
     let machine = target_machine(level).expect("the host should have a target machine");
     // Without the triple of the host, the `asan` pass uses the wrong shadow offset.
     module.set_triple(&TargetMachine::get_default_triple());

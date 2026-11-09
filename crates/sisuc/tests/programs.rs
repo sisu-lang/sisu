@@ -2162,13 +2162,23 @@ fn path_with_llvm_first() -> OsString {
 /// THEN it exits 0
 /// AND stdout is "3\n"
 /// AND stderr is empty
+/// AND each `build` executable holds `asan.module_ctor`, which only the `asan` pass makes
+/// AND the plain build of the program holds none
 ///
 /// The flags are none, `-O2`, `--rc-checks`, `-O3` and `--linker lld` for `build`, and none for
 /// `run`.
 #[test]
 #[cfg_attr(not(target_os = "linux"), ignore = "ASan works only on Linux")]
 fn sanitized_build_should_behave_as_the_plain_build() {
+    const CTOR: &str = "asan.module_ctor";
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let plain = compile_tmp("sanitized_behaves_plain", ALLOCATES_AND_PRINTS_3, false);
+    assert!(
+        !support::defined_symbols(&plain)
+            .iter()
+            .any(|name| name == CTOR),
+        "the plain build should hold no {CTOR}"
+    );
     for flags in [
         &[][..],
         &["-O2"],
@@ -2183,6 +2193,12 @@ fn sanitized_build_should_behave_as_the_plain_build() {
         assert_eq!(out.status.code(), Some(0), "{flags:?}: {out:?}");
         assert_eq!(String::from_utf8_lossy(&out.stdout), "3\n", "{flags:?}");
         assert_eq!(String::from_utf8_lossy(&out.stderr), "", "{flags:?}");
+        assert!(
+            support::defined_symbols(&exe)
+                .iter()
+                .any(|name| name == CTOR),
+            "{flags:?}: the sanitized build should hold {CTOR}"
+        );
     }
     fs::write(
         dir.join("sanitized_behaves_run.sisu"),
