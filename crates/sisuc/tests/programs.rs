@@ -2108,6 +2108,230 @@ fn require_mimalloc_should_accept_a_default_build_and_refuse_a_system_build() {
     assert!(message.contains("does not link mimalloc"), "{message}");
 }
 
+/// A program that allocates an array and an object, prints 3 and frees both.
+const ALLOCATES_AND_PRINTS_3: &str = "class Box {\n    n: i64\n}\n\nfn main() {\n    let xs = [1, 2, 3]\n    let b = Box(n: xs[2])\n    print(b.n)\n}\n";
+
+/// A program that holds an array and indexes it out of bounds.
+const INDEXES_OUT_OF_BOUNDS: &str =
+    "fn main() {\n    let xs = [1, 2, 3]\n    let i = 7\n    print(xs[i])\n}\n";
+
+/// `sisu build --sanitize address <flags>` of `source`, written as `<name>.sisu` in the scratch
+/// directory, with the LLVM `bin` first on `PATH` for `--linker lld`. Returns the executable,
+/// which the flags name, so that two builds of one program do not share a file.
+fn sanitized_exe(name: &str, source: &str, flags: &[&str]) -> PathBuf {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    fs::write(dir.join(format!("{name}.sisu")), source).expect("writes");
+    let words: Vec<&str> = flags.iter().map(|f| f.trim_start_matches('-')).collect();
+    let exe = dir.join(format!("{name}-asan-{}", words.join("-")));
+    let flags: Vec<&str> = ["--sanitize", "address"]
+        .into_iter()
+        .chain(flags.iter().copied())
+        .collect();
+    let out = support::sisu(dir, &format!("{name}.sisu"), &exe, &flags)
+        .env("PATH", path_with_llvm_first())
+        .output()
+        .expect("sisu starts");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    exe
+}
+
+/// A command that runs a sanitized executable. The option is set so that the environment of the
+/// developer cannot turn off a report that a test expects: `fast_unwind_on_malloc=0` is the option
+/// that the harness uses. `sisu` itself does not read or set this variable.
+fn sanitized_command(program: impl AsRef<OsStr>) -> Command {
+    let mut command = Command::new(program);
+    command.env("ASAN_OPTIONS", "fast_unwind_on_malloc=0");
+    command
+}
+
+/// `PATH` with the `bin` of the LLVM that `sisu` builds with first, where `ld.lld` is.
+fn path_with_llvm_first() -> OsString {
+    let bin = Path::new(env!("LLVM_SYS_231_PREFIX")).join("bin");
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&path)))
+        .expect("PATH joins")
+}
+
+/// GIVEN a program that allocates, prints 3 and frees everything
+/// WHEN `sisu <command> --sanitize address <flags>` builds and runs it
+/// THEN it exits 0
+/// AND stdout is "3\n"
+/// AND stderr is empty
+///
+/// The flags are none, `-O2`, `--rc-checks`, `-O3` and `--linker lld` for `build`, and none for
+/// `run`.
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "ASan works only on Linux")]
+fn sanitized_build_should_behave_as_the_plain_build() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    for flags in [
+        &[][..],
+        &["-O2"],
+        &["--rc-checks"],
+        &["-O3"],
+        &["--linker", "lld"],
+    ] {
+        let exe = sanitized_exe("sanitized_behaves", ALLOCATES_AND_PRINTS_3, flags);
+        let out = sanitized_command(&exe)
+            .output()
+            .expect("the program starts");
+        assert_eq!(out.status.code(), Some(0), "{flags:?}: {out:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "3\n", "{flags:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stderr), "", "{flags:?}");
+    }
+    fs::write(
+        dir.join("sanitized_behaves_run.sisu"),
+        ALLOCATES_AND_PRINTS_3,
+    )
+    .expect("writes");
+    let out = sanitized_command(env!("CARGO_BIN_EXE_sisu"))
+        .current_dir(dir)
+        .args(["run", "--sanitize", "address", "sanitized_behaves_run.sisu"])
+        .output()
+        .expect("sisu starts");
+    assert_eq!(out.status.code(), Some(0), "run: {out:?}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "3\n", "run");
+    assert_eq!(String::from_utf8_lossy(&out.stderr), "", "run");
+}
+
+/// GIVEN a program
+/// WHEN `sisu build --sanitize address` builds it
+/// THEN the symbols of the executable hold `sisu_alloc`
+/// AND they hold no mimalloc symbol
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "ASan works only on Linux")]
+fn sanitized_build_should_link_the_system_allocator() {
+    let exe = sanitized_exe("sanitized_system", PRINTS_1, &[]);
+    let symbols = support::defined_symbols(&exe);
+    assert!(symbols.iter().any(|name| name == "sisu_alloc"));
+    assert!(!symbols.iter().any(|name| name == "mi_malloc_aligned"));
+}
+
+/// GIVEN a program that prints 3
+/// WHEN `sisu run --sanitize address --allocator system` runs it
+/// THEN it exits 0
+/// AND stdout is "3\n"
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "ASan works only on Linux")]
+fn sanitized_run_should_accept_the_system_allocator() {
+    let out = sanitized_command(env!("CARGO_BIN_EXE_sisu"))
+        .current_dir(env!("CARGO_TARGET_TMPDIR"))
+        .args([
+            "run",
+            "--sanitize",
+            "address",
+            "--allocator",
+            "system",
+            "-e",
+            "fn main() {\n    print(3)\n}\n",
+        ])
+        .output()
+        .expect("sisu starts");
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "3\n");
+}
+
+/// GIVEN a program that leaks a cycle of objects and prints 1
+/// WHEN it runs, built with `--sanitize address`
+/// THEN it exits with a code other than 0
+/// AND stdout is "1\n"
+/// AND stderr holds `LeakSanitizer: detected memory leaks`
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "ASan works only on Linux")]
+fn sanitized_build_should_report_a_leaked_cycle() {
+    let exe = sanitized_exe("sanitized_cycle", LEAKS_A_CYCLE, &[]);
+    let out = sanitized_command(&exe)
+        .output()
+        .expect("the program starts");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_ne!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "1\n");
+    assert!(
+        stderr.contains("LeakSanitizer: detected memory leaks"),
+        "{stderr}"
+    );
+}
+
+/// GIVEN a program that holds an array and then indexes it out of bounds
+/// WHEN it runs, built with `--sanitize address` at `-O0`
+/// THEN it exits 101
+/// AND stderr is the panic line of the plain build
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "ASan works only on Linux")]
+fn sanitized_panic_should_keep_its_exit_code_and_print_no_report() {
+    let plain = compile_tmp("sanitized_panic", INDEXES_OUT_OF_BOUNDS, false);
+    let plain = Command::new(plain).output().expect("the program starts");
+    assert_eq!(plain.status.code(), Some(101), "{plain:?}");
+    let exe = sanitized_exe("sanitized_panic", INDEXES_OUT_OF_BOUNDS, &[]);
+    let out = sanitized_command(&exe)
+        .output()
+        .expect("the program starts");
+    assert_eq!(out.status.code(), Some(101), "{out:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&plain.stderr)
+    );
+}
+
+/// GIVEN a program that leaks a cycle and prints 1
+/// AND an empty `TMPDIR`
+/// WHEN `sisu run --sanitize address` runs it
+/// THEN it exits with a code other than 0
+/// AND stderr holds `LeakSanitizer`
+/// AND `TMPDIR` is empty
+///
+/// The report and the exit code of the program reach the user, and `run` removes its executable.
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "ASan works only on Linux")]
+fn sanitized_run_should_pass_on_the_report_and_the_exit_code() {
+    let tmp = empty_dir("sanitized_run_report_tmp");
+    let out = sanitized_command(env!("CARGO_BIN_EXE_sisu"))
+        .current_dir(env!("CARGO_TARGET_TMPDIR"))
+        .env("TMPDIR", &tmp)
+        .args(["run", "--sanitize", "address", "-e", LEAKS_A_CYCLE])
+        .output()
+        .expect("sisu starts");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_ne!(out.status.code(), Some(0), "{stderr}");
+    assert!(stderr.contains("LeakSanitizer"), "{stderr}");
+    let left: Vec<_> = fs::read_dir(&tmp)
+        .expect("reads TMPDIR")
+        .map(|entry| entry.expect("reads an entry").file_name())
+        .collect();
+    assert_eq!(left, Vec::<OsString>::new());
+}
+
+/// GIVEN a program that prints its arguments
+/// WHEN `sisu run --sanitize address -e <program> -- a b` runs it
+/// THEN it exits 0
+/// AND stdout is what `sisu run` prints without the flag, and names `a` and `b`
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "ASan works only on Linux")]
+fn sanitized_run_should_pass_on_the_arguments_of_an_inline_program() {
+    let run = |flags: &[&str]| {
+        sanitized_command(env!("CARGO_BIN_EXE_sisu"))
+            .current_dir(env!("CARGO_TARGET_TMPDIR"))
+            .arg("run")
+            .args(flags)
+            .args(["-e", ECHO_ARGS, "--", "a", "b"])
+            .output()
+            .expect("sisu starts")
+    };
+    let plain = run(&[]);
+    assert_eq!(plain.status.code(), Some(0), "{plain:?}");
+    let out = run(&["--sanitize", "address"]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(stdout, String::from_utf8_lossy(&plain.stdout));
+    assert!(stdout.lines().any(|line| line == "a"), "{stdout}");
+    assert!(stdout.lines().any(|line| line == "b"), "{stdout}");
+}
+
 /// The section table of `path`, from `readelf -S --wide`. The command must exit 0.
 fn readelf_sections(path: &Path) -> String {
     let out = Command::new("readelf")
