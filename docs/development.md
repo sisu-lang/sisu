@@ -201,12 +201,13 @@ yourself. A program built without the flag fails under Valgrind on mimalloc's
 startup read and shows none of its Sisu allocations
 ([ADR 0031](adr/0031-compiled-programs-allocate-with-mimalloc.md)).
 To see the ASan report of a case by hand, build it with `--sanitize address`
-and run the executable with `ASAN_OPTIONS=fast_unwind_on_malloc=0`. Without
-that option, the allocation stack of a leak report has no Sisu frame, because
-Sisu emits no frame pointers. The harness also sets
-`detect_stack_use_after_return=1`, because GCC's `libasan` before GCC 13 does
-not check a use after return without it. These options replace the
-`ASAN_OPTIONS` of your environment, and the harness removes `LSAN_OPTIONS`. So
+and run the executable with the options of the harness,
+`ASAN_OPTIONS=fast_unwind_on_malloc=0:detect_stack_use_after_return=1`.
+Without the first option, the allocation stack of a leak report has no Sisu
+frame, because Sisu emits no frame pointers. Without the second, GCC's
+`libasan` before GCC 13 does not check a use after return. In the harness, these
+options replace the `ASAN_OPTIONS` of your environment, and the harness removes
+`LSAN_OPTIONS`. So
 an exported `ASAN_OPTIONS=detect_leaks=0` cannot hide a leak from `make test`.
 On Linux, `sisu` links with `-Wl,-S`, which drops the debug information of
 the runtime archive. So Valgrind shows a runtime frame by its function name,
@@ -1479,8 +1480,9 @@ prints no ASan report, unless LeakSanitizer finds a leak. A leak report sets
 another exit code at any `-O` level. For example, an unreachable cycle that
 exists when the panic runs is a leak. At `-O2`, the last pointer to a live
 object can be dead when the panic runs. To run a sanitized build by hand, set
-`ASAN_OPTIONS=fast_unwind_on_malloc=0`, so that a leak report names the Sisu
-function that allocated. `make test` builds every `run/` case this way on Linux.
+`ASAN_OPTIONS=fast_unwind_on_malloc=0:detect_stack_use_after_return=1`, as the
+harness does (Build and test). `make test` builds every `run/` case this way on
+Linux.
 
 `sisu build --rc-checks file.sisu` builds an executable that checks its
 reference counts. Before each retain or release, it checks that the count is
