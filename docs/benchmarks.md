@@ -518,9 +518,10 @@ as the case `<shape> -O2`. A `-O2` case judges only `codegen`, `optimize` and
 `object`, because the stages before them do the same work at each level. A
 shape in `CHECK_ONLY` tests the path of an error. Each of its programs above
 size 0 must give a diagnostic. Callgrind measures `sisu check` on it, and the
-stages after `check` count 0. The count does not depend on the load of the machine. It also changes a little with
-the file paths and the C library. So on another machine, such as the runner of
-the nightly job, a ratio near a number of the rule can fall on the other side.
+stages after `check` count 0. The count does not depend on the load of the
+machine. It also changes a little with the file paths and the C library. Thus
+a ratio near a number of the rule can fall on the other side on another machine.
+The runner of the nightly job is such a machine.
 It needs `valgrind`, and a full run takes about 12 minutes on the machine
 above.
 

@@ -440,7 +440,8 @@ fn judge_mistakes(g: &Generated, seen: Option<&Path>) -> Result<(), Failure> {
 }
 
 /// The control of `g`: its first two mistakes, in kind order, of different functions. A copy of an
-/// item is not in a control, because the copy can hold the site of the other mistake.
+/// item is not in a control: a use of a name that is defined twice gets no checks, so the other
+/// mistake can lose its error.
 fn control_of(g: &Generated) -> Option<[&Mistake; 2]> {
     let mistakes: Vec<&Mistake> = (g.mistakes.iter())
         .filter(|m| m.kind != Kind::Duplicate)
@@ -2410,7 +2411,7 @@ mod tests {
             .expect("one E0034 at the second definition should pass");
     }
 
-    /// GIVEN a mistake in a function and a copy of an item, which may hold that mistake's site
+    /// GIVEN a mistake in a function and a copy of an item, whose name the mistake may use
     /// WHEN the control is chosen
     /// THEN no control takes the copy
     #[test]

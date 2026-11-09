@@ -64,6 +64,7 @@ LLVM_STAGES = ("optimize", "object")
 O2_SHAPES = ("functions", "statements", "interpolations", "prints", "nested array ==")
 # The shapes whose programs are errors, so that nothing after `check` runs for them.
 CHECK_ONLY = ("failed bounds",)
+# `sisu check` runs lex, parse and check, the first three stages of `STAGES`.
 CHECK_ONLY_STAGES = STAGES[:3]
 O2_SUFFIX = " -O2"
 # At -O2, the stages before codegen do the same work as at -O0, so a -O2 case judges only these.
@@ -795,9 +796,6 @@ def measure_shape(
             profile = str(Path(tmp, "callgrind.out"))
             for k, path in zip(sizes, files, strict=False):
                 what = f"{case}, size {k}"
-                # One codegen unit: the default number of units grows with the program, and each
-                # unit repeats some work, so the sizes would not split the same way.
-                build = ["build", *flags, "--codegen-units", "1", path, "-o", Path(tmp, "out")]
                 callgrind = ["valgrind", "--tool=callgrind", f"--callgrind-out-file={profile}"]
                 if name in CHECK_ONLY:
                     command = [*callgrind, args.sisu, "check", path]
@@ -808,6 +806,9 @@ def measure_shape(
                     found = stage_counts(annotated, CHECK_ONLY_STAGES)
                     found = {stage: found.get(stage, 0) for stage, _ in STAGES}
                 else:
+                    # One codegen unit: the default number of units grows with the program, and
+                    # each unit repeats some work, so the sizes would not split the same way.
+                    build = ["build", *flags, "--codegen-units", "1", path, "-o", Path(tmp, "out")]
                     deadline.run([*callgrind, args.sisu, *build], what, stdout=subprocess.DEVNULL)
                     found = stage_counts(deadline.run([*ANNOTATE, profile], what).stdout)
                 for stage, count in found.items():

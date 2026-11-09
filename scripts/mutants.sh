@@ -61,7 +61,7 @@ count() { if [[ -f mutants.out/$1.txt ]]; then wc -l <"mutants.out/$1.txt"; else
 # Prints one line about the run that holds the lock of this worktree.
 status_report() {
   local lock=target/mutation-test.lock file=target/mutation-test.status
-  local fd label n start jobs finished=0 kind elapsed left progress extra=
+  local fd label n start jobs later finished=0 stuck=0 kind elapsed left progress extra=
   if [[ ! -e $lock ]] || { exec {fd}<"$lock" && flock -n "$fd"; }; then
     echo "mutation-test: no run in this worktree"
     return 0
@@ -70,8 +70,13 @@ status_report() {
     echo "mutation-test: a run holds the lock; no pass has started"
     return 0
   fi
-  IFS=$'\t' read -r label n start jobs <"$file"
-  for kind in caught missed unviable timeout; do finished=$((finished + $(count "$kind"))); done
+  IFS=$'\t' read -r label n start jobs later <"$file"
+  # cargo mutants replaces mutants.out only after it finds the mutants. Until then the lists are
+  # those of the pass before.
+  if [[ mutants.out/lock.json -nt $file ]]; then
+    for kind in caught missed unviable timeout; do finished=$((finished + $(count "$kind"))); done
+    stuck=$(($(count missed) + $(count timeout)))
+  fi
   # shortcut: a group also runs each "delete field" mutant (see run_group), so its lists can pass
   # n and the group can look done early; separate the names if a group's time matters more.
   ((n > 0 && finished > n)) && finished=$n
@@ -87,7 +92,8 @@ status_report() {
   else
     left="no estimate yet"
   fi
-  [[ $label != "pass 1"* ]] || extra="; pass 2 gets $(($(count missed) + $(count timeout))) so far"
+  [[ $label != "pass 1"* ]] || extra="; pass 2 gets $stuck so far"
+  ((later > 0)) && extra="; then the whole-suite group: $later mutants, about $((later * WHOLE_SUITE_SECONDS / jobs / 60)) min"
   echo "mutation-test: $label: $progress, $((elapsed / 60)) min so far, $left$extra"
 }
 
@@ -214,15 +220,17 @@ pass() {
   [[ mutants.out/lock.json -nt $started ]] && tested=yes
   return 0
 }
-# What --status reads: the label of a pass or a group, its size and when it started.
+# What --status reads: the label of a pass or a group, its size, when it started and the jobs.
+# The last field ($3, 0 by default) is the size of the whole-suite group that comes after it.
 record_progress() {
-  printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$(date +%s)" "${CARGO_MUTANTS_JOBS:-2}" >target/mutation-test.status
+  printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$(date +%s)" "${CARGO_MUTANTS_JOBS:-2}" "${3:-0}" >target/mutation-test.status
 }
 
-record_progress "pass 1 (unit tests)" "${total:-0}"
 if [[ -n $not_run || -n $test_args ]]; then
+  record_progress "one pass with the tests you chose" 0
   pass "$@"
 else
+  record_progress "pass 1 (unit tests)" "$total"
   echo "mutation-test: pass 1 (unit tests): $total mutants; pass 2 tests only what pass 1 does not catch, so its time is known when pass 1 ends"
   pass "$@" -- --lib
 fi
@@ -255,12 +263,13 @@ count_in() {
 # and judges only the names it was given: it ignores the other lines of mutants.out and the exit
 # status of cargo mutants, which those other mutants can change.
 run_group() {
-  local label=$1 names=$2 tests=$3 n re
+  local label=$1 names=$2 tests=$3 n re later=0
   shift 3
   n=$(wc -l <"$names")
   ((n > 0)) || return 0
   echo "mutation-test: pass 2, $label group: $n mutants, tests: $tests"
-  record_progress "pass 2, $label group" "$n"
+  [[ $label != lib-only ]] || later=$(wc -l <"$suite_names")
+  record_progress "pass 2, $label group" "$n" "$later"
   if [[ $label == whole-suite ]]; then
     # shortcut: this reads CARGO_MUTANTS_JOBS and not -j; pass -j here if a run needs it.
     echo "mutation-test: pass 2, whole-suite group: about $((n * WHOLE_SUITE_SECONDS / ${CARGO_MUTANTS_JOBS:-2} / 60)) min"

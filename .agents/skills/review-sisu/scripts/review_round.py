@@ -100,7 +100,7 @@ def verify(repo: Path, run: Path, round_number: int, reports: list[str]) -> int:
         raise SystemExit(f"review_round: {before} does not exist: run prepare first")
     record(repo, after)
     paths = [run / numbered(stem, round_number) for stem in reports]
-    missing = [path for path in paths if not path.exists()]
+    missing = [path for path in paths if not (path.is_file() and path.stat().st_size > 0)]
     for path in missing:
         print(f"review_round: no report: {path}")
     if not filecmp.cmp(before, after, shallow=False):

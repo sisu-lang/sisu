@@ -114,6 +114,13 @@ class ReviewRound(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("changed the checkout", result.stdout)
 
+    def test_verify_should_fail_on_an_empty_report(self) -> None:
+        self.script("prepare", "main..main")
+        (self.run_dir / "opus.md").write_text("")
+        result = self.script("verify", "--report", "opus")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(f"no report: {self.run_dir / 'opus.md'}", result.stdout)
+
     def test_verify_should_fail_and_name_a_missing_report(self) -> None:
         self.script("prepare", "main..main")
         (self.run_dir / "sol.md").write_text("report")

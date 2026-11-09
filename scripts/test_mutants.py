@@ -66,6 +66,7 @@ if [[ " $* " == *" ^"* ]]; then
   fi
   echo "$*" >$name
   printf '%s\n' "$@" >lines${name#args}
+  cp target/mutation-test.status status${name#args}
 else
   echo "$*" >args
 fi
@@ -772,15 +773,30 @@ class Mutants(unittest.TestCase):
         )
         self.assertFalse(self.seen("seen"))
 
-    def status(self, label: str = "", n: int = 0, age: int = 600, **done: int) -> str:
-        """Run --status while the test holds the lock of a run in the given state."""
+    def status(
+        self,
+        label: str = "",
+        n: int = 0,
+        age: int = 600,
+        *,
+        later: int = 0,
+        replaced: bool = True,
+        **done: int,
+    ) -> str:
+        """Run --status while the test holds the lock of a run in the given state.
+
+        `replaced` says that cargo mutants wrote this pass's mutants.out.
+        """
         target = self.repo / "target"
         target.mkdir(exist_ok=True)
         if label:
             start = int(time.time()) - age
-            (target / "mutation-test.status").write_text(f"{label}\t{n}\t{start}\t2\n")
+            (target / "mutation-test.status").write_text(f"{label}\t{n}\t{start}\t2\t{later}\n")
         out = self.repo / "mutants.out"
         out.mkdir(exist_ok=True)
+        (out / "lock.json").touch()
+        written = time.time() + (10 if replaced else -1000)
+        os.utime(out / "lock.json", (written, written))
         for kind, lines in done.items():
             (out / f"{kind}.txt").write_text("m\n" * lines)
         with (target / "mutation-test.lock").open("w", encoding="utf-8") as held:
@@ -824,6 +840,33 @@ class Mutants(unittest.TestCase):
 
     def test_status_of_another_group_with_no_mutant_done_should_give_no_estimate(self) -> None:
         self.assertIn("no estimate yet", self.status("pass 2, lib-only group", n=9))
+
+    def test_status_should_not_count_the_lists_of_the_pass_before_until_they_are_replaced(
+        self,
+    ) -> None:
+        line = self.status("pass 1 (unit tests)", n=30, replaced=False, caught=40, missed=7)
+        self.assertIn("0 of 30 done", line)
+        self.assertIn("no estimate yet", line)
+        self.assertIn("pass 2 gets 0 so far", line)
+
+    def test_status_of_the_lib_only_group_should_give_the_whole_suite_group_after_it(self) -> None:
+        self.assertIn(
+            "; then the whole-suite group: 60 mutants, about 77 min",
+            self.status("pass 2, lib-only group", n=9, later=60, caught=3),
+        )
+
+    def test_a_lib_only_group_should_record_the_size_of_the_whole_suite_group(self) -> None:
+        self.rust_commit()
+        names = "crates/sisuc/src/generate/a.rs:1:1: x\ncrates/sisuc/src/check/b.rs:1:1: y"
+        self.mutate(list=2, exit=2, missed_names=names, lib_caught=1, pass2_caught=1)
+        fields = (self.repo / "status_lib").read_text().rstrip("\n").split("\t")
+        self.assertEqual((fields[0], fields[1], fields[4]), ("pass 2, lib-only group", "1", "1"))
+
+    def test_a_run_with_its_own_tests_should_not_record_a_pass_1(self) -> None:
+        self.rust_commit()
+        self.mutate("--", "--doc", caught=1)
+        label, n, *_ = (self.repo / "target/mutation-test.status").read_text().split("\t")
+        self.assertEqual((label, n), ("one pass with the tests you chose", "0"))
 
     def test_status_should_not_count_more_mutants_than_the_group_has(self) -> None:
         self.assertIn("4 of 4 done", self.status("pass 2, lib-only group", n=4, caught=9))
