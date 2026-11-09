@@ -57,6 +57,8 @@ LLVM_STAGES = ("optimize", "object")
 # The shapes that the sweep also builds at -O2, as the case `<shape> -O2`. Under callgrind, -O2
 # costs much more than -O0, so the list holds the shapes that give the -O2 passes the most work.
 # `mut call width` is not in it (#621): under callgrind, its -O2 build at 8n ran over 25 minutes.
+# The cause is LLVM's `ConstraintEliminationPass`, which is cubic in the number of function
+# parameters. Clang does the same on C. #621 is closed.
 O2_SHAPES = ("functions", "statements", "interpolations", "prints", "nested array ==")
 O2_SUFFIX = " -O2"
 # At -O2, the stages before codegen do the same work as at -O0, so a -O2 case judges only these.
@@ -72,10 +74,12 @@ KNOWN = [
     ("mut exits", "object", 502),
     ("owned exits", "optimize", 502),
     ("owned exits", "object", 502),
-    ("interpolations -O2", "optimize", 611),
-    ("interpolations -O2", "object", 611),
+    # The next two rows are LLVM's cost, not Sisu's. Clang at -O0 grows the same way on a C
+    # function with n parameters: the list scheduler of the SelectionDAG. #612 is closed.
     ("mut call width", "object", 612),
     ("mut returns", "object", 612),
+    # The object work for each literal is flat. One size of the sweep falls on a one-time step of
+    # LLVM's tables, so this row is a step and not a curve. #613 is closed.
     ("float left", "object", 613),
 ]
 ANNOTATE = ["callgrind_annotate", "--inclusive=yes", "--threshold=100", "--show=Ir", "--auto=no"]

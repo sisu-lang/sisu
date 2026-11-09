@@ -2874,7 +2874,7 @@ fn defining<'a>(body: &'a str, name: &str) -> &'a str {
 fn cast_operand<'a>(instruction: &'a str, opcode: &str) -> &'a str {
     instruction
         .strip_prefix(opcode)
-        .and_then(|rest| rest.split_whitespace().nth(1))
+        .and_then(|rest| rest.split_whitespace().next())
         .unwrap_or_else(|| panic!("`{instruction}` is not a {opcode}"))
 }
 

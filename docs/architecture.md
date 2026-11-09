@@ -545,15 +545,15 @@ lines, to panic and to allocate and free objects, arrays and strings:
 `sisu_eprint_f64`, `sisu_eprint_bool`,
 `sisu_flush_stdout`, `sisu_panic`, `sisu_panic_message`, `sisu_panic_bounds`,
 `sisu_alloc`, `sisu_realloc` and `sisu_free`. Text lives in `text.rs`:
-`sisu_print_char`, `sisu_print_str`, `sisu_eprint_char`, `sisu_eprint_str`,
-`sisu_str_compare`, and `sisu_write_int`, `sisu_write_bool` and
-`sisu_write_char`, which interpolation calls (`float.rs` adds `sisu_write_f64`
-for an `f64`, and `sisu_write_f64_fixed` for one with a precision), and
-`sisu_pad`, which pads a part with a width in place, and
-`sisu_utf8_count`, `sisu_utf8_decode`, `sisu_utf8_len` and `sisu_utf8_encode`,
-which `chars()` and `string(cs)` call, and `sisu_words_count` and
-`sisu_word_next`, which `words()` calls; `s.words().len()`, written as one
-expression, calls only `sisu_words_count`. `stdin.rs` holds `sisu_read_line`,
+`sisu_print_char`, `sisu_print_str`, `sisu_eprint_char`, `sisu_eprint_str` and
+`sisu_str_compare`. Interpolation calls `sisu_write_int`, `sisu_write_bool`,
+`sisu_write_char` and `sisu_write_str` (`float.rs` adds `sisu_write_f64` for an
+`f64`, and `sisu_write_f64_fixed` for one with a precision). `sisu_pad` pads a
+part with a width in place. Each of these writers and `sisu_pad` returns the
+end of its text. The next part starts there. `chars()` and `string(cs)` call
+`sisu_utf8_count`, `sisu_utf8_decode`, `sisu_utf8_len` and `sisu_utf8_encode`.
+`words()` calls `sisu_words_count` and `sisu_word_next`; `s.words().len()`,
+written as one expression, calls only `sisu_words_count`. `stdin.rs` holds `sisu_read_line`,
 which `read_line()` calls. `args.rs` holds `sisu_args_len` and `sisu_arg`,
 which the generated `main` calls to build `args` when `sisu.main` takes it.
 `stack.rs` holds `sisu_stack_grow`, which runs a generated show or `==` helper

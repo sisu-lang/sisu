@@ -60,7 +60,7 @@ pub extern "C" fn sisu_eprint_char(c: u32) {
     crate::eprint_bytes(char_text(c, &mut [0; 4]));
 }
 
-/// Copies `text` to `out` and returns its length.
+/// Copies `text` to `out` and returns the end of the copy: `out` plus `text.len()`.
 ///
 /// # Safety
 ///
@@ -69,14 +69,14 @@ pub extern "C" fn sisu_eprint_char(c: u32) {
     unsafe_code,
     reason = "writes through the pointer generated code passes"
 )]
-pub(crate) unsafe fn write(text: &[u8], out: *mut u8) -> usize {
+pub(crate) unsafe fn write(text: &[u8], out: *mut u8) -> *mut u8 {
     // SAFETY: the caller promises room for `text.len()` bytes at `out`, apart from `text`.
     unsafe { std::ptr::copy_nonoverlapping(text.as_ptr(), out, text.len()) };
-    text.len()
+    out.wrapping_add(text.len())
 }
 
-/// Writes `value` in decimal, as `print` does, to `out`, and returns how many bytes it wrote:
-/// at most 20. Interpolation calls this for an `i64` or a widened `u8`.
+/// Writes `value` in decimal, as `print` does, to `out`, and returns the end of the text: `out`
+/// plus the bytes it wrote, at most 20. Interpolation calls this for an `i64` or a widened `u8`.
 ///
 /// # Safety
 ///
@@ -86,13 +86,13 @@ pub(crate) unsafe fn write(text: &[u8], out: *mut u8) -> usize {
     reason = "generated code calls this function by its unmangled symbol name"
 )]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sisu_write_int(value: i64, out: *mut u8) -> usize {
+pub unsafe extern "C" fn sisu_write_int(value: i64, out: *mut u8) -> *mut u8 {
     // SAFETY: the caller promises room for the text, at most the 20 bytes `int_text` gives.
     unsafe { write(int_text(value, &mut [0; INT_BYTES]), out) }
 }
 
-/// Writes `true` or `false`, as `print` does, to `out`, and returns how many bytes it wrote:
-/// at most 5. Interpolation calls this for a `bool`.
+/// Writes `true` or `false`, as `print` does, to `out`, and returns the end of the text: `out`
+/// plus the bytes it wrote, at most 5. Interpolation calls this for a `bool`.
 ///
 /// # Safety
 ///
@@ -102,13 +102,14 @@ pub unsafe extern "C" fn sisu_write_int(value: i64, out: *mut u8) -> usize {
     reason = "generated code calls this function by its unmangled symbol name"
 )]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sisu_write_bool(value: bool, out: *mut u8) -> usize {
+pub unsafe extern "C" fn sisu_write_bool(value: bool, out: *mut u8) -> *mut u8 {
     // SAFETY: the caller promises room for 5 bytes, the length of `false`.
     unsafe { write(bool_text(value), out) }
 }
 
 /// Writes the UTF-8 encoding of the `char` with scalar value `c`, as `print` does, to `out`,
-/// and returns how many bytes it wrote: at most 4. Interpolation calls this for a `char`.
+/// and returns the end of the text: `out` plus the bytes it wrote, at most 4. Interpolation
+/// calls this for a `char`.
 ///
 /// # Safety
 ///
@@ -118,17 +119,35 @@ pub unsafe extern "C" fn sisu_write_bool(value: bool, out: *mut u8) -> usize {
     reason = "generated code calls this function by its unmangled symbol name"
 )]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sisu_write_char(c: u32, out: *mut u8) -> usize {
+pub unsafe extern "C" fn sisu_write_char(c: u32, out: *mut u8) -> *mut u8 {
     // SAFETY: the caller promises room for 4 bytes, the longest UTF-8 encoding.
     unsafe { write(char_text(c, &mut [0; 4]), out) }
 }
 
+/// Copies the `len` bytes at `text` to `out`, and returns the end of the copy: `out` plus `len`.
+/// Interpolation calls this for a `string` part.
+///
+/// # Safety
+///
+/// `text[..len]` is readable, `out[..len]` is writable, and they do not overlap. `len` may be 0.
+#[expect(
+    unsafe_code,
+    reason = "generated code calls this function by its unmangled symbol name"
+)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sisu_write_str(text: *const u8, len: usize, out: *mut u8) -> *mut u8 {
+    // SAFETY: the caller promises `len` readable bytes at `text`.
+    let text = unsafe { std::slice::from_raw_parts(text, len) };
+    // SAFETY: the caller promises room for `len` bytes at `out`, apart from `text`.
+    unsafe { write(text, out) }
+}
+
 /// Pads the `len` bytes of UTF-8 text at `text` with spaces to `width` code points, in place,
-/// and returns the new length. `align` 0 puts the text on the left, 1 on the right and 2 in the
-/// centre, with the odd space on the right. Text of `width` code points or more is left as it
-/// is. Interpolation calls this for a part with a width, after writing the part at `text`.
-/// Codegen names the alignments `PAD_LEFT`, `PAD_RIGHT` and `PAD_CENTER` in
-/// `crates/sisuc/src/codegen/abi.rs`.
+/// and returns the end of the padded text: `text` plus the new length. `align` 0 puts the text
+/// on the left, 1 on the right and 2 in the centre, with the odd space on the right. Text of
+/// `width` code points or more is left as it is. Interpolation calls this for a part with a
+/// width, after writing the part at `text`. Codegen names the alignments `PAD_LEFT`,
+/// `PAD_RIGHT` and `PAD_CENTER` in `crates/sisuc/src/codegen/abi.rs`.
 ///
 /// # Safety
 ///
@@ -138,7 +157,7 @@ pub unsafe extern "C" fn sisu_write_char(c: u32, out: *mut u8) -> usize {
     reason = "generated code calls this function by its unmangled symbol name"
 )]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sisu_pad(text: *mut u8, len: usize, width: usize, align: u8) -> usize {
+pub unsafe extern "C" fn sisu_pad(text: *mut u8, len: usize, width: usize, align: u8) -> *mut u8 {
     // SAFETY: the caller promises `len` initialized bytes at `text`.
     let bytes = unsafe { std::slice::from_raw_parts(text, len) };
     // A code point is every byte but a UTF-8 continuation byte, `0b10xx_xxxx`.
@@ -147,7 +166,7 @@ pub unsafe extern "C" fn sisu_pad(text: *mut u8, len: usize, width: usize, align
         .filter(|&&b| b & 0b1100_0000 != 0b1000_0000)
         .count();
     let Some(pad) = width.checked_sub(count) else {
-        return len;
+        return text.wrapping_add(len);
     };
     let left = match align {
         0 => 0,
@@ -166,7 +185,7 @@ pub unsafe extern "C" fn sisu_pad(text: *mut u8, len: usize, width: usize, align
     let tail = unsafe { text.add(left + len) };
     // SAFETY: `pad - left` bytes from `tail` end at `len + pad`, which is writable.
     unsafe { std::ptr::write_bytes(tail, b' ', pad - left) };
-    len + pad
+    text.wrapping_add(len + pad)
 }
 
 /// The `len` bytes at `bytes` as text. A Sisu string is valid UTF-8, so the arm that aborts is
@@ -281,15 +300,12 @@ pub unsafe extern "C" fn sisu_utf8_len(chars: *const u32, n: usize) -> usize {
 )]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sisu_utf8_encode(chars: *const u32, n: usize, out: *mut u8) {
-    let mut written = 0;
+    let mut at = out;
     // SAFETY: the caller promises `n` readable `u32`s at `chars`.
     for c in unsafe { scalars(chars, n) } {
-        // SAFETY: the caller promises room for every encoded byte, and `written` does not
-        // pass their total, so the offset stays inside that room.
-        let at = unsafe { out.add(written) };
-        // SAFETY: `written` plus this `char`'s bytes does not pass the total, so the room at
-        // `at` holds them.
-        written += unsafe { write(c.encode_utf8(&mut [0; 4]).as_bytes(), at) };
+        // SAFETY: the caller promises room for every encoded byte. The bytes before `at` do
+        // not pass their total, so the room at `at` holds this `char`'s bytes.
+        at = unsafe { write(c.encode_utf8(&mut [0; 4]).as_bytes(), at) };
     }
 }
 

@@ -560,13 +560,15 @@ on stdout. It exits with code 1 when:
 
 The pull request that fixes a known case removes its row. The gaps between
 the numbers keep a row from changing between known and fixed when a change
-moves a ratio a little. `KNOWN` has 12 rows. Seven are for the shapes mut
+moves a ratio a little. `KNOWN` has 10 rows. Seven are for the shapes mut
 exits and owned exits (#502), in `mir`, `codegen` and the LLVM stages. Each
 `return` writes its own cleanup, so n exits and n values give n² statements.
 Real programs have few of these: no exit in the benchmark programs or the
-lexer has more than 4 cleanup statements. The other five rows are LLVM cases:
-interpolations -O2 (#611), a call with n arguments at -O0 (#612, in mut call
-width and mut returns), and float left (#613).
+lexer has more than 4 cleanup statements. The other three rows are LLVM cases.
+Each stays. A call with n arguments at -O0 (#612) grows the same way in clang
+on a C function with n parameters. This is mut call width and mut returns. The
+list scheduler of LLVM's SelectionDAG does it. Float left (#613) is a step,
+not a curve: one size of the sweep falls on a one-time step of LLVM's tables.
 
 Each `tir::Expr` holds its exit flag. The checker sets it once, when it makes
 the expression. So array literal depth (#344), type depth, method chain,

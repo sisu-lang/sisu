@@ -18,8 +18,8 @@ pub(crate) fn shortest(x: f64, buffer: &mut [u8; FLOAT_BYTES]) -> &[u8] {
     &buffer[..len]
 }
 
-/// Writes `x` as `print` does to `out`, and returns how many bytes it wrote: at most 24.
-/// Interpolation calls this for an `f64`.
+/// Writes `x` as `print` does to `out`, and returns the end of the text: `out` plus the bytes
+/// it wrote, at most 24. Interpolation calls this for an `f64`.
 ///
 /// # Safety
 ///
@@ -29,7 +29,7 @@ pub(crate) fn shortest(x: f64, buffer: &mut [u8; FLOAT_BYTES]) -> &[u8] {
     reason = "generated code calls this function by its unmangled symbol name"
 )]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sisu_write_f64(x: f64, out: *mut u8) -> usize {
+pub unsafe extern "C" fn sisu_write_f64(x: f64, out: *mut u8) -> *mut u8 {
     // SAFETY: the caller promises room for the text, at most the 24 bytes `shortest` gives.
     unsafe { crate::text::write(shortest(x, &mut [0; FLOAT_BYTES]), out) }
 }
@@ -39,9 +39,9 @@ pub unsafe extern "C" fn sisu_write_f64(x: f64, out: *mut u8) -> usize {
 const FIXED_BYTES: usize = 341;
 
 /// Writes `x` with `precision` decimals, rounded half to even from its exact binary value and
-/// never in exponent form, to `out`, and returns how many bytes it wrote: at most
-/// `311 + precision`. NaN is `nan`; infinity is `inf` or `-inf`, without decimals.
-/// Interpolation calls this for an `f64` with a precision.
+/// never in exponent form, to `out`. Returns the end of the text: `out` plus the bytes it
+/// wrote, at most `311 + precision`. NaN is `nan`. Infinity is `inf` or `-inf`, without
+/// decimals. Interpolation calls this for an `f64` with a precision.
 ///
 /// # Safety
 ///
@@ -51,7 +51,7 @@ const FIXED_BYTES: usize = 341;
     reason = "generated code calls this function by its unmangled symbol name"
 )]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sisu_write_f64_fixed(x: f64, precision: u8, out: *mut u8) -> usize {
+pub unsafe extern "C" fn sisu_write_f64_fixed(x: f64, precision: u8, out: *mut u8) -> *mut u8 {
     if x.is_nan() {
         // SAFETY: the caller promises at least 311 bytes, and `nan` takes 3.
         return unsafe { crate::text::write(b"nan", out) };

@@ -141,7 +141,10 @@ impl Sink {
         )]
         // SAFETY: the block holds the `len - mark` bytes of text at `text`, and `reserve` made
         // room for `width` more after `len`, so `len - mark + width` bytes are writable there.
-        let padded = unsafe { sisu_pad(text, self.len - mark, width, align) };
+        let end = unsafe { sisu_pad(text, self.len - mark, width, align) };
+        #[expect(unsafe_code, reason = "measures the text that `sisu_pad` left")]
+        // SAFETY: `sisu_pad` returns `text` plus the new length, in the same block.
+        let padded = unsafe { end.offset_from_unsigned(text) };
         self.len = mark + padded;
     }
 
@@ -781,7 +784,10 @@ pub unsafe extern "C" fn sisu_show_f64_fixed(sink: *mut Sink, x: f64, precision:
     #[expect(unsafe_code, reason = "calls the runtime's C ABI function")]
     // SAFETY: `buffer` holds the 311 bytes and the precision that the text takes at most, and
     // the caller promises a precision of at most 30.
-    let len = unsafe { float::sisu_write_f64_fixed(x, precision, buffer.as_mut_ptr()) };
+    let end = unsafe { float::sisu_write_f64_fixed(x, precision, buffer.as_mut_ptr()) };
+    #[expect(unsafe_code, reason = "measures the text that the writer wrote")]
+    // SAFETY: the writer returns `buffer` plus the length of the text, in the same array.
+    let len = unsafe { end.offset_from_unsigned(buffer.as_ptr()) };
     sink.put(&buffer[..len]);
 }
 

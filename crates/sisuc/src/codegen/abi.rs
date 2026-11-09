@@ -173,14 +173,14 @@ pub(super) const RUNTIME: &[RuntimeFn] = &[
     RuntimeFn {
         name: "sisu_write_f64",
         params: &[Abi::F64, Abi::Ptr],
-        ret: Some(Abi::I64),
-        attrs: returns_len(NONE),
+        ret: Some(Abi::Ptr),
+        attrs: NONE,
     },
     RuntimeFn {
         name: "sisu_write_f64_fixed",
         params: &[Abi::F64, Abi::U8, Abi::Ptr],
-        ret: Some(Abi::I64),
-        attrs: returns_len(NONE),
+        ret: Some(Abi::Ptr),
+        attrs: NONE,
     },
     // lib.rs
     RuntimeFn {
@@ -414,8 +414,8 @@ pub(super) const RUNTIME: &[RuntimeFn] = &[
     RuntimeFn {
         name: "sisu_pad",
         params: &[Abi::Ptr, Abi::I64, Abi::I64, Abi::U8],
-        ret: Some(Abi::I64),
-        attrs: returns_len(NONE),
+        ret: Some(Abi::Ptr),
+        attrs: NONE,
     },
     RuntimeFn {
         name: "sisu_print_char",
@@ -476,20 +476,26 @@ pub(super) const RUNTIME: &[RuntimeFn] = &[
     RuntimeFn {
         name: "sisu_write_bool",
         params: &[Abi::Bool, Abi::Ptr],
-        ret: Some(Abi::I64),
-        attrs: returns_len(NONE),
+        ret: Some(Abi::Ptr),
+        attrs: NONE,
     },
     RuntimeFn {
         name: "sisu_write_char",
         params: &[Abi::I32, Abi::Ptr],
-        ret: Some(Abi::I64),
-        attrs: returns_len(NONE),
+        ret: Some(Abi::Ptr),
+        attrs: NONE,
     },
     RuntimeFn {
         name: "sisu_write_int",
         params: &[Abi::I64, Abi::Ptr],
-        ret: Some(Abi::I64),
-        attrs: returns_len(NONE),
+        ret: Some(Abi::Ptr),
+        attrs: NONE,
+    },
+    RuntimeFn {
+        name: "sisu_write_str",
+        params: &[Abi::Ptr, Abi::I64, Abi::Ptr],
+        ret: Some(Abi::Ptr),
+        attrs: NONE,
     },
 ];
 
