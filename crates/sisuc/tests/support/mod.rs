@@ -115,12 +115,13 @@ impl Invocation {
     }
 
     /// Runs `exe` with `ASAN_OPTIONS=fast_unwind_on_malloc=0`, which replaces any value in the
-    /// environment, so that the environment of the developer cannot turn off a report. The option
-    /// gives a report whose stack holds the frames of the program.
+    /// environment, and without `LSAN_OPTIONS`. The environment of the developer then cannot
+    /// turn off a report. The option gives a report whose stack holds the frames of the program.
     pub(crate) fn run_asan(&self, exe: &Path) -> Output {
         let mut command = Command::new(exe);
         command
             .env("ASAN_OPTIONS", "fast_unwind_on_malloc=0")
+            .env_remove("LSAN_OPTIONS")
             .args(&self.args);
         output_with_stdin(&mut command, &self.stdin)
     }
@@ -270,7 +271,7 @@ pub(crate) fn run_with(path: &Path, bless: bool, valgrind: &Path) {
     let out_dir = case_dir(path);
     // On macOS, `VALGRIND_O2` is the `-O2` build on mimalloc, and `O0` is the plain build.
     let [o0, o2] = build_into(path, &out_dir, [O0, VALGRIND_O2]);
-    let asan = linux.then(|| build_into(path, &out_dir, [ASAN_O0, ASAN_O2, ASAN_RC]));
+    let asan_builds = linux.then(|| build_into(path, &out_dir, [ASAN_O0, ASAN_O2, ASAN_RC]));
     // The last build to run: on Linux the `-O2` build on mimalloc, on macOS the `--rc-checks` one.
     let [last] = if linux {
         let [exe] = build_into(path, &out_dir, [MIMALLOC_O2]);
@@ -293,7 +294,7 @@ pub(crate) fn run_with(path: &Path, bless: bool, valgrind: &Path) {
     let err_path = path.with_extension("err");
     let expects_stderr = err_path.exists();
     // The first program that runs, see above.
-    let asan: Vec<(&PathBuf, Output)> = asan
+    let asan: Vec<(&PathBuf, Output)> = asan_builds
         .iter()
         .flatten()
         .map(|exe| {

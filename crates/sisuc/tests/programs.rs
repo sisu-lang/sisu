@@ -3534,7 +3534,6 @@ fn specialized_clone_check_should_find_a_definition_of_a_clone() {
 }
 
 /// A `#!/bin/sh` script with the body `body` in `dir`, in place of the `valgrind` program.
-#[cfg(target_os = "linux")]
 fn valgrind_stub(dir: &Path, body: &str) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
     let stub = dir.join("stub");
@@ -3544,7 +3543,6 @@ fn valgrind_stub(dir: &Path, body: &str) -> PathBuf {
 }
 
 /// A `tests/run` case that prints 1.
-#[cfg(target_os = "linux")]
 const PASSING_CASE: [(&str, &str); 2] = [
     ("a.sisu", "fn main() {\n    print(1)\n}\n"),
     ("a.out", "1\n"),
@@ -3681,7 +3679,8 @@ fn run_case_should_run_o0_on_mimalloc_and_o2_on_the_system_allocator() {
 ///
 /// `asan_runs_should_replace_the_asan_options_of_the_environment` starts this test with
 /// `ASAN_OPTIONS=detect_leaks=0`. It has its own directory, because nextest runs the tests at the
-/// same time.
+/// same time. For the same reason, it must not run beside its starter (for example under
+/// `--run-ignored all`): both would use that directory at once.
 #[test]
 #[ignore = "started by asan_runs_should_replace_the_asan_options_of_the_environment"]
 fn leak_case_should_fail_when_started_by_the_environment_test() {
