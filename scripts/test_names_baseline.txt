@@ -625,7 +625,6 @@ crates/sisuc/src/codegen/tests.rs::partition_makes_its_array_unique_once
 crates/sisuc/src/codegen/tests.rs::print_bool_passes_a_zero_extended_i1
 crates/sisuc/src/codegen/tests.rs::print_declarations_carry_attributes
 crates/sisuc/src/codegen/tests.rs::read_line_declaration_has_no_memory_attribute
-crates/sisuc/src/codegen/tests.rs::scalar_not_equal_is_one_icmp_ne
 crates/sisuc/src/codegen/tests.rs::scalar_optional_is_a_pair
 crates/sisuc/src/codegen/tests.rs::store_to_a_moved_root_faults
 crates/sisuc/src/codegen/tests.rs::string_drop_frees_header_and_capacity

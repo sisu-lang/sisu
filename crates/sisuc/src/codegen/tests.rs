@@ -478,9 +478,11 @@ fn main() {
 /// The name of an enum, its bound, and its largest payload, value size and alignment in LLVM.
 type Compared = (String, payload_limit::Measured, Option<(u64, u64, u64)>);
 
-/// Compiles `src` and returns, for each enum of the program that `payload_limit::measure` bounds,
-/// that enum's name, the size of its largest variant and its value size and alignment in LLVM,
-/// each `None` when the enum is `Option`-shaped, which has no struct of its own.
+/// Compiles `src` and returns one entry for each enum of the program that
+/// `payload_limit::measure` bounds: the name of the enum, its bound, and the size of its largest
+/// variant with its value size and alignment in LLVM. The sizes are `None` for an `Option`-shaped
+/// enum, which has no struct of its own. An enum with no field has no struct either. It is its
+/// tag integer, which gives its size and alignment.
 fn enum_layouts(src: &str) -> Vec<Compared> {
     let context = Context::create();
     let parsed = parse_ok(src);
@@ -506,20 +508,37 @@ fn enum_layouts(src: &str) -> Vec<Compared> {
     for (e, bound) in program.enums.iter().zip(measured) {
         let bound = bound.unwrap_or_else(|| panic!("`{}` should have a bound", e.name));
         let value = module.get_struct_type(&format!("sisu.{}", e.name));
-        let value = value.expect("every enum should have a named struct type");
-        let laid_out = (!value.is_opaque()).then(|| {
-            // The size of the largest variant: each payload struct has a body.
-            let payload = (e.variants.iter())
+        // The size of the largest variant: each payload struct of a laid-out enum has a body.
+        let payload = || {
+            (e.variants.iter())
                 .map(|v| {
                     let name = format!("sisu.{}.{}", e.name, v.name);
                     let payload = module.get_struct_type(&name).expect("a payload struct");
                     data.get_abi_size(&payload)
                 })
                 .max()
-                .unwrap_or(0);
-            let (size, align) = (data.get_abi_size(&value), data.get_abi_alignment(&value));
-            (payload, size, u64::from(align))
-        });
+                .unwrap_or(0)
+        };
+        let laid_out = if e.variants.iter().all(|v| v.fields.is_empty()) {
+            // An enum with no field is its tag integer: it has no struct, not even an opaque one.
+            assert!(value.is_none(), "`{}` should have no struct type", e.name);
+            let bits = std::num::NonZeroU32::new(enums::tag_bits(e.variants.len()))
+                .expect("a tag has bits");
+            let tag = context
+                .custom_width_int_type(bits)
+                .expect("LLVM has the tag");
+            Some((
+                payload(),
+                data.get_abi_size(&tag),
+                u64::from(data.get_abi_alignment(&tag)),
+            ))
+        } else {
+            let value = value.expect("every enum with a field should have a named struct type");
+            (!value.is_opaque()).then(|| {
+                let (size, align) = (data.get_abi_size(&value), data.get_abi_alignment(&value));
+                (payload(), size, u64::from(align))
+            })
+        };
         found.push((e.name.clone(), bound, laid_out));
     }
     found
@@ -2060,7 +2079,8 @@ fn niche_layouts_should_follow_the_payload() {
         ("char??", "None", "i32", Some("i32 1114113")),
         ("bool?", "None", "i8", Some("i8 2")),
         ("bool??", "None", "i8", Some("i8 3")),
-        ("E?", "None", "%sisu.E", Some("%sisu.E { i8 2 }")),
+        ("E", "E.B", "i8", Some("i8 1")),
+        ("E?", "None", "i8", Some("i8 2")),
         ("Node?", "None", "ptr", Some("ptr null")),
         (
             "[i64]?",
@@ -2172,9 +2192,110 @@ fn niche_layouts_should_follow_the_payload() {
     }
 }
 
-/// `!=` on an `i64` or a `bool` is one `icmp ne`, not an `icmp eq` and a `not`.
+/// An enum with no field is its tag integer, never a struct `{ tag }`: `FastISel` on x86-64 does
+/// not select a load, store or return of a struct. `Many` has 300 variants, so its tag is an
+/// `i16`. No payload struct holds an enum, so no `{ i8 }` or `{ i16 }` type is left.
 #[test]
-fn scalar_not_equal_is_one_icmp_ne() {
+fn fieldless_enum_should_be_its_tag_integer() {
+    let context = Context::create();
+    let many = MANY_VARIANTS
+        .split("\nfn main()")
+        .next()
+        .expect("a split has a part");
+    let src = format!(
+        "enum Two {{\n    A\n    B\n}}\nenum One {{\n    Only\n}}\n{many}\n\
+         fn two(x: Two) -> Two {{ x }}\nfn one(x: One) -> One {{ x }}\n\
+         fn many(x: Many) -> Many {{ x }}\n\
+         fn main() {{\n    two(Two.A)\n    one(One.Only)\n    many(Many.V0)\n}}\n"
+    );
+    let module = compiled(&context, &src);
+    for name in ["Two", "One", "Many"] {
+        assert!(
+            module.get_struct_type(&format!("sisu.{name}")).is_none(),
+            "{name} should have no struct type"
+        );
+    }
+    for (name, tag) in [
+        ("two", context.i8_type()),
+        ("one", context.i8_type()),
+        ("many", context.i16_type()),
+    ] {
+        let function = (module.get_function(&format!("sisu.{name}")))
+            .unwrap_or_else(|| panic!("no function {name}"));
+        assert_eq!(
+            function.get_type(),
+            tag.fn_type(&[tag.into()], false),
+            "{name}"
+        );
+    }
+    let ir = module.print_to_string().to_string();
+    for width in ["i8", "i16"] {
+        let line = format!("= type {{ {width} }}");
+        assert!(!ir.contains(&line), "{line} in\n{ir}");
+    }
+}
+
+/// `==` on a `bool` is `xor` and `not`, because `FastISel` on x86-64 does not select `icmp` on
+/// `i1`. The generated `eq` helpers of an array and of an optional compare `bool`s too.
+#[test]
+fn bool_equality_should_build_no_icmp_on_i1() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "fn eq(a: bool, b: bool) -> bool { a == b }\n\
+         fn opt(a: bool?, b: bool?) -> bool { a == b }\n\
+         fn same<T: Eq>(a: T, b: T) -> bool { a == b }\n\
+         fn main() {\n    print([true] == [false])\n    print(same(true, false))\n    \
+         print(same(Some(true), None))\n    print(eq(true, true))\n    \
+         print(opt(None, Some(false)))\n}",
+    )
+    .print_to_string()
+    .to_string();
+    for line in ir.lines() {
+        assert!(
+            !line.contains("icmp eq i1 ") && !line.contains("icmp ne i1 "),
+            "{line}"
+        );
+    }
+    let body = function_body(&ir, "define internal i1 @sisu.eq(");
+    let xors: Vec<&str> = body
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.contains(" = xor i1 "))
+        .collect();
+    let [first, second] = xors.as_slice() else {
+        panic!("`eq` should have two `xor i1` lines in\n{body}");
+    };
+    let (result, operands) = first
+        .split_once(" = xor i1 ")
+        .expect("a split at the opcode");
+    // The operands are the two parameters, which `eq` reads back from their slots.
+    let slots: Vec<&str> = (operands.split(", "))
+        .map(|operand| {
+            let load = (body.lines().map(str::trim))
+                .find_map(|l| l.strip_prefix(&format!("{operand} = load i1, ptr ")))
+                .unwrap_or_else(|| panic!("{operand} should be a load of an `i1` in\n{body}"));
+            load.split(',').next().unwrap_or_default()
+        })
+        .collect();
+    assert!(
+        slots.len() == 2 && slots[0] != slots[1],
+        "the first `xor` should take the two parameters: {first}"
+    );
+    assert_eq!(
+        *second,
+        format!(
+            "{} = xor i1 {result}, true",
+            second.split(" = ").next().unwrap_or_default()
+        ),
+        "the second `xor` should negate the first"
+    );
+}
+
+/// `!=` on an `i64` is one `icmp ne`, not an `icmp eq` and a `not`. On a `bool` it is one `xor`,
+/// because `FastISel` on x86-64 does not select `icmp` on `i1`.
+#[test]
+fn scalar_not_equal_should_be_one_instruction() {
     let context = Context::create();
     let ir = compiled(
         &context,
@@ -2182,12 +2303,13 @@ fn scalar_not_equal_is_one_icmp_ne() {
     )
     .print_to_string()
     .to_string();
-    for (name, ty) in [("f", "i64"), ("g", "i1")] {
-        let body = function_body(&ir, &format!("define internal i1 @sisu.{name}("));
-        assert!(body.contains(&format!("icmp ne {ty} ")), "{body}");
-        assert!(!body.contains("icmp eq"), "{body}");
-        assert!(!body.contains("xor"), "{body}");
-    }
+    let f = function_body(&ir, "define internal i1 @sisu.f(");
+    assert_eq!(f.matches("icmp ne i64 ").count(), 1, "{f}");
+    assert!(!f.contains("icmp eq"), "{f}");
+    assert!(!f.contains("xor"), "{f}");
+    let g = function_body(&ir, "define internal i1 @sisu.g(");
+    assert_eq!(g.matches("xor i1 ").count(), 1, "{g}");
+    assert!(!g.contains("icmp"), "{g}");
 }
 
 #[test]

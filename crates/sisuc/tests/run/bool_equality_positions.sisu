@@ -1,0 +1,56 @@
+// GIVEN `bool` values in enum payloads, in `match` patterns, in arrays and in optionals
+// WHEN `main` compares them with `==` and `!=`, directly and through a generic function
+// THEN each `print` line shows the result, and `dbg` writes its line to standard error
+enum Flag {
+    Unset
+    Set(bool)
+}
+
+enum Two {
+    A(bool, i64)
+    B
+}
+
+fn same<T: Eq>(a: T, b: T) -> bool {
+    a == b
+}
+
+fn m(b: bool) -> i64 {
+    match b {
+        true => 1
+        false => 0
+    }
+}
+
+fn f(x: Flag) -> i64 {
+    match x {
+        Flag.Set(true) => 2
+        Flag.Set(false) => 1
+        Flag.Unset => 0
+    }
+}
+
+fn t(x: Two) -> i64 {
+    match x {
+        Two.A(true, n) => n
+        Two.A(false, _) => -1
+        Two.B => 0
+    }
+}
+
+fn main() {
+    print(f(Flag.Unset))
+    print(t(Two.B))
+    print(m(true))
+    print(f(Flag.Set(false)))
+    print(t(Two.A(true, 5)))
+    print(Flag.Set(true) == Flag.Set(false))
+    print(Two.A(true, 1) == Two.A(true, 1))
+    print(same(true, true))
+    print(same(Some(true), None))
+    print([true] == [false])
+    print([Some(true), None].contains(None))
+    let bb: bool?? = Some(Some(false))
+    print(bb == Some(Some(false)))
+    print(dbg(true != false))
+}

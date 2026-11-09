@@ -1,0 +1,189 @@
+// GIVEN enums with no field, with and without a written `Eq` or `Ord`, in arrays, optionals,
+//       generic enums, recursive enums and `any` values
+// WHEN `main` compares them, matches them, calls array methods on them and passes them to `dbg`
+// THEN each `print` line shows the result, and each `dbg` call writes its line to standard error
+interface Shape {
+    fn size(self) -> i64
+}
+
+enum Kind: Shape {
+    Small
+    Large
+
+    fn size(self) -> i64 {
+        match self {
+            Kind.Small => 1
+            Kind.Large => 2
+        }
+    }
+}
+
+enum Level: Eq, Ord {
+    Low
+    High
+    fn less(self, other: Self) -> bool {
+        self.rank() < other.rank()
+    }
+    fn rank(self) -> i64 {
+        match self {
+            Level.Low => 0
+            Level.High => 1
+        }
+    }
+}
+
+enum Sign: Eq {
+    Neg
+    Pos
+    fn eq(self, _other: Self) -> bool {
+        true
+    }
+}
+
+enum Wrap {
+    W(Kind)
+}
+
+enum Pair2<T> {
+    P(T, T)
+}
+
+enum MaybeOpt {
+    Empty
+    Has(Kind?)
+}
+
+enum Tree {
+    Leaf(Kind)
+    Node(Tree, Kind, Tree)
+}
+
+class Cell {
+    mut k: Kind
+}
+
+fn res(b: bool) -> Result<Kind, Kind> {
+    if b { Ok(Kind.Small) } else { Err(Kind.Large) }
+}
+
+fn first_large(xs: [Kind?]) -> i64 {
+    let mut i = 0
+    for x in xs {
+        if x == Some(Kind.Large) {
+            return i
+        }
+        i += 1
+    }
+    -1
+}
+
+fn depth(t: Tree) -> i64 {
+    match t {
+        Tree.Leaf(Kind.Small) => 1
+        Tree.Leaf(Kind.Large) => 2
+        Tree.Node(Tree.Leaf(Kind.Large), Kind.Small, _) => 10
+        Tree.Node(l, _, r) => depth(l) + depth(r)
+    }
+}
+
+fn opt_kind(o: Kind?) -> string {
+    let k = o else { return "none" }
+    match k {
+        Kind.Small if o != None => "small"
+        _ => "other"
+    }
+}
+
+fn ret_opt(b: bool) -> Kind? {
+    if b { Some(Kind.Small) } else { None }
+}
+
+fn main() {
+    let ks = [Kind.Small, Kind.Large]
+    // nested pattern
+    print(depth(Tree.Node(Tree.Leaf(Kind.Large), Kind.Small, Tree.Leaf(Kind.Small))))
+    print(depth(Tree.Node(Tree.Leaf(Kind.Small), Kind.Large, Tree.Leaf(Kind.Large))))
+    // array of Kind?
+    let os: [Kind?] = [None, Some(Kind.Small), Some(Kind.Large)]
+    print(os)
+    print(first_large(os))
+    print(os == [None, Some(Kind.Small), Some(Kind.Large)])
+    print(os.contains(Some(Kind.Large)))
+    print(os.first().to_string())
+    print(os.get(5).to_string())
+    // contains
+    print(ks.contains(Kind.Large))
+    print(ks.first().to_string())
+    print(ks.last() ?? Kind.Small)
+    // written Eq/Ord on fieldless enum
+    print(Level.Low < Level.High)
+    print(Level.High < Level.Low)
+    print(Level.Low == Level.Low)
+    print([Level.Low, Level.High] == [Level.Low, Level.High])
+    print([Level.Low].contains(Level.High))
+    print(Sign.Neg == Sign.Pos)
+    print([Sign.Neg] == [Sign.Pos])
+    print(Some(Sign.Neg) == Some(Sign.Pos))
+    // generic with fieldless
+    match res(false) {
+        Ok(x) => print("ok {x}")
+        Err(e) => print("err {e}")
+    }
+    print(res(true) == res(true))
+    print(res(true))
+    print(Pair2.P(Kind.Small, Kind.Large))
+    print(Pair2.P(Kind.Small, Kind.Large) == Pair2.P(Kind.Small, Kind.Large))
+    // only payload is fieldless
+    let w = Wrap.W(Kind.Large)
+    print(w)
+    print(w == Wrap.W(Kind.Small))
+    match w {
+        Wrap.W(Kind.Large) => print("wl")
+        Wrap.W(_) => print("ws")
+    }
+    // Option-shaped with Kind? field
+    let mo = MaybeOpt.Has(None)
+    let mo2 = MaybeOpt.Has(Some(Kind.Small))
+    print(mo)
+    print(mo2)
+    print(mo == mo2)
+    print(MaybeOpt.Empty == MaybeOpt.Has(None))
+    // dbg
+    let d = dbg(Kind.Large)
+    print(d)
+    dbg(os)
+    dbg(Some(Kind.Small))
+    dbg(true == false)
+    // let-else, guard, if let
+    print(opt_kind(Some(Kind.Small)))
+    print(opt_kind(None))
+    if let Some(x) = ret_opt(true) {
+        print(x)
+    }
+    // exchange and mut field
+    let cell = Cell(k: Kind.Small)
+    cell.k = Kind.Large
+    print(cell.k)
+    let mut e = Kind.Small
+    let old = exchange(mut e, Kind.Large)
+    print("{old} {e}")
+    // interpolation of optionals, to_string
+    let ok: Kind? = Some(Kind.Large)
+    print("{ok ?? Kind.Small} {ks}")
+    // any through array
+    let shapes: [any Shape] = [Kind.Small, Kind.Large]
+    let mut total = 0
+    for s in shapes {
+        total += s.size()
+    }
+    print(total)
+    // bool in arrays and nested optionals
+    let bs = [true, false]
+    print(bs == [true, false])
+    print(bs.contains(false))
+    let bb: bool?? = Some(None)
+    print(bb == Some(None))
+    print(bb != Some(Some(true)))
+    let bk = (Kind.Small == Kind.Large) == (Level.Low == Level.High)
+    print(bk)
+}

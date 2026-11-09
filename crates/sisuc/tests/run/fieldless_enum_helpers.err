@@ -1,0 +1,4 @@
+fieldless_enum_helpers.sisu:152:17: Kind.Large = Large
+fieldless_enum_helpers.sisu:154:9: os = [None, Small, Large]
+fieldless_enum_helpers.sisu:155:9: Some(Kind.Small) = Small
+fieldless_enum_helpers.sisu:156:9: true == false = false
