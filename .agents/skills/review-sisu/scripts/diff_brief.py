@@ -51,6 +51,8 @@ from pathlib import Path
 TEMPLATE = Path(__file__).resolve().parents[1] / "brief.md"
 MAIN_TEMPLATE = "origin/main:.agents/skills/review-sisu/brief.md"
 KINDS = ("spec", "plan", "diff")
+# A full SHA-1 or SHA-256 commit name.
+FULL_SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 
 
 def plugin_skill(plugin: str, skill: str) -> Path | None:
@@ -340,7 +342,10 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915  one linear pass: a branch f
                 "Removed from the tests, with no identical line added back. For each, find its "
                 "keeper or the reason:\n" + "\n".join([f"- {r}" for r in removed[:SHOWN]] + more)
             )
-        builds = sorted((out.parent / "bin").glob("*/sisu"))
+        # build_sisu.sh names each folder by a full SHA; another folder there is not a build.
+        builds = sorted(
+            b for b in (out.parent / "bin").glob("*/sisu") if FULL_SHA.fullmatch(b.parent.name)
+        )
         if builds:
             focus_lines.append(
                 "Prebuilt sisu, one for each commit:\n"

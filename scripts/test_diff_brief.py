@@ -475,6 +475,27 @@ class RemovedTests(unittest.TestCase):
         self.assertIn('- src/tests.rs:4: (2, "row two"),\n- tests/gone.sisu: deleted', focus)
         self.assertIn(f"- {self.head[:8]} head: {build}", focus)
 
+    def test_a_diff_brief_should_skip_a_build_folder_that_is_not_a_sha(self) -> None:
+        run_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, run_dir)
+        for name in (self.head, "fix1"):
+            build = run_dir / "bin" / name / "sisu"
+            build.parent.mkdir(parents=True)
+            build.write_text("")
+        out = run_dir / "brief.md"
+        with (
+            mock.patch.dict(os.environ, ENV, clear=True),
+            mock.patch.object(
+                sys, "argv", ["diff_brief.py", str(self.repo), "HEAD~1..HEAD", str(out)]
+            ),
+            mock.patch("sys.stderr"),
+            mock.patch("sys.stdout"),
+        ):
+            diff_brief.main()
+        focus = out.read_text().split("# Focus", 1)[1]
+        self.assertIn(f"- {self.head[:8]} head: {run_dir / 'bin' / self.head / 'sisu'}", focus)
+        self.assertNotIn("fix1", focus)
+
 
 class GitFailures(Repo):
     """A git command that fails stops the script, unless the failure is an answer."""
