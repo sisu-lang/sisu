@@ -607,23 +607,25 @@ impl Checker<'_> {
         }
     }
 
+    /// A walk of the open scopes for a local costs the depth of the scopes. So a path looks for
+    /// one once, and only where its answer needs one.
     fn path_meaning(&self, name: Symbol, angles: bool) -> Resolved {
         // A local cannot take an enum's name, so the enum wins over one that tried.
-        let broken_enum = match self.names.enum_id(name) {
+        match self.names.enum_id(name) {
             Some(Declared::Known(id)) => return Resolved::Item(ItemId::Enum(id)),
-            found => matches!(found, Some(Declared::Broken)),
-        };
-        let local = self.binding(name);
-        // The type arguments make the path to a broken enum a value, which the local answers.
-        if broken_enum {
-            return match local {
-                Some(b) if angles => self.local_answer(name, b),
-                _ => Resolved::Poisoned(ItemKind::Enum),
-            };
+            // The type arguments make the path to a broken enum a value, which the local answers.
+            Some(Declared::Broken) => {
+                return match angles.then(|| self.binding(name)).flatten() {
+                    Some(b) => self.local_answer(name, b),
+                    None => Resolved::Poisoned(ItemKind::Enum),
+                };
+            }
+            None => {}
         }
-        if local.is_none()
-            && let Some(kind) = self.poison_kind(name)
-        {
+        // A poisoned name that no local hides gives no more error.
+        let poison = self.poison_kind(name);
+        let early = poison.map(|_| self.binding(name));
+        if let (Some(kind), Some(None)) = (poison, early) {
             return Resolved::Poisoned(kind);
         }
         if name == Symbol::OPTION {
@@ -631,9 +633,17 @@ impl Checker<'_> {
         }
         // An alias is the type that it names, unless a local takes the name. A local cannot hide
         // an alias of an enum or of an optional type.
-        if let Some(Declared::Known(id)) = self.names.alias(name)
-            && (local.is_none() || self.alias_unhideable(name))
+        let alias = match self.names.alias(name) {
+            Some(Declared::Known(id)) => Some(id),
+            _ => None,
+        };
+        if let Some(id) = alias
+            && self.alias_unhideable(name)
         {
+            return Resolved::Item(ItemId::Alias(id));
+        }
+        let local = early.unwrap_or_else(|| self.binding(name));
+        if let (Some(id), None) = (alias, local) {
             return Resolved::Item(ItemId::Alias(id));
         }
         if let Some(b) = local {
