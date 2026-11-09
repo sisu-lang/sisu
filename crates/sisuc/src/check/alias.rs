@@ -356,6 +356,11 @@ impl Checker<'_> {
     /// every alias that names it, also through other aliases. Each is made once.
     pub(super) fn unknown_alias(&mut self, id: usize) {
         let Aliases { infos, users, .. } = &mut self.aliases;
+        // An unknown alias passed this on to its users when it became unknown. A second failed
+        // bound of the same alias must not scan them again.
+        if matches!(infos[id].state, State::Done(None)) {
+            return;
+        }
         infos[id].state = State::Done(None);
         let mut stack = vec![id];
         while let Some(alias) = stack.pop() {

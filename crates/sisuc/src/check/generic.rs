@@ -4348,7 +4348,7 @@ impl Checker<'_> {
     /// The name gives no count and no bound to check them against: a repair may change both.
     pub(super) fn resolve_args(&mut self, written: &[ast::TypeExpr]) {
         for arg in written {
-            self.resolve(arg);
+            self.type_argument(arg);
         }
     }
 
