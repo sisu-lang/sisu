@@ -46,16 +46,63 @@
 # One run holds the worktree's lock; a second run prints a FAIL line and stops.
 # With LOG=<file>, all output goes there, opened only once this run holds the lock:
 # a shell redirect would truncate a running log before a second run could refuse.
+# --status prints the pass, the progress and the time left of the run in this worktree. Quote
+# that line for the time of a run: the rate of pass 1 says nothing about pass 2.
 #   [LOG=<file>] scripts/mutants.sh [base] [cargo-mutants args...]
+#   scripts/mutants.sh --status
 set -euo pipefail
+
+# What one mutant costs under the whole suite with 2 mutants at a time, in seconds of one job
+# slot: measured in pass 2 of the name resolver's mutation run.
+WHOLE_SUITE_SECONDS=155
+
+count() { if [[ -f mutants.out/$1.txt ]]; then wc -l <"mutants.out/$1.txt"; else echo 0; fi; }
+
+# Prints one line about the run that holds the lock of this worktree.
+status_report() {
+  local lock=target/mutation-test.lock file=target/mutation-test.status
+  local fd label n start jobs finished=0 kind elapsed left progress extra=
+  if [[ ! -e $lock ]] || { exec {fd}<"$lock" && flock -n "$fd"; }; then
+    echo "mutation-test: no run in this worktree"
+    return 0
+  fi
+  if [[ ! -e $file ]]; then
+    echo "mutation-test: a run holds the lock; no pass has started"
+    return 0
+  fi
+  IFS=$'\t' read -r label n start jobs <"$file"
+  for kind in caught missed unviable timeout; do finished=$((finished + $(count "$kind"))); done
+  # shortcut: a group also runs each "delete field" mutant (see run_group), so its lists can pass
+  # n and the group can look done early; separate the names if a group's time matters more.
+  ((n > 0 && finished > n)) && finished=$n
+  elapsed=$(($(date +%s) - start))
+  progress="$finished done"
+  ((n > 0)) && progress="$finished of $n done"
+  if ((n > 0 && finished == n)); then
+    left="the pass is ending"
+  elif ((n > 0 && finished > 0)); then
+    left="about $((elapsed * (n - finished) / finished / 60)) min left"
+  elif ((n > 0)) && [[ $label == *whole-suite* ]]; then
+    left="about $((n * WHOLE_SUITE_SECONDS / jobs / 60)) min left, from the usual time of a mutant"
+  else
+    left="no estimate yet"
+  fi
+  [[ $label != "pass 1"* ]] || extra="; pass 2 gets $(($(count missed) + $(count timeout))) so far"
+  echo "mutation-test: $label: $progress, $((elapsed / 60)) min so far, $left$extra"
+}
 
 cd "$(git rev-parse --show-toplevel)"
 mkdir -p target
+if [[ ${1:-} == --status ]]; then
+  status_report
+  exit 0
+fi
 exec {worktree_lock}>target/mutation-test.lock
 if ! flock -n "$worktree_lock"; then
   echo "mutation-test: FAIL: another make mutation-test is running in this worktree; wait for it to end"
   exit 1
 fi
+rm -f target/mutation-test.status
 # Then the lock of the whole clone (scripts/heavy-run.sh). A second run in this worktree fails
 # at once above, and does not wait here.
 # shellcheck source=scripts/heavy-run.sh
@@ -146,7 +193,7 @@ max=${MUTANTS_MAX:-300}
 if [[ -z $not_run && -z $test_args ]]; then
   total=$(cargo mutants --in-diff "$diff" --list "$@" 2>/dev/null | wc -l || true)
   if ((total > max)); then
-    verdict="mutation-test: FAIL: $total mutants, more than $max; test a part with --file, or set MUTANTS_MAX=$total"
+    verdict="mutation-test: FAIL: $total mutants, more than $max; the time of pass 2 is known only after pass 1; test a part with --file, or set MUTANTS_MAX=$total"
     echo "$verdict"
     exit 1
   fi
@@ -167,11 +214,16 @@ pass() {
   [[ mutants.out/lock.json -nt $started ]] && tested=yes
   return 0
 }
-count() { if [[ -f mutants.out/$1.txt ]]; then wc -l <"mutants.out/$1.txt"; else echo 0; fi; }
+# What --status reads: the label of a pass or a group, its size and when it started.
+record_progress() {
+  printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$(date +%s)" "${CARGO_MUTANTS_JOBS:-2}" >target/mutation-test.status
+}
 
+record_progress "pass 1 (unit tests)" "${total:-0}"
 if [[ -n $not_run || -n $test_args ]]; then
   pass "$@"
 else
+  echo "mutation-test: pass 1 (unit tests): $total mutants; pass 2 tests only what pass 1 does not catch, so its time is known when pass 1 ends"
   pass "$@" -- --lib
 fi
 if [[ -n $not_run ]]; then
@@ -208,6 +260,11 @@ run_group() {
   n=$(wc -l <"$names")
   ((n > 0)) || return 0
   echo "mutation-test: pass 2, $label group: $n mutants, tests: $tests"
+  record_progress "pass 2, $label group" "$n"
+  if [[ $label == whole-suite ]]; then
+    # shortcut: this reads CARGO_MUTANTS_JOBS and not -j; pass -j here if a run needs it.
+    echo "mutation-test: pass 2, whole-suite group: about $((n * WHOLE_SUITE_SECONDS / ${CARGO_MUTANTS_JOBS:-2} / 60)) min"
+  fi
   local args=("${pass2_args[@]}")
   # A name holds regex characters, so each one is escaped and anchored.
   while IFS= read -r re; do args+=(--re "$re"); done < <(sed 's/[][\\.+*?()|{}^$]/\\&/g; s/^/^/; s/$/$/' "$names")

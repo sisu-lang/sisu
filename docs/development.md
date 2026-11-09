@@ -302,6 +302,11 @@ variable `CARGO_MUTANTS_OUTPUT` and the `output` key of a config file. It
 refuses `-o`, `--output`, `-d`, `--dir` and `--manifest-path`, which move the
 output or the tree.
 
+`make mutation-status` prints the pass of the running `make mutation-test`, how
+many of its mutants are done, and the time left at the rate of that pass. Quote
+that line for the time of a run: pass 1 costs seconds for each mutant and pass 2
+minutes, and the size of pass 2 is known only when pass 1 ends.
+
 One `make mutation-test` runs at a time in a worktree; a second one prints
 `mutation-test: FAIL: another make mutation-test is running in this worktree`
 and stops. `LOG=<file>` writes the whole output to that file, opened only once
