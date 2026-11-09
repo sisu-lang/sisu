@@ -778,7 +778,7 @@ struct Checker<'src> {
     /// The same for each interface with its arguments in the walk of one root (`entry_reason`).
     any_entries: FxHashMap<(tir::InterfaceId, TypeArgs), Option<any::AnyReason>>,
     /// The interfaces that each `any` type conforms to (`any_interfaces`).
-    any_closures: FxHashMap<Type, Rc<[(tir::InterfaceId, TypeArgs)]>>,
+    any_closures: FxHashMap<Type, any::AnyClosure>,
     /// Where each `any` type is first written in the user's program.
     any_written: FxHashMap<Type, Span>,
     /// A buffer for the walk of an interface closure, kept from one closure to the next.
@@ -1739,6 +1739,7 @@ impl Checker<'_> {
                         type_params,
                         inherits: Vec::new(),
                         inherits_at: Vec::new(),
+                        inherits_failed: false,
                         requirements: Vec::new(),
                         bounds: Vec::new(),
                         assoc: Vec::new(),

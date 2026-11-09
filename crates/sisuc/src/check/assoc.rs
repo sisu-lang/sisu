@@ -392,9 +392,10 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether the type parameter or associated type `ty` is unknown in this body: its bounds went
-    /// past the limit (reported as E0157), or one of them failed (reported where it is written).
-    /// It finds the closure first, which sets the state.
+    /// Whether the type parameter, associated type or `any` type `ty` is unknown in this body.
+    /// Its bounds went past the limit (reported as E0157), or one of them failed, or an inherited
+    /// interface did (reported where it is written). It finds the closure first, which sets the
+    /// state.
     pub(super) fn is_unknown(&mut self, ty: Type) -> bool {
         match ty.kind() {
             TypeKind::Param(_, place) => {
@@ -405,6 +406,7 @@ impl Checker<'_> {
                 self.assoc_interfaces(ty);
                 self.body.unknown_assoc.contains(&ty)
             }
+            TypeKind::Any(..) => self.any_unknown(ty),
             _ => false,
         }
     }
@@ -467,7 +469,12 @@ impl Checker<'_> {
             }
             self.body.assoc_conforming.insert(ty, out);
         }
-        if self.interfaces[interface.0].assoc[k as usize].bounds.failed {
+        let closure = &self.body.assoc_conforming[&ty];
+        if self.interfaces[interface.0].assoc[k as usize].bounds.failed
+            || closure
+                .iter()
+                .any(|(inherited, _)| self.interfaces[inherited.0].inherits_failed)
+        {
             self.body.unknown_assoc.insert(ty);
         }
         &self.body.assoc_conforming[&ty]

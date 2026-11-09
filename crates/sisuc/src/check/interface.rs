@@ -104,6 +104,9 @@ pub(super) struct InterfaceInfo {
     pub(super) inherits: Vec<Bound>,
     /// Where each of `inherits` is written.
     pub(super) inherits_at: Vec<Span>,
+    /// Whether an inherited interface is not in `inherits`: it names no interface for certain, or
+    /// an argument does not fit. A body reads the parameter as unknown then (`param_interfaces`).
+    pub(super) inherits_failed: bool,
     /// The first requirement of each name, in declaration order.
     pub(super) requirements: Vec<RequirementInfo>,
     /// The bounds of each of `type_params`: `Self` conforms to the interface itself.
@@ -373,13 +376,19 @@ impl Checker<'_> {
         );
         // The associated types come first: a bare name stands for one in the interface.
         let declared = self.declare_assoc(interface, id, this.args);
+        let mut inherits_failed = false;
         let (inherits, inherits_at) = interface
             .inherits
             .iter()
-            .filter_map(|ty| Some((self.inherited(ty, interface)?, ty.span)))
+            .filter_map(|ty| {
+                let found = self.inherited(ty, interface);
+                inherits_failed |= found.is_none();
+                Some((found?, ty.span))
+            })
             .unzip();
         self.interfaces[id.0].inherits = inherits;
         self.interfaces[id.0].inherits_at = inherits_at;
+        self.interfaces[id.0].inherits_failed = inherits_failed;
         for (k, assoc) in declared.iter().enumerate() {
             let ty = self.body.assoc.at(k).ty;
             let mut failed = false;
@@ -1196,8 +1205,14 @@ impl Checker<'_> {
             .bounds
             .get(place)
             .is_some_and(|bounds| bounds.failed);
-        if failed && !self.body.unknown.contains(&place) {
-            self.body.unknown.push(place);
+        if !self.body.unknown.contains(&place) {
+            let closure = self.body.conforming[place].as_deref().unwrap_or_default();
+            let inherited = closure
+                .iter()
+                .any(|(interface, _)| self.interfaces[interface.0].inherits_failed);
+            if failed || inherited {
+                self.body.unknown.push(place);
+            }
         }
         self.body.conforming[place]
             .as_deref()
