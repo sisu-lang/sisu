@@ -336,7 +336,7 @@ fn a_part_that_a_later_part_changes_should_be_pinned() {
     );
     let moved = f
         .lines()
-        .find(|line| line.contains("= move x#0"))
+        .rfind(|line| line.contains("= move x#0"))
         .and_then(|line| line.trim().split(' ').next())
         .unwrap_or_else(|| panic!("row 5: no move of `x` in\n{f}"));
     let interp = f
@@ -368,9 +368,10 @@ fn a_part_that_a_later_part_changes_should_be_pinned() {
 /// Lowering an interpolation takes steps in proportion to its parts. `LOCAL_OF_READS` counts the
 /// looks at the local of an expression: the rule for a bare part must not scan the other parts
 /// for each part. `MENTION_PROBES` counts the reads of `Mentions::at` in the count of the
-/// mentions of a local in the later parts: a binary search, two for each bare part. Row
-/// `distinct` is the worst input for the scan, `k + 1` locals each read once. Row `pinned` is the
-/// worst input for the count: every bare part of `x` has a later part that mentions `x`.
+/// mentions of a local in the later parts: two binary searches for each bare part, so it grows
+/// as `n log n` and `assert_subquadratic` checks it. Row `distinct` is the worst input for the
+/// scan, `k + 1` locals each read once. Row `pinned` is the worst input for the count: every bare
+/// part of `x` has a later part that mentions `x`.
 #[test]
 fn interpolation_parts_should_lower_in_linear_steps() {
     let distinct = |k: usize| {
@@ -399,15 +400,11 @@ fn interpolation_parts_should_lower_in_linear_steps() {
         [("distinct", &distinct), ("pinned", &pinned)];
     for (shape, source) in shapes {
         // 50, 100 and 150 parts, the sizes `n`, `2n` and `3n` that the assertions take.
-        let [(reads, probes), (reads2, probes2), (reads3, probes3)] =
+        let [(reads, probes), (reads2, probes2), (reads3, _)] =
             [50, 100, 150].map(|k| steps(source(k)));
         assert_near_linear_for(&format!("{shape}, local_of reads: "), reads, reads2, reads3);
-        assert_near_linear_for(
-            &format!("{shape}, mention probes: "),
-            probes,
-            probes2,
-            probes3,
-        );
+        assert!(probes > 0, "{shape}: no mention probe");
+        assert_subquadratic(probes, probes2);
     }
 }
 

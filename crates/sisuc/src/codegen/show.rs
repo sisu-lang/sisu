@@ -89,7 +89,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// string with no copy. A width pads the text of its part in place, from the mark taken
     /// before the part, a precision is for an `f64`, and a `#` part goes through a pretty sink
     /// over the buffer sink. The parts are evaluated already, so a part that returns, breaks or
-    /// continues has left no buffer behind. The caller releases the parts.
+    /// continues has left no buffer behind. The result keeps none of the parts: the mir releases
+    /// the ones it owns.
     pub(super) fn interpolate_compound(
         &self,
         parts: &[(BasicValueEnum<'ctx>, Type)],

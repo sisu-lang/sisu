@@ -239,6 +239,13 @@ def interpolations(k: int) -> str:
     return f'fn main() {{\n    let x = 1\n    let s = "{"{x}" * (k + 1)}"\n    print(s)\n}}\n'
 
 
+def distinct_interpolations(k: int) -> str:
+    """Return a program with one string of `k + 1` parts, each a `string` local of its own."""
+    lets = "".join(f'    let a{tag(i)} = "v" + "w"\n' for i in range(k + 1))
+    parts = "".join(f"{{a{tag(i)}}}" for i in range(k + 1))
+    return f'fn main() {{\n{lets}    print("{parts}")\n}}\n'
+
+
 def string_interpolations(k: int) -> str:
     """Return a program with a string of `k + 1` copies of `{s}lit`, a local and a literal."""
     parts = "{s}lit" * (k + 1)
@@ -452,6 +459,7 @@ SHAPES = {
     "conformers": (50, conformers),
     "type depth": (24, type_depth),
     "interpolations": (50, interpolations),
+    "distinct interpolations": (250, distinct_interpolations),
     "string interpolations": (50, string_interpolations),
     "live locals": (50, live_locals),
     "method chain": (24, method_chain),

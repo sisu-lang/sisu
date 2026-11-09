@@ -14,7 +14,7 @@ Run commands through `make`; `make help` lists the targets. `make test` runs nex
 
 Wait for the reviews and checks of a pull request only with `python3 scripts/watch_pr.py <N>`, with the sandbox off and `run_in_background`. Run it again after each event. It wakes the session for a review with text, a comment, the first failed check, or the end of all checks with none failed; a `Monitor` watch wakes a full turn for each check.
 
-`make compile-speed` times `sisu`, `rustc`, `clang++` and Go on one generated program and prints a table; `ARGS='--check-only'` only checks the inputs, and `docs/benchmarks.md` (Compile speed) says how to read the table. `make scaling` counts the instructions of each compiler stage on 29 shapes of program. It fails on a superlinear stage that has no row in `scripts/scaling.py` (`docs/benchmarks.md`, The scaling sweep).
+`make compile-speed` times `sisu`, `rustc`, `clang++` and Go on one generated program and prints a table; `ARGS='--check-only'` only checks the inputs, and `docs/benchmarks.md` (Compile speed) says how to read the table. `make scaling` counts the instructions of each compiler stage on 30 shapes of program. It fails on a superlinear stage that has no row in `scripts/scaling.py` (`docs/benchmarks.md`, The scaling sweep).
 
 Once per clone, run `make setup`. It installs LLVM 23 into `.llvm/23`, which `.cargo/config.toml` points `LLVM_SYS_231_PREFIX` at; do not build against a system LLVM. It also enables the Git pre-commit and commit-msg hooks. The toolchain is pinned in `rust-toolchain.toml`.
 

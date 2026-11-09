@@ -630,7 +630,7 @@ class ScalingTest(unittest.TestCase):
         self.assertIn("scaling: cannot write the report", err)
 
     def test_each_shape_should_have_its_size_in_its_structure(self) -> None:
-        """GIVEN the 29 shapes
+        """GIVEN the 30 shapes
         WHEN each makes its program at size k
         THEN the repeated part of the program has a size of base + k
         AND the base is what the program at size 0 needs to check clean
@@ -649,6 +649,7 @@ class ScalingTest(unittest.TestCase):
             ("conformers", 50),
             ("type depth", 24),
             ("interpolations", 50),
+            ("distinct interpolations", 250),
             ("string interpolations", 50),
             ("live locals", 50),
             ("method chain", 24),
@@ -709,6 +710,7 @@ class ScalingTest(unittest.TestCase):
             "conformers": (lambda t: t.count("class "), 1),
             "type depth": (lambda t: depth(line(t, "let v"), "(", ")"), 1),
             "interpolations": (lambda t: t.count("{x}"), 1),
+            "distinct interpolations": (lambda t: t.count("let a"), 1),
             "string interpolations": (lambda t: t.count("{s}lit"), 1),
             "live locals": (lambda t: t.count("let live"), 0),
             "method chain": (chain, 1),
@@ -735,7 +737,7 @@ class ScalingTest(unittest.TestCase):
                     self.assertEqual(measure(make(k)), base + k)
 
     def test_text_of_each_shape_should_grow_linearly_with_its_size(self) -> None:
-        """GIVEN the 29 shapes at their sizes 0, n, 2n, 4n and 8n
+        """GIVEN the 30 shapes at their sizes 0, n, 2n, 4n and 8n
         WHEN the bytes of each program are counted
         THEN the growth in bytes at each size is below 2.01 times the growth at half that size
         """

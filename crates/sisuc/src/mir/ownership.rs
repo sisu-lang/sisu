@@ -6,7 +6,8 @@
 //!   `l = move x` or `l = copy x`.
 //! - A borrow site reads its root in place when the root is live after the statement. When it
 //!   is not, `t = move x` comes before the statement, the place reads `t`, and `release t`
-//!   follows: the statement owns the root's value, and releases it.
+//!   follows: the statement owns the root's value, and releases it. A statement moves a root
+//!   once, whatever the number of its borrow sites of that root.
 //! - A guard mark, on a `use` of a `match` binding or a borrow site rooted at one, is a read
 //!   of a borrowed binding: a copy or an in-place read, whatever liveness says. A `use` of a
 //!   borrowed parameter, or a borrow site rooted at one, is read the same way: the pass never
@@ -30,6 +31,8 @@ pub(super) fn place(function: &mut Function) {
         at: (BlockId(0), 0),
         out: Vec::new(),
         after: Vec::new(),
+        moved: Vec::new(),
+        touched: Vec::new(),
     };
     for (b, block) in function.blocks.iter_mut().enumerate() {
         // The terminator's position is the block's length as lowered.
@@ -66,12 +69,17 @@ pub(super) fn place(function: &mut Function) {
                 placer.out.push(store);
             }
             placer.out.append(&mut placer.after);
+            placer.end_statement();
         }
         placer.at = (BlockId(b), len);
         placer.terminator(&mut block.term);
         debug_assert!(
             placer.after.is_empty(),
             "a terminator should have no borrow site to release after"
+        );
+        debug_assert!(
+            placer.touched.is_empty(),
+            "a terminator should move no borrow-site root"
         );
         block.stmts = mem::take(&mut placer.out);
     }
@@ -88,6 +96,11 @@ struct Placer<'a> {
     out: Vec<Statement>,
     /// What goes right after the statement: the releases of its moved borrow-site roots.
     after: Vec<Statement>,
+    /// The temporary that this statement moved each borrow-site root into, indexed by the root.
+    /// It grows as the pass meets a root.
+    moved: Vec<Option<LocalId>>,
+    /// The roots with an entry in `moved`, so that the end of the statement clears only those.
+    touched: Vec<LocalId>,
 }
 
 impl Placer<'_> {
@@ -219,7 +232,8 @@ impl Placer<'_> {
     }
 
     /// Clears a borrow site: its root stays in place, or moves into a temporary released
-    /// after the statement when the statement is the root's last use.
+    /// after the statement when the statement is the root's last use. A statement moves a root
+    /// once: its other borrow sites of that root read the same temporary.
     fn place(&mut self, place: &mut Place) {
         for projection in &mut place.projections {
             if let Projection::Index { index, .. } = projection {
@@ -230,13 +244,29 @@ impl Placer<'_> {
         if !mem::take(&mut place.borrow) || self.keeps(place.local, guard) {
             return;
         }
+        if let Some(&Some(root)) = self.moved.get(place.local.0) {
+            place.local = root;
+            return;
+        }
         let root = self.temp(place.local);
+        if self.moved.len() <= place.local.0 {
+            self.moved.resize(place.local.0 + 1, None);
+        }
+        self.moved[place.local.0] = Some(root);
+        self.touched.push(place.local);
         self.out.push(Statement::Assign {
             dest: Some(root),
             value: Rvalue::Use(Operand::Move(place.local)),
         });
         place.local = root;
         self.after.push(Statement::Release(root));
+    }
+
+    /// Ends the statement: the next one moves a root again, into a temporary of its own.
+    fn end_statement(&mut self) {
+        for root in self.touched.drain(..) {
+            self.moved[root.0] = None;
+        }
     }
 
     /// A new counted temporary of `local`'s type, scoped to the block being placed.

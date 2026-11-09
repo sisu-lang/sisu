@@ -744,6 +744,50 @@ impl<'a> Lowering<'a> {
         Some((ops, temps))
     }
 
+    /// The operands of an interpolation, and the temporaries that own its counted parts. The
+    /// caller releases the temporaries after the statement. An interpolation writes its parts
+    /// into a new string and keeps none of them. So a part is read as `print` reads its operand,
+    /// with one more rule: a part that is a whole source local is a borrow site, read in place
+    /// at the statement. A later part could change what the local holds ("When an operand
+    /// reads"). So when a later part mentions the local other than as a whole read, the part is
+    /// read into a temporary now. An uncounted part is pinned against the later parts, as for
+    /// any statement.
+    fn interpolation_parts(&mut self, es: &[&Expr]) -> Option<(Vec<Operand>, Vec<LocalId>)> {
+        // For each part, the whole reads of its local among the later parts: one backward pass.
+        let mut later_reads: FxHashMap<LocalId, usize> = FxHashMap::default();
+        let mut reads_after = vec![0; es.len()];
+        for (i, e) in es.iter().enumerate().rev() {
+            if let Some(local) = local_of(e) {
+                let reads = later_reads.entry(local).or_default();
+                reads_after[i] = *reads;
+                *reads += 1;
+            }
+        }
+        let (mut ops, mut temps) = (Vec::with_capacity(es.len()), Vec::new());
+        for (i, e) in es.iter().enumerate() {
+            let later = &es[i + 1..];
+            if !self.counted(e.ty) {
+                let op = self.operand(e)?;
+                ops.push(self.pinned(op, later));
+                continue;
+            }
+            let bare = local_of(e)
+                .filter(|&local| !self.is_guarded(local))
+                .filter(|&local| self.mentions.count_within(local, later) == reads_after[i]);
+            if let Some(local) = bare {
+                ops.push(Operand::Read(MirPlace {
+                    borrow: true,
+                    ..whole(local)
+                }));
+                continue;
+            }
+            let (mut op, mut owned) = self.borrowed(&[e])?;
+            ops.append(&mut op);
+            temps.append(&mut owned);
+        }
+        Some((ops, temps))
+    }
+
     /// The place a read at a borrow position starts from. A source local is read in place, as
     /// a borrow site, when `borrow` holds; any other base is evaluated into a temporary that
     /// owns it, which the caller releases after the read.
@@ -1007,11 +1051,17 @@ impl<'a> Lowering<'a> {
             },
             ExprKind::Interpolate { parts, formats } => {
                 let calls = parts.iter().any(|part| self.calls_display(part.ty));
-                Rvalue::Interpolate {
-                    parts: self.operands(&parts.iter().collect::<Vec<_>>())?,
+                let (parts, temps) = self.interpolation_parts(&parts.iter().collect::<Vec<_>>())?;
+                let value = Rvalue::Interpolate {
+                    parts,
                     formats: formats.clone(),
                     calls,
+                };
+                let dest = self.assign(e.ty, dest, value);
+                for temp in temps {
+                    self.release(Some(temp));
                 }
+                return Some(dest);
             }
             ExprKind::Concat { lhs, rhs } => {
                 let [lhs, rhs] = self.pair(lhs, rhs)?;
@@ -1642,6 +1692,27 @@ impl Mentions {
         };
         at.get(at.partition_point(|&position| position < start))
             .is_some_and(|&position| position < end)
+    }
+
+    /// How many mentions of `local` the adjacent expressions `siblings` hold: two binary
+    /// searches, as `within` does one.
+    fn count_within(&self, local: LocalId, siblings: &[&Expr]) -> usize {
+        let (Some(first), Some(last)) = (siblings.first(), siblings.last()) else {
+            return 0;
+        };
+        let (start, end) = (self.span(first).0, self.span(last).1);
+        // A lowering temporary is past the `tir` locals, and no expression mentions it.
+        let Some(at) = self.at.get(local.0) else {
+            return 0;
+        };
+        let before = |bound: usize| {
+            at.partition_point(|&position| {
+                #[cfg(test)]
+                MENTION_PROBES.set(MENTION_PROBES.get() + 1);
+                position < bound
+            })
+        };
+        before(end) - before(start)
     }
 
     /// Whether `e` holds the last mention of `local` in walk order.
