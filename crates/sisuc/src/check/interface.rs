@@ -389,6 +389,11 @@ impl Checker<'_> {
         self.interfaces[id.0].inherits = inherits;
         self.interfaces[id.0].inherits_at = inherits_at;
         self.interfaces[id.0].inherits_failed = inherits_failed;
+        // A read in the list found closures before the flag was set, and a closure is scanned for
+        // the flag once, when it is found. So forget them, and what they gave.
+        self.body.forget_bounds(self.body.bounds.len());
+        self.body.assoc_conforming.clear();
+        self.body.unknown_assoc.clear();
         for (k, assoc) in declared.iter().enumerate() {
             let ty = self.body.assoc.at(k).ty;
             let mut failed = false;
@@ -1197,7 +1202,7 @@ impl Checker<'_> {
             if let Err(k) = wide {
                 self.too_wide(place, k);
             }
-            // An inheritance does not change in a body, so the closure is scanned once.
+            // The flag is final once its interface signature is done.
             if self.closure_inherits_failed(&out) && !self.body.unknown.contains(&place) {
                 self.body.unknown.push(place);
             }

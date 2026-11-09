@@ -467,7 +467,7 @@ impl Checker<'_> {
             if let Err(j) = wide {
                 self.too_wide_assoc(ty, bounds[j].at);
             }
-            // An inheritance does not change in a body, so the closure is scanned once.
+            // The flag is final once its interface signature is done.
             if self.closure_inherits_failed(&out) {
                 self.body.unknown_assoc.insert(ty);
             }
