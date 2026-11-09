@@ -685,9 +685,9 @@ impl<'a> Lowering<'a> {
             .or_else(|| local_of(e).map(|local| self.read(local)))
     }
 
-    /// `op`, an operand of a statement whose later operands are `later`. A later operand can
-    /// mention a whole source local that `op` reads. Then `op` is read into a temporary now, so
-    /// the statement sees the value the local had here.
+    /// `op`, an operand of a statement whose later operands are `later`. When `op` reads a whole
+    /// source local and a later operand mentions that local, `op` is read into a temporary now.
+    /// Then the statement sees the value the local had here.
     fn pinned(&mut self, op: Operand, later: &[&Expr]) -> Operand {
         let local = match &op {
             Operand::Use(local) | Operand::Guarded(local) => *local,
