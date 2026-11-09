@@ -791,7 +791,7 @@ class ScalingTest(unittest.TestCase):
         """
         code, _, err = self.stub_run("failed bounds", check_exit="0")
         self.assertEqual(code, 1)
-        self.assertIn("failed bounds, size 64", err)
+        self.assertIn("failed bounds, size 64: exit code 0, not 1", err)
 
     def test_a_check_only_shape_should_fail_when_sisu_crashes(self) -> None:
         """GIVEN `sisu check` that exits with 101, as a panic does
@@ -800,7 +800,7 @@ class ScalingTest(unittest.TestCase):
         """
         code, _, err = self.stub_run("failed bounds", check_exit="101")
         self.assertEqual(code, 1)
-        self.assertIn("exit code 101", err)
+        self.assertIn("exit code 101, not 1", err)
 
     def test_stage_counts_should_read_each_stage_from_its_own_line(self) -> None:
         """GIVEN callgrind output with a line for each stage function and a closure of `check::check`

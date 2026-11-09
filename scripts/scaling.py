@@ -800,8 +800,10 @@ def measure_shape(
                 if name in CHECK_ONLY:
                     command = [*callgrind, args.sisu, "check", path]
                     run = deadline.run(command, what, stdout=subprocess.DEVNULL, check=False)
-                    if run.returncode != (1 if k > 0 else 0):
-                        raise Fail(f"{what}: exit code {run.returncode}, {run.stderr[-500:]}")
+                    expected = 1 if k > 0 else 0
+                    if run.returncode != expected:
+                        code = f"exit code {run.returncode}, not {expected}"
+                        raise Fail(f"{what}: {code}\n{run.stderr[-500:]}")
                     annotated = deadline.run([*ANNOTATE, profile], what).stdout
                     found = stage_counts(annotated, CHECK_ONLY_STAGES)
                     found = {stage: found.get(stage, 0) for stage, _ in STAGES}

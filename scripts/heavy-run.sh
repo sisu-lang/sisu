@@ -37,7 +37,8 @@ heavy_lock() {
   printf '%s in %s (pid %s)\n' "${*:-$0}" "$PWD" "$$" >"$lock"
 }
 
-heavy_status() {
+# A subshell closes the descriptor, so a shell that sources this script does not keep the lock.
+heavy_status() (
   local lock fd
   if ! command -v flock >/dev/null; then
     echo "unknown: no flock"
@@ -50,7 +51,7 @@ heavy_status() {
   else
     echo free
   fi
-}
+)
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
   set -euo pipefail
