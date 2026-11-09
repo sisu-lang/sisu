@@ -398,6 +398,8 @@ fn same<T: Eq>(a: T, b: T, depth: i64) -> bool {
     if depth == 0 { a == b } else { same(b, a, depth - 1) && a == b }
 }
 
+// As in `any_alloc_enum.sisu`: depth `d` gives `s.size()` times the `d`-th Fibonacci number, so
+// only depth 0 and 1 give `s.size()`. Standard input is empty, so the depth is 0.
 fn size_of(s: any Shape, depth: i64) -> i64 {
     if depth > 1 {
         size_of(s, depth - 1) + size_of(s, depth - 2)

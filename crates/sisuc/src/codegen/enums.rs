@@ -1,7 +1,7 @@
 //! Enums at run time. An enum value is a tag and its variant's payload, held inline:
 //! `%sisu.<Name> = { tag, [n x iA] }`, with one struct per variant, `%sisu.<Name>.<Variant>`,
-//! laid over the payload storage. An enum with no field in any variant is its tag integer, with no
-//! struct. A field that closes a cycle holds a box instead,
+//! laid over the payload storage. An enum with no field in any variant is its tag integer alone.
+//! A field that closes a cycle holds a box instead,
 //! `%sisu.box.<F> = { i64 count, %sisu.<F> }`. A boxed field of type `F` with k ≥ 1 `?` layers
 //! is k − 1 flags around a box pointer that is `null` for the innermost `None`: `{ i1, ptr }`
 //! for an `F??`. When a flag is clear, the storage inside it is zero. An `Option`-shaped enum

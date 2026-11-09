@@ -211,7 +211,8 @@ fn main() {
     // interpolation of optionals, to_string
     let ok: Kind? = Some(Kind.Large)
     print("{ok ?? Kind.Small} {ks}")   // Large [Small, Large]
-    // any through array
+    // any through array. `-O2` makes this call direct; `fieldless_enum_positions.sisu` checks the
+    // call through the table at `-O2` (`o2-indirect-calls: size_of 1`).
     let shapes: [any Shape] = [Kind.Small, Kind.Large]
     let mut total = 0
     for s in shapes {

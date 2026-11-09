@@ -1,9 +1,9 @@
 //! The size limit of an enum payload.
 //!
-//! Codegen lays out an enum with a field as `{ tag, [n x iA] }`: `n` units of the largest payload
-//! alignment `A`, and an enum with no field as its tag integer. `n` is a `u32`, and it is at most
-//! the payload size in bytes. A payload under `PAYLOAD_LIMIT` bytes thus always has an LLVM type,
-//! and one of that size or more may not.
+//! Codegen lays out an enum with no field as its tag integer. It lays out an enum with a field as
+//! `{ tag, [n x iA] }`: `n` units of the largest payload alignment `A`. `n` is a `u32`, and it is
+//! at most the payload size in bytes. A payload under `PAYLOAD_LIMIT` bytes thus always has an
+//! LLVM type, and one of that size or more may not.
 //! `oversized` finds the enums that may have none, so that the front end reports them and codegen
 //! never sees one. The limit promises only the type: a value lives on the stack (ADR 0048), so a
 //! value near the size of the stack overflows it when the program runs.
