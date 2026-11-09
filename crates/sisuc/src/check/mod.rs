@@ -19,6 +19,7 @@ mod generic;
 mod interface;
 mod member;
 mod mut_args;
+mod names;
 mod number;
 mod operator;
 mod optional;
@@ -57,6 +58,7 @@ use constant::{ConstInfo, ConstantSite};
 use enums::{EnumInfo, HoldsTable, reserved_name};
 use extend::Extension;
 use interface::{Bounds, InterfaceInfo, PendingBound, Required, Scope, Slot, Waiting};
+use names::{ConstantId, NameMaps};
 use prelude::PRELUDE;
 pub(crate) use unused_names::is_judged;
 use unused_names::{Owner, Pending, Use, Used};
@@ -343,11 +345,6 @@ fn broken_definition(kind: ast::BrokenKind) -> Option<Definition> {
         ast::BrokenKind::Alias => Some(Definition::Alias),
         ast::BrokenKind::Extend => None,
     }
-}
-
-/// Whether a table of top-level names holds a broken or rejected item for a name.
-fn is_broken<T>(declared: Option<&Declared<T>>) -> bool {
-    matches!(declared, Some(Declared::Broken))
 }
 
 struct ClassInfo {
@@ -732,8 +729,8 @@ pub(crate) fn reached(point: &'static str) {
 struct Checker<'src> {
     /// The program's text and the positions found in it.
     source: Source<'src>,
-    /// The first function of each name, and every broken one.
-    function_ids: FxHashMap<Symbol, Declared<tir::FuncId>>,
+    /// The top-level names, and the items that they stand for.
+    names: NameMaps,
     /// The names of the prelude's free functions, which no item of the user's may take
     /// (`collect_names`).
     prelude_functions: FxHashSet<Symbol>,
@@ -741,12 +738,8 @@ struct Checker<'src> {
     signatures: Vec<Signature>,
     /// Indexed by `ClassId`, so a duplicate class has fields and methods of its own.
     classes: Vec<ClassInfo>,
-    /// The first class of each name, and every broken one.
-    class_ids: FxHashMap<Symbol, Declared<tir::ClassId>>,
     /// Indexed by `EnumId`, so a duplicate enum has variants of its own.
     enums: Vec<EnumInfo>,
-    /// The first enum of each name, and every broken one.
-    enum_ids: FxHashMap<Symbol, Declared<tir::EnumId>>,
     /// Indexed by `InterfaceId`, so a duplicate interface has requirements of its own.
     interfaces: Vec<InterfaceInfo>,
     /// For each method that meets a requirement, its interfaces: a call of it uses them.
@@ -783,8 +776,6 @@ struct Checker<'src> {
     any_written: FxHashMap<Type, Span>,
     /// A buffer for the walk of an interface closure, kept from one closure to the next.
     closure_seen: FxHashSet<(tir::InterfaceId, TypeArgs)>,
-    /// The first interface of each name, and every broken one.
-    interface_ids: FxHashMap<Symbol, Declared<tir::InterfaceId>>,
     /// Each `extend` block whose target is a class or an enum, in source order.
     extensions: Vec<Extension>,
     /// For each class or enum and method name, the blocks that hold a method of that name, and
@@ -872,8 +863,8 @@ struct Checker<'src> {
     /// While a field's or payload's type resolves, the class and enum types in it and where each
     /// is written; `None` otherwise.
     written: Option<Vec<(Type, Span)>>,
-    /// The first constant of each name, and every broken one.
-    constants: FxHashMap<Symbol, Declared<ConstInfo>>,
+    /// Indexed by `ConstantId`, so a duplicate constant has a value of its own.
+    const_infos: Vec<ConstInfo>,
     /// The type aliases, which share the namespace of the items above.
     aliases: Aliases,
     /// What a value of each enum and class may hold, for W0011.
@@ -1229,13 +1220,6 @@ impl Body {
         self.bounds.resize(first, Bounds::default());
         self.bounds.extend(bounds);
     }
-
-    /// Where the type parameter `name` is in `type_params`, if it is one.
-    fn type_param(&self, name: Symbol) -> Option<usize> {
-        #[cfg(test)]
-        PARAM_STEPS.set(PARAM_STEPS.get() + 1);
-        self.type_param_at.get(&name).copied()
-    }
 }
 
 /// Diagnostics sorted by span start (stable); the program only when none is an error. `parsed`
@@ -1463,13 +1447,11 @@ impl<'src> Checker<'src> {
                 breaks: &program.breaks,
                 newlines: &program.newlines,
             },
-            function_ids: FxHashMap::default(),
+            names: NameMaps::default(),
             prelude_functions: FxHashSet::default(),
             signatures: Vec::new(),
             classes: Vec::new(),
-            class_ids: FxHashMap::default(),
             enums: Vec::new(),
-            enum_ids: FxHashMap::default(),
             interfaces: Vec::new(),
             meets: FxHashMap::default(),
             named_for_requirement: FxHashSet::default(),
@@ -1486,7 +1468,6 @@ impl<'src> Checker<'src> {
             any_closures: FxHashMap::default(),
             any_written: FxHashMap::default(),
             closure_seen: FxHashSet::default(),
-            interface_ids: FxHashMap::default(),
             extensions: Vec::new(),
             extension_methods: FxHashMap::default(),
             builtin_methods: Vec::new(),
@@ -1516,7 +1497,7 @@ impl<'src> Checker<'src> {
             lowered_enums: Vec::new(),
             spellings: FxHashMap::default(),
             written: None,
-            constants: FxHashMap::default(),
+            const_infos: Vec::new(),
             aliases: Aliases::default(),
             holds_table: HoldsTable::default(),
             diagnostics: Diagnostics::default(),
@@ -1651,8 +1632,6 @@ impl Checker<'_> {
         // The top-level items that a prelude function's name rejected.
         let mut rejected = Vec::new();
         let mut next_function = 0;
-        // Source order among the constants.
-        let mut order = 0;
         let mut waiting = broken.iter().peekable();
         for (at, item) in items.iter().enumerate() {
             if at == user_items {
@@ -1673,7 +1652,7 @@ impl Checker<'_> {
                     if !self.built_in(name)
                         && self.first_callable(&mut first, &mut rejected, Definition::Class, name)
                     {
-                        self.class_ids.insert(name.name, Declared::Known(id));
+                        self.names.add_class(name.name, id);
                     }
                     next_function += class
                         .members
@@ -1690,8 +1669,8 @@ impl Checker<'_> {
                             &f.name,
                         )
                     {
-                        self.function_ids
-                            .insert(f.name.name, Declared::Known(tir::FuncId(next_function)));
+                        self.names
+                            .add_function(f.name.name, tir::FuncId(next_function));
                     }
                     next_function += 1;
                 }
@@ -1711,11 +1690,13 @@ impl Checker<'_> {
                     if !self.built_in(&e.name)
                         && self.first_callable(&mut first, &mut rejected, Definition::Enum, &e.name)
                     {
-                        self.enum_ids.insert(e.name.name, Declared::Known(id));
+                        self.names.add_enum(e.name.name, id);
                     }
                     next_function += e.methods.len();
                 }
                 ast::Item::Const(c) => {
+                    let id = ConstantId(self.const_infos.len());
+                    self.const_infos.push(ConstInfo::new(c.name.span));
                     if !self.built_in(&c.name)
                         && self.first_callable(
                             &mut first,
@@ -1724,12 +1705,8 @@ impl Checker<'_> {
                             &c.name,
                         )
                     {
-                        self.constants.insert(
-                            c.name.name,
-                            Declared::Known(ConstInfo::new(c.name.span, order)),
-                        );
+                        self.names.add_constant(c.name.name, id);
                     }
-                    order += 1;
                 }
                 ast::Item::Interface(interface) => {
                     let mut type_params = self.type_params(&[], &interface.type_params);
@@ -1755,7 +1732,7 @@ impl Checker<'_> {
                             name,
                         )
                     {
-                        self.interface_ids.insert(name.name, Declared::Known(id));
+                        self.names.add_interface(name.name, id);
                     }
                 }
                 ast::Item::Alias(alias) => self.declare_alias(alias, &mut first, &mut rejected),
@@ -1767,7 +1744,7 @@ impl Checker<'_> {
         }
         // After the loop: the prelude's own items, which come last, would take the names back.
         for (kind, name) in rejected {
-            self.poison_name(kind, name);
+            self.names.poison(kind, name);
         }
         self.poison_broken(broken);
     }
@@ -1793,9 +1770,7 @@ impl Checker<'_> {
         if !self.built_in(&alias.name)
             && self.first_callable(first, rejected, Definition::Alias, &alias.name)
         {
-            self.aliases
-                .names
-                .insert(alias.name.name, Declared::Known(id));
+            self.names.add_alias(alias.name.name, id);
         }
     }
 
@@ -1843,84 +1818,8 @@ impl Checker<'_> {
     fn poison_broken(&mut self, broken: &[ast::Broken]) {
         for broken in broken {
             if let Some(kind) = broken_definition(broken.kind) {
-                self.poison_name(kind, broken.name.name);
+                self.names.poison(kind, broken.name.name);
             }
-        }
-    }
-
-    /// Whether a rejected or broken item poisons the top-level name `name`, so that a use of it
-    /// gives no more errors.
-    fn poisoned(&self, name: Symbol) -> bool {
-        is_broken(self.class_ids.get(&name))
-            || is_broken(self.function_ids.get(&name))
-            || is_broken(self.enum_ids.get(&name))
-            || is_broken(self.interface_ids.get(&name))
-            || is_broken(self.constants.get(&name))
-            || is_broken(self.aliases.names.get(&name))
-    }
-
-    /// Whether a call or a read of the value `name` is poisoned. `Ok` and `Err`, when no user's
-    /// function or class takes them, belong to the prelude's `Result`.
-    fn poisoned_use(&self, name: Symbol) -> bool {
-        self.poisoned(name)
-            || ((name == Symbol::OK || name == Symbol::ERR)
-                && !self.function_ids.contains_key(&name)
-                && !self.class_ids.contains_key(&name)
-                && is_broken(self.enum_ids.get(&Symbol::RESULT)))
-    }
-
-    /// Poisons the top-level name `name` of an item of `kind` that is rejected or broken: its
-    /// uses give no more errors. Functions, classes, enums, interfaces, constants and aliases
-    /// share a namespace, so an item of another kind with this name is poisoned too.
-    fn poison_name(&mut self, kind: Definition, name: Symbol) {
-        // The prelude's code reads a language interface by its name, so no rejected or broken
-        // item takes it, as no intact item of the user's does.
-        let language = is_language_interface(name.as_str());
-        match kind {
-            Definition::Function => {
-                self.function_ids.insert(name, Declared::Broken);
-            }
-            Definition::Class => {
-                self.class_ids.insert(name, Declared::Broken);
-            }
-            Definition::Interface => {
-                if !language {
-                    self.interface_ids.insert(name, Declared::Broken);
-                }
-            }
-            Definition::Enum => {
-                self.enum_ids.insert(name, Declared::Broken);
-            }
-            Definition::Constant => {
-                self.constants.insert(name, Declared::Broken);
-            }
-            Definition::Alias => {
-                self.aliases.names.insert(name, Declared::Broken);
-            }
-            Definition::Field
-            | Definition::Method
-            | Definition::Binding
-            | Definition::Type
-            | Definition::Variant
-            | Definition::LoopLabel => {}
-        }
-        if !language && let Some(interface) = self.interface_ids.get_mut(&name) {
-            *interface = Declared::Broken;
-        }
-        if let Some(class) = self.class_ids.get_mut(&name) {
-            *class = Declared::Broken;
-        }
-        if let Some(e) = self.enum_ids.get_mut(&name) {
-            *e = Declared::Broken;
-        }
-        if let Some(function) = self.function_ids.get_mut(&name) {
-            *function = Declared::Broken;
-        }
-        if let Some(constant) = self.constants.get_mut(&name) {
-            *constant = Declared::Broken;
-        }
-        if let Some(alias) = self.aliases.names.get_mut(&name) {
-            *alias = Declared::Broken;
         }
     }
 
@@ -1929,7 +1828,7 @@ impl Checker<'_> {
     /// declares it, as `Option` and `Result`. A language interface's name is reported too, and so
     /// is a name of milestone 8's constructors (`Some`, `Ok`, `Err`), but the item still takes
     /// it, so that its uses do not cascade. The prelude's own declarations take the language
-    /// interfaces' names as well, in `interface_ids`.
+    /// interfaces' names as well, in the interface names.
     fn built_in(&mut self, name: &ast::Ident) -> bool {
         let kind = if built_in_type(name.name.as_str()).is_some() {
             Some(BuiltIn::Type)
@@ -2253,7 +2152,7 @@ impl Checker<'_> {
     /// that returns a value. A `main` rejected as defined twice is not missing, and a type in
     /// its signature that did not resolve is not wrong: each error is reported already.
     fn check_main(&mut self, declared: &[(&ast::Function, Option<Type>)]) {
-        match self.function_ids.get(&Symbol::intern("main")) {
+        match self.names.function(Symbol::intern("main")) {
             None if declared
                 .iter()
                 .any(|(f, owner)| owner.is_none() && f.name.name.as_str() == "main") => {}
@@ -2365,23 +2264,20 @@ impl Checker<'_> {
             Named::Failed => return None,
             Named::Unknown => {}
         }
-        let declared = (
-            self.class_ids.get(&name).copied(),
-            self.enum_ids.get(&name).copied(),
-        );
+        let declared = (self.names.class(name), self.names.enum_id(name));
         // A broken name poisons every use, a built-in type's too.
         if let (Some(Declared::Broken), _) | (_, Some(Declared::Broken)) = declared {
             return None;
         }
-        match self.aliases.names.get(&name).copied() {
+        match self.names.alias(name) {
             Some(Declared::Broken) => return None,
             Some(Declared::Known(id)) => return self.alias(id, ty, name, args, angles),
             None => {}
         }
         // A class or an enum that took a language interface's name is the type.
         let taken = matches!(declared, (Some(_), _) | (_, Some(_)));
-        if let (false, Some(found)) = (taken, self.interface_ids.get(&name)) {
-            if let Declared::Known(id) = *found
+        if let (false, Some(found)) = (taken, self.names.interface(name)) {
+            if let Declared::Known(id) = found
                 && !self.poisoned(name)
             {
                 self.interface_as_type(id, name.to_string(), ty, ident().span);
@@ -2427,9 +2323,9 @@ impl Checker<'_> {
                 let types =
                     ["i64", "u8", "f64", "bool", "char", "string"].map(|ty| (ty, Definition::Type));
                 let classes = self.class_names();
-                let enums = self.enum_ids.keys().map(|e| (e.as_str(), Definition::Enum));
+                let enums = (self.names.enum_names()).map(|e| (e.as_str(), Definition::Enum));
                 let interfaces =
-                    (self.interface_ids.keys()).map(|i| (i.as_str(), Definition::Interface));
+                    (self.names.interface_names()).map(|i| (i.as_str(), Definition::Interface));
                 let aliases = self.alias_candidates();
                 let candidates = (types.into_iter().chain(classes).chain(enums))
                     .chain(interfaces)
@@ -2623,9 +2519,7 @@ impl Checker<'_> {
 
     /// The classes, as candidates for a name.
     fn class_names(&self) -> impl Iterator<Item = (&str, Definition)> {
-        self.class_ids
-            .keys()
-            .map(|class| (class.as_str(), Definition::Class))
+        (self.names.class_names()).map(|class| (class.as_str(), Definition::Class))
     }
 
     /// The variant `name`, at `span`, written without its enum: `None` when a binding or an item
@@ -2636,12 +2530,12 @@ impl Checker<'_> {
             .scopes
             .iter()
             .any(|scope| scope.contains_key(&name))
-            || self.class_ids.contains_key(&name)
-            || self.function_ids.contains_key(&name)
-            || self.enum_ids.contains_key(&name)
-            || self.interface_ids.contains_key(&name)
-            || self.aliases.names.contains_key(&name)
-            || self.constants.contains_key(&name);
+            || self.names.class(name).is_some()
+            || self.names.function(name).is_some()
+            || self.names.enum_id(name).is_some()
+            || self.names.interface(name).is_some()
+            || self.names.alias(name).is_some()
+            || self.names.constant(name).is_some();
         let enums = self.variant_of(name);
         let at_start = self.starts_break_value(span);
         let labelled = enums
@@ -2676,10 +2570,10 @@ impl Checker<'_> {
     /// open loop label right after an unlabeled `break`. A type's name, built in or a class's or
     /// an enum's, is in scope, but as a type: that is reported instead. So is a function's name.
     fn not_found(&mut self, name: Symbol, span: Span) -> Diagnostic {
-        let item = self.class_ids.contains_key(&name)
-            || self.enum_ids.contains_key(&name)
-            || self.function_ids.contains_key(&name);
-        if !item && self.interface_ids.contains_key(&name) {
+        let item = self.names.class(name).is_some()
+            || self.names.enum_id(name).is_some()
+            || self.names.function(name).is_some();
+        if !item && self.names.interface(name).is_some() {
             return DiagnosticKind::InterfaceAsValue {
                 name: name.to_string(),
                 at: span,
@@ -2688,9 +2582,9 @@ impl Checker<'_> {
         }
         if built_in_type(name.as_str()).is_some()
             || name == Symbol::OPTION
-            || self.class_ids.contains_key(&name)
-            || self.enum_ids.contains_key(&name)
-            || self.aliases.names.contains_key(&name)
+            || self.names.class(name).is_some()
+            || self.names.enum_id(name).is_some()
+            || self.names.alias(name).is_some()
         {
             return DiagnosticKind::TypeAsValue {
                 name: name.to_string(),
@@ -2700,8 +2594,8 @@ impl Checker<'_> {
             .into();
         }
         // Whether the function takes arguments; a prelude function is a function too.
-        let takes_arguments = match self.function_ids.get(&name) {
-            Some(&Declared::Known(func)) => Some(!self.signatures[func.0].params.is_empty()),
+        let takes_arguments = match self.names.function(name) {
+            Some(Declared::Known(func)) => Some(!self.signatures[func.0].params.is_empty()),
             _ => PRELUDE
                 .contains(&name.as_str())
                 .then(|| prelude::takes_arguments(name.as_str())),

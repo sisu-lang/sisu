@@ -773,8 +773,8 @@ impl Checker<'_> {
         if self.body.type_param(name).is_some() {
             return None;
         }
-        match self.interface_ids.get(&name) {
-            Some(&Declared::Known(id)) => Some(id),
+        match self.names.interface(name) {
+            Some(Declared::Known(id)) => Some(id),
             _ => None,
         }
     }
@@ -885,7 +885,7 @@ impl Checker<'_> {
         };
         if let Some((name, args, angles)) = named
             && self.body.type_param(name).is_none()
-            && let Some(&found) = self.interface_ids.get(&name)
+            && let Some(found) = self.names.interface(name)
         {
             let Declared::Known(id) = found else {
                 return None;
@@ -966,10 +966,10 @@ impl Checker<'_> {
         };
         // A class or an enum that took a language interface's name is the type.
         self.body.type_param(name).is_none()
-            && !self.class_ids.contains_key(&name)
-            && !self.enum_ids.contains_key(&name)
-            && !self.aliases.names.contains_key(&name)
-            && matches!(self.interface_ids.get(&name), Some(Declared::Known(_)))
+            && self.names.class(name).is_none()
+            && self.names.enum_id(name).is_none()
+            && self.names.alias(name).is_none()
+            && matches!(self.names.interface(name), Some(Declared::Known(_)))
             && !self.poisoned(name)
     }
 

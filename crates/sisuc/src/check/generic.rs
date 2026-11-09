@@ -3908,7 +3908,7 @@ impl Checker<'_> {
         let ast::ExprKind::Name(name) = base.kind else {
             return None;
         };
-        let Some(&Declared::Known(id)) = self.enum_ids.get(&name) else {
+        let Some(Declared::Known(id)) = self.names.enum_id(name) else {
             let Via::To(through) = self.through(name) else {
                 return None;
             };
@@ -4180,10 +4180,7 @@ impl Checker<'_> {
                 ..CallShape::default()
             };
         }
-        match (
-            self.class_ids.get(&name).copied(),
-            self.function_ids.get(&name).copied(),
-        ) {
+        match (self.names.class(name), self.names.function(name)) {
             (Some(Declared::Known(class)), _) => {
                 let info = &self.classes[class.0];
                 let shaped = fits(info.fields.iter().map(|f| (f.ty, Some(f.name.name))), args);
@@ -4407,9 +4404,9 @@ impl Checker<'_> {
         if let ast::TypeKind::Name(name) = arg.kind
             && matches!(name.as_str(), "unit" | "never")
             && self.body.type_param(name).is_none()
-            && !self.class_ids.contains_key(&name)
-            && !self.enum_ids.contains_key(&name)
-            && !self.aliases.names.contains_key(&name)
+            && self.names.class(name).is_none()
+            && self.names.enum_id(name).is_none()
+            && self.names.alias(name).is_none()
         {
             self.report(DiagnosticKind::TypeArgument {
                 ty: arg.to_string(),
@@ -4484,9 +4481,9 @@ impl Checker<'_> {
         };
         arg.optional == 0
             && built_in_type(n.as_str()).is_none()
-            && !self.class_ids.contains_key(&n)
-            && !self.enum_ids.contains_key(&n)
-            && !self.aliases.names.contains_key(&n)
+            && self.names.class(n).is_none()
+            && self.names.enum_id(n).is_none()
+            && self.names.alias(n).is_none()
             && self.body.type_param(n).is_none()
     }
 
@@ -4534,9 +4531,9 @@ impl Checker<'_> {
         let first = types.first()?;
         let n = name.name;
         let params = match (
-            self.class_ids.get(&n).copied(),
-            self.function_ids.get(&n).copied(),
-            self.enum_ids.get(&n).copied(),
+            self.names.class(n),
+            self.names.function(n),
+            self.names.enum_id(n),
         ) {
             (Some(Declared::Known(id)), ..) => Some(self.classes[id.0].type_params.len()),
             (_, Some(Declared::Known(id)), _) => Some(self.signatures[id.0].type_params.len()),
@@ -4553,7 +4550,7 @@ impl Checker<'_> {
             // A local that hides a poisoned name is no value.
             None if self.lookup(n).is_some_and(|b| b.hides_name) => {}
             None if self.lookup(n).is_some()
-                || matches!(self.constants.get(&n), Some(Declared::Known(_))) =>
+                || matches!(self.names.constant(n), Some(Declared::Known(_))) =>
             {
                 return Some(self.misread(name.span, call.then_some(first)));
             }
@@ -4577,7 +4574,7 @@ impl Checker<'_> {
         if name == Symbol::OPTION {
             return true;
         }
-        if let Some(&Declared::Known(id)) = self.enum_ids.get(&name) {
+        if let Some(Declared::Known(id)) = self.names.enum_id(name) {
             return self.enum_path_method(id, method);
         }
         // An alias is the type that it names, unless a local takes the name.

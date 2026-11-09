@@ -45,7 +45,7 @@ pub(super) enum Owner {
     /// The `extend` block at this place among `Checker.extensions`. It uses the interfaces in the
     /// bounds of its type parameters, once, when it is live.
     Block(usize),
-    /// The constant at this place among the constants (`ConstInfo::order`).
+    /// The constant at this place among the constants (`ConstantId`).
     Const(usize),
 }
 
@@ -563,13 +563,11 @@ impl Checker<'_> {
     /// The span of each constant's name, by its order; `None` for one its name does not hold.
     fn constant_names(&self) -> Vec<Option<Span>> {
         let mut constants = Vec::new();
-        for info in self.constants.values() {
-            if let Declared::Known(info) = info {
-                if constants.len() <= info.order {
-                    constants.resize(info.order + 1, None);
-                }
-                constants[info.order] = Some(info.span);
+        for (_, id) in self.names.known_constants() {
+            if constants.len() <= id.0 {
+                constants.resize(id.0 + 1, None);
             }
+            constants[id.0] = Some(self.const_infos[id.0].span);
         }
         constants
     }
@@ -584,8 +582,8 @@ impl Checker<'_> {
         for (i, u) in self.uses.iter().enumerate() {
             edges[self.owner_index(u.from)].push(i);
         }
-        let main = match self.function_ids.get(&Symbol::intern("main")) {
-            Some(&Declared::Known(id)) => Some(id.0),
+        let main = match self.names.function(Symbol::intern("main")) {
+            Some(Declared::Known(id)) => Some(id.0),
             _ => None,
         };
         let names = (0..functions).map(|f| Some(self.signatures[f].span));

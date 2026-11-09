@@ -1082,7 +1082,7 @@ impl Checker<'_> {
     /// built-in type, and where it is declared, when that is in the source.
     fn in_scope(&self, name: Symbol) -> Option<(ClashKind, Option<Span>)> {
         // A broken item's declaration is not known.
-        fn at<T>(declared: &Declared<T>, span: impl FnOnce(&T) -> Span) -> Option<Span> {
+        fn at<T>(declared: Declared<T>, span: impl FnOnce(T) -> Span) -> Option<Span> {
             match declared {
                 Declared::Known(item) => Some(span(item)),
                 Declared::Broken => None,
@@ -1091,30 +1091,33 @@ impl Checker<'_> {
         if let Some(binding) = self.body.scopes.iter().rev().find_map(|s| s.get(&name)) {
             return Some((ClashKind::Binding, Some(binding.span)));
         }
-        if let Some(id) = self.function_ids.get(&name) {
+        if let Some(id) = self.names.function(name) {
             let span = at(id, |id| self.signatures[id.0].span);
             return Some((ClashKind::Function, span));
         }
         if PRELUDE.contains(&name.as_str()) {
             return Some((ClashKind::Function, None));
         }
-        if let Some(constant) = self.constants.get(&name) {
-            return Some((ClashKind::Constant, at(constant, |info| info.span)));
+        if let Some(constant) = self.names.constant(name) {
+            return Some((
+                ClashKind::Constant,
+                at(constant, |id| self.const_infos[id.0].span),
+            ));
         }
-        if let Some(id) = self.class_ids.get(&name) {
+        if let Some(id) = self.names.class(name) {
             let span = at(id, |id| self.classes[id.0].name.span);
             return Some((ClashKind::Class, span));
         }
-        if let Some(id) = self.enum_ids.get(&name) {
+        if let Some(id) = self.names.enum_id(name) {
             let span = at(id, |id| self.enums[id.0].name.span);
             return Some((ClashKind::Enum, span));
         }
-        if let Some(id) = self.interface_ids.get(&name) {
+        if let Some(id) = self.names.interface(name) {
             let span = at(id, |id| self.interfaces[id.0].name.span);
             return Some((ClashKind::Interface, span));
         }
-        if let Some(id) = self.aliases.names.get(&name) {
-            let span = at(id, |&id| self.aliases.infos[id].name.span);
+        if let Some(id) = self.names.alias(name) {
+            let span = at(id, |id| self.aliases.infos[id].name.span);
             return Some((ClashKind::Alias, span));
         }
         built_in_type(name.as_str()).map(|_| (ClashKind::BuiltInType, None))
@@ -1640,7 +1643,7 @@ impl Checker<'_> {
     ) -> tir::LocalId {
         if !self.reserved(name)
             && !name.span.in_prelude()
-            && (matches!(self.enum_ids.get(&name.name), Some(Declared::Known(_)))
+            && (matches!(self.names.enum_id(name.name), Some(Declared::Known(_)))
                 || self.alias_unhideable(name.name))
         {
             self.report(DiagnosticKind::EnumNamedLocal {

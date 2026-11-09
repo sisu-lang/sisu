@@ -52,8 +52,8 @@ impl Checker<'_> {
     pub(super) fn call(&mut self, span: Span, site: Site<'_>, args: &[ast::Arg]) -> Checked {
         let callee = site.name;
         let declared = (
-            self.class_ids.get(&callee.name).copied(),
-            self.function_ids.get(&callee.name).copied(),
+            self.names.class(callee.name),
+            self.names.function(callee.name),
         );
         // A broken or rejected name, a constant's included, poisons every use, a built-in's too.
         // The item's own error is reported; its arguments may hold more.
@@ -82,7 +82,7 @@ impl Checker<'_> {
                 self.construct_class(span, class, site, args, None)
             }
             (_, Some(Declared::Known(func))) => self.invoke(span, func, None, site, args),
-            _ if self.interface_ids.contains_key(&callee.name) => {
+            _ if self.names.interface(callee.name).is_some() => {
                 self.report(DiagnosticKind::InterfaceAsValue {
                     name: callee.name.to_string(),
                     at: callee.span,
@@ -259,10 +259,8 @@ impl Checker<'_> {
     fn function_suggestion(&self, callee: &ast::Ident) -> Option<Suggestion> {
         let name = callee.name.as_str();
         let at_start = self.starts_break_value(callee.span);
-        let functions = self
-            .function_ids
-            .keys()
-            .map(|function| function.as_str())
+        let functions = (self.names.function_names())
+            .map(Symbol::as_str)
             .chain(PRELUDE.iter().copied())
             .chain(["i64", "u8", "f64", "char", "string"])
             .filter(|function| !(at_start && self.is_open_label(function)))
@@ -288,11 +286,11 @@ impl Checker<'_> {
             .any(|scope| scope.contains_key(&name))
         {
             "a binding"
-        } else if self.constants.contains_key(&name) {
+        } else if self.names.constant(name).is_some() {
             "a constant"
         } else if self.body.type_param(name).is_some() {
             "a type parameter"
-        } else if let Some(found) = self.enum_ids.get(&name) {
+        } else if let Some(found) = self.names.enum_id(name) {
             // The prelude's enums, as `Result`, name no variant that the program wrote.
             let variant = match found {
                 Declared::Known(id) if !self.enums[id.0].name.span.in_prelude() => {
@@ -513,7 +511,7 @@ impl Checker<'_> {
             (info.index.get(&member.name))
                 .is_some_and(|&variant| info.variants[variant].fields.is_empty())
         };
-        if let Some(&Declared::Known(id)) = self.enum_ids.get(&name) {
+        if let Some(Declared::Known(id)) = self.names.enum_id(name) {
             return variant(self, id);
         }
         // An alias is the type that it names, unless a local takes the name.
@@ -786,11 +784,11 @@ impl Checker<'_> {
         let ExprKind::Name(name) = receiver.kind else {
             return;
         };
-        let muts = if let Some(&Declared::Known(id)) = self.class_ids.get(&name)
+        let muts = if let Some(Declared::Known(id)) = self.names.class(name)
             && let Some(&Declared::Known(func)) = self.classes[id.0].methods.get(&method)
         {
             self.signatures[func.0].muts.clone()
-        } else if let Some(&Declared::Known(id)) = self.interface_ids.get(&name)
+        } else if let Some(Declared::Known(id)) = self.names.interface(name)
             && let Some(found) = (self.interfaces[id.0].requirements.iter())
                 .find(|requirement| requirement.name.name == method)
         {

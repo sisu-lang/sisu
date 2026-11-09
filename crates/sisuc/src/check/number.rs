@@ -125,8 +125,8 @@ impl Checker<'_> {
             expected,
         };
         // A local cannot take an enum's name, so the enum wins over one that tried.
-        match self.enum_ids.get(&name) {
-            Some(&Declared::Known(id)) => {
+        match self.names.enum_id(name) {
+            Some(Declared::Known(id)) => {
                 let generic = !self.enums[id.0].type_params.is_empty();
                 if let Some(angles) = angles.filter(|_| !generic) {
                     self.not_generic(name, angles);
@@ -150,16 +150,16 @@ impl Checker<'_> {
         }
         // Any other base with type arguments is checked as a value, which reports them. An alias
         // of a built-in type took them above, and they fit.
-        let applied = self.aliases.names.contains_key(&name) && self.built_in_of(name).is_some();
+        let applied = self.names.alias(name).is_some() && self.built_in_of(name).is_some();
         if (angles.is_some() && !applied) || self.lookup(name).is_some() {
             return None;
         }
         let written = base.span.to(member.span);
-        let declared = self.constants.contains_key(&name)
-            || self.function_ids.contains_key(&name)
-            || self.class_ids.contains_key(&name)
-            || self.aliases.names.contains_key(&name)
-            || self.interface_ids.contains_key(&name);
+        let declared = self.names.constant(name).is_some()
+            || self.names.function(name).is_some()
+            || self.names.class(name).is_some()
+            || self.names.alias(name).is_some()
+            || self.names.interface(name).is_some();
         if matches!(name.as_str(), "math" | "Math") && !declared {
             if let Some((args, _)) = call {
                 return self.math_call(written, member, args);

@@ -23,7 +23,7 @@ pub(super) fn takes_arguments(name: &str) -> bool {
 impl Checker<'_> {
     /// Whether `name` is a function of the program or of the prelude.
     pub(super) fn is_function(&self, name: Symbol) -> bool {
-        self.function_ids.contains_key(&name) || PRELUDE.contains(&name.as_str())
+        self.names.function(name).is_some() || PRELUDE.contains(&name.as_str())
     }
 
     /// A call of the prelude function `callee`; `None` when `callee` names none.

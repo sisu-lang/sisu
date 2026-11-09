@@ -374,7 +374,7 @@ impl Checker<'_> {
         let root = place_root(arg);
         if let ast::ExprKind::Name(name) = root.kind
             && self.lookup(name).is_none()
-            && !self.constants.contains_key(&name)
+            && self.names.constant(name).is_none()
             && self.is_function(name)
         {
             // A function, or a place with a function at its root, is a value: E0105 says so.

@@ -582,7 +582,7 @@ impl Checker<'_> {
         if !matches!(name, Symbol::OK | Symbol::ERR) {
             return None;
         }
-        let Some(&Declared::Known(id)) = self.enum_ids.get(&Symbol::RESULT) else {
+        let Some(Declared::Known(id)) = self.names.enum_id(Symbol::RESULT) else {
             return None;
         };
         Some((id, *self.enums[id.0].index.get(&name)?))
@@ -595,7 +595,7 @@ impl Checker<'_> {
             .iter()
             .enumerate()
             .filter(|(i, e)| {
-                matches!(self.enum_ids.get(&e.name.name), Some(Declared::Known(id)) if id.0 == *i)
+                matches!(self.names.enum_id(e.name.name), Some(Declared::Known(id)) if id.0 == *i)
                     && e.variants.iter().any(|v| v.name.name == name)
             })
             .map(|(_, e)| e.name.name.to_string())

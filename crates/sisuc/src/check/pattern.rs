@@ -963,7 +963,7 @@ impl Checker<'_> {
         }
         // A name the prelude takes is a binding, which `declare` reports.
         if reserved_name(name.name).is_none() {
-            let constant = self.constants.contains_key(&name.name);
+            let constant = self.names.constant(name.name).is_some();
             // A poisoned name gives no error.
             if (constant || text.starts_with(char::is_uppercase)) && self.poisoned_use(name.name) {
                 self.hide_local(name);
@@ -1117,7 +1117,7 @@ impl Checker<'_> {
                 && !self.poisoned_use(name.name)
             {
                 // `n == LIMIT` would test one value, not the range, so the help would mislead.
-                let kind = if self.constants.contains_key(&name.name) {
+                let kind = if self.names.constant(name.name).is_some() {
                     DiagnosticKind::ConstantInPattern {
                         name: name.name.to_string(),
                         at: name.span,
@@ -1343,7 +1343,7 @@ impl Checker<'_> {
         // enum.
         let fits = match qualifier {
             None => true,
-            Some(q) if let Some(&Declared::Known(named)) = self.enum_ids.get(&q.name) => {
+            Some(q) if let Some(Declared::Known(named)) = self.names.enum_id(q.name) => {
                 matches!(ty.kind(), TypeKind::Enum(id, _) if id == named)
             }
             // An alias of an enum is the type that it names, whose fixed arguments hold.
@@ -1532,7 +1532,7 @@ impl Checker<'_> {
     fn poison(&mut self, p: &ast::Pattern, keyword: &'static str, bound: &mut Bound<'_>) {
         match &p.kind {
             ast::PatternKind::Name(name)
-                if (self.constants.contains_key(&name.name)
+                if (self.names.constant(name.name).is_some()
                     || name.name.as_str().starts_with(char::is_uppercase))
                     && self.poisoned_use(name.name) =>
             {
