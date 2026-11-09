@@ -1,8 +1,20 @@
 // GIVEN enums with no field: one with two variants and a method, one with one variant, and one
 //       with 300 variants
+// AND `flip`, `grow`, `pick`, `same` and `size_of` take or return such an enum, and recurse to a
+//     depth that `main` reads at run time
 // WHEN `main` uses them as locals, parameters, results, `mut` arguments, payload fields, class
 //      fields, array elements, optionals, results and `any` values, and compares them
 // THEN each `print` line shows the value or the result of the comparison
+// AND `-O2` keeps the call of each of these functions in `main`, because the compiler cannot know
+//     the depth: the markers below check this
+// AND `size_of` stays a function of its own at `-O2`, and calls `size` through the `any` table:
+//     the last marker checks this
+// o2-calls: main flip 1
+// o2-calls: main grow 1
+// o2-calls: main pick 1
+// o2-calls: main same<Kind> 1
+// o2-calls: main size_of 1
+// o2-indirect-calls: size_of 1
 interface Shape {
     fn size(self) -> i64
 }
@@ -19,8 +31,12 @@ enum Kind: Shape {
     }
 }
 
-enum One {
+enum One: Shape {
     Only
+
+    fn size(self) -> i64 {
+        0
+    }
 }
 
 enum Wide {
@@ -345,30 +361,54 @@ class Box<T> {
     item: T
 }
 
-fn flip(k: Kind) -> Kind {
+fn swap(k: Kind) -> Kind {
     match k {
         Kind.Small => Kind.Large
         Kind.Large => Kind.Small
     }
 }
 
-fn grow(mut k: Kind) {
+// `swap` is its own inverse, so every depth gives `swap(k)`.
+fn flip(k: Kind, depth: i64) -> Kind {
+    if depth == 0 { swap(k) } else { swap(flip(swap(k), depth - 1)) }
+}
+
+// The call comes first, so that `-O2` cannot make it a loop.
+fn grow(mut k: Kind, depth: i64) {
+    if depth > 0 {
+        grow(mut k, depth - 1)
+    }
     k = Kind.Large
 }
 
-fn pick(b: bool) -> Result<Kind, string> {
-    if b { Ok(Kind.Small) } else { Err("no") }
+// `!b` gives the other result, and the `match` turns it back.
+fn pick(b: bool, depth: i64) -> Result<Kind, string> {
+    if depth == 0 {
+        if b { Ok(Kind.Small) } else { Err("no") }
+    } else {
+        match pick(!b, depth - 1) {
+            Ok(_) => Err("no")
+            Err(_) => Ok(Kind.Small)
+        }
+    }
 }
 
-fn same<T: Eq>(a: T, b: T) -> bool {
-    a == b
+// `==` is symmetric for these types, so every depth gives `a == b`.
+fn same<T: Eq>(a: T, b: T, depth: i64) -> bool {
+    if depth == 0 { a == b } else { same(b, a, depth - 1) && a == b }
 }
 
-fn size_of(s: any Shape) -> i64 {
-    s.size()
+fn size_of(s: any Shape, depth: i64) -> i64 {
+    if depth > 1 {
+        size_of(s, depth - 1) + size_of(s, depth - 2)
+    } else {
+        s.size()
+    }
 }
 
 fn main() {
+    // Standard input is empty, so the depth is 0, but the compiler cannot know it.
+    let depth = (read_line() ?? "").len()
     // Builds each variant of `Wide`, so that W0013 stays away.
     let all = [
         Wide.W0,
@@ -672,64 +712,66 @@ fn main() {
         Wide.W298,
         Wide.W299,
     ]
-    print(all.len())
+    print(all.len())   // 300
     let k = Kind.Small
-    print(k)
-    print(flip(k))
+    print(k)   // Small
+    print(flip(k, depth))   // Large
     let mut m = Kind.Small
-    grow(mut m)
-    print(m)
-    print(k == Kind.Small)
-    print(k != Kind.Small)
-    print(One.Only == One.Only)
+    grow(mut m, depth)
+    print(m)   // Large
+    print(k == Kind.Small)   // true
+    print(k != Kind.Small)   // false
+    print(One.Only == One.Only)   // true
     let w = Wide.W299
-    print(w)
-    print(w == Wide.W0)
+    print(w)   // W299
+    print(w == Wide.W0)   // false
     let t = Token.Pair(Kind.Large, 7)
     match t {
         Token.Mark(x) => print(x)
-        Token.Pair(x, n) => print("{x} {n}")
+        Token.Pair(x, n) => print("{x} {n}")   // Large 7
     }
-    print(Token.Mark(Kind.Small) == Token.Mark(Kind.Small))
+    print(Token.Mark(Kind.Small) == Token.Mark(Kind.Small))   // true
     let mk = MaybeKind.Just(Kind.Large)
-    print(mk)
-    print(MaybeKind.Nothing == mk)
+    print(mk)   // Just(Large)
+    print(MaybeKind.Nothing == mk)   // false
     let h = Holder(kind: Kind.Large, wide: Wide.W1)
     h.wide = Wide.W2
-    print(h.kind)
-    print(h.wide)
+    print(h.kind)   // Large
+    print(h.wide)   // W2
     let b = Box(item: Kind.Small)
-    print(b.item)
-    print(same(Kind.Small, Kind.Large))
-    print(same(One.Only, One.Only))
+    print(b.item)   // Small
+    print(same(Kind.Small, Kind.Large, depth))   // false
+    print(same(One.Only, One.Only, depth))   // true
     let ks = [Kind.Small, Kind.Large, Kind.Small]
     for x in ks {
-        print(x.size())
+        print(x.size())   // 1, 2, 1: one line for each element
     }
-    print(ks)
-    print(ks == [Kind.Small, Kind.Large, Kind.Small])
+    print(ks)   // [Small, Large, Small]
+    print(ks == [Kind.Small, Kind.Large, Kind.Small])   // true
     let o: Kind? = Some(Kind.Large)
     let n: Kind? = None
     let oo: Kind?? = Some(None)
-    print(o.to_string())
-    print(n.to_string())
-    print(oo.to_string())
-    print(o == n)
-    print(o ?? Kind.Small)
-    print(oo == Some(None))
-    match pick(true) {
-        Ok(x) => print(x)
+    print(o.to_string())   // Large
+    print(n.to_string())   // None
+    print(oo.to_string())   // Some(None)
+    print(o == n)   // false
+    print(o ?? Kind.Small)   // Large
+    print(oo == Some(None))   // true
+    match pick(true, depth) {
+        Ok(x) => print(x)   // Small
         Err(e) => print(e)
     }
-    print(size_of(Kind.Large))
-    print("{k} and {w}")
-    print(k.to_string())
+    // A second type converts to `any Shape` here, so that `-O2` cannot replace the call of `size`.
+    let shape: any Shape = if depth == 0 { Kind.Large } else { One.Only }
+    print(size_of(shape, depth))   // 2
+    print("{k} and {w}")   // Small and W299
+    print(k.to_string())   // Small
     let p = true
     let q = 1 > 2
-    print(p == q)
-    print(p != q)
-    print(p == true)
+    print(p == q)   // false
+    print(p != q)   // true
+    print(p == true)   // true
     let bo: bool? = Some(false)
-    print(bo == Some(false))
-    print(bo != None)
+    print(bo == Some(false))   // true
+    print(bo != None)   // true
 }

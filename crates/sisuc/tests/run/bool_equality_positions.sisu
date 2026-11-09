@@ -1,6 +1,15 @@
 // GIVEN `bool` values in enum payloads, in `match` patterns, in arrays and in optionals
+// AND `same`, `m`, `f` and `t` take a `bool`, a `bool?`, or an enum with a `bool` payload, and
+//     recurse to a depth that `main` reads at run time
 // WHEN `main` compares them with `==` and `!=`, directly and through a generic function
 // THEN each `print` line shows the result, and `dbg` writes its line to standard error
+// AND `-O2` keeps the calls of these functions in `main`, because the compiler cannot know the
+//     depth: the markers below check this
+// o2-calls: main same<bool> 1
+// o2-calls: main same<bool?> 1
+// o2-calls: main m 1
+// o2-calls: main f 2
+// o2-calls: main t 2
 enum Flag {
     Unset
     Set(bool)
@@ -11,18 +20,31 @@ enum Two {
     B
 }
 
-fn same<T: Eq>(a: T, b: T) -> bool {
-    a == b
+// `==` is symmetric for these types, so every depth gives `a == b`.
+fn same<T: Eq>(a: T, b: T, levels: i64) -> bool {
+    if levels == 0 { a == b } else { same(b, a, levels - 1) && a == b }
 }
 
-fn m(b: bool) -> i64 {
+// The two calls give the same number, so the larger of them is that number. Two calls, so that
+// `-O2` cannot make a loop of them. `f` and `t` do the same.
+fn m(b: bool, levels: i64) -> i64 {
+    if levels > 1 {
+        let a = m(b, levels - 1)
+        let c = m(b, levels - 2)
+        return if a < c { c } else { a }
+    }
     match b {
         true => 1
         false => 0
     }
 }
 
-fn f(x: Flag) -> i64 {
+fn f(x: Flag, levels: i64) -> i64 {
+    if levels > 1 {
+        let a = f(x, levels - 1)
+        let c = f(x, levels - 2)
+        return if a < c { c } else { a }
+    }
     match x {
         Flag.Set(true) => 2
         Flag.Set(false) => 1
@@ -30,7 +52,12 @@ fn f(x: Flag) -> i64 {
     }
 }
 
-fn t(x: Two) -> i64 {
+fn t(x: Two, levels: i64) -> i64 {
+    if levels > 1 {
+        let a = t(x, levels - 1)
+        let c = t(x, levels - 2)
+        return if a < c { c } else { a }
+    }
     match x {
         Two.A(true, n) => n
         Two.A(false, _) => -1
@@ -39,18 +66,22 @@ fn t(x: Two) -> i64 {
 }
 
 fn main() {
-    print(f(Flag.Unset))
-    print(t(Two.B))
-    print(m(true))
-    print(f(Flag.Set(false)))
-    print(t(Two.A(true, 5)))
-    print(Flag.Set(true) == Flag.Set(false))
-    print(Two.A(true, 1) == Two.A(true, 1))
-    print(same(true, true))
-    print(same(Some(true), None))
-    print([true] == [false])
-    print([Some(true), None].contains(None))
+    // Standard input is empty, so the depth is 0, but the compiler cannot know it.
+    let levels = (read_line() ?? "").len()
+    print(f(Flag.Unset, levels))   // 0
+    print(t(Two.B, levels))   // 0
+    print(m(true, levels))   // 1
+    print(f(Flag.Set(false), levels))   // 1
+    print(t(Two.A(true, 5), levels))   // 5
+    print(Flag.Set(true) == Flag.Set(false))   // false
+    print(Two.A(true, 1) == Two.A(true, 1))   // true
+    // `levels == 0` is `true`, but the compiler cannot know it. Two `true` values would let
+    // `-O2` fold the call away.
+    print(same(levels == 0, true, levels))   // true
+    print(same(Some(true), None, levels))   // false
+    print([true] == [false])   // false
+    print([Some(true), None].contains(None))   // true
     let bb: bool?? = Some(Some(false))
-    print(bb == Some(Some(false)))
-    print(dbg(true != false))
+    print(bb == Some(Some(false)))   // true
+    print(dbg(true != false))   // true
 }

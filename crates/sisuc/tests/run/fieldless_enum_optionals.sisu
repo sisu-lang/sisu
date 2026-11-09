@@ -1,8 +1,13 @@
 // GIVEN enums with no field: one with one variant, one with 300 variants, and one with 256
 //       variants, whose optional has no spare tag
+// AND `pass_full` takes and returns an optional of the last one, and recurses to a depth that
+//     `main` reads at run time
 // WHEN `main` makes optionals, nested optionals and arrays of optionals of them
 //      and passes them through calls
 // THEN each `print` line shows the value
+// AND `-O2` keeps both calls of `pass_full` in `main`, because the compiler cannot know the depth:
+//     the marker below checks this
+// o2-calls: main pass_full 2
 enum One {
     Only
 }
@@ -573,11 +578,20 @@ class Box<T> {
     item: T
 }
 
-fn pass_full(f: Full?) -> Full? {
-    f
+// The result of the call is `f`, so `r == None` holds only when `f` is `None`. `-O2` cannot know
+// this, so it keeps the call.
+fn pass_full(f: Full?, depth: i64) -> Full? {
+    if depth == 0 {
+        f
+    } else {
+        let r = pass_full(f, depth - 1)
+        if r == None { f } else { r }
+    }
 }
 
 fn main() {
+    // Standard input is empty, so the depth is 0, but the compiler cannot know it.
+    let depth = (read_line() ?? "").len()
     let all = [
         Full.F0,
         Full.F1,
@@ -1138,34 +1152,34 @@ fn main() {
         Wide.W298,
         Wide.W299,
     ]
-    print(all.len() + ws.len())
+    print(all.len() + ws.len())   // 556
     let o: One? = Some(One.Only)
     let n: One? = None
-    print(o.to_string())
-    print(n.to_string())
-    print(o == n)
-    print(o == Some(One.Only))
+    print(o.to_string())   // Only
+    print(n.to_string())   // None
+    print(o == n)   // false
+    print(o == Some(One.Only))   // true
     let oo: One?? = Some(None)
-    print(oo.to_string())
-    print(oo == Some(None))
+    print(oo.to_string())   // Some(None)
+    print(oo == Some(None))   // true
     let w: Wide? = Some(Wide.W299)
     let wn: Wide? = None
-    print(w.to_string())
-    print(wn.to_string())
-    print(w == wn)
-    print(w ?? Wide.W0)
-    print(wn ?? Wide.W7)
+    print(w.to_string())   // W299
+    print(wn.to_string())   // None
+    print(w == wn)   // false
+    print(w ?? Wide.W0)   // W299
+    print(wn ?? Wide.W7)   // W7
     let f: Full? = Some(Full.F255)
     let fn2: Full? = None
-    print(pass_full(f).to_string())
-    print(pass_full(fn2).to_string())
-    print(f == fn2)
-    print(f == Some(Full.F255))
-    print(f != Some(Full.F0))
-    print(Box(item: One.Only).item)
-    print([One.Only, One.Only])
-    print([One.Only] == [One.Only])
+    print(pass_full(f, depth).to_string())   // F255
+    print(pass_full(fn2, depth).to_string())   // None
+    print(f == fn2)   // false
+    print(f == Some(Full.F255))   // true
+    print(f != Some(Full.F0))   // true
+    print(Box(item: One.Only).item)   // Only
+    print([One.Only, One.Only])   // [Only, Only]
+    print([One.Only] == [One.Only])   // true
     let wo: [Wide?] = [None, Some(Wide.W1)]
-    print(wo)
-    print(wo == [None, Some(Wide.W1)])
+    print(wo)   // [None, W1]
+    print(wo == [None, Some(Wide.W1)])   // true
 }
