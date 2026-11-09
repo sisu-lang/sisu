@@ -1,0 +1,442 @@
+//! A type parameter or associated type whose bound failed is unknown in each body, as one whose
+//! closure is too wide is: the errors that a bound could remove go, and the errors that are
+//! true for any bound stay (S31).
+
+use super::*;
+use Code::{
+    ArgumentCount, BraceOnNewLine, BuiltInName, CannotCompare, CannotIndex, CoalesceNotOptional,
+    ConformanceBody, DefinedTwice, Expected, ForNeedsArray, InheritedArgument, Mismatch, NoMember,
+    NotAnInterface, NotConform, ParamLacks, SafeAccessNotOptional, TypeArguments, UnknownType,
+};
+
+/// The items that every program of S31 starts with.
+const ITEMS: &str = "interface Y {\n    fn y(self) -> i64\n}\nclass Box2<U: Y> {\n    v: U\n}\nfn needs<U: Y>(u: U) -> i64 { 1 }\nfn int(a: i64) -> i64 { a }\n";
+
+/// Asserts that the errors of `src`, in the order of their spans, have the codes `expected`.
+/// A warning is out: the tables list errors. A failure names `row`.
+fn error_codes(row: &str, src: &str, expected: &[Code]) {
+    let (_, ds) = crate::front_end::checked_with(PRELUDE_SOURCE, src);
+    let found: Vec<Code> = ds
+        .iter()
+        .filter(|d| d.severity() == Severity::Error)
+        .map(Diagnostic::code)
+        .collect();
+    assert_eq!(found, expected, "row `{row}` of\n{src}");
+}
+
+/// `ITEMS`, then `form`, then `main`.
+fn program(form: &str) -> String {
+    format!("{ITEMS}{form}fn main() {{}}\n")
+}
+
+/// The 21 uses of S31's first table, with the codes that they keep after the error of the bound.
+const USES: [(&str, &[Code]); 21] = [
+    ("x.zz()", &[]),
+    ("x.y()", &[]),
+    ("let _a = x.zz().w", &[]),
+    ("let _a = x == x", &[]),
+    ("let _a = x < x", &[]),
+    ("let _a = [x] == [x]", &[]),
+    ("let _a = needs(x)", &[]),
+    ("let _a: Box2<T>? = None", &[]),
+    ("let _a: T.Item? = None", &[]),
+    ("x?.y()", &[SafeAccessNotOptional]),
+    ("let _a = x.f", &[NoMember]),
+    ("let _a = x + x", &[ParamLacks]),
+    ("let _a = -x", &[ParamLacks]),
+    ("let _a = x == 1", &[CannotCompare]),
+    ("let _a = !x", &[Mismatch]),
+    ("let _a = x[0]", &[CannotIndex]),
+    ("for _a in x {}", &[ForNeedsArray]),
+    ("let _a = i64(x)", &[Mismatch]),
+    ("let _a: i64 = x", &[Mismatch]),
+    ("let _a = x ?? 1", &[CoalesceNotOptional]),
+    ("print(x)", &[]),
+];
+
+/// S31's first table for the bound `bound`, declared by `decl`: the error `code` of the bound,
+/// and then the code of each use.
+fn each_use(decl: &str, bound: &str, code: Code) {
+    for (form, kept) in USES {
+        let src = program(&format!(
+            "{decl}fn g<T: {bound}>(x: T) {{\n    {form}\n}}\n"
+        ));
+        let want: Vec<Code> = std::iter::once(code).chain(kept.iter().copied()).collect();
+        error_codes(form, &src, &want);
+    }
+}
+
+#[test]
+fn an_unknown_bound_should_leave_only_its_error_at_each_use() {
+    each_use("", "Missing", UnknownType);
+}
+
+#[test]
+fn a_bound_that_did_not_parse_should_leave_only_its_error_at_each_use() {
+    each_use("interface Z\n{\n    fn zz(self)\n}\n", "Z", BraceOnNewLine);
+}
+
+#[test]
+fn a_class_bound_should_leave_only_its_error_at_each_use() {
+    each_use("class K {}\n", "K", NotAnInterface);
+}
+
+#[test]
+fn a_bound_with_a_failed_argument_should_leave_only_its_error_at_each_use() {
+    each_use("interface W<A> {}\n", "W<Missing>", UnknownType);
+}
+
+/// `Q` with `type A`, and a function that uses it.
+const Q_WITH_TYPE: &str =
+    "interface Q {\n    type A\n    fn a(self) -> Self.A\n}\nfn q<U: Q>(u: U) -> U.A { u.a() }\n";
+
+/// The rows 1-18 and 30-38 of S31's second table: the form, and the codes of the output.
+const KINDS: [(&str, &[Code]); 27] = [
+    (
+        "fn g<T: Y & Missing>(x: T) { print(x.y() + true) }",
+        &[UnknownType],
+    ),
+    ("fn g<T: Y & Missing>(x: T) { x.zz() }", &[UnknownType]),
+    ("fn g<T: Missing>(xs: [T]) { xs[0].zz() }", &[UnknownType]),
+    ("fn g<T: Missing>(o: T?) { o?.zz() }", &[UnknownType]),
+    ("fn g<T: Missing>(o: T?) -> bool { o == o }", &[UnknownType]),
+    (
+        "class C<T: Missing> {\n    v: T\n    fn m(self) { self.v.zz() }\n}",
+        &[UnknownType],
+    ),
+    (
+        "enum E<T: Missing> {\n    A(T)\n    fn m(self, x: T) { x.zz() }\n}",
+        &[UnknownType],
+    ),
+    (
+        "class C {\n    fn m<T: Missing>(self, x: T) { x.zz() }\n}",
+        &[UnknownType],
+    ),
+    (
+        "class B<T> {\n    v: T\n}\nextend<T: Missing> B<T> {\n    fn m(self) { self.v.zz() }\n}",
+        &[UnknownType],
+    ),
+    (
+        "interface I {\n    type A: Missing\n    fn a(self) -> Self.A\n}\nfn g<T: I>(x: T) { x.a().zz() }",
+        &[UnknownType],
+    ),
+    (
+        "interface I {\n    type A: Missing\n    fn a(self) -> Self.A\n}\nfn g<T: I>(x: T) -> bool { x.a() == x.a() }",
+        &[UnknownType],
+    ),
+    (
+        "fn g<T: Missing, V>(x: T, v: V) { v.zz() }",
+        &[UnknownType, NoMember],
+    ),
+    ("fn g<T: Y<i64>>(x: T) { x.y() }", &[TypeArguments]),
+    (
+        "fn g<T: Y<i64>>(x: T) { x.zz() }",
+        &[TypeArguments, NoMember],
+    ),
+    ("fn g<T: Missing>(x: Box2<T>) {}", &[UnknownType]),
+    (
+        "interface W<A: Y> {}\nfn g<T: Missing, U: W<T>>(x: U) {}",
+        &[UnknownType],
+    ),
+    (
+        "interface W<A> {\n    fn w(self) -> A\n}\nfn g<T: W>(x: T) { x.w() }",
+        &[TypeArguments],
+    ),
+    (
+        "interface W<A> {\n    fn w(self) -> A\n}\nfn g<T: W<i64, i64>>(x: T) { x.w() }",
+        &[TypeArguments],
+    ),
+    (
+        "class B3<T: Missing> {\n    v: T\n}\nfn f() {\n    let _a = B3(v: 1)\n}",
+        &[UnknownType],
+    ),
+    (
+        "interface P {\n    fn m<U: Missing>(self, u: U)\n}\nclass C: P {\n    fn m<U>(self, u: U) {}\n}",
+        &[UnknownType],
+    ),
+    (
+        "fn g<A: Missing>(b: A) { let _v: i64 = q(b) }",
+        &[UnknownType, Mismatch],
+    ),
+    (
+        "fn g<A: Missing>(b: A) { q(b).zz() }",
+        &[UnknownType, NoMember],
+    ),
+    ("fn g<T>(x: T) { x.zz() }", &[NoMember]),
+    (
+        "fn g<T: Missing>(x: T) {}\nfn f() { g(1, 2) }",
+        &[UnknownType, ArgumentCount],
+    ),
+    (
+        "fn g<T: Missing>(x: T) -> T { x }\nfn f() { g(1).zz() }",
+        &[UnknownType, NoMember],
+    ),
+    (
+        "fn g<T: Missing>(x: T) -> T { x }\nfn f() { g(1) + true }",
+        &[UnknownType, Mismatch],
+    ),
+    (
+        "class Q: Missing {}\nfn g(q: Q) { q.other() }",
+        &[UnknownType, NoMember],
+    ),
+];
+
+/// The probes of the plan: the form, and the codes of the output.
+const PROBES: [(&str, &[Code]); 7] = [
+    // A member bound beside a failed one.
+    (
+        "interface Conv<A> {\n    fn c(self) -> A\n}\nfn g<T: Missing & Conv<T.Item>>(x: T) {}\n",
+        &[UnknownType],
+    ),
+    // A failed bound beside a known one.
+    (
+        "interface K {}\nfn g<T: K & Missing>(x: T) -> bool { x == x }\n",
+        &[UnknownType],
+    ),
+    // A bound reads a parameter in the wave after the wave of the bound that failed.
+    (
+        "interface Holds<A> {\n    type Item\n}\ninterface Conv<A> {}\nfn g<T: Holds<R.Item>, U: Conv<T.Item>, R: Missing>(t: T, u: U, r: R) {}\n",
+        &[UnknownType],
+    ),
+    (
+        "interface Holds<A> {\n    type Item\n}\ninterface Conv<A> {}\nfn g<T: Y & Holds<R.Item>, U: Conv<T.Item>, R: Missing>(t: T, u: U, r: R) {}\n",
+        &[UnknownType],
+    ),
+    // A bound reads a parameter in the wave of the bound that failed, after it.
+    (
+        "interface Holds<A> {\n    type Item\n}\ninterface Conv<A> {}\nfn g<T: Holds<R.Item>, V: Conv<T.Name>, R: Missing>(t: T, v: V, r: R) {}\n",
+        &[UnknownType],
+    ),
+    // A requirement keeps its old cascade.
+    (
+        "interface P {\n    fn m<U: Y>(self, u: U)\n}\nclass C: P {\n    fn m<U: Missing>(self, u: U) {}\n}\n",
+        &[ConformanceBody, UnknownType],
+    ),
+    // A requirement that did not parse leaves its interface without it.
+    (
+        "interface Z {\n    fn zz(self) ->\n}\nfn g<T: Z>(x: T) { x.zz() }\n",
+        &[Expected, NoMember],
+    ),
+];
+
+#[test]
+fn a_failed_bound_should_reach_each_kind_of_parameter() {
+    for (form, want) in KINDS.iter().chain(&PROBES) {
+        // The two rows of `Q` use its items; the others use none of them.
+        let form = if form.contains("q(b)") {
+            format!("{Q_WITH_TYPE}{form}\n")
+        } else if form.ends_with('\n') {
+            (*form).to_string()
+        } else {
+            format!("{form}\n")
+        };
+        error_codes(&form, &program(&form), want);
+    }
+}
+
+/// Rows 19, 20, 24-26, 28, 29 and 39 of S31's second table, and the forms of the plan: the form,
+/// and the codes of the output.
+const INHERITED: [(&str, &[Code]); 31] = [
+    (
+        "interface J: Missing {}\nfn g<T: J>(x: T) { x.zz() }\n",
+        &[UnknownType],
+    ),
+    (
+        "interface J: Y, Missing {}\nfn g<T: J>(x: T) { print(x.y() + true) }\n",
+        &[UnknownType],
+    ),
+    (
+        "interface J: Missing {}\nfn g(x: any J) { x.zz() }\n",
+        &[UnknownType],
+    ),
+    (
+        "interface J: Missing {}\nfn g(x: any J) -> bool { x == x }\n",
+        &[UnknownType],
+    ),
+    (
+        "interface J: Missing {}\nfn g(x: any J) { needs(x) }\n",
+        &[UnknownType],
+    ),
+    // A language interface, as today.
+    (
+        "interface J: Eq {}\nfn g<T: J>(x: T) -> bool { x == x }\n",
+        &[],
+    ),
+    // It still reads the language's `Eq`, as today.
+    (
+        "interface Eq {}\ninterface Eq {}\ninterface J: Eq {}\nfn g<T: J>(x: T) -> bool { x == x }\n",
+        &[BuiltInName, BuiltInName, DefinedTwice],
+    ),
+    // A conformance header through a failed bound, an old cascade, as today.
+    (
+        "interface J: Missing {}\nclass Q: J {}\nfn f() { needs(Q()) }\n",
+        &[UnknownType, NotConform],
+    ),
+    // Two steps.
+    (
+        "interface J: Missing {}\ninterface K: J {}\nfn g<T: K>(x: T) -> bool { x == x }\n",
+        &[UnknownType],
+    ),
+    // Two steps, through an `any` and through an associated type.
+    (
+        "interface J: Missing {}\ninterface K: J {}\nfn g(x: any K) { x.zz() }\n",
+        &[UnknownType],
+    ),
+    (
+        "interface J: Missing {}\ninterface K: J {}\ninterface I {\n    type A: K\n    fn a(self) -> Self.A\n}\nfn g<T: I>(x: T) { x.a().zz() }\n",
+        &[UnknownType],
+    ),
+    // The list reads a parameter before the flag is set: the closures that it found are forgotten.
+    // The wanted codes are the two of the list, with none for the bounds after it.
+    (
+        "interface Conv<A> {}\ninterface J: Missing, Conv<Self.Zed> {\n    type C: Conv<Self.Zed>\n    type D: Conv<Self.Zed>\n}\n",
+        &[UnknownType, UnknownType],
+    ),
+    // The same with the failed bound after the read, through another interface, and with an
+    // interface parameter in place of `Self`.
+    (
+        "interface Conv<A> {}\ninterface J: Conv<Self.Zed>, Missing {\n    type C: Conv<Self.Zed>\n    type D: Conv<Self.Zed>\n}\n",
+        &[UnknownType, UnknownType],
+    ),
+    (
+        "interface Conv<A> {}\ninterface K: Missing {}\ninterface J: K, Conv<Self.Zed> {\n    type C: Conv<Self.Zed>\n    type D: Conv<Self.Zed>\n}\n",
+        &[UnknownType, UnknownType],
+    ),
+    (
+        "interface Conv<A> {}\ninterface J<T: J<T>>: Missing, Conv<T.Zed> {\n    type C: Conv<T.Zed>\n    type D: Conv<T.Zed>\n}\n",
+        &[UnknownType, UnknownType],
+    ),
+    // The list itself fails at an associated path: the interface is unknown from then on.
+    (
+        "interface Conv<A> {}\ninterface Holds {\n    type X\n}\ninterface J: Conv<Self.A.X> {\n    type A: Holds\n    type C: Conv<Self.A.X>\n}\n",
+        &[UnknownType],
+    ),
+    // The list reads an associated type of another interface, whose bound is `J`.
+    (
+        "interface Conv<A> {}\ninterface K {\n    type X: J<Self>\n}\ninterface J<T: K>: Missing, Conv<T.X.Y> {\n    type C: Conv<T.X.Z>\n    type D: Conv<T.X.Z>\n}\n",
+        &[UnknownType, UnknownType],
+    ),
+    // A requirement and the bound of an interface parameter give the same codes, as they did.
+    (
+        "interface Conv<A> {}\ninterface J: Missing, Conv<Self.Zed> {\n    fn m(self, x: Self.Zed)\n    fn n<U: Conv<Self.Zed>>(self, u: U)\n}\n",
+        &[UnknownType, UnknownType],
+    ),
+    (
+        "interface Conv<A> {}\ninterface J<T: Conv<Self.Zed>>: Missing {\n    type C: Conv<Self.Zed>\n}\n",
+        &[UnknownType, UnknownType],
+    ),
+    // An argument of the inherited interface fails.
+    (
+        "interface W<A> {}\ninterface J: W<Missing> {}\nfn g<T: J>(x: T) { x.zz() }\n",
+        &[UnknownType],
+    ),
+    // An argument that does not fit drops the inheritance, and the error after it goes.
+    (
+        "interface W<A> {\n    fn w(self) -> A\n}\ninterface J<A>: W<[A]> {}\nfn g<T: J<i64>>(x: T) { x.w() }\n",
+        &[InheritedArgument],
+    ),
+    // A member bound beside the failed one.
+    (
+        "interface J: Missing {}\nfn g<T: J>(x: T) {\n    let _a: T.Item? = None\n    x.y()\n}\n",
+        &[UnknownType],
+    ),
+    // An associated type whose bound inherits the failure.
+    (
+        "interface J: Missing {}\ninterface I {\n    type A: J\n    fn a(self) -> Self.A\n}\nfn g<T: I>(x: T) { x.a().zz() }\n",
+        &[UnknownType],
+    ),
+    // A class parameter.
+    (
+        "interface J: Missing {}\nclass C<T: J> {\n    v: T\n    fn m(self) { self.v.zz() }\n}\n",
+        &[UnknownType],
+    ),
+    // The interface is written after its use: the fact is there when the body asks.
+    (
+        "fn g<T: J>(x: T) { x.zz() }\ninterface J: Missing {}\n",
+        &[UnknownType],
+    ),
+    (
+        "fn g(x: any J) -> bool { x == x }\ninterface J: Missing {}\n",
+        &[UnknownType],
+    ),
+    (
+        "class C<T: J> {\n    v: T\n    fn m(self) { self.v.zz() }\n}\ninterface J: Missing {}\n",
+        &[UnknownType],
+    ),
+    // A signature that reads a parameter whose bound inherits the failure.
+    (
+        "interface Conv<A> {}\ninterface J: Missing {}\ninterface I<T: J> {\n    type A: Conv<T.Item>\n}\n",
+        &[UnknownType],
+    ),
+    // No bound gives a field, or `+`.
+    (
+        "interface J: Missing {}\nfn g<T: J>(x: T) { let _a = x.f }\n",
+        &[UnknownType, NoMember],
+    ),
+    (
+        "interface J: Missing {}\nfn g(x: any J) { let _a = x + x }\n",
+        &[UnknownType, Mismatch],
+    ),
+    // An `any` with an argument that fails: it is untyped already.
+    (
+        "interface W<A> {}\nfn g(x: any W<Missing>) { x.zz() }\n",
+        &[UnknownType],
+    ),
+];
+
+#[test]
+fn an_inherited_failed_bound_should_leave_only_its_error() {
+    for (form, want) in INHERITED {
+        error_codes(form, &program(form), want);
+    }
+}
+
+#[test]
+fn a_failed_bound_should_be_read_at_each_position() {
+    let rows: [(&str, &[Code]); 9] = [
+        // A closure is found before the bound that fails: the fact is read on each call.
+        (
+            "interface Holds<A> {\n    type Item\n}\ninterface Conv<A> {}\nfn g<A: Conv<T.Name>, T: Holds<R.Item>, V: Conv<T.Other>, R: Missing>(a: A, t: T, v: V, r: R) {}\n",
+            &[UnknownType, UnknownType],
+        ),
+        (
+            "interface I<T: Missing> {\n    fn m(self, x: T) -> T.Item?\n}\n",
+            &[UnknownType],
+        ),
+        (
+            "interface I {\n    fn m<U: Missing>(self, u: U) -> U.Item?\n}\n",
+            &[UnknownType],
+        ),
+        // A conformance header reads the list as today.
+        (
+            "interface R {\n    type A: Y\n}\nclass C<T: Missing>: R {\n    type A = T\n}\n",
+            &[UnknownType, NotConform],
+        ),
+        // A bound adds an interface with a failed inheritance to a closure that was found before:
+        // `T` is unknown, so `T.Y` draws no error. Only the inheritance has one.
+        (
+            "interface Conv<A, B> {}\ninterface K { type B }\ninterface JJ<A>: Missing { type X }\nfn g<T: K & JJ<T.B>, U: Conv<T.X, T.Y>>(t: T, u: U) {}\n",
+            &[UnknownType],
+        ),
+        (
+            "interface Conv<A, B> {}\ninterface K { type B }\ninterface JJ<A>: Missing { type X }\nclass C<T: K & JJ<T.B>, U: Conv<T.X, T.Y>> {\n    t: T\n}\n",
+            &[UnknownType],
+        ),
+        (
+            "interface Conv<A, B> {}\ninterface K { type B }\ninterface M: Missing { type X }\ninterface JJ<A>: M {}\nfn g<T: K & JJ<T.B>, U: Conv<T.X, T.Y>>(t: T, u: U) {}\n",
+            &[UnknownType],
+        ),
+        (
+            "interface Conv<A, B> {}\ninterface K { type B }\ninterface JJ<A>: Missing { type X }\ninterface S<T: K & JJ<T.B>, U: Conv<T.X, T.Y>> {}\n",
+            &[UnknownType],
+        ),
+        // The control: the same shape with no failed inheritance keeps its error at `T.Y`.
+        (
+            "interface Conv<A, B> {}\ninterface K { type B }\ninterface JJ<A> { type X }\nfn g<T: K & JJ<T.B>, U: Conv<T.X, T.Y>>(t: T, u: U) {}\n",
+            &[UnknownType],
+        ),
+    ];
+    for (form, want) in rows {
+        error_codes(form, &program(form), want);
+    }
+}

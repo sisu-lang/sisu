@@ -4,7 +4,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::extend::holder_of;
-use super::interface::{Bound, RequirementInfo};
+use super::interface::{Bound, Bounds, RequirementInfo};
 use super::{Body, Checker, Choice, Choices, Declared, Holder, own_args};
 use crate::ast;
 use crate::conformance::{self, find, find_with};
@@ -321,9 +321,10 @@ impl Checker<'_> {
     }
 
     /// The type parameters of the class, enum or block that `source` is, which are those of the
-    /// conformance, and their bounds.
-    fn source_params(&self, source: Source) -> (Vec<Symbol>, Vec<Vec<Bound>>) {
-        match source {
+    /// conformance, and their bounds. A conformance reads the list alone: a failed bound does not
+    /// make a parameter unknown here.
+    fn source_params(&self, source: Source) -> (Vec<Symbol>, Vec<Bounds>) {
+        let (params, bounds) = match source {
             Source::Body(Holder::Class(c)) => {
                 let info = &self.classes[c.0];
                 (info.type_params.clone(), info.bounds.clone())
@@ -339,7 +340,9 @@ impl Checker<'_> {
                 let ext = &self.extensions[b];
                 (ext.type_params.clone(), ext.bounds.clone())
             }
-        }
+        };
+        let bounds = bounds.into_iter().map(|b| Bounds { failed: false, ..b });
+        (params, bounds.collect())
     }
 
     /// Records the conformance of `target` to `bound`, which is written at `at`, unless it
@@ -366,7 +369,7 @@ impl Checker<'_> {
             self.conforms_twice(bound, &common, (earlier, at));
             // A bounded conformance can fail for an instance, so it covers none.
             let c = self.conformances.get(bound.interface, k);
-            if bounds.iter().all(Vec::is_empty)
+            if bounds.iter().all(|b| b.list.is_empty())
                 && conformance::bind(target, params.len(), c.target)
                     .is_some_and(|b| bound.args.subst(b.get()) == c.args)
             {
@@ -387,10 +390,11 @@ impl Checker<'_> {
                 args: bound.args,
                 methods: Vec::new(),
                 assoc,
-                bounds: if bounds.iter().any(|bounds| !bounds.is_empty()) {
+                bounds: if bounds.iter().any(|bounds| !bounds.list.is_empty()) {
                     (bounds.iter())
                         .map(|list| {
-                            list.iter()
+                            list.list
+                                .iter()
                                 .map(|b| tir::ParamBound {
                                     interface: b.interface,
                                     args: b.args,
@@ -407,7 +411,7 @@ impl Checker<'_> {
             self.choice_ats.insert((bound.interface, index, k), at);
         }
         added.ats.insert((bound.interface, index), at);
-        if bounds.iter().any(|bounds| !bounds.is_empty()) {
+        if bounds.iter().any(|bounds| !bounds.list.is_empty()) {
             self.conformance_bounds
                 .insert((bound.interface, index), (params, bounds));
         }
@@ -625,11 +629,11 @@ impl Checker<'_> {
     /// bounds. `None` when the rule holds.
     fn derive_failure(&mut self, interface: Bound, target: Type, source: Source) -> Option<Type> {
         let (params, declared) = self.source_params(source);
-        let bounds: Vec<Vec<Bound>> = (0..params.len())
+        let bounds: Vec<Bounds> = (0..params.len())
             .map(|i| {
-                let mut list = declared.get(i).cloned().unwrap_or_default();
-                list.push(interface);
-                list
+                let mut bounds = declared.get(i).cloned().unwrap_or_default();
+                bounds.list.push(interface);
+                bounds
             })
             .collect();
         let (leaf, _) = self.with_body(Body::default(), |checker| {
@@ -815,7 +819,7 @@ impl Checker<'_> {
     fn check_choices(&mut self, p: &Pending) {
         let interface = p.interface.interface;
         let declared: Vec<Vec<Bound>> = (self.interfaces[interface.0].assoc.iter())
-            .map(|assoc| assoc.bounds.clone())
+            .map(|assoc| assoc.bounds.list.clone())
             .collect();
         if declared.iter().all(Vec::is_empty) {
             return;
@@ -1056,7 +1060,7 @@ impl Checker<'_> {
             .expect("a conformance that a type does not meet should have bounds")
             .clone();
         (bounds.iter().enumerate())
-            .flat_map(|(i, bounds)| bounds.iter().map(move |&b| (i, b)))
+            .flat_map(|(i, bounds)| bounds.list.iter().map(move |&b| (i, b)))
             .find_map(|(i, b)| {
                 let args = self.subst_args(b.args, bound.get());
                 (!self.conforms(bound.get()[i], b.interface, args)).then_some((i, b, args))
@@ -1086,7 +1090,7 @@ impl Checker<'_> {
         let ext = &self.extensions[block];
         let params: Vec<String> = (ext.type_params.iter().zip(&ext.bounds))
             .map(|(name, bounds)| {
-                let bounds: Vec<String> = (bounds.iter())
+                let bounds: Vec<String> = (bounds.list.iter())
                     .map(|b| self.bound_text(b.interface, b.args))
                     .collect();
                 if bounds.is_empty() {
@@ -1151,7 +1155,7 @@ impl Checker<'_> {
             .chain(requirement.ret_at.into_iter().zip([requirement.ret]));
         // The places that change, in the order of the text: the bounds, then the signature.
         let mut changed = renamed;
-        for b in requirement.bounds.iter().flatten() {
+        for b in requirement.bounds.iter().flat_map(|b| &b.list) {
             let args = b.args.subst(&with);
             if args != b.args {
                 changed.push((b.at, self.bound_text(b.interface, args)));

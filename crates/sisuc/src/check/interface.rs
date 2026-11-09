@@ -104,10 +104,13 @@ pub(super) struct InterfaceInfo {
     pub(super) inherits: Vec<Bound>,
     /// Where each of `inherits` is written.
     pub(super) inherits_at: Vec<Span>,
+    /// Whether an inherited interface is not in `inherits`: it names no interface for certain, or
+    /// an argument does not fit. A body reads the parameter as unknown then (`param_interfaces`).
+    pub(super) inherits_failed: bool,
     /// The first requirement of each name, in declaration order.
     pub(super) requirements: Vec<RequirementInfo>,
     /// The bounds of each of `type_params`: `Self` conforms to the interface itself.
-    pub(super) bounds: Vec<Vec<Bound>>,
+    pub(super) bounds: Vec<Bounds>,
     /// The first associated type of each name, in declaration order.
     pub(super) assoc: Vec<AssocInfo>,
 }
@@ -116,7 +119,7 @@ pub(super) struct InterfaceInfo {
 pub(super) struct AssocInfo {
     pub(super) name: ast::Ident,
     /// The interfaces it conforms to, over the interface's parameters (`Self` first).
-    pub(super) bounds: Vec<Bound>,
+    pub(super) bounds: Bounds,
 }
 
 /// A requirement's signature, over the interface's parameters (`Self` first) and then its own.
@@ -129,7 +132,7 @@ pub(super) struct RequirementInfo {
     /// Where each of `own` is written.
     pub(super) own_at: Vec<Span>,
     /// The bounds of each of `own`.
-    pub(super) bounds: Vec<Vec<Bound>>,
+    pub(super) bounds: Vec<Bounds>,
     /// Without `self`; `None` is `Error`.
     pub(super) params: Vec<Option<Type>>,
     /// Whether each of `params` is `mut`.
@@ -152,6 +155,16 @@ pub(super) struct Bound {
     pub(super) args: TypeArgs,
     /// Where the bound is written.
     pub(super) at: Span,
+}
+
+/// The bounds of one type parameter or associated type, as the checker stores them.
+#[derive(Clone, Default)]
+pub(super) struct Bounds {
+    /// The bounds that name an interface, in source order.
+    pub(super) list: Vec<Bound>,
+    /// Whether a written bound named no interface for certain: `bound` returned `None`. The
+    /// parameter is then unknown in each body (`param_interfaces`).
+    pub(super) failed: bool,
 }
 
 /// A requirement that a type parameter's bounds give: the interface that declares it, with its
@@ -214,7 +227,7 @@ pub(super) enum Slot {
 #[derive(Clone)]
 pub(super) struct Scope {
     params: Vec<Symbol>,
-    bounds: Vec<Vec<Bound>>,
+    bounds: Vec<Bounds>,
     self_type: Option<Type>,
 }
 
@@ -328,7 +341,7 @@ impl Checker<'_> {
         self.interfaces[id.0].assoc = (declared.iter())
             .map(|assoc| AssocInfo {
                 name: assoc.name.clone(),
-                bounds: Vec::new(),
+                bounds: Bounds::default(),
             })
             .collect();
         declared
@@ -353,23 +366,45 @@ impl Checker<'_> {
             args: TypeArgs::intern(&own),
             at: interface.name.span,
         };
-        self.interfaces[id.0].bounds =
-            self.declare_bounds(0, vec![vec![this]], &interface.type_params);
+        self.interfaces[id.0].bounds = self.declare_bounds(
+            0,
+            vec![Bounds {
+                list: vec![this],
+                failed: false,
+            }],
+            &interface.type_params,
+        );
         // The associated types come first: a bare name stands for one in the interface.
         let declared = self.declare_assoc(interface, id, this.args);
+        let mut inherits_failed = false;
         let (inherits, inherits_at) = interface
             .inherits
             .iter()
-            .filter_map(|ty| Some((self.inherited(ty, interface)?, ty.span)))
+            .filter_map(|ty| {
+                let found = self.inherited(ty, interface);
+                inherits_failed |= found.is_none();
+                Some((found?, ty.span))
+            })
             .unzip();
         self.interfaces[id.0].inherits = inherits;
         self.interfaces[id.0].inherits_at = inherits_at;
+        self.interfaces[id.0].inherits_failed = inherits_failed;
+        // A read in the list found closures before the flag was set. A closure entry is scanned
+        // for the flag once, when it is added. So forget the closures, and what they gave.
+        // `unknown_assoc` stays, because an entry found here stays true.
+        self.body.forget_bounds(self.body.bounds.len());
+        self.body.assoc_conforming.clear();
         for (k, assoc) in declared.iter().enumerate() {
             let ty = self.body.assoc.at(k).ty;
-            let bounds = (assoc.bounds.iter())
-                .filter_map(|bound| self.bound(bound, ty))
+            let mut failed = false;
+            let list = (assoc.bounds.iter())
+                .filter_map(|bound| {
+                    let found = self.bound(bound, ty);
+                    failed |= found.is_none();
+                    found
+                })
                 .collect();
-            self.interfaces[id.0].assoc[k].bounds = bounds;
+            self.interfaces[id.0].assoc[k].bounds = Bounds { list, failed };
         }
         let mut first = FxHashMap::default();
         // The names of the interface's parameters, and then the requirement's own: the scope of
@@ -467,9 +502,9 @@ impl Checker<'_> {
     pub(super) fn declare_bounds(
         &mut self,
         first: usize,
-        head: Vec<Vec<Bound>>,
+        head: Vec<Bounds>,
         params: &[ast::TypeParam],
-    ) -> Vec<Vec<Bound>> {
+    ) -> Vec<Bounds> {
         let queued = self.queued();
         let at = first + head.len();
         let mut found: Vec<Vec<Option<Bound>>> = (params.iter())
@@ -486,21 +521,26 @@ impl Checker<'_> {
             }
         }
         if !members.is_empty() {
-            // The bounds so far are in scope, for the bounds that write an associated type.
-            let so_far = head.iter().cloned().chain(
-                found
-                    .iter()
-                    .map(|bounds| bounds.iter().flatten().copied().collect()),
-            );
+            // The bounds so far are in scope, for the bounds that write an associated type. A
+            // bound of a member that is not resolved yet is not a failure.
+            let so_far =
+                head.iter()
+                    .cloned()
+                    .chain(found.iter().zip(params).map(|(row, param)| {
+                        Bounds {
+                            list: row.iter().flatten().copied().collect(),
+                            failed: (row.iter().zip(&param.bounds))
+                                .any(|(bound, ty)| bound.is_none() && !ty.names_member()),
+                        }
+                    }));
             self.body.set_bounds(first, so_far.collect());
             self.resolve_member_bounds(at, params, &mut found, &members);
         }
         let mut bounds = head;
-        bounds.extend(
-            found
-                .into_iter()
-                .map(|bounds| bounds.into_iter().flatten().collect()),
-        );
+        bounds.extend(found.into_iter().map(|row| Bounds {
+            failed: row.iter().any(Option::is_none),
+            list: row.into_iter().flatten().collect(),
+        }));
         self.body.set_bounds(first, bounds.clone());
         self.rescope(queued);
         bounds
@@ -542,9 +582,10 @@ impl Checker<'_> {
     /// the order of the parameters. A bound waits for each declaration of the name it writes that
     /// another bound gives, so the resolution finds the type ambiguous if two differ (E0156). A
     /// declaration that only the bound gives is no wait: then no other bound gives the type, and
-    /// the resolution reports it. The bounds resolve in waves: each wave
-    /// holds the bounds that wait for no one now, and its bounds go into scope together at its
-    /// end. Each bound and each name is read a fixed number of times.
+    /// the resolution reports it. The bounds resolve in waves. Each wave holds the bounds that
+    /// wait for no one now. Its bounds go into scope together at its end, and the fact that a
+    /// bound failed goes into scope at once. Each bound and each name is read a fixed number of
+    /// times.
     ///
     /// The bounds left wait for each other. Each that is on a loop of bounds is reported at the
     /// associated type it writes (E0030), and the others that wait for it stay unknown, with no
@@ -585,6 +626,9 @@ impl Checker<'_> {
                 found[i][j] = self.resolve_bound(at, params, i, j);
                 if let Some(bound) = found[i][j] {
                     wave.push((at + i, bound));
+                } else {
+                    // At once: a later bound of this wave can read the parameter.
+                    self.body.bounds[at + i].failed = true;
                 }
             }
             self.add_bounds(&wave, &mut seen);
@@ -692,7 +736,7 @@ impl Checker<'_> {
         self.body.conformed.clear();
         self.body.leaves.clear();
         for &(place, bound) in added {
-            self.body.bounds[place].push(bound);
+            self.body.bounds[place].list.push(bound);
             let Some(mut out) = self.body.conforming.get_mut(place).and_then(Option::take) else {
                 continue;
             };
@@ -707,7 +751,12 @@ impl Checker<'_> {
             // bound, for each bound that is declared. The bounds that wait for this parameter wait
             // for the bound that is past the limit too (see `Waits`), so none reads the closure
             // before it is made again.
+            let before = out.len();
             let _ = self.extend_closure(receiver, &[bound], &mut out, seen, |_, _| {});
+            // Only the added entries are new: the scan follows them, not the whole closure.
+            if self.closure_inherits_failed(&out[before..]) && !self.body.unknown.contains(&place) {
+                self.body.unknown.push(place);
+            }
             self.body.conforming[place] = Some(out);
         }
     }
@@ -1093,10 +1142,10 @@ impl Checker<'_> {
             return false;
         }
         (requirement.bounds.iter().zip(&sig.bounds)).all(|(want, found)| {
-            let want: Vec<_> = (want.iter())
+            let want: Vec<_> = (want.list.iter())
                 .map(|b| (b.interface, self.subst_args(b.args, &with)))
                 .collect();
-            let found: Vec<_> = found.iter().map(|b| (b.interface, b.args)).collect();
+            let found: Vec<_> = (found.list.iter()).map(|b| (b.interface, b.args)).collect();
             want.iter().all(|b| found.contains(b)) && found.iter().all(|b| want.contains(b))
         })
     }
@@ -1148,18 +1197,44 @@ impl Checker<'_> {
                 name,
                 u32::try_from(place).expect("a declaration should have fewer than 2^32 parameters"),
             ));
-            let bounds = self.body.bounds.get(place).map_or(&[][..], Vec::as_slice);
+            let bounds = self
+                .body
+                .bounds
+                .get(place)
+                .map_or(&[][..], |b| b.list.as_slice());
             let mut seen = std::mem::take(&mut self.closure_seen);
             let wide = self.interfaces_of(receiver, bounds, &mut out, &mut seen);
             self.closure_seen = seen;
             if let Err(k) = wide {
                 self.too_wide(place, k);
             }
+            // The flag is final once its interface signature is done.
+            if self.closure_inherits_failed(&out) && !self.body.unknown.contains(&place) {
+                self.body.unknown.push(place);
+            }
             self.body.conforming[place] = Some(out);
+        }
+        // Read on each call: a bound of the same wave can fail after the closure was found.
+        let failed = self
+            .body
+            .bounds
+            .get(place)
+            .is_some_and(|bounds| bounds.failed);
+        if failed && !self.body.unknown.contains(&place) {
+            self.body.unknown.push(place);
         }
         self.body.conforming[place]
             .as_deref()
             .expect("the closure of a type parameter should be found by now")
+    }
+
+    /// Whether an interface of `closure` has an inheritance that failed (`inherits_failed`).
+    pub(super) fn closure_inherits_failed(&self, closure: &[(InterfaceId, TypeArgs)]) -> bool {
+        closure.iter().any(|(interface, _)| {
+            #[cfg(test)]
+            super::CLOSURE_STEPS.set(super::CLOSURE_STEPS.get() + 1);
+            self.interfaces[interface.0].inherits_failed
+        })
     }
 
     /// Reports the bound at place `k` among those of the type parameter at `place`, whose closure
@@ -1167,8 +1242,8 @@ impl Checker<'_> {
     /// unknown in this body: it conforms to every interface, and a method that its walk did not
     /// find draws no report.
     fn too_wide(&mut self, place: usize, k: usize) {
-        self.body.wide.push(place);
-        let bound = self.body.bounds[place][k];
+        self.body.unknown.push(place);
+        let bound = self.body.bounds[place].list[k];
         if self.wide_reported.insert(bound.at) {
             let text = self.source.type_text(bound.at);
             self.report(DiagnosticKind::BoundTooWide {
@@ -1255,7 +1330,8 @@ impl Checker<'_> {
     /// through its bounds and what they inherit, a class or an enum through its written
     /// conformance, and when none covers it, through the generated rule of a language interface
     /// (`conformance::generated`). A broken `extend` block may have given its target the
-    /// conformance, so that holds.
+    /// conformance, so that holds. A type parameter that is unknown in this body (`is_unknown`)
+    /// conforms to every interface.
     ///
     /// `Display` comes first: it holds for every type but `unit` and `never`, and reads no written
     /// conformance and no bound. A written `Eq` or `Ord` that covers a type decides, and when its
@@ -1285,7 +1361,7 @@ impl Checker<'_> {
             TypeKind::Param(_, place) => {
                 let place = place as usize;
                 self.param_interfaces(place).contains(&(interface, args))
-                    || self.body.wide.contains(&place)
+                    || self.body.unknown.contains(&place)
             }
             TypeKind::Assoc(..) => self.assoc_conforms(ty, interface, args),
             TypeKind::Any(..) => self.any_conforms(ty, interface, args),
@@ -1386,7 +1462,7 @@ impl Checker<'_> {
         };
         let bounds = bounds.clone();
         for (i, bounds) in bounds.iter().enumerate() {
-            for b in bounds {
+            for b in &bounds.list {
                 let args = self.subst_args(b.args, stands.get());
                 if !self.conforms(stands.get()[i], b.interface, args) {
                     return false;
@@ -1543,7 +1619,7 @@ impl Checker<'_> {
                 .clone();
             let mut next = None;
             for (i, bound) in
-                (bounds.iter().enumerate()).flat_map(|(i, b)| b.iter().map(move |&b| (i, b)))
+                (bounds.iter().enumerate()).flat_map(|(i, b)| b.list.iter().map(move |&b| (i, b)))
             {
                 let args = self.subst_args(bound.args, stands.get());
                 if self.conforms(stands.get()[i], bound.interface, args) {
@@ -1969,7 +2045,7 @@ impl Checker<'_> {
             under.extend_from_slice(args.get());
             // The bounds are copied: the probe below borrows the checker.
             let declared = &self.interfaces[declaration.declarer.0].assoc[declaration.k as usize];
-            for bound in declared.bounds.clone() {
+            for bound in declared.bounds.list.clone() {
                 let bound_args = self.subst_args(bound.args, &under);
                 self.probe_further(chosen, bound.interface, bound_args);
             }
@@ -1989,7 +2065,7 @@ impl Checker<'_> {
                 self.body
                     .bounds
                     .get(place as usize)
-                    .map_or(&[], Vec::as_slice),
+                    .map_or(&[], |b| b.list.as_slice()),
             ),
             // No help edits the prelude.
             TypeKind::Assoc(_, owner, _, k) => {
@@ -2001,7 +2077,7 @@ impl Checker<'_> {
                     interface: self.interfaces[owner.0].name.name.to_string(),
                     name: info.name.name.to_string(),
                 };
-                (site, &info.bounds)
+                (site, &info.bounds.list)
             }
             _ => return None,
         };
@@ -2064,7 +2140,7 @@ impl Checker<'_> {
                 let mut with = vec![*this];
                 with.extend_from_slice(bound.args.get());
                 for (k, bounds) in bounds.iter().enumerate().skip(1) {
-                    for &b in bounds {
+                    for &b in &bounds.list {
                         self.check_bound(ats[k - 1], with[k], b, &with);
                     }
                 }
@@ -2094,7 +2170,7 @@ impl Checker<'_> {
         };
         let mut holds = true;
         for (k, bounds) in bounds.iter().enumerate() {
-            for &bound in bounds {
+            for &bound in &bounds.list {
                 holds &= self.check_bound(ats[k], args.get()[k], bound, args.get());
             }
         }
@@ -2340,11 +2416,11 @@ impl Checker<'_> {
     pub(super) fn read_declared_bounds(&mut self) {
         for f in 0..self.signatures.len() {
             let sig = &self.signatures[f];
-            if sig.bounds.iter().all(Vec::is_empty) {
+            if sig.bounds.iter().all(|b| b.list.is_empty()) {
                 continue;
             }
             let owner = sig.type_params.len() - sig.own;
-            let mut bounds = vec![Vec::new(); owner];
+            let mut bounds = vec![Bounds::default(); owner];
             bounds.extend(sig.bounds.iter().cloned());
             let params = sig.type_params.clone();
             self.read_bounds(&params, bounds, owner);
@@ -2365,7 +2441,7 @@ impl Checker<'_> {
         }
         for e in 0..self.extensions.len() {
             let ext = &self.extensions[e];
-            if ext.bounds.iter().any(|bounds| !bounds.is_empty()) {
+            if ext.bounds.iter().any(|bounds| !bounds.list.is_empty()) {
                 let (params, bounds) = (ext.type_params.clone(), ext.bounds.clone());
                 self.read_bounds(&params, bounds, 0);
             }
@@ -2374,12 +2450,12 @@ impl Checker<'_> {
             let info = &self.interfaces[i];
             let (params, bounds) = (info.type_params.clone(), info.bounds.clone());
             let requirements: Vec<_> = (info.requirements.iter())
-                .filter(|r| r.bounds.iter().any(|bounds| !bounds.is_empty()))
+                .filter(|r| r.bounds.iter().any(|bounds| !bounds.list.is_empty()))
                 .map(|r| (r.own.clone(), r.bounds.clone()))
                 .collect();
-            let bounded = bounds.iter().skip(1).any(|bounds| !bounds.is_empty());
+            let bounded = bounds.iter().skip(1).any(|bounds| !bounds.list.is_empty());
             let assoc: Vec<usize> = (info.assoc.iter().enumerate())
-                .filter(|(_, assoc)| !assoc.bounds.is_empty())
+                .filter(|(_, assoc)| !assoc.bounds.list.is_empty())
                 .map(|(k, _)| k)
                 .collect();
             if !bounded && requirements.is_empty() && assoc.is_empty() {
@@ -2419,7 +2495,7 @@ impl Checker<'_> {
 
     /// Reads the bounds of the type parameters `params` from the place `from` on, which have the
     /// `bounds` by place.
-    fn read_bounds(&mut self, params: &[Symbol], bounds: Vec<Vec<Bound>>, from: usize) {
+    fn read_bounds(&mut self, params: &[Symbol], bounds: Vec<Bounds>, from: usize) {
         self.with_body(Body::default(), |checker| {
             checker.body.set_type_params(params);
             checker.body.set_bounds(0, bounds);
@@ -2431,7 +2507,7 @@ impl Checker<'_> {
     /// bound.
     fn read_places(&mut self, from: usize) {
         for place in from..self.body.bounds.len() {
-            if !self.body.bounds[place].is_empty() {
+            if !self.body.bounds[place].list.is_empty() {
                 self.param_interfaces(place);
             }
         }
