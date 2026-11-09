@@ -1,0 +1,22 @@
+// Each part of an interpolation is written where the last part ended.
+// The parts cover text, an `i64`, a `u8`, an `f64` with and without a precision, a `bool` and
+// a `char`, each plain and padded.
+// The text has multi-byte characters. One part is empty. One width is below the text length.
+fn main() {
+    let empty = ""
+    let s = "日本" + "x"
+    let n = -9_223_372_036_854_775_807 - 1
+    let b: u8 = 255
+    let x = 2.675
+    let t = 1 < 2
+    let c = 'ä'
+    print("[{s}{n}{b}{x}{x:.2}{t}{c}]")  // [日本x-92233720368547758082552.6752.67trueä]
+    // [   日本x|-9223372036854775808  | 255 | 2.675|2.7     | true  |  ä]
+    print("[{s:>6}|{n:<22}|{b:^5}|{x:>6}|{x:<8.1}|{t:^7}|{c:>3}]")
+    print("[{empty}{s:>2}{empty:^3}{c}{n:>1}]")  // [日本x   ä-9223372036854775808]
+    print("[{x:>5}{x:>5}{b}{t:<6}{t}]")  // [2.6752.675255true  true]
+    print("{s}")  // 日本x
+    print("{empty}")  // (an empty line)
+    print("{n:>22}")  //   -9223372036854775808
+    print("{c}{s}")  // ä日本x
+}

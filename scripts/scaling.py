@@ -57,6 +57,8 @@ LLVM_STAGES = ("optimize", "object")
 # The shapes that the sweep also builds at -O2, as the case `<shape> -O2`. Under callgrind, -O2
 # costs much more than -O0, so the list holds the shapes that give the -O2 passes the most work.
 # `mut call width` is not in it (#621): under callgrind, its -O2 build at 8n ran over 25 minutes.
+# The cause is LLVM's `ConstraintEliminationPass`, which is cubic in the number of function
+# parameters. Clang does the same on C. #621 is closed.
 O2_SHAPES = ("functions", "statements", "interpolations", "prints", "nested array ==")
 O2_SUFFIX = " -O2"
 # At -O2, the stages before codegen do the same work as at -O0, so a -O2 case judges only these.
@@ -72,10 +74,13 @@ KNOWN = [
     ("mut exits", "object", 502),
     ("owned exits", "optimize", 502),
     ("owned exits", "object", 502),
-    ("interpolations -O2", "optimize", 611),
-    ("interpolations -O2", "object", 611),
+    # The next two rows are LLVM's cost, not Sisu's. Clang at -O0 grows the same way on a C
+    # function with n parameters: the list scheduler of the SelectionDAG. #612 is closed.
     ("mut call width", "object", 612),
     ("mut returns", "object", 612),
+    # The object work for each literal is flat: 3.5K to 4.7K instructions from 12 to 120
+    # literals. One step at 96 literals gives the sweep its ratio, so this row is a step and not
+    # a curve. #613 is closed.
     ("float left", "object", 613),
 ]
 ANNOTATE = ["callgrind_annotate", "--inclusive=yes", "--threshold=100", "--show=Ir", "--auto=no"]
@@ -232,6 +237,12 @@ def type_depth(k: int) -> str:
 def interpolations(k: int) -> str:
     """Return a program with a string of `k + 1` interpolations."""
     return f'fn main() {{\n    let x = 1\n    let s = "{"{x}" * (k + 1)}"\n    print(s)\n}}\n'
+
+
+def string_interpolations(k: int) -> str:
+    """Return a program with a string of `k + 1` copies of `{s}lit`, a local and a literal."""
+    parts = "{s}lit" * (k + 1)
+    return f'fn main() {{\n    let s = "a" + "b"\n    let r = "{parts}"\n    print(r.len())\n}}\n'
 
 
 def live_locals(k: int) -> str:
@@ -441,6 +452,7 @@ SHAPES = {
     "conformers": (50, conformers),
     "type depth": (24, type_depth),
     "interpolations": (50, interpolations),
+    "string interpolations": (50, string_interpolations),
     "live locals": (50, live_locals),
     "method chain": (24, method_chain),
     "float left": (12, float_left),
