@@ -11,7 +11,6 @@ struct Record {
     line: u64,
     column: u64,
     fixes: usize,
-    message: String,
 }
 
 impl Record {
@@ -35,7 +34,6 @@ fn records_of(program: &str) -> Vec<Record> {
             line: v["primary"]["line"].as_u64().expect("a line"),
             column: v["primary"]["column"].as_u64().expect("a column"),
             fixes: v["fixes"].as_array().expect("a fixes array").len(),
-            message: v["message"].as_str().expect("a message").to_string(),
         })
         .collect()
 }
@@ -449,27 +447,6 @@ fn a_name_at_its_position_should_give_one_true_answer() {
         rows.len(),
         wrong.join("\n")
     );
-}
-
-/// GIVEN a class, an enum or a function that has the name of a language interface
-/// WHEN `sisu check` runs on a read of the name
-/// THEN the E0105 names the item that the program declares, not the prelude's interface.
-#[test]
-fn a_read_of_a_language_interface_name_that_an_item_takes_should_name_the_item() {
-    let rows = [
-        ("class", "class Eq {}", "`Eq` is a type, not a value"),
-        ("enum", "enum Eq { A }", "`Eq` is a type, not a value"),
-        ("fn", "fn Eq() {}", "`Eq` is a function, not a value"),
-    ];
-    for (kind, item, message) in rows {
-        let program = format!("{item}\nfn main() {{ let _a = Eq }}");
-        let got: Vec<_> = records_of(&program)
-            .into_iter()
-            .filter(|r| r.code == "E0105")
-            .map(|r| r.message)
-            .collect();
-        assert_eq!(got, [message], "{kind}");
-    }
 }
 
 /// GIVEN the program P7, where a type parameter is a value

@@ -1,0 +1,2 @@
+class Eq {}
+fn main() { let _a = Eq }

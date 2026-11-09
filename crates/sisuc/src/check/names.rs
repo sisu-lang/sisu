@@ -43,14 +43,15 @@ pub(super) enum Position {
 #[derive(Clone, Copy)]
 pub(super) struct Site {
     pub(super) at: Position,
-    /// Whether type arguments follow the name.
+    /// Whether type arguments follow the name at a path. Only a path reads it.
     pub(super) angles: bool,
     /// Whether a read of the name must not count as a use: the caller is the quiet value.
     pub(super) quiet: bool,
 }
 
 impl Site {
-    /// The site at `at`, with type arguments or not.
+    /// The site at `at`. `angles` says whether type arguments follow the name at a path. Only a
+    /// path reads it.
     pub(super) fn new(at: Position, angles: bool) -> Self {
         Self {
             at,

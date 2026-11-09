@@ -1,0 +1,2 @@
+enum Eq { A }
+fn main() { let _a = Eq }

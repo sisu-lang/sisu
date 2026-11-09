@@ -1171,9 +1171,8 @@ fn an_unknown_type_should_keep_each_suggestion_that_makes_no_cycle() {
     );
 }
 
-/// GIVEN one alias with `n` type arguments that each fail a bound, and `n` aliases that name it
-/// WHEN `sisu check` makes the alias unknown, once for each failed bound
-/// THEN the users of the alias are visited once in all, so the work grows with `n`, not `n * n`.
+/// Each failed bound of one alias rescanned all its users. So the sizes 1, 2 and 3 already show
+/// the defect (1, 4 and 9 steps). The sizes 20, 40 and 60 are 20 times larger.
 #[test]
 fn an_alias_with_n_failed_bounds_and_n_users_should_cost_linear_work() {
     let steps = |n: usize| {
@@ -1194,5 +1193,5 @@ fn an_alias_with_n_failed_bounds_and_n_users_should_cost_linear_work() {
         assert_eq!(ds.len(), n, "one E0154 for each failed bound");
         ALIAS_USER_STEPS.get()
     };
-    assert_near_linear(steps(4), steps(8), steps(12));
+    assert_near_linear(steps(20), steps(40), steps(60));
 }
