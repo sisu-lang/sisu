@@ -713,8 +713,8 @@ fn write_bool_should_pass_a_zero_extended_i1() {
     .print_to_string()
     .to_string();
     for wanted in [
-        "declare range(i64 0, -9223372036854775808) i64 @sisu_write_bool(i1 zeroext, ptr)",
-        "call i64 @sisu_write_bool(i1 zeroext",
+        "declare ptr @sisu_write_bool(i1 zeroext, ptr)",
+        "call ptr @sisu_write_bool(i1 zeroext",
     ] {
         assert!(ir.contains(wanted), "missing {wanted:?} in\n{ir}");
     }
@@ -732,12 +732,12 @@ fn format_specs_should_pass_zero_extended_i8s() {
     .print_to_string()
     .to_string();
     for wanted in [
-        "declare range(i64 0, -9223372036854775808) i64 @sisu_write_f64_fixed(double, i8 zeroext, ptr)",
-        "call i64 @sisu_write_f64_fixed(double %",
+        "declare ptr @sisu_write_f64_fixed(double, i8 zeroext, ptr)",
+        "call ptr @sisu_write_f64_fixed(double %",
         ", i8 zeroext 2, ptr",
-        "declare range(i64 0, -9223372036854775808) i64 @sisu_pad(ptr, i64, i64, i8 zeroext)",
+        "declare ptr @sisu_pad(ptr, i64, i64, i8 zeroext)",
         ", i64 8, i8 zeroext 1)",
-        "declare range(i64 0, -9223372036854775808) i64 @sisu_write_char(i32, ptr)",
+        "declare ptr @sisu_write_char(i32, ptr)",
     ] {
         assert!(ir.contains(wanted), "missing {wanted:?} in\n{ir}");
     }
@@ -1400,15 +1400,22 @@ fn interpolation_program(n: usize) -> String {
     )
 }
 
-/// The most calls of `callee` that one basic block of `@sisu.main` holds.
-fn most_calls_in_one_block(ir: &str, callee: &str) -> usize {
-    let call = format!("@{callee}(");
+/// A `main` with one string of `n` copies of `{s}lit`: `2n` parts, a `string` local and a literal.
+fn string_interpolation_program(n: usize) -> String {
+    format!(
+        "fn main() {{\n    let s = \"a\" + \"b\"\n    let r = \"{}\"\n    print(r.len())\n}}",
+        "{s}lit".repeat(n)
+    )
+}
+
+/// The most lines with `needle` that one basic block of `@sisu.main` holds.
+fn most_lines_in_one_block(ir: &str, needle: &str) -> usize {
     let mut most = 0;
     let mut count = 0;
     for line in function_body(ir, "@sisu.main(").lines() {
         if !line.starts_with(' ') && line.contains(':') {
             count = 0;
-        } else if line.contains(&call) {
+        } else if line.contains(needle) {
             count += 1;
             most = most.max(count);
         }
@@ -1420,15 +1427,18 @@ fn most_calls_in_one_block(ir: &str, callee: &str) -> usize {
 fn long_block_should_be_cut_at_o0() {
     const LIMIT: usize = BLOCK_CUT as usize;
     let context = Context::create();
-    for (src, callee) in [
-        (prints_program(2000), "sisu_print_int"),
-        (interpolation_program(2000), "sisu_write_int"),
+    for (src, needle) in [
+        (prints_program(2000), "@sisu_print_int("),
+        (interpolation_program(2000), "@sisu_write_int("),
+        // In the blocks of the `cap` fold, the only adds are the bounds of the 4000 parts and one
+        // in `new_string`. They stay in one block when the fold is not cut.
+        (string_interpolation_program(2000), " = add nuw i64 "),
     ] {
         let ir = compiled(&context, &src).print_to_string().to_string();
-        let most = most_calls_in_one_block(&ir, callee);
+        let most = most_lines_in_one_block(&ir, needle);
         assert!(
             (1..=LIMIT + 1).contains(&most),
-            "one block of @sisu.main holds {most} calls of {callee}"
+            "one block of @sisu.main holds {most} lines with {needle}"
         );
     }
 }
@@ -2982,6 +2992,168 @@ fn printing_a_compound_value_should_use_the_sink_of_its_stream() {
     // The sink slot is the runtime's `SINK_SIZE` bytes, as six words.
     let words = abi::SINK_SIZE / 8;
     assert!(main.contains(&format!("alloca [{words} x i64]")), "{main}");
+}
+
+/// The instruction that defines `name` in `body`, without the `{name} = ` before it.
+fn defining<'a>(body: &'a str, name: &str) -> &'a str {
+    let head = format!("{name} = ");
+    body.lines()
+        .find_map(|line| line.trim_start().strip_prefix(&head))
+        .unwrap_or_else(|| panic!("no definition of {name} in\n{body}"))
+}
+
+/// The value that `instruction` casts: `ptrtoint ptr %x to i64` gives `%x`.
+fn cast_operand<'a>(instruction: &'a str, opcode: &str) -> &'a str {
+    instruction
+        .strip_prefix(opcode)
+        .and_then(|rest| rest.split_whitespace().next())
+        .unwrap_or_else(|| panic!("`{instruction}` is not a {opcode}"))
+}
+
+/// The two operands of `sub nuw i64 %a, %b`.
+fn sub_operands(instruction: &str) -> (&str, &str) {
+    instruction
+        .strip_prefix("sub nuw i64 ")
+        .and_then(|rest| rest.split_once(", "))
+        .unwrap_or_else(|| panic!("`{instruction}` is not a `sub nuw i64`"))
+}
+
+/// The value `sub nuw i64 (ptrtoint end) (ptrtoint start)` subtracts: the `end` and the `start`
+/// of the instruction that defines `name`.
+fn pointer_distance<'a>(body: &'a str, name: &str) -> (&'a str, &'a str) {
+    let (end, start) = sub_operands(defining(body, name));
+    (
+        cast_operand(defining(body, end), "ptrtoint ptr"),
+        cast_operand(defining(body, start), "ptrtoint ptr"),
+    )
+}
+
+/// The result and the arguments of the `nth` call of `callee` in `body`. Each argument is its
+/// value, with no type and no attribute.
+fn nth_call<'a>(body: &'a str, callee: &str, nth: usize) -> (&'a str, Vec<&'a str>) {
+    let callee_text = format!("ptr @{callee}(");
+    let marker = format!(" call {callee_text}");
+    let line = body
+        .lines()
+        .filter(|line| line.contains(&marker))
+        .nth(nth)
+        .unwrap_or_else(|| panic!("no call {nth} of {callee} in\n{body}"));
+    let (result, call) = line
+        .trim()
+        .split_once(" = ")
+        .expect("a call should name its result");
+    let args = call
+        .split_once(&callee_text)
+        .expect("the line has the marker")
+        .1;
+    let args = args.trim_end_matches(')');
+    let values = args
+        .split(", ")
+        .map(|arg| arg.rsplit(' ').next().unwrap_or_default());
+    (result, values.collect())
+}
+
+/// The text of `body` after its call of `@sisu_alloc`, and the result of that call: the new
+/// string.
+fn after_alloc(body: &str) -> (&str, &str) {
+    let (string, _) = nth_call(body, "sisu_alloc", 0);
+    let rest = body
+        .split_once("@sisu_alloc(")
+        .expect("the body allocates")
+        .1;
+    (rest, string)
+}
+
+/// A padded part between two plain parts: the start and the end of the pad both feed a writer.
+#[test]
+fn interpolation_should_write_each_part_at_the_end_of_the_last() {
+    let context = Context::create();
+    let src = "fn f(a: i64, b: i64) -> string {\n    \"{a}{b:>4}{a}\"\n}\nfn main() {}";
+    let ir = compiled(&context, src).print_to_string().to_string();
+    let f = definition(&ir, "sisu.f");
+    let (after, string) = after_alloc(f);
+    // (1) The writers and the pad return a pointer.
+    assert_eq!(f.matches("call ptr @sisu_write_int(").count(), 3, "{f}");
+    assert_eq!(f.matches("call ptr @sisu_pad(").count(), 1, "{f}");
+    let (first, first_args) = nth_call(f, "sisu_write_int", 0);
+    let (second, second_args) = nth_call(f, "sisu_write_int", 1);
+    let (padded, pad_args) = nth_call(f, "sisu_pad", 0);
+    let (_, third_args) = nth_call(f, "sisu_write_int", 2);
+    // (2) The first part is written at the bytes field of the new string.
+    let bytes = first_args[1];
+    let field = defining(f, bytes);
+    assert!(
+        field.starts_with("getelementptr inbounds nuw")
+            && field.ends_with(&format!("ptr {string}, i32 0, i32 {}", layout::BYTES)),
+        "{bytes} = {field}"
+    );
+    // (3) The second part starts at the end of the first.
+    assert_eq!(second_args[1], first, "{f}");
+    // (4) The pad works on the text of the second part.
+    assert_eq!(pad_args[0], second_args[1], "{f}");
+    // (5) The pad gets the length of that text: the end of the writer less its start.
+    assert_eq!(
+        pointer_distance(f, pad_args[1]),
+        (second, second_args[1]),
+        "{f}"
+    );
+    // (6) The third part starts at the end of the pad.
+    assert_eq!(third_args[1], padded, "{f}");
+    // (7) No instruction adds a length, or steps from the start of the bytes.
+    assert!(!after.contains("add nuw i64"), "{f}");
+    assert!(!after.contains("getelementptr inbounds i8"), "{f}");
+}
+
+/// Two string parts, one padded, then a number: a copy, a pad and a writer chain by their ends.
+#[test]
+fn interpolation_should_copy_a_string_part_with_sisu_write_str() {
+    let context = Context::create();
+    let src =
+        "fn f(s: string, t: string, a: i64) -> string {\n    \"{s}{t:>3}{a}\"\n}\nfn main() {}";
+    let module = compiled(&context, src);
+    let ir = module.print_to_string().to_string();
+    // (1) The module declares the function.
+    assert!(
+        ir.contains("declare ptr @sisu_write_str(ptr, i64, ptr)"),
+        "{ir}"
+    );
+    let f = definition(&ir, "sisu.f");
+    let (after, string) = after_alloc(f);
+    let (first, first_args) = nth_call(f, "sisu_write_str", 0);
+    let (second, second_args) = nth_call(f, "sisu_write_str", 1);
+    let (padded, pad_args) = nth_call(f, "sisu_pad", 0);
+    let (last, int_args) = nth_call(f, "sisu_write_int", 0);
+    // (2) The first part is written at the bytes field of the new string.
+    let bytes = first_args[2];
+    let field = defining(f, bytes);
+    assert!(
+        field.starts_with("getelementptr inbounds nuw")
+            && field.ends_with(&format!("ptr {string}, i32 0, i32 {}", layout::BYTES)),
+        "{bytes} = {field}"
+    );
+    // (3) The second part starts at the end of the first.
+    assert_eq!(second_args[2], first, "{f}");
+    // (4) The pad works on the text of the second part.
+    assert_eq!(pad_args[0], second_args[2], "{f}");
+    assert_eq!(
+        pointer_distance(f, pad_args[1]),
+        (second, second_args[2]),
+        "{f}"
+    );
+    // (5) The third part starts at the end of the pad.
+    assert_eq!(int_args[1], padded, "{f}");
+    // (6) No copy, no added length and no step from the start of the bytes.
+    assert!(!after.contains("@llvm.memcpy"), "{f}");
+    assert!(!after.contains("add nuw i64"), "{f}");
+    assert!(!after.contains("getelementptr inbounds i8"), "{f}");
+    // (7) The stored length is the end of the last part less the start of the bytes.
+    let stored = after
+        .lines()
+        .rev()
+        .find_map(|line| line.trim().strip_prefix("store i64 "))
+        .and_then(|rest| rest.split_once(", "))
+        .expect("the body should store the length");
+    assert_eq!(pointer_distance(f, stored.0), (last, bytes), "{f}");
 }
 
 /// An interpolation with a compound part writes every part through one buffer sink, which is the

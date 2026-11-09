@@ -509,7 +509,7 @@ check when its tool is not on `PATH`. It needs `perf` for the last column.
 `make scaling` finds the programs for which a compiler stage costs more than
 a fixed amount for each unit of input. A shape is a kind of program that
 grows in one direction, such as more functions, deeper nesting or more match
-arms. `scripts/scaling.py` builds each of 28 shapes into an executable at
+arms. `scripts/scaling.py` builds each of 29 shapes into an executable at
 size 0 and at four sizes that double: n, 2n, 4n and 8n. Each build has one
 codegen unit. It counts the instructions of each stage under callgrind: `lex`,
 `parse`, `check`, `mono`, `mir`, `codegen`, `optimize` (the LLVM passes) and
@@ -546,12 +546,14 @@ large linear part, such as 10000n + n². It also marks a linear stage that has
 one step in r2 and a rise in r3.
 
 One shape and one stage that is superlinear for it is a case. The known list
-`KNOWN` in `scripts/scaling.py` has one row for each case that has an open
-issue: the shape, the stage and the issue number. A known case is a row of
-`KNOWN` that does not look fixed. A known row can be linear but just under
-the rule, when its cause is known. The script exits with code 0 when every
-superlinear case has a row and no row looks fixed. It prints each known case
-on stdout. It exits with code 1 when:
+`KNOWN` in `scripts/scaling.py` has one row for each case that has an issue:
+the shape, the stage and the issue number. Most of these issues are open.
+When the cost is LLVM's, the issue is closed as not planned and its row
+stays, as for #612 and #613. A comment above such a row gives the cause.
+A known case is a row of `KNOWN` that does not look fixed. A known row can
+be linear but just under the rule, when its cause is known. The script exits
+with code 0 when every superlinear case has a row and no row looks fixed. It
+prints each known case on stdout. It exits with code 1 when:
 
 - a superlinear case has no row. Open an issue and add a row.
 - a row looks fixed. Its stage is not judged, has no ratio, has r3 < 2.15, or
@@ -560,13 +562,15 @@ on stdout. It exits with code 1 when:
 
 The pull request that fixes a known case removes its row. The gaps between
 the numbers keep a row from changing between known and fixed when a change
-moves a ratio a little. `KNOWN` has 12 rows. Seven are for the shapes mut
+moves a ratio a little. `KNOWN` has 10 rows. Seven are for the shapes mut
 exits and owned exits (#502), in `mir`, `codegen` and the LLVM stages. Each
 `return` writes its own cleanup, so n exits and n values give n² statements.
 Real programs have few of these: no exit in the benchmark programs or the
-lexer has more than 4 cleanup statements. The other five rows are LLVM cases:
-interpolations -O2 (#611), a call with n arguments at -O0 (#612, in mut call
-width and mut returns), and float left (#613).
+lexer has more than 4 cleanup statements. The other three rows are LLVM cases.
+Each stays. A call with n arguments at -O0 (#612) grows the same way in clang
+on a C function with n parameters. This is mut call width and mut returns. The
+list scheduler of LLVM's SelectionDAG does it. Float left (#613) is a step,
+not a curve: one size of the sweep falls on a one-time step of LLVM's tables.
 
 Each `tir::Expr` holds its exit flag. The checker sets it once, when it makes
 the expression. So array literal depth (#344), type depth, method chain,
