@@ -8,8 +8,8 @@ use std::process::Command;
 use std::thread;
 
 /// The sections of `neighbours.txt`: the template, with its two `{stmt}` places, and the function
-/// whose bound failed, with its one. Then the values and the contexts, one for each line that is
-/// not empty and not a comment.
+/// whose bound failed, with its one. Then the values, the failed values and the contexts, one for
+/// each line that is not empty and not a comment.
 struct Forms {
     template: String,
     failed: String,
