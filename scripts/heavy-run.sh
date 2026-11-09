@@ -8,6 +8,7 @@
 # .git), the command runs with no lock and a warning. SISU_HEAVY_LOCK=skip runs it with no lock
 # on purpose, such as while a mutation test of hours holds the lock and the machine has room.
 #   scripts/heavy-run.sh <command> [args...]
+#   scripts/heavy-run.sh --status    prints "free", or "held: " and the run that holds the lock
 
 heavy_lock() {
   local dir lock
@@ -36,8 +37,27 @@ heavy_lock() {
   printf '%s in %s (pid %s)\n' "${*:-$0}" "$PWD" "$$" >"$lock"
 }
 
+heavy_status() {
+  local lock fd
+  if ! command -v flock >/dev/null; then
+    echo "unknown: no flock"
+    return 0
+  fi
+  lock=$(git rev-parse --path-format=absolute --git-common-dir)/sisu-heavy-run.lock
+  # The text of a run stays in the file after the run ends, so only flock can tell.
+  if [[ -e $lock ]] && exec {fd}<"$lock" && ! flock -n "$fd"; then
+    echo "held: $(cat "$lock")"
+  else
+    echo free
+  fi
+}
+
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
   set -euo pipefail
+  if [[ ${1:-} == --status ]]; then
+    heavy_status
+    exit 0
+  fi
   heavy_lock "$@"
   exec "$@"
 fi
