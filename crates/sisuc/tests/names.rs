@@ -116,7 +116,7 @@ struct Meaning {
 }
 
 #[rustfmt::skip]
-const MEANINGS: [Meaning; 23] = [
+const MEANINGS: [Meaning; 24] = [
     Meaning { name: "local", shape: "fn f(N: i64) { U }", spelled: None, declaration: &[],
         codes: ["ok", "E0052", "E0030", "E0125", "E0063", "E0063", "E0137", "E0137"] },
     Meaning { name: "constant", shape: "const N = 1\nfn f() { U }", spelled: None, declaration: &[],
@@ -161,6 +161,8 @@ const MEANINGS: [Meaning; 23] = [
         codes: ["ok", "ok", "ok", "ok", "E0063", "E0063", "E0137", "E0137"] },
     Meaning { name: "poisoned constant hidden by a local", shape: "const N =\n\nfn f(N: i64) { U }", spelled: None, declaration: &["E0011"],
         codes: ["ok", "ok", "ok", "ok", "E0063", "E0063", "E0137", "E0137"] },
+    Meaning { name: "alias of a poisoned item", shape: "enum Z\n{ A }\ntype N = Z\nfn f() { U }", spelled: None, declaration: &["E0004"],
+        codes: ["ok", "ok", "ok", "ok", "ok", "ok", "ok", "ok"] },
     Meaning { name: "unknown", shape: "fn f() { U }", spelled: None, declaration: &[],
         codes: ["E0033", "E0052", "E0030", "E0125", "E0033", "E0033", "E0052", "E0033"] },
 ];
@@ -198,6 +200,7 @@ fn each_meaning_at_each_position_should_give_its_code() {
 /// WHEN `sisu check` runs on it
 /// THEN the errors are exactly the true ones, with their positions.
 #[test]
+#[expect(clippy::too_many_lines, reason = "one table of rows")]
 fn a_name_at_its_position_should_give_one_true_answer() {
     let rows = [
         row(
@@ -284,6 +287,136 @@ fn a_name_at_its_position_should_give_one_true_answer() {
             "assign parameter",
             "fn f<T>() {\n    T = 1\n}\nfn main() {}",
             &["E0105 2:5"],
+        ),
+        row(
+            "P1",
+            "enum Foo\n{ A }\n\ntype Y = Foo\n\nfn main() {\n    match 1 {\n        Y => {}\n        _ => {}\n    }\n}",
+            &["E0004 2:1"],
+        ),
+        row(
+            "P1b",
+            "enum Foo\n{ A }\n\ntype Y = Foo\n\nfn main() {\n    match 1 {\n        Y(x) => {}\n        _ => {}\n    }\n}",
+            &["E0004 2:1"],
+        ),
+        row(
+            "P1c",
+            "enum Foo\n{ A }\n\ntype Y = Foo\n\nfn main() {\n    let _a = Y\n}",
+            &["E0004 2:1"],
+        ),
+        row(
+            "P6",
+            "interface Eq\n{}\nconst Eq = 1\n\nfn main() {\n    let p = Eq\n    print(p)\n}",
+            &["E0026 1:11", "E0004 2:1", "E0026 3:7", "E0034 3:7"],
+        ),
+        row(
+            "P6b",
+            "interface Eq\n{}\nclass Eq {}\nfn g(x: Eq) {}\nfn main() {}",
+            &["E0026 1:11", "E0004 2:1", "E0026 3:7", "E0034 3:7"],
+        ),
+        row(
+            "R1",
+            "class A {}\nconst A = 1\n\nfn main() {\n    let _a = A\n}",
+            &["E0034 2:7"],
+        ),
+        row(
+            "R2",
+            "const A = 1\nclass A {}\n\nfn main() {\n    let _a: A = A()\n}",
+            &["E0034 2:7"],
+        ),
+        row(
+            "R3",
+            "fn A(x: i64) {}\nfn A(x: string) {}\n\nfn main() {\n    A(\"s\")\n}",
+            &["E0034 2:4"],
+        ),
+        row(
+            "R4",
+            "enum A { V }\nfn A() {}\n\nfn main() {\n    A()\n}",
+            &["E0034 2:4"],
+        ),
+        row(
+            "R5",
+            "class A { v: i64 }\nclass A { w: i64 }\n\nfn main() {\n    let a = A(w: 1)\n    print(a.w)\n}",
+            &["E0034 2:7"],
+        ),
+        row(
+            "R6",
+            "fn A(x: i64) {}\nfn A(x: string) {}\n\nfn main() {\n    A(\"s\")\n    print(1 + true)\n}",
+            &["E0034 2:4", "E0032 6:15"],
+        ),
+        row(
+            "R7",
+            "interface I {}\ninterface I {}\nclass C {}\nfn g<T: I>(x: T) { x.m() }\nfn main() { g(C()) }",
+            &["E0034 2:11"],
+        ),
+        row(
+            "A1",
+            "enum Z\n{ A }\ntype N = [Z]\nfn main() {\n    let _a = N\n}",
+            &["E0004 2:1"],
+        ),
+        row(
+            "A2",
+            "enum Z\n{ A }\ntype M = Z\ntype N = M\nfn main() {\n    let _a = N\n}",
+            &["E0004 2:1"],
+        ),
+        row(
+            "A3",
+            "type N = Missing\nfn main() {\n    let _a = N\n}",
+            &["E0030 1:10"],
+        ),
+        row(
+            "A4",
+            "type N = N\nfn main() {\n    let _a = N\n}",
+            &["E0161 1:6"],
+        ),
+        row(
+            "A5",
+            "class R {}\nclass R {}\ntype N = R\nfn main() {\n    let _a = N(1)\n}",
+            &["E0034 2:7"],
+        ),
+        row(
+            "I1",
+            "interface Eq {}\ninterface Eq {}\nfn g(x: Eq) {}\nfn main() {}",
+            &["E0026 1:11", "E0026 2:11", "E0034 2:11"],
+        ),
+        row(
+            "I2 (control)",
+            "interface Eq {}\ninterface Eq {}\nfn g<T: Eq>(x: T) {}\nfn main() {}",
+            &["E0026 1:11", "E0026 2:11", "E0034 2:11"],
+        ),
+        row(
+            "I3 (control)",
+            "interface Eq {}\nclass Eq {}\nfn g<T: Eq>(x: T) {}\nclass R: Eq {}\nfn main() {}",
+            &["E0026 1:11", "E0026 2:7", "E0034 2:7", "E0152 4:10"],
+        ),
+        row(
+            "I4 (control)",
+            "interface Eq {}\ninterface Eq {}\nclass C: Eq {\n    fn eq(self, other: C) -> bool { true }\n}\nfn main() {\n    print(C() == C())\n}",
+            &["E0026 1:11", "E0026 2:11", "E0034 2:11"],
+        ),
+        row(
+            "I5 (control)",
+            "interface Eq {}\nclass Eq {}\nfn g<T: Eq>(x: T) -> bool { x == x }\nfn main() {}",
+            &["E0026 1:11", "E0026 2:7", "E0034 2:7"],
+        ),
+        row(
+            "I6 (control)",
+            "interface Ord {}\ninterface Ord {}\nfn g<T: Ord>(x: T) -> bool { x < x }\nfn main() {}",
+            &["E0026 1:11", "E0026 2:11", "E0034 2:11"],
+        ),
+        row(
+            "I7 (control)",
+            "interface Display {}\ninterface Display {}\nclass C: Display {\n    fn display(self) -> string { \"\" }\n}\nfn main() {\n    print(C())\n}",
+            &["E0026 1:11", "E0026 2:11", "E0034 2:11"],
+        ),
+        row(
+            "I8 (control)",
+            "interface Eq {}\ninterface Eq {}\nfn g(x: any Eq) {}\nfn main() {}",
+            &["E0026 1:11", "E0026 2:11", "E0034 2:11", "E0164 3:13"],
+        ),
+        row(
+            "alias args call (control)",
+            "enum Z\n{ A }\ntype N = Z\nfn main() {\n    let _a = N<Missing>(1)\n}",
+            &["E0004 2:1"],
         ),
     ];
     let wrong = differing(&rows, false);
@@ -449,4 +582,139 @@ fn an_assignment_to_a_prelude_names_item_should_keep_its_wrong_kind_error() {
         rows.len(),
         wrong.join("\n")
     );
+}
+
+/// Asserts that no row of `rows` differs from its errors.
+fn assert_rows(rows: &[Row]) {
+    let wrong = differing(rows, false);
+    assert!(
+        wrong.is_empty(),
+        "{} of {} rows differ:\n{}",
+        wrong.len(),
+        rows.len(),
+        wrong.join("\n")
+    );
+}
+
+/// GIVEN a top-level name that a program declares twice
+/// AND a use of the name before or after the second declaration, at any position
+/// WHEN `sisu check` runs on it
+/// THEN the errors are the redeclaration's own, and a use gives no more
+/// AND a language interface's redeclaration gives the same, with its E0026 on each declaration.
+#[test]
+fn a_redeclared_name_should_leave_only_its_error() {
+    let eq = "interface Eq {}\ninterface Eq {}\nfn main() {\n";
+    let eq_twice = ["E0026 1:11", "E0026 2:11", "E0034 2:11"];
+    let rows = [
+        row(
+            "forward fn (control)",
+            "fn main() { A() }\nfn A() {}\nfn A(x: i64) {}",
+            &["E0034 3:4"],
+        ),
+        row(
+            "forward alias",
+            "type N = R\nclass R {}\nclass R {}\nfn main() {\n    let _a = N(1)\n}",
+            &["E0034 3:7"],
+        ),
+        row(
+            "main twice (control)",
+            "fn main() {}\nfn main() {}",
+            &["E0034 2:4"],
+        ),
+        row(
+            "three fns (control)",
+            "fn A() {}\nfn A() {}\nfn A() {}\nfn main() {}",
+            &["E0034 2:4", "E0034 3:4"],
+        ),
+        row(
+            "variant of twice",
+            "enum E { A }\nenum E { B }\nfn main() {\n    let _a = E.B\n    let _b = E.A\n}",
+            &["E0034 2:6"],
+        ),
+        row(
+            "const twice",
+            "const A = 1\nconst A = 2\nconst B = A + true\nfn main() { print(B) }",
+            &["E0034 2:7"],
+        ),
+        row(
+            "header twice (control)",
+            "interface I {}\ninterface I {}\nclass C: I {}\nfn main() { let _c = C() }",
+            &["E0034 2:11"],
+        ),
+        row(
+            "broken Eq second",
+            "interface Eq {}\ninterface Eq\n{}\nfn f(x: Eq) {}\nfn main() {}",
+            &["E0026 1:11", "E0026 2:11", "E0034 2:11", "E0004 3:1"],
+        ),
+        row(
+            "broken Eq first",
+            "interface Eq\n{}\ninterface Eq {}\nfn f(x: Eq) {}\nfn main() {}",
+            &["E0026 1:11", "E0004 2:1", "E0026 3:11", "E0034 3:11"],
+        ),
+        row("Eq value", &format!("{eq}    let _a = Eq\n}}"), &eq_twice),
+        row("Eq call", &format!("{eq}    let _a = Eq(1)\n}}"), &eq_twice),
+        row("Eq path", &format!("{eq}    let _a = Eq.x\n}}"), &eq_twice),
+        row(
+            "Eq pattern",
+            &format!("{eq}    match 1 {{\n        Eq => {{}}\n        _ => {{}}\n    }}\n}}"),
+            &eq_twice,
+        ),
+        row(
+            "duplicate class read",
+            "class C {}\nclass C {}\nfn main() { let p = C }\n",
+            &["E0034 2:7"],
+        ),
+        row(
+            "duplicate fn read",
+            "fn f() {}\nfn f() {}\nfn main() { let p = f }\n",
+            &["E0034 2:4"],
+        ),
+        row(
+            "duplicate enum called",
+            "enum E { A }\nenum E { B }\nfn main() { E(1) }\n",
+            &["E0034 2:6"],
+        ),
+    ];
+    assert_rows(&rows);
+}
+
+/// GIVEN a use that a poisoned name cannot make untrue: type args on a failed alias, a member
+/// defined twice, a parameter that hides a redeclared name, or one broken definition
+/// WHEN `sisu check` runs on it
+/// THEN the true error stays.
+#[test]
+fn an_error_a_poisoned_name_cannot_remove_should_stay() {
+    let rows = [
+        row(
+            "alias args (control)",
+            "enum Z\n{ A }\ntype N = Z\nfn f(x: N<Missing>) {}\nfn main() {}",
+            &["E0004 2:1", "E0137 4:10"],
+        ),
+        row(
+            "one Eq (control)",
+            "interface Eq {}\nfn g(x: Eq) {}\nfn main() {}",
+            &["E0026 1:11", "E0147 2:9"],
+        ),
+        row(
+            "method twice (control)",
+            "class C {\n    fn m(self) {}\n    fn m(self, x: i64) {}\n}\nfn main() {\n    C().m(true)\n}",
+            &["E0034 3:8", "E0053 6:5"],
+        ),
+        row(
+            "field twice (control)",
+            "class C {\n    v: i64\n    v: string\n}\nfn main() {\n    let _a: string = C(v: 1).v\n}",
+            &["E0034 3:5", "E0032 6:22"],
+        ),
+        row(
+            "param hides (control)",
+            "fn A() {}\nfn A() {}\nfn f(A: i64) { print(A + true) }\nfn main() {}",
+            &["E0034 2:4", "E0032 3:26"],
+        ),
+        row(
+            "one broken Eq (control)",
+            "interface Eq\n{}\nfn f(x: Eq) {}\nfn main() {}",
+            &["E0026 1:11", "E0004 2:1", "E0147 3:9"],
+        ),
+    ];
+    assert_rows(&rows);
 }

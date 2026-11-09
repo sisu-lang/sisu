@@ -217,7 +217,6 @@ crates/sisuc/src/check/tests/mod.rs::class_after_function_of_same_name
 crates/sisuc/src/check/tests/mod.rs::class_and_function_share_names
 crates/sisuc/src/check/tests/mod.rs::class_candidate_is_named_a_class
 crates/sisuc/src/check/tests/mod.rs::class_cycle_search_reads_linearly
-crates/sisuc/src/check/tests/mod.rs::class_defined_twice
 crates/sisuc/src/check/tests/mod.rs::coalesce_chain_is_not_optional
 crates/sisuc/src/check/tests/mod.rs::coalesce_left_not_optional
 crates/sisuc/src/check/tests/mod.rs::coalesce_left_not_optional_checks_the_right
