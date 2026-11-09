@@ -323,13 +323,13 @@ def stubs(
     annotate: str = ANNOTATE,
     *,
     valgrind: bool = True,
-    check_exit: str = "1",
+    check_above_0: str = 'echo "error[E0030]: unknown" >&2; exit 1',
 ) -> str:
     """Writes stub `sisu`, `valgrind` and `callgrind_annotate` in `tmp/bin`; returns that PATH.
 
-    `check` is shell text that runs first for each call of the stub `sisu`. `check_exit` is the
-    exit code of `sisu check` under valgrind at each size above 0. A stub exits with
-    code 2 when its arguments are not the ones that the script must give:
+    `check` is shell text that runs first for each call of the stub `sisu`. `check_above_0` is
+    the shell text of `sisu check` under valgrind at each size above 0.
+    A stub exits with code 2 when its arguments are not the ones that the script must give:
     `sisu check FILE`, `valgrind --tool=callgrind --callgrind-out-file=FILE SISU build [-O2]
     --codegen-units 1 FILE -o OUT`, the same valgrind command with `check FILE` and
     `callgrind_annotate --inclusive=yes --threshold=100 --show=Ir --auto=no FILE`.
@@ -358,7 +358,7 @@ def stubs(
             'case "$out" in --callgrind-out-file=*) : > "${out#*=}";; *) ' + bad + ";; esac\n"
             'if [ "$command" = check ]; then\n'
             f"  [ $# -eq 1 ] || {{ {bad}; }}\n"
-            f'  case "$1" in *size-0.sisu) exit 0;; *) exit {check_exit};; esac\n'
+            f'  case "$1" in *size-0.sisu) exit 0;; *) {check_above_0};; esac\n'
             "fi\n"
             f'[ "$command" = build ] || {{ {bad}; }}\n'
             '[ "$1" = -O2 ] && shift\n'
@@ -789,7 +789,7 @@ class ScalingTest(unittest.TestCase):
         WHEN it is measured
         THEN the run fails, because it would measure no failed bound
         """
-        code, _, err = self.stub_run("failed bounds", check_exit="0")
+        code, _, err = self.stub_run("failed bounds", check_above_0="exit 0")
         self.assertEqual(code, 1)
         self.assertIn("failed bounds, size 64: exit code 0, not 1", err)
 
@@ -798,9 +798,18 @@ class ScalingTest(unittest.TestCase):
         WHEN a check-only shape is measured
         THEN the run fails, and the crash does not count as the diagnostic
         """
-        code, _, err = self.stub_run("failed bounds", check_exit="101")
+        code, _, err = self.stub_run("failed bounds", check_above_0="exit 101")
         self.assertEqual(code, 1)
         self.assertIn("exit code 101, not 1", err)
+
+    def test_a_check_only_shape_should_fail_when_sisu_fails_with_no_error(self) -> None:
+        """GIVEN `sisu check` that exits with 1 and writes no error diagnostic
+        WHEN a check-only shape is measured
+        THEN the run fails, because the program did not give the error that the shape tests
+        """
+        code, _, err = self.stub_run("failed bounds", check_above_0="exit 1")
+        self.assertEqual(code, 1)
+        self.assertIn("failed bounds, size 64: no error diagnostic", err)
 
     def test_stage_counts_should_read_each_stage_from_its_own_line(self) -> None:
         """GIVEN callgrind output with a line for each stage function and a closure of `check::check`

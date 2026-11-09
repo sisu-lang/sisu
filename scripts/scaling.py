@@ -804,6 +804,11 @@ def measure_shape(
                     if run.returncode != expected:
                         code = f"exit code {run.returncode}, not {expected}"
                         raise Fail(f"{what}: {code}\n{run.stderr[-500:]}")
+                    rows = run.stderr.splitlines()
+                    if k > 0 and not any(
+                        (m := DIAGNOSTIC.match(row)) and m[1] == "error" for row in rows
+                    ):
+                        raise Fail(f"{what}: no error diagnostic\n{run.stderr[-500:]}")
                     annotated = deadline.run([*ANNOTATE, profile], what).stdout
                     found = stage_counts(annotated, CHECK_ONLY_STAGES)
                     found = {stage: found.get(stage, 0) for stage, _ in STAGES}

@@ -66,11 +66,13 @@ status_report() {
     echo "mutation-test: no run in this worktree"
     return 0
   fi
-  if [[ ! -e $file ]]; then
+  [[ ! -e $file ]] || IFS=$'\t' read -r label n start jobs later <"$file" || true
+  # record_progress empties the file just before it writes the line.
+  if [[ -z ${label:-} ]]; then
     echo "mutation-test: a run holds the lock; no pass has started"
     return 0
   fi
-  IFS=$'\t' read -r label n start jobs later <"$file"
+  ((jobs > 0)) || jobs=1
   # cargo mutants replaces mutants.out only after it finds the mutants. Until then the lists are
   # those of the pass before.
   if [[ mutants.out/lock.json -nt $file ]]; then
@@ -220,10 +222,12 @@ pass() {
   [[ mutants.out/lock.json -nt $started ]] && tested=yes
   return 0
 }
+# The estimates divide by the jobs, so 0 jobs counts as 1.
+estimate_jobs=$((${CARGO_MUTANTS_JOBS:-2} > 0 ? ${CARGO_MUTANTS_JOBS:-2} : 1))
 # What --status reads: the label of a pass or a group, its size, when it started and the jobs.
 # The last field ($3, 0 by default) is the size of the whole-suite group that comes after it.
 record_progress() {
-  printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$(date +%s)" "${CARGO_MUTANTS_JOBS:-2}" "${3:-0}" >target/mutation-test.status
+  printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$(date +%s)" "$estimate_jobs" "${3:-0}" >target/mutation-test.status
 }
 
 if [[ -n $not_run || -n $test_args ]]; then
@@ -272,7 +276,7 @@ run_group() {
   record_progress "pass 2, $label group" "$n" "$later"
   if [[ $label == whole-suite ]]; then
     # shortcut: this reads CARGO_MUTANTS_JOBS and not -j; pass -j here if a run needs it.
-    echo "mutation-test: pass 2, whole-suite group: about $((n * WHOLE_SUITE_SECONDS / ${CARGO_MUTANTS_JOBS:-2} / 60)) min"
+    echo "mutation-test: pass 2, whole-suite group: about $((n * WHOLE_SUITE_SECONDS / estimate_jobs / 60)) min"
   fi
   local args=("${pass2_args[@]}")
   # A name holds regex characters, so each one is escaped and anchored.

@@ -864,6 +864,25 @@ class Mutants(unittest.TestCase):
         fields = (self.repo / "status2").read_text().rstrip("\n").split("\t")
         self.assertEqual((fields[0], fields[1], fields[4]), ("pass 2, whole-suite group", "1", "0"))
 
+    def test_a_run_with_no_jobs_should_count_one_job_in_its_estimates(self) -> None:
+        self.rust_commit()
+        names = "crates/sisuc/src/check/b.rs:1:1: y"
+        run = self.mutate(
+            list=1, exit=2, missed_names=names, pass2_caught=1, env={"CARGO_MUTANTS_JOBS": "0"}
+        )
+        self.assertIn("mutation-test: pass 2, whole-suite group: about", self.log.read_text())
+        fields = (self.repo / "status2").read_text().split("\t")
+        self.assertEqual((fields[0], fields[3]), ("pass 2, whole-suite group", "1"), run.stderr)
+
+    def test_status_should_say_no_pass_has_started_when_the_status_file_is_empty(self) -> None:
+        # record_progress empties the file just before it writes the line.
+        target = self.repo / "target"
+        target.mkdir(exist_ok=True)
+        (target / "mutation-test.status").write_text("")
+        with (target / "mutation-test.lock").open("w", encoding="utf-8") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            self.assertIn("no pass has started", self.run_status())
+
     def test_a_run_with_its_own_tests_should_not_record_a_pass_1(self) -> None:
         self.rust_commit()
         self.mutate("--", "--doc", caught=1)
