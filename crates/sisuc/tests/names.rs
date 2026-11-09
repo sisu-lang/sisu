@@ -92,7 +92,7 @@ fn differing(rows: &[Row], codes_only: bool) -> Vec<String> {
     })
 }
 
-/// The seven columns of the names table: the use `U` in each position, with `N` the name.
+/// The eight columns of the names table: the use `U` in each position, with `N` the name.
 const POSITIONS: [(&str, &str); 8] = [
     ("value", "let _a = N"),
     ("callee", "let _a = N(1)"),
@@ -398,6 +398,50 @@ fn a_path_should_keep_its_order() {
         ),
     ];
     let wrong = differing(&rows, false);
+    assert!(
+        wrong.is_empty(),
+        "{} of {} rows differ:\n{}",
+        wrong.len(),
+        rows.len(),
+        wrong.join("\n")
+    );
+}
+
+/// GIVEN a class, an enum, an interface or an alias with the name `Some`, `Ok` or `Err`
+/// WHEN `sisu check` runs on a program that assigns to the name
+/// AND the program may add to it, pass it as a `mut` argument or assign to an index of it
+/// THEN the errors are the declaration's E0026 and an E0105, as for any other item of that kind.
+#[test]
+fn an_assignment_to_a_prelude_names_item_should_keep_its_wrong_kind_error() {
+    let declarations = [
+        ("class", "class N {}"),
+        ("enum", "enum N { A }"),
+        ("interface", "interface N {}"),
+        ("alias of a number", "type N = i64"),
+        ("alias of a class", "class C {}\ntype N = C"),
+    ];
+    let uses = [
+        ("assignment", "N = 1"),
+        ("compound assignment", "N += 1"),
+        ("mut argument", "set(mut N)"),
+        ("index assignment", "N[0] = 1"),
+    ];
+    let mut rows = Vec::new();
+    for name in ["Some", "Ok", "Err"] {
+        for (kind, declaration) in declarations {
+            for (form, user) in uses {
+                let program =
+                    format!("{declaration}\nfn set(mut x: i64) {{}}\nfn main() {{ {user} }}\n")
+                        .replace('N', name);
+                rows.push(row(
+                    &format!("{kind} {name}, {form}"),
+                    &program,
+                    &["E0026 1:1", "E0105 1:1"],
+                ));
+            }
+        }
+    }
+    let wrong = differing(&rows, true);
     assert!(
         wrong.is_empty(),
         "{} of {} rows differ:\n{}",
