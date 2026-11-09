@@ -763,8 +763,8 @@ interface.
 **Position**:
 The place in a program where a name is written. It decides what the name can
 mean: a value, a callee, a type, a bound, a pattern, a path or a path call. The
-name resolver (`check/names.rs`) tries the meanings of a name in an order that
-belongs to the position.
+name resolver (`check/names.rs`) tries the meanings of a name in an order of the
+position's own. A path and a path call share one order.
 
 **Cascade**:
 An error that follows from a guess about code that failed, and not from what the
