@@ -1490,12 +1490,13 @@ fn sanitize_should_exit_2_when_the_flags_do_not_allow_it() {
     }
 }
 
-/// GIVEN `--sanitize address`, with `--allocator mimalloc` in one row
-/// WHEN `sisu build` or `sisu run` runs on macOS
-/// THEN it exits 2 with a usage error that says the flag works only on Linux
+/// GIVEN a program
+/// WHEN `sisu <command> --sanitize address` runs on macOS
+/// THEN it exits 2
+/// AND stderr holds `--sanitize address` works only on Linux
 ///
-/// The Linux check comes before the allocator check, so the `--allocator mimalloc` row shows the
-/// Linux text.
+/// The command is `build` or `run`. A third row adds `--allocator mimalloc`. The Linux check comes
+/// before the allocator check, so that row shows the Linux text.
 #[test]
 #[cfg_attr(
     not(target_os = "macos"),
