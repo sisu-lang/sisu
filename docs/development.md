@@ -178,7 +178,7 @@ run shows its report and names its build. A stack overflow shows as an ASan
 
 ASan and Valgrind find different faults, so the cases use both. Both find a
 leak, a use after free and an overrun of a heap block. ASan also finds an
-overrun of a global. It finds an overrun of a stack array only at `-O0`. It also
+overrun of a global. It finds an overrun of a stack array unless `-O2` removes the access. It also
 finds a use of a stack variable after its function returns. ASan costs far less CPU than
 Valgrind. Only Valgrind finds a read of uninitialized memory. So the `-O2`
 build runs once under Valgrind. That run misses an uninitialized read that
