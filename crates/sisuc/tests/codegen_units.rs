@@ -215,12 +215,12 @@ fn split_build_should_run_like_one_module() {
 }
 
 /// GIVEN the case program built with `--codegen-units 4`, plain, with `-O2` and with `--rc-checks`
-/// WHEN each executable runs under Valgrind on Linux, on the system allocator, as the `tests/run`
-/// cases do
+/// WHEN each executable runs under Valgrind on Linux, on the system allocator
 /// THEN it prints the lines of the case and Valgrind finds no error
 /// AND the `--rc-checks` build, run without Valgrind, prints the same and exits 0
 ///
-/// A `tests/run` case builds one module, so this test is the memory proof of a split build.
+/// A `tests/run` case builds one module, so this test is the memory proof of a split build. A case
+/// runs only its `-O2` build under Valgrind, and this test runs all three.
 #[test]
 fn split_build_should_pass_the_memory_checks() {
     let dir = fixture(
