@@ -553,9 +553,10 @@ part with a width in place. Each of these writers and `sisu_pad` returns the
 end of its text. The next part starts there. `chars()` and `string(cs)` call
 `sisu_utf8_count`, `sisu_utf8_decode`, `sisu_utf8_len` and `sisu_utf8_encode`.
 `words()` calls `sisu_words_count` and `sisu_word_next`; `s.words().len()`,
-written as one expression, calls only `sisu_words_count`. `stdin.rs` holds `sisu_read_line`,
-which `read_line()` calls. `args.rs` holds `sisu_args_len` and `sisu_arg`,
-which the generated `main` calls to build `args` when `sisu.main` takes it.
+written as one expression, calls only `sisu_words_count`. `stdin.rs` holds
+`sisu_read_line`, which `read_line()` calls. `args.rs` holds `sisu_args_len`
+and `sisu_arg`, which the generated `main` calls to build `args` when
+`sisu.main` takes it.
 `stack.rs` holds `sisu_stack_grow`, which runs a generated show or `==` helper
 on a new stack segment when the stack is low
 ([ADR 0047](adr/0047-deep-show-and-equality-grow-the-stack.md)). `deferred.rs`

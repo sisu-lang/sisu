@@ -2899,7 +2899,8 @@ fn pointer_distance<'a>(body: &'a str, name: &str) -> (&'a str, &'a str) {
 /// The result and the arguments of the `nth` call of `callee` in `body`. Each argument is its
 /// value, with no type and no attribute.
 fn nth_call<'a>(body: &'a str, callee: &str, nth: usize) -> (&'a str, Vec<&'a str>) {
-    let marker = format!(" call ptr @{callee}(");
+    let callee_text = format!("ptr @{callee}(");
+    let marker = format!(" call {callee_text}");
     let line = body
         .lines()
         .filter(|line| line.contains(&marker))
@@ -2910,7 +2911,7 @@ fn nth_call<'a>(body: &'a str, callee: &str, nth: usize) -> (&'a str, Vec<&'a st
         .split_once(" = ")
         .expect("a call should name its result");
     let args = call
-        .split_once(&marker[5..])
+        .split_once(&callee_text)
         .expect("the line has the marker")
         .1;
     let args = args.trim_end_matches(')');
@@ -2931,8 +2932,7 @@ fn after_alloc(body: &str) -> (&str, &str) {
     (rest, string)
 }
 
-/// Each part of an interpolation starts where the last part ended: the end is the pointer that
-/// the part's writer returns, and no instruction adds the length written so far.
+/// A padded part between two plain parts: the start and the end of the pad both feed a writer.
 #[test]
 fn interpolation_should_write_each_part_at_the_end_of_the_last() {
     let context = Context::create();
@@ -2952,7 +2952,7 @@ fn interpolation_should_write_each_part_at_the_end_of_the_last() {
     let field = defining(f, bytes);
     assert!(
         field.starts_with("getelementptr inbounds nuw")
-            && field.contains(&format!("ptr {string},")),
+            && field.ends_with(&format!("ptr {string}, i32 0, i32 {}", layout::BYTES)),
         "{bytes} = {field}"
     );
     // (3) The second part starts at the end of the first.
@@ -2972,9 +2972,7 @@ fn interpolation_should_write_each_part_at_the_end_of_the_last() {
     assert!(!after.contains("getelementptr inbounds i8"), "{f}");
 }
 
-/// A string part is copied by `sisu_write_str`, which returns the end of the copy, in place of
-/// an inline `memcpy`; the length that the string stores is the distance from its bytes to the
-/// end of the last part.
+/// Two string parts, one padded, then a number: a copy, a pad and a writer chain by their ends.
 #[test]
 fn interpolation_should_copy_a_string_part_with_sisu_write_str() {
     let context = Context::create();
@@ -2998,7 +2996,7 @@ fn interpolation_should_copy_a_string_part_with_sisu_write_str() {
     let field = defining(f, bytes);
     assert!(
         field.starts_with("getelementptr inbounds nuw")
-            && field.contains(&format!("ptr {string},")),
+            && field.ends_with(&format!("ptr {string}, i32 0, i32 {}", layout::BYTES)),
         "{bytes} = {field}"
     );
     // (3) The second part starts at the end of the first.
