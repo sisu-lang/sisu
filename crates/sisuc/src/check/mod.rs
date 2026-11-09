@@ -56,7 +56,7 @@ use assoc::{Choice, Choices, Named};
 use constant::{ConstInfo, ConstantSite};
 use enums::{EnumInfo, HoldsTable, reserved_name};
 use extend::Extension;
-use interface::{Bound, InterfaceInfo, PendingBound, Required, Scope, Slot, Waiting};
+use interface::{Bounds, InterfaceInfo, PendingBound, Required, Scope, Slot, Waiting};
 use prelude::PRELUDE;
 pub(crate) use unused_names::is_judged;
 use unused_names::{Owner, Pending, Use, Used};
@@ -272,7 +272,7 @@ enum Holder {
 }
 
 /// The type parameters of a declaration with the bounds of each.
-type ParamBounds = (Vec<Symbol>, Vec<Vec<Bound>>);
+type ParamBounds = (Vec<Symbol>, Vec<Bounds>);
 
 /// A type of `None` is `Error`: its error is reported where the signature names it.
 struct Signature {
@@ -283,7 +283,7 @@ struct Signature {
     /// How many of `type_params` are the function's own, the last ones.
     own: usize,
     /// The bounds of each of the function's own type parameters.
-    bounds: Vec<Vec<Bound>>,
+    bounds: Vec<Bounds>,
     /// Without a method's `self`.
     params: Vec<Option<Type>>,
     /// Whether each of `params` is `mut`.
@@ -356,7 +356,7 @@ struct ClassInfo {
     /// Whether a type parameter is written with a bound.
     bounded: bool,
     /// The bounds of each of `type_params`; empty when `bounded` is false.
-    bounds: Vec<Vec<Bound>>,
+    bounds: Vec<Bounds>,
     /// The first field of each name, in declaration order.
     fields: Vec<FieldInfo>,
     /// Each field's index in `fields`, by name.
@@ -1012,19 +1012,19 @@ struct Body {
     /// Where in `type_params` each name first is, so a lookup does not scan them.
     type_param_at: FxHashMap<Symbol, usize>,
     /// The bounds of the type parameters in scope, by place; a place past the end has none.
-    bounds: Vec<Vec<Bound>>,
-    /// The places of the type parameters whose closure went past `BOUND_CLOSURE_LIMIT`: they stay
-    /// unknown in this body.
-    wide: Vec<usize>,
+    bounds: Vec<Bounds>,
+    /// The places of the type parameters that are unknown in this body: a closure past
+    /// `BOUND_CLOSURE_LIMIT` (reported as E0157), or a bound that failed (reported where it is
+    /// written). They conform to every interface, and a method call on them is untyped.
+    unknown: Vec<usize>,
     /// The interfaces each type parameter conforms to, by place, once found (`param_interfaces`).
     conforming: Vec<Option<Vec<(tir::InterfaceId, TypeArgs)>>>,
     /// The interfaces each associated type of a type parameter conforms to through the bounds of
     /// its declaration, once found (`assoc_interfaces`). The bounds of the type parameters in scope
     /// do not change them, so a body keeps them as it goes.
     assoc_conforming: FxHashMap<Type, Vec<(tir::InterfaceId, TypeArgs)>>,
-    /// The associated types whose closure went past `BOUND_CLOSURE_LIMIT`: they stay unknown in
-    /// this body.
-    wide_assoc: FxHashSet<Type>,
+    /// The associated types that are unknown in this body, for the same two causes as `unknown`.
+    unknown_assoc: FxHashSet<Type>,
     /// The requirements of the bounds of each type parameter or associated type by name, once
     /// indexed (`required`). All these caches change with the bounds, and a body's are cleared
     /// with it.
@@ -1214,7 +1214,7 @@ impl Body {
     fn forget_bounds(&mut self, first: usize) {
         self.bounds.truncate(first);
         self.conforming.clear();
-        self.wide.clear();
+        self.unknown.clear();
         self.required.clear();
         self.named.clear();
         self.conformed.clear();
@@ -1223,9 +1223,9 @@ impl Body {
     }
 
     /// Gives the type parameters from the place `first` on their `bounds`.
-    fn set_bounds(&mut self, first: usize, bounds: Vec<Vec<Bound>>) {
+    fn set_bounds(&mut self, first: usize, bounds: Vec<Bounds>) {
         self.forget_bounds(first);
-        self.bounds.resize(first, Vec::new());
+        self.bounds.resize(first, Bounds::default());
         self.bounds.extend(bounds);
     }
 
@@ -2134,7 +2134,7 @@ impl Checker<'_> {
         f: &ast::Function,
         name: String,
         owner: &[ast::TypeParam],
-        owner_bounds: Vec<Vec<Bound>>,
+        owner_bounds: Vec<Bounds>,
     ) {
         let type_params = self.type_params(owner, &f.type_params);
         self.body.set_type_params(&type_params);
@@ -2507,14 +2507,14 @@ impl Checker<'_> {
             Some(at) => self.extensions[at].bounds.clone(),
             None => self.owner_bounds(owner),
         };
-        bounds.resize(owner_params, Vec::new());
+        bounds.resize(owner_params, Bounds::default());
         bounds.extend(sig.bounds.iter().cloned());
         fresh.set_bounds(0, bounds);
         let ((params, body, misfit), state) = self.with_body(fresh, |c| {
             // The signature's bounds name interfaces for this function. The bounds of a block's
             // parameters are named once, by the block (`record_block_bounds`).
             for place in owner_params..c.body.bounds.len() {
-                for bound in c.body.bounds[place].clone() {
+                for bound in c.body.bounds[place].list.clone() {
                     c.record(Used::Interface(bound.interface), bound.at);
                 }
             }
@@ -2611,7 +2611,7 @@ impl Checker<'_> {
 
     /// The bounds of the type parameters of the class or enum `owner`, a method's `self`; empty
     /// for a function, and when none is bounded.
-    fn owner_bounds(&self, owner: Option<Type>) -> Vec<Vec<Bound>> {
+    fn owner_bounds(&self, owner: Option<Type>) -> Vec<Bounds> {
         match owner.map(Type::kind) {
             Some(TypeKind::Class(id, _)) => self.classes[id.0].bounds.clone(),
             Some(TypeKind::Enum(id, _)) => self.enums[id.0].bounds.clone(),

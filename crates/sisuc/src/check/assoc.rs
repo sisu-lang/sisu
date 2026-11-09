@@ -279,7 +279,7 @@ impl Checker<'_> {
         }
         let closure = self.closure_len(base_ty);
         // A base whose bounds went past the limit is reported already, and unknown.
-        if self.is_wide(base_ty) {
+        if self.is_unknown(base_ty) {
             return None;
         }
         // The declarations in the order of the closure. The lookup reads the shorter of the closure
@@ -392,12 +392,20 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether the bounds of the type parameter or associated type `ty` went past the limit,
-    /// which `interfaces_for` has found out: it is reported, and unknown in this body.
-    pub(super) fn is_wide(&self, ty: Type) -> bool {
+    /// Whether the type parameter or associated type `ty` is unknown in this body: its bounds went
+    /// past the limit (reported as E0157), or one of them failed (reported where it is written).
+    /// It finds the closure first, which sets the state.
+    pub(super) fn is_unknown(&mut self, ty: Type) -> bool {
         match ty.kind() {
-            TypeKind::Param(_, place) => self.body.wide.contains(&(place as usize)),
-            _ => self.body.wide_assoc.contains(&ty),
+            TypeKind::Param(_, place) => {
+                self.param_interfaces(place as usize);
+                self.body.unknown.contains(&(place as usize))
+            }
+            TypeKind::Assoc(..) => {
+                self.assoc_interfaces(ty);
+                self.body.unknown_assoc.contains(&ty)
+            }
+            _ => false,
         }
     }
 
@@ -413,7 +421,7 @@ impl Checker<'_> {
     }
 
     /// Whether the associated type `ty` conforms to `interface` with `args`: through the bounds
-    /// of its declaration, or because its bounds went past the limit and it is unknown.
+    /// of its declaration, or because it is unknown (`is_unknown`).
     pub(super) fn assoc_conforms(
         &mut self,
         ty: Type,
@@ -422,7 +430,8 @@ impl Checker<'_> {
     ) -> bool {
         #[cfg(test)]
         super::reached("assoc_conforms");
-        self.assoc_interfaces(ty).contains(&(interface, args)) || self.body.wide_assoc.contains(&ty)
+        self.assoc_interfaces(ty).contains(&(interface, args))
+            || self.body.unknown_assoc.contains(&ty)
     }
 
     /// The interfaces that the associated type `ty` conforms to through the bounds of its
@@ -432,20 +441,23 @@ impl Checker<'_> {
     /// F9 (b)), as for `param_interfaces`: the closure is computed once for each associated type
     /// that a body names, so a body costs the closure's size.
     fn assoc_interfaces(&mut self, ty: Type) -> &[(InterfaceId, TypeArgs)] {
+        let TypeKind::Assoc(base, interface, args, k) = ty.kind() else {
+            unreachable!("only an associated type should be asked for its closure");
+        };
         if !self.body.assoc_conforming.contains_key(&ty) {
-            let TypeKind::Assoc(base, interface, args, k) = ty.kind() else {
-                unreachable!("only an associated type should be asked for its closure");
-            };
             // The declaration's bounds are over the interface's parameters, `Self` first.
             let mut with = vec![base];
             with.extend_from_slice(args.get());
-            let bounds: Vec<Bound> = (self.interfaces[interface.0].assoc[k as usize].bounds.iter())
-                .map(|b| Bound {
-                    interface: b.interface,
-                    args: b.args.subst(&with),
-                    at: b.at,
-                })
-                .collect();
+            let bounds: Vec<Bound> = (self.interfaces[interface.0].assoc[k as usize]
+                .bounds
+                .list
+                .iter())
+            .map(|b| Bound {
+                interface: b.interface,
+                args: b.args.subst(&with),
+                at: b.at,
+            })
+            .collect();
             let mut out = Vec::new();
             let mut seen = std::mem::take(&mut self.closure_seen);
             let wide = self.interfaces_of(ty, &bounds, &mut out, &mut seen);
@@ -455,13 +467,16 @@ impl Checker<'_> {
             }
             self.body.assoc_conforming.insert(ty, out);
         }
+        if self.interfaces[interface.0].assoc[k as usize].bounds.failed {
+            self.body.unknown_assoc.insert(ty);
+        }
         &self.body.assoc_conforming[&ty]
     }
 
     /// Reports the bound written at `at` of the associated type `ty`, whose closure went past the
     /// limit: once for the bound, whatever bodies read it. The type is then unknown in this body.
     pub(super) fn too_wide_assoc(&mut self, ty: Type, at: Span) {
-        self.body.wide_assoc.insert(ty);
+        self.body.unknown_assoc.insert(ty);
         if self.wide_reported.insert(at) {
             let text = self.source.type_text(at);
             self.report(DiagnosticKind::BoundTooWide {

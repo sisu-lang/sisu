@@ -4352,22 +4352,19 @@ fn a_bound_should_see_the_bounds_of_its_siblings_and_the_arguments_it_waits_for(
             vec![(Code::UnknownType, (4, 18)), (Code::UnknownType, (4, 35))],
         ),
         // A bound that names no interface declares nothing: a class, a type parameter and an
-        // optional. The parameter it bounds has no associated type, and that is all.
+        // optional. The parameter it bounds is unknown, so a type that a bound writes through it
+        // draws no second error.
         (
             "fn f<S: Source, T: Wrap<S.Item>, U: Convert<T.Out>>(_s: S, _t: T, _u: U) {}".to_string(),
-            vec![(Code::NotAnInterface, (1, 20)), (Code::UnknownType, (1, 47))],
+            vec![(Code::NotAnInterface, (1, 20))],
         ),
         (
             "fn f<S: Source, T, U: T<S.Item>, V: Convert<U.Out>>(_s: S, _t: T, _u: U, _v: V) {}".to_string(),
-            vec![
-                (Code::NotAnInterface, (1, 23)),
-                (Code::TypeArguments, (1, 24)),
-                (Code::UnknownType, (1, 47)),
-            ],
+            vec![(Code::NotAnInterface, (1, 23)), (Code::TypeArguments, (1, 24))],
         ),
         (
             "fn f<S: Source, U: [Convert<S.Item>], V: Convert<U.Out>>(_s: S, _u: U, _v: V) {}".to_string(),
-            vec![(Code::NotAnInterface, (1, 20)), (Code::UnknownType, (1, 52))],
+            vec![(Code::NotAnInterface, (1, 20))],
         ),
         // Two bounds of one parameter declare the name that another bound writes.
         (
@@ -4376,7 +4373,7 @@ fn a_bound_should_see_the_bounds_of_its_siblings_and_the_arguments_it_waits_for(
         ),
         (
             "fn f<S: Source, U: Convert<S.Item>?, V: Convert<U.Out>>(_s: S, _u: U, _v: V) {}".to_string(),
-            vec![(Code::NotAnInterface, (1, 20)), (Code::UnknownType, (1, 51))],
+            vec![(Code::NotAnInterface, (1, 20))],
         ),
         (
             "interface GSource<T> {\n    type Item\n}\nextend<U: Marker> Wrap<U>: GSource<i64> {\n    type Item = i64\n}\nfn gpass<S: GSource<T>, T>(s: S, x: S.Item, y: T) {}\nfn t() {\n    let node = Node(id: 1)\n    gpass(Wrap(value: node), \"x\", 5)\n}".to_string(),

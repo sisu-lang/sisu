@@ -11,7 +11,7 @@ use super::alias::{Through, Via};
 use super::any;
 use super::array::innermost;
 use super::expr::{bare_hole, dbg_argument, option_written, read_jump};
-use super::interface::{Bound, Required};
+use super::interface::{Bounds, Required};
 use super::mut_args::{MutParts, MutSite, PlaceShape, marked};
 use super::pattern::{LetPattern, LetValue, arm_key, matchable};
 use super::prelude::PRELUDE;
@@ -1615,7 +1615,7 @@ pub(super) struct GenericSig<'a> {
     /// The bounds of the parameters after the receiver's, in order; a parameter past the end has
     /// none. The call checks each as soon as its parameter is bound, and at no other time (see
     /// `Early`).
-    pub(super) bounds: &'a [Vec<Bound>],
+    pub(super) bounds: &'a [Bounds],
     /// The callee's `mut` parameters, when it has any: an argument at one is a place, checked
     /// before the others.
     pub(super) mut_site: Option<&'a MutSite<'a>>,
@@ -1762,7 +1762,7 @@ struct Early<'s> {
     /// How many of the callee's parameters its receiver binds.
     owned: usize,
     /// The bounds of the parameters after the receiver's, as `GenericSig::bounds`.
-    bounds: &'s [Vec<Bound>],
+    bounds: &'s [Bounds],
     /// The type of each parameter as a bound sees it: its binding, or `UNKNOWN` while it is
     /// unbound or rejected. The first check that needs it builds it. Each later binding changes
     /// only its own entry, so the list is built once for the call.
@@ -1781,7 +1781,7 @@ impl<'s> Early<'s> {
     /// receiver binds the parameter that the type writes it through.
     fn of(sig: &GenericSig<'s>) -> Option<Early<'s>> {
         let assoc = sig.params.iter().flatten().any(|param| param.has_assoc());
-        if !assoc && sig.bounds.iter().all(Vec::is_empty) {
+        if !assoc && sig.bounds.iter().all(|b| b.list.is_empty()) {
             return None;
         }
         Some(Early {
@@ -2121,11 +2121,11 @@ impl Checker<'_> {
         ret: Option<Type>,
         declared: usize,
         owner: &[Type],
-        bounds: &[Vec<Bound>],
+        bounds: &[Bounds],
         named: &[Type],
     ) -> Option<Type> {
         let ret = ret?;
-        let bounded = bounds.iter().any(|b| !b.is_empty());
+        let bounded = bounds.iter().any(|b| !b.list.is_empty());
         if !bounded && !ret.has_param() {
             return Some(ret);
         }
@@ -2515,8 +2515,9 @@ impl Checker<'_> {
                 with[i] = listed(bindings.found[i]);
             }
         }
-        let count =
-            |i: usize| (i.checked_sub(owned).and_then(|k| bounds.get(k))).map_or(0, Vec::len);
+        let count = |i: usize| {
+            (i.checked_sub(owned).and_then(|k| bounds.get(k))).map_or(0, |b| b.list.len())
+        };
         if early.waiting.is_empty() && bound.iter().all(|&i| count(i) == 0) {
             return;
         }
@@ -2535,7 +2536,7 @@ impl Checker<'_> {
             if bindings.found[i] == Some(*REJECTED) {
                 continue;
             }
-            let bound = bounds[i - owned][j];
+            let bound = bounds[i - owned].list[j];
             let args = bound.args.get();
             if let Some(waits_for) = args.iter().find_map(|&arg| bindings.unknown_param(arg)) {
                 early.waiting.entry(waits_for).or_default().push((i, j));
@@ -2683,13 +2684,13 @@ impl Checker<'_> {
     /// reports only a query that is too deep). A bound whose arguments name a parameter that
     /// `context` leaves unbound is not decided yet, as in `check_early`, and holds here. The work
     /// is one query for each bound of the callee.
-    fn meets_bounds(&mut self, all: &[Vec<Bound>], owned: usize, context: &Bindings) -> bool {
+    fn meets_bounds(&mut self, all: &[Bounds], owned: usize, context: &Bindings) -> bool {
         let with: Vec<Type> = context.found.iter().map(|&t| listed(t)).collect();
         for (k, bounds) in all.iter().enumerate() {
             let Some(ty) = context.found[owned + k].filter(|&t| t != *REJECTED) else {
                 continue;
             };
-            for bound in bounds {
+            for bound in &bounds.list {
                 let args = bound.args.get();
                 if !args.iter().all(|&arg| self.known(context, arg).is_some()) {
                     continue;

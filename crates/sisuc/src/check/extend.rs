@@ -4,7 +4,7 @@
 use rustc_hash::FxHashMap;
 
 use super::generic::named_params;
-use super::interface::Bound;
+use super::interface::{Bound, Bounds};
 use super::{Checker, Choices, Declared, Definition, DiagnosticKind, Holder, Symbol, UNKNOWN};
 use crate::ast;
 use crate::conformance::{bind, overlap};
@@ -30,7 +30,7 @@ pub(super) struct Extension {
     /// The block's type parameters, which are the `Param`s of `target`, numbered from 0.
     pub(super) type_params: Vec<Symbol>,
     /// The bounds of each of `type_params`.
-    pub(super) bounds: Vec<Vec<Bound>>,
+    pub(super) bounds: Vec<Bounds>,
     /// The interface of an `extend T: I` block, and where it is written.
     pub(super) interface: Option<(Bound, Span)>,
     /// The associated types the block chooses.
@@ -214,12 +214,16 @@ impl<'a> Checker<'_> {
         extension: usize,
         stands: tir::TypeArgs,
     ) -> Option<(usize, Bound)> {
-        if self.extensions[extension].bounds.iter().all(Vec::is_empty) {
+        if self.extensions[extension]
+            .bounds
+            .iter()
+            .all(|b| b.list.is_empty())
+        {
             return None;
         }
         let bounds = self.extensions[extension].bounds.clone();
         for (i, bounds) in bounds.iter().enumerate() {
-            for &b in bounds {
+            for &b in &bounds.list {
                 let args = self.subst_args(b.args, stands.get());
                 if !self.conforms(stands.get()[i], b.interface, args) {
                     return Some((i, b));
