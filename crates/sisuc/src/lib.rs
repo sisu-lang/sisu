@@ -569,7 +569,7 @@ fn emit_ir(
             // `LLVMString`'s `Display` quotes and escapes the text; `to_string` does not.
             let before = module.print_to_string().to_string();
             timings.time(timings::Stage::Optimize, || {
-                codegen::optimize(module, machine, level)
+                codegen::optimize(module, machine, level, None)
             })?;
             Ok(format!(
                 "; before {pipeline}\n{before}\n; after {pipeline}\n{}",
@@ -916,7 +916,7 @@ fn compile(
         rc_checks,
         ref linker,
         allocator: _,
-        sanitize: _,
+        sanitize,
         units: wanted,
     } = *backend;
     let mir = timings.time(timings::Stage::Mir, || mir::build(program));
@@ -935,7 +935,7 @@ fn compile(
         timings,
         |at, module, machine, timings| {
             timings.time(timings::Stage::Optimize, || {
-                codegen::optimize(module, machine, level)
+                codegen::optimize(module, machine, level, sanitize)
             })?;
             let code = timings.time(timings::Stage::Object, || {
                 codegen::object_code(module, machine)
@@ -953,6 +953,7 @@ fn compile(
         runtime,
         output,
         linker: linker.as_deref(),
+        sanitize,
     };
     let link_result = timings.time(timings::Stage::Link, || link::link(&objects, &linking));
     let removed = remove_objects(&objects);

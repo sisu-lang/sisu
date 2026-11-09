@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 
-use crate::Allocator;
+use crate::{Allocator, Sanitizer};
 
 /// What a link needs besides the object file.
 pub(crate) struct Linking<'a> {
@@ -12,6 +12,8 @@ pub(crate) struct Linking<'a> {
     pub(crate) runtime: &'a Path,
     pub(crate) output: &'a Path,
     pub(crate) linker: Option<&'a str>,
+    /// The sanitizer that the objects are built for; its runtime is linked in.
+    pub(crate) sanitize: Option<Sanitizer>,
 }
 
 /// Links `objects`, in order, with `cc`'s default linker, or with `ld.<linker>` through
@@ -21,8 +23,12 @@ pub(crate) fn link(objects: &[PathBuf], linking: &Linking<'_>) -> Result<(), Str
         runtime,
         output,
         linker,
+        sanitize,
     } = *linking;
     let mut cc = Command::new("cc");
+    if sanitize.is_some() {
+        cc.arg("-fsanitize=address");
+    }
     if let Some(linker) = linker {
         cc.arg(format!("-fuse-ld={linker}"));
     }

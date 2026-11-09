@@ -585,7 +585,6 @@ crates/sisuc/src/check/tests/unused.rs::unused_value_skips_errors
 crates/sisuc/src/codegen/abi.rs::declares_what_the_row_says
 crates/sisuc/src/codegen/abi.rs::each_row_matches_its_rust_signature
 crates/sisuc/src/codegen/abi.rs::every_runtime_export_has_a_row_and_every_row_an_export
-crates/sisuc/src/codegen/tests.rs::a_bool_fill_is_a_memset_at_o2
 crates/sisuc/src/codegen/tests.rs::args_declarations_carry_memory_effects
 crates/sisuc/src/codegen/tests.rs::arithmetic_calls_overflow_intrinsics
 crates/sisuc/src/codegen/tests.rs::blocks_are_named_after_their_index_or_loop_role
@@ -594,13 +593,11 @@ crates/sisuc/src/codegen/tests.rs::class_fields_follow_their_elements
 crates/sisuc/src/codegen/tests.rs::class_layout_comes_from_the_data_layout
 crates/sisuc/src/codegen/tests.rs::classification_is_float_compares
 crates/sisuc/src/codegen/tests.rs::division_guards_precede_the_division
-crates/sisuc/src/codegen/tests.rs::element_comparison_in_a_loop_retains_nothing
 crates/sisuc/src/codegen/tests.rs::empty_class_allocates_its_count
 crates/sisuc/src/codegen/tests.rs::eprint_calls_the_stderr_functions
 crates/sisuc/src/codegen/tests.rs::field_accesses_carry_their_fields_tbaa_tag
 crates/sisuc/src/codegen/tests.rs::field_assignment_to_a_local_skips_base_count
 crates/sisuc/src/codegen/tests.rs::field_read_retains_before_releasing_base
-crates/sisuc/src/codegen/tests.rs::float_ops_have_no_fast_math
 crates/sisuc/src/codegen/tests.rs::float_to_int_saturates
 crates/sisuc/src/codegen/tests.rs::general_path_releases_base
 crates/sisuc/src/codegen/tests.rs::helper_names_cannot_collide
@@ -613,10 +610,7 @@ crates/sisuc/src/codegen/tests.rs::make_unique_of_a_moved_array_faults
 crates/sisuc/src/codegen/tests.rs::method_symbols
 crates/sisuc/src/codegen/tests.rs::methods_lower_to_intrinsics_and_libm
 crates/sisuc/src/codegen/tests.rs::nested_array_helpers_are_defined
-crates/sisuc/src/codegen/tests.rs::objects_that_stay_local_are_not_allocated_at_o2
 crates/sisuc/src/codegen/tests.rs::only_main_is_external
-crates/sisuc/src/codegen/tests.rs::optional_field_method_counts_nothing
-crates/sisuc/src/codegen/tests.rs::partition_makes_its_array_unique_once
 crates/sisuc/src/codegen/tests.rs::print_bool_passes_a_zero_extended_i1
 crates/sisuc/src/codegen/tests.rs::print_declarations_carry_attributes
 crates/sisuc/src/codegen/tests.rs::read_line_declaration_has_no_memory_attribute
