@@ -129,7 +129,6 @@ impl Checker<'_> {
         } else {
             Position::Path
         };
-        // A local cannot take an enum's name, so the enum wins over one that tried.
         match self.meaning(name, names::Site::new(at, angles.is_some())) {
             Resolved::Item(ItemId::Enum(id)) => {
                 let generic = !self.enums[id.0].type_params.is_empty();
@@ -162,7 +161,7 @@ impl Checker<'_> {
         // Any other base with type arguments is checked as a value, which reports them. An alias
         // of a built-in type took them above, and they fit.
         let applied = self.names.alias(name).is_some() && self.built_in_of(name).is_some();
-        if (angles.is_some() && !applied) || self.lookup(name).is_some() {
+        if angles.is_some() && !applied {
             return None;
         }
         let written = base.span.to(member.span);

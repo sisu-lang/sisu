@@ -366,10 +366,22 @@ impl Checker<'_> {
 
     /// The answer `Local` for `name`, bound as `b`.
     fn local_answer(&self, name: Symbol, b: &Binding) -> Resolved {
+        self.local_of(name, b.local, b.ty, b.hides_name)
+    }
+
+    /// The answer `Local` for `name`, bound as `local` of type `ty`. `hides_name` is whether a
+    /// pattern made it to hide a poisoned item.
+    fn local_of(
+        &self,
+        name: Symbol,
+        local: tir::LocalId,
+        ty: Option<Type>,
+        hides_name: bool,
+    ) -> Resolved {
         Resolved::Local {
-            local: b.local,
-            ty: b.ty,
-            hidden: if b.hides_name {
+            local,
+            ty,
+            hidden: if hides_name {
                 self.poison_kind_use(name)
             } else {
                 None
@@ -401,15 +413,7 @@ impl Checker<'_> {
         {
             b.read |= !site.quiet;
             let (local, ty, hides_name) = (b.local, b.ty, b.hides_name);
-            return Resolved::Local {
-                local,
-                ty,
-                hidden: if hides_name {
-                    self.poison_kind_use(name)
-                } else {
-                    None
-                },
-            };
+            return self.local_of(name, local, ty, hides_name);
         }
         self.meaning(name, site)
     }
@@ -429,7 +433,12 @@ impl Checker<'_> {
         if name == Symbol::SOME || self.result_variant(name).is_some() {
             return Resolved::PreludeVariant;
         }
-        // The wrong-kind answers. An inner scope wins, so a type parameter comes first.
+        self.value_kind(name)
+    }
+
+    /// What `name` stands for in a read, when it is no local, constant or prelude variant: the
+    /// wrong-kind answers. An inner scope wins, so a type parameter comes first.
+    fn value_kind(&self, name: Symbol) -> Resolved {
         if let Some(place) = self.body.type_param(name) {
             return Resolved::TypeParam(place);
         }
@@ -597,18 +606,18 @@ impl Checker<'_> {
     }
 
     fn path_meaning(&self, name: Symbol, angles: bool) -> Resolved {
-        let local = self.binding(name);
         // A local cannot take an enum's name, so the enum wins over one that tried.
-        match self.names.enum_id(name) {
+        let broken_enum = match self.names.enum_id(name) {
             Some(Declared::Known(id)) => return Resolved::Item(ItemId::Enum(id)),
-            // The type arguments make the path a value, which the local answers.
-            Some(Declared::Broken) => {
-                return match local {
-                    Some(b) if angles => self.local_answer(name, b),
-                    _ => Resolved::Poisoned(ItemKind::Enum),
-                };
-            }
-            None => {}
+            found => matches!(found, Some(Declared::Broken)),
+        };
+        let local = self.binding(name);
+        // The type arguments make the path to a broken enum a value, which the local answers.
+        if broken_enum {
+            return match local {
+                Some(b) if angles => self.local_answer(name, b),
+                _ => Resolved::Poisoned(ItemKind::Enum),
+            };
         }
         if local.is_none()
             && let Some(kind) = self.poison_kind(name)
@@ -659,6 +668,11 @@ impl Checker<'_> {
         let text = || name.to_string();
         match site.at {
             Position::Value => Some(match answer {
+                // A read of a prelude variant is no error. An assignment to the name is, when a
+                // program item took it: the item's kind says which.
+                Resolved::PreludeVariant => {
+                    return self.wrong_kind(name, at, site, self.value_kind(name));
+                }
                 Resolved::TypeParam(_) => DiagnosticKind::ParamAsValue {
                     name: text(),
                     what: "a type parameter",
