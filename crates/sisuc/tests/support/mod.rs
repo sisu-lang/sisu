@@ -106,21 +106,38 @@ impl Invocation {
     /// run, so `exe` runs natively and the Linux jobs alone check for leaks. On Linux it refuses
     /// a build that links mimalloc, before Valgrind starts (see `refuse_mimalloc`).
     pub(crate) fn run(&self, exe: &Path, valgrind: bool) -> Output {
-        let mut command = if valgrind && cfg!(target_os = "linux") {
-            refuse_mimalloc(exe);
-            let mut command = Command::new("valgrind");
-            command
-                .args([
-                    "--leak-check=full",
-                    "--errors-for-leak-kinds=definite,indirect,possible",
-                    "--error-exitcode=1",
-                ])
-                .arg(exe);
-            command
-        } else {
-            Command::new(exe)
-        };
+        if valgrind && cfg!(target_os = "linux") {
+            return self.run_under(exe, Path::new("valgrind"));
+        }
+        let mut command = Command::new(exe);
         command.args(&self.args);
+        output_with_stdin(&mut command, &self.stdin)
+    }
+
+    /// Runs `exe` with `ASAN_OPTIONS=fast_unwind_on_malloc=0`, which replaces any value in the
+    /// environment, so that the environment of the developer cannot turn off a report. The option
+    /// gives a report whose stack holds the frames of the program.
+    pub(crate) fn run_asan(&self, exe: &Path) -> Output {
+        let mut command = Command::new(exe);
+        command
+            .env("ASAN_OPTIONS", "fast_unwind_on_malloc=0")
+            .args(&self.args);
+        output_with_stdin(&mut command, &self.stdin)
+    }
+
+    /// Runs `exe` under the Valgrind program `valgrind`, with the three flags of `run`. It refuses
+    /// a build that links mimalloc, before `valgrind` starts (see `refuse_mimalloc`).
+    pub(crate) fn run_under(&self, exe: &Path, valgrind: &Path) -> Output {
+        refuse_mimalloc(exe);
+        let mut command = Command::new(valgrind);
+        command
+            .args([
+                "--leak-check=full",
+                "--errors-for-leak-kinds=definite,indirect,possible",
+                "--error-exitcode=1",
+            ])
+            .arg(exe)
+            .args(&self.args);
         output_with_stdin(&mut command, &self.stdin)
     }
 }
@@ -169,7 +186,7 @@ fn links_mimalloc(names: &[String]) -> bool {
 }
 
 /// Panics when `exe` links mimalloc, whose blocks Valgrind cannot see.
-fn refuse_mimalloc(exe: &Path) {
+pub(crate) fn refuse_mimalloc(exe: &Path) {
     assert!(
         !links_mimalloc(&defined_symbols(exe)),
         "{} links mimalloc, whose blocks Valgrind cannot see: build it with `--allocator system`",
@@ -236,6 +253,11 @@ fn output_with_stdin(command: &mut Command, stdin: &[u8]) -> Output {
 /// With `bless`, rewrites `<name>.out`, and `<name>.err` when it exists, instead, after every
 /// other check passed.
 pub(crate) fn run(path: &Path, bless: bool) {
+    run_with(path, bless, Path::new("valgrind"));
+}
+
+/// `run`, with `valgrind` as the Valgrind program.
+pub(crate) fn run_with(path: &Path, bless: bool, valgrind: &Path) {
     let out_dir = case_dir(path);
     let [o0, o2, rc] = build_into(path, &out_dir, [VALGRIND_O0, VALGRIND_O2, RC_CHECKS]);
     let rc_valgrind = cfg!(target_os = "linux").then(|| {
@@ -284,7 +306,7 @@ pub(crate) fn run(path: &Path, bless: bool) {
     // macOS has no Valgrind, and the native runs above already checked these builds.
     if cfg!(target_os = "linux") {
         for exe in [o0, o2].into_iter().chain(rc_valgrind) {
-            let checked = invocation.run(&exe, true);
+            let checked = invocation.run_under(&exe, valgrind);
             let valgrind_stderr = String::from_utf8_lossy(&checked.stderr);
             assert_eq!(
                 checked.status.code(),
@@ -547,6 +569,9 @@ pub(crate) fn fixture(test: &str, files: &[(&str, &str)]) -> PathBuf {
 
 /// The builds `build` makes: the executable's name in the case directory, and `sisu`'s flags.
 pub(crate) type Build = (&'static str, &'static [&'static str]);
+pub(crate) const ASAN_O0: Build = ("asan-O0", &["--sanitize", "address"]);
+pub(crate) const ASAN_O2: Build = ("asan-O2", &["--sanitize", "address", "-O2"]);
+pub(crate) const ASAN_RC: Build = ("asan-rc", &["--sanitize", "address", "--rc-checks"]);
 const O0: Build = ("O0", &[]);
 const O2: Build = ("O2", &["-O2"]);
 pub(crate) const RC_CHECKS: Build = ("rc", &["--rc-checks"]);

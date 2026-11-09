@@ -12,6 +12,7 @@ use std::process::{Command, Output, Stdio};
 use std::thread;
 
 mod scratch_path;
+#[expect(dead_code, reason = "this binary uses only part of the shared helpers")]
 mod support;
 
 use scratch_path::{empty_dir, failing_cc, only_cc};
