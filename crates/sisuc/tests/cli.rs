@@ -1396,10 +1396,13 @@ fn allocator_should_exit_2_unless_the_command_builds_an_executable() {
     }
 }
 
-/// GIVEN `--sanitize address` with `--emit`, with `--allocator mimalloc`, with both, and
-/// `--sanitize thread`
-/// WHEN `sisu build` or `sisu run` runs
-/// THEN it exits 2 with a usage error that holds the message of the wrong use
+/// GIVEN a program
+/// WHEN `sisu <command> <flags>` runs on it
+/// THEN it exits 2
+/// AND stderr holds the message of the wrong use
+///
+/// The rows are the table of the scenario, and `--allocator system` with `--emit ir`: the
+/// `--sanitize` text, not the `--allocator` text.
 ///
 /// `--sanitize` selects the System allocator, so with `--emit` the `--sanitize` text shows and
 /// not the `--allocator` text; with `--allocator mimalloc` the allocator text shows first.
@@ -1487,9 +1490,12 @@ fn sanitize_should_exit_2_when_the_flags_do_not_allow_it() {
     }
 }
 
-/// GIVEN `--sanitize address`
+/// GIVEN `--sanitize address`, with `--allocator mimalloc` in one row
 /// WHEN `sisu build` or `sisu run` runs on macOS
 /// THEN it exits 2 with a usage error that says the flag works only on Linux
+///
+/// The Linux check comes before the allocator check, so the `--allocator mimalloc` row shows the
+/// Linux text.
 #[test]
 #[cfg_attr(
     not(target_os = "macos"),
@@ -1499,6 +1505,16 @@ fn sanitize_should_exit_2_on_macos() {
     for args in [
         &["build", "--sanitize", "address", "f.sisu", "-o", "out"][..],
         &["run", "--sanitize", "address", "f.sisu"],
+        &[
+            "build",
+            "--sanitize",
+            "address",
+            "--allocator",
+            "mimalloc",
+            "f.sisu",
+            "-o",
+            "out",
+        ],
     ] {
         let stderr = assert_usage_errors(&[args]);
         assert!(
