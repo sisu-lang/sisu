@@ -43,6 +43,11 @@ exclude_re = [
     "replace match guard !matches!\\(b\\.kind.* with true in needed_walk",
     "replace match guard a == c with true in needed_walk",
     "replace && with \\|\\| in needed_all",
+    # `id.0 > order` in `Checker<'_>::gate`: `fold_constants` calls it for the constant at place
+    # `order`, whose name is `user.name`, and `ConstantId` is the place among the constants. The
+    # first branch takes `*name == user.name`. Any other name has another declaration, so
+    # its `id.0` is another place, and `>=` gives the same answer.
+    "replace > with >= in Checker<'_>::gate",
     # `at > settled` in `Checker<'_>::inferred_by_use`: `>=` differs only when one use is checked
     # twice at the same place. The second check must also give a type that the first did not.
     # One use is checked again only after the string-join rollback in `binary_operands`, which
