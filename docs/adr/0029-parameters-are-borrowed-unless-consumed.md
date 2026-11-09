@@ -119,4 +119,4 @@ read in place. The exception is a later part of the same interpolation that ment
 other than as a whole read. The certifier reads the parts as operands. So a parameter that a
 function only interpolates is now borrowed. The consequence "Interpolation still makes a parameter
 owned" no longer holds. The benchmark: one `string` local interpolated 800 times took 2,525M
-instructions to build at `-O2`, and 301M with this change.
+instructions to build at `-O2`, and 345M with this change.
