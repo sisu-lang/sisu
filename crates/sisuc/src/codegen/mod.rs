@@ -1796,6 +1796,16 @@ pub(crate) fn pipeline(level: OptLevel) -> &'static str {
     }
 }
 
+/// The pipeline of a sanitized build: `pipeline`, then `asan`, as `clang` runs it. `asan` is a
+/// module pass, so the `-O0` pipeline wraps its `mem2reg` in `function(...)`.
+fn sanitized_pipeline(level: OptLevel) -> &'static str {
+    match level {
+        OptLevel::O0 => "function(mem2reg),asan",
+        OptLevel::O2 => "default<O2>,asan",
+        OptLevel::O3 => "default<O3>,asan",
+    }
+}
+
 /// Marks each Sisu function in `names`, comma separated, `noinline` so that the optimizer keeps
 /// it. The `o2-calls` check uses this to read a caller's own calls; a name that is not a
 /// function is skipped.
@@ -1942,10 +1952,11 @@ fn text_part(ty: Type) -> bool {
 
 /// Verifies `module` in a debug build, then runs the pipeline. At `-O0`, it first makes each
 /// function that is too large for `mem2reg` `optnone` (see `MEM2REG_LIMIT`). With `sanitize`, it
-/// then marks each function with a body `sanitize_address`. A release build does not verify,
-/// because the verifier takes about 180 ms of a 143k-line build. The tests that run
-/// `sisu` run a debug build, so it verifies each module that they build. No verifier runs after the
-/// pipeline: a pass that broke the IR reaches instruction selection, which would be an LLVM bug.
+/// then marks each function with a body `sanitize_address` and runs `sanitized_pipeline`. A
+/// release build does not verify, because the verifier takes about 180 ms of a 143k-line build.
+/// The tests that run `sisu` run a debug build, so it verifies each module that they build. No
+/// verifier runs after the pipeline: a pass that broke the IR reaches instruction selection, which
+/// would be an LLVM bug.
 pub(crate) fn optimize(
     module: &Module<'_>,
     machine: &TargetMachine,
@@ -1961,8 +1972,13 @@ pub(crate) fn optimize(
     if cfg!(debug_assertions) {
         module.verify().map_err(|e| e.to_string())?;
     }
+    let passes = if sanitize.is_some() {
+        sanitized_pipeline(level)
+    } else {
+        pipeline(level)
+    };
     module
-        .run_passes(pipeline(level), machine, PassBuilderOptions::create())
+        .run_passes(passes, machine, PassBuilderOptions::create())
         .map_err(|e| e.to_string())
 }
 
