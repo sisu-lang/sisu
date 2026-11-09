@@ -2143,12 +2143,12 @@ fn sanitized_exe(name: &str, source: &str, flags: &[&str]) -> PathBuf {
 
 /// A command that runs a sanitized executable. `ASAN_OPTIONS` is set and `LSAN_OPTIONS` is
 /// removed, so that the environment of the developer cannot turn off a report that a test
-/// expects: `fast_unwind_on_malloc=0` is the option that the harness uses. `sisu` itself does not
-/// read or set these variables.
+/// expects: [`support::ASAN_OPTIONS`] are the options that the harness uses. `sisu` itself does
+/// not read or set these variables.
 fn sanitized_command(program: impl AsRef<OsStr>) -> Command {
     let mut command = Command::new(program);
     command
-        .env("ASAN_OPTIONS", "fast_unwind_on_malloc=0")
+        .env("ASAN_OPTIONS", support::ASAN_OPTIONS)
         .env_remove("LSAN_OPTIONS");
     command
 }
