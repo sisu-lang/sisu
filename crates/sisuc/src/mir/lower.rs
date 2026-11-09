@@ -189,6 +189,8 @@ fn constant(e: &Expr, counted: impl Fn(Type) -> bool) -> Option<Const> {
 
 /// The local that `e` reads whole.
 fn local_of(e: &Expr) -> Option<LocalId> {
+    #[cfg(test)]
+    LOCAL_OF_READS.set(LOCAL_OF_READS.get() + 1);
     if let ExprKind::Local(local) = e.kind {
         Some(local)
     } else {
@@ -683,9 +685,9 @@ impl<'a> Lowering<'a> {
             .or_else(|| local_of(e).map(|local| self.read(local)))
     }
 
-    /// `op`, an operand of a statement whose later operands are `later`. A read of a whole
-    /// source local that a later operand mentions is read into a temporary now, so the
-    /// statement sees the value the local had here ("When an operand reads").
+    /// `op`, an operand of a statement whose later operands are `later`. When `op` reads a whole
+    /// source local and a later operand mentions that local, `op` is read into a temporary now.
+    /// Then the statement sees the value the local had here.
     fn pinned(&mut self, op: Operand, later: &[&Expr]) -> Operand {
         let local = match &op {
             Operand::Use(local) | Operand::Guarded(local) => *local,
@@ -738,6 +740,49 @@ impl<'a> Lowering<'a> {
                 temps.push(temp);
                 ops.push(Operand::Read(whole(temp)));
             }
+        }
+        Some((ops, temps))
+    }
+
+    /// The operands of an interpolation, and the temporaries that own its counted parts. The
+    /// caller releases the temporaries after the statement. An interpolation writes its parts
+    /// into a new string and keeps none of them. So a part is read as `print` reads its operand,
+    /// with one more rule: a part that is a whole source local is a borrow site, read in place
+    /// at the statement. A later part could change what the local holds (see `pinned`). So when
+    /// a later part mentions the local other than as a whole read, the part is read into a
+    /// temporary now. An uncounted part is pinned against the later parts, as for any statement.
+    fn interpolation_parts(&mut self, es: &[&Expr]) -> Option<(Vec<Operand>, Vec<LocalId>)> {
+        // For each part, the whole reads of its local among the later parts: one backward pass.
+        let mut later_reads: FxHashMap<LocalId, usize> = FxHashMap::default();
+        let mut reads_after = vec![0; es.len()];
+        for (i, e) in es.iter().enumerate().rev() {
+            if let Some(local) = local_of(e) {
+                let reads = later_reads.entry(local).or_default();
+                reads_after[i] = *reads;
+                *reads += 1;
+            }
+        }
+        let (mut ops, mut temps) = (Vec::with_capacity(es.len()), Vec::new());
+        for (i, e) in es.iter().enumerate() {
+            let later = &es[i + 1..];
+            if !self.counted(e.ty) {
+                let op = self.operand(e)?;
+                ops.push(self.pinned(op, later));
+                continue;
+            }
+            let bare = local_of(e)
+                .filter(|&local| !self.is_guarded(local))
+                .filter(|&local| self.mentions.count_within(local, later) == reads_after[i]);
+            if let Some(local) = bare {
+                ops.push(Operand::Read(MirPlace {
+                    borrow: true,
+                    ..whole(local)
+                }));
+                continue;
+            }
+            let (mut op, mut owned) = self.borrowed(&[e])?;
+            ops.append(&mut op);
+            temps.append(&mut owned);
         }
         Some((ops, temps))
     }
@@ -1005,11 +1050,17 @@ impl<'a> Lowering<'a> {
             },
             ExprKind::Interpolate { parts, formats } => {
                 let calls = parts.iter().any(|part| self.calls_display(part.ty));
-                Rvalue::Interpolate {
-                    parts: self.operands(&parts.iter().collect::<Vec<_>>())?,
+                let (parts, temps) = self.interpolation_parts(&parts.iter().collect::<Vec<_>>())?;
+                let value = Rvalue::Interpolate {
+                    parts,
                     formats: formats.clone(),
                     calls,
+                };
+                let dest = self.assign(e.ty, dest, value);
+                for temp in temps {
+                    self.release(Some(temp));
                 }
+                return Some(dest);
             }
             ExprKind::Concat { lhs, rhs } => {
                 let [lhs, rhs] = self.pair(lhs, rhs)?;
@@ -1642,6 +1693,25 @@ impl Mentions {
             .is_some_and(|&position| position < end)
     }
 
+    /// How many mentions of `local` the adjacent expressions `siblings` hold: two binary
+    /// searches, as `within` does one.
+    fn count_within(&self, local: LocalId, siblings: &[&Expr]) -> usize {
+        let (Some(first), Some(last)) = (siblings.first(), siblings.last()) else {
+            return 0;
+        };
+        let (start, end) = (self.span(first).0, self.span(last).1);
+        // `local` is a `tir` local: an expression reads it whole, so `at` holds it.
+        let at = &self.at[local.0];
+        let before = |bound: usize| {
+            at.partition_point(|&position| {
+                #[cfg(test)]
+                MENTION_PROBES.set(MENTION_PROBES.get() + 1);
+                position < bound
+            })
+        };
+        before(end) - before(start)
+    }
+
     /// Whether `e` holds the last mention of `local` in walk order.
     fn last_in(&self, local: LocalId, e: &Expr) -> bool {
         let end = self.span(e).1;
@@ -1702,6 +1772,13 @@ thread_local! {
     /// How many construction counters (`Lowering::built`) the last function lowered on this
     /// thread held.
     pub(super) static COUNTERS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many times lowering has looked at the local that an expression reads whole
+    /// (`local_of`) on this thread. Every look at the local of an interpolation part goes
+    /// through it, so a scan of the other parts for each part ticks.
+    pub(super) static LOCAL_OF_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many entries of `Mentions::at` the count of the mentions of a local in a run of
+    /// siblings has read on this thread: each probe of its binary search.
+    pub(super) static MENTION_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// `mentions` of `e`'s own node and its children.

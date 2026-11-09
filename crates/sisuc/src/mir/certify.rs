@@ -923,14 +923,16 @@ fn rvalue<'a>(
                 f(*token, Effect::Reuse, None);
             }
         }
-        Rvalue::New { args, .. }
-        | Rvalue::ArrayLit(args)
-        | Rvalue::Interpolate { parts: args, .. } => {
+        Rvalue::New { args, .. } | Rvalue::ArrayLit(args) => {
             for op in args {
                 consumed(op, lowered, f);
             }
         }
-        Rvalue::Math { operands, .. } => {
+        // An interpolation writes its parts into a new string and keeps none of them.
+        Rvalue::Math { operands, .. }
+        | Rvalue::Interpolate {
+            parts: operands, ..
+        } => {
             for op in operands {
                 operand(op, lowered, f);
             }

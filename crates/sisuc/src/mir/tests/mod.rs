@@ -321,13 +321,18 @@ pub(crate) fn assert_near_linear(one: usize, two: usize, three: usize) {
 /// below 3 when `c + k` is above 2, so `n` must be above 4 when `k` is 0. A count of 0 fails, so
 /// a walk that ticks no counter cannot pass.
 pub(crate) fn assert_subquadratic(one: usize, two: usize) {
+    assert_subquadratic_for("", one, two);
+}
+
+/// `assert_subquadratic` for a table row: a failure message starts with `row`.
+pub(crate) fn assert_subquadratic_for(row: &str, one: usize, two: usize) {
     assert!(
         one > 0 && two > 0,
-        "a count is 0: {one} reads for n, {two} for 2n"
+        "{row}a count is 0: {one} reads for n, {two} for 2n"
     );
     assert!(
         two <= 3 * one,
-        "{one} reads for n, {two} for 2n: more than three times"
+        "{row}{one} reads for n, {two} for 2n: more than three times"
     );
 }
 

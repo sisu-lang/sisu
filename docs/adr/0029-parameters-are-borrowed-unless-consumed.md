@@ -109,3 +109,14 @@ and its bindings stay borrowed.
   owns `self`, passes on each argument that the method owns, and releases each argument that the
   method only borrows, after the call, because the caller of a borrowing method holds its
   arguments for the whole call.
+
+## Amendment, 2026-11-09: interpolation reads its parts
+
+An interpolation no longer consumes its parts (#625). It writes each part into a new string and
+keeps none of them, so lowering reads the parts as `print` reads its operand. A counted part is a
+borrow site, or a temporary that is released after the statement. A part that is a whole local is
+read in place. The exception is a later part of the same interpolation that mentions that local
+other than as a whole read. The certifier reads the parts as operands. So a parameter that a
+function only interpolates is now borrowed. The consequence "Interpolation still makes a parameter
+owned" no longer holds. The benchmark: one `string` local interpolated 800 times took 2,525M
+instructions to build at `-O2`, and 345M with this change.

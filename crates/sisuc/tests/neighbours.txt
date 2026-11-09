@@ -168,8 +168,10 @@ Rock()
 nothing
 nothing[0]
 # A literal with a part that never finishes, and a block that a `break` outside a loop ends: the
-# report goes to the part or the jump, whatever call or context holds the value.
+# report goes to the part or the jump, whatever call or context holds the value. The `loop` part
+# has a value type, but it returns before its `break`.
 "a{return}b"
+"a{loop { return; break "z" }}b"
 { break; 1 }
 { if c { break }; return }
 # A field whose chain ends in a name that holds no value: an unbound name, a type, or an enum
