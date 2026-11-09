@@ -2141,12 +2141,15 @@ fn sanitized_exe(name: &str, source: &str, flags: &[&str]) -> PathBuf {
     exe
 }
 
-/// A command that runs a sanitized executable. The option is set so that the environment of the
-/// developer cannot turn off a report that a test expects: `fast_unwind_on_malloc=0` is the option
-/// that the harness uses. `sisu` itself does not read or set this variable.
+/// A command that runs a sanitized executable. `ASAN_OPTIONS` is set and `LSAN_OPTIONS` is
+/// removed, so that the environment of the developer cannot turn off a report that a test
+/// expects: `fast_unwind_on_malloc=0` is the option that the harness uses. `sisu` itself does not
+/// read or set these variables.
 fn sanitized_command(program: impl AsRef<OsStr>) -> Command {
     let mut command = Command::new(program);
-    command.env("ASAN_OPTIONS", "fast_unwind_on_malloc=0");
+    command
+        .env("ASAN_OPTIONS", "fast_unwind_on_malloc=0")
+        .env_remove("LSAN_OPTIONS");
     command
 }
 
@@ -3692,16 +3695,20 @@ fn leak_case_should_fail_when_started_by_the_environment_test() {
     assert!(message.contains("LeakSanitizer"), "{message}");
 }
 
-/// GIVEN the environment has `ASAN_OPTIONS=detect_leaks=0`
+/// GIVEN the environment has `ASAN_OPTIONS=detect_leaks=0` and `LSAN_OPTIONS=suppressions=<file>`,
+/// where the file holds `leak:*`
 /// WHEN a test binary runs a `run` case that leaks a cycle
 /// THEN the harness still fails the case with a `LeakSanitizer` report
 ///
-/// The test starts its own binary with the variable, so that no test changes its own
-/// environment. If the harness kept the variable, the leak would pass, and the test that it
-/// starts would fail.
+/// The test starts its own binary with the variables, so that no test changes its own
+/// environment. If the harness kept `ASAN_OPTIONS`, or kept `LSAN_OPTIONS`, the leak would pass,
+/// and the test that it starts would fail.
 #[test]
 #[cfg_attr(not(target_os = "linux"), ignore = "ASan works only on Linux")]
 fn asan_runs_should_replace_the_asan_options_of_the_environment() {
+    let dir = empty_dir("asan_runs_replace_the_asan_options");
+    let suppressions = dir.join("suppressions");
+    fs::write(&suppressions, "leak:*\n").expect("writes the suppressions");
     let out = Command::new(std::env::current_exe().expect("finds the test binary"))
         .args([
             "--exact",
@@ -3709,6 +3716,10 @@ fn asan_runs_should_replace_the_asan_options_of_the_environment() {
             "--ignored",
         ])
         .env("ASAN_OPTIONS", "detect_leaks=0")
+        .env(
+            "LSAN_OPTIONS",
+            format!("suppressions={}", suppressions.display()),
+        )
         .output()
         .expect("starts the test binary");
     let stdout = String::from_utf8_lossy(&out.stdout);
