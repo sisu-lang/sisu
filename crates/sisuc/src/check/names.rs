@@ -361,6 +361,8 @@ impl Checker<'_> {
 
     /// The binding of `name` in the innermost open scope that has one.
     fn binding(&self, name: Symbol) -> Option<&Binding> {
+        #[cfg(test)]
+        super::BINDING_STEPS.set(super::BINDING_STEPS.get() + 1);
         (self.body.scopes.iter().rev()).find_map(|scope| scope.get(&name))
     }
 
