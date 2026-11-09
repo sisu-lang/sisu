@@ -5,13 +5,18 @@
 # context, and probe each pair. When a review finds a neighbour that this file does not name, add
 # it here, so that the next list has it.
 #
-# `tests/neighbours.rs` puts each value of `[values]` into the `$` of each line of `[contexts]`,
-# writes the statement into the two `{stmt}` places of `[template]` (`main` and a generic
-# function), and runs `sisu check` on each program. It also writes it into the one `{stmt}` of
-# `[failed]`, a function whose bound failed, in a second program: the template with no statement,
-# then that function. That program always fails, so `check` stops before the later passes. The
-# first program can reach them. Most programs are wrong. The test fails when `sisu check` crashes
-# on one, as a reached `panic!` or `assert!` in the checker does.
+# `tests/neighbours.rs` puts each value of `[values]` into the `$` of each line of `[contexts]`.
+# It writes the statement into the two `{stmt}` places of `[template]` (`main` and a generic
+# function), and runs `sisu check` on each program.
+#
+# It also puts each value of `[failed values]` into each context. It writes that statement into
+# the one `{stmt}` of `[failed]`, a function whose bound failed. That function goes in a second
+# program, after the template with no statement. The program always fails, so `check` stops before
+# the later passes. Only a value that reads the parameter `u` reaches its unknown state, so each
+# value of `[failed values]` holds `u`.
+#
+# Most programs are wrong. The test fails when `sisu check` crashes on one, as a reached `panic!`
+# or `assert!` in the checker does.
 #
 # A line that starts with `#` is a comment. Each value and each context is one line.
 
@@ -84,14 +89,6 @@ fn failed<U: Missing, V>(u: U, v: V, c: bool, d: bool, k: i64, n: any Named, p: 
 }
 
 [values]
-# A type parameter read: in `generic` it conforms to `Named`; in the function whose bound failed
-# it is unknown; in `main` there is none, which is an error.
-u
-u.name()
-u.nope()
-u == u
-id(u)
-Some(u)
 # Each spelling of an empty optional. A `None` that writes no type takes its type from its
 # context; the others write some or all of it.
 None
@@ -180,6 +177,15 @@ nothing[0]
 zz.x
 i64.x
 E.A
+
+[failed values]
+# A type parameter read: in the function whose bound failed, `u` is unknown.
+u
+u.name()
+u.nope()
+u == u
+id(u)
+Some(u)
 
 [contexts]
 # Array literals beside a hint from another branch, with the value alone, first and last.

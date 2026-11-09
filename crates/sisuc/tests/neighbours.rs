@@ -14,6 +14,7 @@ struct Forms {
     template: String,
     failed: String,
     values: Vec<String>,
+    failed_values: Vec<String>,
     contexts: Vec<String>,
 }
 
@@ -25,12 +26,13 @@ fn forms() -> Forms {
         template: String::new(),
         failed: String::new(),
         values: Vec::new(),
+        failed_values: Vec::new(),
         contexts: Vec::new(),
     };
     let mut section = "";
     for line in text.lines() {
         if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']'))
-            && ["template", "failed", "values", "contexts"].contains(&name)
+            && ["template", "failed", "values", "failed values", "contexts"].contains(&name)
         {
             section = name;
             continue;
@@ -46,6 +48,7 @@ fn forms() -> Forms {
             }
             _ if line.trim().is_empty() || line.starts_with('#') => {}
             "values" => forms.values.push(line.to_string()),
+            "failed values" => forms.failed_values.push(line.to_string()),
             "contexts" => forms.contexts.push(line.to_string()),
             _ => {}
         }
@@ -61,14 +64,19 @@ fn forms() -> Forms {
         "the function whose bound failed should have one `{{stmt}}`"
     );
     assert!(
+        !forms.failed_values.is_empty() && forms.failed_values.iter().all(|v| v.contains('u')),
+        "each value of `[failed values]` should read `u`, and there should be one"
+    );
+    assert!(
         forms.contexts.iter().all(|c| c.contains('$')),
         "each context should have a `$` for the value"
     );
     forms
 }
 
-/// The statement and the output of `sisu check` when it crashed on that statement.
-fn crash(program: &str, stmt: &str) -> Option<String> {
+/// The program (`which`), the statement and the output of `sisu check` when it crashed on that
+/// statement.
+fn crash(which: &str, program: &str, stmt: &str) -> Option<String> {
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
         .args(["check", "-e", program])
         .output()
@@ -76,42 +84,44 @@ fn crash(program: &str, stmt: &str) -> Option<String> {
     // 0: no error; 1: an error. A panic aborts, and a signal has no exit code.
     (!matches!(out.status.code(), Some(0 | 1))).then(|| {
         format!(
-            "{stmt}\n  {}: {}",
+            "{which}: {stmt}\n  {}: {}",
             out.status,
             String::from_utf8_lossy(&out.stderr).trim()
         )
     })
 }
 
-/// GIVEN each value of `neighbours.txt` in each of its contexts, in `main` and in a generic
-/// function
-/// GIVEN the same, in a function whose bound failed, in a program of its own
+/// GIVEN each value of `[values]` in each of its contexts, in `main` and in a generic function
+/// AND each value of `[failed values]` in each context, in a function whose bound failed, in a
+/// program of its own
 /// WHEN `sisu check` runs on each program
 /// THEN no run crashes: each one ends with no error or with an error.
 #[test]
 fn check_should_end_with_its_own_status_on_each_neighbouring_form() {
     let forms = forms();
-    let stmts: Vec<String> = forms
-        .contexts
-        .iter()
-        .flat_map(|c| forms.values.iter().map(move |v| c.replace('$', v)))
-        .collect();
+    let statements = |values: &[String]| -> Vec<String> {
+        (forms.contexts.iter())
+            .flat_map(|c| values.iter().map(move |v| c.replace('$', v)))
+            .collect()
+    };
+    let bare = forms.template.replace("{stmt}", "");
+    let mut programs: Vec<(&str, String, String)> = Vec::new();
+    for stmt in statements(&forms.values) {
+        programs.push(("template", forms.template.replace("{stmt}", &stmt), stmt));
+    }
+    for stmt in statements(&forms.failed_values) {
+        let program = bare.clone() + &forms.failed.replace("{stmt}", &stmt);
+        programs.push(("failed", program, stmt));
+    }
     let workers = thread::available_parallelism().map_or(4, usize::from);
     let crashes: Vec<String> = thread::scope(|s| {
-        let handles: Vec<_> = stmts
-            .chunks(stmts.len().div_ceil(workers))
+        let handles: Vec<_> = programs
+            .chunks(programs.len().div_ceil(workers))
             .map(|chunk| {
-                let (template, failed) = (&forms.template, &forms.failed);
                 s.spawn(move || {
                     chunk
                         .iter()
-                        .flat_map(|stmt| {
-                            let whole = template.replace("{stmt}", stmt);
-                            let after =
-                                template.replace("{stmt}", "") + &failed.replace("{stmt}", stmt);
-                            [crash(&whole, stmt), crash(&after, stmt)]
-                        })
-                        .flatten()
+                        .filter_map(|(which, program, stmt)| crash(which, program, stmt))
                         .collect::<Vec<_>>()
                 })
             })
@@ -125,7 +135,7 @@ fn check_should_end_with_its_own_status_on_each_neighbouring_form() {
         crashes.is_empty(),
         "`sisu check` crashed on {} of {} programs:\n{}",
         crashes.len(),
-        2 * stmts.len(),
+        programs.len(),
         crashes.join("\n")
     );
 }
