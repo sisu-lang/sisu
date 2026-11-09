@@ -352,9 +352,20 @@ impl Checker<'_> {
             .map(|name| (name.as_str(), Definition::Alias))
     }
 
-    /// Makes the alias `id` `Error`, as an alias is whose bounds fail where it is declared.
+    /// Makes the alias `id` `Error`, as an alias is whose bounds fail where it is declared. So is
+    /// every alias that names it, also through other aliases. Each is made once.
     pub(super) fn unknown_alias(&mut self, id: usize) {
-        self.aliases.infos[id].state = State::Done(None);
+        let Aliases { infos, users, .. } = &mut self.aliases;
+        infos[id].state = State::Done(None);
+        let mut stack = vec![id];
+        while let Some(alias) = stack.pop() {
+            for &user in &users[alias] {
+                if matches!(infos[user].state, State::Done(Some(_))) {
+                    infos[user].state = State::Done(None);
+                    stack.push(user);
+                }
+            }
+        }
     }
 
     /// Reports the cycle of the component of the alias `first`, the first of the component in

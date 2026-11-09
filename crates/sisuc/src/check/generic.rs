@@ -4344,6 +4344,14 @@ impl Checker<'_> {
         self.type_args_of(name, declared, written, angles, true)
     }
 
+    /// Resolves the type arguments `written` after a poisoned name, so that their own errors stay.
+    /// The name gives no count and no bound to check them against: a repair may change both.
+    pub(super) fn resolve_args(&mut self, written: &[ast::TypeExpr]) {
+        for arg in written {
+            self.resolve(arg);
+        }
+    }
+
     /// `type_args`, where `instantiates` says whether a list that fits records a type argument
     /// (see `tir::Program::instantiates`). An interface's list records none: `mono` copies no
     /// interface, so a program with generic interfaces and no generic item takes its fast path.

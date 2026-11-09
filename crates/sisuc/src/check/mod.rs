@@ -1631,7 +1631,8 @@ impl Checker<'_> {
     fn collect_names(&mut self, items: &[&ast::Item], user_items: usize, broken: &[ast::Broken]) {
         self.prelude_functions = prelude_function_names(items[user_items..].iter().copied());
         let mut first = FxHashMap::default();
-        // The top-level items that a prelude function's name rejected.
+        // The top-level items that a prelude function's name rejected, and the items that
+        // redeclare a name of the program.
         let mut rejected = Vec::new();
         let mut next_function = 0;
         let mut waiting = broken.iter().peekable();
@@ -1754,7 +1755,7 @@ impl Checker<'_> {
 
     /// Records the alias `alias`, and its name as the first function, class, enum, constant or
     /// alias of that name, which `first` holds. `rejected` holds the names that a prelude function
-    /// takes.
+    /// takes and the names that the program declares twice.
     fn declare_alias(
         &mut self,
         alias: &ast::AliasDecl,
@@ -2277,8 +2278,12 @@ impl Checker<'_> {
                 Named::Type(ty) => plain(self, ty),
                 Named::Failed | Named::Unknown => None,
             },
-            // A broken name poisons every use, a built-in type's too. Its own error is reported.
-            Resolved::Poisoned(_) => None,
+            // A broken name poisons every use, a built-in type's too. Its own error is reported,
+            // and so are the errors of the arguments that the use writes.
+            Resolved::Poisoned(_) => {
+                self.resolve_args(args);
+                None
+            }
             Resolved::Item(ItemId::Alias(id)) => self.alias(id, ty, name, args, angles),
             Resolved::Item(ItemId::Interface(id)) => {
                 self.interface_as_type(id, name.to_string(), ty, ident().span);

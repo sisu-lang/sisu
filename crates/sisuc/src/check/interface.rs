@@ -902,7 +902,10 @@ impl Checker<'_> {
                     }
                     return Some(bound);
                 }
-                Resolved::Poisoned(_) => return None,
+                Resolved::Poisoned(_) => {
+                    self.resolve_args(args);
+                    return None;
+                }
                 _ => {}
             }
         }
