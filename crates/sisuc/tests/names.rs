@@ -795,6 +795,11 @@ fn an_alias_of_an_alias_with_a_failed_bound_should_give_only_that_error() {
             &format!("{items}type N = [M]\nfn main() {{ let x = N }}"),
             &["E0154 3:12"],
         ),
+        row(
+            "chain of two aliases",
+            &format!("{items}type N = M\ntype O = N\nfn main() {{ let x = O }}"),
+            &["E0154 3:12"],
+        ),
     ];
     assert_rows(&rows);
 }
