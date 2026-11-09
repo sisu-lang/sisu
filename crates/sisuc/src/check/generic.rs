@@ -13,6 +13,7 @@ use super::array::innermost;
 use super::expr::{bare_hole, dbg_argument, option_written, read_jump};
 use super::interface::{Bounds, Required};
 use super::mut_args::{MutParts, MutSite, PlaceShape, marked};
+use super::names::{self, ItemId, Resolved};
 use super::pattern::{LetPattern, LetValue, arm_key, matchable};
 use super::prelude::PRELUDE;
 use super::stmt::BlockSoFar;
@@ -3908,7 +3909,7 @@ impl Checker<'_> {
         let ast::ExprKind::Name(name) = base.kind else {
             return None;
         };
-        let Some(&Declared::Known(id)) = self.enum_ids.get(&name) else {
+        let Some(Declared::Known(id)) = self.names.enum_id(name) else {
             let Via::To(through) = self.through(name) else {
                 return None;
             };
@@ -4180,10 +4181,7 @@ impl Checker<'_> {
                 ..CallShape::default()
             };
         }
-        match (
-            self.class_ids.get(&name).copied(),
-            self.function_ids.get(&name).copied(),
-        ) {
+        match (self.names.class(name), self.names.function(name)) {
             (Some(Declared::Known(class)), _) => {
                 let info = &self.classes[class.0];
                 let shaped = fits(info.fields.iter().map(|f| (f.ty, Some(f.name.name))), args);
@@ -4346,6 +4344,14 @@ impl Checker<'_> {
         self.type_args_of(name, declared, written, angles, true)
     }
 
+    /// Resolves the type arguments `written` after a poisoned name, so that their own errors stay.
+    /// The name gives no count and no bound to check them against: a repair may change both.
+    pub(super) fn resolve_args(&mut self, written: &[ast::TypeExpr]) {
+        for arg in written {
+            self.type_argument(arg);
+        }
+    }
+
     /// `type_args`, where `instantiates` says whether a list that fits records a type argument
     /// (see `tir::Program::instantiates`). An interface's list records none: `mono` copies no
     /// interface, so a program with generic interfaces and no generic item takes its fast path.
@@ -4407,9 +4413,9 @@ impl Checker<'_> {
         if let ast::TypeKind::Name(name) = arg.kind
             && matches!(name.as_str(), "unit" | "never")
             && self.body.type_param(name).is_none()
-            && !self.class_ids.contains_key(&name)
-            && !self.enum_ids.contains_key(&name)
-            && !self.aliases.names.contains_key(&name)
+            && self.names.class(name).is_none()
+            && self.names.enum_id(name).is_none()
+            && self.names.alias(name).is_none()
         {
             self.report(DiagnosticKind::TypeArgument {
                 ty: arg.to_string(),
@@ -4484,9 +4490,9 @@ impl Checker<'_> {
         };
         arg.optional == 0
             && built_in_type(n.as_str()).is_none()
-            && !self.class_ids.contains_key(&n)
-            && !self.enum_ids.contains_key(&n)
-            && !self.aliases.names.contains_key(&n)
+            && self.names.class(n).is_none()
+            && self.names.enum_id(n).is_none()
+            && self.names.alias(n).is_none()
             && self.body.type_param(n).is_none()
     }
 
@@ -4534,9 +4540,9 @@ impl Checker<'_> {
         let first = types.first()?;
         let n = name.name;
         let params = match (
-            self.class_ids.get(&n).copied(),
-            self.function_ids.get(&n).copied(),
-            self.enum_ids.get(&n).copied(),
+            self.names.class(n),
+            self.names.function(n),
+            self.names.enum_id(n),
         ) {
             (Some(Declared::Known(id)), ..) => Some(self.classes[id.0].type_params.len()),
             (_, Some(Declared::Known(id)), _) => Some(self.signatures[id.0].type_params.len()),
@@ -4553,7 +4559,7 @@ impl Checker<'_> {
             // A local that hides a poisoned name is no value.
             None if self.lookup(n).is_some_and(|b| b.hides_name) => {}
             None if self.lookup(n).is_some()
-                || matches!(self.constants.get(&n), Some(Declared::Known(_))) =>
+                || matches!(self.names.constant(n), Some(Declared::Known(_))) =>
             {
                 return Some(self.misread(name.span, call.then_some(first)));
             }
@@ -4573,22 +4579,24 @@ impl Checker<'_> {
             ast::ExprKind::Applied { name, .. } => name.name,
             _ => return false,
         };
-        // No item can take the name of the optional type, whose members are its variants.
-        if name == Symbol::OPTION {
-            return true;
-        }
-        if let Some(&Declared::Known(id)) = self.enum_ids.get(&name) {
-            return self.enum_path_method(id, method);
-        }
-        // An alias is the type that it names, unless a local takes the name.
-        if let Via::To(through) = self.through(name)
-            && self.alias_visible(name)
-        {
-            match through.ty.kind() {
-                TypeKind::Enum(id, _) => return self.enum_path_method(id, method),
-                TypeKind::Optional(_) => return true,
-                _ => {}
+        let angles = matches!(receiver.kind, ast::ExprKind::Applied { .. });
+        match self.meaning(name, names::Site::new(names::Position::PathCall, angles)) {
+            // A poisoned name that no local hides is no path: its own error is reported.
+            Resolved::Poisoned(_) => return false,
+            // No item can take the name of the optional type, whose members are its variants.
+            Resolved::OptionType => return true,
+            Resolved::Item(ItemId::Enum(id)) => return self.enum_path_method(id, method),
+            // An alias is the type that it names, unless a local takes the name.
+            Resolved::Item(ItemId::Alias(_)) => {
+                if let Via::To(through) = self.through(name) {
+                    match through.ty.kind() {
+                        TypeKind::Enum(id, _) => return self.enum_path_method(id, method),
+                        TypeKind::Optional(_) => return true,
+                        _ => {}
+                    }
+                }
             }
+            _ => {}
         }
         (self.built_in_of(name).is_some() || matches!(name.as_str(), "math" | "Math"))
             && self.lookup(name).is_none()

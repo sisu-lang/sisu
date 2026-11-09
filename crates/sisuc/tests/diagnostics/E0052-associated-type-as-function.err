@@ -1,0 +1,8 @@
+error[E0052]: `Item` is an associated type, not a function
+ --> E0052-associated-type-as-function.sisu:5:27
+  |
+5 |     fn m(self) { let _c = Item(1) }
+  |                           ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0052

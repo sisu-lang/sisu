@@ -514,7 +514,7 @@ fn a_local_with_a_poisoned_enum_name_should_give_no_second_error() {
     front_end_row(
         "duplicate enum, let",
         "enum Foo { A }\nconst Foo = 1\n\nfn main() {\n    let Foo = 1\n}",
-        &[(Code::DefinedTwice, (2, 7)), (Code::EnumNamedLocal, (5, 9))],
+        &[(Code::DefinedTwice, (2, 7))],
     );
     front_end_row(
         "broken enum, if let",
@@ -899,15 +899,12 @@ fn a_poisoned_name_in_a_pattern_should_give_no_second_error() {
     front_end_row(
         "duplicate enum, bare",
         &["enum Foo { A }\nconst Foo = 1\n\n", &match_one("Foo")].concat(),
-        &[(Code::DefinedTwice, (2, 7)), (Code::NotVariantHere, (6, 9))],
+        &[(Code::DefinedTwice, (2, 7))],
     );
     front_end_row(
         "duplicate constant, bare",
         &["const foo = 1\nconst foo = 2\n\n", &match_one("foo")].concat(),
-        &[
-            (Code::DefinedTwice, (2, 7)),
-            (Code::ConstantInPattern, (6, 9)),
-        ],
+        &[(Code::DefinedTwice, (2, 7))],
     );
     front_end_row(
         "intact enum named Result, call form",

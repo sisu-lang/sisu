@@ -1,0 +1,7 @@
+interface I { type Item
+ fn m(self) }
+class C: I {
+    type Item = i64
+    fn m(self) { let _c = Item(1) }
+}
+fn main() {}

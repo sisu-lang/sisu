@@ -6,8 +6,9 @@ use std::rc::Rc;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::extend::holder_of;
+use super::names::{self, ItemId, Position, Resolved};
 use super::{
-    BindingKind, Body, Checker, Choice, Choices, Declared, Definition, Holder, LeafAnswers, LeafKey,
+    BindingKind, Body, Checker, Choice, Choices, Definition, Holder, LeafAnswers, LeafKey,
 };
 use crate::ast;
 use crate::conformance::{CHOICE_DEPTH_LIMIT, Entered, Generated, ensure_stack, find, generated};
@@ -769,12 +770,8 @@ impl Checker<'_> {
         let ast::TypeKind::Applied(applied) = &ty.kind else {
             return None;
         };
-        let name = applied.name;
-        if self.body.type_param(name).is_some() {
-            return None;
-        }
-        match self.interface_ids.get(&name) {
-            Some(&Declared::Known(id)) => Some(id),
+        match self.meaning(applied.name, names::Site::new(Position::Bound, false)) {
+            Resolved::Item(ItemId::Interface(id)) => Some(id),
             _ => None,
         }
     }
@@ -883,31 +880,34 @@ impl Checker<'_> {
             }
             _ => None,
         };
-        if let Some((name, args, angles)) = named
-            && self.body.type_param(name).is_none()
-            && let Some(&found) = self.interface_ids.get(&name)
-        {
-            let Declared::Known(id) = found else {
-                return None;
-            };
-            let ident = ast::Ident {
-                name,
-                span: Span::new(ty.span.start(), ty.span.start() + name.as_str().len()),
-            };
-            let declared = self.interfaces[id.0].type_params[1..].to_vec();
-            // An interface is copied by no one, so its arguments record no instantiation.
-            let written = args;
-            let args = self.type_args_of(&ident, &declared, written, angles, false)?;
-            let bound = Bound {
-                interface: id,
-                args,
-                at: ty.bare,
-            };
-            if let (Some(this), false) = (this, written.is_empty()) {
-                let ats = written.iter().map(|arg| arg.span).collect();
-                self.check_arguments(bound, this, ats);
+        if let Some((name, args, angles)) = named {
+            match self.meaning(name, names::Site::new(Position::Bound, false)) {
+                Resolved::Item(ItemId::Interface(id)) => {
+                    let ident = ast::Ident {
+                        name,
+                        span: Span::new(ty.span.start(), ty.span.start() + name.as_str().len()),
+                    };
+                    let declared = self.interfaces[id.0].type_params[1..].to_vec();
+                    // An interface is copied by no one, so its arguments record no instantiation.
+                    let written = args;
+                    let args = self.type_args_of(&ident, &declared, written, angles, false)?;
+                    let bound = Bound {
+                        interface: id,
+                        args,
+                        at: ty.bare,
+                    };
+                    if let (Some(this), false) = (this, written.is_empty()) {
+                        let ats = written.iter().map(|arg| arg.span).collect();
+                        self.check_arguments(bound, this, ats);
+                    }
+                    return Some(bound);
+                }
+                Resolved::Poisoned(_) => {
+                    self.resolve_args(args);
+                    return None;
+                }
+                _ => {}
             }
-            return Some(bound);
         }
         // An optional or an array of an interface is a type that is no interface. `resolve` would
         // say that the interface is no type, and advise a bound, which this already is.
@@ -964,13 +964,10 @@ impl Checker<'_> {
             ast::TypeKind::Applied(applied) => applied.name,
             _ => return false,
         };
-        // A class or an enum that took a language interface's name is the type.
-        self.body.type_param(name).is_none()
-            && !self.class_ids.contains_key(&name)
-            && !self.enum_ids.contains_key(&name)
-            && !self.aliases.names.contains_key(&name)
-            && matches!(self.interface_ids.get(&name), Some(Declared::Known(_)))
-            && !self.poisoned(name)
+        matches!(
+            self.meaning(name, names::Site::new(Position::Type, false)),
+            Resolved::Item(ItemId::Interface(_))
+        )
     }
 
     /// The interface that `ty`, in the inheritance list of `interface`, names. An argument that is

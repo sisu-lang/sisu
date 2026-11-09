@@ -2111,7 +2111,7 @@ fn main() {
     }
 
     /// A rejected item (a name that a prelude function takes, or a duplicate) poisons its name:
-    /// the item's own error is reported, and a use of the name gives no more errors.
+    /// the item's own error is reported, and a use of the name gives no error of its own.
     #[test]
     #[expect(clippy::too_many_lines, reason = "one table of rows")]
     fn a_use_of_a_rejected_name_should_give_no_second_error() {
@@ -2574,10 +2574,9 @@ fn main() {
     fn a_use_that_nothing_poisons_should_keep_its_error() {
         use Code::{
             AssignToFunction as Assign, BindingNotFound as NoBind, BraceOnNewLine as Brace,
-            BuiltInName as Built, CannotInfer as Infer, DefinedTwice as Twice,
-            InterfaceAsType as IfaceType, Mismatch, NotAnInterface as NotIface,
-            PrintArgument as Print, TypeAsValue as AsValue, UnknownType as NoType,
-            VariantForm as Variant,
+            BuiltInName as Built, CannotInfer as Infer, InterfaceAsType as IfaceType, Mismatch,
+            NotAnInterface as NotIface, PrintArgument as Print, TypeAsValue as AsValue,
+            UnknownType as NoType, VariantForm as Variant,
         };
         let rows: &[(&str, &str, &[Found])] = &[
             (
@@ -2614,21 +2613,6 @@ fn main() {
                 "intact enum called",
                 "enum E { A }\nfn main() { E(1) }\n",
                 &[(AsValue, (2, 13))],
-            ),
-            (
-                "duplicate class read: the first stays",
-                "class C {}\nclass C {}\nfn main() { let p = C }\n",
-                &[(Twice, (2, 7)), (AsValue, (3, 21))],
-            ),
-            (
-                "duplicate fn read",
-                "fn f() {}\nfn f() {}\nfn main() { let p = f }\n",
-                &[(Twice, (2, 4)), (AsValue, (3, 21))],
-            ),
-            (
-                "duplicate enum called",
-                "enum E { A }\nenum E { B }\nfn main() { E(1) }\n",
-                &[(Twice, (2, 6)), (AsValue, (3, 13))],
             ),
             (
                 "intact class Result, read of Ok",

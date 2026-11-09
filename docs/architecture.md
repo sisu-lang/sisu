@@ -154,6 +154,12 @@ fields that close a cycle of enums, the ones that go behind a box, and the
 enums that hold a counted part. In a generic enum the box goes on the declaring
 enum's own field, not on one inside a generic type it names. Building a variant, `Expr.Num(2)`, becomes a `Variant` node
 ([ADR 0019](adr/0019-enums-are-values-named-through-their-enum.md)).
+`check/names.rs` owns the maps from a top-level name to its item. Each position asks it one
+question: what the name means here. The positions are a value, a callee, a type, a bound, a
+pattern, a path and a path call. Each has an order of its own for the meanings, and a path and
+a path call share one. The module also poisons a rejected or broken item, so a use of it gives
+no error of its own
+([ADR 0049](adr/0049-one-name-resolver-and-one-poison-rule.md)).
 `check/pattern.rs` checks each pattern against the type at its position and
 declares the names it binds. `if let` on an enum becomes a `match` whose `_`
 arm is the `else`, and `while let` on one a loop around a `match` whose `_` arm

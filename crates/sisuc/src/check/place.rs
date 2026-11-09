@@ -655,9 +655,10 @@ impl Checker<'_> {
     /// one. The value is still checked against the constant's type. A broken constant poisons
     /// the assignment without a diagnostic.
     fn constant_place(&mut self, span: Span, name: Symbol, change: Change) -> Option<CheckedPlace> {
-        let Declared::Known(constant) = self.constants.get(&name)? else {
+        let Declared::Known(id) = self.names.constant(name)? else {
             return Some(CheckedPlace::failed());
         };
+        let constant = &self.const_infos[id.0];
         let (declared, ty) = (constant.span, constant.ty);
         let cause = Immutable::Constant { declared };
         let refused = if change == Change::MutArg {

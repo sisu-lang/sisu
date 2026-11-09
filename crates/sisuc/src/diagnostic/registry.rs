@@ -157,7 +157,7 @@ codes! {
     ExponentNeedsDigits = "E0102",
     FloatOutOfRange = "E0103",
     NotExactlyF64 = "E0104",
-    TypeAsValue | FunctionAsValue | InterfaceAsValue | EnumAsValue = "E0105",
+    TypeAsValue | FunctionAsValue | InterfaceAsValue | EnumAsValue | ParamAsValue = "E0105",
     MathIdiom = "E0106",
     PowerOperator = "E0107",
     MalformedFormatSpec = "E0108",
@@ -836,8 +836,8 @@ pub(crate) enum DiagnosticKind {
         at: Span,
         suggestion: Option<Suggestion>,
     },
-    /// A call at `at` of `name`, which is `what` and no function: a binding, a constant or a type
-    /// parameter.
+    /// A call at `at` of `name`, which is `what` and no function: a binding, a constant, a type
+    /// parameter or an associated type.
     NotAFunction {
         name: String,
         what: &'static str,
@@ -1111,6 +1111,12 @@ pub(crate) enum DiagnosticKind {
     },
     /// The interface `name`, at `at`, read as a value.
     InterfaceAsValue { name: String, at: Span },
+    /// The type parameter or associated type `name`, at `at`, read as a value. `what` says which.
+    ParamAsValue {
+        name: String,
+        what: &'static str,
+        at: Span,
+    },
     /// The enum `name`, at `at`, called as a function. `variant` is the first variant of the
     /// enum, written with the enum, for the help.
     EnumAsValue {
@@ -5493,6 +5499,9 @@ impl From<DiagnosticKind> for Diagnostic {
             ),
             DiagnosticKind::InterfaceAsValue { name, at } => {
                 Diagnostic::coded(code, at, format!("`{name}` is an interface, not a value"))
+            }
+            DiagnosticKind::ParamAsValue { name, what, at } => {
+                Diagnostic::coded(code, at, format!("`{name}` is {what}, not a value"))
             }
             DiagnosticKind::EnumAsValue { name, variant, at } => {
                 let d = Diagnostic::coded(code, at, format!("`{name}` is an enum, not a value"));

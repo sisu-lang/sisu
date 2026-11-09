@@ -86,6 +86,29 @@ fn a_bound_with_a_failed_argument_should_leave_only_its_error_at_each_use() {
     each_use("interface W<A> {}\n", "W<Missing>", UnknownType);
 }
 
+#[test]
+fn a_redeclared_bound_should_leave_only_its_error_at_each_use() {
+    each_use(
+        "interface Z {\n    fn zz(self)\n}\ninterface Z {\n    fn zz(self)\n}\n",
+        "Z",
+        DefinedTwice,
+    );
+}
+
+/// Rows 21, 22, 23 and 27 of S31's second table: "Z twice" is `interface Z` written two times.
+#[test]
+fn a_redeclared_interface_should_leave_only_its_error() {
+    let twice = "interface Z {\n    fn zz(self)\n}\ninterface Z {\n    fn zz(self)\n}\n";
+    for form in [
+        "interface J: Z {}\nfn g<T: J>(x: T) { x.zz() }\n",
+        "interface J: Z {}\nfn g<T: J>(x: T) -> bool { x == x }\n",
+        "interface J: Z {}\nfn g(x: any J) { x.zz() }\n",
+        "interface J: Z {}\nclass Q: J {}\n",
+    ] {
+        error_codes(form, &program(&format!("{twice}{form}")), &[DefinedTwice]);
+    }
+}
+
 /// `Q` with `type A`, and a function that uses it.
 const Q_WITH_TYPE: &str =
     "interface Q {\n    type A\n    fn a(self) -> Self.A\n}\nfn q<U: Q>(u: U) -> U.A { u.a() }\n";

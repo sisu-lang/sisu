@@ -3,6 +3,7 @@
 use std::ops::Range;
 
 use super::generic::Site;
+use super::names::{self, Resolved};
 use super::{
     Checked, Checker, Flag, Poisoned, UNKNOWN, Uninferred, is_kept, is_unwrapped, payload, spread,
     tail, type_of, wrap,
@@ -349,39 +350,36 @@ impl Checker<'_> {
     /// type of a local with no type may give the type that the help of its E0050 writes.
     fn name(&mut self, span: Span, name: Symbol, expected: Option<Type>) -> Checked {
         let quiet = self.body.quiet == Some(span);
-        match self.lookup(name) {
-            Some(b) => {
-                b.read |= !quiet;
-                if let Some(ty) = b.ty {
-                    return Ok(tir::Expr::new(tir::ExprKind::Local(b.local), ty, span));
+        match self.resolve_name(name, names::Site::value(quiet)) {
+            Resolved::Local { local, ty, .. } => {
+                if let Some(ty) = ty {
+                    return Ok(tir::Expr::new(tir::ExprKind::Local(local), ty, span));
                 }
                 // `Error`: its diagnostic was recorded where it was bound.
-                let local = b.local;
                 self.inferred_by_expected(local, expected, span);
                 Err(Poisoned::error())
             }
-            None => self.constant_use(name, span).unwrap_or_else(|| {
-                // The item's own error is reported.
-                if self.poisoned_use(name) {
-                    return Err(Poisoned::error());
-                }
-                let d = if name == Symbol::SOME || self.result_variant(name).is_some() {
-                    // These variants of the prelude's enums are written without the enum, and
-                    // `Option` makes no enum for `bare_variant` to find.
-                    DiagnosticKind::VariantForm {
-                        path: name.to_string(),
-                        payload: true,
-                        held: false,
-                        at: span,
-                    }
-                    .into()
-                } else {
-                    self.bare_variant(name, span)
-                        .unwrap_or_else(|| self.not_found(name, span))
-                };
+            Resolved::Constant(id) => self.constant_use(id, span),
+            // The item's own error is reported.
+            Resolved::Poisoned(_) => Err(Poisoned::error()),
+            Resolved::PreludeVariant => {
+                // These variants of the prelude's enums are written without the enum, and
+                // `Option` makes no enum for `bare_variant` to find.
+                self.report(DiagnosticKind::VariantForm {
+                    path: name.to_string(),
+                    payload: true,
+                    held: false,
+                    at: span,
+                });
+                Err(Poisoned::error())
+            }
+            _ => {
+                let d = self
+                    .bare_variant(name, span)
+                    .unwrap_or_else(|| self.not_found(name, span));
                 self.diagnostics.push(d);
                 Err(Poisoned::error())
-            }),
+            }
         }
     }
 

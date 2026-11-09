@@ -13,7 +13,7 @@
 
 use std::rc::Rc;
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 
 use super::expr::{bare_none, none_literal};
 use super::generic::{Site, type_meets};
@@ -137,8 +137,6 @@ impl AliasInfo {
 /// What the checker keeps of the aliases.
 #[derive(Default)]
 pub(super) struct Aliases {
-    /// The first alias of each name, and every broken one.
-    pub(super) names: FxHashMap<Symbol, Declared<usize>>,
     /// Every alias in source order, so a second alias of a name has a body of its own.
     pub(super) infos: Vec<AliasInfo>,
     /// For each alias, the aliases whose bodies name it.
@@ -201,8 +199,8 @@ impl Checker<'_> {
     /// The aliases that the type `ty` writes and the parameters `params` do not hide, each with
     /// where the name stands, in source order.
     fn alias_refs(&self, ty: &ast::TypeExpr, params: &[Symbol], out: &mut Vec<(usize, Span)>) {
-        let named = |name: Symbol| match self.aliases.names.get(&name) {
-            Some(&Declared::Known(id)) if !params.contains(&name) => Some((
+        let named = |name: Symbol| match self.names.alias(name) {
+            Some(Declared::Known(id)) if !params.contains(&name) => Some((
                 id,
                 Span::new(ty.span.start(), ty.span.start() + name.as_str().len()),
             )),
@@ -349,14 +347,32 @@ impl Checker<'_> {
     /// being resolved, as the fix would make a cycle.
     pub(super) fn alias_candidates(&self) -> impl Iterator<Item = (&str, Definition)> {
         let cyclic = self.cyclic_names();
-        (self.aliases.names.keys())
-            .filter(move |name| !cyclic.contains(*name))
+        (self.names.alias_names())
+            .filter(move |name| !cyclic.contains(name))
             .map(|name| (name.as_str(), Definition::Alias))
     }
 
-    /// Makes the alias `id` `Error`, as an alias is whose bounds fail where it is declared.
+    /// Makes the alias `id` `Error`, as an alias is whose bounds fail where it is declared. So is
+    /// every alias that names it, also through other aliases. Each is made once.
     pub(super) fn unknown_alias(&mut self, id: usize) {
-        self.aliases.infos[id].state = State::Done(None);
+        let Aliases { infos, users, .. } = &mut self.aliases;
+        // An unknown alias passed this on to its users when it became unknown. A second failed
+        // bound of the same alias must not scan them again.
+        if matches!(infos[id].state, State::Done(None)) {
+            return;
+        }
+        infos[id].state = State::Done(None);
+        let mut stack = vec![id];
+        while let Some(alias) = stack.pop() {
+            for &user in &users[alias] {
+                #[cfg(test)]
+                super::ALIAS_USER_STEPS.set(super::ALIAS_USER_STEPS.get() + 1);
+                if matches!(infos[user].state, State::Done(Some(_))) {
+                    infos[user].state = State::Done(None);
+                    stack.push(user);
+                }
+            }
+        }
     }
 
     /// Reports the cycle of the component of the alias `first`, the first of the component in
@@ -395,9 +411,9 @@ impl Checker<'_> {
     /// a built-in type: a constructor, a variant, a conversion or a member of the type that the
     /// alias names. The caller reads the name as a type's only after a local has not taken it.
     pub(super) fn through(&mut self, name: Symbol) -> Via {
-        let id = match self.aliases.names.get(&name) {
+        let id = match self.names.alias(name) {
             None => return Via::Not,
-            Some(&Declared::Known(id)) => id,
+            Some(Declared::Known(id)) => id,
             Some(Declared::Broken) => return Via::Error,
         };
         let Some(resolved) = self.alias_body(id) else {
@@ -467,7 +483,7 @@ impl Checker<'_> {
     /// as `Param("", i)`. The reads that cannot change the checker use it, and ask only for a
     /// built-in type, which no parameter is in.
     pub(super) fn alias_type(&self, name: Symbol) -> Option<Type> {
-        let &Declared::Known(id) = self.aliases.names.get(&name)? else {
+        let Declared::Known(id) = self.names.alias(name)? else {
             return None;
         };
         match &self.aliases.infos[id].state {
@@ -478,7 +494,7 @@ impl Checker<'_> {
 
     /// Whether `name` is an alias that takes no type parameter.
     pub(super) fn alias_takes_none(&self, name: Symbol) -> bool {
-        matches!(self.aliases.names.get(&name), Some(&Declared::Known(id)) if self.aliases.infos[id].params.is_empty())
+        matches!(self.names.alias(name), Some(Declared::Known(id)) if self.aliases.infos[id].params.is_empty())
     }
 
     /// Whether `e` is the empty optional: `None`, `Option.None`, `Option<T>.None`, or the same
@@ -504,7 +520,7 @@ impl Checker<'_> {
             ast::ExprKind::Applied { name, .. } => (&name.name, false),
             _ => return None,
         };
-        let Some(&Declared::Known(id)) = self.aliases.names.get(alias) else {
+        let Some(Declared::Known(id)) = self.names.alias(*alias) else {
             return None;
         };
         let State::Done(Some(resolved)) = &self.aliases.infos[id].state else {
@@ -548,9 +564,9 @@ impl Checker<'_> {
     /// Whether `name` is an alias that is `Error`: a broken one, or one that has failed. Its own
     /// error stands, so a use of it reports nothing more.
     pub(super) fn alias_error(&self, name: Symbol) -> bool {
-        match self.aliases.names.get(&name) {
+        match self.names.alias(name) {
             Some(Declared::Broken) => true,
-            Some(&Declared::Known(id)) => matches!(self.aliases.infos[id].state, State::Done(None)),
+            Some(Declared::Known(id)) => matches!(self.aliases.infos[id].state, State::Done(None)),
             None => false,
         }
     }
@@ -561,7 +577,7 @@ impl Checker<'_> {
         match &base.kind {
             ast::ExprKind::Name(name) => self.built_in_of(*name).is_some(),
             ast::ExprKind::Applied { name, .. } => {
-                self.aliases.names.contains_key(&name.name) && self.built_in_of(name.name).is_some()
+                self.names.alias(name.name).is_some() && self.built_in_of(name.name).is_some()
             }
             _ => false,
         }

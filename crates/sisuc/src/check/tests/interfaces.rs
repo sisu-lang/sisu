@@ -590,8 +590,7 @@ fn closure(
     let bounds: Vec<Bound> = bounds
         .iter()
         .map(|&(name, args)| {
-            let Some(&Declared::Known(interface)) =
-                checker.interface_ids.get(&Symbol::intern(name))
+            let Some(Declared::Known(interface)) = checker.names.interface(Symbol::intern(name))
             else {
                 panic!("{name} should be an interface");
             };

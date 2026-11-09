@@ -197,9 +197,9 @@ impl Checker<'_> {
     /// is reported (E0030).
     pub(super) fn assoc_named(&mut self, name: Symbol, at: Span) -> Named {
         if self.body.choosing.contains(&name) {
-            let shadows = self.class_ids.contains_key(&name)
-                || self.enum_ids.contains_key(&name)
-                || self.aliases.names.contains_key(&name)
+            let shadows = self.names.class(name).is_some()
+                || self.names.enum_id(name).is_some()
+                || self.names.alias(name).is_some()
                 || built_in_type(name.as_str()).is_some();
             self.report(DiagnosticKind::UnknownType {
                 name: name.to_string(),

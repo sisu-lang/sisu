@@ -25,6 +25,7 @@ pub(crate) mod interfaces;
 mod let_else;
 mod loop_condition;
 mod mut_args;
+mod names;
 mod optionals;
 mod parity;
 mod patterns;
@@ -2700,13 +2701,9 @@ fn class_after_function_of_same_name() {
 }
 
 #[test]
-fn class_defined_twice() {
-    // The `bool` argument shows that `X` still names the first class.
+fn a_class_defined_twice_should_give_only_its_own_error() {
     let src = "class X {\n    a: i64\n}\nclass X {\n    a: bool\n}\nfn main() { X(a: true) }";
-    codes(
-        src,
-        &[(Code::DefinedTwice, (4, 7)), (Code::Mismatch, (7, 18))],
-    );
+    codes(src, &[(Code::DefinedTwice, (4, 7))]);
     let secondary: Vec<_> = diags(src)[0]
         .secondary()
         .iter()
