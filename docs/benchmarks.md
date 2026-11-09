@@ -509,7 +509,7 @@ check when its tool is not on `PATH`. It needs `perf` for the last column.
 `make scaling` finds the programs for which a compiler stage costs more than
 a fixed amount for each unit of input. A shape is a kind of program that
 grows in one direction, such as more functions, deeper nesting or more match
-arms. `scripts/scaling.py` builds each of 28 shapes into an executable at
+arms. `scripts/scaling.py` builds each of 29 shapes into an executable at
 size 0 and at four sizes that double: n, 2n, 4n and 8n. Each build has one
 codegen unit. It counts the instructions of each stage under callgrind: `lex`,
 `parse`, `check`, `mono`, `mir`, `codegen`, `optimize` (the LLVM passes) and

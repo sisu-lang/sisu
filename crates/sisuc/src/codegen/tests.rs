@@ -1381,15 +1381,22 @@ fn interpolation_program(n: usize) -> String {
     )
 }
 
-/// The most calls of `callee` that one basic block of `@sisu.main` holds.
-fn most_calls_in_one_block(ir: &str, callee: &str) -> usize {
-    let call = format!("@{callee}(");
+/// A `main` with one string of `n` interpolated parts, each a `string` local and a literal.
+fn string_interpolation_program(n: usize) -> String {
+    format!(
+        "fn main() {{\n    let s = \"a\" + \"b\"\n    let r = \"{}\"\n    print(r.len())\n}}",
+        "{s}lit".repeat(n)
+    )
+}
+
+/// The most lines with `needle` that one basic block of `@sisu.main` holds.
+fn most_lines_in_one_block(ir: &str, needle: &str) -> usize {
     let mut most = 0;
     let mut count = 0;
     for line in function_body(ir, "@sisu.main(").lines() {
         if !line.starts_with(' ') && line.contains(':') {
             count = 0;
-        } else if line.contains(&call) {
+        } else if line.contains(needle) {
             count += 1;
             most = most.max(count);
         }
@@ -1401,15 +1408,18 @@ fn most_calls_in_one_block(ir: &str, callee: &str) -> usize {
 fn long_block_should_be_cut_at_o0() {
     const LIMIT: usize = BLOCK_CUT as usize;
     let context = Context::create();
-    for (src, callee) in [
-        (prints_program(2000), "sisu_print_int"),
-        (interpolation_program(2000), "sisu_write_int"),
+    for (src, needle) in [
+        (prints_program(2000), "@sisu_print_int("),
+        (interpolation_program(2000), "@sisu_write_int("),
+        // The bounds of the 4000 parts are the only adds but one in `new_string`. They stay
+        // in one block when the `cap` fold of `interpolate` is not cut.
+        (string_interpolation_program(2000), " = add nuw i64 "),
     ] {
         let ir = compiled(&context, &src).print_to_string().to_string();
-        let most = most_calls_in_one_block(&ir, callee);
+        let most = most_lines_in_one_block(&ir, needle);
         assert!(
             (1..=LIMIT + 1).contains(&most),
-            "one block of @sisu.main holds {most} calls of {callee}"
+            "one block of @sisu.main holds {most} lines with {needle}"
         );
     }
 }
