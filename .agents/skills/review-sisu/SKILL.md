@@ -40,17 +40,17 @@ answer, or earlier rulings. List the deferred findings and open issues
 that the target touches, so that no reviewer reports them again. Do not
 summarize the target; the reviewer reads it.
 
-Then let the script write the brief, for every kind. Run `origin/main`'s
-copy of it, because a branch's own copy can be older than the template:
+Then let `review_round.py` do the fixed steps, for every kind. `<skill base>` is the directory of this file. Run it with the sandbox off, because it runs `git fetch`. Write `RUN` and each file path as an absolute path. Write `<target>` just after `RUN`:
 
 ```
-git -C <repository root> show origin/main:.agents/skills/review-sisu/scripts/diff_brief.py |
-  python3 - <repository root> <target> RUN/brief.md --kind <spec|plan|diff> --doc <spec or plan> --focus RUN/focus.md
+python3 <skill base>/scripts/review_round.py prepare <repository root> RUN <target> --kind <spec|plan|diff> --doc <spec or plan>
 ```
 
-- `<target>` is the path of a spec or a plan, or `<base>..<head>` for a diff. Write a branch as `origin/main..<branch>`. The script writes a diff's range as full SHAs, and copies a spec or a plan to `RUN/target-<round>.md`, which the reviewer reads.
+It takes `build_sisu.sh` and `diff_brief.py` from `origin/main`, because a branch's own copy can be older than the template. It builds `sisu` at both ends of a diff, so that no reviewer builds them; earlier builds stay in `RUN/bin`. It writes `RUN/brief.md`, adds `RUN/focus.md`, and records the checkout in `RUN/tree-1.txt`. Run it just before the launch.
+
+- `<target>` is the path of a spec or a plan, or `<base>..<head>` for a diff. Write a branch as `origin/main..<branch>`. The brief writes a diff's range as full SHAs, and copies a spec or a plan to `RUN/target-<round>.md`, which the reviewer reads.
 - Repeat `--doc` for each document the reviewer reads with the target; leave it out when there is none.
-- For a diff, build `sisu` at the base and the head first, so that no reviewer builds them: `git -C <repository root> show origin/main:.agents/skills/review-sisu/scripts/build_sisu.sh | bash -s -- <repository root> RUN <base> <head>`. In a later round, build the round's head; earlier builds stay in `RUN/bin`. The brief lists each build there, and each line that the diff removes from the tests.
+- The brief lists each build in `RUN/bin`, and each line that the diff removes from the tests.
 - For a diff, pass the `LOG=` file of each `make mutation-test` run as `--mutation-log` (repeat the option for more than one log; Focus gets one line for each, and the script checks each one), and the output of `make coverage BASE=<base> > RUN/coverage.txt` as `--coverage`. Leave out each one that did not run. The script stops when the log measured uncommitted changes or a commit outside the range, and when the coverage output measured uncommitted changes or a commit other than the head. A stage or a group runs mutation tests once, on its final head after the task reviews, so a task review has no log; the final review gets it. A large fix round of the final review runs one more (step 5). A log from an earlier commit of the range is still accepted, and the brief lists the commits after it.
 - The script drops a skill line it cannot find. Tell the user in the report.
 
@@ -66,12 +66,11 @@ The user or the caller's plan may change an effort or add a reviewer.
 Launch the reviewers together. Each launcher must let its reviewer read
 `RUN` and the skill paths in the brief.
 
-Just before the launch, record the checkout:
-`{ git -C <repository root> rev-parse HEAD; git -C <repository root> status --porcelain --untracked-files=all; git -C <repository root> diff HEAD; } > RUN/tree-<round>.txt`.
-After the last reviewer ends, run the same command into `RUN/tree-<round>-after.txt` and `cmp` the
-two files. A difference means that a reviewer wrote in the repository, so the round is a failed
-run: show the user the difference and ask how to go on. Sol's launch can write anywhere, so this
-check is the guard. It does not see a write to an ignored file.
+After the last reviewer ends, run `python3 <skill base>/scripts/review_round.py verify <repository root> RUN --round <round>`.
+It fails when the checkout differs from the record of `prepare`. A difference means that a
+reviewer wrote in the repository, so the round is a failed run: show the user the difference and
+ask how to go on. Sol's launch can write anywhere, so this check is the guard. It does not see a
+write to an ignored file.
 
 - **Sol:** `copilot -p "Read RUN/brief.md and follow it. Your scratch directory is RUN/copilot-scratch. Write your report to RUN/sol.md; your final reply is that report." --model gpt-6.1-sol --reasoning-effort <effort> --allow-all -s -C RUN/copilot-scratch --add-dir <repository root> --add-dir RUN`, with one more `--add-dir` for the directory of each skill in the brief, and with `brief-<round>.md` and `sol-<round>.md` in a later round. Run it through Bash with `run_in_background` and the sandbox off: copilot needs the network and writes under `~/.copilot`. Start the call with `copilot`, because the permission rule matches that word. The completion notification ends the wait; do not poll. When it fails or leaves no report, show the user the error it prints and ask how to go on. Do not put another model in Sol's place without asking.
 - **Opus:** the Agent tool with the `subagent_type` from the table, and the prompt `Read RUN/brief.md and follow it. Your scratch directory is RUN/opus-scratch. Write your report to RUN/opus.md; your final reply is that report.` with `RUN` written out, and `brief-<round>.md` and `opus-<round>.md` in a later round. Pass no `model` or `effort`.
@@ -113,9 +112,9 @@ each must fail, and for the stated cause.
 In the final review of a diff whose flow runs mutation tests, a fix round that changes more than 50 Rust lines outside the tests, such as a new algorithm, runs one mutation test on its head before the re-review. The stage's or group's run came before that round, so no line is mutated twice. `git diff --shortstat <round base> HEAD -- '*.rs' ':!**/tests/**' ':!**/tests.rs'` gives the count. Run `(cd <worktree> && env CARGO_MUTANTS_JOBS=2 nice -n 19 make mutation-test BASE=<round base> LOG=RUN/mutation-<round>.log)` with Bash `run_in_background`. Put each surviving mutant into the round, with a test that kills it or a reason it is equivalent, and pass the log as another `--mutation-log`.
 
 When you fixed a blocking finding, review again. Write `RUN/focus-<round>.md`
-with the fixes and what you probed, and run the script with
-`RUN/brief-<round>.md`, the round's target (for a diff, the fix range),
-`--round <round> --rulings RUN/rulings-<round - 1>.md`, and `--prior <report>` once for each earlier report.
+with the fixes and what you probed. Run `review_round.py prepare` with
+the round's target (for a diff, the fix range) and `--round <round>`. It writes
+`RUN/brief-<round>.md` and takes `RUN/rulings-<round - 1>.md` and each earlier report from `RUN`.
 Its "Re-review" section asks for a verdict on each accepted finding, the
 neighbours of each fix, and regressions against the base of the whole
 work. Send it to the later-round reviewers in the table; their reports
