@@ -63,6 +63,7 @@ Read each target below before you decide it needs no edit.
 | A language feature added or changed | The Tour's prose and its "What is not here yet" list in `site/src/tour.html`, and the page's hand-kept commit |
 | A language feature added or changed | Its page in `docs/reference/`, in the same pull request |
 | How `sisu` builds: its threads, its codegen units, or what one command runs | The Compile speed notes in `docs/benchmarks.md` and `site/src/benchmarks.html` |
+| `scripts/scaling.py`: its shapes, its rule, or its `KNOWN` rows and their issues | "The scaling sweep" in `docs/benchmarks.md`; the shape count in "Commands" of `AGENTS.md` |
 | What codegen puts into one LLVM module | The codegen bullet of "Modules (milestone 11)" in `docs/roadmap.md` |
 | The prose of `docs/benchmarks.md`, or `scripts/bench.sh` | The Benchmarks prose in `site/src/benchmarks.html`, and the page's hand-kept commit |
 | An ADR's status changing, such as proposed to accepted, or a planned one built | Its row's note on `site/src/decisions.html` (the `<small>` or `soon` after its title) and its label in `site/data/status.toml`, such as "ADR 0012 (proposed)", and the page's hand-kept commit |
