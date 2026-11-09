@@ -6,10 +6,12 @@
 # it here, so that the next list has it.
 #
 # `tests/neighbours.rs` puts each value of `[values]` into the `$` of each line of `[contexts]`,
-# writes the statement into the three `{stmt}` places of `[template]` (`main`, a generic
-# function, and a function whose bound failed), and runs `sisu check` on each program. Most
-# programs are wrong. The test fails when `sisu check` crashes on one, as a reached `panic!` or
-# `assert!` in the checker does.
+# writes the statement into the two `{stmt}` places of `[template]` (`main` and a generic
+# function), and runs `sisu check` on each program. It also writes it into the one `{stmt}` of
+# `[failed]`, a function whose bound failed, in a second program: the template with no statement,
+# then that function. That program always fails, so `check` stops before the later passes. The
+# first program can reach them. Most programs are wrong. The test fails when `sisu check` crashes
+# on one, as a reached `panic!` or `assert!` in the checker does.
 #
 # A line that starts with `#` is a comment. Each value and each context is one line.
 
@@ -62,10 +64,6 @@ fn generic<U: Named, V>(u: U, v: V, c: bool, d: bool, k: i64, n: any Named, p: a
     let mut mq: (any Pet)? = op
     {stmt}
 }
-fn failed<U: Missing, V>(u: U, v: V, c: bool, d: bool, k: i64, n: any Named, p: any Pet, op: (any Pet)?, ob: Bx?) {
-    let mut mq: (any Pet)? = op
-    {stmt}
-}
 fn main() {
     let c = true
     let d = false
@@ -79,7 +77,21 @@ fn main() {
     {stmt}
 }
 
+[failed]
+fn failed<U: Missing, V>(u: U, v: V, c: bool, d: bool, k: i64, n: any Named, p: any Pet, op: (any Pet)?, ob: Bx?) {
+    let mut mq: (any Pet)? = op
+    {stmt}
+}
+
 [values]
+# A type parameter read: in `generic` it conforms to `Named`; in the function whose bound failed
+# it is unknown; in `main` there is none, which is an error.
+u
+u.name()
+u.nope()
+u == u
+id(u)
+Some(u)
 # Each spelling of an empty optional. A `None` that writes no type takes its type from its
 # context; the others write some or all of it.
 None

@@ -390,7 +390,8 @@ impl Checker<'_> {
         self.interfaces[id.0].inherits_at = inherits_at;
         self.interfaces[id.0].inherits_failed = inherits_failed;
         // A read in the list found closures before the flag was set, and a closure is scanned for
-        // the flag once, when it is found. So forget them, and what they gave.
+        // the flag once, when it is found. So forget them, and what they gave. `unknown_assoc`
+        // stays, because an entry found here stays true.
         self.body.forget_bounds(self.body.bounds.len());
         self.body.assoc_conforming.clear();
         for (k, assoc) in declared.iter().enumerate() {
@@ -581,10 +582,10 @@ impl Checker<'_> {
     /// the order of the parameters. A bound waits for each declaration of the name it writes that
     /// another bound gives, so the resolution finds the type ambiguous if two differ (E0156). A
     /// declaration that only the bound gives is no wait: then no other bound gives the type, and
-    /// the resolution reports it. The bounds resolve in waves: each wave
-    /// holds the bounds that wait for no one now, and its bounds go into scope together at its
-    /// end: the fact that a bound failed goes into scope at once. Each bound and each name is read
-    /// a fixed number of times.
+    /// the resolution reports it. The bounds resolve in waves. Each wave holds the bounds that
+    /// wait for no one now. Its bounds go into scope together at its end, and the fact that a
+    /// bound failed goes into scope at once. Each bound and each name is read a fixed number of
+    /// times.
     ///
     /// The bounds left wait for each other. Each that is on a loop of bounds is reported at the
     /// associated type it writes (E0030), and the others that wait for it stay unknown, with no

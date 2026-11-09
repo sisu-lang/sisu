@@ -278,7 +278,8 @@ impl Checker<'_> {
             return self.alias_assoc(ty, base, base_ty, name);
         }
         let closure = self.closure_len(base_ty);
-        // A base whose bounds went past the limit is reported already, and unknown.
+        // A base whose bounds went past the limit, or whose bound failed, is reported already, and
+        // unknown.
         if self.is_unknown(base_ty) {
             return None;
         }

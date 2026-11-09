@@ -7,10 +7,12 @@ use std::path::Path;
 use std::process::Command;
 use std::thread;
 
-/// The sections of `neighbours.txt`: the template, with its three `{stmt}` places, and the values
-/// and contexts, one for each line that is not empty and not a comment.
+/// The sections of `neighbours.txt`: the template, with its two `{stmt}` places, and the function
+/// whose bound failed, with its one. Then the values and the contexts, one for each line that is
+/// not empty and not a comment.
 struct Forms {
     template: String,
+    failed: String,
     values: Vec<String>,
     contexts: Vec<String>,
 }
@@ -21,13 +23,14 @@ fn forms() -> Forms {
         .unwrap_or_else(|e| panic!("{} should be readable: {e}", path.display()));
     let mut forms = Forms {
         template: String::new(),
+        failed: String::new(),
         values: Vec::new(),
         contexts: Vec::new(),
     };
     let mut section = "";
     for line in text.lines() {
         if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']'))
-            && ["template", "values", "contexts"].contains(&name)
+            && ["template", "failed", "values", "contexts"].contains(&name)
         {
             section = name;
             continue;
@@ -37,6 +40,10 @@ fn forms() -> Forms {
                 forms.template.push_str(line);
                 forms.template.push('\n');
             }
+            "failed" => {
+                forms.failed.push_str(line);
+                forms.failed.push('\n');
+            }
             _ if line.trim().is_empty() || line.starts_with('#') => {}
             "values" => forms.values.push(line.to_string()),
             "contexts" => forms.contexts.push(line.to_string()),
@@ -45,8 +52,13 @@ fn forms() -> Forms {
     }
     assert_eq!(
         forms.template.matches("{stmt}").count(),
-        3,
-        "the template should have a `{{stmt}}` in a generic function, in a function whose bound failed, and in `main`"
+        2,
+        "the template should have a `{{stmt}}` in a generic function and in `main`"
+    );
+    assert_eq!(
+        forms.failed.matches("{stmt}").count(),
+        1,
+        "the function whose bound failed should have one `{{stmt}}`"
     );
     assert!(
         forms.contexts.iter().all(|c| c.contains('$')),
@@ -56,10 +68,9 @@ fn forms() -> Forms {
 }
 
 /// The statement and the output of `sisu check` when it crashed on that statement.
-fn crash(template: &str, stmt: &str) -> Option<String> {
-    let program = template.replace("{stmt}", stmt);
+fn crash(program: &str, stmt: &str) -> Option<String> {
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
-        .args(["check", "-e", &program])
+        .args(["check", "-e", program])
         .output()
         .expect("sisu should start");
     // 0: no error; 1: an error. A panic aborts, and a signal has no exit code.
@@ -72,8 +83,9 @@ fn crash(template: &str, stmt: &str) -> Option<String> {
     })
 }
 
-/// GIVEN each value of `neighbours.txt` in each of its contexts, in `main`, in a generic
-/// function and in a function whose bound failed
+/// GIVEN each value of `neighbours.txt` in each of its contexts, in `main` and in a generic
+/// function
+/// GIVEN the same, in a function whose bound failed, in a program of its own
 /// WHEN `sisu check` runs on each program
 /// THEN no run crashes: each one ends with no error or with an error.
 #[test]
@@ -89,11 +101,17 @@ fn check_should_end_with_its_own_status_on_each_neighbouring_form() {
         let handles: Vec<_> = stmts
             .chunks(stmts.len().div_ceil(workers))
             .map(|chunk| {
-                let template = &forms.template;
+                let (template, failed) = (&forms.template, &forms.failed);
                 s.spawn(move || {
                     chunk
                         .iter()
-                        .filter_map(|stmt| crash(template, stmt))
+                        .flat_map(|stmt| {
+                            let whole = template.replace("{stmt}", stmt);
+                            let after =
+                                template.replace("{stmt}", "") + &failed.replace("{stmt}", stmt);
+                            [crash(&whole, stmt), crash(&after, stmt)]
+                        })
+                        .flatten()
                         .collect::<Vec<_>>()
                 })
             })
@@ -107,7 +125,7 @@ fn check_should_end_with_its_own_status_on_each_neighbouring_form() {
         crashes.is_empty(),
         "`sisu check` crashed on {} of {} programs:\n{}",
         crashes.len(),
-        stmts.len(),
+        2 * stmts.len(),
         crashes.join("\n")
     );
 }
