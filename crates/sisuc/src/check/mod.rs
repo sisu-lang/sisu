@@ -1021,7 +1021,8 @@ struct Body {
     conforming: Vec<Option<Vec<(tir::InterfaceId, TypeArgs)>>>,
     /// The interfaces each associated type of a type parameter conforms to through the bounds of
     /// its declaration, once found (`assoc_interfaces`). The bounds of the type parameters in scope
-    /// do not change them, so a body keeps them as it goes.
+    /// do not change them, so a body keeps them as it goes. The signature of an interface forgets
+    /// them after its inheritance list.
     assoc_conforming: FxHashMap<Type, Vec<(tir::InterfaceId, TypeArgs)>>,
     /// The associated types that are unknown in this body, for the same two causes as `unknown`.
     unknown_assoc: FxHashSet<Type>,

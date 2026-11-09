@@ -7,7 +7,7 @@ use std::path::Path;
 use std::process::Command;
 use std::thread;
 
-/// The sections of `neighbours.txt`: the template, with its two `{stmt}` places, and the values
+/// The sections of `neighbours.txt`: the template, with its three `{stmt}` places, and the values
 /// and contexts, one for each line that is not empty and not a comment.
 struct Forms {
     template: String,
@@ -45,8 +45,8 @@ fn forms() -> Forms {
     }
     assert_eq!(
         forms.template.matches("{stmt}").count(),
-        2,
-        "the template should have a `{{stmt}}` in a generic function and in `main`"
+        3,
+        "the template should have a `{{stmt}}` in a generic function, in a function whose bound failed, and in `main`"
     );
     assert!(
         forms.contexts.iter().all(|c| c.contains('$')),
@@ -72,8 +72,8 @@ fn crash(template: &str, stmt: &str) -> Option<String> {
     })
 }
 
-/// GIVEN each value of `neighbours.txt` in each of its contexts, in `main` and in a generic
-/// function
+/// GIVEN each value of `neighbours.txt` in each of its contexts, in `main`, in a generic
+/// function and in a function whose bound failed
 /// WHEN `sisu check` runs on each program
 /// THEN no run crashes: each one ends with no error or with an error.
 #[test]

@@ -393,7 +393,6 @@ impl Checker<'_> {
         // the flag once, when it is found. So forget them, and what they gave.
         self.body.forget_bounds(self.body.bounds.len());
         self.body.assoc_conforming.clear();
-        self.body.unknown_assoc.clear();
         for (k, assoc) in declared.iter().enumerate() {
             let ty = self.body.assoc.at(k).ty;
             let mut failed = false;
@@ -584,7 +583,8 @@ impl Checker<'_> {
     /// declaration that only the bound gives is no wait: then no other bound gives the type, and
     /// the resolution reports it. The bounds resolve in waves: each wave
     /// holds the bounds that wait for no one now, and its bounds go into scope together at its
-    /// end. Each bound and each name is read a fixed number of times.
+    /// end: the fact that a bound failed goes into scope at once. Each bound and each name is read
+    /// a fixed number of times.
     ///
     /// The bounds left wait for each other. Each that is on a loop of bounds is reported at the
     /// associated type it writes (E0030), and the others that wait for it stay unknown, with no
@@ -1324,7 +1324,8 @@ impl Checker<'_> {
     /// through its bounds and what they inherit, a class or an enum through its written
     /// conformance, and when none covers it, through the generated rule of a language interface
     /// (`conformance::generated`). A broken `extend` block may have given its target the
-    /// conformance, so that holds.
+    /// conformance, so that holds. A type parameter that is unknown in this body (`is_unknown`)
+    /// conforms to every interface.
     ///
     /// `Display` comes first: it holds for every type but `unit` and `never`, and reads no written
     /// conformance and no bound. A written `Eq` or `Ord` that covers a type decides, and when its

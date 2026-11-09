@@ -6,9 +6,10 @@
 # it here, so that the next list has it.
 #
 # `tests/neighbours.rs` puts each value of `[values]` into the `$` of each line of `[contexts]`,
-# writes the statement into the two `{stmt}` places of `[template]` (`main` and a generic
-# function), and runs `sisu check` on each program. Most programs are wrong. The test fails when
-# `sisu check` crashes on one, as a reached `panic!` or `assert!` in the checker does.
+# writes the statement into the three `{stmt}` places of `[template]` (`main`, a generic
+# function, and a function whose bound failed), and runs `sisu check` on each program. Most
+# programs are wrong. The test fails when `sisu check` crashes on one, as a reached `panic!` or
+# `assert!` in the checker does.
 #
 # A line that starts with `#` is a comment. Each value and each context is one line.
 
@@ -58,6 +59,10 @@ fn take2<T>(mut x: T?, n: i64) { x = None }
 fn keep<T>(mut x: T?) -> T? { x }
 fn opt<T>(v: T?) -> T? { v }
 fn generic<U: Named, V>(u: U, v: V, c: bool, d: bool, k: i64, n: any Named, p: any Pet, op: (any Pet)?, ob: Bx?) {
+    let mut mq: (any Pet)? = op
+    {stmt}
+}
+fn failed<U: Missing, V>(u: U, v: V, c: bool, d: bool, k: i64, n: any Named, p: any Pet, op: (any Pet)?, ob: Bx?) {
     let mut mq: (any Pet)? = op
     {stmt}
 }
