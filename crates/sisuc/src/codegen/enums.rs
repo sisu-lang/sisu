@@ -189,11 +189,12 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// Builds every enum's layout. First it names each enum's type and its payload structs, so
-    /// that a payload can name any enum. Then it gives each enum its shape and niche, its
-    /// payloads' bodies and its body. These need the layouts of the enums it holds inline. Thus
-    /// an enum held inline is laid out before its holder, in post-order over the inline fields,
-    /// with an explicit stack. `tir::layout_enums` boxes a field on every cycle, so the inline
-    /// fields form no cycle and the walk ends.
+    /// that a payload can name any enum. An enum with no field gets its tag integer instead. Then
+    /// it gives each enum its shape and niche, its payloads' bodies and its body. These need the
+    /// layouts of the enums it holds inline. Thus an enum held inline is laid out before its
+    /// holder, in post-order over the inline fields, with an explicit stack.
+    /// `tir::layout_enums` boxes a field on every cycle, so the inline fields form no cycle and
+    /// the walk ends.
     pub(super) fn lay_out_enums(&mut self) {
         let program = self.program;
         let context = self.context;
@@ -266,8 +267,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// Lays out enum `id`, whose inline-held enums are laid out. An `Option`-shaped enum gets
-    /// its shape and type; another enum gets its payloads' bodies and its body. Then each gets
-    /// its niche.
+    /// its shape and type; another enum with a field gets its payloads' bodies and its body.
+    /// Then each gets its niche.
     fn lay_out_enum(&mut self, id: usize) {
         let program = self.program;
         let e = &program.enums[id];
@@ -668,7 +669,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// the tag and each field stored into a scratch slot, which is loaded whole. The slot is
     /// zeroed first, so that the whole load never reads a byte that no store gave a value, and
     /// a boxed `F?` field given `None` keeps its `null`. A boxed field's value moves into a new
-    /// box with count 1, built into its token's block when `reuse` gives it one.
+    /// box with count 1, built into its token's block when `reuse` gives it one. An enum with no
+    /// field is its tag, so its value is the tag constant.
     pub(super) fn variant(
         &self,
         id: EnumId,
