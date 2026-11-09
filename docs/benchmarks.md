@@ -546,12 +546,14 @@ large linear part, such as 10000n + n². It also marks a linear stage that has
 one step in r2 and a rise in r3.
 
 One shape and one stage that is superlinear for it is a case. The known list
-`KNOWN` in `scripts/scaling.py` has one row for each case that has an open
-issue: the shape, the stage and the issue number. A known case is a row of
-`KNOWN` that does not look fixed. A known row can be linear but just under
-the rule, when its cause is known. The script exits with code 0 when every
-superlinear case has a row and no row looks fixed. It prints each known case
-on stdout. It exits with code 1 when:
+`KNOWN` in `scripts/scaling.py` has one row for each case that has an issue:
+the shape, the stage and the issue number. Most of these issues are open.
+When the cost is LLVM's, the issue is closed as not planned and its row
+stays, as for #612 and #613. A comment above such a row gives the cause.
+A known case is a row of `KNOWN` that does not look fixed. A known row can
+be linear but just under the rule, when its cause is known. The script exits
+with code 0 when every superlinear case has a row and no row looks fixed. It
+prints each known case on stdout. It exits with code 1 when:
 
 - a superlinear case has no row. Open an issue and add a row.
 - a row looks fixed. Its stage is not judged, has no ratio, has r3 < 2.15, or
