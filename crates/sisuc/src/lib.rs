@@ -108,6 +108,8 @@ struct Backend {
     linker: Option<String>,
     /// The allocator of the runtime the executable links; `None` is mimalloc.
     allocator: Option<Allocator>,
+    /// The sanitizer to build the executable with; `None` builds none.
+    sanitize: Option<Sanitizer>,
     /// The most codegen units to split the program into; `None` lets the size of the program
     /// decide.
     units: Option<usize>,
@@ -119,6 +121,12 @@ enum Allocator {
     #[default]
     Mimalloc,
     System,
+}
+
+/// The sanitizer that `--sanitize` builds an executable with.
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum Sanitizer {
+    Address,
 }
 
 /// The stage `--emit` prints.
@@ -908,6 +916,7 @@ fn compile(
         rc_checks,
         ref linker,
         allocator: _,
+        sanitize: _,
         units: wanted,
     } = *backend;
     let mir = timings.time(timings::Stage::Mir, || mir::build(program));
