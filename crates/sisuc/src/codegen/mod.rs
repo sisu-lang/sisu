@@ -1133,15 +1133,12 @@ impl<'ctx> Codegen<'ctx, '_> {
                     .collect();
                 // Text, numbers, `bool` and `char` go in one block of known size; a compound part
                 // goes through a sink.
-                let text = if parts.iter().all(|&(_, ty)| text_part(ty)) {
+                // The result is a new block: it keeps none of the parts, which the MIR releases.
+                if parts.iter().all(|&(_, ty)| text_part(ty)) {
                     self.interpolate(&parts, formats)
                 } else {
                     self.interpolate_compound(&parts, formats)
-                };
-                for (value, ty) in parts {
-                    self.release(value, ty);
                 }
-                text
             }
             Rvalue::ReadLine => self.read_line(),
             Rvalue::Out { index } => {

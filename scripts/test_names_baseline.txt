@@ -1106,7 +1106,6 @@ crates/sisuc/src/mir/tests/ownership.rs::guard_borrow_site_on_a_returning_path
 crates/sisuc/src/mir/tests/ownership.rs::guard_reads
 crates/sisuc/src/mir/tests/ownership.rs::guard_return_of_binding_copies
 crates/sisuc/src/mir/tests/ownership.rs::guard_use_of_binding_never_moves
-crates/sisuc/src/mir/tests/ownership.rs::interpolate_parts_left_to_right
 crates/sisuc/src/mir/tests/ownership.rs::last_use_through_match
 crates/sisuc/src/mir/tests/ownership.rs::liveness_reads_grow_linearly
 crates/sisuc/src/mir/tests/ownership.rs::move_in_inner_loop

@@ -1,0 +1,221 @@
+// GIVEN interpolations whose parts are counted locals read more than once, live or at their last
+// use, with later parts that read, change or consume the same local
+// WHEN the program is built and run
+// THEN it prints the text of each interpolation, once for each part, and the parts stay intact:
+// an interpolation reads its parts and consumes none of them
+enum E {
+    A(string)
+    B
+}
+
+extend E: Display {
+    fn to_string(self) -> string {
+        match self {
+            E.A(s) => s + "!"
+            E.B => "B"
+        }
+    }
+}
+
+// A `to_string` that consumes `self`: it returns the payload itself.
+enum F {
+    C(string)
+}
+
+fn keep(f: F) -> string {
+    match f {
+        F.C(s) => s
+    }
+}
+
+extend F: Display {
+    fn to_string(self) -> string {
+        keep(self)
+    }
+}
+
+enum Shape {
+    Num(i64)
+    Add(Shape, Shape)
+}
+
+fn bump(mut s: string) -> i64 {
+    s = s + "!"
+    1
+}
+
+fn eat(s: string) -> i64 {
+    let owned = s
+    owned.len()
+}
+
+fn len(s: string) -> i64 {
+    s.len()
+}
+
+fn inc(mut n: i64) -> i64 {
+    n += 10
+    0
+}
+
+fn twice(s: string) -> string {
+    "{s}{s}"
+}
+
+fn greet(name: string) -> string {
+    "hello {name}!"
+}
+
+// Case 1: `x` is at its last use, so the interpolation reads it once, in a temporary.
+fn last_use() {
+    let x = "a" + "b"
+    let t = "{x}{x}{x}"
+    print("last use {t}")                // last use ababab
+}
+
+// Case 2: `x` is live after the interpolation.
+fn live_after() {
+    let x = "a" + "b"
+    let t = "{x}{x}{x}"
+    print("live after {t}")              // live after ababab
+    print(x)                             // ab
+}
+
+// Parameters that are only interpolated are borrowed.
+fn borrowed_parameters() {
+    print("borrowed {twice("q" + "r")}") // borrowed qrqr
+    print("greet {greet("w" + "v")}")    // greet hello wv!
+}
+
+// Case 5: a later part changes `x`, so the first `{x}` is read before the call.
+fn pinned_by_a_change() {
+    let mut x = "a" + "b"
+    let t = "{x}{bump(mut x)}{x}"
+    print("change {t}")                  // change ab1ab!
+}
+
+// Case 6: a later part consumes `y`, so both `{y}` are read before the call.
+fn pinned_by_a_consumer() {
+    let y = "c" + "d"
+    let u = "{y}{y}{eat(y)}"
+    print("consume {u}")                 // consume cdcd2
+}
+
+// Case 7: an array part.
+fn array_parts() {
+    let a = [1, 2]
+    print("array {a}{a}")                // array [1, 2][1, 2]
+    print(a)                             // [1, 2]
+}
+
+// Case 8: each element is read in its own statement.
+fn element_parts() {
+    let a = ["x" + "y", "z"]
+    print("elements {a[0]}{a[1]}")       // elements xyz
+}
+
+// Case 9: a part with a format.
+fn format_parts() {
+    let x = "a" + "b"
+    print("format {x:>5}{x}")            // format    abab
+}
+
+// Case 11: a part with a written `to_string`.
+fn display_parts() {
+    let e = E.A("w" + "x")
+    print("display {e}{e}")              // display wx!wx!
+    print(e)                             // wx!
+    let b = E.B
+    print("display {b}{b}")              // display BB
+}
+
+// A `to_string` that consumes `self` takes a copy: the part stays intact.
+fn consuming_display() {
+    let f = F.C("p" + "q")
+    print("consuming {f}{f}")            // consuming pqpq
+    let g = F.C("r" + "s")
+    print("consuming {g}{g}")            // consuming rsrs
+    print(g)                             // rs
+}
+
+// An optional part, present and absent.
+fn optional_parts() {
+    let o: string? = "o" + "p"
+    print("some {o}{o}")                 // some opop
+    let n: string? = None
+    print("none {n}{n}")                 // none NoneNone
+}
+
+// An interpolation inside another one.
+fn nested() {
+    let w = "w" + "1"
+    print("nested {w}{"[{w}]"}{w}")      // nested w1[w1]w1
+}
+
+// Case 13: a later part reads `x` in a call, so the first `{x}` is read before it.
+fn pinned_by_a_read() {
+    let x = "a" + "b"
+    print("read {x}{len(x)}{x}")         // read ab2ab
+    print(x)                             // ab
+}
+
+// Case 14: an uncounted part is read before a later part that changes it.
+fn uncounted_parts() {
+    let n = 1
+    print("uncounted {n}{n}")            // uncounted 11
+    let mut a = 1
+    let s = "{a}{inc(mut a)}{a}"
+    print("int call {s}")                // int call 1011
+    let mut m = 1
+    let t = "{m}{ { m = 7; 0 } }{m}"
+    print("int block {t}")               // int block 107
+    let mut f = 1.5
+    let u = "{f}{ { f = 2.5; 0 } }"
+    print("float block {u}")             // float block 1.50
+}
+
+// A later part assigns the local in a block.
+fn assigning_blocks() {
+    let mut s = "b" + "1"
+    let t = "{s}{ { s = "z"; 0 } }{s}"
+    print("assign {t}")                  // assign b10z
+    let mut c = "c" + "1"
+    let flag = c.len() > 0
+    let u = "{c}{if flag { c = "C"; 2 } else { 3 }}{c}"
+    print("if {u}")                      // if c12C
+}
+
+// A compound part that is a local of the function, live after the interpolation.
+fn compound_parts() {
+    let e = Shape.Add(Shape.Num(1), Shape.Num(2))
+    let t = "{e}{e}"
+    print("compound {t}")                // compound Add(Num(1), Num(2))Add(Num(1), Num(2))
+    print(e)                             // Add(Num(1), Num(2))
+}
+
+// Case 15: the same local at its last use in two statements in a row.
+fn two_statements() {
+    let mut w = "w" + "1"
+    w = "{w}{w}"
+    print("two {w}{w}")                  // two w1w1w1w1
+}
+
+fn main() {
+    last_use()
+    live_after()
+    borrowed_parameters()
+    pinned_by_a_change()
+    pinned_by_a_consumer()
+    array_parts()
+    element_parts()
+    format_parts()
+    display_parts()
+    consuming_display()
+    optional_parts()
+    nested()
+    pinned_by_a_read()
+    uncounted_parts()
+    assigning_blocks()
+    compound_parts()
+    two_statements()
+}

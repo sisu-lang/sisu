@@ -26,6 +26,14 @@ fn signature(printed: &str, name: &str, head: &str) {
     assert!(f.starts_with(head), "`{head}` in\n{f}");
 }
 
+/// A function that only interpolates its parameter does not consume it: the parameter is
+/// borrowed (ADR 0029, the amendment of 2026-11-09).
+#[test]
+fn an_interpolated_parameter_should_be_borrowed() {
+    let printed = built("fn greet(name: string) -> string { \"hello {name}!\" }");
+    signature(&printed, "greet", "fn greet(name#0: borrow string)");
+}
+
 #[test]
 fn read_only_parameter_is_borrowed() {
     let printed = built(

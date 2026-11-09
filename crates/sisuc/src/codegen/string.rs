@@ -331,8 +331,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// block with room for the most text each part can give. It writes each part where the
     /// last part ended, and pads it there when its format has a width. Then it stores the
     /// length written. Each writer returns the end of its text. The next part starts there. So
-    /// no part has an offset that sums the parts before it. The caller releases the `string`
-    /// parts.
+    /// no part has an offset that sums the parts before it. The result keeps none of the parts:
+    /// the mir releases the ones it owns.
     pub(super) fn interpolate(
         &self,
         parts: &[(BasicValueEnum<'ctx>, Type)],
