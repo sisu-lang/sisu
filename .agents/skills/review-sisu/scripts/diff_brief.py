@@ -51,7 +51,8 @@ from pathlib import Path
 TEMPLATE = Path(__file__).resolve().parents[1] / "brief.md"
 MAIN_TEMPLATE = "origin/main:.agents/skills/review-sisu/brief.md"
 KINDS = ("spec", "plan", "diff")
-FULL_SHA = re.compile(r"[0-9a-f]{40}")
+# A full SHA-1 or SHA-256 commit name.
+FULL_SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 
 
 def plugin_skill(plugin: str, skill: str) -> Path | None:
