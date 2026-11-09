@@ -106,21 +106,39 @@ impl Invocation {
     /// run, so `exe` runs natively and the Linux jobs alone check for leaks. On Linux it refuses
     /// a build that links mimalloc, before Valgrind starts (see `refuse_mimalloc`).
     pub(crate) fn run(&self, exe: &Path, valgrind: bool) -> Output {
-        let mut command = if valgrind && cfg!(target_os = "linux") {
-            refuse_mimalloc(exe);
-            let mut command = Command::new("valgrind");
-            command
-                .args([
-                    "--leak-check=full",
-                    "--errors-for-leak-kinds=definite,indirect,possible",
-                    "--error-exitcode=1",
-                ])
-                .arg(exe);
-            command
-        } else {
-            Command::new(exe)
-        };
+        if valgrind && cfg!(target_os = "linux") {
+            return self.run_under(exe, Path::new("valgrind"));
+        }
+        let mut command = Command::new(exe);
         command.args(&self.args);
+        output_with_stdin(&mut command, &self.stdin)
+    }
+
+    /// Runs `exe` with `ASAN_OPTIONS=fast_unwind_on_malloc=0`, which replaces any value in the
+    /// environment, and without `LSAN_OPTIONS`. The environment of the developer then cannot
+    /// turn off a report. The option gives a report whose stack holds the frames of the program.
+    pub(crate) fn run_asan(&self, exe: &Path) -> Output {
+        let mut command = Command::new(exe);
+        command
+            .env("ASAN_OPTIONS", "fast_unwind_on_malloc=0")
+            .env_remove("LSAN_OPTIONS")
+            .args(&self.args);
+        output_with_stdin(&mut command, &self.stdin)
+    }
+
+    /// Runs `exe` under the Valgrind program `valgrind`, with the three flags of `run`. It refuses
+    /// a build that links mimalloc, before `valgrind` starts (see `refuse_mimalloc`).
+    pub(crate) fn run_under(&self, exe: &Path, valgrind: &Path) -> Output {
+        refuse_mimalloc(exe);
+        let mut command = Command::new(valgrind);
+        command
+            .args([
+                "--leak-check=full",
+                "--errors-for-leak-kinds=definite,indirect,possible",
+                "--error-exitcode=1",
+            ])
+            .arg(exe)
+            .args(&self.args);
         output_with_stdin(&mut command, &self.stdin)
     }
 }
@@ -169,7 +187,7 @@ fn links_mimalloc(names: &[String]) -> bool {
 }
 
 /// Panics when `exe` links mimalloc, whose blocks Valgrind cannot see.
-fn refuse_mimalloc(exe: &Path) {
+pub(crate) fn refuse_mimalloc(exe: &Path) {
     assert!(
         !links_mimalloc(&defined_symbols(exe)),
         "{} links mimalloc, whose blocks Valgrind cannot see: build it with `--allocator system`",
@@ -219,16 +237,24 @@ fn output_with_stdin(command: &mut Command, stdin: &[u8]) -> Output {
 }
 
 /// Checks a `tests/run` case: the plain and `-O2` builds differ, exit 0, agree on stdout and on
-/// stderr, and print the same under Valgrind on Linux, which finds no leak or memory error, and in
-/// a `--rc-checks` build, which finds no count fault or live object at exit, and, on Linux, in an
-/// `-O2` build on mimalloc (see `MIMALLOC_O2`); then that stdout is `<name>.out`. On Linux, a
-/// `--rc-checks` build on the System allocator (`VALGRIND_RC`) also runs under Valgrind, so a count
-/// check that the plain builds lack cannot hide a leak or a memory error.
-/// On Linux the plain and `-O2` builds use the System allocator, for Valgrind, so the `-O2` build
-/// on mimalloc is the only Linux build of `-O2` code on the allocator that users get.
-/// Stderr is empty, unless `<name>.err` exists: then the stderr of the plain, `-O2`, `--rc-checks`
-/// and mimalloc `-O2` runs is that file. The Valgrind runs' stderr holds Valgrind's own log, so it
-/// is never compared.
+/// stderr; then that stdout is `<name>.out`.
+///
+/// On Linux, the checks run in this order:
+/// 1. Three builds that `ASan` checks (`ASAN_O0`, `ASAN_O2` and `ASAN_RC`) exit 0. The `asan-O0`
+///    build is the first program that runs, so that a stack overflow shows as an `ASan` report and
+///    not as a signal.
+/// 2. The plain build (on mimalloc) and the `-O2` build (on the System allocator, for Valgrind)
+///    exit 0 and agree.
+/// 3. The three `ASan` builds print what the plain builds print.
+/// 4. The `-O2` build runs once under Valgrind, which finds no leak or memory error.
+/// 5. An `-O2` build on mimalloc (`MIMALLOC_O2`) prints the same: it is the only build of `-O2`
+///    code on the allocator that users get.
+///
+/// On macOS, `ASan` and Valgrind do not run. The plain and `-O2` builds run natively, then a
+/// `--rc-checks` build, which finds no count fault or live object at exit, prints the same.
+///
+/// Stderr is empty, unless `<name>.err` exists: then the stderr of every run but the Valgrind run
+/// is that file. The Valgrind run's stderr holds Valgrind's own log, so it is never compared.
 /// Every run reads `<name>.in` on its standard input, or empty input without one, and gets the
 /// arguments of the case's `// args:` line.
 /// Each `// o2-calls:` and `// o2-indirect-calls:` marker in the case must hold in the `-O2` IR
@@ -236,21 +262,29 @@ fn output_with_stdin(command: &mut Command, stdin: &[u8]) -> Output {
 /// With `bless`, rewrites `<name>.out`, and `<name>.err` when it exists, instead, after every
 /// other check passed.
 pub(crate) fn run(path: &Path, bless: bool) {
+    run_with(path, bless, Path::new("valgrind"));
+}
+
+/// `run`, with `valgrind` as the Valgrind program.
+pub(crate) fn run_with(path: &Path, bless: bool, valgrind: &Path) {
+    let linux = cfg!(target_os = "linux");
     let out_dir = case_dir(path);
-    let [o0, o2, rc] = build_into(path, &out_dir, [VALGRIND_O0, VALGRIND_O2, RC_CHECKS]);
-    let rc_valgrind = cfg!(target_os = "linux").then(|| {
-        let [exe] = build_into(path, &out_dir, [VALGRIND_RC]);
-        exe
-    });
-    // On macOS, `o2` is on mimalloc already, so there is no further build.
-    let mimalloc = cfg!(target_os = "linux").then(|| {
+    // On macOS, `VALGRIND_O2` is the `-O2` build on mimalloc, and `O0` is the plain build.
+    let [o0, o2] = build_into(path, &out_dir, [O0, VALGRIND_O2]);
+    let asan_builds = linux.then(|| build_into(path, &out_dir, [ASAN_O0, ASAN_O2, ASAN_RC]));
+    // The last build to run: on Linux the `-O2` build on mimalloc, on macOS the `--rc-checks` one.
+    let [last] = if linux {
         let [exe] = build_into(path, &out_dir, [MIMALLOC_O2]);
         require_mimalloc(&exe);
-        exe
-    });
+        [exe]
+    } else {
+        build_into(path, &out_dir, [RC_CHECKS])
+    };
+    // On macOS, `o2` is on mimalloc already.
+    let optimized = if linux { &last } else { &o2 };
     assert!(
         fs::read(&o0).expect("reads the plain build")
-            != fs::read(&o2).expect("reads the -O2 build"),
+            != fs::read(optimized).expect("reads the -O2 build"),
         "{}: -O2 build is identical to the plain build",
         path.display()
     );
@@ -259,19 +293,22 @@ pub(crate) fn run(path: &Path, bless: bool) {
     let invocation = Invocation::of(path);
     let err_path = path.with_extension("err");
     let expects_stderr = err_path.exists();
+    // The first program that runs, see above.
+    let asan: Vec<(&PathBuf, Output)> = asan_builds
+        .iter()
+        .flatten()
+        .map(|exe| {
+            let out = invocation.run_asan(exe);
+            assert_exits_zero(exe, &out);
+            (exe, out)
+        })
+        .collect();
     let [out0, out2] = [&o0, &o2].map(|exe| {
         let out = invocation.run(exe, false);
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        assert_eq!(
-            out.status.code(),
-            Some(0),
-            "{}: {:?}\n{stderr}",
-            exe.display(),
-            out.status
-        );
+        assert_exits_zero(exe, &out);
         if !expects_stderr {
             assert_eq!(
-                stderr,
+                String::from_utf8_lossy(&out.stderr),
                 "",
                 "{}: writes to stderr, and the case has no `.err` file",
                 exe.display()
@@ -281,55 +318,68 @@ pub(crate) fn run(path: &Path, bless: bool) {
     });
     let stdout = agreed(path, "stdout", &out0.stdout, &out2.stdout);
     let stderr = agreed(path, "stderr", &out0.stderr, &out2.stderr);
-    // macOS has no Valgrind, and the native runs above already checked these builds.
-    if cfg!(target_os = "linux") {
-        for exe in [o0, o2].into_iter().chain(rc_valgrind) {
-            let checked = invocation.run(&exe, true);
-            let valgrind_stderr = String::from_utf8_lossy(&checked.stderr);
-            assert_eq!(
-                checked.status.code(),
-                Some(0),
-                "{}: {valgrind_stderr}",
-                exe.display()
-            );
-            // shortcut: Valgrind 3.26 runs arm64 FMINNM and FMAXNM as FMIN and FMAX
-            // (VEX/priv/guest_arm64_toIR.c:32), so `min` or `max` of a `nan` prints `nan` under it;
-            // compare stdout on aarch64 again once a Valgrind release fixes that.
-            if !cfg!(target_arch = "aarch64") {
-                assert_eq!(
-                    String::from_utf8_lossy(&checked.stdout),
-                    stdout,
-                    "{}: {valgrind_stderr}",
-                    exe.display()
-                );
-            }
-        }
+    for (exe, out) in &asan {
+        assert_same_streams(exe, out, &stdout, &stderr);
     }
-    // The `--rc-checks` build and the `-O2` build on mimalloc.
-    for exe in std::iter::once(&rc).chain(&mimalloc) {
-        let checked = invocation.run(exe, false);
-        let checked_stderr = String::from_utf8_lossy(&checked.stderr);
+    // macOS has no Valgrind, and the native runs above already checked these builds.
+    if linux {
+        let checked = invocation.run_under(&o2, valgrind);
+        let valgrind_stderr = String::from_utf8_lossy(&checked.stderr);
         assert_eq!(
             checked.status.code(),
             Some(0),
-            "{}: {:?}\n{checked_stderr}",
-            exe.display(),
-            checked.status
+            "{}: {valgrind_stderr}",
+            o2.display()
         );
-        assert_eq!(checked_stderr, stderr, "{}", exe.display());
-        assert_eq!(
-            String::from_utf8_lossy(&checked.stdout),
-            stdout,
-            "{}",
-            exe.display()
-        );
+        // shortcut: Valgrind 3.26 runs arm64 FMINNM and FMAXNM as FMIN and FMAX
+        // (VEX/priv/guest_arm64_toIR.c:32), so `min` or `max` of a `nan` prints `nan` under it;
+        // compare stdout on aarch64 again once a Valgrind release fixes that.
+        if !cfg!(target_arch = "aarch64") {
+            assert_eq!(
+                String::from_utf8_lossy(&checked.stdout),
+                stdout,
+                "{}: {valgrind_stderr}",
+                o2.display()
+            );
+        }
     }
+    let out = invocation.run(&last, false);
+    assert_exits_zero(&last, &out);
+    assert_same_streams(&last, &out, &stdout, &stderr);
     // Last, so that a run failing any check above writes nothing.
     let mut files = vec![(path.with_extension("out"), stdout)];
     if expects_stderr {
         files.push((err_path, stderr));
     }
     expect_files(&files, bless);
+}
+
+/// Panics unless `out`, the output of `exe`, shows exit code 0.
+fn assert_exits_zero(exe: &Path, out: &Output) {
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}: {:?}\n{}",
+        exe.display(),
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Panics unless `out`, the output of `exe`, holds `stdout` on stdout and `stderr` on stderr.
+fn assert_same_streams(exe: &Path, out: &Output, stdout: &str, stderr: &str) {
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr),
+        stderr,
+        "{}",
+        exe.display()
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        stdout,
+        "{}",
+        exe.display()
+    );
 }
 
 /// Checks a `tests/run-fail` case: both builds exit 101, agree, and print `<name>.out` on stdout
@@ -547,6 +597,9 @@ pub(crate) fn fixture(test: &str, files: &[(&str, &str)]) -> PathBuf {
 
 /// The builds `build` makes: the executable's name in the case directory, and `sisu`'s flags.
 pub(crate) type Build = (&'static str, &'static [&'static str]);
+pub(crate) const ASAN_O0: Build = ("asan-O0", &["--sanitize", "address"]);
+pub(crate) const ASAN_O2: Build = ("asan-O2", &["--sanitize", "address", "-O2"]);
+pub(crate) const ASAN_RC: Build = ("asan-rc", &["--sanitize", "address", "--rc-checks"]);
 const O0: Build = ("O0", &[]);
 const O2: Build = ("O2", &["-O2"]);
 pub(crate) const RC_CHECKS: Build = ("rc", &["--rc-checks"]);
@@ -554,8 +607,9 @@ pub(crate) const RC_CHECKS: Build = ("rc", &["--rc-checks"]);
 /// build: without it, no Linux case runs `-O2` code on mimalloc, the allocator that users get.
 /// On macOS `VALGRIND_O2` is this build already.
 pub(crate) const MIMALLOC_O2: Build = ("O2-mimalloc", &["-O2"]);
-/// `--rc-checks` on the System allocator, for `run` on Linux, where Valgrind checks it as it
-/// checks `VALGRIND_O0`. Its stderr is Valgrind's own log, and is not compared. On macOS Valgrind
+/// `--rc-checks` on the System allocator, for a test that runs a count-checked build under
+/// Valgrind on Linux, as it runs `VALGRIND_O0`. `run` does not build it: there, `ASAN_RC` checks
+/// the counted build. Its stderr is Valgrind's own log, and is not compared. On macOS Valgrind
 /// does not run, and `RC_CHECKS` is this build already.
 pub(crate) const VALGRIND_RC: Build = (
     "rc-valgrind",
@@ -565,7 +619,9 @@ pub(crate) const VALGRIND_RC: Build = (
         &["--rc-checks"]
     },
 );
-/// `O0` and `O2` for `run`, whose plain builds also run under Valgrind.
+/// `O0` and `O2` for a test that runs a plain build under Valgrind on Linux, on the System
+/// allocator. `run` builds `VALGRIND_O2` and runs it once under Valgrind, but its plain build
+/// is `O0`, on mimalloc.
 pub(crate) const VALGRIND_O0: Build = ("O0", VALGRIND_FLAGS);
 // Repeats `VALGRIND_FLAGS`' values after `-O2`, and must stay in step with them: a const cannot
 // concatenate slices.

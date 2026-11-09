@@ -647,7 +647,8 @@ so it does not wait for the later goals:
   LLVM's `Linux-X64`, `Linux-ARM64` or `macOS-ARM64` build by `uname -s` and
   `uname -m`. CI's "Test (ARM64)" job runs the tests on an `ubuntu-26.04-arm`
   runner and "Test (macOS)" on a `macos-26` runner, on each push to `main`.
-  macOS has no Valgrind, so leaks are checked on Linux only, and the tests
+  macOS has no Valgrind and no ASan run, so leaks are checked on Linux. On
+  macOS, the `--rc-checks` run finds only an object still live at exit. The tests
   that need `/dev/full`, GNU ld or gcc run only on Linux. LLVM publishes no
   build for Intel Macs.
 - A `--leaks` build mode that finds reference cycles (ADR 0008). The runtime

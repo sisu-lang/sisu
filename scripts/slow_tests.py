@@ -20,8 +20,9 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 # Seconds on a GitHub-hosted runner. A unit test runs in-process. An end-to-end test spawns sisu,
-# links, and may run under Valgrind. A `tests/run` case, with its builds and Valgrind runs, takes
-# about 2 s.
+# links, and may run under ASan or Valgrind. A `tests/run` case has six builds, three ASan runs
+# and one Valgrind run. It took 1.5 s at the median of 367 cases, in one local `make test` on
+# x86-64 Linux. That is not a time on a GitHub runner.
 UNIT_BUDGET = 1.0
 END_TO_END_BUDGET = 4.0
 

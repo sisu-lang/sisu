@@ -852,3 +852,7 @@ _Avoid_: nightly (alone), release (alone), snapshot
 
 **Install line**:
 The `curl | sh` command that runs `install.sh` from `releases/latest/download/`.
+
+**Sanitized build**:
+An executable built with `--sanitize`. When it runs, it reports memory errors
+and leaks.
