@@ -189,6 +189,8 @@ fn constant(e: &Expr, counted: impl Fn(Type) -> bool) -> Option<Const> {
 
 /// The local that `e` reads whole.
 fn local_of(e: &Expr) -> Option<LocalId> {
+    #[cfg(test)]
+    LOCAL_OF_READS.set(LOCAL_OF_READS.get() + 1);
     if let ExprKind::Local(local) = e.kind {
         Some(local)
     } else {
@@ -1702,6 +1704,13 @@ thread_local! {
     /// How many construction counters (`Lowering::built`) the last function lowered on this
     /// thread held.
     pub(super) static COUNTERS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many times lowering has looked at the local that an expression reads whole
+    /// (`local_of`) on this thread. Every look at the local of an interpolation part goes
+    /// through it, so a scan of the other parts for each part ticks.
+    pub(super) static LOCAL_OF_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many entries of `Mentions::at` the count of the mentions of a local in a run of
+    /// siblings has read on this thread: each probe of its binary search.
+    pub(super) static MENTION_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// `mentions` of `e`'s own node and its children.

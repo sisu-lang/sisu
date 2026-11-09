@@ -109,11 +109,95 @@ fn variant_args_should_be_trimmed_and_taken_in_order() {
     );
 }
 
-/// `Interpolate` evaluates its parts left to right: only the last one's read may move.
+/// `Interpolate` reads its parts and consumes none of them. So a parameter that a function only
+/// interpolates is borrowed, and each part reads it in place. `concat_lhs_then_rhs` keeps the
+/// left-to-right contract for `Concat`, which does consume its operands.
 #[test]
-fn interpolate_parts_left_to_right() {
+fn interpolating_a_borrowed_parameter_should_read_it_in_place() {
     let printed = built("fn f(s: string) -> string { \"{s}{s}\" }");
-    has(&printed, "f", &["_ = copy s#0", "interp(move _, move s#0)"]);
+    has(
+        &printed,
+        "f",
+        &["fn f(s#0: borrow string)", "_ = interp(s#0, s#0)"],
+    );
+    assert!(!function(&printed, "f").contains("copy"), "{printed}");
+}
+
+/// A local that an interpolation reads is not consumed: live after, every part reads it in place;
+/// at its last use, the statement moves it into one temporary once, whatever the number of parts,
+/// and releases it after. The record of that temporary ends with the statement, so the next
+/// statement that reads the same local moves it again into a new temporary.
+#[test]
+fn interpolating_a_local_should_move_it_once_for_each_statement() {
+    // Each row: the program, what its `main` holds in order, and what it never holds.
+    let rows: [(&str, &str, &[&str], &[&str]); 3] = [
+        (
+            "case 1: a last use",
+            "fn main() {\n    let x = \"a\" + \"b\"\n    let t = \"{x}{x}{x}\"\n    print(t)\n}",
+            &["_ = move x#0", "interp(_, _, _)", "release _"],
+            &["copy x#0"],
+        ),
+        (
+            "case 2: live after",
+            "fn main() {\n    let x = \"a\" + \"b\"\n    let t = \"{x}{x}{x}\"\n    print(t)\n    print(x)\n}",
+            &["interp(x#0, x#0, x#0)"],
+            &["copy x#0"],
+        ),
+        (
+            "case 15: the same local in two statements in a row",
+            "fn main() {\n    let mut w = \"w\" + \"1\"\n    w = \"{w}{w}\"\n    print(\"{w}{w}\")\n}",
+            &[
+                "_ = move w#0",
+                "_ = interp(_, _)",
+                "release _",
+                "w#0 = move _",
+                "_ = move w#0",
+                "_ = interp(_, _)",
+                "release _",
+            ],
+            &["copy w#0"],
+        ),
+    ];
+    for (row, src, want, never) in rows {
+        let f = function(&built(src), "main");
+        let mut from = 0;
+        for part in want {
+            let at = f[from..]
+                .find(part)
+                .unwrap_or_else(|| panic!("{row}: `{part}` after byte {from} of\n{f}"));
+            from += at + part.len();
+        }
+        for part in never {
+            assert!(!f.contains(part), "{row}: `{part}` in\n{f}");
+        }
+    }
+    // One move of `x` in case 1, and two of `w` in case 15, into two different temporaries.
+    let printed = built(rows[0].1);
+    assert_eq!(
+        count(&printed, "main", "= move x#0"),
+        1,
+        "case 1: {printed}"
+    );
+    let printed = built(rows[2].1);
+    assert_eq!(
+        count(&printed, "main", "= move w#0"),
+        2,
+        "case 15: {printed}"
+    );
+    let moves: Vec<&str> = printed
+        .lines()
+        .filter(|line| line.contains("= move w#0"))
+        .map(|line| {
+            line.trim()
+                .split(' ')
+                .next()
+                .expect("a statement has a dest")
+        })
+        .collect();
+    assert_ne!(
+        moves[0], moves[1],
+        "case 15: one temporary twice in\n{printed}"
+    );
 }
 
 /// `Concat` evaluates its left operand, then its right: only the right one's read may move.

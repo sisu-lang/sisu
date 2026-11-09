@@ -1,7 +1,9 @@
+use std::fmt::Write as _;
+
 use rustc_hash::FxHashMap;
 
 use super::*;
-use crate::mir::lower::{ARM_STEPS, Mentions, WALKED};
+use crate::mir::lower::{ARM_STEPS, LOCAL_OF_READS, MENTION_PROBES, Mentions, WALKED};
 use crate::mir::print::EXAMINED;
 
 /// Calls run in source order, and an `i64` is returned by a read, not moved.
@@ -296,6 +298,117 @@ fn chain(objects: usize) -> String {
         "class C {{\n    next: C?\n    mut items: [i64]?\n}}\nfn f(c: C?) {{ c{}?.items?.push(1) }}",
         "?.next".repeat(objects)
     )
+}
+
+/// A part that a later part changes is read into a temporary before that part. A part that
+/// nothing later changes is read in place. Row 5: `bump` changes `x`, so the first `{x}` reads a
+/// copy. The last `{x}` is the only bare one, at the last use of `x`: it moves into a temporary,
+/// which is the last operand. Row 6: `eat` consumes `y`, so both `{y}` read a copy. Row 14 is
+/// green before and after the fix, and guards it: an uncounted part is pinned against the later
+/// parts of the same interpolation. Pinning each part against no later part prints `11011` for
+/// row `n` in place of `1011`. The first operand is then `n#..` and not a temporary.
+#[test]
+fn a_part_that_a_later_part_changes_should_be_pinned() {
+    let printed = built(
+        "fn bump(mut s: string) -> i64 {\n    s = s + \"!\"\n    1\n}\n\
+         fn eat(s: string) -> i64 { s.len() }\n\
+         fn inc(mut n: i64) -> i64 {\n    n += 10\n    0\n}\n\
+         fn row5() {\n    let mut x = \"a\" + \"b\"\n    let t = \"{x}{bump(mut x)}{x}\"\n    print(t)\n}\n\
+         fn row6() {\n    let y = \"c\" + \"d\"\n    let u = \"{y}{y}{eat(y)}\"\n    print(u)\n}\n\
+         fn row14n() {\n    let mut n = 1\n    let s = \"{n}{inc(mut n)}{n}\"\n    print(s)\n}\n\
+         fn row14m() {\n    let mut m = 1\n    let t = \"{m}{ { m = 7; 0 } }{m}\"\n    print(t)\n}\n\
+         fn row14f() {\n    let mut f = 1.5\n    let u = \"{f}{ { f = 2.5; 0 } }\"\n    print(u)\n}\n\
+         fn main() {}",
+    );
+    let raw = |name: &str| {
+        let start = printed
+            .find(&format!("fn {name}("))
+            .unwrap_or_else(|| panic!("no function {name} in {printed}"));
+        let rest = &printed[start..];
+        rest[..rest.find("\n}").expect("a function ends with a brace")].to_owned()
+    };
+    // Row 5: a copy before the call, and a move of `x` into the last operand.
+    let f = raw("row5");
+    has(
+        &printed,
+        "row5",
+        &["= copy x#0", "call bump(", "= move x#0", "interp("],
+    );
+    let moved = f
+        .lines()
+        .find(|line| line.contains("= move x#0"))
+        .and_then(|line| line.trim().split(' ').next())
+        .unwrap_or_else(|| panic!("row 5: no move of `x` in\n{f}"));
+    let interp = f
+        .lines()
+        .find(|line| line.contains("interp("))
+        .unwrap_or_else(|| panic!("row 5: no interp in\n{f}"));
+    assert!(
+        interp.ends_with(&format!(", {moved})")),
+        "row 5: {interp} in\n{f}"
+    );
+    // Row 6: both parts read a copy.
+    let f = raw("row6");
+    assert_eq!(f.matches("= copy y#").count(), 2, "row 6: {f}");
+    // Row 14: the first operand is a temporary.
+    for (row, name) in [("n", "row14n"), ("m", "row14m"), ("f", "row14f")] {
+        let f = raw(name);
+        let interp = f
+            .lines()
+            .find(|line| line.contains("interp("))
+            .unwrap_or_else(|| panic!("row 14 {row}: no interp in\n{f}"));
+        let first = interp
+            .split("interp(")
+            .nth(1)
+            .expect("an interp has operands");
+        assert!(first.starts_with('_'), "row 14 {row}: {interp} in\n{f}");
+    }
+}
+
+/// Lowering an interpolation takes steps in proportion to its parts. `LOCAL_OF_READS` counts the
+/// looks at the local of an expression: the rule for a bare part must not scan the other parts
+/// for each part. `MENTION_PROBES` counts the reads of `Mentions::at` in the count of the
+/// mentions of a local in the later parts: a binary search, two for each bare part. Row
+/// `distinct` is the worst input for the scan, `k + 1` locals each read once. Row `pinned` is the
+/// worst input for the count: every bare part of `x` has a later part that mentions `x`.
+#[test]
+fn interpolation_parts_should_lower_in_linear_steps() {
+    let distinct = |k: usize| {
+        let mut lets = String::new();
+        let mut parts = String::new();
+        for i in 0..=k {
+            writeln!(lets, "    let a{i} = \"v\" + \"w\"").expect("a string takes a write");
+            write!(parts, "{{a{i}}}").expect("a string takes a write");
+        }
+        format!("fn main() {{\n{lets}    let t = \"{parts}\"\n    print(t)\n}}")
+    };
+    let pinned = |k: usize| {
+        let parts = "{x}{x.len()}".repeat(k + 1);
+        format!(
+            "fn main() {{\n    let x = \"a\" + \"b\"\n    let t = \"{parts}\"\n    print(t)\n}}"
+        )
+    };
+    let steps = |src: String| {
+        let program = checked(&src);
+        LOCAL_OF_READS.set(0);
+        MENTION_PROBES.set(0);
+        drop(lowered_of(&program));
+        (LOCAL_OF_READS.get(), MENTION_PROBES.get())
+    };
+    let shapes: [(&str, &dyn Fn(usize) -> String); 2] =
+        [("distinct", &distinct), ("pinned", &pinned)];
+    for (shape, source) in shapes {
+        // 50, 100 and 150 parts, the sizes `n`, `2n` and `3n` that the assertions take.
+        let [(reads, probes), (reads2, probes2), (reads3, probes3)] =
+            [50, 100, 150].map(|k| steps(source(k)));
+        assert_near_linear_for(&format!("{shape}, local_of reads: "), reads, reads2, reads3);
+        assert_near_linear_for(
+            &format!("{shape}, mention probes: "),
+            probes,
+            probes2,
+            probes3,
+        );
+    }
 }
 
 /// The checker spills `"a"` into a local before the operand that can return, and the return
@@ -953,22 +1066,26 @@ fn break_without_a_value_edge_makes_no_exit() {
     }
 }
 
-/// An interpolation consumes its parts, so a local that is used again is copied once, whether it
-/// is a `string` (`"{s}"`) or a compound value (`"{e}"`): one retain and one release.
+/// An interpolation reads its parts and consumes none of them. A local of the function that is
+/// used again is not copied, whether it is a `string` (`"{s}"`) or a compound value (`"{e}"`).
+/// Each row is a local, not a parameter: a borrowed parameter has no copy for any rule.
 #[test]
-fn interpolating_a_compound_local_should_copy_it_once() {
+fn interpolating_a_compound_local_should_not_copy_it() {
     let decls = "enum Expr {\n    Num(i64)\n    Add(Expr, Expr)\n}\n";
-    for (ty, name) in [("string", "s"), ("Expr", "e")] {
+    for (ty, name, init) in [
+        ("string", "s", "\"a\" + \"b\""),
+        ("Expr", "e", "Expr.Add(Expr.Num(1), Expr.Num(2))"),
+    ] {
         let src = format!(
-            "{decls}fn f({name}: {ty}) -> string {{\n    let t = \"{{{name}}}\"\n    print({name})\n    t\n}}\nfn main() {{}}"
+            "{decls}fn f() -> string {{\n    let {name} = {init}\n    let t = \"{{{name}}}\"\n    print({name})\n    t\n}}\nfn main() {{}}"
         );
         let f = function(&built(&src), "f");
         assert_eq!(
             f.matches(&format!("= copy {name}#0")).count(),
-            1,
+            0,
             "{ty}: {f}"
         );
-        assert!(f.contains("interp("), "{ty}: {f}");
+        assert!(f.contains(&format!("interp({name}#0)")), "{ty}: {f}");
         assert!(!f.contains("[calls]"), "{ty}: {f}");
     }
 }
@@ -1085,17 +1202,29 @@ fn a_pattern_under_a_boxed_optional_field_should_test_presence_then_the_tag() {
 }
 
 /// Under a boxed `T?` field the box stays in the rest: each counted binding under it is
-/// copied once, though two alternatives bind it, and an uncounted one is not copied.
+/// copied once, though two alternatives bind it, and an uncounted one is not copied. The arm
+/// consumes `s` with a `+`, which copies a binding that the `match` borrows.
 #[test]
 fn a_binding_under_a_boxed_optional_field_should_be_copied_once() {
     let printed = built(
-        "enum T {\n    End\n    Next(T?, string, i64)\n}\nfn f(t: T) -> string {\n    match t {\n        Next(Some(Next(None, s, n) | Next(Some(_), s, n)), _, _) => \"{s}{n}\"\n        _ => \"\"\n    }\n}",
+        "enum T {\n    End\n    Next(T?, string, i64)\n}\nfn f(t: T) -> string {\n    match t {\n        Next(Some(Next(None, s, n) | Next(Some(_), s, n)), _, _) => s + \"{n}\"\n        _ => \"\"\n    }\n}",
     );
     let f = function(&printed, "f");
     assert_eq!(f.matches(" = copy s#").count(), 1, "{f}");
     assert!(!f.contains(" = copy n#"), "a copy of `n` in\n{f}");
     assert!(!f.contains("token"), "a token in\n{f}");
     has(&printed, "f", &["take_apart _: rest _"]);
+}
+
+/// An interpolation reads a binding that the `match` borrows in place: it takes no copy of it.
+#[test]
+fn interpolating_a_borrowed_binding_should_not_copy_it() {
+    let printed = built(
+        "enum T {\n    End\n    Next(T?, string, i64)\n}\nfn f(t: T) -> string {\n    match t {\n        Next(Some(Next(None, s, n) | Next(Some(_), s, n)), _, _) => \"{s}{n}\"\n        _ => \"\"\n    }\n}",
+    );
+    let f = function(&printed, "f");
+    assert!(f.contains("interp(s#1, n#2)"), "{f}");
+    assert!(!f.contains(" = copy s#"), "a copy of `s` in\n{f}");
 }
 
 /// A conversion to `any` consumes its operand, and the call `s.area()` reads a temporary that owns
