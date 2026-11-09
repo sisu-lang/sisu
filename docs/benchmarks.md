@@ -509,14 +509,16 @@ check when its tool is not on `PATH`. It needs `perf` for the last column.
 `make scaling` finds the programs for which a compiler stage costs more than
 a fixed amount for each unit of input. A shape is a kind of program that
 grows in one direction, such as more functions, deeper nesting or more match
-arms. `scripts/scaling.py` builds each of 31 shapes into an executable at
+arms. `scripts/scaling.py` builds each of 32 shapes into an executable at
 size 0 and at four sizes that double: n, 2n, 4n and 8n. Each build has one
 codegen unit. It counts the instructions of each stage under callgrind: `lex`,
 `parse`, `check`, `mono`, `mir`, `codegen`, `optimize` (the LLVM passes) and
 `object` (the machine code). The shapes in `O2_SHAPES` are also built at `-O2`,
 as the case `<shape> -O2`. A `-O2` case judges only `codegen`, `optimize` and
-`object`, because the stages before them do the same work at each level. The
-count does not depend on the load of the machine. It also changes a little with
+`object`, because the stages before them do the same work at each level. A
+shape in `CHECK_ONLY` tests the path of an error. Each of its programs above
+size 0 must give a diagnostic. Callgrind measures `sisu check` on it, and the
+stages after `check` count 0. The count does not depend on the load of the machine. It also changes a little with
 the file paths and the C library. So on another machine, such as the runner of
 the nightly job, a ratio near a number of the rule can fall on the other side.
 It needs `valgrind`, and a full run takes about 12 minutes on the machine

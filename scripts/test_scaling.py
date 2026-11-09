@@ -318,15 +318,21 @@ def script(path: Path, text: str) -> None:
 
 
 def stubs(
-    tmp: Path | str, check: str = "", annotate: str = ANNOTATE, *, valgrind: bool = True
+    tmp: Path | str,
+    check: str = "",
+    annotate: str = ANNOTATE,
+    *,
+    valgrind: bool = True,
+    check_exit: str = "1",
 ) -> str:
     """Writes stub `sisu`, `valgrind` and `callgrind_annotate` in `tmp/bin`; returns that PATH.
 
-    `check` is shell text that runs first for each call of the stub `sisu`. A stub exits with
+    `check` is shell text that runs first for each call of the stub `sisu`. `check_exit` is the
+    exit code of `sisu check` under valgrind at each size above 0. A stub exits with
     code 2 when its arguments are not the ones that the script must give:
     `sisu check FILE`, `valgrind --tool=callgrind --callgrind-out-file=FILE SISU build [-O2]
-    --codegen-units 1 FILE -o OUT` and `callgrind_annotate --inclusive=yes --threshold=100
-    --show=Ir --auto=no FILE`.
+    --codegen-units 1 FILE -o OUT`, the same valgrind command with `check FILE` and
+    `callgrind_annotate --inclusive=yes --threshold=100 --show=Ir --auto=no FILE`.
     """
     tmp = Path(tmp)
     bin_dir = tmp / "bin"
@@ -347,11 +353,17 @@ def stubs(
             bin_dir / "valgrind",
             f'echo "valgrind $*" >> {log}\n'
             'case "$1" in --version) echo valgrind-3.22.0; exit 0;; esac\n'
-            f'[ "$1" = --tool=callgrind ] && [ "$4" = build ] || {{ {bad}; }}\n'
-            'out="$2"; shift 4; [ "$1" = -O2 ] && shift\n'
+            f'[ "$1" = --tool=callgrind ] || {{ {bad}; }}\n'
+            'out="$2"; command="$4"; shift 4\n'
+            'case "$out" in --callgrind-out-file=*) : > "${out#*=}";; *) ' + bad + ";; esac\n"
+            'if [ "$command" = check ]; then\n'
+            f"  [ $# -eq 1 ] || {{ {bad}; }}\n"
+            f'  case "$1" in *size-0.sisu) exit 0;; *) exit {check_exit};; esac\n'
+            "fi\n"
+            f'[ "$command" = build ] || {{ {bad}; }}\n'
+            '[ "$1" = -O2 ] && shift\n'
             '[ $# -eq 5 ] && [ "$1 $2" = "--codegen-units 1" ] && [ "$4" = -o ] '
             f"|| {{ {bad}; }}\n"
-            'case "$out" in --callgrind-out-file=*) : > "${out#*=}";; *) ' + bad + ";; esac\n"
             "exit 0\n",
         )
     script(
@@ -630,7 +642,7 @@ class ScalingTest(unittest.TestCase):
         self.assertIn("scaling: cannot write the report", err)
 
     def test_each_shape_should_have_its_size_in_its_structure(self) -> None:
-        """GIVEN the 31 shapes
+        """GIVEN the 32 shapes
         WHEN each makes its program at size k
         THEN the repeated part of the program has a size of base + k
         AND the base is what the program at size 0 needs to check clean
@@ -668,6 +680,7 @@ class ScalingTest(unittest.TestCase):
             ("prints", 250),
             ("mutable locals", 250),
             ("nested array ==", 5),
+            ("failed bounds", 64),
         ]
         self.assertEqual([(name, n) for name, (n, _) in sc.SHAPES.items()], sizes)
 
@@ -730,6 +743,7 @@ class ScalingTest(unittest.TestCase):
             "prints": (lambda t: t.count("print(1)"), 0),
             "mutable locals": (lambda t: min(t.count("let mut"), t.count("+= 1")), 0),
             "nested array ==": (lambda t: depth(line(t, "let a"), "[", "]"), 0),
+            "failed bounds": (lambda t: min(t.count("type U"), t.count("C<i64>")), 0),
         }
         self.assertEqual(list(parts), list(sc.SHAPES))
         for name, (_, make) in sc.SHAPES.items():
@@ -739,7 +753,7 @@ class ScalingTest(unittest.TestCase):
                     self.assertEqual(measure(make(k)), base + k)
 
     def test_text_of_each_shape_should_grow_linearly_with_its_size(self) -> None:
-        """GIVEN the 31 shapes at their sizes 0, n, 2n, 4n and 8n
+        """GIVEN the 32 shapes at their sizes 0, n, 2n, 4n and 8n
         WHEN the bytes of each program are counted
         THEN the growth in bytes at each size is below 2.01 times the growth at half that size
         """
@@ -753,6 +767,40 @@ class ScalingTest(unittest.TestCase):
             for i in (2, 3, 4):
                 with self.subTest(shape=name, size=sizes[i]):
                     self.assertLess(growth[i] / growth[i - 1], 2.01)
+
+    def test_a_check_only_shape_should_measure_check_and_expect_its_diagnostics(self) -> None:
+        """GIVEN a shape whose programs give a diagnostic at each size above 0
+        WHEN it is measured
+        THEN only `sisu check` runs, under callgrind, and no build runs
+        AND the stages after `check` count 0, so the run passes
+        """
+        code, _, err = self.stub_run("failed bounds")
+        self.assertEqual(code, 0, err)
+        self.assertIn(" check ", self.log())
+        self.assertNotIn(" build ", self.log())
+        self.assertNotIn("\nsisu check", "\n" + self.log())
+        counts = json.loads((self.out / "counts.json").read_text())
+        stages = counts["shapes"]["failed bounds"]["counts"]
+        self.assertEqual(stages["mono"], [0] * 5)
+        self.assertGreater(stages["check"][4], 0)
+
+    def test_a_check_only_shape_should_fail_when_a_program_gives_no_diagnostic(self) -> None:
+        """GIVEN a shape whose program checks clean at a size above 0
+        WHEN it is measured
+        THEN the run fails, because it would measure no failed bound
+        """
+        code, _, err = self.stub_run("failed bounds", check_exit="0")
+        self.assertEqual(code, 1)
+        self.assertIn("failed bounds, size 64", err)
+
+    def test_a_check_only_shape_should_fail_when_sisu_crashes(self) -> None:
+        """GIVEN `sisu check` that exits with 101, as a panic does
+        WHEN a check-only shape is measured
+        THEN the run fails, and the crash does not count as the diagnostic
+        """
+        code, _, err = self.stub_run("failed bounds", check_exit="101")
+        self.assertEqual(code, 1)
+        self.assertIn("exit code 101", err)
 
     def test_stage_counts_should_read_each_stage_from_its_own_line(self) -> None:
         """GIVEN callgrind output with a line for each stage function and a closure of `check::check`
