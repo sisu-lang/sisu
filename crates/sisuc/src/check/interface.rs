@@ -389,9 +389,9 @@ impl Checker<'_> {
         self.interfaces[id.0].inherits = inherits;
         self.interfaces[id.0].inherits_at = inherits_at;
         self.interfaces[id.0].inherits_failed = inherits_failed;
-        // A read in the list found closures before the flag was set, and a closure is scanned for
-        // the flag once, when it is found. So forget them, and what they gave. `unknown_assoc`
-        // stays, because an entry found here stays true.
+        // A read in the list found closures before the flag was set. A closure entry is scanned
+        // for the flag once, when it is added. So forget the closures, and what they gave.
+        // `unknown_assoc` stays, because an entry found here stays true.
         self.body.forget_bounds(self.body.bounds.len());
         self.body.assoc_conforming.clear();
         for (k, assoc) in declared.iter().enumerate() {
@@ -751,7 +751,12 @@ impl Checker<'_> {
             // bound, for each bound that is declared. The bounds that wait for this parameter wait
             // for the bound that is past the limit too (see `Waits`), so none reads the closure
             // before it is made again.
+            let before = out.len();
             let _ = self.extend_closure(receiver, &[bound], &mut out, seen, |_, _| {});
+            // Only the added entries are new: the scan follows them, not the whole closure.
+            if self.closure_inherits_failed(&out[before..]) && !self.body.unknown.contains(&place) {
+                self.body.unknown.push(place);
+            }
             self.body.conforming[place] = Some(out);
         }
     }
