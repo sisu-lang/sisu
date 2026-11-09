@@ -28,11 +28,12 @@ are skipped, and `make coverage`, `make mutation-test`, `make fuzz`,
   [cargo-mutants](https://mutants.rs) for the commands below.
 - [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) for
   `scripts/coverage.sh`.
-- On Linux, Valgrind, and a `cc` that links `-fsanitize=address`, which needs
-  the ASan runtime (`libasan`) that goes with GCC. The end-to-end tests run
-  each program under AddressSanitizer (ASan), and once under Valgrind, to
-  catch leaks and memory errors. macOS has neither, so there the tests run
-  each program natively and do not check for leaks.
+- On Linux, Valgrind, and a `cc` that links `-fsanitize=address`. That needs
+  the ASan runtime of the C compiler that `cc` runs: `libasan` for GCC,
+  compiler-rt for Clang. The end-to-end tests run each program under
+  AddressSanitizer (ASan), and once under Valgrind, to catch leaks and memory
+  errors. macOS has neither. There the tests run each program natively, and
+  the `--rc-checks` run finds an object that is still live at exit.
 - For `make miri`, a nightly toolchain with Miri:
   `rustup toolchain install nightly --component miri --component rust-src`.
 - [uv](https://docs.astral.sh/uv/), for `make site`, which builds the website.
@@ -175,16 +176,17 @@ run shows its report and names its build. A stack overflow shows as an ASan
 `stack-overflow` report and not as signal 11. The comparison of stderr in step
 3 is stronger than the Valgrind check, which never compares stderr.
 
-ASan and Valgrind find different faults, so the cases use both. ASan finds
-what Valgrind finds. It also finds an overrun of a stack array or of a global,
-and a use of a stack variable after its function returns. It costs far less CPU
-than Valgrind. Only Valgrind finds a read of uninitialized memory. So the `-O2`
-build runs once under Valgrind. That run misses an uninitialized read that only `-O0` code shows,
-and one in a `--rc-checks` build. The harness runs the 15 programs of
+ASan and Valgrind find different faults, so the cases use both. Both find a
+leak, a use after free and an overrun of a heap block. ASan also finds an
+overrun of a global. It finds an overrun of a stack array only at `-O0`. It also
+finds a use of a stack variable after its function returns. ASan costs far less CPU than
+Valgrind. Only Valgrind finds a read of uninitialized memory. So the `-O2`
+build runs once under Valgrind. That run misses an uninitialized read that
+only `-O0` code shows, and one in a `--rc-checks` build. The harness runs the 15 programs of
 `site/programs/run` in the same way.
 
-The three ASan builds and the Valgrind build use `--allocator system`, because
-ASan and Valgrind track `malloc` and see no block that mimalloc hands out.
+The three ASan builds and the Valgrind build use the System allocator.
+ASan and Valgrind track `malloc`, and see no block that mimalloc hands out.
 The plain build has no `--allocator` flag, so it runs on mimalloc, the
 allocator that users get. The extra `-O2` build runs `-O2` code on mimalloc.
 On macOS there is no ASan and no Valgrind: the plain, `-O2` and `--rc-checks`
@@ -1464,15 +1466,17 @@ takes it too.
 
 `sisu build --sanitize address file.sisu` builds an executable that AddressSanitizer
 checks: it reports a memory error, and a leak at exit, and then fails.
-`sisu run` takes the flag too. The compiler runs LLVM's ASan pass on the module,
-and the link adds `-fsanitize=address`, so `cc` must find `libasan`; a missing
-`libasan` shows as the `cc failed` error. ASan sees only blocks from `malloc`.
+`sisu run` takes the flag too. The compiler runs LLVM's ASan pass on the module.
+The link adds `-fsanitize=address`, so the C compiler that `cc` runs must have
+its ASan runtime. With GCC, a missing `libasan` shows as the `cc failed`
+error. ASan sees only blocks from `malloc`.
 So the flag selects the System allocator when you give no `--allocator`, and
 `--allocator mimalloc` with it is a usage error. `--sanitize` works only on
-Linux and only when building an executable. A panic at `-O0` keeps exit code
-101 and prints no ASan report. At `-O2`, the last pointer to a live object can
-be dead when the panic runs. Then LeakSanitizer reports a leak and sets the
-exit code. To run a sanitized build by hand, set
+Linux and only when building an executable. A panic keeps exit code 101 and
+prints no ASan report, unless LeakSanitizer finds a leak. A leak report sets
+another exit code at any `-O` level. For example, an unreachable cycle that
+exists when the panic runs is a leak. At `-O2`, the last pointer to a live
+object can be dead when the panic runs. To run a sanitized build by hand, set
 `ASAN_OPTIONS=fast_unwind_on_malloc=0`, so that a leak report names the Sisu
 function that allocated. `make test` builds every `run/` case this way on Linux.
 
