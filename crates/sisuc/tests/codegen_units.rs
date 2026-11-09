@@ -255,6 +255,34 @@ fn split_build_should_pass_the_memory_checks() {
     assert_eq!(out.stderr, b"", "{tag}");
 }
 
+/// GIVEN the case program built with `--sanitize address` and `--codegen-units 4`, plain, with
+/// `-O2` and with `--rc-checks`
+/// WHEN each executable runs on Linux
+/// THEN it prints the lines of the case, exits 0 and writes nothing to stderr
+///
+/// `ASan` checks every unit of a split build, with no report of a leak or a memory error.
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "ASan works only on Linux")]
+fn split_build_should_pass_under_asan() {
+    let dir = fixture(
+        "split_build_should_pass_under_asan",
+        &[("codegen_units.sisu", CASE)],
+    );
+    for (tag, flags) in [support::ASAN_O0, support::ASAN_O2, support::ASAN_RC] {
+        let flags: Vec<&str> = flags
+            .iter()
+            .copied()
+            .chain(["--codegen-units", "4"])
+            .collect();
+        let (exe, _) = build(&dir, "codegen_units", tag, &flags);
+        let out = Invocation::default().run_asan(&exe);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(0), "{tag}: {stderr}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), CASE_OUT, "{tag}");
+        assert_eq!(stderr, "", "{tag}");
+    }
+}
+
 /// GIVEN `even` and `odd`, which call each other, and a `main` that calls both
 /// WHEN the program is built with `--codegen-units 3`
 /// THEN `even` and `odd` are in different units

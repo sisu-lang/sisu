@@ -3533,9 +3533,78 @@ fn specialized_clone_check_should_find_a_definition_of_a_clone() {
     assert!(!support::has_specialized_clone(call, "walk"));
 }
 
+/// A `#!/bin/sh` script with the body `body` in `dir`, in place of the `valgrind` program.
+#[cfg(target_os = "linux")]
+fn valgrind_stub(dir: &Path, body: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let stub = dir.join("stub");
+    fs::write(&stub, format!("#!/bin/sh\n{body}\n")).expect("writes the stub");
+    fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).expect("makes the stub run");
+    stub
+}
+
+/// A `tests/run` case that prints 1.
+#[cfg(target_os = "linux")]
+const PASSING_CASE: [(&str, &str); 2] = [
+    ("a.sisu", "fn main() {\n    print(1)\n}\n"),
+    ("a.out", "1\n"),
+];
+
 /// GIVEN a `run` case that leaks a cycle, with a wrong `.out` file
 /// WHEN the harness runs it in bless mode
-/// THEN it panics with the Valgrind leak summary
+/// THEN it panics with the `LeakSanitizer` report of the `asan-O0` build, which names `sisu.leak`
+/// AND the `.out` file is unchanged
+///
+/// A run that passes natively but fails under `ASan` writes nothing.
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "reads ASan's output, and ASan runs only on Linux"
+)]
+fn bless_should_not_write_after_an_asan_failure() {
+    let dir = fixture(
+        "bless_never_writes_after_an_asan_failure",
+        &[("a.sisu", LEAKS_A_CYCLE), ("a.out", "wrong\n")],
+    );
+    let message = panic_message(|| support::run(&dir.join("a.sisu"), true));
+    assert!(message.contains("asan-O0"), "{message}");
+    assert!(message.contains("LeakSanitizer"), "{message}");
+    assert!(message.contains("sisu.leak"), "{message}");
+    assert_eq!(
+        fs::read_to_string(dir.join("a.out")).expect("reads a.out"),
+        "wrong\n"
+    );
+}
+
+/// GIVEN a `run` case that passes, and a program in place of Valgrind that logs its arguments and
+/// then runs the program it is given
+/// WHEN the harness runs the case with that program
+/// THEN the case passes
+/// AND the program started once
+/// AND that run was of the `O2` executable
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "reads Valgrind's output, and Valgrind runs only on Linux"
+)]
+fn run_case_should_run_valgrind_once_on_the_o2_build() {
+    let dir = fixture("run_case_runs_valgrind_once_on_o2", &PASSING_CASE);
+    let log = dir.join("log");
+    let stub = valgrind_stub(
+        &dir,
+        &format!("echo \"$*\" >> '{}'; shift 3; exec \"$@\"", log.display()),
+    );
+    support::run_with(&dir.join("a.sisu"), false, &stub);
+    let log = fs::read_to_string(log).expect("reads the log");
+    let lines: Vec<&str> = log.lines().collect();
+    assert_eq!(lines.len(), 1, "{log}");
+    assert!(lines[0].ends_with("/O2"), "{log}");
+}
+
+/// GIVEN a `run` case that passes, with a wrong `.out` file, and a program in place of Valgrind
+/// that exits 1
+/// WHEN the harness runs the case with that program in bless mode
+/// THEN it panics and names the `O2` executable, not `O2-mimalloc`
 /// AND the `.out` file is unchanged
 ///
 /// A run that passes natively but fails under Valgrind writes nothing.
@@ -3547,14 +3616,105 @@ fn specialized_clone_check_should_find_a_definition_of_a_clone() {
 fn bless_should_not_write_after_a_valgrind_failure() {
     let dir = fixture(
         "bless_never_writes_after_a_valgrind_failure",
-        &[("a.sisu", LEAKS_A_CYCLE), ("a.out", "wrong\n")],
+        &[("a.sisu", PASSING_CASE[0].1), ("a.out", "wrong\n")],
     );
-    let message = panic_message(|| support::run(&dir.join("a.sisu"), true));
-    assert!(message.contains("LEAK SUMMARY"), "{message}");
+    let stub = valgrind_stub(&dir, "exit 1");
+    let message = panic_message(|| support::run_with(&dir.join("a.sisu"), true, &stub));
+    assert!(message.contains("/O2: "), "{message}");
     assert_eq!(
         fs::read_to_string(dir.join("a.out")).expect("reads a.out"),
         "wrong\n"
     );
+}
+
+/// GIVEN a `run` case whose function calls itself and adds 1 to the result
+/// WHEN the harness runs it
+/// THEN it panics with the `ASan` report of the `asan-O0` build, which holds `stack-overflow`
+///
+/// The `asan-O0` build must be the first program that the harness runs: `-O0` keeps each call, but
+/// `-O2` makes this recursion an endless loop (probed), so the test depends on the order of the
+/// runs. A plain run first would die by signal 11, with no report.
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "reads ASan's output, and ASan runs only on Linux"
+)]
+fn run_case_should_show_the_asan_report_of_a_stack_overflow() {
+    let dir = fixture(
+        "run_case_shows_the_asan_report_of_a_stack_overflow",
+        &[
+            (
+                "a.sisu",
+                "fn dive(n: i64) -> i64 {\n    dive(n + 1) + 1\n}\n\nfn main() {\n    print(dive(0))\n}\n",
+            ),
+            ("a.out", ""),
+        ],
+    );
+    let message = panic_message(|| support::run(&dir.join("a.sisu"), false));
+    assert!(message.contains("asan-O0"), "{message}");
+    assert!(message.contains("stack-overflow"), "{message}");
+}
+
+/// GIVEN a `run` case that passes
+/// WHEN the harness runs it
+/// THEN its `O0` executable links mimalloc
+/// AND its `O2` executable does not
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "reads the symbols of an executable, and the allocator choice is a Linux one"
+)]
+fn run_case_should_run_o0_on_mimalloc_and_o2_on_the_system_allocator() {
+    let dir = fixture(
+        "run_case_runs_o0_on_mimalloc_and_o2_on_system",
+        &PASSING_CASE,
+    );
+    let source = dir.join("a.sisu");
+    support::run(&source, false);
+    support::require_mimalloc(&support::case_path(&source).join("O0"));
+    support::refuse_mimalloc(&support::case_path(&source).join("O2"));
+}
+
+/// GIVEN a `run` case that leaks a cycle, with the right `.out` file
+/// WHEN the harness runs it
+/// THEN it panics with a `LeakSanitizer` report
+///
+/// `asan_runs_should_replace_the_asan_options_of_the_environment` starts this test with
+/// `ASAN_OPTIONS=detect_leaks=0`. It has its own directory, because nextest runs the tests at the
+/// same time.
+#[test]
+#[ignore = "started by asan_runs_should_replace_the_asan_options_of_the_environment"]
+fn leak_case_should_fail_when_started_by_the_environment_test() {
+    let dir = fixture(
+        "leak_case_fails_when_started_by_the_environment_test",
+        &[("a.sisu", LEAKS_A_CYCLE), ("a.out", "1\n")],
+    );
+    let message = panic_message(|| support::run(&dir.join("a.sisu"), false));
+    assert!(message.contains("LeakSanitizer"), "{message}");
+}
+
+/// GIVEN the environment has `ASAN_OPTIONS=detect_leaks=0`
+/// WHEN a test binary runs a `run` case that leaks a cycle
+/// THEN the harness still fails the case with a `LeakSanitizer` report
+///
+/// The test starts its own binary with the variable, so that no test changes its own
+/// environment. If the harness kept the variable, the leak would pass, and the test that it
+/// starts would fail.
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "ASan works only on Linux")]
+fn asan_runs_should_replace_the_asan_options_of_the_environment() {
+    let out = Command::new(std::env::current_exe().expect("finds the test binary"))
+        .args([
+            "--exact",
+            "leak_case_should_fail_when_started_by_the_environment_test",
+            "--ignored",
+        ])
+        .env("ASAN_OPTIONS", "detect_leaks=0")
+        .output()
+        .expect("starts the test binary");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{stdout}");
+    assert!(stdout.contains("1 passed"), "{stdout}");
 }
 
 /// GIVEN a `run_fail` case that has an `.out` file and no `.err` file
