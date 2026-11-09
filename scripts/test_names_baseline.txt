@@ -6,7 +6,6 @@ crates/runtime/src/float.rs::fixed_fills_its_bound
 crates/runtime/src/float.rs::fixed_precision
 crates/runtime/src/float.rs::shortest_matches_the_spec
 crates/runtime/src/float.rs::shortest_reads_back
-crates/runtime/src/float.rs::write_f64_fills_its_bound
 crates/runtime/src/lib.rs::abort_child
 crates/runtime/src/lib.rs::alloc_aborts_on_invalid_alignment
 crates/runtime/src/lib.rs::alloc_aborts_on_zero_size
@@ -53,9 +52,6 @@ crates/runtime/src/text.rs::utf8_encode_bytes
 crates/runtime/src/text.rs::word_next_without_a_word_is_the_end
 crates/runtime/src/text.rs::words_agree_with_split_whitespace_for_every_char
 crates/runtime/src/text.rs::words_split_on_white_space
-crates/runtime/src/text.rs::write_bool_words
-crates/runtime/src/text.rs::write_char_widths
-crates/runtime/src/text.rs::write_int_extremes
 crates/sisuc/src/ast.rs::display_float
 crates/sisuc/src/check/string.rs::a_match_is_one_term_only_in_parentheses
 crates/sisuc/src/check/tests/arrays.rs::array_of_t_is_not_array_of_optional_t

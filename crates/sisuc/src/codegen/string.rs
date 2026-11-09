@@ -327,10 +327,12 @@ impl<'ctx> Codegen<'ctx, '_> {
         string
     }
 
-    /// The string of the evaluated `parts`, each with its type, in one pass: allocates one
-    /// block with room for the most text each part can give, writes each part at the running
-    /// offset, pads it there when its format has a width, and stores the length written. The
-    /// caller releases the `string` parts.
+    /// The string of the evaluated `parts`, each with its type, in one pass. It allocates one
+    /// block with room for the most text each part can give. It writes each part where the
+    /// last part ended, and pads it there when its format has a width. Then it stores the
+    /// length written. Each writer returns the end of its text. The next part starts there. So
+    /// no part has an offset that sums the parts before it. The caller releases the `string`
+    /// parts.
     pub(super) fn interpolate(
         &self,
         parts: &[(BasicValueEnum<'ctx>, Type)],
@@ -340,6 +342,16 @@ impl<'ctx> Codegen<'ctx, '_> {
         let add = |a, b| {
             self.builder
                 .build_int_nuw_add(a, b, "len")
+                .expect(POSITIONED)
+        };
+        let address = |pointer| {
+            self.builder
+                .build_ptr_to_int(pointer, i64_type, "address")
+                .expect(POSITIONED)
+        };
+        let distance = |end, start| {
+            self.builder
+                .build_int_nuw_sub(address(end), address(start), "written")
                 .expect(POSITIONED)
         };
         // The formats are in part order, so one pass over them meets each in turn.
@@ -353,18 +365,18 @@ impl<'ctx> Codegen<'ctx, '_> {
             .iter()
             .enumerate()
             .fold(i64_type.const_zero(), |cap, (i, &(value, ty))| {
+                self.cut_long_block();
                 let format = formats_in_order.next_if(|format| format.part == i);
+                let precision = format.and_then(|format| format.precision);
                 let text = match ty {
                     Type::STRING => self.value_len(value),
                     Type::I64 => bound(20),
                     Type::U8 => bound(3),
                     Type::BOOL => bound(5),
                     Type::CHAR => bound(4),
-                    Type::F64 => bound(
-                        format
-                            .and_then(|format| format.precision)
-                            .map_or(24, |precision| 311 + u64::from(precision)),
-                    ),
+                    Type::F64 => {
+                        bound(precision.map_or(24, |precision| 311 + u64::from(precision)))
+                    }
                     _ => unreachable!(
                         "the checker should accept only text, numbers, `bool` and `char`"
                     ),
@@ -378,16 +390,18 @@ impl<'ctx> Codegen<'ctx, '_> {
         let result = self.new_string(cap);
         let bytes = self.string_field(result, BYTES);
         let mut formats_in_order = formats.iter().peekable();
-        let mut len = i64_type.const_zero();
+        let mut at = bytes;
         for (i, &(value, ty)) in parts.iter().enumerate() {
             self.cut_long_block();
             let format = formats_in_order.next_if(|format| format.part == i);
-            let at = self.string_byte(bytes, len);
-            let written = match ty {
+            let end = match ty {
                 Type::STRING => {
-                    let part_len = self.value_len(value);
-                    self.copy_bytes(at, self.value_data(value), part_len);
-                    part_len
+                    let args = [
+                        self.value_data(value).into(),
+                        self.value_len(value).into(),
+                        at.into(),
+                    ];
+                    self.write_text("sisu_write_str", &args)
                 }
                 Type::U8 => {
                     let widened = self
@@ -408,7 +422,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 Type::BOOL => self.write_text("sisu_write_bool", &[value, at.into()]),
                 _ => self.write_text("sisu_write_char", &[value, at.into()]),
             };
-            let written = match format.and_then(|format| format.pad) {
+            at = match format.and_then(|format| format.pad) {
                 Some(Pad { align, width, .. }) => {
                     let align = match align {
                         Align::Left => PAD_LEFT,
@@ -417,16 +431,16 @@ impl<'ctx> Codegen<'ctx, '_> {
                     };
                     let args = [
                         at.into(),
-                        written.into(),
+                        distance(end, at).into(),
                         bound(width.into()).into(),
                         self.context.i8_type().const_int(align, false).into(),
                     ];
                     self.write_text("sisu_pad", &args)
                 }
-                None => written,
+                None => end,
             };
-            len = add(len, written);
         }
+        let len = distance(at, bytes);
         self.store(self.string_field(result, LEN), len.into());
         self.make_value(result, bytes, len)
     }
@@ -543,10 +557,10 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.call(self.runtime(name), &[text.into(), n.into(), out.into()]);
     }
 
-    /// A call of the runtime's `name(args) -> len`, such as `sisu_write_int(value, out)`, which
-    /// writes text at `out`; declared on first use, so that a module without interpolation
-    /// stays as it was.
-    fn write_text(&self, name: &str, args: &[BasicValueEnum<'ctx>]) -> IntValue<'ctx> {
+    /// A call of the runtime's `name(args) -> end`, such as `sisu_write_int(value, out)`, which
+    /// writes text at `out` and returns the end of the text; declared on first use, so that a
+    /// module without interpolation stays as it was.
+    fn write_text(&self, name: &str, args: &[BasicValueEnum<'ctx>]) -> PointerValue<'ctx> {
         // The C ABI extends a `bool` or a `u8` argument to 32 bits and the callee may read all
         // of them, so the caller extends it with zeros, as for `sisu_print_bool`.
         let narrow = || {
@@ -559,15 +573,15 @@ impl<'ctx> Codegen<'ctx, '_> {
         let values: Vec<BasicMetadataValueEnum<'_>> = args.iter().map(|&arg| arg.into()).collect();
         let call = self
             .builder
-            .build_call(function, &values, "written")
+            .build_call(function, &values, "end")
             .expect(POSITIONED);
         for i in narrow() {
             call.add_attribute(AttributeLoc::Param(i), zeroext(self.context));
         }
         call.try_as_basic_value()
             .basic()
-            .expect("a `sisu_write_*` or `sisu_pad` function should return an `i64`, as the runtime declares it")
-            .into_int_value()
+            .expect("a `sisu_write_*` or `sisu_pad` function should return a pointer, as the runtime declares it")
+            .into_pointer_value()
     }
 
     /// Copies the `len` bytes at `from` to `to`.
