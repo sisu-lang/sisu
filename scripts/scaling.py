@@ -240,7 +240,7 @@ def interpolations(k: int) -> str:
 
 
 def string_interpolations(k: int) -> str:
-    """Return a program with a string of `k + 1` parts, each a `string` local and a literal."""
+    """Return a program with a string of `k + 1` copies of `{s}lit`, a local and a literal."""
     parts = "{s}lit" * (k + 1)
     return f'fn main() {{\n    let s = "a" + "b"\n    let r = "{parts}"\n    print(r.len())\n}}\n'
 

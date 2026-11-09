@@ -1381,7 +1381,7 @@ fn interpolation_program(n: usize) -> String {
     )
 }
 
-/// A `main` with one string of `n` interpolated parts, each a `string` local and a literal.
+/// A `main` with one string of `n` copies of `{s}lit`: `2n` parts, a `string` local and a literal.
 fn string_interpolation_program(n: usize) -> String {
     format!(
         "fn main() {{\n    let s = \"a\" + \"b\"\n    let r = \"{}\"\n    print(r.len())\n}}",
@@ -1411,8 +1411,8 @@ fn long_block_should_be_cut_at_o0() {
     for (src, needle) in [
         (prints_program(2000), "@sisu_print_int("),
         (interpolation_program(2000), "@sisu_write_int("),
-        // The bounds of the 4000 parts are the only adds but one in `new_string`. They stay
-        // in one block when the `cap` fold of `interpolate` is not cut.
+        // In the blocks of the `cap` fold, the only adds are the bounds of the 4000 parts and one
+        // in `new_string`. They stay in one block when the fold is not cut.
         (string_interpolation_program(2000), " = add nuw i64 "),
     ] {
         let ir = compiled(&context, &src).print_to_string().to_string();
