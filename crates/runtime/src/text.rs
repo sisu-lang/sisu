@@ -129,7 +129,8 @@ pub unsafe extern "C" fn sisu_write_char(c: u32, out: *mut u8) -> *mut u8 {
 ///
 /// # Safety
 ///
-/// `text[..len]` is readable, `out[..len]` is writable, and they do not overlap. `len` may be 0.
+/// `text` and `out` are not null, `text[..len]` is readable, `out[..len]` is writable, and they
+/// do not overlap. `len` may be 0.
 #[expect(
     unsafe_code,
     reason = "generated code calls this function by its unmangled symbol name"

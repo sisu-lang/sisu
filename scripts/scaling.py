@@ -78,8 +78,9 @@ KNOWN = [
     # function with n parameters: the list scheduler of the SelectionDAG. #612 is closed.
     ("mut call width", "object", 612),
     ("mut returns", "object", 612),
-    # The object work for each literal is flat. One size of the sweep falls on a one-time step of
-    # LLVM's tables, so this row is a step and not a curve. #613 is closed.
+    # The object work for each literal is flat: 3.5K to 4.7K instructions from 12 to 120
+    # literals. One step at 96 literals gives the sweep its ratio, so this row is a step and not
+    # a curve. #613 is closed.
     ("float left", "object", 613),
 ]
 ANNOTATE = ["callgrind_annotate", "--inclusive=yes", "--threshold=100", "--show=Ir", "--auto=no"]

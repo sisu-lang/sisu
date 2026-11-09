@@ -365,18 +365,18 @@ impl<'ctx> Codegen<'ctx, '_> {
             .iter()
             .enumerate()
             .fold(i64_type.const_zero(), |cap, (i, &(value, ty))| {
+                self.cut_long_block();
                 let format = formats_in_order.next_if(|format| format.part == i);
+                let precision = format.and_then(|format| format.precision);
                 let text = match ty {
                     Type::STRING => self.value_len(value),
                     Type::I64 => bound(20),
                     Type::U8 => bound(3),
                     Type::BOOL => bound(5),
                     Type::CHAR => bound(4),
-                    Type::F64 => bound(
-                        format
-                            .and_then(|format| format.precision)
-                            .map_or(24, |precision| 311 + u64::from(precision)),
-                    ),
+                    Type::F64 => {
+                        bound(precision.map_or(24, |precision| 311 + u64::from(precision)))
+                    }
                     _ => unreachable!(
                         "the checker should accept only text, numbers, `bool` and `char`"
                     ),
