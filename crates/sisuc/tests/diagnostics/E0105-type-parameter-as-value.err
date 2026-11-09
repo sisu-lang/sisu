@@ -1,0 +1,8 @@
+error[E0105]: `T` is a type parameter, not a value
+ --> E0105-type-parameter-as-value.sisu:2:23
+  |
+2 | fn q<T: Bp>(c: i64) { T.bp(c) }
+  |                       ^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0105

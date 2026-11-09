@@ -1,0 +1,3 @@
+interface Bp { fn bp(self, x: i64) }
+fn q<T: Bp>(c: i64) { T.bp(c) }
+fn main() {}

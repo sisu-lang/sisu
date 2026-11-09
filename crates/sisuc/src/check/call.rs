@@ -9,11 +9,12 @@ use super::generic::{GenericSig, Site, mark, mismatched, written_args};
 use super::interface::{Bounds, LangPath};
 use super::member::Found;
 use super::mut_args::{Callee, MutParts, MutSite, site_of};
+use super::names::{self, ItemId, Position, Resolved};
 use super::prelude::PRELUDE;
 use super::unused_names::Used;
 use super::{
-    Checked, Checker, Declared, Lowered, Poisoned, UNKNOWN, block_expr, built_in_type,
-    has_remedy_flag, is_unwrapped, own_args, spread, type_of,
+    Checked, Checker, Declared, Lowered, Poisoned, UNKNOWN, block_expr, has_remedy_flag,
+    is_unwrapped, own_args, spread, type_of,
 };
 use super::{array, number, string};
 use crate::ast::{self, ExprKind};
@@ -51,50 +52,50 @@ impl Checker<'_> {
     /// `callee(args)`, which `site` writes with its type arguments.
     pub(super) fn call(&mut self, span: Span, site: Site<'_>, args: &[ast::Arg]) -> Checked {
         let callee = site.name;
-        let declared = (
-            self.names.class(callee.name),
-            self.names.function(callee.name),
-        );
-        // A broken or rejected name, a constant's included, poisons every use, a built-in's too.
-        // The item's own error is reported; its arguments may hold more.
-        if self.poisoned_use(callee.name) {
-            self.stray(args);
-            return Err(Poisoned::error());
-        }
-        if let Some(checked) = self.prelude_call(span, callee, args, site.expected) {
-            return checked;
-        }
-        match self.through_site(callee, site.written, site.angles) {
-            Via::Not => {}
-            Via::Error => {
-                self.stray(args);
-                return Err(Poisoned::error());
-            }
-            Via::To(through) => return self.call_through(span, site, args, &through),
-        }
-        if let Some(to @ (Type::I64 | Type::U8 | Type::F64 | Type::CHAR | Type::STRING)) =
-            built_in_type(callee.name.as_str())
-        {
-            return self.convert(span, callee.span, to, args);
-        }
-        match declared {
-            (Some(Declared::Known(class)), _) => {
-                self.construct_class(span, class, site, args, None)
-            }
-            (_, Some(Declared::Known(func))) => self.invoke(span, func, None, site, args),
-            _ if self.names.interface(callee.name).is_some() => {
-                self.report(DiagnosticKind::InterfaceAsValue {
-                    name: callee.name.to_string(),
-                    at: callee.span,
-                });
+        let at = names::Site::new(Position::Callee, !site.written.is_empty());
+        let answer = self.meaning(callee.name, at);
+        match answer {
+            // A broken or rejected name, a constant's included, poisons every use, a built-in's
+            // too. The item's own error is reported; its arguments may hold more.
+            Resolved::Poisoned(_) => {
                 self.stray(args);
                 Err(Poisoned::error())
             }
-            // Here `Some` is the prelude's. A user item named `Some` is reported, and the two arms
+            Resolved::BuiltinFunction => self
+                .prelude_call(span, callee, args, site.expected)
+                .expect("a prelude name should have a call"),
+            Resolved::Item(ItemId::Alias(_)) => {
+                match self.through_site(callee, site.written, site.angles) {
+                    Via::To(through) => self.call_through(span, site, args, &through),
+                    Via::Not | Via::Error => {
+                        self.stray(args);
+                        Err(Poisoned::error())
+                    }
+                }
+            }
+            Resolved::BuiltinType(to) if to != Type::BOOL => {
+                self.convert(span, callee.span, to, args)
+            }
+            Resolved::Item(ItemId::Class(class)) => {
+                self.construct_class(span, class, site, args, None)
+            }
+            Resolved::Item(ItemId::Function(func)) => self.invoke(span, func, None, site, args),
+            Resolved::Item(ItemId::Interface(_)) => {
+                let kind = self.wrong_kind(callee.name, callee.span, at, answer);
+                self.report(kind.expect("an interface callee should be the wrong kind"));
+                self.stray(args);
+                Err(Poisoned::error())
+            }
+            // Here `Some` is the prelude's. A user item named `Some` is reported, and the arms
             // above call it.
-            _ if callee.name == Symbol::SOME => self.some(span, site, None, args, None),
+            Resolved::PreludeVariant if callee.name == Symbol::SOME => {
+                self.some(span, site, None, args, None)
+            }
             // `Ok` and `Err` are the prelude's, and no user item can take their names.
-            _ if let Some((id, _)) = self.result_variant(callee.name) => {
+            Resolved::PreludeVariant => {
+                let (id, _) = self
+                    .result_variant(callee.name)
+                    .expect("a prelude variant other than `Some` should be `Ok` or `Err`");
                 self.enum_path(span, id, callee, Some((args, callee.span)), site, None)
             }
             _ => match self.bare_variant(callee.name, callee.span) {
@@ -103,7 +104,7 @@ impl Checker<'_> {
                     self.stray(args);
                     Err(Poisoned::error())
                 }
-                None => self.unknown_call(site, args),
+                None => self.unknown_call(site, args, answer),
             },
         }
     }
@@ -149,7 +150,7 @@ impl Checker<'_> {
     /// `name(p)`, where `p` is an object of a class or an enum that has the method `name`, or an
     /// optional of one. In a method, `name(args)` where its class or enum has the method `name`
     /// points to `self.name(args)`. `site` writes `callee` with its type arguments.
-    fn unknown_call(&mut self, site: Site<'_>, args: &[ast::Arg]) -> Checked {
+    fn unknown_call(&mut self, site: Site<'_>, args: &[ast::Arg], answer: Resolved) -> Checked {
         let callee = site.name;
         let name = callee.name.as_str();
         let unlabeled = args.iter().all(|arg| arg.label.is_none());
@@ -241,13 +242,14 @@ impl Checker<'_> {
             return Err(Poisoned::error());
         }
         self.reject_array_lacking(callee, first_checked.as_ref(), rest)?;
-        let kind =
-            self.not_a_function(callee)
-                .unwrap_or_else(|| DiagnosticKind::FunctionNotFound {
-                    name: callee.name.to_string(),
-                    at: callee.span,
-                    suggestion: self.function_suggestion(callee),
-                });
+        let at = names::Site::new(Position::Callee, !site.written.is_empty());
+        let kind = self
+            .wrong_kind(callee.name, callee.span, at, answer)
+            .unwrap_or_else(|| DiagnosticKind::FunctionNotFound {
+                name: callee.name.to_string(),
+                at: callee.span,
+                suggestion: self.function_suggestion(callee),
+            });
         self.report(kind);
         // No `labels`: the name may have meant a class, whose constructor takes them.
         self.stray(rest);
@@ -272,52 +274,6 @@ impl Checker<'_> {
             }),
             None => suggestion(name, functions.chain(self.class_names())),
         }
-    }
-
-    /// What the name `callee` is when it is no function: a binding of an open scope, a constant,
-    /// a type parameter, an enum, or a type with no constructor. A binding hides a constant, and
-    /// a constant hides a type parameter, as they do in a value.
-    fn not_a_function(&self, callee: &ast::Ident) -> Option<DiagnosticKind> {
-        let (name, at) = (callee.name, callee.span);
-        let what = if self
-            .body
-            .scopes
-            .iter()
-            .any(|scope| scope.contains_key(&name))
-        {
-            "a binding"
-        } else if self.names.constant(name).is_some() {
-            "a constant"
-        } else if self.body.type_param(name).is_some() {
-            "a type parameter"
-        } else if let Some(found) = self.names.enum_id(name) {
-            // The prelude's enums, as `Result`, name no variant that the program wrote.
-            let variant = match found {
-                Declared::Known(id) if !self.enums[id.0].name.span.in_prelude() => {
-                    (self.enums[id.0].variants.first())
-                        .map(|first| format!("{name}.{}", first.name.name))
-                }
-                _ => None,
-            };
-            return Some(DiagnosticKind::EnumAsValue {
-                name: name.to_string(),
-                variant,
-                at,
-            });
-        } else if built_in_type(name.as_str()).is_some() || name == Symbol::OPTION {
-            return Some(DiagnosticKind::TypeAsValue {
-                name: name.to_string(),
-                at,
-                alias: None,
-            });
-        } else {
-            return None;
-        };
-        Some(DiagnosticKind::NotAFunction {
-            name: name.to_string(),
-            what,
-            at,
-        })
     }
 
     /// Reports the call `callee(first, rest...)` when `first` is an array, or an optional one, that

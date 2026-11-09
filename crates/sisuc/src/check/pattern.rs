@@ -8,9 +8,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::alias::Via;
 use super::branch::{Branch, failed_join};
-use super::enums::reserved_name;
 use super::exhaust::{self, Neighbours, Report, Row};
 use super::generic::{Ahead, type_meets};
+use super::names::{self, Position, Resolved};
 use super::stmt::BlockSoFar;
 use super::{Checked, CheckedBlock, Checker, Declared, Poisoned, has_remedy_flag, type_of};
 use crate::ast;
@@ -961,15 +961,15 @@ impl Checker<'_> {
             });
             return None;
         }
+        let answer = self.meaning(name.name, names::Site::new(Position::Pattern, false));
         // A name the prelude takes is a binding, which `declare` reports.
-        if reserved_name(name.name).is_none() {
-            let constant = self.names.constant(name.name).is_some();
+        if !matches!(answer, Resolved::PreludeVariant) {
             // A poisoned name gives no error.
-            if (constant || text.starts_with(char::is_uppercase)) && self.poisoned_use(name.name) {
+            if matches!(answer, Resolved::Poisoned(_)) {
                 self.hide_local(name);
                 return None;
             }
-            if constant {
+            if matches!(answer, Resolved::Constant(_)) {
                 let candidates =
                     iter::once("n".to_string()).chain((2..).map(|n: u32| format!("n{n}")));
                 // Bound in one alternative of an `|`, the name would be missing from the others.

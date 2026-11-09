@@ -58,7 +58,7 @@ use constant::{ConstInfo, ConstantSite};
 use enums::{EnumInfo, HoldsTable, reserved_name};
 use extend::Extension;
 use interface::{Bounds, InterfaceInfo, PendingBound, Required, Scope, Slot, Waiting};
-use names::{ConstantId, NameMaps};
+use names::{ConstantId, ItemId, NameMaps, Position, Resolved};
 use prelude::PRELUDE;
 pub(crate) use unused_names::is_judged;
 use unused_names::{Owner, Pending, Use, Used};
@@ -863,7 +863,7 @@ struct Checker<'src> {
     /// While a field's or payload's type resolves, the class and enum types in it and where each
     /// is written; `None` otherwise.
     written: Option<Vec<(Type, Span)>>,
-    /// Indexed by `ConstantId`, so a duplicate constant has a value of its own.
+    /// Indexed by `ConstantId`, which is the source order among the constants.
     const_infos: Vec<ConstInfo>,
     /// The type aliases, which share the namespace of the items above.
     aliases: Aliases,
@@ -2249,46 +2249,31 @@ impl Checker<'_> {
             }
             c.type_args(&ident(), &[], args, angles).map(|_| ty)
         };
-        if let Some(i) = self.body.type_param(name) {
-            let i = u32::try_from(i).expect("a declaration should have fewer than 2^32 parameters");
-            // The body of an alias names its parameters by place alone.
-            let name = if self.body.alias.is_some() {
-                Symbol::intern("")
-            } else {
-                name
-            };
-            return plain(self, Type::intern(TypeKind::Param(name, i)));
-        }
-        match self.assoc_named(name, ident().span) {
-            Named::Type(ty) => return plain(self, ty),
-            Named::Failed => return None,
-            Named::Unknown => {}
-        }
-        let declared = (self.names.class(name), self.names.enum_id(name));
-        // A broken name poisons every use, a built-in type's too.
-        if let (Some(Declared::Broken), _) | (_, Some(Declared::Broken)) = declared {
-            return None;
-        }
-        match self.names.alias(name) {
-            Some(Declared::Broken) => return None,
-            Some(Declared::Known(id)) => return self.alias(id, ty, name, args, angles),
-            None => {}
-        }
-        // A class or an enum that took a language interface's name is the type.
-        let taken = matches!(declared, (Some(_), _) | (_, Some(_)));
-        if let (false, Some(found)) = (taken, self.names.interface(name)) {
-            if let Declared::Known(id) = found
-                && !self.poisoned(name)
-            {
-                self.interface_as_type(id, name.to_string(), ty, ident().span);
+        match self.meaning(name, names::Site::new(Position::Type, !args.is_empty())) {
+            Resolved::TypeParam(i) => {
+                let i =
+                    u32::try_from(i).expect("a declaration should have fewer than 2^32 parameters");
+                // The body of an alias names its parameters by place alone.
+                let name = if self.body.alias.is_some() {
+                    Symbol::intern("")
+                } else {
+                    name
+                };
+                plain(self, Type::intern(TypeKind::Param(name, i)))
             }
-            return None;
-        }
-        if let Some(named) = built_in_type(name.as_str()) {
-            return plain(self, named);
-        }
-        match declared {
-            (Some(Declared::Known(id)), _) => {
+            Resolved::AssocType => match self.assoc_named(name, ident().span) {
+                Named::Type(ty) => plain(self, ty),
+                Named::Failed | Named::Unknown => None,
+            },
+            // A broken name poisons every use, a built-in type's too. Its own error is reported.
+            Resolved::Poisoned(_) => None,
+            Resolved::Item(ItemId::Alias(id)) => self.alias(id, ty, name, args, angles),
+            Resolved::Item(ItemId::Interface(id)) => {
+                self.interface_as_type(id, name.to_string(), ty, ident().span);
+                None
+            }
+            Resolved::BuiltinType(named) => plain(self, named),
+            Resolved::Item(ItemId::Class(id)) => {
                 self.reaches_prelude(id.0 >= self.prelude.classes, ident().span);
                 let list = if args.is_empty() && self.classes[id.0].type_params.is_empty() {
                     TypeArgs::NONE
@@ -2300,7 +2285,7 @@ impl Checker<'_> {
                 self.bounded(self.classes[id.0].bounded, ty, args)
                     .then_some(ty)
             }
-            (_, Some(Declared::Known(id))) => {
+            Resolved::Item(ItemId::Enum(id)) => {
                 self.reaches_prelude(id.0 >= self.prelude.enums, ident().span);
                 let list = if args.is_empty() && self.enums[id.0].type_params.is_empty() {
                     TypeArgs::NONE
@@ -2313,12 +2298,10 @@ impl Checker<'_> {
                     .then_some(ty)
             }
             // `Option<T>` is `T?`: the prelude's declaration of it makes no enum.
-            _ if name == Symbol::OPTION => {
+            Resolved::OptionType => {
                 let args = self.type_args(&ident(), &[Symbol::intern("T")], args, angles)?;
                 Some(optional_of(args.get()[0]))
             }
-            // A broken or rejected function or constant of the name has its own error.
-            _ if self.poisoned(name) => None,
             _ => {
                 let types =
                     ["i64", "u8", "f64", "bool", "char", "string"].map(|ty| (ty, Definition::Type));
@@ -2570,43 +2553,9 @@ impl Checker<'_> {
     /// open loop label right after an unlabeled `break`. A type's name, built in or a class's or
     /// an enum's, is in scope, but as a type: that is reported instead. So is a function's name.
     fn not_found(&mut self, name: Symbol, span: Span) -> Diagnostic {
-        let item = self.names.class(name).is_some()
-            || self.names.enum_id(name).is_some()
-            || self.names.function(name).is_some();
-        if !item && self.names.interface(name).is_some() {
-            return DiagnosticKind::InterfaceAsValue {
-                name: name.to_string(),
-                at: span,
-            }
-            .into();
-        }
-        if built_in_type(name.as_str()).is_some()
-            || name == Symbol::OPTION
-            || self.names.class(name).is_some()
-            || self.names.enum_id(name).is_some()
-            || self.names.alias(name).is_some()
-        {
-            return DiagnosticKind::TypeAsValue {
-                name: name.to_string(),
-                at: span,
-                alias: None,
-            }
-            .into();
-        }
-        // Whether the function takes arguments; a prelude function is a function too.
-        let takes_arguments = match self.names.function(name) {
-            Some(Declared::Known(func)) => Some(!self.signatures[func.0].params.is_empty()),
-            _ => PRELUDE
-                .contains(&name.as_str())
-                .then(|| prelude::takes_arguments(name.as_str())),
-        };
-        if let Some(takes_arguments) = takes_arguments {
-            return DiagnosticKind::FunctionAsValue {
-                name: name.to_string(),
-                at: span,
-                takes_arguments,
-            }
-            .into();
+        let site = names::Site::value(true);
+        if let Some(wrong) = self.wrong_kind(name, span, site, self.meaning(name, site)) {
+            return wrong.into();
         }
         let at_start = self.starts_break_value(span);
         let bindings = self

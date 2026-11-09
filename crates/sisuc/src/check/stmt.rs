@@ -1089,7 +1089,9 @@ impl Checker<'_> {
             }
         }
         if let Some(binding) = self.body.scopes.iter().rev().find_map(|s| s.get(&name)) {
-            return Some((ClashKind::Binding, Some(binding.span)));
+            // A local that hides a poisoned name is no binding, and the poisoned item gives no
+            // clash.
+            return (!binding.hides_name).then_some((ClashKind::Binding, Some(binding.span)));
         }
         if let Some(id) = self.names.function(name) {
             let span = at(id, |id| self.signatures[id.0].span);

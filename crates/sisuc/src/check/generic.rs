@@ -13,6 +13,7 @@ use super::array::innermost;
 use super::expr::{bare_hole, dbg_argument, option_written, read_jump};
 use super::interface::{Bounds, Required};
 use super::mut_args::{MutParts, MutSite, PlaceShape, marked};
+use super::names::{self, ItemId, Resolved};
 use super::pattern::{LetPattern, LetValue, arm_key, matchable};
 use super::prelude::PRELUDE;
 use super::stmt::BlockSoFar;
@@ -4570,22 +4571,24 @@ impl Checker<'_> {
             ast::ExprKind::Applied { name, .. } => name.name,
             _ => return false,
         };
-        // No item can take the name of the optional type, whose members are its variants.
-        if name == Symbol::OPTION {
-            return true;
-        }
-        if let Some(Declared::Known(id)) = self.names.enum_id(name) {
-            return self.enum_path_method(id, method);
-        }
-        // An alias is the type that it names, unless a local takes the name.
-        if let Via::To(through) = self.through(name)
-            && self.alias_visible(name)
-        {
-            match through.ty.kind() {
-                TypeKind::Enum(id, _) => return self.enum_path_method(id, method),
-                TypeKind::Optional(_) => return true,
-                _ => {}
+        let angles = matches!(receiver.kind, ast::ExprKind::Applied { .. });
+        match self.meaning(name, names::Site::new(names::Position::PathCall, angles)) {
+            // A poisoned name that no local hides is no path: its own error is reported.
+            Resolved::Poisoned(_) => return false,
+            // No item can take the name of the optional type, whose members are its variants.
+            Resolved::OptionType => return true,
+            Resolved::Item(ItemId::Enum(id)) => return self.enum_path_method(id, method),
+            // An alias is the type that it names, unless a local takes the name.
+            Resolved::Item(ItemId::Alias(_)) => {
+                if let Via::To(through) = self.through(name) {
+                    match through.ty.kind() {
+                        TypeKind::Enum(id, _) => return self.enum_path_method(id, method),
+                        TypeKind::Optional(_) => return true,
+                        _ => {}
+                    }
+                }
             }
+            _ => {}
         }
         (self.built_in_of(name).is_some() || matches!(name.as_str(), "math" | "Math"))
             && self.lookup(name).is_none()

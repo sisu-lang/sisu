@@ -5,12 +5,12 @@
 
 use rustc_hash::FxHashMap;
 
+use super::names::ConstantId;
 use super::unused_names::{Owner, Used};
 use super::{Body, Checked, Checker, Declared, Poisoned, type_of};
 use crate::ast::{self, ExprKind};
 use crate::diagnostic::{Diagnostic, DiagnosticKind, Panic, RangePlace, TypedLiteral};
 use crate::source::Span;
-use crate::symbol::Symbol;
 use crate::tir::{self, BinaryOp, CompareOp, Type, UnaryOp};
 
 /// A folded constant's value; the variant fixes the type.
@@ -323,22 +323,17 @@ impl Checker<'_> {
         }
     }
 
-    /// A use of `name` at `span` if it names a constant: its literal, or, if folding failed,
-    /// `Poisoned` of its `ty`, with no diagnostic. A use of a known constant is recorded.
-    pub(super) fn constant_use(&mut self, name: Symbol, span: Span) -> Option<Checked> {
-        let (order, checked) = match self.names.constant(name)? {
-            Declared::Known(id) => match &self.const_infos[id.0] {
-                ConstInfo {
-                    value: Some(value), ..
-                } => (Some(id.0), Ok(value.lower(span))),
-                info => (Some(id.0), Err(Poisoned::of(info.ty))),
-            },
-            Declared::Broken => (None, Err(Poisoned::error())),
+    /// A use of the constant `id` at `span`: its literal, or, if folding failed, `Poisoned` of
+    /// its `ty`, with no diagnostic. The use is recorded.
+    pub(super) fn constant_use(&mut self, id: ConstantId, span: Span) -> Checked {
+        let checked = match &self.const_infos[id.0] {
+            ConstInfo {
+                value: Some(value), ..
+            } => Ok(value.lower(span)),
+            info => Err(Poisoned::of(info.ty)),
         };
-        if let Some(order) = order {
-            self.record(Used::Const(order), span);
-        }
-        Some(checked)
+        self.record(Used::Const(id.0), span);
+        checked
     }
 }
 
