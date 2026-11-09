@@ -4,9 +4,10 @@ Status: accepted, 2026-11-07. It changes how codegen passes a value that
 [ADR 0029](0029-parameters-are-borrowed-unless-consumed.md) passes. It does not
 change who owns the value.
 
-An enum is one LLVM aggregate, `{ tag, [n x iA] }`. Before this ADR, codegen
-copied it as one value at each `let`, parameter, return and element. LLVM splits
-such a value into one value for each element. A variant of 10 000 `i64` fields,
+An enum with a field is one LLVM aggregate, `{ tag, [n x iA] }`. An enum with no
+field is its tag integer. Before this ADR, codegen copied it as one value at each
+`let`, parameter, return and element. LLVM splits such a value into one value for
+each element. A variant of 10 000 `i64` fields,
 or an enum of 683 KiB, made `sisu build -O2` take gigabytes or crash. Instruction
 selection crashes at 65 536 elements.
 

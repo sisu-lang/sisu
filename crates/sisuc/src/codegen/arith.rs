@@ -87,12 +87,25 @@ impl<'ctx> Codegen<'ctx, '_> {
             .expect(POSITIONED)
     }
 
+    /// `lhs predicate rhs`. `==` and `!=` on `i1` are `xor`, not `icmp`, because `FastISel` on
+    /// x86-64 does not select `icmp` on `i1`. `bool` has no other predicate.
     pub(super) fn int_compare(
         &self,
         predicate: IntPredicate,
         lhs: IntValue<'ctx>,
         rhs: IntValue<'ctx>,
     ) -> IntValue<'ctx> {
+        if lhs.get_type().get_bit_width() == 1 {
+            let differ = self
+                .builder
+                .build_xor(lhs, rhs, "differ")
+                .expect(POSITIONED);
+            return match predicate {
+                IntPredicate::NE => differ,
+                IntPredicate::EQ => self.builder.build_not(differ, "same").expect(POSITIONED),
+                _ => unreachable!("`bool` should have only `==` and `!=`"),
+            };
+        }
         self.builder
             .build_int_compare(predicate, lhs, rhs, "cmp")
             .expect(POSITIONED)

@@ -40,10 +40,11 @@ use rustc_hash::FxHashMap;
 
 /// An enum's LLVM types.
 pub(super) struct EnumLayout<'ctx> {
-    /// `{ tag, [n x iA] }`, or `{ tag }` when no variant has a field. `iA` is the integer type
-    /// as wide as the largest payload ABI alignment `a`, and `n` the largest payload ABI size
-    /// rounded up to whole `a`s, so the storage fits every payload at its alignment. An
-    /// `Option`-shaped enum is the storage of its field's niche instead (`shape`).
+    /// `{ tag, [n x iA] }`. `iA` is the integer type as wide as the largest payload ABI
+    /// alignment `a`. `n` is the largest payload ABI size rounded up to whole `a`s. So the
+    /// storage fits every payload at its alignment. An enum with no field in any variant is its
+    /// `tag` integer (`is_tag`). `FastISel` on x86-64 selects no load, store or return of a
+    /// struct. An `Option`-shaped enum is the storage of its field's niche (`shape`).
     pub(super) ty: BasicTypeEnum<'ctx>,
     /// `i8`, `i16` or `i32`, the smallest that holds the variant count. Tag `v` is variant `v`.
     /// An `Option`-shaped enum stores no tag: `load_tag` gives it from the niche.
@@ -70,6 +71,13 @@ pub(super) struct Shape {
     pub(super) empty: usize,
     /// The niche of the other variant's field: a box pointer's `null` when the field is boxed.
     pub(super) field: Niche,
+}
+
+impl EnumLayout<'_> {
+    /// Whether the enum has no field in any variant, so that its value is its tag integer.
+    pub(super) fn is_tag(&self) -> bool {
+        self.shape.is_none() && self.ty.is_int_type()
+    }
 }
 
 impl Shape {
@@ -195,10 +203,15 @@ impl<'ctx> Codegen<'ctx, '_> {
                 let tag = NonZeroU32::new(tag_bits(e.variants.len()))
                     .and_then(|bits| context.custom_width_int_type(bits).ok())
                     .expect("a tag should be an `i8`, an `i16` or an `i32`, which LLVM has");
+                let fieldless = e.variants.iter().all(|v| v.fields.is_empty());
                 EnumLayout {
-                    ty: context
-                        .opaque_struct_type(&format!("sisu.{}", e.name))
-                        .into(),
+                    ty: if fieldless {
+                        tag.into()
+                    } else {
+                        context
+                            .opaque_struct_type(&format!("sisu.{}", e.name))
+                            .into()
+                    },
                     tag,
                     payloads: e
                         .variants
@@ -277,7 +290,9 @@ impl<'ctx> Codegen<'ctx, '_> {
                     .collect();
                 payload.set_body(&fields, false);
             }
-            self.set_enum_body(id);
+            if !self.enums[id].is_tag() {
+                self.set_enum_body(id);
+            }
         }
         // A tagged enum's last tag is its last variant's: the tag after it is the next value.
         let last = Niche {
@@ -319,7 +334,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.enums[id.0].ty.into_struct_type()
     }
 
-    /// Sets the body of enum `id`, whose payload structs are all sized.
+    /// Sets the body of enum `id`, which has a struct, and whose payload structs are all sized.
     fn set_enum_body(&self, id: usize) {
         let layout = &self.enums[id];
         let ty = layout.ty.into_struct_type();
@@ -333,10 +348,6 @@ impl<'ctx> Codegen<'ctx, '_> {
                 )
             });
         let tag = layout.tag.into();
-        if size == 0 {
-            ty.set_body(&[tag], false);
-            return;
-        }
         let unit = NonZeroU32::new(align * 8)
             .and_then(|bits| self.context.custom_width_int_type(bits).ok())
             .expect("an ABI alignment should be a positive number of bytes that LLVM has an integer type for");
@@ -345,8 +356,12 @@ impl<'ctx> Codegen<'ctx, '_> {
         ty.set_body(&[tag, unit.array_type(units).into()], false);
     }
 
-    /// The address of the tag of the enum `id` at `value_addr`.
+    /// The address of the tag of the enum `id` at `value_addr`. The value of an enum with no
+    /// field is its tag.
     pub(super) fn tag_ptr(&self, id: EnumId, value_addr: PointerValue<'ctx>) -> PointerValue<'ctx> {
+        if self.enums[id.0].is_tag() {
+            return value_addr;
+        }
         self.builder
             .build_struct_gep(self.tagged_type(id), value_addr, 0, "tag")
             .expect("an enum's struct should have the tag at element 0")
@@ -664,10 +679,13 @@ impl<'ctx> Codegen<'ctx, '_> {
         if let Some(shape) = layout.shape {
             return self.shaped_variant(id, shape, variant, values, reuse);
         }
+        let tag_value = u64::try_from(variant).expect("a variant index should fit in a `u64`");
+        if layout.is_tag() {
+            return layout.tag.const_int(tag_value, false).into();
+        }
         let (ty, tag) = (layout.ty.into_struct_type(), layout.tag);
         let slot = self.entry_alloca(ty.into(), "variant");
         self.store_zero(slot, ty.into());
-        let tag_value = u64::try_from(variant).expect("a variant index should fit in a `u64`");
         self.store(
             self.tag_ptr(id, slot),
             tag.const_int(tag_value, false).into(),
