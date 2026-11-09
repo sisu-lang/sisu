@@ -667,6 +667,8 @@ thread_local! {
     pub(crate) static PUSHED_VALUES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many type parameter names have been indexed or looked up on this thread.
     pub(super) static PARAM_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many users of an alias `unknown_alias` has visited on this thread.
+    pub(super) static ALIAS_USER_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many times `binding` has walked the open scopes for a name on this thread.
     pub(super) static BINDING_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many inherited interfaces the check for a requirement that an interface declares

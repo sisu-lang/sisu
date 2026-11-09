@@ -1170,3 +1170,29 @@ fn an_unknown_type_should_keep_each_suggestion_that_makes_no_cycle() {
         [(false, vec![(2, 9, "Bax", "Box".to_owned())])]
     );
 }
+
+/// GIVEN one alias with `n` type arguments that each fail a bound, and `n` aliases that name it
+/// WHEN `sisu check` makes the alias unknown, once for each failed bound
+/// THEN the users of the alias are visited once in all, so the work grows with `n`, not `n * n`.
+#[test]
+fn an_alias_with_n_failed_bounds_and_n_users_should_cost_linear_work() {
+    let steps = |n: usize| {
+        let params = (0..n)
+            .map(|i| format!("T{i}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let args = vec!["C<i64>"; n].join(", ");
+        let mut users = String::new();
+        for i in 0..n {
+            writeln!(users, "type N{i} = M").expect("writing to a string should succeed");
+        }
+        let src = format!(
+            "interface I {{}}\nclass C<T: I> {{}}\nclass Pack<{params}> {{}}\ntype M = Pack<{args}>\n{users}fn main() {{}}"
+        );
+        ALIAS_USER_STEPS.set(0);
+        let ds = diags(&src);
+        assert_eq!(ds.len(), n, "one E0154 for each failed bound");
+        ALIAS_USER_STEPS.get()
+    };
+    assert_near_linear(steps(4), steps(8), steps(12));
+}

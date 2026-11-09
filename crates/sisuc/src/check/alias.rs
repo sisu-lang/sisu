@@ -360,6 +360,8 @@ impl Checker<'_> {
         let mut stack = vec![id];
         while let Some(alias) = stack.pop() {
             for &user in &users[alias] {
+                #[cfg(test)]
+                super::ALIAS_USER_STEPS.set(super::ALIAS_USER_STEPS.get() + 1);
                 if matches!(infos[user].state, State::Done(Some(_))) {
                     infos[user].state = State::Done(None);
                     stack.push(user);
