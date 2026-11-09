@@ -861,6 +861,8 @@ class Mutants(unittest.TestCase):
         self.mutate(list=2, exit=2, missed_names=names, lib_caught=1, pass2_caught=1)
         fields = (self.repo / "status_lib").read_text().rstrip("\n").split("\t")
         self.assertEqual((fields[0], fields[1], fields[4]), ("pass 2, lib-only group", "1", "1"))
+        fields = (self.repo / "status2").read_text().rstrip("\n").split("\t")
+        self.assertEqual((fields[0], fields[1], fields[4]), ("pass 2, whole-suite group", "1", "0"))
 
     def test_a_run_with_its_own_tests_should_not_record_a_pass_1(self) -> None:
         self.rust_commit()

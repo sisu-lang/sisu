@@ -116,8 +116,8 @@ duplicate E0032
 #   fn r() -> f64 { 1.0 }
 #   fn main() { print(i64(r()) ?? 0) }
 duplicate E0048
-# Found by a review probe, in seed 23. The same negation has the type `i64`, so a conversion to
-# `i64` gives E0054.
+# Found by a review probe, in seed 23. As in the E0032 pair, the negation of the call has the type
+# `i64`, so a conversion to `i64` gives E0054.
 #   fn r() -> f64 { 1.0 }
 #   fn r() -> f64 { 1.0 }
 #   fn main() { print(i64(-r())) }

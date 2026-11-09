@@ -521,9 +521,8 @@ size 0 must give a diagnostic. Callgrind measures `sisu check` on it, and the
 stages after `check` count 0. The count does not depend on the load of the
 machine. It also changes a little with the file paths and the C library. Thus
 a ratio near a number of the rule can fall on the other side on another machine.
-The runner of the nightly job is such a machine.
-It needs `valgrind`, and a full run takes about 12 minutes on the machine
-above.
+The runner of the nightly job is such a machine. The sweep needs `valgrind`, and
+a full run takes about 12 minutes on the machine above.
 
 The script prints one table for each shape. It also writes `table.md` and
 `counts.json` to `target/scaling/`. `ARGS='--shapes functions,fields'`
