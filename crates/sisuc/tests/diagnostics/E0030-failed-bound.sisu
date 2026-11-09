@@ -1,0 +1,23 @@
+interface Source {
+    fn next(self) -> i64
+}
+
+interface Piped: Missing {}
+
+fn drain<S: Nope>(s: S) {
+    print(s.next())
+}
+
+fn same<S: Nope>(a: S, b: S) -> bool {
+    a == b
+}
+
+fn piped<S: Piped>(s: S) -> i64 {
+    s.next()
+}
+
+fn boxed(s: any Piped) -> i64 {
+    s.next()
+}
+
+fn main() {}

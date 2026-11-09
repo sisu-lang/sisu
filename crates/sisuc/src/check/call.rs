@@ -6,7 +6,7 @@ use std::fmt;
 use super::alias::{Through, Via};
 use super::expr::{fits, no_member, option_written, path, postfix};
 use super::generic::{GenericSig, Site, mark, mismatched, written_args};
-use super::interface::{Bound, LangPath};
+use super::interface::{Bounds, LangPath};
 use super::member::Found;
 use super::mut_args::{Callee, MutParts, MutSite, site_of};
 use super::prelude::PRELUDE;
@@ -1107,7 +1107,7 @@ impl Checker<'_> {
         ret: Option<Type>,
         declared: &[Symbol],
         owner: &[Type],
-        bounds: &[Vec<Bound>],
+        bounds: &[Bounds],
         site: Site<'_>,
     ) -> Option<Type> {
         let own = declared.get(owner.len()..).unwrap_or_default();

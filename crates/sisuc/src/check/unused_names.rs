@@ -204,7 +204,7 @@ impl Checker<'_> {
     /// Records a use of each interface in the bounds of the `extend` block `block`, by the block:
     /// one use for each bound, however many methods the block has.
     pub(super) fn record_block_bounds(&mut self, block: usize) {
-        let bounds = self.extensions[block].bounds.iter().flatten();
+        let bounds = self.extensions[block].bounds.iter().flat_map(|b| &b.list);
         let from = Owner::Block(block);
         let uses = bounds.map(|b| Use {
             from,
@@ -709,10 +709,11 @@ impl Checker<'_> {
         while let Some(i) = to_follow.pop() {
             let info = &self.interfaces[i];
             let inherited = info.inherits.iter();
-            let requirements = (info.requirements.iter()).flat_map(|r| r.bounds.iter().flatten());
+            let requirements =
+                (info.requirements.iter()).flat_map(|r| r.bounds.iter().flat_map(|b| &b.list));
             // `Self`'s bound, first, is the interface itself.
-            let own = info.bounds.iter().skip(1).flatten();
-            let assoc = info.assoc.iter().flat_map(|a| a.bounds.iter());
+            let own = info.bounds.iter().skip(1).flat_map(|b| &b.list);
+            let assoc = info.assoc.iter().flat_map(|a| &a.bounds.list);
             for bound in inherited.chain(requirements).chain(own).chain(assoc) {
                 use_interface(used, &mut to_follow, bound.interface.0);
             }
@@ -766,7 +767,10 @@ impl Checker<'_> {
                 unreachable!("only a class or an enum is started by a use")
             }
         };
-        let bounds = bounds.iter().flatten().map(|bound| bound.interface);
+        let bounds = bounds
+            .iter()
+            .flat_map(|b| &b.list)
+            .map(|bound| bound.interface);
         let chosen = chosen.get(&holder).into_iter().flatten().copied();
         bounds.chain(declared.chain(chosen).flat_map(Type::anys))
     }

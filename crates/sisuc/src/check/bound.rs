@@ -153,12 +153,12 @@ impl Checker<'_> {
         span: Span,
         found: &[Required],
     ) -> Option<Required> {
-        let wide = self.is_wide(ty);
+        let unknown = self.is_unknown(ty);
         match found {
-            // A parameter whose closure is too wide is reported already, and unknown: a method
-            // that its walk did not reach is no error, and nor is one that it did, whatever the
-            // call is.
-            _ if wide => None,
+            // A parameter whose closure is too wide, or whose bound failed, is reported already,
+            // and unknown: a method that its walk did not reach is no error, and nor is one that
+            // it did, whatever the call is.
+            _ if unknown => None,
             [] => {
                 self.no_bound_method(ty, site.name);
                 None

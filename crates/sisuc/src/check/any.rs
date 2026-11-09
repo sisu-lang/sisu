@@ -39,6 +39,16 @@ pub(super) enum AnyJoin {
     Leaves { ty: Type, member: (usize, Type) },
 }
 
+/// The interfaces that an `any` type conforms to, and whether it is unknown (`any_unknown`). The
+/// answer outlives a body, so it is stored with the closure.
+#[derive(Clone)]
+pub(super) struct AnyClosure {
+    /// The interface of the `any` type and each one it inherits, each with its arguments once.
+    interfaces: Rc<[(InterfaceId, TypeArgs)]>,
+    /// Whether an interface of the closure has an inheritance that failed.
+    unknown: bool,
+}
+
 /// Why an interface cannot be `any`. The interface `owner` is the interface itself or one that it
 /// inherits. `kind` names its requirement or associated type, by place.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -277,8 +287,20 @@ impl Checker<'_> {
     /// `any_ty`, an `any I`, and every interface that `I` inherits, each with its arguments once.
     /// These are the interfaces that `any_ty` conforms to. Its calls use their requirements.
     pub(super) fn any_interfaces(&mut self, any_ty: Type) -> Rc<[(InterfaceId, TypeArgs)]> {
+        self.any_closure_of(any_ty).interfaces
+    }
+
+    /// Whether `any_ty`, an `any I`, is unknown: an interface of its closure, `I` included, has an
+    /// inheritance that failed. It conforms to every interface then, as a type parameter does
+    /// (`is_unknown`).
+    pub(super) fn any_unknown(&mut self, any_ty: Type) -> bool {
+        self.any_closure_of(any_ty).unknown
+    }
+
+    /// The closure of `any_ty`, found when first asked for.
+    fn any_closure_of(&mut self, any_ty: Type) -> AnyClosure {
         if let Some(closure) = self.any_closures.get(&any_ty) {
-            return Rc::clone(closure);
+            return closure.clone();
         }
         let interfaces = &self.interfaces;
         let closure: Rc<[(InterfaceId, TypeArgs)]> = any_closure(
@@ -292,19 +314,26 @@ impl Checker<'_> {
             || {},
         )
         .into();
-        self.any_closures.insert(any_ty, Rc::clone(&closure));
+        let unknown = self.closure_inherits_failed(&closure);
+        let closure = AnyClosure {
+            interfaces: closure,
+            unknown,
+        };
+        self.any_closures.insert(any_ty, closure.clone());
         closure
     }
 
     /// Whether `any_ty`, an `any I`, conforms to `interface` with `args`: `I` is `interface`, or
-    /// inherits it. `Display` is every type's, and `conforms` answers it first.
+    /// inherits it, or `any_ty` is unknown. `Display` is every type's, and `conforms` answers it
+    /// first.
     pub(super) fn any_conforms(
         &mut self,
         any_ty: Type,
         interface: InterfaceId,
         args: TypeArgs,
     ) -> bool {
-        self.any_interfaces(any_ty).contains(&(interface, args))
+        let closure = self.any_closure_of(any_ty);
+        closure.unknown || closure.interfaces.contains(&(interface, args))
     }
 
     /// `e`, of type `got`, where `want` is expected, when `want` is `any I` or `(any I)?`:

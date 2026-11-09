@@ -1746,26 +1746,19 @@ fn main() {
     /// name. In each row: the program and the code and place of each diagnostic.
     #[test]
     fn a_broken_item_should_get_the_duplicate_check_of_an_intact_item() {
-        use Code::{
-            BraceOnNewLine as Brace, DefinedTwice as Twice, Expected, Mismatch, NoMember as NoNext,
-        };
+        use Code::{BraceOnNewLine as Brace, DefinedTwice as Twice, Expected, Mismatch};
         let rows: &[(&str, &str, &[Found])] = &[
-            // The E0063 rows stay until the failed bound of a poisoned interface stops
-            // cascading (#506): `Source` is intact and poisoned, so the bound of `drain` fails.
+            // `Source` is intact and poisoned, so the bound of `drain` fails: `drain`'s parameter
+            // is unknown, and `s.next()` draws no E0063.
             (
                 "broken interface after an intact one, and a use",
                 "interface Source {\n    fn next(self) -> i64\n}\n\nfn drain<S: Source>(s: S) {\n    print(s.next())\n}\n\ninterface Source\n{   fn get(self) -> i64\n}\n\nfn main() {\n    let x: i64 = \"s\"\n}\n",
-                &[
-                    (NoNext, (6, 13)),
-                    (Twice, (9, 11)),
-                    (Brace, (10, 1)),
-                    (Mismatch, (14, 18)),
-                ],
+                &[(Twice, (9, 11)), (Brace, (10, 1)), (Mismatch, (14, 18))],
             ),
             (
                 "broken interface after an intact one",
                 "interface Source {\n    fn next(self) -> i64\n}\n\nfn drain<S: Source>(s: S) {\n    print(s.next())\n}\n\ninterface Source\n{   fn get(self) -> i64\n}\n\nfn main() {}\n",
-                &[(NoNext, (6, 13)), (Twice, (9, 11)), (Brace, (10, 1))],
+                &[(Twice, (9, 11)), (Brace, (10, 1))],
             ),
             (
                 "broken interface, no use",
@@ -1800,7 +1793,7 @@ fn main() {
             (
                 "broken interface before an intact one",
                 "interface Source\n{   fn get(self) -> i64\n}\n\nfn drain<S: Source>(s: S) {\n    print(s.next())\n}\n\ninterface Source {\n    fn next(self) -> i64\n}\n\nfn main() {}\n",
-                &[(Brace, (2, 1)), (NoNext, (6, 13)), (Twice, (9, 11))],
+                &[(Brace, (2, 1)), (Twice, (9, 11))],
             ),
             (
                 "error in a body",

@@ -26,7 +26,7 @@ pub(super) struct EnumInfo {
     /// Whether a type parameter is written with a bound.
     pub(super) bounded: bool,
     /// The bounds of each of `type_params`; empty when `bounded` is false.
-    pub(super) bounds: Vec<Vec<super::Bound>>,
+    pub(super) bounds: Vec<super::Bounds>,
     /// The first variant of each name, in declaration order.
     pub(super) variants: Vec<VariantInfo>,
     /// Each variant's index in `variants`, by name.
