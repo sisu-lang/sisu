@@ -1207,16 +1207,22 @@ impl Checker<'_> {
             .is_some_and(|bounds| bounds.failed);
         if !self.body.unknown.contains(&place) {
             let closure = self.body.conforming[place].as_deref().unwrap_or_default();
-            let inherited = closure
-                .iter()
-                .any(|(interface, _)| self.interfaces[interface.0].inherits_failed);
-            if failed || inherited {
+            if failed || self.closure_inherits_failed(closure) {
                 self.body.unknown.push(place);
             }
         }
         self.body.conforming[place]
             .as_deref()
             .expect("the closure of a type parameter should be found by now")
+    }
+
+    /// Whether an interface of `closure` has an inheritance that failed (`inherits_failed`).
+    pub(super) fn closure_inherits_failed(&self, closure: &[(InterfaceId, TypeArgs)]) -> bool {
+        closure.iter().any(|(interface, _)| {
+            #[cfg(test)]
+            super::CLOSURE_STEPS.set(super::CLOSURE_STEPS.get() + 1);
+            self.interfaces[interface.0].inherits_failed
+        })
     }
 
     /// Reports the bound at place `k` among those of the type parameter at `place`, whose closure

@@ -2441,6 +2441,57 @@ fn a_body_should_close_and_index_the_bounds_of_a_parameter_once() {
     assert_eq!(checks(32), checks(1));
 }
 
+/// `n` independent interfaces, each with one method, and the bounds that name them all.
+fn independent(n: usize) -> (String, String) {
+    let mut interfaces = String::new();
+    for i in 0..n {
+        writeln!(interfaces, "interface I{i} {{\n    fn m{i}(self)\n}}")
+            .expect("writing to a `String` should succeed");
+    }
+    let bounds: Vec<String> = (0..n).map(|i| format!("I{i}")).collect();
+    (interfaces, bounds.join(" & "))
+}
+
+/// A call of each of the `n` methods of `independent` on `receiver`, one for each line.
+fn calls_of(n: usize, receiver: &str) -> String {
+    let mut calls = String::new();
+    for i in 0..n {
+        writeln!(calls, "    {receiver}.m{i}()").expect("writing to a `String` should succeed");
+    }
+    calls
+}
+
+/// A body reads the inheritance of a closure for a failed bound once, not at each call: `n` bounds
+/// and `n` calls of their methods cost `n` steps, so the steps of `n`, `2n` and `3n` grow linearly.
+#[test]
+fn a_body_should_scan_the_inheritance_of_a_parameter_closure_once() {
+    let steps = |n: usize| {
+        let (interfaces, bounds) = independent(n);
+        let calls = calls_of(n, "x");
+        let src = format!("{interfaces}fn f<T: {bounds}>(x: T) {{\n{calls}}}\nfn main() {{}}");
+        CLOSURE_STEPS.set(0);
+        clean(&src);
+        CLOSURE_STEPS.get()
+    };
+    assert_near_linear(steps(32), steps(64), steps(96));
+}
+
+/// The same for an associated type: its closure is read once for each body.
+#[test]
+fn a_body_should_scan_the_inheritance_of_an_associated_closure_once() {
+    let steps = |n: usize| {
+        let (interfaces, bounds) = independent(n);
+        let calls = calls_of(n, "y");
+        let src = format!(
+            "{interfaces}interface Holder {{\n    type A: {bounds}\n    fn a(self) -> Self.A\n}}\nfn f<T: Holder>(x: T) {{\n    let y = x.a()\n{calls}}}\nfn main() {{}}"
+        );
+        CLOSURE_STEPS.set(0);
+        clean(&src);
+        CLOSURE_STEPS.get()
+    };
+    assert_near_linear(steps(32), steps(64), steps(96));
+}
+
 /// A chain of `n` interfaces, each inheriting the one before it, and a function whose bound is the
 /// last: the bound gives `n` interfaces. The function comes first, so that its bound is on line 1.
 fn chain(n: usize, call: &str) -> String {

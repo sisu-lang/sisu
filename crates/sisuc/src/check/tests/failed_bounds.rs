@@ -236,7 +236,7 @@ fn a_failed_bound_should_reach_each_kind_of_parameter() {
 
 /// Rows 19, 20, 24-26, 28, 29 and 39 of S31's second table, and the forms of the plan: the form,
 /// and the codes of the output.
-const INHERITED: [(&str, &[Code]); 21] = [
+const INHERITED: [(&str, &[Code]); 23] = [
     (
         "interface J: Missing {}\nfn g<T: J>(x: T) { x.zz() }\n",
         &[UnknownType],
@@ -275,6 +275,15 @@ const INHERITED: [(&str, &[Code]); 21] = [
     // Two steps.
     (
         "interface J: Missing {}\ninterface K: J {}\nfn g<T: K>(x: T) -> bool { x == x }\n",
+        &[UnknownType],
+    ),
+    // Two steps, through an `any` and through an associated type.
+    (
+        "interface J: Missing {}\ninterface K: J {}\nfn g(x: any K) { x.zz() }\n",
+        &[UnknownType],
+    ),
+    (
+        "interface J: Missing {}\ninterface K: J {}\ninterface I {\n    type A: K\n    fn a(self) -> Self.A\n}\nfn g<T: I>(x: T) { x.a().zz() }\n",
         &[UnknownType],
     ),
     // An argument of the inherited interface fails.

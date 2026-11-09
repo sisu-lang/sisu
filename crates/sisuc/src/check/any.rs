@@ -314,9 +314,7 @@ impl Checker<'_> {
             || {},
         )
         .into();
-        let unknown = closure
-            .iter()
-            .any(|(interface, _)| interfaces[interface.0].inherits_failed);
+        let unknown = self.closure_inherits_failed(&closure);
         let closure = AnyClosure {
             interfaces: closure,
             unknown,

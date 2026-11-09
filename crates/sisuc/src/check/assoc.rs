@@ -471,9 +471,7 @@ impl Checker<'_> {
         }
         let closure = &self.body.assoc_conforming[&ty];
         if self.interfaces[interface.0].assoc[k as usize].bounds.failed
-            || closure
-                .iter()
-                .any(|(inherited, _)| self.interfaces[inherited.0].inherits_failed)
+            || self.closure_inherits_failed(closure)
         {
             self.body.unknown_assoc.insert(ty);
         }
