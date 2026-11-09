@@ -12,6 +12,7 @@ use std::process::{Command, Output, Stdio};
 use std::thread;
 
 mod scratch_path;
+#[expect(dead_code, reason = "this binary uses only part of the shared helpers")]
 mod support;
 
 use scratch_path::{empty_dir, failing_cc, only_cc};
@@ -2108,6 +2109,249 @@ fn require_mimalloc_should_accept_a_default_build_and_refuse_a_system_build() {
     assert!(message.contains("does not link mimalloc"), "{message}");
 }
 
+/// A program that allocates an array and an object, prints 3 and frees both.
+const ALLOCATES_AND_PRINTS_3: &str = "class Box {\n    n: i64\n}\n\nfn main() {\n    let xs = [1, 2, 3]\n    let b = Box(n: xs[2])\n    print(b.n)\n}\n";
+
+/// A program that holds an array and indexes it out of bounds.
+const INDEXES_OUT_OF_BOUNDS: &str =
+    "fn main() {\n    let xs = [1, 2, 3]\n    let i = 7\n    print(xs[i])\n}\n";
+
+/// `sisu build --sanitize address <flags>` of `source`, written as `<name>.sisu` in the scratch
+/// directory, with the LLVM `bin` first on `PATH` for `--linker lld`. Returns the executable,
+/// which the flags name, so that two builds of one program do not share a file.
+fn sanitized_exe(name: &str, source: &str, flags: &[&str]) -> PathBuf {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    fs::write(dir.join(format!("{name}.sisu")), source).expect("writes");
+    let words: Vec<&str> = flags.iter().map(|f| f.trim_start_matches('-')).collect();
+    let exe = dir.join(format!("{name}-asan-{}", words.join("-")));
+    let flags: Vec<&str> = ["--sanitize", "address"]
+        .into_iter()
+        .chain(flags.iter().copied())
+        .collect();
+    let out = support::sisu(dir, &format!("{name}.sisu"), &exe, &flags)
+        .env("PATH", path_with_llvm_first())
+        .output()
+        .expect("sisu starts");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    exe
+}
+
+/// A command that runs a sanitized executable. `ASAN_OPTIONS` is set and `LSAN_OPTIONS` is
+/// removed, so that the environment of the developer cannot turn off a report that a test
+/// expects: `fast_unwind_on_malloc=0` is the option that the harness uses. `sisu` itself does not
+/// read or set these variables.
+fn sanitized_command(program: impl AsRef<OsStr>) -> Command {
+    let mut command = Command::new(program);
+    command
+        .env("ASAN_OPTIONS", "fast_unwind_on_malloc=0")
+        .env_remove("LSAN_OPTIONS");
+    command
+}
+
+/// `PATH` with the `bin` of the LLVM that `sisu` builds with first, where `ld.lld` is.
+fn path_with_llvm_first() -> OsString {
+    let bin = Path::new(env!("LLVM_SYS_231_PREFIX")).join("bin");
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&path)))
+        .expect("PATH joins")
+}
+
+/// GIVEN a program that allocates, prints 3 and frees everything
+/// WHEN `sisu <command> --sanitize address <flags>` builds and runs it
+/// THEN it exits 0
+/// AND stdout is "3\n"
+/// AND stderr is empty
+/// AND each `build` executable holds `asan.module_ctor`, which only the `asan` pass makes
+/// AND the plain build of the program holds none
+///
+/// The flags are none, `-O2`, `--rc-checks`, `-O3` and `--linker lld` for `build`, and none for
+/// `run`.
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "ASan works only on Linux")]
+fn sanitized_build_should_behave_as_the_plain_build() {
+    const CTOR: &str = "asan.module_ctor";
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let plain = compile_tmp("sanitized_behaves_plain", ALLOCATES_AND_PRINTS_3, false);
+    assert!(
+        !support::defined_symbols(&plain)
+            .iter()
+            .any(|name| name == CTOR),
+        "the plain build should hold no {CTOR}"
+    );
+    for flags in [
+        &[][..],
+        &["-O2"],
+        &["--rc-checks"],
+        &["-O3"],
+        &["--linker", "lld"],
+    ] {
+        let exe = sanitized_exe("sanitized_behaves", ALLOCATES_AND_PRINTS_3, flags);
+        let out = sanitized_command(&exe)
+            .output()
+            .expect("the program starts");
+        assert_eq!(out.status.code(), Some(0), "{flags:?}: {out:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "3\n", "{flags:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stderr), "", "{flags:?}");
+        assert!(
+            support::defined_symbols(&exe)
+                .iter()
+                .any(|name| name == CTOR),
+            "{flags:?}: the sanitized build should hold {CTOR}"
+        );
+    }
+    fs::write(
+        dir.join("sanitized_behaves_run.sisu"),
+        ALLOCATES_AND_PRINTS_3,
+    )
+    .expect("writes");
+    let out = sanitized_command(env!("CARGO_BIN_EXE_sisu"))
+        .current_dir(dir)
+        .args(["run", "--sanitize", "address", "sanitized_behaves_run.sisu"])
+        .output()
+        .expect("sisu starts");
+    assert_eq!(out.status.code(), Some(0), "run: {out:?}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "3\n", "run");
+    assert_eq!(String::from_utf8_lossy(&out.stderr), "", "run");
+}
+
+/// GIVEN a program
+/// WHEN `sisu build --sanitize address` builds it
+/// THEN the symbols of the executable hold `sisu_alloc`
+/// AND they hold no mimalloc symbol
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "ASan works only on Linux")]
+fn sanitized_build_should_link_the_system_allocator() {
+    let exe = sanitized_exe("sanitized_system", PRINTS_1, &[]);
+    let symbols = support::defined_symbols(&exe);
+    assert!(symbols.iter().any(|name| name == "sisu_alloc"));
+    assert!(!symbols.iter().any(|name| name == "mi_malloc_aligned"));
+}
+
+/// GIVEN a program that prints 3
+/// WHEN `sisu run --sanitize address --allocator system` runs it
+/// THEN it exits 0
+/// AND stdout is "3\n"
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "ASan works only on Linux")]
+fn sanitized_run_should_accept_the_system_allocator() {
+    let out = sanitized_command(env!("CARGO_BIN_EXE_sisu"))
+        .current_dir(env!("CARGO_TARGET_TMPDIR"))
+        .args([
+            "run",
+            "--sanitize",
+            "address",
+            "--allocator",
+            "system",
+            "-e",
+            "fn main() {\n    print(3)\n}\n",
+        ])
+        .output()
+        .expect("sisu starts");
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "3\n");
+}
+
+/// GIVEN a program that leaks a cycle of objects and prints 1
+/// WHEN it runs, built with `--sanitize address`
+/// THEN it exits with a code other than 0
+/// AND stdout is "1\n"
+/// AND stderr holds `LeakSanitizer: detected memory leaks`
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "ASan works only on Linux")]
+fn sanitized_build_should_report_a_leaked_cycle() {
+    let exe = sanitized_exe("sanitized_cycle", LEAKS_A_CYCLE, &[]);
+    let out = sanitized_command(&exe)
+        .output()
+        .expect("the program starts");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_ne!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "1\n");
+    assert!(
+        stderr.contains("LeakSanitizer: detected memory leaks"),
+        "{stderr}"
+    );
+}
+
+/// GIVEN a program that holds an array and then indexes it out of bounds
+/// WHEN it runs, built with `--sanitize address` at `-O0`
+/// THEN it exits 101
+/// AND stderr is the panic line of the plain build
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "ASan works only on Linux")]
+fn sanitized_panic_should_keep_its_exit_code_and_print_no_report() {
+    let plain = compile_tmp("sanitized_panic", INDEXES_OUT_OF_BOUNDS, false);
+    let plain = Command::new(plain).output().expect("the program starts");
+    assert_eq!(plain.status.code(), Some(101), "{plain:?}");
+    let exe = sanitized_exe("sanitized_panic", INDEXES_OUT_OF_BOUNDS, &[]);
+    let out = sanitized_command(&exe)
+        .output()
+        .expect("the program starts");
+    assert_eq!(out.status.code(), Some(101), "{out:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&plain.stderr)
+    );
+}
+
+/// GIVEN a program that leaks a cycle and prints 1
+/// AND an empty `TMPDIR`
+/// WHEN `sisu run --sanitize address` runs it
+/// THEN it exits with a code other than 0
+/// AND stderr holds `LeakSanitizer`
+/// AND `TMPDIR` is empty
+///
+/// The report and the exit code of the program reach the user, and `run` removes its executable.
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "ASan works only on Linux")]
+fn sanitized_run_should_pass_on_the_report_and_the_exit_code() {
+    let tmp = empty_dir("sanitized_run_report_tmp");
+    let out = sanitized_command(env!("CARGO_BIN_EXE_sisu"))
+        .current_dir(env!("CARGO_TARGET_TMPDIR"))
+        .env("TMPDIR", &tmp)
+        .args(["run", "--sanitize", "address", "-e", LEAKS_A_CYCLE])
+        .output()
+        .expect("sisu starts");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_ne!(out.status.code(), Some(0), "{stderr}");
+    assert!(stderr.contains("LeakSanitizer"), "{stderr}");
+    let left: Vec<_> = fs::read_dir(&tmp)
+        .expect("reads TMPDIR")
+        .map(|entry| entry.expect("reads an entry").file_name())
+        .collect();
+    assert_eq!(left, Vec::<OsString>::new());
+}
+
+/// GIVEN a program that prints its arguments
+/// WHEN `sisu run --sanitize address -e <program> -- a b` runs it
+/// THEN it exits 0
+/// AND stdout is what `sisu run` prints without the flag, and names `a` and `b`
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "ASan works only on Linux")]
+fn sanitized_run_should_pass_on_the_arguments_of_an_inline_program() {
+    let run = |flags: &[&str]| {
+        sanitized_command(env!("CARGO_BIN_EXE_sisu"))
+            .current_dir(env!("CARGO_TARGET_TMPDIR"))
+            .arg("run")
+            .args(flags)
+            .args(["-e", ECHO_ARGS, "--", "a", "b"])
+            .output()
+            .expect("sisu starts")
+    };
+    let plain = run(&[]);
+    assert_eq!(plain.status.code(), Some(0), "{plain:?}");
+    let out = run(&["--sanitize", "address"]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(stdout, String::from_utf8_lossy(&plain.stdout));
+    assert!(stdout.lines().any(|line| line == "a"), "{stdout}");
+    assert!(stdout.lines().any(|line| line == "b"), "{stdout}");
+}
+
 /// The section table of `path`, from `readelf -S --wide`. The command must exit 0.
 fn readelf_sections(path: &Path) -> String {
     let out = Command::new("readelf")
@@ -3292,9 +3536,76 @@ fn specialized_clone_check_should_find_a_definition_of_a_clone() {
     assert!(!support::has_specialized_clone(call, "walk"));
 }
 
+/// A `#!/bin/sh` script with the body `body` in `dir`, in place of the `valgrind` program.
+fn valgrind_stub(dir: &Path, body: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let stub = dir.join("stub");
+    fs::write(&stub, format!("#!/bin/sh\n{body}\n")).expect("writes the stub");
+    fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).expect("makes the stub run");
+    stub
+}
+
+/// A `tests/run` case that prints 1.
+const PASSING_CASE: [(&str, &str); 2] = [
+    ("a.sisu", "fn main() {\n    print(1)\n}\n"),
+    ("a.out", "1\n"),
+];
+
 /// GIVEN a `run` case that leaks a cycle, with a wrong `.out` file
 /// WHEN the harness runs it in bless mode
-/// THEN it panics with the Valgrind leak summary
+/// THEN it panics with the `LeakSanitizer` report of the `asan-O0` build, which names `sisu.leak`
+/// AND the `.out` file is unchanged
+///
+/// A run that passes natively but fails under `ASan` writes nothing.
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "reads ASan's output, and ASan runs only on Linux"
+)]
+fn bless_should_not_write_after_an_asan_failure() {
+    let dir = fixture(
+        "bless_never_writes_after_an_asan_failure",
+        &[("a.sisu", LEAKS_A_CYCLE), ("a.out", "wrong\n")],
+    );
+    let message = panic_message(|| support::run(&dir.join("a.sisu"), true));
+    assert!(message.contains("asan-O0"), "{message}");
+    assert!(message.contains("LeakSanitizer"), "{message}");
+    assert!(message.contains("sisu.leak"), "{message}");
+    assert_eq!(
+        fs::read_to_string(dir.join("a.out")).expect("reads a.out"),
+        "wrong\n"
+    );
+}
+
+/// GIVEN a `run` case that passes, and a program in place of Valgrind that logs its arguments and
+/// then runs the program it is given
+/// WHEN the harness runs the case with that program
+/// THEN the case passes
+/// AND the program started once
+/// AND that run was of the `O2` executable
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "reads Valgrind's output, and Valgrind runs only on Linux"
+)]
+fn run_case_should_run_valgrind_once_on_the_o2_build() {
+    let dir = fixture("run_case_runs_valgrind_once_on_o2", &PASSING_CASE);
+    let log = dir.join("log");
+    let stub = valgrind_stub(
+        &dir,
+        &format!("echo \"$*\" >> '{}'; shift 3; exec \"$@\"", log.display()),
+    );
+    support::run_with(&dir.join("a.sisu"), false, &stub);
+    let log = fs::read_to_string(log).expect("reads the log");
+    let lines: Vec<&str> = log.lines().collect();
+    assert_eq!(lines.len(), 1, "{log}");
+    assert!(lines[0].ends_with("/O2"), "{log}");
+}
+
+/// GIVEN a `run` case that passes, with a wrong `.out` file, and a program in place of Valgrind
+/// that exits 1
+/// WHEN the harness runs the case with that program in bless mode
+/// THEN it panics and names the `O2` executable, not `O2-mimalloc`
 /// AND the `.out` file is unchanged
 ///
 /// A run that passes natively but fails under Valgrind writes nothing.
@@ -3306,14 +3617,114 @@ fn specialized_clone_check_should_find_a_definition_of_a_clone() {
 fn bless_should_not_write_after_a_valgrind_failure() {
     let dir = fixture(
         "bless_never_writes_after_a_valgrind_failure",
-        &[("a.sisu", LEAKS_A_CYCLE), ("a.out", "wrong\n")],
+        &[("a.sisu", PASSING_CASE[0].1), ("a.out", "wrong\n")],
     );
-    let message = panic_message(|| support::run(&dir.join("a.sisu"), true));
-    assert!(message.contains("LEAK SUMMARY"), "{message}");
+    let stub = valgrind_stub(&dir, "exit 1");
+    let message = panic_message(|| support::run_with(&dir.join("a.sisu"), true, &stub));
+    assert!(message.contains("/O2: "), "{message}");
     assert_eq!(
         fs::read_to_string(dir.join("a.out")).expect("reads a.out"),
         "wrong\n"
     );
+}
+
+/// GIVEN a `run` case whose function calls itself and adds 1 to the result
+/// WHEN the harness runs it
+/// THEN it panics with the `ASan` report of the `asan-O0` build, which holds `stack-overflow`
+///
+/// The `asan-O0` build must be the first program that the harness runs: `-O0` keeps each call, but
+/// `-O2` makes this recursion an endless loop (probed), so the test depends on the order of the
+/// runs. A plain run first would die by signal 11, with no report.
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "reads ASan's output, and ASan runs only on Linux"
+)]
+fn run_case_should_show_the_asan_report_of_a_stack_overflow() {
+    let dir = fixture(
+        "run_case_shows_the_asan_report_of_a_stack_overflow",
+        &[
+            (
+                "a.sisu",
+                "fn dive(n: i64) -> i64 {\n    dive(n + 1) + 1\n}\n\nfn main() {\n    print(dive(0))\n}\n",
+            ),
+            ("a.out", ""),
+        ],
+    );
+    let message = panic_message(|| support::run(&dir.join("a.sisu"), false));
+    assert!(message.contains("asan-O0"), "{message}");
+    assert!(message.contains("stack-overflow"), "{message}");
+}
+
+/// GIVEN a `run` case that passes
+/// WHEN the harness runs it
+/// THEN its `O0` executable links mimalloc
+/// AND its `O2` executable does not
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "reads the symbols of an executable, and the allocator choice is a Linux one"
+)]
+fn run_case_should_run_o0_on_mimalloc_and_o2_on_the_system_allocator() {
+    let dir = fixture(
+        "run_case_runs_o0_on_mimalloc_and_o2_on_system",
+        &PASSING_CASE,
+    );
+    let source = dir.join("a.sisu");
+    support::run(&source, false);
+    support::require_mimalloc(&support::case_path(&source).join("O0"));
+    support::refuse_mimalloc(&support::case_path(&source).join("O2"));
+}
+
+/// GIVEN a `run` case that leaks a cycle, with the right `.out` file
+/// WHEN the harness runs it
+/// THEN it panics with a `LeakSanitizer` report
+///
+/// `asan_runs_should_replace_the_asan_options_of_the_environment` starts this test with
+/// `ASAN_OPTIONS=detect_leaks=0`. It has its own directory, because nextest runs the tests at the
+/// same time. For the same reason, it must not run beside its starter (for example under
+/// `--run-ignored all`): both would use that directory at once.
+#[test]
+#[ignore = "started by asan_runs_should_replace_the_asan_options_of_the_environment"]
+fn leak_case_should_fail_when_started_by_the_environment_test() {
+    let dir = fixture(
+        "leak_case_fails_when_started_by_the_environment_test",
+        &[("a.sisu", LEAKS_A_CYCLE), ("a.out", "1\n")],
+    );
+    let message = panic_message(|| support::run(&dir.join("a.sisu"), false));
+    assert!(message.contains("LeakSanitizer"), "{message}");
+}
+
+/// GIVEN the environment has `ASAN_OPTIONS=detect_leaks=0` and `LSAN_OPTIONS=suppressions=<file>`,
+/// where the file holds `leak:*`
+/// WHEN a test binary runs a `run` case that leaks a cycle
+/// THEN the harness still fails the case with a `LeakSanitizer` report
+///
+/// The test starts its own binary with the variables, so that no test changes its own
+/// environment. If the harness kept `ASAN_OPTIONS`, or kept `LSAN_OPTIONS`, the leak would pass,
+/// and the test that it starts would fail.
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore = "ASan works only on Linux")]
+fn asan_runs_should_replace_the_asan_options_of_the_environment() {
+    let dir = empty_dir("asan_runs_replace_the_asan_options");
+    let suppressions = dir.join("suppressions");
+    fs::write(&suppressions, "leak:*\n").expect("writes the suppressions");
+    let out = Command::new(std::env::current_exe().expect("finds the test binary"))
+        .args([
+            "--exact",
+            "leak_case_should_fail_when_started_by_the_environment_test",
+            "--ignored",
+        ])
+        .env("ASAN_OPTIONS", "detect_leaks=0")
+        .env(
+            "LSAN_OPTIONS",
+            format!("suppressions={}", suppressions.display()),
+        )
+        .output()
+        .expect("starts the test binary");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{stdout}");
+    assert!(stdout.contains("1 passed"), "{stdout}");
 }
 
 /// GIVEN a `run_fail` case that has an `.out` file and no `.err` file

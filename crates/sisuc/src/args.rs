@@ -9,7 +9,7 @@ use clap::{ArgGroup, Args, CommandFactory, Parser, Subcommand, ValueEnum};
 
 use crate::codegen::OptLevel;
 use crate::report::Format;
-use crate::{Allocator, Backend, Mode, Source, Stage};
+use crate::{Allocator, Backend, Mode, Sanitizer, Source, Stage};
 
 /// The Sisu compiler.
 #[derive(Parser)]
@@ -119,6 +119,13 @@ struct BuildFlags {
     )]
     #[arg(long, value_enum)]
     allocator: Option<Allocator>,
+    /// Find memory errors and leaks at run time with AddressSanitizer; works on Linux only
+    #[expect(
+        clippy::doc_markdown,
+        reason = "this doc comment is `--help` text, where backticks around AddressSanitizer would print"
+    )]
+    #[arg(long, value_enum)]
+    sanitize: Option<Sanitizer>,
     /// Split the program into at most N codegen units, built on several threads; 1 gives
     /// whole-program optimization and the fastest program
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u8).range(1..=64))]
@@ -129,16 +136,35 @@ struct BuildFlags {
 }
 
 impl BuildFlags {
-    /// The format, and the back end these flags ask for.
-    fn into_parts(self) -> (Format, Backend) {
+    /// The format, and the back end these flags ask for. Gives the usage error of `subcommand`
+    /// when the platform or the allocator does not allow the sanitizer.
+    fn into_parts(self, subcommand: &str) -> Result<(Format, Backend), clap::Error> {
+        let mut allocator = self.allocator;
+        if self.sanitize.is_some() {
+            if !cfg!(target_os = "linux") {
+                return Err(usage_error(
+                    subcommand,
+                    "`--sanitize address` works only on Linux",
+                ));
+            }
+            if matches!(allocator, Some(Allocator::Mimalloc)) {
+                return Err(usage_error(
+                    subcommand,
+                    "`--sanitize address` works only with `--allocator system`",
+                ));
+            }
+            // ASan sees only the blocks that `malloc` gives.
+            allocator = Some(Allocator::System);
+        }
         let backend = Backend {
             level: self.level.unwrap_or(OptLevel::O0),
             rc_checks: self.rc_checks,
             linker: self.linker,
-            allocator: self.allocator,
+            allocator,
+            sanitize: self.sanitize,
             units: self.codegen_units.map(usize::from),
         };
-        (self.format, backend)
+        Ok((self.format, backend))
     }
 }
 
@@ -164,7 +190,7 @@ pub(crate) fn parse(args: &[OsString]) -> Result<(Format, Mode), clap::Error> {
             output,
             timings,
         } => {
-            let (format, backend) = flags.into_parts();
+            let (format, backend) = flags.into_parts("build")?;
             reject_json_timings(&format, timings, "build")?;
             (
                 format,
@@ -176,7 +202,7 @@ pub(crate) fn parse(args: &[OsString]) -> Result<(Format, Mode), clap::Error> {
             inline,
             rest,
         } => {
-            let (format, backend) = flags.into_parts();
+            let (format, backend) = flags.into_parts("run")?;
             let inline_given = !inline.is_empty();
             let mut values = if inline_given { inline } else { rest }
                 .into_iter()
@@ -269,6 +295,13 @@ fn build_mode(
             timings,
         });
     };
+    // `into_parts` has set the allocator, so this check comes before the one on `--allocator`.
+    if backend.sanitize.is_some() {
+        return Err(usage_error(
+            "build",
+            "`--sanitize` works only when building an executable",
+        ));
+    }
     // The other stages run no optimizer.
     if backend.level != OptLevel::O0 && !matches!(stage, Stage::Ir) {
         let level = backend

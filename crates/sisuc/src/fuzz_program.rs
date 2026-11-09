@@ -49,6 +49,7 @@ const BUILDS: [(&str, Backend); 4] = [
             rc_checks: false,
             linker: None,
             allocator: None,
+            sanitize: None,
             units: None,
         },
     ),
@@ -59,6 +60,7 @@ const BUILDS: [(&str, Backend); 4] = [
             rc_checks: false,
             linker: None,
             allocator: None,
+            sanitize: None,
             units: Some(1),
         },
     ),
@@ -69,6 +71,7 @@ const BUILDS: [(&str, Backend); 4] = [
             rc_checks: true,
             linker: None,
             allocator: None,
+            sanitize: None,
             units: None,
         },
     ),
@@ -79,6 +82,7 @@ const BUILDS: [(&str, Backend); 4] = [
             rc_checks: false,
             linker: None,
             allocator: None,
+            sanitize: None,
             units: Some(4),
         },
     ),
@@ -968,17 +972,6 @@ thread_local! {
     static FORCE: std::cell::Cell<Option<Force>> = const { std::cell::Cell::new(None) };
 }
 
-/// `target/debug/libsisu_runtime_mimalloc.a`, the default allocator's runtime, which
-/// nextest's setup script builds: the test binary is `target/debug/deps/<name>` (decision 7).
-#[cfg(test)]
-fn runtime() -> PathBuf {
-    let exe = std::env::current_exe().expect("the test binary should know its path");
-    exe.parent()
-        .and_then(Path::parent)
-        .expect("the test binary should be two levels inside the target directory")
-        .join("libsisu_runtime_mimalloc.a")
-}
-
 /// What `source` writes to its standard output, built at O0 and run once. For the tests of the
 /// generator, which check the text of values.
 #[cfg(test)]
@@ -987,7 +980,14 @@ pub(crate) fn stdout_of(source: &str) -> Vec<u8> {
         .expect("the test should make its directory");
     let program = checked("program", source).expect("the test's program should check clean");
     let exe = dir.join("program");
-    build("program", source, &program, &BUILDS[0].1, &runtime(), &exe);
+    build(
+        "program",
+        source,
+        &program,
+        &BUILDS[0].1,
+        &crate::link::test_runtime(crate::Allocator::Mimalloc),
+        &exe,
+    );
     let stdin = dir.join("stdin.txt");
     fs::write(&stdin, "").expect("the test should write the stdin");
     let run = run(&exe, &stdin, &dir, LIMIT);
@@ -1012,8 +1012,9 @@ mod tests {
         Answer, BUILDS, Exit, FORCE, Force, Known, LIMIT, Property, Run, build, builds, checked,
         control_of, is_marked, judge, judge_bounds, judge_builds, judge_edit, judge_known,
         judge_marked, judge_mistakes, judge_pair, judge_source, known_cascades, parse_cascades,
-        program, program_in, run, runtime,
+        program, program_in, run,
     };
+    use crate::Allocator;
     use crate::diagnostic::Severity;
     use crate::fresh_names;
     use crate::generate::coverage::FUZZ_SEEDS;
@@ -1021,6 +1022,7 @@ mod tests {
     use crate::generate::{
         BoundSite, Generated, Kind, MAIN_ARGS_GATE, Mistake, coverage, generate,
     };
+    use crate::link::test_runtime;
 
     /// A directory of the test's own, removed when dropped.
     struct Scratch(PathBuf);
@@ -1050,7 +1052,7 @@ mod tests {
             "program",
             source,
             &program,
-            &runtime(),
+            &test_runtime(Allocator::Mimalloc),
             &scratch.0,
             &stdin_path,
             limit,
@@ -1127,7 +1129,14 @@ mod tests {
         let scratch = Scratch::new();
         let program = checked("program", source).expect("the test's program should check clean");
         let exe = scratch.0.join("program");
-        build("program", source, &program, &BUILDS[0].1, &runtime(), &exe);
+        build(
+            "program",
+            source,
+            &program,
+            &BUILDS[0].1,
+            &test_runtime(Allocator::Mimalloc),
+            &exe,
+        );
         let stdin = scratch.0.join("stdin.txt");
         fs::write(&stdin, "").expect("the test should write the stdin");
         let hung = run(&exe, &stdin, &scratch.0, Duration::from_millis(200));
@@ -1252,8 +1261,8 @@ mod tests {
                 mut_lens: Vec::new(),
             };
             let scratch = Scratch::new();
-            let (failure, builds) =
-                judge(&g, &runtime(), &scratch.0).expect_err("an unknown name should fail");
+            let (failure, builds) = judge(&g, &test_runtime(Allocator::Mimalloc), &scratch.0)
+                .expect_err("an unknown name should fail");
             assert_eq!(
                 (failure.property, builds.as_str()),
                 (Property::Clean, ""),
@@ -1916,7 +1925,14 @@ mod tests {
             let stdin = scratch.0.join("stdin.txt");
             fs::write(&stdin, &g.stdin).expect("the test should write the stdin");
             let exe = scratch.0.join("program");
-            build("swapped", &source, &program, &BUILDS[0].1, &runtime(), &exe);
+            build(
+                "swapped",
+                &source,
+                &program,
+                &BUILDS[0].1,
+                &test_runtime(Allocator::Mimalloc),
+                &exe,
+            );
             run(&exe, &stdin, &scratch.0, LIMIT)
         });
         assert_eq!(run.exit, Exit::Code(0), "{source}");
@@ -1972,10 +1988,11 @@ mod tests {
     /// The failed property of `judge` on `g`, if any, and the record of the builds.
     fn judged(g: &Generated) -> (Option<Property>, String) {
         let scratch = Scratch::new();
-        crate::on_compiler_stack(|| judge(g, &runtime(), &scratch.0)).map_or_else(
-            |(f, record)| (Some(f.property), record),
-            |()| (None, String::new()),
-        )
+        crate::on_compiler_stack(|| judge(g, &test_runtime(Allocator::Mimalloc), &scratch.0))
+            .map_or_else(
+                |(f, record)| (Some(f.property), record),
+                |()| (None, String::new()),
+            )
     }
 
     #[test]
@@ -2017,8 +2034,15 @@ mod tests {
                 checked(name, source).unwrap_or_else(|f| panic!("{}: {}", f.property, f.detail));
             let stdin = scratch.0.join("stdin.txt");
             fs::write(&stdin, &g.stdin).expect("the test should write the stdin");
-            judge_source(name, source, &program, &runtime(), &scratch.0, &stdin)
-                .unwrap_or_else(|(f, record)| panic!("the exit check: {}\n{record}", f.detail));
+            judge_source(
+                name,
+                source,
+                &program,
+                &test_runtime(Allocator::Mimalloc),
+                &scratch.0,
+                &stdin,
+            )
+            .unwrap_or_else(|(f, record)| panic!("the exit check: {}\n{record}", f.detail));
         });
     }
 
@@ -2094,7 +2118,7 @@ mod tests {
         let n = (0..FUZZ_SEEDS)
             .find(|&n| gated(n))
             .expect("some gated seed should hold a known value site");
-        crate::on_compiler_stack(|| program(&seed(n), &runtime()));
+        crate::on_compiler_stack(|| program(&seed(n), &test_runtime(Allocator::Mimalloc)));
     }
 
     #[test]
@@ -2161,7 +2185,7 @@ mod tests {
             g.rewritten != g.program && panic_sites(&g) == 1 && g.known.len() > 1,
             "seed 3934 should have rewrites, a value site and a panic site"
         );
-        crate::on_compiler_stack(|| program_in(&data, &runtime(), &tmp.0));
+        crate::on_compiler_stack(|| program_in(&data, &test_runtime(Allocator::Mimalloc), &tmp.0));
         let left = fs::read_dir(&tmp.0)
             .expect("the test's directory should be readable")
             .count();
@@ -3024,7 +3048,7 @@ mod tests {
                 &g.program,
                 &program,
                 &BUILDS[0].1,
-                &runtime(),
+                &test_runtime(Allocator::Mimalloc),
                 &exe,
             );
             run(&exe, &stdin, &scratch.0, LIMIT)
@@ -3102,7 +3126,7 @@ mod tests {
         if env::var_os(CHILD).is_some() {
             crate::on_compiler_stack(|| {
                 FORCE.set(Some(Force::Stdout));
-                program(&[], &runtime());
+                program(&[], &test_runtime(Allocator::Mimalloc));
             });
             return;
         }
@@ -3140,7 +3164,7 @@ mod tests {
             std::panic::set_hook(Box::new(|_| std::process::abort()));
             crate::on_compiler_stack(|| {
                 FORCE.set(Some(Force::CompilerPanic));
-                program(&seed(0), &runtime());
+                program(&seed(0), &test_runtime(Allocator::Mimalloc));
             });
             return;
         }
@@ -3179,7 +3203,7 @@ mod tests {
             std::panic::set_hook(Box::new(|_| std::process::abort()));
             crate::on_compiler_stack(|| {
                 FORCE.set(Some(Force::WorkerPanic));
-                program(&seed(0), &runtime());
+                program(&seed(0), &test_runtime(Allocator::Mimalloc));
             });
             return;
         }
@@ -3206,7 +3230,7 @@ mod tests {
         if env::var_os(CHILD).is_some() {
             crate::on_compiler_stack(|| {
                 FORCE.set(Some(Force::CompilerPanic));
-                program(&seed(0), &runtime());
+                program(&seed(0), &test_runtime(Allocator::Mimalloc));
             });
             return;
         }
@@ -3236,7 +3260,7 @@ mod tests {
         if env::var_os(CHILD).is_some() {
             crate::on_compiler_stack(|| {
                 FORCE.set(Some(Force::Conforming));
-                program(&seed(bound_seed()), &runtime());
+                program(&seed(bound_seed()), &test_runtime(Allocator::Mimalloc));
             });
             return;
         }
@@ -3287,7 +3311,7 @@ mod tests {
         if env::var_os(CHILD).is_some() {
             crate::on_compiler_stack(|| {
                 FORCE.set(Some(Force::CheckerPanic));
-                program(&seed(bound_seed()), &runtime());
+                program(&seed(bound_seed()), &test_runtime(Allocator::Mimalloc));
             });
             return;
         }
@@ -3313,7 +3337,7 @@ mod tests {
         if env::var_os(CHILD).is_some() {
             crate::on_compiler_stack(|| {
                 FORCE.set(Some(Force::CheckerPanic));
-                program(&seed(mistake_seed()), &runtime());
+                program(&seed(mistake_seed()), &test_runtime(Allocator::Mimalloc));
             });
             return;
         }

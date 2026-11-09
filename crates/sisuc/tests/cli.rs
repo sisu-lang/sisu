@@ -1396,6 +1396,156 @@ fn allocator_should_exit_2_unless_the_command_builds_an_executable() {
     }
 }
 
+/// GIVEN a program
+/// WHEN `sisu <command> <flags>` runs on it
+/// THEN it exits 2
+/// AND stderr holds the message of the wrong use
+///
+/// The rows are the table of the scenario, and `--allocator system` with `--emit ir`: the
+/// `--sanitize` text, not the `--allocator` text.
+///
+/// `--sanitize` selects the System allocator, so with `--emit` the `--sanitize` text shows and
+/// not the `--allocator` text; with `--allocator mimalloc` the allocator text shows first.
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "on macOS the flag is refused before these checks"
+)]
+fn sanitize_should_exit_2_when_the_flags_do_not_allow_it() {
+    const EXECUTABLE: &str = "`--sanitize` works only when building an executable";
+    const SYSTEM: &str = "`--sanitize address` works only with `--allocator system`";
+    for (args, message) in [
+        (
+            &["build", "--sanitize", "address", "--emit", "ir", "f.sisu"][..],
+            EXECUTABLE,
+        ),
+        (
+            &[
+                "build",
+                "--sanitize",
+                "address",
+                "--emit",
+                "tokens",
+                "f.sisu",
+            ],
+            EXECUTABLE,
+        ),
+        (
+            &[
+                "build",
+                "--sanitize",
+                "address",
+                "--allocator",
+                "mimalloc",
+                "f.sisu",
+                "-o",
+                "out",
+            ],
+            SYSTEM,
+        ),
+        (
+            &[
+                "run",
+                "--sanitize",
+                "address",
+                "--allocator",
+                "mimalloc",
+                "f.sisu",
+            ],
+            SYSTEM,
+        ),
+        (
+            &[
+                "build",
+                "--sanitize",
+                "address",
+                "--allocator",
+                "mimalloc",
+                "--emit",
+                "ir",
+                "f.sisu",
+            ],
+            SYSTEM,
+        ),
+        (
+            &["build", "--sanitize", "thread", "f.sisu", "-o", "out"],
+            "invalid value 'thread'",
+        ),
+        (
+            &[
+                "build",
+                "--sanitize",
+                "address",
+                "--allocator",
+                "system",
+                "--emit",
+                "ir",
+                "f.sisu",
+            ],
+            EXECUTABLE,
+        ),
+    ] {
+        let stderr = assert_usage_errors(&[args]);
+        assert!(stderr.contains(message), "{args:?}: {stderr}");
+    }
+}
+
+/// GIVEN a program
+/// WHEN `sisu <command> --sanitize address` runs on macOS
+/// THEN it exits 2
+/// AND stderr holds `--sanitize address` works only on Linux
+///
+/// The command is `build` or `run`. A third row adds `--allocator mimalloc`. The Linux check comes
+/// before the allocator check, so that row shows the Linux text.
+#[test]
+#[cfg_attr(
+    not(target_os = "macos"),
+    ignore = "only macOS refuses the flag; Linux accepts it"
+)]
+fn sanitize_should_exit_2_on_macos() {
+    for args in [
+        &["build", "--sanitize", "address", "f.sisu", "-o", "out"][..],
+        &["run", "--sanitize", "address", "f.sisu"],
+        &[
+            "build",
+            "--sanitize",
+            "address",
+            "--allocator",
+            "mimalloc",
+            "f.sisu",
+            "-o",
+            "out",
+        ],
+    ] {
+        let stderr = assert_usage_errors(&[args]);
+        assert!(
+            stderr.contains("`--sanitize address` works only on Linux"),
+            "{args:?}: {stderr}"
+        );
+    }
+}
+
+/// GIVEN `--sanitize address` twice, `--sanitize` with no value, and `check --sanitize address`
+/// WHEN `sisu` runs
+/// THEN it exits 2 with a usage error
+#[test]
+fn sanitize_should_exit_2_for_a_repeat_a_missing_value_or_check() {
+    assert_usage_errors(&[
+        &[
+            "build",
+            "--sanitize",
+            "address",
+            "--sanitize",
+            "address",
+            "f.sisu",
+            "-o",
+            "out",
+        ],
+        &["build", "--sanitize"],
+        &["check", "--sanitize", "address", "f.sisu"],
+    ]);
+}
+
 /// GIVEN a program that computes `fib(30)`
 /// WHEN it is built with `--emit ir-raw`
 /// THEN LLVM parses the output into a module that verifies, and the output has no `; before` header
@@ -1929,7 +2079,8 @@ fn emit_ir_should_size_each_enum_by_its_variant_count_and_largest_payload() {
 
 /// GIVEN a copy of `sisu` with no runtime library beside it, and a temporary directory that is
 /// absent
-/// WHEN it runs `build` and `run`, with the default allocator and with `--allocator system`
+/// WHEN it runs `build` and `run`, with the default allocator, with `--allocator system` and, on
+/// Linux, with `--sanitize address`
 /// THEN each run exits 1 and stderr says the runtime library is not found, with the archive of the
 /// allocator, and says to run the Sisu install line again or to run `cargo build --workspace` in a
 /// clone
@@ -1949,6 +2100,10 @@ fn build_and_run_should_report_a_missing_runtime_library_before_they_compile() {
         &["run", "one.sisu"],
         &["build", "--allocator", "system", "one.sisu", "-o", "one"],
         &["run", "--allocator", "system", "one.sisu"],
+        #[cfg(target_os = "linux")]
+        &["build", "--sanitize", "address", "one.sisu", "-o", "one"],
+        #[cfg(target_os = "linux")]
+        &["run", "--sanitize", "address", "one.sisu"],
     ] {
         let out = Command::new(&sisu)
             .current_dir(&dir)
@@ -1962,7 +2117,7 @@ fn build_and_run_should_report_a_missing_runtime_library_before_they_compile() {
             stderr.starts_with("sisu: runtime library not found at "),
             "{args:?}: {stderr}"
         );
-        let archive = if args.contains(&"system") {
+        let archive = if args.contains(&"system") || args.contains(&"--sanitize") {
             "/libsisu_runtime_system.a;"
         } else {
             "/libsisu_runtime_mimalloc.a;"

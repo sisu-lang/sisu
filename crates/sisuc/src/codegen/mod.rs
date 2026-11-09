@@ -49,6 +49,7 @@ use self::enums::{Component, EnumLayout};
 use self::layout::{ClassLayout, HeapBlock, Niche, tbaa_tag};
 use self::rc::Helper;
 use self::units::{Placement, Unit};
+use crate::Sanitizer;
 use crate::conformance::Written;
 use crate::mir::{
     self, BlockId, Const, Operand, Place, Projection, Rvalue, Side, Statement, Terminator,
@@ -1795,6 +1796,15 @@ pub(crate) fn pipeline(level: OptLevel) -> &'static str {
     }
 }
 
+/// The pipeline of a sanitized build: `pipeline`, then `asan`, as `clang` runs it. `asan` is a
+/// module pass, so the `-O0` pipeline wraps its `mem2reg` in `function(...)`.
+fn sanitized_pipeline(level: OptLevel) -> String {
+    match level {
+        OptLevel::O0 => "function(mem2reg),asan".to_owned(),
+        OptLevel::O2 | OptLevel::O3 => format!("{},asan", pipeline(level)),
+    }
+}
+
 /// Marks each Sisu function in `names`, comma separated, `noinline` so that the optimizer keeps
 /// it. The `o2-calls` check uses this to read a caller's own calls; a name that is not a
 /// function is skipped.
@@ -1940,23 +1950,34 @@ fn text_part(ty: Type) -> bool {
 }
 
 /// Verifies `module` in a debug build, then runs the pipeline. At `-O0`, it first makes each
-/// function that is too large for `mem2reg` `optnone` (see `MEM2REG_LIMIT`). A release build does
-/// not verify, because the verifier takes about 180 ms of a 143k-line build. The tests that run
-/// `sisu` run a debug build, so it verifies each module that they build. No verifier runs after the
-/// pipeline: a pass that broke the IR reaches instruction selection, which would be an LLVM bug.
+/// function that is too large for `mem2reg` `optnone` (see `MEM2REG_LIMIT`). With `sanitize`, it
+/// then marks each function with a body `sanitize_address` and runs `sanitized_pipeline`. A
+/// release build does not verify, because the verifier takes about 180 ms of a 143k-line build.
+/// The tests that run `sisu` run a debug build, so it verifies each module that they build. No
+/// verifier runs after the pipeline: a pass that broke the IR reaches instruction selection, which
+/// would be an LLVM bug.
 pub(crate) fn optimize(
     module: &Module<'_>,
     machine: &TargetMachine,
     level: OptLevel,
+    sanitize: Option<Sanitizer>,
 ) -> Result<(), String> {
     if level == OptLevel::O0 {
         skip_mem2reg_of_large_functions(module);
     }
+    if sanitize.is_some() {
+        mark_sanitize_address(module);
+    }
     if cfg!(debug_assertions) {
         module.verify().map_err(|e| e.to_string())?;
     }
+    let passes = if sanitize.is_some() {
+        sanitized_pipeline(level)
+    } else {
+        pipeline(level).to_owned()
+    };
     module
-        .run_passes(pipeline(level), machine, PassBuilderOptions::create())
+        .run_passes(&passes, machine, PassBuilderOptions::create())
         .map_err(|e| e.to_string())
 }
 
@@ -1987,6 +2008,19 @@ fn skip_mem2reg_of_large_functions(module: &Module<'_>) {
     }
 }
 
+/// Marks each function of `module` that has a body `sanitize_address`, so that the `asan` pass
+/// instruments it. A declaration has no body, and the runtime is not instrumented.
+fn mark_sanitize_address(module: &Module<'_>) {
+    let attribute = module
+        .get_context()
+        .create_enum_attribute(Attribute::get_named_enum_kind_id("sanitize_address"), 0);
+    for function in module.get_functions() {
+        if function.count_basic_blocks() > 0 {
+            function.add_attribute(AttributeLoc::Function, attribute);
+        }
+    }
+}
+
 /// Compiles `module`, which `optimize` ran, to object code for `machine`, in memory.
 pub(crate) fn object_code(
     module: &Module<'_>,
@@ -1997,5 +2031,7 @@ pub(crate) fn object_code(
         .map_err(|e| e.to_string())
 }
 
+#[cfg(test)]
+mod asan_tests;
 #[cfg(test)]
 mod tests;
