@@ -11,6 +11,7 @@ struct Record {
     line: u64,
     column: u64,
     fixes: usize,
+    message: String,
 }
 
 impl Record {
@@ -34,6 +35,7 @@ fn records_of(program: &str) -> Vec<Record> {
             line: v["primary"]["line"].as_u64().expect("a line"),
             column: v["primary"]["column"].as_u64().expect("a column"),
             fixes: v["fixes"].as_array().expect("a fixes array").len(),
+            message: v["message"].as_str().expect("a message").to_string(),
         })
         .collect()
 }
@@ -207,6 +209,26 @@ fn a_name_at_its_position_should_give_one_true_answer() {
             "P2 (control)",
             "fn f(Bar: string) {\n    match zz {\n        Bar => {\n            let _a: i64 = Bar\n        }\n        _ => {}\n    }\n}\n\nfn main() {}",
             &["E0033 2:11", "E0032 4:27"],
+        ),
+        row(
+            "a broken enum named i64, as a type",
+            "enum i64\n{ A }\nfn f(x: i64) { let _a: string = x }\nfn main() {}",
+            &["E0026 1:6", "E0004 2:1"],
+        ),
+        row(
+            "a bound, where an associated type has the name of a poisoned interface",
+            "interface N<T> {}\ninterface N<T> {}\ninterface I {\n    type N\n    fn m<U: N<Missing>>(self, x: U)\n}\nfn main() {}",
+            &["E0034 2:11", "E0030 5:15"],
+        ),
+        row(
+            "a bare bound, where an associated type has the name of a poisoned interface",
+            "interface N<T> {}\ninterface N<T> {}\ninterface I {\n    type N\n    fn m<U: N>(self, x: U)\n}\nfn main() {}",
+            &["E0034 2:11"],
+        ),
+        row(
+            "a parameter named char, called",
+            "fn f(char: i64) { print(char(65)) }\nfn main() {}",
+            &[],
         ),
         row(
             "P3",
@@ -427,6 +449,27 @@ fn a_name_at_its_position_should_give_one_true_answer() {
         rows.len(),
         wrong.join("\n")
     );
+}
+
+/// GIVEN a class, an enum or a function that has the name of a language interface
+/// WHEN `sisu check` runs on a read of the name
+/// THEN the E0105 names the item that the program declares, not the prelude's interface.
+#[test]
+fn a_read_of_a_language_interface_name_that_an_item_takes_should_name_the_item() {
+    let rows = [
+        ("class", "class Eq {}", "`Eq` is a type, not a value"),
+        ("enum", "enum Eq { A }", "`Eq` is a type, not a value"),
+        ("fn", "fn Eq() {}", "`Eq` is a function, not a value"),
+    ];
+    for (kind, item, message) in rows {
+        let program = format!("{item}\nfn main() {{ let _a = Eq }}");
+        let got: Vec<_> = records_of(&program)
+            .into_iter()
+            .filter(|r| r.code == "E0105")
+            .map(|r| r.message)
+            .collect();
+        assert_eq!(got, [message], "{kind}");
+    }
 }
 
 /// GIVEN the program P7, where a type parameter is a value
@@ -673,6 +716,21 @@ fn a_redeclared_name_should_leave_only_its_error() {
             "duplicate enum called",
             "enum E { A }\nenum E { B }\nfn main() { E(1) }\n",
             &["E0034 2:6"],
+        ),
+        row(
+            "interface and fn, a bound member",
+            "interface A { fn m(self) }\nfn A() {}\nfn g<T: A>(x: T) { x.zz() }\nfn main() {}",
+            &["E0034 2:4"],
+        ),
+        row(
+            "constant and fn, a read",
+            "const A = 1\nfn A() {}\nfn main() { let _a: string = A }",
+            &["E0034 2:4"],
+        ),
+        row(
+            "alias and fn, a type",
+            "type A = i64\nfn A() {}\nfn g(x: A) { let _a: string = x }\nfn main() {}",
+            &["E0034 2:4"],
         ),
     ];
     assert_rows(&rows);
