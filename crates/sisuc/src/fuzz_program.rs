@@ -439,13 +439,15 @@ fn judge_mistakes(g: &Generated, seen: Option<&Path>) -> Result<(), Failure> {
     control.map_or(Ok(()), |pair| judge_edit(g, &pair, seen))
 }
 
-/// The control of `g`: its first two mistakes, in kind order, of different functions.
+/// The control of `g`: its first two mistakes, in kind order, of different functions. A copy of an
+/// item is not in a control, because the copy can hold the site of the other mistake.
 fn control_of(g: &Generated) -> Option<[&Mistake; 2]> {
-    g.mistakes.iter().enumerate().find_map(|(i, a)| {
-        let b = g.mistakes[i + 1..]
-            .iter()
-            .find(|b| b.function != a.function);
-        b.map(|b| [a, b])
+    let mistakes: Vec<&Mistake> = (g.mistakes.iter())
+        .filter(|m| m.kind != Kind::Duplicate)
+        .collect();
+    mistakes.iter().enumerate().find_map(|(i, &a)| {
+        let b = mistakes[i + 1..].iter().find(|b| b.function != a.function);
+        b.map(|&b| [a, b])
     })
 }
 
@@ -2330,6 +2332,13 @@ mod tests {
         }
     }
 
+    /// A second definition of `f1` in `TWO`, written before the first one.
+    fn duplicate_mistake() -> Mistake {
+        let item = &TWO[..TWO.find("fn main").expect("TWO should have a main")];
+        let name = "fn ".len();
+        mistake(Kind::Duplicate, (0, ""), item, &[("E0034", name)])
+    }
+
     /// The offset of the `n`th occurrence of `text` in `program`, counted from 0.
     fn nth(program: &str, text: &str, n: usize) -> usize {
         program
@@ -2390,6 +2399,25 @@ mod tests {
     fn single_mistake_check_should_pass_a_literal_mistake() {
         let g = with_mistakes(LITERAL, vec![literal_mistake()]);
         judge_mistakes(&g, None).expect("one E0032 at the literal should pass");
+    }
+
+    /// GIVEN a function that the edit writes a second time, before the first one
+    /// WHEN the single-mistake check runs
+    /// THEN it expects E0034 at the name of the original, which is now the second definition
+    #[test]
+    fn single_mistake_check_should_pass_a_duplicate_mistake() {
+        judge_mistakes(&with_mistakes(TWO, vec![duplicate_mistake()]), None)
+            .expect("one E0034 at the second definition should pass");
+    }
+
+    /// GIVEN a mistake in a function and a copy of an item, which may hold that mistake's site
+    /// WHEN the control is chosen
+    /// THEN no control takes the copy
+    #[test]
+    fn control_should_take_no_duplicate_mistake() {
+        let [literal, _] = two_mistakes("missing");
+        let g = with_mistakes(TWO, vec![literal, duplicate_mistake()]);
+        assert_eq!(control_of(&g), None);
     }
 
     #[test]

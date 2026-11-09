@@ -17,20 +17,23 @@ pub(crate) enum Kind {
     Local,
     Argument,
     Declaration,
+    /// Last, so that the picks of the other kinds stay.
+    Duplicate,
 }
 
 impl Kind {
     /// Every kind, in kind order.
-    pub(crate) const ALL: [Kind; 5] = [
+    pub(crate) const ALL: [Kind; 6] = [
         Kind::Literal,
         Kind::Callee,
         Kind::Local,
         Kind::Argument,
         Kind::Declaration,
+        Kind::Duplicate,
     ];
 
     /// The name in `fuzz/known_cascades.txt`: "literal", "callee", "local", "argument",
-    /// "declaration".
+    /// "declaration", "duplicate".
     pub(crate) fn name(self) -> &'static str {
         match self {
             Kind::Literal => "literal",
@@ -38,6 +41,7 @@ impl Kind {
             Kind::Local => "local",
             Kind::Argument => "argument",
             Kind::Declaration => "declaration",
+            Kind::Duplicate => "duplicate",
         }
     }
 
@@ -52,9 +56,11 @@ impl Kind {
 pub(crate) struct MistakeSite {
     pub(crate) kind: Kind,
     /// The text that the edit replaces: the literal, the callee's name, the local's name, the
-    /// removed argument with its `, `, or the declared name.
+    /// removed argument with its `, `, or the declared name. For `Duplicate`, the item that the
+    /// edit writes again before itself.
     pub(crate) at: Range<usize>,
-    /// Where the error starts: the call for `Argument`, else `at.start`.
+    /// Where the error starts: the call for `Argument`, the item's name for `Duplicate`, else
+    /// `at.start`.
     pub(crate) error: usize,
     /// The index in `Scope::funcs` of the function that holds the site; `None` outside them.
     pub(crate) function: Option<usize>,
@@ -110,6 +116,51 @@ pub(crate) fn choose(sites: &[MistakeSite], program: &str, data: &[u8]) -> Vec<M
         .collect()
 }
 
+/// The `Duplicate` site of each top-level item of `program` that declares a name. The site holds
+/// the text of the item, up to the next item. An `extend` block ends the item before it, but it is
+/// not a site: it declares no name. The generator does not record these sites, so `choose` does
+/// not see them unless the caller adds them.
+pub(crate) fn item_sites(program: &str) -> Vec<MistakeSite> {
+    let Ok(lexed) = lexer::lex(program) else {
+        return Vec::new();
+    };
+    let mut depth = 0_usize;
+    // Where each item starts, and where its name starts when it is a site.
+    let mut items: Vec<(usize, Option<usize>)> = Vec::new();
+    for (i, token) in lexed.tokens.iter().enumerate() {
+        match token.kind {
+            TokenKind::LBrace => depth += 1,
+            TokenKind::RBrace => depth = depth.saturating_sub(1),
+            TokenKind::Extend if depth == 0 => items.push((token.span.range().start, None)),
+            TokenKind::Fn
+            | TokenKind::Class
+            | TokenKind::Enum
+            | TokenKind::Interface
+            | TokenKind::Const
+            | TokenKind::Type
+                if depth == 0 =>
+            {
+                let name = lexed.tokens.get(i + 1).map(|name| name.span.range().start);
+                items.push((token.span.range().start, name));
+            }
+            _ => {}
+        }
+    }
+    let ends = (items.iter().skip(1))
+        .map(|&(start, _)| start)
+        .chain([program.len()]);
+    (items.iter().zip(ends))
+        .filter_map(|(&(start, name), end)| {
+            Some(MistakeSite {
+                kind: Kind::Duplicate,
+                at: start..end,
+                error: name?,
+                function: None,
+            })
+        })
+        .collect()
+}
+
 /// The edit of `site`, and the errors that it gives, or `None` when the edit gives none.
 fn edit(
     site: &MistakeSite,
@@ -155,11 +206,18 @@ fn edit(
             }
             (fresh(), uses)
         }
+        // The copy comes first, so the error is at the name of the original.
+        Kind::Duplicate => (text.to_string(), vec![("E0034", site.error)]),
+    };
+    let at = if site.kind == Kind::Duplicate {
+        site.at.start..site.at.start
+    } else {
+        site.at.clone()
     };
     Some(Mistake {
         kind: site.kind,
         function: site.function,
-        at: site.at.clone(),
+        at,
         by,
         errors,
     })
@@ -340,6 +398,52 @@ mod tests {
         assert_eq!(mistake.errors, [("E0033", mistake.at.start)]);
     }
 
+    /// GIVEN a program with each kind of top-level item, an `extend` block and nested items
+    /// WHEN the item sites are read
+    /// THEN each top-level item that declares a name has a site, up to the next item
+    /// AND the error of each site is at the name of the item
+    #[test]
+    fn item_sites_should_hold_each_top_level_item_up_to_the_next() {
+        let items = [
+            ("const c: i64 = 1\n", "c"),
+            ("type A = i64\n", "A"),
+            ("class C {\n    x: i64\n}\n", "C"),
+            ("enum E {\n    V\n}\n", "E"),
+            ("interface I {\n    type T\n    fn f(self)\n}\n", "I"),
+        ];
+        let extend = "extend C {\n    fn m(self) {}\n}\n";
+        let last = ("fn main() {\n    const d: i64 = 2\n}\n", "main");
+        let before: String = items.iter().map(|&(text, _)| text).collect();
+        let program = format!("{before}{extend}{}", last.0);
+        let wanted: Vec<(&str, &str)> = items.into_iter().chain([last]).collect();
+        let found: Vec<(&str, &str)> = item_sites(&program)
+            .iter()
+            .map(|site| {
+                assert_eq!(site.kind, Kind::Duplicate);
+                let name = program[site.error..]
+                    .split(|c: char| !c.is_alphanumeric())
+                    .next()
+                    .expect("split should give a first part");
+                (&program[site.at.clone()], name)
+            })
+            .collect();
+        assert_eq!(found, wanted);
+    }
+
+    /// GIVEN the site of a top-level function
+    /// WHEN the mistake is chosen
+    /// THEN the edit writes a copy of the item before it and removes nothing
+    /// AND the expected E0034 is at the name of the original
+    #[test]
+    fn choose_should_write_an_item_again_before_itself_and_expect_e0034_at_its_name() {
+        let program = "fn f1() {}\nfn main() {}\n";
+        let sites = item_sites(program);
+        let mistake = choose(&sites[..1], program, b"").pop().expect("a mistake");
+        assert_eq!(mistake.at, 0..0);
+        assert_eq!(mistake.by, "fn f1() {}\n");
+        assert_eq!(mistake.errors, [("E0034", "fn ".len())]);
+    }
+
     fn tokens(program: &str) -> Vec<Token> {
         lexer::lex(program).expect("the program should lex").tokens
     }
@@ -405,6 +509,13 @@ mod tests {
                         && g.program[m.at.end..].starts_with(')')
                         && (call.starts_with("((") || callee)
                 }
+                // Nothing is replaced: the text is the empty range, and the copy starts an item.
+                Kind::Duplicate => {
+                    text.is_empty()
+                        && ["fn ", "class ", "enum ", "interface ", "const ", "type "]
+                            .iter()
+                            .any(|keyword| m.by.starts_with(keyword))
+                }
             };
             assert!(ok, "seed {n}: {:?} replaces {text:?}", m.kind);
             if m.kind == Kind::Declaration {
@@ -448,7 +559,7 @@ mod tests {
         }
         kinds.sort();
         kinds.dedup();
-        assert_eq!(kinds.len(), 5, "kinds found: {kinds:?}");
+        assert_eq!(kinds.len(), Kind::ALL.len(), "kinds found: {kinds:?}");
     }
 
     /// The sites of the seeds `first..first + 16` hold the text of their kind. Four tests of 16

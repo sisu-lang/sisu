@@ -624,6 +624,10 @@ must pass seven properties. Each one has the name of its check:
      removed. The error is E0053 at the call.
    - `declaration`: a local with a use is declared with another name. There is
      one E0033 at each use.
+   - `duplicate`: a top-level function, class, enum, interface, constant or type
+     alias is written again before itself. The error is E0034 at the name of
+     the original, which is now the second definition. No control holds this
+     kind, because the copy can hold the site of the other mistake.
 
    An error matches an expected error with its code that starts at its offset,
    or at a run of `(` that ends there. The checker starts an E0033 or an E0053
