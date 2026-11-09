@@ -760,6 +760,12 @@ use of it gives no error. A language interface's name stays the language's: at a
 bound, a conformance, an inheritance list or an `any`, it names the prelude's
 interface.
 
+**Position**:
+The place in a program where a name is written. It decides what the name can
+mean: a value, a callee, a type, a bound, a pattern, a path or a path call. The
+name resolver (`check/names.rs`) tries the meanings of a name in an order that
+belongs to the position.
+
 **Cascade**:
 An error that follows from a guess about code that failed, and not from what the
 source states.
