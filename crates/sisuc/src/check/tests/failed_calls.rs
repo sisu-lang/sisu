@@ -134,6 +134,26 @@ fn a_variant_with_a_mistake_should_keep_its_enum() {
 }
 
 #[test]
+fn a_variant_should_check_each_argument_after_a_failed_one() {
+    let decls = "enum E {\n    V(i64, i64)\n}";
+    // The arguments start after `let _v = E.V(`, past the indent.
+    let first = 18;
+    failed(
+        decls,
+        "let _v = E.V(missing_first, missing_second)",
+        &[
+            (BindingNotFound, (0, first)),
+            (BindingNotFound, (0, first + 15)),
+        ],
+    );
+    failed(
+        decls,
+        "let _v = E.V(\"s\", missing_second)",
+        &[(Mismatch, (0, first)), (BindingNotFound, (0, first + 5))],
+    );
+}
+
+#[test]
 fn a_built_in_method_with_the_wrong_count_should_keep_its_result_type() {
     for (row, body) in [
         ("array", "let xs = [1]\n    let s: string = xs.len(1)"),
