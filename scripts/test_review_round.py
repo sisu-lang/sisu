@@ -95,21 +95,53 @@ class ReviewRound(unittest.TestCase):
         self.assertFalse((self.run_dir / "brief.md").exists())
 
     def test_verify_without_a_record_should_say_to_prepare(self) -> None:
-        result = self.script("verify")
+        result = self.script("verify", "--report", "opus")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("run prepare first", result.stderr)
 
-    def test_verify_should_pass_on_an_unchanged_checkout(self) -> None:
+    def test_verify_should_pass_on_an_unchanged_checkout_with_each_report(self) -> None:
         self.script("prepare", "main..main")
-        result = self.script("verify")
+        (self.run_dir / "opus.md").write_text("report")
+        (self.run_dir / "sol.md").write_text("report")
+        result = self.script("verify", "--report", "opus", "--report", "sol")
         self.assertEqual(result.returncode, 0, result.stdout)
 
     def test_verify_should_fail_when_a_reviewer_wrote_in_the_checkout(self) -> None:
         self.script("prepare", "main..main")
+        (self.run_dir / "opus.md").write_text("report")
         (self.repo / "stray").write_text("x")
-        result = self.script("verify")
+        result = self.script("verify", "--report", "opus")
         self.assertEqual(result.returncode, 1)
         self.assertIn("changed the checkout", result.stdout)
+
+    def test_verify_should_fail_on_an_empty_report(self) -> None:
+        self.script("prepare", "main..main")
+        (self.run_dir / "opus.md").write_text("")
+        result = self.script("verify", "--report", "opus")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(f"no report: {self.run_dir / 'opus.md'}", result.stdout)
+
+    def test_verify_should_fail_and_name_a_missing_report(self) -> None:
+        self.script("prepare", "main..main")
+        (self.run_dir / "sol.md").write_text("report")
+        result = self.script("verify", "--report", "sol", "--report", "opus")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(f"no report: {self.run_dir / 'opus.md'}", result.stdout)
+        self.assertNotIn("sol.md", result.stdout)
+
+    def test_verify_of_a_later_round_should_ask_for_the_numbered_report(self) -> None:
+        for name in ("rulings-1.md", "opus.md"):
+            (self.run_dir / name).write_text(name)
+        self.script("prepare", "main..main", "--round", "2")
+        result = self.script("verify", "--round", "2", "--report", "opus")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("opus-2.md", result.stdout)
+
+    def test_verify_with_no_report_named_should_fail(self) -> None:
+        self.script("prepare", "main..main")
+        result = self.script("verify")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--report", result.stderr)
 
 
 if __name__ == "__main__":

@@ -77,7 +77,9 @@ end-to-end test, on a GitHub-hosted runner. CI runs it after the tests. The
 pre-commit hook runs it on the report of your last `make test` with
 `--diff HEAD`, so it lists only the slow tests your change names and counts the
 rest. Neither CI nor the hook fails on a slow test: wall-clock time depends on
-the machine and its load.
+the machine and its load. A CI warning for a test you added or changed is a nit.
+The budget is for a CI runner, so a local time is only a hint. See one with
+`python3 scripts/slow_tests.py target/nextest/default/junit.xml --diff <base>`.
 
 The pre-commit hook also runs `crates/sisuc/tests/architecture.rs` when a commit
 changes a file that the test reads. CI's lint job skips that hook, because its
@@ -340,6 +342,13 @@ variable `CARGO_MUTANTS_OUTPUT` and the `output` key of a config file. It
 refuses `-o`, `--output`, `-d`, `--dir` and `--manifest-path`, which move the
 output or the tree.
 
+`make mutation-status` prints the pass of the running `make mutation-test`, how
+many of its mutants are done, and the time left at the rate of that pass. Quote
+that line for the time of a run: pass 1 costs seconds for each mutant and pass 2
+minutes, and the size of pass 2 is known only when pass 1 ends. While the
+lib-only group runs, the line also gives the whole-suite group after it. The
+first figures of a pass are high, because the rate holds the baseline run.
+
 One `make mutation-test` runs at a time in a worktree; a second one prints
 `mutation-test: FAIL: another make mutation-test is running in this worktree`
 and stops. `LOG=<file>` writes the whole output to that file, opened only once
@@ -352,8 +361,10 @@ one lock for all the worktrees of the clone. The lock is a file in the clone's
 of programs at once, and then the disk stops for every other process. So a
 second run prints `heavy-run: waiting for this run to end: <command> in
 <worktree>` and waits for the first. A second `make mutation-test` in the same
-worktree still fails at once. When the lock cannot be taken (no `flock`, no Git
-directory, a read-only `.git`), the run warns and goes on with no lock.
+worktree still fails at once. `scripts/heavy-run.sh --status` prints `free`, or
+`held:` and the run that holds the lock; the file alone does not tell, because
+its text stays after the run ends. When the lock cannot be taken (no `flock`,
+no Git directory, a read-only `.git`), the run warns and goes on with no lock.
 `SISU_HEAVY_LOCK=skip` runs it with no lock on purpose, for example while a
 mutation test of hours holds the lock and the machine has cores to spare. Each
 mutant of a mutation run tests 8 tests at a time. `NEXTEST_TEST_THREADS` sets
@@ -655,6 +666,11 @@ must pass seven properties. Each one has the name of its check:
      removed. The error is E0053 at the call.
    - `declaration`: a local with a use is declared with another name. There is
      one E0033 at each use.
+   - `duplicate`: a top-level function, class, enum, interface, constant or type
+     alias is written again before itself. The error is E0034 at the name of
+     the original, which is now the second definition. No control holds this
+     kind: a use of a name that is defined twice gets no checks, so the other
+     mistake can lose its error.
 
    An error matches an expected error with its code that starts at its offset,
    or at a run of `(` that ends there. The checker starts an E0033 or an E0053

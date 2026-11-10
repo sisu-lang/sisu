@@ -66,14 +66,16 @@ The user or the caller's plan may change an effort or add a reviewer.
 Launch the reviewers together. Each launcher must let its reviewer read
 `RUN` and the skill paths in the brief.
 
-After the last reviewer ends, run `python3 <skill base>/scripts/review_round.py verify <repository root> RUN --round <round>`.
-It fails when the checkout differs from the record of `prepare`. A difference means that a
-reviewer wrote in the repository, so the round is a failed run: show the user the difference and
+After the last reviewer ends, run `python3 <skill base>/scripts/review_round.py verify <repository root> RUN --round <round> --report <stem>`,
+with one `--report` for each reviewer, such as `--report sol --report opus`.
+It fails when a report is missing, or when the checkout differs from the record of `prepare`. A
+missing report means that the reviewer failed or that you did not save its reply. A difference
+means that a reviewer wrote in the repository, so the round is a failed run: show the user the difference and
 ask how to go on. Sol's launch can write anywhere, so this check is the guard. It does not see a
 write to an ignored file.
 
 - **Sol:** `copilot -p "Read RUN/brief.md and follow it. Your scratch directory is RUN/copilot-scratch. Write your report to RUN/sol.md; your final reply is that report." --model gpt-6.1-sol --reasoning-effort <effort> --allow-all -s -C RUN/copilot-scratch --add-dir <repository root> --add-dir RUN`, with one more `--add-dir` for the directory of each skill in the brief, and with `brief-<round>.md` and `sol-<round>.md` in a later round. Run it through Bash with `run_in_background` and the sandbox off: copilot needs the network and writes under `~/.copilot`. Start the call with `copilot`, because the permission rule matches that word. The completion notification ends the wait; do not poll. When it fails or leaves no report, show the user the error it prints and ask how to go on. Do not put another model in Sol's place without asking.
-- **Opus:** the Agent tool with the `subagent_type` from the table, and the prompt `Read RUN/brief.md and follow it. Your scratch directory is RUN/opus-scratch. Write your report to RUN/opus.md; your final reply is that report.` with `RUN` written out, and `brief-<round>.md` and `opus-<round>.md` in a later round. Pass no `model` or `effort`.
+- **Opus:** the Agent tool with the `subagent_type` from the table, and the prompt `Read RUN/brief.md and follow it. Your scratch directory is RUN/opus-scratch. Your final reply is the whole report.` with `RUN` written out, and `brief-<round>.md` in a later round. Pass no `model` or `effort`. A read-only reviewer such as `opus-medium` cannot write a file. So you save each reply to `RUN/opus.md` (`opus-<round>.md` in a later round) before `verify`.
 
 ### 4. Rule on each finding
 

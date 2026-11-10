@@ -163,6 +163,8 @@ pub(crate) fn generate(data: &[u8]) -> Generated {
     g.leaves = fold % 8 == 5;
     // The gate of `main_args` is `MAIN_ARGS_GATE`.
     let (cost, known, expected) = g.program(fold % 8 == MAIN_ARGS_GATE);
+    let items = mistake::item_sites(&g.w.out.program);
+    g.w.out.sites.extend(items);
     let mistakes = mistake::choose(&g.w.out.sites, &g.w.out.program, data);
     // Only the tests read the cost.
     #[cfg(not(test))]

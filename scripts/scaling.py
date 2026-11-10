@@ -12,6 +12,9 @@ stage (its count less its count at size 0), the ratio at each doubling, and the 
 
 Before callgrind, `sisu check` runs on each shape at size 0 and at 8n. A shape that gives a
 diagnostic stops the run: without this check, the failure shows as a missing stage function.
+The shapes in `CHECK_ONLY` test the path of an error. Each of their programs above size 0 must
+give the error code that `CHECK_ONLY` gives for the shape. Callgrind measures `sisu check` on
+them, and the stages after `check` count 0.
 
 The script exits with code 1 in these cases:
 - A superlinear case has no row in `KNOWN`.
@@ -60,6 +63,11 @@ LLVM_STAGES = ("optimize", "object")
 # The cause is LLVM's `ConstraintEliminationPass`, which is cubic in the number of function
 # parameters. Clang does the same on C. #621 is closed.
 O2_SHAPES = ("functions", "statements", "interpolations", "prints", "nested array ==")
+# The shapes whose programs are errors, so that nothing after `check` runs for them. The value
+# is the error code that each of their programs above size 0 must give.
+CHECK_ONLY = {"failed bounds": "E0154"}
+# `sisu check` runs lex, parse and check, the first three stages of `STAGES`.
+CHECK_ONLY_STAGES = STAGES[:3]
 O2_SUFFIX = " -O2"
 # At -O2, the stages before codegen do the same work as at -O0, so a -O2 case judges only these.
 O2_STAGES = ("codegen", "optimize", "object")
@@ -454,6 +462,17 @@ def nested_array_eq(k: int) -> str:
     return f"fn main() {{\n    let a = {literal}\n    let b = {literal}\n    print(a == b)\n}}\n"
 
 
+def failed_bounds(k: int) -> str:
+    """Return a program with `k` failed bounds in one alias, and `k` users of that alias."""
+    params = ", ".join(["P", *(f"P{tag(i)}" for i in range(k))])
+    arguments = ", ".join(["i64", *("C<i64>" for _ in range(k))])
+    users = "".join(f"type U{tag(i)} = M\n" for i in range(k))
+    return (
+        "interface I {}\nclass C<T: I> {}\n"
+        f"class Pack<{params}> {{}}\ntype M = Pack<{arguments}>\n{users}fn main() {{}}\n"
+    )
+
+
 # The name of a shape, its `n` and the program at a size. The sizes are 0, n, 2n, 4n and 8n.
 SHAPES = {
     "functions": (250, functions),
@@ -487,6 +506,7 @@ SHAPES = {
     "prints": (250, prints),
     "mutable locals": (250, mutable_locals),
     "nested array ==": (5, nested_array_eq),
+    "failed bounds": (64, failed_bounds),
 }
 
 
@@ -566,7 +586,7 @@ ANNOTATE_LINE = re.compile(r"^\s*([\d,]+) \(\s*[\d.]+%\)\s+(.*)$")
 OBJECT_FIELD = re.compile(r" \[[^\]]*\]$")
 
 
-def stage_counts(annotate: str) -> dict[str, int]:
+def stage_counts(annotate: str, stages: list[tuple[str, str]] = STAGES) -> dict[str, int]:
     """Return the count of each stage, from the output of `callgrind_annotate`.
 
     A line is `<count> (<percent>)  <file>:<function> [<object>]`. A line without the object field
@@ -586,7 +606,7 @@ def stage_counts(annotate: str) -> dict[str, int]:
             where = match[2][: field.start()]
             rows.append((where, where.split(":", 1)[1], int(match[1].replace(",", ""))))
     counts: dict[str, int] = {}
-    for stage, function in STAGES:
+    for stage, function in stages:
         found = [
             (where, count)
             for where, name, count in rows
@@ -756,6 +776,16 @@ def measure(args: argparse.Namespace, counts: dict[str, Any]) -> None:
         measure_shape(deadline, args, name, counts)
 
 
+def expect_error(what: str, error: str | None, stderr: str) -> None:
+    """Fails unless the only error code in `stderr` is `error`; `None` expects no error."""
+    matches = (DIAGNOSTIC.match(row) for row in stderr.splitlines())
+    errors = {m[2] for m in matches if m and m[1] == "error"}
+    if error is not None and error not in errors:
+        raise Fail(f"{what}: no error[{error}]\n{stderr[-500:]}")
+    if others := sorted(errors - {error}):
+        raise Fail(f"{what}: an error other than {error}: {', '.join(others)}")
+
+
 def measure_shape(
     deadline: Deadline, args: argparse.Namespace, name: str, counts: dict[str, Any]
 ) -> None:
@@ -767,8 +797,9 @@ def measure_shape(
     files = [directory / f"size-{k}.sisu" for k in sizes]
     for k, path in zip(sizes, files, strict=False):
         path.write_text(make(k))
-    for k, path in ((sizes[0], files[0]), (sizes[-1], files[-1])):
-        check_clean(deadline, args.sisu, path, f"{name}, size {k}")
+    if name not in CHECK_ONLY:
+        for k, path in ((sizes[0], files[0]), (sizes[-1], files[-1])):
+            check_clean(deadline, args.sisu, path, f"{name}, size {k}")
     levels = [("", [])] + ([(O2_SUFFIX, ["-O2"])] if name in O2_SHAPES else [])
     for suffix, flags in levels:
         case = name + suffix
@@ -777,12 +808,24 @@ def measure_shape(
             profile = str(Path(tmp, "callgrind.out"))
             for k, path in zip(sizes, files, strict=False):
                 what = f"{case}, size {k}"
-                # One codegen unit: the default number of units grows with the program, and each
-                # unit repeats some work, so the sizes would not split the same way.
-                build = ["build", *flags, "--codegen-units", "1", path, "-o", Path(tmp, "out")]
                 callgrind = ["valgrind", "--tool=callgrind", f"--callgrind-out-file={profile}"]
-                deadline.run([*callgrind, args.sisu, *build], what, stdout=subprocess.DEVNULL)
-                found = stage_counts(deadline.run([*ANNOTATE, profile], what).stdout)
+                if name in CHECK_ONLY:
+                    command = [*callgrind, args.sisu, "check", path]
+                    run = deadline.run(command, what, stdout=subprocess.DEVNULL, check=False)
+                    expected = 1 if k > 0 else 0
+                    if run.returncode != expected:
+                        code = f"exit code {run.returncode}, not {expected}"
+                        raise Fail(f"{what}: {code}\n{run.stderr[-500:]}")
+                    expect_error(what, CHECK_ONLY[name] if k > 0 else None, run.stderr)
+                    annotated = deadline.run([*ANNOTATE, profile], what).stdout
+                    found = stage_counts(annotated, CHECK_ONLY_STAGES)
+                    found = {stage: found.get(stage, 0) for stage, _ in STAGES}
+                else:
+                    # One codegen unit: the default number of units grows with the program, and
+                    # each unit repeats some work, so the sizes would not split the same way.
+                    build = ["build", *flags, "--codegen-units", "1", path, "-o", Path(tmp, "out")]
+                    deadline.run([*callgrind, args.sisu, *build], what, stdout=subprocess.DEVNULL)
+                    found = stage_counts(deadline.run([*ANNOTATE, profile], what).stdout)
                 for stage, count in found.items():
                     per_stage[stage].append(count)
         counts["shapes"][case] = {"sizes": sizes, "counts": per_stage}

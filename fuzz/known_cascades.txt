@@ -2,7 +2,7 @@
 # A cascade (GLOSSARY.md) is an error that follows from a guess about code that failed.
 # Here it is an error that an injected mistake gives besides its own errors.
 # Each line is a pair `<kind> <code>`: the kind of the mistake and the code of the extra error.
-# The kinds are literal, callee, local, argument and declaration.
+# The kinds are literal, callee, local, argument, declaration and duplicate.
 # A pair in this file passes. A pair that is not in this file fails the single-mistake check.
 # The nightly summary reports each pair that no input of the run gave.
 # A checker fix removes pairs from this file. Only a new cascade that a fuzz run finds adds one.
@@ -99,3 +99,69 @@ declaration E0048
 #       if let v = i64(missing) { print(v) }
 #   }
 local E0051
+
+# The kind `duplicate` writes a top-level item twice. The checker then has no type for the name, or
+# two definitions of it. So a use of the name gives a second error. Each pair below has this cause.
+#
+# The fixed seeds 15, 21, 89 and 112 give this pair. A call of a function that is defined twice has
+# no type, so the negation of the call has the type `i64`, which gives E0032 where `f64` is needed.
+#   fn r() -> f64 { 1.0 }
+#   fn r() -> f64 { 1.0 }
+#   fn g(x: f64) {}
+#   fn main() { g(-r()) }
+duplicate E0032
+# Found by a review probe. The call has no type, so the conversion is not optional, and the `??`
+# after it gives E0048.
+#   fn r() -> f64 { 1.0 }
+#   fn r() -> f64 { 1.0 }
+#   fn main() { print(i64(r()) ?? 0) }
+duplicate E0048
+# Found by a review probe, in seed 23. As in the E0032 pair, the negation of the call has the type
+# `i64`, so a conversion to `i64` gives E0054.
+#   fn r() -> f64 { 1.0 }
+#   fn r() -> f64 { 1.0 }
+#   fn main() { print(i64(-r())) }
+duplicate E0054
+# Found by a review probe. The same negation has the type `i64`, so a method of `f64` gives E0063.
+#   fn r() -> f64 { 1.0 }
+#   fn r() -> f64 { 1.0 }
+#   fn main() {
+#       let one = -r()
+#       print(one.sqrt())
+#   }
+duplicate E0063
+# The fixed seeds 29 and 49 give this pair. An alias that is defined twice is not read in a pattern.
+#   type M<T> = [T]?
+#   type M<T> = [T]?
+#   fn main() {
+#       let x: [i64]? = None
+#       let n = match x {
+#           Some(xs) => xs.len()
+#           M.None => 0
+#       }
+#       print(n)
+#   }
+duplicate E0127
+# The fixed seed 95 gives this pair. An interface that is defined twice loses its associated type
+# for the interfaces that inherit it.
+#   interface S { type Item }
+#   interface S { type Item }
+#   interface C: S {}
+#   class K: C { type Item = i64 }
+#   fn main() {}
+duplicate E0152
+# Found by a review probe. An interface that is defined twice loses the interfaces that it inherits.
+#   interface I {}
+#   interface J: I {}
+#   interface J: I {}
+#   class K: J {}
+#   fn g<T: I>(x: T) {}
+#   fn main() { g(K()) }
+duplicate E0154
+# The fixed seeds 32, 48 and 82 give this pair. The search for an associated type finds both
+# definitions of the interface.
+#   interface N { type Named }
+#   interface N { type Named }
+#   type G<S> = [S.Named]
+#   fn main() {}
+duplicate E0156

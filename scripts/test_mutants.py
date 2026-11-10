@@ -11,6 +11,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from typing import ClassVar, override
@@ -65,6 +66,7 @@ if [[ " $* " == *" ^"* ]]; then
   fi
   echo "$*" >$name
   printf '%s\n' "$@" >lines${name#args}
+  cp target/mutation-test.status status${name#args}
 else
   echo "$*" >args
 fi
@@ -486,6 +488,9 @@ class Mutants(unittest.TestCase):
         self.assertIn(
             "mutation-test: pass 2, whole-suite group: 1 mutants, tests: the whole suite\n", log
         )
+        self.assertIn("mutation-test: pass 2, whole-suite group: about 1 min\n", log)
+        label, n, *_ = (self.repo / "target/mutation-test.status").read_text().split("\t")
+        self.assertEqual((label, n), ("pass 2, whole-suite group", "1"))
 
     def test_a_second_pass_with_lib_only_mutants_alone_should_not_run_the_whole_suite(self) -> None:
         self.rust_commit()
@@ -763,9 +768,137 @@ class Mutants(unittest.TestCase):
         self.assertEqual(
             self.last_line(),
             "mutation-test: FAIL: 301 mutants, more than 300; "
+            "the time of pass 2 is known only after pass 1; "
             "test a part with --file, or set MUTANTS_MAX=301",
         )
         self.assertFalse(self.seen("seen"))
+
+    def status(
+        self,
+        label: str = "",
+        n: int = 0,
+        age: int = 600,
+        *,
+        later: int = 0,
+        replaced: bool = True,
+        **done: int,
+    ) -> str:
+        """Run --status while the test holds the lock of a run in the given state.
+
+        `replaced` says that cargo mutants wrote this pass's mutants.out.
+        """
+        target = self.repo / "target"
+        target.mkdir(exist_ok=True)
+        if label:
+            start = int(time.time()) - age
+            (target / "mutation-test.status").write_text(f"{label}\t{n}\t{start}\t2\t{later}\n")
+        out = self.repo / "mutants.out"
+        out.mkdir(exist_ok=True)
+        (out / "lock.json").touch()
+        written = time.time() + (10 if replaced else -1000)
+        os.utime(out / "lock.json", (written, written))
+        for kind, lines in done.items():
+            (out / f"{kind}.txt").write_text("m\n" * lines)
+        with (target / "mutation-test.lock").open("w", encoding="utf-8") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            return self.run_status()
+
+    def run_status(self) -> str:
+        return subprocess.run(
+            ["bash", "scripts/mutants.sh", "--status"],
+            cwd=self.repo,
+            env=ENV,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+
+    def test_status_should_say_no_run_when_no_run_holds_the_lock(self) -> None:
+        (self.repo / "target").mkdir()
+        (self.repo / "target/mutation-test.lock").touch()
+        (self.repo / "target/mutation-test.status").write_text("pass 1\t5\t1\t2\n")
+        self.assertEqual(self.run_status(), "mutation-test: no run in this worktree\n")
+
+    def test_status_should_say_when_a_run_has_no_pass_yet(self) -> None:
+        self.assertIn("no pass has started", self.status())
+
+    def test_status_of_pass_1_should_give_the_measured_time_and_what_pass_2_gets(self) -> None:
+        self.assertEqual(
+            self.status("pass 1 (unit tests)", n=30, age=600, caught=8, missed=1, timeout=1),
+            "mutation-test: pass 1 (unit tests): 10 of 30 done, 10 min so far, "
+            "about 20 min left; pass 2 gets 2 so far\n",
+        )
+
+    def test_status_of_a_whole_suite_group_with_no_mutant_done_should_use_the_usual_time(
+        self,
+    ) -> None:
+        self.assertEqual(
+            self.status("pass 2, whole-suite group", n=60, age=30),
+            "mutation-test: pass 2, whole-suite group: 0 of 60 done, 0 min so far, "
+            "about 77 min left, from the usual time of a mutant\n",
+        )
+
+    def test_status_of_another_group_with_no_mutant_done_should_give_no_estimate(self) -> None:
+        self.assertIn("no estimate yet", self.status("pass 2, lib-only group", n=9))
+
+    def test_status_should_not_count_the_lists_of_the_pass_before_until_they_are_replaced(
+        self,
+    ) -> None:
+        line = self.status("pass 1 (unit tests)", n=30, replaced=False, caught=40, missed=7)
+        self.assertIn("0 of 30 done", line)
+        self.assertIn("no estimate yet", line)
+        self.assertIn("pass 2 gets 0 so far", line)
+
+    def test_status_of_the_lib_only_group_should_give_the_whole_suite_group_after_it(self) -> None:
+        self.assertIn(
+            "; then the whole-suite group: 60 mutants, about 77 min",
+            self.status("pass 2, lib-only group", n=9, later=60, caught=3),
+        )
+
+    def test_a_lib_only_group_should_record_the_size_of_the_whole_suite_group(self) -> None:
+        self.rust_commit()
+        names = "crates/sisuc/src/generate/a.rs:1:1: x\ncrates/sisuc/src/check/b.rs:1:1: y"
+        self.mutate(list=2, exit=2, missed_names=names, lib_caught=1, pass2_caught=1)
+        fields = (self.repo / "status_lib").read_text().rstrip("\n").split("\t")
+        self.assertEqual((fields[0], fields[1], fields[4]), ("pass 2, lib-only group", "1", "1"))
+        fields = (self.repo / "status2").read_text().rstrip("\n").split("\t")
+        self.assertEqual((fields[0], fields[1], fields[4]), ("pass 2, whole-suite group", "1", "0"))
+
+    def test_a_run_with_no_jobs_should_count_one_job_in_its_estimates(self) -> None:
+        self.rust_commit()
+        names = "crates/sisuc/src/check/b.rs:1:1: y"
+        run = self.mutate(
+            list=1, exit=2, missed_names=names, pass2_caught=1, env={"CARGO_MUTANTS_JOBS": "0"}
+        )
+        self.assertIn("mutation-test: pass 2, whole-suite group: about", self.log.read_text())
+        fields = (self.repo / "status2").read_text().split("\t")
+        self.assertEqual((fields[0], fields[3]), ("pass 2, whole-suite group", "1"), run.stderr)
+
+    def test_status_should_say_no_pass_has_started_when_the_status_file_is_empty(self) -> None:
+        # record_progress empties the file just before it writes the line.
+        target = self.repo / "target"
+        target.mkdir(exist_ok=True)
+        (target / "mutation-test.status").write_text("")
+        with (target / "mutation-test.lock").open("w", encoding="utf-8") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            self.assertIn("no pass has started", self.run_status())
+
+    def test_a_run_with_its_own_tests_should_not_record_a_pass_1(self) -> None:
+        self.rust_commit()
+        self.mutate("--", "--doc", caught=1)
+        label, n, *_ = (self.repo / "target/mutation-test.status").read_text().split("\t")
+        self.assertEqual((label, n), ("one pass with the tests you chose", "0"))
+
+    def test_status_should_not_count_more_mutants_than_the_group_has(self) -> None:
+        self.assertIn("4 of 4 done", self.status("pass 2, lib-only group", n=4, caught=9))
+
+    def test_a_run_should_print_the_size_of_pass_1_and_record_it(self) -> None:
+        self.rust_commit()
+        self.mutate(list=3, caught=1)
+        log = self.log.read_text()
+        self.assertIn("mutation-test: pass 1 (unit tests): 3 mutants;", log)
+        label, n, *_ = (self.repo / "target/mutation-test.status").read_text().split("\t")
+        self.assertEqual((label, n), ("pass 1 (unit tests)", "3"))
 
     def test_a_diff_at_the_limit_should_run(self) -> None:
         self.rust_commit()

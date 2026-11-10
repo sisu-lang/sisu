@@ -9,10 +9,10 @@ BENCH =
 ARGS =
 
 .DEFAULT_GOAL := help
-.PHONY: help setup audit-setup build test test-health bless lint deny miri check coverage mutation-test fuzz fuzz-coverage fuzz-gaps bench compile-speed scaling callgrind site
+.PHONY: help setup audit-setup build test test-health bless lint deny miri check coverage mutation-test mutation-status fuzz fuzz-coverage fuzz-gaps bench compile-speed scaling callgrind site
 
 help: ## List the targets
-	@awk 'BEGIN { FS = ":.*## " } /^[a-z-]+:.*## / { printf "  %-13s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+	@awk 'BEGIN { FS = ":.*## " } /^[a-z-]+:.*## / { printf "  %-15s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 	@echo
 	@echo 'BASE=<commit> sets where the changes start: by default where HEAD left origin/main.'
 	@echo 'On a stacked branch, pass the stage below, so its changes stay out.'
@@ -57,6 +57,9 @@ coverage: ## Coverage of the changes since BASE
 
 mutation-test: ## Mutation-test the changes since BASE (unit tests, then the whole suite or the unit tests for survivors); LOG=<file> writes the output there
 	LOG="$(LOG)" scripts/mutants.sh "$(BASE)"
+
+mutation-status: ## The pass, the progress and the time left of the make mutation-test in this worktree
+	@scripts/mutants.sh --status
 
 fuzz: ## Fuzz TARGET (front_end by default, or program) for SECS seconds (1800 by default)
 	scripts/fuzz.sh --target "$(or $(TARGET),front_end)" "$(SECS)"

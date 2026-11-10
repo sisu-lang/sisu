@@ -118,6 +118,44 @@ class HeavyRun(unittest.TestCase):
             held.seek(0)
             self.assertEqual(held.read(), "make mutation-test in /elsewhere (pid 1)\n")
 
+    def status(self) -> str:
+        return subprocess.run(
+            ["bash", SCRIPT, "--status"],
+            cwd=self.repo,
+            env=ENV,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+
+    def test_status_should_name_the_run_that_holds_the_lock(self) -> None:
+        with self.lock.open("w", encoding="utf-8") as held:
+            held.write("make test in /elsewhere (pid 1)\n")
+            held.flush()
+            fcntl.flock(held, fcntl.LOCK_EX)
+            self.assertEqual(self.status(), "held: make test in /elsewhere (pid 1)\n")
+
+    def test_status_should_say_free_when_only_the_text_of_an_ended_run_stays(self) -> None:
+        self.lock.write_text("make test in /elsewhere (pid 1)\n", encoding="utf-8")
+        self.assertEqual(self.status(), "free\n")
+
+    def test_status_should_say_free_when_no_run_made_the_lock_file(self) -> None:
+        self.assertEqual(self.status(), "free\n")
+
+    def test_status_in_a_shell_that_sources_the_script_should_not_keep_the_lock(self) -> None:
+        # mutants.sh sources the script, and the shell takes the lock later.
+        self.lock.write_text("make test in /elsewhere (pid 1)\n", encoding="utf-8")
+        script = 'source "$1"; heavy_status; exec {f}<"$2"; flock -n "$f" && echo locked'
+        run = subprocess.run(
+            ["bash", "-c", script, "bash", SCRIPT, self.lock],
+            cwd=self.repo,
+            env=ENV,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(run.stdout, "free\nlocked\n")
+
     def test_a_run_with_no_git_directory_should_warn_and_run_with_no_lock(self) -> None:
         shutil.rmtree(self.repo / ".git")
         run = self.start("touch", "ran")
