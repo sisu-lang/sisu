@@ -106,3 +106,28 @@ fn insert_at_should_put_a_report_at_its_mark_and_count_it() {
     );
     assert_eq!(list.errors(), 3);
 }
+
+#[test]
+fn an_absorbed_promise_should_return_with_restore() {
+    // `absorb` moves the promises of a second take with its reports, so `restore` puts both back.
+    let mut list = Diagnostics::default();
+    let mut held = list.take_since(list.mark());
+    let mark = list.mark();
+    list.proof(Span::new(2, 3));
+    held.absorb(list.take_since(mark));
+    assert!(list.promises_kept(false), "the promise is held out");
+    list.restore(held);
+    assert!(!list.promises_kept(false), "the promise is back");
+}
+
+#[test]
+fn a_cleared_promise_should_not_return_with_restore() {
+    // `clear` drops the promises held with the reports, so `restore` puts neither back.
+    let mut list = Diagnostics::default();
+    let mark = list.mark();
+    list.proof(Span::new(2, 3));
+    let mut held = list.take_since(mark);
+    held.clear();
+    list.restore(held);
+    assert!(list.promises_kept(false));
+}
