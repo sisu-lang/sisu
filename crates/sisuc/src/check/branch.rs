@@ -35,7 +35,7 @@ fn failed_branch(blocks: &[CheckedBlock]) -> Reported {
 
 impl Checker<'_> {
     /// Without an `else`, `unit`. With one, the branches joined (see `branches`). A condition
-    /// that is not `bool` makes the `if` `Error`, or `Never` when its branches are.
+    /// that is not `bool` makes the `if` untyped, or `Never` when its branches are.
     pub(super) fn if_expr(
         &mut self,
         span: Span,

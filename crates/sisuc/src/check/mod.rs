@@ -68,12 +68,12 @@ pub(crate) use unused_names::is_judged;
 use unused_names::{Owner, Pending, Use, Used};
 
 /// An expression whose rule failed; its diagnostic is recorded. `ty` is its type when it is
-/// still known: a `let` with a declared type keeps that type. Else `ty` is the poison type
-/// `Error`, which matches every type and draws no further diagnostic.
+/// still known: a `let` with a declared type keeps that type. Else the value is untyped: it
+/// matches every type and draws no further diagnostic.
 ///
-/// Poison spreads to sibling operands by one rule. For a homogeneous operator (`+ - * / %
-/// && ||`, comparison chains), once an operand is `Error` the later operands are still
-/// checked for their own errors but not against the operator's type. Call and constructor
+/// Poison spreads to sibling operands by one rule. Take a homogeneous operator (`+ - * / %
+/// && ||`, comparison chains). Once an operand is untyped, the later operands are still
+/// checked for their own errors, but not against the operator's type. Call and constructor
 /// arguments are each checked against their own parameter, so one bad argument does not
 /// excuse another.
 ///
@@ -81,15 +81,15 @@ use unused_names::{Owner, Pending, Use, Used};
 /// constructor, a variant, a built-in method or a prelude function. The receiver's type
 /// arguments and the written ones are put in the result (`Checker::fixed_result`).
 ///
-/// A callee whose result names a parameter that only the arguments bind gives `Error`, as `dbg`,
-/// `get` and a conversion do. So does a call whose written type arguments fail, and a call that
-/// gives a bound to its own parameter when that bound fails or no list is written: the corrected
-/// call is `Error` then (`Checker::counted_result`).
+/// A callee whose result names a parameter that only the arguments bind gives an untyped value,
+/// as `dbg`, `get` and a conversion do. So does a call whose written type arguments fail. So
+/// does a call that gives a bound to its own parameter, when that bound fails or no list is
+/// written. The corrected call is untyped then (`Checker::counted_result`).
 ///
 /// A construction of a generic class or variant keeps the type that its written list, or its
-/// alias, fixes. It is `Error` when that list fails, or fails a bound.
+/// alias, fixes. It is untyped when that list fails, or fails a bound.
 ///
-/// A generic call that cannot meet its context is `Error` too, but it keeps the type it found
+/// A generic call that cannot meet its context is untyped too, but it keeps the type it found
 /// in `found`. A block, a branch and a safe call keep that field for the code that uses the value.
 /// A value in which a generic call kept its E0050 has `kept` set. A block, a branch, unary `-`,
 /// a number operator, and a call that fails on an unbound parameter, keep that field too.
@@ -99,11 +99,11 @@ use unused_names::{Owner, Pending, Use, Used};
 /// type.
 struct Poisoned {
     ty: Option<Type>,
-    /// Whether the expected type passed down was rejected (a `None` that is not optional, a
-    /// number that does not fit, an array with such an element, or a block or `if` whose value
-    /// is one): the rule that passed it failed, so its expression is `Error` too, where an
-    /// `Error` operand would excuse it. A number that does not fit (E0040, E0042 or E0104)
-    /// counts as a mismatch, as a value of another type does.
+    /// Whether the expected type passed down was rejected. It is rejected by a `None` that is not
+    /// optional, a number that does not fit, or an array with such an element. A block or `if`
+    /// whose value is one is rejected too. The rule that passed it failed, so its expression is
+    /// untyped too, where an untyped operand would excuse it. A number that does not fit (E0040,
+    /// E0042 or E0104) counts as a mismatch, as a value of another type does.
     mismatch: bool,
     /// What a generic call found for its result, which cannot meet the call's context. Only a
     /// report reads it. Every other check sees an untyped value. It stays apart from `ty`:
@@ -121,7 +121,7 @@ struct Poisoned {
     /// A failed `break` or `continue` outside a loop makes the value `never`, and that jump has
     /// its own report. In a block, it is the statement that ends the block. In an `if` or a
     /// `match`, it is at least one branch (see `join`). The flow keeps the `never`, as a jump
-    /// statement does; a place that reads the value takes it as `Error` (`read_jump`).
+    /// statement does; a place that reads the value takes it as untyped (`read_jump`).
     jumped: bool,
     /// The proof of the report, or of the promise, that made the value poisoned.
     reported: Reported,
