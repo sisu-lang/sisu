@@ -584,8 +584,9 @@ impl Checker<'_> {
         // The operator is rejected whatever stands beside the `char`, unless that is an `Error`:
         // then the operator may be the mistake, as for any other type, and the sum is `Error`.
         if arithmetic && checked.iter().any(|c| type_of(c) == Some(Type::CHAR)) {
-            // The caller reports the `char` alone and gives a new poisoned value, so no value
-            // outlives the dropped reports.
+            // The caller reports the `char` alone or, when an operand failed, gives `Error`.
+            // Either way the result is a new poisoned value, so no value outlives the dropped
+            // reports.
             drop(deferred);
             if failed {
                 for c in &mut checked {

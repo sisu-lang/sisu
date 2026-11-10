@@ -1,8 +1,8 @@
 //! The checker's list of reports, and the token that proves that one was made.
 //!
 //! Only `error` and `proof` make a [`Reported`]. A promise (`proof`) says that the program has an
-//! error. An error anywhere in the program keeps it, and so does a parser mark. At the end of the
-//! check, `promises_kept` finds a promise that neither keeps.
+//! error. An error in the checker's list keeps it, wherever the error is, and so does a parser
+//! mark. At the end of the check, `promises_kept` finds a promise that neither keeps.
 
 use crate::diagnostic::{Code, Diagnostic, Severity};
 use crate::source::Span;
