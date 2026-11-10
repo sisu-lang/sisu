@@ -58,13 +58,15 @@ fn a_later_mistake_in_a_failed_array_should_wait() {
             vec![FAILED_LET],
         ),
         (
-            // The `[]` branch fails, so the `if` has no type: the spec row `if`, `match` (a
+            // The `[]` branch fails, so the `if` is untyped: the spec row `if`, `match` (a
             // branch).
             "second if",
             format!("let _x: Missing = [1, {IF}]"),
             vec![FAILED_LET],
         ),
         (
+            // The `[]` branch fails, so the `if let` is untyped: the spec row `if`, `match` (a
+            // branch).
             "second if let",
             format!("let _x: Missing = [1, {IFLET}]"),
             vec![FAILED_LET],

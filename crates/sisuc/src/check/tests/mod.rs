@@ -3985,7 +3985,7 @@ fn may_be_none_in_an_assignment_target_should_offer_the_fix() {
     }
 }
 
-/// `m.o.v = 1` has an E0062 at `m`, with its fix. `m.o` has no type (the spec row `p.name`), so
+/// `m.o.v = 1` has an E0062 at `m`, with its fix. `m.o` is untyped (the spec row `p.name`), so
 /// the E0062 of the optional field `m.o` waits.
 #[test]
 fn may_be_none_in_an_assignment_target_should_be_reported_once_with_its_fix() {
@@ -4164,7 +4164,7 @@ fn may_be_none_before_an_index_should_have_no_fix() {
     }
 }
 
-/// `m.o.items[0] = 1` has an E0062 at `m`, with no fix. `m.o` has no type (the spec row `p.name`),
+/// `m.o.items[0] = 1` has an E0062 at `m`, with no fix. `m.o` is untyped (the spec row `p.name`),
 /// so the E0062 of the optional field `m.o` waits.
 #[test]
 fn may_be_none_before_an_index_should_be_reported_once_with_no_fix() {
@@ -4263,7 +4263,8 @@ fn may_be_none_in_a_target_chain_and_in_its_argument_should_offer_the_fix() {
 }
 
 /// The `n.next` of the target and the `k.next` of a read after it both get the unsafe fix.
-/// `n.next` has no type (the spec row `p.name`), so the E0062 of `n.next.next` waits.
+/// The missing unwrap of `n.next` makes `n.next.next` untyped (the spec row `p.name`), so the
+/// E0062 of its `.v` waits.
 #[test]
 fn may_be_none_in_and_after_an_assignment_target_should_offer_the_fix() {
     let src = "class N {\n    mut v: i64\n    next: N?\n}\nfn f(n: N, k: N) {\n    n.next.next.v = 1\n    print(k.next.v)\n}\nfn main() {}";

@@ -4283,7 +4283,7 @@ const WHOLE_ROWS: &[PartialRow<'static>] = {
             "h(true, Two.P(\"s\", 1))",
             &[(Mismatch, "Two.P(")],
         ),
-        // The `else` branch fails, so the `if` has no type (the spec row `if`, `match`: a branch),
+        // The `else` branch fails, so the `if` is untyped (the spec row `if`, `match`: a branch),
         // and the mismatch of the whole argument waits.
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
@@ -6615,42 +6615,49 @@ fn a_failed_never_block_as_a_value_should_give_e0050_and_e0043() {
 
 /// Rows where a generic call that misfits still gives E0050, or gives one diagnostic less or more
 /// than its concrete twin, or one at another place. Each text is true, and none of the programs
-/// is accepted.
-const KEPT_E0050_ROWS: &[(ParityRow<'static>, &[Code])] = &[
+/// is accepted. Each row pins the code and the place of each diagnostic. The line counts from
+/// the first line of the row's own text, `fn main() {` included, and the column is its column.
+const KEPT_E0050_ROWS: &[(ParityRow<'static>, &[Placed])] = &[
     // A comparison holds its operands to the first one's type. A generic call gives none, so
     // nothing names the type that has no `<`: the call cannot infer `X`.
-    (("", "print(mk2() < mk2())"), &[Code::CannotInfer]),
+    (
+        ("", "print(mk2() < mk2())"),
+        &[(Code::CannotInfer, (2, 11))],
+    ),
     // The concrete leader holds the later operand to its own type. The generic call gives no
     // whole type, so the later operand leads, and the call is held to the leader's type.
-    (("", "print(mk2() < fi(1))"), &[Code::Mismatch]),
-    (("", "print(mk2() < 'a')"), &[Code::Mismatch]),
+    (("", "print(mk2() < fi(1))"), &[(Code::Mismatch, (2, 11))]),
+    (("", "print(mk2() < 'a')"), &[(Code::Mismatch, (2, 11))]),
     // No context at all: nothing to misfit.
-    (("", "print(mk2() == mk2())"), &[Code::CannotInfer]),
-    (("", "print(-mk2())"), &[Code::CannotInfer]),
+    (
+        ("", "print(mk2() == mk2())"),
+        &[(Code::CannotInfer, (2, 11))],
+    ),
+    (("", "print(-mk2())"), &[(Code::CannotInfer, (2, 12))]),
     // An `Error` branch may be the mistake, so the join reports nothing more.
     (
         ("", "print(1 == if true { mk2() } else { nope })"),
-        &[Code::BindingNotFound],
+        &[(Code::BindingNotFound, (2, 41))],
     ),
     (
         (
             "",
             "print(1 == match 1 {\n    1 => mk2()\n    _ => nope\n})",
         ),
-        &[Code::BindingNotFound],
+        &[(Code::BindingNotFound, (4, 14))],
     ),
     // A branch that does not fit gives the join no type (the spec row `if`, `match`: a branch),
     // so the misfit of an earlier branch waits, as the concrete twin's mismatch does.
     (
         ("", "let y: i64 = if true { mk2() } else { None }\nprint(y)"),
-        &[Code::Mismatch],
+        &[(Code::Mismatch, (2, 43))],
     ),
     (
         (
             "",
             "let y: i64 = if true { mk2() } else if false { mk2() } else { 3 }\nprint(y)",
         ),
-        &[Code::Mismatch],
+        &[(Code::Mismatch, (2, 52))],
     ),
     // The side of the type parameter has no `==`, which is the first mistake.
     (
@@ -6658,29 +6665,32 @@ const KEPT_E0050_ROWS: &[(ParityRow<'static>, &[Code])] = &[
             "fn h<X>(v: X) -> bool {\n    v == mk2()\n}\n",
             "print(h(1))",
         ),
-        &[Code::ParamLacks, Code::CannotInfer],
+        &[(Code::ParamLacks, (2, 5)), (Code::CannotInfer, (2, 10))],
     ),
-    // The misfit fails its branch, so the join has no type (the spec row `if`, `match`: a
+    // The misfit fails its branch, so the join is untyped (the spec row `if`, `match`: a
     // branch), and `==` waits.
     (
         (
             "",
             "let a: any Display = 1\nprint(1 == if true { a } else { mk2() })",
         ),
-        &[Code::CannotInfer],
+        &[(Code::CannotInfer, (3, 37))],
     ),
 ];
 
 /// A misfit that no code can report against a type the user wrote keeps a true diagnostic: the
-/// pinned codes of `KEPT_E0050_ROWS`.
+/// pinned codes and places of `KEPT_E0050_ROWS`.
 #[test]
 fn a_misfit_with_no_type_to_report_against_should_keep_a_true_diagnostic() {
     with_prelude();
-    for &(row, codes) in KEPT_E0050_ROWS {
+    let decls = PARITY_DECLS.lines().count();
+    for &(row, want) in KEPT_E0050_ROWS {
         let (failed, found) = parity_found(&parity_program(row, false));
-        let got: Vec<_> = found.iter().map(|(code, ..)| *code).collect();
+        let got: Vec<_> = (found.iter())
+            .map(|&(code, (line, column), _)| (code, (line - decls, column)))
+            .collect();
         assert!(failed, "row `{}`", row.1);
-        assert_eq!(got, codes, "row `{}`: {found:?}", row.1);
+        assert_eq!(got, want, "row `{}`", row.1);
     }
 }
 

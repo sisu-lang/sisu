@@ -51,7 +51,7 @@ fn coalesce_call_then_string(o: i64?) {
 }
 
 // Guards: a type that the user wrote holds the call to it. So does a sum that has one, or an
-// integer literal first, as in the concrete twin. A branch that keeps an E0050 fails its join.
+// integer literal first, as in the concrete twin. A branch that keeps an E0050 makes its join untyped.
 fn written_i64() { let z: i64 = id(mk2()) + id(mk2()) }
 fn literal_first() { let z = 1 + id(mk2()) }
 fn chain_literal_first() { let z = 0 < id(mk2()) < 10 }
@@ -151,7 +151,7 @@ fn block_times_u8(x: u8) { let z = { let q = 1 == id(mk2()); nope } * x }
 fn block_nope_then_u8(x: u8) { let z = { let q = 1 == id(mk2()); nope } + x }
 fn block_nope_then_literal_then_u8(x: u8) { let z = { let q = 1 == id(mk2()); nope } + 1 + x }
 
-// A block statement that keeps an E0050 does not make the value of the block fail. A branch does.
+// A block statement that keeps an E0050 does not make the value of the block fail. A branch makes its join untyped.
 fn call_of_block_then_string() {
     let z = id({
         let q = 1 == id(mk2())
@@ -228,7 +228,7 @@ fn literal_first_call_then_string() {
 }
 
 // Only a value that kept its E0050 is kept. A value that failed with its own report is not kept,
-// and the operator treats it, or a `-` of it, as any failed operand: the call is held to no type.
+// and the operator treats it, or a `-` of it, as any untyped operand: the call is held to no type.
 fn snd<T, U>(a: T, b: T) -> U { panic("no") }
 fn join_of_failures_then_call(c: bool) { let z = (if c { nope } else { nope }) + id(mk2()) }
 fn coalesce_join_of_failures_then_string(c: bool, o: i64?) {

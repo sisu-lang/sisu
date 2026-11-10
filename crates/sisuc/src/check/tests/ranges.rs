@@ -185,7 +185,7 @@ fn string_get_through_safe_access_should_be_an_optional_string() {
 /// GIVEN `get` with a range on a `string?` with no `?.`, on a local and on a field
 /// WHEN the program is checked
 /// THEN it reports E0062 at the receiver, once, as `len()` does, and not E0023 at the range
-/// AND no warning follows: the call has no type (the spec row `p.m()`)
+/// AND no warning follows: the call is untyped (the spec row `p.m()`)
 #[test]
 fn string_get_on_an_optional_string_should_be_e0062_at_the_receiver() {
     let rows = [

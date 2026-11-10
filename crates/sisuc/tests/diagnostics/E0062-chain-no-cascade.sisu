@@ -1,11 +1,11 @@
 // GIVEN a `.` on an optional that starts a chain, in a function for each case
 // AND the rest of the chain checks whether a value is optional, or binds a name to the value
-// AND a value built from the typed one by an operator, a block, a join, a generic call or a slice
+// AND a value built from the poisoned one by an operator, a block, a join, a generic call or a slice
 // WHEN `sisu check` runs on it
-// THEN it reports E0062, and a reader of the failed value adds no report, because the value has no type
-// AND it does not report that the value is not optional, and a name bound to it has no type
-// AND a form that gives its own type, such as `==`, `<`, `-`, `!` or a string, reads as that type,
-// so `??` on it reports E0048. A `match` on the failed value does not report a missing variant
+// THEN it reports E0062, and a reader of the poisoned value adds no report, because the value is untyped
+// AND it does not report that the value is not optional, and a name bound to it is untyped
+// AND `??` on a form with its own type, such as `==`, `<`, `!`, `&&` or a string, reports E0048
+// AND a `match` on the poisoned value does not report a missing variant
 class Inner {
     ys: [i64]
     v: i64

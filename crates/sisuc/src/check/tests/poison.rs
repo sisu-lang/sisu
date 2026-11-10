@@ -574,10 +574,11 @@ fn a_chain_fixture_should_read_a_poisoned_value_as_any_reader() {
     );
 }
 
-/// A place, an element or a `push` below a failed `.` has no type, so the value is not checked
-/// against it. The E0001 of a field below the untyped member goes too: no field is looked up.
+/// A place, an element or a `push` below a failed `.` is untyped. So the value is checked with no
+/// expected type, and its mismatch waits. The E0001 of a field below the untyped member goes too:
+/// no field is looked up.
 #[test]
-fn a_place_under_a_failed_member_should_be_untyped() {
+fn a_place_under_a_poisoned_member_should_be_untyped() {
     let lines = "    c.inner.v = \"a\"\n    c.inner.xs.push(\"a\")\n    c.inner.xs[0] = \"a\"\n";
     let mutable = format!(
         "class In {{\n    mut v: i64\n    mut xs: [i64]\n}}\nclass C {{\n    mut inner: In\n}}\nfn f(mut c: C?) {{\n{lines}}}\nfn main() {{}}\n"
@@ -619,12 +620,12 @@ fn a_push_should_report_e0001_only_on_a_field_that_a_poisoned_member_names() {
     };
     error_rows(&[
         (
-            "no failed member, a string index",
+            "no poisoned member, a string index",
             program("n.yss[\"a\"].push(1)"),
             vec![(Mismatch, (7, 11))],
         ),
         (
-            "no failed member, a bool index",
+            "no poisoned member, a bool index",
             program("n.yss[true].push(1)"),
             vec![(Mismatch, (7, 11))],
         ),
@@ -634,7 +635,7 @@ fn a_push_should_report_e0001_only_on_a_field_that_a_poisoned_member_names() {
             vec![(MayBeNone, (7, 5)), (Mismatch, (7, 12))],
         ),
         (
-            "a failed member, a string index",
+            "a poisoned member, a string index",
             program("c.yss[\"a\"].push(1)"),
             vec![(MayBeNone, (7, 5)), (Mismatch, (7, 11))],
         ),
@@ -656,22 +657,22 @@ fn a_push_should_report_e0001_only_on_a_field_that_a_poisoned_member_names() {
     ]);
 }
 
-/// `x` binds a failed member, so it has no type, and the `if let` that gives it is untyped.
+/// `x` binds a poisoned member, so `x` is untyped, and so is the `if let` that gives it.
 #[test]
 fn an_untyped_binding_should_fail_its_branch() {
     c_rows(&[(
-        "if let of a failed member",
+        "if let of a poisoned member",
         "let a = if let x = p.v { x + 1 } else { 0 } and print(a + true)".into(),
         vec![(MayBeNone, (41, 24))],
     )]);
 }
 
-/// A local with no type names no field, so a `push` on it adds no E0001.
+/// An untyped local names no field, so a `push` on it adds no E0001.
 #[test]
 fn a_push_on_an_untyped_local_should_add_no_error() {
     c_rows(&[
         (
-            "a failed member",
+            "a poisoned member",
             "let a = p.name and a.push(1)".into(),
             vec![(MayBeNone, (41, 13))],
         ),
@@ -759,7 +760,7 @@ fn rows(rows: &[(&str, &[Wanted])]) {
     }
 }
 
-/// A field of an optional has no type, so no mismatch and no missing member after it is reported.
+/// A field of an optional is untyped, so no mismatch and no missing member after it is reported.
 /// The spec rows `p.name` (the missing unwrap) and index, member, method (the receiver).
 #[test]
 fn a_field_of_an_optional_should_be_untyped() {
@@ -770,7 +771,7 @@ fn a_field_of_an_optional_should_be_untyped() {
     ]);
 }
 
-/// A method of an optional has no type, so no mismatch and no missing member after it is
+/// A method of an optional is untyped, so no mismatch and no missing member after it is
 /// reported. The spec row `p.m()` (the missing unwrap).
 #[test]
 fn a_method_of_an_optional_should_be_untyped() {
@@ -780,10 +781,10 @@ fn a_method_of_an_optional_should_be_untyped() {
     ]);
 }
 
-/// A member of an optional has no type, so E0048, E0051, E0044 and E0049 do not report that it
+/// A member of an optional is untyped, so E0048, E0051, E0044 and E0049 do not report that it
 /// is not optional. The spec rows `p.name` and `??`.
 #[test]
-fn a_failed_member_should_get_no_report_that_it_is_not_optional() {
+fn a_poisoned_member_should_get_no_report_that_it_is_not_optional() {
     rows(&[
         ("print(c.inner.v ?? 0)", &[(MayBeNone, (11, 11))]),
         ("print(o.len() ?? 0)", &[(MayBeNone, (11, 11))]),
@@ -822,7 +823,7 @@ fn value_that_is_not_optional_should_get_the_report_that_it_is_not_optional() {
 /// with no declared type and a `for` variable. The plain value gives the name its type, so a
 /// member that it lacks is reported.
 #[test]
-fn a_name_bound_to_a_failed_member_should_have_no_type() {
+fn a_name_bound_to_a_poisoned_member_should_be_untyped() {
     rows(&[
         ("let x = c.inner\n    x.nope", &[(MayBeNone, (11, 13))]),
         ("for n in c.inner.ys { n.nope() }", &[(MayBeNone, (11, 14))]),
@@ -832,20 +833,23 @@ fn a_name_bound_to_a_failed_member_should_have_no_type() {
 }
 
 /// An index of an optional array reports E0062, and goes on with the element of the payload.
-/// Below a member of an optional, `c.oys[0]` has no type (the spec row index, member, method), so
-/// the `push` checks no argument; the field `oys` cannot change, so its E0001 stays.
 #[test]
 fn index_of_an_optional_array_should_go_on_with_the_element() {
-    rows(&[
-        (
-            "let s: string = o[0]",
-            &[(MayBeNone, (11, 21)), (Mismatch, (11, 21))],
-        ),
-        (
-            "c.oys[0].push(\"a\")",
-            &[(MayBeNone, (11, 5)), (AssignToImmutable, (11, 5))],
-        ),
-    ]);
+    rows(&[(
+        "let s: string = o[0]",
+        &[(MayBeNone, (11, 21)), (Mismatch, (11, 21))],
+    )]);
+}
+
+/// Below a member of an optional, `c.oys[0]` is untyped (the spec row index, member, method).
+/// So the argument of the `push` is checked with no expected type, and its mismatch waits. The
+/// field `oys` cannot change, so its E0001 stays.
+#[test]
+fn a_push_on_an_index_of_a_poisoned_member_should_keep_only_its_e0001() {
+    rows(&[(
+        "c.oys[0].push(\"a\")",
+        &[(MayBeNone, (11, 5)), (AssignToImmutable, (11, 5))],
+    )]);
 }
 
 /// A method of an optional checks its type arguments on the payload. A field is no method.
@@ -889,10 +893,10 @@ fn cell_rows(rows: &[(&str, &[Wanted])]) {
     }
 }
 
-/// An operator on a member of an optional has no type, so its result gets no report that it is
+/// An operator on a member of an optional is untyped, so its result gets no report that it is
 /// not optional. The spec rows `+` with a failed left operand and `??` (either side).
 #[test]
-fn an_operator_on_a_failed_member_should_be_untyped() {
+fn an_operator_on_a_poisoned_member_should_be_untyped() {
     cell_rows(&[
         ("print((c.v + 1) ?? 0)", &[(MayBeNone, (14, 12))]),
         ("print((c.v + 1) == None)", &[(MayBeNone, (14, 12))]),
@@ -904,10 +908,10 @@ fn an_operator_on_a_failed_member_should_be_untyped() {
     ]);
 }
 
-/// A block that ends in a member of an optional, and a join with a branch of one, have no type:
+/// A block that ends in a member of an optional, and a join with a branch of one, are untyped:
 /// the spec rows block (the tail) and `if`, `match` (a branch).
 #[test]
-fn a_block_and_a_join_of_a_failed_member_should_be_untyped() {
+fn a_block_and_a_join_of_a_poisoned_member_should_be_untyped() {
     cell_rows(&[
         ("print({ c.v } ?? 0)", &[(MayBeNone, (14, 13))]),
         (
@@ -921,10 +925,10 @@ fn a_block_and_a_join_of_a_failed_member_should_be_untyped() {
     ]);
 }
 
-/// A generic call has no type when only a member of an optional binds its type parameter. A
+/// A generic call is untyped when only a member of an optional binds its type parameter. A
 /// slice of a member of an optional has none. The spec rows of a call and index, member, method.
 #[test]
-fn a_generic_call_and_a_slice_of_a_failed_member_should_be_untyped() {
+fn a_generic_call_and_a_slice_of_a_poisoned_member_should_be_untyped() {
     cell_rows(&[
         ("print(id(c.v) ?? 0)", &[(MayBeNone, (14, 14))]),
         ("let x = c.ys[0..1]\n    x.nope()", &[(MayBeNone, (14, 13))]),
@@ -934,7 +938,7 @@ fn a_generic_call_and_a_slice_of_a_failed_member_should_be_untyped() {
 /// `==` gives `bool` when an operand fails: the spec row `<`, `==`, `!`, `&&`, `is`. A typed
 /// poisoned value reads as any value of its type, so the `??` on it is a true E0048.
 #[test]
-fn equality_on_a_failed_member_should_be_bool() {
+fn equality_on_a_poisoned_member_should_be_bool() {
     cell_rows(&[(
         "print((c.v == 1) ?? false)",
         &[(CoalesceNotOptional, (14, 11)), (MayBeNone, (14, 12))],
@@ -944,7 +948,7 @@ fn equality_on_a_failed_member_should_be_bool() {
 /// A name that takes all of a member of an optional binds no type: the spec row a binding of a
 /// pattern. So `if let` and `let ... else` do not report that it always matches.
 #[test]
-fn a_name_pattern_on_a_failed_member_should_not_always_match() {
+fn a_name_pattern_on_a_poisoned_member_should_not_always_match() {
     cell_rows(&[
         ("if let x = c.e { print(x) }", &[(MayBeNone, (14, 16))]),
         ("let x = c.e else { return }", &[(MayBeNone, (14, 13))]),
@@ -952,10 +956,10 @@ fn a_name_pattern_on_a_failed_member_should_not_always_match() {
     ]);
 }
 
-/// A member of an optional has no type, so `Some` and `None` patterns on it are no mistake. A
-/// name that takes all of it has no type: the spec row a binding of a pattern.
+/// A member of an optional is untyped, so `Some` and `None` patterns on it are no mistake. A
+/// name that takes all of it is untyped: the spec row a binding of a pattern.
 #[test]
-fn some_and_none_patterns_on_a_failed_member_should_be_accepted() {
+fn some_and_none_patterns_on_a_poisoned_member_should_be_accepted() {
     cell_rows(&[
         (
             "match c.v { Some(x) => print(x); None => {} }",
@@ -969,21 +973,21 @@ fn some_and_none_patterns_on_a_failed_member_should_be_accepted() {
     ]);
 }
 
-/// A place through `?.` after a member of an optional has no type (the spec row index, member,
-/// method): no field below the member is looked up, so the write is not checked and no E0001 is
-/// reported.
+/// A place through `?.` after a member of an optional is untyped (the spec row index, member,
+/// method): no field below the member is looked up, so the write rule finds no field and no
+/// E0001 is reported.
 #[test]
-fn a_place_through_safe_access_after_a_failed_member_should_be_untyped() {
+fn a_place_through_safe_access_after_a_poisoned_member_should_be_untyped() {
     cell_rows(&[
         ("c.n?.ys.push(1)", &[(MayBeNone, (14, 5))]),
         ("c.n?.w = \"a\"", &[(MayBeNone, (14, 5))]),
     ]);
 }
 
-/// A generic variant and a call through an interface bound have no type when only a member of
+/// A generic variant and a call through an interface bound are untyped when only a member of
 /// an optional binds their type parameter. The spec row of a call.
 #[test]
-fn a_generic_variant_and_a_bound_call_of_a_failed_member_should_be_untyped() {
+fn a_generic_variant_and_a_bound_call_of_a_poisoned_member_should_be_untyped() {
     cell_rows(&[(
         "match Bx2.Full(c.v) { Bx2.Full(x) => print(x ?? 0); Bx2.Empty => {} }",
         &[(MayBeNone, (14, 20))],
@@ -994,10 +998,10 @@ fn a_generic_variant_and_a_bound_call_of_a_failed_member_should_be_untyped() {
     );
 }
 
-/// A name inside a `Some` on a member of an optional has no type, and the `Some` is no mistake:
-/// the subject has no type (the spec row a binding of a pattern).
+/// A name inside a `Some` on a member of an optional is untyped, and the `Some` is no mistake:
+/// the subject is untyped (the spec row a binding of a pattern).
 #[test]
-fn a_name_inside_a_some_on_a_failed_member_should_have_no_type() {
+fn a_name_inside_a_some_on_a_poisoned_member_should_be_untyped() {
     cell_rows(&[
         (
             "match c.v { Some(x) => print(x ?? 0); None => {} }",
@@ -1014,11 +1018,11 @@ fn a_name_inside_a_some_on_a_failed_member_should_have_no_type() {
     ]);
 }
 
-/// A member of an optional has no type, also when its own type is optional. So a name bound to
-/// it has no type, and no later mistake with it is reported. The spec rows `p.name` and a
+/// A member of an optional is untyped, also when its own type is optional. So a name bound to
+/// it is untyped, and no later mistake with it is reported. The spec rows `p.name` and a
 /// binding of a pattern.
 #[test]
-fn a_name_bound_to_an_optional_failed_member_should_have_no_type() {
+fn a_name_bound_to_an_optional_poisoned_member_should_be_untyped() {
     cell_rows(&[
         ("if let x = c.n { x.nope() }", &[(MayBeNone, (14, 16))]),
         (
@@ -1028,7 +1032,7 @@ fn a_name_bound_to_an_optional_failed_member_should_have_no_type() {
     ]);
 }
 
-/// A generic method of an optional has no type (the spec row `p.m()`), so its result gets no
+/// A generic method of an optional is untyped (the spec row `p.m()`), so its result gets no
 /// report that it is not optional.
 #[test]
 fn a_generic_method_of_an_optional_should_be_untyped() {
@@ -1044,21 +1048,21 @@ fn a_generic_method_of_an_optional_should_be_untyped() {
     ]);
 }
 
-/// A `??` with a member of an optional on either side has no type (the spec row `??`), so the
+/// A `??` with a member of an optional on either side is untyped (the spec row `??`), so the
 /// `??` after it reports nothing.
 #[test]
-fn a_coalesce_over_a_failed_member_should_be_untyped() {
+fn a_coalesce_over_a_poisoned_member_should_be_untyped() {
     cell_rows(&[
         ("print((Some(c.v) ?? 0) ?? 0)", &[(MayBeNone, (14, 17))]),
         ("print((c.n?.v ?? 0) ?? 0)", &[(MayBeNone, (14, 12))]),
     ]);
 }
 
-/// A `?.` after a member of an optional has no type: the spec row index, member, method. So a
-/// name bound to it has no type. A `?.` on the optional itself keeps its type. A result that only
-/// the member binds has no type.
+/// A `?.` after a member of an optional is untyped: the spec row index, member, method. So a
+/// name bound to it is untyped. A `?.` on the optional itself keeps its type. A result that only
+/// the member binds is untyped.
 #[test]
-fn a_safe_access_after_a_failed_member_should_be_untyped() {
+fn a_safe_access_after_a_poisoned_member_should_be_untyped() {
     cell_rows(&[
         ("if let x = c.n?.v { x.nope() }", &[(MayBeNone, (14, 16))]),
         (
@@ -1072,7 +1076,7 @@ fn a_safe_access_after_a_failed_member_should_be_untyped() {
 /// and a join carries it: the spec rows a binding with no declared type and `if`, `match` (a
 /// branch).
 #[test]
-fn a_let_of_an_optional_failed_member_should_have_no_type() {
+fn a_let_of_an_optional_poisoned_member_should_be_untyped() {
     cell_rows(&[
         ("let y = c.n\n    y.nope()", &[(MayBeNone, (14, 13))]),
         (
@@ -1082,10 +1086,10 @@ fn a_let_of_an_optional_failed_member_should_have_no_type() {
     ]);
 }
 
-/// A member of an optional has no type, so E0124 does not report a `match` on it: the spec row a
+/// A member of an optional is untyped, so E0124 does not report a `match` on it: the spec row a
 /// binding of a pattern.
 #[test]
-fn a_match_on_a_failed_member_should_not_report_e0124() {
+fn a_match_on_a_poisoned_member_should_not_report_e0124() {
     cell_rows(&[
         ("match c.ys { xs => print(xs) }", &[(MayBeNone, (14, 11))]),
         (
@@ -1095,10 +1099,10 @@ fn a_match_on_a_failed_member_should_not_report_e0124() {
     ]);
 }
 
-/// An index of a member of an optional has no type: the spec row index, member, method. So the
+/// An index of a member of an optional is untyped: the spec row index, member, method. So the
 /// `??` on the element reports nothing, and the index of the optional `oys` waits.
 #[test]
-fn an_index_of_a_failed_member_should_be_untyped() {
+fn an_index_of_a_poisoned_member_should_be_untyped() {
     rows(&[("print(c.oys[0][0] ?? 0)", &[(MayBeNone, (11, 11))])]);
 }
 
@@ -1124,7 +1128,7 @@ fn call_rows(table: &[CallRow<'_>]) {
 
 /// The receiver or a written type list can fix the result of a call. Such a result keeps its
 /// type when an argument is a member of an optional, so the `??` on it is reported: the spec row
-/// of a call. A result that only that argument binds has no type, so its `??` and its mismatch
+/// of a call. A result that only that argument binds is untyped, so its `??` and its mismatch
 /// wait: `id(c.v)` and `E.V(c.v)`.
 #[test]
 fn a_call_result_should_be_untyped_only_when_a_failed_argument_binds_it() {
@@ -1203,20 +1207,20 @@ fn a_bound_method_whose_result_the_bound_fixes_should_keep_its_type() {
     );
 }
 
-/// A join of an `if let` with a branch that is a member of an optional has no type (the spec row
+/// A join of an `if let` with a branch that is a member of an optional is untyped (the spec row
 /// `if`, `match`: a branch), so the `??` after it reports nothing.
 #[test]
-fn an_if_let_branch_of_a_failed_member_should_be_untyped() {
+fn an_if_let_branch_of_a_poisoned_member_should_be_untyped() {
     codes(
         "class C {\n    v: i64\n}\nfn f(c: C?, k: i64?) {\n    print((if let x = k { c.v } else { 0 }) ?? 0)\n}\nfn main() {}",
         &[(MayBeNone, (5, 27))],
     );
 }
 
-/// A `match` on a member of an optional has a subject with no type, so an `Ok` pattern on it is
-/// not checked: the spec row a binding of a pattern.
+/// A `match` on a member of an optional has an untyped subject, so an `Ok` pattern on it adds no
+/// error: the spec row a binding of a pattern.
 #[test]
-fn a_constructor_pattern_on_a_failed_member_should_add_no_error() {
+fn a_constructor_pattern_on_a_poisoned_member_should_add_no_error() {
     codes(
         "class C {\n    v: i64\n}\nfn f(c: C?) {\n    match c.v {\n        Ok(x) => print(x)\n        _ => print(0)\n    }\n}\nfn main() {}",
         &[(MayBeNone, (5, 11))],
@@ -1225,7 +1229,8 @@ fn a_constructor_pattern_on_a_failed_member_should_add_no_error() {
 
 /// A call whose result names a parameter that another argument binds, and whose one failed
 /// argument is an unknown name, keeps its type: its `??` is still reported. A call through a
-/// function and through a bound each have the rule.
+/// function and through a bound each have the rule. The spec's call row makes this result
+/// untyped, so that its `??` waits: the next task of part 6 changes this row.
 #[test]
 fn a_call_whose_other_argument_binds_its_parameter_should_keep_its_type() {
     codes(

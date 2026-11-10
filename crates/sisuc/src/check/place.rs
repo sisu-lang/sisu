@@ -95,8 +95,8 @@ pub(super) struct CheckedPlace {
     /// For a `push`, whose receiver may turn out to be no array: the E0001 of a root that cannot
     /// change, which only an array reports.
     held: Option<DiagnosticKind>,
-    /// For a `push`: the type that the root field declares, through the indexes of the place. A
-    /// place under a failed `.` has no `ty`, but its field still has this type.
+    /// For a `push`: the type that a root field under a failed `.` declares, through the indexes
+    /// of the place that do not fail. The place has no `ty`, but its field still has this type.
     held_ty: Option<Type>,
     /// The object that a `?.` of the root field takes out of an optional. The write of the place
     /// is the branch where it is present.
@@ -260,7 +260,7 @@ impl Checker<'_> {
         receiver: &ast::Expr,
         read: Checked,
     ) -> Result<tir::Expr, Checked> {
-        let in_place = held_array_layers(&read, self.pushed_guarded()) == 1;
+        let in_place = held_array_layers(type_of(&read), self.pushed_guarded()) == 1;
         match read {
             Ok(mut array) if in_place => {
                 // The array inside the optional that the place stores.
@@ -291,7 +291,8 @@ impl Checker<'_> {
         let mut place = self
             .take_pushed(receiver)
             .expect("`push_receiver` should have kept the place of a receiver that is a place");
-        if held_array_layers(&read, place.guard.is_some()) > 0
+        // A place under a failed `.` is untyped, but its field still declares one.
+        if held_array_layers(type_of(&read).or(place.held_ty), place.guard.is_some()) > 0
             && let Some(d) = place.held.take()
         {
             self.report(d);
@@ -389,18 +390,12 @@ impl Checker<'_> {
             // `Ok` path checks it, with no value to push.
             if element.is_none() {
                 // A field under a failed `.` still names its array, so a field that cannot
-                // change gets its E0001. A local with no type names nothing.
-                let mut root = receiver_expr;
-                while let ast::ExprKind::Index { base, .. } = &root.kind {
-                    root = base;
-                }
-                let array = place.as_ref().is_some_and(|p| {
-                    p.held_ty
+                // change gets its E0001.
+                if let Some(place) = place
+                    && place
+                        .held_ty
                         .is_some_and(|t| matches!(payload(t).kind(), TypeKind::Array(_)))
-                });
-                if array
-                    && matches!(root.kind, ast::ExprKind::Field { .. })
-                    && let Some(d) = place.and_then(|place| place.held)
+                    && let Some(d) = place.held
                 {
                     self.report(d);
                 }
@@ -957,12 +952,12 @@ impl Checker<'_> {
                         root: Root::Field(index),
                         operands: vec![base],
                     }),
-                    // A place under a failed `.` has no type: the fix of the E0062 decides it.
+                    // A place under a failed `.` is untyped: the fix of the E0062 decides it.
                     ty: ty.filter(|_| !on_optional),
                     shown,
                     writable,
                     held,
-                    held_ty: ty,
+                    held_ty: ty.filter(|_| on_optional),
                     guard,
                     refused,
                     chain: None,
@@ -1002,9 +997,11 @@ impl Checker<'_> {
                     shown: None,
                     writable: inner.writable,
                     held: inner.held,
-                    held_ty: inner.held_ty.and_then(|t| match payload(t).kind() {
-                        TypeKind::Array(element) => Some(element),
-                        _ => None,
+                    held_ty: inner.held_ty.filter(|_| !mismatched).and_then(|t| {
+                        match payload(t).kind() {
+                            TypeKind::Array(element) => Some(element),
+                            _ => None,
+                        }
                     }),
                     guard: None,
                     refused: inner.refused,
@@ -1085,11 +1082,11 @@ pub(super) fn place_root(mut e: &ast::Expr) -> &ast::Expr {
 }
 
 /// The layers of optional around the array that a `.push` receiver holds, or 0 when it holds no
-/// optional array. The receiver holds the type of `read`, made optional where a `?.` of the root
+/// optional array. The receiver holds the type `ty`, made optional where a `?.` of the root
 /// field of its place `guarded` it. `?.push` takes the place as one array only when there is one
 /// layer. A place with any layer reports its held write before E0062.
-fn held_array_layers(read: &Checked, guarded: bool) -> usize {
-    let Some(mut ty) = type_of(read) else {
+fn held_array_layers(ty: Option<Type>, guarded: bool) -> usize {
+    let Some(mut ty) = ty else {
         return 0;
     };
     if guarded {

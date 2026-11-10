@@ -2,7 +2,7 @@
 // AND the rest of the chain has a mistake that it has with the same optional unwrapped
 // WHEN `sisu check` runs on it
 // THEN it reports each E0062, with the help that it gave before
-// AND the rest of the chain has no type, so its mistakes wait. An E0001 on the field that the failed `.` names stays
+// AND the rest of the chain is untyped, so its mistakes wait, but an E0001 on the field that the failed `.` names stays
 class Inner {
     ys: [i64]
     v: i64

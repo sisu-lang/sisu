@@ -678,10 +678,11 @@ fn dot_field_on_optional_should_report_a_missing_field_alone() {
     );
 }
 
-/// A write to a field of an optional checks the write rule on the payload's field. The place has
-/// no type (the spec row `p.name`), so the value is not checked.
+/// A write to a field of an optional checks the write rule on the payload's field. The place is
+/// untyped (the spec row `p.name`), so the value is checked with no expected type, and its
+/// mismatch waits.
 #[test]
-fn dot_assign_on_optional_should_check_the_write_rule_and_not_the_value() {
+fn dot_assign_on_optional_should_check_the_write_rule_and_let_the_mismatch_wait() {
     codes(
         &on_node_optional("c.w = 2"),
         &[(Code::MayBeNone, (7, 5)), (Code::AssignToImmutable, (7, 5))],
@@ -845,11 +846,12 @@ fn a_none_beside_a_loop_with_no_value_should_report_only_the_none() {
         "let _ = if c { None } else { loop { break } }",
         "let _ = if c { None } else { outer: loop { loop { break outer } } }",
     ] {
-        assert_eq!(
-            error_codes(&with_exit_body(statement)),
-            [Code::CannotInfer],
-            "{statement}"
-        );
+        let src = with_exit_body(statement);
+        let found: Vec<_> = (diags(&src).iter())
+            .filter(|d| d.code().severity() == Severity::Error)
+            .map(|d| (d.code(), at(&src, d.span())))
+            .collect();
+        assert_eq!(found, [(Code::CannotInfer, (7, 20))], "{statement}");
     }
 }
 

@@ -263,7 +263,7 @@ impl Checker<'_> {
                     return Err(Poisoned::kept_error());
                 }
                 // The operand of `-` decides its type, so a failed operand gives no type.
-                if *op == UnaryOp::Neg && !mismatched && type_of(&operand).is_none() {
+                if *op == UnaryOp::Neg && type_of(&operand).is_none() {
                     return Err(Poisoned::error());
                 }
                 typed(

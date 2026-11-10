@@ -144,7 +144,7 @@ impl Checker<'_> {
         else {
             return Err(Poisoned::error());
         };
-        // E0062 is reported. The member has no type: the fix of the E0062 decides it.
+        // E0062 is reported. The member is untyped: the fix of the E0062 decides it.
         if on_optional {
             return Err(Poisoned::error());
         }
