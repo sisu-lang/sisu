@@ -154,8 +154,6 @@ pub(super) struct Aliases {
     /// Whether the memo passed `MAX_CHECK_ENTRIES`: every later substitution fails, with no
     /// report of its own, so each later use of an alias is `Error`.
     exhausted: bool,
-    /// The token of the report that the memo passed `MAX_CHECK_ENTRIES`, once it is made.
-    full: Option<Reported>,
     /// How many uses of an alias have resolved.
     pub(super) uses: usize,
     /// The interfaces that an alias body names as `S.Name`. An alias has no owner, so no use
@@ -867,12 +865,17 @@ impl Checker<'_> {
         })
     }
 
-    /// A use at `at`, with the arguments `args`, of an alias that is `Error`. Its own report says
-    /// why, and no list of the checker holds the token of that report, unless the memo is full.
+    /// A use at `at`, with the arguments `args`, of an alias that is `Error`.
     pub(super) fn failed_alias(&mut self, at: Span, args: &[ast::Arg]) -> Checked {
         self.stray(args);
-        let full = self.memo_report(at);
-        Err(Poisoned::untyped(full.unwrap_or_else(|| self.proof(at)))) // proof: declaration
+        Err(Poisoned::untyped(self.failed_alias_token(at)))
+    }
+
+    /// The token of a use at `at` of an alias that is `Error`. Its own report says why, and no
+    /// list of the checker holds the token of that report. A use in no written type reports the
+    /// limit of the memo that it passed.
+    pub(super) fn failed_alias_token(&mut self, at: Span) -> Reported {
+        self.memo_report(at).unwrap_or_else(|| self.proof(at)) // proof: declaration
     }
 
     /// `A.None` and `A.Some(x)`, where the alias `A` names an optional type: the paths of `Option`.
@@ -1028,15 +1031,14 @@ impl Checker<'_> {
     }
 
     /// The token of the report of a limit of the memo, for a use at `at`. When `at` is in no
-    /// written type, it reports the limit that a use passed. Else the token is the one of the
-    /// report of the full memo, once it is made.
+    /// written type, it reports the limit that a use passed. A written type holds that report
+    /// until it is done.
     fn memo_report(&mut self, at: Span) -> Option<Reported> {
-        if self.aliases.base.is_none()
-            && let Some(reported) = self.report_too_large(at)
-        {
-            return Some(reported);
+        if self.aliases.base.is_none() {
+            self.report_too_large(at)
+        } else {
+            None
         }
-        self.aliases.full
     }
 
     /// Reports the written type at `at`, when a use passed a limit of the memo in it: once for
@@ -1053,9 +1055,6 @@ impl Checker<'_> {
             },
             check: passed == Passed::Check,
         });
-        if passed == Passed::Check {
-            self.aliases.full = Some(reported);
-        }
         Some(reported)
     }
 

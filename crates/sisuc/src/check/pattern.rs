@@ -1272,26 +1272,27 @@ impl Checker<'_> {
             Some(q) if let Some(Declared::Known(named)) = self.names.enum_id(q.name) => {
                 matches!(ty.kind(), TypeKind::Enum(id, _) if id == named)
             }
-            // An alias of an enum is the type that it names, whose fixed arguments hold.
-            Some(q)
-                if let Via::To(through) = self.through(q.name)
-                    && matches!(through.ty.kind(), TypeKind::Enum(..)) =>
-            {
-                type_meets(through.params.len(), through.ty, ty)
-            }
-            Some(q) => {
-                let resolved = self.resolve(&ast::TypeExpr {
-                    kind: ast::TypeKind::Name(q.name),
-                    optional: 0,
-                    span: q.span,
-                    bare: q.span,
-                });
-                if resolved.is_none() {
-                    // `resolve` reported the error of the type just now, but it gives no token.
-                    return Err(self.proof(q.span)); // proof: declaration
+            Some(q) => match self.through(q.name) {
+                // An alias of an enum is the type that it names, whose fixed arguments hold.
+                Via::To(through) if matches!(through.ty.kind(), TypeKind::Enum(..)) => {
+                    type_meets(through.params.len(), through.ty, ty)
                 }
-                false
-            }
+                Via::Error => return Err(self.failed_alias_token(q.span)),
+                _ => {
+                    let resolved = self.resolve(&ast::TypeExpr {
+                        kind: ast::TypeKind::Name(q.name),
+                        optional: 0,
+                        span: q.span,
+                        bare: q.span,
+                    });
+                    if resolved.is_none() {
+                        // `resolve` reported the error of the written type, or its declaration
+                        // did, but it gives no token.
+                        return Err(self.proof(q.span)); // proof: declaration
+                    }
+                    false
+                }
+            },
         };
         let (id, args) = match ty.kind() {
             TypeKind::Enum(id, args) if fits => (id.0, args),
