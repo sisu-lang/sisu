@@ -132,7 +132,9 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// join are in the helper `@sisu_rc.concat.string(lhs, rhs_len)`, which `define_string_concat`
     /// writes: one call for each `+`, so that the `phi` nodes of the ways do not chain through the
     /// joins of a function (#633). This caller reads the two lengths, calls the helper, copies the
-    /// bytes of `rhs` to where the helper says, and releases `rhs`.
+    /// bytes of `rhs` to where the helper says, and releases `rhs`. It builds the result from the
+    /// block and the data of the call. The length is the sum of the two lengths, so that LLVM
+    /// sees it.
     ///
     /// The helper makes room for `rhs_len` more bytes and stores the new length in the header.
     /// `lhs` has a block with a header `len` of set bytes, and `needed` is
@@ -170,13 +172,20 @@ impl<'ctx> Codegen<'ctx, '_> {
             .try_as_basic_value()
             .basic()
             .expect("`@sisu_rc.concat.string` should return the value, as `helper` declares it");
+        let data = self.value_data(joined);
         self.copy_bytes(
-            self.string_byte(self.value_data(joined), lhs_len),
+            self.string_byte(data, lhs_len),
             self.value_data(rhs),
             rhs_len,
         );
         self.release(rhs, Type::STRING);
-        joined
+        // The length is the sum here and not the one in `joined`, so that LLVM sees it: a length
+        // read from the result of the call is opaque. The sum cannot wrap, as in the helper.
+        let len = self
+            .builder
+            .build_int_nuw_add(lhs_len, rhs_len, "needed")
+            .expect(POSITIONED);
+        self.make_value(self.value_block(joined), data, len)
     }
 
     /// `@sisu_rc.concat.string(lhs, rhs_len)`: the three ways of `concat`. It returns the value of

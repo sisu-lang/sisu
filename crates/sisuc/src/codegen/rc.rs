@@ -305,7 +305,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         match kind {
             Helper::Eq => self.mark_eq(function, ty),
             Helper::Show(_) => self.mark_len_params(function, 1, &[ty]),
-            Helper::Trim | Helper::Concat => self.mark_trim(function, ty),
+            Helper::Trim | Helper::Concat => self.mark_out_of_line(function, ty),
             Helper::Retain
             | Helper::Release
             | Helper::Drop
@@ -332,12 +332,13 @@ impl<'ctx> Codegen<'ctx, '_> {
         }
     }
 
-    /// Gives `@sisu_rc.trim.[T]` and `@sisu_rc.trim.string`, which take a value of the type `ty`,
-    /// the facts of a value's length, and `noinline`. The trim point tests the common case itself,
-    /// so the optimizer keeps this call out of line there: the size tests and the copy would be
-    /// repeated at each point. `@sisu_rc.concat.string` gets the same: inlined at each `+`, its
-    /// `phi` nodes would chain through the joins of a function again (#633).
-    fn mark_trim(&self, function: FunctionValue<'ctx>, ty: Type) {
+    /// Gives a helper that takes a value of the type `ty` the facts of a value's length, and
+    /// `noinline`. The helpers are `@sisu_rc.trim.[T]`, `@sisu_rc.trim.string` and
+    /// `@sisu_rc.concat.string`. The trim point tests the common case itself, so the optimizer
+    /// keeps this call out of line there: the size tests and the copy would be repeated at each
+    /// point. The join helper inlined at each `+` would chain its `phi` nodes through the joins
+    /// of a function again (#633).
+    fn mark_out_of_line(&self, function: FunctionValue<'ctx>, ty: Type) {
         self.mark_len_params(function, 0, &[ty]);
         self.mark_noinline(function);
     }

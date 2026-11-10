@@ -7512,6 +7512,19 @@ fn each_string_join_should_be_one_call_with_no_phi_at_o2() {
         .count();
     assert_eq!(calls, 4, "calls of {HELPER} in\n{page}");
     assert!(!page.contains("phi "), "a `phi` in\n{page}");
+    // The caller copies the bytes of `rhs`, so a literal gives a copy of a constant size. A copy
+    // in the helper would leave `page` with no `memcpy`.
+    let copies: Vec<&str> = (page.lines())
+        .filter(|l| l.contains("call void @llvm.memcpy"))
+        .collect();
+    assert!(!copies.is_empty(), "no `memcpy` in\n{page}");
+    for copy in copies {
+        let length = copy.rsplit_once(", i64 ").map(|(_, rest)| rest);
+        assert!(
+            length.is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit())),
+            "a `memcpy` of a length that is not constant: {copy}"
+        );
+    }
     for allocator in ["@sisu_alloc(", "@sisu_realloc("] {
         assert!(
             !page.contains(allocator),
