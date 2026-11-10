@@ -2516,10 +2516,11 @@ impl Checker<'_> {
     /// "cannot find binding `name`", offering the closest binding of any open scope, and of any
     /// open loop label right after an unlabeled `break`. A type's name, built in or a class's or
     /// an enum's, is in scope, but as a type: that is reported instead. So is a function's name.
-    fn not_found(&mut self, name: Symbol, span: Span) -> Diagnostic {
+    /// Reports the error, and gives its token.
+    fn not_found(&mut self, name: Symbol, span: Span) -> Reported {
         let site = names::Site::value(true);
         if let Some(wrong) = self.wrong_kind(name, span, site, self.meaning(name, site)) {
-            return wrong.into();
+            return self.error(wrong);
         }
         let at_start = self.starts_break_value(span);
         let bindings = self
@@ -2534,28 +2535,25 @@ impl Checker<'_> {
             .filter(|_| self.body.label_typo.is_some_and(|(at, _)| at == span))
             .map(|label| (label.name.as_str(), Definition::LoopLabel));
         let suggestion = suggestion(name.as_str(), bindings.chain(labels));
-        if let Some(found) = &suggestion
-            && found.kind == Definition::LoopLabel
-        {
-            // Only a bare name after `break` offers a loop label: a misspelled loop label is one
-            // mistake, which neither the loop label's warning nor its loop's type reports again.
-            // The caller reports the diagnostic made here.
-            let reported = self.proof(span); // proof: held misfit
-            self.break_meant(&found.name, reported);
-        }
-        let wrap = match (&suggestion, self.body.label_typo) {
-            (Some(found), Some((_, start))) if found.kind == Definition::LoopLabel => {
-                self.wrap_break(span, start)
-            }
+        let meant = (suggestion.as_ref())
+            .filter(|found| found.kind == Definition::LoopLabel)
+            .map(|found| found.name.clone());
+        let wrap = match (&meant, self.body.label_typo) {
+            (Some(_), Some((_, start))) => self.wrap_break(span, start),
             _ => None,
         };
-        DiagnosticKind::BindingNotFound {
+        let reported = self.error(DiagnosticKind::BindingNotFound {
             name: name.to_string(),
             at: span,
             suggestion,
             wrap,
+        });
+        if let Some(meant) = meant {
+            // Only a bare name after `break` offers a loop label: a misspelled loop label is one
+            // mistake, which neither the loop label's warning nor its loop's type reports again.
+            self.break_meant(&meant, reported);
         }
-        .into()
+        reported
     }
 
     /// `break_start`, the start of the `break` whose label is at `label`, when the label ends the

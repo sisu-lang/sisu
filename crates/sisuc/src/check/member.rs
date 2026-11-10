@@ -512,8 +512,12 @@ impl Checker<'_> {
         indexed: bool,
     ) -> Checked {
         let inner = innermost(payload);
-        // The E0062 below, or the failed lookup of the name, is the report. No list holds it yet.
-        let held = self.proof(site.name.span); // proof: held misfit
+        // The report of `value`, else the E0062 below or the failed lookup of the name. No list
+        // holds the last two yet.
+        let held = match &value {
+            Err(failed) => failed.reported(),
+            Ok(_) => self.proof(site.name.span), // proof: held misfit
+        };
         let checked = Err(Poisoned::typed(inner, held));
         // The call reports its own mistakes, and its type waits for the fix.
         drop(self.method_call(span, Dot::Payload, checked, receiver, site, args));
@@ -759,7 +763,7 @@ impl Checker<'_> {
         }
         match self.written_types(site.written) {
             Some(types) => Ok(types),
-            // `resolve` gives no proof for a written type that does not resolve.
+            // `resolve` reported the error of the written type just now, but it gives no token.
             None => Err(self.proof(site.angles)), // proof: declaration
         }
     }

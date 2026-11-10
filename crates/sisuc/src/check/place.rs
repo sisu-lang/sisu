@@ -812,8 +812,7 @@ impl Checker<'_> {
                     at: target.span,
                 })
             } else {
-                let d = self.not_found(name, target.span);
-                let reported = self.diagnostics.error(d);
+                let reported = self.not_found(name, target.span);
                 // The name may have meant any open binding; none of them warns as
                 // unassigned.
                 for b in self.body.scopes.iter_mut().flat_map(|s| s.values_mut()) {
@@ -843,7 +842,7 @@ impl Checker<'_> {
             Some(cause) => (self.forbid(change, name.to_string(), span, cause), None),
             None => ((None, None), None),
         };
-        let untyped = ty.is_none().then(|| self.untyped_binding(span));
+        let reported = forbidden.or_else(|| ty.is_none().then(|| self.untyped_binding(span)));
         CheckedPlace {
             path: Some(Path {
                 root: Root::Local(local),
@@ -857,7 +856,7 @@ impl Checker<'_> {
             guard: None,
             refused,
             chain: None,
-            reported: untyped.or(forbidden),
+            reported,
         }
     }
 
@@ -985,7 +984,6 @@ impl Checker<'_> {
                 }
                 // A field with no type has the error of its declaration.
                 let untyped = ty.is_none() && on_optional.is_none();
-                let untyped = untyped.then(|| self.proof(name.span)); // proof: declaration
                 let on_optional_report = on_optional;
                 let on_optional = on_optional.is_some();
                 // The copy-in reads the field.
@@ -995,8 +993,8 @@ impl Checker<'_> {
                 // The first error of the place: its base's, if the base failed.
                 let reported = (checked.as_ref().err().map(Poisoned::reported))
                     .or(on_optional_report)
-                    .or(untyped)
-                    .or(forbidden);
+                    .or(forbidden)
+                    .or_else(|| untyped.then(|| self.proof(name.span))); // proof: declaration
                 CheckedPlace {
                     path: checked.ok().filter(|_| !on_optional).map(|base| Path {
                         root: Root::Field(index),

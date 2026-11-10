@@ -1287,6 +1287,7 @@ impl Checker<'_> {
                     bare: q.span,
                 });
                 if resolved.is_none() {
+                    // `resolve` reported the error of the type just now, but it gives no token.
                     return Err(self.proof(q.span)); // proof: declaration
                 }
                 false

@@ -3213,7 +3213,9 @@ impl Checker<'_> {
                 let want = self.known_in(call, pattern);
                 // `e` bound the base of the associated type that has no choice.
                 if want.is_none() && lacks_choice(call, pattern) {
-                    return Err(Poisoned::untyped(self.proof(e.span))); // proof: declaration
+                    return Err(Poisoned::untyped(
+                        failure(call).unwrap_or_else(|| self.proof(e.span)), // proof: declaration
+                    ));
                 }
                 debug_assert!(
                     want.is_some() || call.failed.is_some() || call.rejected.is_some(),
@@ -3383,8 +3385,8 @@ impl Checker<'_> {
             }
         }
         let Some(bound) = bound else {
-            // An element that binds nothing failed, and holds the proof.
-            let reported = first_failed(&slots);
+            // An element that binds nothing failed, and holds the proof, else the call failed.
+            let reported = first_failed(&slots).or_else(|| failure(call));
             let reported = reported.unwrap_or_else(|| self.proof(span)); // proof: quiet reader
             return (Err(Poisoned::untyped(reported)), None);
         };
@@ -3425,7 +3427,9 @@ impl Checker<'_> {
             // The context rejected it, and the outer call reported why.
             if ty == *REJECTED {
                 if call.rejected.is_none() {
-                    call.rejected = Some(self.proof(at)); // proof: quiet reader
+                    call.rejected = Some(
+                        failure(call).unwrap_or_else(|| self.proof(at)), // proof: quiet reader
+                    );
                 }
             } else if matches!(ty, Type::UNIT | Type::NEVER) {
                 call.failed = Some(self.error(DiagnosticKind::TypeArgument {
@@ -4518,7 +4522,7 @@ impl Checker<'_> {
                 at: arg.span,
             }));
         }
-        // `resolve` gives no token for the error of a written type.
+        // `resolve` reported the error of the written type just now, but it gives no token.
         self.resolve(arg).ok_or_else(|| self.proof(arg.span)) // proof: declaration
     }
 

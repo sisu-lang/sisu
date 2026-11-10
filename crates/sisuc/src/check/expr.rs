@@ -366,10 +366,11 @@ impl Checker<'_> {
                 Err(Poisoned::untyped(reported))
             }
             _ => {
-                let d = self
-                    .bare_variant(name, span)
-                    .unwrap_or_else(|| self.not_found(name, span));
-                Err(Poisoned::untyped(self.diagnostics.error(d)))
+                let reported = match self.bare_variant(name, span) {
+                    Some(d) => self.diagnostics.error(d),
+                    None => self.not_found(name, span),
+                };
+                Err(Poisoned::untyped(reported))
             }
         }
     }

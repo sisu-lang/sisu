@@ -511,7 +511,9 @@ impl Checker<'_> {
                 .reported
                 .expect("a place with no type should have failed")),
             // A parameter with no type has the error of its declaration.
-            (None, Some(_)) => Err(self.proof(at)), // proof: declaration
+            (None, Some(_)) => {
+                Err((place.reported).unwrap_or_else(|| self.proof(at))) // proof: declaration
+            }
         }
     }
 
