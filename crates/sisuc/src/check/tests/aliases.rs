@@ -341,6 +341,42 @@ fn an_alias_qualifier_that_is_error_should_add_no_error_in_a_pattern() {
     );
 }
 
+/// GIVEN `type OA<T> = Missing<T>`, an alias that is `Error`, and a class `C`
+/// WHEN a pattern at a position of `C?` qualifies `Some` with `OA`
+/// THEN only the declaration of `OA` reports, not the class position that takes only names
+#[test]
+fn an_alias_qualifier_that_is_error_should_add_no_error_at_a_class_position() {
+    codes(
+        "class C {\n    x: i64\n}\ntype OA<T> = Missing<T>\nfn h(o: C?) {\n    match o {\n        \
+         OA.Some(n) => {}\n        _ => {}\n    }\n}\nfn main() {}",
+        &[(Code::UnknownType, (4, 14))],
+    );
+}
+
+/// GIVEN the aliases `B1` to `B15`, eight signatures that use `B15`, and `type OA<T> = B15<T>?`
+/// WHEN a pattern at a position of `B15<i64>?` qualifies `Some` with `OA`, whose alias body
+///   passes the limit of the whole check
+/// THEN the pattern reports that limit alone, not the class position that takes only names
+#[test]
+fn an_alias_qualifier_at_a_class_position_should_report_only_the_limit_that_it_passes() {
+    let mut src = format!("{PAIR}{}type OA<T> = B15<T>?\n", branching(15));
+    for g in 0..8 {
+        let (open, close) = ("[".repeat(g), "]".repeat(g));
+        writeln!(src, "fn g{g}(x: B15<{open}i64{close}>) {{}}")
+            .expect("writing to a string should not fail");
+    }
+    src.push_str(
+        "fn h(o: B15<i64>?) {\n    match o {\n        OA.Some(n) => {}\n        _ => {}\n    \
+         }\n}\nfn main() {}",
+    );
+    let (_, ds) = checked(&src);
+    let errors: Vec<_> = (ds.iter())
+        .filter(|d| d.code().severity() == Severity::Error)
+        .map(|d| (d.code(), at(&src, d.span())))
+        .collect();
+    assert_eq!(errors, [(Code::AliasTooLarge, (31, 9))]);
+}
+
 /// A depth-first resolution that follows each alias by a call would use a frame for each alias of
 /// the chain: 100,000 aliases overflow the stack. The alias that waits for its body takes a place
 /// in a list, so the resolution of a chain has no recursion.
