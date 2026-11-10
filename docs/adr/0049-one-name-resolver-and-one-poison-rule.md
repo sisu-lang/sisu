@@ -27,6 +27,13 @@ The decision has four parts:
   checks it. The token does not prevent a second report. Its known
   limit: a rollback can drop the report that made a token.
 
+As built, `Reported` and `Diagnostics` are in `check/reports.rs`. A `Poisoned`
+holds a `Reported`, and so does `Declared::Poisoned`, the state of an item that
+is poisoned. `Reported` is `Copy`, so a copy proves the same report. Each call of
+`proof` has a tag that names why no token was in scope: `quiet reader`,
+`declaration`, `binding`, `unknown state`, `parser mark` or `held misfit`. The
+flag on `Poisoned` is gone: a poisoned value is typed or untyped by its form.
+
 ## Considered options
 
 - **A separate resolve stage, before the checker**: rejected. A name's meaning
