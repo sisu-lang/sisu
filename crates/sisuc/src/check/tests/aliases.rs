@@ -300,6 +300,33 @@ fn an_alias_use_in_a_value_position_should_report_the_limit_that_it_passes() {
     assert_eq!(errors, [(Code::AliasTooLarge, (30, 14))]);
 }
 
+/// GIVEN the aliases `B1` to `B15`, eight signatures that use `B15`, and `type EA<T> =
+///   Two<B15<T>, i64>` of an enum `Two`
+/// WHEN a pattern qualifies a variant with `EA`, whose alias body passes the limit of the whole
+///   check
+/// THEN the pattern reports that limit alone: the alias is `Error`, not a type that needs its
+///   argument
+#[test]
+fn an_alias_qualifier_in_a_pattern_should_report_only_the_limit_that_it_passes() {
+    let two = "enum Two<A, B> {\n    V(A)\n    W(B)\n}\ntype EA<T> = Two<B15<T>, i64>\n";
+    let mut src = format!("{PAIR}{}{two}", branching(15));
+    for g in 0..8 {
+        let (open, close) = ("[".repeat(g), "]".repeat(g));
+        writeln!(src, "fn g{g}(x: B15<{open}i64{close}>) {{}}")
+            .expect("writing to a string should not fail");
+    }
+    src.push_str(
+        "fn h(e: Two<B15<i64>, i64>) {\n    match e {\n        EA.W(n) => print(n)\n        \
+         _ => {}\n    }\n}\nfn main() {}",
+    );
+    let (_, ds) = checked(&src);
+    let errors: Vec<_> = (ds.iter())
+        .filter(|d| d.code().severity() == Severity::Error)
+        .map(|d| (d.code(), at(&src, d.span())))
+        .collect();
+    assert_eq!(errors, [(Code::AliasTooLarge, (35, 9))]);
+}
+
 /// A depth-first resolution that follows each alias by a call would use a frame for each alias of
 /// the chain: 100,000 aliases overflow the stack. The alias that waits for its body takes a place
 /// in a list, so the resolution of a chain has no recursion.
