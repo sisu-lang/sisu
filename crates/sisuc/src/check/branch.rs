@@ -5,7 +5,7 @@ use super::expr::fits;
 use super::generic::{Ahead, Rank};
 use super::pattern::{LetPattern, arm_key};
 use super::{
-    Checked, CheckedBlock, Checker, Flag, Misfit, Poisoned, UNKNOWN, as_optional, block_type,
+    Checked, CheckedBlock, Checker, Expectation, Flag, Misfit, Poisoned, as_optional, block_type,
     has_remedy_flag, is_jumped, is_kept, payload, spread, tail, value_span, wrap_block,
 };
 use crate::ast;
@@ -31,11 +31,10 @@ impl Checker<'_> {
         cond: &ast::Expr,
         then_block: &ast::Block,
         else_block: Option<&ast::Block>,
-        expected: Option<Type>,
+        expected: Expectation,
     ) -> Checked {
-        let (cond, mismatched) = self.operand(cond, Some(Type::BOOL));
+        let (cond, mismatched) = self.operand(cond, Expectation::Required(Type::BOOL));
         let (then, other, ty) = self.branches(
-            span,
             then_block,
             else_block,
             expected,
@@ -76,7 +75,7 @@ impl Checker<'_> {
         value: &ast::Expr,
         then_block: &ast::Block,
         else_block: Option<&ast::Block>,
-        expected: Option<Type>,
+        expected: Expectation,
     ) -> Checked {
         // Ranking the `if let` for context may have checked its value (see `rank_value`).
         let (scrutinee, form, mismatched) = match self.kept(value.span, false) {
@@ -85,19 +84,13 @@ impl Checker<'_> {
         };
         let mut checked = None;
         let bind = |c: &mut Self| Some(c.bind_pattern(Some(Unwrap::IfLet), &form, pattern, None));
-        let (then, other, ty) = self.branches(
-            span,
-            then_block,
-            else_block,
-            expected,
-            bind,
-            |c, expected| {
+        let (then, other, ty) =
+            self.branches(then_block, else_block, expected, bind, |c, expected| {
                 let (bound, block) =
                     c.let_block(Unwrap::IfLet, &form, pattern, then_block, expected);
                 checked = Some(bound);
                 block
-            },
-        );
+            });
         let bound = checked.expect("`branches` should check the first block, which sets it");
         // A failed join keeps its own `mismatch`, and branches that never end keep `Never`.
         let ty = match ty {
@@ -132,29 +125,28 @@ impl Checker<'_> {
         Ok(tir::Expr::new(kind, ty, span))
     }
 
-    /// The blocks of the `if` or `if let` at `span`, `then` checking the first, and their type:
+    /// The blocks of an `if` or `if let`, `then` checking the first, and their type:
     /// `unit` without an `else`; see `join`. `bind` binds what the first block sees, for the
     /// ranking of its value.
     fn branches(
         &mut self,
-        span: Span,
         then_block: &ast::Block,
         else_block: Option<&ast::Block>,
-        expected: Option<Type>,
+        expected: Expectation,
         bind: impl FnOnce(&mut Self) -> Option<(LetPattern, Option<Checked>)>,
-        then: impl FnOnce(&mut Self, Option<Type>) -> CheckedBlock,
+        then: impl FnOnce(&mut Self, Expectation) -> CheckedBlock,
     ) -> (CheckedBlock, Option<CheckedBlock>, Result<Type, Poisoned>) {
         let Some(else_block) = else_block else {
-            return (then(self, None), None, Ok(Type::UNIT));
+            return (then(self, Expectation::None), None, Ok(Type::UNIT));
         };
-        let (expected, siblings) = self.hinted(span, expected);
+        let (expected, siblings) = expected.split_hint();
         let mut then = Some(then);
         let (blocks, ty) = self.ranked(|c| {
             let sources = [
                 c.block_branch(then_block, expected, bind),
                 c.block_branch(else_block, expected, |_| None),
             ];
-            c.join(span, &sources, (expected, siblings), |c, i, expected| {
+            c.join(&sources, (expected, siblings), |c, i, expected| {
                 if i == 0 {
                     let then = then
                         .take()
@@ -175,7 +167,7 @@ impl Checker<'_> {
     /// lowest `Rank` is checked first, the first in source order on a tie. Each branch after it
     /// expects the type of the first branch of a known type that is not `never`, made optional,
     /// unless its value waits and makes no optional by itself: it expects that type as it is.
-    /// That type is a hint (see `Body::hint_at`). In a hinted `if` or `match`, `siblings`, the
+    /// That type is a hint (see `Expectation::Hint`). In a hinted `if` or `match`, `siblings`, the
     /// type of the hinted value's siblings, is that first type. A failed or `unit` branch sets
     /// what the branches after it expect only until a branch of another known type is checked.
     /// Then a `never` branch, and after it an `Error` one, takes the others' type. A `T` and a
@@ -183,33 +175,32 @@ impl Checker<'_> {
     /// that fails for a branch that rejected `expected` is a mismatch too. With no branches, the
     /// type is `never`. A `never` join with a branch that only a failed `break` or `continue`
     /// makes `never` is `Err` with that mark (see `Poisoned::jumped`): one such branch is enough.
-    /// A branch with no expected type is quiet when the `if` or `match` is (see `Body::quiet_at`).
     pub(super) fn join(
         &mut self,
-        span: Span,
         sources: &[Branch<'_>],
-        (expected, siblings): (Option<Type>, Option<Type>),
-        mut check: impl FnMut(&mut Self, usize, Option<Type>) -> CheckedBlock,
+        (expected, siblings): (Expectation, Option<Type>),
+        mut check: impl FnMut(&mut Self, usize, Expectation) -> CheckedBlock,
     ) -> (Vec<CheckedBlock>, Result<Type, Poisoned>) {
         let mut order: Vec<usize> = (0..sources.len()).collect();
-        if expected.is_none() {
+        if expected == Expectation::None {
             order.sort_by_key(|&i| sources[i].rank);
         }
         let mut checked: Vec<Option<CheckedBlock>> = sources.iter().map(|_| None).collect();
         let mut anchor = siblings.map(Some);
         for i in order {
-            let carried =
-                expected.or_else(|| anchor.and_then(|a| after_branch(a, sources[i].exact())));
-            let tail = sources[i].tail.map(|v| v.span);
-            let outer = self.pass_quiet(span, tail, carried);
+            let carried = if expected == Expectation::None {
+                anchor.map_or(Expectation::None, |a| after_branch(a, sources[i].exact()))
+            } else {
+                expected
+            };
             // A type that the branches before give is a hint, not an expected type.
-            let hint = anchor
-                .flatten()
-                .filter(|_| expected.is_none() && carried.is_some());
-            let outer_hint = self.pass_hint(tail, hint);
+            let carried = match (carried, anchor.flatten()) {
+                (Expectation::Required(want), Some(siblings)) if expected == Expectation::None => {
+                    Expectation::Hint { want, siblings }
+                }
+                (carried, _) => carried,
+            };
             let block = check(self, i, carried);
-            self.body.quiet_at = outer;
-            self.body.hint_at = outer_hint;
             // The first branch of a known type anchors the rest; a failed or `unit` one only
             // until then. An `any` branch widens the anchor, which only the hints read.
             match (block_type(&block), anchor) {
@@ -230,7 +221,7 @@ impl Checker<'_> {
             .map(|block| block.expect("`join` should check every branch"))
             .collect();
         // Each branch converts to an `any` type that is expected, as a value does.
-        if let Some(want) = expected.filter(|&want| want != UNKNOWN) {
+        if let Some(want) = expected.ty() {
             for (block, source) in blocks.iter_mut().zip(sources) {
                 self.any_block(block, want, source.span);
             }
@@ -256,7 +247,7 @@ impl Checker<'_> {
         };
         // A join that fails with a type expected rejects that type, as a branch that does, and
         // then the whole is `Error`, whatever type the other branches joined to.
-        let mismatch = failed && expected.is_some_and(|want| want != UNKNOWN)
+        let mismatch = failed && expected.ty().is_some()
             || blocks
                 .iter()
                 .any(|b| matches!(b, Err(Poisoned { mismatch: true, .. })));
@@ -313,7 +304,7 @@ impl Checker<'_> {
     fn fold_branches(
         &mut self,
         sources: &[Branch<'_>],
-        (expected, siblings): (Option<Type>, Option<Type>),
+        (expected, siblings): (Expectation, Option<Type>),
         blocks: &[CheckedBlock],
     ) -> (Option<Type>, bool, bool) {
         // A branch's misfit joins by the type it found (see `Misfit`), as a concrete one would.
@@ -387,7 +378,10 @@ impl Checker<'_> {
             AnyJoin::Fails { earlier, later } => {
                 // A hint that is no `any` type names the branch that leaves it, as an expected
                 // type does.
-                let want = expected.or_else(|| siblings.filter(|&ty| !is_target(ty)));
+                let want = match (expected, siblings.filter(|&ty| !is_target(ty))) {
+                    (Expectation::None, Some(ty)) => Expectation::Required(ty),
+                    _ => expected,
+                };
                 self.join_mismatch((sources, blocks), want, earlier, later)
             }
             AnyJoin::NoAny | AnyJoin::Joined { .. } => {
@@ -405,7 +399,7 @@ impl Checker<'_> {
     fn join_mismatch(
         &mut self,
         (sources, blocks): (&[Branch<'_>], &[CheckedBlock]),
-        expected: Option<Type>,
+        expected: Expectation,
         (first, first_ty): (usize, Type),
         (other, other_ty): (usize, Type),
     ) -> Diagnostic {
@@ -413,7 +407,7 @@ impl Checker<'_> {
             let (at, tail, want, got) = self.reported(&sources[i], &blocks[i], want, got);
             self.leaves_any(at, tail, want, got)
         };
-        match expected.filter(|&want| want != UNKNOWN) {
+        match expected.ty() {
             _ if first_ty == Type::UNIT => DiagnosticKind::NoValue {
                 at: sources[first].span,
                 never: false,
@@ -437,10 +431,10 @@ impl Checker<'_> {
         &mut self,
         sources: &[Branch<'_>],
         blocks: &[CheckedBlock],
-        expected: Option<Type>,
+        expected: Expectation,
         members: &[(usize, Type)],
     ) -> Option<Diagnostic> {
-        let want = expected.filter(|&want| want != UNKNOWN)?;
+        let want = expected.ty()?;
         if !is_target(want) && !members.iter().any(|&(_, t)| is_target(t)) {
             return None;
         }
@@ -530,12 +524,11 @@ impl Checker<'_> {
     pub(super) fn block_branch<'a>(
         &mut self,
         block: &'a ast::Block,
-        expected: Option<Type>,
+        expected: Expectation,
         bind: impl FnOnce(&mut Self) -> Option<(LetPattern, Option<Checked>)>,
     ) -> Branch<'a> {
         let mut fit = true;
-        let ranked = expected
-            .is_none()
+        let ranked = (expected == Expectation::None)
             .then(|| self.block_rank(block, &mut fit, bind))
             .flatten();
         Branch {
@@ -564,12 +557,11 @@ impl Checker<'_> {
         &mut self,
         arm: &ast::Arm,
         e: &'a ast::Expr,
-        expected: Option<Type>,
+        expected: Expectation,
         bind: impl FnOnce(&mut Self) -> Option<(LetPattern, Option<Checked>)>,
     ) -> Branch<'a> {
         let mut fit = true;
-        let ranked = expected
-            .is_none()
+        let ranked = (expected == Expectation::None)
             .then(|| self.tail_rank(arm_key(arm), None, e, &mut fit, bind));
         Branch {
             rank: ranked.map_or(Rank::Concrete, |ranked| ranked.sibling(fit)),
@@ -659,11 +651,11 @@ type Pair = ((usize, Type), (usize, Type));
 /// What one branch of an `if` expects after the other, of type `ty`, when the `if` expects
 /// nothing: `ty` made optional, unless it is one or the branch is `exact`; `Error` after
 /// `Error`; nothing after `unit` or `never`.
-fn after_branch(ty: Option<Type>, exact: bool) -> Option<Type> {
+fn after_branch(ty: Option<Type>, exact: bool) -> Expectation {
     match ty {
-        None => Some(UNKNOWN),
-        Some(Type::UNIT | Type::NEVER) => None,
-        Some(ty) if exact => Some(ty),
-        Some(ty) => Some(as_optional(ty)),
+        None => Expectation::Poisoned,
+        Some(Type::UNIT | Type::NEVER) => Expectation::None,
+        Some(ty) if exact => Expectation::Required(ty),
+        Some(ty) => Expectation::Required(as_optional(ty)),
     }
 }

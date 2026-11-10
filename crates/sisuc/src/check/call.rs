@@ -13,7 +13,7 @@ use super::names::{self, ItemId, Position, Resolved};
 use super::prelude::PRELUDE;
 use super::unused_names::Used;
 use super::{
-    Checked, Checker, Declared, Lowered, Poisoned, UNKNOWN, block_expr, has_remedy_flag,
+    Checked, Checker, Declared, Expectation, Lowered, Poisoned, block_expr, has_remedy_flag,
     is_unwrapped, own_args, spread, type_of,
 };
 use super::{array, number, string};
@@ -156,7 +156,7 @@ impl Checker<'_> {
         let unlabeled = args.iter().all(|arg| arg.label.is_none());
         let mut first_checked = None;
         // The method of the class or the enum that holds the call, not the first argument's.
-        let own = (self.body.self_type).and_then(|ty| self.idiom_of(callee.name, ty));
+        let own = (self.body.self_type.known()).and_then(|ty| self.idiom_of(callee.name, ty));
         let rest = match args.split_first() {
             Some((first, rest)) if unlabeled => {
                 // The first argument is checked as a receiver. Stamp it for the method of `self`:
@@ -164,7 +164,7 @@ impl Checker<'_> {
                 if let Some(Idiom::Method(func, _)) = own {
                     self.stamp_mut_params(&args[..1], &self.signatures[func.0].muts.clone());
                 }
-                let receiver = self.expr(&first.value, Some(UNKNOWN));
+                let receiver = self.expr(&first.value, Expectation::Poisoned);
                 // When it fits the method of `self`, the call is most likely `self.name(args)`,
                 // as in a language that calls a bare method name on `this`.
                 let want = self.self_parameter(callee.name, args.len());
@@ -314,8 +314,11 @@ impl Checker<'_> {
     /// The type of the first parameter of the method `name` of `self`. `None` unless the method
     /// takes `count` arguments and has no type parameters of its own.
     fn self_parameter(&self, name: Symbol, count: usize) -> Option<Type> {
-        let Some(Idiom::Method(func, owner)) =
-            self.body.self_type.and_then(|ty| self.idiom_of(name, ty))
+        let Some(Idiom::Method(func, owner)) = self
+            .body
+            .self_type
+            .known()
+            .and_then(|ty| self.idiom_of(name, ty))
         else {
             return None;
         };
@@ -429,7 +432,7 @@ impl Checker<'_> {
         {
             let checked = first
                 .take()
-                .unwrap_or_else(|| self.expr(&arg.value, want.or(Some(UNKNOWN))));
+                .unwrap_or_else(|| self.expr(&arg.value, Expectation::or_poisoned(want)));
             takes &= want.is_some_and(|want| checked.is_ok_and(|checked| fits(want, checked.ty)));
         }
         takes
@@ -886,7 +889,7 @@ impl Checker<'_> {
             return Ok(self.rejected(d.into(), args, Some(Type::BOOL)));
         }
         let labeled = self.labels(args);
-        let (other, _) = self.operand(&args[0].value, Some(ty));
+        let (other, _) = self.operand(&args[0].value, Expectation::Required(ty));
         Ok(match (receiver, other) {
             (Ok(lhs), Ok(rhs)) if !labeled => {
                 let eq = interface == self.lang.eq;
@@ -988,7 +991,7 @@ impl Checker<'_> {
                     if let (Some(want), Some(text)) = (param, text) {
                         self.show(arg.value.span, want, text);
                     }
-                    mark(self.operand(&arg.value, param))
+                    mark(self.operand(&arg.value, Expectation::or_poisoned(param)))
                 })
                 .collect();
             Ok((checked, TypeArgs::NONE, ret))
@@ -1014,7 +1017,7 @@ impl Checker<'_> {
         };
         let list = checked.as_ref().ok().map(|(_, types, _)| *types);
         let result = (
-            site.expected,
+            site.expected.ty(),
             checked.as_ref().ok().and_then(|(_, _, ret)| *ret),
         );
         self.marks(args, &mut parts, &mut_site, (&params, list), result);
@@ -1316,9 +1319,10 @@ impl Checker<'_> {
                 failed = true;
             }
             if failed {
-                checked.push(self.expr(&arg.value, Some(UNKNOWN)));
+                checked.push(self.expr(&arg.value, Expectation::Poisoned));
             } else {
-                let (arg, mismatched) = self.operand(&arg.value, fields[i].1);
+                let (arg, mismatched) =
+                    self.operand(&arg.value, Expectation::or_poisoned(fields[i].1));
                 failed = mismatched;
                 checked.push(arg);
             }

@@ -11,9 +11,9 @@ use super::pattern::LetPattern;
 use super::prelude::PRELUDE;
 use super::unused_names::{Owner, Pending};
 use super::{
-    Binding, BindingKind, Checked, CheckedBlock, Checker, Declared, LoopContext, LoopFrame,
-    LoopKind, Poisoned, UNKNOWN, block_expr, built_in_type, has_remedy_flag, starts_in, tail,
-    type_of,
+    Binding, BindingKind, Checked, CheckedBlock, Checker, Declared, Expectation, LoopContext,
+    LoopFrame, LoopKind, Poisoned, SelfType, block_expr, built_in_type, has_remedy_flag, starts_in,
+    tail, type_of,
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{
@@ -67,7 +67,7 @@ impl Checker<'_> {
     /// `never` once a statement is `never`, else the type of the last statement (`unit` when
     /// there is none). Warns "unreachable code" on the first statement after a `never` one.
     /// Every statement is checked, also after one fails. `expected` is for the block's value.
-    pub(super) fn block(&mut self, block: &ast::Block, expected: Option<Type>) -> CheckedBlock {
+    pub(super) fn block(&mut self, block: &ast::Block, expected: Expectation) -> CheckedBlock {
         // Ranking an argument may have checked all but the block's value (see `tail_rank`).
         let (scope, so_far) = match self.kept(block.span, true) {
             Some((_, Ahead::Block(scope, so_far))) => (scope, so_far),
@@ -81,7 +81,7 @@ impl Checker<'_> {
     pub(super) fn scoped_block(
         &mut self,
         block: &ast::Block,
-        expected: Option<Type>,
+        expected: Expectation,
     ) -> CheckedBlock {
         self.resume_block(block, expected, BlockSoFar::default())
     }
@@ -90,7 +90,7 @@ impl Checker<'_> {
     pub(super) fn resume_block(
         &mut self,
         block: &ast::Block,
-        expected: Option<Type>,
+        expected: Expectation,
         mut so_far: BlockSoFar,
     ) -> CheckedBlock {
         self.block_statements(block, expected, &mut so_far, block.stmts.len());
@@ -137,7 +137,7 @@ impl Checker<'_> {
     pub(super) fn block_statements(
         &mut self,
         block: &ast::Block,
-        expected: Option<Type>,
+        expected: Expectation,
         so_far: &mut BlockSoFar,
         end: usize,
     ) {
@@ -149,7 +149,8 @@ impl Checker<'_> {
                 so_far.warned = true;
             }
             let last = i + 1 == block.stmts.len();
-            let (checked, invalid_jump) = self.jumps(|c| c.stmt(stmt, expected.filter(|_| last)));
+            let (checked, invalid_jump) =
+                self.jumps(|c| c.stmt(stmt, if last { expected } else { Expectation::None }));
             let stmt_ty = match checked {
                 Ok(lowered) => {
                     if !last
@@ -342,7 +343,7 @@ impl Checker<'_> {
         clippy::too_many_lines,
         reason = "one arm per statement kind, so the dispatch reads in one place"
     )]
-    fn stmt(&mut self, stmt: &ast::Stmt, expected: Option<Type>) -> Result<tir::Stmt, Poisoned> {
+    fn stmt(&mut self, stmt: &ast::Stmt, expected: Expectation) -> Result<tir::Stmt, Poisoned> {
         let unit = || Poisoned::typed(Type::UNIT);
         match &stmt.kind {
             StmtKind::Let {
@@ -362,9 +363,9 @@ impl Checker<'_> {
                         if let (Some(want), Some(text)) = (declared, &shown) {
                             self.show(init.span, want, text);
                         }
-                        self.expect(init, declared)
+                        self.expect(init, Expectation::or_poisoned(declared))
                     }
-                    None => self.value(init, None),
+                    None => self.value(init, Expectation::None),
                 };
                 let uninferred = self.uninferred_of(init_expr);
                 self.body.let_init = None;
@@ -425,12 +426,13 @@ impl Checker<'_> {
                 let before = (self.diagnostics.errors, self.body.writes, self.body.exits);
                 let nans = self.body.nans;
                 let cond = self.in_header(*keyword, label.clone(), |c| {
-                    c.expect(cond_ast, Some(Type::BOOL))
+                    c.expect(cond_ast, Expectation::Required(Type::BOOL))
                 });
                 // W0005 reports a comparison with `nan` in it, and its fix changes the condition.
                 let nan = self.body.nans != nans;
-                let frame = LoopFrame::new(LoopKind::While, *keyword, label.clone(), None);
-                let (checked, frame) = self.loop_body(frame, |c| c.block(body, None));
+                let frame =
+                    LoopFrame::new(LoopKind::While, *keyword, label.clone(), Expectation::None);
+                let (checked, frame) = self.loop_body(frame, |c| c.block(body, Expectation::None));
                 let broken = frame.broken;
                 if endless {
                     // Writing `loop` over a failed loop (a failed jump, label or `break` value in
@@ -488,9 +490,14 @@ impl Checker<'_> {
                 let (scrutinee, form, _) = self.in_header(*keyword, label.clone(), |c| {
                     c.let_value(Unwrap::WhileLet, pattern, value)
                 });
-                let frame = LoopFrame::new(LoopKind::WhileLet, *keyword, label.clone(), None);
+                let frame = LoopFrame::new(
+                    LoopKind::WhileLet,
+                    *keyword,
+                    label.clone(),
+                    Expectation::None,
+                );
                 let ((bound, checked), _) = self.loop_body(frame, |c| {
-                    c.let_block(Unwrap::WhileLet, &form, pattern, body, None)
+                    c.let_block(Unwrap::WhileLet, &form, pattern, body, Expectation::None)
                 });
                 if let Ok(checked) = &checked {
                     self.discard_tail(body, checked);
@@ -563,7 +570,7 @@ impl Checker<'_> {
         let word = Unwrap::LetElse;
         let (scrutinee, form, _) = self.let_value(word, pattern, value);
         let before = self.diagnostics.len();
-        let block = self.block(else_block, None);
+        let block = self.block(else_block, Expectation::None);
         if let Ok(block) = &block
             && block.ty != Type::NEVER
         {
@@ -675,9 +682,9 @@ impl Checker<'_> {
             ast::ForSource::Array(e) => c.for_array(span, e),
             ast::ForSource::Range(range) => c.for_range(span, range),
         });
-        let frame = LoopFrame::new(LoopKind::For, keyword, label.cloned(), None);
+        let frame = LoopFrame::new(LoopKind::For, keyword, label.cloned(), Expectation::None);
         let ((x, checked), _) = self.loop_body(frame, |c| {
-            c.unwrapping_block("for", name, bound, body, None)
+            c.unwrapping_block("for", name, bound, body, Expectation::None)
         });
         if let Ok(checked) = &checked {
             self.discard_tail(body, checked);
@@ -767,7 +774,7 @@ impl Checker<'_> {
         // The subject is indexed in the loop: a `?.` fix of an E0062 in it leads to a `for` on an
         // optional, as an index does.
         let outer = std::mem::replace(&mut self.body.indexed, true);
-        let checked = self.value(e, None);
+        let checked = self.value(e, Expectation::None);
         self.body.indexed = outer;
         let (element, d) = match type_of(&checked).map(|ty| (ty, ty.kind())) {
             // The elements of a value that an E0062 typed depend on the remedy.
@@ -855,12 +862,12 @@ impl Checker<'_> {
             let d = Self::range_outside(range, RangePlace::ForSource);
             self.diagnostics.push(d);
             for bound in [&range.start, &range.end].into_iter().flatten() {
-                drop(self.expect(bound, Some(Type::I64)));
+                drop(self.expect(bound, Expectation::Required(Type::I64)));
             }
             return (None, Some(Type::I64));
         };
-        let start = self.expect(start, Some(Type::I64));
-        let end = self.expect(end, Some(Type::I64));
+        let start = self.expect(start, Expectation::Required(Type::I64));
+        let end = self.expect(end, Expectation::Required(Type::I64));
         let counter = self.fresh_var(Type::I64);
         let limit = self.fresh(Type::I64);
         let go = inclusive.then(|| self.fresh_var(Type::BOOL));
@@ -913,7 +920,7 @@ impl Checker<'_> {
                 _ => None,
             },
             Some(value) if self.body.ret == Some(Type::UNIT) => {
-                if type_of(&self.value(value, None)).is_some() {
+                if type_of(&self.value(value, Expectation::None)).is_some() {
                     self.report(DiagnosticKind::UnexpectedReturnValue { at: value.span });
                 }
                 return Err(never());
@@ -922,7 +929,9 @@ impl Checker<'_> {
                 if let (Some(want), Some(text)) = (self.body.ret, self.body.ret_shown.clone()) {
                     self.show(value.span, want, &text);
                 }
-                let value = self.expect(value, self.body.ret).map_err(|_| never())?;
+                let value = self
+                    .expect(value, Expectation::or_poisoned(self.body.ret))
+                    .map_err(|_| never())?;
                 Some(Box::new(value))
             }
         };
@@ -1267,12 +1276,10 @@ impl Checker<'_> {
         span: Span,
         (keyword, label): (Span, Option<&ast::Ident>),
         body: &ast::Block,
-        expected: Option<Type>,
+        expected: Expectation,
     ) -> Checked {
-        let mut frame = LoopFrame::new(LoopKind::Loop, keyword, label.cloned(), expected);
-        frame.quiet = self.quiet(span, expected);
-        frame.siblings = self.hinted(span, expected).1;
-        let (mut checked, mut frame) = self.loop_body(frame, |c| c.block(body, None));
+        let frame = LoopFrame::new(LoopKind::Loop, keyword, label.cloned(), expected);
+        let (mut checked, mut frame) = self.loop_body(frame, |c| c.block(body, Expectation::None));
         self.join_deferred(&mut frame);
         if let Ok(checked) = &mut checked {
             self.discard_tail(body, checked);
@@ -1309,7 +1316,7 @@ impl Checker<'_> {
         };
         let join = match self.any_join_all(&members) {
             joined @ AnyJoin::Joined { .. } => joined,
-            failed => match self.seeded_join(frame.siblings, &members) {
+            failed => match self.seeded_join(frame.expected.siblings(), &members) {
                 seeded @ AnyJoin::Joined { .. } => {
                     #[cfg(test)]
                     super::reached("seeded_join for a loop");
@@ -1396,32 +1403,24 @@ impl Checker<'_> {
             return Err(Poisoned::typed(Type::NEVER));
         }
         let frame = self.frame(target);
-        let quiet = frame.quiet;
-        let hint = frame
-            .expected
-            .map(|ty| (ty, None))
-            .or_else(|| frame.first.map(|(ty, at)| (ty, Some(at))));
-        // An earlier value gives a hint, as the siblings of a hinted loop do.
-        let siblings = match hint {
-            Some((_, None)) => frame.siblings,
-            first => first.map(|(ty, _)| ty),
+        // With no expected type, an earlier value gives a hint, as the siblings of a hinted loop
+        // do.
+        let (hint, first_at) = match (frame.expected, frame.first) {
+            (Expectation::None, Some((ty, at))) => {
+                let hint = Expectation::Hint {
+                    want: ty,
+                    siblings: ty,
+                };
+                (hint, Some(at))
+            }
+            (expected, _) => (expected, None),
         };
-        let from = hint
-            .and_then(|(_, first)| first)
-            .map(|first| (v.span, first));
+        let from = first_at.map(|first| (v.span, first));
         let outer = std::mem::replace(&mut self.body.break_hint, from);
-        // A value of a quiet loop that expects nothing is quiet too, wherever the `break` is.
-        let outer_quiet = self.body.quiet_at;
-        if quiet {
-            self.body.quiet_at = Some(v.span);
-        }
         self.body.label_typo = typo.map(|name| (name.span, span.start()));
-        let outer_hint = self.pass_hint(Some(v.span), siblings);
-        let checked = self.expr(v, hint.map(|(ty, _)| ty));
-        self.body.hint_at = outer_hint;
+        let checked = self.expr(v, hint);
         self.body.label_typo = None;
         self.body.break_hint = outer;
-        self.body.quiet_at = outer_quiet;
         // A failed value fails the loop, and gives it no type and no second report. A generic
         // call's misfit is joined by the type it found, as a concrete call is by its type.
         let misfit = self.misfit_type(&checked);
@@ -1443,11 +1442,11 @@ impl Checker<'_> {
                 let frame = self.frame(target);
                 frame.valued.get_or_insert(span);
                 let (expected, first) = (frame.expected, frame.first);
-                let hinted = frame.siblings.is_some();
-                if expected == Some(UNKNOWN) {
+                let hinted = matches!(expected, Expectation::Hint { .. });
+                if expected == Expectation::Poisoned {
                     checked
                 } else {
-                    let want = (expected, hinted, first);
+                    let want = (expected.ty(), hinted, first);
                     self.join_break((v, span), (checked, got), want, target)
                 }
             }
@@ -1462,7 +1461,7 @@ impl Checker<'_> {
     /// A value that fits the expected type keeps its own, as a block's value does. The values join
     /// as `if` branches do: a `T` and a `T?` make a `T?`. An object and an `any` type that it
     /// converts to make the `any` type. The values before it are converted at the loop's end when
-    /// the type grows. With `hinted`, `expected` is a hint (see `Body::hint_at`).
+    /// the type grows. With `hinted`, `expected` is a hint (see `Expectation::Hint`).
     fn join_break(
         &mut self,
         (v, span): (&ast::Expr, Span),
@@ -1541,7 +1540,7 @@ impl Checker<'_> {
         name: &ast::Ident,
         ty: Option<Type>,
         block: &ast::Block,
-        expected: Option<Type>,
+        expected: Expectation,
     ) -> (tir::LocalId, CheckedBlock) {
         self.body.scopes.push(FxHashMap::default());
         let bind = self.bind_unwrapped(keyword, name, ty);
@@ -1917,7 +1916,7 @@ impl Checker<'_> {
         if self.holds(self.body.locals[id.0].ty).poison {
             return false;
         }
-        if id.0 == 0 && self.body.self_type.is_some() {
+        if id.0 == 0 && self.body.self_type != SelfType::Absent {
             return self.body.self_written <= writes;
         }
         // A local with no name is a checker temporary, so it has no binding.

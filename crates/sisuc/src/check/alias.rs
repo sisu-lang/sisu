@@ -19,8 +19,8 @@ use super::expr::{bare_none, none_literal};
 use super::generic::{Site, type_meets};
 use super::interface::{Bound, Slot};
 use super::{
-    Body, Checked, Checker, Declared, DiagnosticKind, Poisoned, UnknownForm, built_in_type,
-    own_args, tail, value_span,
+    Body, Checked, Checker, Declared, DiagnosticKind, Expectation, Poisoned, UnknownForm,
+    built_in_type, own_args, tail, value_span,
 };
 use crate::ast;
 use crate::diagnostic::{Definition, NestingForm};
@@ -871,9 +871,17 @@ impl Checker<'_> {
         #[cfg(test)]
         super::reached("optional_alias_path");
         let site = if through.params.is_empty() {
+            // A hinted value stays hinted.
+            let expected = match site.expected {
+                Expectation::Hint { siblings, .. } => Expectation::Hint {
+                    want: through.ty,
+                    siblings,
+                },
+                _ => Expectation::Required(through.ty),
+            };
             Site {
                 written: &[],
-                expected: Some(through.ty),
+                expected,
                 ..site
             }
         } else {

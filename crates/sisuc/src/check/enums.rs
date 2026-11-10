@@ -11,7 +11,8 @@ use super::interface::Slot;
 use super::mut_args::Callee;
 use super::unused_names::Used;
 use super::{
-    Checked, Checker, Declared, Definition, DiagnosticKind, Poisoned, has_remedy_flag, own_args,
+    Checked, Checker, Declared, Definition, DiagnosticKind, Expectation, Poisoned, SelfType,
+    has_remedy_flag, own_args,
 };
 use crate::ast;
 use crate::diagnostic::{BuiltIn, Unbuilt, VariantLabels, suggestion};
@@ -151,7 +152,7 @@ impl Checker<'_> {
         &mut self,
         e: &'a ast::Enum,
         id: EnumId,
-        declared: &mut Vec<(&'a ast::Function, Option<Type>)>,
+        declared: &mut Vec<(&'a ast::Function, SelfType)>,
     ) {
         let owner = e.name.name.as_str();
         if e.variants.is_empty() {
@@ -161,7 +162,7 @@ impl Checker<'_> {
             });
         }
         let receiver = Type::intern(TypeKind::Enum(id, own_args(&self.enums[id.0].type_params)));
-        self.body.self_type = Some(receiver);
+        self.body.self_type = SelfType::Known(receiver);
         self.body.set_type_params(&self.enums[id.0].type_params);
         let bounds = self.declare_bounds(0, Vec::new(), &e.type_params);
         if self.enums[id.0].bounded {
@@ -244,14 +245,14 @@ impl Checker<'_> {
                 &e.type_params,
                 bounds,
             );
-            declared.push((method, Some(receiver)));
+            declared.push((method, SelfType::Known(receiver)));
         }
         for method in &e.broken_methods {
             self.enums[id.0]
                 .methods
                 .insert(method.name, Declared::Broken);
         }
-        self.body.self_type = None;
+        self.body.self_type = SelfType::Absent;
         self.body.assoc = std::rc::Rc::default();
     }
 
@@ -566,7 +567,7 @@ impl Checker<'_> {
         let (checked, mismatched): (Vec<_>, Vec<_>) = args
             .iter()
             .zip(fields)
-            .map(|(arg, field)| self.operand(&arg.value, *field))
+            .map(|(arg, field)| self.operand(&arg.value, Expectation::or_poisoned(*field)))
             .unzip();
         let failed = labeled || mismatched.contains(&true);
         checked

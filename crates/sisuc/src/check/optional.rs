@@ -7,7 +7,8 @@ use super::any::is_target;
 use super::generic::{GenericSig, Site, mark, mismatched, written_args};
 use super::mut_args::Callee;
 use super::{
-    Checked, Checker, DiagnosticKind, Poisoned, has_remedy_flag, optional_of, spread, type_of,
+    Checked, Checker, DiagnosticKind, Expectation, Poisoned, has_remedy_flag, optional_of, spread,
+    type_of,
 };
 use crate::ast;
 use crate::diagnostic::{Definition, suggestion};
@@ -75,18 +76,24 @@ impl Checker<'_> {
             matches!(t.ty.kind(), TypeKind::Optional(p)
                 if t.params.len() == 1 && p == Type::intern(TypeKind::Param(t.params[0], 0)))
         });
-        let hinted = self.hinted(span, None).1.is_some();
-        let (arg, found, list) = match site.expected.map(|ty| (ty, ty.kind())) {
+        let hinted = matches!(site.expected, Expectation::Hint { .. });
+        let (arg, found, list) = match site.expected.ty().map(|ty| (ty, ty.kind())) {
             // An expected `T?` fixes `T`, so a literal in the argument takes that type: the
             // generic call would type an `if` of integer literals by their default first.
             Some((want, TypeKind::Optional(payload)))
                 if site.written.is_empty() && !want.holds_hole() && plain =>
             {
                 let e = &args[0].value;
-                // A hinted `Some` gives its hint to the argument (see `Body::hint_at`).
-                let outer_hint = self.pass_hint(Some(e.span), hinted.then_some(payload));
-                let checked = self.value(e, Some(payload));
-                self.body.hint_at = outer_hint;
+                // A hinted `Some` gives its hint to the argument (see `Expectation::Hint`).
+                let checked = if hinted {
+                    let hint = Expectation::Hint {
+                        want: payload,
+                        siblings: payload,
+                    };
+                    self.value(e, hint)
+                } else {
+                    self.value(e, Expectation::Required(payload))
+                };
                 match type_of(&checked) {
                     // An object that does not convert to the hint keeps its own type: the join
                     // converts it to an `any` type, or the other values to it, or reports it. So
@@ -107,7 +114,7 @@ impl Checker<'_> {
                         (checked, optional_of(got), TypeArgs::NONE)
                     }
                     _ => (
-                        mark(self.settled(e, checked, Some(payload))),
+                        mark(self.settled(e, checked, Expectation::Required(payload))),
                         want,
                         TypeArgs::NONE,
                     ),
@@ -219,7 +226,7 @@ impl Checker<'_> {
                 if self.use_checks(&t.checks, list, span) != Some(true) {
                     return Err(Poisoned::error());
                 }
-                self.none(span, Some(found))
+                self.none(span, Expectation::Required(found))
             }
             (Symbol::NONE, None) => {
                 let mut expected = site.expected;
@@ -229,7 +236,7 @@ impl Checker<'_> {
                     else {
                         return Err(Poisoned::error());
                     };
-                    expected = Some(optional_of(args.get()[0]));
+                    expected = Expectation::Required(optional_of(args.get()[0]));
                 }
                 self.none(span, expected)
             }

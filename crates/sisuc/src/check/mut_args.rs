@@ -10,7 +10,7 @@ use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use super::expr::{fits, local};
 use super::generic::mark;
 use super::place::{Chain, Change, CheckedPlace, Path, Root, build, place_root};
-use super::{Checked, Checker, Poisoned, UNKNOWN, block_expr, type_of};
+use super::{Checked, Checker, Expectation, Poisoned, SelfType, block_expr, type_of};
 use crate::ast;
 use crate::diagnostic::{
     ChainForm, ChainLabel, DiagnosticKind, Immutable, MissingFix, NotMutForm, NotPlace, SliceOf,
@@ -361,12 +361,12 @@ impl Checker<'_> {
         }
         if matches!(arg.kind, ast::ExprKind::SelfValue) {
             // Outside a method there is no `self` to pass: E0041 says so.
-            if self.body.self_type.is_none() {
+            if self.body.self_type == SelfType::Absent {
                 self.checked_alone(arg);
                 return Ok(CheckedPlace::failed());
             }
             let class = matches!(
-                self.body.self_type.map(Type::kind),
+                self.body.self_type.known().map(Type::kind),
                 Some(TypeKind::Class(..))
             );
             return Err((NotPlace::SelfValue { class }, None));
@@ -405,16 +405,16 @@ impl Checker<'_> {
     }
 
     /// The type of the expression `arg`, checked on its own for its own mistakes, and whether
-    /// it failed. The range arm uses both. The function, `self` and temporary arms use only the
-    /// check: the function and `self` arms report its errors alone, and the temporary arm adds
-    /// E0169.
+    /// it failed. The range arm uses both. The `get` of a string uses only whether it failed.
+    /// The function, `self` and temporary arms use only the check: the function and `self` arms
+    /// report its errors alone, and the temporary arm adds E0169.
     ///
     /// It failed when it reported an error. It failed too when its type is unknown and an error
     /// was reported before it: its type comes from a local that failed. With no earlier error, an
     /// unknown type is no failure, so the report is made.
-    fn checked_alone(&mut self, arg: &ast::Expr) -> (Option<Type>, bool) {
+    pub(super) fn checked_alone(&mut self, arg: &ast::Expr) -> (Option<Type>, bool) {
         let errors = self.diagnostics.errors;
-        let ty = type_of(&self.expr(arg, Some(UNKNOWN)));
+        let ty = type_of(&self.expr(arg, Expectation::Poisoned));
         let failed = self.diagnostics.errors > errors || ty.is_none() && errors > 0;
         (ty, failed)
     }
@@ -852,7 +852,7 @@ impl Checker<'_> {
         let (Some(want), Some(got)) = (want, got) else {
             return true;
         };
-        want == UNKNOWN || want.holds_hole() || fits(want, got) || self.converts_to_any(got, want)
+        want.holds_hole() || fits(want, got) || self.converts_to_any(got, want)
     }
 
     /// What the report of the missing `mut` of `arg` offers. `check` is the check of the argument,

@@ -4,7 +4,7 @@
 use super::array::optional_array;
 use super::call::Dot;
 use super::string::single_term;
-use super::{Checked, Checker, Poisoned, UNKNOWN, is_unwrapped, spread, type_of};
+use super::{Checked, Checker, Expectation, Poisoned, is_unwrapped, spread, type_of};
 use crate::ast::{self, ExprKind};
 use crate::diagnostic::{
     Diagnostic, DiagnosticKind, GetCall, IndexUsage, MissingBound, RangeForm, RangePlace,
@@ -93,7 +93,7 @@ impl Checker<'_> {
                 self.bounds(range);
             } else {
                 // Only its diagnostics matter.
-                drop(self.expr(&arg.value, Some(UNKNOWN)));
+                drop(self.expr(&arg.value, Expectation::Poisoned));
             }
         }
         // A comparison misread as a call explains the count, which is known after the arguments.
@@ -121,12 +121,12 @@ impl Checker<'_> {
     ) -> Checked {
         if error_for_good(range) {
             self.stamp_push(base);
-            drop(self.value(base, None));
+            drop(self.value(base, Expectation::None));
             self.diagnostics.push(self.index_outside(base, range, None));
             return Err(Poisoned::error());
         }
         let outer = std::mem::replace(&mut self.body.indexed, true);
-        let checked = self.value(base, None);
+        let checked = self.value(base, Expectation::None);
         // The bounds are not part of the chain that the index ends.
         self.body.indexed = false;
         let Some(ty) = type_of(&checked) else {
@@ -216,8 +216,8 @@ impl Checker<'_> {
         };
         let ExprKind::Range(range) = &arg.value.kind else {
             // The argument reports its own mistakes, else it is a value that is no range.
-            let checked = self.expr(&arg.value, Some(UNKNOWN));
-            if type_of(&checked).is_some() {
+            let (_, failed) = self.checked_alone(&arg.value);
+            if !failed {
                 self.report(DiagnosticKind::StringGetNeedsRange {
                     at: arg.value.span,
                     base: self.source.line_text(receiver_expr.span),
@@ -247,7 +247,7 @@ impl Checker<'_> {
             if let ExprKind::Range(range) = &arg.value.kind {
                 self.bounds(range);
             } else {
-                drop(self.expr(&arg.value, Some(UNKNOWN)));
+                drop(self.expr(&arg.value, Expectation::Poisoned));
             }
         }
     }
@@ -275,7 +275,7 @@ impl Checker<'_> {
         let mut mismatched = false;
         let mut bound = |checker: &mut Self, bound: &Option<Box<ast::Expr>>| {
             bound.as_ref().map(|bound| {
-                let (checked, wrong) = checker.operand(bound, Some(Type::I64));
+                let (checked, wrong) = checker.operand(bound, Expectation::Required(Type::I64));
                 mismatched |= wrong;
                 checked
             })
@@ -331,7 +331,7 @@ impl Checker<'_> {
         let found = range_index(target)?;
         self.stamp_push(target);
         // The base is read, as `xs[0..2]` reads it, and reports its own mistakes.
-        let base_type = type_of(&self.value(found.base, None));
+        let base_type = type_of(&self.value(found.base, Expectation::None));
         let range = found.range;
         // `xs[..][i]` is an element of `xs`, which E0021 helps; `xs[..]` is `xs`.
         let element_of_all = found.parent.is_some() && range.start.is_none() && !range.inclusive;
@@ -342,7 +342,7 @@ impl Checker<'_> {
             base_type.map(|ty| self.range_write(&found, op, (target, value), (ty, place)))
         };
         self.diagnostics.extend(d);
-        drop(self.expr(value, Some(UNKNOWN)));
+        drop(self.expr(value, Expectation::Poisoned));
         Some(Err(Poisoned::typed(Type::UNIT)))
     }
 

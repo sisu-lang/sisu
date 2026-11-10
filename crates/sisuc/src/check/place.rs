@@ -8,7 +8,7 @@ use super::member::{Access, FoundField, safe_value};
 use super::operator::Operator;
 use super::unused_names::Used;
 use super::{
-    BindingKind, Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, block_expr,
+    BindingKind, Checked, Checker, Declared, Expectation, Poisoned, as_optional, block_expr,
     is_unwrapped, payload, spread, type_of,
 };
 use crate::ast;
@@ -152,7 +152,7 @@ impl Checker<'_> {
         if let (Some(want), Some(text)) = (place.ty, &place.shown) {
             self.show(value.span, want, text);
         }
-        let value = self.expect(value, place.ty);
+        let value = self.expect(value, Expectation::or_poisoned(place.ty));
         self.inferred_by_write(target, &value, span.end());
         self.assigned(span, place, value)
     }
@@ -376,7 +376,7 @@ impl Checker<'_> {
             if let [arg] = args
                 && let Some(local) = self.pushed_to_uninferred(receiver_expr)
             {
-                if let Ok(pushed) = self.expr(&arg.value, Some(UNKNOWN)) {
+                if let Ok(pushed) = self.expr(&arg.value, Expectation::Poisoned) {
                     self.inferred_by_use(local, pushed.ty, arg.value.span.end());
                 }
                 return unit();
@@ -418,7 +418,7 @@ impl Checker<'_> {
         };
         // A label or a mismatch is reported, and an error withholds the `tir`.
         self.labels(args);
-        let value = self.expect(&arg.value, element);
+        let value = self.expect(&arg.value, Expectation::or_poisoned(element));
         match (value, read, place) {
             (Ok(value), Some(read), Some(place)) if place.writable => {
                 let path = unread(read);
@@ -500,7 +500,7 @@ impl Checker<'_> {
         let place = self.place(span, target, Change::Assign);
         let Some(ty) = place.ty else {
             // Only its own mistakes are left to report.
-            drop(self.expr(value, Some(UNKNOWN)));
+            drop(self.expr(value, Expectation::Poisoned));
             return Err(unit());
         };
         if ty == Type::CHAR {
@@ -576,7 +576,7 @@ impl Checker<'_> {
             (op, op_span),
             target,
             value,
-            Some(want.unwrap_or(UNKNOWN)),
+            Expectation::or_poisoned(want),
             true,
         );
         let expanded = ast::Expr {
@@ -588,7 +588,7 @@ impl Checker<'_> {
             },
             span,
         };
-        let (checked, _) = self.settled(&expanded, checked, want);
+        let (checked, _) = self.settled(&expanded, checked, Expectation::or_poisoned(want));
         self.assigned(span, place, checked)
     }
 
@@ -614,7 +614,12 @@ impl Checker<'_> {
             let start = self.diagnostics.len();
             // A `string?` place is what `binary` reports first, and the value is checked with no
             // expected type.
-            let checked = self.value(value, Some(if ty == Type::STRING { ty } else { UNKNOWN }));
+            let expected = if ty == Type::STRING {
+                Expectation::Required(ty)
+            } else {
+                Expectation::Poisoned
+            };
+            let checked = self.value(value, expected);
             if ty != Type::STRING && type_of(&checked) == Some(Type::CHAR) {
                 self.report(DiagnosticKind::ArithmeticOnChar { at: op_span });
                 return Err(Poisoned::error());
@@ -631,7 +636,7 @@ impl Checker<'_> {
                 self.diagnostics.push(d);
                 (Err(Poisoned::error()), true)
             } else {
-                self.settled(value, checked, Some(ty))
+                self.settled(value, checked, Expectation::Required(ty))
             };
             self.concat(span, read, value, mismatched)
         } else {
@@ -648,7 +653,7 @@ impl Checker<'_> {
     fn char_compound(&mut self, op_span: Span, value: &ast::Expr) {
         self.report(DiagnosticKind::ArithmeticOnChar { at: op_span });
         // Only its diagnostics matter.
-        drop(self.expr(value, Some(UNKNOWN)));
+        drop(self.expr(value, Expectation::Poisoned));
     }
 
     /// The constant `name` as the root of a place that `span` assigns, reported, if `name` names
@@ -875,7 +880,7 @@ impl Checker<'_> {
                 // there leads to a path that is no place (E0170).
                 let outer = self.body.indexed;
                 self.body.indexed |= change == Change::MutArg;
-                let checked = self.value(base, None);
+                let checked = self.value(base, Expectation::None);
                 self.body.indexed = outer;
                 let mut guard = None;
                 // `?.` takes the object out of its optional, where the place starts. The write
@@ -968,7 +973,7 @@ impl Checker<'_> {
                 };
                 // The index is not part of the chain that it ends.
                 self.body.indexed = false;
-                let (index, mismatched) = self.operand(index, Some(Type::I64));
+                let (index, mismatched) = self.operand(index, Expectation::Required(Type::I64));
                 self.body.indexed = outer;
                 let path = inner
                     .path

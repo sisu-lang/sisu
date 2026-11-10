@@ -12,7 +12,9 @@ use super::exhaust::{self, Neighbours, Report, Row};
 use super::generic::{Ahead, type_meets};
 use super::names::{self, Position, Resolved};
 use super::stmt::BlockSoFar;
-use super::{Checked, CheckedBlock, Checker, Declared, Poisoned, has_remedy_flag, type_of};
+use super::{
+    Checked, CheckedBlock, Checker, Declared, Expectation, Poisoned, has_remedy_flag, type_of,
+};
 use crate::ast;
 use crate::diagnostic::{
     BadRange, Definition, DiagnosticKind, Expected, GuardHelp, MismatchSource, Plain, Unwrap,
@@ -211,7 +213,7 @@ impl Checker<'_> {
         &mut self,
         arms: &'a [ast::Arm],
         form: &LetValue,
-        expected: Option<Type>,
+        expected: Expectation,
     ) -> Vec<Branch<'a>> {
         arms.iter()
             .map(|arm| {
@@ -234,9 +236,9 @@ impl Checker<'_> {
         close: Span,
         scrutinee: &ast::Expr,
         arms: &[ast::Arm],
-        expected: Option<Type>,
+        expected: Expectation,
     ) -> Checked {
-        let (expected, siblings) = self.hinted(span, expected);
+        let (expected, siblings) = expected.split_hint();
         let checked = self.value_kept(scrutinee);
         let mut position = type_of(&checked);
         let cannot = position.take_if(|&mut ty| !matchable(ty));
@@ -256,7 +258,7 @@ impl Checker<'_> {
         let form = LetValue::test(position, &checked);
         let (blocks, ty) = self.ranked(|c| {
             let sources = c.arm_branches(arms, &form, expected);
-            c.join(span, &sources, (expected, siblings), |c, i, expected| {
+            c.join(&sources, (expected, siblings), |c, i, expected| {
                 let arm = &arms[i];
                 let (bound, guard, so_far) = c.bound_branch(arm_key(arm), |c| {
                     c.bind_pattern(None, &form, &arm.pattern, Some(arm))
@@ -466,7 +468,7 @@ impl Checker<'_> {
         pattern: &ast::Pattern,
         value: &ast::Expr,
     ) -> (Checked, LetValue, bool) {
-        let checked = self.value(value, None);
+        let checked = self.value(value, Expectation::None);
         // A value that an E0062 typed is no judge of `if let`: under the `?.` fix it is optional.
         // A member of an optional type is optional under both remedies.
         let flagged = has_remedy_flag(&checked);
@@ -541,7 +543,7 @@ impl Checker<'_> {
         value: &LetValue,
         pattern: &ast::Pattern,
         block: &ast::Block,
-        expected: Option<Type>,
+        expected: Expectation,
     ) -> (LetPattern, CheckedBlock) {
         let (bound, _, so_far) = self.bound_branch(block.span, |c| {
             c.bind_pattern(Some(keyword), value, pattern, None)
@@ -631,7 +633,7 @@ impl Checker<'_> {
         };
         let guard = arm
             .and_then(|arm| arm.guard.as_ref())
-            .map(|guard| self.expect(guard, Some(Type::BOOL)));
+            .map(|guard| self.expect(guard, Expectation::Required(Type::BOOL)));
         (bound, guard)
     }
 

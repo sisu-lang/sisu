@@ -5,7 +5,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::extend::holder_of;
 use super::interface::{Bound, Bounds, RequirementInfo};
-use super::{Body, Checker, Choice, Choices, Declared, Holder, own_args};
+use super::{Body, Checker, Choice, Choices, Declared, Holder, SelfType, own_args};
 use crate::ast;
 use crate::conformance::{self, find, find_with};
 use crate::diagnostic::{ConformanceForm, DiagnosticKind, MutDiffers, NotConformForm, Ungenerated};
@@ -304,7 +304,7 @@ impl Checker<'_> {
                     unreachable!("only the body of a class or an enum lists conformances")
                 }
             });
-            self.body.self_type = Some(receiver);
+            self.body.self_type = SelfType::Known(receiver);
             self.body.set_type_params(&params);
             let mut roots = Vec::new();
             for ty in conforms {
@@ -314,7 +314,7 @@ impl Checker<'_> {
                 roots.push((bound, ty.bare));
             }
             self.body.set_type_params(&[]);
-            self.body.self_type = None;
+            self.body.self_type = SelfType::Absent;
             lists.push((holder, receiver, roots));
         }
         lists

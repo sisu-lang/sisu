@@ -88,7 +88,7 @@ impl Checker<'_> {
         let result = self.generic_call_mut(span, &sig, written, args, site.expected, &mut parts);
         let list = result.as_ref().ok().map(|(_, list, _)| *list);
         let met = (
-            site.expected,
+            site.expected.ty(),
             result.as_ref().ok().and_then(|(_, _, ret)| *ret),
         );
         self.marks(args, &mut parts, &mut_site, (&params, list), met);
@@ -165,7 +165,7 @@ impl Checker<'_> {
             }
             [one] => Some(*one),
             _ => {
-                if self.context_failed(site, span) {
+                if Self::context_failed(site) {
                     return None;
                 }
                 // A result that is `Error` has its own error.

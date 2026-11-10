@@ -10,7 +10,7 @@ use super::array::pair;
 use super::call::Dot;
 use super::expr::{local, no_member, path, postfix, typed};
 use super::mut_args::Callee;
-use super::{Checked, Checker, Poisoned, block_expr, is_jumped, type_of};
+use super::{Checked, Checker, Expectation, Poisoned, block_expr, is_jumped, type_of};
 use crate::ast::{self, CompareOp, ExprKind};
 use crate::conformance::makes_group;
 use crate::diagnostic::{
@@ -71,7 +71,7 @@ impl Checker<'_> {
             },
         ) in parts.iter().enumerate()
         {
-            let value = self.expr(part, None);
+            let value = self.expr(part, Expectation::None);
             // Every type interpolates but `unit`; an optional warns.
             match type_of(&value).map(Type::kind) {
                 Some(TypeKind::Unit) => {}
@@ -407,7 +407,12 @@ impl Checker<'_> {
             Type::STRING => &chars,
             _ => &[Type::I64],
         };
-        let checked = self.value(&arg.value, (to == Type::STRING).then_some(chars[0]));
+        let expected = if to == Type::STRING {
+            Expectation::Required(chars[0])
+        } else {
+            Expectation::None
+        };
+        let checked = self.value(&arg.value, expected);
         let fails = matches!(to, Type::U8 | Type::CHAR)
             || (to == Type::I64 && type_of(&checked) == Some(Type::F64));
         // The head, `to(`, and the tail, `)`, are the text a rewrite of the call deletes.

@@ -61,6 +61,10 @@ fn oa_none() -> Oa? { None }
 fn mk<T>() -> T { loop {} }
 fn some<T>(v: T) -> T? { Some(v) }
 fn id<T>(v: T) -> T { v }
+class Sn {
+    name: string?
+}
+fn sn() -> Sn? { None }
 fn take<T>(mut x: T?) { x = None }
 fn take2<T>(mut x: T?, n: i64) { x = None }
 fn keep<T>(mut x: T?) -> T? { x }
@@ -179,6 +183,13 @@ nothing[0]
 zz.x
 i64.x
 E.A
+# Values that fail to give a range to a string's `get`, with a mistake of their own or none.
+id(None)
+id([])
+loop { break None }
+{ [] }
+if c { [] } else { [] }
+loop { if c { break 1 }; break "x" }
 
 [failed values]
 # A type parameter read: in the function whose bound failed, `u` is unknown.
@@ -294,3 +305,8 @@ print("x {$}")
 # A value as a name that is read, and as a name that is assigned.
 let _r = $
 $ = 1
+# A string's `get`, on a literal, on a call and on a chain with `?.`: the argument that is no range
+# is E0032, or its own mistake.
+"abc".get($)
+n.name().get($)
+sn()?.name?.get($)

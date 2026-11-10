@@ -5,7 +5,7 @@
 use super::array::pair;
 use super::expr::{path, read_jump, typed};
 use super::mut_args::Callee;
-use super::{Checked, Checker, Poisoned, has_remedy_flag, spread, type_of};
+use super::{Checked, Checker, Expectation, Poisoned, has_remedy_flag, spread, type_of};
 use crate::ast;
 use crate::diagnostic::{DiagnosticKind, Expected, MismatchFix, PrintProblem};
 use crate::source::Span;
@@ -32,7 +32,7 @@ impl Checker<'_> {
         span: Span,
         callee: &ast::Ident,
         args: &[ast::Arg],
-        expected: Option<Type>,
+        expected: Expectation,
     ) -> Option<Checked> {
         match callee.name.as_str() {
             "print" => Some(self.print(span, args, Stream::Stdout)),
@@ -47,11 +47,15 @@ impl Checker<'_> {
 
     /// `print(x)` or `eprint(x)`, by `stream`.
     fn print(&mut self, span: Span, args: &[ast::Arg], stream: Stream) -> Checked {
-        let (arg, checked, labeled) =
-            match self.shown(span, args, stream.name(), (None, Some(Type::UNIT))) {
-                Ok(shown) => shown,
-                Err(failed) => return failed,
-            };
+        let (arg, checked, labeled) = match self.shown(
+            span,
+            args,
+            stream.name(),
+            (Expectation::None, Some(Type::UNIT)),
+        ) {
+            Ok(shown) => shown,
+            Err(failed) => return failed,
+        };
         self.warn_if_optional(&arg.value, &checked);
         let kind = checked
             .ok()
@@ -64,12 +68,9 @@ impl Checker<'_> {
     }
 
     /// `dbg(x)`, of the type of `x`, which it checks against `expected`. It does not warn when
-    /// `x` is an optional: `dbg` is meant to be run. When the call is the quiet value (see
-    /// `Body::quiet_at`), so is `x`.
-    fn dbg(&mut self, span: Span, args: &[ast::Arg], expected: Option<Type>) -> Checked {
-        let outer = self.pass_quiet(span, args.first().map(|a| a.value.span), expected);
+    /// `x` is an optional: `dbg` is meant to be run.
+    fn dbg(&mut self, span: Span, args: &[ast::Arg], expected: Expectation) -> Checked {
         let shown = self.shown(span, args, "dbg", (expected, None));
-        self.body.quiet_at = outer;
         let (arg, checked, labeled) = match shown {
             Ok(shown) => shown,
             Err(failed) => return failed,
@@ -103,7 +104,7 @@ impl Checker<'_> {
         span: Span,
         args: &'a [ast::Arg],
         function: &'static str,
-        (expected, ret): (Option<Type>, Option<Type>),
+        (expected, ret): (Expectation, Option<Type>),
     ) -> Result<(&'a ast::Arg, Checked, bool), Checked> {
         // Not `value()`: a `unit` argument needs this code, not "expression has no value".
         let wrong = |problem, at| {
@@ -121,7 +122,8 @@ impl Checker<'_> {
             return Err(Err(Poisoned::of(ret)));
         };
         self.refuse_mut(args, Callee::Unnamed(&function));
-        let checked = read_jump(self.expr(&arg.value, expected));
+        // The argument is an operand, not a value part of the value, so a hint does not reach it.
+        let checked = read_jump(self.expr(&arg.value, expected.plain()));
         let error = match type_of(&checked) {
             Some(Type::UNIT) => wrong(PrintProblem::NoValue, arg.value.span),
             Some(Type::NEVER) => DiagnosticKind::PrintNever {
@@ -233,7 +235,7 @@ impl Checker<'_> {
     /// A `panic` or `todo` message, an expression of type `string`. A value that interpolation
     /// prints, on one line, gets the fix that wraps it in a literal.
     pub(super) fn message(&mut self, arg: &ast::Expr) -> Checked {
-        let checked = self.value(arg, Some(Type::STRING));
+        let checked = self.value(arg, Expectation::Required(Type::STRING));
         let got = match type_of(&checked) {
             Some(Type::STRING) | None => return checked,
             Some(got) => got,

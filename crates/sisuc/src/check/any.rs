@@ -8,7 +8,9 @@ use rustc_hash::FxHashSet;
 use super::alias::UseCheck;
 use super::interface::{BOUND_CLOSURE_LIMIT, Bound, Check};
 use super::unused_names::Used;
-use super::{Checked, CheckedBlock, Checker, DeferredAsType, Poisoned, block_type, wrap};
+use super::{
+    Checked, CheckedBlock, Checker, DeferredAsType, Expectation, Poisoned, block_type, wrap,
+};
 use crate::ast;
 use crate::conformance::{any_closure, interface_closure};
 use crate::diagnostic::{Diagnostic, DiagnosticKind, NotAny, NotConformForm};
@@ -485,8 +487,8 @@ impl Checker<'_> {
         AnyJoin::Joined { ty }
     }
 
-    /// `any_join_all` of the typed `members` of a hinted join with `siblings`, the type of its
-    /// siblings (see `Body::hint_at`), for members that do not join by themselves. With
+    /// `any_join_all` of the typed `members` of a hinted join, for members that do not join by
+    /// themselves. `siblings` is the type of its siblings (see `Expectation::Hint`). With
     /// `siblings` an `any` type, the members join to the widest `any` type of them all, or one
     /// of them leaves it. `if c { a } else { if d { C() } else { D() } }` joins the inner `C` and
     /// `D` so. Else, or when two `any` types do not join, it is `NoAny`: the members' own
@@ -567,10 +569,10 @@ pub(super) fn is_target(want: Type) -> bool {
 }
 
 /// `expected`, split in two: the context that is no `any` type, and the one that is.
-pub(super) fn split_context(expected: Option<Type>) -> (Option<Type>, Option<Type>) {
+pub(super) fn split_context(expected: Expectation) -> (Option<Type>, Option<Type>) {
     (
-        expected.filter(|&want| !is_target(want)),
-        expected.filter(|&want| is_target(want)),
+        expected.ty().filter(|&want| !is_target(want)),
+        expected.ty().filter(|&want| is_target(want)),
     )
 }
 

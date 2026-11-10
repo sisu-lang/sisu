@@ -13,6 +13,7 @@ mod constant;
 mod cycle;
 mod enums;
 mod exhaust;
+mod expectation;
 mod expr;
 mod extend;
 mod generic;
@@ -56,6 +57,7 @@ use alias::{AliasInfo, Aliases, FieldType, UseCheck};
 use assoc::{Choice, Choices, Named};
 use constant::{ConstInfo, ConstantSite};
 use enums::{EnumInfo, HoldsTable, reserved_name};
+use expectation::Expectation;
 use extend::Extension;
 use interface::{Bounds, InterfaceInfo, PendingBound, Required, Scope, Slot, Waiting};
 use names::{ConstantId, ItemId, NameMaps, Position, Resolved};
@@ -258,10 +260,6 @@ fn spread<T>(checked: Result<T, Poisoned>, from: bool) -> Result<T, Poisoned> {
 
 type Checked = Result<tir::Expr, Poisoned>;
 type CheckedBlock = Result<tir::Block, Poisoned>;
-
-/// The expected type a position passes down when its own type is `Error`. No position expects
-/// `never`, so it stands for `Error` there: a `None` it reaches is `Error`, with no diagnostic.
-static UNKNOWN: Type = Type::NEVER;
 
 /// What holds methods: a class or an enum, or, for the prelude's `extend` blocks, every array
 /// type together, or `i64`.
@@ -495,9 +493,9 @@ struct LoopFrame {
     label_used: bool,
     /// Whether a `break` has targeted it.
     broken: bool,
-    /// The type the position around a `loop` expects, each value's hint; `UNKNOWN` for an
-    /// `Error` one.
-    expected: Option<Type>,
+    /// The type the position around a `loop` expects, each value's hint; `Poisoned` when that
+    /// position failed. A `Hint` when the loop is hinted, which no value converts to.
+    expected: Expectation,
     /// The type of the first value whose type is neither `never` nor `Error`, and its `break`'s
     /// span; under an expected `T?`, a `T?` value after `T` ones replaces it.
     first: Option<(Type, Span)>,
@@ -508,11 +506,6 @@ struct LoopFrame {
     /// The values of objects that did not join the first one yet, by span, with their types. A
     /// later `any` value can join them, so the loop reports them when its body is checked.
     deferred: Vec<(Span, Type)>,
-    /// The type of the siblings of a hinted loop (see `Body::hint_at`): `expected` is then a
-    /// hint, which no value converts to.
-    siblings: Option<Type>,
-    /// Whether the loop is a quiet value (see `Body::quiet_at`), and so its values are too.
-    quiet: bool,
     /// Whether a `break` inside a nested loop has targeted it, so its values lie in one.
     crossed: bool,
     /// The first bare `break`.
@@ -529,7 +522,7 @@ impl LoopFrame {
         kind: LoopKind,
         keyword: Span,
         label: Option<ast::Ident>,
-        expected: Option<Type>,
+        expected: Expectation,
     ) -> Self {
         Self {
             kind,
@@ -545,8 +538,6 @@ impl LoopFrame {
             failed: false,
             widened: false,
             deferred: Vec::new(),
-            siblings: None,
-            quiet: false,
             crossed: false,
         }
     }
@@ -564,7 +555,7 @@ impl LoopFrame {
                 Type::NEVER
             });
         }
-        // Under an `Error` expectation no value sets `first`.
+        // Under a `Poisoned` expectation no value sets `first`.
         self.first.map(|(ty, _)| ty)
     }
 }
@@ -997,6 +988,28 @@ struct Uninferred {
     settled: Option<usize>,
 }
 
+/// What `self` and `Self` mean in the code being checked.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+enum SelfType {
+    /// Outside a method: `self` and `Self` are errors (E0041, E0149).
+    #[default]
+    Absent,
+    /// In a block that failed (its target, its interface or its parameters): the block reports it,
+    /// so `self` and `Self` give no error.
+    Failed,
+    Known(Type),
+}
+
+impl SelfType {
+    /// The type, unless there is none or it failed.
+    fn known(self) -> Option<Type> {
+        match self {
+            Self::Known(ty) => Some(ty),
+            Self::Absent | Self::Failed => None,
+        }
+    }
+}
+
 /// What checking one body needs: a function's, a method's, or a constant's initialiser.
 #[derive(Default)]
 struct Body {
@@ -1059,8 +1072,8 @@ struct Body {
     locals: Vec<tir::Local>,
     /// `None` is `Error`.
     ret: Option<Type>,
-    /// The type of the method being checked, a class or an enum, whose `self` is local 0.
-    self_type: Option<Type>,
+    /// What `self` is in the code being checked (see `SelfType`); when known, `self` is local 0.
+    self_type: SelfType,
     /// Loops open around the code being checked, innermost last: what a `break` would act on.
     loops: Vec<LoopContext>,
     /// The value of the `break` being checked, and the earlier `break` whose value gave the
@@ -1090,18 +1103,6 @@ struct Body {
     /// Where the initializer of a `let` is, whose annotation failed: a constructor there does not
     /// check its bounds, as its errors would follow from the annotation's.
     failed_let: Option<Span>,
-    /// Where the quiet value is: an expression that has no expected type only because the
-    /// context of an array literal around it failed (see `joined`). Its value parts are quiet
-    /// too, and a quiet value that cannot be inferred is not reported, as the failed context
-    /// was reported. Only the expression at this span is quiet, not its operands.
-    quiet_at: Option<Span>,
-    /// Where the hinted value is, and the type of its siblings: an expression whose expected
-    /// type comes from the siblings it joins (the branches before it, the earlier values of its
-    /// loop, the left side of its `??`), not from its context. That type steers inference as an
-    /// expected type does, but the value does not convert to an `any` type for it, and a join in
-    /// it takes the siblings' type as its first anchor, not as its expected type (see `hinted`).
-    /// Its value parts are hinted too. Only the expression at this span is hinted.
-    hint_at: Option<(Span, Type)>,
     /// Whether an index follows the expression being checked in its chain (field bases, method
     /// receivers, indexed bases). A `?.` that fixes a `.` there leads to an index on an optional.
     indexed: bool,
@@ -1278,10 +1279,10 @@ pub(crate) fn check<'src>(
                 return None;
             }
             let calls = recursion::unconditional(function, tir::FuncId(i))?;
-            let kind = if owner.is_some() {
-                Definition::Method
-            } else {
+            let kind = if owner == SelfType::Absent {
                 Definition::Function
+            } else {
+                Definition::Method
             };
             Some(
                 DiagnosticKind::UnconditionalRecursion {
@@ -1561,7 +1562,7 @@ impl Checker<'_> {
         items: &[&'a ast::Item],
         user_items: usize,
         broken: &[ast::Broken],
-    ) -> Vec<(&'a ast::Function, Option<Type>)> {
+    ) -> Vec<(&'a ast::Function, SelfType)> {
         self.collect_names(items, user_items, broken);
         self.resolve_aliases();
         self.lang = self.language_interfaces();
@@ -1938,7 +1939,7 @@ impl Checker<'_> {
     fn collect_signatures<'a>(
         &mut self,
         items: &[&'a ast::Item],
-    ) -> Vec<(&'a ast::Function, Option<Type>)> {
+    ) -> Vec<(&'a ast::Function, SelfType)> {
         let mut declared = Vec::new();
         let mut next_class = 0;
         let mut next_enum = 0;
@@ -1946,7 +1947,7 @@ impl Checker<'_> {
             let class = match item {
                 ast::Item::Function(f) => {
                     self.signature(f, f.name.name.to_string(), &[], Vec::new());
-                    declared.push((f, None));
+                    declared.push((f, SelfType::Absent));
                     continue;
                 }
                 ast::Item::Class(class) => class,
@@ -1965,7 +1966,7 @@ impl Checker<'_> {
             next_class += 1;
             let owner = self.classes[id.0].type_params.clone();
             let receiver = Type::intern(TypeKind::Class(id, own_args(&owner)));
-            self.body.self_type = Some(receiver);
+            self.body.self_type = SelfType::Known(receiver);
             self.body.set_type_params(&owner);
             let bounds = self.declare_bounds(0, Vec::new(), &class.type_params);
             if self.classes[id.0].bounded {
@@ -2027,7 +2028,7 @@ impl Checker<'_> {
                         let name = format!("{}.{}", class.name.name, method.name.name);
                         let bounds = self.classes[id.0].bounds.clone();
                         self.signature(method, name, &class.type_params, bounds);
-                        declared.push((method, Some(receiver)));
+                        declared.push((method, SelfType::Known(receiver)));
                     }
                 }
             }
@@ -2037,7 +2038,7 @@ impl Checker<'_> {
                     .methods
                     .insert(method.name, Declared::Broken);
             }
-            self.body.self_type = None;
+            self.body.self_type = SelfType::Absent;
             self.body.assoc = Rc::default();
         }
         declared
@@ -2166,11 +2167,8 @@ impl Checker<'_> {
     /// Reports a missing `main`, or one that takes anything but nothing or one `[string]`, or
     /// that returns a value. A `main` rejected as defined twice is not missing, and a type in
     /// its signature that did not resolve is not wrong: each error is reported already.
-    fn check_main(&mut self, declared: &[(&ast::Function, Option<Type>)]) {
+    fn check_main(&mut self, declared: &[(&ast::Function, SelfType)]) {
         match self.names.function(Symbol::intern("main")) {
-            None if declared
-                .iter()
-                .any(|(f, owner)| owner.is_none() && f.name.name.as_str() == "main") => {}
             None => self.report(DiagnosticKind::NoMain),
             Some(Declared::Broken) => {}
             Some(Declared::Known(id)) => {
@@ -2224,13 +2222,14 @@ impl Checker<'_> {
                 self.named_type(ty, applied.name, &applied.args, applied.angles)?
             }
             ast::TypeKind::Name(name) => self.named_type(ty, *name, &[], ty.span)?,
-            ast::TypeKind::SelfType => {
-                let Some(declared) = self.body.self_type else {
+            ast::TypeKind::SelfType => match self.body.self_type {
+                SelfType::Known(declared) => declared,
+                SelfType::Failed => return None,
+                SelfType::Absent => {
                     self.report(DiagnosticKind::SelfOutside { at: ty.bare });
                     return None;
-                };
-                declared
-            }
+                }
+            },
             ast::TypeKind::Member { base, name } => self.member_type(ty, base, name)?,
             ast::TypeKind::Any(interface) => self.resolve_any(ty, interface)?,
         };
@@ -2357,18 +2356,18 @@ impl Checker<'_> {
         self.check_applied(ty, written.iter().map(|arg| arg.span).collect())
     }
 
-    /// `function`, except that a method of a block that failed has the unknown receiver and is not
+    /// `function`, except that a method of a block that failed has a failed `self` and is not
     /// checked: the block's own error says what is wrong.
     fn method_or_function(
         &mut self,
         f: &ast::Function,
         id: tir::FuncId,
-        owner: Option<Type>,
+        owner: SelfType,
     ) -> Option<tir::Function> {
-        if owner == Some(UNKNOWN) {
+        if owner == SelfType::Failed {
             return None;
         }
-        self.function(f, id, owner)
+        self.function(f, id, owner.known())
     }
 
     /// Checks `f`'s body against its own signature, `id`. The function, unless its return type
@@ -2396,7 +2395,7 @@ impl Checker<'_> {
             owner: Some(Owner::Func(id)),
             ret,
             ret_shown,
-            self_type: owner,
+            self_type: owner.map_or(SelfType::Absent, SelfType::Known),
             ..Body::default()
         };
         fresh.set_type_params(&sig.type_params);
@@ -2444,9 +2443,9 @@ impl Checker<'_> {
                 .collect();
             // A `unit` function discards its body's value, so it expects none.
             let expected = match ret {
-                None => Some(UNKNOWN),
-                Some(Type::UNIT) => None,
-                Some(ret) => Some(ret),
+                None => Expectation::Poisoned,
+                Some(Type::UNIT) => Expectation::None,
+                Some(ret) => Expectation::Required(ret),
             };
             c.show_value(&f.body, ret);
             let mut body = c.block(&f.body, expected);

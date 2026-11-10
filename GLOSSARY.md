@@ -783,8 +783,8 @@ that `fuzz/known_cascades.txt` does not list.
 
 **Expected type**:
 The type that the context asks of an expression. It is *required*: a mismatch is
-an error. Or it is *hinted*: it guides a literal. A poisoned context asks for
-nothing.
+an error. Or it is *hinted*: it guides the inference of a literal, a call, `None` or
+`[]`. A poisoned context asks for nothing, and a mistake that follows from it waits.
 
 **Origin**:
 The declaration, earlier value or language rule that makes a context require or

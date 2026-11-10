@@ -7,7 +7,7 @@ use super::alias::Via;
 use super::expr::{no_member, postfix, typed};
 use super::generic::Site;
 use super::names::{self, ItemId, Position, Resolved};
-use super::{Checked, Checker, Poisoned, UNKNOWN};
+use super::{Checked, Checker, Expectation, Poisoned};
 use crate::ast;
 use crate::diagnostic::{Definition, DiagnosticKind, MathFix, NanFix};
 use crate::source::Span;
@@ -99,7 +99,7 @@ impl Checker<'_> {
         base: &ast::Expr,
         member: &ast::Ident,
         call: Option<(&[ast::Arg], Span)>,
-        expected: Option<Type>,
+        expected: Expectation,
     ) -> Option<Checked> {
         let (ident, written, angles) = match &base.kind {
             ast::ExprKind::Name(name) => (
@@ -245,7 +245,7 @@ impl Checker<'_> {
             self.stray(args);
             return None;
         };
-        let receiver = self.expr(&first.value, Some(UNKNOWN));
+        let receiver = self.expr(&first.value, Expectation::Poisoned);
         let Some((ty, params)) = receiver
             .ok()
             .and_then(|r| Some((r.ty, self.built_in_arity(r.ty, name)?)))
@@ -284,7 +284,7 @@ impl Checker<'_> {
     pub(super) fn number_arguments(&mut self, ty: Type, params: usize, rest: &[ast::Arg]) -> bool {
         let checked: Vec<_> = rest
             .iter()
-            .map(|arg| self.expr(&arg.value, Some(ty)))
+            .map(|arg| self.expr(&arg.value, Expectation::Required(ty)))
             .collect();
         rest.len() == params
             && checked
@@ -369,7 +369,7 @@ impl Checker<'_> {
         let labeled = self.labels(args);
         let (checked, mismatched): (Vec<_>, Vec<_>) = args
             .iter()
-            .map(|arg| self.operand(&arg.value, Some(ty)))
+            .map(|arg| self.operand(&arg.value, Expectation::Required(ty)))
             .unzip();
         let failed = labeled || mismatched.contains(&true);
         let operands: Result<Vec<_>, Poisoned> = std::iter::once(receiver).chain(checked).collect();
