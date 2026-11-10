@@ -4,8 +4,8 @@
 use super::*;
 use crate::front_end::checked_with;
 use Code::{
-    AssignToSelf, BindingNotFound, CannotExtend, MethodNeedsSelf, Mismatch, NoMain, SelfOutside,
-    SelfOutsideMethod, UnknownType,
+    AssignToSelf, BindingNotFound, CannotExtend, DefinedTwice, MethodNeedsSelf, Mismatch, NoMain,
+    SelfOutside, SelfOutsideMethod, UnknownType,
 };
 
 const IF: &str = r#"if c { "a" } else { [] }"#;
@@ -316,6 +316,36 @@ fn a_failed_self_should_give_no_error_of_its_own() {
             "main in failed extend",
             "extend Missing {\n    fn main() {}\n}\n".into(),
             vec![(NoMain, (1, 1)), EXTEND_MISSING, (MethodNeedsSelf, (2, 8))],
+        ),
+    ];
+    error_rows(&rows);
+}
+
+/// GIVEN a program whose `main` is defined twice, or that has a `main` method but no `main`
+/// WHEN the program is checked
+/// THEN a rejected `main` is not reported missing, and a method does not count as the `main`
+#[test]
+fn a_rejected_main_should_not_be_reported_missing() {
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "main twice",
+            "fn main() {}\nfn main() {}\n".into(),
+            vec![(DefinedTwice, (2, 4))],
+        ),
+        (
+            "main method of a failed block",
+            "extend i64 {\n    fn main(self) {}\n}\n".into(),
+            vec![(NoMain, (1, 1)), (CannotExtend, (1, 8))],
+        ),
+        (
+            "main and a main method of a failed block",
+            "fn main() {}\nextend i64 {\n    fn main(self) {}\n}\n".into(),
+            vec![(CannotExtend, (2, 8))],
+        ),
+        (
+            "main method of an enum",
+            "enum E { A }\nextend E {\n    fn main(self) {}\n}\n".into(),
+            vec![(NoMain, (1, 1))],
         ),
     ];
     error_rows(&rows);
