@@ -144,6 +144,53 @@ fn a_later_mistake_in_a_failed_array_should_wait() {
     error_rows(&rows);
 }
 
+/// GIVEN an array whose context failed, and an element with a branch or a `loop` whose values
+/// do not join
+/// WHEN the program is checked
+/// THEN it reports the failure only, and the mismatch waits for the next run
+#[test]
+fn a_mismatch_in_a_branch_or_loop_of_a_failed_array_should_wait() {
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "branch loop",
+            "let _x: Missing = [if c { loop { break 1 } } else { true }]".to_string(),
+            vec![UNKNOWN_LET],
+        ),
+        (
+            "nested loop break",
+            "let _x: Missing = [loop { if c { break loop { break 1 } }; break \"a\" }]".to_string(),
+            vec![UNKNOWN_LET],
+        ),
+        (
+            "loop then bool",
+            "let _x: Missing = [loop { break 1 }, true]".to_string(),
+            vec![UNKNOWN_LET],
+        ),
+        (
+            "loop break bool",
+            "let _x: Missing = [loop { if c { break 1 }; break true }]".to_string(),
+            vec![UNKNOWN_LET],
+        ),
+    ]
+    .into_iter()
+    .map(|(name, stmt, wanted)| (name, program(&stmt), wanted))
+    .collect();
+    error_rows(&rows);
+}
+
+/// GIVEN an array whose context failed, and an element that is a branch of arrays
+/// WHEN the branches do not join
+/// THEN the mismatch is at the whole branch and names the array types
+#[test]
+fn a_nested_branch_mismatch_in_a_failed_array_should_be_at_the_whole_branch() {
+    let rows = [(
+        "nested if",
+        program("let _x: Missing = [if c { [1] } else { [\"a\"] }]"),
+        vec![UNKNOWN_LET, (Mismatch, (4, 44))],
+    )];
+    error_rows(&rows);
+}
+
 /// GIVEN an array with no failed context
 /// WHEN the program is checked
 /// THEN it still reports its own mistake
