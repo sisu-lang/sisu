@@ -1532,60 +1532,53 @@ fn unmarked_place_should_leave_a_mismatch_only_to_a_closed_result() {
         fn text(s: string) {\n    print(s)\n}\n\
         class Holder {\n    s: string\n}\n\
         class Names {\n    cells: [string]\n    fn pick<T>(self, mut xs: [T]) -> T {\n        let x = xs[0]\n        xs[0] = x\n        x\n    }\n}\n";
-    let rows = [
+    let main = |body: &str| format!("{decls}fn main() {{\n    {body}\n}}");
+    let e166 = Code::MutMarkerMissing;
+    error_rows(&[
         (
             "let",
-            false,
-            "let names = [\"a\"]\n    let n: i64 = first(names)\n    print(n)",
+            main("let names = [\"a\"]\n    let n: i64 = first(names)\n    print(n)"),
+            vec![(e166, (26, 24))],
         ),
         (
             "let mut",
-            false,
-            "let mut names = [\"a\"]\n    let n: i64 = first(names)\n    print(n)",
+            main("let mut names = [\"a\"]\n    let n: i64 = first(names)\n    print(n)"),
+            vec![(e166, (26, 24))],
         ),
+        // The closed `i64` of `count` is typed, so its mismatch stays.
         (
             "function that is not generic",
-            true,
-            "let ys = [1]\n    let s: string = count(ys)\n    print(s)",
+            main("let ys = [1]\n    let s: string = count(ys)\n    print(s)"),
+            vec![(Code::Mismatch, (26, 21)), (e166, (26, 27))],
         ),
         (
             "field",
-            false,
-            "let b = Names(cells: [\"a\"])\n    let n: i64 = first(b.cells)\n    print(n)",
+            main("let b = Names(cells: [\"a\"])\n    let n: i64 = first(b.cells)\n    print(n)"),
+            vec![(e166, (26, 24))],
         ),
         (
             "method",
-            false,
-            "let b = Names(cells: [\"a\"])\n    let ys = [\"a\"]\n    let n: i64 = b.pick(ys)\n    print(n)",
+            main(
+                "let b = Names(cells: [\"a\"])\n    let ys = [\"a\"]\n    let n: i64 = b.pick(ys)\n    print(n)",
+            ),
+            vec![(e166, (27, 25))],
         ),
         (
             "argument of another call",
-            false,
-            "let ys = [1]\n    text(first(ys))",
+            main("let ys = [1]\n    text(first(ys))"),
+            vec![(e166, (26, 16))],
         ),
         (
             "field of a constructor",
-            false,
-            "let ys = [1]\n    let h = Holder(s: first(ys))\n    print(h.s)",
+            main("let ys = [1]\n    let h = Holder(s: first(ys))\n    print(h.s)"),
+            vec![(e166, (26, 29))],
         ),
-    ];
-    for (row, closed, body) in rows {
-        let src = format!("{decls}fn main() {{\n    {body}\n}}");
-        let mut found = diags(&src);
-        found.sort_by_key(|d| d.span().start());
-        let found: Vec<_> = found.iter().map(Diagnostic::code).collect();
-        let expected: &[Code] = if closed {
-            &[Code::Mismatch, Code::MutMarkerMissing]
-        } else {
-            &[Code::MutMarkerMissing]
-        };
-        assert_eq!(found, expected, "row `{row}`: {src}");
-    }
-    let ret = format!("{decls}fn give(ys: [i64]) -> string {{\n    first(ys)\n}}\nfn main() {{}}");
-    let mut found = diags(&ret);
-    found.sort_by_key(|d| d.span().start());
-    let found: Vec<_> = found.iter().map(Diagnostic::code).collect();
-    assert_eq!(found, [Code::MutMarkerMissing], "return");
+        (
+            "return",
+            format!("{decls}fn give(ys: [i64]) -> string {{\n    first(ys)\n}}\nfn main() {{}}"),
+            vec![(e166, (25, 11))],
+        ),
+    ]);
 }
 
 /// GIVEN two `mut` places, and `f(mut a, mut b)`

@@ -437,7 +437,7 @@ fn contains_should_report_an_argument_that_is_not_an_element() {
 }
 
 /// A failed `contains` keeps its type `bool` when its argument is the problem, so a use of the
-/// result is still checked. An untyped receiver makes it untyped (the index row of S14).
+/// result is still checked.
 #[test]
 fn contains_should_keep_its_type_when_its_argument_fails() {
     with_prelude();
@@ -449,6 +449,13 @@ fn contains_should_keep_its_type_when_its_argument_fails() {
         "fn f(xs: [i64]) {\n    let b = xs.contains(v: 1)\n    print(b + 1)\n}\nfn main() {}",
         &[(Code::LabeledArgument, (2, 25)), (Code::Mismatch, (3, 11))],
     );
+}
+
+/// An index that fails makes the receiver of `contains` untyped (the index row of S14). So the
+/// call is untyped, and a use of the result reports nothing more.
+#[test]
+fn contains_should_be_untyped_when_its_receiver_fails() {
+    with_prelude();
     codes(
         "fn f(g: [[i64]]) {\n    let b = g[nope].contains(1)\n    print(b + 1)\n}\nfn main() {}",
         &[(Code::BindingNotFound, (2, 15))],

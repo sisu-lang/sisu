@@ -2035,4 +2035,10 @@ fn a_typed_poisoned_part_should_fail_only_a_call() {
             vec![(CannotInfer, (41, 13)), (ArgumentCount, (41, 17))],
         ),
     ]);
+    // A typed poisoned receiver of an interface method reads as its type too.
+    error_rows(&[(
+        "typed bound receiver",
+        "interface D {\n    fn dg<U>(self, a: U) -> U\n}\nfn f<T: D>(t: T) {\n    let a = { nope\n        t }.dg(1)\n    print(a + true)\n}\nfn main() {}\n".into(),
+        vec![(BindingNotFound, (5, 15)), (Mismatch, (7, 15))],
+    )]);
 }
