@@ -1278,8 +1278,7 @@ impl Checker<'_> {
         body: &ast::Block,
         expected: Expectation,
     ) -> Checked {
-        let mut frame = LoopFrame::new(LoopKind::Loop, keyword, label.cloned(), expected);
-        frame.siblings = self.hinted(span, expected).1;
+        let frame = LoopFrame::new(LoopKind::Loop, keyword, label.cloned(), expected);
         let (mut checked, mut frame) = self.loop_body(frame, |c| c.block(body, Expectation::None));
         self.join_deferred(&mut frame);
         if let Ok(checked) = &mut checked {
@@ -1317,7 +1316,7 @@ impl Checker<'_> {
         };
         let join = match self.any_join_all(&members) {
             joined @ AnyJoin::Joined { .. } => joined,
-            failed => match self.seeded_join(frame.siblings, &members) {
+            failed => match self.seeded_join(frame.expected.siblings(), &members) {
                 seeded @ AnyJoin::Joined { .. } => {
                     #[cfg(test)]
                     super::reached("seeded_join for a loop");
@@ -1406,17 +1405,20 @@ impl Checker<'_> {
         let frame = self.frame(target);
         // With no expected type, an earlier value gives a hint, as the siblings of a hinted loop
         // do.
-        let (hint, first_at, siblings) = match (frame.expected, frame.first) {
-            (Expectation::None, Some((ty, at))) => (Expectation::Required(ty), Some(at), Some(ty)),
-            (Expectation::None, None) => (Expectation::None, None, None),
-            (expected, _) => (expected, None, frame.siblings),
+        let (hint, first_at) = match (frame.expected, frame.first) {
+            (Expectation::None, Some((ty, at))) => {
+                let hint = Expectation::Hint {
+                    want: ty,
+                    siblings: ty,
+                };
+                (hint, Some(at))
+            }
+            (expected, _) => (expected, None),
         };
         let from = first_at.map(|first| (v.span, first));
         let outer = std::mem::replace(&mut self.body.break_hint, from);
         self.body.label_typo = typo.map(|name| (name.span, span.start()));
-        let outer_hint = self.pass_hint(Some(v.span), siblings);
         let checked = self.expr(v, hint);
-        self.body.hint_at = outer_hint;
         self.body.label_typo = None;
         self.body.break_hint = outer;
         // A failed value fails the loop, and gives it no type and no second report. A generic
@@ -1440,7 +1442,7 @@ impl Checker<'_> {
                 let frame = self.frame(target);
                 frame.valued.get_or_insert(span);
                 let (expected, first) = (frame.expected, frame.first);
-                let hinted = frame.siblings.is_some();
+                let hinted = matches!(expected, Expectation::Hint { .. });
                 if expected == Expectation::Poisoned {
                     checked
                 } else {
@@ -1459,7 +1461,7 @@ impl Checker<'_> {
     /// A value that fits the expected type keeps its own, as a block's value does. The values join
     /// as `if` branches do: a `T` and a `T?` make a `T?`. An object and an `any` type that it
     /// converts to make the `any` type. The values before it are converted at the loop's end when
-    /// the type grows. With `hinted`, `expected` is a hint (see `Body::hint_at`).
+    /// the type grows. With `hinted`, `expected` is a hint (see `Expectation::Hint`).
     fn join_break(
         &mut self,
         (v, span): (&ast::Expr, Span),

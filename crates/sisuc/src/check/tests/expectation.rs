@@ -47,7 +47,7 @@ fn error_rows(rows: &[ErrorRow<'_>]) {
     );
 }
 
-const UNKNOWN_LET: Wanted = (UnknownType, (4, 13));
+const FAILED_LET: Wanted = (UnknownType, (4, 13));
 const GET: Wanted = (Mismatch, (4, 15));
 
 /// GIVEN an array whose context failed, and a later element or branch that does not fit
@@ -61,52 +61,52 @@ fn a_later_mistake_in_a_failed_array_should_wait() {
         (
             "let if",
             format!("let _x: Missing = [{IF}]"),
-            vec![UNKNOWN_LET],
+            vec![FAILED_LET],
         ),
         (
             "let if let",
             format!("let _x: Missing = [{IFLET}]"),
-            vec![UNKNOWN_LET],
+            vec![FAILED_LET],
         ),
         (
             "let loop empty",
             format!("let _x: Missing = [{LS}]"),
-            vec![UNKNOWN_LET],
+            vec![FAILED_LET],
         ),
         (
             "let loop mismatch",
             format!("let _x: Missing = [{LM}]"),
-            vec![UNKNOWN_LET],
+            vec![FAILED_LET],
         ),
         (
             "let loop none",
             format!("let _x: Missing = [{LN}]"),
-            vec![UNKNOWN_LET],
+            vec![FAILED_LET],
         ),
         (
             "second if",
             format!("let _x: Missing = [1, {IF}]"),
-            vec![UNKNOWN_LET, (Mismatch, (4, 27))],
+            vec![FAILED_LET, (Mismatch, (4, 27))],
         ),
         (
             "second if let",
             format!("let _x: Missing = [1, {IFLET}]"),
-            vec![UNKNOWN_LET, (Mismatch, (4, 27))],
+            vec![FAILED_LET, (Mismatch, (4, 27))],
         ),
         (
             "second loop empty",
             format!("let _x: Missing = [1, {LS}]"),
-            vec![UNKNOWN_LET],
+            vec![FAILED_LET],
         ),
         (
             "second loop mismatch",
             format!("let _x: Missing = [1, {LM}]"),
-            vec![UNKNOWN_LET],
+            vec![FAILED_LET],
         ),
         (
             "second loop none",
             format!("let _x: Missing = [1, {LN}]"),
-            vec![UNKNOWN_LET],
+            vec![FAILED_LET],
         ),
         (
             "operand if",
@@ -157,22 +157,22 @@ fn a_mismatch_in_a_branch_or_loop_of_a_failed_array_should_wait() {
         (
             "branch loop",
             "let _x: Missing = [if c { loop { break 1 } } else { true }]".to_string(),
-            vec![UNKNOWN_LET],
+            vec![FAILED_LET],
         ),
         (
             "nested loop break",
             "let _x: Missing = [loop { if c { break loop { break 1 } }; break \"a\" }]".to_string(),
-            vec![UNKNOWN_LET],
+            vec![FAILED_LET],
         ),
         (
             "loop then bool",
             "let _x: Missing = [loop { break 1 }, true]".to_string(),
-            vec![UNKNOWN_LET],
+            vec![FAILED_LET],
         ),
         (
             "loop break bool",
             "let _x: Missing = [loop { if c { break 1 }; break true }]".to_string(),
-            vec![UNKNOWN_LET],
+            vec![FAILED_LET],
         ),
     ]
     .into_iter()
@@ -189,7 +189,7 @@ fn a_nested_branch_mismatch_in_a_failed_array_should_be_at_the_whole_branch() {
     let rows = [(
         "nested if",
         program("let _x: Missing = [if c { [1] } else { [\"a\"] }]"),
-        vec![UNKNOWN_LET, (Mismatch, (4, 44))],
+        vec![FAILED_LET, (Mismatch, (4, 44))],
     )];
     error_rows(&rows);
 }

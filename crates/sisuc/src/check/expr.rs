@@ -6,7 +6,7 @@ use super::generic::Site;
 use super::names::{self, Resolved};
 use super::{
     Checked, Checker, Expectation, Flag, Poisoned, SelfType, Uninferred, is_kept, is_unwrapped,
-    payload, spread, tail, type_of, wrap,
+    payload, spread, type_of, wrap,
 };
 use crate::ast::{self, ExprKind, UnaryOp};
 use crate::diagnostic::{
@@ -323,16 +323,10 @@ impl Checker<'_> {
             ExprKind::Return { .. } | ExprKind::Break { .. } | ExprKind::Continue { .. } => {
                 failed_jump(self.jump_expr(e))
             }
-            ExprKind::Block(block) => {
-                let value = tail(block).map(|v| v.span);
-                let outer_hint = self.pass_hint(value, self.hinted(e.span, expected).1);
-                let checked = self.block(block, expected);
-                self.body.hint_at = outer_hint;
-                checked.map(|block| {
-                    let ty = block.ty;
-                    tir::Expr::new(tir::ExprKind::Block(block), ty, e.span)
-                })
-            }
+            ExprKind::Block(block) => self.block(block, expected).map(|block| {
+                let ty = block.ty;
+                tir::Expr::new(tir::ExprKind::Block(block), ty, e.span)
+            }),
         }
     }
 
@@ -492,42 +486,26 @@ impl Checker<'_> {
         (checked, false)
     }
 
-    /// `expected` as the expression at `span` takes it, and the type of its siblings: no
-    /// expected type and that type when it is the hinted value (see `Body::hint_at`), else
-    /// `expected` and none.
-    pub(super) fn hinted(&self, span: Span, expected: Expectation) -> (Expectation, Option<Type>) {
-        match self.body.hint_at {
-            Some((at, siblings)) if at == span => (Expectation::None, Some(siblings)),
-            _ => (expected, None),
-        }
-    }
-
-    /// Makes `to` the hinted value, its siblings of type `siblings`, or makes no value hinted
-    /// when either is `None`. Returns the hinted value before, to put back after `to` is checked.
-    pub(super) fn pass_hint(
-        &mut self,
-        to: Option<Span>,
-        siblings: Option<Type>,
-    ) -> Option<(Span, Type)> {
-        std::mem::replace(&mut self.body.hint_at, to.zip(siblings))
-    }
-
     /// A `None`, of the optional type `expected`.
     pub(super) fn none(&mut self, span: Span, expected: Expectation) -> Checked {
         let kind = match expected {
             Expectation::Poisoned => return Err(Poisoned::error()),
-            Expectation::Required(ty) if matches!(ty.kind(), TypeKind::Optional(_)) => {
+            Expectation::Required(ty) | Expectation::Hint { want: ty, .. }
+                if matches!(ty.kind(), TypeKind::Optional(_)) =>
+            {
                 return Ok(tir::Expr::new(tir::ExprKind::None, ty, span));
             }
-            Expectation::Required(ty) => DiagnosticKind::Mismatch {
-                want: Expected::Types(vec![self.want_name(span, ty)]),
-                got: "None".to_string(),
-                at: span,
-                source: self.expected_from(span),
-                fix: None,
-                conversion: false,
-                layers: false,
-            },
+            Expectation::Required(ty) | Expectation::Hint { want: ty, .. } => {
+                DiagnosticKind::Mismatch {
+                    want: Expected::Types(vec![self.want_name(span, ty)]),
+                    got: "None".to_string(),
+                    at: span,
+                    source: self.expected_from(span),
+                    fix: None,
+                    conversion: false,
+                    layers: false,
+                }
+            }
             Expectation::None => {
                 self.report_uninferred(Literal::None, span);
                 return Err(Poisoned::error());

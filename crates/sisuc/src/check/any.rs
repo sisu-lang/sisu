@@ -487,8 +487,8 @@ impl Checker<'_> {
         AnyJoin::Joined { ty }
     }
 
-    /// `any_join_all` of the typed `members` of a hinted join with `siblings`, the type of its
-    /// siblings (see `Body::hint_at`), for members that do not join by themselves. With
+    /// `any_join_all` of the typed `members` of a hinted join, for members that do not join by
+    /// themselves. `siblings` is the type of its siblings (see `Expectation::Hint`). With
     /// `siblings` an `any` type, the members join to the widest `any` type of them all, or one
     /// of them leaves it. `if c { a } else { if d { C() } else { D() } }` joins the inner `C` and
     /// `D` so. Else, or when two `any` types do not join, it is `NoAny`: the members' own

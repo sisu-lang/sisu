@@ -46,11 +46,12 @@ impl Checker<'_> {
         elements: &[ast::Expr],
         expected: Expectation,
     ) -> Checked {
-        // The type of an earlier branch is a hint, not a written type (see `Body::hint_at`). A
-        // hint of an array of an `any` type is not an expected type: each element joins the
+        // The type of an earlier branch is a hint, not a written type (see `Expectation::Hint`).
+        // A hint of an array of an `any` type is not an expected type: each element joins the
         // elements of the siblings (see `hinted_elements`). Any other hint is an expected type.
-        let siblings = self.hinted(span, expected).1;
-        if let Some(element) = expected_element(siblings).filter(|&element| holds_any(element)) {
+        if let Some(element) =
+            expected_element(expected.siblings()).filter(|&element| holds_any(element))
+        {
             return if elements.is_empty() {
                 // A `[]` has no element to join, so it takes the type of its siblings.
                 self.array(span, element, Vec::new(), false)
@@ -69,15 +70,17 @@ impl Checker<'_> {
         if elements.is_empty() {
             let d = match expected {
                 Expectation::Poisoned => return Err(Poisoned::error()),
-                Expectation::Required(ty) => DiagnosticKind::Mismatch {
-                    want: Expected::Types(vec![self.type_name(ty)]),
-                    got: "[]".to_string(),
-                    at: span,
-                    source: self.expected_from(span),
-                    fix: None,
-                    conversion: false,
-                    layers: false,
-                },
+                Expectation::Required(ty) | Expectation::Hint { want: ty, .. } => {
+                    DiagnosticKind::Mismatch {
+                        want: Expected::Types(vec![self.type_name(ty)]),
+                        got: "[]".to_string(),
+                        at: span,
+                        source: self.expected_from(span),
+                        fix: None,
+                        conversion: false,
+                        layers: false,
+                    }
+                }
                 Expectation::None => {
                     self.report_uninferred(Literal::EmptyArray, span);
                     return Err(Poisoned::error());
@@ -97,8 +100,8 @@ impl Checker<'_> {
     }
 
     /// The `elements` of a literal whose siblings are arrays of `element`, a type that holds an
-    /// `any` type (see `Body::hint_at`). Each is a hinted value beside an `element` value, and
-    /// they join as the branches of an `if` do (`join`), with `element` as the siblings' type.
+    /// `any` type (see `Expectation::Hint`). Each is a hinted value beside an `element` value.
+    /// They join as the branches of an `if` do (`join`), with `element` as the siblings' type.
     /// An array does not widen: the join must go into `element`, or the first element that does
     /// not is the mistake, named by its own type.
     fn hinted_elements(&mut self, span: Span, elements: &[ast::Expr], element: Type) -> Checked {
@@ -335,15 +338,16 @@ impl Checker<'_> {
     }
 
     /// The value `e`, typed beside an element of the `any` type `any`: with `any` made optional as
-    /// a hint (see `Body::hint_at`), as the branch of an `if` after an `any` branch is. So the
+    /// a hint (see `Expectation::Hint`), as the branch of an `if` after an `any` branch is. So the
     /// payload of a `Some` converts to `any`.
     fn value_beside(&mut self, e: &ast::Expr, any: Type) -> Checked {
         #[cfg(test)]
         super::reached("value_beside");
-        let outer = self.pass_hint(Some(e.span), Some(any));
-        let checked = self.value(e, Expectation::Required(as_optional(any)));
-        self.body.hint_at = outer;
-        checked
+        let hint = Expectation::Hint {
+            want: as_optional(any),
+            siblings: any,
+        };
+        self.value(e, hint)
     }
 
     /// `anchor`, the `any` type that the elements before give, widened by an element of type

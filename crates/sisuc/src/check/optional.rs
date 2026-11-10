@@ -76,7 +76,7 @@ impl Checker<'_> {
             matches!(t.ty.kind(), TypeKind::Optional(p)
                 if t.params.len() == 1 && p == Type::intern(TypeKind::Param(t.params[0], 0)))
         });
-        let hinted = self.hinted(span, Expectation::None).1.is_some();
+        let hinted = matches!(site.expected, Expectation::Hint { .. });
         let (arg, found, list) = match site.expected.ty().map(|ty| (ty, ty.kind())) {
             // An expected `T?` fixes `T`, so a literal in the argument takes that type: the
             // generic call would type an `if` of integer literals by their default first.
@@ -84,10 +84,16 @@ impl Checker<'_> {
                 if site.written.is_empty() && !want.holds_hole() && plain =>
             {
                 let e = &args[0].value;
-                // A hinted `Some` gives its hint to the argument (see `Body::hint_at`).
-                let outer_hint = self.pass_hint(Some(e.span), hinted.then_some(payload));
-                let checked = self.value(e, Expectation::Required(payload));
-                self.body.hint_at = outer_hint;
+                // A hinted `Some` gives its hint to the argument (see `Expectation::Hint`).
+                let checked = if hinted {
+                    let hint = Expectation::Hint {
+                        want: payload,
+                        siblings: payload,
+                    };
+                    self.value(e, hint)
+                } else {
+                    self.value(e, Expectation::Required(payload))
+                };
                 match type_of(&checked) {
                     // An object that does not convert to the hint keeps its own type: the join
                     // converts it to an `any` type, or the other values to it, or reports it. So

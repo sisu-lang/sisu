@@ -35,7 +35,6 @@ impl Checker<'_> {
     ) -> Checked {
         let (cond, mismatched) = self.operand(cond, Expectation::Required(Type::BOOL));
         let (then, other, ty) = self.branches(
-            span,
             then_block,
             else_block,
             expected,
@@ -85,19 +84,13 @@ impl Checker<'_> {
         };
         let mut checked = None;
         let bind = |c: &mut Self| Some(c.bind_pattern(Some(Unwrap::IfLet), &form, pattern, None));
-        let (then, other, ty) = self.branches(
-            span,
-            then_block,
-            else_block,
-            expected,
-            bind,
-            |c, expected| {
+        let (then, other, ty) =
+            self.branches(then_block, else_block, expected, bind, |c, expected| {
                 let (bound, block) =
                     c.let_block(Unwrap::IfLet, &form, pattern, then_block, expected);
                 checked = Some(bound);
                 block
-            },
-        );
+            });
         let bound = checked.expect("`branches` should check the first block, which sets it");
         // A failed join keeps its own `mismatch`, and branches that never end keep `Never`.
         let ty = match ty {
@@ -132,12 +125,11 @@ impl Checker<'_> {
         Ok(tir::Expr::new(kind, ty, span))
     }
 
-    /// The blocks of the `if` or `if let` at `span`, `then` checking the first, and their type:
+    /// The blocks of an `if` or `if let`, `then` checking the first, and their type:
     /// `unit` without an `else`; see `join`. `bind` binds what the first block sees, for the
     /// ranking of its value.
     fn branches(
         &mut self,
-        span: Span,
         then_block: &ast::Block,
         else_block: Option<&ast::Block>,
         expected: Expectation,
@@ -147,7 +139,7 @@ impl Checker<'_> {
         let Some(else_block) = else_block else {
             return (then(self, Expectation::None), None, Ok(Type::UNIT));
         };
-        let (expected, siblings) = self.hinted(span, expected);
+        let (expected, siblings) = expected.split_hint();
         let mut then = Some(then);
         let (blocks, ty) = self.ranked(|c| {
             let sources = [
@@ -175,7 +167,7 @@ impl Checker<'_> {
     /// lowest `Rank` is checked first, the first in source order on a tie. Each branch after it
     /// expects the type of the first branch of a known type that is not `never`, made optional,
     /// unless its value waits and makes no optional by itself: it expects that type as it is.
-    /// That type is a hint (see `Body::hint_at`). In a hinted `if` or `match`, `siblings`, the
+    /// That type is a hint (see `Expectation::Hint`). In a hinted `if` or `match`, `siblings`, the
     /// type of the hinted value's siblings, is that first type. A failed or `unit` branch sets
     /// what the branches after it expect only until a branch of another known type is checked.
     /// Then a `never` branch, and after it an `Error` one, takes the others' type. A `T` and a
@@ -201,14 +193,14 @@ impl Checker<'_> {
             } else {
                 expected
             };
-            let tail = sources[i].tail.map(|v| v.span);
             // A type that the branches before give is a hint, not an expected type.
-            let hint = anchor
-                .flatten()
-                .filter(|_| expected == Expectation::None && carried != Expectation::None);
-            let outer_hint = self.pass_hint(tail, hint);
+            let carried = match (carried, anchor.flatten()) {
+                (Expectation::Required(want), Some(siblings)) if expected == Expectation::None => {
+                    Expectation::Hint { want, siblings }
+                }
+                (carried, _) => carried,
+            };
             let block = check(self, i, carried);
-            self.body.hint_at = outer_hint;
             // The first branch of a known type anchors the rest; a failed or `unit` one only
             // until then. An `any` branch widens the anchor, which only the hints read.
             match (block_type(&block), anchor) {

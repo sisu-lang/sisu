@@ -27,11 +27,12 @@ impl Checker<'_> {
         operand: &ast::Expr,
         expected: Expectation,
     ) -> Result<(Type, (Checked, bool)), Poisoned> {
-        // A `None` expects an `i64`, as in `None + 1`.
+        // A `None` expects an `i64`, as in `None + 1`. The operand is at another span, so a hint
+        // does not reach it.
         let expected = if expected == Expectation::None && self.none_written(operand) {
             Expectation::Required(Type::I64)
         } else {
-            expected
+            expected.plain()
         };
         let before = self.diagnostics.len();
         let checked = self.value(operand, expected);
@@ -182,6 +183,8 @@ impl Checker<'_> {
         };
         let start = self.diagnostics.len();
         let op = |_| op.to_string();
+        // The operands are at other spans, so a hint does not reach them.
+        let expected = expected.plain();
         let (checked, ty, mismatched) =
             self.ranked(|c| c.binary_operands(span, &[lhs, rhs], expected, operator, &op));
         if checked.iter().any(|c| type_of(c) == Some(Type::CHAR)) {
@@ -421,10 +424,11 @@ impl Checker<'_> {
             let value = match first.take_if(|(k, _)| *k == i) {
                 Some((_, operand)) => operand,
                 None if hinted => {
-                    let outer_hint = self.pass_hint(Some(e.span), want);
-                    let value = self.value(e, Expectation::or_poisoned(want));
-                    self.body.hint_at = outer_hint;
-                    value
+                    let hint = want.map_or(Expectation::Poisoned, |want| Expectation::Hint {
+                        want,
+                        siblings: want,
+                    });
+                    self.value(e, hint)
                 }
                 None if by_char => self.value(e, Expectation::None),
                 None => self.value(e, Expectation::or_poisoned(want)),
@@ -671,15 +675,14 @@ impl Checker<'_> {
             || (self.none_written(lhs) && !self.none_written(rhs));
         let (first, second) = if swapped { (rhs, lhs) } else { (lhs, rhs) };
         let checked = self.value(first, Expectation::None);
-        let want = type_of(&checked).map_or(Expectation::Poisoned, |ty| {
-            Expectation::Required(as_optional(ty))
+        // The first side's type is a hint to the second, as a sibling's is (see
+        // `Expectation::Hint`): an `if` there reports a branch against it, as one checked first
+        // reports against its first branch.
+        let want = type_of(&checked).map_or(Expectation::Poisoned, |ty| Expectation::Hint {
+            want: as_optional(ty),
+            siblings: ty,
         });
-        // The first side's type is a hint to the second, as a sibling's is (see `Body::hint_at`):
-        // an `if` there reports a branch against it, as one checked first reports against its
-        // first branch.
-        let outer_hint = self.pass_hint(Some(second.span), type_of(&checked));
         let other = self.value(second, want);
-        self.body.hint_at = outer_hint;
         // A side converts through one `?` only: `x == 5` on an `i64??` holds `5` to `i64??`.
         if let (Some(a), Some(b)) = (type_of(&checked), type_of(&other))
             && let Some((side, want, got)) = [(second, a, b), (first, b, a)]
@@ -1051,10 +1054,11 @@ impl Checker<'_> {
             drop(self.fallback(tail, Expectation::Poisoned));
             return Err(Poisoned::error());
         }
-        let written = (self.hinted(span, expected).0.ty())
-            .filter(|&want| is_target(want) || is_target(payload));
+        // A hint is no written type.
+        let written =
+            (expected.split_hint().0.ty()).filter(|&want| is_target(want) || is_target(payload));
         // The right side expects `P` for an optional `P`, else `P?`: a value converts through
-        // one `?` only. That is a hint (see `Body::hint_at`), unless that type is written. Then
+        // one `?` only. That is a hint (see `Expectation::Hint`), unless that type is written. Then
         // the right side is checked against it, so `let r: any I = oa ?? None` reports at the
         // `None`, and an optional value there at the whole `??`.
         let other = match written {
@@ -1064,10 +1068,11 @@ impl Checker<'_> {
                 self.fallback(rhs, Expectation::Required(want))
             }
             _ => {
-                let outer_hint = self.pass_hint(Some(rhs.span), Some(payload));
-                let other = self.fallback(rhs, Expectation::Required(as_optional(payload)));
-                self.body.hint_at = outer_hint;
-                other
+                let hint = Expectation::Hint {
+                    want: as_optional(payload),
+                    siblings: payload,
+                };
+                self.fallback(rhs, hint)
             }
         };
         // Under the `?.` fix of an E0062 in either side, the result is optional.

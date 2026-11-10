@@ -1671,8 +1671,7 @@ pub(super) struct ContextHint {
 pub(super) struct Inference<'s> {
     /// The call's span.
     at: Span,
-    /// Whether the call is the hinted value when it starts (see `Body::hint_at`). The arguments
-    /// change the hint, so this is set once.
+    /// Whether the call is the hinted value (see `Expectation::Hint`).
     hinted: bool,
     pub(super) bindings: Bindings,
     /// Each argument once checked, in source order.
@@ -2192,7 +2191,7 @@ impl Checker<'_> {
         let owned = sig.owner.len();
         let mut call = Inference {
             at: span,
-            hinted: self.hinted(span, Expectation::None).1.is_some(),
+            hinted: matches!(expected, Expectation::Hint { .. }),
             bindings: Bindings::new(sig.declared.len(), sig.owner),
             slots: args.iter().map(|_| None).collect(),
             last: Vec::new(),
@@ -3056,11 +3055,15 @@ impl Checker<'_> {
         // A hinted call hands its hint on to an argument that its context bound, as a hinted
         // `Some` does (see `Checker::some`): the inner call is hinted too.
         let hinted = call.hinted && bound_by_context(call, pattern);
-        let outer_hint = hinted.then(|| self.pass_hint(Some(e.span), Some(want)));
-        let checked = self.value(e, Expectation::Required(want));
-        if let Some(outer_hint) = outer_hint {
-            self.body.hint_at = outer_hint;
-        }
+        let checked = if hinted {
+            let hint = Expectation::Hint {
+                want,
+                siblings: want,
+            };
+            self.value(e, hint)
+        } else {
+            self.value(e, Expectation::Required(want))
+        };
         // A hint is the type of a sibling. Examples are the other side of `==`, the left side of
         // `??`, another branch and an earlier `break` value. The user did not write it. By rule,
         // a misfit under a hint keeps its E0050 at the call, and the call does not hand it up

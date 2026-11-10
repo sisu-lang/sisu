@@ -238,7 +238,7 @@ impl Checker<'_> {
         arms: &[ast::Arm],
         expected: Expectation,
     ) -> Checked {
-        let (expected, siblings) = self.hinted(span, expected);
+        let (expected, siblings) = expected.split_hint();
         let checked = self.value_kept(scrutinee);
         let mut position = type_of(&checked);
         let cannot = position.take_if(|&mut ty| !matchable(ty));

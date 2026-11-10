@@ -871,9 +871,17 @@ impl Checker<'_> {
         #[cfg(test)]
         super::reached("optional_alias_path");
         let site = if through.params.is_empty() {
+            // A hinted value stays hinted.
+            let expected = match site.expected {
+                Expectation::Hint { siblings, .. } => Expectation::Hint {
+                    want: through.ty,
+                    siblings,
+                },
+                _ => Expectation::Required(through.ty),
+            };
             Site {
                 written: &[],
-                expected: Expectation::Required(through.ty),
+                expected,
                 ..site
             }
         } else {

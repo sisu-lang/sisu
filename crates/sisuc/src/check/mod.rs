@@ -494,7 +494,7 @@ struct LoopFrame {
     /// Whether a `break` has targeted it.
     broken: bool,
     /// The type the position around a `loop` expects, each value's hint; `Poisoned` when that
-    /// position failed.
+    /// position failed. A `Hint` when the loop is hinted, which no value converts to.
     expected: Expectation,
     /// The type of the first value whose type is neither `never` nor `Error`, and its `break`'s
     /// span; under an expected `T?`, a `T?` value after `T` ones replaces it.
@@ -506,9 +506,6 @@ struct LoopFrame {
     /// The values of objects that did not join the first one yet, by span, with their types. A
     /// later `any` value can join them, so the loop reports them when its body is checked.
     deferred: Vec<(Span, Type)>,
-    /// The type of the siblings of a hinted loop (see `Body::hint_at`): `expected` is then a
-    /// hint, which no value converts to.
-    siblings: Option<Type>,
     /// Whether a `break` inside a nested loop has targeted it, so its values lie in one.
     crossed: bool,
     /// The first bare `break`.
@@ -541,7 +538,6 @@ impl LoopFrame {
             failed: false,
             widened: false,
             deferred: Vec::new(),
-            siblings: None,
             crossed: false,
         }
     }
@@ -1106,13 +1102,6 @@ struct Body {
     /// Where the initializer of a `let` is, whose annotation failed: a constructor there does not
     /// check its bounds, as its errors would follow from the annotation's.
     failed_let: Option<Span>,
-    /// Where the hinted value is, and the type of its siblings: an expression whose expected
-    /// type comes from the siblings it joins (the branches before it, the earlier values of its
-    /// loop, the left side of its `??`), not from its context. That type steers inference as an
-    /// expected type does, but the value does not convert to an `any` type for it, and a join in
-    /// it takes the siblings' type as its first anchor, not as its expected type (see `hinted`).
-    /// Its value parts are hinted too. Only the expression at this span is hinted.
-    hint_at: Option<(Span, Type)>,
     /// Whether an index follows the expression being checked in its chain (field bases, method
     /// receivers, indexed bases). A `?.` that fixes a `.` there leads to an index on an optional.
     indexed: bool,
