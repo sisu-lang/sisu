@@ -524,7 +524,7 @@ impl Checker<'_> {
                 // it again with none.
                 ty = Some(Type::STRING);
                 if let Some(other) = before.take() {
-                    // All that is deferred is that operand's, the first of two. It becomes `Error`
+                    // All that is deferred is that operand's, the first of two. It becomes untyped
                     // below, so no value outlives the dropped reports.
                     deferred.clear();
                     // Beside the first operand is this `string`, which `ty` now is.

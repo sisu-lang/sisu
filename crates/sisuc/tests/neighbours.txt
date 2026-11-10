@@ -97,6 +97,10 @@ fn main() {
 }
 
 [failed]
+enum Eb {
+    A
+}
+extend Eb: Nope {}
 fn failed<U: Missing, V>(u: U, v: V, c: bool, d: bool, k: i64, n: any Named, p: any Pet, op: (any Pet)?, ob: Bx?) {
     let mut mq: (any Pet)? = op
     {stmt}
@@ -145,6 +149,7 @@ id(Some(Some(p)))
 Bx().none<Fox>(1)
 p.name(1)
 Fox(1)
+oa_none(1)
 # A count error with a written list, and a generic construction with a list.
 Bx().wrap<Fox>(1, 2)
 id<Fox>(p, 1)
@@ -211,6 +216,8 @@ u
 u.name()
 u.nope()
 u == u
+# `==` on a type whose `Eq` comes only from a broken block (`Eb`, in `[failed]`), beside `u`.
+u == u || Eb.A == Eb.A
 id(u)
 Some(u)
 
