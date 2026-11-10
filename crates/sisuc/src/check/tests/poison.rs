@@ -5,9 +5,10 @@ use std::iter;
 
 use super::*;
 use Code::{
-    ArgumentCount, AssignToImmutable, BindingNotFound, BraceOnNewLine, CoalesceNotOptional,
-    FunctionNotFound, LabeledArgument, MayBeNone, Mismatch, NeverNone, NoMember,
-    SafeAccessNotOptional, TypeArguments, UnwrapNeedsOptional,
+    AlreadyConverted, ArgumentCount, AssignToImmutable, BindingNotFound, BraceOnNewLine,
+    CannotInfer, CoalesceNotOptional, FunctionNotFound, JumpOutsideLoop, LabeledArgument,
+    MayBeNone, Mismatch, MissingField, NeverNone, NoMember, NotConform, SafeAccessNotOptional,
+    TooManyArguments, TypeArguments, TypeAsValue, UnknownType, UnwrapNeedsOptional,
 };
 
 /// The declarations C: the classes, enums and functions that each row of `c_rows` uses. `Broken`
@@ -1228,18 +1229,793 @@ fn a_constructor_pattern_on_a_poisoned_member_should_add_no_error() {
 }
 
 /// A call whose result names a parameter that another argument binds, and whose one failed
-/// argument is an unknown name, keeps its type: its `??` is still reported. A call through a
-/// function and through a bound each have the rule. The spec's call row makes this result
-/// untyped, so that its `??` waits: the next task of part 6 changes this row.
+/// argument is an unknown name, is untyped: the spec's call row lets no argument settle a
+/// parameter in a call with a failed part. So the E0048 of its `??` waits. A call through a
+/// function and through a bound each have the rule.
 #[test]
-fn a_call_whose_other_argument_binds_its_parameter_should_keep_its_type() {
+fn a_call_whose_other_argument_binds_its_parameter_should_be_untyped() {
     codes(
         "interface Two {\n    fn two<U>(self, a: U, b: U) -> U\n}\nfn two<U>(a: U, b: U) -> U { a }\nfn f<T: Two>(t: T) {\n    print(t.two(1, nope) ?? 0)\n}\nfn g() {\n    print(two(1, nope) ?? 0)\n}\nfn main() {}",
-        &[
-            (CoalesceNotOptional, (6, 11)),
-            (BindingNotFound, (6, 20)),
-            (CoalesceNotOptional, (9, 11)),
-            (BindingNotFound, (9, 18)),
-        ],
+        &[(BindingNotFound, (6, 20)), (BindingNotFound, (9, 18))],
     );
+}
+
+/// Each form of S14 as `let a = <form>`, then `print(a + true)`. The form decides whether the
+/// poisoned value is typed, and not the source of the failure. An error that the rule adds is at
+/// `true`, or at `a` when no `+` takes the type of `a`.
+#[test]
+#[expect(clippy::too_many_lines, reason = "one row for each row of S14")]
+fn the_form_should_decide_the_type() {
+    c_rows(&[
+        (
+            "if nothing() { 1 } else { 2 }",
+            "let a = if nothing() { 1 } else { 2 } and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 16)), (Mismatch, (42, 15))],
+        ),
+        (
+            "if p.name { 1 } else { 2 }",
+            "let a = if p.name { 1 } else { 2 } and print(a + true)".into(),
+            vec![(MayBeNone, (41, 16)), (Mismatch, (42, 15))],
+        ),
+        (
+            "match nothing() { _ => 1 }",
+            "let a = match nothing() { _ => 1 } and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 19)), (Mismatch, (42, 15))],
+        ),
+        (
+            "{ nothing()\n 1 }",
+            "let a = { nothing()\n 1 } and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 15)), (Mismatch, (43, 15))],
+        ),
+        (
+            "h(nothing())",
+            "let a = h(nothing()) and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 15)), (Mismatch, (42, 15))],
+        ),
+        (
+            "h(p.name)",
+            "let a = h(p.name) and print(a + true)".into(),
+            vec![(MayBeNone, (41, 15)), (Mismatch, (42, 15))],
+        ),
+        (
+            "two(nothing(), 1)",
+            "let a = two(nothing(), 1) and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 17)), (Mismatch, (42, 15))],
+        ),
+        (
+            "h()",
+            "let a = h() and print(a + true)".into(),
+            vec![(ArgumentCount, (41, 13)), (Mismatch, (42, 15))],
+        ),
+        (
+            "keep(1)",
+            "let a = keep(1) and print(a + true)".into(),
+            vec![(ArgumentCount, (41, 13)), (Mismatch, (42, 15))],
+        ),
+        (
+            "keep(1, 2, 3)",
+            "let a = keep(1, 2, 3) and print(a + true)".into(),
+            vec![(ArgumentCount, (41, 13)), (Mismatch, (42, 15))],
+        ),
+        (
+            "keep(1, \"x\")",
+            "let a = keep(1, \"x\") and print(a + true)".into(),
+            vec![(Mismatch, (41, 21)), (Mismatch, (42, 15))],
+        ),
+        (
+            "keep(nothing(), 1)",
+            "let a = keep(nothing(), 1) and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 18)), (Mismatch, (42, 15))],
+        ),
+        (
+            "s.gm(nothing())",
+            "let a = s.gm(nothing()) and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 18)), (Mismatch, (42, 15))],
+        ),
+        (
+            "id<i64>()",
+            "let a = id<i64>() and print(a + true)".into(),
+            vec![(ArgumentCount, (41, 13)), (Mismatch, (42, 15))],
+        ),
+        (
+            "id<i64>(nothing())",
+            "let a = id<i64>(nothing()) and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 21)), (Mismatch, (42, 15))],
+        ),
+        (
+            "keep<i64>(nothing(), 1)",
+            "let a = keep<i64>(nothing(), 1) and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 23)), (Mismatch, (42, 15))],
+        ),
+        (
+            "Box<i64>(v: nothing())",
+            "let a = Box<i64>(v: nothing()) and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 25)), (Mismatch, (42, 11))],
+        ),
+        (
+            "Some<i64>(nothing())",
+            "let a = Some<i64>(nothing()) and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 23)), (Mismatch, (42, 11))],
+        ),
+        (
+            "bi.other(nothing())",
+            "let a = bi.other(nothing()) and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 22)), (Mismatch, (42, 15))],
+        ),
+        (
+            "arr(nothing())",
+            "let a = arr(nothing()) and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 17)), (Mismatch, (42, 11))],
+        ),
+        (
+            "keep<Missing>(1, 2)",
+            "let a = keep<Missing>(1, 2) and print(a + true)".into(),
+            vec![(UnknownType, (41, 18)), (Mismatch, (42, 15))],
+        ),
+        (
+            "k + nothing()",
+            "let a = k + nothing() and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 17)), (Mismatch, (42, 15))],
+        ),
+        (
+            "k * nothing()",
+            "let a = k * nothing() and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 17)), (Mismatch, (42, 15))],
+        ),
+        (
+            "1.5 + nothing()",
+            "let a = 1.5 + nothing() and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 19)), (Mismatch, (42, 15))],
+        ),
+        (
+            "\"a\" + nothing()",
+            "let a = \"a\" + nothing() and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 19)), (Mismatch, (42, 15))],
+        ),
+        (
+            "[1; missing]",
+            "let a = [1; missing] and print(a + true)".into(),
+            vec![(BindingNotFound, (41, 17)), (Mismatch, (42, 11))],
+        ),
+        (
+            "nothing() is i64",
+            "let a = nothing() is i64 and print(a + true)".into(),
+            vec![
+                (FunctionNotFound, (41, 13)),
+                (TypeAsValue, (41, 26)),
+                (Mismatch, (42, 11)),
+            ],
+        ),
+        (
+            "match 1 { x if missing => 1\n _ => 2 }",
+            "let a = match 1 { x if missing => 1\n _ => 2 } and print(a + true)".into(),
+            vec![(BindingNotFound, (41, 28)), (Mismatch, (43, 15))],
+        ),
+        (
+            "if c { return nothing() } else { 1 }",
+            "let a = if c { return nothing() } else { 1 } and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 27)), (Mismatch, (42, 15))],
+        ),
+        (
+            "if c { 1 } else { return missing }",
+            "let a = if c { 1 } else { return missing } and print(a + true)".into(),
+            vec![(BindingNotFound, (41, 38)), (Mismatch, (42, 15))],
+        ),
+        (
+            "if c { 1 } else { panic(nothing()) }",
+            "let a = if c { 1 } else { panic(nothing()) } and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 37)), (Mismatch, (42, 15))],
+        ),
+        (
+            "o ?? return 0",
+            "let a = o ?? return 0 and print(a + true)".into(),
+            vec![(Mismatch, (42, 15))],
+        ),
+        (
+            "Q(n: nothing())",
+            "let a = Q(n: nothing()) and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 18)), (Mismatch, (42, 11))],
+        ),
+        (
+            "Q(n: p.name)",
+            "let a = Q(n: p.name) and print(a + true)".into(),
+            vec![(MayBeNone, (41, 18)), (Mismatch, (42, 11))],
+        ),
+        (
+            "E.V(nothing())",
+            "let a = E.V(nothing()) and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 17)), (Mismatch, (42, 11))],
+        ),
+        (
+            "e.k(nothing())",
+            "let a = e.k(nothing()) and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 17)), (Mismatch, (42, 15))],
+        ),
+        (
+            "nothing() < 1",
+            "let a = nothing() < 1 and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 13)), (Mismatch, (42, 11))],
+        ),
+        (
+            "1 < nothing()",
+            "let a = 1 < nothing() and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 17)), (Mismatch, (42, 11))],
+        ),
+        (
+            "p.name < 1",
+            "let a = p.name < 1 and print(a + true)".into(),
+            vec![(MayBeNone, (41, 13)), (Mismatch, (42, 11))],
+        ),
+        (
+            "nothing() == 1",
+            "let a = nothing() == 1 and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 13)), (Mismatch, (42, 11))],
+        ),
+        (
+            "!nothing()",
+            "let a = !nothing() and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 14)), (Mismatch, (42, 11))],
+        ),
+        (
+            "nothing() && true",
+            "let a = nothing() && true and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 13)), (Mismatch, (42, 11))],
+        ),
+        (
+            "true && nothing()",
+            "let a = true && nothing() and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 21)), (Mismatch, (42, 11))],
+        ),
+        (
+            "xs[0..missing]",
+            "let a = xs[0..missing] and print(a + true)".into(),
+            vec![(BindingNotFound, (41, 19)), (Mismatch, (42, 11))],
+        ),
+        (
+            "i64(nothing())",
+            "let a = i64(nothing()) and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 17)), (Mismatch, (42, 15))],
+        ),
+        (
+            "string(nothing())",
+            "let a = string(nothing()) and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 20)), (Mismatch, (42, 15))],
+        ),
+        (
+            "\"{missing}\"",
+            "let a = \"{missing}\" and print(a + true)".into(),
+            vec![(BindingNotFound, (41, 15)), (Mismatch, (42, 15))],
+        ),
+        (
+            "{ 1\n nothing() }",
+            "let a = { 1\n nothing() } and print(a + true)".into(),
+            vec![(FunctionNotFound, (42, 6))],
+        ),
+        (
+            "if c { 1 } else { nothing() }",
+            "let a = if c { 1 } else { nothing() } and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 31))],
+        ),
+        (
+            "if nothing() { 1 } else { nothing() }",
+            "let a = if nothing() { 1 } else { nothing() } and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 16)), (FunctionNotFound, (41, 39))],
+        ),
+        (
+            "match c { true => 1\n false => nothing() }",
+            "let a = match c { true => 1\n false => nothing() } and print(a + true)".into(),
+            vec![(FunctionNotFound, (42, 15))],
+        ),
+        (
+            "[1, nothing()]",
+            "let a = [1, nothing()] and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 17))],
+        ),
+        (
+            "[nothing(), 1]",
+            "let a = [nothing(), 1] and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 14))],
+        ),
+        (
+            "[nothing()]",
+            "let a = [nothing()] and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 14))],
+        ),
+        (
+            "[p.name]",
+            "let a = [p.name] and print(a + true)".into(),
+            vec![(MayBeNone, (41, 14))],
+        ),
+        (
+            "Some(nothing())",
+            "let a = Some(nothing()) and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 18))],
+        ),
+        (
+            "Ok(nothing())",
+            "let a = Ok(nothing()) and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 16))],
+        ),
+        (
+            "Err(nothing())",
+            "let a = Err(nothing()) and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 17))],
+        ),
+        (
+            "dbg(nothing())",
+            "let a = dbg(nothing()) and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 17))],
+        ),
+        (
+            "id(nothing())",
+            "let a = id(nothing()) and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 16))],
+        ),
+        (
+            "s.gn(nothing())",
+            "let a = s.gn(nothing()) and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 18))],
+        ),
+        (
+            "G.W(nothing())",
+            "let a = G.W(nothing()) and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 17))],
+        ),
+        (
+            "Box(v: nothing())",
+            "let a = Box(v: nothing()) and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 20))],
+        ),
+        (
+            "id()",
+            "let a = id() and print(a + true)".into(),
+            vec![(ArgumentCount, (41, 13))],
+        ),
+        (
+            "pick(1)",
+            "let a = pick(1) and print(a + true)".into(),
+            vec![(ArgumentCount, (41, 13))],
+        ),
+        (
+            "pick(1, 2, 3)",
+            "let a = pick(1, 2, 3) and print(a + true)".into(),
+            vec![(ArgumentCount, (41, 13))],
+        ),
+        (
+            "both(1)",
+            "let a = both(1) and print(a + true)".into(),
+            vec![(ArgumentCount, (41, 13))],
+        ),
+        (
+            "Box()",
+            "let a = Box() and print(a + true)".into(),
+            vec![(MissingField, (41, 13))],
+        ),
+        (
+            "Box(v: 1, w: 2)",
+            "let a = Box(v: 1, w: 2) and print(a + true)".into(),
+            vec![(TooManyArguments, (41, 23))],
+        ),
+        (
+            "[nothing(); 3]",
+            "let a = [nothing(); 3] and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 14))],
+        ),
+        (
+            "nothing() + 1",
+            "let a = nothing() + 1 and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 13))],
+        ),
+        (
+            "nothing() * k",
+            "let a = nothing() * k and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 13))],
+        ),
+        (
+            "1 + nothing()",
+            "let a = 1 + nothing() and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 17))],
+        ),
+        (
+            "-1 + nothing()",
+            "let a = -1 + nothing() and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 18))],
+        ),
+        (
+            "(1 + 2) + nothing()",
+            "let a = (1 + 2) + nothing() and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 23))],
+        ),
+        (
+            "{ 1 } + nothing()",
+            "let a = { 1 } + nothing() and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 21))],
+        ),
+        (
+            "if c { 1 } else { 2 } + nothing()",
+            "let a = if c { 1 } else { 2 } + nothing() and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 37))],
+        ),
+        (
+            "id(1) + nothing()",
+            "let a = id(1) + nothing() and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 21))],
+        ),
+        (
+            "pick(1, nothing())",
+            "let a = pick(1, nothing()) and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 21))],
+        ),
+        (
+            "both(k, nothing())",
+            "let a = both(k, nothing()) and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 21))],
+        ),
+        (
+            "id(h())",
+            "let a = id(h()) and print(a + true)".into(),
+            vec![(ArgumentCount, (41, 16))],
+        ),
+        (
+            "both(1, \"x\")",
+            "let a = both(1, \"x\") and print(a + true)".into(),
+            vec![(Mismatch, (41, 18))],
+        ),
+        (
+            "bd(Rock(), 1)",
+            "let a = bd(Rock(), 1) and print(a + true)".into(),
+            vec![(NotConform, (41, 16))],
+        ),
+        (
+            "id<Missing>(1)",
+            "let a = id<Missing>(1) and print(a + true)".into(),
+            vec![(UnknownType, (41, 16))],
+        ),
+        (
+            "true + nothing()",
+            "let a = true + nothing() and print(a + true)".into(),
+            vec![(Mismatch, (41, 13)), (FunctionNotFound, (41, 20))],
+        ),
+        (
+            "o + nothing()",
+            "let a = o + nothing() and print(a + true)".into(),
+            vec![(Mismatch, (41, 13)), (FunctionNotFound, (41, 17))],
+        ),
+        (
+            "o ?? return missing",
+            "let a = o ?? return missing and print(a + true)".into(),
+            vec![(BindingNotFound, (41, 25))],
+        ),
+        (
+            "-nothing()",
+            "let a = -nothing() and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 14))],
+        ),
+        (
+            "xs[missing]",
+            "let a = xs[missing] and print(a + true)".into(),
+            vec![(BindingNotFound, (41, 16))],
+        ),
+        (
+            "missing[0]",
+            "let a = missing[0] and print(a + true)".into(),
+            vec![(BindingNotFound, (41, 13))],
+        ),
+        (
+            "nothing().x",
+            "let a = nothing().x and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 13))],
+        ),
+        (
+            "nothing().m()",
+            "let a = nothing().m() and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 13))],
+        ),
+        (
+            "nothing() ?? 1",
+            "let a = nothing() ?? 1 and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 13))],
+        ),
+        (
+            "o ?? nothing()",
+            "let a = o ?? nothing() and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 18))],
+        ),
+        (
+            "loop { break nothing() }",
+            "let a = loop { break nothing() } and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 26))],
+        ),
+        (
+            "loop { if c { break 1 }\n break nothing() }",
+            "let a = loop { if c { break 1 }\n break nothing() } and print(a + true)".into(),
+            vec![(FunctionNotFound, (42, 12))],
+        ),
+        (
+            "p.name",
+            "let a = p.name and print(a + true)".into(),
+            vec![(MayBeNone, (41, 13))],
+        ),
+        (
+            "p.m()",
+            "let a = p.m() and print(a + true)".into(),
+            vec![(MayBeNone, (41, 13))],
+        ),
+        (
+            "p.u()",
+            "let a = p.u() and print(a + true)".into(),
+            vec![(MayBeNone, (41, 13))],
+        ),
+    ]);
+}
+
+/// The statements `stmts` (each part between ` and ` is one line) in the body of `f`, from line
+/// 2. `f` has an array `xs` and an optional `o`.
+fn in_f(stmts: &str) -> String {
+    let body = stmts
+        .split(" and ")
+        .fold(String::new(), |body, line| body + "    " + line + "\n");
+    format!("fn f(xs: [i64], o: i64?) -> i64 {{\n{body}    return 1\n}}\nfn main() {{}}\n")
+}
+
+/// A declared type, a range and the `else` block of `let ... else` state the type apart from
+/// the failed part. So the true errors after it stay (S16).
+#[test]
+fn a_type_known_for_certain_should_keep_its_true_errors() {
+    error_rows(&[
+        (
+            "declared",
+            in_f("let x: i64 = nothing() and print(x + true)"),
+            vec![(FunctionNotFound, (2, 18)), (Mismatch, (3, 15))],
+        ),
+        (
+            "no type",
+            in_f("let x = nothing() and print(x + true)"),
+            vec![(FunctionNotFound, (2, 13))],
+        ),
+        (
+            "sibling",
+            in_f("print(missing + other)"),
+            vec![(BindingNotFound, (2, 11)), (BindingNotFound, (2, 21))],
+        ),
+        (
+            "one edit",
+            in_f("let n = true and print(n + 1) and print(n * 2)"),
+            vec![(Mismatch, (3, 11)), (Mismatch, (4, 11))],
+        ),
+        (
+            "declared ??",
+            in_f("let x: i64 = nothing() and print(x ?? 1)"),
+            vec![(FunctionNotFound, (2, 18)), (CoalesceNotOptional, (3, 11))],
+        ),
+        (
+            "for range",
+            in_f("for x in 0..missing { print(x + true) }"),
+            vec![(BindingNotFound, (2, 17)), (Mismatch, (2, 37))],
+        ),
+        (
+            "for range index",
+            in_f("for x in xs[0..missing] { print(x + true) }"),
+            vec![(BindingNotFound, (2, 20)), (Mismatch, (2, 41))],
+        ),
+        (
+            "for failed",
+            in_f("for x in missing { print(x + true) }"),
+            vec![(BindingNotFound, (2, 14))],
+        ),
+        (
+            "let else failed",
+            in_f("let Some(y) = missing else { return 1 } and print(y + true)"),
+            vec![(BindingNotFound, (2, 19))],
+        ),
+        (
+            "let else block",
+            in_f("let Some(y) = o else { return missing } and print(y + true)"),
+            vec![(BindingNotFound, (2, 35)), (Mismatch, (3, 15))],
+        ),
+    ]);
+}
+
+/// `mismatch` and `jumped` keep their jobs: the operator's own failure is the one error (S17).
+#[test]
+fn an_operator_failure_should_stay_one_report() {
+    error_rows(&[
+        (
+            "mismatch",
+            in_f("let n: i64 = None && true"),
+            vec![(Mismatch, (2, 18))],
+        ),
+        (
+            "jumped",
+            in_f("let y: i64 = { break }"),
+            vec![(JumpOutsideLoop, (2, 20))],
+        ),
+    ]);
+}
+
+/// A generic call that cannot meet its context keeps its message: `found` and `Misfit` give the
+/// E0032 at the `return` and each E0050 at the operator (S18).
+#[test]
+fn a_failed_generic_call_should_keep_its_message() {
+    error_rows(&[
+        (
+            "s18",
+            "class Two<A, B> {\n    a: A\n    b: B\n}\nfn mk2<X>() -> Two<X, bool> { panic(\"e\") }\nfn id<V>(v: V) -> V { v }\nfn r() -> i64 { return id(mk2()) }\nfn main() {\n    let z = id(mk2()) + id(mk2())\n}\n".into(),
+            vec![(Mismatch, (7, 27)), (CannotInfer, (9, 16)), (CannotInfer, (9, 28))],
+        ),
+    ]);
+}
+
+/// A closed result is typed only when each parameter that it names is bound: a written type arg
+/// binds it, and an argument beside a failed part does not. A type arg that its bound rejects
+/// binds nothing, and a result that names no parameter stays typed past it.
+#[test]
+fn a_closed_result_should_need_each_parameter_bound() {
+    c_rows(&[
+        (
+            "closed by arg",
+            "let a = pick<i64>(nothing(), 1) and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 23)), (Mismatch, (42, 15))],
+        ),
+        (
+            "open",
+            "let a = pick(nothing(), 1) and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 18))],
+        ),
+        (
+            "rejected bound",
+            "let a = bd<Rock>(Rock(), 1) and print(a + true)".into(),
+            vec![(NotConform, (41, 16))],
+        ),
+        (
+            "closed past a bound",
+            "let a = kb<Rock>(Rock()) and print(a + true)".into(),
+            vec![(NotConform, (41, 16)), (Mismatch, (42, 15))],
+        ),
+    ]);
+}
+
+/// `h()` is a typed poisoned `i64`. In a call it is a failed part, so the call is untyped. In
+/// each other form it reads as an `i64`, so the true errors after it stay. Beside it, the other
+/// arguments and the bounds are still checked against its type.
+#[test]
+#[expect(clippy::too_many_lines, reason = "one row for each form of the table")]
+fn a_typed_poisoned_part_should_fail_only_a_call() {
+    c_rows(&[
+        (
+            "id",
+            "let a = id(h()) and print(a + true)".into(),
+            vec![(ArgumentCount, (41, 16))],
+        ),
+        (
+            "some",
+            "let a = Some(h()) and print(a + true)".into(),
+            vec![(ArgumentCount, (41, 18))],
+        ),
+        (
+            "dbg",
+            "let a = dbg(h()) and print(a + true)".into(),
+            vec![(ArgumentCount, (41, 17))],
+        ),
+        (
+            "pick",
+            "let a = pick(h(), 1) and print(a + true)".into(),
+            vec![(ArgumentCount, (41, 18))],
+        ),
+        (
+            "plus k",
+            "let a = h() + k and print(a + true)".into(),
+            vec![(ArgumentCount, (41, 13)), (Mismatch, (42, 15))],
+        ),
+        (
+            "plus 1",
+            "let a = h() + 1 and print(a + true)".into(),
+            vec![(ArgumentCount, (41, 13)), (Mismatch, (42, 15))],
+        ),
+        (
+            "k plus",
+            "let a = k + h() and print(a + true)".into(),
+            vec![(ArgumentCount, (41, 17)), (Mismatch, (42, 15))],
+        ),
+        (
+            "1 plus",
+            "let a = 1 + h() and print(a + true)".into(),
+            vec![(ArgumentCount, (41, 17)), (Mismatch, (42, 15))],
+        ),
+        (
+            "conv plus",
+            "let a = i64(nope) + k and print(a + true)".into(),
+            vec![(BindingNotFound, (41, 17)), (Mismatch, (42, 15))],
+        ),
+        (
+            "block plus",
+            "let a = { nope\n 5 } + 1 and print(a + true)".into(),
+            vec![(BindingNotFound, (41, 15)), (Mismatch, (43, 15))],
+        ),
+        (
+            "neg",
+            "let a = -h() and print(a + true)".into(),
+            vec![(ArgumentCount, (41, 14)), (Mismatch, (42, 15))],
+        ),
+        (
+            "neg conv",
+            "let a = -i64(nope) and print(a + true)".into(),
+            vec![(BindingNotFound, (41, 18)), (Mismatch, (42, 15))],
+        ),
+        (
+            "index",
+            "let a = xs[h()] and print(a + true)".into(),
+            vec![(ArgumentCount, (41, 16)), (Mismatch, (42, 15))],
+        ),
+        (
+            "less",
+            "let a = h() < 1 and print(a + true)".into(),
+            vec![(ArgumentCount, (41, 13)), (Mismatch, (42, 11))],
+        ),
+        (
+            "array",
+            "let a = [h()] and print(a + true)".into(),
+            vec![(ArgumentCount, (41, 14)), (Mismatch, (42, 11))],
+        ),
+        (
+            "repeat",
+            "let a = [h(); 3] and print(a + true)".into(),
+            vec![(ArgumentCount, (41, 14)), (Mismatch, (42, 11))],
+        ),
+        (
+            "block",
+            "let a = { h() } and print(a + true)".into(),
+            vec![(ArgumentCount, (41, 15)), (Mismatch, (42, 15))],
+        ),
+        (
+            "if",
+            "let a = if c { 1 } else { h() } and print(a + true)".into(),
+            vec![(ArgumentCount, (41, 31)), (Mismatch, (42, 15))],
+        ),
+        (
+            "match",
+            "let a = match c { true => 1\n false => h() } and print(a + true)".into(),
+            vec![(ArgumentCount, (42, 15)), (Mismatch, (43, 15))],
+        ),
+        (
+            "coalesce",
+            "let a = o ?? h() and print(a + true)".into(),
+            vec![(ArgumentCount, (41, 18)), (Mismatch, (42, 15))],
+        ),
+        (
+            "interp",
+            "let a = \"{h()}\" and print(a + true)".into(),
+            vec![(ArgumentCount, (41, 15)), (Mismatch, (42, 15))],
+        ),
+        (
+            "i64 conv",
+            "let a = i64(h()) and print(a + true)".into(),
+            vec![(ArgumentCount, (41, 17)), (AlreadyConverted, (41, 17))],
+        ),
+        (
+            "string conv",
+            "let a = string(h()) and print(a + true)".into(),
+            vec![(ArgumentCount, (41, 20)), (Mismatch, (41, 20))],
+        ),
+        (
+            "both",
+            "let a = both(h(), true)".into(),
+            vec![(ArgumentCount, (41, 18)), (Mismatch, (41, 23))],
+        ),
+        (
+            "bd",
+            "let a = bd(h(), 1)".into(),
+            vec![(ArgumentCount, (41, 16)), (NotConform, (41, 16))],
+        ),
+        (
+            "ok",
+            "let a = Ok(h()) and print(a + true)".into(),
+            vec![(CannotInfer, (41, 13)), (ArgumentCount, (41, 16))],
+        ),
+        (
+            "err",
+            "let a = Err(h()) and print(a + true)".into(),
+            vec![(CannotInfer, (41, 13)), (ArgumentCount, (41, 17))],
+        ),
+    ]);
 }
