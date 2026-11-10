@@ -2752,7 +2752,7 @@ mod tests {
         assert_eq!(g.blocks, MAX_BLOCKS - 1);
     }
 
-    /// The `len` rule's text of a slice receiver: `((` and the block of a range, and `).len())`.
+    /// The start of the `len` rule's text when its receiver is a range of a local.
     const LEN_OF_SLICE: &str = "((({ let a = ";
 
     /// Many byte patterns of data.
@@ -2808,7 +2808,7 @@ mod tests {
     /// GIVEN an `[i64]` local `xs` and a `[string]` local `ys` in scope, one expression past a turn
     /// of the slice of `len`
     /// WHEN the `len` rule writes from many bytes of data
-    /// THEN no receiver is a range
+    /// THEN the outer receiver is no range
     #[test]
     fn len_should_not_slice_off_its_turn() {
         for bytes in byte_patterns() {

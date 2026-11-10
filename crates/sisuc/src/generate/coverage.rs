@@ -10169,7 +10169,8 @@ fn generated_programs_should_name_each_language_interface() {
     assert!(enumeration, "no seed lists Eq or Display after an enum");
 }
 
-/// GIVEN the programs of the seeds `0..FUZZ_SEEDS`, which the nightly reads and no others
+/// GIVEN the plain programs, with no fixed gap form, of the seeds `0..FUZZ_SEEDS`, which the
+/// nightly reads and no others
 /// WHEN each one is checked, instantiated and built to mir, in order
 /// THEN some function of some program slices a whole array local in place, and the walk stops at
 /// the first such seed. Pair removal gives this form when one block reads and drops the slice,
