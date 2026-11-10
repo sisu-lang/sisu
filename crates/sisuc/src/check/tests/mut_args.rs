@@ -1522,9 +1522,11 @@ fn stray_mut_should_not_be_reported_beside_a_count_error() {
 ///   field of a constructor, with a `let` local, a `let mut` local and a field, for a function
 ///   and a method, generic or not
 /// WHEN it is checked
-/// THEN the mismatch of the result is E0032, as for the call with `mut`, and E0166 follows
+/// THEN E0166 is reported, and the argument that it rejects is a failed part (the call row of
+///   S14). The result of a generic call is untyped and adds no mismatch. The closed `i64` of
+///   `count` is typed, so its mismatch E0032 comes first
 #[test]
-fn unmarked_place_whose_call_misses_its_expected_type_should_report_the_mismatch() {
+fn unmarked_place_should_leave_a_mismatch_only_to_a_closed_result() {
     let decls = "fn first<T>(mut xs: [T]) -> T {\n    let x = xs[0]\n    xs[0] = x\n    x\n}\n\
         fn count(mut xs: [i64]) -> i64 {\n    xs[0] += 1\n    xs[0]\n}\n\
         fn text(s: string) {\n    print(s)\n}\n\
@@ -1533,49 +1535,57 @@ fn unmarked_place_whose_call_misses_its_expected_type_should_report_the_mismatch
     let rows = [
         (
             "let",
+            false,
             "let names = [\"a\"]\n    let n: i64 = first(names)\n    print(n)",
         ),
         (
             "let mut",
+            false,
             "let mut names = [\"a\"]\n    let n: i64 = first(names)\n    print(n)",
         ),
         (
             "function that is not generic",
+            true,
             "let ys = [1]\n    let s: string = count(ys)\n    print(s)",
         ),
         (
             "field",
+            false,
             "let b = Names(cells: [\"a\"])\n    let n: i64 = first(b.cells)\n    print(n)",
         ),
         (
             "method",
+            false,
             "let b = Names(cells: [\"a\"])\n    let ys = [\"a\"]\n    let n: i64 = b.pick(ys)\n    print(n)",
         ),
         (
             "argument of another call",
+            false,
             "let ys = [1]\n    text(first(ys))",
         ),
         (
             "field of a constructor",
+            false,
             "let ys = [1]\n    let h = Holder(s: first(ys))\n    print(h.s)",
         ),
     ];
-    for (row, body) in rows {
+    for (row, closed, body) in rows {
         let src = format!("{decls}fn main() {{\n    {body}\n}}");
         let mut found = diags(&src);
         found.sort_by_key(|d| d.span().start());
         let found: Vec<_> = found.iter().map(Diagnostic::code).collect();
-        assert_eq!(
-            found,
-            [Code::Mismatch, Code::MutMarkerMissing],
-            "row `{row}`: {src}"
-        );
+        let expected: &[Code] = if closed {
+            &[Code::Mismatch, Code::MutMarkerMissing]
+        } else {
+            &[Code::MutMarkerMissing]
+        };
+        assert_eq!(found, expected, "row `{row}`: {src}");
     }
     let ret = format!("{decls}fn give(ys: [i64]) -> string {{\n    first(ys)\n}}\nfn main() {{}}");
     let mut found = diags(&ret);
     found.sort_by_key(|d| d.span().start());
     let found: Vec<_> = found.iter().map(Diagnostic::code).collect();
-    assert_eq!(found, [Code::Mismatch, Code::MutMarkerMissing], "return");
+    assert_eq!(found, [Code::MutMarkerMissing], "return");
 }
 
 /// GIVEN two `mut` places, and `f(mut a, mut b)`
@@ -2197,7 +2207,7 @@ fn mut_argument_against_a_written_context_should_be_e0170_only() {
 ///   writes its type arguments, or is a safe call, or is not generic, or the place is behind `?.`,
 ///   or the parameter is an associated type, or a parameter that no argument binds is in context
 /// WHEN the call is checked
-/// THEN the reports are those of the call before: this fix changes none of them
+/// THEN the reports are those of the call before, but a missing `mut` makes the call untyped
 #[test]
 fn mut_argument_against_a_written_context_should_keep_the_other_reports() {
     let rows: &[Row] = &[
@@ -2213,11 +2223,13 @@ fn mut_argument_against_a_written_context_should_keep_the_other_reports() {
             "let n: string = pair(mut names, 1)",
             &[(E32, "1")],
         ),
+        // E0166 rejects `names`, so the call has a failed part and is untyped (the call row of
+        // S14): its mismatch waits.
         (
             "i: no `mut`",
             "",
             "let n: i64 = first(names)",
-            &[(E32, "first(names)"), (Code::MutMarkerMissing, "names")],
+            &[(Code::MutMarkerMissing, "names")],
         ),
         (
             "n: a written type argument",

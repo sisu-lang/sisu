@@ -1,7 +1,7 @@
 // GIVEN `let n: i64 = first(b.cells)`, where the field `cells` is a `[string]` that is not `mut`
 // WHEN `sisu check` runs on it
-// THEN it reports E0032 for the result, then E0166 on `b.cells`
-// AND the E0166 has no help: declaring the field `mut` would leave the E0032
+// THEN it reports E0166 on `b.cells`; the E0032 of the result waits, because the call has a failed part
+// AND the E0166 has no help: declaring the field `mut` would leave that E0032
 class Names {
     cells: [string]
 }

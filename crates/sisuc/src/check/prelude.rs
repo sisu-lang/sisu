@@ -75,7 +75,8 @@ impl Checker<'_> {
             Ok(shown) => shown,
             Err(failed) => return failed,
         };
-        let Some(ty) = type_of(&checked) else {
+        // No argument settles `T` in a call with a failed part.
+        let Some(ty) = type_of(&checked).filter(|_| checked.is_ok()) else {
             return Err(Poisoned::error());
         };
         self.dbg_shown.push((self.body.owner, ty, span));

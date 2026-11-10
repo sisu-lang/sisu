@@ -191,12 +191,21 @@ impl Checker<'_> {
         let [l, r]: [Checked; 2] = checked
             .try_into()
             .unwrap_or_else(|_| panic!("`integers` should return one result per operand"));
+        // Only an untyped operand is a failed part: a typed poisoned one reads as its type. With
+        // an untyped right, a typed left of `sibling_rank` `Concrete` decides the type. An
+        // untyped left decides nothing, so the second error waits.
+        let failed = type_of(&l).is_none() || type_of(&r).is_none();
+        let decides =
+            !failed || (type_of(&l).is_some() && self.sibling_rank(lhs) == Rank::Concrete);
         if ty == Some(Type::STRING) {
             self.label_join_literals(start, [lhs, rhs]);
-            return self.concat(span, l, r, mismatched);
+            return self.concat(span, (l, decides), r, mismatched);
         }
         if kept {
             return Err(Poisoned::kept_error());
+        }
+        if !decides {
+            return Err(Poisoned::error());
         }
         let kind = l.ok().zip(r.ok()).map(|(l, r)| tir::ExprKind::Binary {
             op: tir_op,

@@ -575,14 +575,14 @@ fn a_labeled_mut_argument_should_leave_the_result_to_the_arguments() {
     );
 }
 
-/// The `Some` has a plain failed call as its argument, and the call decides no part of the type.
-/// The later `let` still reports that `y` is `i64?`, not a `string`.
+/// The `Some` has a failed call as its argument, so it has a failed part and is untyped (the call
+/// row of S14). The later `let` reads an untyped `y`, so its mismatch waits.
 #[test]
-fn a_some_of_a_failed_call_should_not_hide_a_later_mismatch() {
+fn a_some_of_a_failed_call_should_be_untyped() {
     failed(
         "fn h(x: i64) -> i64 { x }",
         "let y = Some(h(1, 2))\n    let s: string = y",
-        &[(ArgumentCount, (0, 18)), (Mismatch, (4, 21))],
+        &[(ArgumentCount, (0, 18))],
     );
 }
 

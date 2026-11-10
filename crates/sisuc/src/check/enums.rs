@@ -490,9 +490,9 @@ impl Checker<'_> {
                 tir::ExprKind::Variant { id, variant, args }
             })),
             _ => {
-                // The arguments bind the rest of the type, and they may be the fault.
+                // No argument settles a parameter in a call with a failed part.
                 let written = written_args(site, list.get(), 0);
-                self.failed_build((held, failed), (ty, ret, declared.len()), written)
+                self.failed_build(held, (ret, declared.len()), written)
             }
         }
     }

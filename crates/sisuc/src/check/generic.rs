@@ -1644,7 +1644,8 @@ pub(super) struct Site<'a> {
 }
 
 /// The type arguments after the first `owner` of `found`, which inference found for a callee,
-/// when `site` writes them. Else none: the arguments bind them, and they may be the fault.
+/// when `site` writes them. Else none: no argument settles a parameter in a call with a failed
+/// part.
 pub(super) fn written_args<'t>(site: Site<'_>, found: &'t [Type], owner: usize) -> &'t [Type] {
     if site.written.is_empty() {
         &[]
@@ -2130,8 +2131,9 @@ impl Checker<'_> {
             return Some(ret);
         }
         let mut bindings = Bindings::new(declared, owner);
+        // A `REJECTED` written type argument binds nothing.
         for (slot, &ty) in bindings.found[owner.len()..].iter_mut().zip(named) {
-            *slot = Some(ty);
+            *slot = (ty != *REJECTED).then_some(ty);
         }
         if bounded && (named.is_empty() || !self.meets_bounds(bounds, owner.len(), &bindings)) {
             return None;
@@ -2143,28 +2145,19 @@ impl Checker<'_> {
         }
     }
 
-    /// The result of a construction of a generic class or enum whose arguments `Err`. `state` says
-    /// whether an alias bound `held` and whether the call `failed`. `ty` is the type that the
-    /// arguments bound, `ret` the type with its parameters (`declared` of them) and `written` the
-    /// written type arguments. A failed call has the type that `fixed_result` gives.
+    /// The result of a construction of a generic class or enum whose arguments `Err`. `held` says
+    /// whether an alias bound held. `ret` is the type with its parameters (`declared` of them) and
+    /// `written` the written type arguments. No argument settles a parameter in a call with a
+    /// failed part, so the call has the type that `fixed_result` gives.
     pub(super) fn failed_build(
         &mut self,
-        (held, failed): (bool, bool),
-        (ty, ret, declared): (Type, Type, usize),
+        held: bool,
+        (ret, declared): (Type, usize),
         written: &[Type],
     ) -> Checked {
-        let fixed = if held && failed {
-            self.fixed_result(Some(ret), declared, &[], &[], written)
-        } else {
-            None
-        };
-        let ty = if !held {
-            None
-        } else if failed {
-            fixed
-        } else {
-            Some(ty)
-        };
+        let ty = held
+            .then(|| self.fixed_result(Some(ret), declared, &[], &[], written))
+            .flatten();
         Err(Poisoned::of(ty))
     }
 
@@ -2196,12 +2189,17 @@ impl Checker<'_> {
             bound: Vec::new(),
             mut_shapes: Vec::new(),
         };
+        // The written type arguments, which bind the result of a call that fails.
+        let mut named = Vec::new();
         if !written.is_empty() {
             let Some(list) = self.type_args(sig.name, &sig.declared[owned..], written, angles)
             else {
                 self.stray(args);
-                return Err(Poisoned::error());
+                // A list that failed binds nothing: only the receiver binds the result.
+                let ty = self.fixed_result(sig.ret, sig.declared.len(), sig.owner, &[], &[]);
+                return Err(Poisoned::of(ty));
             };
+            named = list.get().to_vec();
             // `type_args` rejects each type that `report_fresh` would.
             for (i, &ty) in list.get().iter().enumerate() {
                 call.bindings.found[owned + i] = Some(ty);
@@ -2209,6 +2207,12 @@ impl Checker<'_> {
             }
             let bound: Vec<usize> = (owned..sig.declared.len()).collect();
             self.check_early(&mut call, &bound, span);
+            // A written type argument that its bound rejects binds no parameter.
+            for (k, ty) in named.iter_mut().enumerate() {
+                if call.bindings.found[owned + k] == Some(*REJECTED) {
+                    *ty = *REJECTED;
+                }
+            }
         }
         // An argument at a `mut` parameter is a place. It binds the parameters that its
         // parameter names first, so that the other arguments convert to them.
@@ -2333,10 +2337,17 @@ impl Checker<'_> {
                     drop(self.expr(&arg.value, Expectation::Poisoned));
                 }
             }
+            // No argument settles a parameter in a failed call: the receiver and the written
+            // type arguments bind the result, or it is untyped.
+            let ty = if found.is_none() {
+                self.fixed_result(sig.ret, sig.declared.len(), sig.owner, &[], &named)
+            } else {
+                None
+            };
             return Err(Poisoned {
                 found,
-                kept: call.slots.iter().flatten().any(is_kept),
-                ..Poisoned::error()
+                kept: ty.is_none() && call.slots.iter().flatten().any(is_kept),
+                ..Poisoned::of(ty)
             });
         };
         // An argument that keeps its E0050 under a hint fails like any failed argument. The

@@ -97,6 +97,7 @@ impl Checker<'_> {
         let (iargs, types) = (TypeArgs::intern(iargs), TypeArgs::intern(types));
         let parts = self.mut_overlaps(parts);
         let failed = labeled || checked.iter().any(mismatched);
+        let parted = labeled || checked.iter().any(Result::is_err);
         let method =
             u32::try_from(method).expect("an interface should have fewer than 2^32 requirements");
         let call = move |args| tir::ExprKind::InterfaceCall {
@@ -114,16 +115,19 @@ impl Checker<'_> {
                 let call = tir::Expr::new(call(args), solved, span);
                 Ok(self.mut_call(call, parts))
             }
-            (_, solved) => {
-                // The arguments bind the rest of the result, and they may be the fault.
-                let fixed = if failed {
-                    let written = written_args(site, list.get(), owner.len());
-                    self.fixed_result(ret, declared.len(), &owner, &[], written)
-                } else {
-                    None
-                };
-                let result = if failed { fixed } else { solved };
-                Err(Poisoned::of(result))
+            // Only the receiver failed, and it is typed, so it reads as its type.
+            (_, Some(solved)) if !parted => Err(Poisoned::of(Some(solved))),
+            _ => {
+                // A call with a failed part: no argument settles a parameter, so the result is
+                // typed only when the receiver or a written type argument binds it.
+                let written = written_args(site, list.get(), owner.len());
+                Err(Poisoned::of(self.fixed_result(
+                    ret,
+                    declared.len(),
+                    &owner,
+                    &[],
+                    written,
+                )))
             }
         }
     }

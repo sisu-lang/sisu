@@ -354,12 +354,13 @@ fn a_none_that_is_called_should_get_the_fix_that_removes_the_parentheses() {
     }
 }
 
-/// An argument that fails still gives `Some` the type it has, so a use of it is checked.
+/// An argument that fails is a failed part of `Some`, so the `Some` is untyped (the call row of
+/// S14). The `let` adds no mismatch.
 #[test]
-fn a_some_whose_argument_fails_should_keep_its_type() {
+fn a_some_whose_argument_fails_should_be_untyped() {
     codes(
         &with_body("let r: i64 = Some(nothing)"),
-        &[(Code::Mismatch, (2, 18)), (Code::BindingNotFound, (2, 23))],
+        &[(Code::BindingNotFound, (2, 23))],
     );
 }
 

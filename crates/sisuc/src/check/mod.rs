@@ -104,11 +104,17 @@ struct Poisoned {
     /// counts as a mismatch, as a value of another type does.
     mismatch: bool,
     /// What a generic call found for its result, which cannot meet the call's context. Only a
-    /// report reads it. Every other check sees `Error`.
+    /// report reads it. Every other check sees an untyped value. It stays apart from `ty`:
+    /// `settled_by` and the joins of `coalesce` and `break_value` read it after the call
+    /// returned, when no expected type went down to the call. S18 pins it.
     found: Option<Misfit>,
-    /// A generic call in the value kept its E0050, which is its only report. The value has no
-    /// type, so it holds the code that uses it to nothing. That code adds no report for the
-    /// default type of an operator.
+    /// A generic call in the value kept its E0050, which is its only report. The value is
+    /// untyped, and an operator with such an operand adds no report for its default type. Three
+    /// readers in `integers` and `binary` need the mark. An operand that waits after a kept one
+    /// takes the default `i64` as a hint and keeps its own E0050 (S18). A leader that the
+    /// operator does not take is held to the operator's type after a kept operand, so
+    /// `id(mk2()) - b` with `b: bool` gives its E0032. And unary `-` and `binary` pass the mark
+    /// on, so a `char` beside `-(id(mk2()) + 1)` is still rejected.
     kept: bool,
     /// A failed `break` or `continue` outside a loop makes the value `never`, and that jump has
     /// its own report. In a block, it is the statement that ends the block. In an `if` or a
@@ -120,7 +126,8 @@ struct Poisoned {
 /// The result type of a generic call that cannot meet its context (see `report_unbound`). The
 /// type names the callee's unbound parameters, so it is never a value's type. The code that uses
 /// the value reports the mismatch with it, as it does for a callee that is not generic. `entry`
-/// is the place of the call's E0050 in `Body::misfits`, which that report cancels.
+/// is the place of the call's E0050 in `Body::misfits`, which that report cancels. It is not the
+/// type of a poisoned value: a value with it is untyped, and only the readers of `found` see it.
 #[derive(Clone, Copy)]
 struct Misfit {
     ty: Type,

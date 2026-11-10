@@ -1875,9 +1875,10 @@ fn a_closed_result_should_need_each_parameter_bound() {
     ]);
 }
 
-/// `h()` is a typed poisoned `i64`. In a call it is a failed part, so the call is untyped. In
-/// each other form it reads as an `i64`, so the true errors after it stay. Beside it, the other
-/// arguments and the bounds are still checked against its type.
+/// `h()` is a typed poisoned `i64`. As an argument of a call it is a failed part, so the call is
+/// untyped. In each other form it reads as an `i64`, so the true errors after it stay. Beside it,
+/// the other arguments and the bounds are still checked against its type. A typed poisoned
+/// receiver of a method reads as its type too.
 #[test]
 #[expect(clippy::too_many_lines, reason = "one row for each form of the table")]
 fn a_typed_poisoned_part_should_fail_only_a_call() {
@@ -1901,6 +1902,22 @@ fn a_typed_poisoned_part_should_fail_only_a_call() {
             "pick",
             "let a = pick(h(), 1) and print(a + true)".into(),
             vec![(ArgumentCount, (41, 18))],
+        ),
+        // A typed poisoned receiver reads as its type, so the argument binds the result.
+        (
+            "typed receiver",
+            "let a = { nope; s }.gn(1) and print(a + true)".into(),
+            vec![(BindingNotFound, (41, 15)), (Mismatch, (42, 15))],
+        ),
+        (
+            "built receiver",
+            "let a = P(name: 1, v: 1).gn(1) and print(a + true)".into(),
+            vec![(Mismatch, (41, 21)), (Mismatch, (42, 15))],
+        ),
+        (
+            "receiver and argument",
+            "let a = { nope; s }.gn(h()) and print(a + true)".into(),
+            vec![(BindingNotFound, (41, 15)), (ArgumentCount, (41, 28))],
         ),
         (
             "plus k",

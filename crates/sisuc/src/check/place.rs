@@ -653,7 +653,7 @@ impl Checker<'_> {
             } else {
                 self.settled(value, checked, Expectation::Required(ty))
             };
-            self.concat(span, read, value, mismatched)
+            self.concat(span, (read, true), value, mismatched)
         } else {
             // The place's own mismatch waits for `arithmetic`, which drops it beside a `char`.
             let start = self.diagnostics.len();

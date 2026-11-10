@@ -512,7 +512,10 @@ impl Checker<'_> {
                     tir::ExprKind::Index { base, index }
                 }))
             }
-            (.., element) => Err(Poisoned::of(element.filter(|_| !mismatched))),
+            // A failed index is untyped: a repair to an index differs from one to a range.
+            (_, index, element) => Err(Poisoned::of(
+                element.filter(|_| !mismatched && type_of(&index).is_some()),
+            )),
         }
     }
 

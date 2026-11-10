@@ -153,22 +153,20 @@ impl Checker<'_> {
                 span,
             )),
             _ => {
-                // The arguments bind the rest of the type, and they may be the fault.
-                let fixed = if failed {
-                    self.failed_some((through, open), site, list.get())
-                } else {
-                    None
-                };
-                let found = if failed { fixed } else { Some(found) };
-                Err(Poisoned::of(found))
+                // No argument settles the payload in a call with a failed part.
+                Err(Poisoned::of(self.failed_some(
+                    (through, open),
+                    site,
+                    list.get(),
+                )))
             }
         }
     }
 
     /// The type of a `Some` at `site`, through `through`, whose argument fails. `open` is
-    /// `through` when it takes parameters. `list` is the type arguments that the arguments
-    /// bound. An alias with no open parameter fixes the type, as does a written list; else
-    /// `None`, as the arguments may be the fault.
+    /// `through` when it takes parameters. `list` is the type arguments that the call found. An
+    /// alias with no open parameter fixes the type, as does a written list; else `None`, as no
+    /// argument settles the payload in a call with a failed part.
     fn failed_some(
         &mut self,
         (through, open): (Option<&Through>, Option<&Through>),

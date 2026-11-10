@@ -1017,6 +1017,7 @@ impl Checker<'_> {
         let (checked, types, solved) = checked?;
         let parts = self.mut_overlaps(parts);
         let failed = labeled || checked.iter().any(mismatched);
+        let parted = labeled || checked.iter().any(Result::is_err);
         match (receiver.into_iter().chain(checked).collect(), solved) {
             (Ok(args), Some(solved)) if !failed && parts.is_empty() => Ok(self.spilled(
                 span,
@@ -1028,16 +1029,19 @@ impl Checker<'_> {
                 let call = tir::Expr::new(tir::ExprKind::Call { func, types, args }, solved, span);
                 Ok(self.mut_call(call, parts))
             }
-            (_, solved) => {
-                // The arguments bind the rest of the result, and they may be the fault.
-                let fixed = if failed {
-                    let written = written_args(site, types.get(), owner.len());
-                    self.fixed_result(ret, declared.len(), owner, &[], written)
-                } else {
-                    None
-                };
-                let result = if failed { fixed } else { solved };
-                Err(Poisoned::of(result))
+            // Only the receiver failed, and it is typed, so it reads as its type.
+            (_, Some(solved)) if !parted => Err(Poisoned::of(Some(solved))),
+            _ => {
+                // A call with a failed part: no argument settles a parameter, so the result is
+                // typed only when the receiver or a written type argument binds it.
+                let written = written_args(site, types.get(), owner.len());
+                Err(Poisoned::of(self.fixed_result(
+                    ret,
+                    declared.len(),
+                    owner,
+                    &[],
+                    written,
+                )))
             }
         }
     }
@@ -1216,7 +1220,6 @@ impl Checker<'_> {
             let Some(ty) = ty else {
                 return Err(Poisoned::error());
             };
-            let failed = args.iter().any(mismatched);
             // The bounds that the alias's body puts on its parameters, on what they are bound to.
             let held = quiet
                 || through.is_none_or(|t| self.use_checks(&t.checks, list, span) == Some(true));
@@ -1226,10 +1229,9 @@ impl Checker<'_> {
                 }
                 Ok(_) => Err(Poisoned::error()),
                 Err(_) => {
-                    // The arguments bind the rest of the type, and they may be the fault.
+                    // No argument settles a parameter in a call with a failed part.
                     let written = written_args(site, list.get(), 0);
-                    let state = (held, failed);
-                    self.failed_build(state, (ty, ret, declared.len()), written)
+                    self.failed_build(held, (ret, declared.len()), written)
                 }
             };
         }

@@ -1,7 +1,7 @@
 // GIVEN `let s: string = gget(ys)`, where `ys` is a `let mut` `[i64]` and `gget` has a `mut` `T`
 // WHEN `sisu check` runs on it
-// THEN it reports E0032 for the result, then E0166 on `ys`
-// AND the E0166 has no fix: adding `mut` would leave the E0032
+// THEN it reports E0166 on `ys`; the E0032 of the result waits, because the call has a failed part
+// AND the E0166 has no help: adding `mut` would leave that E0032
 fn gget<T>(mut x: T) -> T {
     let y = x
     x = y

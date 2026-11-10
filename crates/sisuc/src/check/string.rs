@@ -32,17 +32,19 @@ pub(super) const METHODS: &[(&str, usize)] = &[
 ];
 
 impl Checker<'_> {
-    /// `l + r` over two `string`s, which `mismatched` says were reported against.
+    /// `l + r` over two `string`s, which `mismatched` says were reported against. `decides` says
+    /// whether the join is typed: both operands are typed, or `l` is typed and of `sibling_rank`
+    /// `Concrete`.
     pub(super) fn concat(
         &mut self,
         span: Span,
-        l: Checked,
+        (l, decides): (Checked, bool),
         r: Checked,
         mismatched: bool,
     ) -> Checked {
-        // A join with an `Error` operand is `Error`: that operand may have been meant as a
-        // number, and a `char` or an expected type beside the join would report it again.
-        let known = !mismatched && type_of(&l).is_some() && type_of(&r).is_some();
+        // A join that `l` does not decide is untyped: an untyped operand may have been meant as
+        // a number, and a `char` or an expected type beside the join would report it again.
+        let known = !mismatched && decides;
         let (Ok(l), Ok(r)) = (l, r) else {
             return Err(Poisoned::of(known.then_some(Type::STRING)));
         };

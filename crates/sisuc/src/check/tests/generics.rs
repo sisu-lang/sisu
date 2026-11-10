@@ -2887,18 +2887,19 @@ fn generic_arguments_that_do_not_check_should_report_as_other_arguments() {
             "fn both<T>(o: Opt2<T>, x: T) {}\nfn g() {\n    both(Wrap.W(\"a\"), 1)\n}".into(),
             vec![(Code::Mismatch, (3, 10))],
         ),
-        // A labeled variant is an error, and a missing name too; a bound one is typed.
+        // A labeled variant is an error, and a missing name too. A call with a missing name has
+        // a failed part, so it is untyped (the call row of S14), and the `let` adds no mismatch.
         (
             "fn g() {\n    let n: i64 = Wrap.W(x: 1)\n}".into(),
             vec![(Code::LabeledArgument, (2, 25))],
         ),
         (
             "fn g() {\n    let n: i64 = Tree.Node(Tree<i64>.Leaf, nope, Tree.Leaf)\n}".into(),
-            vec![(Code::Mismatch, (2, 18)), (Code::BindingNotFound, (2, 44))],
+            vec![(Code::BindingNotFound, (2, 44))],
         ),
         (
             "fn g() {\n    let n: i64 = Cell(value: 1, next: nope)\n}".into(),
-            vec![(Code::Mismatch, (2, 18)), (Code::BindingNotFound, (2, 39))],
+            vec![(Code::BindingNotFound, (2, 39))],
         ),
         (
             "enum Mix<T> { M(x: T, T) }\nfn g() {\n    let m = Mix.M(x: 1, 2)\n}".into(),
@@ -2987,11 +2988,14 @@ fn work_done_ahead_should_not_be_done_again() {
             "fn g(b: Box<i64>, c: bool) {\n    let xs: [i64] = id(if c { let n = nope; b.make() } else { let m = 1; b.make() })\n}",
             vec![(Code::BindingNotFound, (2, 39))],
         ),
-        // A join checked again checks again what its first check ranked ahead.
+        // A join checked again checks again what its first check ranked ahead. The closed
+        // `string` of `f` is a typed poisoned left (the call row of S14), so the join is a
+        // `string` and `let n: u8` reports it.
         (
             "class Bx {\n    fn make<U>(self) -> [U] { [] }\n}\nfn f<T>(x: T) -> string { \"\" }\nfn g() {\n    let n: u8 = f(({ nope; Bx() }).make()) + \"x\"\n}",
             vec![
                 (Code::CannotInfer, (6, 17)),
+                (Code::Mismatch, (6, 17)),
                 (Code::BindingNotFound, (6, 22)),
             ],
         ),
@@ -3533,21 +3537,26 @@ fn call_with_no_value_should_report_no_value() {
 }
 
 /// A call whose arguments do not give its type is checked alone, with no context. It reports the
-/// `E` that it cannot infer first (`mk(None)`), as `let v = mk(None)` does, and not that it has no
-/// value.
+/// `E` that it cannot infer first (`mk(None)`), as `let v = mk(None)` does. The results of `mk`
+/// and of `m?.make` name no parameter, so they are typed (the call row of S14). So `f` reports
+/// that it has no value.
 #[test]
 fn a_call_whose_arguments_do_not_give_its_type_should_report_its_parameter() {
     with_prelude();
     let maker = "class Maker {\n    n: i64\n    fn make<E>(self, x: E?) {}\n}\n";
     let (fun, m) = ("fn mk<E>(x: E?) {}\n", "let m: Maker? = None\n    ");
-    // The column of the call, or of the method's name.
-    for (decls, lets, call, col) in [
-        (fun, "", "f(mk(None))", 7),
-        (maker, m, "f(m?.make(None))", 10),
-    ] {
-        let (src, line) = no_value_main(decls, lets, call);
-        codes_row(call, &src, &[(Code::CannotInfer, (line, col))]);
-    }
+    let (src, line) = no_value_main(fun, "", "f(mk(None))");
+    codes_row(
+        "f(mk(None))",
+        &src,
+        &[(Code::CannotInfer, (line, 7)), (Code::NoValue, (line, 7))],
+    );
+    let (src, line) = no_value_main(maker, m, "f(m?.make(None))");
+    codes_row(
+        "f(m?.make(None))",
+        &src,
+        &[(Code::NoValue, (line, 7)), (Code::CannotInfer, (line, 10))],
+    );
 }
 
 /// `mk` has a mistake of its own, an argument of the wrong type, and a result that cannot meet
@@ -5453,12 +5462,9 @@ const CONTEXT_BOUND_ROWS: &[PartialRow<'static>] = {
     use Code::Mismatch;
     &[
         // The context makes `T` an `i64`, which `I` has no conformance for. The call keeps the
-        // `T = W` of its first argument, as a call with no context does.
-        (
-            "",
-            "let _x: i64 = h(W(), Two.P(5, 7))",
-            &[(Mismatch, "h(W()"), (Mismatch, "5")],
-        ),
+        // `T = W` of its first argument, as a call with no context does. The parameter rejects
+        // `5`, so the call has a failed part and is untyped (the call row of S14).
+        ("", "let _x: i64 = h(W(), Two.P(5, 7))", &[(Mismatch, "5")]),
         ("", "let _x: i64 = g(W())", &[(Mismatch, "g(W())")]),
         ("", "let _x: i64? = g2(W(), W())", &[(Mismatch, "g2(")]),
         // The bound of `T` names `U`, which the context binds: `i64` does not conform to
