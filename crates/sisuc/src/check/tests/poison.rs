@@ -467,15 +467,10 @@ fn each_source_should_obey_the_rule_at_each_reader() {
 /// The lines of the fixture, each with the errors whose primary line is that line. A typed
 /// poisoned `bool` or `string` gets the true E0048 of `??`; an untyped value gets none.
 #[test]
-#[expect(clippy::too_many_lines, reason = "one row for each line of S15")]
 fn a_chain_fixture_should_read_a_poisoned_value_as_any_reader() {
     let src = include_str!("../../../tests/diagnostics/E0062-chain-no-cascade.sisu");
     let (_, ds) = checked_with(PRELUDE_SOURCE, src);
-    let found: Vec<Wanted> = ds
-        .iter()
-        .filter(|d| d.code().severity() == Severity::Error)
-        .map(|d| (d.code(), at(src, d.span())))
-        .collect();
+    let found = errors(src, &ds);
     let lines: [(&str, usize, &[Wanted]); 20] = [
         (
             "(c.v < 1) ?? false",

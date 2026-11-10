@@ -271,15 +271,6 @@ fn full_memo(prefix: &str, tail: &str) -> String {
     src
 }
 
-/// The code and the position of each error of `src`.
-fn errors(src: &str) -> Vec<(Code, (usize, usize))> {
-    let (_, ds) = checked(src);
-    (ds.iter())
-        .filter(|d| d.code().severity() == Severity::Error)
-        .map(|d| (d.code(), at(src, d.span())))
-        .collect()
-}
-
 /// The memo of the aliases stays within the limit of the whole check, however many uses a program
 /// makes, and the use that passes it is the one report: each later use is `Error` with no report.
 /// 160 uses is 20x the smallest count that passes the limit (about 8).
@@ -310,7 +301,10 @@ fn an_alias_use_in_a_value_position_should_report_the_limit_that_it_passes() {
         &format!("{PAIR}{}type H<T> = Pair<B15<T>, i64>\n", branching(15)),
         "fn h(x: B15<i64>) {\n    let _v = H(first: x, second: 1)\n}\nfn main() {}",
     );
-    assert_eq!(errors(&src), [(Code::AliasTooLarge, (30, 14))]);
+    assert_eq!(
+        errors(&src, &diags(&src)),
+        [(Code::AliasTooLarge, (30, 14))]
+    );
 }
 
 /// GIVEN the aliases `B1` to `B15`, eight signatures that use `B15`, and `type EA<T> =
@@ -327,7 +321,7 @@ fn an_alias_qualifier_in_a_pattern_should_report_only_the_limit_that_it_passes()
         "fn h(e: Two<B15<i64>, i64>) {\n    match e {\n        EA.W(n) => print(n)\n        \
          _ => {}\n    }\n}\nfn main() {}",
     );
-    assert_eq!(errors(&src), [(Code::AliasTooLarge, (35, 9))]);
+    assert_eq!(errors(&src, &diags(&src)), [(Code::AliasTooLarge, (35, 9))]);
 }
 
 /// GIVEN `type EA<T> = Missing<T>`, an alias that is `Error`, and an enum `Two`
@@ -367,7 +361,7 @@ fn an_alias_qualifier_at_a_class_position_should_report_only_the_limit_that_it_p
         "fn h(o: B15<i64>?) {\n    match o {\n        OA.Some(n) => {}\n        _ => {}\n    \
          }\n}\nfn main() {}",
     );
-    assert_eq!(errors(&src), [(Code::AliasTooLarge, (31, 9))]);
+    assert_eq!(errors(&src, &diags(&src)), [(Code::AliasTooLarge, (31, 9))]);
 }
 
 /// A depth-first resolution that follows each alias by a call would use a frame for each alias of

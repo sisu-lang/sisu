@@ -136,6 +136,14 @@ fn codes_row(row: &str, src: &str, expected: &[Wanted]) {
 /// A diagnostic's code and its primary position, as a test names it.
 type Wanted = (Code, (usize, usize));
 
+/// The code and the position of each error among `ds`, the diagnostics of `src`.
+fn errors(src: &str, ds: &[Diagnostic]) -> Vec<Wanted> {
+    (ds.iter())
+        .filter(|d| d.code().severity() == Severity::Error)
+        .map(|d| (d.code(), at(src, d.span())))
+        .collect()
+}
+
 /// One row of `error_rows`: its name, its program and the errors that it must give.
 type ErrorRow<'a> = (&'a str, String, Vec<Wanted>);
 
@@ -145,11 +153,7 @@ fn error_rows(rows: &[ErrorRow<'_>]) {
     let mut red = Vec::new();
     for (name, src, wanted) in rows {
         let (_, ds) = checked_with(PRELUDE_SOURCE, src);
-        let found: Vec<Wanted> = ds
-            .iter()
-            .filter(|d| d.code().severity() == Severity::Error)
-            .map(|d| (d.code(), at(src, d.span())))
-            .collect();
+        let found = errors(src, &ds);
         if found != *wanted {
             red.push(format!("row `{name}`: found {found:?}, wanted {wanted:?}"));
         }

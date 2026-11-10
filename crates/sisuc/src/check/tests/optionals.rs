@@ -848,10 +848,7 @@ fn a_none_beside_a_loop_with_no_value_should_report_only_the_none() {
         "let _ = if c { None } else { outer: loop { loop { break outer } } }",
     ] {
         let src = with_exit_body(statement);
-        let found: Vec<_> = (diags(&src).iter())
-            .filter(|d| d.code().severity() == Severity::Error)
-            .map(|d| (d.code(), at(&src, d.span())))
-            .collect();
+        let found = errors(&src, &diags(&src));
         assert_eq!(found, [(Code::CannotInfer, (7, 20))], "{statement}");
     }
 }
