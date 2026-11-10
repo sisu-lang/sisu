@@ -259,6 +259,27 @@ fn many_uses(uses: usize) -> String {
     format!("{PAIR}{src}fn main() {{}}")
 }
 
+/// `prefix`, then eight signatures that use `B15` (they fill the memo of the aliases), then `tail`.
+fn full_memo(prefix: &str, tail: &str) -> String {
+    let mut src = prefix.to_string();
+    for g in 0..8 {
+        let (open, close) = ("[".repeat(g), "]".repeat(g));
+        writeln!(src, "fn g{g}(x: B15<{open}i64{close}>) {{}}")
+            .expect("writing to a string should not fail");
+    }
+    src.push_str(tail);
+    src
+}
+
+/// The code and the position of each error of `src`.
+fn errors(src: &str) -> Vec<(Code, (usize, usize))> {
+    let (_, ds) = checked(src);
+    (ds.iter())
+        .filter(|d| d.code().severity() == Severity::Error)
+        .map(|d| (d.code(), at(src, d.span())))
+        .collect()
+}
+
 /// The memo of the aliases stays within the limit of the whole check, however many uses a program
 /// makes, and the use that passes it is the one report: each later use is `Error` with no report.
 /// 160 uses is 20x the smallest count that passes the limit (about 8).
@@ -285,19 +306,11 @@ fn many_uses_of_an_alias_should_stay_within_the_limit_of_the_check() {
 /// THEN that use reports the limit: the alias is `Error`, and the report is not lost
 #[test]
 fn an_alias_use_in_a_value_position_should_report_the_limit_that_it_passes() {
-    let mut src = format!("{PAIR}{}type H<T> = Pair<B15<T>, i64>\n", branching(15));
-    for g in 0..8 {
-        let (open, close) = ("[".repeat(g), "]".repeat(g));
-        writeln!(src, "fn g{g}(x: B15<{open}i64{close}>) {{}}")
-            .expect("writing to a string should not fail");
-    }
-    src.push_str("fn h(x: B15<i64>) {\n    let _v = H(first: x, second: 1)\n}\nfn main() {}");
-    let (_, ds) = checked(&src);
-    let errors: Vec<_> = (ds.iter())
-        .filter(|d| d.code().severity() == Severity::Error)
-        .map(|d| (d.code(), at(&src, d.span())))
-        .collect();
-    assert_eq!(errors, [(Code::AliasTooLarge, (30, 14))]);
+    let src = full_memo(
+        &format!("{PAIR}{}type H<T> = Pair<B15<T>, i64>\n", branching(15)),
+        "fn h(x: B15<i64>) {\n    let _v = H(first: x, second: 1)\n}\nfn main() {}",
+    );
+    assert_eq!(errors(&src), [(Code::AliasTooLarge, (30, 14))]);
 }
 
 /// GIVEN the aliases `B1` to `B15`, eight signatures that use `B15`, and `type EA<T> =
@@ -309,22 +322,12 @@ fn an_alias_use_in_a_value_position_should_report_the_limit_that_it_passes() {
 #[test]
 fn an_alias_qualifier_in_a_pattern_should_report_only_the_limit_that_it_passes() {
     let two = "enum Two<A, B> {\n    V(A)\n    W(B)\n}\ntype EA<T> = Two<B15<T>, i64>\n";
-    let mut src = format!("{PAIR}{}{two}", branching(15));
-    for g in 0..8 {
-        let (open, close) = ("[".repeat(g), "]".repeat(g));
-        writeln!(src, "fn g{g}(x: B15<{open}i64{close}>) {{}}")
-            .expect("writing to a string should not fail");
-    }
-    src.push_str(
+    let src = full_memo(
+        &format!("{PAIR}{}{two}", branching(15)),
         "fn h(e: Two<B15<i64>, i64>) {\n    match e {\n        EA.W(n) => print(n)\n        \
          _ => {}\n    }\n}\nfn main() {}",
     );
-    let (_, ds) = checked(&src);
-    let errors: Vec<_> = (ds.iter())
-        .filter(|d| d.code().severity() == Severity::Error)
-        .map(|d| (d.code(), at(&src, d.span())))
-        .collect();
-    assert_eq!(errors, [(Code::AliasTooLarge, (35, 9))]);
+    assert_eq!(errors(&src), [(Code::AliasTooLarge, (35, 9))]);
 }
 
 /// GIVEN `type EA<T> = Missing<T>`, an alias that is `Error`, and an enum `Two`
@@ -359,22 +362,12 @@ fn an_alias_qualifier_that_is_error_should_add_no_error_at_a_class_position() {
 /// THEN the pattern reports that limit alone, not the class position that takes only names
 #[test]
 fn an_alias_qualifier_at_a_class_position_should_report_only_the_limit_that_it_passes() {
-    let mut src = format!("{PAIR}{}type OA<T> = B15<T>?\n", branching(15));
-    for g in 0..8 {
-        let (open, close) = ("[".repeat(g), "]".repeat(g));
-        writeln!(src, "fn g{g}(x: B15<{open}i64{close}>) {{}}")
-            .expect("writing to a string should not fail");
-    }
-    src.push_str(
+    let src = full_memo(
+        &format!("{PAIR}{}type OA<T> = B15<T>?\n", branching(15)),
         "fn h(o: B15<i64>?) {\n    match o {\n        OA.Some(n) => {}\n        _ => {}\n    \
          }\n}\nfn main() {}",
     );
-    let (_, ds) = checked(&src);
-    let errors: Vec<_> = (ds.iter())
-        .filter(|d| d.code().severity() == Severity::Error)
-        .map(|d| (d.code(), at(&src, d.span())))
-        .collect();
-    assert_eq!(errors, [(Code::AliasTooLarge, (31, 9))]);
+    assert_eq!(errors(&src), [(Code::AliasTooLarge, (31, 9))]);
 }
 
 /// A depth-first resolution that follows each alias by a call would use a frame for each alias of
