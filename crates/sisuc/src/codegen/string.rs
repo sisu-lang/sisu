@@ -19,7 +19,7 @@ use inkwell::{AddressSpace, IntPredicate};
 use super::abi::{PAD_CENTER, PAD_LEFT, PAD_RIGHT};
 use super::layout::{BYTES, CAP, HeapBlock, LEN};
 use super::rc::{Helper, param};
-use super::{Codegen, POSITIONED, zeroext};
+use super::{Codegen, OptLevel, POSITIONED, zeroext};
 use crate::source::Span;
 use crate::tir::{Align, Format, Pad, Stream, Type};
 
@@ -132,9 +132,9 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// join are in the helper `@sisu_rc.concat.string(lhs, rhs_len)`, which `define_string_concat`
     /// writes: one call for each `+`, so that the `phi` nodes of the ways do not chain through the
     /// joins of a function (#633). This caller reads the two lengths, calls the helper, copies the
-    /// bytes of `rhs` to where the helper says, and releases `rhs`. It builds the result from the
-    /// block and the data of the call. The length is the sum of the two lengths, so that LLVM
-    /// sees it.
+    /// bytes of `rhs` to where the helper says, and releases `rhs`. At `-O0` it returns the
+    /// value of the call. Above `-O0`, it builds the result from the block and the data of the
+    /// call. The length is the sum of the two lengths, so that LLVM sees it.
     ///
     /// The helper makes room for `rhs_len` more bytes and stores the new length in the header.
     /// `lhs` has a block with a header `len` of set bytes, and `needed` is
@@ -179,6 +179,11 @@ impl<'ctx> Codegen<'ctx, '_> {
             rhs_len,
         );
         self.release(rhs, Type::STRING);
+        // At `-O0` no pass reads the sum. A chain of sums in one block makes the DAG combiner
+        // superlinear (`string left`), so `-O0` keeps the length of the call.
+        if self.level == OptLevel::O0 {
+            return joined;
+        }
         // The length is the sum here and not the one in `joined`, so that LLVM sees it: a length
         // read from the result of the call is opaque. The sum cannot wrap, as in the helper.
         let len = self

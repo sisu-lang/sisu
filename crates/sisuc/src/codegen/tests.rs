@@ -7558,9 +7558,10 @@ fn each_string_join_should_be_one_call_with_no_phi_at_o2() {
 #[test]
 fn the_length_of_a_string_join_should_reach_a_bounds_check_at_o2() {
     let context = Context::create();
-    let module = compiled(
+    let module = compiled_at(
         &context,
         "fn at(a: string) -> u8 {\n    let b = (a + \"!\").bytes()\n    b[a.len()]\n}\n\nfn main(args: [string]) {\n    print(at(\"x{args.len()}\"))\n}",
+        OptLevel::O2,
     );
     keep_functions(&module, "at");
     let machine = target_machine(OptLevel::O2).expect("the host is a target");
