@@ -7539,6 +7539,43 @@ fn each_string_join_should_be_one_call_with_no_phi_at_o2() {
     assert!(attributes.contains("noinline"), "{HELPER}: {attributes}");
 }
 
+/// The length of the joined string is the sum of the two lengths, which the caller of the join
+/// helper computes. So at `-O2` the index `a.len()` is in the bounds of `a + "!"`, and `at` holds
+/// no bounds check. A length that is read from the result of the call would keep the check.
+#[test]
+fn the_length_of_a_string_join_should_reach_a_bounds_check_at_o2() {
+    let context = Context::create();
+    let module = compiled(
+        &context,
+        "fn at(a: string) -> u8 {\n    let b = (a + \"!\").bytes()\n    b[a.len()]\n}\n\nfn main(args: [string]) {\n    print(at(\"x{args.len()}\"))\n}",
+    );
+    keep_functions(&module, "at");
+    let machine = target_machine(OptLevel::O2).expect("the host is a target");
+    optimize(&module, &machine, OptLevel::O2, None).expect("the module should optimize");
+    let ir = module.print_to_string().to_string();
+    let at = function_body(&ir, "@sisu.at(");
+    assert!(
+        !at.contains("@sisu_panic_bounds"),
+        "a bounds check in\n{at}"
+    );
+}
+
+/// The length of `a + b` folds with `a.len() + b.len()` at `-O2`, so `same` returns `true`.
+#[test]
+fn the_length_of_a_string_join_should_fold_in_a_compare_at_o2() {
+    let context = Context::create();
+    let module = optimized_at(
+        &context,
+        "fn same(a: string, b: string) -> bool {\n    let s = a + b\n    s.len() == a.len() + b.len()\n}\n\nfn main(args: [string]) {\n    print(same(\"x{args.len()}\", \"y{args.len()}\"))\n}",
+        OptLevel::O2,
+    );
+    let ir = module.print_to_string().to_string();
+    assert!(
+        ir.contains("@sisu_print_bool(i1 zeroext true)"),
+        "no constant `true` for `print_bool` in\n{ir}"
+    );
+}
+
 /// `+=` on a field and on an element lower to the same join as `+`, so each is one call of the
 /// join helper.
 #[test]
