@@ -115,19 +115,10 @@ impl Checker<'_> {
                 let call = tir::Expr::new(call(args), solved, span);
                 Ok(self.mut_call(call, parts))
             }
-            // Only the receiver failed, and it is typed, so it reads as its type.
-            (_, Some(solved)) if !parted => Err(Poisoned::of(Some(solved))),
             _ => {
-                // A call with a failed part: no argument settles a parameter, so the result is
-                // typed only when the receiver or a written type argument binds it.
                 let written = written_args(site, list.get(), owner.len());
-                Err(Poisoned::of(self.fixed_result(
-                    ret,
-                    declared.len(),
-                    &owner,
-                    &[],
-                    written,
-                )))
+                let sig = (ret, declared.len(), &owner[..]);
+                Err(self.failed_call((solved, parted), sig, written))
             }
         }
     }

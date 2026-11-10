@@ -2161,6 +2161,25 @@ impl Checker<'_> {
         Err(Poisoned::of(ty))
     }
 
+    /// The poison of a failed call to a callee with `declared` type parameters and the result
+    /// `ret`. `owner` is the receiver's type arguments, `written` the type arguments that the
+    /// call writes, and `solved` what inference found.
+    ///
+    /// When only the receiver failed (`parted` is false), the receiver is typed and reads as its
+    /// type, so `solved` stands. Otherwise the call has a failed part, and no argument settles a
+    /// parameter: the result is typed only when the receiver or a written type argument binds it.
+    pub(super) fn failed_call(
+        &mut self,
+        (solved, parted): (Option<Type>, bool),
+        (ret, declared, owner): (Option<Type>, usize, &[Type]),
+        written: &[Type],
+    ) -> Poisoned {
+        match solved {
+            Some(solved) if !parted => Poisoned::of(Some(solved)),
+            _ => Poisoned::of(self.fixed_result(ret, declared, owner, &[], written)),
+        }
+    }
+
     /// `generic_call`, before what ranking kept is dropped.
     #[expect(
         clippy::too_many_lines,
@@ -2189,8 +2208,8 @@ impl Checker<'_> {
             bound: Vec::new(),
             mut_shapes: Vec::new(),
         };
-        // The written type arguments, which bind the result of a call that fails.
-        let mut named = Vec::new();
+        // How many type arguments the call writes. They bind the result of a call that fails.
+        let mut named = 0;
         if !written.is_empty() {
             let Some(list) = self.type_args(sig.name, &sig.declared[owned..], written, angles)
             else {
@@ -2199,7 +2218,7 @@ impl Checker<'_> {
                 let ty = self.fixed_result(sig.ret, sig.declared.len(), sig.owner, &[], &[]);
                 return Err(Poisoned::of(ty));
             };
-            named = list.get().to_vec();
+            named = list.get().len();
             // `type_args` rejects each type that `report_fresh` would.
             for (i, &ty) in list.get().iter().enumerate() {
                 call.bindings.found[owned + i] = Some(ty);
@@ -2207,12 +2226,6 @@ impl Checker<'_> {
             }
             let bound: Vec<usize> = (owned..sig.declared.len()).collect();
             self.check_early(&mut call, &bound, span);
-            // A written type argument that its bound rejects binds no parameter.
-            for (k, ty) in named.iter_mut().enumerate() {
-                if call.bindings.found[owned + k] == Some(*REJECTED) {
-                    *ty = *REJECTED;
-                }
-            }
         }
         // An argument at a `mut` parameter is a place. It binds the parameters that its
         // parameter names first, so that the other arguments convert to them.
@@ -2340,6 +2353,12 @@ impl Checker<'_> {
             // No argument settles a parameter in a failed call: the receiver and the written
             // type arguments bind the result, or it is untyped.
             let ty = if found.is_none() {
+                // A written type argument that its bound rejects is `REJECTED` there, and binds
+                // no parameter.
+                let named: Vec<Type> = call.bindings.found[owned..owned + named]
+                    .iter()
+                    .map(|ty| ty.unwrap_or(*REJECTED))
+                    .collect();
                 self.fixed_result(sig.ret, sig.declared.len(), sig.owner, &[], &named)
             } else {
                 None
