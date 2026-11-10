@@ -118,8 +118,8 @@ fn operands_spill_before_an_exit() {
 }
 
 /// A literal whose expected type failed still types and joins its elements: only what takes
-/// its type from the context is left quiet. A `loop` takes its type from its `break` values,
-/// which must agree. Each quiet row checks clean with an array type written for `Bad`.
+/// its type from the context is left quiet. A mistake inside an element that no sibling hints
+/// waits for the next run. Each quiet row checks clean with an array type written for `Bad`.
 #[test]
 fn a_literal_in_a_failed_context_should_still_join_its_elements() {
     let quiet = [
@@ -156,14 +156,15 @@ fn a_literal_in_a_failed_context_should_still_join_its_elements() {
                 (Code::BindingNotFound, (2, 20)),
             ],
         ),
-        // A loop in a branch or in a `break` value of the element joins its values too.
+        // A branch of an element with no expected type waits: its mismatch is for the next run.
         (
             "fn main() {\n    let xs: Bad = [if true { loop { break 1 } } else { true }]\n}",
-            vec![(Code::UnknownType, (2, 13)), (Code::Mismatch, (2, 56))],
+            vec![(Code::UnknownType, (2, 13))],
         ),
+        // A loop in the element takes `UNKNOWN`, so the values of its `break`s wait too.
         (
             "fn main() {\n    let xs: Bad = [loop {\n        if true { break loop { break 1 } }\n        break \"a\"\n    }]\n}",
-            vec![(Code::UnknownType, (2, 13)), (Code::Mismatch, (4, 15))],
+            vec![(Code::UnknownType, (2, 13))],
         ),
         // A loop in a statement before the element's value keeps its own rules.
         (
@@ -172,11 +173,11 @@ fn a_literal_in_a_failed_context_should_still_join_its_elements() {
         ),
         (
             "fn main() {\n    let xs: Bad = [loop { break 1 }, true]\n}",
-            vec![(Code::UnknownType, (2, 13)), (Code::Mismatch, (2, 38))],
+            vec![(Code::UnknownType, (2, 13))],
         ),
         (
             "fn main() {\n    let xs: Bad = [loop {\n        if true { break 1 }\n        break true\n    }]\n}",
-            vec![(Code::UnknownType, (2, 13)), (Code::Mismatch, (4, 15))],
+            vec![(Code::UnknownType, (2, 13))],
         ),
     ] {
         codes(src, &expected);

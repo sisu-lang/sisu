@@ -165,7 +165,7 @@ impl Checker<'_> {
             }
             [one] => Some(*one),
             _ => {
-                if self.context_failed(site, span) {
+                if Self::context_failed(site) {
                     return None;
                 }
                 // A result that is `Error` has its own error.

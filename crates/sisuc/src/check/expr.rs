@@ -321,10 +321,8 @@ impl Checker<'_> {
             }
             ExprKind::Block(block) => {
                 let value = tail(block).map(|v| v.span);
-                let outer = self.pass_quiet(e.span, value, expected);
                 let outer_hint = self.pass_hint(value, self.hinted(e.span, expected).1);
                 let checked = self.block(block, expected);
-                self.body.quiet_at = outer;
                 self.body.hint_at = outer_hint;
                 checked.map(|block| {
                     let ty = block.ty;
@@ -490,27 +488,6 @@ impl Checker<'_> {
         (checked, false)
     }
 
-    /// Whether the expression at `span`, which expects `expected`, is the quiet value (see
-    /// `Body::quiet_at`).
-    pub(super) fn quiet(&self, span: Span, expected: Option<Type>) -> bool {
-        expected.is_none() && self.body.quiet_at == Some(span)
-    }
-
-    /// Moves the quiet value from `from` to `to`, the part that gives its value, when `to`
-    /// expects nothing (`expected`). Returns where it was, to put back after `to` is checked.
-    pub(super) fn pass_quiet(
-        &mut self,
-        from: Span,
-        to: Option<Span>,
-        expected: Option<Type>,
-    ) -> Option<Span> {
-        let outer = self.body.quiet_at;
-        if self.quiet(from, expected) {
-            self.body.quiet_at = to;
-        }
-        outer
-    }
-
     /// `expected` as the expression at `span` takes it, and the type of its siblings: no
     /// expected type and that type when it is the hinted value (see `Body::hint_at`), else
     /// `expected` and none.
@@ -538,7 +515,6 @@ impl Checker<'_> {
     /// A `None`, of the optional type `expected`.
     pub(super) fn none(&mut self, span: Span, expected: Option<Type>) -> Checked {
         let kind = match expected {
-            _ if self.quiet(span, expected) => return Err(Poisoned::error()),
             Some(ty) if matches!(ty.kind(), TypeKind::Optional(_)) => {
                 return Ok(tir::Expr::new(tir::ExprKind::None, ty, span));
             }

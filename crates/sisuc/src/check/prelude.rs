@@ -64,12 +64,9 @@ impl Checker<'_> {
     }
 
     /// `dbg(x)`, of the type of `x`, which it checks against `expected`. It does not warn when
-    /// `x` is an optional: `dbg` is meant to be run. When the call is the quiet value (see
-    /// `Body::quiet_at`), so is `x`.
+    /// `x` is an optional: `dbg` is meant to be run.
     fn dbg(&mut self, span: Span, args: &[ast::Arg], expected: Option<Type>) -> Checked {
-        let outer = self.pass_quiet(span, args.first().map(|a| a.value.span), expected);
         let shown = self.shown(span, args, "dbg", (expected, None));
-        self.body.quiet_at = outer;
         let (arg, checked, labeled) = match shown {
             Ok(shown) => shown,
             Err(failed) => return failed,

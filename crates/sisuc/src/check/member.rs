@@ -720,7 +720,7 @@ impl Checker<'_> {
         span: Span,
         candidates: &[(tir::FuncId, InterfaceId, TypeArgs)],
     ) -> Option<tir::FuncId> {
-        if self.context_failed(site, span) {
+        if Self::context_failed(site) {
             return None;
         }
         // A result that is `Error` has its own error.
@@ -739,10 +739,10 @@ impl Checker<'_> {
         Some(candidates[picked].0)
     }
 
-    /// Whether the context of the call at `span` failed, and reported it: this call is poisoned
-    /// with it, and picking among its candidates would only add to it.
-    pub(super) fn context_failed(&self, site: Site<'_>, span: Span) -> bool {
-        site.expected == Some(UNKNOWN) || self.quiet(span, site.expected)
+    /// Whether the context of the call that `site` writes failed, and reported it: this call is
+    /// poisoned with it, and picking among its candidates would only add to it.
+    pub(super) fn context_failed(site: Site<'_>) -> bool {
+        site.expected == Some(UNKNOWN)
     }
 
     /// The type arguments that `site` writes, resolved without a report; none when it writes

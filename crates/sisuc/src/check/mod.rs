@@ -511,8 +511,6 @@ struct LoopFrame {
     /// The type of the siblings of a hinted loop (see `Body::hint_at`): `expected` is then a
     /// hint, which no value converts to.
     siblings: Option<Type>,
-    /// Whether the loop is a quiet value (see `Body::quiet_at`), and so its values are too.
-    quiet: bool,
     /// Whether a `break` inside a nested loop has targeted it, so its values lie in one.
     crossed: bool,
     /// The first bare `break`.
@@ -546,7 +544,6 @@ impl LoopFrame {
             widened: false,
             deferred: Vec::new(),
             siblings: None,
-            quiet: false,
             crossed: false,
         }
     }
@@ -1090,11 +1087,6 @@ struct Body {
     /// Where the initializer of a `let` is, whose annotation failed: a constructor there does not
     /// check its bounds, as its errors would follow from the annotation's.
     failed_let: Option<Span>,
-    /// Where the quiet value is: an expression that has no expected type only because the
-    /// context of an array literal around it failed (see `joined`). Its value parts are quiet
-    /// too, and a quiet value that cannot be inferred is not reported, as the failed context
-    /// was reported. Only the expression at this span is quiet, not its operands.
-    quiet_at: Option<Span>,
     /// Where the hinted value is, and the type of its siblings: an expression whose expected
     /// type comes from the siblings it joins (the branches before it, the earlier values of its
     /// loop, the left side of its `??`), not from its context. That type steers inference as an

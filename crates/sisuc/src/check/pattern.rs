@@ -256,7 +256,7 @@ impl Checker<'_> {
         let form = LetValue::test(position, &checked);
         let (blocks, ty) = self.ranked(|c| {
             let sources = c.arm_branches(arms, &form, expected);
-            c.join(span, &sources, (expected, siblings), |c, i, expected| {
+            c.join(&sources, (expected, siblings), |c, i, expected| {
                 let arm = &arms[i];
                 let (bound, guard, so_far) = c.bound_branch(arm_key(arm), |c| {
                     c.bind_pattern(None, &form, &arm.pattern, Some(arm))

@@ -2101,8 +2101,6 @@ impl Checker<'_> {
         expected: Option<Type>,
         parts: &mut MutParts,
     ) -> Result<(Vec<Checked>, TypeArgs, Option<Type>), Poisoned> {
-        // The context of the quiet value failed, as an `UNKNOWN` one did.
-        let expected = expected.or_else(|| self.quiet(span, expected).then_some(UNKNOWN));
         self.ranked(|c| c.infer_call(span, sig, written, args, expected, parts))
     }
 

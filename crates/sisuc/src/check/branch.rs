@@ -154,7 +154,7 @@ impl Checker<'_> {
                 c.block_branch(then_block, expected, bind),
                 c.block_branch(else_block, expected, |_| None),
             ];
-            c.join(span, &sources, (expected, siblings), |c, i, expected| {
+            c.join(&sources, (expected, siblings), |c, i, expected| {
                 if i == 0 {
                     let then = then
                         .take()
@@ -183,10 +183,8 @@ impl Checker<'_> {
     /// that fails for a branch that rejected `expected` is a mismatch too. With no branches, the
     /// type is `never`. A `never` join with a branch that only a failed `break` or `continue`
     /// makes `never` is `Err` with that mark (see `Poisoned::jumped`): one such branch is enough.
-    /// A branch with no expected type is quiet when the `if` or `match` is (see `Body::quiet_at`).
     pub(super) fn join(
         &mut self,
-        span: Span,
         sources: &[Branch<'_>],
         (expected, siblings): (Option<Type>, Option<Type>),
         mut check: impl FnMut(&mut Self, usize, Option<Type>) -> CheckedBlock,
@@ -201,14 +199,12 @@ impl Checker<'_> {
             let carried =
                 expected.or_else(|| anchor.and_then(|a| after_branch(a, sources[i].exact())));
             let tail = sources[i].tail.map(|v| v.span);
-            let outer = self.pass_quiet(span, tail, carried);
             // A type that the branches before give is a hint, not an expected type.
             let hint = anchor
                 .flatten()
                 .filter(|_| expected.is_none() && carried.is_some());
             let outer_hint = self.pass_hint(tail, hint);
             let block = check(self, i, carried);
-            self.body.quiet_at = outer;
             self.body.hint_at = outer_hint;
             // The first branch of a known type anchors the rest; a failed or `unit` one only
             // until then. An `any` branch widens the anchor, which only the hints read.

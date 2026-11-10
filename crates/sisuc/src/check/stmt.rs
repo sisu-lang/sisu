@@ -1270,7 +1270,6 @@ impl Checker<'_> {
         expected: Option<Type>,
     ) -> Checked {
         let mut frame = LoopFrame::new(LoopKind::Loop, keyword, label.cloned(), expected);
-        frame.quiet = self.quiet(span, expected);
         frame.siblings = self.hinted(span, expected).1;
         let (mut checked, mut frame) = self.loop_body(frame, |c| c.block(body, None));
         self.join_deferred(&mut frame);
@@ -1396,7 +1395,6 @@ impl Checker<'_> {
             return Err(Poisoned::typed(Type::NEVER));
         }
         let frame = self.frame(target);
-        let quiet = frame.quiet;
         let hint = frame
             .expected
             .map(|ty| (ty, None))
@@ -1410,18 +1408,12 @@ impl Checker<'_> {
             .and_then(|(_, first)| first)
             .map(|first| (v.span, first));
         let outer = std::mem::replace(&mut self.body.break_hint, from);
-        // A value of a quiet loop that expects nothing is quiet too, wherever the `break` is.
-        let outer_quiet = self.body.quiet_at;
-        if quiet {
-            self.body.quiet_at = Some(v.span);
-        }
         self.body.label_typo = typo.map(|name| (name.span, span.start()));
         let outer_hint = self.pass_hint(Some(v.span), siblings);
         let checked = self.expr(v, hint.map(|(ty, _)| ty));
         self.body.hint_at = outer_hint;
         self.body.label_typo = None;
         self.body.break_hint = outer;
-        self.body.quiet_at = outer_quiet;
         // A failed value fails the loop, and gives it no type and no second report. A generic
         // call's misfit is joined by the type it found, as a concrete call is by its type.
         let misfit = self.misfit_type(&checked);

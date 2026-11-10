@@ -65,7 +65,7 @@ impl Checker<'_> {
                 .unzip();
             return self.array(span, element, checked, mismatched.contains(&true));
         }
-        let quiet = expected == Some(UNKNOWN) || self.quiet(span, expected);
+        let quiet = expected == Some(UNKNOWN);
         if elements.is_empty() {
             let d = match expected {
                 _ if quiet => return Err(Poisoned::error()),
@@ -111,7 +111,7 @@ impl Checker<'_> {
         let mut own: Vec<Option<Type>> = vec![None; elements.len()];
         let sources: Vec<_> = elements.iter().map(|e| self.value_branch(e)).collect();
         let siblings = (None, Some(element));
-        let (blocks, joined) = self.join(span, &sources, siblings, |c, i, expected| {
+        let (blocks, joined) = self.join(&sources, siblings, |c, i, expected| {
             let checked = c.value(&elements[i], expected);
             own[i] = checked.as_ref().ok().map(|e| {
                 if let tir::ExprKind::Wrap(inner) = &e.kind
@@ -170,28 +170,25 @@ impl Checker<'_> {
     /// optional; an element that waits and is not such is typed against the join as it is. With
     /// no typed element, the first element that waits cannot be inferred, which `quiet` (the
     /// context failed) leaves unreported.
-    /// With `quiet`, each concrete element is a quiet value too (see `Body::quiet_at`). An
-    /// element whose type is `Error` poisons the array.
+    /// With `quiet`, a concrete element that no anchor hints is checked as `UNKNOWN`. An element
+    /// whose type is `Error` poisons the array.
     fn joined(&mut self, span: Span, elements: &[ast::Expr], quiet: bool) -> Checked {
         let mut slots: Vec<Option<Checked>> = elements.iter().map(|_| None).collect();
         let (ranks, optional): (Vec<Rank>, Vec<bool>) =
             elements.iter().map(|e| self.sibling_ranked(e)).unzip();
-        let outer = self.body.quiet_at;
         // The first typed element that is an `any` type, widened by the later ones, is a hint
         // for the elements after it, as the first branch of an `if` is for the others.
         let mut anchor: Option<Type> = None;
         for (i, e) in elements.iter().enumerate() {
             if ranks[i] == Rank::Concrete {
-                self.body.quiet_at = if quiet { Some(e.span) } else { outer };
                 let checked = match anchor {
                     Some(any) => self.value_beside(e, any),
-                    None => self.value(e, None),
+                    None => self.value(e, quiet.then_some(UNKNOWN)),
                 };
                 anchor = self.widen_anchor(anchor, type_of(&checked));
                 slots[i] = Some(checked);
             }
         }
-        self.body.quiet_at = outer;
         let literal = literal_type(slots.iter().flatten().next().and_then(type_of));
         for (i, e) in elements.iter().enumerate() {
             if ranks[i] == Rank::Literal {
@@ -446,12 +443,10 @@ impl Checker<'_> {
     ) -> Checked {
         let element = expected_element(expected);
         // Without an element type, a `None` or `[]` cannot be inferred, unless `expected` is
-        // `UNKNOWN` or the literal is the quiet value, which makes `value` quiet too.
+        // `UNKNOWN`.
         let hint = element.or_else(|| expected.filter(|&ty| ty == UNKNOWN));
-        let outer = self.pass_quiet(span, Some(value.span), expected);
         // `operand`, split so the class rule runs between the check and the wrap.
         let checked = self.value(value, hint);
-        self.body.quiet_at = outer;
         let class = type_of(&checked).map(innermost).filter(|ty| {
             matches!(
                 ty.kind(),
