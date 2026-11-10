@@ -92,10 +92,6 @@ const DBG_EVERY: u64 = 37;
 const SLICE_EVERY: u64 = 200;
 /// Every this many expressions, the receiver of a `len` that has an array local in scope is a range
 /// of that local. The range reads its base in place when the program uses the base again.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the fix commit uses it in `Gen::len`")
-)]
 const SLICE_LEN_EVERY: u64 = 2;
 /// Every this many expressions, one that an array local's element can be is that element through
 /// `first`, `last` or `get`, under a default.
@@ -796,9 +792,28 @@ impl Gen<'_> {
         Info::of(&parts, max - left, true)
     }
 
-    /// `((s).len())` of a `string` or `((a).len())` of an array.
+    /// `((s).len())` of a `string` or `((a).len())` of an array. On a turn by count, with an array
+    /// local in scope, the array is a range of that local. The program may then use the local
+    /// again, so the range reads it in place.
     fn len(&mut self) -> Info {
         self.w.text("((");
+        if !self.one_line
+            && self.nesting < MAX_NESTING
+            && self.blocks < MAX_BLOCKS
+            && self.expressions.is_multiple_of(SLICE_LEN_EVERY)
+        {
+            let arrays: Vec<usize> = (0..self.scope.vars.len())
+                .filter(|&v| matches!(self.scope.vars[v].ty, Ty::Array(_)))
+                .collect();
+            if !arrays.is_empty() {
+                let pick = self.pick(arrays.len());
+                let var = &self.scope.vars[arrays[pick]];
+                let (name, size) = (var.name.clone(), var.size);
+                let receiver = self.local_slice(&name, size);
+                self.w.text(").len())");
+                return Info::of(&[receiver], 0, true);
+            }
+        }
         self.synth = true;
         let receiver = if self.pick(2) == 0 {
             self.expr(&Ty::String, MAX_SIZE)
@@ -1029,30 +1044,37 @@ impl Gen<'_> {
         let vars: Vec<usize> = (0..self.scope.vars.len())
             .filter(|&v| self.scope.vars[v].ty == *ty && self.scope.vars[v].size <= max)
             .collect();
-        self.w.text("({ ");
-        self.blocks += 1;
-        // `None` for a literal that the block binds, whose parts are the literal's.
-        let local = if !vars.is_empty() && self.pick(2) == 0 {
+        if !vars.is_empty() && self.pick(2) == 0 {
             let pick = self.pick(vars.len());
             let var = &self.scope.vars[vars[pick]];
-            Some((var.name.clone(), var.size))
-        } else {
-            None
-        };
-        let (name, base) = if let Some((name, size)) = local {
-            (name, Info::leaf(size))
-        } else {
-            // The type is written, as an empty literal has none of its own.
-            self.w.text(&format!("let b: {ty} = "));
-            let literal = self.array_literal(element, max, false);
-            self.w.text("; ");
-            ("b".to_string(), literal)
-        };
-        let (bind, range) = self.bounded_range(&name);
+            let (name, size) = (var.name.clone(), var.size);
+            return self.local_slice(&name, size);
+        }
+        self.w.text("({ ");
+        self.blocks += 1;
+        // The type is written, as an empty literal has none of its own.
+        self.w.text(&format!("let b: {ty} = "));
+        let literal = self.array_literal(element, max, false);
+        self.w.text("; ");
+        self.close_slice("b");
+        // It reads a local that a write may change.
+        Info::of(&[literal], literal.size, false)
+    }
+
+    /// `({ let a = ...; name[range] })` of the array local `name`, whose value has `size`.
+    fn local_slice(&mut self, name: &str, size: u64) -> Info {
+        self.w.text("({ ");
+        self.blocks += 1;
+        self.close_slice(name);
+        // It reads a local that a write may change.
+        Info::of(&[Info::leaf(size)], size, false)
+    }
+
+    /// The end of a block that slices `name`: its binding of `a`, the range, and the closing.
+    fn close_slice(&mut self, name: &str) {
+        let (bind, range) = self.bounded_range(name);
         self.w.text(&format!("{bind}{name}[{range}] }})"));
         self.blocks -= 1;
-        // It reads a local that a write may change.
-        Info::of(&[base], base.size, false)
     }
 
     /// `let a = i % (name.len() + 1); ` and a range over `name` in one of the five forms, with
