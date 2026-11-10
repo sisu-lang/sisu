@@ -2,10 +2,10 @@
 // AND the rest of the chain checks whether a value is optional, or binds a name to the value
 // AND a value built from the typed one by an operator, a block, a join, a generic call or a slice
 // WHEN `sisu check` runs on it
-// THEN it reports E0062 alone, as the `?.` fix of E0062 would make the value optional
+// THEN it reports E0062, and a reader of the failed value adds no report, because the value has no type
 // AND it does not report that the value is not optional, and a name bound to it has no type
-// AND where both remedies give the same report, such as `==` or an enum that misses a variant,
-// it reports that too
+// AND a form that gives its own type, such as `==`, `<`, `-`, `!` or a string, reads as that type,
+// so `??` on it reports E0048. A `match` on the failed value does not report a missing variant
 class Inner {
     ys: [i64]
     v: i64

@@ -3,10 +3,7 @@
 use super::any::{AnyJoin, is_target, widen};
 use super::expr::{fits, literal_type, no_member, path, typed};
 use super::generic::{Rank, mark};
-use super::{
-    Checked, Checker, Declared, Expectation, Flag, Poisoned, as_optional, has_remedy_flag, payload,
-    spread, type_of,
-};
+use super::{Checked, Checker, Declared, Expectation, Poisoned, as_optional, payload, type_of};
 use crate::ast;
 use crate::diagnostic::{
     Definition, Diagnostic, DiagnosticKind, Expected, IndexUsage, Literal, UnwrapHelp,
@@ -92,7 +89,6 @@ impl Checker<'_> {
                 mismatch: true,
                 found: None,
                 kept: false,
-                unwrapped: Flag::No,
                 jumped: false,
             });
         }
@@ -433,7 +429,6 @@ impl Checker<'_> {
                 mismatch: mismatched,
                 found: None,
                 kept: false,
-                unwrapped: Flag::No,
                 jumped: false,
             }),
         }
@@ -503,7 +498,6 @@ impl Checker<'_> {
         }
         let outer = std::mem::replace(&mut self.body.indexed, true);
         let checked = self.value(base, Expectation::None);
-        let unwrapped = has_remedy_flag(&checked);
         // An optional array is reported, and its element goes on typed, but no code reads it.
         let optional = type_of(&checked).is_some_and(is_optional_array);
         let element = self.element(base, type_of(&checked), IndexUsage::Read);
@@ -518,10 +512,7 @@ impl Checker<'_> {
                     tir::ExprKind::Index { base, index }
                 }))
             }
-            (.., element) => spread(
-                Err(Poisoned::of(element.filter(|_| !mismatched))),
-                unwrapped,
-            ),
+            (.., element) => Err(Poisoned::of(element.filter(|_| !mismatched))),
         }
     }
 

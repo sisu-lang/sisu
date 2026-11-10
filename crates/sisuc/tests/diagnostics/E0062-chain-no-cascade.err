@@ -174,6 +174,12 @@ help: if a `None` result is fine, use `?.`
 118 |     print((c?.s + "x") ?? "")
     |             +
 
+error[E0048]: the left side of `??` is not optional
+   --> E0062-chain-no-cascade.sisu:122:11
+    |
+122 |     print((c.v < 1) ?? false)
+    |           ^^^^^^^^^
+
 error[E0062]: `c` may be `None`
    --> E0062-chain-no-cascade.sisu:122:12
     |
@@ -198,6 +204,12 @@ help: if a `None` result is fine, use `?.`
 126 |     print((-c?.v) ?? 0)
     |              +
 
+error[E0048]: the left side of `??` is not optional
+   --> E0062-chain-no-cascade.sisu:130:11
+    |
+130 |     print((!c.b) ?? false)
+    |           ^^^^^^
+
 error[E0062]: `c` may be `None`
    --> E0062-chain-no-cascade.sisu:130:13
     |
@@ -209,6 +221,12 @@ help: if a `None` result is fine, use `?.`
     |
 130 |     print((!c?.b) ?? false)
     |              +
+
+error[E0048]: the left side of `??` is not optional
+   --> E0062-chain-no-cascade.sisu:134:11
+    |
+134 |     print((c.b && k) ?? false)
+    |           ^^^^^^^^^^
 
 error[E0062]: `c` may be `None`
    --> E0062-chain-no-cascade.sisu:134:12
@@ -341,6 +359,12 @@ help: if a `None` result is fine, use `?.`
     |
 171 |     print((match p { A => if k { c?.v } else { 1 }; B => 1 }) ?? 0)
     |                                   +
+
+error[E0048]: the left side of `??` is not optional
+   --> E0062-chain-no-cascade.sisu:175:11
+    |
+175 |     print((if c.b { 1 } else { 2 }) ?? 0)
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^
 
 error[E0062]: `c` may be `None`
    --> E0062-chain-no-cascade.sisu:175:15
@@ -482,12 +506,6 @@ help: if a `None` result is fine, use `?.`
 214 |     print("{c?.v}" ?? "")
     |              +
 
-error[E0048]: the left side of `??` is not optional
-   --> E0062-chain-no-cascade.sisu:218:11
-    |
-218 |     print([c.v] ?? [1])
-    |           ^^^^^
-
 error[E0062]: `c` may be `None`
    --> E0062-chain-no-cascade.sisu:218:12
     |
@@ -608,12 +626,6 @@ help: if a `None` result is fine, use `?.`
 254 |     match c?.v { Some("a") => {}; _ => {} }
     |            +
 
-error[E0032]: expected a pattern for `i64`, found `"a"`
-   --> E0062-chain-no-cascade.sisu:254:22
-    |
-254 |     match c.v { Some("a") => {}; _ => {} }
-    |                      ^^^
-
 error[E0062]: `c` may be `None`
    --> E0062-chain-no-cascade.sisu:258:11
     |
@@ -625,12 +637,6 @@ help: if a `None` result is fine, use `?.`
     |
 258 |     match c?.v { Some(Some(x)) => {}; _ => {} }
     |            +
-
-error[E0032]: expected a pattern for `i64`, found `Some`
-   --> E0062-chain-no-cascade.sisu:258:22
-    |
-258 |     match c.v { Some(Some(x)) => {}; _ => {} }
-    |                      ^^^^^^^
 
 error[E0062]: `c` may be `None`
    --> E0062-chain-no-cascade.sisu:262:11
@@ -667,19 +673,6 @@ help: if a `None` result is fine, use `?.`
     |
 270 |     if let Some(m) = c?.n { print(m.v) }
     |                       +
-
-error[E0130]: `match` does not cover `B`
-   --> E0062-chain-no-cascade.sisu:274:5
-    |
-274 |     match c.e { A => {} }
-    |     ^^^^^
-    |
-help: add a `_ =>` arm
-    |
-274 ~     match c.e { A => {}
-275 +         _ => todo
-276 ~     }
-    |
 
 error[E0062]: `c` may be `None`
    --> E0062-chain-no-cascade.sisu:274:11
@@ -1186,4 +1179,4 @@ help: if a `None` result is fine, use `?.`
     |                   +
 
 sisu: 102 errors
-sisu: for more on a code, run `sisu explain <code>`: E0032, E0048, E0062, E0130
+sisu: for more on a code, run `sisu explain <code>`: E0048, E0062

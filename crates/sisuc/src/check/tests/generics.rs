@@ -4283,10 +4283,12 @@ const WHOLE_ROWS: &[PartialRow<'static>] = {
             "h(true, Two.P(\"s\", 1))",
             &[(Mismatch, "Two.P(")],
         ),
+        // The `else` branch fails, so the `if` has no type (the spec row `if`, `match`: a branch),
+        // and the mismatch of the whole argument waits.
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "h(true, if true { Two.P(\"s\", 1) } else { Two.P(true, 2) })",
-            &[(Mismatch, "if"), (Mismatch, "true, 2)")],
+            &[(Mismatch, "true, 2)")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
@@ -6637,18 +6639,18 @@ const KEPT_E0050_ROWS: &[(ParityRow<'static>, &[Code])] = &[
         ),
         &[Code::BindingNotFound],
     ),
-    // The join reports the branch that does not fit first, and the other branch's misfit has no
-    // code that reports it.
+    // A branch that does not fit gives the join no type (the spec row `if`, `match`: a branch),
+    // so the misfit of an earlier branch waits, as the concrete twin's mismatch does.
     (
         ("", "let y: i64 = if true { mk2() } else { None }\nprint(y)"),
-        &[Code::CannotInfer, Code::Mismatch],
+        &[Code::Mismatch],
     ),
     (
         (
             "",
             "let y: i64 = if true { mk2() } else if false { mk2() } else { 3 }\nprint(y)",
         ),
-        &[Code::CannotInfer, Code::Mismatch],
+        &[Code::Mismatch],
     ),
     // The side of the type parameter has no `==`, which is the first mistake.
     (
@@ -6658,12 +6660,14 @@ const KEPT_E0050_ROWS: &[(ParityRow<'static>, &[Code])] = &[
         ),
         &[Code::ParamLacks, Code::CannotInfer],
     ),
+    // The misfit fails its branch, so the join has no type (the spec row `if`, `match`: a
+    // branch), and `==` waits.
     (
         (
             "",
             "let a: any Display = 1\nprint(1 == if true { a } else { mk2() })",
         ),
-        &[Code::NoOperator, Code::CannotInfer],
+        &[Code::CannotInfer],
     ),
 ];
 

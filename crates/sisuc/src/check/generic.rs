@@ -18,9 +18,8 @@ use super::pattern::{LetPattern, LetValue, arm_key, matchable};
 use super::prelude::PRELUDE;
 use super::stmt::BlockSoFar;
 use super::{
-    Binding, Checked, Checker, Declared, Definition, DiagnosticKind, Expectation, Flag, Misfit,
-    Poisoned, as_optional, built_in_type, has_remedy_flag, is_kept, optional_of, own_args, payload,
-    spread, type_of,
+    Binding, Checked, Checker, Declared, Definition, DiagnosticKind, Expectation, Misfit, Poisoned,
+    as_optional, built_in_type, is_kept, optional_of, own_args, payload, type_of,
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{ArgumentsForm, Diagnostic, Expected, MainForm, Unwrap};
@@ -1806,7 +1805,6 @@ pub(super) fn mark((checked, mismatched): (Checked, bool)) -> Checked {
             mismatch: true,
             found: None,
             kept: false,
-            unwrapped: Flag::No,
             jumped: false,
         })
     } else {
@@ -2146,19 +2144,16 @@ impl Checker<'_> {
     }
 
     /// The result of a construction of a generic class or enum whose arguments `Err`. `state` says
-    /// whether an alias bound `held`, whether the call `failed`, and whether an argument has the
-    /// remedy flag (`has_remedy_flag`). `ty` is the type that the arguments bound, `ret` the type
-    /// with its parameters (`declared` of them) and `written` the written type arguments.
-    ///
-    /// A failed call has the type that `fixed_result` gives, and the flag follows only when it
-    /// gives none: then the arguments alone bind the type, and the remedy changes it.
+    /// whether an alias bound `held` and whether the call `failed`. `ty` is the type that the
+    /// arguments bound, `ret` the type with its parameters (`declared` of them) and `written` the
+    /// written type arguments. A failed call has the type that `fixed_result` gives.
     pub(super) fn failed_build(
         &mut self,
-        (held, failed, flagged): (bool, bool, bool),
+        (held, failed): (bool, bool),
         (ty, ret, declared): (Type, Type, usize),
         written: &[Type],
     ) -> Checked {
-        let fixed = if held && (failed || flagged) {
+        let fixed = if held && failed {
             self.fixed_result(Some(ret), declared, &[], &[], written)
         } else {
             None
@@ -2170,7 +2165,7 @@ impl Checker<'_> {
         } else {
             Some(ty)
         };
-        spread(Err(Poisoned::of(ty)), flagged && fixed.is_none())
+        Err(Poisoned::of(ty))
     }
 
     /// `generic_call`, before what ranking kept is dropped.
@@ -2667,7 +2662,6 @@ impl Checker<'_> {
                 mismatch: true,
                 found: None,
                 kept: false,
-                unwrapped: Flag::No,
                 jumped: false,
             }));
             blamed = true;
@@ -3600,10 +3594,9 @@ impl Checker<'_> {
             K::Match {
                 scrutinee, arms, ..
             } => {
-                let (ty, flagged) = self.value_ahead(scrutinee);
+                let ty = self.value_ahead(scrutinee);
                 let form = LetValue::Match {
                     ty: ty.filter(|&ty| matchable(ty)),
-                    flagged,
                 };
                 combine_branches(arms.iter().map(|arm| {
                     let bind =
@@ -4139,7 +4132,7 @@ impl Checker<'_> {
             ast::ExprKind::Applied { .. } => return None,
             _ => {}
         }
-        self.value_ahead(receiver).0
+        self.value_ahead(receiver)
     }
 
     /// `e` checked as a value: as ranking checked it ahead, a method's receiver or a `match`'s
@@ -4151,24 +4144,23 @@ impl Checker<'_> {
         }
     }
 
-    /// The type of `e`, checked ahead of its turn and kept for it as `Ahead::Receiver`, and whether
-    /// an E0062 typed it, so that its type depends on the remedy (see `has_remedy_flag`).
-    fn value_ahead(&mut self, e: &ast::Expr) -> (Option<Type>, bool) {
+    /// The type of `e`, checked ahead of its turn and kept for it as `Ahead::Receiver`.
+    fn value_ahead(&mut self, e: &ast::Expr) -> Option<Type> {
         let kept = self.body.ahead_at.get(&(e.span, false)).and_then(|&index| {
             #[cfg(test)]
             INSPECTED.set(INSPECTED.get() + 1);
             self.body.ahead[index].1.as_ref()
         });
         if let Some(Ahead::Receiver(checked)) = kept {
-            return (type_of(checked), has_remedy_flag(checked));
+            return type_of(checked);
         }
         // An argument is not part of the chain that an index ends.
         let indexed = std::mem::take(&mut self.body.indexed);
         let (checked, jumped) = self.jumps(|c| c.value(e, Expectation::None));
         self.body.indexed = indexed;
-        let (ty, flagged) = (type_of(&checked), has_remedy_flag(&checked));
+        let ty = type_of(&checked);
         self.keep((e.span, false), Some(Ahead::Receiver(checked)), jumped);
-        (ty, flagged)
+        ty
     }
 
     /// The shape of a call of `name` with `args` that calls a generic function, constructs a

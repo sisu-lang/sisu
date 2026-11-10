@@ -4,7 +4,7 @@
 use super::generic::{GenericSig, Site, mismatched, named_params, written_args};
 use super::interface::Required;
 use super::mut_args::{MutParts, MutSite, site_of};
-use super::{Checked, Checker, Poisoned, has_remedy_flag, spread};
+use super::{Checked, Checker, Poisoned};
 use crate::ast;
 use crate::diagnostic::{Definition, DiagnosticKind};
 use crate::source::Span;
@@ -97,10 +97,6 @@ impl Checker<'_> {
         let (iargs, types) = (TypeArgs::intern(iargs), TypeArgs::intern(types));
         let parts = self.mut_overlaps(parts);
         let failed = labeled || checked.iter().any(mismatched);
-        // A result that names a type parameter may take the type of an argument. The `?.` fix of
-        // an E0062 in that argument would make it optional, unless it is optional already. The
-        // flag follows only when the arguments alone bind the result.
-        let flagged = ret.is_some() && checked.iter().any(has_remedy_flag);
         let method =
             u32::try_from(method).expect("an interface should have fewer than 2^32 requirements");
         let call = move |args| tir::ExprKind::InterfaceCall {
@@ -120,14 +116,14 @@ impl Checker<'_> {
             }
             (_, solved) => {
                 // The arguments bind the rest of the result, and they may be the fault.
-                let fixed = if failed || flagged {
+                let fixed = if failed {
                     let written = written_args(site, list.get(), owner.len());
                     self.fixed_result(ret, declared.len(), &owner, &[], written)
                 } else {
                     None
                 };
                 let result = if failed { fixed } else { solved };
-                spread(Err(Poisoned::of(result)), flagged && fixed.is_none())
+                Err(Poisoned::of(result))
             }
         }
     }

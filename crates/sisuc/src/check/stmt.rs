@@ -12,8 +12,7 @@ use super::prelude::PRELUDE;
 use super::unused_names::{Owner, Pending};
 use super::{
     Binding, BindingKind, Checked, CheckedBlock, Checker, Declared, Expectation, LoopContext,
-    LoopFrame, LoopKind, Poisoned, SelfType, block_expr, built_in_type, has_remedy_flag, starts_in,
-    tail, type_of,
+    LoopFrame, LoopKind, Poisoned, SelfType, block_expr, built_in_type, starts_in, tail, type_of,
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{
@@ -115,7 +114,6 @@ impl Checker<'_> {
                     mismatch: value.mismatch && none,
                     found: value.found.filter(|_| none),
                     kept: value.kept && none,
-                    unwrapped: value.unwrapped,
                     // The block is `never` exactly when `ty` is, and then `jumped` says why.
                     jumped,
                 });
@@ -383,8 +381,7 @@ impl Checker<'_> {
                 let ty = match (declared, &init) {
                     (Some(None), _) => None,
                     (Some(Some(declared)), Err(_)) => Some(declared),
-                    // The type of a value that an E0062 typed depends on the remedy.
-                    _ => type_of(&init).filter(|_| !has_remedy_flag(&init)),
+                    _ => type_of(&init),
                 };
                 let kind = if mutable.is_some() {
                     BindingKind::Var
@@ -777,10 +774,7 @@ impl Checker<'_> {
         let checked = self.value(e, Expectation::None);
         self.body.indexed = outer;
         let (element, d) = match type_of(&checked).map(|ty| (ty, ty.kind())) {
-            // The elements of a value that an E0062 typed depend on the remedy.
-            Some((_, TypeKind::Array(element))) => {
-                ((!has_remedy_flag(&checked)).then_some(element), None)
-            }
+            Some((_, TypeKind::Array(element))) => (Some(element), None),
             Some((_, TypeKind::Optional(payload)))
                 if matches!(payload.kind(), TypeKind::Array(_)) =>
             {

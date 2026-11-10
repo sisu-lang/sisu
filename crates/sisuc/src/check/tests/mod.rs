@@ -411,11 +411,13 @@ fn poisoned_operand_checks_siblings() {
     );
 }
 
+/// A failed branch gives the `if` no type, as its repair can change the join: the spec row `if`,
+/// `match` (a branch). So `y + true` gets no mismatch.
 #[test]
-fn if_with_failed_branch_takes_other_type() {
+fn an_if_with_a_failed_branch_should_be_untyped() {
     codes(
         "fn main() {\n    let y = if true { nope } else { 1 }\n    print(y + true)\n}",
-        &[(Code::BindingNotFound, (2, 23)), (Code::Mismatch, (3, 15))],
+        &[(Code::BindingNotFound, (2, 23))],
     );
 }
 
@@ -921,14 +923,12 @@ fn failed_value_of_an_annotated_let_should_keep_the_declared_type() {
             "fn f() -> i64 {\n    let x: i64 = return 1\n    let s: string = x\n    0\n}\n\nfn main() {\n    print(f())\n}",
             &[(Code::NoValue, (2, 18)), (Code::Mismatch, (3, 21))],
         ),
+        // The failed branch gives the `if` no type (the spec row `if`, `match`: a branch), so the
+        // `"s"` gets no mismatch against the declared `i64`.
         (
             "branch_other",
             "fn main() {\n    let w: i64 = if true { nope } else { \"s\" }\n    let q: string = w\n    print(q)\n}",
-            &[
-                (Code::Mismatch, (2, 18)),
-                (Code::BindingNotFound, (2, 28)),
-                (Code::Mismatch, (3, 21)),
-            ],
+            &[(Code::BindingNotFound, (2, 28)), (Code::Mismatch, (3, 21))],
         ),
         (
             "if_branch",
@@ -3985,10 +3985,10 @@ fn may_be_none_in_an_assignment_target_should_offer_the_fix() {
     }
 }
 
-/// `m.o.v = 1` has a second E0062, at the optional field `m.o`, after the one at `m`. Each has
-/// its fix.
+/// `m.o.v = 1` has an E0062 at `m`, with its fix. `m.o` has no type (the spec row `p.name`), so
+/// the E0062 of the optional field `m.o` waits.
 #[test]
-fn may_be_none_in_an_assignment_target_should_offer_the_fix_at_each_optional() {
+fn may_be_none_in_an_assignment_target_should_be_reported_once_with_its_fix() {
     let src =
         "class N {\n    mut v: i64\n    o: N?\n}\nfn f(m: N?) {\n    m.o.v = 1\n}\nfn main() {}";
     let found: Vec<_> = diags(src)
@@ -3997,18 +3997,11 @@ fn may_be_none_in_an_assignment_target_should_offer_the_fix_at_each_optional() {
         .collect();
     assert_eq!(
         found,
-        [
-            (
-                Code::MayBeNone,
-                (6, 5),
-                vec![(false, vec![(6, 6, ".", "?.".to_owned())])]
-            ),
-            (
-                Code::MayBeNone,
-                (6, 5),
-                vec![(false, vec![(6, 8, ".", "?.".to_owned())])]
-            ),
-        ]
+        [(
+            Code::MayBeNone,
+            (6, 5),
+            vec![(false, vec![(6, 6, ".", "?.".to_owned())])]
+        )]
     );
 }
 
@@ -4171,16 +4164,14 @@ fn may_be_none_before_an_index_should_have_no_fix() {
     }
 }
 
-/// `m.o.items[0] = 1` has a second E0062, at the optional field `m.o`. Neither has a fix.
+/// `m.o.items[0] = 1` has an E0062 at `m`, with no fix. `m.o` has no type (the spec row `p.name`),
+/// so the E0062 of the optional field `m.o` waits.
 #[test]
-fn may_be_none_before_an_index_should_have_no_fix_at_each_optional() {
+fn may_be_none_before_an_index_should_be_reported_once_with_no_fix() {
     let src = "class N {\n    mut items: [i64]\n    o: N?\n}\nfn f(m: N?) {\n    m.o.items[0] = 1\n}\nfn main() {}";
     let ds = diags(src);
     let found: Vec<_> = ds.iter().map(|d| (d.code(), at(src, d.span()))).collect();
-    assert_eq!(
-        found,
-        [(Code::MayBeNone, (6, 5)), (Code::MayBeNone, (6, 5))]
-    );
+    assert_eq!(found, [(Code::MayBeNone, (6, 5))]);
     assert!(ds.iter().all(|d| d.fixes().is_empty()), "{ds:?}");
 }
 
@@ -4272,6 +4263,7 @@ fn may_be_none_in_a_target_chain_and_in_its_argument_should_offer_the_fix() {
 }
 
 /// The `n.next` of the target and the `k.next` of a read after it both get the unsafe fix.
+/// `n.next` has no type (the spec row `p.name`), so the E0062 of `n.next.next` waits.
 #[test]
 fn may_be_none_in_and_after_an_assignment_target_should_offer_the_fix() {
     let src = "class N {\n    mut v: i64\n    next: N?\n}\nfn f(n: N, k: N) {\n    n.next.next.v = 1\n    print(k.next.v)\n}\nfn main() {}";
@@ -4286,11 +4278,6 @@ fn may_be_none_in_and_after_an_assignment_target_should_offer_the_fix() {
                 Code::MayBeNone,
                 (6, 5),
                 vec![(false, vec![(6, 11, ".", "?.".to_owned())])]
-            ),
-            (
-                Code::MayBeNone,
-                (6, 5),
-                vec![(false, vec![(6, 16, ".", "?.".to_owned())])]
             ),
             (
                 Code::MayBeNone,

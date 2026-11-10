@@ -185,30 +185,19 @@ fn string_get_through_safe_access_should_be_an_optional_string() {
 /// GIVEN `get` with a range on a `string?` with no `?.`, on a local and on a field
 /// WHEN the program is checked
 /// THEN it reports E0062 at the receiver, once, as `len()` does, and not E0023 at the range
+/// AND no warning follows: the call has no type (the spec row `p.m()`)
 #[test]
 fn string_get_on_an_optional_string_should_be_e0062_at_the_receiver() {
-    // The `get` of a range gives a `string?`, which `print` warns about, as it does after the
-    // unwrap that the help names.
     let rows = [
-        ("local", "o.get(1..3)", (5, 11), Some(Code::PrintsOptional)),
-        (
-            "field",
-            "c.o.get(1..3)",
-            (5, 11),
-            Some(Code::PrintsOptional),
-        ),
-        ("len", "o.len()", (5, 11), None),
+        ("local", "o.get(1..3)"),
+        ("field", "c.o.get(1..3)"),
+        ("len", "o.len()"),
     ];
-    for (row, call, at, warned) in rows {
+    for (row, call) in rows {
         let src = format!(
             "class C {{ o: string? }}\nfn main() {{\n    let o: string? = \"abc\"\n    let c = C(o: o)\n    print({call})\n}}"
         );
-        let wanted: Vec<_> = [Code::MayBeNone]
-            .into_iter()
-            .chain(warned)
-            .map(|code| (code, at))
-            .collect();
-        codes_row(row, &src, &wanted);
+        codes_row(row, &src, &[(Code::MayBeNone, (5, 11))]);
     }
 }
 

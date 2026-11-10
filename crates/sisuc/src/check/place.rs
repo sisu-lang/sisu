@@ -9,7 +9,7 @@ use super::operator::Operator;
 use super::unused_names::Used;
 use super::{
     BindingKind, Checked, Checker, Declared, Expectation, Poisoned, as_optional, block_expr,
-    is_unwrapped, payload, spread, type_of,
+    payload, type_of,
 };
 use crate::ast;
 use crate::diagnostic::{DiagnosticKind, Immutable, IndexUsage, UnwrapHelp};
@@ -95,6 +95,9 @@ pub(super) struct CheckedPlace {
     /// For a `push`, whose receiver may turn out to be no array: the E0001 of a root that cannot
     /// change, which only an array reports.
     held: Option<DiagnosticKind>,
+    /// For a `push`: the type that the root field declares, through the indexes of the place. A
+    /// place under a failed `.` has no `ty`, but its field still has this type.
+    held_ty: Option<Type>,
     /// The object that a `?.` of the root field takes out of an optional. The write of the place
     /// is the branch where it is present.
     pub(super) guard: Option<Guard>,
@@ -119,6 +122,7 @@ impl CheckedPlace {
             shown: None,
             writable: false,
             held: None,
+            held_ty: None,
             guard: None,
             refused: None,
             chain: None,
@@ -384,6 +388,22 @@ impl Checker<'_> {
             // An array that no value reads, such as the payload of an optional, is checked as the
             // `Ok` path checks it, with no value to push.
             if element.is_none() {
+                // A field under a failed `.` still names its array, so a field that cannot
+                // change gets its E0001. A local with no type names nothing.
+                let mut root = receiver_expr;
+                while let ast::ExprKind::Index { base, .. } = &root.kind {
+                    root = base;
+                }
+                let array = place.as_ref().is_some_and(|p| {
+                    p.held_ty
+                        .is_some_and(|t| matches!(payload(t).kind(), TypeKind::Array(_)))
+                });
+                if array
+                    && matches!(root.kind, ast::ExprKind::Field { .. })
+                    && let Some(d) = place.and_then(|place| place.held)
+                {
+                    self.report(d);
+                }
                 return not_pushed(self, None);
             }
         }
@@ -678,6 +698,7 @@ impl Checker<'_> {
             shown: None,
             writable: false,
             held: None,
+            held_ty: None,
             guard: None,
             refused,
             chain: None,
@@ -802,6 +823,7 @@ impl Checker<'_> {
             shown,
             writable: true,
             held,
+            held_ty: None,
             guard: None,
             refused,
             chain: None,
@@ -885,7 +907,6 @@ impl Checker<'_> {
                 let mut guard = None;
                 // `?.` takes the object out of its optional, where the place starts. The write
                 // of the place is the branch where the object is present.
-                let flagged = is_unwrapped(&checked);
                 let checked = if *safe {
                     match (self.safe_payload(&checked, base, name), checked) {
                         (Ok(payload), Ok(scrutinee)) => {
@@ -895,16 +916,6 @@ impl Checker<'_> {
                                 scrutinee: Ok(scrutinee),
                             });
                             Ok(local(bind, payload, base.span))
-                        }
-                        // An E0062 typed the object: its chain goes on with the payload's type,
-                        // as the `?.` makes the place optional.
-                        (Ok(payload), Err(scrutinee)) if flagged => {
-                            let bind = self.fresh(payload);
-                            guard = Some(Guard {
-                                bind,
-                                scrutinee: Err(scrutinee),
-                            });
-                            spread(Err(Poisoned::typed(payload)), true)
                         }
                         (payload, _) => {
                             // As `?.` does, report the field and give no type.
@@ -946,10 +957,12 @@ impl Checker<'_> {
                         root: Root::Field(index),
                         operands: vec![base],
                     }),
-                    ty,
+                    // A place under a failed `.` has no type: the fix of the E0062 decides it.
+                    ty: ty.filter(|_| !on_optional),
                     shown,
                     writable,
                     held,
+                    held_ty: ty,
                     guard,
                     refused,
                     chain: None,
@@ -989,6 +1002,10 @@ impl Checker<'_> {
                     shown: None,
                     writable: inner.writable,
                     held: inner.held,
+                    held_ty: inner.held_ty.and_then(|t| match payload(t).kind() {
+                        TypeKind::Array(element) => Some(element),
+                        _ => None,
+                    }),
                     guard: None,
                     refused: inner.refused,
                     chain: None,

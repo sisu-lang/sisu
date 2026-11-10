@@ -10,12 +10,6 @@ help: to do nothing when it is `None`, use `?.`
 32 |         self.o?.xs.push("a")
    |               +
 
-error[E0032]: expected `i64`, found `string`
-  --> E0062-push-on-payload.sisu:32:24
-   |
-32 |         self.o.xs.push("a")
-   |                        ^^^
-
 error[E0062]: `self.o?.xs` may be `None`
   --> E0062-push-on-payload.sisu:36:9
    |
@@ -64,12 +58,6 @@ help: to do nothing when it is `None`, use `?.`
 45 |     c?.xs.push("a")
    |      +
 
-error[E0032]: expected `i64`, found `string`
-  --> E0062-push-on-payload.sisu:45:15
-   |
-45 |     c.xs.push("a")
-   |               ^^^
-
 error[E0062]: `xs` may be `None`
   --> E0062-push-on-payload.sisu:50:5
    |
@@ -95,12 +83,6 @@ error[E0062]: `c` may be `None`
    |
    = help: unwrap it with `if let`, `let ... else` or `?? return`
 
-error[E0032]: expected `i64`, found `string`
-  --> E0062-push-on-payload.sisu:54:19
-   |
-54 |     c.xss[0].push("a")
-   |                   ^^^
-
 error[E0062]: `c` may be `None`
   --> E0062-push-on-payload.sisu:58:5
    |
@@ -108,12 +90,6 @@ error[E0062]: `c` may be `None`
    |     ^
    |
    = help: peel the extra layer first: `(c ?? None)?.xs`
-
-error[E0032]: expected `i64`, found `string`
-  --> E0062-push-on-payload.sisu:58:15
-   |
-58 |     c.xs.push("a")
-   |               ^^^
 
 error[E0062]: `s` may be `None`
   --> E0062-push-on-payload.sisu:62:5
@@ -301,14 +277,6 @@ help: to do nothing when it is `None`, use `?.`
     |
 100 |     c?.xs.push(v: 1)
     |      +
-
-error[E0055]: this call takes no labels on its arguments
-   --> E0062-push-on-payload.sisu:100:15
-    |
-100 |     c.xs.push(v: 1)
-    |               ^
-    |
-    = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
 
 error[E0062]: `b?.inner` may be `None`
    --> E0062-push-on-payload.sisu:104:5
@@ -692,5 +660,5 @@ error[E0053]: `[i64].push` takes 1 argument, found 0
 206 |     xs.push()
     |     ^^^^^^^^^
 
-sisu: 76 errors
+sisu: 71 errors
 sisu: for more on a code, run `sisu explain <code>`: E0001, E0021, E0032, E0033, E0049, E0053, E0055, E0062, E0063

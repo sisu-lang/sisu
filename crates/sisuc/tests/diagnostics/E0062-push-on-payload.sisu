@@ -1,6 +1,6 @@
 // GIVEN a `.push` whose receiver may be `None`, in a function for each case
 // WHEN `sisu check` runs on it
-// THEN it reports E0062, then the error of the same call through `?.`, such as E0032, E0021, E0053 or E0055
+// THEN it reports E0062, then the error of the same call through `?.`, such as E0032, E0021, E0053 or E0055. Below a failed `.`, the receiver has no type, so the error of the call waits
 // AND an array in a binding that cannot change reports E0001 first, as `?.push` does
 // AND each guard function keeps the output that it had before
 class Node {

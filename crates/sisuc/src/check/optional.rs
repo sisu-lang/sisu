@@ -6,10 +6,7 @@ use super::alias::Through;
 use super::any::is_target;
 use super::generic::{GenericSig, Site, mark, mismatched, written_args};
 use super::mut_args::Callee;
-use super::{
-    Checked, Checker, DiagnosticKind, Expectation, Poisoned, has_remedy_flag, optional_of, spread,
-    type_of,
-};
+use super::{Checked, Checker, DiagnosticKind, Expectation, Poisoned, optional_of, type_of};
 use crate::ast;
 use crate::diagnostic::{Definition, suggestion};
 use crate::source::Span;
@@ -149,9 +146,6 @@ impl Checker<'_> {
             }
         };
         let failed = labeled || mismatched(&arg);
-        // The `?.` fix of an E0062 in the argument would make the payload, and so the `Some`, one
-        // optional deeper. The flag follows only when the argument alone binds the type.
-        let flagged = has_remedy_flag(&arg);
         match arg {
             Ok(inner) if !failed => Ok(tir::Expr::new(
                 tir::ExprKind::Wrap(Box::new(inner)),
@@ -160,13 +154,13 @@ impl Checker<'_> {
             )),
             _ => {
                 // The arguments bind the rest of the type, and they may be the fault.
-                let fixed = if failed || flagged {
+                let fixed = if failed {
                     self.failed_some((through, open), site, list.get())
                 } else {
                     None
                 };
                 let found = if failed { fixed } else { Some(found) };
-                spread(Err(Poisoned::of(found)), flagged && fixed.is_none())
+                Err(Poisoned::of(found))
             }
         }
     }

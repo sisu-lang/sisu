@@ -9,8 +9,7 @@ use super::extend::{holder_of, method_holder};
 use super::generic::{Site, named_params};
 use super::unused_names::Used;
 use super::{
-    Checked, Checker, Declared, Expectation, Flag, Holder, Poisoned, as_optional, has_remedy_flag,
-    is_unwrapped, spread, type_of, wrap,
+    Checked, Checker, Declared, Expectation, Holder, Poisoned, as_optional, type_of, wrap,
 };
 use crate::ast;
 use crate::diagnostic::{Annotate, Definition, Diagnostic, DiagnosticKind, Peel, UnwrapHelp};
@@ -98,8 +97,7 @@ impl Checker<'_> {
         name: &ast::Ident,
     ) -> Result<Type, Poisoned> {
         let Some(TypeKind::Optional(payload)) = type_of(scrutinee).map(Type::kind) else {
-            // A value that an E0062 typed is optional under its `?.` fix.
-            if type_of(scrutinee).is_some() && !is_unwrapped(scrutinee) {
+            if type_of(scrutinee).is_some() {
                 let kind = DiagnosticKind::SafeAccessNotOptional {
                     value: path(receiver),
                     at: receiver.span,
@@ -140,16 +138,15 @@ impl Checker<'_> {
         receiver: &ast::Expr,
         name: &ast::Ident,
     ) -> Checked {
-        let unwrapped = is_unwrapped(&base);
         let on_optional = matches!(type_of(&base).map(Type::kind), Some(TypeKind::Optional(_)));
         let Some((class, index, ty)) =
             self.find_field(type_of(&base), receiver, name, Access::Read)
         else {
             return Err(Poisoned::error());
         };
-        // E0062 is reported. The chain goes on with the type that the field has on the payload.
+        // E0062 is reported. The member has no type: the fix of the E0062 decides it.
         if on_optional {
-            return Err(Poisoned::unwrapped(ty));
+            return Err(Poisoned::error());
         }
         self.record(Used::Field(class, index), span);
         match (base, ty) {
@@ -161,7 +158,7 @@ impl Checker<'_> {
                 ty,
                 span,
             )),
-            (_, ty) => spread(Err(Poisoned::of(ty)), unwrapped),
+            (_, ty) => Err(Poisoned::of(ty)),
         }
     }
 
@@ -495,10 +492,9 @@ impl Checker<'_> {
     /// name and its arguments report their own mistakes. E0062 comes first, unless the lookup
     /// of the name failed (`Body::failed_lookups`). A method that is missing, or a field,
     /// stands alone: the `?.` fix would lead to it. `indexed` is `Body::indexed` of the call:
-    /// an index follows it in its chain. The result is poisoned, with the type of the call that
-    /// was checked, so the chain goes on as it would after the unwrap that the help names. A
-    /// `payload` that is optional too gets the peel help, unless a `push` writes or an index
-    /// follows: the peeled `?.` fails there.
+    /// an index follows it in its chain. The result is poisoned with no type: the fix of the
+    /// E0062 decides the type (ADR 0049). A `payload` that is optional too gets the peel help,
+    /// unless a `push` writes or an index follows: the peeled `?.` fails there.
     pub(super) fn method_of_payload(
         &mut self,
         span: Span,
@@ -510,7 +506,8 @@ impl Checker<'_> {
     ) -> Checked {
         let inner = innermost(payload);
         let checked = Err(Poisoned::typed(inner));
-        let result = self.method_call(span, Dot::Payload, checked, receiver, site, args);
+        // The call reports its own mistakes, and its type waits for the fix.
+        drop(self.method_call(span, Dot::Payload, checked, receiver, site, args));
         let name = site.name;
         if !self.body.failed_lookups.contains(&name.span) {
             // A `push` onto an optional array writes: the `?.` fix makes it do nothing.
@@ -526,11 +523,7 @@ impl Checker<'_> {
             let d = may_be_none(receiver, name, fix, write, unwrap);
             self.diagnostics.push(d);
         }
-        // The call of a generic method may be built from a flagged argument: it keeps that state.
-        if has_remedy_flag(&result) {
-            return spread(Err(Poisoned::of(type_of(&result))), true);
-        }
-        Err(Poisoned::unwrapped(type_of(&result)))
+        Err(Poisoned::error())
     }
 
     /// The help of an E0062 for a `.` after `receiver`, an optional of the `payload?`, before
@@ -910,16 +903,8 @@ pub(super) fn safe_value(
             });
         }
     };
-    // The result is built from the member or the scrutinee when either has the remedy flag. Else
-    // it is the scrutinee again: `c.n?.v` is `i64?` under both remedies.
-    let built = has_remedy_flag(&scrutinee) || has_remedy_flag(&member);
-    let state = scrutinee.as_ref().err().map_or(Flag::No, |p| p.unwrapped);
     let (Ok(scrutinee), Ok(member)) = (scrutinee, member) else {
-        // A `?.` after a `.` on an optional goes on, as the first `?.` does (see `Checker::place`).
-        return Err(Poisoned {
-            unwrapped: if built { Flag::Built } else { state },
-            ..Poisoned::typed(ty)
-        });
+        return Err(Poisoned::typed(ty));
     };
     let none = (ty != Type::UNIT).then_some(tir::Expr::new(tir::ExprKind::None, ty, span));
     let value = if member.ty == ty {

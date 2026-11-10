@@ -13,8 +13,7 @@ use super::names::{self, ItemId, Position, Resolved};
 use super::prelude::PRELUDE;
 use super::unused_names::Used;
 use super::{
-    Checked, Checker, Declared, Expectation, Lowered, Poisoned, block_expr, has_remedy_flag,
-    is_unwrapped, own_args, spread, type_of,
+    Checked, Checker, Declared, Expectation, Lowered, Poisoned, block_expr, own_args, type_of,
 };
 use super::{array, number, string};
 use crate::ast::{self, ExprKind};
@@ -600,9 +599,7 @@ impl Checker<'_> {
     }
 
     /// `receiver.method(args)`, `receiver` checked from `receiver_expr`. `dot` says whether it
-    /// is `receiver?.method(args)`, or the check of a `.` call on an optional's payload. The
-    /// result of a call on a value that an E0062 typed is typed by it too (see
-    /// `Poisoned::unwrapped`).
+    /// is `receiver?.method(args)`, or the check of a `.` call on an optional's payload.
     pub(super) fn method_call(
         &mut self,
         span: Span,
@@ -612,11 +609,7 @@ impl Checker<'_> {
         site: Site<'_>,
         args: &[ast::Arg],
     ) -> Checked {
-        let unwrapped = is_unwrapped(&receiver);
-        spread(
-            self.method_on(span, dot, receiver, receiver_expr, site, args),
-            unwrapped,
-        )
+        self.method_on(span, dot, receiver, receiver_expr, site, args)
     }
 
     /// `method_call`, whatever the receiver is.
@@ -1024,10 +1017,6 @@ impl Checker<'_> {
         let (checked, types, solved) = checked?;
         let parts = self.mut_overlaps(parts);
         let failed = labeled || checked.iter().any(mismatched);
-        // A result that names a type parameter may take the type of an argument. The `?.` fix of
-        // an E0062 in that argument would make it optional, unless it is optional already. The
-        // flag follows only when the arguments alone bind the result.
-        let flagged = ret.is_some() && checked.iter().any(has_remedy_flag);
         match (receiver.into_iter().chain(checked).collect(), solved) {
             (Ok(args), Some(solved)) if !failed && parts.is_empty() => Ok(self.spilled(
                 span,
@@ -1041,14 +1030,14 @@ impl Checker<'_> {
             }
             (_, solved) => {
                 // The arguments bind the rest of the result, and they may be the fault.
-                let fixed = if failed || flagged {
+                let fixed = if failed {
                     let written = written_args(site, types.get(), owner.len());
                     self.fixed_result(ret, declared.len(), owner, &[], written)
                 } else {
                     None
                 };
                 let result = if failed { fixed } else { solved };
-                spread(Err(Poisoned::of(result)), flagged && fixed.is_none())
+                Err(Poisoned::of(result))
             }
         }
     }
@@ -1228,8 +1217,6 @@ impl Checker<'_> {
                 return Err(Poisoned::error());
             };
             let failed = args.iter().any(mismatched);
-            // The flag follows only when the arguments alone bind the type.
-            let flagged = args.iter().any(has_remedy_flag);
             // The bounds that the alias's body puts on its parameters, on what they are bound to.
             let held = quiet
                 || through.is_none_or(|t| self.use_checks(&t.checks, list, span) == Some(true));
@@ -1241,7 +1228,7 @@ impl Checker<'_> {
                 Err(_) => {
                     // The arguments bind the rest of the type, and they may be the fault.
                     let written = written_args(site, list.get(), 0);
-                    let state = (held, failed, flagged);
+                    let state = (held, failed);
                     self.failed_build(state, (ty, ret, declared.len()), written)
                 }
             };

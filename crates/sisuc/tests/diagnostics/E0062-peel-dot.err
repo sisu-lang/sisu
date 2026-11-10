@@ -289,18 +289,6 @@ error[E0062]: `c` may be `None`
     |
     = help: peel the extra layer first: `(c ?? None)?.n`
 
-error[E0062]: `c.n` may be `None`
-   --> E0062-peel-dot.sisu:149:5
-    |
-149 |     c.n.v = 1
-    |     ^^^
-    |
-    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
-help: to do nothing when it is `None`, use `?.`
-    |
-149 |     c.n?.v = 1
-    |        +
-
 error[E0062]: `c` may be `None`
    --> E0062-peel-dot.sisu:153:14
     |
@@ -1246,5 +1234,5 @@ error[E0062]: `c` may be `None`
     |
     = help: unwrap it with `if let`, `let ... else` or `?? return`
 
-sisu: 148 errors, 4 warnings
+sisu: 147 errors, 4 warnings
 sisu: for more on a code, run `sisu explain <code>`: E0001, E0052, E0053, E0055, E0062, E0063, E0070, E0105, E0120, E0137, E0156, E0166, E0167, W0002

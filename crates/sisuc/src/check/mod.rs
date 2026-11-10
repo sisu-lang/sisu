@@ -65,9 +65,9 @@ use prelude::PRELUDE;
 pub(crate) use unused_names::is_judged;
 use unused_names::{Owner, Pending, Use, Used};
 
-/// An expression whose rule failed; its diagnostic is recorded. `ty` is its type when
-/// still known (an `if` with one failed branch takes the other's), else it is the poison
-/// type `Error`, which matches every type and draws no further diagnostic.
+/// An expression whose rule failed; its diagnostic is recorded. `ty` is its type when it is
+/// still known: a `let` with a declared type keeps that type. Else `ty` is the poison type
+/// `Error`, which matches every type and draws no further diagnostic.
 ///
 /// Poison spreads to sibling operands by one rule. For a homogeneous operator (`+ - * / %
 /// && ||`, comparison chains), once an operand is `Error` the later operands are still
@@ -92,29 +92,9 @@ use unused_names::{Owner, Pending, Use, Used};
 /// A value in which a generic call kept its E0050 has `kept` set. A block, a branch, unary `-`,
 /// a number operator, and a call that fails on an unbound parameter, keep that field too.
 ///
-/// A value that an E0062 typed has `unwrapped` set (see `Flag`). A value built from it has
-/// the flag too.
-///
-/// A place that makes a new `Poisoned` from a value with the remedy flag keeps the right state.
-/// A new value that is the same value copies the state. A new value built from it sets `Built`.
-/// Only the `.` that reports E0062 sets `Member`, and only when its value has no remedy flag.
-///
-/// The flag spreads through `!`, unary `-`, each operator but `==` and `!=`, a block and a join.
-/// It spreads through an `if` condition, `Some`, and both sides of `??`. It spreads through a
-/// generic call, method, constructor, variant or interface call whose result names a type
-/// parameter. It spreads through `dbg` and a slice. A `.` or a method call on a flagged base,
-/// an index on a base with the remedy flag, and a `?.` after a flagged optional, keep it too.
-/// A `?.` is built from its member or its scrutinee when either has the remedy flag, else it is
-/// its scrutinee again.
-///
-/// A rule that fails on a member of an optional type under both remedies builds from any flag
-/// (`is_unwrapped`). These rules are an operator, `!`, unary `-`, a field, a method call, a
-/// slice and a place. A rule whose type depends on the remedy reads the remedy flag
-/// (`has_remedy_flag`). These rules are a `let`, a `for`, a join, `Some`, `??`, a pattern, an
-/// index, `?.` and E0124.
-///
-/// The remedy flag is `unwrapped` set, except for a member of an optional type. That member has
-/// the same type under the `if let` unwrap and under the `?.` fix.
+/// A poisoned value is typed only when the source states its type apart from the failed part
+/// (the form table of ADR 0049). Each reader reads a typed poisoned value as any value of that
+/// type.
 struct Poisoned {
     ty: Option<Type>,
     /// Whether the expected type passed down was rejected (a `None` that is not optional, a
@@ -130,28 +110,11 @@ struct Poisoned {
     /// type, so it holds the code that uses it to nothing. That code adds no report for the
     /// default type of an operator.
     kept: bool,
-    /// The value is typed by the unwrap that the help of its E0062 names. It comes from a `.` on
-    /// an optional, and has the type that the member has on the payload. The `?.` fix of the
-    /// E0062 would make the value optional. So a check that fires only because the value is not
-    /// optional (E0044, E0048, E0049, E0051) or not matchable (E0124) skips it. A `let` or a
-    /// `for` binds `Error` for it, as its optionality depends on the remedy.
-    unwrapped: Flag,
     /// A failed `break` or `continue` outside a loop makes the value `never`, and that jump has
     /// its own report. In a block, it is the statement that ends the block. In an `if` or a
     /// `match`, it is at least one branch (see `join`). The flow keeps the `never`, as a jump
     /// statement does; a place that reads the value takes it as `Error` (`read_jump`).
     jumped: bool,
-}
-
-/// How a value got its `Poisoned::unwrapped` flag.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Flag {
-    /// Not typed by an E0062.
-    No,
-    /// The member itself, from the `.` that reported the E0062 (see `Poisoned::unwrapped`).
-    Member,
-    /// Built from a flagged value, as `spread` does.
-    Built,
 }
 
 /// The result type of a generic call that cannot meet its context (see `report_unbound`). The
@@ -181,17 +144,7 @@ impl Poisoned {
             mismatch: false,
             found: None,
             kept: false,
-            unwrapped: Flag::No,
             jumped: false,
-        }
-    }
-
-    /// A failed `.` on an optional, whose member has the type `ty` on the payload (see
-    /// `Poisoned::unwrapped`).
-    fn unwrapped(ty: Option<Type>) -> Self {
-        Self {
-            unwrapped: Flag::Member,
-            ..Self::of(ty)
         }
     }
 
@@ -212,50 +165,6 @@ fn is_kept<T>(checked: &Result<T, Poisoned>) -> bool {
 /// Whether a failed `break` or `continue` makes `checked` `never` (see `Poisoned::jumped`).
 fn is_jumped<T>(checked: &Result<T, Poisoned>) -> bool {
     matches!(checked, Err(Poisoned { jumped: true, .. }))
-}
-
-/// Whether `checked` is typed by the unwrap of an E0062 (see `Poisoned::unwrapped`).
-fn is_unwrapped<T>(checked: &Result<T, Poisoned>) -> bool {
-    matches!(
-        checked,
-        Err(Poisoned {
-            unwrapped: Flag::Member | Flag::Built,
-            ..
-        })
-    )
-}
-
-/// Whether `checked` is flagged, and not a member of an optional type. The type of such a value
-/// depends on the remedy: the `?.` fix would make it optional. A member of an optional type is
-/// the same under both remedies.
-fn has_remedy_flag<T>(checked: &Result<T, Poisoned>) -> bool {
-    match checked {
-        Err(Poisoned {
-            unwrapped: Flag::Built,
-            ..
-        }) => true,
-        Err(Poisoned {
-            unwrapped: Flag::Member,
-            ty,
-            ..
-        }) => !ty.is_some_and(|ty| matches!(ty.kind(), TypeKind::Optional(_))),
-        _ => false,
-    }
-}
-
-/// `checked`, built from a flagged value when `from` is. Under the `?.` fix of an operand's E0062,
-/// the result of some rules is optional. Those rules pass the flag on, so their result gets no
-/// report that it is not optional. A result that both remedies give the same, such as `==`, does
-/// not.
-fn spread<T>(checked: Result<T, Poisoned>, from: bool) -> Result<T, Poisoned> {
-    checked.map_err(|poisoned| Poisoned {
-        unwrapped: if from && poisoned.unwrapped == Flag::No {
-            Flag::Built
-        } else {
-            poisoned.unwrapped
-        },
-        ..poisoned
-    })
 }
 
 type Checked = Result<tir::Expr, Poisoned>;

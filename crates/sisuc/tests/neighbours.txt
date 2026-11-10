@@ -293,10 +293,13 @@ let _a = $?.wrap(ob.wrap(1))
 match ob.wrap($) { _ => {} }
 print(oa_none().oa[0] ?? $)
 # A method named `push` called on each value, and a `push` or an assignment through a range: the
-# receiver is checked as a place, and as a value when it is no place.
+# receiver is checked as a place, and as a value when it is no place. A `push` on a local that
+# holds the value, and a `push` on an element of it.
 $.push(1)
 $[0..1].push(1)
 $[0..1] = [1]
+{ let s = $; s.push(1) }
+$[0].push(1)
 # A chain on each value as the subject of a `for`, which is indexed in its loop, and the value
 # printed or interpolated, which warns when it can be `None`.
 for _x in $.wrap([1]) {}

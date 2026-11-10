@@ -414,12 +414,6 @@ error[E0050]: cannot infer `X` for `mk2`
    |
    = help: annotate the result, or write the type: `mk2<...>(...)`
 
-error[E0032]: expected `string`, found `i64`
-  --> E0050-generic-hint.sisu:77:21
-   |
-77 |     let w: string = z
-   |                     ^
-
 error[E0032]: expected `i64`, found `Two<X, bool>`
   --> E0050-generic-hint.sisu:79:51
    |
@@ -1078,12 +1072,6 @@ error[E0050]: cannot infer `X` for `mk2`
     |
     = help: annotate the result, or write the type: `mk2<...>(...)`
 
-error[E0032]: expected `string`, found `i64`
-   --> E0050-generic-hint.sisu:205:21
-    |
-205 |     let w: string = z
-    |                     ^
-
 error[E0050]: cannot infer `X` for `mk2`
    --> E0050-generic-hint.sisu:210:21
     |
@@ -1175,12 +1163,6 @@ error[E0033]: cannot find binding `nope`
     |
 238 | fn negated_failure_then_call() { let z = -nope + id(mk2()) }
     |                                           ^^^^
-
-error[E0032]: expected `i64`, found `Two<X, bool>`
-   --> E0050-generic-hint.sisu:238:53
-    |
-238 | fn negated_failure_then_call() { let z = -nope + id(mk2()) }
-    |                                                     ^^^^^
 
 error[E0050]: cannot infer `X` for `mk2`
    --> E0050-generic-hint.sisu:242:26
@@ -1722,5 +1704,5 @@ error[E0050]: cannot infer `X` for `mk2`
     |
     = help: annotate the result, or write the type: `mk2<...>(...)`
 
-sisu: 236 errors
+sisu: 233 errors
 sisu: for more on a code, run `sisu explain <code>`: E0032, E0033, E0050, E0094, E0139
