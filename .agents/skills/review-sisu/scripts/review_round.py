@@ -179,7 +179,10 @@ def handback(transcript: Path) -> str:
     for line in transcript.read_text(encoding="utf-8").split("\n"):
         if not line.strip():
             continue
-        entry = json.loads(line)
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            raise SystemExit(f"review_round: {transcript} holds a line that is not JSON") from None
         content = entry.get("message", {}).get("content")
         if entry.get("type") != "assistant" or not isinstance(content, list) or not content:
             continue

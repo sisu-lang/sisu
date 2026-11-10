@@ -245,6 +245,15 @@ class SaveReport(unittest.TestCase):
         self.assertIn("no final reply", result.stdout)
         self.assertFalse((self.root / "opus.md").exists())
 
+    def test_save_report_should_fail_on_a_line_that_is_not_json(self) -> None:
+        self.transcript({"type": "text", "text": "Verdict: y"})
+        with (self.agents / "agent-abc.jsonl").open("a", encoding="utf-8") as f:
+            f.write('{"type": "assistant", "mess')
+        result = self.save("--agent", "abc")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("not JSON", result.stderr)
+        self.assertFalse((self.root / "opus.md").exists())
+
     def test_save_report_should_fail_on_a_blank_reply(self) -> None:
         self.transcript({"type": "tool_use", "name": "SubagentHandback", "input": {"message": " "}})
         result = self.save("--agent", "abc")
