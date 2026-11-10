@@ -52,7 +52,8 @@ const GET: Wanted = (Mismatch, (4, 15));
 
 /// GIVEN an array whose context failed, and a later element or branch that does not fit
 /// WHEN the program is checked
-/// THEN it reports the failure only, and the later mistake waits for the next run
+/// THEN it reports the failure, and an element that does not fit an earlier element,
+/// AND a mistake inside the later element waits for the next run
 #[test]
 fn a_later_mistake_in_a_failed_array_should_wait() {
     let rows: Vec<ErrorRow<'_>> = vec![
