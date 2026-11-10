@@ -2,7 +2,6 @@
 //! `get` with no range gives E0032.
 
 use super::*;
-use crate::front_end::checked_with;
 use Code::{
     AssignToSelf, BindingNotFound, CannotExtend, DefinedTwice, MethodNeedsSelf, Mismatch, NoMain,
     SelfOutside, SelfOutsideMethod, UnknownType,
@@ -19,32 +18,6 @@ fn program(stmt: &str) -> String {
     format!(
         "fn id<T>(x: T) -> T {{ x }}\nclass P {{}}\nfn f(c: bool, d: bool, o: i64?, p: P) {{\n    {stmt}\n}}\nfn main() {{}}\n"
     )
-}
-
-/// One row of `error_rows`: its name, its program and the errors that it must give.
-type ErrorRow<'a> = (&'a str, String, Vec<Wanted>);
-
-/// Runs every row, and asserts once at the end, so that a red run lists each red row. Only
-/// errors count.
-fn error_rows(rows: &[ErrorRow<'_>]) {
-    let mut red = Vec::new();
-    for (name, src, wanted) in rows {
-        let (_, ds) = checked_with(PRELUDE_SOURCE, src);
-        let found: Vec<Wanted> = ds
-            .iter()
-            .filter(|d| d.code().severity() == Severity::Error)
-            .map(|d| (d.code(), at(src, d.span())))
-            .collect();
-        if found != *wanted {
-            red.push(format!("row `{name}`: found {found:?}, wanted {wanted:?}"));
-        }
-    }
-    assert!(
-        red.is_empty(),
-        "{} red rows:\n{}",
-        red.len(),
-        red.join("\n")
-    );
 }
 
 const FAILED_LET: Wanted = (UnknownType, (4, 13));

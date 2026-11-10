@@ -1,7 +1,7 @@
 use super::*;
 use crate::diagnostic::explanations::apply;
 use crate::diagnostic::{Code, Fix};
-use crate::front_end::{PRELUDE_SOURCE, prelude_program};
+use crate::front_end::{PRELUDE_SOURCE, checked_with, prelude_program};
 use crate::mir::tests::{assert_near_linear, assert_near_linear_for};
 use crate::parser::parse_ok;
 use crate::source::line_col;
@@ -31,6 +31,7 @@ mod optionals;
 mod parity;
 mod patterns;
 mod places;
+mod poison;
 mod prelude;
 mod ranges;
 mod recursion;
@@ -39,7 +40,6 @@ mod strings;
 mod u8;
 mod unused;
 mod unused_names;
-mod unwrapped;
 
 /// The `PARAM_STEPS` that checking the four language interfaces takes, which every test's count
 /// holds: `Self` and one more step for each.
@@ -134,6 +134,32 @@ fn codes_row(row: &str, src: &str, expected: &[Wanted]) {
 
 /// A diagnostic's code and its primary position, as a test names it.
 type Wanted = (Code, (usize, usize));
+
+/// One row of `error_rows`: its name, its program and the errors that it must give.
+type ErrorRow<'a> = (&'a str, String, Vec<Wanted>);
+
+/// Runs every row, and asserts once at the end, so that a red run lists each red row. Only
+/// errors count.
+fn error_rows(rows: &[ErrorRow<'_>]) {
+    let mut red = Vec::new();
+    for (name, src, wanted) in rows {
+        let (_, ds) = checked_with(PRELUDE_SOURCE, src);
+        let found: Vec<Wanted> = ds
+            .iter()
+            .filter(|d| d.code().severity() == Severity::Error)
+            .map(|d| (d.code(), at(src, d.span())))
+            .collect();
+        if found != *wanted {
+            red.push(format!("row `{name}`: found {found:?}, wanted {wanted:?}"));
+        }
+    }
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+}
 
 /// A diagnostic's code, its primary position and its secondary positions.
 type Found = (Code, (usize, usize), Vec<(usize, usize)>);
