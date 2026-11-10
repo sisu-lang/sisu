@@ -2037,3 +2037,27 @@ fn a_typed_poisoned_part_should_fail_only_a_call() {
         vec![(BindingNotFound, (5, 15)), (Mismatch, (7, 15))],
     )]);
 }
+
+/// GIVEN an enum `E` whose only conformance block names an unknown interface, so that `E` has
+///   `Eq` only through that broken block
+/// WHEN `==` compares two values of `E`, both checked or one a typed poisoned call
+/// THEN the `==` is untyped: a later `+` adds no error, and only the earlier errors stay
+#[test]
+fn equality_on_a_type_with_eq_only_from_a_broken_block_should_be_untyped() {
+    for (row, src, wanted) in [
+        (
+            "two variants",
+            "enum E {\n    A\n}\nextend E: Nope {}\nfn main() {\n    let a = E.A == E.A\n    \
+             print(a + 1)\n}\n",
+            vec![(UnknownType, (4, 11))],
+        ),
+        (
+            "a typed poisoned side",
+            "enum E {\n    A\n}\nextend E: Nope {}\nfn mk(x: i64) -> E {\n    E.A\n}\n\
+             fn main() {\n    let a = E.A == mk()\n    print(a + 1)\n}\n",
+            vec![(UnknownType, (4, 11)), (ArgumentCount, (9, 20))],
+        ),
+    ] {
+        codes_row(row, src, &wanted);
+    }
+}
