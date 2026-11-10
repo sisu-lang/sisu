@@ -3,7 +3,10 @@
 
 use super::*;
 use crate::front_end::checked_with;
-use Code::{BindingNotFound, Mismatch, UnknownType};
+use Code::{
+    AssignToSelf, BindingNotFound, CannotExtend, MethodNeedsSelf, Mismatch, NoMain, SelfOutside,
+    SelfOutsideMethod, UnknownType,
+};
 
 const IF: &str = r#"if c { "a" } else { [] }"#;
 const IFLET: &str = r#"if let Some(v) = o { "a" } else { [] }"#;
@@ -253,4 +256,105 @@ fn a_string_get_after_an_error_should_wait() {
         "fn f() {\n    print(missing)\n    let _a = \"abc\".get(None)\n}\nfn main() {}\n",
         &[(BindingNotFound, (2, 11))],
     );
+}
+
+const EXTEND_MISSING: Wanted = (UnknownType, (1, 8));
+
+/// The program of a row: `line` is line 2 of an `extend` block of a type that does not exist.
+fn failed_extend(line: &str) -> String {
+    format!("extend Missing {{\n    {line}\n}}\nfn main() {{}}\n")
+}
+
+/// GIVEN a block whose target type failed, or `self` and `Self` outside a method
+/// WHEN the program is checked
+/// THEN it gives the errors that the target and the plain forms give, and no more
+#[test]
+fn a_failed_self_should_give_no_error_of_its_own() {
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "extend i64",
+            "extend Missing {\n    fn m(self) -> i64 { self }\n}\nfn main() {}\n".into(),
+            vec![EXTEND_MISSING],
+        ),
+        (
+            "extend Self",
+            "extend Missing {\n    fn m(self) -> Self { self }\n}\nfn main() {}\n".into(),
+            vec![EXTEND_MISSING],
+        ),
+        (
+            "extend param",
+            "extend Missing {\n    fn m(self, o: Self) {}\n}\nfn main() {}\n".into(),
+            vec![EXTEND_MISSING],
+        ),
+        (
+            "extend field",
+            "extend Missing {\n    fn m(self) -> i64 { self.x + true }\n}\nfn main() {}\n".into(),
+            vec![EXTEND_MISSING],
+        ),
+        (
+            "extend mut",
+            "extend Missing {\n    fn m(mut self) { self = 1 }\n}\nfn main() {}\n".into(),
+            vec![EXTEND_MISSING, (AssignToSelf, (2, 22))],
+        ),
+        (
+            "extend unused",
+            "extend<T> i64 {\n    fn m(self) -> i64 { self }\n}\nfn main() {}\n".into(),
+            vec![(CannotExtend, (1, 11))],
+        ),
+        (
+            "extend interface",
+            "extend i64: Missing {\n    fn m(self) -> i64 { self }\n}\nfn main() {}\n".into(),
+            vec![(CannotExtend, (1, 8)), (UnknownType, (1, 13))],
+        ),
+        (
+            "self outside",
+            "fn f() -> i64 { self }\nfn main() {}\n".into(),
+            vec![(SelfOutsideMethod, (1, 17))],
+        ),
+        (
+            "Self outside",
+            "fn f(x: Self) {}\nfn main() {}\n".into(),
+            vec![(SelfOutside, (1, 9))],
+        ),
+        (
+            "main in failed extend",
+            "extend Missing {\n    fn main() {}\n}\n".into(),
+            vec![(NoMain, (1, 1)), EXTEND_MISSING, (MethodNeedsSelf, (2, 8))],
+        ),
+    ];
+    error_rows(&rows);
+}
+
+/// GIVEN a signature that names `Self` as the type of a failed block
+/// WHEN the program is checked
+/// THEN it reports the failed target only, because every other error follows from it
+#[test]
+fn a_failed_self_in_a_signature_should_give_no_error_of_its_own() {
+    let rows: Vec<ErrorRow<'_>> = [
+        ("member param", "fn m(self, x: Self.Item) {}"),
+        ("member return", "fn m(self) -> Self.Item { self }"),
+        ("member array", "fn m(self, x: [Self.Item]) {}"),
+        ("member optional", "fn m(self, x: Self.Item?) {}"),
+        ("member nested", "fn m(self, x: Self.Item.Other) {}"),
+        ("bound", "fn m<T: Self>(self, x: T) {}"),
+        ("bound optional", "fn m<T: Self?>(self, x: T) {}"),
+        ("bound array", "fn m<T: [Self]>(self, x: T) {}"),
+        ("bound member", "fn m<T: Self.Item>(self, x: T) {}"),
+    ]
+    .into_iter()
+    .map(|(name, line)| (name, failed_extend(line), vec![EXTEND_MISSING]))
+    .chain([
+        (
+            "optional target",
+            "extend Missing? {\n    fn m(self, o: Self.Item) -> Self { self }\n}\nfn main() {}\n".to_string(),
+            vec![EXTEND_MISSING],
+        ),
+        (
+            "failed type argument",
+            "class Bq<T> { v: T }\nextend Bq<Missing> {\n    fn m(self, o: Self) -> Self.Item { o }\n}\nfn main() {}\n".to_string(),
+            vec![(UnknownType, (2, 11))],
+        ),
+    ])
+    .collect();
+    error_rows(&rows);
 }
