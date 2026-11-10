@@ -145,10 +145,9 @@ impl Diagnostics {
 
     /// Adds the error `d` at `mark`, before the reports that came after it, and proves it.
     pub(super) fn insert_at(&mut self, mark: Mark, d: Diagnostic) -> Reported {
-        debug_assert_eq!(d.severity(), Severity::Error, "{:?} is no error", d.code());
-        self.count(&d);
-        self.list.insert(mark.reports, d);
-        Reported(())
+        let reported = self.error(d);
+        self.list[mark.reports..].rotate_right(1);
+        reported
     }
 
     /// Puts `d` in place of the report at `index`. The code and the severity stay.
