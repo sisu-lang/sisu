@@ -10169,6 +10169,47 @@ fn generated_programs_should_name_each_language_interface() {
     assert!(enumeration, "no seed lists Eq or Display after an enum");
 }
 
+/// GIVEN the programs of the seeds `0..FUZZ_SEEDS`, which the nightly reads and no others
+/// WHEN each one is checked, instantiated and built to mir, in order
+/// THEN some function of some program slices a whole array local in place, and the walk stops at
+/// the first such seed. Pair removal gives this form when one block reads and drops the slice,
+/// and the program uses the base again.
+#[test]
+fn generated_programs_should_slice_a_base_in_place() {
+    use crate::mir::{Operand, Rvalue, Statement};
+    let in_place = |stmt: &Statement, locals: &[crate::mir::Local]| {
+        let Statement::Assign {
+            value:
+                Rvalue::Slice {
+                    base: Operand::Read(place),
+                    safe: false,
+                    ..
+                },
+            ..
+        } = stmt
+        else {
+            return false;
+        };
+        place.projections.is_empty()
+            && matches!(locals[place.local.0].ty.kind(), TypeKind::Array(_))
+    };
+    let found = (0..FUZZ_SEEDS).any(|n| {
+        let (program, diagnostics) = crate::front_end::checked(&generate(&seed(n)).plain);
+        let program = program.unwrap_or_else(|| panic!("seed {n}: {diagnostics:?}"));
+        let program = crate::mono::instantiate(program).unwrap_or_else(|f| panic!("{f:?}"));
+        let mir = crate::mir::build(&program);
+        (mir.functions.iter().filter(|function| !function.prelude)).any(|function| {
+            (function.blocks.iter())
+                .flat_map(|block| &block.stmts)
+                .any(|stmt| in_place(stmt, &function.locals))
+        })
+    });
+    assert!(
+        found,
+        "no program of the seeds 0..{FUZZ_SEEDS} slices an array local in place"
+    );
+}
+
 /// The seeds between them write the enum `NestE`, whose payload is an associated type of its
 /// parameter and whose conformance chooses the enum again, in the form `T.Item` and in the form
 /// `T.Item?`. Each program that writes it builds a value two or more levels deep, compares it

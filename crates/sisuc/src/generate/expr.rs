@@ -90,6 +90,13 @@ pub(crate) fn arithmetic_value(ty: &Ty, op: usize, l: i64, r: i64) -> Result<i64
 const DBG_EVERY: u64 = 37;
 /// Every this many expressions, one that wants an array is a range of an array.
 const SLICE_EVERY: u64 = 200;
+/// Every this many expressions, the receiver of a `len` that has an array local in scope is a range
+/// of that local. The range reads its base in place when the program uses the base again.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the fix commit uses it in `Gen::len`")
+)]
+const SLICE_LEN_EVERY: u64 = 2;
 /// Every this many expressions, one that an array local's element can be is that element through
 /// `first`, `last` or `get`, under a default.
 const SAFE_ELEMENT_EVERY: u64 = 11;
@@ -2563,8 +2570,8 @@ mod tests {
     use arbitrary::Unstructured;
 
     use super::{
-        Gen, MAX_BLOCKS, MAX_NESTING, MAX_SIZE, Rule, SAFE_ELEMENT_EVERY, SLICE_EVERY, Ty, Var,
-        arithmetic_value,
+        Gen, MAX_BLOCKS, MAX_NESTING, MAX_SIZE, Rule, SAFE_ELEMENT_EVERY, SLICE_EVERY,
+        SLICE_LEN_EVERY, Ty, Var, arithmetic_value,
     };
     use crate::generate::writer::Rewrite;
 
@@ -2724,6 +2731,162 @@ mod tests {
         let text = &g.w.out.program;
         assert_eq!(text.matches("({ ").count(), 1, "{text}");
         assert_eq!(g.blocks, MAX_BLOCKS - 1);
+    }
+
+    /// The `len` rule's text of a slice receiver: `((` and the block of a range, and `).len())`.
+    const LEN_OF_SLICE: &str = "((({ let a = ";
+
+    /// Many byte patterns of data.
+    fn byte_patterns() -> impl Iterator<Item = Vec<u8>> {
+        (0..=255_u8).map(|byte| {
+            (0..32_u8)
+                .map(|i| byte.wrapping_mul(i + 1).wrapping_add(i))
+                .collect()
+        })
+    }
+
+    /// GIVEN an `[i64]` local `xs` and a `[string]` local `ys` in scope, on a turn of the slice of
+    /// `len`
+    /// WHEN the `len` rule writes from many bytes of data
+    /// THEN the receiver is a range of `xs` or of `ys` in each of the five forms. The value is not
+    /// pure. The rule leaves its block count and `synth` as it found them.
+    #[test]
+    fn len_should_slice_an_array_local_on_its_turn() {
+        let forms = ["[a..a + ", "[a..=a + ", "[a..]", "[..a + ", "[..=a + "];
+        let (mut seen, mut ints, mut strings) = ([false; 5], false, false);
+        for bytes in byte_patterns() {
+            let mut g = Gen::new(&bytes);
+            for (name, element) in [("xs", Ty::I64), ("ys", Ty::String)] {
+                let ty = Ty::Array(Box::new(element));
+                g.scope
+                    .vars
+                    .push(Var::new(name.to_string(), ty, false, 4, 0, 0));
+            }
+            g.expressions = SLICE_LEN_EVERY;
+            let info = g.rule(Rule::Len, &Ty::I64, MAX_SIZE, false);
+            let text = &g.w.out.program;
+            assert!(
+                text.starts_with(LEN_OF_SLICE) && text.ends_with("] })).len())"),
+                "{text}"
+            );
+            let slice = |name: &str| {
+                text.contains(&format!("% ({name}.len() + 1); "))
+                    && text.contains(&format!("{name}["))
+            };
+            ints |= slice("xs");
+            strings |= slice("ys");
+            for (form, seen) in forms.iter().zip(&mut seen) {
+                *seen |= text.contains(form);
+            }
+            assert!(!info.pure, "{text}");
+            assert_eq!(g.blocks, 0, "{text}");
+            assert!(!g.synth, "{text}");
+        }
+        assert!(ints && strings, "xs {ints}, ys {strings}");
+        assert_eq!(seen, [true; 5], "forms {forms:?}");
+    }
+
+    /// GIVEN an `[i64]` local `xs` and a `[string]` local `ys` in scope, one expression past a turn
+    /// of the slice of `len`
+    /// WHEN the `len` rule writes from many bytes of data
+    /// THEN no receiver is a range
+    #[test]
+    fn len_should_not_slice_off_its_turn() {
+        for bytes in byte_patterns() {
+            let mut g = Gen::new(&bytes);
+            for (name, element) in [("xs", Ty::I64), ("ys", Ty::String)] {
+                let ty = Ty::Array(Box::new(element));
+                g.scope
+                    .vars
+                    .push(Var::new(name.to_string(), ty, false, 4, 0, 0));
+            }
+            g.expressions = SLICE_LEN_EVERY + 1;
+            g.rule(Rule::Len, &Ty::I64, MAX_SIZE, false);
+            let text = &g.w.out.program;
+            assert!(!text.starts_with(LEN_OF_SLICE), "{text}");
+        }
+    }
+
+    /// GIVEN a `string` local `s`, an `i64` local `n` and an optional array local `o`, on a turn of
+    /// the slice of `len`. An optional array is no array.
+    /// WHEN the `len` rule writes from many bytes of data
+    /// THEN no receiver is a range, and some text is `((s).len())`
+    #[test]
+    fn len_should_not_slice_without_an_array_local() {
+        let mut of_s = false;
+        for bytes in byte_patterns() {
+            let mut g = Gen::new(&bytes);
+            let optional = Ty::Optional(Box::new(Ty::Array(Box::new(Ty::I64))));
+            for (name, ty) in [("s", Ty::String), ("n", Ty::I64), ("o", optional)] {
+                g.scope
+                    .vars
+                    .push(Var::new(name.to_string(), ty, false, 4, 0, 0));
+            }
+            g.expressions = SLICE_LEN_EVERY;
+            g.rule(Rule::Len, &Ty::I64, MAX_SIZE, false);
+            let text = &g.w.out.program;
+            assert!(!text.starts_with(LEN_OF_SLICE), "{text}");
+            of_s |= text == "((s).len())";
+        }
+        assert!(of_s, "no text is `((s).len())`");
+    }
+
+    /// GIVEN an `[i64]` local `xs` in scope, on a turn of the slice of `len`
+    /// WHEN the `len` rule writes from many bytes of data, with nothing set, in one line, at the
+    /// deepest nesting, and at the block limit
+    /// THEN a receiver is a range with nothing set, and none is in the other three
+    #[test]
+    fn len_should_not_slice_in_one_line_at_the_deepest_nesting_or_at_the_block_limit() {
+        let ty = Ty::Array(Box::new(Ty::I64));
+        let limits = ["nothing", "one line", "nesting", "blocks"];
+        for limit in limits {
+            let mut sliced = false;
+            for bytes in byte_patterns() {
+                let mut g = Gen::new(&bytes);
+                g.scope
+                    .vars
+                    .push(Var::new("xs".to_string(), ty.clone(), false, 4, 0, 0));
+                g.expressions = SLICE_LEN_EVERY;
+                match limit {
+                    "one line" => g.one_line = true,
+                    "nesting" => g.nesting = MAX_NESTING,
+                    "blocks" => g.blocks = MAX_BLOCKS,
+                    _ => {}
+                }
+                g.rule(Rule::Len, &Ty::I64, MAX_SIZE, false);
+                sliced |= g.w.out.program.starts_with(LEN_OF_SLICE);
+            }
+            assert_eq!(sliced, limit == "nothing", "{limit}");
+        }
+    }
+
+    /// GIVEN an `[i64]` local `xs` of size 4 in scope
+    /// WHEN the range rule writes from many bytes of data, with room for 4
+    /// THEN each range of `xs` is one block that binds `a`, and slices `xs` after
+    /// `% (xs.len() + 1); `. Some range is of `xs`.
+    #[test]
+    fn a_slice_of_a_local_should_be_one_block_that_binds_a() {
+        let ty = Ty::Array(Box::new(Ty::I64));
+        let mut of_xs = false;
+        for bytes in byte_patterns() {
+            let mut g = Gen::new(&bytes);
+            g.scope
+                .vars
+                .push(Var::new("xs".to_string(), ty.clone(), false, 4, 0, 0));
+            g.rule(Rule::Slice, &ty, 4, false);
+            let text = &g.w.out.program;
+            assert_eq!(g.blocks, 0, "{text}");
+            if text.contains("xs[") {
+                of_xs = true;
+                assert!(
+                    text.starts_with("({ let a = ") && text.ends_with("] })"),
+                    "{text}"
+                );
+                assert_eq!(text.matches("({ ").count(), 1, "{text}");
+                assert!(text.contains("% (xs.len() + 1); xs["), "{text}");
+            }
+        }
+        assert!(of_xs, "no range is of `xs`");
     }
 
     /// GIVEN an `[i64]` local `xs` of 3 elements in scope
