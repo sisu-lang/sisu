@@ -531,6 +531,11 @@ fn a_bound_in_an_alias_body_should_be_checked_at_each_use() {
             vec![(Code::NotConform, (6, 18))],
         ),
         (
+            "a constructor of an alias whose body takes an associated type of an argument that does not conform",
+            "interface Has {\n    type Item\n}\nclass Bad {}\nclass Box<A, B> {\n    a: A\n}\ntype Alias<T> = Box<T, T.Item>\nfn main() {\n    let _v = Alias(a: Bad())\n}".to_string(),
+            vec![(Code::NotConform, (10, 14))],
+        ),
+        (
             "a class of two parameters, whose second one is bounded",
             "class Two<A, B: Ord> {\n    a: A\n    b: B\n}\ntype T2<X> = Two<i64, X>\nfn f(x: T2<bool>) {}\nfn main() {}".to_string(),
             vec![(Code::NotConform, (6, 9))],
