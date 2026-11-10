@@ -327,6 +327,20 @@ fn an_alias_qualifier_in_a_pattern_should_report_only_the_limit_that_it_passes()
     assert_eq!(errors, [(Code::AliasTooLarge, (35, 9))]);
 }
 
+/// GIVEN `type EA<T> = Missing<T>`, an alias that is `Error`, and an enum `Two`
+/// WHEN a pattern qualifies a variant with `EA`
+/// THEN only the declaration of `EA` reports: the alias is `Error`, not a type that needs its
+///   argument
+#[test]
+fn an_alias_qualifier_that_is_error_should_add_no_error_in_a_pattern() {
+    codes(
+        "enum Two<A, B> {\n    V(A)\n    W(B)\n}\ntype EA<T> = Missing<T>\n\
+         fn h(e: Two<i64, i64>) {\n    match e {\n        EA.W(n) => print(n)\n        \
+         _ => {}\n    }\n}\nfn main() {}",
+        &[(Code::UnknownType, (5, 14))],
+    );
+}
+
 /// A depth-first resolution that follows each alias by a call would use a frame for each alias of
 /// the chain: 100,000 aliases overflow the stack. The alias that waits for its body takes a place
 /// in a list, so the resolution of a chain has no recursion.
