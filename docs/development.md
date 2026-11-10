@@ -294,9 +294,16 @@ Arguments after `--` choose
 the tests yourself; the script then runs one pass with them. Each mutant still
 costs one build, so a large diff can take an hour or more. A diff of more
 than 300 mutants fails at once, before pass 1, with
-`mutation-test: FAIL: N mutants, more than 300`. Then test a part with
-`scripts/mutants.sh <base> --file <path>`, or set `MUTANTS_MAX=<n>` to test
-all of it.
+`mutation-test: FAIL: N mutants, more than 300`. Then choose the files that
+earn a run: a new module, and code that decides a result, such as a rule, a
+table or an algorithm. Leave out code that only passes a value on, code that
+a change renamed or moved, and lines whose every change the fixtures already
+show. `scripts/mutants.sh <base> --list` lists the mutants, with the file in
+the name of each one. Test the chosen files in one run, so that one log holds
+the summary: `LOG=<file> scripts/mutants.sh <base> --file <a> --file <b>`.
+When the chosen files still have more than 300 mutants, choose fewer. When
+one file alone has more than 300, ask the user. Set `MUTANTS_MAX=<n>` to test
+all of the diff only when the user asks for it.
 Run it only when the user or your instructions ask for it; it is not a
 default step. In a plan, the controller runs it once per stage, on the
 stage's final head after the task reviews. An executor never runs it, so it
