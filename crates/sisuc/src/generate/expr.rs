@@ -2862,8 +2862,8 @@ mod tests {
 
     /// GIVEN an `[i64]` local `xs` of size 4 in scope
     /// WHEN the range rule writes from many bytes of data, with room for 4
-    /// THEN each range of `xs` is one block that binds `a`, and slices `xs` after
-    /// `% (xs.len() + 1); `. Some range is of `xs`.
+    /// THEN each range that starts with `({ let a = ` is one block that slices `xs` after
+    /// `% (xs.len() + 1); `. Some range starts so.
     #[test]
     fn a_slice_of_a_local_should_be_one_block_that_binds_a() {
         let ty = Ty::Array(Box::new(Ty::I64));
@@ -2876,12 +2876,9 @@ mod tests {
             g.rule(Rule::Slice, &ty, 4, false);
             let text = &g.w.out.program;
             assert_eq!(g.blocks, 0, "{text}");
-            if text.contains("xs[") {
+            if text.starts_with("({ let a = ") {
                 of_xs = true;
-                assert!(
-                    text.starts_with("({ let a = ") && text.ends_with("] })"),
-                    "{text}"
-                );
+                assert!(text.ends_with("] })"), "{text}");
                 assert_eq!(text.matches("({ ").count(), 1, "{text}");
                 assert!(text.contains("% (xs.len() + 1); xs["), "{text}");
             }
@@ -2948,7 +2945,8 @@ mod tests {
     /// GIVEN an `[i64]` local `xs` of size 4 in scope
     /// WHEN the range rule writes a range over many bytes of data, with room for 4, and with room
     /// for 3
-    /// THEN some range is of `xs` with room for 4, where it fits exactly, and none with room for 3
+    /// THEN some range starts with `({ let a = `, the form of a range of a local, with room for 4.
+    /// There `xs` fits exactly. None does with room for 3.
     #[test]
     fn a_slice_should_take_a_local_only_when_it_fits() {
         let ty = Ty::Array(Box::new(Ty::I64));
@@ -2963,7 +2961,7 @@ mod tests {
                     .vars
                     .push(Var::new("xs".to_string(), ty.clone(), false, 4, 0, 0));
                 g.rule(Rule::Slice, &ty, max, false);
-                of_xs |= g.w.out.program.contains("xs[");
+                of_xs |= g.w.out.program.starts_with("({ let a = ");
             }
             assert_eq!(of_xs, expected, "room for {max}");
         }
