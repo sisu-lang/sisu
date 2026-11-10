@@ -4533,7 +4533,8 @@ impl Checker<'_> {
                 at: arg.span,
             }));
         }
-        // `resolve` reported the error of the written type just now, but it gives no token.
+        // `resolve` reported the error of the written type, or its declaration did, but it gives
+        // no token.
         self.resolve(arg).ok_or_else(|| self.proof(arg.span)) // proof: declaration
     }
 

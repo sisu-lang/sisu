@@ -763,7 +763,8 @@ impl Checker<'_> {
         }
         match self.written_types(site.written) {
             Some(types) => Ok(types),
-            // `resolve` reported the error of the written type just now, but it gives no token.
+            // `resolve` reported the error of the written type, or its declaration did, but it
+            // gives no token.
             None => Err(self.proof(site.angles)), // proof: declaration
         }
     }
