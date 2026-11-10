@@ -705,10 +705,12 @@ impl Checker<'_> {
                 parens,
             } => {
                 let kind = if names_only {
-                    // A poisoned name gives no error beside the first one.
+                    // A poisoned name, or an alias that is `Error`, gives no error beside the
+                    // first one.
                     let poison = match qualifier {
                         None => self.use_poison(name.name, name.span),
-                        Some(_) => None,
+                        Some(q) => matches!(self.through(q.name), Via::Error)
+                            .then(|| self.failed_alias_token(q.span)),
                     };
                     Err(poison.unwrap_or_else(|| self.only_names(ty, p.span)))
                 } else {
