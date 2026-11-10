@@ -776,6 +776,16 @@ def measure(args: argparse.Namespace, counts: dict[str, Any]) -> None:
         measure_shape(deadline, args, name, counts)
 
 
+def expect_error(what: str, error: str | None, stderr: str) -> None:
+    """Fails unless the only error code in `stderr` is `error`; `None` expects no error."""
+    matches = (DIAGNOSTIC.match(row) for row in stderr.splitlines())
+    errors = {m[2] for m in matches if m and m[1] == "error"}
+    if error is not None and error not in errors:
+        raise Fail(f"{what}: no error[{error}]\n{stderr[-500:]}")
+    if others := sorted(errors - {error}):
+        raise Fail(f"{what}: an error other than {error}: {', '.join(others)}")
+
+
 def measure_shape(
     deadline: Deadline, args: argparse.Namespace, name: str, counts: dict[str, Any]
 ) -> None:
@@ -806,13 +816,7 @@ def measure_shape(
                     if run.returncode != expected:
                         code = f"exit code {run.returncode}, not {expected}"
                         raise Fail(f"{what}: {code}\n{run.stderr[-500:]}")
-                    error = CHECK_ONLY[name]
-                    rows = run.stderr.splitlines()
-                    if k > 0 and not any(
-                        (m := DIAGNOSTIC.match(row)) and m.groups() == ("error", error)
-                        for row in rows
-                    ):
-                        raise Fail(f"{what}: no error[{error}]\n{run.stderr[-500:]}")
+                    expect_error(what, CHECK_ONLY[name] if k > 0 else None, run.stderr)
                     annotated = deadline.run([*ANNOTATE, profile], what).stdout
                     found = stage_counts(annotated, CHECK_ONLY_STAGES)
                     found = {stage: found.get(stage, 0) for stage, _ in STAGES}

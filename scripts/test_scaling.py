@@ -821,6 +821,16 @@ class ScalingTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("failed bounds, size 64: no error[E0154]", err)
 
+    def test_a_check_only_shape_should_fail_when_sisu_also_gives_an_other_error(self) -> None:
+        """GIVEN `sisu check` that gives E0154 and also E0030
+        WHEN the failed bounds shape is measured
+        THEN the run fails, because the counts also measure the path of the other error
+        """
+        both = 'echo "error[E0154]: bound" >&2; echo "error[E0030]: unknown type" >&2; exit 1'
+        code, _, err = self.stub_run("failed bounds", check_above_0=both)
+        self.assertEqual(code, 1)
+        self.assertIn("failed bounds, size 64: an error other than E0154: E0030", err)
+
     def test_stage_counts_should_read_each_stage_from_its_own_line(self) -> None:
         """GIVEN callgrind output with a line for each stage function and a closure of `check::check`
         WHEN `stage_counts` reads it
