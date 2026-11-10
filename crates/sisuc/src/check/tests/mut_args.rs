@@ -2656,3 +2656,12 @@ fn mut_argument_beside_an_earlier_error_should_keep_its_reports() {
         set(mut self[0])\n    }\n}\nfn main() {\n    [1].f()\n}";
     assert_eq!(error_texts(src), [(Code::CannotExtend, "[i64]")], "self-in");
 }
+
+/// GIVEN `fn f(mut x: Nope)`, whose parameter type fails with E0030, and `let mut a = 1`
+/// WHEN `main` calls `f(mut a)`
+/// THEN the E0030 of the declaration is the one error: the argument has no error of its own
+#[test]
+fn a_mut_argument_for_a_parameter_with_no_type_should_report_only_the_declaration() {
+    let src = "fn f(mut x: Nope) {}\nfn main() {\n    let mut a = 1\n    f(mut a)\n}";
+    codes(src, &[(Code::NeverReassigned, (1, 10)), (E30, (1, 13))]);
+}
