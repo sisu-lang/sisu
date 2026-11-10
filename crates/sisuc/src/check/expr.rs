@@ -2,11 +2,11 @@
 
 use std::ops::Range;
 
-use super::generic::Site;
+use super::generic::{Site, mismatch_poison};
 use super::names::{self, Resolved};
+use super::reports::Reported;
 use super::{
-    Checked, Checker, Expectation, Flag, Poisoned, SelfType, Uninferred, is_kept, is_unwrapped,
-    payload, spread, type_of, wrap,
+    Checked, Checker, Expectation, Poisoned, SelfType, Uninferred, payload, type_of, wrap,
 };
 use crate::ast::{self, ExprKind, UnaryOp};
 use crate::diagnostic::{
@@ -104,40 +104,31 @@ impl Checker<'_> {
             )]
             let (x, exact) = (value as f64, (value as f64) as i128 == i128::from(value));
             if !exact {
-                self.report(DiagnosticKind::NotExactlyF64 {
+                let reported = self.error(DiagnosticKind::NotExactlyF64 {
                     text: self.source.text(literal).to_string(),
                     nearest: format!("{x:?}"),
                     at,
                 });
                 return Err(Poisoned {
                     ty: Some(ty),
-                    mismatch: true,
-                    found: None,
-                    kept: false,
-                    unwrapped: Flag::No,
-                    jumped: false,
+                    ..mismatch_poison(reported)
                 });
             }
             return Ok(tir::Expr::new(tir::ExprKind::Float(x), ty, at));
         }
         if ty == Type::U8 && !(0..=i64::from(u8::MAX)).contains(&value) {
             // Only `-9223372036854775808` parses to a negative literal.
-            self.diagnostics.push(if value < 0 {
-                DiagnosticKind::NegatedU8 { at }.into()
+            let reported = self.diagnostics.error(if value < 0 {
+                DiagnosticKind::NegatedU8 { at }
             } else {
                 DiagnosticKind::IntegerDoesNotFit {
                     text: self.source.text(literal).to_string(),
                     at,
                 }
-                .into()
             });
             return Err(Poisoned {
                 ty: Some(ty),
-                mismatch: true,
-                found: None,
-                kept: false,
-                unwrapped: Flag::No,
-                jumped: false,
+                ..mismatch_poison(reported)
             });
         }
         Ok(tir::Expr::new(tir::ExprKind::Int(value), ty, at))
@@ -162,8 +153,7 @@ impl Checker<'_> {
             ExprKind::Index { base, index } => self.index(e.span, base, index),
             ExprKind::Range(range) => {
                 let d = Self::range_outside(range, RangePlace::Elsewhere);
-                self.diagnostics.push(d);
-                Err(Poisoned::error())
+                Err(Poisoned::untyped(self.diagnostics.error(d)))
             }
             ExprKind::NoneLit => self.none(e.span, expected),
             ExprKind::Name(name) => self.name(e.span, *name, expected),
@@ -196,25 +186,23 @@ impl Checker<'_> {
                 if let Some(value) = self.named_args(name, types, *angles, false) {
                     return Err(value);
                 }
-                let reported = self.diagnostics.len();
+                let reported = self.diagnostics.mark();
                 let checked = self.name(name.span, name.name, Expectation::None);
                 // The type arguments follow the name, so `Holder.W<i64>` followed by `.` does not
                 // parse: the fix of a bare variant would break the syntax.
-                for d in &mut self.diagnostics[reported..] {
-                    if d.code() == Code::BareVariant {
-                        d.retain_fixes(|_| false);
-                    }
-                }
+                self.diagnostics
+                    .strip_fixes_since(reported, Code::BareVariant);
                 checked
             }
             ExprKind::Todo { keyword, args } => self.todo(e.span, *keyword, args),
             ExprKind::SelfValue => match self.body.self_type {
                 SelfType::Known(ty) => node(tir::ExprKind::Local(tir::LocalId(0)), ty),
-                SelfType::Failed => Err(Poisoned::error()),
+                SelfType::Failed => {
+                    Err(Poisoned::untyped(self.proof(e.span))) // proof: declaration
+                }
                 SelfType::Absent => {
-                    self.diagnostics
-                        .push(DiagnosticKind::SelfOutsideMethod { at: e.span }.into());
-                    Err(Poisoned::error())
+                    let d = DiagnosticKind::SelfOutsideMethod { at: e.span };
+                    Err(Poisoned::untyped(self.diagnostics.error(d)))
                 }
             },
             ExprKind::Field { base, name, safe } => {
@@ -262,16 +250,24 @@ impl Checker<'_> {
                     ),
                 };
                 // `-` of a value that kept its E0050 keeps it, as an operator does.
-                if *op == UnaryOp::Neg && is_kept(&operand) {
-                    return Err(Poisoned::kept_error());
+                if let Err(failed) = &operand
+                    && *op == UnaryOp::Neg
+                {
+                    if failed.kept {
+                        return Err(Poisoned::kept_error(failed.reported()));
+                    }
+                    // The operand of `-` decides its type, so a failed operand gives no type.
+                    if failed.ty.is_none() {
+                        return Err(Poisoned::untyped(failed.reported()));
+                    }
                 }
-                let flagged = is_unwrapped(&operand);
-                spread(
-                    typed(
-                        e.span,
-                        want,
-                        mismatched,
-                        operand.ok().map(|operand| match operand.kind {
+                typed(
+                    e.span,
+                    want,
+                    mismatched,
+                    operand
+                        .map_err(|failed| failed.reported())
+                        .map(|operand| match operand.kind {
                             // `-1.5` is one literal, as it reads.
                             tir::ExprKind::Float(x) => tir::ExprKind::Float(-x),
                             _ => tir::ExprKind::Unary {
@@ -279,8 +275,6 @@ impl Checker<'_> {
                                 operand: Box::new(operand),
                             },
                         }),
-                    ),
-                    flagged,
                 )
             }
             ExprKind::Binary {
@@ -353,28 +347,30 @@ impl Checker<'_> {
                 }
                 // `Error`: its diagnostic was recorded where it was bound.
                 self.inferred_by_expected(local, expected, span);
-                Err(Poisoned::error())
+                Err(Poisoned::untyped(self.untyped_binding(span)))
             }
             Resolved::Constant(id) => self.constant_use(id, span),
             // The item's own error is reported.
-            Resolved::Poisoned(_) => Err(Poisoned::error()),
+            Resolved::Poisoned(_, reported) => {
+                Err(Poisoned::untyped(self.poison_token(reported, span)))
+            }
             Resolved::PreludeVariant => {
                 // These variants of the prelude's enums are written without the enum, and
                 // `Option` makes no enum for `bare_variant` to find.
-                self.report(DiagnosticKind::VariantForm {
+                let reported = self.error(DiagnosticKind::VariantForm {
                     path: name.to_string(),
                     payload: true,
                     held: false,
                     at: span,
                 });
-                Err(Poisoned::error())
+                Err(Poisoned::untyped(reported))
             }
             _ => {
-                let d = self
-                    .bare_variant(name, span)
-                    .unwrap_or_else(|| self.not_found(name, span));
-                self.diagnostics.push(d);
-                Err(Poisoned::error())
+                let reported = match self.bare_variant(name, span) {
+                    Some(d) => self.diagnostics.error(d),
+                    None => self.not_found(name, span),
+                };
+                Err(Poisoned::untyped(reported))
             }
         }
     }
@@ -404,19 +400,18 @@ impl Checker<'_> {
         match type_of(&checked) {
             Some(ty @ (Type::UNIT | Type::NEVER)) => {
                 let at = self.never_at(e.span);
-                self.no_value(at, ty);
-                Err(Poisoned::error())
+                Err(Poisoned::untyped(self.no_value(at, ty)))
             }
             _ => checked,
         }
     }
 
     /// Reports a value of `ty`, `unit` or `never`, used at `at`.
-    pub(super) fn no_value(&mut self, at: Span, ty: Type) {
-        self.report(DiagnosticKind::NoValue {
+    pub(super) fn no_value(&mut self, at: Span, ty: Type) -> Reported {
+        self.error(DiagnosticKind::NoValue {
             at,
             never: ty == Type::NEVER,
-        });
+        })
     }
 
     /// A value of type `want`; `Poisoned` is `Error`, which every type matches. A `T` where
@@ -462,7 +457,7 @@ impl Checker<'_> {
             {
                 let wrapped = match checked {
                     Ok(e) => Ok(wrap(e, want)),
-                    Err(_) => Err(Poisoned::typed(want)),
+                    Err(failed) => Err(Poisoned::typed(want, failed.reported())),
                 };
                 return (wrapped, false);
             }
@@ -470,8 +465,7 @@ impl Checker<'_> {
                 return done;
             }
             let d = self.mismatch_from(e.span, Some(e), want, got, source);
-            self.diagnostics.push(d);
-            return (Err(Poisoned::error()), true);
+            return (Err(Poisoned::untyped(self.diagnostics.error(d))), true);
         }
         // A generic call that cannot meet `want` is reported with the type it found, as a
         // concrete call is with its type.
@@ -479,9 +473,9 @@ impl Checker<'_> {
             && let Some(found) = self.misfit_type(&checked).filter(|&found| found != want)
         {
             let d = self.mismatch_from(e.span, Some(e), want, found, source);
-            self.diagnostics.push(d);
+            let reported = self.diagnostics.error(d);
             self.settle_misfit(&checked);
-            return (Err(Poisoned::error()), true);
+            return (Err(Poisoned::untyped(reported)), true);
         }
         (checked, false)
     }
@@ -489,7 +483,7 @@ impl Checker<'_> {
     /// A `None`, of the optional type `expected`.
     pub(super) fn none(&mut self, span: Span, expected: Expectation) -> Checked {
         let kind = match expected {
-            Expectation::Poisoned => return Err(Poisoned::error()),
+            Expectation::Poisoned => return Err(Poisoned::untyped(self.poisoned_context(span))),
             Expectation::Required(ty) | Expectation::Hint { want: ty, .. }
                 if matches!(ty.kind(), TypeKind::Optional(_)) =>
             {
@@ -507,32 +501,25 @@ impl Checker<'_> {
                 }
             }
             Expectation::None => {
-                self.report_uninferred(Literal::None, span);
-                return Err(Poisoned::error());
+                return Err(Poisoned::untyped(
+                    self.report_uninferred(Literal::None, span),
+                ));
             }
         };
-        self.diagnostics.push(kind.into());
-        Err(Poisoned {
-            ty: None,
-            mismatch: true,
-            found: None,
-            kept: false,
-            unwrapped: Flag::No,
-            jumped: false,
-        })
+        Err(mismatch_poison(self.diagnostics.error(kind)))
     }
 
     /// Reports E0050 for the `None` or `[]` at `span`. When it is the whole initializer of a
     /// `let`, the `let` finds the report (see `Checker::uninferred_of`).
-    pub(super) fn report_uninferred(&mut self, literal: Literal, span: Span) {
+    pub(super) fn report_uninferred(&mut self, literal: Literal, span: Span) -> Reported {
         let binding = self.let_binding(span);
-        self.report(DiagnosticKind::CannotInfer {
+        self.error(DiagnosticKind::CannotInfer {
             literal,
             binding,
             ty: None,
             at: span,
             regroup: None,
-        });
+        })
     }
 
     /// The help of the E0050 of `local` writes `payload` (`payload?` for a `None`, `[payload]`
@@ -570,14 +557,14 @@ impl Checker<'_> {
             .is_some_and(|d| d.code() == Code::CannotInfer && d.span() == span);
         if reported {
             let help = self.type_name(ty);
-            self.diagnostics[index] = DiagnosticKind::CannotInfer {
+            let d = DiagnosticKind::CannotInfer {
                 literal,
                 binding: Some(binding),
                 ty: Some(help),
                 at: span,
                 regroup: None,
-            }
-            .into();
+            };
+            self.diagnostics.rewrite(index, d.into());
         }
     }
 
@@ -857,18 +844,25 @@ pub(super) fn no_member<'a>(
     }
     .into()
 }
-
-/// The node `kind` makes, of type `ty`. `kind` is `None` when an operand failed; the node
-/// keeps `ty`, which its rule fixes whatever its operands are, unless the rule itself
+/// The node `kind` makes, of type `ty`. `kind` is the proof of a report when an operand failed;
+/// the node keeps `ty`, which its rule fixes whatever its operands are, unless the rule itself
 /// reported a `mismatched` operand: a rule that failed makes its expression `Error`.
 pub(super) fn typed(
     span: Span,
     ty: Type,
     mismatched: bool,
-    kind: Option<tir::ExprKind>,
+    kind: Result<tir::ExprKind, Reported>,
 ) -> Checked {
-    match kind {
-        Some(kind) => Ok(tir::Expr::new(kind, ty, span)),
-        None => Err(Poisoned::of((!mismatched).then_some(ty))),
-    }
+    kind.map(|kind| tir::Expr::new(kind, ty, span))
+        .map_err(|reported| Poisoned::new((!mismatched).then_some(ty), reported))
+}
+
+/// The value of `checked`, or the proof of the report that failed it: its own, else the one of a
+/// label in its call, `labeled`.
+pub(super) fn unlabeled<T>(
+    checked: Result<T, Poisoned>,
+    labeled: Option<Reported>,
+) -> Result<T, Reported> {
+    let value = checked.map_err(|failed| failed.reported())?;
+    labeled.map_or(Ok(value), Err)
 }

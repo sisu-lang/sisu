@@ -354,12 +354,13 @@ fn a_none_that_is_called_should_get_the_fix_that_removes_the_parentheses() {
     }
 }
 
-/// An argument that fails still gives `Some` the type it has, so a use of it is checked.
+/// An argument that fails is a failed part of `Some`, so the `Some` is untyped (the call row of
+/// S14). The `let` adds no mismatch.
 #[test]
-fn a_some_whose_argument_fails_should_keep_its_type() {
+fn a_some_whose_argument_fails_should_be_untyped() {
     codes(
         &with_body("let r: i64 = Some(nothing)"),
-        &[(Code::Mismatch, (2, 18)), (Code::BindingNotFound, (2, 23))],
+        &[(Code::BindingNotFound, (2, 23))],
     );
 }
 
@@ -678,16 +679,18 @@ fn dot_field_on_optional_should_report_a_missing_field_alone() {
     );
 }
 
-/// A write to a field of an optional checks the write rule and the value on the payload's field.
+/// A write to a field of an optional checks the write rule on the payload's field. The place is
+/// untyped (the spec row `p.name`), so the value is checked with no expected type, and its
+/// mismatch waits.
 #[test]
-fn dot_assign_on_optional_should_check_the_write_rule_and_the_value() {
+fn dot_assign_on_optional_should_check_the_write_rule_and_let_the_mismatch_wait() {
     codes(
         &on_node_optional("c.w = 2"),
         &[(Code::MayBeNone, (7, 5)), (Code::AssignToImmutable, (7, 5))],
     );
     codes(
         &on_node_optional("c.v = \"a\""),
-        &[(Code::MayBeNone, (7, 5)), (Code::Mismatch, (7, 11))],
+        &[(Code::MayBeNone, (7, 5))],
     );
 }
 
@@ -835,20 +838,18 @@ fn a_loop_with_a_break_should_give_its_branch_a_type() {
     assert!(error_codes(&src).is_empty(), "{src}");
 }
 
-/// A `break` with no value gives the `loop` the type `unit`, which is no value. The second error
-/// is a cascade of the first. It is kept as it was, and is not a wanted result.
+/// The `None` has no type to take, so its branch fails, and the `if` has no type: the spec row
+/// `if`, `match` (a branch). So the `loop`, whose `break` gives no value, adds no E0043.
 #[test]
-fn a_loop_with_a_break_and_no_value_should_keep_its_two_errors() {
+fn a_none_beside_a_loop_with_no_value_should_report_only_the_none() {
     super::with_prelude();
     for statement in [
         "let _ = if c { None } else { loop { break } }",
         "let _ = if c { None } else { outer: loop { loop { break outer } } }",
     ] {
-        assert_eq!(
-            error_codes(&with_exit_body(statement)),
-            [Code::NoValue, Code::CannotInfer],
-            "{statement}"
-        );
+        let src = with_exit_body(statement);
+        let found = errors(&src, &diags(&src));
+        assert_eq!(found, [(Code::CannotInfer, (7, 20))], "{statement}");
     }
 }
 

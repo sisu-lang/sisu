@@ -7,6 +7,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::extend::holder_of;
 use super::names::{self, ItemId, Position, Resolved};
+use super::reports::Reported;
 use super::{
     BindingKind, Body, Checker, Choice, Choices, Definition, Holder, LeafAnswers, LeafKey, SelfType,
 };
@@ -639,7 +640,7 @@ impl Checker<'_> {
             return;
         }
         for (root, name) in waits.on_loops(&written) {
-            self.report(DiagnosticKind::UnknownType {
+            self.error(DiagnosticKind::UnknownType {
                 name: name.name.to_string(),
                 at: name.span,
                 form: UnknownForm::BoundsLoop {
@@ -890,7 +891,8 @@ impl Checker<'_> {
                     let declared = self.interfaces[id.0].type_params[1..].to_vec();
                     // An interface is copied by no one, so its arguments record no instantiation.
                     let written = args;
-                    let args = self.type_args_of(&ident, &declared, written, angles, false)?;
+                    let args =
+                        (self.type_args_of(&ident, &declared, written, angles, false)).ok()?;
                     let bound = Bound {
                         interface: id,
                         args,
@@ -902,7 +904,7 @@ impl Checker<'_> {
                     }
                     return Some(bound);
                 }
-                Resolved::Poisoned(_) => {
+                Resolved::Poisoned(..) => {
                     self.resolve_args(args);
                     return None;
                 }
@@ -940,7 +942,7 @@ impl Checker<'_> {
 
     /// Reports the written type `ty`, which is a `kind` and no interface, at its name.
     fn not_an_interface(&mut self, ty: &ast::TypeExpr, kind: NotInterface) {
-        self.report(DiagnosticKind::NotAnInterface {
+        self.error(DiagnosticKind::NotAnInterface {
             written: ty.to_string(),
             at: ty.span,
             kind,
@@ -981,7 +983,7 @@ impl Checker<'_> {
         let mut fits = true;
         for (written, &arg) in applied.args.iter().zip(bound.args.get()) {
             if !matches!(arg.kind(), TypeKind::Param(..)) && arg.has_param() {
-                self.report(DiagnosticKind::InheritedArgument {
+                self.error(DiagnosticKind::InheritedArgument {
                     arg: written.to_string(),
                     interface: interface.name.name.to_string(),
                     at: written.span,
@@ -1019,7 +1021,7 @@ impl Checker<'_> {
                 .into_iter()
                 .map(|at| self.interfaces[at].name.name.to_string())
                 .collect();
-            self.report(DiagnosticKind::InheritanceCycle {
+            self.error(DiagnosticKind::InheritanceCycle {
                 name: interface.name.name.to_string(),
                 at: first.span.to(last.span),
                 through,
@@ -1104,7 +1106,7 @@ impl Checker<'_> {
                 }
             }
             for report in reports {
-                self.report(report);
+                self.error(report);
             }
         }
     }
@@ -1243,7 +1245,7 @@ impl Checker<'_> {
         let bound = self.body.bounds[place].list[k];
         if self.wide_reported.insert(bound.at) {
             let text = self.source.type_text(bound.at);
-            self.report(DiagnosticKind::BoundTooWide {
+            self.error(DiagnosticKind::BoundTooWide {
                 kind: WideKind::Bound,
                 written: format!("{}: {text}", self.body.type_params[place]),
                 limit: BOUND_CLOSURE_LIMIT,
@@ -1256,14 +1258,15 @@ impl Checker<'_> {
     /// it, gives more than `BOUND_CLOSURE_LIMIT` interfaces with those it inherits. The conformance
     /// is then unknown: `ty` has no report for what the walk did reach, as for a broken block.
     pub(super) fn too_wide_at(&mut self, ty: Type, at: Span) {
-        self.report(DiagnosticKind::BoundTooWide {
+        let reported = self.error(DiagnosticKind::BoundTooWide {
             kind: WideKind::Conformance,
             written: format!("{}: {}", self.type_name(ty), self.source.type_text(at)),
             limit: BOUND_CLOSURE_LIMIT,
             at,
         });
         let holder = holder_of(ty).expect("a conformance's target should be a class or an enum");
-        self.broken_extensions.insert(self.holder_name(holder));
+        self.broken_extensions
+            .insert(self.holder_name(holder), reported);
     }
 
     /// Reports once for the class or enum `holder` that a query of `conforms` went past
@@ -1283,7 +1286,7 @@ impl Checker<'_> {
             .open
             .root()
             .expect("a query that is too deep should have a root");
-        self.report(DiagnosticKind::ConformanceTooDeep {
+        self.error(DiagnosticKind::ConformanceTooDeep {
             interface: self.bound_text(interface, args),
             root: self.type_name(root),
             limit: depth_limit(),
@@ -1375,8 +1378,10 @@ impl Checker<'_> {
     /// `conformance::Open` says: a key whose query is open or pending holds, and any other key is
     /// expanded once.
     fn conforms_holder(&mut self, ty: Type, interface: InterfaceId, args: TypeArgs) -> bool {
-        let broken = holder_of(ty)
-            .is_some_and(|holder| self.broken_extensions.contains(&self.holder_name(holder)));
+        let broken = holder_of(ty).is_some_and(|holder| {
+            self.broken_extensions
+                .contains_key(&self.holder_name(holder))
+        });
         if broken {
             return true;
         }
@@ -1501,7 +1506,10 @@ impl Checker<'_> {
     pub(super) fn lang_path(&mut self, ty: Type, interface: InterfaceId) -> LangPath {
         let args = TypeArgs::NONE;
         if let Some(holder) = holder_of(ty) {
-            if self.broken_extensions.contains(&self.holder_name(holder)) {
+            if self
+                .broken_extensions
+                .contains_key(&self.holder_name(holder))
+            {
                 return LangPath::PoisonOnly;
             }
             if let Some((k, stands)) = find(&self.conformances, interface, ty, args) {
@@ -1793,7 +1801,8 @@ impl Checker<'_> {
                 }
                 TypeKind::Class(..) | TypeKind::Enum(..) => {
                     let broken = holder_of(ty).is_some_and(|holder| {
-                        self.broken_extensions.contains(&self.holder_name(holder))
+                        self.broken_extensions
+                            .contains_key(&self.holder_name(holder))
                     });
                     if broken {
                         return None;
@@ -1864,14 +1873,21 @@ impl Checker<'_> {
     }
 
     /// Checks that `ty` meets `bound`, whose arguments name the parameters that `with` gives
-    /// types to. Reports it at `at` when not.
-    pub(super) fn check_bound(&mut self, at: Span, ty: Type, bound: Bound, with: &[Type]) -> bool {
+    /// types to. Reports it at `at` when not, and gives the token of the report.
+    pub(super) fn check_bound(
+        &mut self,
+        at: Span,
+        ty: Type,
+        bound: Bound,
+        with: &[Type],
+    ) -> Result<(), Reported> {
         self.check_bound_of(at, ty, bound, with, None, None)
     }
 
     /// `check_bound` for a bound of a block, where the call is of the method that `need` names:
     /// the label of a bound of the prelude says that the method needs it. `implied` is the type
     /// written at the span, when no one writes the bound: it is an associated type of that type.
+    /// The proof of the report, when `ty` does not meet `bound`.
     pub(super) fn check_bound_of(
         &mut self,
         at: Span,
@@ -1880,11 +1896,11 @@ impl Checker<'_> {
         with: &[Type],
         need: Option<BlockNeed>,
         implied: Option<Span>,
-    ) -> bool {
+    ) -> Result<(), Reported> {
         let args = self.subst_args(bound.args, with);
         if self.conforms(ty, bound.interface, args) {
             self.probe_associated(ty, bound.interface, args);
-            return true;
+            return Ok(());
         }
         let prelude = bound.at.in_prelude();
         let advice = self.bound_advice(ty, bound.interface, args, prelude, need);
@@ -1895,7 +1911,7 @@ impl Checker<'_> {
         let owner = if prelude { leaf } else { ty };
         let needs = find(&self.conformances, bound.interface, owner, args)
             .map(|(k, stands)| self.failed_bound(bound.interface, k, stands));
-        self.report(DiagnosticKind::NotConform {
+        Err(self.error(DiagnosticKind::NotConform {
             ty: self.type_name(ty),
             interface: self.bound_text(bound.interface, args),
             at,
@@ -1911,8 +1927,7 @@ impl Checker<'_> {
                 add: advice.add,
                 needs,
             },
-        });
-        false
+        }))
     }
 
     /// The help to make `part` conform to `interface` with `args`: a class or an enum with no
@@ -2088,8 +2103,8 @@ impl Checker<'_> {
 
     /// Checks that each argument of the applied type `ty`, written at `ats`, meets the bounds
     /// that its class or enum declares. When every conformance is not yet known, the check waits.
-    /// Whether it holds, or waits.
-    pub(super) fn check_applied(&mut self, ty: Type, ats: Vec<Span>) -> bool {
+    /// `Ok` when it holds, or waits; else the token of a report.
+    pub(super) fn check_applied(&mut self, ty: Type, ats: Vec<Span>) -> Result<(), Reported> {
         self.check_or_wait(Check::Applied { ty, ats })
     }
 
@@ -2097,12 +2112,19 @@ impl Checker<'_> {
     /// interface declares for its parameter, as `check_applied` does for a class or an enum. The
     /// type `this` has the interface.
     pub(super) fn check_arguments(&mut self, bound: Bound, this: Type, ats: Vec<Span>) {
-        self.check_or_wait(Check::Arguments { bound, this, ats });
+        // A failed check of arguments keeps no type to make unknown.
+        let _ = self.check_or_wait(Check::Arguments { bound, this, ats });
     }
 
     /// Checks that `ty`, written at `at`, conforms to the interface of `bound`, as the bound of a
     /// type parameter would need. When every conformance is not yet known, the check waits.
-    pub(super) fn check_conforms(&mut self, at: Span, ty: Type, bound: Bound, base: Span) -> bool {
+    pub(super) fn check_conforms(
+        &mut self,
+        at: Span,
+        ty: Type,
+        bound: Bound,
+        base: Span,
+    ) -> Result<(), Reported> {
         self.check_or_wait(Check::Conforms {
             ty,
             bound,
@@ -2111,9 +2133,9 @@ impl Checker<'_> {
         })
     }
 
-    /// Queues `check` while the conformances are not yet known, and else runs it. Whether it
-    /// holds, or waits.
-    pub(super) fn check_or_wait(&mut self, check: Check) -> bool {
+    /// Queues `check` while the conformances are not yet known, and else runs it. `Ok` when it
+    /// holds, or waits; else the token of a report.
+    pub(super) fn check_or_wait(&mut self, check: Check) -> Result<(), Reported> {
         let scope = self.pending_bounds.is_some().then(|| self.scope());
         if let (Some(scope), Some(pending)) = (scope, &mut self.pending_bounds) {
             pending.push(PendingBound {
@@ -2121,14 +2143,14 @@ impl Checker<'_> {
                 scope,
                 place: None,
             });
-            return true;
+            return Ok(());
         }
         self.check_now(&check)
     }
 
-    /// Runs `check`. Whether it holds: a failed check of arguments is reported and keeps no type
-    /// to make unknown, so it counts as held.
-    fn check_now(&mut self, check: &Check) -> bool {
+    /// Runs `check`. `Ok` when it holds, else the token of a report: a failed check of arguments
+    /// is reported and keeps no type to make unknown, so it counts as held.
+    fn check_now(&mut self, check: &Check) -> Result<(), Reported> {
         match check {
             Check::Applied { ty, ats } => self.check_applied_now(*ty, ats),
             Check::Arguments { bound, this, ats } => {
@@ -2138,10 +2160,10 @@ impl Checker<'_> {
                 with.extend_from_slice(bound.args.get());
                 for (k, bounds) in bounds.iter().enumerate().skip(1) {
                     for &b in &bounds.list {
-                        self.check_bound(ats[k - 1], with[k], b, &with);
+                        let _ = self.check_bound(ats[k - 1], with[k], b, &with);
                     }
                 }
-                true
+                Ok(())
             }
             Check::Conforms {
                 ty,
@@ -2150,25 +2172,23 @@ impl Checker<'_> {
                 base,
             } => self.check_bound_of(*at, *ty, *bound, &[], None, Some(*base)),
             Check::Any { bound } => match self.why_not_any(bound.interface) {
-                None => true,
-                Some(reason) => {
-                    self.cannot_be_any(*bound, reason);
-                    false
-                }
+                None => Ok(()),
+                Some(reason) => Err(self.cannot_be_any(*bound, reason)),
             },
         }
     }
 
-    fn check_applied_now(&mut self, ty: Type, ats: &[Span]) -> bool {
+    fn check_applied_now(&mut self, ty: Type, ats: &[Span]) -> Result<(), Reported> {
         let (bounds, args) = match ty.kind() {
             TypeKind::Class(id, args) => (self.classes[id.0].bounds.clone(), args),
             TypeKind::Enum(id, args) => (self.enums[id.0].bounds.clone(), args),
             _ => unreachable!("only an applied class or enum should wait for its bounds"),
         };
-        let mut holds = true;
+        let mut holds = Ok(());
         for (k, bounds) in bounds.iter().enumerate() {
             for &bound in &bounds.list {
-                holds &= self.check_bound(ats[k], args.get()[k], bound, args.get());
+                let held = self.check_bound(ats[k], args.get()[k], bound, args.get());
+                holds = holds.and(held);
             }
         }
         holds
@@ -2258,7 +2278,7 @@ impl Checker<'_> {
                     let Some(check) = taken else {
                         continue;
                     };
-                    if !checker.check_now(&check.check)
+                    if checker.check_now(&check.check).is_err()
                         && let Some(place) = check.place
                     {
                         checker.make_unknown(place);

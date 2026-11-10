@@ -1,7 +1,7 @@
 // GIVEN an index of an optional array, or a `.` or `?.` on an optional before an index
 // AND the rest of the chain has a mistake that it has when the optional is unwrapped
 // WHEN `sisu check` runs on it
-// THEN it reports each E0062 first, then each mistake of the rest of the chain
+// THEN it reports each E0062 first, then each mistake of the rest of the chain, which waits below a failed `.`
 // AND an E0062 comes before the E0001 that starts at the same place
 class N2 {
     yss: [[i64]]

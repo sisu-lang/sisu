@@ -2,7 +2,6 @@
 
 use std::collections::hash_map::Entry;
 use std::iter;
-use std::mem;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -11,10 +10,9 @@ use super::branch::{Branch, failed_join};
 use super::exhaust::{self, Neighbours, Report, Row};
 use super::generic::{Ahead, type_meets};
 use super::names::{self, Position, Resolved};
+use super::reports::Reported;
 use super::stmt::BlockSoFar;
-use super::{
-    Checked, CheckedBlock, Checker, Declared, Expectation, Poisoned, has_remedy_flag, type_of,
-};
+use super::{Checked, CheckedBlock, Checker, Declared, Expectation, Poisoned, type_of};
 use crate::ast;
 use crate::diagnostic::{
     BadRange, Definition, DiagnosticKind, Expected, GuardHelp, MismatchSource, Plain, Unwrap,
@@ -65,14 +63,6 @@ fn alternative_removal(
 struct Bound<'a> {
     top: Span,
     arm: Option<&'a ast::Arm>,
-    /// The value has the remedy flag (see `has_remedy_flag`): an E0062 typed it, and its type
-    /// depends on the remedy. Every name in the pattern binds `Error`. A `Some` or `None` that
-    /// takes all of a value that is not optional is no mistake, as the `?.` fix makes it optional.
-    flagged: bool,
-    /// The pattern about to be checked takes all of the value: it is the top pattern, or an
-    /// alternative of an `|` that takes all of it. `pattern` reads it, and clears it for the
-    /// patterns inside.
-    takes_all: bool,
     /// The `mut` of a `let mut` whose one name this pattern binds: it is a variable, not a
     /// name `keyword` unwrapped.
     mutable: Option<Span>,
@@ -113,28 +103,18 @@ pub(super) enum LetValue {
         name: ast::Ident,
         bound: Option<Type>,
     },
-    /// Tests the value, of type `ty` (`None` is `Error`), against the pattern. `flagged` says
-    /// that an E0062 typed the value.
-    Match { ty: Option<Type>, flagged: bool },
-}
-
-impl LetValue {
-    /// The test of `checked`, a value of type `ty`, that a `match` makes.
-    fn test(ty: Option<Type>, checked: &Checked) -> Self {
-        Self::Match {
-            ty,
-            flagged: has_remedy_flag(checked),
-        }
-    }
+    /// Tests the value, of type `ty` (`None` is `Error`), against the pattern.
+    Match { ty: Option<Type> },
 }
 
 /// The checked pattern of an `if let`, a `while let` or a `match` arm, from `bind_pattern`.
 pub(super) enum LetPattern {
     /// An optional's payload bound to `bind`, as `IfSome` binds it.
     Some { bind: tir::LocalId },
-    /// An enum tested against `pattern`, which binds `bindings`; `None` when it failed.
+    /// An enum tested against `pattern`, which binds `bindings`. When it failed, the token of
+    /// its own error, or `None` at an `Error` position, whose token is the value's.
     Match {
-        pattern: Option<(tir::Pattern, Vec<tir::LocalId>)>,
+        pattern: Result<(tir::Pattern, Vec<tir::LocalId>), Option<Reported>>,
     },
 }
 
@@ -229,6 +209,10 @@ impl Checker<'_> {
     /// `match scrutinee { arms }`, whose keyword is at `keyword` and `}` at `close`. Each arm is
     /// checked in a scope that holds its bindings, and the arms join as an `if`'s branches do
     /// (`join`). When every pattern checked, the arms are checked for coverage and reachability.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the scrutinee, the arms, the coverage and the result read in order in one place"
+    )]
     pub(super) fn match_expr(
         &mut self,
         span: Span,
@@ -241,21 +225,18 @@ impl Checker<'_> {
         let (expected, siblings) = expected.split_hint();
         let checked = self.value_kept(scrutinee);
         let mut position = type_of(&checked);
-        let cannot = position.take_if(|&mut ty| !matchable(ty));
-        // Under the `?.` fix a value that an E0062 typed is optional, which `match` takes.
-        if let Some(ty) = cannot
-            && !has_remedy_flag(&checked)
-        {
+        let cannot = position.take_if(|&mut ty| !matchable(ty)).map(|ty| {
             let ty = self.type_name(ty);
-            self.report(DiagnosticKind::CannotMatch {
+            self.error(DiagnosticKind::CannotMatch {
                 ty,
                 at: scrutinee.span,
-            });
-        }
-        let mismatched = cannot.is_some();
+            })
+        });
+        // The token of an `Error` position: the scrutinee's, or the error that it cannot match.
+        let unmatched = checked.as_ref().err().map(Poisoned::reported).or(cannot);
         let mut patterns: Vec<_> = arms.iter().map(|_| None).collect();
         let mut guards: Vec<_> = arms.iter().map(|_| None).collect();
-        let form = LetValue::test(position, &checked);
+        let form = LetValue::Match { ty: position };
         let (blocks, ty) = self.ranked(|c| {
             let sources = c.arm_branches(arms, &form, expected);
             c.join(&sources, (expected, siblings), |c, i, expected| {
@@ -268,7 +249,7 @@ impl Checker<'_> {
                         "a `match` arm should test its value, which `bind_pattern` never unwraps"
                     );
                 };
-                patterns[i] = pattern;
+                patterns[i] = Some(pattern);
                 guards[i] = guard;
                 if let ast::ExprKind::Block(block) = &arm.body.kind {
                     return c.resume_block(block, expected, so_far);
@@ -284,12 +265,15 @@ impl Checker<'_> {
         });
         // A scrutinee `match` cannot take fails the `match`, as a failed condition fails an `if`.
         // With no arms, only a scrutinee of a known type makes it `never`.
-        let ty = match ty {
-            Ok(Type::NEVER) if mismatched && !arms.is_empty() => Err(Poisoned::typed(Type::NEVER)),
-            Ok(_) if mismatched || (arms.is_empty() && position.is_none()) => {
-                Err(Poisoned::error())
+        let ty = match (ty, cannot, unmatched) {
+            (Ok(Type::NEVER), Some(cannot), _) if !arms.is_empty() => {
+                Err(Poisoned::typed(Type::NEVER, cannot))
             }
-            ty => ty,
+            (Ok(_), Some(cannot), _) => Err(Poisoned::untyped(cannot)),
+            (Ok(_), None, Some(scrutinee)) if arms.is_empty() && position.is_none() => {
+                Err(Poisoned::untyped(scrutinee))
+            }
+            (ty, ..) => ty,
         };
         let mut reachable = vec![true; arms.len()];
         if let Some(ty) = position {
@@ -297,7 +281,8 @@ impl Checker<'_> {
                 .iter()
                 .zip(arms)
                 .map(|(p, arm)| {
-                    p.as_ref().map(|(pattern, _)| Row {
+                    let (pattern, _) = p.as_ref()?.as_ref().ok()?;
+                    Some(Row {
                         pattern,
                         guarded: arm.guard.is_some(),
                     })
@@ -308,29 +293,29 @@ impl Checker<'_> {
                 self.report_coverage(keyword, close, arms, report, &mut reachable);
             }
         }
-        let flagged = blocks.iter().any(has_remedy_flag);
-        let arms: Option<Vec<_>> = patterns
+        let arms: Result<Vec<_>, Reported> = patterns
             .into_iter()
             .zip(guards)
             .zip(blocks)
             .zip(reachable)
             .map(|(((pattern, guard), body), reachable)| {
-                let (pattern, bindings) = pattern?;
-                let guard = match guard {
-                    Some(guard) => Some(guard.ok()?),
-                    None => None,
-                };
-                Some(tir::Arm {
+                let pattern = pattern.expect("`join` should bind the pattern of every arm");
+                let (pattern, bindings) = pattern.map_err(|own| {
+                    own.or(unmatched).expect(
+                        "a pattern with no error of its own should be at an `Error` position",
+                    )
+                })?;
+                Ok(tir::Arm {
                     pattern,
                     bindings,
-                    guard,
-                    body: body.ok()?,
+                    guard: guard.transpose().map_err(|p| p.reported())?,
+                    body: body.map_err(|p| p.reported())?,
                     reachable,
                 })
             })
             .collect();
         match (checked, arms, ty) {
-            (Ok(scrutinee), Some(arms), Ok(ty)) => Ok(tir::Expr::new(
+            (Ok(scrutinee), Ok(arms), Ok(ty)) => Ok(tir::Expr::new(
                 tir::ExprKind::Match {
                     temp: self.fresh(scrutinee.ty),
                     scrutinee: Box::new(scrutinee),
@@ -339,7 +324,10 @@ impl Checker<'_> {
                 ty,
                 span,
             )),
-            (.., ty) => failed_join(ty, flagged),
+            (checked, arms, ty) => failed_join(
+                ty,
+                checked.err().map(|p| p.reported()).or_else(|| arms.err()),
+            ),
         }
     }
 
@@ -417,7 +405,7 @@ impl Checker<'_> {
                 ),
                 None => whole_arm(),
             };
-            self.report(DiagnosticKind::UnreachableArm {
+            self.warn(DiagnosticKind::UnreachableArm {
                 at: found.at,
                 alternative: found.alternative.is_some(),
                 covered_by: found.covered_by,
@@ -445,7 +433,7 @@ impl Checker<'_> {
             let start = arms.last().map_or(close, |arm| arm.body.span.end());
             (Span::new(start, close), Some(match_indent.to_string()))
         };
-        self.report(DiagnosticKind::NonExhaustive {
+        self.error(DiagnosticKind::NonExhaustive {
             missing: missing.pattern,
             partly: missing.partly,
             guarded: missing.guarded,
@@ -469,29 +457,13 @@ impl Checker<'_> {
         value: &ast::Expr,
     ) -> (Checked, LetValue, bool) {
         let checked = self.value(value, Expectation::None);
-        // A value that an E0062 typed is no judge of `if let`: under the `?.` fix it is optional.
-        // A member of an optional type is optional under both remedies.
-        let flagged = has_remedy_flag(&checked);
-        let ty = type_of(&checked).filter(|ty| {
-            !flagged || matches!(ty.kind(), TypeKind::Optional(_) | TypeKind::Enum(..))
-        });
+        let ty = type_of(&checked);
         let name = match &pattern.kind {
             // A variant of the enum inside matches that value, as in `match`.
             ast::PatternKind::Name(name)
                 if ty.is_some_and(|ty| variant_inside(&self.enums, ty, name.name)) =>
             {
                 None
-            }
-            // The name takes the value whole, and its type depends on the remedy.
-            ast::PatternKind::Name(name) if flagged => {
-                return (
-                    checked,
-                    LetValue::Unwrap {
-                        name: name.clone(),
-                        bound: None,
-                    },
-                    false,
-                );
             }
             ast::PatternKind::Name(name) => Some(name.clone()),
             ast::PatternKind::Wild => Some(ast::Ident {
@@ -510,7 +482,7 @@ impl Checker<'_> {
                 (checked, LetValue::Unwrap { name, bound }, false)
             }
             (Some((_, TypeKind::Optional(_) | TypeKind::Enum(..))) | None, _) => {
-                (checked, LetValue::Match { ty, flagged }, false)
+                (checked, LetValue::Match { ty }, false)
             }
             (Some((ty, kind)), _) => {
                 let compare = matches!(
@@ -518,18 +490,15 @@ impl Checker<'_> {
                     ast::PatternKind::Literal(literal) if literal_fits(literal, kind)
                 );
                 let found = self.type_name(ty);
-                self.report(DiagnosticKind::UnwrapNeedsOptional {
+                let reported = self.error(DiagnosticKind::UnwrapNeedsOptional {
                     keyword,
                     found,
                     at: value.span,
                     compare,
                 });
                 (
-                    Err(Poisoned::error()),
-                    LetValue::Match {
-                        ty: None,
-                        flagged: false,
-                    },
+                    Err(Poisoned::untyped(reported)),
+                    LetValue::Match { ty: None },
                     true,
                 )
             }
@@ -603,13 +572,11 @@ impl Checker<'_> {
                     None => self.bind_unwrapped(word, name, *bound),
                 },
             },
-            &LetValue::Match { ty, flagged } => {
-                let pattern = self.pattern_in_scope(pattern, ty, flagged, word, arm, mutable);
-                // A `let` with no `else` reports its own error, which needs the same test. A value
-                // that an E0062 typed is optional under the `?.` fix, which no pattern covers.
-                if let (Some(keyword), Some(ty), Some((pattern, _))) = (keyword, ty, &pattern)
+            &LetValue::Match { ty } => {
+                let pattern = self.pattern_in_scope(pattern, ty, word, arm, mutable);
+                // A `let` with no `else` reports its own error, which needs the same test.
+                if let (Some(keyword), Some(ty), Ok((pattern, _))) = (keyword, ty, &pattern)
                     && !matches!(keyword, Unwrap::Let)
-                    && !flagged
                     && self.always_matches(ty, pattern)
                 {
                     // A name or `_` takes nothing apart, so a plain `let` does the same. A bare
@@ -622,7 +589,7 @@ impl Checker<'_> {
                         (tir::PatternKind::Bind(_) | tir::PatternKind::Wild, None) => Plain::Let,
                         _ => Plain::No,
                     };
-                    self.report(DiagnosticKind::AlwaysMatches {
+                    self.error(DiagnosticKind::AlwaysMatches {
                         keyword,
                         at: pattern.span,
                         plain,
@@ -650,29 +617,31 @@ impl Checker<'_> {
 
     /// `pattern` at a position of type `ty` (`None` is `Error`), its names declared in the
     /// innermost scope as `keyword` binds them; `arm` is the `match` arm it starts, if any.
-    /// `None` when it failed.
+    /// When it failed, the token of its own error, or `None` at an `Error` position.
     fn pattern_in_scope(
         &mut self,
         pattern: &ast::Pattern,
         ty: Option<Type>,
-        flagged: bool,
         keyword: &'static str,
         arm: Option<&ast::Arm>,
         mutable: Option<Span>,
-    ) -> Option<(tir::Pattern, Vec<tir::LocalId>)> {
+    ) -> Result<(tir::Pattern, Vec<tir::LocalId>), Option<Reported>> {
         let mut bound = Bound {
             top: pattern.span,
             arm,
-            flagged,
-            takes_all: true,
             mutable,
             names: FxHashMap::default(),
             order: Vec::new(),
             locals: Vec::new(),
             alternatives: Vec::new(),
         };
+        // An `Error` position matches anything; its own error is reported.
+        let Some(ty) = ty else {
+            self.poison(pattern, keyword, &mut bound);
+            return Err(None);
+        };
         let pattern = self.pattern(pattern, ty, keyword, &mut bound)?;
-        Some((pattern, bound.locals))
+        Ok((pattern, bound.locals))
     }
 
     /// `p` at a position of type `ty`; see `pattern_in_scope`. A failed pattern still declares
@@ -680,25 +649,13 @@ impl Checker<'_> {
     fn pattern(
         &mut self,
         p: &ast::Pattern,
-        ty: Option<Type>,
+        ty: Type,
         keyword: &'static str,
         bound: &mut Bound<'_>,
-    ) -> Option<tir::Pattern> {
+    ) -> Result<tir::Pattern, Reported> {
         let pattern = |kind| tir::Pattern { kind, span: p.span };
-        let takes_all = bound.flagged && mem::take(&mut bound.takes_all);
-        // An `Error` position matches anything; its own error is reported.
-        let Some(ty) = ty else {
-            self.poison(p, keyword, bound);
-            return None;
-        };
         if let TypeKind::Optional(payload) = ty.kind() {
             return self.optional_pattern(p, ty, payload, keyword, bound);
-        }
-        // Under the `?.` fix of the E0062, the value is optional. So a `Some` or a `None` that
-        // takes all of it is no mistake. The arm fails with no report, so the coverage of the
-        // `match` is not judged: its result depends on the remedy.
-        if takes_all && self.takes_all_option(p, ty, keyword, bound) {
-            return None;
         }
         let names_only = !matchable(ty);
         match &p.kind {
@@ -707,8 +664,7 @@ impl Checker<'_> {
             | ast::PatternKind::Range { .. }
                 if names_only =>
             {
-                self.only_names(ty, p.span);
-                None
+                Err(self.only_names(ty, p.span))
             }
             ast::PatternKind::Literal(literal) => {
                 self.literal_pattern(literal, p.span, ty).map(pattern)
@@ -721,27 +677,26 @@ impl Checker<'_> {
                 .range_pattern(p.span, start, end, *inclusive, ty)
                 .map(pattern),
             ast::PatternKind::Or(alternatives) if names_only => {
-                self.only_names(ty, p.span);
+                let reported = self.only_names(ty, p.span);
                 for alternative in alternatives {
                     self.poison(alternative, keyword, bound);
                 }
-                None
+                Err(reported)
             }
             ast::PatternKind::Or(alternatives) => self
-                .alternatives(alternatives, (ty, takes_all), keyword, bound)
+                .alternatives(alternatives, ty, keyword, bound)
                 .map(pattern),
-            ast::PatternKind::Wild => Some(pattern(tir::PatternKind::Wild)),
+            ast::PatternKind::Wild => Ok(pattern(tir::PatternKind::Wild)),
             ast::PatternKind::Name(name) => {
                 self.name_pattern(name, ty, keyword, bound).map(pattern)
             }
             ast::PatternKind::None => {
                 let want = self.type_name(ty);
-                self.report(DiagnosticKind::PatternMismatch {
+                Err(self.error(DiagnosticKind::PatternMismatch {
                     want,
                     found: "None".to_string(),
                     at: p.span,
-                });
-                None
+                }))
             }
             ast::PatternKind::Variant {
                 qualifier,
@@ -750,58 +705,46 @@ impl Checker<'_> {
                 parens,
             } => {
                 let kind = if names_only {
-                    // A poisoned name gives no error beside the first one.
-                    if qualifier.is_some() || !self.poisoned_use(name.name) {
-                        self.only_names(ty, p.span);
-                    }
-                    None
+                    // A poisoned name, or an alias that is `Error`, gives no error beside the
+                    // first one.
+                    let poison = match qualifier {
+                        None => self.use_poison(name.name, name.span),
+                        Some(q) => matches!(self.through(q.name), Via::Error)
+                            .then(|| self.failed_alias_token(q.span)),
+                    };
+                    Err(poison.unwrap_or_else(|| self.only_names(ty, p.span)))
                 } else {
                     self.variant_pattern(p.span, ty, qualifier.as_ref(), name, fields, *parens)
                 };
-                let Some((variant, types)) = kind else {
-                    for field in fields {
-                        self.poison(field, keyword, bound);
+                let (variant, types) = match kind {
+                    Ok(kind) => kind,
+                    Err(reported) => {
+                        for field in fields {
+                            self.poison(field, keyword, bound);
+                        }
+                        return Err(reported);
                     }
-                    return None;
                 };
                 // Every field is checked, so the names after a failed one are still bound.
                 let fields: Vec<_> = fields
                     .iter()
                     .zip(&types)
-                    .map(|(field, &ty)| self.pattern(field, ty, keyword, bound))
+                    .map(|(field, &ty)| {
+                        if let Some(ty) = ty {
+                            self.pattern(field, ty, keyword, bound)
+                        } else {
+                            // An `Error` field matches anything; its declaration's error is
+                            // reported.
+                            self.poison(field, keyword, bound);
+                            Err(self.proof(field.span)) // proof: declaration
+                        }
+                    })
                     .collect();
-                Some(pattern(tir::PatternKind::Variant {
+                Ok(pattern(tir::PatternKind::Variant {
                     variant,
-                    fields: fields.into_iter().collect::<Option<_>>()?,
+                    fields: fields.into_iter().collect::<Result<_, _>>()?,
                 }))
             }
-        }
-    }
-
-    /// Whether `p` is the `Some` or the `None` of a value that is not optional, of type `ty`,
-    /// which an E0062 typed (see `Bound::flagged`). The payload of a `Some` is checked against
-    /// `ty`, as the `?.` fix of the E0062 would have it.
-    fn takes_all_option(
-        &mut self,
-        p: &ast::Pattern,
-        ty: Type,
-        keyword: &'static str,
-        bound: &mut Bound<'_>,
-    ) -> bool {
-        match &p.kind {
-            ast::PatternKind::None => true,
-            ast::PatternKind::Variant {
-                qualifier: None,
-                name,
-                fields,
-                ..
-            } if name.name == Symbol::SOME => {
-                for field in fields {
-                    drop(self.pattern(field, Some(ty), keyword, bound));
-                }
-                true
-            }
-            _ => false,
         }
     }
 
@@ -820,29 +763,28 @@ impl Checker<'_> {
         payload: Type,
         keyword: &'static str,
         bound: &mut Bound<'_>,
-    ) -> Option<tir::Pattern> {
+    ) -> Result<tir::Pattern, Reported> {
         let pattern = |kind| tir::Pattern { kind, span: p.span };
-        let some = |inner| Some(pattern(tir::PatternKind::Some(Box::new(inner?))));
+        let some = |inner: Result<_, _>| Ok(pattern(tir::PatternKind::Some(Box::new(inner?))));
         match &p.kind {
-            ast::PatternKind::Wild => Some(pattern(tir::PatternKind::Wild)),
-            ast::PatternKind::None => Some(pattern(tir::PatternKind::None)),
+            ast::PatternKind::Wild => Ok(pattern(tir::PatternKind::Wild)),
+            ast::PatternKind::None => Ok(pattern(tir::PatternKind::None)),
             ast::PatternKind::Name(name) if variant_inside(&self.enums, payload, name.name) => {
-                some(self.pattern(p, Some(payload), keyword, bound))
+                some(self.pattern(p, payload, keyword, bound))
             }
             ast::PatternKind::Name(name) if name.name == Symbol::SOME => {
-                self.report(DiagnosticKind::VariantForm {
+                Err(self.error(DiagnosticKind::VariantForm {
                     path: "Some".to_string(),
                     payload: true,
                     held: false,
                     at: name.span,
-                });
-                None
+                }))
             }
             ast::PatternKind::Name(name) => {
                 self.name_pattern(name, ty, keyword, bound).map(pattern)
             }
             ast::PatternKind::Or(alternatives) => self
-                .alternatives(alternatives, (ty, false), keyword, bound)
+                .alternatives(alternatives, ty, keyword, bound)
                 .map(pattern),
             ast::PatternKind::Variant {
                 qualifier,
@@ -856,7 +798,7 @@ impl Checker<'_> {
             {
                 let kind = match (parens, &fields[..]) {
                     (Some(_), [field]) => {
-                        return some(self.pattern(field, Some(payload), keyword, bound));
+                        return some(self.pattern(field, payload, keyword, bound));
                     }
                     (None, _) => DiagnosticKind::VariantForm {
                         path: written(qualifier.as_ref(), name),
@@ -871,9 +813,9 @@ impl Checker<'_> {
                         at: p.span,
                     },
                 };
-                self.report(kind);
+                let reported = self.error(kind);
                 self.poison(p, keyword, bound);
-                None
+                Err(reported)
             }
             ast::PatternKind::Variant {
                 qualifier: Some(q),
@@ -882,16 +824,16 @@ impl Checker<'_> {
                 parens,
             } if name.name == Symbol::NONE && self.names_option_at(q.name, ty) => {
                 let Some(parens) = parens else {
-                    return Some(pattern(tir::PatternKind::None));
+                    return Ok(pattern(tir::PatternKind::None));
                 };
-                self.report(DiagnosticKind::VariantForm {
+                let reported = self.error(DiagnosticKind::VariantForm {
                     path: written(Some(q), name),
                     payload: false,
                     held: !fields.is_empty() || self.comment_in(&[parens.range()]),
                     at: *parens,
                 });
                 self.poison(p, keyword, bound);
-                None
+                Err(reported)
             }
             ast::PatternKind::Variant {
                 qualifier: Some(q),
@@ -899,14 +841,14 @@ impl Checker<'_> {
                 ..
             } if self.names_option_at(q.name, ty) => {
                 let variants = [("None", Definition::Variant), ("Some", Definition::Variant)];
-                self.report(DiagnosticKind::UnknownVariant {
+                let reported = self.error(DiagnosticKind::UnknownVariant {
                     enum_name: q.name.to_string(),
                     name: name.name.to_string(),
                     at: name.span,
                     suggestion: suggestion(name.name.as_str(), variants),
                 });
                 self.poison(p, keyword, bound);
-                None
+                Err(reported)
             }
             // An alias of an optional type that is not this one.
             ast::PatternKind::Variant {
@@ -915,19 +857,17 @@ impl Checker<'_> {
                 ..
             } if self.names_option(q.name) => {
                 let want = self.type_name(ty);
-                self.report(DiagnosticKind::PatternMismatch {
+                let reported = self.error(DiagnosticKind::PatternMismatch {
                     want,
                     found: written(Some(q), name),
                     at: p.span,
                 });
                 self.poison(p, keyword, bound);
-                None
+                Err(reported)
             }
             ast::PatternKind::Variant { .. }
             | ast::PatternKind::Literal(_)
-            | ast::PatternKind::Range { .. } => {
-                some(self.pattern(p, Some(payload), keyword, bound))
-            }
+            | ast::PatternKind::Range { .. } => some(self.pattern(p, payload, keyword, bound)),
         }
     }
 
@@ -940,7 +880,7 @@ impl Checker<'_> {
         ty: Type,
         keyword: &'static str,
         bound: &mut Bound<'_>,
-    ) -> Option<tir::PatternKind> {
+    ) -> Result<tir::PatternKind, Reported> {
         let text = name.name.as_str();
         let enum_id = match ty.kind() {
             TypeKind::Enum(id, _) => Some(id.0),
@@ -950,26 +890,25 @@ impl Checker<'_> {
             && let Some(&variant) = self.enums[id].index.get(&name.name)
         {
             if self.enums[id].variants[variant].fields.is_empty() {
-                return Some(tir::PatternKind::Variant {
+                return Ok(tir::PatternKind::Variant {
                     variant,
                     fields: Vec::new(),
                 });
             }
-            self.report(DiagnosticKind::VariantForm {
+            return Err(self.error(DiagnosticKind::VariantForm {
                 path: text.to_string(),
                 payload: true,
                 held: false,
                 at: name.span,
-            });
-            return None;
+            }));
         }
         let answer = self.meaning(name.name, names::Site::new(Position::Pattern, false));
         // A name the prelude takes is a binding, which `declare` reports.
         if !matches!(answer, Resolved::PreludeVariant) {
             // A poisoned name gives no error.
-            if matches!(answer, Resolved::Poisoned(_)) {
+            if let Resolved::Poisoned(_, reported) = answer {
                 self.hide_local(name);
-                return None;
+                return Err(self.poison_token(reported, name.span));
             }
             if matches!(answer, Resolved::Constant(_)) {
                 let candidates =
@@ -982,12 +921,11 @@ impl Checker<'_> {
                         GuardHelp::Rewritten(format!("{fresh} if {fresh} == {text}{own}"))
                     })
                 };
-                self.report(DiagnosticKind::ConstantInPattern {
+                return Err(self.error(DiagnosticKind::ConstantInPattern {
                     name: text.to_string(),
                     at: name.span,
                     guard,
-                });
-                return None;
+                }));
             }
             if text.starts_with(char::is_uppercase) {
                 let kind = if let Some(id) = enum_id {
@@ -1029,13 +967,10 @@ impl Checker<'_> {
                         at: name.span,
                     }
                 };
-                self.report(kind);
-                return None;
+                return Err(self.error(kind));
             }
         }
-        // A name in a pattern on a value with the remedy flag binds `Error`.
-        let ty = (!bound.flagged).then_some(ty);
-        self.bind(name, ty, keyword, bound)
+        self.bind(name, Some(ty), keyword, bound)
             .map(tir::PatternKind::Bind)
     }
 
@@ -1046,7 +981,7 @@ impl Checker<'_> {
         literal: &ast::Literal,
         at: Span,
         ty: Type,
-    ) -> Option<tir::PatternKind> {
+    ) -> Result<tir::PatternKind, Reported> {
         match (literal, ty) {
             (
                 &ast::Literal::Int {
@@ -1057,50 +992,45 @@ impl Checker<'_> {
                 Type::I64 | Type::U8,
             ) => {
                 let value = self.int_value(value, text, negative, ty)?;
-                Some(tir::PatternKind::Range {
+                Ok(tir::PatternKind::Range {
                     lo: value,
                     hi: value,
                 })
             }
             (&ast::Literal::Char(c), Type::CHAR) => {
                 let value = i64::from(u32::from(c));
-                Some(tir::PatternKind::Range {
+                Ok(tir::PatternKind::Range {
                     lo: value,
                     hi: value,
                 })
             }
-            (&ast::Literal::Bool(value), Type::BOOL) => Some(tir::PatternKind::Bool(value)),
-            (ast::Literal::Str(text), Type::STRING) => Some(tir::PatternKind::Str(text.clone())),
-            _ => {
-                self.pattern_mismatch(ty, at);
-                None
-            }
+            (&ast::Literal::Bool(value), Type::BOOL) => Ok(tir::PatternKind::Bool(value)),
+            (ast::Literal::Str(text), Type::STRING) => Ok(tir::PatternKind::Str(text.clone())),
+            _ => Err(self.pattern_mismatch(ty, at)),
         }
     }
 
     /// The integer `value`, its digits at `text` after the `-` at `negative`, at a position of
-    /// type `ty`, `i64` or `u8`; `None` when `u8` cannot hold it, which is reported.
+    /// type `ty`, `i64` or `u8`; the token of the error when `u8` cannot hold it.
     fn int_value(
         &mut self,
         value: i64,
         text: Span,
         negative: Option<Span>,
         ty: Type,
-    ) -> Option<i64> {
+    ) -> Result<i64, Reported> {
         if ty == Type::U8 {
             if let Some(minus) = negative {
-                self.report(DiagnosticKind::NegatedU8 { at: minus.to(text) });
-                return None;
+                return Err(self.error(DiagnosticKind::NegatedU8 { at: minus.to(text) }));
             }
             if value > i64::from(u8::MAX) {
-                self.report(DiagnosticKind::IntegerDoesNotFit {
+                return Err(self.error(DiagnosticKind::IntegerDoesNotFit {
                     text: self.source.text(text).to_string(),
                     at: text,
-                });
-                return None;
+                }));
             }
         }
-        Some(value)
+        Ok(value)
     }
 
     /// The range `start..end`, or `start..=end` when `inclusive`, at `at`, at a position of
@@ -1113,11 +1043,15 @@ impl Checker<'_> {
         end: &ast::Bound,
         inclusive: bool,
         ty: Type,
-    ) -> Option<tir::PatternKind> {
+    ) -> Result<tir::PatternKind, Reported> {
+        let mut named = None;
         for bound in [start, end] {
-            if let ast::Bound::Name(name) = bound
-                && !self.poisoned_use(name.name)
-            {
+            let ast::Bound::Name(name) = bound else {
+                continue;
+            };
+            if let Some(reported) = self.use_poison(name.name, name.span) {
+                named.get_or_insert(reported);
+            } else {
                 // `n == LIMIT` would test one value, not the range, so the help would mislead.
                 let kind = if self.names.constant(name.name).is_some() {
                     DiagnosticKind::ConstantInPattern {
@@ -1132,21 +1066,21 @@ impl Checker<'_> {
                         at: name.span,
                     }
                 };
-                self.report(kind);
+                let reported = self.error(kind);
+                named.get_or_insert(reported);
             }
         }
         let (ast::Bound::Literal(lo), ast::Bound::Literal(hi)) = (start, end) else {
-            return None;
+            return Err(named.expect("a bound that is a name should be reported or poisoned"));
         };
         let text = |literal: &ast::Literal| {
             matches!(literal, ast::Literal::Str(_) | ast::Literal::Bool(_))
         };
         if !matches!(ty, Type::I64 | Type::U8 | Type::CHAR) || text(lo) || text(hi) {
-            self.report(DiagnosticKind::BadRange {
+            return Err(self.error(DiagnosticKind::BadRange {
                 form: BadRange::Type,
                 at,
-            });
-            return None;
+            }));
         }
         let (lo, hi) = match (lo, hi, ty) {
             (
@@ -1170,17 +1104,13 @@ impl Checker<'_> {
             (&ast::Literal::Char(lo), &ast::Literal::Char(hi), Type::CHAR) => {
                 (i64::from(u32::from(lo)), i64::from(u32::from(hi)))
             }
-            _ => {
-                self.pattern_mismatch(ty, at);
-                return None;
-            }
+            _ => return Err(self.pattern_mismatch(ty, at)),
         };
         if lo > hi || (lo == hi && !inclusive) {
-            self.report(DiagnosticKind::BadRange {
+            return Err(self.error(DiagnosticKind::BadRange {
                 form: BadRange::Empty,
                 at,
-            });
-            return None;
+            }));
         }
         // Not empty, so `hi - 1` cannot overflow.
         let hi = match (inclusive, ty) {
@@ -1189,34 +1119,32 @@ impl Checker<'_> {
             (false, Type::CHAR) if hi == 0xE000 => 0xD7FF,
             (false, _) => hi - 1,
         };
-        Some(tir::PatternKind::Range { lo, hi })
+        Ok(tir::PatternKind::Range { lo, hi })
     }
 
     /// "expected a pattern for `ty`", for the pattern at `at` as written.
-    fn pattern_mismatch(&mut self, ty: Type, at: Span) {
+    fn pattern_mismatch(&mut self, ty: Type, at: Span) -> Reported {
         let want = self.type_name(ty);
-        self.report(DiagnosticKind::PatternMismatch {
+        self.error(DiagnosticKind::PatternMismatch {
             want,
             found: self.source.text(at).to_string(),
             at,
-        });
+        })
     }
 
     /// The alternatives of an `|` at a position of type `ty`, which takes more than names. Each
     /// binds the names of the first, with the same types, so each name is one local, which
     /// every alternative binds. A name of the first that an alternative lacks is reported there;
-    /// a name only later alternatives bind is reported once, at the first. `takes_all` says that
-    /// the `|` takes all of the value, and so does each alternative.
+    /// a name only later alternatives bind is reported once, at the first.
     fn alternatives(
         &mut self,
         alternatives: &[ast::Pattern],
-        (ty, takes_all): (Type, bool),
+        ty: Type,
         keyword: &'static str,
         bound: &mut Bound<'_>,
-    ) -> Option<tir::PatternKind> {
+    ) -> Result<tir::PatternKind, Reported> {
         let mark = bound.order.len();
-        bound.takes_all = takes_all;
-        let first = self.pattern(&alternatives[0], Some(ty), keyword, bound);
+        let first = self.pattern(&alternatives[0], ty, keyword, bound);
         let named: Vec<_> = bound
             .order
             .drain(mark..)
@@ -1233,12 +1161,12 @@ impl Checker<'_> {
             extra: None,
         });
         let mut checked = vec![first];
-        let mut agree = true;
+        // The token of the first name that the alternatives do not agree on.
+        let mut lacks = None;
         // The names only a later alternative binds, each reported once, at the first.
         let mut later_only = FxHashSet::default();
         for alternative in &alternatives[1..] {
-            bound.takes_all = takes_all;
-            checked.push(self.pattern(alternative, Some(ty), keyword, bound));
+            checked.push(self.pattern(alternative, ty, keyword, bound));
             let here: FxHashSet<_> = bound.order.drain(mark..).collect();
             for name in &here {
                 bound.names.remove(name);
@@ -1250,20 +1178,18 @@ impl Checker<'_> {
             let missing = named.iter().find(|(name, _)| !here.contains(name));
             let lacking = match (missing, extra) {
                 (Some(&(name, _)), _) => Some((name, alternative.span)),
-                (None, Some(name)) => {
-                    agree = false;
-                    later_only
-                        .insert(name)
-                        .then_some((name, alternatives[0].span))
-                }
+                // A name reported at the first already gave its token.
+                (None, Some(name)) => later_only
+                    .insert(name)
+                    .then_some((name, alternatives[0].span)),
                 (None, None) => None,
             };
             if let Some((name, at)) = lacking {
-                agree = false;
-                self.report(DiagnosticKind::AlternativeBindings {
+                let reported = self.error(DiagnosticKind::AlternativeBindings {
                     name: name.to_string(),
                     at,
                 });
+                lacks.get_or_insert(reported);
             }
         }
         bound.alternatives.pop();
@@ -1272,11 +1198,11 @@ impl Checker<'_> {
             bound.names.insert(name, entry);
             bound.order.push(name);
         }
-        let checked: Option<Vec<_>> = checked.into_iter().collect();
-        if !agree {
-            return None;
+        let checked: Result<Vec<_>, _> = checked.into_iter().collect();
+        if let Some(reported) = lacks {
+            return Err(reported);
         }
-        Some(tir::PatternKind::Or(checked?))
+        Ok(tir::PatternKind::Or(checked?))
     }
 
     /// For a guard a help suggests in place of what the pattern `bound` checks cannot test: the
@@ -1322,7 +1248,7 @@ impl Checker<'_> {
 
     /// The variant that `qualifier.name(fields)` (`parens` is `None` without parentheses)
     /// names at a position of type `ty`, an enum or a type `==` compares, and its field types;
-    /// `None` when it was reported, or when the name is poisoned.
+    /// the token of its error when it was reported, or of the poison when the name is poisoned.
     fn variant_pattern(
         &mut self,
         span: Span,
@@ -1331,13 +1257,13 @@ impl Checker<'_> {
         name: &ast::Ident,
         fields: &[ast::Pattern],
         parens: Option<Span>,
-    ) -> Option<(usize, Vec<Option<Type>>)> {
+    ) -> Result<(usize, Vec<Option<Type>>), Reported> {
         // A poisoned name gives no error, unless `ty` has a variant of that name.
         if qualifier.is_none()
-            && self.poisoned_use(name.name)
             && !variant_inside(&self.enums, ty, name.name)
+            && let Some(reported) = self.use_poison(name.name, name.span)
         {
-            return None;
+            return Err(reported);
         }
         let path = written(qualifier, name);
         // A qualifier names an enum, whatever arguments `ty` gives it, as an enum path does in
@@ -1348,33 +1274,37 @@ impl Checker<'_> {
             Some(q) if let Some(Declared::Known(named)) = self.names.enum_id(q.name) => {
                 matches!(ty.kind(), TypeKind::Enum(id, _) if id == named)
             }
-            // An alias of an enum is the type that it names, whose fixed arguments hold.
-            Some(q)
-                if let Via::To(through) = self.through(q.name)
-                    && matches!(through.ty.kind(), TypeKind::Enum(..)) =>
-            {
-                type_meets(through.params.len(), through.ty, ty)
-            }
-            Some(q) => {
-                self.resolve(&ast::TypeExpr {
-                    kind: ast::TypeKind::Name(q.name),
-                    optional: 0,
-                    span: q.span,
-                    bare: q.span,
-                })?;
-                false
-            }
+            Some(q) => match self.through(q.name) {
+                // An alias of an enum is the type that it names, whose fixed arguments hold.
+                Via::To(through) if matches!(through.ty.kind(), TypeKind::Enum(..)) => {
+                    type_meets(through.params.len(), through.ty, ty)
+                }
+                Via::Error => return Err(self.failed_alias_token(q.span)),
+                _ => {
+                    let resolved = self.resolve(&ast::TypeExpr {
+                        kind: ast::TypeKind::Name(q.name),
+                        optional: 0,
+                        span: q.span,
+                        bare: q.span,
+                    });
+                    if resolved.is_none() {
+                        // `resolve` reported the error of the written type, or its declaration
+                        // did, but it gives no token.
+                        return Err(self.proof(q.span)); // proof: declaration
+                    }
+                    false
+                }
+            },
         };
         let (id, args) = match ty.kind() {
             TypeKind::Enum(id, args) if fits => (id.0, args),
             _ => {
                 let want = self.type_name(ty);
-                self.report(DiagnosticKind::PatternMismatch {
+                return Err(self.error(DiagnosticKind::PatternMismatch {
                     want,
                     found: path,
                     at: span,
-                });
-                return None;
+                }));
             }
         };
         let info = &self.enums[id];
@@ -1390,8 +1320,7 @@ impl Checker<'_> {
                 at: name.span,
                 suggestion: suggestion(name.name.as_str(), variants),
             };
-            self.report(kind);
-            return None;
+            return Err(self.error(kind));
         };
         // Counted, not cloned: a wide variant's malformed patterns must not each copy its fields.
         let count = info.variants[variant].fields.len();
@@ -1420,17 +1349,16 @@ impl Checker<'_> {
                 let fields = fields
                     .iter()
                     .map(|ty| ty.and_then(|ty| self.subst(ty, args.get())));
-                return Some((variant, fields.collect()));
+                return Ok((variant, fields.collect()));
             }
         };
-        self.report(kind);
-        None
+        Err(self.error(kind))
     }
 
     /// "a `ty` position takes only a name or `_`", at `at`.
-    fn only_names(&mut self, ty: Type, at: Span) {
+    fn only_names(&mut self, ty: Type, at: Span) -> Reported {
         let ty = self.type_name(ty);
-        self.report(DiagnosticKind::OnlyNamePosition { ty, at });
+        self.error(DiagnosticKind::OnlyNamePosition { ty, at })
     }
 
     /// Declares `name`, of type `ty`, as `keyword` binds it, unless this pattern binds it
@@ -1443,7 +1371,7 @@ impl Checker<'_> {
         ty: Option<Type>,
         keyword: &'static str,
         bound: &mut Bound<'_>,
-    ) -> Option<tir::LocalId> {
+    ) -> Result<tir::LocalId, Reported> {
         if let Some(&(first, _)) = bound.names.get(&name.name) {
             let written = name.name.as_str();
             let next = match written.as_bytes() {
@@ -1468,18 +1396,17 @@ impl Checker<'_> {
                     ))
                 })
             };
-            self.report(DiagnosticKind::BoundTwice {
+            return Err(self.error(DiagnosticKind::BoundTwice {
                 name: name.name.to_string(),
                 at: name.span,
                 first,
                 guard,
-            });
-            return None;
+            }));
         }
         let (kind, mutable) = bound.binding_kind(keyword);
         // A later alternative binds the first's local; its type must agree, but the name is
         // bound either way, so no alternative is reported as lacking it.
-        let mut agrees = true;
+        let mut misfit = None;
         let local = if let Some(alternatives) = bound.alternatives.last_mut() {
             if let Some(&local) = alternatives.first.get(&name.name) {
                 let earlier = self.lookup(name.name).map(|b| {
@@ -1490,7 +1417,7 @@ impl Checker<'_> {
                     && want != got
                 {
                     let (want, got) = (self.type_name(want), self.type_name(got));
-                    self.report(DiagnosticKind::Mismatch {
+                    misfit = Some(self.error(DiagnosticKind::Mismatch {
                         want: Expected::Types(vec![want]),
                         got,
                         at: name.span,
@@ -1501,8 +1428,7 @@ impl Checker<'_> {
                         fix: None,
                         conversion: false,
                         layers: false,
-                    });
-                    agrees = false;
+                    }));
                 }
                 local
             } else {
@@ -1516,7 +1442,7 @@ impl Checker<'_> {
         };
         bound.names.insert(name.name, (name.span, local));
         bound.order.push(name.name);
-        agrees.then_some(local)
+        misfit.map_or(Ok(local), Err)
     }
 
     /// Hides any outer local of the poisoned name `name` from the reads and writes in its scope.
@@ -1544,7 +1470,8 @@ impl Checker<'_> {
                 if !name.name.as_str().starts_with(char::is_uppercase)
                     && !bound.names.contains_key(&name.name) =>
             {
-                self.bind(name, None, keyword, bound);
+                // The pattern's own failure is the error: a name with no type binds as `Error`.
+                let _ = self.bind(name, None, keyword, bound);
             }
             ast::PatternKind::Variant { fields, .. } => {
                 for field in fields {

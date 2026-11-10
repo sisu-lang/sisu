@@ -24,12 +24,6 @@ help: mark the field `mut`
  7 |     mut ys: [i64]
    |     +++
 
-error[E0032]: expected `i64`, found `string`
-  --> E0062-chain-continues.sisu:24:24
-   |
-24 |         self.o.ys.push("a")
-   |                        ^^^
-
 error[E0062]: `self.o` may be `None`
   --> E0062-chain-continues.sisu:28:25
    |
@@ -42,12 +36,6 @@ help: if a `None` result is fine, use `?.`
 28 |         let s: string = self.o?.v
    |                               +
 
-error[E0032]: expected `string`, found `i64`
-  --> E0062-chain-continues.sisu:28:25
-   |
-28 |         let s: string = self.o.v
-   |                         ^^^^^^^^
-
 error[E0062]: `c` may be `None`
   --> E0062-chain-continues.sisu:59:5
    |
@@ -55,26 +43,6 @@ error[E0062]: `c` may be `None`
    |     ^
    |
    = help: unwrap it with `if let`, `let ... else` or `?? return`
-
-error[E0001]: cannot change `ys`
-  --> E0062-chain-continues.sisu:59:5
-   |
- 7 |     ys: [i64]
-   |     -- declared without `mut` here
-...
-59 |     c.ns[0].ys.push("a")
-   |     ^^^^^^^^^^ `push` changes `ys`
-   |
-help: mark the field `mut`
-   |
- 7 |     mut ys: [i64]
-   |     +++
-
-error[E0032]: expected `i64`, found `string`
-  --> E0062-chain-continues.sisu:59:21
-   |
-59 |     c.ns[0].ys.push("a")
-   |                     ^^^
 
 error[E0062]: `c` may be `None`
   --> E0062-chain-continues.sisu:63:5
@@ -88,26 +56,6 @@ help: if a `None` result is fine, use `?.`
 63 |     c?.inner.ys.push("a")
    |      +
 
-error[E0001]: cannot change `ys`
-  --> E0062-chain-continues.sisu:63:5
-   |
- 7 |     ys: [i64]
-   |     -- declared without `mut` here
-...
-63 |     c.inner.ys.push("a")
-   |     ^^^^^^^^^^ `push` changes `ys`
-   |
-help: mark the field `mut`
-   |
- 7 |     mut ys: [i64]
-   |     +++
-
-error[E0032]: expected `i64`, found `string`
-  --> E0062-chain-continues.sisu:63:21
-   |
-63 |     c.inner.ys.push("a")
-   |                     ^^^
-
 error[E0062]: `c` may be `None`
   --> E0062-chain-continues.sisu:67:5
    |
@@ -119,26 +67,6 @@ help: if a `None` result is fine, use `?.`
    |
 67 |     c?.mk().ys.push("a")
    |      +
-
-error[E0001]: cannot change `ys`
-  --> E0062-chain-continues.sisu:67:5
-   |
- 7 |     ys: [i64]
-   |     -- declared without `mut` here
-...
-67 |     c.mk().ys.push("a")
-   |     ^^^^^^^^^ `push` changes `ys`
-   |
-help: mark the field `mut`
-   |
- 7 |     mut ys: [i64]
-   |     +++
-
-error[E0032]: expected `i64`, found `string`
-  --> E0062-chain-continues.sisu:67:20
-   |
-67 |     c.mk().ys.push("a")
-   |                    ^^^
 
 error[E0062]: `c` may be `None`
   --> E0062-chain-continues.sisu:71:5
@@ -152,26 +80,6 @@ help: if a `None` result is fine, use `?.`
 71 |     c?.inner.v = "s"
    |      +
 
-error[E0001]: cannot assign to `v`
-  --> E0062-chain-continues.sisu:71:5
-   |
- 8 |     v: i64
-   |     - declared without `mut` here
-...
-71 |     c.inner.v = "s"
-   |     ^^^^^^^^^^^^^^^
-   |
-help: mark the field `mut`
-   |
- 8 |     mut v: i64
-   |     +++
-
-error[E0032]: expected `i64`, found `string`
-  --> E0062-chain-continues.sisu:71:17
-   |
-71 |     c.inner.v = "s"
-   |                 ^^^
-
 error[E0062]: `c` may be `None`
   --> E0062-chain-continues.sisu:75:5
    |
@@ -183,26 +91,6 @@ help: if a `None` result is fine, use `?.`
    |
 75 |     c?.inner.v += "s"
    |      +
-
-error[E0001]: cannot assign to `v`
-  --> E0062-chain-continues.sisu:75:5
-   |
- 8 |     v: i64
-   |     - declared without `mut` here
-...
-75 |     c.inner.v += "s"
-   |     ^^^^^^^^^^^^^^^^
-   |
-help: mark the field `mut`
-   |
- 8 |     mut v: i64
-   |     +++
-
-error[E0032]: expected `i64`, found `string`
-  --> E0062-chain-continues.sisu:75:18
-   |
-75 |     c.inner.v += "s"
-   |                  ^^^
 
 error[E0062]: `c` may be `None`
   --> E0062-chain-continues.sisu:79:11
@@ -216,12 +104,6 @@ help: if a `None` result is fine, use `?.`
 79 |     print(c?.inner.nope)
    |            +
 
-error[E0063]: `Inner` has no field `nope`
-  --> E0062-chain-continues.sisu:79:19
-   |
-79 |     print(c.inner.nope)
-   |                   ^^^^
-
 error[E0062]: `c` may be `None`
   --> E0062-chain-continues.sisu:83:11
    |
@@ -233,12 +115,6 @@ help: if a `None` result is fine, use `?.`
    |
 83 |     print(c?.inner.v.nope())
    |            +
-
-error[E0063]: `i64` has no method `nope`
-  --> E0062-chain-continues.sisu:83:21
-   |
-83 |     print(c.inner.v.nope())
-   |                     ^^^^
 
 error[E0062]: `c` may be `None`
   --> E0062-chain-continues.sisu:87:21
@@ -252,12 +128,6 @@ help: if a `None` result is fine, use `?.`
 87 |     let s: string = c?.v
    |                      +
 
-error[E0032]: expected `string`, found `i64`
-  --> E0062-chain-continues.sisu:87:21
-   |
-87 |     let s: string = c.v
-   |                     ^^^
-
 error[E0062]: `c` may be `None`
   --> E0062-chain-continues.sisu:91:21
    |
@@ -269,12 +139,6 @@ help: if a `None` result is fine, use `?.`
    |
 91 |     let s: string = c?.inner.v
    |                      +
-
-error[E0032]: expected `string`, found `i64`
-  --> E0062-chain-continues.sisu:91:21
-   |
-91 |     let s: string = c.inner.v
-   |                     ^^^^^^^^^
 
 error[E0062]: `c` may be `None`
   --> E0062-chain-continues.sisu:95:21
@@ -288,12 +152,6 @@ help: if a `None` result is fine, use `?.`
 95 |     let s: string = c?.one()
    |                      +
 
-error[E0032]: expected `string`, found `i64`
-  --> E0062-chain-continues.sisu:95:21
-   |
-95 |     let s: string = c.one()
-   |                     ^^^^^^^
-
 error[E0062]: `c` may be `None`
   --> E0062-chain-continues.sisu:99:5
    |
@@ -305,17 +163,6 @@ help: to do nothing when it is `None`, use `?.`
    |
 99 |     c?.oa.push(1)
    |      +
-
-error[E0062]: `c.oa` may be `None`
-  --> E0062-chain-continues.sisu:99:5
-   |
-99 |     c.oa.push(1)
-   |     ^^^^
-   |
-help: to do nothing when it is `None`, use `?.`
-   |
-99 |     c.oa?.push(1)
-   |         +
 
 error[E0001]: cannot change `oa`
   --> E0062-chain-continues.sisu:99:5
@@ -364,17 +211,6 @@ error[E0062]: `c` may be `None`
     |
     = help: unwrap it with `if let`, `let ... else` or `?? return`
 
-error[E0169]: a `mut` argument must be a place: a variable, a `mut` field, or an element of one of these
-   --> E0062-chain-continues.sisu:107:14
-    |
- 33 |     count: i64
-    |     ----- declared without `mut` here
-...
-107 |     bump(mut c.tally.count)
-    |              ^^^^^^^^^^^^^ not a place
-    |
-    = help: declare the field `count` as `mut`
-
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:111:14
     |
@@ -382,12 +218,6 @@ error[E0062]: `c` may be `None`
     |              ^
     |
     = help: unwrap it with `if let`, `let ... else` or `?? return`
-
-error[E0035]: `for` needs an array or a range; this is `i64`
-   --> E0062-chain-continues.sisu:111:14
-    |
-111 |     for n in c.inner.v { print(n) }
-    |              ^^^^^^^^^
 
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:115:8
@@ -400,12 +230,6 @@ help: if a `None` result is fine, use `?.`
     |
 115 |     if c?.v { print(1) }
     |         +
-
-error[E0032]: expected `bool`, found `i64`
-   --> E0062-chain-continues.sisu:115:8
-    |
-115 |     if c.v { print(1) }
-    |        ^^^
 
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:119:11
@@ -442,18 +266,6 @@ help: if a `None` result is fine, use `?.`
     |
 123 |     print(c?.inner.one<i64>())
     |            +
-
-error[E0137]: `one` takes no type arguments
-   --> E0062-chain-continues.sisu:123:22
-    |
-123 |     print(c.inner.one<i64>())
-    |                      ^^^^^
-    |
-help: remove the type arguments
-    |
-123 -     print(c.inner.one<i64>())
-123 +     print(c.inner.one())
-    |
 
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:127:11
@@ -563,12 +375,6 @@ help: if a `None` result is fine, use `?.`
 147 |     match c?.inner.v { "a" => print(1); _ => print(2) }
     |            +
 
-error[E0032]: expected a pattern for `i64`, found `"a"`
-   --> E0062-chain-continues.sisu:147:23
-    |
-147 |     match c.inner.v { "a" => print(1); _ => print(2) }
-    |                       ^^^
-
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:151:16
     |
@@ -580,12 +386,6 @@ help: if a `None` result is fine, use `?.`
     |
 151 |     if let x = c?.inner.nope {}
     |                 +
-
-error[E0063]: `Inner` has no field `nope`
-   --> E0062-chain-continues.sisu:151:24
-    |
-151 |     if let x = c.inner.nope {}
-    |                        ^^^^
 
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:155:11
@@ -599,12 +399,6 @@ help: if a `None` result is fine, use `?.`
 155 |     print(c?.inner.nope ?? 0)
     |            +
 
-error[E0063]: `Inner` has no field `nope`
-   --> E0062-chain-continues.sisu:155:19
-    |
-155 |     print(c.inner.nope ?? 0)
-    |                   ^^^^
-
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:159:13
     |
@@ -616,12 +410,6 @@ help: if a `None` result is fine, use `?.`
     |
 159 |     print("{c?.inner.nope}")
     |              +
-
-error[E0063]: `Inner` has no field `nope`
-   --> E0062-chain-continues.sisu:159:21
-    |
-159 |     print("{c.inner.nope}")
-    |                     ^^^^
 
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:163:18
@@ -635,12 +423,6 @@ help: if a `None` result is fine, use `?.`
 163 |     takes_string(c?.inner.v)
     |                   +
 
-error[E0032]: expected `string`, found `i64`
-   --> E0062-chain-continues.sisu:163:18
-    |
-163 |     takes_string(c.inner.v)
-    |                  ^^^^^^^^^
-
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:167:12
     |
@@ -653,12 +435,6 @@ help: if a `None` result is fine, use `?.`
 167 |     return c?.inner.v
     |             +
 
-error[E0032]: expected `string`, found `i64`
-   --> E0062-chain-continues.sisu:167:12
-    |
-167 |     return c.inner.v
-    |            ^^^^^^^^^
-
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:171:5
     |
@@ -666,26 +442,6 @@ error[E0062]: `c` may be `None`
     |     ^
     |
     = help: unwrap it with `if let`, `let ... else` or `?? return`
-
-error[E0001]: cannot assign to `v`
-   --> E0062-chain-continues.sisu:171:5
-    |
-  8 |     v: i64
-    |     - declared without `mut` here
-...
-171 |     c.ns[0].v -= "a"
-    |     ^^^^^^^^^^^^^^^^
-    |
-help: mark the field `mut`
-    |
-  8 |     mut v: i64
-    |     +++
-
-error[E0032]: expected `i64`, found `string`
-   --> E0062-chain-continues.sisu:171:18
-    |
-171 |     c.ns[0].v -= "a"
-    |                  ^^^
 
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:175:5
@@ -699,12 +455,6 @@ help: if a `None` result is fine, use `?.`
 175 |     c?.mk().one().nope()
     |      +
 
-error[E0063]: `i64` has no method `nope`
-   --> E0062-chain-continues.sisu:175:18
-    |
-175 |     c.mk().one().nope()
-    |                  ^^^^
-
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:179:21
     |
@@ -716,12 +466,6 @@ help: if a `None` result is fine, use `?.`
     |
 179 |     let s: string = c?.mk().one()
     |                      +
-
-error[E0032]: expected `string`, found `i64`
-   --> E0062-chain-continues.sisu:179:21
-    |
-179 |     let s: string = c.mk().one()
-    |                     ^^^^^^^^^^^^
 
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:183:5
@@ -735,26 +479,6 @@ help: if a `None` result is fine, use `?.`
 183 |     c?.inner.ys.push("a")
     |      +
 
-error[E0001]: cannot change `ys`
-   --> E0062-chain-continues.sisu:183:5
-    |
-  7 |     ys: [i64]
-    |     -- declared without `mut` here
-...
-183 |     c.inner.ys.push("a")
-    |     ^^^^^^^^^^ `push` changes `ys`
-    |
-help: mark the field `mut`
-    |
-  7 |     mut ys: [i64]
-    |     +++
-
-error[E0032]: expected `i64`, found `string`
-   --> E0062-chain-continues.sisu:183:21
-    |
-183 |     c.inner.ys.push("a")
-    |                     ^^^
-
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:187:21
     |
@@ -767,12 +491,6 @@ help: if a `None` result is fine, use `?.`
 187 |     let s: string = c?.v
     |                      +
 
-error[E0032]: expected `string`, found `i64`
-   --> E0062-chain-continues.sisu:187:21
-    |
-187 |     let s: string = c.v
-    |                     ^^^
-
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:191:5
     |
@@ -781,26 +499,6 @@ error[E0062]: `c` may be `None`
     |
     = help: peel the extra layer first: `(c ?? None)?.inner`
 
-error[E0001]: cannot change `ys`
-   --> E0062-chain-continues.sisu:191:5
-    |
-  7 |     ys: [i64]
-    |     -- declared without `mut` here
-...
-191 |     c.inner.ys.push("a")
-    |     ^^^^^^^^^^ `push` changes `ys`
-    |
-help: mark the field `mut`
-    |
-  7 |     mut ys: [i64]
-    |     +++
-
-error[E0032]: expected `i64`, found `string`
-   --> E0062-chain-continues.sisu:191:21
-    |
-191 |     c.inner.ys.push("a")
-    |                     ^^^
-
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:195:21
     |
@@ -808,12 +506,6 @@ error[E0062]: `c` may be `None`
     |                     ^
     |
     = help: peel the extra layer first: `(c ?? None)?.v`
-
-error[E0032]: expected `string`, found `i64`
-   --> E0062-chain-continues.sisu:195:21
-    |
-195 |     let s: string = c.v
-    |                     ^^^
 
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:199:18
@@ -827,12 +519,6 @@ help: if a `None` result is fine, use `?.`
 199 |     let k: i64 = c?.name()
     |                   +
 
-error[E0032]: expected `i64`, found `string`
-   --> E0062-chain-continues.sisu:199:18
-    |
-199 |     let k: i64 = c.name()
-    |                  ^^^^^^^^
-
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:203:5
     |
@@ -844,12 +530,6 @@ help: if a `None` result is fine, use `?.`
     |
 203 |     c?.name().nope()
     |      +
-
-error[E0063]: `string` has no method `nope`
-   --> E0062-chain-continues.sisu:203:14
-    |
-203 |     c.name().nope()
-    |              ^^^^
 
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:207:21
@@ -863,12 +543,6 @@ help: if a `None` result is fine, use `?.`
 207 |     let s: string = c?.oa
     |                      +
 
-error[E0032]: expected `string`, found `[i64]?`
-   --> E0062-chain-continues.sisu:207:21
-    |
-207 |     let s: string = c.oa
-    |                     ^^^^
-
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:211:11
     |
@@ -881,18 +555,6 @@ help: if a `None` result is fine, use `?.`
 211 |     print(c?.oa.len())
     |            +
 
-error[E0062]: `c.oa` may be `None`
-   --> E0062-chain-continues.sisu:211:11
-    |
-211 |     print(c.oa.len())
-    |           ^^^^
-    |
-    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
-help: if a `None` result is fine, use `?.`
-    |
-211 |     print(c.oa?.len())
-    |               +
-
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:215:11
     |
@@ -904,18 +566,6 @@ help: if a `None` result is fine, use `?.`
     |
 215 |     print(c?.inner.v + "s")
     |            +
-
-error[E0032]: expected `string`, found `i64`
-   --> E0062-chain-continues.sisu:215:11
-    |
-215 |     print(c.inner.v + "s")
-    |           ^^^^^^^^^   --- `+` joins this `string`
-    |
-help: use interpolation
-    |
-215 -     print(c.inner.v + "s")
-215 +     print("{c.inner.v}s")
-    |
 
 error[E0062]: `c?.rows` may be `None`
    --> E0062-chain-continues.sisu:235:5
@@ -963,31 +613,6 @@ help: if a `None` result is fine, use `?.`
 239 |     c?.n?.ys.push(1)
     |      +
 
-error[E0062]: `c.n?.ys` may be `None`
-   --> E0062-chain-continues.sisu:239:5
-    |
-239 |     c.n?.ys.push(1)
-    |     ^^^^^^^
-    |
-help: to do nothing when it is `None`, use `?.`
-    |
-239 |     c.n?.ys?.push(1)
-    |            +
-
-error[E0001]: cannot change `ys`
-   --> E0062-chain-continues.sisu:239:5
-    |
-221 |     ys: [i64]
-    |     -- declared without `mut` here
-...
-239 |     c.n?.ys.push(1)
-    |     ^^^^^^^ `push` changes `ys`
-    |
-help: mark the field `mut`
-    |
-221 |     mut ys: [i64]
-    |     +++
-
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:243:5
     |
@@ -1000,20 +625,6 @@ help: if a `None` result is fine, use `?.`
 243 |     c?.n?.v = 1
     |      +
 
-error[E0001]: cannot assign to `v`
-   --> E0062-chain-continues.sisu:243:5
-    |
-220 |     v: i64
-    |     - declared without `mut` here
-...
-243 |     c.n?.v = 1
-    |     ^^^^^^^^^^
-    |
-help: mark the field `mut`
-    |
-220 |     mut v: i64
-    |     +++
-
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:247:5
     |
@@ -1025,12 +636,6 @@ help: if a `None` result is fine, use `?.`
     |
 247 |     c?.n?.w = "a"
     |      +
-
-error[E0032]: expected `i64`, found `string`
-   --> E0062-chain-continues.sisu:247:14
-    |
-247 |     c.n?.w = "a"
-    |              ^^^
 
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:251:5
@@ -1056,12 +661,6 @@ help: if a `None` result is fine, use `?.`
 255 |     c?.n?.w += "a"
     |      +
 
-error[E0032]: expected `i64`, found `string`
-   --> E0062-chain-continues.sisu:255:15
-    |
-255 |     c.n?.w += "a"
-    |               ^^^
-
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:259:5
     |
@@ -1074,23 +673,6 @@ help: if a `None` result is fine, use `?.`
 259 |     c?.n?.mys.push("a")
     |      +
 
-error[E0062]: `c.n?.mys` may be `None`
-   --> E0062-chain-continues.sisu:259:5
-    |
-259 |     c.n?.mys.push("a")
-    |     ^^^^^^^^
-    |
-help: to do nothing when it is `None`, use `?.`
-    |
-259 |     c.n?.mys?.push("a")
-    |             +
-
-error[E0032]: expected `i64`, found `string`
-   --> E0062-chain-continues.sisu:259:19
-    |
-259 |     c.n?.mys.push("a")
-    |                   ^^^
-
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:263:5
     |
@@ -1098,28 +680,6 @@ error[E0062]: `c` may be `None`
     |     ^
     |
     = help: unwrap it with `if let`, `let ... else` or `?? return`
-
-error[E0062]: `c.n?.ys` may be `None`
-   --> E0062-chain-continues.sisu:263:5
-    |
-263 |     c.n?.ys[0] = 1
-    |     ^^^^^^^
-    |
-    = help: unwrap `c.n` with `if let`, `let ... else` or `?? return`
-
-error[E0001]: cannot assign to an element of `ys`
-   --> E0062-chain-continues.sisu:263:5
-    |
-221 |     ys: [i64]
-    |     -- declared without `mut` here
-...
-263 |     c.n?.ys[0] = 1
-    |     ^^^^^^^^^^^^^^
-    |
-help: mark the field `mut`
-    |
-221 |     mut ys: [i64]
-    |     +++
 
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:267:16
@@ -1133,12 +693,6 @@ help: if a `None` result is fine, use `?.`
 267 |     if let x = c?.n { x.nope() }
     |                 +
 
-error[E0063]: `Cell` has no method `nope`
-   --> E0062-chain-continues.sisu:267:24
-    |
-267 |     if let x = c.n { x.nope() }
-    |                        ^^^^
-
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:271:16
     |
@@ -1150,12 +704,6 @@ help: if a `None` result is fine, use `?.`
     |
 271 |     if let x = c?.n { print(x.v ?? 0) }
     |                 +
-
-error[E0048]: the left side of `??` is not optional
-   --> E0062-chain-continues.sisu:271:28
-    |
-271 |     if let x = c.n { print(x.v ?? 0) }
-    |                            ^^^
 
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:275:11
@@ -1169,18 +717,6 @@ help: if a `None` result is fine, use `?.`
 275 |     match c?.n { x => print(x.v ?? 0) }
     |            +
 
-error[E0062]: `x` may be `None`
-   --> E0062-chain-continues.sisu:275:28
-    |
-275 |     match c.n { x => print(x.v ?? 0) }
-    |                            ^
-    |
-    = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
-help: if a `None` result is fine, use `?.`
-    |
-275 |     match c.n { x => print(x?.v ?? 0) }
-    |                             +
-
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:279:5
     |
@@ -1192,12 +728,6 @@ help: if a `None` result is fine, use `?.`
     |
 279 |     c?.n?.n?.w = "a"
     |      +
-
-error[E0032]: expected `i64`, found `string`
-   --> E0062-chain-continues.sisu:279:17
-    |
-279 |     c.n?.n?.w = "a"
-    |                 ^^^
 
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:283:5
@@ -1211,29 +741,6 @@ help: if a `None` result is fine, use `?.`
 283 |     c?.n?.n?.mys.push("a")
     |      +
 
-error[E0062]: `c.n?.n?.mys` may be `None`
-   --> E0062-chain-continues.sisu:283:5
-    |
-283 |     c.n?.n?.mys.push("a")
-    |     ^^^^^^^^^^^
-    |
-help: to do nothing when it is `None`, use `?.`
-    |
-283 |     c.n?.n?.mys?.push("a")
-    |                +
-
-error[E0032]: expected `i64`, found `string`
-   --> E0062-chain-continues.sisu:283:22
-    |
-283 |     c.n?.n?.mys.push("a")
-    |                      ^^^
-
-error[E0048]: the left side of `??` is not optional
-   --> E0062-chain-continues.sisu:287:11
-    |
-287 |     print((if let x = c.n { x.v } else { 0 }) ?? 0)
-    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:287:23
     |
@@ -1245,12 +752,6 @@ help: if a `None` result is fine, use `?.`
     |
 287 |     print((if let x = c?.n { x.v } else { 0 }) ?? 0)
     |                        +
-
-error[E0048]: the left side of `??` is not optional
-   --> E0062-chain-continues.sisu:291:11
-    |
-291 |     print(Bx2.Full(c.n) ?? 0)
-    |           ^^^^^^^^^^^^^
 
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:291:20
@@ -1276,18 +777,6 @@ help: if a `None` result is fine, use `?.`
 295 |     match c?.v { Some(1 | None) => {}; _ => {} }
     |            +
 
-error[E0032]: expected a pattern for `i64`, found `None`
-   --> E0062-chain-continues.sisu:295:26
-    |
-295 |     match c.v { Some(1 | None) => {}; _ => {} }
-    |                          ^^^^
-
-error[E0048]: the left side of `??` is not optional
-   --> E0062-chain-continues.sisu:299:11
-    |
-299 |     print((c.n?.v ?? 0) ?? 0)
-    |           ^^^^^^^^^^^^^
-
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:299:12
     |
@@ -1311,18 +800,6 @@ help: if a `None` result is fine, use `?.`
     |
 303 |     if let x = c?.n?.v { x.nope() }
     |                 +
-
-error[E0063]: `i64` has no method `nope`
-   --> E0062-chain-continues.sisu:303:27
-    |
-303 |     if let x = c.n?.v { x.nope() }
-    |                           ^^^^
-
-error[E0048]: the left side of `??` is not optional
-   --> E0062-chain-continues.sisu:307:11
-    |
-307 |     print(Bx2.Full(c.n?.v) ?? 0)
-    |           ^^^^^^^^^^^^^^^^
 
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:307:20
@@ -1348,12 +825,6 @@ help: if a `None` result is fine, use `?.`
 311 |     let y = c?.n
     |              +
 
-error[E0063]: `Cell` has no method `nope`
-   --> E0062-chain-continues.sisu:312:7
-    |
-312 |     y.nope()
-    |       ^^^^
-
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:316:20
     |
@@ -1366,12 +837,6 @@ help: if a `None` result is fine, use `?.`
 316 |     let y = if k { c?.n } else { None }
     |                     +
 
-error[E0063]: `Cell` has no method `nope`
-   --> E0062-chain-continues.sisu:317:7
-    |
-317 |     y.nope()
-    |       ^^^^
-
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:321:32
     |
@@ -1383,12 +848,6 @@ help: if a `None` result is fine, use `?.`
     |
 321 |     let y = match p { First => c?.n; Second => None }
     |                                 +
-
-error[E0063]: `Cell` has no method `nope`
-   --> E0062-chain-continues.sisu:322:7
-    |
-322 |     y.nope()
-    |       ^^^^
 
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:326:13
@@ -1414,12 +873,6 @@ help: if a `None` result is fine, use `?.`
 326 |     let y = c.n ?? c?.n
     |                     +
 
-error[E0063]: `Cell` has no method `nope`
-   --> E0062-chain-continues.sisu:327:7
-    |
-327 |     y.nope()
-    |       ^^^^
-
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:331:11
     |
@@ -1444,12 +897,6 @@ help: if a `None` result is fine, use `?.`
 331 |     match c.opt(c?.n) { Some(x) => x.nope(); None => {} }
     |                  +
 
-error[E0063]: `Cell` has no method `nope`
-   --> E0062-chain-continues.sisu:331:37
-    |
-331 |     match c.opt(c.n) { Some(x) => x.nope(); None => {} }
-    |                                     ^^^^
-
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:335:11
     |
@@ -1457,20 +904,6 @@ error[E0062]: `c` may be `None`
     |           ^
     |
     = help: unwrap it with `if let`, `let ... else` or `?? return`
-
-error[E0062]: `c.oa` may be `None`
-   --> E0062-chain-continues.sisu:335:11
-    |
-335 |     print(c.oa[0] ?? 0)
-    |           ^^^^
-    |
-    = help: unwrap it with `if let`, `let ... else` or `?? return`
-
-error[E0048]: the left side of `??` is not optional
-   --> E0062-chain-continues.sisu:335:11
-    |
-335 |     print(c.oa[0] ?? 0)
-    |           ^^^^^^^
 
 error[E0062]: `c` may be `None`
    --> E0062-chain-continues.sisu:344:24
@@ -1496,11 +929,5 @@ help: if a `None` result is fine, use `?.`
 344 |     let y = if let x = c.n { x.onn } else { c?.onn }
     |                                              +
 
-error[E0063]: `i64` has no method `nope`
-   --> E0062-chain-continues.sisu:345:7
-    |
-345 |     y.nope()
-    |       ^^^^
-
-sisu: 154 errors
-sisu: for more on a code, run `sisu explain <code>`: E0001, E0032, E0033, E0035, E0048, E0062, E0063, E0137, E0169
+sisu: 82 errors
+sisu: for more on a code, run `sisu explain <code>`: E0001, E0033, E0062, E0137

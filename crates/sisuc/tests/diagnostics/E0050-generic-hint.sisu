@@ -51,7 +51,7 @@ fn coalesce_call_then_string(o: i64?) {
 }
 
 // Guards: a type that the user wrote holds the call to it. So does a sum that has one, or an
-// integer literal first, as in the concrete twin.
+// integer literal first, as in the concrete twin. A branch that keeps an E0050 makes its join untyped.
 fn written_i64() { let z: i64 = id(mk2()) + id(mk2()) }
 fn literal_first() { let z = 1 + id(mk2()) }
 fn chain_literal_first() { let z = 0 < id(mk2()) < 10 }
@@ -151,7 +151,8 @@ fn block_times_u8(x: u8) { let z = { let q = 1 == id(mk2()); nope } * x }
 fn block_nope_then_u8(x: u8) { let z = { let q = 1 == id(mk2()); nope } + x }
 fn block_nope_then_literal_then_u8(x: u8) { let z = { let q = 1 == id(mk2()); nope } + 1 + x }
 
-// A block statement that keeps an E0050 does not make the value of the block fail.
+// A block statement that keeps an E0050 does not make the value of the block fail. A branch makes its join untyped.
+// A call of such a block has a failed part, so its result waits.
 fn call_of_block_then_string() {
     let z = id({
         let q = 1 == id(mk2())
@@ -205,7 +206,7 @@ fn branch_with_sum_plus_literal_then_string(c: bool) {
     let w: string = z
 }
 
-// An argument that kept its E0050 fails like any argument: another argument binds the parameter.
+// An argument that kept its E0050 is a failed part: no other argument settles the parameter, so the result waits.
 fn pair_with_sum_then_string(x: u8) {
     let z = pair(id(mk2()) + 1, x)
     let w: string = z
@@ -215,7 +216,7 @@ fn pair_with_block_then_string(x: u8) {
     let w: string = z
 }
 
-// Guards: the concrete twin gives these outputs too.
+// Guards: the concrete twin gives these outputs too. A literal left does not decide a sum with a failed right, so its `string` waits.
 fn compare_call_array_compare() { let z = mk2() < [] < 2 }
 fn compare_call_none() { let z = mk2() < None }
 fn coalesce_concrete_call_then_string(o: i64?) {
@@ -228,7 +229,7 @@ fn literal_first_call_then_string() {
 }
 
 // Only a value that kept its E0050 is kept. A value that failed with its own report is not kept,
-// and the operator treats it as any failed operand.
+// and the operator treats it, or a `-` of it, as any untyped operand: the call is held to no type.
 fn snd<T, U>(a: T, b: T) -> U { panic("no") }
 fn join_of_failures_then_call(c: bool) { let z = (if c { nope } else { nope }) + id(mk2()) }
 fn coalesce_join_of_failures_then_string(c: bool, o: i64?) {
@@ -244,8 +245,8 @@ fn coalesce_pair_with_sum_then_string(o: i64?) {
 }
 fn pair_with_sum_then_call() { let z = pair(id(mk2()) + 1, nope) + id(mk2()) }
 
-// A type from a sibling is a type, not the hint: the call keeps it. A parameter that the hint
-// binds, and that no argument which kept its E0050 names, is not the fault of that argument.
+// A type from a sibling is a type, not the hint: a `u8` left decides the sum, so its E0032 stays.
+// A call with an argument that kept its E0050 has a failed part: its result waits, also for a parameter that the hint binds.
 fn u8_plus_call_of_sum_then_string(x: u8) {
     let z = x + id(id(mk2()) + 1)
     let w: string = z
@@ -287,7 +288,7 @@ fn call_plus_optional_u8_then_string(o: u8?) {
 }
 fn pair_of_calls_minus_bool(b: bool) { let z = pair(id(mk2()), id(mk2())) - b }
 
-// Guards: a leader that is a written type, a literal first, or the concrete twin.
+// Guards: a leader that is a written type, a literal first, or the concrete twin. A literal first does not decide a sum with a failed right, so the `- b` after it waits.
 fn bool_minus_call(b: bool) { let z = b - id(mk2()) }
 fn call_plus_u8(x: u8) { let z = id(mk2()) + x }
 fn call_plus_optional_string(o: string?) { let z = id(mk2()) + o }

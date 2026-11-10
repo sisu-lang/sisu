@@ -1,6 +1,6 @@
 // GIVEN an optional whose member exists, used with `.` in a function for each case
 // WHEN `sisu check` runs on it
-// THEN it reports E0062 at the optional, then the errors of the member on the payload
+// THEN it reports E0062, then the errors of the member on the payload, but a value below a failed `.` is untyped and waits
 // AND each guard function keeps the output that it had before
 interface Named {
     fn name(self) -> string

@@ -2181,10 +2181,11 @@ fn bound_violations_should_be_reported_once_at_the_call() {
             vec![(Code::NotConform, (3, 12))],
         ),
         // The method of a generic class has an owner argument before its own parameters, and a
-        // bound that fails poisons the call: its tail adds no mismatch.
+        // bound that fails poisons the call. Its closed `i64` result names no parameter, so it is
+        // typed (the call row of S14). The tail reports that it is not a `string`.
         (
             "class Hold<T> {\n    v: T\n    fn put<U: Same>(self, u: U) -> i64 { 0 }\n}\nfn go(h: Hold<Circle>, n: Node) -> string {\n    h.put(n)\n}",
-            vec![(Code::NotConform, (6, 11))],
+            vec![(Code::Mismatch, (6, 5)), (Code::NotConform, (6, 11))],
         ),
         // A built-in type conforms to nothing yet.
         (

@@ -2,10 +2,10 @@
 
 use super::any::{AnyJoin, is_target, widen};
 use super::expr::{fits, literal_type, no_member, path, typed};
-use super::generic::{Rank, mark};
+use super::generic::{Rank, mark, mismatch_poison};
+use super::reports::Reported;
 use super::{
-    Checked, Checker, Declared, Expectation, Flag, Poisoned, as_optional, has_remedy_flag, payload,
-    spread, type_of,
+    Checked, Checker, Declared, Expectation, Poisoned, as_optional, known_type, payload, type_of,
 };
 use crate::ast;
 use crate::diagnostic::{
@@ -69,7 +69,9 @@ impl Checker<'_> {
         let quiet = expected == Expectation::Poisoned;
         if elements.is_empty() {
             let d = match expected {
-                Expectation::Poisoned => return Err(Poisoned::error()),
+                Expectation::Poisoned => {
+                    return Err(Poisoned::untyped(self.poisoned_context(span)));
+                }
                 Expectation::Required(ty) | Expectation::Hint { want: ty, .. } => {
                     DiagnosticKind::Mismatch {
                         want: Expected::Types(vec![self.type_name(ty)]),
@@ -82,19 +84,11 @@ impl Checker<'_> {
                     }
                 }
                 Expectation::None => {
-                    self.report_uninferred(Literal::EmptyArray, span);
-                    return Err(Poisoned::error());
+                    let reported = self.report_uninferred(Literal::EmptyArray, span);
+                    return Err(Poisoned::untyped(reported));
                 }
             };
-            self.report(d);
-            return Err(Poisoned {
-                ty: None,
-                mismatch: true,
-                found: None,
-                kept: false,
-                unwrapped: Flag::No,
-                jumped: false,
-            });
+            return Err(mismatch_poison(self.error(d)));
         }
         self.ranked(|c| c.joined(span, elements, quiet))
     }
@@ -131,22 +125,30 @@ impl Checker<'_> {
                 value: Some(Box::new(value)),
             })
         });
-        let Ok(joined) = joined else {
-            return Err(Poisoned::error());
+        let joined = match joined {
+            Ok(joined) => joined,
+            Err(failed) => return Err(Poisoned::untyped(failed.reported())),
         };
         if joined != Type::NEVER && !fits_element(self, joined) {
             let at = (0..elements.len())
                 .find(|&i| own[i].is_some_and(|ty| !fits_element(self, ty)))
                 .unwrap_or(0);
             let e = &elements[at];
-            if matches!(e.kind, ast::ExprKind::NoneLit) {
+            let reported = if matches!(e.kind, ast::ExprKind::NoneLit) {
                 // As in a written array: "found `None`".
-                drop(self.none(e.span, Expectation::Required(element)));
+                match self.none(e.span, Expectation::Required(element)) {
+                    Err(failed) => failed.reported(),
+                    // An optional element takes the `None`, and the check stays quiet.
+                    // Else an element that failed holds the proof.
+                    Ok(_) => (blocks.iter())
+                        .find_map(|block| block.as_ref().err().map(Poisoned::reported))
+                        .unwrap_or_else(|| self.proof(e.span)), // proof: quiet reader
+                }
             } else {
                 let d = self.leaves_any(e.span, Some(e), element, own[at].unwrap_or(joined));
-                self.diagnostics.push(d);
-            }
-            return Err(Poisoned::error());
+                self.diagnostics.error(d)
+            };
+            return Err(Poisoned::untyped(reported));
         }
         let checked = blocks
             .into_iter()
@@ -205,9 +207,9 @@ impl Checker<'_> {
                 slots[i] = Some(self.value(e, Expectation::Required(want)));
             }
         }
-        let mut failed = slots.iter().flatten().any(|c| type_of(c).is_none());
+        let mut failed = slots.iter().flatten().find_map(|c| known_type(c).err());
         let mut joined: Option<Type> = None;
-        if !failed {
+        if failed.is_none() {
             let typed: Vec<(usize, Type)> = (slots.iter().enumerate())
                 .filter_map(|(i, slot)| Some((i, slot.as_ref().and_then(type_of)?)))
                 .collect();
@@ -221,29 +223,32 @@ impl Checker<'_> {
                             None => (elements[at].span, Some(&elements[at]), want, got),
                         };
                     let d = self.leaves_any(at_span, source, want, got);
-                    self.diagnostics.push(d);
-                    failed = true;
+                    failed = Some(self.diagnostics.error(d));
                 }
                 ObjectJoin::Not => {
                     (joined, failed) = self.fold_elements(elements, &typed);
                 }
             }
         }
-        let Some(joined) = joined.filter(|_| !failed) else {
+        let Some(joined) = joined.filter(|_| failed.is_none()) else {
             let waiting = elements
                 .iter()
                 .zip(&ranks)
                 .filter(|&(_, &r)| r == Rank::Waits);
+            let mut reported = failed;
             for (i, (e, _)) in waiting.enumerate() {
-                let expected = if i > 0 || failed || quiet {
+                let expected = if i > 0 || failed.is_some() || quiet {
                     Expectation::Poisoned
                 } else {
                     Expectation::None
                 };
-                // Only its own diagnostics matter.
-                drop(self.value(e, expected));
+                // Only its own diagnostics matter, and the proof of the first that fails.
+                let value = self.value(e, expected);
+                reported = reported.or_else(|| value.as_ref().err().map(Poisoned::reported));
             }
-            return Err(Poisoned::error());
+            // With no typed element, the first element that waits holds the proof.
+            let reported = reported.unwrap_or_else(|| self.proof(span)); // proof: quiet reader
+            return Err(Poisoned::untyped(reported));
         };
         let want = as_optional(joined);
         for (i, e) in elements.iter().enumerate() {
@@ -368,30 +373,28 @@ impl Checker<'_> {
         &mut self,
         elements: &[ast::Expr],
         typed: &[(usize, Type)],
-    ) -> (Option<Type>, bool) {
+    ) -> (Option<Type>, Option<Reported>) {
         let report = |c: &mut Self, at: usize, want: Type, got: Type| {
             let d = c.mismatch(elements[at].span, Some(&elements[at]), want, got);
-            c.diagnostics.push(d);
+            Some(c.diagnostics.error(d))
         };
         match self.any_join_all(typed) {
             AnyJoin::Joined { ty } => {
                 self.instantiates = true;
-                return (Some(ty), false);
+                return (Some(ty), None);
             }
             AnyJoin::Fails {
                 earlier: (_, want),
                 later: (at, got),
             } => {
-                report(self, at, want, got);
-                return (None, true);
+                return (None, report(self, at, want, got));
             }
             AnyJoin::Leaves {
                 ty,
                 member: (at, got),
             } => {
                 let d = self.leaves_any(elements[at].span, Some(&elements[at]), ty, got);
-                self.diagnostics.push(d);
-                return (None, true);
+                return (None, Some(self.diagnostics.error(d)));
             }
             AnyJoin::NoAny => {}
         }
@@ -400,8 +403,7 @@ impl Checker<'_> {
             match joined {
                 Some(t) if fits(t, ty) => {}
                 Some(t) if !fits(ty, t) => {
-                    report(self, i, t, ty);
-                    return (joined, true);
+                    return (joined, report(self, i, t, ty));
                 }
                 _ => joined = Some(ty),
             }
@@ -410,10 +412,9 @@ impl Checker<'_> {
         if let Some(t) = joined
             && let Some(&(i, ty)) = typed.iter().find(|&&(_, ty)| !fits(t, ty))
         {
-            report(self, i, t, ty);
-            return (joined, true);
+            return (joined, report(self, i, t, ty));
         }
-        (joined, false)
+        (joined, None)
     }
 
     /// The `ArrayLit` of `checked`, an `[element]`, unless an element failed. `mismatched`
@@ -428,13 +429,10 @@ impl Checker<'_> {
         let ty = Type::array(element);
         match checked.into_iter().collect::<Result<Vec<_>, _>>() {
             Ok(elements) => Ok(self.spilled(span, ty, elements, tir::ExprKind::ArrayLit)),
-            _ => Err(Poisoned {
+            Err(failed) => Err(Poisoned {
                 ty: (!mismatched).then_some(ty),
                 mismatch: mismatched,
-                found: None,
-                kept: false,
-                unwrapped: Flag::No,
-                jumped: false,
+                ..Poisoned::untyped(failed.reported())
             }),
         }
     }
@@ -466,24 +464,25 @@ impl Checker<'_> {
                 TypeKind::Class(..) | TypeKind::Param(..) | TypeKind::Assoc(..) | TypeKind::Any(..)
             ) && !self.none_written(value)
         });
+        let mut same = None;
         if let Some(class) = class {
             let any = matches!(class.kind(), TypeKind::Any(..));
             // An `any` of a class-only interface holds an object, as a class is one.
             let may_be_class = matches!(class.kind(), TypeKind::Param(..) | TypeKind::Assoc(..))
                 || (any && !self.conforms(class, self.lang.any_object, TypeArgs::NONE));
-            self.report(DiagnosticKind::SameObject {
+            same = Some(self.error(DiagnosticKind::SameObject {
                 class: self.type_name(class),
                 at: value.span,
                 param: may_be_class,
                 any,
-            });
+            }));
         }
         let (checked, mismatched) = match element {
             Some(element) => self.against(value, checked, Some(element), None),
             None => (checked, false),
         };
         let (len, len_mismatched) = self.operand(len, Expectation::Required(Type::I64));
-        let failed = mismatched || class.is_some() || len_mismatched;
+        let failed = mismatched || same.is_some() || len_mismatched;
         let ty = type_of(&checked).map(Type::array);
         match (checked, len, ty) {
             (Ok(value), Ok(len), Some(ty)) if !failed => {
@@ -492,7 +491,13 @@ impl Checker<'_> {
                     tir::ExprKind::ArrayFill { value, len }
                 }))
             }
-            (.., ty) => Err(Poisoned::of(ty.filter(|_| !failed))),
+            (Err(part), _, ty) | (_, Err(part), ty) => {
+                Err(Poisoned::new(ty.filter(|_| !failed), part.reported()))
+            }
+            // Both parts check, so the class rule failed, and reported.
+            _ => Err(Poisoned::untyped(same.expect(
+                "an array fill whose parts check should fail by its class rule",
+            ))),
         }
     }
 
@@ -503,10 +508,9 @@ impl Checker<'_> {
         }
         let outer = std::mem::replace(&mut self.body.indexed, true);
         let checked = self.value(base, Expectation::None);
-        let unwrapped = has_remedy_flag(&checked);
         // An optional array is reported, and its element goes on typed, but no code reads it.
         let optional = type_of(&checked).is_some_and(is_optional_array);
-        let element = self.element(base, type_of(&checked), IndexUsage::Read);
+        let (element, report) = self.element(base, type_of(&checked), IndexUsage::Read);
         // The index is not part of the chain that it ends.
         self.body.indexed = false;
         let (index, mismatched) = self.operand(index, Expectation::Required(Type::I64));
@@ -518,28 +522,38 @@ impl Checker<'_> {
                     tir::ExprKind::Index { base, index }
                 }))
             }
-            (.., element) => spread(
-                Err(Poisoned::of(element.filter(|_| !mismatched))),
-                unwrapped,
-            ),
+            // A failed index is untyped: a repair to an index differs from one to a range.
+            (base, index, element) => {
+                let ty = element.filter(|_| !mismatched && type_of(&index).is_some());
+                let reported = match (base, index) {
+                    (Err(part), _) | (_, Err(part)) => part.reported(),
+                    // A base that checks and gives no element, or an optional one, is reported.
+                    (Ok(_), Ok(_)) => {
+                        report.expect("an index whose parts check should fail by its base's report")
+                    }
+                };
+                Err(Poisoned::new(ty, reported))
+            }
         }
     }
 
     /// The element type of `base`, which is indexed and has type `ty` (`None` is `Error`). An
     /// optional array is reported and gives the element of its payload. A string, or a value that
-    /// is no array, is reported and gives `Error`.
+    /// is no array, is reported and gives `Error`. With the proof of the report, when there is one.
     pub(super) fn element(
         &mut self,
         base: &ast::Expr,
         ty: Option<Type>,
         usage: IndexUsage,
-    ) -> Option<Type> {
-        let ty = ty?;
-        let d = match ty.kind() {
-            TypeKind::Array(element) => return Some(element),
+    ) -> (Option<Type>, Option<Reported>) {
+        let Some(ty) = ty else {
+            return (None, None);
+        };
+        let d: Diagnostic = match ty.kind() {
+            TypeKind::Array(element) => return (Some(element), None),
             TypeKind::Optional(payload) if matches!(payload.kind(), TypeKind::Array(_)) => {
-                self.diagnostics.push(optional_array(base, UnwrapHelp::It));
-                return optional_element(ty);
+                let reported = self.diagnostics.error(optional_array(base, UnwrapHelp::It));
+                return (optional_element(ty), Some(reported));
             }
             _ if ty == Type::STRING => DiagnosticKind::StringIndex {
                 at: base.span,
@@ -554,8 +568,7 @@ impl Checker<'_> {
             }
             .into(),
         };
-        self.diagnostics.push(d);
-        None
+        (None, Some(self.diagnostics.error(d)))
     }
 
     /// `receiver.method(args)` on `receiver`, an array of type `ty`, when no block of the prelude
@@ -578,8 +591,8 @@ impl Checker<'_> {
             return self.unmet_block_bound(span, func, ty, method, args);
         }
         let Some(&(_, arity)) = built_in else {
-            if self.rejected_methods.contains(&method.name) {
-                return self.call_of_rejected_method(method, args);
+            if let Some(&reported) = self.rejected_methods.get(&method.name) {
+                return self.call_of_rejected_method(method, args, reported);
             }
             let prelude = self.prelude_method_names(ty);
             let targets = self.prelude_targets(method.name);
@@ -607,7 +620,9 @@ impl Checker<'_> {
             };
             return self.rejected(d.into(), args, Some(Type::I64));
         }
-        let kind = receiver.ok().map(|r| tir::ExprKind::Len(Box::new(r)));
+        let kind = receiver
+            .map(|r| tir::ExprKind::Len(Box::new(r)))
+            .map_err(|failed| failed.reported());
         typed(span, Type::I64, false, kind)
     }
 
@@ -636,32 +651,37 @@ impl Checker<'_> {
             return self.wrong_count(span, name, params.len(), args, None);
         }
         let stands = self.owner_args(func, ty).get().to_vec();
-        let mut own_mistake = false;
+        let mut own_mistake = None;
         for (arg, param) in args.iter().zip(params) {
             let want = param.and_then(|param| self.subst(param, &stands));
             let (argument, mismatched) = self.operand(&arg.value, Expectation::or_poisoned(want));
             // An argument with no type has failed, but a type parameter keeps its report beside
             // the error of such an argument.
             let failed = type_of(&argument).is_none() && !want.is_some_and(Type::has_param);
-            own_mistake |= mismatched || failed;
+            if mismatched || failed {
+                own_mistake = own_mistake.or_else(|| argument.err().map(|part| part.reported()));
+            }
         }
-        if !own_mistake {
-            self.report_block_bound(extension, ty, span, method.name.as_str());
-        }
-        Err(Poisoned::error())
+        let reported = match own_mistake {
+            Some(reported) => reported,
+            None => self.report_block_bound(extension, ty, span, method.name.as_str()),
+        };
+        Err(Poisoned::untyped(reported))
     }
 
     /// A call of the method `method` that a rejected `extend` block may have given (see
-    /// `Checker.rejected_methods`): poisoned, with no report of its own.
+    /// `Checker.rejected_methods`): poisoned, with no report of its own. `reported` is the proof
+    /// of the block's report.
     pub(super) fn call_of_rejected_method(
         &mut self,
         method: &ast::Ident,
         args: &[ast::Arg],
+        reported: Reported,
     ) -> Checked {
         self.body.rejected_calls.insert(method.span);
         self.labels(args);
         self.stray(args);
-        Err(Poisoned::error())
+        Err(Poisoned::untyped(reported))
     }
 
     /// Reports `d` for a method call that cannot be checked, and its arguments' own errors. `ret`
@@ -672,10 +692,10 @@ impl Checker<'_> {
         args: &[ast::Arg],
         ret: Option<Type>,
     ) -> Checked {
-        self.diagnostics.push(d);
+        let reported = self.diagnostics.error(d);
         self.labels(args);
         self.stray(args);
-        Err(Poisoned::of(ret))
+        Err(Poisoned::new(ret, reported))
     }
 }
 

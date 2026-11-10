@@ -29,6 +29,7 @@ mod place;
 mod prelude;
 mod range;
 mod recursion;
+mod reports;
 mod stmt;
 mod string;
 mod unused_names;
@@ -62,16 +63,17 @@ use extend::Extension;
 use interface::{Bounds, InterfaceInfo, PendingBound, Required, Scope, Slot, Waiting};
 use names::{ConstantId, ItemId, NameMaps, Position, Resolved};
 use prelude::PRELUDE;
+use reports::{Diagnostics, Reported};
 pub(crate) use unused_names::is_judged;
 use unused_names::{Owner, Pending, Use, Used};
 
-/// An expression whose rule failed; its diagnostic is recorded. `ty` is its type when
-/// still known (an `if` with one failed branch takes the other's), else it is the poison
-/// type `Error`, which matches every type and draws no further diagnostic.
+/// An expression whose rule failed; its diagnostic is recorded. `ty` is its type when it is
+/// still known: a `let` with a declared type keeps that type. Else the value is untyped: it
+/// matches every type and draws no further diagnostic.
 ///
-/// Poison spreads to sibling operands by one rule. For a homogeneous operator (`+ - * / %
-/// && ||`, comparison chains), once an operand is `Error` the later operands are still
-/// checked for their own errors but not against the operator's type. Call and constructor
+/// Poison spreads to sibling operands by one rule. Take a homogeneous operator (`+ - * / %
+/// && ||`, comparison chains). Once an operand is untyped, the later operands are still
+/// checked for their own errors, but not against the operator's type. Call and constructor
 /// arguments are each checked against their own parameter, so one bad argument does not
 /// excuse another.
 ///
@@ -79,85 +81,57 @@ use unused_names::{Owner, Pending, Use, Used};
 /// constructor, a variant, a built-in method or a prelude function. The receiver's type
 /// arguments and the written ones are put in the result (`Checker::fixed_result`).
 ///
-/// A callee whose result names a parameter that only the arguments bind gives `Error`, as `dbg`,
-/// `get` and a conversion do. So does a call whose written type arguments fail, and a call that
-/// gives a bound to its own parameter when that bound fails or no list is written: the corrected
-/// call is `Error` then (`Checker::counted_result`).
+/// A callee whose result names a parameter that only the arguments bind gives an untyped value,
+/// as `dbg`, `get` and a conversion do. So does a call whose written type arguments fail. So
+/// does a call that gives a bound to its own parameter, when that bound fails or no list is
+/// written. The corrected call is untyped then (`Checker::counted_result`).
 ///
 /// A construction of a generic class or variant keeps the type that its written list, or its
-/// alias, fixes. It is `Error` when that list fails, or fails a bound.
+/// alias, fixes. It is untyped when that list fails, or fails a bound.
 ///
-/// A generic call that cannot meet its context is `Error` too, but it keeps the type it found
+/// A generic call that cannot meet its context is untyped too, but it keeps the type it found
 /// in `found`. A block, a branch and a safe call keep that field for the code that uses the value.
 /// A value in which a generic call kept its E0050 has `kept` set. A block, a branch, unary `-`,
 /// a number operator, and a call that fails on an unbound parameter, keep that field too.
 ///
-/// A value that an E0062 typed has `unwrapped` set (see `Flag`). A value built from it has
-/// the flag too.
-///
-/// A place that makes a new `Poisoned` from a value with the remedy flag keeps the right state.
-/// A new value that is the same value copies the state. A new value built from it sets `Built`.
-/// Only the `.` that reports E0062 sets `Member`, and only when its value has no remedy flag.
-///
-/// The flag spreads through `!`, unary `-`, each operator but `==` and `!=`, a block and a join.
-/// It spreads through an `if` condition, `Some`, and both sides of `??`. It spreads through a
-/// generic call, method, constructor, variant or interface call whose result names a type
-/// parameter. It spreads through `dbg` and a slice. A `.` or a method call on a flagged base,
-/// an index on a base with the remedy flag, and a `?.` after a flagged optional, keep it too.
-/// A `?.` is built from its member or its scrutinee when either has the remedy flag, else it is
-/// its scrutinee again.
-///
-/// A rule that fails on a member of an optional type under both remedies builds from any flag
-/// (`is_unwrapped`). These rules are an operator, `!`, unary `-`, a field, a method call, a
-/// slice and a place. A rule whose type depends on the remedy reads the remedy flag
-/// (`has_remedy_flag`). These rules are a `let`, a `for`, a join, `Some`, `??`, a pattern, an
-/// index, `?.` and E0124.
-///
-/// The remedy flag is `unwrapped` set, except for a member of an optional type. That member has
-/// the same type under the `if let` unwrap and under the `?.` fix.
+/// A poisoned value is typed only when the source states its type apart from the failed part
+/// (the form table of ADR 0049). Each reader reads a typed poisoned value as any value of that
+/// type.
 struct Poisoned {
     ty: Option<Type>,
-    /// Whether the expected type passed down was rejected (a `None` that is not optional, a
-    /// number that does not fit, an array with such an element, or a block or `if` whose value
-    /// is one): the rule that passed it failed, so its expression is `Error` too, where an
-    /// `Error` operand would excuse it. A number that does not fit (E0040, E0042 or E0104)
-    /// counts as a mismatch, as a value of another type does.
+    /// Whether the expected type passed down was rejected. It is rejected by a `None` that is not
+    /// optional, a number that does not fit, or an array with such an element. A block or `if`
+    /// whose value is one is rejected too. The rule that passed it failed, so its expression is
+    /// untyped too, where an untyped operand would excuse it. A number that does not fit (E0040,
+    /// E0042 or E0104) counts as a mismatch, as a value of another type does.
     mismatch: bool,
     /// What a generic call found for its result, which cannot meet the call's context. Only a
-    /// report reads it. Every other check sees `Error`.
+    /// report reads it. Every other check sees an untyped value. It stays apart from `ty`:
+    /// `settled_by` and the joins of `coalesce` and `break_value` read it after the call
+    /// returned, when no expected type went down to the call. S18 pins it.
     found: Option<Misfit>,
-    /// A generic call in the value kept its E0050, which is its only report. The value has no
-    /// type, so it holds the code that uses it to nothing. That code adds no report for the
-    /// default type of an operator.
+    /// A generic call in the value kept its E0050, which is its only report. The value is
+    /// untyped, and an operator with such an operand adds no report for its default type. Three
+    /// readers in `integers` and `binary` need the mark. An operand that waits after a kept one
+    /// takes the default `i64` as a hint and keeps its own E0050 (S18). A leader that the
+    /// operator does not take is held to the operator's type after a kept operand, so
+    /// `id(mk2()) - b` with `b: bool` gives its E0032. And unary `-` and `binary` pass the mark
+    /// on, so a `char` beside `-(id(mk2()) + 1)` is still rejected.
     kept: bool,
-    /// The value is typed by the unwrap that the help of its E0062 names. It comes from a `.` on
-    /// an optional, and has the type that the member has on the payload. The `?.` fix of the
-    /// E0062 would make the value optional. So a check that fires only because the value is not
-    /// optional (E0044, E0048, E0049, E0051) or not matchable (E0124) skips it. A `let` or a
-    /// `for` binds `Error` for it, as its optionality depends on the remedy.
-    unwrapped: Flag,
     /// A failed `break` or `continue` outside a loop makes the value `never`, and that jump has
     /// its own report. In a block, it is the statement that ends the block. In an `if` or a
     /// `match`, it is at least one branch (see `join`). The flow keeps the `never`, as a jump
-    /// statement does; a place that reads the value takes it as `Error` (`read_jump`).
+    /// statement does; a place that reads the value takes it as untyped (`read_jump`).
     jumped: bool,
-}
-
-/// How a value got its `Poisoned::unwrapped` flag.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Flag {
-    /// Not typed by an E0062.
-    No,
-    /// The member itself, from the `.` that reported the E0062 (see `Poisoned::unwrapped`).
-    Member,
-    /// Built from a flagged value, as `spread` does.
-    Built,
+    /// The proof of the report, or of the promise, that made the value poisoned.
+    reported: Reported,
 }
 
 /// The result type of a generic call that cannot meet its context (see `report_unbound`). The
 /// type names the callee's unbound parameters, so it is never a value's type. The code that uses
 /// the value reports the mismatch with it, as it does for a callee that is not generic. `entry`
-/// is the place of the call's E0050 in `Body::misfits`, which that report cancels.
+/// is the place of the call's E0050 in `Body::misfits`, which that report cancels. It is not the
+/// type of a poisoned value: a value with it is untyped, and only the readers of `found` see it.
 #[derive(Clone, Copy)]
 struct Misfit {
     ty: Type,
@@ -165,42 +139,39 @@ struct Misfit {
 }
 
 impl Poisoned {
-    /// `Error`.
-    fn error() -> Self {
-        Self::of(None)
+    /// A failed expression whose type is not known, poisoned by the report `reported` proves.
+    fn untyped(reported: Reported) -> Self {
+        Self::new(None, reported)
     }
 
     /// A failed expression whose type is still known.
-    fn typed(ty: Type) -> Self {
-        Self::of(Some(ty))
+    fn typed(ty: Type, reported: Reported) -> Self {
+        Self::new(Some(ty), reported)
     }
 
-    fn of(ty: Option<Type>) -> Self {
+    /// A failed expression of type `ty`, when it has one.
+    fn new(ty: Option<Type>, reported: Reported) -> Self {
         Self {
             ty,
             mismatch: false,
             found: None,
             kept: false,
-            unwrapped: Flag::No,
             jumped: false,
+            reported,
         }
     }
 
-    /// A failed `.` on an optional, whose member has the type `ty` on the payload (see
-    /// `Poisoned::unwrapped`).
-    fn unwrapped(ty: Option<Type>) -> Self {
-        Self {
-            unwrapped: Flag::Member,
-            ..Self::of(ty)
-        }
-    }
-
-    /// `Error` for a value in which a generic call kept its E0050 (see `Poisoned::kept`).
-    fn kept_error() -> Self {
+    /// An untyped value in which a generic call kept its E0050 (see `Poisoned::kept`).
+    fn kept_error(reported: Reported) -> Self {
         Self {
             kept: true,
-            ..Self::error()
+            ..Self::untyped(reported)
         }
+    }
+
+    /// The proof of the report that made the value poisoned.
+    fn reported(&self) -> Reported {
+        self.reported
     }
 }
 
@@ -212,50 +183,6 @@ fn is_kept<T>(checked: &Result<T, Poisoned>) -> bool {
 /// Whether a failed `break` or `continue` makes `checked` `never` (see `Poisoned::jumped`).
 fn is_jumped<T>(checked: &Result<T, Poisoned>) -> bool {
     matches!(checked, Err(Poisoned { jumped: true, .. }))
-}
-
-/// Whether `checked` is typed by the unwrap of an E0062 (see `Poisoned::unwrapped`).
-fn is_unwrapped<T>(checked: &Result<T, Poisoned>) -> bool {
-    matches!(
-        checked,
-        Err(Poisoned {
-            unwrapped: Flag::Member | Flag::Built,
-            ..
-        })
-    )
-}
-
-/// Whether `checked` is flagged, and not a member of an optional type. The type of such a value
-/// depends on the remedy: the `?.` fix would make it optional. A member of an optional type is
-/// the same under both remedies.
-fn has_remedy_flag<T>(checked: &Result<T, Poisoned>) -> bool {
-    match checked {
-        Err(Poisoned {
-            unwrapped: Flag::Built,
-            ..
-        }) => true,
-        Err(Poisoned {
-            unwrapped: Flag::Member,
-            ty,
-            ..
-        }) => !ty.is_some_and(|ty| matches!(ty.kind(), TypeKind::Optional(_))),
-        _ => false,
-    }
-}
-
-/// `checked`, built from a flagged value when `from` is. Under the `?.` fix of an operand's E0062,
-/// the result of some rules is optional. Those rules pass the flag on, so their result gets no
-/// report that it is not optional. A result that both remedies give the same, such as `==`, does
-/// not.
-fn spread<T>(checked: Result<T, Poisoned>, from: bool) -> Result<T, Poisoned> {
-    checked.map_err(|poisoned| Poisoned {
-        unwrapped: if from && poisoned.unwrapped == Flag::No {
-            Flag::Built
-        } else {
-            poisoned.unwrapped
-        },
-        ..poisoned
-    })
 }
 
 type Checked = Result<tir::Expr, Poisoned>;
@@ -311,12 +238,13 @@ struct Signature {
 }
 
 /// What a function, class, constant or method name stands for: the first intact item of that
-/// name, or a broken one, which holds a syntax error. A broken name wins over an intact one, and
-/// every use of it is poisoned without a diagnostic: its item's error is reported already.
+/// name, or a poisoned one: an item that holds a syntax error, or that the checker rejected. A
+/// poisoned name wins over an intact one, and every use of it is poisoned without a diagnostic:
+/// its item's error is reported already, and the token proves it.
 #[derive(Clone, Copy)]
 enum Declared<T> {
     Known(T),
-    Broken,
+    Poisoned(Reported),
 }
 
 /// The name of the top-level item `item`; an `extend` block has none of its own.
@@ -512,9 +440,9 @@ struct LoopFrame {
     bare: Option<Span>,
     /// The first `break` whose value's type is not `never`.
     valued: Option<Span>,
-    /// Whether the loop failed: a failed jump, loop label or `break` value in it. It then has
-    /// no type.
-    failed: bool,
+    /// The token of the error that failed the loop: a failed jump, loop label or `break` value
+    /// in it. It then has no type.
+    failed: Option<Reported>,
 }
 
 impl LoopFrame {
@@ -535,7 +463,7 @@ impl LoopFrame {
             first_value: keyword,
             bare: None,
             valued: None,
-            failed: false,
+            failed: None,
             widened: false,
             deferred: Vec::new(),
             crossed: false,
@@ -545,7 +473,7 @@ impl LoopFrame {
     /// The type of a `loop` whose body has been checked: `never` with no `break`, or with only
     /// `never` values; `unit` with bare ones; else its values'. `None` is `Error`.
     fn loop_type(&self) -> Option<Type> {
-        if self.failed {
+        if self.failed.is_some() {
             return None;
         }
         if self.valued.is_none() {
@@ -721,6 +649,10 @@ pub(crate) fn reached(point: &'static str) {
     });
 }
 
+#[expect(
+    clippy::zero_sized_map_values,
+    reason = "the map holds the proof of a report for each key, and a set cannot hold it"
+)]
 struct Checker<'src> {
     /// The program's text and the positions found in it.
     source: Source<'src>,
@@ -780,10 +712,11 @@ struct Checker<'src> {
     /// block. A report of an unknown method reads these, not the methods of every block.
     builtin_methods: Vec<(Holder, Symbol, usize)>,
     /// The names of the types that a broken `extend` block, or a block of a conformance that
-    /// failed, may have given methods to. A method no one finds on them is poisoned.
-    broken_extensions: FxHashSet<Symbol>,
+    /// failed, may have given methods to. Each name holds the proof of its report. A method no one
+    /// finds on them is poisoned.
+    broken_extensions: FxHashMap<Symbol, Reported>,
     /// The methods that a block of an intact target lost to a syntax error.
-    broken_extension_methods: FxHashSet<(Holder, Symbol)>,
+    broken_extension_methods: FxHashMap<(Holder, Symbol), Reported>,
     /// The names of the methods of each `extend` block whose target the checker rejected. Such a
     /// block may have given any type a method of its name, so a call of that name on any type is
     /// poisoned, with no report. The set holds names, not types. The target can be a type
@@ -791,8 +724,8 @@ struct Checker<'src> {
     /// name, such as `f64`, `string` or `bool`. The block's own error is in the program. So the
     /// set can hide a report on another type that has a member of the same name: a missing
     /// method (E0063), a field that is not a method (E0058), or a variant that is not a method
-    /// (E0120). That costs nothing.
-    rejected_methods: FxHashSet<Symbol>,
+    /// (E0120). That costs nothing. Each name holds the proof of the block's report.
+    rejected_methods: FxHashMap<Symbol, Reported>,
     /// The methods of the conformance blocks that cover the receiver of the call being found, with
     /// the block's interface and its arguments for the receiver: a buffer that `find_method` fills
     /// and clears per call.
@@ -901,63 +834,6 @@ enum Lowered {
     Operator(tir::InterfaceId, &'static str),
 }
 
-/// The checker's diagnostics, and how many errors were added to them. The count never goes
-/// down, so a diagnostic that is cut or added again counts more than once: that can only stop a
-/// W0011 warning, never cause one.
-#[derive(Default)]
-struct Diagnostics {
-    list: Vec<Diagnostic>,
-    errors: u32,
-}
-
-impl Diagnostics {
-    fn push(&mut self, d: Diagnostic) {
-        self.errors += u32::from(d.severity() == Severity::Error);
-        self.list.push(d);
-    }
-
-    fn extend(&mut self, ds: impl IntoIterator<Item = Diagnostic>) {
-        for d in ds {
-            self.push(d);
-        }
-    }
-
-    fn insert(&mut self, at: usize, d: Diagnostic) {
-        self.errors += u32::from(d.severity() == Severity::Error);
-        self.list.insert(at, d);
-    }
-
-    fn append(&mut self, ds: &mut Vec<Diagnostic>) {
-        self.extend(ds.drain(..));
-    }
-
-    fn truncate(&mut self, len: usize) {
-        self.list.truncate(len);
-    }
-
-    fn drain(&mut self, range: std::ops::RangeFrom<usize>) -> std::vec::Drain<'_, Diagnostic> {
-        self.list.drain(range)
-    }
-
-    fn into_vec(self) -> Vec<Diagnostic> {
-        self.list
-    }
-}
-
-impl std::ops::Deref for Diagnostics {
-    type Target = [Diagnostic];
-
-    fn deref(&self) -> &[Diagnostic] {
-        &self.list
-    }
-}
-
-impl std::ops::DerefMut for Diagnostics {
-    fn deref_mut(&mut self) -> &mut [Diagnostic] {
-        &mut self.list
-    }
-}
-
 /// The entries of the closure of a type parameter or an associated type, by interface.
 #[derive(Default)]
 struct ClosureIndex {
@@ -1012,6 +888,10 @@ impl SelfType {
 
 /// What checking one body needs: a function's, a method's, or a constant's initialiser.
 #[derive(Default)]
+#[expect(
+    clippy::zero_sized_map_values,
+    reason = "the map holds the proof of a report for each key, and a set cannot hold it"
+)]
 struct Body {
     /// The function, method or constant whose body this is; `None` for none, such as a signature.
     owner: Option<Owner>,
@@ -1064,10 +944,10 @@ struct Body {
     leaves: LeafAnswers,
     /// Where in `Checker.scopes` the type parameters now in scope are, once a check waits.
     scope: Option<usize>,
-    /// Where each call of a value, `a<b, c>(d)`, that has been reported starts: comparisons
-    /// misread as a call change the count of the arguments of the call they are an argument of,
-    /// which is then not reported.
-    misread: FxHashSet<usize>,
+    /// Where each call of a value, `a<b, c>(d)`, that has been reported starts, with the token of
+    /// the report: comparisons misread as a call change the count of the arguments of the call
+    /// they are an argument of, which is then not reported.
+    misread: FxHashMap<usize, Reported>,
     scopes: Vec<FxHashMap<Symbol, Binding>>,
     locals: Vec<tir::Local>,
     /// `None` is `Error`.
@@ -1227,6 +1107,22 @@ impl Body {
     }
 }
 
+/// Whether the parser marked an item, or a method of one, as broken.
+fn parser_marked(program: &ast::Program, items: &[&ast::Item]) -> bool {
+    !program.broken.is_empty()
+        || items.iter().any(|item| match item {
+            ast::Item::Class(class) => !class.broken_methods.is_empty(),
+            ast::Item::Enum(e) => !e.broken_methods.is_empty(),
+            ast::Item::Extend(extend) => !extend.broken_methods.is_empty(),
+            // The checker reads no requirement that an interface lost to a syntax error: a call of
+            // one finds no method and gets an error of its own, so no promise rests on the mark.
+            ast::Item::Function(_)
+            | ast::Item::Const(_)
+            | ast::Item::Alias(_)
+            | ast::Item::Interface(_) => false,
+        })
+}
+
 /// Diagnostics sorted by span start (stable); the program only when none is an error. `parsed`
 /// holds the parser's diagnostics, sorted by span start: their errors count against a function too.
 /// The items of `prelude` follow those of `program`, so that every id of a user's item is what it
@@ -1252,9 +1148,9 @@ pub(crate) fn check<'src>(
     let declared = checker.declare_items(&items, program.items.len(), &program.broken);
     checker.fold_constants(&items);
     checker.lowered_enums = checker.lower_enums();
-    checker
-        .diagnostics
-        .extend(payload_limit::diagnostics(&checker.lowered_enums, &[]));
+    for d in payload_limit::diagnostics(&checker.lowered_enums, &[]) {
+        checker.diagnostics.error(d);
+    }
     checker.holds_table = checker.holds_table();
     checker.check_main(&declared);
     // Every body is checked, so this collects into a `Vec` before it gives up on a `None`.
@@ -1265,7 +1161,12 @@ pub(crate) fn check<'src>(
     checker.instantiation_cycles(&functions, &unbuilt);
     checker.report_loops();
     let classes = checker.classes.iter().map(lower_class).collect();
-    let mut diagnostics = std::mem::take(&mut checker.diagnostics).into_vec();
+    let broken = parser_marked(program, &items);
+    debug_assert!(
+        checker.diagnostics.promises_kept(broken),
+        "a promise of an error was not kept"
+    );
+    let mut diagnostics = std::mem::take(&mut checker.diagnostics).finish();
     diagnostics.sort_by_key(order);
     let errors = error_spans(&diagnostics);
     // A function with an error of its own is skipped, so that its errors stand alone.
@@ -1306,18 +1207,6 @@ pub(crate) fn check<'src>(
         diagnostics.extend(checker.unjudged());
     }
     diagnostics.sort_by_key(order);
-    let broken = !program.broken.is_empty()
-        || items.iter().any(|item| match item {
-            ast::Item::Class(class) => !class.broken_methods.is_empty(),
-            ast::Item::Enum(e) => !e.broken_methods.is_empty(),
-            ast::Item::Extend(extend) => !extend.broken_methods.is_empty(),
-            // Nothing poisons a call of a method an interface loses without an error yet: Task 4
-            // resolves such calls, and until then the program has an error of its own.
-            ast::Item::Function(_)
-            | ast::Item::Const(_)
-            | ast::Item::Alias(_)
-            | ast::Item::Interface(_) => false,
-        });
     let interfaces = checker.lowered_interfaces();
     let enums = checker.lowered_enums;
     let (instantiates, prelude, lang) = (checker.instantiates, checker.prelude, checker.lang);
@@ -1422,6 +1311,14 @@ fn type_of(checked: &Checked) -> Option<Type> {
     }
 }
 
+/// The type of `checked`, or the proof of the report that left it untyped.
+fn known_type(checked: &Checked) -> Result<Type, Reported> {
+    match checked {
+        Ok(e) => Ok(e.ty),
+        Err(p) => p.ty.ok_or(p.reported),
+    }
+}
+
 /// The type of a checked block; `None` is `Error`.
 fn block_type(checked: &CheckedBlock) -> Option<Type> {
     match checked {
@@ -1432,6 +1329,10 @@ fn block_type(checked: &CheckedBlock) -> Option<Type> {
 
 impl<'src> Checker<'src> {
     /// The one way to build a checker; `check` and the tests call it.
+    #[expect(
+        clippy::zero_sized_map_values,
+        reason = "the map holds the proof of a report for each key, and a set cannot hold it"
+    )]
     fn new(
         program: &'src ast::Program,
         source: &'src str,
@@ -1476,9 +1377,9 @@ impl<'src> Checker<'src> {
             extensions: Vec::new(),
             extension_methods: FxHashMap::default(),
             builtin_methods: Vec::new(),
-            broken_extensions: FxHashSet::default(),
-            broken_extension_methods: FxHashSet::default(),
-            rejected_methods: FxHashSet::default(),
+            broken_extensions: FxHashMap::default(),
+            broken_extension_methods: FxHashMap::default(),
+            rejected_methods: FxHashMap::default(),
             candidates: Vec::new(),
             conformances: tir::Conformances::default(),
             conformance_bounds: FxHashMap::default(),
@@ -1524,7 +1425,9 @@ impl<'src> Checker<'src> {
         let outer = std::mem::replace(&mut self.body, body);
         let result = f(self);
         let mut body = std::mem::replace(&mut self.body, outer);
-        self.diagnostics.extend(body.misfits.drain(..).flatten());
+        for d in body.misfits.drain(..).flatten() {
+            self.diagnostics.error(d);
+        }
         (result, body)
     }
 
@@ -1617,9 +1520,34 @@ impl Checker<'_> {
             .collect()
     }
 
-    /// Records a coded diagnostic.
-    fn report(&mut self, kind: DiagnosticKind) {
-        self.diagnostics.push(kind.into());
+    /// Records a coded error.
+    fn error(&mut self, kind: DiagnosticKind) -> Reported {
+        self.diagnostics.error(kind)
+    }
+
+    /// Records a coded warning.
+    fn warn(&mut self, kind: DiagnosticKind) {
+        self.diagnostics.warn(kind);
+    }
+
+    /// Records a promise made at `at`. An error in the list keeps it, wherever the error is, and
+    /// so does a parser mark (see `Diagnostics::promises_kept`).
+    fn proof(&mut self, at: Span) -> Reported {
+        self.diagnostics.proof(at)
+    }
+
+    /// The token of a use at `at` of a binding with no type. Its error was reported where it was
+    /// bound: its initializer's, its declared type's, or an E0050. No binding holds that token.
+    fn untyped_binding(&mut self, at: Span) -> Reported {
+        self.proof(at) // proof: binding
+    }
+
+    /// The token of a value at `at` that a `Poisoned` expectation gives no type. The reader of
+    /// the value stays quiet. The error of the context was reported before, or the caller
+    /// reports it after: `checked_alone` gives no error before, and in `g(mut [])` its caller
+    /// reports E0169.
+    fn poisoned_context(&mut self, at: Span) -> Reported {
+        self.proof(at) // proof: quiet reader
     }
 
     /// Pass 1: gives every class a `ClassId` and every enum an `EnumId`, and records the first
@@ -1749,9 +1677,9 @@ impl Checker<'_> {
             self.prelude = self.item_counts(next_function);
         }
         // After the loop: the prelude's own items, which come last, would take the names back.
-        for (kind, name) in rejected {
-            self.names.poison_language(name);
-            self.names.poison(kind, name);
+        for (kind, name, reported) in rejected {
+            self.names.poison_language(name, reported);
+            self.names.poison(kind, name, reported);
         }
         self.poison_broken(broken);
     }
@@ -1763,7 +1691,7 @@ impl Checker<'_> {
         &mut self,
         alias: &ast::AliasDecl,
         first: &mut FxHashMap<Symbol, (Span, Definition)>,
-        rejected: &mut Vec<(Definition, Symbol)>,
+        rejected: &mut Vec<(Definition, Symbol, Reported)>,
     ) {
         let id = self.aliases.infos.len();
         self.aliases.infos.push(AliasInfo::new(alias));
@@ -1812,14 +1740,17 @@ impl Checker<'_> {
             let Some(kind) = broken_definition(broken.kind) else {
                 // Its target is intact, and its parse error already fails the program. A method
                 // call on the target that finds no method is poisoned.
-                self.broken_extensions.insert(broken.name.name);
+                let reported = self.proof(broken.name.span); // proof: parser mark
+                self.broken_extensions.insert(broken.name.name, reported);
                 continue;
             };
-            if !(self.built_in(&broken.name) || self.prelude_taken(kind, &broken.name)) {
-                let redeclared = redeclares(first, &broken.name);
-                self.first_definition(first, kind, None, &broken.name);
-                if redeclared {
-                    self.names.poison_language(broken.name.name);
+            if !(self.built_in(&broken.name) || self.prelude_taken(kind, &broken.name).is_some()) {
+                if redeclares(first, &broken.name)
+                    && let Some(reported) = self.report_redeclared(first, kind, None, &broken.name)
+                {
+                    self.names.poison_language(broken.name.name, reported);
+                } else {
+                    self.first_definition(first, kind, None, &broken.name);
                 }
             }
         }
@@ -1829,7 +1760,8 @@ impl Checker<'_> {
     fn poison_broken(&mut self, broken: &[ast::Broken]) {
         for broken in broken {
             if let Some(kind) = broken_definition(broken.kind) {
-                self.names.poison(kind, broken.name.name);
+                let reported = self.proof(broken.name.span); // proof: parser mark
+                self.names.poison(kind, broken.name.name, reported);
             }
         }
     }
@@ -1849,7 +1781,7 @@ impl Checker<'_> {
             None
         };
         if let Some(kind) = kind {
-            self.report(DiagnosticKind::BuiltInName {
+            self.error(DiagnosticKind::BuiltInName {
                 name: name.name.to_string(),
                 at: name.span,
                 kind,
@@ -1866,32 +1798,30 @@ impl Checker<'_> {
     fn first_callable(
         &mut self,
         first: &mut FxHashMap<Symbol, (Span, Definition)>,
-        rejected: &mut Vec<(Definition, Symbol)>,
+        rejected: &mut Vec<(Definition, Symbol, Reported)>,
         kind: Definition,
         name: &ast::Ident,
     ) -> bool {
-        if self.prelude_taken(kind, name) {
-            rejected.push((kind, name.name));
+        if let Some(reported) = self.prelude_taken(kind, name) {
+            rejected.push((kind, name.name, reported));
             return false;
         }
-        let redeclared = redeclares(first, name);
-        let is_first = self.first_definition(first, kind, None, name);
-        if redeclared {
-            rejected.push((kind, name.name));
+        if redeclares(first, name)
+            && let Some(reported) = self.report_redeclared(first, kind, None, name)
+        {
+            rejected.push((kind, name.name, reported));
+            return false;
         }
-        is_first
+        self.first_definition(first, kind, None, name)
     }
 
     /// Whether `name` is a prelude function's, which no top-level item of `kind` may take;
-    /// reports it when it is.
-    fn prelude_taken(&mut self, kind: Definition, name: &ast::Ident) -> bool {
+    /// reports it when it is, and gives the token of that report.
+    fn prelude_taken(&mut self, kind: Definition, name: &ast::Ident) -> Option<Reported> {
         // A function the prelude's code writes is taken too, but not in the prelude's own code.
         let written = !name.span.in_prelude() && self.prelude_functions.contains(&name.name);
         let taken = written || PRELUDE.contains(&name.name.as_str());
-        if taken {
-            self.report(defined_twice(kind, name, Earlier::BuiltIn));
-        }
-        taken
+        taken.then(|| self.error(defined_twice(kind, name, Earlier::BuiltIn)))
     }
 
     /// Whether `name` is the first of its name in `first`, which it joins with its `kind`;
@@ -1903,7 +1833,7 @@ impl Checker<'_> {
         owner: Option<&str>,
         name: &ast::Ident,
     ) -> bool {
-        if let Some(&(span, first_kind)) = first.get(&name.name) {
+        if let Some(&(span, _)) = first.get(&name.name) {
             // A user's item took the prelude's name first. For a constructor name, `BuiltInName`
             // has said so. A language interface still takes its name, which only the prelude's
             // code reads. A built-in type never gets here: `built_in` keeps a user item of its
@@ -1911,16 +1841,29 @@ impl Checker<'_> {
             if name.span.in_prelude() && !span.in_prelude() {
                 return is_language_interface(name.name.as_str());
             }
-            let first = Earlier::At {
-                span,
-                kind: first_kind,
-                owner: owner.map(str::to_string),
-            };
-            self.report(defined_twice(kind, name, first));
+            self.report_redeclared(first, kind, owner, name);
             return false;
         }
         first.insert(name.name, (name.span, kind));
         true
+    }
+
+    /// Reports `name` as defined twice when `first` holds an item of its name, and gives the
+    /// token of that report. `owner` is the class whose members `first` holds.
+    fn report_redeclared(
+        &mut self,
+        first: &FxHashMap<Symbol, (Span, Definition)>,
+        kind: Definition,
+        owner: Option<&str>,
+        name: &ast::Ident,
+    ) -> Option<Reported> {
+        let &(span, first_kind) = first.get(&name.name)?;
+        let first = Earlier::At {
+            span,
+            kind: first_kind,
+            owner: owner.map(str::to_string),
+        };
+        Some(self.error(defined_twice(kind, name, first)))
     }
 
     /// How many classes, enums and functions are declared so far, `functions` being the count of
@@ -2034,9 +1977,10 @@ impl Checker<'_> {
             }
             self.body.set_type_params(&[]);
             for method in &class.broken_methods {
+                let reported = self.proof(method.span); // proof: parser mark
                 self.classes[id.0]
                     .methods
-                    .insert(method.name, Declared::Broken);
+                    .insert(method.name, Declared::Poisoned(reported));
             }
             self.body.self_type = SelfType::Absent;
             self.body.assoc = Rc::default();
@@ -2159,7 +2103,7 @@ impl Checker<'_> {
             });
         }
         for report in reports {
-            self.report(report);
+            self.error(report);
         }
         cyclic
     }
@@ -2169,8 +2113,10 @@ impl Checker<'_> {
     /// its signature that did not resolve is not wrong: each error is reported already.
     fn check_main(&mut self, declared: &[(&ast::Function, SelfType)]) {
         match self.names.function(Symbol::intern("main")) {
-            None => self.report(DiagnosticKind::NoMain),
-            Some(Declared::Broken) => {}
+            None => {
+                self.error(DiagnosticKind::NoMain);
+            }
+            Some(Declared::Poisoned(_)) => {}
             Some(Declared::Known(id)) => {
                 let main = declared[id.0].0;
                 if !main.type_params.is_empty() {
@@ -2184,7 +2130,7 @@ impl Checker<'_> {
                 let args = Some(Type::array(Type::STRING));
                 let takes = params.is_empty() || *params == [args];
                 if !takes || *ret != Some(Type::UNIT) {
-                    self.report(DiagnosticKind::MainSignature {
+                    self.error(DiagnosticKind::MainSignature {
                         at: main.name.span,
                         form: MainForm::Signature,
                     });
@@ -2226,7 +2172,7 @@ impl Checker<'_> {
                 SelfType::Known(declared) => declared,
                 SelfType::Failed => return None,
                 SelfType::Absent => {
-                    self.report(DiagnosticKind::SelfOutside { at: ty.bare });
+                    self.error(DiagnosticKind::SelfOutside { at: ty.bare });
                     return None;
                 }
             },
@@ -2261,7 +2207,7 @@ impl Checker<'_> {
             if args.is_empty() {
                 return Some(ty);
             }
-            c.type_args(&ident(), &[], args, angles).map(|_| ty)
+            c.type_args(&ident(), &[], args, angles).ok().map(|_| ty)
         };
         match self.meaning(name, names::Site::new(Position::Type, false)) {
             Resolved::TypeParam(i) => {
@@ -2281,7 +2227,7 @@ impl Checker<'_> {
             },
             // A broken name poisons every use, a built-in type's too. Its own error is reported,
             // and so are the errors of the arguments that the use writes.
-            Resolved::Poisoned(_) => {
+            Resolved::Poisoned(..) => {
                 self.resolve_args(args);
                 None
             }
@@ -2297,7 +2243,7 @@ impl Checker<'_> {
                     TypeArgs::NONE
                 } else {
                     let declared = self.classes[id.0].type_params.clone();
-                    self.type_args(&ident(), &declared, args, angles)?
+                    self.type_args(&ident(), &declared, args, angles).ok()?
                 };
                 let ty = Type::intern(TypeKind::Class(id, list));
                 self.bounded(self.classes[id.0].bounded, ty, args)
@@ -2309,7 +2255,7 @@ impl Checker<'_> {
                     TypeArgs::NONE
                 } else {
                     let declared = self.enums[id.0].type_params.clone();
-                    self.type_args(&ident(), &declared, args, angles)?
+                    self.type_args(&ident(), &declared, args, angles).ok()?
                 };
                 let ty = Type::intern(TypeKind::Enum(id, list));
                 self.bounded(self.enums[id.0].bounded, ty, args)
@@ -2317,7 +2263,7 @@ impl Checker<'_> {
             }
             // `Option<T>` is `T?`: the prelude's declaration of it makes no enum.
             Resolved::OptionType => {
-                let args = self.type_args(&ident(), &[Symbol::intern("T")], args, angles)?;
+                let args = (self.type_args(&ident(), &[Symbol::intern("T")], args, angles)).ok()?;
                 Some(optional_of(args.get()[0]))
             }
             _ => {
@@ -2331,7 +2277,7 @@ impl Checker<'_> {
                 let candidates = (types.into_iter().chain(classes).chain(enums))
                     .chain(interfaces)
                     .chain(aliases);
-                self.report(DiagnosticKind::UnknownType {
+                self.error(DiagnosticKind::UnknownType {
                     name: name.to_string(),
                     at: ident().span,
                     form: UnknownForm::Name {
@@ -2351,9 +2297,11 @@ impl Checker<'_> {
         }
         // In an alias body, a type that names a parameter waits for each use of the alias.
         if self.body.alias.is_some() && ty.has_param() {
-            return self.make_check(UseCheck::Applied(ty), Span::new(0, 0));
+            return self
+                .make_check(UseCheck::Applied(ty), Span::new(0, 0))
+                .is_ok();
         }
-        self.check_applied(ty, written.iter().map(|arg| arg.span).collect())
+        (self.check_applied(ty, written.iter().map(|arg| arg.span).collect())).is_ok()
     }
 
     /// `function`, except that a method of a block that failed has a failed `self` and is not
@@ -2488,7 +2436,7 @@ impl Checker<'_> {
                 } else {
                     self.mismatch(value_span(&f.body), tail(&f.body), want, got)
                 };
-                self.diagnostics.push(d);
+                self.diagnostics.error(d);
             }
             _ => {}
         }
@@ -2570,10 +2518,11 @@ impl Checker<'_> {
     /// "cannot find binding `name`", offering the closest binding of any open scope, and of any
     /// open loop label right after an unlabeled `break`. A type's name, built in or a class's or
     /// an enum's, is in scope, but as a type: that is reported instead. So is a function's name.
-    fn not_found(&mut self, name: Symbol, span: Span) -> Diagnostic {
+    /// Reports the error, and gives its token.
+    fn not_found(&mut self, name: Symbol, span: Span) -> Reported {
         let site = names::Site::value(true);
         if let Some(wrong) = self.wrong_kind(name, span, site, self.meaning(name, site)) {
-            return wrong.into();
+            return self.error(wrong);
         }
         let at_start = self.starts_break_value(span);
         let bindings = self
@@ -2588,26 +2537,25 @@ impl Checker<'_> {
             .filter(|_| self.body.label_typo.is_some_and(|(at, _)| at == span))
             .map(|label| (label.name.as_str(), Definition::LoopLabel));
         let suggestion = suggestion(name.as_str(), bindings.chain(labels));
-        if let Some(found) = &suggestion
-            && found.kind == Definition::LoopLabel
-        {
-            // Only a bare name after `break` offers a loop label: a misspelled loop label is one
-            // mistake, which neither the loop label's warning nor its loop's type reports again.
-            self.break_meant(&found.name);
-        }
-        let wrap = match (&suggestion, self.body.label_typo) {
-            (Some(found), Some((_, start))) if found.kind == Definition::LoopLabel => {
-                self.wrap_break(span, start)
-            }
+        let meant = (suggestion.as_ref())
+            .filter(|found| found.kind == Definition::LoopLabel)
+            .map(|found| found.name.clone());
+        let wrap = match (&meant, self.body.label_typo) {
+            (Some(_), Some((_, start))) => self.wrap_break(span, start),
             _ => None,
         };
-        DiagnosticKind::BindingNotFound {
+        let reported = self.error(DiagnosticKind::BindingNotFound {
             name: name.to_string(),
             at: span,
             suggestion,
             wrap,
+        });
+        if let Some(meant) = meant {
+            // Only a bare name after `break` offers a loop label: a misspelled loop label is one
+            // mistake, which neither the loop label's warning nor its loop's type reports again.
+            self.break_meant(&meant, reported);
         }
-        .into()
+        reported
     }
 
     /// `break_start`, the start of the `break` whose label is at `label`, when the label ends the

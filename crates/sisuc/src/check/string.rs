@@ -8,7 +8,7 @@ use std::fmt::Write;
 
 use super::array::pair;
 use super::call::Dot;
-use super::expr::{local, no_member, path, postfix, typed};
+use super::expr::{local, no_member, path, postfix, typed, unlabeled};
 use super::mut_args::Callee;
 use super::{Checked, Checker, Expectation, Poisoned, block_expr, is_jumped, type_of};
 use crate::ast::{self, CompareOp, ExprKind};
@@ -32,19 +32,27 @@ pub(super) const METHODS: &[(&str, usize)] = &[
 ];
 
 impl Checker<'_> {
-    /// `l + r` over two `string`s, which `mismatched` says were reported against.
+    /// `l + r` over two `string`s, which `mismatched` says were reported against. `decides` says
+    /// whether the join is typed: both operands are typed, or `l` is typed and of `sibling_rank`
+    /// `Concrete`.
     pub(super) fn concat(
         &mut self,
         span: Span,
-        l: Checked,
+        (l, decides): (Checked, bool),
         r: Checked,
         mismatched: bool,
     ) -> Checked {
-        // A join with an `Error` operand is `Error`: that operand may have been meant as a
-        // number, and a `char` or an expected type beside the join would report it again.
-        let known = !mismatched && type_of(&l).is_some() && type_of(&r).is_some();
-        let (Ok(l), Ok(r)) = (l, r) else {
-            return Err(Poisoned::of(known.then_some(Type::STRING)));
+        // A join that `l` does not decide is untyped: an untyped operand may have been meant as
+        // a number, and a `char` or an expected type beside the join would report it again.
+        let known = !mismatched && decides;
+        let (l, r) = match (l, r) {
+            (Ok(l), Ok(r)) => (l, r),
+            (Err(failed), _) | (_, Err(failed)) => {
+                return Err(Poisoned::new(
+                    known.then_some(Type::STRING),
+                    failed.reported(),
+                ));
+            }
         };
         Ok(self.spilled(span, Type::STRING, vec![l, r], |operands| {
             let (lhs, rhs) = pair(operands);
@@ -106,11 +114,11 @@ impl Checker<'_> {
                 }
             }
             let found = type_of(&value).expect("a part reported here should have a type");
-            self.report(DiagnosticKind::CannotInterpolate {
+            let reported = self.error(DiagnosticKind::CannotInterpolate {
                 ty: self.type_name(found),
                 at: part.span,
             });
-            checked.push(Err(Poisoned::error()));
+            checked.push(Err(Poisoned::untyped(reported)));
         }
         if let Some(at) = never_at {
             self.body.never_part = Some((span, at));
@@ -124,9 +132,9 @@ impl Checker<'_> {
             ),
             // The literal is `never` by its first `never` part, so it is by a failed jump when
             // that part is.
-            Err(_) => Err(Poisoned {
+            Err(failed) => Err(Poisoned {
                 jumped,
-                ..Poisoned::typed(ty)
+                ..Poisoned::typed(ty, failed.reported())
             }),
         }
     }
@@ -174,7 +182,7 @@ impl Checker<'_> {
                 }
                 _ => None,
             };
-            self.report(DiagnosticKind::PrecisionNeedsF64 {
+            self.error(DiagnosticKind::PrecisionNeedsF64 {
                 ty: self.type_name(ty),
                 at: spec.span,
                 help,
@@ -255,11 +263,12 @@ impl Checker<'_> {
                 _ => continue,
             };
             let want = vec![self.type_name(Type::STRING)];
-            for d in self.diagnostics[start..]
-                .iter_mut()
-                .filter(|d| d.code() == Code::Mismatch && d.span() == e.span)
-            {
-                *d = DiagnosticKind::Mismatch {
+            for index in start..self.diagnostics.len() {
+                let d = &self.diagnostics[index];
+                if d.code() != Code::Mismatch || d.span() != e.span {
+                    continue;
+                }
+                let d = DiagnosticKind::Mismatch {
                     want: Expected::Types(want.clone()),
                     got: got.to_string(),
                     at: e.span,
@@ -267,8 +276,8 @@ impl Checker<'_> {
                     fix: None,
                     conversion: false,
                     layers: false,
-                }
-                .into();
+                };
+                self.diagnostics.rewrite(index, d.into());
             }
         }
     }
@@ -351,8 +360,8 @@ impl Checker<'_> {
             "bytes" => (Type::array(Type::U8), tir::ExprKind::Bytes),
             "words" => (Type::array(Type::STRING), tir::ExprKind::Words),
             _ => {
-                if self.rejected_methods.contains(&method.name) {
-                    return self.call_of_rejected_method(method, args);
+                if let Some(&reported) = self.rejected_methods.get(&method.name) {
+                    return self.call_of_rejected_method(method, args, reported);
                 }
                 let owner = self.type_name(Type::STRING);
                 let d = no_member(
@@ -373,7 +382,9 @@ impl Checker<'_> {
             };
             return self.rejected(d.into(), args, Some(ty));
         }
-        let kind = receiver.ok().map(|r| node(Box::new(r)));
+        let kind = receiver
+            .map(|r| node(Box::new(r)))
+            .map_err(|failed| failed.reported());
         typed(span, ty, false, kind)
     }
 
@@ -391,14 +402,14 @@ impl Checker<'_> {
     ) -> Checked {
         let labeled = self.labels(args);
         let [arg] = args else {
-            self.report(DiagnosticKind::ArgumentCount {
+            let reported = self.error(DiagnosticKind::ArgumentCount {
                 name: to.to_string(),
                 want: 1,
                 found: args.len(),
                 at: span,
             });
             self.stray(args);
-            return Err(Poisoned::error());
+            return Err(Poisoned::untyped(reported));
         };
         self.refuse_mut(args, Callee::Unnamed(&self.source.text(name)));
         let chars = [Type::array(Type::CHAR)];
@@ -437,7 +448,7 @@ impl Checker<'_> {
                     conversion: span,
                     name,
                     grouped,
-                    labeled,
+                    labeled: labeled.is_some(),
                     commented,
                 }
                 .into()
@@ -465,12 +476,12 @@ impl Checker<'_> {
                     let arg = checked.as_ref().ok()?;
                     site.literal(span, to, arg)
                 });
-                self.report(DiagnosticKind::ConversionInConstant {
+                let reported = self.error(DiagnosticKind::ConversionInConstant {
                     to: self.type_name(to),
                     at: span,
                     fix,
                 });
-                return Err(Poisoned::typed(to));
+                return Err(Poisoned::typed(to, reported));
             }
             _ => {
                 let node = if to == Type::STRING {
@@ -478,16 +489,12 @@ impl Checker<'_> {
                 } else {
                     tir::ExprKind::Convert
                 };
-                let kind = checked
-                    .ok()
-                    .filter(|_| !labeled)
-                    .map(|arg| node(Box::new(arg)));
+                let kind = unlabeled(checked, labeled).map(|arg| node(Box::new(arg)));
                 let ty = if fails { Type::optional(to) } else { to };
-                return typed(span, ty, labeled, kind);
+                return typed(span, ty, labeled.is_some(), kind);
             }
         };
-        self.diagnostics.push(d);
-        Err(Poisoned::error())
+        Err(Poisoned::untyped(self.diagnostics.error(d)))
     }
 
     /// `string(arg)` where `arg`, of type `got`, is not a `want`. A value that interpolation

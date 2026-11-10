@@ -473,16 +473,6 @@ fn while_should_not_warn_when_its_second_class_has_a_field_of_an_unknown_type() 
     );
 }
 
-/// Every `insert` today comes with a failed expression, which fails the loop body, so no
-/// program reaches the count.
-#[test]
-fn diagnostics_should_count_every_error_it_holds() {
-    let mut diagnostics = Diagnostics::default();
-    let at = Span::new(0, 0);
-    diagnostics.insert(0, DiagnosticKind::IsTestsNone { tested: None, at }.into());
-    assert_eq!(diagnostics.errors, 1);
-}
-
 /// W0005 reports the comparison, and its fix makes the condition read a method call.
 #[test]
 fn while_should_not_warn_when_its_condition_compares_with_nan() {

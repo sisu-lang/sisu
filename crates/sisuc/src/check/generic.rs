@@ -16,11 +16,11 @@ use super::mut_args::{MutParts, MutSite, PlaceShape, marked};
 use super::names::{self, ItemId, Resolved};
 use super::pattern::{LetPattern, LetValue, arm_key, matchable};
 use super::prelude::PRELUDE;
+use super::reports::Reported;
 use super::stmt::BlockSoFar;
 use super::{
-    Binding, Checked, Checker, Declared, Definition, DiagnosticKind, Expectation, Flag, Misfit,
-    Poisoned, as_optional, built_in_type, has_remedy_flag, is_kept, optional_of, own_args, payload,
-    spread, type_of,
+    Binding, Checked, Checker, Declared, Definition, DiagnosticKind, Expectation, Misfit, Poisoned,
+    as_optional, built_in_type, is_kept, optional_of, own_args, payload, type_of,
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{ArgumentsForm, Diagnostic, Expected, MainForm, Unwrap};
@@ -1645,7 +1645,8 @@ pub(super) struct Site<'a> {
 }
 
 /// The type arguments after the first `owner` of `found`, which inference found for a callee,
-/// when `site` writes them. Else none: the arguments bind them, and they may be the fault.
+/// when `site` writes them. Else none: no argument settles a parameter in a call with a failed
+/// part.
 pub(super) fn written_args<'t>(site: Site<'_>, found: &'t [Type], owner: usize) -> &'t [Type] {
     if site.written.is_empty() {
         &[]
@@ -1678,15 +1679,15 @@ pub(super) struct Inference<'s> {
     /// The arguments of type `unit` or `never`, which bind only what no other argument does, each
     /// with the span to report it at: the argument, or the part of a literal that never finishes.
     last: Vec<(usize, Type, Span)>,
-    /// Whether a parameter was bound to a type that no parameter takes, or its bound failed: the
-    /// call reported it.
-    failed: bool,
-    /// Whether the context rejected a parameter (see `REJECTED`). The call fails, but the outer
-    /// call reported the bound, so this one reports nothing for that parameter. It still reports
-    /// a parameter that the context leaves unbound. The field stays false for a parameter whose
-    /// hint holds a rejected part only: `infer_call` does not set it, and it skips the E0050 of
-    /// that parameter (see `Bindings::first_unbound_not_rejected`).
-    rejected: bool,
+    /// The proof of the report, when a parameter was bound to a type that no parameter takes, or
+    /// its bound failed: the call reported it.
+    failed: Option<Reported>,
+    /// Whether the context rejected a parameter (see `REJECTED`), with the proof. The call fails,
+    /// but the outer call reported the bound, so this one reports nothing for that parameter. It
+    /// still reports a parameter that the context leaves unbound. The field stays false for a
+    /// parameter whose hint holds a rejected part only: `infer_call` does not set it, and it skips
+    /// the E0050 of that parameter (see `Bindings::first_unbound_not_rejected`).
+    rejected: Option<Reported>,
     /// Where each parameter was bound: the argument, or the type argument written for it.
     origin: Origins,
     /// The bounds that the call checks as soon as a parameter is bound; none when the callee has
@@ -1738,6 +1739,19 @@ use origins::Origins;
 /// hint or a type the user wrote.
 fn bound_by_context(call: &Inference<'_>, pattern: Type) -> bool {
     names_marked(pattern, |j| call.origin.get(j) == Some(call.at), true)
+}
+
+/// The proof of the first failed part of `call`: a failed bound, a rejected context, or a failed
+/// argument.
+fn failure(call: &Inference<'_>) -> Option<Reported> {
+    call.failed
+        .or(call.rejected)
+        .or_else(|| first_failed(&call.slots))
+}
+
+/// The proof of the first of `slots` that failed.
+fn first_failed(slots: &[Option<Checked>]) -> Option<Reported> {
+    (slots.iter().flatten()).find_map(|checked| checked.as_ref().err().map(Poisoned::reported))
 }
 
 /// Whether `pattern`, which `known_in` gives no type for, names no unbound parameter: an
@@ -1798,19 +1812,24 @@ impl<'s> Early<'s> {
     }
 }
 
-/// `checked`, an argument, made `Error` that its rule rejected when `mismatched`.
+/// `checked`, an argument, made `Error` that its rule rejected when `mismatched`. A mismatched
+/// argument is poisoned by its report already, and keeps that proof.
 pub(super) fn mark((checked, mismatched): (Checked, bool)) -> Checked {
-    if mismatched {
-        Err(Poisoned {
-            ty: None,
-            mismatch: true,
-            found: None,
-            kept: false,
-            unwrapped: Flag::No,
-            jumped: false,
-        })
-    } else {
-        checked
+    debug_assert!(
+        !mismatched || checked.is_err(),
+        "a mismatched argument should be poisoned"
+    );
+    match checked {
+        Err(poisoned) if mismatched => Err(mismatch_poison(poisoned.reported())),
+        checked => checked,
+    }
+}
+
+/// The poison of an argument that its rule rejected, with the proof of the report.
+pub(super) fn mismatch_poison(reported: Reported) -> Poisoned {
+    Poisoned {
+        mismatch: true,
+        ..Poisoned::untyped(reported)
     }
 }
 
@@ -2132,8 +2151,9 @@ impl Checker<'_> {
             return Some(ret);
         }
         let mut bindings = Bindings::new(declared, owner);
+        // A `REJECTED` written type argument binds nothing.
         for (slot, &ty) in bindings.found[owner.len()..].iter_mut().zip(named) {
-            *slot = Some(ty);
+            *slot = (ty != *REJECTED).then_some(ty);
         }
         if bounded && (named.is_empty() || !self.meets_bounds(bounds, owner.len(), &bindings)) {
             return None;
@@ -2145,32 +2165,59 @@ impl Checker<'_> {
         }
     }
 
-    /// The result of a construction of a generic class or enum whose arguments `Err`. `state` says
-    /// whether an alias bound `held`, whether the call `failed`, and whether an argument has the
-    /// remedy flag (`has_remedy_flag`). `ty` is the type that the arguments bound, `ret` the type
-    /// with its parameters (`declared` of them) and `written` the written type arguments.
-    ///
-    /// A failed call has the type that `fixed_result` gives, and the flag follows only when it
-    /// gives none: then the arguments alone bind the type, and the remedy changes it.
+    /// The result of a construction of a generic class or enum whose arguments `Err`. `held` says
+    /// whether an alias bound held. `ret` is the type with its parameters (`declared` of them) and
+    /// `written` the written type arguments. No argument settles a parameter in a call with a
+    /// failed part, so the call has the type that `fixed_result` gives.
     pub(super) fn failed_build(
         &mut self,
-        (held, failed, flagged): (bool, bool, bool),
-        (ty, ret, declared): (Type, Type, usize),
+        (held, reported): (bool, Reported),
+        (ret, declared): (Type, usize),
         written: &[Type],
     ) -> Checked {
-        let fixed = if held && (failed || flagged) {
-            self.fixed_result(Some(ret), declared, &[], &[], written)
-        } else {
-            None
+        let ty = held
+            .then(|| self.fixed_result(Some(ret), declared, &[], &[], written))
+            .flatten();
+        Err(Poisoned::new(ty, reported))
+    }
+
+    /// The type `ty` that a generic construction that checked builds. `None` when it names an
+    /// associated type that has no choice. `held` is the result of the alias checks of the
+    /// construction, which run first: when they failed, their token is the one of the type.
+    /// Else the conformance of a bound reports the type, and gives no token.
+    pub(super) fn built_type(
+        &mut self,
+        ty: Option<Type>,
+        held: Result<(), Reported>,
+        at: Span,
+    ) -> Result<Type, Poisoned> {
+        let Some(ty) = ty else {
+            let reported = held.err().unwrap_or_else(|| self.proof(at)); // proof: declaration
+            return Err(Poisoned::untyped(reported));
         };
-        let ty = if !held {
-            None
-        } else if failed {
-            fixed
-        } else {
-            Some(ty)
-        };
-        spread(Err(Poisoned::of(ty)), flagged && fixed.is_none())
+        Ok(ty)
+    }
+
+    /// The poison of a failed call to a callee with `declared` type parameters and the result
+    /// `ret`. `owner` is the receiver's type arguments, `written` the type arguments that the
+    /// call writes, and `solved` what inference found. `reported` proves the failure.
+    ///
+    /// When only the receiver failed (`parted` is false), the receiver is typed and reads as its
+    /// type, so `solved` stands. Otherwise the call has a failed part, and no argument settles a
+    /// parameter: the result is typed only when the receiver or a written type argument binds it.
+    pub(super) fn failed_call(
+        &mut self,
+        (solved, parted, reported): (Option<Type>, bool, Reported),
+        (ret, declared, owner): (Option<Type>, usize, &[Type]),
+        written: &[Type],
+    ) -> Poisoned {
+        match solved {
+            Some(solved) if !parted => Poisoned::typed(solved, reported),
+            _ => Poisoned::new(
+                self.fixed_result(ret, declared, owner, &[], written),
+                reported,
+            ),
+        }
     }
 
     /// `generic_call`, before what ranking kept is dropped.
@@ -2194,19 +2241,26 @@ impl Checker<'_> {
             bindings: Bindings::new(sig.declared.len(), sig.owner),
             slots: args.iter().map(|_| None).collect(),
             last: Vec::new(),
-            failed: false,
-            rejected: false,
+            failed: None,
+            rejected: None,
             origin: Origins::new(sig.declared.len()),
             early: Early::of(sig),
             bound: Vec::new(),
             mut_shapes: Vec::new(),
         };
+        // How many type arguments the call writes. They bind the result of a call that fails.
+        let mut named = 0;
         if !written.is_empty() {
-            let Some(list) = self.type_args(sig.name, &sig.declared[owned..], written, angles)
-            else {
-                self.stray(args);
-                return Err(Poisoned::error());
+            let list = match self.type_args(sig.name, &sig.declared[owned..], written, angles) {
+                Ok(list) => list,
+                Err(reported) => {
+                    self.stray(args);
+                    // A list that failed binds nothing: only the receiver binds the result.
+                    let ty = self.fixed_result(sig.ret, sig.declared.len(), sig.owner, &[], &[]);
+                    return Err(Poisoned::new(ty, reported));
+                }
             };
+            named = list.get().len();
             // `type_args` rejects each type that `report_fresh` would.
             for (i, &ty) in list.get().iter().enumerate() {
                 call.bindings.found[owned + i] = Some(ty);
@@ -2267,7 +2321,7 @@ impl Checker<'_> {
             let met = (whole(want) && call.bindings.unify(ret, want))
                 || call.bindings.constrain(ret, payload(want));
             misfit = self.misfit(span, ret, want, met).then_some((ret, want));
-            if !met && written.is_empty() && !call.failed {
+            if !met && written.is_empty() && call.failed.is_none() {
                 self.blame_arguments(&mut call, sig, args, ret, want, span);
             }
             self.report_fresh(&mut call, span);
@@ -2299,8 +2353,8 @@ impl Checker<'_> {
             {
                 continue;
             }
-            self.no_value(at, ty);
-            call.slots[i] = Some(Err(Poisoned::error()));
+            let reported = self.no_value(at, ty);
+            call.slots[i] = Some(Err(Poisoned::untyped(reported)));
         }
         let broken = poison_broken_params(&mut call.bindings, sig.declared);
         // Once every parameter is bound, an argument is still unchecked only when its parameter
@@ -2308,48 +2362,79 @@ impl Checker<'_> {
         // the call fails after it.
         let unchecked = call.slots.iter().any(Option::is_none);
         let mut found = None;
+        let clear = call.failed.is_none() && call.rejected.is_none();
         let list = match call.bindings.finish() {
-            Ok(list) if !call.failed && !call.rejected && !broken && !unchecked => Some(list),
-            Ok(_) => None,
+            Ok(list) if clear && !broken && !unchecked => Ok(list),
+            // A broken parameter and an associated type with no choice are declarations.
+            Ok(_) => Err(failure(&call).unwrap_or_else(|| self.proof(span))), // proof: declaration
             Err(first) => {
                 // An argument that failed, or a parameter's or the return type that did, may be
                 // what would have bound it. So may a `Poisoned` context, which is one that failed.
                 let errored = call.slots.iter().flatten().any(|c| type_of(c).is_none())
                     || sig.params.contains(&None)
                     || sig.ret.is_none();
-                if !errored && !call.failed && expected != Expectation::Poisoned {
-                    // A parameter that meets a rejected part only is rejected as well: the
-                    // failed bound of the outer call is its only fault.
-                    if let Some(i) = call.bindings.first_unbound_not_rejected(first) {
+                let reports =
+                    !errored && call.failed.is_none() && expected != Expectation::Poisoned;
+                // A parameter that meets a rejected part only is rejected as well: the failed
+                // bound of the outer call is its only fault.
+                let unbound = reports
+                    .then(|| call.bindings.first_unbound_not_rejected(first))
+                    .flatten();
+                Err(match unbound {
+                    Some(i) => {
                         let misfit =
                             misfit.map(|(ret, want)| (self.printed(&call.bindings, ret), want));
-                        found = self.report_unbound(span, sig, i, misfit);
+                        let (misfit, reported) = self.report_unbound(span, sig, i, misfit);
+                        found = misfit;
+                        reported
                     }
-                }
-                None
+                    None => match failure(&call) {
+                        Some(reported) => reported,
+                        // The parameter or the return type of the signature is `None`.
+                        None if errored => self.proof(span), // proof: declaration
+                        // The context failed, or holds a rejected part only.
+                        None => self.proof(span), // proof: quiet reader
+                    },
+                })
             }
         };
-        self.mut_final(&mut call, sig, args, list);
-        let Some(list) = list else {
-            // What waited for context and has none is checked against a failed one, so it
-            // reports only its own mistakes, and uses what ranking kept for it.
-            for (arg, slot) in iter::zip(args, &call.slots) {
-                if slot.is_none() {
-                    drop(self.expr(&arg.value, Expectation::Poisoned));
+        self.mut_final(&mut call, sig, args, list.ok());
+        let list = match list {
+            Ok(list) => list,
+            Err(reported) => {
+                // What waited for context and has none is checked against a failed one. So it
+                // reports only its own mistakes, and uses what ranking kept for it.
+                for (arg, slot) in iter::zip(args, &call.slots) {
+                    if slot.is_none() {
+                        drop(self.expr(&arg.value, Expectation::Poisoned));
+                    }
                 }
+                // No argument settles a parameter in a failed call: the receiver and the written
+                // type arguments bind the result, or it is untyped.
+                let ty = if found.is_none() {
+                    // A written type argument that its bound rejects is `REJECTED` there, and binds
+                    // no parameter.
+                    let named: Vec<Type> = call.bindings.found[owned..owned + named]
+                        .iter()
+                        .map(|ty| ty.unwrap_or(*REJECTED))
+                        .collect();
+                    self.fixed_result(sig.ret, sig.declared.len(), sig.owner, &[], &named)
+                } else {
+                    None
+                };
+                return Err(Poisoned {
+                    found,
+                    kept: ty.is_none() && call.slots.iter().flatten().any(is_kept),
+                    ..Poisoned::new(ty, reported)
+                });
             }
-            return Err(Poisoned {
-                found,
-                kept: call.slots.iter().flatten().any(is_kept),
-                ..Poisoned::error()
-            });
         };
         // An argument that keeps its E0050 under a hint fails like any failed argument. The
         // other arguments and the written type arguments still bind the parameters. The call
         // fails only when the hint alone binds a parameter that the argument names. That type
         // is the hint's, not a type that anyone wrote.
-        if self.hint_alone_binds_kept(&call, sig) {
-            return Err(Poisoned::kept_error());
+        if let Some(reported) = self.hint_alone_binds_kept(&call, sig) {
+            return Err(Poisoned::kept_error(reported));
         }
         self.instantiates = true;
         let checked = call
@@ -2389,9 +2474,9 @@ impl Checker<'_> {
             if !chain && (list.is_none() || shape.writes(want)) {
                 continue;
             }
-            self.report_mut_type(&args[i].value, &shape, (site, i), (want, pattern));
+            let reported = self.report_mut_type(&args[i].value, &shape, (site, i), (want, pattern));
             if !chain {
-                call.slots[i] = Some(mark((Err(Poisoned::error()), true)));
+                call.slots[i] = Some(Err(mismatch_poison(reported)));
             }
         }
     }
@@ -2401,15 +2486,22 @@ impl Checker<'_> {
     /// kept it when it is `Err` with `Poisoned::kept`, or is a generic call whose E0050 is still
     /// open (see `Misfit`). No other argument that has a type names the parameter, and no type
     /// argument that the call writes binds it. A type that a sibling gives as an expected type
-    /// is a type, so it is not the hint. The work is linear in the arguments.
-    fn hint_alone_binds_kept(&self, call: &Inference<'_>, sig: &GenericSig<'_>) -> bool {
+    /// is a type, so it is not the hint. The work is linear in the arguments. When so, the proof
+    /// of the first E0050 that an argument kept.
+    fn hint_alone_binds_kept(
+        &self,
+        call: &Inference<'_>,
+        sig: &GenericSig<'_>,
+    ) -> Option<Reported> {
         let kept = |slot: &Option<Checked>| {
             slot.as_ref()
                 .is_some_and(|c| is_kept(c) || self.misfit_type(c).is_some())
         };
-        if !call.hinted || !call.slots.iter().any(kept) {
-            return false;
+        if !call.hinted {
+            return None;
         }
+        let first = call.slots.iter().find(|&slot| kept(slot))?;
+        let reported = first.as_ref()?.as_ref().err()?.reported();
         let count = sig.declared.len();
         let named = |wanted: &dyn Fn(&Option<Checked>) -> bool| {
             let params = iter::zip(&call.slots, sig.params).filter(|(slot, _)| wanted(slot));
@@ -2419,7 +2511,9 @@ impl Checker<'_> {
             named(&kept),
             named(&|slot| slot.as_ref().is_some_and(|c| type_of(c).is_some())),
         );
-        (0..count).any(|j| on_kept[j] && !on_typed[j] && call.origin.get(j) == Some(call.at))
+        (0..count)
+            .any(|j| on_kept[j] && !on_typed[j] && call.origin.get(j) == Some(call.at))
+            .then_some(reported)
     }
 
     /// The rank of each argument of the call: 2 for `Rank::Waits`, 1 for `Rank::Literal`, else 0
@@ -2556,8 +2650,10 @@ impl Checker<'_> {
                 LISTED.set(LISTED.get() + bindings.found.len());
                 bindings.found.iter().map(|&t| listed(t)).collect()
             });
-            if !self.check_bound(origin.get(i).unwrap_or(at), ty, bound, with) {
-                *failed = true;
+            if let Err(reported) =
+                self.check_bound_of(origin.get(i).unwrap_or(at), ty, bound, with, None, None)
+            {
+                *failed = Some(reported);
                 rejected.push(i);
             }
         }
@@ -2656,20 +2752,13 @@ impl Checker<'_> {
             }
             // A `mut` argument must have the parameter's type exactly: E0170 says so, and
             // `mut_final` would skip it when the call has a parameter that no argument binds.
-            if let Some((site, (_, shape))) = sig.mut_site.zip(shape) {
-                self.report_mut_type(&arg.value, &shape, (site, i), (fit, param));
+            let reported = if let Some((site, (_, shape))) = sig.mut_site.zip(shape) {
+                self.report_mut_type(&arg.value, &shape, (site, i), (fit, param))
             } else {
                 let d = self.mismatch(arg.value.span, Some(&arg.value), fit, got);
-                self.diagnostics.push(d);
-            }
-            call.slots[i] = Some(Err(Poisoned {
-                ty: None,
-                mismatch: true,
-                found: None,
-                kept: false,
-                unwrapped: Flag::No,
-                jumped: false,
-            }));
+                self.diagnostics.error(d)
+            };
+            call.slots[i] = Some(Err(mismatch_poison(reported)));
             blamed = true;
         }
         call.mut_shapes = unblamed;
@@ -2736,7 +2825,12 @@ impl Checker<'_> {
                 _ => None,
             });
         if call.bindings.reject_unbound(failed) {
-            call.rejected = true;
+            // Only a failed argument rejects a parameter here, and it holds the proof.
+            call.rejected = call.rejected.or_else(|| first_failed(&call.slots));
+            debug_assert!(
+                call.rejected.is_some(),
+                "a rejected parameter should have a failed argument"
+            );
         }
         let unchecked = |call: &Inference<'_>, i: usize| ranks[i] == 2 && call.slots[i].is_none();
         call.bound.clear();
@@ -3124,17 +3218,20 @@ impl Checker<'_> {
                     let want = self.printed(&call.bindings, pattern);
                     self.mismatch(e.span, Some(e), want, ty)
                 };
-                self.diagnostics.push(d);
-                mark((checked, true))
+                Err(mismatch_poison(self.diagnostics.error(d)))
             }
             Some(_) => {
                 let want = self.known_in(call, pattern);
                 // `e` bound the base of the associated type that has no choice.
                 if want.is_none() && lacks_choice(call, pattern) {
-                    return Err(Poisoned::error());
+                    let failed =
+                        (failure(call)).or_else(|| checked.as_ref().err().map(Poisoned::reported));
+                    return Err(Poisoned::untyped(
+                        failed.unwrap_or_else(|| self.proof(e.span)), // proof: declaration
+                    ));
                 }
                 debug_assert!(
-                    want.is_some() || call.failed || call.rejected,
+                    want.is_some() || call.failed.is_some() || call.rejected.is_some(),
                     "a unified pattern should be known, unless a bound check failed"
                 );
                 mark(self.against(e, checked, want, None))
@@ -3269,20 +3366,24 @@ impl Checker<'_> {
                     checked
                 } else {
                     quiet = quiet
-                        || call.failed
-                        || call.rejected
+                        || call.failed.is_some()
+                        || call.rejected.is_some()
                         || slots.iter().flatten().any(|c| type_of(c).is_none());
-                    // Only its own diagnostics matter.
-                    drop(self.value(
+                    // Only its own diagnostics matter, and the proof of its failure.
+                    let value = self.value(
                         e,
                         if quiet {
                             Expectation::Poisoned
                         } else {
                             Expectation::None
                         },
-                    ));
+                    );
                     quiet = true;
-                    Err(Poisoned::error())
+                    let reported = match value {
+                        Err(poisoned) => poisoned.reported(),
+                        Ok(_) => self.proof(e.span), // proof: quiet reader
+                    };
+                    Err(Poisoned::untyped(reported))
                 };
                 // An element has a value: `infer_value` leaves `unit` and `never` for
                 // `infer_arg`, which an element has not.
@@ -3290,15 +3391,17 @@ impl Checker<'_> {
                 slots[i] = Some(match type_of(&checked) {
                     Some(ty @ (Type::UNIT | Type::NEVER)) => {
                         let at = self.never_at(e.span);
-                        self.no_value(at, ty);
-                        Err(Poisoned::error())
+                        Err(Poisoned::untyped(self.no_value(at, ty)))
                     }
                     _ => checked,
                 });
             }
         }
         let Some(bound) = bound else {
-            return (Err(Poisoned::error()), None);
+            // An element that binds nothing failed, and holds the proof, else the call failed.
+            let reported = first_failed(&slots).or_else(|| failure(call));
+            let reported = reported.unwrap_or_else(|| self.proof(span)); // proof: quiet reader
+            return (Err(Poisoned::untyped(reported)), None);
         };
         let mismatched = slots
             .iter()
@@ -3336,13 +3439,16 @@ impl Checker<'_> {
             let ty = call.bindings.found[i].expect("a fresh parameter should be bound");
             // The context rejected it, and the outer call reported why.
             if ty == *REJECTED {
-                call.rejected = true;
+                if call.rejected.is_none() {
+                    call.rejected = Some(
+                        failure(call).unwrap_or_else(|| self.proof(at)), // proof: quiet reader
+                    );
+                }
             } else if matches!(ty, Type::UNIT | Type::NEVER) {
-                self.report(DiagnosticKind::TypeArgument {
+                call.failed = Some(self.error(DiagnosticKind::TypeArgument {
                     ty: self.type_name(ty),
                     at,
-                });
-                call.failed = true;
+                }));
             }
         }
         if call.early.is_some() {
@@ -3373,11 +3479,10 @@ impl Checker<'_> {
         sig: &GenericSig<'_>,
         param: usize,
         misfit: Option<(Type, Type)>,
-    ) -> Option<Misfit> {
+    ) -> (Option<Misfit>, Reported) {
         let hint = self.body.context_hint.filter(|hint| hint.at == span);
         let Some((found, context)) = misfit else {
-            self.cannot_infer(sig, param);
-            return None;
+            return (None, self.cannot_infer(sig, param));
         };
         // The result of a safe call is optional (see `Checker::member`).
         let found = if self.is_safe_call(span) {
@@ -3387,23 +3492,22 @@ impl Checker<'_> {
         };
         if let Some(hint) = hint {
             let d = self.mismatch(span, None, hint.want, found);
-            self.diagnostics.push(d);
-            return None;
+            return (None, self.diagnostics.error(d));
         }
         if context.holds_hole() {
-            self.cannot_infer(sig, param);
-            return None;
+            return (None, self.cannot_infer(sig, param));
         }
         let entry = self.body.misfits.len();
         let d = Self::cannot_infer_kind(sig, param).into();
         self.body.misfits.push(Some(d));
-        Some(Misfit { ty: found, entry })
+        let reported = self.proof(span); // proof: held misfit
+        (Some(Misfit { ty: found, entry }), reported)
     }
 
     /// Reports the call of `sig` that binds nothing to its parameter at `param`.
-    fn cannot_infer(&mut self, sig: &GenericSig<'_>, param: usize) {
+    fn cannot_infer(&mut self, sig: &GenericSig<'_>, param: usize) -> Reported {
         let kind = Self::cannot_infer_kind(sig, param);
-        self.report(kind);
+        self.error(kind)
     }
 
     /// The E0050 of `cannot_infer`.
@@ -3600,10 +3704,9 @@ impl Checker<'_> {
             K::Match {
                 scrutinee, arms, ..
             } => {
-                let (ty, flagged) = self.value_ahead(scrutinee);
+                let ty = self.value_ahead(scrutinee);
                 let form = LetValue::Match {
                     ty: ty.filter(|&ty| matchable(ty)),
-                    flagged,
                 };
                 combine_branches(arms.iter().map(|arm| {
                     let bind =
@@ -3984,7 +4087,7 @@ impl Checker<'_> {
         // The method the call will find, as `find_method` finds it, without its reports.
         let func = match self.applicable_method(ty, method.name) {
             Some(Declared::Known(func)) => func,
-            Some(Declared::Broken) => return CallShape::default(),
+            Some(Declared::Poisoned(_)) => return CallShape::default(),
             None => {
                 self.conforming_methods(ty, method.name);
                 match self.candidates[..] {
@@ -4139,7 +4242,7 @@ impl Checker<'_> {
             ast::ExprKind::Applied { .. } => return None,
             _ => {}
         }
-        self.value_ahead(receiver).0
+        self.value_ahead(receiver)
     }
 
     /// `e` checked as a value: as ranking checked it ahead, a method's receiver or a `match`'s
@@ -4151,24 +4254,23 @@ impl Checker<'_> {
         }
     }
 
-    /// The type of `e`, checked ahead of its turn and kept for it as `Ahead::Receiver`, and whether
-    /// an E0062 typed it, so that its type depends on the remedy (see `has_remedy_flag`).
-    fn value_ahead(&mut self, e: &ast::Expr) -> (Option<Type>, bool) {
+    /// The type of `e`, checked ahead of its turn and kept for it as `Ahead::Receiver`.
+    fn value_ahead(&mut self, e: &ast::Expr) -> Option<Type> {
         let kept = self.body.ahead_at.get(&(e.span, false)).and_then(|&index| {
             #[cfg(test)]
             INSPECTED.set(INSPECTED.get() + 1);
             self.body.ahead[index].1.as_ref()
         });
         if let Some(Ahead::Receiver(checked)) = kept {
-            return (type_of(checked), has_remedy_flag(checked));
+            return type_of(checked);
         }
         // An argument is not part of the chain that an index ends.
         let indexed = std::mem::take(&mut self.body.indexed);
         let (checked, jumped) = self.jumps(|c| c.value(e, Expectation::None));
         self.body.indexed = indexed;
-        let (ty, flagged) = (type_of(&checked), has_remedy_flag(&checked));
+        let ty = type_of(&checked);
         self.keep((e.span, false), Some(Ahead::Receiver(checked)), jumped);
-        (ty, flagged)
+        ty
     }
 
     /// The shape of a call of `name` with `args` that calls a generic function, constructs a
@@ -4343,16 +4445,16 @@ impl Checker<'_> {
     }
 
     /// The type arguments `written` in `angles` after `name`, whose declaration's type
-    /// parameters are `declared`. `None`, reported, when they do not fit `declared`, or one is
-    /// `Error` or cannot be a type argument. A list after a name that takes none is reported,
-    /// and the name stands without it.
+    /// parameters are `declared`. `Err` with the token of the report when they do not fit
+    /// `declared`, or one is `Error` or cannot be a type argument. A list after a name that takes
+    /// none is reported, and the name stands without it.
     pub(super) fn type_args(
         &mut self,
         name: &ast::Ident,
         declared: &[Symbol],
         written: &[ast::TypeExpr],
         angles: Span,
-    ) -> Option<TypeArgs> {
+    ) -> Result<TypeArgs, Reported> {
         self.type_args_of(name, declared, written, angles, true)
     }
 
@@ -4360,7 +4462,7 @@ impl Checker<'_> {
     /// The name gives no count and no bound to check them against: a repair may change both.
     pub(super) fn resolve_args(&mut self, written: &[ast::TypeExpr]) {
         for arg in written {
-            self.type_argument(arg);
+            let _ = self.type_argument(arg);
         }
     }
 
@@ -4375,12 +4477,12 @@ impl Checker<'_> {
         written: &[ast::TypeExpr],
         angles: Span,
         instantiates: bool,
-    ) -> Option<TypeArgs> {
+    ) -> Result<TypeArgs, Reported> {
         let form = match (declared.len(), written.len()) {
-            (0, 0) => return Some(TypeArgs::NONE),
+            (0, 0) => return Ok(TypeArgs::NONE),
             (0, _) => {
                 self.not_generic(name.name, angles);
-                return Some(TypeArgs::NONE);
+                return Ok(TypeArgs::NONE);
             }
             (_, 0) => ArgumentsForm::Missing {
                 params: declared.iter().map(Symbol::to_string).collect(),
@@ -4392,7 +4494,7 @@ impl Checker<'_> {
                 self.instantiates |= instantiates;
                 return args
                     .into_iter()
-                    .collect::<Option<Vec<_>>>()
+                    .collect::<Result<Vec<_>, Reported>>()
                     .map(|args| TypeArgs::intern(&args));
             }
         };
@@ -4400,28 +4502,27 @@ impl Checker<'_> {
             ArgumentsForm::Missing { .. } => name.span,
             _ => angles,
         };
-        self.report(DiagnosticKind::TypeArguments {
+        Err(self.error(DiagnosticKind::TypeArguments {
             name: name.name.to_string(),
             at,
             form,
-        });
-        None
+        }))
     }
 
     /// Reports the type arguments in `angles` after `name`, which takes none: the fix removes
     /// them.
     pub(super) fn not_generic(&mut self, name: Symbol, angles: Span) {
         let safe = !self.comment_in(&[angles.range()]);
-        self.report(DiagnosticKind::TypeArguments {
+        self.error(DiagnosticKind::TypeArguments {
             name: name.to_string(),
             at: angles,
             form: ArgumentsForm::NotGeneric { safe },
         });
     }
 
-    /// The type of the type argument `arg`: `None`, reported, for `unit` or `never`, which no
-    /// type parameter takes.
-    fn type_argument(&mut self, arg: &ast::TypeExpr) -> Option<Type> {
+    /// The type of the type argument `arg`: `Err`, reported, for `unit` or `never`, which no
+    /// type parameter takes, and for a type that is `Error`.
+    fn type_argument(&mut self, arg: &ast::TypeExpr) -> Result<Type, Reported> {
         if let ast::TypeKind::Name(name) = arg.kind
             && matches!(name.as_str(), "unit" | "never")
             && self.body.type_param(name).is_none()
@@ -4429,13 +4530,14 @@ impl Checker<'_> {
             && self.names.enum_id(name).is_none()
             && self.names.alias(name).is_none()
         {
-            self.report(DiagnosticKind::TypeArgument {
+            return Err(self.error(DiagnosticKind::TypeArgument {
                 ty: arg.to_string(),
                 at: arg.span,
-            });
-            return None;
+            }));
         }
-        self.resolve(arg)
+        // `resolve` reported the error of the written type, or its declaration did, but it gives
+        // no token.
+        self.resolve(arg).ok_or_else(|| self.proof(arg.span)) // proof: declaration
     }
 
     /// Reports `main`, which has type parameters. The fix removes them, unless a comment is
@@ -4451,7 +4553,7 @@ impl Checker<'_> {
             })
         });
         let remove = (!named && !self.comment_in(&[angles.range()])).then_some(angles);
-        self.report(DiagnosticKind::MainSignature {
+        self.error(DiagnosticKind::MainSignature {
             at: angles,
             form: MainForm::TypeParams { remove },
         });
@@ -4459,9 +4561,9 @@ impl Checker<'_> {
 
     /// Reports `op` on the operand at `at`, of type `ty`, which names a type parameter that lacks
     /// the operator.
-    pub(super) fn param_lacks(&mut self, at: Span, ty: Type, op: impl fmt::Display) {
+    pub(super) fn param_lacks(&mut self, at: Span, ty: Type, op: impl fmt::Display) -> Reported {
         let d = self.lacks(at, ty, op);
-        self.diagnostics.push(d);
+        self.diagnostics.error(d)
     }
 
     /// The report that `param_lacks` makes.
@@ -4510,13 +4612,13 @@ impl Checker<'_> {
 
     /// `misread` with the comparison `compare` its help writes, if any.
     pub(super) fn misread_as(&mut self, name: Span, compare: Option<String>) -> Poisoned {
-        self.body.misread.insert(name.start());
-        self.report(DiagnosticKind::TypeArguments {
+        let reported = self.error(DiagnosticKind::TypeArguments {
             name: self.source.slice(name.start()..name.end()).to_string(),
             at: name,
             form: ArgumentsForm::Value { compare },
         });
-        Poisoned::error()
+        self.body.misread.insert(name.start(), reported);
+        Poisoned::untyped(reported)
     }
 
     /// Marks `span`, an `a<b, c>(d)` whose type arguments `types` took a comma, as misread when
@@ -4530,11 +4632,11 @@ impl Checker<'_> {
     ) {
         // Only a list whose first and last argument name no type could join `a <` and `> (d)`.
         if let [first, .., last] = types
-            && checked.is_err()
+            && let Err(failed) = checked
             && self.names_no_type(first)
             && self.names_no_type(last)
         {
-            self.body.misread.insert(span.start());
+            self.body.misread.insert(span.start(), failed.reported());
         }
     }
 
@@ -4594,7 +4696,7 @@ impl Checker<'_> {
         let angles = matches!(receiver.kind, ast::ExprKind::Applied { .. });
         match self.meaning(name, names::Site::new(names::Position::PathCall, angles)) {
             // A poisoned name that no local hides is no path: its own error is reported.
-            Resolved::Poisoned(_) => return false,
+            Resolved::Poisoned(..) => return false,
             // No item can take the name of the optional type, whose members are its variants.
             Resolved::OptionType => return true,
             Resolved::Item(ItemId::Enum(id)) => return self.enum_path_method(id, method),
@@ -4668,7 +4770,7 @@ impl Checker<'_> {
         variant: &ast::Ident,
         types: &[ast::TypeExpr],
         angles: Span,
-    ) {
+    ) -> Reported {
         let text = self.source;
         // An alias that takes no parameter has no type arguments to move onto it.
         let takes_none =
@@ -4681,11 +4783,11 @@ impl Checker<'_> {
                 variant.name
             )
         });
-        self.report(DiagnosticKind::TypeArguments {
+        self.error(DiagnosticKind::TypeArguments {
             name: text.type_text(base.span.to(variant.span)).into_owned(),
             at: angles,
             form: ArgumentsForm::Variant { instead },
-        });
+        })
     }
 }
 

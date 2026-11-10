@@ -18,6 +18,7 @@ use rustc_hash::FxHashSet;
 use super::expr::{bare_none, none_literal};
 use super::generic::{Site, type_meets};
 use super::interface::{Bound, Slot};
+use super::reports::Reported;
 use super::{
     Body, Checked, Checker, Declared, DiagnosticKind, Expectation, Poisoned, UnknownForm,
     built_in_type, own_args, tail, value_span,
@@ -147,7 +148,8 @@ pub(super) struct Aliases {
     memo: SharedMemo,
     /// How many entries the memo held when the outermost written type that resolves began.
     base: Option<usize>,
-    /// The limit that a use passed in the outermost written type, which is reported at its end.
+    /// The limit that a use passed, which is reported at the end of the outermost written type.
+    /// A limit that `through` passed waits for the next use that reports one.
     too_large: Option<Passed>,
     /// Whether the memo passed `MAX_CHECK_ENTRIES`: every later substitution fails, with no
     /// report of its own, so each later use of an alias is `Error`.
@@ -399,7 +401,7 @@ impl Checker<'_> {
             })
             .collect();
         let through = (1..cycle.len()).map(|k| name(k).name.to_string()).collect();
-        self.report(DiagnosticKind::AliasCycle {
+        self.error(DiagnosticKind::AliasCycle {
             name: name(0).name.to_string(),
             at: name(0).span,
             through,
@@ -414,7 +416,7 @@ impl Checker<'_> {
         let id = match self.names.alias(name) {
             None => return Via::Not,
             Some(Declared::Known(id)) => id,
-            Some(Declared::Broken) => return Via::Error,
+            Some(Declared::Poisoned(_)) => return Via::Error,
         };
         let Some(resolved) = self.alias_body(id) else {
             return Via::Error;
@@ -422,9 +424,12 @@ impl Checker<'_> {
         let params = self.aliases.infos[id].params.clone();
         // The parameters take their written names, as a message prints them.
         let ty = self.substitute(resolved.body, own_args(&params));
-        // The body was within the limits when it resolved, so a substitution of its own
-        // parameters stays within them; if not, the alias is `Error`, and the use reports nothing.
-        self.aliases.too_large = None;
+        // The body was within the limit of a written type when it resolved, so a substitution of
+        // its own parameters stays within it. It can pass the limit of the whole check: then the
+        // alias is `Error`, and the next use that reports a limit reports that one.
+        if self.aliases.too_large == Some(Passed::Type) {
+            self.aliases.too_large = None;
+        }
         match ty {
             Some(ty) => Via::To(Through {
                 params,
@@ -452,7 +457,7 @@ impl Checker<'_> {
         if written.is_empty() {
             return Via::To(through);
         }
-        let Some(list) = self.type_args_of(name, &through.params, written, angles, false) else {
+        let Ok(list) = self.type_args_of(name, &through.params, written, angles, false) else {
             return Via::Error;
         };
         let at = name.span.to(angles);
@@ -465,9 +470,8 @@ impl Checker<'_> {
             self.report_too_large(at);
             return Via::Error;
         };
-        match self.use_checks(&through.checks, list, at) {
-            Some(true) => {}
-            _ => return Via::Error,
+        if self.use_checks(&through.checks, list, at).is_err() {
+            return Via::Error;
         }
         match self.settle(built) {
             Some(ty) => Via::To(Through {
@@ -565,7 +569,7 @@ impl Checker<'_> {
     /// error stands, so a use of it reports nothing more.
     pub(super) fn alias_error(&self, name: Symbol) -> bool {
         match self.names.alias(name) {
-            Some(Declared::Broken) => true,
+            Some(Declared::Poisoned(_)) => true,
             Some(Declared::Known(id)) => matches!(self.aliases.infos[id].state, State::Done(None)),
             None => false,
         }
@@ -614,14 +618,12 @@ impl Checker<'_> {
         let resolved = self.alias_body(id);
         let params = self.aliases.infos[id].params.clone();
         let list = self.type_args_of(&ident, &params, args, angles, false);
-        let (resolved, list) = (resolved?, list?);
+        let (resolved, list) = (resolved?, list.ok()?);
         let built = self.substitute(resolved.body, list)?;
         // The checks come before the replacement of an associated type, which poisons a type that
         // does not conform without a report of its own. A type that fails one is `Error`, as a
         // class that fails its bound is.
-        if !self.use_checks(&resolved.checks, list, ty.bare)? {
-            return None;
-        }
+        self.use_checks(&resolved.checks, list, ty.bare).ok()?;
         // The body of the alias was resolved once, with no owner, so its `any` types name their
         // interfaces for each use in a body. The type arguments record their own where they are
         // written.
@@ -672,15 +674,16 @@ impl Checker<'_> {
     }
 
     /// Makes the checks of a use of an alias with the type arguments `list`, written at `at`. In
-    /// an alias body, one that still names a parameter waits for the use of that alias. Whether
-    /// they all hold; `None` when a substitution passed the limit.
+    /// an alias body, one that still names a parameter waits for the use of that alias. `Ok`
+    /// when they all hold; else the token of a failed check, or of a substitution that passed
+    /// the limit.
     pub(super) fn use_checks(
         &mut self,
         checks: &[UseCheck],
         list: TypeArgs,
         at: Span,
-    ) -> Option<bool> {
-        let mut held = true;
+    ) -> Result<(), Reported> {
+        let mut held = Ok(());
         for &check in checks {
             let (of, applied) = match check {
                 UseCheck::Applied(ty) => (ty, None),
@@ -691,7 +694,9 @@ impl Checker<'_> {
                     base,
                 } => (ty, Some((interface, at, base))),
             };
-            let ty = self.substitute(of, list)?;
+            let Some(ty) = self.substitute(of, list) else {
+                return Err(self.unbuilt_check(at));
+            };
             let check = match applied {
                 None => UseCheck::Applied(ty),
                 Some((interface, at, base)) => UseCheck::Conforms {
@@ -701,14 +706,16 @@ impl Checker<'_> {
                     base,
                 },
             };
-            held &= self.make_check(check, at);
+            let made = self.make_check(check, at);
+            held = held.and(made);
         }
-        Some(held)
+        held
     }
 
     /// Makes `check` where the type is written at `at`; in an alias body, a type that names a
-    /// parameter is kept for the uses of the alias instead. Whether it holds, or waits.
-    pub(super) fn make_check(&mut self, check: UseCheck, at: Span) -> bool {
+    /// parameter is kept for the uses of the alias instead. `Ok` when it holds, or waits; else the
+    /// token of a report.
+    pub(super) fn make_check(&mut self, check: UseCheck, at: Span) -> Result<(), Reported> {
         let (ty, count) = match check {
             UseCheck::Applied(ty) => (ty, ty_args(ty)),
             UseCheck::Conforms { ty, .. } => (ty, 0),
@@ -727,7 +734,7 @@ impl Checker<'_> {
                 }
                 UseCheck::Applied(_) => "make_check keeps an applied type",
             });
-            return true;
+            return Ok(());
         }
         match check {
             UseCheck::Applied(ty) => match ty.kind() {
@@ -738,7 +745,7 @@ impl Checker<'_> {
                         at,
                     };
                     self.check_arguments(bound, ty, vec![at; count]);
-                    true
+                    Ok(())
                 }
                 _ => self.check_applied(ty, vec![at; count]),
             },
@@ -788,8 +795,7 @@ impl Checker<'_> {
         match self.through_site(site.name, site.written, site.angles) {
             Via::Not => None,
             Via::Error => {
-                self.stray(call.map_or(&[], |(args, _)| args));
-                Some(Err(Poisoned::error()))
+                Some(self.failed_alias(site.name.span, call.map_or(&[], |(args, _)| args)))
             }
             Via::To(through) => match through.ty.kind() {
                 // An enum with no parameter binds none of the alias's, which is reported once the
@@ -797,8 +803,12 @@ impl Checker<'_> {
                 TypeKind::Enum(id, _) if self.enums[id.0].type_params.is_empty() => {
                     let checked = self.enum_path(span, id, member, call, site, Some(&through));
                     if checked.is_ok() && !through.params.is_empty() {
-                        self.report_unbound_alias(site, &through, Some((member, call.is_some())));
-                        return Some(Err(Poisoned::error()));
+                        let reported = self.report_unbound_alias(
+                            site,
+                            &through,
+                            Some((member, call.is_some())),
+                        );
+                        return Some(Err(Poisoned::untyped(reported)));
                     }
                     Some(checked)
                 }
@@ -826,7 +836,7 @@ impl Checker<'_> {
         site: Site<'_>,
         through: &Through,
         member: Option<(&ast::Ident, bool)>,
-    ) {
+    ) -> Reported {
         let name = site.name;
         let dots = vec!["..."; through.params.len()].join(", ");
         let (callee, example, at) = match member {
@@ -846,13 +856,26 @@ impl Checker<'_> {
                 name.span,
             ),
         };
-        self.report(DiagnosticKind::CannotInferParam {
+        self.error(DiagnosticKind::CannotInferParam {
             param: through.params[0].to_string(),
             callee,
             example,
             at,
             in_result: false,
-        });
+        })
+    }
+
+    /// A use at `at`, with the arguments `args`, of an alias that is `Error`.
+    pub(super) fn failed_alias(&mut self, at: Span, args: &[ast::Arg]) -> Checked {
+        self.stray(args);
+        Err(Poisoned::untyped(self.failed_alias_token(at)))
+    }
+
+    /// The token of a use at `at` of an alias that is `Error`. Its own report says why, and no
+    /// list of the checker holds the token of that report. A use in no written type reports the
+    /// limit of the memo that it passed.
+    pub(super) fn failed_alias_token(&mut self, at: Span) -> Reported {
+        self.memo_report(at).unwrap_or_else(|| self.proof(at)) // proof: declaration
     }
 
     /// `A.None` and `A.Some(x)`, where the alias `A` names an optional type: the paths of `Option`.
@@ -910,7 +933,8 @@ impl Checker<'_> {
             [(interface, k)] if self.interfaces[interface.0].type_params.len() == 1 => {
                 let k = u32::try_from(k).expect("an interface should have fewer than 2^32 types");
                 self.aliases.named_interfaces.push(interface);
-                self.make_check(
+                // A type that does not conform is reported, and the associated type stays.
+                let _ = self.make_check(
                     UseCheck::Conforms {
                         ty: base_ty,
                         interface,
@@ -927,7 +951,7 @@ impl Checker<'_> {
                 )))
             }
             [] | [_] => {
-                self.report(DiagnosticKind::UnknownType {
+                self.error(DiagnosticKind::UnknownType {
                     name: name.name.to_string(),
                     at: name.span,
                     form: UnknownForm::NoAssociated {
@@ -938,7 +962,7 @@ impl Checker<'_> {
                 None
             }
             _ => {
-                self.report(DiagnosticKind::Ambiguous {
+                self.error(DiagnosticKind::Ambiguous {
                     method: name.name.to_string(),
                     receiver: self.source.type_text(base.span).into_owned(),
                     interfaces: (declaring.iter())
@@ -963,7 +987,7 @@ impl Checker<'_> {
     ) -> Option<Type> {
         let resolved = resolved?;
         if self.aliases.uses > uses && resolved.depth() > MAX_DEPTH {
-            self.report(DiagnosticKind::NestingTooDeep {
+            self.error(DiagnosticKind::NestingTooDeep {
                 at: ty.bare,
                 limit: MAX_DEPTH as usize,
                 form: NestingForm::Alias(self.source.type_text(ty.bare).into_owned()),
@@ -998,13 +1022,31 @@ impl Checker<'_> {
         None
     }
 
+    /// The token of a check of an alias use at `at` whose type the memo did not build. A written
+    /// type holds the report of the limit until it is done (`end_written`). A use in a value
+    /// position is in no written type, so it reports the limit here.
+    fn unbuilt_check(&mut self, at: Span) -> Reported {
+        // `aliases.too_large` holds the report until the written type is done.
+        self.memo_report(at).unwrap_or_else(|| self.proof(at)) // proof: held misfit
+    }
+
+    /// The token of the report of a limit of the memo, for a use at `at`. When `at` is in no
+    /// written type, it reports the limit that a use passed. A written type holds that report
+    /// until it is done.
+    fn memo_report(&mut self, at: Span) -> Option<Reported> {
+        if self.aliases.base.is_none() {
+            self.report_too_large(at)
+        } else {
+            None
+        }
+    }
+
     /// Reports the written type at `at`, when a use passed a limit of the memo in it: once for
     /// the type, and once for the check, as every later substitution fails with no report.
-    fn report_too_large(&mut self, at: Span) {
-        let Some(passed) = self.aliases.too_large.take() else {
-            return;
-        };
-        self.report(DiagnosticKind::AliasTooLarge {
+    /// Gives the token of the report, when it makes one.
+    fn report_too_large(&mut self, at: Span) -> Option<Reported> {
+        let passed = self.aliases.too_large.take()?;
+        let reported = self.error(DiagnosticKind::AliasTooLarge {
             ty: self.source.type_text(at).into_owned(),
             at,
             limit: match passed {
@@ -1013,6 +1055,7 @@ impl Checker<'_> {
             },
             check: passed == Passed::Check,
         });
+        Some(reported)
     }
 
     /// The type written as `ty`, when the types it resolved to followed a use of an alias, which

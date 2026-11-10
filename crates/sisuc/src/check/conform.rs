@@ -434,7 +434,7 @@ impl Checker<'_> {
         } else {
             (places.1, places.0)
         };
-        self.report(DiagnosticKind::ConformsTwice {
+        self.error(DiagnosticKind::ConformsTwice {
             ty: self.type_name(common[0]),
             interface: self.bound_text(bound.interface, tir::TypeArgs::intern(&common[1..])),
             at: second,
@@ -501,7 +501,7 @@ impl Checker<'_> {
         let via = via.map(|(interface, written)| {
             (self.interfaces[interface.0].name.name.to_string(), written)
         });
-        self.report(DiagnosticKind::ClassOnly {
+        self.error(DiagnosticKind::ClassOnly {
             ty: self.type_name(target),
             at,
             via,
@@ -613,7 +613,7 @@ impl Checker<'_> {
         let info = &self.interfaces[interface.interface.0];
         let requirement = &info.requirements[0];
         let signature = self.required_text(source, interface, requirement);
-        self.report(DiagnosticKind::ConformanceBody {
+        self.error(DiagnosticKind::ConformanceBody {
             ty: self.type_name(target),
             interface: info.name.name.to_string(),
             at,
@@ -658,8 +658,8 @@ impl Checker<'_> {
                     Some(&f) => Some(Declared::Known(f)),
                     None => self
                         .broken_extension_methods
-                        .contains(&(ext.holder, name))
-                        .then_some(Declared::Broken),
+                        .get(&(ext.holder, name))
+                        .map(|&reported| Declared::Poisoned(reported)),
                 }
             }
         }
@@ -690,7 +690,7 @@ impl Checker<'_> {
                 None if elsewhere => {}
                 None => missing.push(self.required_text(p.source, p.interface, requirement)),
                 // Its own error is reported.
-                Some(Declared::Broken) => {}
+                Some(Declared::Poisoned(_)) => {}
                 Some(Declared::Known(f)) if self.meets(requirement, f, &base) => methods.push(f),
                 Some(Declared::Known(_)) if elsewhere => {}
                 Some(Declared::Known(f)) => {
@@ -765,7 +765,7 @@ impl Checker<'_> {
             .get_mut(p.interface.interface, p.index)
             .methods = methods;
         for report in reports {
-            self.report(report);
+            self.error(report);
         }
     }
 
@@ -840,7 +840,7 @@ impl Checker<'_> {
             for (chosen, bounds) in chosen.into_iter().zip(declared) {
                 let Some((ty, at)) = chosen else { continue };
                 for bound in bounds {
-                    checker.check_bound(at, ty, bound, &with);
+                    let _ = checker.check_bound(at, ty, bound, &with);
                 }
             }
         });
@@ -902,7 +902,7 @@ impl Checker<'_> {
             }
         }
         for report in reports {
-            self.report(report);
+            self.error(report);
         }
     }
 
@@ -931,7 +931,10 @@ impl Checker<'_> {
         let holder =
             holder_of(p.target).expect("a conformance's target should be a class or an enum");
         // A broken block may have written the conformance.
-        if self.broken_extensions.contains(&self.holder_name(holder)) {
+        if self
+            .broken_extensions
+            .contains_key(&self.holder_name(holder))
+        {
             return;
         }
         let mut closure = Vec::new();
@@ -1031,7 +1034,7 @@ impl Checker<'_> {
             }
             None => extend = block.map(|b| self.extend_help(b, &ty, &inherited)),
         }
-        self.report(DiagnosticKind::NotConform {
+        self.error(DiagnosticKind::NotConform {
             ty,
             interface: inherited,
             at,
