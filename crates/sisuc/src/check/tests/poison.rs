@@ -608,6 +608,54 @@ fn a_place_under_a_failed_member_should_be_untyped() {
     ]);
 }
 
+/// The E0001 of a `push` needs a field that a failed `.` names, through indexes that do not fail
+/// (plan call 2). A `?.push` on that field keeps it, as a `.push` does.
+#[test]
+fn a_push_should_report_e0001_only_on_a_field_that_a_poisoned_member_names() {
+    let program = |line: &str| {
+        format!(
+            "class N {{\n    yss: [[i64]]\n    oxs: [i64]?\n    oyss: [[i64]?]\n}}\nfn f(c: N?, n: N) {{\n    {line}\n}}\nfn main() {{}}\n"
+        )
+    };
+    error_rows(&[
+        (
+            "no failed member, a string index",
+            program("n.yss[\"a\"].push(1)"),
+            vec![(Mismatch, (7, 11))],
+        ),
+        (
+            "no failed member, a bool index",
+            program("n.yss[true].push(1)"),
+            vec![(Mismatch, (7, 11))],
+        ),
+        (
+            "a root `?.`, a string index",
+            program("c?.yss[\"a\"].push(1)"),
+            vec![(MayBeNone, (7, 5)), (Mismatch, (7, 12))],
+        ),
+        (
+            "a failed member, a string index",
+            program("c.yss[\"a\"].push(1)"),
+            vec![(MayBeNone, (7, 5)), (Mismatch, (7, 11))],
+        ),
+        (
+            "a `?.push` on an optional field",
+            program("c.oxs?.push(1)"),
+            vec![(MayBeNone, (7, 5)), (AssignToImmutable, (7, 5))],
+        ),
+        (
+            "a `?.push` on an optional element",
+            program("c.oyss[0]?.push(1)"),
+            vec![(MayBeNone, (7, 5)), (AssignToImmutable, (7, 5))],
+        ),
+        (
+            "a `?.push` of a string on an optional field",
+            program("c.oxs?.push(\"a\")"),
+            vec![(MayBeNone, (7, 5)), (AssignToImmutable, (7, 5))],
+        ),
+    ]);
+}
+
 /// `x` binds a failed member, so it has no type, and the `if let` that gives it is untyped.
 #[test]
 fn an_untyped_binding_should_fail_its_branch() {
