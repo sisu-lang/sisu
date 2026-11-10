@@ -565,11 +565,15 @@ impl Checker<'_> {
         args: &[ast::Arg],
     ) -> Result<Vec<tir::Expr>, Reported> {
         let labeled = self.positional_shape(span, path, fields.len(), args)?;
-        // A mismatched argument is one that failed.
-        let checked: Result<Vec<_>, Poisoned> = (args.iter().zip(fields))
+        // A mismatched argument is one that failed. Each argument is checked, so this collects
+        // into a `Vec` before it gives up.
+        let checked: Vec<_> = (args.iter().zip(fields))
             .map(|(arg, field)| self.expect(&arg.value, Expectation::or_poisoned(*field)))
             .collect();
-        match (checked, labeled) {
+        match (
+            checked.into_iter().collect::<Result<Vec<_>, Poisoned>>(),
+            labeled,
+        ) {
             (Ok(checked), None) => Ok(checked),
             (Err(failed), _) => Err(failed.reported()),
             (Ok(_), Some(reported)) => Err(reported),
