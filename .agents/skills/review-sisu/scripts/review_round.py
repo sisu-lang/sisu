@@ -58,9 +58,20 @@ def script(repo: Path, name: str) -> bytes:
 
 
 def is_ancestor(repo: Path, a: str, b: str) -> bool:
-    """Tell whether the commit A is an ancestor of the commit B."""
+    """Tell whether the commit A is an ancestor of the commit B. Stop when git cannot tell."""
     args = ["git", "-C", repo, "merge-base", "--is-ancestor", a, b]
-    return subprocess.run(args, check=False, capture_output=True).returncode == 0
+    result = subprocess.run(args, check=False, capture_output=True, text=True)
+    if result.returncode not in {0, 1}:
+        raise SystemExit(f"review_round: {result.stderr.strip()}")
+    return result.returncode == 0
+
+
+def diff_ends(target: str) -> tuple[str, str] | None:
+    """Return the base and the head of a diff TARGET, or None for the path of a spec or a plan."""
+    if ".." in target and not Path(target).exists():
+        base, head = target.split("..", 1)
+        return base, head
+    return None
 
 
 def numbered(stem: str, round_number: int) -> str:
@@ -95,21 +106,23 @@ def round_options(run: Path, round_number: int) -> list[str]:
 
 def check_main(repo: Path, target: str) -> None:
     """Stop when a diff starts on main but origin/main is not an ancestor of its head."""
-    if ".." in target and not Path(target).exists():
-        base, head = target.split("..", 1)
-        main = "origin/main"
-        if is_ancestor(repo, base, main) and not is_ancestor(repo, main, head):
-            raise SystemExit(
-                f"review_round: {main} is not an ancestor of {head}: main moved, so the diff is not"
-                " what will merge. Bring main in first (SKILL.md, step 1.5), or pass --old-main"
-                " for the diff of one task."
-            )
+    ends = diff_ends(target)
+    if ends is None:
+        return
+    base, head = ends
+    main = "origin/main"
+    if is_ancestor(repo, base, main) and not is_ancestor(repo, main, head):
+        raise SystemExit(
+            f"review_round: {main} is not an ancestor of {head}: main moved, so the diff is not"
+            " what will merge. Bring main in first (SKILL.md, step 1.5), or pass --old-main"
+            " for the diff of one task or a range that main has passed."
+        )
 
 
 def prepare(repo: Path, run: Path, target: str, round_number: int, extra: list[str]) -> None:
     """Build both ends of a diff, write the brief and record the checkout."""
-    if ".." in target and not Path(target).exists():
-        base, head = target.split("..", 1)
+    if ends := diff_ends(target):
+        base, head = ends
         subprocess.run(
             ["bash", "-s", "--", repo, run, base, head],
             input=script(repo, "build_sisu.sh"),
@@ -156,19 +169,27 @@ def verify(repo: Path, run: Path, round_number: int, reports: list[str]) -> int:
 
 
 def handback(transcript: Path) -> str:
-    """Return the last SubagentHandback message of a subagent transcript, or else its last text."""
-    message, text = "", ""
-    for line in transcript.read_text().splitlines():
+    """Return the last SubagentHandback message of a subagent transcript.
+
+    Without one, return the text of the last assistant entry when that entry ends with text: an
+    agent that stopped during its work gives no reply. Each JSON line ends at a newline only,
+    because a reply can hold U+2028 or U+0085 as they are.
+    """
+    message, last = "", None
+    for line in transcript.read_text(encoding="utf-8").split("\n"):
+        if not line.strip():
+            continue
         entry = json.loads(line)
         content = entry.get("message", {}).get("content")
-        if entry.get("type") != "assistant" or not isinstance(content, list):
+        if entry.get("type") != "assistant" or not isinstance(content, list) or not content:
             continue
+        last = content[-1]
         for block in content:
             if block.get("type") == "tool_use" and block.get("name") == "SubagentHandback":
                 message = block.get("input", {}).get("message", "")
-            elif block.get("type") == "text" and block.get("text", "").strip():
-                text = block["text"]
-    return message or text
+    if message or last is None or last.get("type") != "text":
+        return message
+    return last.get("text", "")
 
 
 def save_report(run: Path, stem: str, agent: str, round_number: int, transcripts: Path) -> int:
@@ -183,7 +204,7 @@ def save_report(run: Path, stem: str, agent: str, round_number: int, transcripts
         print(f"review_round: {found[0]} holds no final reply")
         return 1
     report = run / numbered(stem, round_number)
-    report.write_text(reply if reply.endswith("\n") else reply + "\n")
+    report.write_text(reply if reply.endswith("\n") else reply + "\n", encoding="utf-8")
     print(report)
     return 0
 

@@ -300,7 +300,7 @@ a new module, and code that decides a result, such as a rule, a table or an
 algorithm. Leave out code that only passes a value on, code that a change
 renamed or moved, and lines whose every change the fixtures already show.
 `scripts/mutants.sh <base> --list` lists the mutants, with the file in the
-name of each one. A plan names its files in its Execution section. Set
+name of each one. Set
 `MUTANTS_MAX=<n>` to test all of the diff only when the user asks for it.
 Run it only when the user or your instructions ask for it; it is not a
 default step. In a plan, the controller runs it once per stage, on the

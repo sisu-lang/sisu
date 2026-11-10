@@ -127,6 +127,12 @@ class ReviewRound(unittest.TestCase):
         result = self.script("prepare", "feat~1..feat")
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_a_head_that_names_no_commit_should_fail_with_the_error_of_git(self) -> None:
+        result = self.script("prepare", "main..nope")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("nope", result.stderr)
+        self.assertNotIn("main moved", result.stderr)
+
     def test_verify_without_a_record_should_say_to_prepare(self) -> None:
         result = self.script("verify", "--report", "opus")
         self.assertNotEqual(result.returncode, 0)
@@ -196,9 +202,10 @@ class SaveReport(unittest.TestCase):
         self.agents.mkdir(parents=True)
 
     def transcript(self, *blocks: object) -> None:
-        lines = [json.dumps({"type": "assistant", "message": {"content": [b]}}) for b in blocks]
-        lines.append(json.dumps({"type": "user", "message": {"content": [{"type": "text"}]}}))
-        (self.agents / "agent-abc.jsonl").write_text("\n".join(lines) + "\n")
+        entries = [{"type": "assistant", "message": {"content": [b]}} for b in blocks]
+        entries.append({"type": "user", "message": {"content": [{"type": "text"}]}})
+        lines = [json.dumps(entry, ensure_ascii=False) for entry in entries]
+        (self.agents / "agent-abc.jsonl").write_text("\n".join(lines) + "\n\n", encoding="utf-8")
 
     def save(self, *args: str) -> subprocess.CompletedProcess[str]:
         transcripts = ["--transcripts", str(self.root / "projects")]
@@ -220,6 +227,38 @@ class SaveReport(unittest.TestCase):
         result = self.save("--agent", "abc", "--round", "2")
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual((self.root / "opus-2.md").read_text(), "Verdict: x\n")
+
+    def test_save_report_should_keep_a_line_separator_in_the_reply(self) -> None:
+        reply = "Verdict: x\u2028two\u0085three\n"
+        handback = {"type": "tool_use", "name": "SubagentHandback", "input": {"message": reply}}
+        self.transcript(handback)
+        result = self.save("--agent", "abc")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.root / "opus.md").read_text(encoding="utf-8"), reply)
+
+    def test_save_report_should_fail_when_the_agent_stopped_during_its_work(self) -> None:
+        self.transcript(
+            {"type": "text", "text": "thinking aloud"}, {"type": "tool_use", "name": "Read"}
+        )
+        result = self.save("--agent", "abc")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no final reply", result.stdout)
+        self.assertFalse((self.root / "opus.md").exists())
+
+    def test_save_report_should_fail_on_a_blank_reply(self) -> None:
+        self.transcript({"type": "tool_use", "name": "SubagentHandback", "input": {"message": " "}})
+        result = self.save("--agent", "abc")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no final reply", result.stdout)
+
+    def test_save_report_should_fail_when_two_transcripts_have_the_id(self) -> None:
+        self.transcript({"type": "text", "text": "Verdict: y"})
+        other = self.root / "projects/q/session/subagents"
+        other.mkdir(parents=True)
+        shutil.copy(self.agents / "agent-abc.jsonl", other)
+        result = self.save("--agent", "abc")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("2 transcripts", result.stdout)
 
     def test_save_report_should_take_the_last_text_when_there_is_no_handback(self) -> None:
         self.transcript({"type": "text", "text": "first"}, {"type": "text", "text": "Verdict: y"})
