@@ -73,10 +73,13 @@ GCC, compiler-rt for Clang). The flag selects the System allocator:
 
 ```console
 $ timeout 20 $S build --sanitize address $D/p.sisu -o $D/p.asan     # or add -O2
-$ ASAN_OPTIONS=fast_unwind_on_malloc=0 timeout 120 $D/p.asan
+$ env -u LSAN_OPTIONS ASAN_OPTIONS=fast_unwind_on_malloc=0:detect_stack_use_after_return=1 timeout 120 $D/p.asan
 ```
 
-The option makes a leak report name the Sisu function that allocated. On
+These are the options of the test harness. The first makes a leak report name
+the Sisu function that allocated. Without the second, GCC's `libasan` before
+GCC 13 does not check a use after return. The run removes `LSAN_OPTIONS`, so a
+suppression file of your shell cannot hide a leak. On
 macOS, `sisu` refuses the flag. There, mark each function and instrument the
 raw IR with `opt`. `make audit-setup` installs `opt` and `clang`, with the ASan
 runtime, for this. Nobody has checked this route on macOS yet:

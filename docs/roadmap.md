@@ -648,8 +648,9 @@ so it does not wait for the later goals:
   `uname -m`. CI's "Test (ARM64)" job runs the tests on an `ubuntu-26.04-arm`
   runner and "Test (macOS)" on a `macos-26` runner, on each push to `main`.
   macOS has no Valgrind and no ASan run, so leaks are checked on Linux. On
-  macOS, the `--rc-checks` run finds only an object still live at exit. The tests
-  that need `/dev/full`, GNU ld or gcc run only on Linux. LLVM publishes no
+  macOS, the `--rc-checks` run finds a retain or release of a count below 1,
+  and an object still live at exit. It also finds a read of a moved-out string, class or array
+  local. The tests that need `/dev/full`, GNU ld or gcc run only on Linux. LLVM publishes no
   build for Intel Macs.
 - A `--leaks` build mode that finds reference cycles (ADR 0008). The runtime
   records each live allocation with the place it was made. When `main`

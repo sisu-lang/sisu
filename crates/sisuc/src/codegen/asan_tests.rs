@@ -130,10 +130,14 @@ fn failure_of(ir: &str, level: OptLevel, report: &str) -> Option<String> {
         sanitize: Some(Sanitizer::Address),
     };
     link::link(&[object_path], &linking).expect("the object should link");
-    // The option is set so that the environment of the developer cannot turn off a report that
-    // this test expects.
+    // The options are set so that the environment of the developer cannot turn off a report that
+    // this test expects. GCC's `libasan` before GCC 13 does not check a use after return unless
+    // `detect_stack_use_after_return=1` is set.
     let out = Command::new(&exe)
-        .env("ASAN_OPTIONS", "fast_unwind_on_malloc=0")
+        .env(
+            "ASAN_OPTIONS",
+            "fast_unwind_on_malloc=0:detect_stack_use_after_return=1",
+        )
         .output()
         .expect("the program should start");
     drop(fs::remove_dir_all(&dir));
