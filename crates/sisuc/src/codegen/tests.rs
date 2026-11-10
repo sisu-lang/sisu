@@ -7483,3 +7483,73 @@ fn main() {
         .expect("the other unit has `step`");
     assert_eq!(step.get_linkage(), Linkage::External);
 }
+
+/// Two statements join `out` and a parameter, each with a literal, so `page` has four `+`. At
+/// `-O2` each `+` is one call of the join helper `@sisu_rc.concat.string`, which is `noinline`.
+/// The three ways of a join stay out of `page`, so it holds no `phi` and no call of the
+/// allocator. The result of a call ends the chain of `phi` nodes that LLVM walks (#633). The
+/// argument of `page` is a literal, which `-O2` puts into `page`. An argument made at run time
+/// lets jump threading copy one call, and leaves one `phi`.
+#[test]
+fn each_string_join_should_be_one_call_with_no_phi_at_o2() {
+    const HELPER: &str = "@sisu_rc.concat.string";
+    let context = Context::create();
+    let module = compiled(
+        &context,
+        "fn page(t: string) -> string {\n    let mut out = \"\"\n    out = out + \"<p>\" + t\n    out = out + \"<li>\" + t\n    out\n}\n\nfn main() {\n    print(page(\"x\"))\n}",
+    );
+    keep_functions(&module, "page");
+    let machine = target_machine(OptLevel::O2).expect("the host is a target");
+    optimize(&module, &machine, OptLevel::O2, None).expect("the module should optimize");
+    let ir = module.print_to_string().to_string();
+    let page = function_body(&ir, "@sisu.page(");
+    let calls = page
+        .lines()
+        .filter(|l| l.contains("call ") && l.contains(&format!("{HELPER}(")))
+        .count();
+    assert_eq!(calls, 4, "calls of {HELPER} in\n{page}");
+    assert!(!page.contains("phi "), "a `phi` in\n{page}");
+    for allocator in ["@sisu_alloc(", "@sisu_realloc("] {
+        assert!(
+            !page.contains(allocator),
+            "a call of {allocator} in\n{page}"
+        );
+    }
+    let mut headers = ir
+        .lines()
+        .filter(|l| l.starts_with("define ") && l.contains(&format!("{HELPER}(")));
+    let header = headers
+        .next()
+        .unwrap_or_else(|| panic!("{HELPER} is not defined in\n{ir}"));
+    assert!(
+        headers.next().is_none(),
+        "{HELPER} is defined twice in\n{ir}"
+    );
+    let (_, group) = header
+        .trim_end_matches(" {")
+        .rsplit_once(" #")
+        .unwrap_or_else(|| panic!("{HELPER} has no attribute group in\n{ir}"));
+    let attributes = ir
+        .lines()
+        .find(|l| l.starts_with(&format!("attributes #{group} =")))
+        .unwrap_or_else(|| panic!("no attributes #{group} in\n{ir}"));
+    assert!(attributes.contains("noinline"), "{HELPER}: {attributes}");
+}
+
+/// `+=` on a field and on an element lower to the same join as `+`, so each is one call of the
+/// join helper.
+#[test]
+fn a_string_append_to_a_field_or_an_element_should_call_the_join_helper() {
+    let context = Context::create();
+    let module = compiled(
+        &context,
+        "class Holder {\n    mut s: string\n}\n\nfn f(h: Holder, xs: [string]) -> string {\n    let mut ys = xs\n    h.s += \"x\"\n    ys[0] += \"y\"\n    ys[0]\n}\n\nfn main() {\n    let h = Holder(s: \"a\")\n    print(f(h, [\"b\"]))\n    print(h.s)\n}",
+    );
+    let ir = module.print_to_string().to_string();
+    let f = function_body(&ir, "@sisu.f(");
+    let calls = f
+        .lines()
+        .filter(|l| l.contains("call ") && l.contains("@sisu_rc.concat.string("))
+        .count();
+    assert_eq!(calls, 2, "calls of the join helper in\n{f}");
+}
