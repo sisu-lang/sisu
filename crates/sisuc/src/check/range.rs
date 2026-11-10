@@ -216,8 +216,8 @@ impl Checker<'_> {
         };
         let ExprKind::Range(range) = &arg.value.kind else {
             // The argument reports its own mistakes, else it is a value that is no range.
-            let checked = self.expr(&arg.value, Some(UNKNOWN));
-            if type_of(&checked).is_some() {
+            let (_, failed) = self.checked_alone(&arg.value);
+            if !failed {
                 self.report(DiagnosticKind::StringGetNeedsRange {
                     at: arg.value.span,
                     base: self.source.line_text(receiver_expr.span),

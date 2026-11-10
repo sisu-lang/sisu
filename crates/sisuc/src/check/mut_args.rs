@@ -405,14 +405,14 @@ impl Checker<'_> {
     }
 
     /// The type of the expression `arg`, checked on its own for its own mistakes, and whether
-    /// it failed. The range arm uses both. The function, `self` and temporary arms use only the
-    /// check: the function and `self` arms report its errors alone, and the temporary arm adds
-    /// E0169.
+    /// it failed. The range arm uses both. The `get` of a string uses only whether it failed.
+    /// The function, `self` and temporary arms use only the check: the function and `self` arms
+    /// report its errors alone, and the temporary arm adds E0169.
     ///
     /// It failed when it reported an error. It failed too when its type is unknown and an error
     /// was reported before it: its type comes from a local that failed. With no earlier error, an
     /// unknown type is no failure, so the report is made.
-    fn checked_alone(&mut self, arg: &ast::Expr) -> (Option<Type>, bool) {
+    pub(super) fn checked_alone(&mut self, arg: &ast::Expr) -> (Option<Type>, bool) {
         let errors = self.diagnostics.errors;
         let ty = type_of(&self.expr(arg, Some(UNKNOWN)));
         let failed = self.diagnostics.errors > errors || ty.is_none() && errors > 0;
