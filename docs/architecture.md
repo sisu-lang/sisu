@@ -162,7 +162,7 @@ no error of its own
 ([ADR 0049](adr/0049-one-name-resolver-and-one-poison-rule.md)).
 `check/expectation.rs` holds `Expectation`, what the context expects of a value: nothing, a
 required type, a poisoned context (`Poisoned`), or a hint. The siblings of a value give it a
-hint, and an operator hints the operands after its leader. A hint holds at one value and
+hint, and an operator can hint its operands. A hint holds at one value and
 the parts that give the value. An operand does not see the hint of the value that holds it. A
 mistake that follows from a poisoned context waits for the next run.
 `check/pattern.rs` checks each pattern against the type at its position and
