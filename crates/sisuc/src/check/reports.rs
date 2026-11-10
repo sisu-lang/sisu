@@ -53,14 +53,9 @@ impl Held {
         self.reports.push(d);
     }
 
-    /// Puts `d` in place of the report held at `index`.
-    pub(super) fn replace(&mut self, index: usize, d: Diagnostic) {
-        self.reports[index] = d;
-    }
-
-    /// The number of reports held.
-    pub(super) fn len(&self) -> usize {
-        self.reports.len()
+    /// Puts `d` in place of the first report held.
+    pub(super) fn replace_first(&mut self, d: Diagnostic) {
+        self.reports[0] = d;
     }
 
     /// Drops the reports and the promises held, for good.

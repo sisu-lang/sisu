@@ -414,9 +414,10 @@ impl Checker<'_> {
         // the proof of the first concrete operand that was untyped as found, which its own
         // diagnostic reported.
         let (mut before, mut failed) = (None, None);
-        // A mismatch of the first operand, in `deferred` at the index, that waits to be labelled
-        // by the second operand, if that is a `string`.
-        let mut unlabelled = None;
+        // Whether the mismatch of the first operand waits to be labelled by the second operand,
+        // if that is a `string`. That mismatch is the first report in `deferred`: the first
+        // operand is concrete, so no report of its own is held before it.
+        let mut unlabelled = false;
         // The proof of the first report of a lacking operator.
         let mut lacks = None;
         // Where the report of a lacking `Ord` stands, for an operand of the leader's type, once no
@@ -491,11 +492,16 @@ impl Checker<'_> {
                 (ty, before) = (None, None);
                 continue;
             }
-            if let (Some(at), Some(found)) = (unlabelled.take(), before) {
-                deferred.replace(
-                    at,
-                    self.concat_mismatch(operands[0], found, operands, compound, got),
-                );
+            if std::mem::take(&mut unlabelled)
+                && let Some(found) = before
+            {
+                deferred.replace_first(self.concat_mismatch(
+                    operands[0],
+                    found,
+                    operands,
+                    compound,
+                    got,
+                ));
             }
             let joins = matches!(operator, Operator::Plus { .. });
             let (operand, m) = if let Some(got) =
@@ -504,7 +510,7 @@ impl Checker<'_> {
                 // The other operand's type, if it is checked already: the first's is `before`, and
                 // a second that is the leader waits in `first`.
                 let beside = first.as_ref().map_or(before, |f| type_of(&f.1));
-                unlabelled = beside.is_none().then_some(deferred.len());
+                unlabelled = beside.is_none();
                 deferred.push(self.concat_mismatch(e, got, operands, compound, beside));
                 let reported = match &value {
                     Err(poisoned) => poisoned.reported(),
