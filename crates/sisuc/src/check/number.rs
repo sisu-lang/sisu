@@ -196,7 +196,7 @@ impl Checker<'_> {
         else {
             let names = constants.iter().map(|(constant, _)| *constant);
             let d = no_member(Definition::Constant, ty.to_string(), member, names);
-            self.diagnostics.push(d);
+            self.diagnostics.error(d);
             return Some(Err(Poisoned::error()));
         };
         // An alias of `f64` with a parameter that its constant does not bind (E0050).
@@ -212,7 +212,7 @@ impl Checker<'_> {
 
     /// Reports the math idiom written at `written`, with `fix` if it has one.
     fn report_math(&mut self, written: Span, fix: Option<MathFix>) {
-        self.report(DiagnosticKind::MathIdiom { written, fix });
+        self.error(DiagnosticKind::MathIdiom { written, fix });
     }
 
     /// `written(args)`, where `written` is `math.member`, `Math.member` or `f64.member`: the
@@ -325,7 +325,7 @@ impl Checker<'_> {
         let at = lhs.0.span.to(rhs.0.span);
         self.body.nans += 1;
         self.diagnostics
-            .push(DiagnosticKind::NanComparison { at, negated, fix }.into());
+            .warn(DiagnosticKind::NanComparison { at, negated, fix });
     }
 
     /// `receiver.method(args)` on an `f64`, or on an `i64` that the prelude gives no method of

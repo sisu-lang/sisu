@@ -639,7 +639,7 @@ impl Checker<'_> {
             return;
         }
         for (root, name) in waits.on_loops(&written) {
-            self.report(DiagnosticKind::UnknownType {
+            self.error(DiagnosticKind::UnknownType {
                 name: name.name.to_string(),
                 at: name.span,
                 form: UnknownForm::BoundsLoop {
@@ -940,7 +940,7 @@ impl Checker<'_> {
 
     /// Reports the written type `ty`, which is a `kind` and no interface, at its name.
     fn not_an_interface(&mut self, ty: &ast::TypeExpr, kind: NotInterface) {
-        self.report(DiagnosticKind::NotAnInterface {
+        self.error(DiagnosticKind::NotAnInterface {
             written: ty.to_string(),
             at: ty.span,
             kind,
@@ -981,7 +981,7 @@ impl Checker<'_> {
         let mut fits = true;
         for (written, &arg) in applied.args.iter().zip(bound.args.get()) {
             if !matches!(arg.kind(), TypeKind::Param(..)) && arg.has_param() {
-                self.report(DiagnosticKind::InheritedArgument {
+                self.error(DiagnosticKind::InheritedArgument {
                     arg: written.to_string(),
                     interface: interface.name.name.to_string(),
                     at: written.span,
@@ -1019,7 +1019,7 @@ impl Checker<'_> {
                 .into_iter()
                 .map(|at| self.interfaces[at].name.name.to_string())
                 .collect();
-            self.report(DiagnosticKind::InheritanceCycle {
+            self.error(DiagnosticKind::InheritanceCycle {
                 name: interface.name.name.to_string(),
                 at: first.span.to(last.span),
                 through,
@@ -1104,7 +1104,7 @@ impl Checker<'_> {
                 }
             }
             for report in reports {
-                self.report(report);
+                self.error(report);
             }
         }
     }
@@ -1243,7 +1243,7 @@ impl Checker<'_> {
         let bound = self.body.bounds[place].list[k];
         if self.wide_reported.insert(bound.at) {
             let text = self.source.type_text(bound.at);
-            self.report(DiagnosticKind::BoundTooWide {
+            self.error(DiagnosticKind::BoundTooWide {
                 kind: WideKind::Bound,
                 written: format!("{}: {text}", self.body.type_params[place]),
                 limit: BOUND_CLOSURE_LIMIT,
@@ -1256,7 +1256,7 @@ impl Checker<'_> {
     /// it, gives more than `BOUND_CLOSURE_LIMIT` interfaces with those it inherits. The conformance
     /// is then unknown: `ty` has no report for what the walk did reach, as for a broken block.
     pub(super) fn too_wide_at(&mut self, ty: Type, at: Span) {
-        self.report(DiagnosticKind::BoundTooWide {
+        self.error(DiagnosticKind::BoundTooWide {
             kind: WideKind::Conformance,
             written: format!("{}: {}", self.type_name(ty), self.source.type_text(at)),
             limit: BOUND_CLOSURE_LIMIT,
@@ -1283,7 +1283,7 @@ impl Checker<'_> {
             .open
             .root()
             .expect("a query that is too deep should have a root");
-        self.report(DiagnosticKind::ConformanceTooDeep {
+        self.error(DiagnosticKind::ConformanceTooDeep {
             interface: self.bound_text(interface, args),
             root: self.type_name(root),
             limit: depth_limit(),
@@ -1895,7 +1895,7 @@ impl Checker<'_> {
         let owner = if prelude { leaf } else { ty };
         let needs = find(&self.conformances, bound.interface, owner, args)
             .map(|(k, stands)| self.failed_bound(bound.interface, k, stands));
-        self.report(DiagnosticKind::NotConform {
+        self.error(DiagnosticKind::NotConform {
             ty: self.type_name(ty),
             interface: self.bound_text(bound.interface, args),
             at,

@@ -29,6 +29,7 @@ mod place;
 mod prelude;
 mod range;
 mod recursion;
+mod reports;
 mod stmt;
 mod string;
 mod unused_names;
@@ -62,6 +63,7 @@ use extend::Extension;
 use interface::{Bounds, InterfaceInfo, PendingBound, Required, Scope, Slot, Waiting};
 use names::{ConstantId, ItemId, NameMaps, Position, Resolved};
 use prelude::PRELUDE;
+use reports::{Diagnostics, Reported};
 pub(crate) use unused_names::is_judged;
 use unused_names::{Owner, Pending, Use, Used};
 
@@ -817,63 +819,6 @@ enum Lowered {
     Operator(tir::InterfaceId, &'static str),
 }
 
-/// The checker's diagnostics, and how many errors were added to them. The count never goes
-/// down, so a diagnostic that is cut or added again counts more than once: that can only stop a
-/// W0011 warning, never cause one.
-#[derive(Default)]
-struct Diagnostics {
-    list: Vec<Diagnostic>,
-    errors: u32,
-}
-
-impl Diagnostics {
-    fn push(&mut self, d: Diagnostic) {
-        self.errors += u32::from(d.severity() == Severity::Error);
-        self.list.push(d);
-    }
-
-    fn extend(&mut self, ds: impl IntoIterator<Item = Diagnostic>) {
-        for d in ds {
-            self.push(d);
-        }
-    }
-
-    fn insert(&mut self, at: usize, d: Diagnostic) {
-        self.errors += u32::from(d.severity() == Severity::Error);
-        self.list.insert(at, d);
-    }
-
-    fn append(&mut self, ds: &mut Vec<Diagnostic>) {
-        self.extend(ds.drain(..));
-    }
-
-    fn truncate(&mut self, len: usize) {
-        self.list.truncate(len);
-    }
-
-    fn drain(&mut self, range: std::ops::RangeFrom<usize>) -> std::vec::Drain<'_, Diagnostic> {
-        self.list.drain(range)
-    }
-
-    fn into_vec(self) -> Vec<Diagnostic> {
-        self.list
-    }
-}
-
-impl std::ops::Deref for Diagnostics {
-    type Target = [Diagnostic];
-
-    fn deref(&self) -> &[Diagnostic] {
-        &self.list
-    }
-}
-
-impl std::ops::DerefMut for Diagnostics {
-    fn deref_mut(&mut self) -> &mut [Diagnostic] {
-        &mut self.list
-    }
-}
-
 /// The entries of the closure of a type parameter or an associated type, by interface.
 #[derive(Default)]
 struct ClosureIndex {
@@ -1143,6 +1088,22 @@ impl Body {
     }
 }
 
+/// Whether the parser marked an item, or a method of one, as broken.
+fn parser_marked(program: &ast::Program, items: &[&ast::Item]) -> bool {
+    !program.broken.is_empty()
+        || items.iter().any(|item| match item {
+            ast::Item::Class(class) => !class.broken_methods.is_empty(),
+            ast::Item::Enum(e) => !e.broken_methods.is_empty(),
+            ast::Item::Extend(extend) => !extend.broken_methods.is_empty(),
+            // Nothing poisons a call of a method an interface loses without an error yet: Task 4
+            // resolves such calls, and until then the program has an error of its own.
+            ast::Item::Function(_)
+            | ast::Item::Const(_)
+            | ast::Item::Alias(_)
+            | ast::Item::Interface(_) => false,
+        })
+}
+
 /// Diagnostics sorted by span start (stable); the program only when none is an error. `parsed`
 /// holds the parser's diagnostics, sorted by span start: their errors count against a function too.
 /// The items of `prelude` follow those of `program`, so that every id of a user's item is what it
@@ -1168,9 +1129,9 @@ pub(crate) fn check<'src>(
     let declared = checker.declare_items(&items, program.items.len(), &program.broken);
     checker.fold_constants(&items);
     checker.lowered_enums = checker.lower_enums();
-    checker
-        .diagnostics
-        .extend(payload_limit::diagnostics(&checker.lowered_enums, &[]));
+    for d in payload_limit::diagnostics(&checker.lowered_enums, &[]) {
+        checker.diagnostics.error(d);
+    }
     checker.holds_table = checker.holds_table();
     checker.check_main(&declared);
     // Every body is checked, so this collects into a `Vec` before it gives up on a `None`.
@@ -1181,7 +1142,12 @@ pub(crate) fn check<'src>(
     checker.instantiation_cycles(&functions, &unbuilt);
     checker.report_loops();
     let classes = checker.classes.iter().map(lower_class).collect();
-    let mut diagnostics = std::mem::take(&mut checker.diagnostics).into_vec();
+    let broken = parser_marked(program, &items);
+    debug_assert!(
+        checker.diagnostics.promises_kept(broken),
+        "a promise of an error was not kept"
+    );
+    let mut diagnostics = std::mem::take(&mut checker.diagnostics).finish();
     diagnostics.sort_by_key(order);
     let errors = error_spans(&diagnostics);
     // A function with an error of its own is skipped, so that its errors stand alone.
@@ -1222,18 +1188,6 @@ pub(crate) fn check<'src>(
         diagnostics.extend(checker.unjudged());
     }
     diagnostics.sort_by_key(order);
-    let broken = !program.broken.is_empty()
-        || items.iter().any(|item| match item {
-            ast::Item::Class(class) => !class.broken_methods.is_empty(),
-            ast::Item::Enum(e) => !e.broken_methods.is_empty(),
-            ast::Item::Extend(extend) => !extend.broken_methods.is_empty(),
-            // Nothing poisons a call of a method an interface loses without an error yet: Task 4
-            // resolves such calls, and until then the program has an error of its own.
-            ast::Item::Function(_)
-            | ast::Item::Const(_)
-            | ast::Item::Alias(_)
-            | ast::Item::Interface(_) => false,
-        });
     let interfaces = checker.lowered_interfaces();
     let enums = checker.lowered_enums;
     let (instantiates, prelude, lang) = (checker.instantiates, checker.prelude, checker.lang);
@@ -1440,7 +1394,9 @@ impl<'src> Checker<'src> {
         let outer = std::mem::replace(&mut self.body, body);
         let result = f(self);
         let mut body = std::mem::replace(&mut self.body, outer);
-        self.diagnostics.extend(body.misfits.drain(..).flatten());
+        for d in body.misfits.drain(..).flatten() {
+            self.diagnostics.error(d);
+        }
         (result, body)
     }
 
@@ -1533,9 +1489,23 @@ impl Checker<'_> {
             .collect()
     }
 
-    /// Records a coded diagnostic.
-    fn report(&mut self, kind: DiagnosticKind) {
-        self.diagnostics.push(kind.into());
+    /// Records a coded error.
+    fn error(&mut self, kind: DiagnosticKind) -> Reported {
+        self.diagnostics.error(kind)
+    }
+
+    /// Records a coded warning.
+    fn warn(&mut self, kind: DiagnosticKind) {
+        self.diagnostics.warn(kind);
+    }
+
+    /// Promises an error at `at`, where no list holds it yet.
+    #[expect(
+        dead_code,
+        reason = "the poisoned values hold its token from the next change on"
+    )]
+    fn proof(&mut self, at: Span) -> Reported {
+        self.diagnostics.proof(at)
     }
 
     /// Pass 1: gives every class a `ClassId` and every enum an `EnumId`, and records the first
@@ -1765,7 +1735,7 @@ impl Checker<'_> {
             None
         };
         if let Some(kind) = kind {
-            self.report(DiagnosticKind::BuiltInName {
+            self.error(DiagnosticKind::BuiltInName {
                 name: name.name.to_string(),
                 at: name.span,
                 kind,
@@ -1805,7 +1775,7 @@ impl Checker<'_> {
         let written = !name.span.in_prelude() && self.prelude_functions.contains(&name.name);
         let taken = written || PRELUDE.contains(&name.name.as_str());
         if taken {
-            self.report(defined_twice(kind, name, Earlier::BuiltIn));
+            self.error(defined_twice(kind, name, Earlier::BuiltIn));
         }
         taken
     }
@@ -1832,7 +1802,7 @@ impl Checker<'_> {
                 kind: first_kind,
                 owner: owner.map(str::to_string),
             };
-            self.report(defined_twice(kind, name, first));
+            self.error(defined_twice(kind, name, first));
             return false;
         }
         first.insert(name.name, (name.span, kind));
@@ -2075,7 +2045,7 @@ impl Checker<'_> {
             });
         }
         for report in reports {
-            self.report(report);
+            self.error(report);
         }
         cyclic
     }
@@ -2085,7 +2055,9 @@ impl Checker<'_> {
     /// its signature that did not resolve is not wrong: each error is reported already.
     fn check_main(&mut self, declared: &[(&ast::Function, SelfType)]) {
         match self.names.function(Symbol::intern("main")) {
-            None => self.report(DiagnosticKind::NoMain),
+            None => {
+                self.error(DiagnosticKind::NoMain);
+            }
             Some(Declared::Broken) => {}
             Some(Declared::Known(id)) => {
                 let main = declared[id.0].0;
@@ -2100,7 +2072,7 @@ impl Checker<'_> {
                 let args = Some(Type::array(Type::STRING));
                 let takes = params.is_empty() || *params == [args];
                 if !takes || *ret != Some(Type::UNIT) {
-                    self.report(DiagnosticKind::MainSignature {
+                    self.error(DiagnosticKind::MainSignature {
                         at: main.name.span,
                         form: MainForm::Signature,
                     });
@@ -2142,7 +2114,7 @@ impl Checker<'_> {
                 SelfType::Known(declared) => declared,
                 SelfType::Failed => return None,
                 SelfType::Absent => {
-                    self.report(DiagnosticKind::SelfOutside { at: ty.bare });
+                    self.error(DiagnosticKind::SelfOutside { at: ty.bare });
                     return None;
                 }
             },
@@ -2247,7 +2219,7 @@ impl Checker<'_> {
                 let candidates = (types.into_iter().chain(classes).chain(enums))
                     .chain(interfaces)
                     .chain(aliases);
-                self.report(DiagnosticKind::UnknownType {
+                self.error(DiagnosticKind::UnknownType {
                     name: name.to_string(),
                     at: ident().span,
                     form: UnknownForm::Name {
@@ -2404,7 +2376,7 @@ impl Checker<'_> {
                 } else {
                     self.mismatch(value_span(&f.body), tail(&f.body), want, got)
                 };
-                self.diagnostics.push(d);
+                self.diagnostics.error(d);
             }
             _ => {}
         }

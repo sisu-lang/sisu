@@ -295,7 +295,7 @@ impl Checker<'_> {
         if held_array_layers(type_of(&read).or(place.held_ty), place.guard.is_some()) > 0
             && let Some(d) = place.held.take()
         {
-            self.report(d);
+            self.error(d);
         }
         if let Ok(read) = &read {
             self.read_pushed(read, receiver);
@@ -362,7 +362,7 @@ impl Checker<'_> {
         };
         let not_pushed = |checker: &mut Self, d: Option<DiagnosticKind>| {
             if let Some(d) = d {
-                checker.report(d);
+                checker.error(d);
             }
             checker.stray(args);
             unit()
@@ -397,7 +397,7 @@ impl Checker<'_> {
                         .is_some_and(|t| matches!(payload(t).kind(), TypeKind::Array(_)))
                     && let Some(d) = place.held
                 {
-                    self.report(d);
+                    self.error(d);
                 }
                 return not_pushed(self, None);
             }
@@ -415,7 +415,7 @@ impl Checker<'_> {
             (Err(_), place) => (None, place),
         };
         if let Some(d) = place.as_mut().and_then(|place| place.held.take()) {
-            self.report(d);
+            self.error(d);
         }
         let [arg] = args else {
             let d = DiagnosticKind::ArgumentCount {
@@ -636,19 +636,19 @@ impl Checker<'_> {
             };
             let checked = self.value(value, expected);
             if ty != Type::STRING && type_of(&checked) == Some(Type::CHAR) {
-                self.report(DiagnosticKind::ArithmeticOnChar { at: op_span });
+                self.error(DiagnosticKind::ArithmeticOnChar { at: op_span });
                 return Err(Poisoned::error());
             }
             self.label_join_literals(start, [target, value]);
             let (value, mismatched) = if ty != Type::STRING {
                 let d = self.concat_mismatch(target, ty, &[target, value], true, type_of(&checked));
-                self.diagnostics.push(d);
+                self.diagnostics.error(d);
                 (Err(Poisoned::error()), true)
             } else if let Some(got) = type_of(&checked).filter(|&got| got != ty) {
                 // As in `binary`: the place is the `string` that the value is joined to.
                 // A rejected expected type leaves no type, so `got` is the value's own.
                 let d = self.concat_mismatch(value, got, &[target, value], true, Some(ty));
-                self.diagnostics.push(d);
+                self.diagnostics.error(d);
                 (Err(Poisoned::error()), true)
             } else {
                 self.settled(value, checked, Expectation::Required(ty))
@@ -656,9 +656,10 @@ impl Checker<'_> {
             self.concat(span, (read, true), value, mismatched)
         } else {
             // The place's own mismatch waits for `arithmetic`, which drops it beside a `char`.
-            let start = self.diagnostics.len();
+            let start = self.diagnostics.mark();
             let place = self.settled_by(target, read, Some(want), Some(operator.takes()));
-            let held = self.diagnostics.drain(start..).collect();
+            // `arithmetic` restores them, or cuts them with the place, which is `Error` then.
+            let held = self.diagnostics.take_since(start);
             self.arithmetic(span, (op, op_span), want, place, value, held)
         }
     }
@@ -666,7 +667,7 @@ impl Checker<'_> {
     /// Reports the compound assignment, at its operator `op_span`, to a `char` place, and checks
     /// `value` for its own mistakes.
     fn char_compound(&mut self, op_span: Span, value: &ast::Expr) {
-        self.report(DiagnosticKind::ArithmeticOnChar { at: op_span });
+        self.error(DiagnosticKind::ArithmeticOnChar { at: op_span });
         // Only its diagnostics matter.
         drop(self.expr(value, Expectation::Poisoned));
     }
@@ -684,7 +685,7 @@ impl Checker<'_> {
         let refused = if change == Change::MutArg {
             Some(cause)
         } else {
-            self.report(change.immutable(name.to_string(), span, cause));
+            self.error(change.immutable(name.to_string(), span, cause));
             None
         };
         Some(CheckedPlace {
@@ -713,7 +714,7 @@ impl Checker<'_> {
         if change == Change::Push {
             return Some(d);
         }
-        self.report(d);
+        self.error(d);
         None
     }
 
@@ -772,13 +773,13 @@ impl Checker<'_> {
             } else if self.poisoned_use(name) {
                 // The item's own error is reported, and the name is no typo for a binding.
             } else if self.is_function(name) {
-                self.report(DiagnosticKind::AssignToFunction {
+                self.error(DiagnosticKind::AssignToFunction {
                     name: name.to_string(),
                     at: target.span,
                 });
             } else {
                 let d = self.not_found(name, target.span);
-                self.diagnostics.push(d);
+                self.diagnostics.error(d);
                 // The name may have meant any open binding; none of them warns as
                 // unassigned.
                 for b in self.body.scopes.iter_mut().flat_map(|s| s.values_mut()) {
@@ -870,7 +871,7 @@ impl Checker<'_> {
             }
             _ => UnwrapHelp::Nothing,
         };
-        self.diagnostics.push(optional_array(base, unwrap));
+        self.diagnostics.error(optional_array(base, unwrap));
     }
 
     /// The place `target` names, which `span` changes as `change` says: `Element` when it is the

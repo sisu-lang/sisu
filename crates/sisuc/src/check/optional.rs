@@ -241,7 +241,7 @@ impl Checker<'_> {
                     ),
                     None => (false, member.span),
                 };
-                self.report(DiagnosticKind::VariantForm {
+                self.error(DiagnosticKind::VariantForm {
                     path: format!("{}.{}", site.name.name, member.name),
                     payload,
                     held,
@@ -252,7 +252,7 @@ impl Checker<'_> {
             }
             _ => {
                 let variants = [("None", Definition::Variant), ("Some", Definition::Variant)];
-                self.report(DiagnosticKind::UnknownVariant {
+                self.error(DiagnosticKind::UnknownVariant {
                     enum_name: site.name.name.to_string(),
                     name: member.name.to_string(),
                     at: member.span,

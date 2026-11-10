@@ -143,7 +143,7 @@ impl Checker<'_> {
         so_far.stmts.reserve(end - done);
         for (i, stmt) in (done..).zip(&block.stmts[done..end]) {
             if so_far.ty == Some(Type::NEVER) && !so_far.warned {
-                self.report(DiagnosticKind::UnreachableCode { at: stmt.span });
+                self.warn(DiagnosticKind::UnreachableCode { at: stmt.span });
                 so_far.warned = true;
             }
             let last = i + 1 == block.stmts.len();
@@ -327,7 +327,7 @@ impl Checker<'_> {
             Vec::new()
         };
         for Unused { ty, at, arm, .. } in unused {
-            self.report(DiagnosticKind::UnusedValue {
+            self.warn(DiagnosticKind::UnusedValue {
                 ty,
                 at,
                 arm,
@@ -420,7 +420,7 @@ impl Checker<'_> {
                 // Only the literal: the AST has no parenthesis node, so `(true)` is it too.
                 let endless = matches!(cond_ast.kind, ast::ExprKind::Bool(true));
                 // W0011 reads what changed from here to the end of the body.
-                let before = (self.diagnostics.errors, self.body.writes, self.body.exits);
+                let before = (self.diagnostics.errors(), self.body.writes, self.body.exits);
                 let nans = self.body.nans;
                 let cond = self.in_header(*keyword, label.clone(), |c| {
                     c.expect(cond_ast, Expectation::Required(Type::BOOL))
@@ -435,7 +435,7 @@ impl Checker<'_> {
                     // Writing `loop` over a failed loop (a failed jump, label or `break` value in
                     // it) could remove its error rather than fix it, and a safe fix may remove
                     // only its own diagnostic.
-                    self.report(DiagnosticKind::WhileTrue {
+                    self.warn(DiagnosticKind::WhileTrue {
                         at: keyword.to(cond_ast.span),
                         fix: !frame.failed,
                     });
@@ -572,7 +572,7 @@ impl Checker<'_> {
             && block.ty != Type::NEVER
         {
             let close = else_block.span.end();
-            self.report(DiagnosticKind::LetElseCanFinish {
+            self.error(DiagnosticKind::LetElseCanFinish {
                 at: Span::new(close - 1, close),
             });
         }
@@ -599,7 +599,7 @@ impl Checker<'_> {
         ) = (mutable, &bound)
             && bindings.is_empty()
         {
-            self.report(DiagnosticKind::Expected {
+            self.error(DiagnosticKind::Expected {
                 what: "a pattern".to_string(),
                 found: "`mut`".to_string(),
                 at: keyword,
@@ -652,7 +652,7 @@ impl Checker<'_> {
                 },
             };
             if let Some(always) = always {
-                self.report(DiagnosticKind::RefutablePattern {
+                self.error(DiagnosticKind::RefutablePattern {
                     at: pattern.span,
                     shown: self.source.text(pattern.span).to_string(),
                     always,
@@ -787,7 +787,9 @@ impl Checker<'_> {
             }
             None => (None, None),
         };
-        self.diagnostics.extend(d);
+        if let Some(d) = d {
+            self.diagnostics.error(d);
+        }
         let ty = type_of(&checked).unwrap_or(Type::UNIT);
         // A place that cannot change during the loop is read in place, not copied into a local
         // that parameter inference would take for a consume.
@@ -854,7 +856,7 @@ impl Checker<'_> {
         let (Some(start), Some(end)) = (&range.start, &range.end) else {
             // A bound is missing: one report, and the bound that is there checks itself.
             let d = Self::range_outside(range, RangePlace::ForSource);
-            self.diagnostics.push(d);
+            self.diagnostics.error(d);
             for bound in [&range.start, &range.end].into_iter().flatten() {
                 drop(self.expect(bound, Expectation::Required(Type::I64)));
             }
@@ -908,14 +910,14 @@ impl Checker<'_> {
             None => match self.body.ret {
                 Some(ret) if ret != Type::UNIT => {
                     let want = self.type_name(ret);
-                    self.report(DiagnosticKind::ReturnNeedsValue { want, at: span });
+                    self.error(DiagnosticKind::ReturnNeedsValue { want, at: span });
                     return Err(never());
                 }
                 _ => None,
             },
             Some(value) if self.body.ret == Some(Type::UNIT) => {
                 if type_of(&self.value(value, Expectation::None)).is_some() {
-                    self.report(DiagnosticKind::UnexpectedReturnValue { at: value.span });
+                    self.error(DiagnosticKind::UnexpectedReturnValue { at: value.span });
                 }
                 return Err(never());
             }
@@ -957,7 +959,7 @@ impl Checker<'_> {
             self.body.failed_labels.extend([outer, label.span]);
             self.fail_loops(at..=at);
             frame.failed = true;
-            self.report(DiagnosticKind::LabelReused {
+            self.error(DiagnosticKind::LabelReused {
                 name: label.name.to_string(),
                 at: label.span,
                 outer,
@@ -972,7 +974,7 @@ impl Checker<'_> {
             && !frame.label_used
             && !self.body.failed_labels.contains(&label.span)
         {
-            self.report(DiagnosticKind::UnusedLabel {
+            self.warn(DiagnosticKind::UnusedLabel {
                 name: label.name.to_string(),
                 at: label.span,
                 remove: Span::new(
@@ -1071,7 +1073,7 @@ impl Checker<'_> {
                 .as_ref()
                 .and_then(|_| self.wrap_break(name.span, start))
         });
-        self.report(DiagnosticKind::MissingLabel {
+        self.error(DiagnosticKind::MissingLabel {
             name: name.name.to_string(),
             keyword,
             at: name.span,
@@ -1143,7 +1145,7 @@ impl Checker<'_> {
             && let Some((kind, declared)) = self.in_scope(label.name)
         {
             let at = self.frame(target).label.as_ref().map(|l| l.span);
-            self.report(DiagnosticKind::LabelClash {
+            self.error(DiagnosticKind::LabelClash {
                 name: label.name.to_string(),
                 at: label.span,
                 declared: at.expect("a jump's loop label should be its target's"),
@@ -1238,7 +1240,7 @@ impl Checker<'_> {
                 if let Some(label) = label {
                     self.named_by_failed_jump(label.name);
                 }
-                self.report(DiagnosticKind::JumpInLoopHeader {
+                self.error(DiagnosticKind::JumpInLoopHeader {
                     keyword,
                     at: span,
                     loop_at,
@@ -1253,7 +1255,7 @@ impl Checker<'_> {
                     Err(Poisoned::error())
                 }
                 _ => {
-                    self.report(DiagnosticKind::JumpOutsideLoop { keyword, at: span });
+                    self.error(DiagnosticKind::JumpOutsideLoop { keyword, at: span });
                     self.body.invalid_jump = true;
                     Err(Poisoned {
                         jumped: true,
@@ -1282,7 +1284,7 @@ impl Checker<'_> {
             }
         }
         if let (Some(at), Some(valued)) = (frame.bare, frame.valued) {
-            self.report(DiagnosticKind::BareBreak { at, valued });
+            self.error(DiagnosticKind::BareBreak { at, valued });
             frame.failed = true;
         }
         let ty = frame.loop_type();
@@ -1344,13 +1346,13 @@ impl Checker<'_> {
                 for &(at_value, got) in &deferred {
                     let source = Some(MismatchSource::Break(at));
                     let d = self.mismatch_from(at_value, None, first, got, source);
-                    self.diagnostics.push(d);
+                    self.diagnostics.error(d);
                 }
                 frame.failed = true;
                 return;
             }
         };
-        self.diagnostics.push(d);
+        self.diagnostics.error(d);
         frame.failed = true;
     }
 
@@ -1388,7 +1390,7 @@ impl Checker<'_> {
                 self.missing_label(name, "break", Some(span.start()));
             } else {
                 self.skip_value();
-                self.report(DiagnosticKind::BreakValueNotLoop {
+                self.error(DiagnosticKind::BreakValueNotLoop {
                     keyword,
                     at: v.span,
                     loop_at,
@@ -1424,7 +1426,7 @@ impl Checker<'_> {
         }
         let checked = match type_of(&checked).or(misfit) {
             Some(Type::UNIT) => {
-                self.report(DiagnosticKind::NoValue {
+                self.error(DiagnosticKind::NoValue {
                     at: v.span,
                     never: false,
                 });
@@ -1503,7 +1505,7 @@ impl Checker<'_> {
             // A `Some` of an object is the mistake at the object, as in a branch.
             if let Some((at, want, object)) = self.object_in_some(&value, first) {
                 let d = self.leaves_any(at, None, want, object);
-                self.diagnostics.push(d);
+                self.diagnostics.error(d);
                 return Err(Poisoned::error());
             }
             return self
@@ -1641,7 +1643,7 @@ impl Checker<'_> {
             && (matches!(self.names.enum_id(name.name), Some(Declared::Known(_)))
                 || self.alias_unhideable(name.name))
         {
-            self.report(DiagnosticKind::EnumNamedLocal {
+            self.error(DiagnosticKind::EnumNamedLocal {
                 name: name.name.to_string(),
                 at: name.span,
                 optional: self.alias_names_option(name.name),
@@ -1707,14 +1709,11 @@ impl Checker<'_> {
         if kind == BindingKind::Param
             && let Some(first) = scope.get_mut(&name.name)
         {
-            self.diagnostics.push(
-                DiagnosticKind::AlreadyDeclared {
-                    name: name.name.to_string(),
-                    at: name.span,
-                    first: first.span,
-                }
-                .into(),
-            );
+            self.diagnostics.error(DiagnosticKind::AlreadyDeclared {
+                name: name.name.to_string(),
+                at: name.span,
+                first: first.span,
+            });
             // A use after it may mean either parameter, so neither is judged: the name becomes
             // `Error` and can be assigned, which also keeps W0002 off a `mut` parameter.
             first.reassigned = true;
@@ -1789,7 +1788,7 @@ impl Checker<'_> {
             None => None,
         };
         if let Some(form) = form {
-            self.report(DiagnosticKind::NeverReassigned {
+            self.warn(DiagnosticKind::NeverReassigned {
                 name: name.to_string(),
                 at: b.span,
                 form,
@@ -1821,7 +1820,7 @@ impl Checker<'_> {
     /// start of the condition) wrote one, and nothing left the loop or reported an error.
     fn unchanged_condition(&mut self, at: Span, cond: &tir::Expr, before: (u32, u32, u32)) {
         let (errors, writes, exits) = before;
-        if self.diagnostics.errors != errors || self.body.exits != exits {
+        if self.diagnostics.errors() != errors || self.body.exits != exits {
             return;
         }
         let Some(locals) = self.condition_locals(cond).filter(|l| !l.is_empty()) else {
@@ -1843,7 +1842,7 @@ impl Checker<'_> {
             }
             names.push(name.to_string());
         }
-        self.report(DiagnosticKind::UnchangedLoopCondition { at, names, lets });
+        self.warn(DiagnosticKind::UnchangedLoopCondition { at, names, lets });
     }
 
     /// The locals `cond` reads, each once, in source order; `None` when it holds a node that

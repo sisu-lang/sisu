@@ -222,7 +222,7 @@ impl Checker<'_> {
         let cannot = position.take_if(|&mut ty| !matchable(ty));
         if let Some(ty) = cannot {
             let ty = self.type_name(ty);
-            self.report(DiagnosticKind::CannotMatch {
+            self.error(DiagnosticKind::CannotMatch {
                 ty,
                 at: scrutinee.span,
             });
@@ -391,7 +391,7 @@ impl Checker<'_> {
                 ),
                 None => whole_arm(),
             };
-            self.report(DiagnosticKind::UnreachableArm {
+            self.warn(DiagnosticKind::UnreachableArm {
                 at: found.at,
                 alternative: found.alternative.is_some(),
                 covered_by: found.covered_by,
@@ -419,7 +419,7 @@ impl Checker<'_> {
             let start = arms.last().map_or(close, |arm| arm.body.span.end());
             (Span::new(start, close), Some(match_indent.to_string()))
         };
-        self.report(DiagnosticKind::NonExhaustive {
+        self.error(DiagnosticKind::NonExhaustive {
             missing: missing.pattern,
             partly: missing.partly,
             guarded: missing.guarded,
@@ -476,7 +476,7 @@ impl Checker<'_> {
                     ast::PatternKind::Literal(literal) if literal_fits(literal, kind)
                 );
                 let found = self.type_name(ty);
-                self.report(DiagnosticKind::UnwrapNeedsOptional {
+                self.error(DiagnosticKind::UnwrapNeedsOptional {
                     keyword,
                     found,
                     at: value.span,
@@ -571,7 +571,7 @@ impl Checker<'_> {
                         (tir::PatternKind::Bind(_) | tir::PatternKind::Wild, None) => Plain::Let,
                         _ => Plain::No,
                     };
-                    self.report(DiagnosticKind::AlwaysMatches {
+                    self.error(DiagnosticKind::AlwaysMatches {
                         keyword,
                         at: pattern.span,
                         plain,
@@ -675,7 +675,7 @@ impl Checker<'_> {
             }
             ast::PatternKind::None => {
                 let want = self.type_name(ty);
-                self.report(DiagnosticKind::PatternMismatch {
+                self.error(DiagnosticKind::PatternMismatch {
                     want,
                     found: "None".to_string(),
                     at: p.span,
@@ -742,7 +742,7 @@ impl Checker<'_> {
                 some(self.pattern(p, Some(payload), keyword, bound))
             }
             ast::PatternKind::Name(name) if name.name == Symbol::SOME => {
-                self.report(DiagnosticKind::VariantForm {
+                self.error(DiagnosticKind::VariantForm {
                     path: "Some".to_string(),
                     payload: true,
                     held: false,
@@ -783,7 +783,7 @@ impl Checker<'_> {
                         at: p.span,
                     },
                 };
-                self.report(kind);
+                self.error(kind);
                 self.poison(p, keyword, bound);
                 None
             }
@@ -796,7 +796,7 @@ impl Checker<'_> {
                 let Some(parens) = parens else {
                     return Some(pattern(tir::PatternKind::None));
                 };
-                self.report(DiagnosticKind::VariantForm {
+                self.error(DiagnosticKind::VariantForm {
                     path: written(Some(q), name),
                     payload: false,
                     held: !fields.is_empty() || self.comment_in(&[parens.range()]),
@@ -811,7 +811,7 @@ impl Checker<'_> {
                 ..
             } if self.names_option_at(q.name, ty) => {
                 let variants = [("None", Definition::Variant), ("Some", Definition::Variant)];
-                self.report(DiagnosticKind::UnknownVariant {
+                self.error(DiagnosticKind::UnknownVariant {
                     enum_name: q.name.to_string(),
                     name: name.name.to_string(),
                     at: name.span,
@@ -827,7 +827,7 @@ impl Checker<'_> {
                 ..
             } if self.names_option(q.name) => {
                 let want = self.type_name(ty);
-                self.report(DiagnosticKind::PatternMismatch {
+                self.error(DiagnosticKind::PatternMismatch {
                     want,
                     found: written(Some(q), name),
                     at: p.span,
@@ -867,7 +867,7 @@ impl Checker<'_> {
                     fields: Vec::new(),
                 });
             }
-            self.report(DiagnosticKind::VariantForm {
+            self.error(DiagnosticKind::VariantForm {
                 path: text.to_string(),
                 payload: true,
                 held: false,
@@ -894,7 +894,7 @@ impl Checker<'_> {
                         GuardHelp::Rewritten(format!("{fresh} if {fresh} == {text}{own}"))
                     })
                 };
-                self.report(DiagnosticKind::ConstantInPattern {
+                self.error(DiagnosticKind::ConstantInPattern {
                     name: text.to_string(),
                     at: name.span,
                     guard,
@@ -941,7 +941,7 @@ impl Checker<'_> {
                         at: name.span,
                     }
                 };
-                self.report(kind);
+                self.error(kind);
                 return None;
             }
         }
@@ -999,11 +999,11 @@ impl Checker<'_> {
     ) -> Option<i64> {
         if ty == Type::U8 {
             if let Some(minus) = negative {
-                self.report(DiagnosticKind::NegatedU8 { at: minus.to(text) });
+                self.error(DiagnosticKind::NegatedU8 { at: minus.to(text) });
                 return None;
             }
             if value > i64::from(u8::MAX) {
-                self.report(DiagnosticKind::IntegerDoesNotFit {
+                self.error(DiagnosticKind::IntegerDoesNotFit {
                     text: self.source.text(text).to_string(),
                     at: text,
                 });
@@ -1042,7 +1042,7 @@ impl Checker<'_> {
                         at: name.span,
                     }
                 };
-                self.report(kind);
+                self.error(kind);
             }
         }
         let (ast::Bound::Literal(lo), ast::Bound::Literal(hi)) = (start, end) else {
@@ -1052,7 +1052,7 @@ impl Checker<'_> {
             matches!(literal, ast::Literal::Str(_) | ast::Literal::Bool(_))
         };
         if !matches!(ty, Type::I64 | Type::U8 | Type::CHAR) || text(lo) || text(hi) {
-            self.report(DiagnosticKind::BadRange {
+            self.error(DiagnosticKind::BadRange {
                 form: BadRange::Type,
                 at,
             });
@@ -1086,7 +1086,7 @@ impl Checker<'_> {
             }
         };
         if lo > hi || (lo == hi && !inclusive) {
-            self.report(DiagnosticKind::BadRange {
+            self.error(DiagnosticKind::BadRange {
                 form: BadRange::Empty,
                 at,
             });
@@ -1105,7 +1105,7 @@ impl Checker<'_> {
     /// "expected a pattern for `ty`", for the pattern at `at` as written.
     fn pattern_mismatch(&mut self, ty: Type, at: Span) {
         let want = self.type_name(ty);
-        self.report(DiagnosticKind::PatternMismatch {
+        self.error(DiagnosticKind::PatternMismatch {
             want,
             found: self.source.text(at).to_string(),
             at,
@@ -1167,7 +1167,7 @@ impl Checker<'_> {
             };
             if let Some((name, at)) = lacking {
                 agree = false;
-                self.report(DiagnosticKind::AlternativeBindings {
+                self.error(DiagnosticKind::AlternativeBindings {
                     name: name.to_string(),
                     at,
                 });
@@ -1276,7 +1276,7 @@ impl Checker<'_> {
             TypeKind::Enum(id, args) if fits => (id.0, args),
             _ => {
                 let want = self.type_name(ty);
-                self.report(DiagnosticKind::PatternMismatch {
+                self.error(DiagnosticKind::PatternMismatch {
                     want,
                     found: path,
                     at: span,
@@ -1297,7 +1297,7 @@ impl Checker<'_> {
                 at: name.span,
                 suggestion: suggestion(name.name.as_str(), variants),
             };
-            self.report(kind);
+            self.error(kind);
             return None;
         };
         // Counted, not cloned: a wide variant's malformed patterns must not each copy its fields.
@@ -1330,14 +1330,14 @@ impl Checker<'_> {
                 return Some((variant, fields.collect()));
             }
         };
-        self.report(kind);
+        self.error(kind);
         None
     }
 
     /// "a `ty` position takes only a name or `_`", at `at`.
     fn only_names(&mut self, ty: Type, at: Span) {
         let ty = self.type_name(ty);
-        self.report(DiagnosticKind::OnlyNamePosition { ty, at });
+        self.error(DiagnosticKind::OnlyNamePosition { ty, at });
     }
 
     /// Declares `name`, of type `ty`, as `keyword` binds it, unless this pattern binds it
@@ -1375,7 +1375,7 @@ impl Checker<'_> {
                     ))
                 })
             };
-            self.report(DiagnosticKind::BoundTwice {
+            self.error(DiagnosticKind::BoundTwice {
                 name: name.name.to_string(),
                 at: name.span,
                 first,
@@ -1397,7 +1397,7 @@ impl Checker<'_> {
                     && want != got
                 {
                     let (want, got) = (self.type_name(want), self.type_name(got));
-                    self.report(DiagnosticKind::Mismatch {
+                    self.error(DiagnosticKind::Mismatch {
                         want: Expected::Types(vec![want]),
                         got,
                         at: name.span,

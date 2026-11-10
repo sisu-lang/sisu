@@ -81,7 +81,7 @@ impl Checker<'_> {
             Resolved::Item(ItemId::Function(func)) => self.invoke(span, func, None, site, args),
             Resolved::Item(ItemId::Interface(_)) => {
                 let kind = self.wrong_kind(callee.name, callee.span, at, answer);
-                self.report(kind.expect("an interface callee should be the wrong kind"));
+                self.error(kind.expect("an interface callee should be the wrong kind"));
                 self.stray(args);
                 Err(Poisoned::error())
             }
@@ -99,7 +99,7 @@ impl Checker<'_> {
             }
             _ => match self.bare_variant(callee.name, callee.span) {
                 Some(d) => {
-                    self.diagnostics.push(d);
+                    self.diagnostics.error(d);
                     self.stray(args);
                     Err(Poisoned::error())
                 }
@@ -132,7 +132,7 @@ impl Checker<'_> {
                 converted
             }
             _ => {
-                self.report(DiagnosticKind::TypeAsValue {
+                self.error(DiagnosticKind::TypeAsValue {
                     name: site.name.name.to_string(),
                     at: site.name.span,
                     alias: Some(self.type_name(through.ty)),
@@ -205,7 +205,7 @@ impl Checker<'_> {
                             safe: takes && !self.comment_in(&deleted),
                         }
                     };
-                    self.report(DiagnosticKind::MethodAsFunction {
+                    self.error(DiagnosticKind::MethodAsFunction {
                         name: callee.name.to_string(),
                         at: callee.span,
                         receiver,
@@ -228,7 +228,7 @@ impl Checker<'_> {
                 && unlabeled
                 && site.written.is_empty();
             let bound = self.method_block_bound(func, owner, name, can_take);
-            self.report(DiagnosticKind::MethodAsFunction {
+            self.error(DiagnosticKind::MethodAsFunction {
                 name: callee.name.to_string(),
                 at: callee.span,
                 receiver: MethodReceiver::SelfValue {
@@ -249,7 +249,7 @@ impl Checker<'_> {
                 at: callee.span,
                 suggestion: self.function_suggestion(callee),
             });
-        self.report(kind);
+        self.error(kind);
         // No `labels`: the name may have meant a class, whose constructor takes them.
         self.stray(rest);
         Err(Poisoned::error())
@@ -299,7 +299,7 @@ impl Checker<'_> {
         {
             return Ok(());
         }
-        self.report(DiagnosticKind::SumNeedsNumbers {
+        self.error(DiagnosticKind::SumNeedsNumbers {
             method: name.to_string(),
             ty: self.type_name(first.ty),
             targets: targets.into_iter().map(|t| self.type_name(t)).collect(),
@@ -1079,7 +1079,7 @@ impl Checker<'_> {
     ) -> Checked {
         self.stray(args);
         if !self.misread_in(args) {
-            self.report(DiagnosticKind::ArgumentCount {
+            self.error(DiagnosticKind::ArgumentCount {
                 name,
                 want,
                 found: args.len(),
@@ -1130,7 +1130,7 @@ impl Checker<'_> {
     pub(super) fn labels(&mut self, args: &[ast::Arg]) -> bool {
         let mut labeled = false;
         for label in args.iter().filter_map(|a| a.label.as_ref()) {
-            self.report(DiagnosticKind::LabeledArgument {
+            self.error(DiagnosticKind::LabeledArgument {
                 at: label.span,
                 variant: None,
             });
@@ -1261,13 +1261,13 @@ impl Checker<'_> {
             .enumerate()
             .find_map(|(i, arg)| misplaced(name, fields, i, arg));
         if let Some(d) = mistake {
-            self.diagnostics.push(d);
+            self.diagnostics.error(d);
             self.stray(args);
         } else if let Some(missing) = fields.get(args.len()) {
             // Checking the arguments records a comparison misread as a call.
             self.stray(args);
             if !self.misread_in(args) {
-                self.report(DiagnosticKind::MissingField {
+                self.error(DiagnosticKind::MissingField {
                     field: missing.to_string(),
                     fields: fields.iter().map(ToString::to_string).collect(),
                     at: span,
@@ -1295,7 +1295,7 @@ impl Checker<'_> {
         let mut checked = Vec::with_capacity(args.len());
         for (i, arg) in args.iter().enumerate() {
             if !failed && let Some(d) = misplaced(name, &names, i, arg) {
-                self.diagnostics.push(d);
+                self.diagnostics.error(d);
                 failed = true;
             }
             if failed {
@@ -1309,7 +1309,7 @@ impl Checker<'_> {
         }
         if !failed && let Some(missing) = names.get(args.len()) {
             if !self.misread_in(args) {
-                self.report(DiagnosticKind::MissingField {
+                self.error(DiagnosticKind::MissingField {
                     field: missing.to_string(),
                     fields: names.iter().map(ToString::to_string).collect(),
                     at: span,

@@ -303,7 +303,7 @@ impl Checker<'_> {
             .filter_map(|(i, t)| t.filter(|&t| t != Type::NEVER).map(|t| (i, t)))
             .collect();
         if let Some(d) = self.leaves_written(sources, blocks, expected, &members) {
-            self.diagnostics.push(d);
+            self.diagnostics.error(d);
             return (None, error, true);
         }
         let failed = match self.any_join_all(&members) {
@@ -375,7 +375,7 @@ impl Checker<'_> {
                 unreachable!("a join that failed should name its mistake")
             }
         };
-        self.diagnostics.push(d);
+        self.diagnostics.error(d);
         (None, error, true)
     }
 

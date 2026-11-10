@@ -4,6 +4,7 @@ use super::any::{is_target, widen};
 use super::expr::{fits, if_some, literal_type, local, operator, path, typed};
 use super::generic::{Rank, mismatched};
 use super::interface::Operation;
+use super::reports::Held;
 use super::{
     Checked, Checker, Expectation, Lowered, Poisoned, as_optional, beyond_one_layer, block_expr,
     is_kept, optional_of, payload, type_of, wrap,
@@ -33,7 +34,7 @@ impl Checker<'_> {
         } else {
             expected.plain()
         };
-        let before = self.diagnostics.len();
+        let before = self.diagnostics.mark();
         let checked = self.value(operand, expected);
         if let Some(ty) = type_of(&checked).filter(|ty| ty.has_param()) {
             self.param_lacks(operand.span, ty, "-");
@@ -44,10 +45,11 @@ impl Checker<'_> {
             // a `u8` only because the context wants one, which the negation rejects.
             let literal = matches!(operand.kind, ExprKind::Int { .. });
             if literal {
-                self.diagnostics.truncate(before);
+                // The operator gives a new poisoned value, so no value outlives the cut reports.
+                self.diagnostics.drop_since(before);
             }
             self.diagnostics
-                .push(DiagnosticKind::NegatedU8 { at: span }.into());
+                .error(DiagnosticKind::NegatedU8 { at: span });
             return Err(Poisoned {
                 ty: None,
                 mismatch: literal,
@@ -66,7 +68,7 @@ impl Checker<'_> {
                 .filter(|&got| got != Type::CHAR && !NEGATABLE.contains(&payload(got)))
         {
             let d = self.takes_mismatch(operand.span, NEGATABLE, got);
-            self.diagnostics.push(d);
+            self.diagnostics.error(d);
             return Ok((want, (Err(Poisoned::error()), true)));
         }
         let checked = self.against(operand, checked, Some(want), None);
@@ -170,7 +172,7 @@ impl Checker<'_> {
         };
         if want == Type::BOOL {
             let lhs = self.operand(lhs, Expectation::Required(want));
-            return self.arithmetic(span, (tir_op, op_span), want, lhs, rhs, Vec::new());
+            return self.arithmetic(span, (tir_op, op_span), want, lhs, rhs, Held::default());
         }
         let operator = if tir_op == tir::BinaryOp::Add {
             Operator::Plus { compound }
@@ -184,7 +186,7 @@ impl Checker<'_> {
         let (checked, ty, mismatched) =
             self.ranked(|c| c.binary_operands(span, &[lhs, rhs], expected, operator, &op));
         if checked.iter().any(|c| type_of(c) == Some(Type::CHAR)) {
-            self.report(DiagnosticKind::ArithmeticOnChar { at: op_span });
+            self.error(DiagnosticKind::ArithmeticOnChar { at: op_span });
             return Err(Poisoned::error());
         }
         let kept = checked.iter().any(is_kept);
@@ -239,7 +241,7 @@ impl Checker<'_> {
             return self.integers(operands, Expectation::None, operator, op);
         }
         let (diagnostics, locals, pending, misfits) = (
-            self.diagnostics.len(),
+            self.diagnostics.mark(),
             self.body.locals.len(),
             self.pending.len(),
             self.body.misfits.len(),
@@ -250,7 +252,8 @@ impl Checker<'_> {
         }
         // The first check is dropped, and its locals, uninferred literals, misfits and findings
         // with it, so none is left that nothing binds, and none is judged twice.
-        self.diagnostics.truncate(diagnostics);
+        // The result of the first check is dropped, so no value outlives the cut reports.
+        self.diagnostics.drop_since(diagnostics);
         if !self.body.uninferred.is_empty() {
             for local in locals..self.body.locals.len() {
                 #[cfg(test)]
@@ -399,7 +402,7 @@ impl Checker<'_> {
             && ((defaulted && ranks[0] != Rank::Literal) || kept_first || misfit_leader);
         // The diagnostics of the operator's type: mismatches, and a literal's, which that type
         // types. They wait until a `char` operand is ruled out.
-        let mut deferred = Vec::new();
+        let mut deferred = Held::default();
         // The type of the operand checked last, as it was found, before it was held to `want`; and
         // whether a concrete operand was `Error` as found, which its own diagnostic reported.
         let (mut before, mut failed) = (None, false);
@@ -424,7 +427,7 @@ impl Checker<'_> {
             {
                 want = Some(Type::I64);
             }
-            let start = self.diagnostics.len();
+            let start = self.diagnostics.mark();
             let value = match first.take_if(|(k, _)| *k == i) {
                 Some((_, operand)) => operand,
                 None if hinted => {
@@ -438,7 +441,8 @@ impl Checker<'_> {
                 None => self.value(e, Expectation::or_poisoned(want)),
             };
             if ranks[i] != Rank::Concrete {
-                deferred.extend(self.diagnostics.drain(start..));
+                // Held for `restore` below, where a `char` operand may cut them with the operator.
+                deferred.absorb(self.diagnostics.take_since(start));
             }
             let char_value = type_of(&value) == Some(Type::CHAR);
             let got = type_of(&value);
@@ -462,7 +466,7 @@ impl Checker<'_> {
                         self.param_lacks(e.span, param, op(i));
                     } else {
                         // Reported below, once the operands after it are checked.
-                        pending = Some((self.diagnostics.len(), e.span, param, i));
+                        pending = Some((self.diagnostics.mark(), e.span, param, i));
                     }
                 }
                 checked.push(Err(Poisoned::error()));
@@ -474,7 +478,10 @@ impl Checker<'_> {
                 continue;
             }
             if let (Some(at), Some(found)) = (unlabelled.take(), before) {
-                deferred[at] = self.concat_mismatch(operands[0], found, operands, compound, got);
+                deferred.replace(
+                    at,
+                    self.concat_mismatch(operands[0], found, operands, compound, got),
+                );
             }
             let joins = matches!(operator, Operator::Plus { .. });
             let (operand, m) = if let Some(got) =
@@ -493,11 +500,12 @@ impl Checker<'_> {
                 // it again with none.
                 ty = Some(Type::STRING);
                 if let Some(other) = before.take() {
-                    // All that is deferred is that operand's, the first of two.
+                    // All that is deferred is that operand's, the first of two. The operand is
+                    // replaced below, so no value outlives the reports that are cut.
                     deferred.clear();
                     // Beside the first operand is this `string`, which `ty` now is.
                     let d = self.concat_mismatch(operands[0], other, operands, false, ty);
-                    self.diagnostics.push(d);
+                    self.diagnostics.error(d);
                     checked[0] = Err(Poisoned::error());
                     want = None;
                     (Err(Poisoned::error()), true)
@@ -537,15 +545,17 @@ impl Checker<'_> {
                 if operator == Operator::Compare {
                     (value, false)
                 } else {
-                    let start = self.diagnostics.len();
+                    let start = self.diagnostics.mark();
                     let settled = self.settled_by(e, value, want, Some(takes));
-                    deferred.extend(self.diagnostics.drain(start..));
+                    // Held for `restore` below, as above.
+                    deferred.absorb(self.diagnostics.take_since(start));
                     settled
                 }
             } else {
-                let start = self.diagnostics.len();
+                let start = self.diagnostics.mark();
                 let settled = self.settled_by(e, value, want, takes.filter(|_| leader == Some(i)));
-                deferred.extend(self.diagnostics.drain(start..));
+                // Held for `restore` below, as above.
+                deferred.absorb(self.diagnostics.take_since(start));
                 settled
             };
             if type_of(&operand).is_none() {
@@ -569,12 +579,12 @@ impl Checker<'_> {
             let d = self.missing_operator(at, param, &op(i), ord);
             // A type with no `<` makes the chain `Error`, as a mismatch does.
             mismatched |= matches!(d, DiagnosticKind::NoOperator { .. });
-            self.diagnostics.insert(report, d.into());
+            self.diagnostics.insert_at(report, d.into());
         }
         // The operator is rejected whatever stands beside the `char`, unless that is an `Error`:
         // then the operator may be the mistake, as for any other type, and the sum is `Error`.
         if !(arithmetic && checked.iter().any(|c| type_of(c) == Some(Type::CHAR))) {
-            self.diagnostics.append(&mut deferred);
+            self.diagnostics.restore(deferred);
         } else if failed {
             for c in &mut checked {
                 *c = Err(Poisoned::error());
@@ -589,7 +599,7 @@ impl Checker<'_> {
     fn reject_leader(&mut self, e: &ast::Expr, checked: &mut Checked, ty: Type) {
         if let Some(found) = type_of(checked) {
             let d = self.mismatch(e.span, Some(e), ty, found);
-            self.diagnostics.push(d);
+            self.diagnostics.error(d);
         }
         *checked = Err(Poisoned::error());
     }
@@ -604,16 +614,16 @@ impl Checker<'_> {
         want: Type,
         (l, l_mismatched): (Checked, bool),
         rhs: &ast::Expr,
-        held: Vec<Diagnostic>,
+        held: Held,
     ) -> Checked {
         let expected = Expectation::or_poisoned(type_of(&l).and(Some(want)));
         let checked = self.value(rhs, expected);
         // Only a compound assignment's number gets here with a `char` to its right.
         if want != Type::BOOL && type_of(&checked) == Some(Type::CHAR) {
-            self.report(DiagnosticKind::ArithmeticOnChar { at: op_span });
+            self.error(DiagnosticKind::ArithmeticOnChar { at: op_span });
             return Err(Poisoned::error());
         }
-        self.diagnostics.extend(held);
+        self.diagnostics.restore(held);
         let (r, r_mismatched) = self.settled(rhs, checked, expected);
         let kind = l.ok().zip(r.ok()).map(|(l, r)| tir::ExprKind::Binary {
             op,
@@ -641,7 +651,7 @@ impl Checker<'_> {
                 .filter(|&got| !takes.contains(&payload(got)))
         {
             let d = self.takes_mismatch(e.span, takes, got);
-            self.diagnostics.push(d);
+            self.diagnostics.error(d);
             self.settle_misfit(&checked);
             return (Err(Poisoned::error()), true);
         }
@@ -690,7 +700,7 @@ impl Checker<'_> {
                 .find(|&(_, want, got)| beyond_one_layer(want, got))
         {
             let d = self.mismatch(side.span, Some(side), want, got);
-            self.diagnostics.push(d);
+            self.diagnostics.error(d);
             return Err(Poisoned::error());
         }
         // `second` is the `none_written`, if either is.
@@ -700,7 +710,7 @@ impl Checker<'_> {
         {
             let value = path(first);
             self.diagnostics
-                .push(DiagnosticKind::NeverNone { value, at: span }.into());
+                .error(DiagnosticKind::NeverNone { value, at: span });
             return Err(Poisoned::error());
         }
         // The numbers are `i64`, `u8`, `f64` and `char`: none is compared with another.
@@ -719,7 +729,7 @@ impl Checker<'_> {
             } else {
                 self.mismatch(second.span, Some(second), payload(want), got)
             };
-            self.diagnostics.push(d);
+            self.diagnostics.error(d);
             return Err(Poisoned::error());
         }
         let (l, r) = if swapped {
@@ -767,7 +777,7 @@ impl Checker<'_> {
                 }
                 let op = if negated { "!=" } else { "==" };
                 let d = self.missing_operator(side.span, ty, op, eq);
-                self.report(d);
+                self.error(d);
                 return Err(Poisoned::error());
             }
         }
@@ -797,14 +807,14 @@ impl Checker<'_> {
         if self.none_written(lhs) || self.none_written(rhs) {
             let other = if self.none_written(lhs) { rhs } else { lhs };
             // It goes before the diagnostics of `other`, which the help waits for.
-            let at = self.diagnostics.len();
+            let at = self.diagnostics.mark();
             let checked = self.value(other, Expectation::Poisoned);
             // `== None` compiles only beside an optional, or a side whose type is unknown.
             let optional =
                 type_of(&checked).is_none_or(|ty| matches!(ty.kind(), TypeKind::Optional(_)));
             let tested = path(other).filter(|_| optional);
             let d = DiagnosticKind::IsTestsNone { tested, at: span }.into();
-            self.diagnostics.insert(at, d);
+            self.diagnostics.insert_at(at, d);
             return Err(Poisoned::error());
         }
         let (l, r) = (
@@ -838,7 +848,7 @@ impl Checker<'_> {
                     at: side.span,
                     make,
                 };
-                self.diagnostics.push(kind.into());
+                self.diagnostics.error(kind);
                 return Err(Poisoned::error());
             }
             let nested = matches!(ty.kind(), TypeKind::Optional(p) if matches!(p.kind(), TypeKind::Optional(_)));
@@ -865,7 +875,7 @@ impl Checker<'_> {
                         },
                     }),
                 };
-                self.diagnostics.push(kind.into());
+                self.diagnostics.error(kind);
                 return Err(Poisoned::error());
             }
             if matches!(
@@ -883,7 +893,7 @@ impl Checker<'_> {
                         .filter(|_| !nested),
                     peel: None,
                 };
-                self.diagnostics.push(kind.into());
+                self.diagnostics.error(kind);
                 return Err(Poisoned::error());
             }
         }
@@ -933,7 +943,7 @@ impl Checker<'_> {
                 right: self.type_name(rt),
                 at: span,
             };
-            self.diagnostics.push(kind.into());
+            self.diagnostics.error(kind);
             self.settle_misfit(&l);
             self.settle_misfit(&r);
             return Err(Poisoned::error());
@@ -959,7 +969,7 @@ impl Checker<'_> {
                         right: self.type_name(rt),
                         at: span,
                     };
-                    self.diagnostics.push(kind.into());
+                    self.diagnostics.error(kind);
                     return Err(Poisoned::error());
                 }
             }
@@ -982,7 +992,7 @@ impl Checker<'_> {
     fn fallback(&mut self, rhs: &ast::Expr, expected: Expectation) -> Checked {
         let checked = self.expr(rhs, expected);
         if type_of(&checked) == Some(Type::UNIT) {
-            self.report(DiagnosticKind::NoValue {
+            self.error(DiagnosticKind::NoValue {
                 at: rhs.span,
                 never: false,
             });
@@ -997,7 +1007,7 @@ impl Checker<'_> {
     /// E0050 for the `None` at `none` that starts the right side of a `??` whose left side starts
     /// at `lhs_start`: the fix groups the left side.
     fn report_unregrouped(&mut self, none: Span, lhs_start: usize) {
-        self.report(DiagnosticKind::CannotInfer {
+        self.error(DiagnosticKind::CannotInfer {
             literal: Literal::None,
             binding: None,
             ty: None,
@@ -1019,7 +1029,7 @@ impl Checker<'_> {
         let Some(TypeKind::Optional(payload)) = type_of(&scrutinee).map(Type::kind) else {
             if type_of(&scrutinee).is_some() {
                 self.diagnostics
-                    .push(DiagnosticKind::CoalesceNotOptional { at: lhs.span }.into());
+                    .error(DiagnosticKind::CoalesceNotOptional { at: lhs.span });
             }
             // Only its own diagnostics matter.
             drop(self.fallback(rhs, Expectation::Poisoned));
@@ -1115,7 +1125,7 @@ impl Checker<'_> {
                         (None, Some((at, want, object))) => self.leaves_any(at, None, want, object),
                         (None, None) => self.mismatch(rhs.span, Some(rhs), payload, ty),
                     };
-                    self.diagnostics.push(d);
+                    self.diagnostics.error(d);
                     self.settle_misfit(&other);
                     return Err(Poisoned::error());
                 };

@@ -132,7 +132,7 @@ impl Checker<'_> {
     fn report_as_type(&mut self, held: DeferredAsType) {
         if self.interfaces_resolved {
             let any = self.why_not_any(held.interface).is_none();
-            self.report(DiagnosticKind::InterfaceAsType {
+            self.error(DiagnosticKind::InterfaceAsType {
                 name: held.name,
                 written: Some(held.written),
                 at: held.at,
@@ -185,7 +185,7 @@ impl Checker<'_> {
         let owner = (reason.owner != bound.interface
             && !matches!(reason.kind, ReasonKind::InheritsSelf(_)))
         .then(|| self.interfaces[reason.owner.0].name.name.to_string());
-        self.report(DiagnosticKind::CannotBeAny {
+        self.error(DiagnosticKind::CannotBeAny {
             interface: self.bound_text(bound.interface, bound.args),
             owner,
             reason: why,
@@ -367,7 +367,7 @@ impl Checker<'_> {
             return Err(checked);
         }
         if !self.conforms(got, interface, args) {
-            self.report(self.not_conform(at, got, target));
+            self.error(self.not_conform(at, got, target));
             return Ok((Err(Poisoned::error()), true));
         }
         // A conversion makes a table, which only `mono` reaches.

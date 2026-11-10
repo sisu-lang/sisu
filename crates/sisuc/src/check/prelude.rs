@@ -106,17 +106,14 @@ impl Checker<'_> {
         (expected, ret): (Expectation, Option<Type>),
     ) -> Result<(&'a ast::Arg, Checked, bool), Checked> {
         // Not `value()`: a `unit` argument needs this code, not "expression has no value".
-        let wrong = |problem, at| {
-            DiagnosticKind::PrintArgument {
-                function,
-                problem,
-                at,
-            }
-            .into()
+        let wrong = |problem, at| DiagnosticKind::PrintArgument {
+            function,
+            problem,
+            at,
         };
         let labeled = self.labels(args);
         let [arg] = args else {
-            self.diagnostics.push(wrong(PrintProblem::Count, span));
+            self.diagnostics.error(wrong(PrintProblem::Count, span));
             self.stray(args);
             return Err(Err(Poisoned::of(ret)));
         };
@@ -128,11 +125,10 @@ impl Checker<'_> {
             Some(Type::NEVER) => DiagnosticKind::PrintNever {
                 function,
                 at: self.never_at(arg.value.span),
-            }
-            .into(),
+            },
             _ => return Ok((arg, checked, labeled)),
         };
-        self.diagnostics.push(error);
+        self.diagnostics.error(error);
         Err(Err(Poisoned::of(ret)))
     }
 
@@ -155,7 +151,7 @@ impl Checker<'_> {
             type_of(checked).map(Type::kind),
             Some(TypeKind::Optional(_))
         ) {
-            self.report(DiagnosticKind::PrintsOptional {
+            self.warn(DiagnosticKind::PrintsOptional {
                 value: path(value),
                 at: value.span,
             });
@@ -180,7 +176,7 @@ impl Checker<'_> {
     pub(super) fn todo(&mut self, span: Span, keyword: Span, args: &[ast::Arg]) -> Checked {
         self.body.exits += 1;
         self.body.todo = true;
-        self.report(DiagnosticKind::TodoLeft { at: keyword });
+        self.warn(DiagnosticKind::TodoLeft { at: keyword });
         let labeled = self.labels(args);
         let text = |text: &str| {
             tir::Expr::new(tir::ExprKind::Str(text.to_string()), Type::STRING, keyword)
@@ -221,7 +217,7 @@ impl Checker<'_> {
         args: &[ast::Arg],
         ret: Type,
     ) -> Checked {
-        self.report(DiagnosticKind::ArgumentCount {
+        self.error(DiagnosticKind::ArgumentCount {
             name: name.to_string(),
             want,
             found: args.len(),
@@ -243,7 +239,7 @@ impl Checker<'_> {
             got,
             Type::I64 | Type::U8 | Type::F64 | Type::BOOL | Type::CHAR
         );
-        self.report(DiagnosticKind::Mismatch {
+        self.error(DiagnosticKind::Mismatch {
             want: Expected::Types(vec![self.type_name(Type::STRING)]),
             got: self.type_name(got),
             at: arg.span,

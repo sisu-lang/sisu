@@ -413,9 +413,9 @@ impl Checker<'_> {
     /// was reported before it: its type comes from a local that failed. With no earlier error, an
     /// unknown type is no failure, so the report is made.
     pub(super) fn checked_alone(&mut self, arg: &ast::Expr) -> (Option<Type>, bool) {
-        let errors = self.diagnostics.errors;
+        let errors = self.diagnostics.errors();
         let ty = type_of(&self.expr(arg, Expectation::Poisoned));
-        let failed = self.diagnostics.errors > errors || ty.is_none() && errors > 0;
+        let failed = self.diagnostics.errors() > errors || ty.is_none() && errors > 0;
         (ty, failed)
     }
 
@@ -475,7 +475,7 @@ impl Checker<'_> {
             Ok(place) => place.path.is_some().then_some(place),
             Err((cause, _)) => {
                 let name = self.refused_name(arg);
-                self.report(DiagnosticKind::MutArgumentNotPlace {
+                self.error(DiagnosticKind::MutArgumentNotPlace {
                     at: arg.span,
                     name,
                     cause,
@@ -556,7 +556,7 @@ impl Checker<'_> {
             promotes,
             chain,
         };
-        self.report(d);
+        self.error(d);
     }
 
     /// The temp that stands for the `mut` argument `arg` in its call, and the part that the call
@@ -765,7 +765,7 @@ impl Checker<'_> {
                 .unwrap_or_else(|| arg.value.span.start());
             let gap = self.source.text(Span::new(at.end(), next));
             let fix_end = at.end() + gap.len() - gap.trim_start_matches([' ', '\t']).len();
-            self.report(DiagnosticKind::MutMarkerNotMut { at, fix_end, form });
+            self.error(DiagnosticKind::MutMarkerNotMut { at, fix_end, form });
         }
     }
 
@@ -836,7 +836,7 @@ impl Checker<'_> {
                 .names
                 .get(i)
                 .expect("a site that has a `mut` parameter should name every parameter");
-            self.report(DiagnosticKind::MutMarkerMissing {
+            self.error(DiagnosticKind::MutMarkerMissing {
                 at: arg.value.span,
                 name: param.name.to_string(),
                 callee: site.callee.to_string(),
@@ -936,7 +936,7 @@ impl Checker<'_> {
                     )
                 }
             };
-            self.report(DiagnosticKind::MutPlaceTwice {
+            self.error(DiagnosticKind::MutPlaceTwice {
                 first: a.span,
                 second: b.span,
                 shown,

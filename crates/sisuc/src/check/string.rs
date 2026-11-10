@@ -108,7 +108,7 @@ impl Checker<'_> {
                 }
             }
             let found = type_of(&value).expect("a part reported here should have a type");
-            self.report(DiagnosticKind::CannotInterpolate {
+            self.error(DiagnosticKind::CannotInterpolate {
                 ty: self.type_name(found),
                 at: part.span,
             });
@@ -176,7 +176,7 @@ impl Checker<'_> {
                 }
                 _ => None,
             };
-            self.report(DiagnosticKind::PrecisionNeedsF64 {
+            self.error(DiagnosticKind::PrecisionNeedsF64 {
                 ty: self.type_name(ty),
                 at: spec.span,
                 help,
@@ -257,11 +257,12 @@ impl Checker<'_> {
                 _ => continue,
             };
             let want = vec![self.type_name(Type::STRING)];
-            for d in self.diagnostics[start..]
-                .iter_mut()
-                .filter(|d| d.code() == Code::Mismatch && d.span() == e.span)
-            {
-                *d = DiagnosticKind::Mismatch {
+            for index in start..self.diagnostics.len() {
+                let d = &self.diagnostics[index];
+                if d.code() != Code::Mismatch || d.span() != e.span {
+                    continue;
+                }
+                let d = DiagnosticKind::Mismatch {
                     want: Expected::Types(want.clone()),
                     got: got.to_string(),
                     at: e.span,
@@ -269,8 +270,8 @@ impl Checker<'_> {
                     fix: None,
                     conversion: false,
                     layers: false,
-                }
-                .into();
+                };
+                self.diagnostics.rewrite(index, d.into());
             }
         }
     }
@@ -393,7 +394,7 @@ impl Checker<'_> {
     ) -> Checked {
         let labeled = self.labels(args);
         let [arg] = args else {
-            self.report(DiagnosticKind::ArgumentCount {
+            self.error(DiagnosticKind::ArgumentCount {
                 name: to.to_string(),
                 want: 1,
                 found: args.len(),
@@ -467,7 +468,7 @@ impl Checker<'_> {
                     let arg = checked.as_ref().ok()?;
                     site.literal(span, to, arg)
                 });
-                self.report(DiagnosticKind::ConversionInConstant {
+                self.error(DiagnosticKind::ConversionInConstant {
                     to: self.type_name(to),
                     at: span,
                     fix,
@@ -488,7 +489,7 @@ impl Checker<'_> {
                 return typed(span, ty, labeled, kind);
             }
         };
-        self.diagnostics.push(d);
+        self.diagnostics.error(d);
         Err(Poisoned::error())
     }
 

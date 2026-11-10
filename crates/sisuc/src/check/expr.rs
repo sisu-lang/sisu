@@ -103,7 +103,7 @@ impl Checker<'_> {
             )]
             let (x, exact) = (value as f64, (value as f64) as i128 == i128::from(value));
             if !exact {
-                self.report(DiagnosticKind::NotExactlyF64 {
+                self.error(DiagnosticKind::NotExactlyF64 {
                     text: self.source.text(literal).to_string(),
                     nearest: format!("{x:?}"),
                     at,
@@ -120,14 +120,13 @@ impl Checker<'_> {
         }
         if ty == Type::U8 && !(0..=i64::from(u8::MAX)).contains(&value) {
             // Only `-9223372036854775808` parses to a negative literal.
-            self.diagnostics.push(if value < 0 {
-                DiagnosticKind::NegatedU8 { at }.into()
+            self.diagnostics.error(if value < 0 {
+                DiagnosticKind::NegatedU8 { at }
             } else {
                 DiagnosticKind::IntegerDoesNotFit {
                     text: self.source.text(literal).to_string(),
                     at,
                 }
-                .into()
             });
             return Err(Poisoned {
                 ty: Some(ty),
@@ -159,7 +158,7 @@ impl Checker<'_> {
             ExprKind::Index { base, index } => self.index(e.span, base, index),
             ExprKind::Range(range) => {
                 let d = Self::range_outside(range, RangePlace::Elsewhere);
-                self.diagnostics.push(d);
+                self.diagnostics.error(d);
                 Err(Poisoned::error())
             }
             ExprKind::NoneLit => self.none(e.span, expected),
@@ -193,15 +192,12 @@ impl Checker<'_> {
                 if let Some(value) = self.named_args(name, types, *angles, false) {
                     return Err(value);
                 }
-                let reported = self.diagnostics.len();
+                let reported = self.diagnostics.mark();
                 let checked = self.name(name.span, name.name, Expectation::None);
                 // The type arguments follow the name, so `Holder.W<i64>` followed by `.` does not
                 // parse: the fix of a bare variant would break the syntax.
-                for d in &mut self.diagnostics[reported..] {
-                    if d.code() == Code::BareVariant {
-                        d.retain_fixes(|_| false);
-                    }
-                }
+                self.diagnostics
+                    .strip_fixes_since(reported, Code::BareVariant);
                 checked
             }
             ExprKind::Todo { keyword, args } => self.todo(e.span, *keyword, args),
@@ -210,7 +206,7 @@ impl Checker<'_> {
                 SelfType::Failed => Err(Poisoned::error()),
                 SelfType::Absent => {
                     self.diagnostics
-                        .push(DiagnosticKind::SelfOutsideMethod { at: e.span }.into());
+                        .error(DiagnosticKind::SelfOutsideMethod { at: e.span });
                     Err(Poisoned::error())
                 }
             },
@@ -358,7 +354,7 @@ impl Checker<'_> {
             Resolved::PreludeVariant => {
                 // These variants of the prelude's enums are written without the enum, and
                 // `Option` makes no enum for `bare_variant` to find.
-                self.report(DiagnosticKind::VariantForm {
+                self.error(DiagnosticKind::VariantForm {
                     path: name.to_string(),
                     payload: true,
                     held: false,
@@ -370,7 +366,7 @@ impl Checker<'_> {
                 let d = self
                     .bare_variant(name, span)
                     .unwrap_or_else(|| self.not_found(name, span));
-                self.diagnostics.push(d);
+                self.diagnostics.error(d);
                 Err(Poisoned::error())
             }
         }
@@ -410,7 +406,7 @@ impl Checker<'_> {
 
     /// Reports a value of `ty`, `unit` or `never`, used at `at`.
     pub(super) fn no_value(&mut self, at: Span, ty: Type) {
-        self.report(DiagnosticKind::NoValue {
+        self.error(DiagnosticKind::NoValue {
             at,
             never: ty == Type::NEVER,
         });
@@ -467,7 +463,7 @@ impl Checker<'_> {
                 return done;
             }
             let d = self.mismatch_from(e.span, Some(e), want, got, source);
-            self.diagnostics.push(d);
+            self.diagnostics.error(d);
             return (Err(Poisoned::error()), true);
         }
         // A generic call that cannot meet `want` is reported with the type it found, as a
@@ -476,7 +472,7 @@ impl Checker<'_> {
             && let Some(found) = self.misfit_type(&checked).filter(|&found| found != want)
         {
             let d = self.mismatch_from(e.span, Some(e), want, found, source);
-            self.diagnostics.push(d);
+            self.diagnostics.error(d);
             self.settle_misfit(&checked);
             return (Err(Poisoned::error()), true);
         }
@@ -508,7 +504,7 @@ impl Checker<'_> {
                 return Err(Poisoned::error());
             }
         };
-        self.diagnostics.push(kind.into());
+        self.diagnostics.error(kind);
         Err(Poisoned {
             ty: None,
             mismatch: true,
@@ -522,7 +518,7 @@ impl Checker<'_> {
     /// `let`, the `let` finds the report (see `Checker::uninferred_of`).
     pub(super) fn report_uninferred(&mut self, literal: Literal, span: Span) {
         let binding = self.let_binding(span);
-        self.report(DiagnosticKind::CannotInfer {
+        self.error(DiagnosticKind::CannotInfer {
             literal,
             binding,
             ty: None,
@@ -566,14 +562,14 @@ impl Checker<'_> {
             .is_some_and(|d| d.code() == Code::CannotInfer && d.span() == span);
         if reported {
             let help = self.type_name(ty);
-            self.diagnostics[index] = DiagnosticKind::CannotInfer {
+            let d = DiagnosticKind::CannotInfer {
                 literal,
                 binding: Some(binding),
                 ty: Some(help),
                 at: span,
                 regroup: None,
-            }
-            .into();
+            };
+            self.diagnostics.rewrite(index, d.into());
         }
     }
 

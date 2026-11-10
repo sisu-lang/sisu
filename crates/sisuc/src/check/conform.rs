@@ -434,7 +434,7 @@ impl Checker<'_> {
         } else {
             (places.1, places.0)
         };
-        self.report(DiagnosticKind::ConformsTwice {
+        self.error(DiagnosticKind::ConformsTwice {
             ty: self.type_name(common[0]),
             interface: self.bound_text(bound.interface, tir::TypeArgs::intern(&common[1..])),
             at: second,
@@ -501,7 +501,7 @@ impl Checker<'_> {
         let via = via.map(|(interface, written)| {
             (self.interfaces[interface.0].name.name.to_string(), written)
         });
-        self.report(DiagnosticKind::ClassOnly {
+        self.error(DiagnosticKind::ClassOnly {
             ty: self.type_name(target),
             at,
             via,
@@ -613,7 +613,7 @@ impl Checker<'_> {
         let info = &self.interfaces[interface.interface.0];
         let requirement = &info.requirements[0];
         let signature = self.required_text(source, interface, requirement);
-        self.report(DiagnosticKind::ConformanceBody {
+        self.error(DiagnosticKind::ConformanceBody {
             ty: self.type_name(target),
             interface: info.name.name.to_string(),
             at,
@@ -765,7 +765,7 @@ impl Checker<'_> {
             .get_mut(p.interface.interface, p.index)
             .methods = methods;
         for report in reports {
-            self.report(report);
+            self.error(report);
         }
     }
 
@@ -902,7 +902,7 @@ impl Checker<'_> {
             }
         }
         for report in reports {
-            self.report(report);
+            self.error(report);
         }
     }
 
@@ -1031,7 +1031,7 @@ impl Checker<'_> {
             }
             None => extend = block.map(|b| self.extend_help(b, &ty, &inherited)),
         }
-        self.report(DiagnosticKind::NotConform {
+        self.error(DiagnosticKind::NotConform {
             ty,
             interface: inherited,
             at,

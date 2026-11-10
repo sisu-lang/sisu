@@ -86,7 +86,7 @@ impl Checker<'_> {
         let base = base.map(|base| self.source.line_text(base.span));
         for arg in args {
             if let ExprKind::Range(range) = &arg.value.kind {
-                self.report(DiagnosticKind::ArrayGetTakesIndex {
+                self.error(DiagnosticKind::ArrayGetTakesIndex {
                     at: range.span,
                     base: base.clone(),
                 });
@@ -98,7 +98,7 @@ impl Checker<'_> {
         }
         // A comparison misread as a call explains the count, which is known after the arguments.
         if args.len() != 1 && !self.misread_in(args) {
-            self.report(DiagnosticKind::ArgumentCount {
+            self.error(DiagnosticKind::ArgumentCount {
                 name: self.method_name(array, "get"),
                 want: 1,
                 found: args.len(),
@@ -122,7 +122,8 @@ impl Checker<'_> {
         if error_for_good(range) {
             self.stamp_push(base);
             drop(self.value(base, Expectation::None));
-            self.diagnostics.push(self.index_outside(base, range, None));
+            self.diagnostics
+                .error(self.index_outside(base, range, None));
             return Err(Poisoned::error());
         }
         let outer = std::mem::replace(&mut self.body.indexed, true);
@@ -138,7 +139,7 @@ impl Checker<'_> {
         if !matches!(ty.kind(), TypeKind::Array(_)) && ty != Type::STRING {
             self.body.indexed = outer;
             let d = self.cannot_slice(base, ty);
-            self.diagnostics.push(d);
+            self.diagnostics.error(d);
             return Err(Poisoned::error());
         }
         let sliced = self.slice_of(span, (checked, ty), range, false);
@@ -209,7 +210,7 @@ impl Checker<'_> {
                 found: args.len(),
                 at: span,
             };
-            self.diagnostics.push(d.into());
+            self.diagnostics.error(d);
             self.get_arguments(args);
             return Err(Poisoned::error());
         };
@@ -217,7 +218,7 @@ impl Checker<'_> {
             // The argument reports its own mistakes, else it is a value that is no range.
             let (_, failed) = self.checked_alone(&arg.value);
             if !failed {
-                self.report(DiagnosticKind::StringGetNeedsRange {
+                self.error(DiagnosticKind::StringGetNeedsRange {
                     at: arg.value.span,
                     base: self.source.line_text(receiver_expr.span),
                     call,
@@ -228,7 +229,7 @@ impl Checker<'_> {
         if error_for_good(range) {
             self.stamp_push(receiver_expr);
             self.diagnostics
-                .push(self.index_outside(receiver_expr, range, Some(call)));
+                .error(self.index_outside(receiver_expr, range, Some(call)));
             return Err(Poisoned::error());
         }
         let sliced = self.slice_of(span, (receiver, Type::STRING), range, true);
@@ -340,7 +341,9 @@ impl Checker<'_> {
             let place = is_place(found.base) && self.rooted(found.base);
             base_type.map(|ty| self.range_write(&found, op, (target, value), (ty, place)))
         };
-        self.diagnostics.extend(d);
+        if let Some(d) = d {
+            self.diagnostics.error(d);
+        }
         drop(self.expr(value, Expectation::Poisoned));
         Some(Err(Poisoned::typed(Type::UNIT)))
     }

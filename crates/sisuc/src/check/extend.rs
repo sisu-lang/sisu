@@ -127,7 +127,7 @@ impl<'a> Checker<'_> {
             }
             if let (Some(mut_self), Some(holder)) = (&method.mut_self, holder) {
                 let owner = method_owner(holder, &name);
-                self.report(DiagnosticKind::MutSelf {
+                self.error(DiagnosticKind::MutSelf {
                     keyword: mut_self.keyword,
                     remove: mut_self_removal(self.source.comments, mut_self),
                     safe: mut_self.annotation.is_none(),
@@ -309,7 +309,7 @@ impl<'a> Checker<'_> {
             let remove = (params.len() == 1 && !self.names_in_block(extend, param.name.name))
                 .then_some(header)
                 .filter(|header| !self.comment_in(&[header.range()]));
-            self.report(DiagnosticKind::CannotExtend {
+            self.error(DiagnosticKind::CannotExtend {
                 written: param.name.name.to_string(),
                 at: param.name.span,
                 form: CannotExtendForm::Unused {
@@ -344,7 +344,7 @@ impl<'a> Checker<'_> {
                 _ => unreachable!("an interface name should be a name or an applied name"),
             };
             // Following the advice of `InterfaceAsType` would give `CannotExtend`, so it has none.
-            self.report(DiagnosticKind::InterfaceAsType {
+            self.error(DiagnosticKind::InterfaceAsType {
                 name: name.to_string(),
                 written: None,
                 at: ty.bare,
@@ -383,7 +383,7 @@ impl<'a> Checker<'_> {
         } else {
             ty.to_string()
         };
-        self.report(DiagnosticKind::CannotExtend {
+        self.error(DiagnosticKind::CannotExtend {
             written,
             at: ty.bare,
             form,
@@ -482,7 +482,7 @@ impl<'a> Checker<'_> {
             }
         }
         for report in reports {
-            self.report(report);
+            self.error(report);
         }
     }
 

@@ -83,7 +83,7 @@ impl Checker<'_> {
                     return Err(Poisoned::error());
                 }
             };
-            self.report(d);
+            self.error(d);
             return Err(Poisoned {
                 ty: None,
                 mismatch: true,
@@ -140,7 +140,7 @@ impl Checker<'_> {
                 drop(self.none(e.span, Expectation::Required(element)));
             } else {
                 let d = self.leaves_any(e.span, Some(e), element, own[at].unwrap_or(joined));
-                self.diagnostics.push(d);
+                self.diagnostics.error(d);
             }
             return Err(Poisoned::error());
         }
@@ -217,7 +217,7 @@ impl Checker<'_> {
                             None => (elements[at].span, Some(&elements[at]), want, got),
                         };
                     let d = self.leaves_any(at_span, source, want, got);
-                    self.diagnostics.push(d);
+                    self.diagnostics.error(d);
                     failed = true;
                 }
                 ObjectJoin::Not => {
@@ -367,7 +367,7 @@ impl Checker<'_> {
     ) -> (Option<Type>, bool) {
         let report = |c: &mut Self, at: usize, want: Type, got: Type| {
             let d = c.mismatch(elements[at].span, Some(&elements[at]), want, got);
-            c.diagnostics.push(d);
+            c.diagnostics.error(d);
         };
         match self.any_join_all(typed) {
             AnyJoin::Joined { ty } => {
@@ -386,7 +386,7 @@ impl Checker<'_> {
                 member: (at, got),
             } => {
                 let d = self.leaves_any(elements[at].span, Some(&elements[at]), ty, got);
-                self.diagnostics.push(d);
+                self.diagnostics.error(d);
                 return (None, true);
             }
             AnyJoin::NoAny => {}
@@ -466,7 +466,7 @@ impl Checker<'_> {
             // An `any` of a class-only interface holds an object, as a class is one.
             let may_be_class = matches!(class.kind(), TypeKind::Param(..) | TypeKind::Assoc(..))
                 || (any && !self.conforms(class, self.lang.any_object, TypeArgs::NONE));
-            self.report(DiagnosticKind::SameObject {
+            self.error(DiagnosticKind::SameObject {
                 class: self.type_name(class),
                 at: value.span,
                 param: may_be_class,
@@ -529,10 +529,10 @@ impl Checker<'_> {
         usage: IndexUsage,
     ) -> Option<Type> {
         let ty = ty?;
-        let d = match ty.kind() {
+        let d: Diagnostic = match ty.kind() {
             TypeKind::Array(element) => return Some(element),
             TypeKind::Optional(payload) if matches!(payload.kind(), TypeKind::Array(_)) => {
-                self.diagnostics.push(optional_array(base, UnwrapHelp::It));
+                self.diagnostics.error(optional_array(base, UnwrapHelp::It));
                 return optional_element(ty);
             }
             _ if ty == Type::STRING => DiagnosticKind::StringIndex {
@@ -548,7 +548,7 @@ impl Checker<'_> {
             }
             .into(),
         };
-        self.diagnostics.push(d);
+        self.diagnostics.error(d);
         None
     }
 
@@ -666,7 +666,7 @@ impl Checker<'_> {
         args: &[ast::Arg],
         ret: Option<Type>,
     ) -> Checked {
-        self.diagnostics.push(d);
+        self.diagnostics.error(d);
         self.labels(args);
         self.stray(args);
         Err(Poisoned::of(ret))

@@ -137,7 +137,7 @@ impl Checker<'_> {
         let Some(kind) = reserved_name(name.name) else {
             return false;
         };
-        self.report(DiagnosticKind::BuiltInName {
+        self.error(DiagnosticKind::BuiltInName {
             name: name.name.to_string(),
             at: name.span,
             kind,
@@ -156,7 +156,7 @@ impl Checker<'_> {
     ) {
         let owner = e.name.name.as_str();
         if e.variants.is_empty() {
-            self.report(DiagnosticKind::EmptyEnum {
+            self.error(DiagnosticKind::EmptyEnum {
                 name: owner.to_string(),
                 at: e.name.span,
             });
@@ -177,7 +177,7 @@ impl Checker<'_> {
             if name.name.as_str().starts_with(char::is_uppercase) {
                 self.reserved(name);
             } else {
-                self.report(DiagnosticKind::VariantCase {
+                self.error(DiagnosticKind::VariantCase {
                     name: name.name.to_string(),
                     at: name.span,
                 });
@@ -188,7 +188,7 @@ impl Checker<'_> {
                 .iter()
                 .find(|field| labeled(field) != labeled(&payload[0]))
             {
-                self.report(DiagnosticKind::MixedLabels {
+                self.error(DiagnosticKind::MixedLabels {
                     variant: name.name.to_string(),
                     at: field
                         .label
@@ -278,7 +278,7 @@ impl Checker<'_> {
                     // An argument at a `mut` parameter gets the help of a place.
                     let muts = self.signatures[func.0].muts.clone();
                     self.stamp_mut_params(call.map_or(&[], |(args, _)| args), &muts);
-                    self.report(DiagnosticKind::MemberKind {
+                    self.error(DiagnosticKind::MemberKind {
                         name: member.name.to_string(),
                         enum_name: enum_name.to_string(),
                         method: true,
@@ -293,7 +293,7 @@ impl Checker<'_> {
                         .iter()
                         .map(|v| (v.name.name.as_str(), Definition::Variant));
                     let suggestion = suggestion(member.name.as_str(), variants);
-                    self.report(DiagnosticKind::UnknownVariant {
+                    self.error(DiagnosticKind::UnknownVariant {
                         enum_name: enum_name.to_string(),
                         name: member.name.to_string(),
                         at: member.span,
@@ -351,7 +351,7 @@ impl Checker<'_> {
                 // The fix deletes the parentheses, so what they hold (even a comment) makes it
                 // unsafe.
                 let inside = parens.start()..parens.end();
-                self.report(DiagnosticKind::VariantForm {
+                self.error(DiagnosticKind::VariantForm {
                     path: path.to_string(),
                     payload: false,
                     held: !args.is_empty() || self.comment_in(&[inside]),
@@ -361,7 +361,7 @@ impl Checker<'_> {
                 return Err(Poisoned::error());
             }
             None => {
-                self.report(DiagnosticKind::VariantForm {
+                self.error(DiagnosticKind::VariantForm {
                     path: path.to_string(),
                     payload: true,
                     held: false,
@@ -527,7 +527,7 @@ impl Checker<'_> {
         }
         let labeled = !labels.is_empty();
         if let Some(first) = args.iter().find_map(|arg| arg.label.as_ref()) {
-            self.report(DiagnosticKind::LabeledArgument {
+            self.error(DiagnosticKind::LabeledArgument {
                 at: first.span,
                 variant: Some(VariantLabels {
                     path: path.to_string(),
@@ -538,7 +538,7 @@ impl Checker<'_> {
         if want != args.len() {
             self.stray(args);
             if !self.misread_in(args) {
-                self.report(DiagnosticKind::ArgumentCount {
+                self.error(DiagnosticKind::ArgumentCount {
                     name: path.to_string(),
                     want,
                     found: args.len(),
@@ -710,7 +710,7 @@ impl Checker<'_> {
             } else {
                 &self.enums[n - classes].name
             };
-            self.report(DiagnosticKind::NeverConstructed {
+            self.error(DiagnosticKind::NeverConstructed {
                 name: name.name.to_string(),
                 at: name.span,
                 cause: Unbuilt::Chain(chain),

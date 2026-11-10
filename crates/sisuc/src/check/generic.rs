@@ -2685,7 +2685,7 @@ impl Checker<'_> {
                 self.report_mut_type(&arg.value, &shape, (site, i), (fit, param));
             } else {
                 let d = self.mismatch(arg.value.span, Some(&arg.value), fit, got);
-                self.diagnostics.push(d);
+                self.diagnostics.error(d);
             }
             call.slots[i] = Some(Err(Poisoned {
                 ty: None,
@@ -3148,7 +3148,7 @@ impl Checker<'_> {
                     let want = self.printed(&call.bindings, pattern);
                     self.mismatch(e.span, Some(e), want, ty)
                 };
-                self.diagnostics.push(d);
+                self.diagnostics.error(d);
                 mark((checked, true))
             }
             Some(_) => {
@@ -3362,7 +3362,7 @@ impl Checker<'_> {
             if ty == *REJECTED {
                 call.rejected = true;
             } else if matches!(ty, Type::UNIT | Type::NEVER) {
-                self.report(DiagnosticKind::TypeArgument {
+                self.error(DiagnosticKind::TypeArgument {
                     ty: self.type_name(ty),
                     at,
                 });
@@ -3411,7 +3411,7 @@ impl Checker<'_> {
         };
         if let Some(hint) = hint {
             let d = self.mismatch(span, None, hint.want, found);
-            self.diagnostics.push(d);
+            self.diagnostics.error(d);
             return None;
         }
         if context.holds_hole() {
@@ -3427,7 +3427,7 @@ impl Checker<'_> {
     /// Reports the call of `sig` that binds nothing to its parameter at `param`.
     fn cannot_infer(&mut self, sig: &GenericSig<'_>, param: usize) {
         let kind = Self::cannot_infer_kind(sig, param);
-        self.report(kind);
+        self.error(kind);
     }
 
     /// The E0050 of `cannot_infer`.
@@ -4422,7 +4422,7 @@ impl Checker<'_> {
             ArgumentsForm::Missing { .. } => name.span,
             _ => angles,
         };
-        self.report(DiagnosticKind::TypeArguments {
+        self.error(DiagnosticKind::TypeArguments {
             name: name.name.to_string(),
             at,
             form,
@@ -4434,7 +4434,7 @@ impl Checker<'_> {
     /// them.
     pub(super) fn not_generic(&mut self, name: Symbol, angles: Span) {
         let safe = !self.comment_in(&[angles.range()]);
-        self.report(DiagnosticKind::TypeArguments {
+        self.error(DiagnosticKind::TypeArguments {
             name: name.to_string(),
             at: angles,
             form: ArgumentsForm::NotGeneric { safe },
@@ -4451,7 +4451,7 @@ impl Checker<'_> {
             && self.names.enum_id(name).is_none()
             && self.names.alias(name).is_none()
         {
-            self.report(DiagnosticKind::TypeArgument {
+            self.error(DiagnosticKind::TypeArgument {
                 ty: arg.to_string(),
                 at: arg.span,
             });
@@ -4473,7 +4473,7 @@ impl Checker<'_> {
             })
         });
         let remove = (!named && !self.comment_in(&[angles.range()])).then_some(angles);
-        self.report(DiagnosticKind::MainSignature {
+        self.error(DiagnosticKind::MainSignature {
             at: angles,
             form: MainForm::TypeParams { remove },
         });
@@ -4483,7 +4483,7 @@ impl Checker<'_> {
     /// the operator.
     pub(super) fn param_lacks(&mut self, at: Span, ty: Type, op: impl fmt::Display) {
         let d = self.lacks(at, ty, op);
-        self.diagnostics.push(d);
+        self.diagnostics.error(d);
     }
 
     /// The report that `param_lacks` makes.
@@ -4533,7 +4533,7 @@ impl Checker<'_> {
     /// `misread` with the comparison `compare` its help writes, if any.
     pub(super) fn misread_as(&mut self, name: Span, compare: Option<String>) -> Poisoned {
         self.body.misread.insert(name.start());
-        self.report(DiagnosticKind::TypeArguments {
+        self.error(DiagnosticKind::TypeArguments {
             name: self.source.slice(name.start()..name.end()).to_string(),
             at: name,
             form: ArgumentsForm::Value { compare },
@@ -4703,7 +4703,7 @@ impl Checker<'_> {
                 variant.name
             )
         });
-        self.report(DiagnosticKind::TypeArguments {
+        self.error(DiagnosticKind::TypeArguments {
             name: text.type_text(base.span.to(variant.span)).into_owned(),
             at: angles,
             form: ArgumentsForm::Variant { instead },

@@ -399,7 +399,7 @@ impl Checker<'_> {
             })
             .collect();
         let through = (1..cycle.len()).map(|k| name(k).name.to_string()).collect();
-        self.report(DiagnosticKind::AliasCycle {
+        self.error(DiagnosticKind::AliasCycle {
             name: name(0).name.to_string(),
             at: name(0).span,
             through,
@@ -846,7 +846,7 @@ impl Checker<'_> {
                 name.span,
             ),
         };
-        self.report(DiagnosticKind::CannotInferParam {
+        self.error(DiagnosticKind::CannotInferParam {
             param: through.params[0].to_string(),
             callee,
             example,
@@ -927,7 +927,7 @@ impl Checker<'_> {
                 )))
             }
             [] | [_] => {
-                self.report(DiagnosticKind::UnknownType {
+                self.error(DiagnosticKind::UnknownType {
                     name: name.name.to_string(),
                     at: name.span,
                     form: UnknownForm::NoAssociated {
@@ -938,7 +938,7 @@ impl Checker<'_> {
                 None
             }
             _ => {
-                self.report(DiagnosticKind::Ambiguous {
+                self.error(DiagnosticKind::Ambiguous {
                     method: name.name.to_string(),
                     receiver: self.source.type_text(base.span).into_owned(),
                     interfaces: (declaring.iter())
@@ -963,7 +963,7 @@ impl Checker<'_> {
     ) -> Option<Type> {
         let resolved = resolved?;
         if self.aliases.uses > uses && resolved.depth() > MAX_DEPTH {
-            self.report(DiagnosticKind::NestingTooDeep {
+            self.error(DiagnosticKind::NestingTooDeep {
                 at: ty.bare,
                 limit: MAX_DEPTH as usize,
                 form: NestingForm::Alias(self.source.type_text(ty.bare).into_owned()),
@@ -1004,7 +1004,7 @@ impl Checker<'_> {
         let Some(passed) = self.aliases.too_large.take() else {
             return;
         };
-        self.report(DiagnosticKind::AliasTooLarge {
+        self.error(DiagnosticKind::AliasTooLarge {
             ty: self.source.type_text(at).into_owned(),
             at,
             limit: match passed {

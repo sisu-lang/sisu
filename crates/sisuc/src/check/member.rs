@@ -103,7 +103,7 @@ impl Checker<'_> {
                     at: receiver.span,
                     access: Span::new(receiver.span.end(), name.span.start()),
                 };
-                self.diagnostics.push(kind.into());
+                self.diagnostics.error(kind);
             }
             return Err(Poisoned::of(type_of(scrutinee)));
         };
@@ -122,7 +122,7 @@ impl Checker<'_> {
                 }),
                 unwrap: UnwrapHelp::It,
             };
-            self.diagnostics.push(kind.into());
+            self.diagnostics.error(kind);
             // The member is checked on the type that the `??` peeled, so that its arguments
             // report only their own mistakes.
             return Err(Poisoned::typed(innermost(payload)));
@@ -240,7 +240,7 @@ impl Checker<'_> {
             }
             _ => no_member(Definition::Field, self.type_name(ty), name, []),
         };
-        self.diagnostics.push(d);
+        self.diagnostics.error(d);
         None
     }
 
@@ -274,7 +274,7 @@ impl Checker<'_> {
             self.peel_or(payload, (receiver, name), UnwrapHelp::It)
         };
         self.diagnostics
-            .push(may_be_none(receiver, name, fix, write, unwrap));
+            .error(may_be_none(receiver, name, fix, write, unwrap));
         Some(found)
     }
 
@@ -470,7 +470,7 @@ impl Checker<'_> {
     /// optional receiver (`Body::failed_lookups`). Each report of a lookup at `name` comes here.
     pub(super) fn report_lookup_failure(&mut self, d: Diagnostic, name: &ast::Ident) {
         self.body.failed_lookups.insert(name.span);
-        self.diagnostics.push(d);
+        self.diagnostics.error(d);
     }
 
     /// `report_lookup_failure` for a method call that cannot be checked: the arguments report
@@ -521,7 +521,7 @@ impl Checker<'_> {
             };
             let fix = payload_fix(payload, indexed);
             let d = may_be_none(receiver, name, fix, write, unwrap);
-            self.diagnostics.push(d);
+            self.diagnostics.error(d);
         }
         Err(Poisoned::error())
     }
@@ -792,7 +792,7 @@ impl Checker<'_> {
             binding: self.let_binding(span).unwrap_or_else(|| "x".to_string()),
             ty: self.type_name(ret),
         });
-        self.report(DiagnosticKind::Ambiguous {
+        self.error(DiagnosticKind::Ambiguous {
             method: site.name.name.to_string(),
             receiver: self.type_name(ty),
             interfaces,
@@ -806,10 +806,11 @@ impl Checker<'_> {
     /// reports them when it checks its arguments. `None` when one does not resolve; then its
     /// reports stay, as no later step makes them.
     fn written_types(&mut self, written: &[ast::TypeExpr]) -> Option<Vec<Type>> {
-        let before = self.diagnostics.len();
+        let before = self.diagnostics.mark();
         let types: Option<Vec<Type>> = written.iter().map(|ty| self.resolve(ty)).collect();
         if types.is_some() {
-            self.diagnostics.truncate(before);
+            // The types hold no poisoned value, so no value outlives the reports that are cut.
+            self.diagnostics.drop_since(before);
         }
         types
     }
