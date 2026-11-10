@@ -15,6 +15,7 @@ mod chars;
 mod conformances;
 mod constants;
 mod enums;
+mod expectation;
 mod extend;
 mod failed_bounds;
 mod failed_calls;
