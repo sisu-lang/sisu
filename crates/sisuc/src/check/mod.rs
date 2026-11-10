@@ -2169,10 +2169,6 @@ impl Checker<'_> {
     /// its signature that did not resolve is not wrong: each error is reported already.
     fn check_main(&mut self, declared: &[(&ast::Function, SelfType)]) {
         match self.names.function(Symbol::intern("main")) {
-            None if declared
-                .iter()
-                .any(|(f, owner)| *owner == SelfType::Absent && f.name.name.as_str() == "main") => {
-            }
             None => self.report(DiagnosticKind::NoMain),
             Some(Declared::Broken) => {}
             Some(Declared::Known(id)) => {
