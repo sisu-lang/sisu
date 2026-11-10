@@ -1501,3 +1501,153 @@ fn trim_should_not_precede_a_local_an_argument_a_return_or_some() {
     );
     assert!(!printed.contains("trim"), "{printed}");
 }
+
+/// One source for each place that takes a string literal, and the mir it must hold: the copy of
+/// the literal, then the place, with no `trim` between them.
+const LITERAL_PLACES: &[(&str, &str, &[&str])] = &[
+    (
+        "a class constructor argument",
+        "class Holder {\n    s: string\n}\nfn f() -> Holder { Holder(s: \"ab\") }",
+        &["copy \"ab\"", "new Holder(move _)"],
+    ),
+    (
+        "the empty literal at a class constructor argument",
+        "class Holder {\n    s: string\n}\nfn f() -> Holder { Holder(s: \"\") }",
+        &["copy \"\"", "new Holder(move _)"],
+    ),
+    (
+        "a class field store",
+        "class Holder {\n    mut s: string\n}\nfn f(h: Holder) { h.s = \"ab\" }",
+        &["copy \"ab\"", ".0 = move _"],
+    ),
+    (
+        "an enum payload",
+        "enum Tok {\n    Word(string)\n    End\n}\nfn f() -> Tok { Tok.Word(\"ab\") }",
+        &["copy \"ab\"", "variant Tok.Word(move _)"],
+    ),
+    (
+        "an enum payload of an optional, with no written `Some`",
+        "enum Tok {\n    Word(string?)\n    End\n}\nfn f() -> Tok { Tok.Word(\"ab\") }",
+        &["copy \"ab\"", "wrap move _", "variant Tok.Word(move _)"],
+    ),
+    (
+        "an array literal element",
+        "fn f() -> [string] { [\"ab\"] }",
+        &["copy \"ab\"", "array[move _]"],
+    ),
+    (
+        "the value of `[v; n]`",
+        "fn f() -> [string] { [\"ab\"; 3] }",
+        &["copy \"ab\"", "array[move _; 3]"],
+    ),
+    (
+        "a `push`",
+        "fn f(ys: [string]) -> [string] {\n    let mut zs = ys\n    zs.push(\"ab\")\n    zs\n}",
+        &["copy \"ab\"", "push zs#1, move _"],
+    ),
+    (
+        "an element write",
+        "fn f(ys: [string]) -> [string] {\n    let mut zs = ys\n    zs[0] = \"ab\"\n    zs\n}",
+        &["copy \"ab\"", "zs#1[0] = move _"],
+    ),
+    (
+        "an element write into an array of optionals",
+        "fn f(ys: [string?]) -> [string?] {\n    let mut zs = ys\n    zs[0] = \"cd\"\n    zs\n}",
+        &["copy \"cd\"", "wrap move _", "zs#1[0] = move _"],
+    ),
+    (
+        "a conversion to `any`",
+        "fn f() -> i64 {\n    let d: any Display = \"ab\"\n    d.to_string().len()\n}",
+        &["copy \"ab\"", "to_any move _"],
+    ),
+    (
+        "an optional constructor argument",
+        "class Holder {\n    top: string?\n}\nfn f() -> Holder { Holder(top: Some(\"ab\")) }",
+        &["copy \"ab\"", "wrap move _", "new Holder(move _)"],
+    ),
+    (
+        "an optional constructor argument, with no written `Some`",
+        "class Holder {\n    top: string?\n}\nfn f() -> Holder { Holder(top: \"ab\") }",
+        &["copy \"ab\"", "wrap move _", "new Holder(move _)"],
+    ),
+    (
+        "an optional inside an optional",
+        "class Holder {\n    top: string??\n}\nfn f() -> Holder { Holder(top: Some(Some(\"ab\"))) }",
+        &[
+            "copy \"ab\"",
+            "wrap move _",
+            "wrap move _",
+            "new Holder(move _)",
+        ],
+    ),
+];
+
+/// GIVEN a string literal at each trim point of ADR 0042, one source for each
+/// AND the literal alone, inside `Some`, inside two `Some`, or with the `Some` that the checker
+/// adds
+/// WHEN the function is lowered
+/// THEN the mir holds no `trim`, and the place still takes the value of the literal
+#[test]
+fn a_string_literal_should_reach_each_trim_point_untrimmed() {
+    for &(point, source, parts) in LITERAL_PLACES {
+        let printed = lowered(source);
+        let f = function(&printed, "f");
+        assert!(!f.contains("trim"), "{point}: a trim in\n{f}");
+        let mut from = 0;
+        for part in parts {
+            let at = f[from..]
+                .find(part)
+                .unwrap_or_else(|| panic!("{point}: `{part}` after byte {from} of\n{f}"));
+            from += at + part.len();
+        }
+    }
+}
+
+/// One source for each value at a trim point that is no string literal. Each row also gives the
+/// number of `trim` that the value keeps, and the mir it must hold.
+const KEPT_TRIMS: &[(&str, &str, usize, &[&str])] = &[
+    (
+        "an interpolation",
+        "class Holder {\n    s: string\n}\nfn f(n: i64) -> Holder { Holder(s: \"a{n}\") }",
+        1,
+        &["trim move _", "new Holder(move _)"],
+    ),
+    (
+        "a `Some` of an interpolation",
+        "class Holder {\n    top: string?\n}\nfn f(n: i64) -> Holder { Holder(top: Some(\"a{n}\")) }",
+        1,
+        &["wrap move _", "trim move _", "new Holder(move _)"],
+    ),
+    (
+        "a `Some` of a literal and a `None` in an array",
+        "fn f() -> [string?] { [Some(\"q\"), None] }",
+        1,
+        &["trim None", "array[move _, move _]"],
+    ),
+    (
+        "an array literal of a literal",
+        "class Holder {\n    xs: [string]\n}\nfn f() -> Holder { Holder(xs: [\"ab\"]) }",
+        1,
+        &["array[move _]", "trim move _", "new Holder("],
+    ),
+];
+
+/// GIVEN a value at a trim point that is no string literal: an interpolation, a `Some` of one,
+/// a `None`, and an array literal
+/// WHEN the function is lowered
+/// THEN the mir keeps the `trim` of each, and a literal inside the value does not add one
+#[test]
+fn a_string_that_is_not_a_literal_should_keep_its_trim() {
+    for &(point, source, trims, parts) in KEPT_TRIMS {
+        let printed = lowered(source);
+        let f = function(&printed, "f");
+        assert_eq!(f.matches("trim").count(), trims, "{point}: trims in\n{f}");
+        let mut from = 0;
+        for part in parts {
+            let at = f[from..]
+                .find(part)
+                .unwrap_or_else(|| panic!("{point}: `{part}` after byte {from} of\n{f}"));
+            from += at + part.len();
+        }
+    }
+}

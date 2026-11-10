@@ -1277,7 +1277,7 @@ fn trim_should_call_one_function_per_type() {
     let context = Context::create();
     let module = compiled(
         &context,
-        "class Holder {\n    mut xs: [i64]\n    mut s: string\n}\n\nfn first(h: Holder, xs: [i64]) {\n    h.xs = xs[..1]\n}\n\nfn second(h: Holder, xs: [i64]) {\n    h.xs = xs[..2]\n}\n\nfn text(h: Holder, s: string) {\n    h.s = s[..1]\n}\n\nfn main(args: [string]) {\n    let n = args.len()\n    let h = Holder(xs: [0; n + 1], s: \"abc\")\n    let xs = [7; n + 400]\n    first(h, xs)\n    second(h, xs)\n    text(h, \"{n} and more\")\n    print(h.xs.len() + h.s.len())\n}",
+        "class Holder {\n    mut xs: [i64]\n    mut s: string\n}\n\nfn first(h: Holder, xs: [i64]) {\n    h.xs = xs[..1]\n}\n\nfn second(h: Holder, xs: [i64]) {\n    h.xs = xs[..2]\n}\n\nfn text(h: Holder, s: string) {\n    h.s = s[..1]\n}\n\nfn main(args: [string]) {\n    let n = args.len()\n    let h = Holder(xs: [0; n + 1], s: \"abc{n}\")\n    let xs = [7; n + 400]\n    first(h, xs)\n    second(h, xs)\n    text(h, \"{n} and more\")\n    print(h.xs.len() + h.s.len())\n}",
     );
     let ir = module.print_to_string().to_string();
     for (symbol, calls) in FUNCTIONS {
@@ -4543,6 +4543,24 @@ fn partition_should_make_its_array_unique_once() {
     );
     let bounds = partition.matches("call void @sisu_panic_bounds(").count();
     assert!(bounds <= 2, "{bounds} bounds checks in\n{partition}");
+}
+
+/// A string literal at a trim point is not trimmed: its value covers its block, so its trim never
+/// copies. The global of the literal is writable. So `-O2` cannot fold the size test of a trim,
+/// and a table of literals would keep one call each.
+#[test]
+fn a_table_of_string_literals_should_call_no_trim_at_o2() {
+    let context = Context::create();
+    let module = compiled(
+        &context,
+        "fn table() -> [string] {\n    [\"w0\", \"w1\", \"w2\", \"w3\"]\n}\n\nfn main() {\n    print(table().len())\n}",
+    );
+    keep_functions(&module, "table");
+    let machine = target_machine(OptLevel::O2).expect("the host is a target");
+    optimize(&module, &machine, OptLevel::O2, None).expect("the module should optimize");
+    let ir = module.print_to_string().to_string();
+    let table = function_body(&ir, "@sisu.table(");
+    assert!(!table.contains("@sisu_rc.trim.string"), "{table}");
 }
 
 /// A tail call whose result is an array is a loop at `-O2`. Both branches of the `if` join in
