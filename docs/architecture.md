@@ -165,11 +165,11 @@ required type, a poisoned context (`Poisoned`), or a hint. The siblings of a val
 hint, and an operator can hint its operands. A hint holds at one value and
 the parts that give the value. An operand does not see the hint of the value that holds it. A
 mistake that follows from a poisoned context waits for the next run.
-`check/reports.rs` holds `Diagnostics`, the checker's list of reports, and `Reported`, a
+`check/reports.rs` holds `Diagnostics`, the checker's list of diagnostics, and `Reported`, a
 zero-size token. Only an error and `proof` make one, and each poisoned value and each poisoned
 item holds one. `proof` is a promise of an error. The end of the check verifies in a debug build
 that each promise has an error in the list or a parser mark. A rollback cuts and puts back the
-promises with the reports, and the list has no `DerefMut`.
+promises with the diagnostics, and the list has no `DerefMut`.
 `check/pattern.rs` checks each pattern against the type at its position and
 declares the names it binds. `if let` on an enum becomes a `match` whose `_`
 arm is the `else`, and `while let` on one a loop around a `match` whose `_` arm
@@ -269,8 +269,8 @@ type apart from the poisoned part and untyped otherwise. The goal is that
 one mistake gives only true errors
 ([ADR 0049](adr/0049-one-name-resolver-and-one-poison-rule.md)). A call with a
 failed part keeps the result type of its callee in one case. The receiver or a written type
-argument must bind each parameter that the type names. Otherwise its result is untyped. Then the checker still checks the code that uses a
-typed value. A program with
+argument must bind each parameter that the type names. Otherwise its result is untyped. Then
+the checker still checks the code that uses a typed value. A program with
 no errors comes out as the typed tree, `tir`, which `mir` is built from. A type
 in `tir` is a 4-byte `Type` handle into one table (`types.rs`), as a name is a
 `Symbol`; its `kind()` gives the structure, and equal structures get the same

@@ -36,9 +36,9 @@ flag on `Poisoned` is gone: a poisoned value is typed or untyped by its form.
 
 `Poisoned::new`, `typed` and `untyped` each take a token, so no poisoned value
 exists without one. `Diagnostics` has no `DerefMut`: code reads the list, and
-`rewrite` and `strip_fixes_since` change a report in place. A rollback (`mark`,
-`drop_since`, `take_since` with `Held`, `restore` and `insert_at`) cuts and puts
-back the promises with the reports. `promises_kept(broken)` is true when no
+`rewrite` and `strip_fixes_since` change a diagnostic in place. A rollback (`mark`,
+`drop_since`, `take_since` with `Held` and `restore`) cuts and puts back the
+promises with the diagnostics. `insert_at` adds an error at a mark. `promises_kept(broken)` is true when no
 promise exists, the list holds an error, or the parser marked one. `check`
 asserts it with `debug_assert!` before `finish`.
 
