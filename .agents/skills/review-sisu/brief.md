@@ -258,3 +258,5 @@ Your final reply is the report. It has these parts, in this order:
 3. `Checked and clean:` one line per item of the checks above that found
    nothing, with what you looked at.
 4. `Unverified:` each claim you could not check, and why.
+5. In a re-review, `Outside this round:` each defect in code that this
+   round did not change.

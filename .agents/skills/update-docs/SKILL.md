@@ -20,19 +20,22 @@ Run plain git from the repository root, one command per call. Start with
 
 Before a pull request, run `git merge-tree --write-tree --name-only origin/main HEAD`.
 Exit status 1 means the branch conflicts with `main`, and the output names the
-files. Rebase onto `origin/main` first, then document the rebased code: the docs
-describe what merges, and a rebase can change it.
+files. Bring `origin/main` in first, as `review-sisu` (step 1.5) says: rebase
+when the commits replay cleanly. When a rebase stops on a conflict, run
+`git rebase --abort`, then merge. Then document the result: the docs describe
+what merges.
 
 - Before a pull request: `git diff --stat origin/main...HEAD`, then
   `git diff origin/main...HEAD -- <path>` for each file that matters.
 - For a branch that is not checked out: the same, with `<branch>` for
   `HEAD`. `git show <branch>:<path>` reads a file as that branch has it.
 - After a merge: find the merge commit with
-  `gh pr view <number> --json mergeCommit`, then
-  `git diff <merge-sha>^1 <merge-sha> -- <path>`.
+  `gh api repos/sisu-lang/sisu/pulls/<number> --jq .merge_commit_sha`, with
+  the sandbox off, then `git diff <merge-sha>^1 <merge-sha> -- <path>`.
 
-If the pull request exists, read its body with `gh pr view <number>`. It
-names what is out of scope and what does not work yet.
+If the pull request exists, read its body with
+`gh api repos/sisu-lang/sisu/pulls/<number> --jq .body`. It names what is
+out of scope and what does not work yet.
 
 ## 2. Map the change to the docs
 
