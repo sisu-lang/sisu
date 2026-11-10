@@ -118,8 +118,10 @@ fn operands_spill_before_an_exit() {
 }
 
 /// A literal whose expected type failed still types and joins its elements: only what takes
-/// its type from the context is left quiet. A mismatch that involves a `loop` waits (see
-/// `tests/expectation.rs`). Each quiet row checks clean with an array type written for `Bad`.
+/// its type from the context is left quiet. With a `loop` element, a mismatch between the
+/// elements waits. A mismatch inside one element, such as an `if` with no `loop`, is still
+/// reported (see `tests/expectation.rs`). Each quiet row checks clean with an array type written
+/// for `Bad`.
 #[test]
 fn a_literal_in_a_failed_context_should_still_join_its_elements() {
     let quiet = [

@@ -147,8 +147,9 @@ fn a_later_mistake_in_a_failed_array_should_wait() {
     error_rows(&rows);
 }
 
-/// GIVEN an array whose context failed, and a `loop` element that does not join: with its own
-/// `break` values, with a sibling element or with the other branch of an `if`
+/// GIVEN an array whose context failed, and a `loop` element
+/// AND a mismatch between its `break` values, between the elements, or between the branches of
+/// an `if` that holds it
 /// WHEN the program is checked
 /// THEN it reports the failure only, and the mismatch waits for the next run
 #[test]
