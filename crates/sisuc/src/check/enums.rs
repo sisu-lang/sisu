@@ -483,9 +483,9 @@ impl Checker<'_> {
             site.angles,
         );
         let (args, list, ty) = self.generic_call(span, &sig, written, args, site.expected)?;
-        let ty = self.built_type(ty, span)?;
         // The bounds that the alias's body puts on its parameters, on what they are bound to.
         let held = through.map_or(Ok(()), |t| self.use_checks(&t.checks, list, span));
+        let ty = self.built_type(ty, held, span)?;
         // A mismatched argument is one that failed.
         let refused = labeled.or_else(|| held.err());
         match args.into_iter().collect::<Result<Vec<_>, Poisoned>>() {

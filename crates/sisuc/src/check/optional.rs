@@ -135,10 +135,9 @@ impl Checker<'_> {
                 let written = (site.written, site.angles);
                 let (args, list, found) =
                     self.generic_call(span, &sig, written, args, site.expected)?;
-                let found = self.built_type(found, span)?;
-                if let Some(t) = open {
-                    (self.use_checks(&t.checks, list, span)).map_err(Poisoned::untyped)?;
-                }
+                let held = open.map_or(Ok(()), |t| self.use_checks(&t.checks, list, span));
+                let found = self.built_type(found, held, span)?;
+                held.map_err(Poisoned::untyped)?;
                 let arg = (args.into_iter().next())
                     .expect("`Some` should have the one argument it checked");
                 (arg, found, list)
@@ -211,8 +210,9 @@ impl Checker<'_> {
                 let written = (site.written, site.angles);
                 let (_, list, found) =
                     self.generic_call(span, &sig, written, &[], site.expected)?;
-                let found = self.built_type(found, span)?;
-                (self.use_checks(&t.checks, list, span)).map_err(Poisoned::untyped)?;
+                let held = self.use_checks(&t.checks, list, span);
+                let found = self.built_type(found, held, span)?;
+                held.map_err(Poisoned::untyped)?;
                 self.none(span, Expectation::Required(found))
             }
             (Symbol::NONE, None) => {

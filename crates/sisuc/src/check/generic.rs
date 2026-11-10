@@ -2182,9 +2182,20 @@ impl Checker<'_> {
     }
 
     /// The type `ty` that a generic construction that checked builds. `None` when it names an
-    /// associated type that has no choice: the conformance reports that, and gives no token.
-    pub(super) fn built_type(&mut self, ty: Option<Type>, at: Span) -> Result<Type, Poisoned> {
-        ty.ok_or_else(|| Poisoned::untyped(self.proof(at))) // proof: declaration
+    /// associated type that has no choice. `held` is the result of the alias checks of the
+    /// construction, which run first: when they failed, their token is the one of the type.
+    /// Else the conformance of a bound reports the type, and gives no token.
+    pub(super) fn built_type(
+        &mut self,
+        ty: Option<Type>,
+        held: Result<(), Reported>,
+        at: Span,
+    ) -> Result<Type, Poisoned> {
+        let Some(ty) = ty else {
+            let reported = held.err().unwrap_or_else(|| self.proof(at)); // proof: declaration
+            return Err(Poisoned::untyped(reported));
+        };
+        Ok(ty)
     }
 
     /// The poison of a failed call to a callee with `declared` type parameters and the result

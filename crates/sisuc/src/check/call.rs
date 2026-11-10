@@ -1228,12 +1228,12 @@ impl Checker<'_> {
                 site.angles,
             );
             let (args, list, ty) = self.generic_call(span, &sig, written, args, site.expected)?;
-            let ty = self.built_type(ty, span)?;
             // The bounds that the alias's body puts on its parameters, on what they are bound to.
             let held = match through {
                 Some(t) if !quiet => self.use_checks(&t.checks, list, span),
                 _ => Ok(()),
             };
+            let ty = self.built_type(ty, held, span)?;
             return match (args.into_iter().collect::<Result<Vec<_>, Poisoned>>(), held) {
                 (Ok(args), Ok(())) => {
                     Ok(self.spilled(span, ty, args, |args| tir::ExprKind::New { class, args }))
