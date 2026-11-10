@@ -1499,7 +1499,8 @@ impl Checker<'_> {
         self.diagnostics.warn(kind);
     }
 
-    /// Promises an error at `at`, where no list holds it yet.
+    /// Records a promise made at `at`. An error in the list keeps it, wherever the error is, and
+    /// so does a parser mark (see `Diagnostics::promises_kept`).
     #[expect(
         dead_code,
         reason = "the poisoned values hold its token from the next change on"

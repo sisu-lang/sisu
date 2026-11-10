@@ -250,9 +250,9 @@ impl Checker<'_> {
         if result.1 != Some(Type::STRING) {
             return result;
         }
-        // The first check is dropped, and its locals, uninferred literals, misfits and findings
-        // with it, so none is left that nothing binds, and none is judged twice.
-        // The result of the first check is dropped, so no value outlives the cut reports.
+        // The first check is dropped with its result, locals, uninferred literals, misfits and
+        // findings. So none is left that nothing binds, none is judged twice, and no value
+        // outlives the cut reports.
         self.diagnostics.drop_since(diagnostics);
         if !self.body.uninferred.is_empty() {
             for local in locals..self.body.locals.len() {
@@ -500,8 +500,8 @@ impl Checker<'_> {
                 // it again with none.
                 ty = Some(Type::STRING);
                 if let Some(other) = before.take() {
-                    // All that is deferred is that operand's, the first of two. The operand is
-                    // replaced below, so no value outlives the reports that are cut.
+                    // All that is deferred is that operand's, the first of two. It becomes `Error`
+                    // below, so no value outlives the dropped reports.
                     deferred.clear();
                     // Beside the first operand is this `string`, which `ty` now is.
                     let d = self.concat_mismatch(operands[0], other, operands, false, ty);
@@ -583,13 +583,18 @@ impl Checker<'_> {
         }
         // The operator is rejected whatever stands beside the `char`, unless that is an `Error`:
         // then the operator may be the mistake, as for any other type, and the sum is `Error`.
-        if !(arithmetic && checked.iter().any(|c| type_of(c) == Some(Type::CHAR))) {
-            self.diagnostics.restore(deferred);
-        } else if failed {
-            for c in &mut checked {
-                *c = Err(Poisoned::error());
+        if arithmetic && checked.iter().any(|c| type_of(c) == Some(Type::CHAR)) {
+            // The caller reports the `char` alone and gives a new poisoned value, so no value
+            // outlives the dropped reports.
+            drop(deferred);
+            if failed {
+                for c in &mut checked {
+                    *c = Err(Poisoned::error());
+                }
+                ty = None;
             }
-            ty = None;
+        } else {
+            self.diagnostics.restore(deferred);
         }
         (checked, ty, mismatched)
     }
@@ -621,6 +626,9 @@ impl Checker<'_> {
         // Only a compound assignment's number gets here with a `char` to its right.
         if want != Type::BOOL && type_of(&checked) == Some(Type::CHAR) {
             self.error(DiagnosticKind::ArithmeticOnChar { at: op_span });
+            // The `char` is reported alone and the result is a new poisoned value, so no value
+            // outlives the dropped reports.
+            drop(held);
             return Err(Poisoned::error());
         }
         self.diagnostics.restore(held);

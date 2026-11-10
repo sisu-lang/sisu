@@ -1,8 +1,8 @@
 //! The checker's list of reports, and the token that proves that one was made.
 //!
-//! Only `error` and `proof` make a [`Reported`]. A promise (`proof`) says that an error is
-//! reported somewhere that no list holds yet. At the end of the check, `promises_kept` finds a
-//! promise that no error backs.
+//! Only `error` and `proof` make a [`Reported`]. A promise (`proof`) says that the program has an
+//! error. An error anywhere in the program keeps it, and so does a parser mark. At the end of the
+//! check, `promises_kept` finds a promise that neither keeps.
 
 use crate::diagnostic::{Code, Diagnostic, Severity};
 use crate::source::Span;
@@ -34,6 +34,7 @@ pub(super) struct Mark {
 }
 
 /// The reports and the promises that `take_since` cut. `restore` puts them back.
+#[must_use]
 #[derive(Default)]
 pub(super) struct Held {
     reports: Vec<Diagnostic>,
@@ -70,8 +71,13 @@ impl Held {
 }
 
 impl Diagnostics {
-    fn add(&mut self, d: Diagnostic) {
+    /// Counts `d` if it is an error.
+    fn count(&mut self, d: &Diagnostic) {
         self.errors += u32::from(d.severity() == Severity::Error);
+    }
+
+    fn add(&mut self, d: Diagnostic) {
+        self.count(&d);
         self.list.push(d);
     }
 
@@ -95,7 +101,8 @@ impl Diagnostics {
         self.add(d);
     }
 
-    /// Promises that an error is reported at `at`, where no list holds it yet.
+    /// Records a promise made at `at`. An error in the list keeps it, wherever the error is, and
+    /// so does a parser mark (see `promises_kept`).
     #[cfg_attr(
         not(test),
         expect(
@@ -145,7 +152,7 @@ impl Diagnostics {
 
     /// Adds `d` at `mark`, before the reports that came after it.
     pub(super) fn insert_at(&mut self, mark: Mark, d: Diagnostic) {
-        self.errors += u32::from(d.severity() == Severity::Error);
+        self.count(&d);
         self.list.insert(mark.reports, d);
     }
 

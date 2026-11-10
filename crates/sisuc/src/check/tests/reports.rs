@@ -87,3 +87,22 @@ fn take_and_restore_should_keep_the_order() {
     assert_eq!(places(&list), before);
     assert_eq!(list.errors(), 5);
 }
+
+#[test]
+fn insert_at_should_put_a_report_at_its_mark_and_count_it() {
+    // A push would put the report last. The report goes before the one that follows the mark.
+    let mut list = Diagnostics::default();
+    list.error(error_at(1));
+    let mark = list.mark();
+    list.error(error_at(3));
+    list.insert_at(mark, error_at(2));
+    assert_eq!(
+        places(&list),
+        [
+            (Code::SelfOutsideMethod, 1),
+            (Code::SelfOutsideMethod, 2),
+            (Code::SelfOutsideMethod, 3),
+        ]
+    );
+    assert_eq!(list.errors(), 3);
+}
