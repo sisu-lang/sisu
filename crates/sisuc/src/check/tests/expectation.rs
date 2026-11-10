@@ -147,11 +147,12 @@ fn a_later_mistake_in_a_failed_array_should_wait() {
     error_rows(&rows);
 }
 
-/// GIVEN an array whose context failed, and a branch or a `loop` element that does not join
+/// GIVEN an array whose context failed, and a `loop` element that does not join: with its own
+/// `break` values, with a sibling element or with the other branch of an `if`
 /// WHEN the program is checked
 /// THEN it reports the failure only, and the mismatch waits for the next run
 #[test]
-fn a_mismatch_in_a_branch_or_loop_of_a_failed_array_should_wait() {
+fn a_mismatch_with_a_loop_in_a_failed_array_should_wait() {
     let rows: Vec<ErrorRow<'_>> = vec![
         (
             "branch loop",

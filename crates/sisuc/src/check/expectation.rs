@@ -14,15 +14,16 @@ pub(super) enum Expectation {
     Poisoned,
     /// The context expects this type.
     Required(Type),
-    /// The siblings that the value joins give it `want`. Siblings are the branches before it and
-    /// the earlier values of its loop. They are also the other side of its `==`, the left side of
-    /// its `??`, and an element beside an `any` element (`value_beside`). The context did not
-    /// write it. `want` steers inference as a required type does. But the value does not convert
-    /// to an `any` type for it. A join in the value takes `siblings` as its first anchor, not as
-    /// its expected type (see `split_hint`). `siblings` is the type of the siblings. A value part
-    /// of the value keeps the hint. Such a part is the tail of a block or the argument of a
-    /// hinted `Some`. It is also an argument that a hinted call's context bound, or a `break`
-    /// value of a hinted loop. An operand takes `plain`.
+    /// The siblings that the value joins give it `want`, the type of the siblings (`siblings`).
+    /// Siblings are the branches before it and the earlier values of its loop. They are also the
+    /// other side of its `==`, the left side of its `??`, and an element beside an `any` element
+    /// (`value_beside`). The default `i64` of an arithmetic operator is a hint to its operands.
+    /// The context did not write it. `want` steers inference as a required type does. But the
+    /// value does not convert to an `any` type for it. A join in the value takes `siblings` as
+    /// its first anchor, not as its expected type (see `split_hint`). A value part of the value
+    /// keeps the hint. Such a part is the tail of a block, a branch of a hinted `if` or `match`,
+    /// or the argument of a hinted `Some`. It is also an argument that a hinted call's context
+    /// bound, or a `break` value of a hinted loop. An operand takes `plain`.
     Hint { want: Type, siblings: Type },
 }
 

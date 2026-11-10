@@ -161,9 +161,9 @@ a path call share one. The module also poisons a rejected or broken item, so a u
 no error of its own
 ([ADR 0049](adr/0049-one-name-resolver-and-one-poison-rule.md)).
 `check/expectation.rs` holds `Expectation`, what the context expects of a value: nothing, a
-required type, a failed context (`Poisoned`), or a hint. The siblings of a value give it a hint.
-A hint holds at one value and the parts that give the value, and an operand does not see it. A
-mistake that follows from a failed context waits for the next run.
+required type, a poisoned context (`Poisoned`), or a hint. The siblings of a value give it a hint.
+A hint holds at one value and the parts that give the value. An operand does not see the hint of
+the value that holds it. A mistake that follows from a poisoned context waits for the next run.
 `check/pattern.rs` checks each pattern against the type at its position and
 declares the names it binds. `if let` on an enum becomes a `match` whose `_`
 arm is the `else`, and `while let` on one a loop around a `match` whose `_` arm
