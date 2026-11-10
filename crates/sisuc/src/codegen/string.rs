@@ -128,37 +128,75 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.runtime("sisu_realloc")
     }
 
-    /// `lhs + rhs`, which takes both owned references and returns an owned one. `lhs` has a
-    /// block with a header `len` of set bytes, and `needed` is `lhs.len() + rhs.len()`. There are
-    /// three ways, as for a `push`:
+    /// `lhs + rhs`, which takes both owned references and returns an owned one. The ways of the
+    /// join are in the helper `@sisu_rc.concat.string(lhs, rhs_len)`, which `define_string_concat`
+    /// writes: one call for each `+`, so that the `phi` nodes of the ways do not chain through the
+    /// joins of a function (#633). This caller reads the two lengths, calls the helper, copies the
+    /// bytes of `rhs` to where the helper says, and releases `rhs`.
+    ///
+    /// The helper makes room for `rhs_len` more bytes and stores the new length in the header.
+    /// `lhs` has a block with a header `len` of set bytes, and `needed` is
+    /// `lhs.len() + rhs.len()`. There are three ways, as for a `push`:
     /// 1. The count is 1, `lhs` ends at the block's last set byte (`data + len` is where the
     ///    header's `len` ends), and the header's `len + rhs.len()` is at most the capacity: the
     ///    bytes of `rhs` go in place.
     /// 2. The count is 1, `lhs` covers its block, and the block is full: the block is
     ///    reallocated to `max(needed, 2 * cap)` bytes, and the bytes of `rhs` go in place.
-    /// 3. Otherwise a new block receives both byte runs, and `lhs` is released. Its capacity is
-    ///    `needed` when `lhs` covers its shared block, else `2 * needed`, so that an `lhs` that
-    ///    does not cover its block, such as a substring, takes path 1 on the appends that follow.
+    /// 3. Otherwise a new block receives the bytes of `lhs`, and `lhs` is released. The capacity
+    ///    is `needed` when `lhs` covers its shared block, else `2 * needed`. So an `lhs` that
+    ///    does not cover its block, such as a substring, takes path 1 on the appends that
+    ///    follow. The bytes of `rhs` go after them.
     ///
     /// Either way `rhs` is released last. No way writes over a byte that another value can see.
     /// The result starts where `lhs` did in paths 1 and 2, and at the start of the new block in
     /// path 3.
+    ///
+    /// The helper releases `lhs` on path 3 before the caller reads `rhs`. `rhs` is an owned
+    /// reference, so its block stays alive when it is the block of `lhs` (`s + s`). On paths 1
+    /// and 2 the count of `lhs` is 1, so `lhs` is not the block of `rhs`. A grow leaves `rhs` in
+    /// place. Nothing runs between the store of the new length and the copy of the bytes.
+    pub(super) fn concat(
+        &self,
+        lhs: BasicValueEnum<'ctx>,
+        rhs: BasicValueEnum<'ctx>,
+    ) -> BasicValueEnum<'ctx> {
+        let (lhs_len, rhs_len) = (self.value_len(lhs), self.value_len(rhs));
+        let mut args = self.split(Type::STRING, lhs);
+        args.push(rhs_len.into());
+        let joined = self
+            .builder
+            .build_call(self.helper(Helper::Concat, Type::STRING), &args, "joined")
+            .expect(POSITIONED)
+            .try_as_basic_value()
+            .basic()
+            .expect("`@sisu_rc.concat.string` should return the value, as `helper` declares it");
+        self.copy_bytes(
+            self.string_byte(self.value_data(joined), lhs_len),
+            self.value_data(rhs),
+            rhs_len,
+        );
+        self.release(rhs, Type::STRING);
+        joined
+    }
+
+    /// `@sisu_rc.concat.string(lhs, rhs_len)`: the three ways of `concat`. It returns the value of
+    /// `lhs`'s bytes in a block with room for `rhs_len` more, and has stored the new length in
+    /// that block's header. The call consumes `lhs`.
     #[expect(
         clippy::too_many_lines,
         reason = "the three ways of a join read best in one place"
     )]
-    pub(super) fn concat(
-        &self,
-        lhs_value: BasicValueEnum<'ctx>,
-        rhs: BasicValueEnum<'ctx>,
-    ) -> BasicValueEnum<'ctx> {
+    fn define_string_concat(&self, function: FunctionValue<'ctx>) {
+        self.builder
+            .position_at_end(self.context.append_basic_block(function, "entry"));
+        let lhs_value = self.joined_params(function, 0, &[Type::STRING])[0];
+        let rhs_len = function
+            .get_last_param()
+            .expect("the join helper should have a parameter for the length of `rhs`")
+            .into_int_value();
         let i64_type = self.context.i64_type();
         let lhs = self.value_block(lhs_value);
-        let (data, len, rhs_len) = (
-            self.value_data(lhs_value),
-            self.value_len(lhs_value),
-            self.value_len(rhs),
-        );
+        let (data, len) = (self.value_data(lhs_value), self.value_len(lhs_value));
         // Both strings exist in memory, which on every host Sisu supports is below 2^57 bytes,
         // so no length, capacity or block size here can overflow.
         let needed = self
@@ -286,13 +324,12 @@ impl<'ctx> Codegen<'ctx, '_> {
         let set = self.builder.build_phi(i64_type, "set").expect(POSITIONED);
         set.add_incoming(&[(&raised, ends), (&raised, grow), (&needed, copied)]);
         let start = start.as_basic_value().into_pointer_value();
-        self.copy_bytes(self.string_byte(start, len), self.value_data(rhs), rhs_len);
         self.store(
             self.string_field(result.as_basic_value().into_pointer_value(), LEN),
             set.as_basic_value(),
         );
-        self.release(rhs, Type::STRING);
-        self.make_value(result.as_basic_value().into_pointer_value(), start, needed)
+        let joined = self.make_value(result.as_basic_value().into_pointer_value(), start, needed);
+        self.builder.build_return(Some(&joined)).expect(POSITIONED);
     }
 
     /// A new string holding a copy of the `len` bytes at `bytes`, which are valid UTF-8.
@@ -645,6 +682,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             Helper::Drop => self.define_string_drop(function),
             Helper::Eq => self.define_string_eq(function),
             Helper::Trim => self.define_string_trim(function),
+            Helper::Concat => self.define_string_concat(function),
             Helper::Retain
             | Helper::Release
             | Helper::Unique

@@ -1615,14 +1615,17 @@ fn string_drop_frees_header_and_capacity() {
 }
 
 /// A string append that outgrows its block reallocates it from the size it was allocated with:
-/// the header plus the old capacity, not the new one.
+/// the header plus the old capacity, not the new one. The join helper does the reallocation.
 #[test]
-fn string_grow_reallocates_from_the_old_capacity() {
+fn string_grow_should_reallocate_from_the_old_capacity() {
     let context = Context::create();
     let ir = compiled(&context, STRING_PROGRAM)
         .print_to_string()
         .to_string();
-    let body = function_body(&ir, "define internal void @sisu.main(");
+    let body = function_body(
+        &ir,
+        "define internal { ptr, ptr, i64 } @sisu_rc.concat.string(",
+    );
     let line = body
         .split_once("call ptr @sisu_realloc(ptr ")
         .and_then(|(_, rest)| rest.lines().next())
