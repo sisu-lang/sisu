@@ -10,6 +10,7 @@ use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use super::expr::{fits, local};
 use super::generic::mark;
 use super::place::{Chain, Change, CheckedPlace, Path, Root, build, place_root};
+use super::reports::Reported;
 use super::{Checked, Checker, Expectation, Poisoned, SelfType, block_expr, type_of};
 use crate::ast;
 use crate::diagnostic::{
@@ -349,8 +350,8 @@ impl Checker<'_> {
             // the root is never reassigned.
             self.stamp_push(arg);
             let (ty, failed) = self.checked_alone(arg);
-            if failed {
-                return Ok(CheckedPlace::failed());
+            if failed.is_some() {
+                return Ok(CheckedPlace::failed(failed));
             }
             let slice = if ty == Some(Type::STRING) {
                 SliceOf::String
@@ -362,8 +363,8 @@ impl Checker<'_> {
         if matches!(arg.kind, ast::ExprKind::SelfValue) {
             // Outside a method there is no `self` to pass: E0041 says so.
             if self.body.self_type == SelfType::Absent {
-                self.checked_alone(arg);
-                return Ok(CheckedPlace::failed());
+                let (_, failed) = self.checked_alone(arg);
+                return Ok(CheckedPlace::failed(failed));
             }
             let class = matches!(
                 self.body.self_type.known().map(Type::kind),
@@ -377,9 +378,11 @@ impl Checker<'_> {
             && self.names.constant(name).is_none()
             && self.is_function(name)
         {
-            // A function, or a place with a function at its root, is a value: E0105 says so.
-            self.checked_alone(arg);
-            return Ok(CheckedPlace::failed());
+            // A function, or a place with a function at its root, is a value: E0105 says so. A
+            // broken function holds the token of its own error, which the count can miss.
+            let (_, failed) = self.checked_alone(arg);
+            let failed = failed.or_else(|| self.use_poison(name, root.span));
+            return Ok(CheckedPlace::failed(failed));
         }
         if !is_place(arg) {
             // A value that is not a place is never one: E0169 does not depend on its type or its
@@ -404,18 +407,25 @@ impl Checker<'_> {
         Ok(place)
     }
 
-    /// The type of the expression `arg`, checked on its own for its own mistakes, and whether
-    /// it failed. The range arm uses both. The `get` of a string uses only whether it failed.
+    /// The type of the expression `arg`, checked on its own for its own mistakes, and the token
+    /// of its failure, when it failed. The range arm uses both. The `get` of a string uses only
+    /// the token.
     /// The function, `self` and temporary arms use only the check: the function and `self` arms
     /// report its errors alone, and the temporary arm adds E0169.
     ///
     /// It failed when it reported an error. It failed too when its type is unknown and an error
     /// was reported before it: its type comes from a local that failed. With no earlier error, an
     /// unknown type is no failure, so the report is made.
-    pub(super) fn checked_alone(&mut self, arg: &ast::Expr) -> (Option<Type>, bool) {
+    pub(super) fn checked_alone(&mut self, arg: &ast::Expr) -> (Option<Type>, Option<Reported>) {
         let errors = self.diagnostics.errors();
-        let ty = type_of(&self.expr(arg, Expectation::Poisoned));
+        let checked = self.expr(arg, Expectation::Poisoned);
+        let ty = type_of(&checked);
         let failed = self.diagnostics.errors() > errors || ty.is_none() && errors > 0;
+        let failed = failed.then(|| match checked {
+            Err(poisoned) => poisoned.reported(),
+            // An error inside a value that did not fail: the count holds it.
+            Ok(_) => self.proof(arg.span), // proof: quiet reader
+        });
         (ty, failed)
     }
 
@@ -468,33 +478,53 @@ impl Checker<'_> {
     }
 
     /// The place of the argument `arg`, which is passed `mut`, with E0169 reported when it is
-    /// none. `None` when it is none, or a part of it failed.
-    fn mut_place_reported(&mut self, arg: &ast::Expr) -> Option<CheckedPlace> {
+    /// none. `Err` holds the token of the E0169, or of the part of the place that failed.
+    fn mut_place_reported(&mut self, arg: &ast::Expr) -> Result<CheckedPlace, Reported> {
         match self.mut_place(arg) {
+            Ok(place) if place.path.is_some() => Ok(place),
             // A part of it failed, and reported itself.
-            Ok(place) => place.path.is_some().then_some(place),
+            Ok(place) => Err(place
+                .reported
+                .expect("a place with no path should have failed")),
             Err((cause, _)) => {
                 let name = self.refused_name(arg);
-                self.error(DiagnosticKind::MutArgumentNotPlace {
+                Err(self.error(DiagnosticKind::MutArgumentNotPlace {
                     at: arg.span,
                     name,
                     cause,
-                });
-                None
+                }))
             }
+        }
+    }
+
+    /// The type of the parameter, `want`, and the type of the place of a `mut` argument at `at`.
+    /// `Err` holds the token of the error that left one of them with no type.
+    fn mut_arg_types(
+        &mut self,
+        want: Option<Type>,
+        place: &CheckedPlace,
+        at: Span,
+    ) -> Result<(Type, Type), Reported> {
+        match (want, place.ty) {
+            (Some(want), Some(have)) => Ok((want, have)),
+            (_, None) => Err(place
+                .reported
+                .expect("a place with no type should have failed")),
+            // A parameter with no type has the error of its declaration.
+            (None, Some(_)) => Err(self.proof(at)), // proof: declaration
         }
     }
 
     /// Reports E0170 for the `mut` argument `arg` at place `at`, whose place has the types of
     /// `shape` and whose parameter has the type `want` once inference is done. `declared_as` is
-    /// the parameter's type as it is declared.
+    /// the parameter's type as it is declared. The proof of the report.
     pub(super) fn report_mut_type(
         &mut self,
         arg: &ast::Expr,
         shape: &PlaceShape,
         (site, at): (&MutSite<'_>, usize),
         (want, declared_as): (Type, Type),
-    ) {
+    ) -> Reported {
         let name = site.names.get(at).map(|n| n.name.to_string());
         let declared = site
             .names
@@ -556,7 +586,7 @@ impl Checker<'_> {
             promotes,
             chain,
         };
-        self.error(d);
+        self.error(d)
     }
 
     /// The temp that stands for the `mut` argument `arg` in its call, and the part that the call
@@ -602,16 +632,15 @@ impl Checker<'_> {
         want: Option<Type>,
         (site, parts): (&MutSite<'_>, &mut MutParts),
     ) -> Checked {
-        let Some(mut place) = self.mut_place_reported(&arg.value) else {
-            return Err(Poisoned::error());
-        };
-        let (Some(want), Some(have)) = (want, place.ty) else {
-            return Err(Poisoned::error());
-        };
+        let mut place = self
+            .mut_place_reported(&arg.value)
+            .map_err(Poisoned::untyped)?;
+        let (want, have) =
+            (self.mut_arg_types(want, &place, arg.value.span)).map_err(Poisoned::untyped)?;
         if place.chain.is_some() || want != have {
             let shape = place.shape(have);
-            self.report_mut_type(&arg.value, &shape, (site, at), (want, want));
-            return mark((Err(Poisoned::error()), true));
+            let reported = self.report_mut_type(&arg.value, &shape, (site, at), (want, want));
+            return mark((Err(Poisoned::untyped(reported)), true));
         }
         Ok(self.mut_slot(arg, place, parts))
     }
@@ -629,21 +658,22 @@ impl Checker<'_> {
         (pattern, site): (Option<Type>, &MutSite<'_>),
         parts: &mut MutParts,
     ) -> Checked {
-        let Some(mut place) = self.mut_place_reported(&arg.value) else {
-            return Err(Poisoned::error());
-        };
-        let (Some(pattern), Some(have)) = (pattern, place.ty) else {
-            return Err(Poisoned::error());
-        };
+        let mut place = self
+            .mut_place_reported(&arg.value)
+            .map_err(Poisoned::untyped)?;
+        let (pattern, have) =
+            (self.mut_arg_types(pattern, &place, arg.value.span)).map_err(Poisoned::untyped)?;
         let shape = place.shape(have);
         if shape.chain.is_some() {
             call.mut_shapes.push((at, shape));
-            return mark((Err(Poisoned::error()), true));
+            // `mut_final` reports the place against the parameter's type once inference is done.
+            let reported = self.proof(arg.value.span); // proof: held misfit
+            return mark((Err(Poisoned::untyped(reported)), true));
         }
         if !self.bind_param(call, pattern, have, arg.value.span) {
             let want = self.printed(&call.bindings, pattern);
-            self.report_mut_type(&arg.value, &shape, (site, at), (want, pattern));
-            return mark((Err(Poisoned::error()), true));
+            let reported = self.report_mut_type(&arg.value, &shape, (site, at), (want, pattern));
+            return mark((Err(Poisoned::untyped(reported)), true));
         }
         call.mut_shapes.push((at, shape));
         Ok(self.mut_slot(arg, place, parts))
@@ -668,15 +698,20 @@ impl Checker<'_> {
         if arg.label.is_some() || !is_place(&arg.value) {
             return None;
         }
+        let mut failed = None;
         let check = match self.mut_place(&arg.value) {
-            Ok(place) => match place.path.as_ref().map(|path| self.mut_key(path)) {
-                Some(key) => MarkCheck::Place(Kept {
-                    key,
-                    ty: place.ty,
-                    chain: place.chain.is_some(),
-                }),
-                None => MarkCheck::Failed,
-            },
+            Ok(place) => {
+                if let Some(key) = place.path.as_ref().map(|path| self.mut_key(path)) {
+                    MarkCheck::Place(Kept {
+                        key,
+                        ty: place.ty,
+                        chain: place.chain.is_some(),
+                    })
+                } else {
+                    failed = place.reported;
+                    MarkCheck::Failed
+                }
+            }
             Err((cause, kept)) => MarkCheck::NotPlace(cause, kept),
         };
         // A `let` local or a field that cannot change binds as a place does: with `mut`, it would.
@@ -697,9 +732,15 @@ impl Checker<'_> {
         {
             let _ = self.bind_param(call, pattern, *have, arg.value.span);
         }
+        // A place that failed has reported itself. Else E0166, which `marks` reports, is the
+        // report.
+        let reported = match (&check, failed) {
+            (MarkCheck::Failed, Some(reported)) => reported,
+            _ => self.proof(arg.value.span), // proof: held misfit
+        };
         parts.unmarked.push((at, check));
         // The call keeps its result type: the result meets its context or is E0032 as usual.
-        Some(Err(Poisoned::error()))
+        Some(Err(Poisoned::untyped(reported)))
     }
 
     /// The argument `arg` at the `mut` parameter `at` of a call that `site` describes, whose type

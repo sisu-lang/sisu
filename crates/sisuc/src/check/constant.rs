@@ -330,7 +330,11 @@ impl Checker<'_> {
             ConstInfo {
                 value: Some(value), ..
             } => Ok(value.lower(span)),
-            info => Err(Poisoned::of(info.ty)),
+            info => {
+                let ty = info.ty;
+                let reported = self.proof(span); // proof: declaration
+                Err(Poisoned::new(ty, reported))
+            }
         };
         self.record(Used::Const(id.0), span);
         checked

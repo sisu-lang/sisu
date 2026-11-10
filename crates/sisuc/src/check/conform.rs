@@ -658,8 +658,8 @@ impl Checker<'_> {
                     Some(&f) => Some(Declared::Known(f)),
                     None => self
                         .broken_extension_methods
-                        .contains(&(ext.holder, name))
-                        .then_some(Declared::Broken),
+                        .get(&(ext.holder, name))
+                        .map(|&reported| Declared::Poisoned(reported)),
                 }
             }
         }
@@ -690,7 +690,7 @@ impl Checker<'_> {
                 None if elsewhere => {}
                 None => missing.push(self.required_text(p.source, p.interface, requirement)),
                 // Its own error is reported.
-                Some(Declared::Broken) => {}
+                Some(Declared::Poisoned(_)) => {}
                 Some(Declared::Known(f)) if self.meets(requirement, f, &base) => methods.push(f),
                 Some(Declared::Known(_)) if elsewhere => {}
                 Some(Declared::Known(f)) => {
@@ -840,7 +840,7 @@ impl Checker<'_> {
             for (chosen, bounds) in chosen.into_iter().zip(declared) {
                 let Some((ty, at)) = chosen else { continue };
                 for bound in bounds {
-                    checker.check_bound(at, ty, bound, &with);
+                    let _ = checker.check_bound(at, ty, bound, &with);
                 }
             }
         });
@@ -931,7 +931,10 @@ impl Checker<'_> {
         let holder =
             holder_of(p.target).expect("a conformance's target should be a class or an enum");
         // A broken block may have written the conformance.
-        if self.broken_extensions.contains(&self.holder_name(holder)) {
+        if self
+            .broken_extensions
+            .contains_key(&self.holder_name(holder))
+        {
             return;
         }
         let mut closure = Vec::new();

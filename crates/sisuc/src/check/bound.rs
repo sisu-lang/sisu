@@ -4,6 +4,7 @@
 use super::generic::{GenericSig, Site, mismatched, named_params, written_args};
 use super::interface::Required;
 use super::mut_args::{MutParts, MutSite, site_of};
+use super::reports::Reported;
 use super::{Checked, Checker, Poisoned};
 use crate::ast;
 use crate::diagnostic::{Definition, DiagnosticKind};
@@ -15,6 +16,10 @@ impl Checker<'_> {
     /// which `site` writes: the call of the requirement that its bounds give. The call's own type
     /// arguments are inferred against the requirement, as for a generic method, and the bounds of
     /// the requirement's own parameters are checked.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the steps of a call of a requirement read in order in one place"
+    )]
     pub(super) fn bound_method(
         &mut self,
         span: Span,
@@ -34,14 +39,19 @@ impl Checker<'_> {
             });
         }
         // A rejected block may have given the type the method (see `Checker.rejected_methods`).
-        if found.is_empty() && self.rejected_methods.contains(&site.name.name) {
-            return self.call_of_rejected_method(site.name, args);
+        if found.is_empty()
+            && let Some(&reported) = self.rejected_methods.get(&site.name.name)
+        {
+            return self.call_of_rejected_method(site.name, args, reported);
         }
-        let Some(picked) = self.pick_required(ty, site, span, &found) else {
-            self.stamp_candidates(&found, args);
-            self.labels(args);
-            self.stray(args);
-            return Err(Poisoned::error());
+        let picked = match self.pick_required(ty, site, span, &found) {
+            Ok(picked) => picked,
+            Err(reported) => {
+                self.stamp_candidates(&found, args);
+                self.labels(args);
+                self.stray(args);
+                return Err(Poisoned::untyped(reported));
+            }
         };
         let Required {
             interface,
@@ -96,8 +106,8 @@ impl Checker<'_> {
         let (iargs, types) = list.get().split_at(owner.len());
         let (iargs, types) = (TypeArgs::intern(iargs), TypeArgs::intern(types));
         let parts = self.mut_overlaps(parts);
-        let failed = labeled || checked.iter().any(mismatched);
-        let parted = labeled || checked.iter().any(Result::is_err);
+        let failed = labeled.is_some() || checked.iter().any(mismatched);
+        let parted = labeled.is_some() || checked.iter().any(Result::is_err);
         let method =
             u32::try_from(method).expect("an interface should have fewer than 2^32 requirements");
         let call = move |args| tir::ExprKind::InterfaceCall {
@@ -115,10 +125,17 @@ impl Checker<'_> {
                 let call = tir::Expr::new(call(args), solved, span);
                 Ok(self.mut_call(call, parts))
             }
-            _ => {
+            (args, solved) => {
+                // A failed part, or a label, holds the proof. With neither, the requirement's
+                // result is an associated type that has no choice.
+                let reported = match (args, labeled) {
+                    (Err(poisoned), _) => poisoned.reported(),
+                    (Ok(_), Some(reported)) => reported,
+                    (Ok(_), None) => self.proof(span), // proof: declaration
+                };
                 let written = written_args(site, list.get(), owner.len());
                 let sig = (ret, declared.len(), &owner[..]);
-                Err(self.failed_call((solved, parted), sig, written))
+                Err(self.failed_call((solved, parted, reported), sig, written))
             }
         }
     }
@@ -143,27 +160,26 @@ impl Checker<'_> {
         site: Site<'_>,
         span: Span,
         found: &[Required],
-    ) -> Option<Required> {
+    ) -> Result<Required, Reported> {
         let unknown = self.is_unknown(ty);
         match found {
             // A parameter whose closure is too wide, or whose bound failed, is reported already,
             // and unknown: a method that its walk did not reach is no error, and nor is one that
             // it did, whatever the call is.
-            _ if unknown => None,
-            [] => {
-                self.no_bound_method(ty, site.name);
-                None
-            }
-            [one] => Some(*one),
+            _ if unknown => Err(self.proof(span)), // proof: unknown state
+            [] => Err(self.no_bound_method(ty, site.name)),
+            [one] => Ok(*one),
             _ => {
                 if Self::context_failed(site) {
-                    return None;
+                    return Err(self.proof(span)); // proof: quiet reader
                 }
                 // A result that is `Error` has its own error.
                 let results: Option<Vec<Type>> = (found.iter())
                     .map(|one| self.interfaces[one.interface.0].requirements[one.method].ret)
                     .collect();
-                let results = results?;
+                let Some(results) = results else {
+                    return Err(self.proof(span)); // proof: declaration
+                };
                 let written = self.written_list(site)?;
                 let rets: Vec<Option<Type>> = (found.iter().zip(results))
                     .map(|(one, ret)| self.requirement_result(ty, one, ret, &written))
@@ -172,7 +188,7 @@ impl Checker<'_> {
                     .map(|one| self.bound_text(one.interface, one.args))
                     .collect();
                 let picked = self.pick_among(ty, site, span, &rets, interfaces)?;
-                Some(found[picked])
+                Ok(found[picked])
             }
         }
     }
@@ -209,7 +225,7 @@ impl Checker<'_> {
     /// Reports that the type parameter `ty` has no method `name`: no interface of its bounds
     /// declares one. The help adds the bound, when exactly one interface of the program declares
     /// a method of that name and it takes no type parameters.
-    fn no_bound_method(&mut self, ty: Type, name: &ast::Ident) {
+    fn no_bound_method(&mut self, ty: Type, name: &ast::Ident) -> Reported {
         let add = match self.declaring.get(&name.name).map(Vec::as_slice) {
             Some(&[only]) => self.add_bound(ty, only),
             _ => None,
@@ -222,6 +238,6 @@ impl Checker<'_> {
             suggestion: None,
             add,
         };
-        self.report_lookup_failure(d.into(), name);
+        self.report_lookup_failure(d.into(), name)
     }
 }

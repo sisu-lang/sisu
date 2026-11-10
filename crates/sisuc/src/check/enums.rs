@@ -6,9 +6,10 @@ use std::{fmt, mem};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::alias::Through;
-use super::generic::{GenericSig, Site, mismatched, written_args};
+use super::generic::{GenericSig, Site, written_args};
 use super::interface::Slot;
 use super::mut_args::Callee;
+use super::reports::Reported;
 use super::unused_names::Used;
 use super::{
     Checked, Checker, Declared, Definition, DiagnosticKind, Expectation, Poisoned, SelfType,
@@ -48,6 +49,8 @@ pub(super) struct VariantInfo {
     pub(super) inner: Vec<Vec<(Type, Span)>>,
     /// The payload's labels, one for each field.
     pub(super) labels: Vec<Option<Symbol>>,
+    /// The token of the report of labels that are neither all present nor all absent.
+    pub(super) mixed: Option<Reported>,
 }
 
 /// The name milestone 8's prelude takes, which no item, variant or binding may take, and what
@@ -184,18 +187,17 @@ impl Checker<'_> {
             }
             let payload = variant.payload.as_deref().unwrap_or_default();
             let labeled = |field: &ast::PayloadField| field.label.is_some();
-            if let Some(field) = payload
-                .iter()
+            let mixed = (payload.iter())
                 .find(|field| labeled(field) != labeled(&payload[0]))
-            {
-                self.error(DiagnosticKind::MixedLabels {
-                    variant: name.name.to_string(),
-                    at: field
-                        .label
-                        .as_ref()
-                        .map_or(field.ty.span, |label| label.span),
+                .map(|field| {
+                    self.error(DiagnosticKind::MixedLabels {
+                        variant: name.name.to_string(),
+                        at: field
+                            .label
+                            .as_ref()
+                            .map_or(field.ty.span, |label| label.span),
+                    })
                 });
-            }
             let mut labels = FxHashMap::default();
             for label in payload.iter().filter_map(|field| field.label.as_ref()) {
                 self.first_definition(&mut labels, Definition::Field, Some(owner), label);
@@ -227,6 +229,7 @@ impl Checker<'_> {
                         .iter()
                         .map(|field| field.label.as_ref().map(|label| label.name))
                         .collect(),
+                    mixed,
                 });
             }
         }
@@ -248,9 +251,10 @@ impl Checker<'_> {
             declared.push((method, SelfType::Known(receiver)));
         }
         for method in &e.broken_methods {
+            let reported = self.proof(method.span); // proof: parser mark
             self.enums[id.0]
                 .methods
-                .insert(method.name, Declared::Broken);
+                .insert(method.name, Declared::Poisoned(reported));
         }
         self.body.self_type = SelfType::Absent;
         self.body.assoc = std::rc::Rc::default();
@@ -273,7 +277,7 @@ impl Checker<'_> {
         let enum_name = qualifier(site, member, info.name.name);
         let enum_name = enum_name.as_str();
         let Some(&variant) = info.index.get(&member.name) else {
-            match info.methods.get(&member.name) {
+            let reported = match info.methods.get(&member.name) {
                 Some(&Declared::Known(func)) => {
                     // An argument at a `mut` parameter gets the help of a place.
                     let muts = self.signatures[func.0].muts.clone();
@@ -283,10 +287,10 @@ impl Checker<'_> {
                         enum_name: enum_name.to_string(),
                         method: true,
                         at: member.span,
-                    });
+                    })
                 }
                 // The method's own error is reported.
-                Some(Declared::Broken) => {}
+                Some(&Declared::Poisoned(reported)) => reported,
                 None => {
                     let variants = info
                         .variants
@@ -298,11 +302,11 @@ impl Checker<'_> {
                         name: member.name.to_string(),
                         at: member.span,
                         suggestion,
-                    });
+                    })
                 }
-            }
+            };
             self.stray(call.map_or(&[], |(args, _)| args));
-            return Err(Poisoned::error());
+            return Err(Poisoned::untyped(reported));
         };
         self.record(Used::Variant(id, variant), span);
         if let Some((args, _)) = call {
@@ -339,35 +343,33 @@ impl Checker<'_> {
                     self.positional(span, &path, &fields, args)
                 } else {
                     // Mixed labels are reported at the declaration.
+                    let reported = v.mixed.expect("mixed labels should be reported");
                     self.stray(args);
-                    return Err(Poisoned::error());
+                    return Err(Poisoned::untyped(reported));
                 };
-                let Some(args) = built else {
-                    return Err(Poisoned::typed(ty));
-                };
-                args
+                built.map_err(|reported| Poisoned::typed(ty, reported))?
             }
             Some((args, parens)) => {
                 // The fix deletes the parentheses, so what they hold (even a comment) makes it
                 // unsafe.
                 let inside = parens.start()..parens.end();
-                self.error(DiagnosticKind::VariantForm {
+                let reported = self.error(DiagnosticKind::VariantForm {
                     path: path.to_string(),
                     payload: false,
                     held: !args.is_empty() || self.comment_in(&[inside]),
                     at: parens,
                 });
                 self.stray(args);
-                return Err(Poisoned::error());
+                return Err(Poisoned::untyped(reported));
             }
             None => {
-                self.error(DiagnosticKind::VariantForm {
+                let reported = self.error(DiagnosticKind::VariantForm {
                     path: path.to_string(),
                     payload: true,
                     held: false,
                     at: member.span,
                 });
-                return Err(Poisoned::error());
+                return Err(Poisoned::untyped(reported));
             }
         };
         Ok(self.spilled(span, ty, args, |args| tir::ExprKind::Variant {
@@ -443,25 +445,27 @@ impl Checker<'_> {
                 (through.params.clone(), Vec::new(), through.ty, fields)
             }
         };
-        let labels = self.enums[id.0].variants[variant].labels.clone();
+        let v = &self.enums[id.0].variants[variant];
+        let (labels, mixed) = (v.labels.clone(), v.mixed);
         let args = call.map_or(&[][..], |(args, _)| args);
-        let labeled = if labels.iter().all(Option::is_some) && !labels.is_empty() {
+        let shape = if labels.iter().all(Option::is_some) && !labels.is_empty() {
             let names: Vec<_> = labels.iter().flatten().copied().collect();
-            if !self.shaped(span, &path, &names, args) {
-                let fixed = self.counted_result(Some(ret), &declared, &[], &bounds, site);
-                return Err(Poisoned::of(fixed));
-            }
-            false
+            self.shaped(span, &path, &names, args).map(|()| None)
         } else if labels.iter().all(Option::is_none) {
-            let Some(labeled) = self.positional_shape(span, &path, fields.len(), args) else {
-                let fixed = self.counted_result(Some(ret), &declared, &[], &bounds, site);
-                return Err(Poisoned::of(fixed));
-            };
-            labeled
+            self.positional_shape(span, &path, fields.len(), args)
         } else {
             // Mixed labels are reported at the declaration.
             self.stray(args);
-            return Err(Poisoned::error());
+            return Err(Poisoned::untyped(
+                mixed.expect("mixed labels should be reported"),
+            ));
+        };
+        let labeled = match shape {
+            Ok(labeled) => labeled,
+            Err(reported) => {
+                let fixed = self.counted_result(Some(ret), &declared, &[], &bounds, site);
+                return Err(Poisoned::new(fixed, reported));
+            }
         };
         let sig = GenericSig {
             name: site.name,
@@ -479,34 +483,36 @@ impl Checker<'_> {
             site.angles,
         );
         let (args, list, ty) = self.generic_call(span, &sig, written, args, site.expected)?;
-        let Some(ty) = ty else {
-            return Err(Poisoned::error());
-        };
-        let failed = labeled || args.iter().any(mismatched);
+        let ty = self.built_type(ty, span)?;
         // The bounds that the alias's body puts on its parameters, on what they are bound to.
-        let held = through.is_none_or(|t| self.use_checks(&t.checks, list, span) == Some(true));
-        match args.into_iter().collect() {
-            Ok(args) if !failed && held => Ok(self.spilled(span, ty, args, |args| {
+        let held = through.map_or(Ok(()), |t| self.use_checks(&t.checks, list, span));
+        // A mismatched argument is one that failed.
+        let refused = labeled.or_else(|| held.err());
+        match args.into_iter().collect::<Result<Vec<_>, Poisoned>>() {
+            Ok(args) if refused.is_none() => Ok(self.spilled(span, ty, args, |args| {
                 tir::ExprKind::Variant { id, variant, args }
             })),
-            _ => {
+            args => {
+                let reported = (args.err().map(|failed| failed.reported()))
+                    .or(refused)
+                    .expect("a variant that fails should have a failed part");
                 // No argument settles a parameter in a call with a failed part.
                 let written = written_args(site, list.get(), 0);
-                self.failed_build(held, (ret, declared.len()), written)
+                self.failed_build((held.is_ok(), reported), (ret, declared.len()), written)
             }
         }
     }
 
     /// Reports the labels of `path(args)`, a variant whose payload declares none, and a count
-    /// of `args` that is not `want`. `None` when the count is wrong, else whether there was a
-    /// label.
+    /// of `args` that is not `want`. `Err` with the token of the count when it is wrong, else the
+    /// token of the labels' report, when there was a label.
     pub(super) fn positional_shape(
         &mut self,
         span: Span,
         path: &dyn fmt::Display,
         want: usize,
         args: &[ast::Arg],
-    ) -> Option<bool> {
+    ) -> Result<Option<Reported>, Reported> {
         // Each `label: ` and the white space after it, which the fix deletes. A comment between
         // the label and the `:`, or after the `:`, stays: the cut stops at it, so a comment before
         // the `:` makes two cuts.
@@ -525,52 +531,49 @@ impl Checker<'_> {
                 labels.push(Span::new(colon.start(), after));
             }
         }
-        let labeled = !labels.is_empty();
-        if let Some(first) = args.iter().find_map(|arg| arg.label.as_ref()) {
+        let labeled = (args.iter().find_map(|arg| arg.label.as_ref())).map(|first| {
             self.error(DiagnosticKind::LabeledArgument {
                 at: first.span,
                 variant: Some(VariantLabels {
                     path: path.to_string(),
                     labels,
                 }),
-            });
-        }
+            })
+        });
         if want != args.len() {
             self.stray(args);
-            if !self.misread_in(args) {
-                self.error(DiagnosticKind::ArgumentCount {
+            return Err(match self.misread_in(args) {
+                Some(reported) => reported,
+                None => self.error(DiagnosticKind::ArgumentCount {
                     name: path.to_string(),
                     want,
                     found: args.len(),
                     at: span,
-                });
-            }
-            return None;
+                }),
+            });
         }
-        Some(labeled)
+        Ok(labeled)
     }
 
     /// The arguments of `path(args)`, a variant whose payload declares no labels, checked
-    /// against its `fields` in order. `None` when a mistake was reported, here or in an argument.
+    /// against its `fields` in order. `Err` with the token of a mistake, here or in an argument.
     fn positional(
         &mut self,
         span: Span,
         path: &dyn fmt::Display,
         fields: &[Option<Type>],
         args: &[ast::Arg],
-    ) -> Option<Vec<tir::Expr>> {
+    ) -> Result<Vec<tir::Expr>, Reported> {
         let labeled = self.positional_shape(span, path, fields.len(), args)?;
-        let (checked, mismatched): (Vec<_>, Vec<_>) = args
-            .iter()
-            .zip(fields)
-            .map(|(arg, field)| self.operand(&arg.value, Expectation::or_poisoned(*field)))
-            .unzip();
-        let failed = labeled || mismatched.contains(&true);
-        checked
-            .into_iter()
-            .collect::<Result<_, _>>()
-            .ok()
-            .filter(|_| !failed)
+        // A mismatched argument is one that failed.
+        let checked: Result<Vec<_>, Poisoned> = (args.iter().zip(fields))
+            .map(|(arg, field)| self.expect(&arg.value, Expectation::or_poisoned(*field)))
+            .collect();
+        match (checked, labeled) {
+            (Ok(checked), None) => Ok(checked),
+            (Err(failed), _) => Err(failed.reported()),
+            (Ok(_), Some(reported)) => Err(reported),
+        }
     }
 
     /// The prelude's `Result` and the variant it declares for `name`, when `name` is `Ok` or

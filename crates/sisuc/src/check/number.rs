@@ -4,9 +4,10 @@
 use std::f64::consts;
 
 use super::alias::Via;
-use super::expr::{no_member, postfix, typed};
+use super::expr::{no_member, postfix, typed, unlabeled};
 use super::generic::Site;
 use super::names::{self, ItemId, Position, Resolved};
+use super::reports::Reported;
 use super::{Checked, Checker, Expectation, Poisoned};
 use crate::ast;
 use crate::diagnostic::{Definition, DiagnosticKind, MathFix, NanFix};
@@ -137,9 +138,10 @@ impl Checker<'_> {
                 }
                 return Some(self.enum_path(span, id, member, call, site, None));
             }
-            Resolved::Poisoned(_) => {
+            Resolved::Poisoned(_, reported) => {
                 self.stray(call.map_or(&[], |(args, _)| args));
-                return Some(Err(Poisoned::error()));
+                let reported = self.poison_token(reported, span);
+                return Some(Err(Poisoned::untyped(reported)));
             }
             Resolved::OptionType => {
                 return Some(self.option_path(span, site, member, call, None));
@@ -178,8 +180,7 @@ impl Checker<'_> {
                     name: constant_named(member.name.as_str())?,
                 }),
             };
-            self.report_math(written, fix);
-            return Some(Err(Poisoned::error()));
+            return Some(Err(Poisoned::untyped(self.report_math(written, fix))));
         }
         let ty = self.built_in_of(name)?;
         if let Some((args, _)) = call {
@@ -196,23 +197,22 @@ impl Checker<'_> {
         else {
             let names = constants.iter().map(|(constant, _)| *constant);
             let d = no_member(Definition::Constant, ty.to_string(), member, names);
-            self.diagnostics.error(d);
-            return Some(Err(Poisoned::error()));
+            return Some(Err(Poisoned::untyped(self.diagnostics.error(d))));
         };
         // An alias of `f64` with a parameter that its constant does not bind (E0050).
         if angles.is_none()
             && let Via::To(through) = self.through(name)
             && !through.params.is_empty()
         {
-            self.report_unbound_alias(site, &through, Some((member, false)));
-            return Some(Err(Poisoned::error()));
+            let reported = self.report_unbound_alias(site, &through, Some((member, false)));
+            return Some(Err(Poisoned::untyped(reported)));
         }
         Some(Ok(tir::Expr::new(tir::ExprKind::Float(x), Type::F64, span)))
     }
 
     /// Reports the math idiom written at `written`, with `fix` if it has one.
-    fn report_math(&mut self, written: Span, fix: Option<MathFix>) {
-        self.error(DiagnosticKind::MathIdiom { written, fix });
+    fn report_math(&mut self, written: Span, fix: Option<MathFix>) -> Reported {
+        self.error(DiagnosticKind::MathIdiom { written, fix })
     }
 
     /// `written(args)`, where `written` is `math.member`, `Math.member` or `f64.member`: the
@@ -228,8 +228,7 @@ impl Checker<'_> {
     ) -> Option<Checked> {
         let name = method_name(member.name.as_str())?;
         let fix = self.method_fix(written, name, args);
-        self.report_math(written, fix);
-        Some(Err(Poisoned::error()))
+        Some(Err(Poisoned::untyped(self.report_math(written, fix))))
     }
 
     /// The fix of `written(args)`, the call of the method `name`, or `None` where it is no
@@ -341,8 +340,8 @@ impl Checker<'_> {
     ) -> Checked {
         // An `i64` reaches here when the prelude gives it no method of the name.
         let Some((op, params)) = self::method(ty, method.name.as_str()) else {
-            if self.rejected_methods.contains(&method.name) {
-                return self.call_of_rejected_method(method, args);
+            if let Some(&reported) = self.rejected_methods.get(&method.name) {
+                return self.call_of_rejected_method(method, args, reported);
             }
             let owner = self.type_name(ty);
             let names: Vec<&str> = if ty == Type::F64 {
@@ -367,17 +366,15 @@ impl Checker<'_> {
             return self.rejected(d.into(), args, Some(result));
         }
         let labeled = self.labels(args);
-        let (checked, mismatched): (Vec<_>, Vec<_>) = args
+        // A mismatched operand is a failed one.
+        let checked: Vec<_> = args
             .iter()
-            .map(|arg| self.operand(&arg.value, Expectation::Required(ty)))
-            .unzip();
-        let failed = labeled || mismatched.contains(&true);
+            .map(|arg| self.operand(&arg.value, Expectation::Required(ty)).0)
+            .collect();
         let operands: Result<Vec<_>, Poisoned> = std::iter::once(receiver).chain(checked).collect();
         // Never an owned reference, so no operand needs `spill`.
-        let kind = operands
-            .ok()
-            .filter(|_| !failed)
-            .map(|operands| tir::ExprKind::Math { op, operands });
+        let kind =
+            unlabeled(operands, labeled).map(|operands| tir::ExprKind::Math { op, operands });
         typed(span, result, false, kind)
     }
 }

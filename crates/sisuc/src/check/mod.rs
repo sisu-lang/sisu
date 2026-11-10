@@ -123,6 +123,8 @@ struct Poisoned {
     /// `match`, it is at least one branch (see `join`). The flow keeps the `never`, as a jump
     /// statement does; a place that reads the value takes it as `Error` (`read_jump`).
     jumped: bool,
+    /// The proof of the report, or of the promise, that made the value poisoned.
+    reported: Reported,
 }
 
 /// The result type of a generic call that cannot meet its context (see `report_unbound`). The
@@ -137,32 +139,39 @@ struct Misfit {
 }
 
 impl Poisoned {
-    /// `Error`.
-    fn error() -> Self {
-        Self::of(None)
+    /// A failed expression whose type is not known, poisoned by the report `reported` proves.
+    fn untyped(reported: Reported) -> Self {
+        Self::new(None, reported)
     }
 
     /// A failed expression whose type is still known.
-    fn typed(ty: Type) -> Self {
-        Self::of(Some(ty))
+    fn typed(ty: Type, reported: Reported) -> Self {
+        Self::new(Some(ty), reported)
     }
 
-    fn of(ty: Option<Type>) -> Self {
+    /// A failed expression of type `ty`, when it has one.
+    fn new(ty: Option<Type>, reported: Reported) -> Self {
         Self {
             ty,
             mismatch: false,
             found: None,
             kept: false,
             jumped: false,
+            reported,
         }
     }
 
-    /// `Error` for a value in which a generic call kept its E0050 (see `Poisoned::kept`).
-    fn kept_error() -> Self {
+    /// An untyped value in which a generic call kept its E0050 (see `Poisoned::kept`).
+    fn kept_error(reported: Reported) -> Self {
         Self {
             kept: true,
-            ..Self::error()
+            ..Self::untyped(reported)
         }
+    }
+
+    /// The proof of the report that made the value poisoned.
+    fn reported(&self) -> Reported {
+        self.reported
     }
 }
 
@@ -229,12 +238,13 @@ struct Signature {
 }
 
 /// What a function, class, constant or method name stands for: the first intact item of that
-/// name, or a broken one, which holds a syntax error. A broken name wins over an intact one, and
-/// every use of it is poisoned without a diagnostic: its item's error is reported already.
+/// name, or a poisoned one: an item that holds a syntax error, or that the checker rejected. A
+/// poisoned name wins over an intact one, and every use of it is poisoned without a diagnostic:
+/// its item's error is reported already, and the token proves it.
 #[derive(Clone, Copy)]
 enum Declared<T> {
     Known(T),
-    Broken,
+    Poisoned(Reported),
 }
 
 /// The name of the top-level item `item`; an `extend` block has none of its own.
@@ -430,9 +440,9 @@ struct LoopFrame {
     bare: Option<Span>,
     /// The first `break` whose value's type is not `never`.
     valued: Option<Span>,
-    /// Whether the loop failed: a failed jump, loop label or `break` value in it. It then has
-    /// no type.
-    failed: bool,
+    /// The token of the error that failed the loop: a failed jump, loop label or `break` value
+    /// in it. It then has no type.
+    failed: Option<Reported>,
 }
 
 impl LoopFrame {
@@ -453,7 +463,7 @@ impl LoopFrame {
             first_value: keyword,
             bare: None,
             valued: None,
-            failed: false,
+            failed: None,
             widened: false,
             deferred: Vec::new(),
             crossed: false,
@@ -463,7 +473,7 @@ impl LoopFrame {
     /// The type of a `loop` whose body has been checked: `never` with no `break`, or with only
     /// `never` values; `unit` with bare ones; else its values'. `None` is `Error`.
     fn loop_type(&self) -> Option<Type> {
-        if self.failed {
+        if self.failed.is_some() {
             return None;
         }
         if self.valued.is_none() {
@@ -639,6 +649,10 @@ pub(crate) fn reached(point: &'static str) {
     });
 }
 
+#[expect(
+    clippy::zero_sized_map_values,
+    reason = "the map holds the proof of a report for each key, and a set cannot hold it"
+)]
 struct Checker<'src> {
     /// The program's text and the positions found in it.
     source: Source<'src>,
@@ -698,10 +712,11 @@ struct Checker<'src> {
     /// block. A report of an unknown method reads these, not the methods of every block.
     builtin_methods: Vec<(Holder, Symbol, usize)>,
     /// The names of the types that a broken `extend` block, or a block of a conformance that
-    /// failed, may have given methods to. A method no one finds on them is poisoned.
-    broken_extensions: FxHashSet<Symbol>,
+    /// failed, may have given methods to. Each name holds the proof of its report. A method no one
+    /// finds on them is poisoned.
+    broken_extensions: FxHashMap<Symbol, Reported>,
     /// The methods that a block of an intact target lost to a syntax error.
-    broken_extension_methods: FxHashSet<(Holder, Symbol)>,
+    broken_extension_methods: FxHashMap<(Holder, Symbol), Reported>,
     /// The names of the methods of each `extend` block whose target the checker rejected. Such a
     /// block may have given any type a method of its name, so a call of that name on any type is
     /// poisoned, with no report. The set holds names, not types. The target can be a type
@@ -709,8 +724,8 @@ struct Checker<'src> {
     /// name, such as `f64`, `string` or `bool`. The block's own error is in the program. So the
     /// set can hide a report on another type that has a member of the same name: a missing
     /// method (E0063), a field that is not a method (E0058), or a variant that is not a method
-    /// (E0120). That costs nothing.
-    rejected_methods: FxHashSet<Symbol>,
+    /// (E0120). That costs nothing. Each name holds the proof of the block's report.
+    rejected_methods: FxHashMap<Symbol, Reported>,
     /// The methods of the conformance blocks that cover the receiver of the call being found, with
     /// the block's interface and its arguments for the receiver: a buffer that `find_method` fills
     /// and clears per call.
@@ -873,6 +888,10 @@ impl SelfType {
 
 /// What checking one body needs: a function's, a method's, or a constant's initialiser.
 #[derive(Default)]
+#[expect(
+    clippy::zero_sized_map_values,
+    reason = "the map holds the proof of a report for each key, and a set cannot hold it"
+)]
 struct Body {
     /// The function, method or constant whose body this is; `None` for none, such as a signature.
     owner: Option<Owner>,
@@ -925,10 +944,10 @@ struct Body {
     leaves: LeafAnswers,
     /// Where in `Checker.scopes` the type parameters now in scope are, once a check waits.
     scope: Option<usize>,
-    /// Where each call of a value, `a<b, c>(d)`, that has been reported starts: comparisons
-    /// misread as a call change the count of the arguments of the call they are an argument of,
-    /// which is then not reported.
-    misread: FxHashSet<usize>,
+    /// Where each call of a value, `a<b, c>(d)`, that has been reported starts, with the token of
+    /// the report: comparisons misread as a call change the count of the arguments of the call
+    /// they are an argument of, which is then not reported.
+    misread: FxHashMap<usize, Reported>,
     scopes: Vec<FxHashMap<Symbol, Binding>>,
     locals: Vec<tir::Local>,
     /// `None` is `Error`.
@@ -1095,8 +1114,8 @@ fn parser_marked(program: &ast::Program, items: &[&ast::Item]) -> bool {
             ast::Item::Class(class) => !class.broken_methods.is_empty(),
             ast::Item::Enum(e) => !e.broken_methods.is_empty(),
             ast::Item::Extend(extend) => !extend.broken_methods.is_empty(),
-            // Nothing poisons a call of a method an interface loses without an error yet: Task 4
-            // resolves such calls, and until then the program has an error of its own.
+            // The checker reads no requirement that an interface lost to a syntax error: a call of
+            // one finds no method and gets an error of its own, so no promise rests on the mark.
             ast::Item::Function(_)
             | ast::Item::Const(_)
             | ast::Item::Alias(_)
@@ -1292,6 +1311,14 @@ fn type_of(checked: &Checked) -> Option<Type> {
     }
 }
 
+/// The type of `checked`, or the proof of the report that left it untyped.
+fn known_type(checked: &Checked) -> Result<Type, Reported> {
+    match checked {
+        Ok(e) => Ok(e.ty),
+        Err(p) => p.ty.ok_or(p.reported),
+    }
+}
+
 /// The type of a checked block; `None` is `Error`.
 fn block_type(checked: &CheckedBlock) -> Option<Type> {
     match checked {
@@ -1302,6 +1329,10 @@ fn block_type(checked: &CheckedBlock) -> Option<Type> {
 
 impl<'src> Checker<'src> {
     /// The one way to build a checker; `check` and the tests call it.
+    #[expect(
+        clippy::zero_sized_map_values,
+        reason = "the map holds the proof of a report for each key, and a set cannot hold it"
+    )]
     fn new(
         program: &'src ast::Program,
         source: &'src str,
@@ -1346,9 +1377,9 @@ impl<'src> Checker<'src> {
             extensions: Vec::new(),
             extension_methods: FxHashMap::default(),
             builtin_methods: Vec::new(),
-            broken_extensions: FxHashSet::default(),
-            broken_extension_methods: FxHashSet::default(),
-            rejected_methods: FxHashSet::default(),
+            broken_extensions: FxHashMap::default(),
+            broken_extension_methods: FxHashMap::default(),
+            rejected_methods: FxHashMap::default(),
             candidates: Vec::new(),
             conformances: tir::Conformances::default(),
             conformance_bounds: FxHashMap::default(),
@@ -1501,12 +1532,20 @@ impl Checker<'_> {
 
     /// Records a promise made at `at`. An error in the list keeps it, wherever the error is, and
     /// so does a parser mark (see `Diagnostics::promises_kept`).
-    #[expect(
-        dead_code,
-        reason = "the poisoned values hold its token from the next change on"
-    )]
     fn proof(&mut self, at: Span) -> Reported {
         self.diagnostics.proof(at)
+    }
+
+    /// The token of a use at `at` of a binding with no type. Its error was reported where it was
+    /// bound: its initializer's, its declared type's, or an E0050. No binding holds that token.
+    fn untyped_binding(&mut self, at: Span) -> Reported {
+        self.proof(at) // proof: binding
+    }
+
+    /// The token of a value at `at` that a `Poisoned` expectation gives no type. The error of
+    /// the context was reported before, and the reader of the value stays quiet.
+    fn poisoned_context(&mut self, at: Span) -> Reported {
+        self.proof(at) // proof: quiet reader
     }
 
     /// Pass 1: gives every class a `ClassId` and every enum an `EnumId`, and records the first
@@ -1636,9 +1675,9 @@ impl Checker<'_> {
             self.prelude = self.item_counts(next_function);
         }
         // After the loop: the prelude's own items, which come last, would take the names back.
-        for (kind, name) in rejected {
-            self.names.poison_language(name);
-            self.names.poison(kind, name);
+        for (kind, name, reported) in rejected {
+            self.names.poison_language(name, reported);
+            self.names.poison(kind, name, reported);
         }
         self.poison_broken(broken);
     }
@@ -1650,7 +1689,7 @@ impl Checker<'_> {
         &mut self,
         alias: &ast::AliasDecl,
         first: &mut FxHashMap<Symbol, (Span, Definition)>,
-        rejected: &mut Vec<(Definition, Symbol)>,
+        rejected: &mut Vec<(Definition, Symbol, Reported)>,
     ) {
         let id = self.aliases.infos.len();
         self.aliases.infos.push(AliasInfo::new(alias));
@@ -1699,14 +1738,17 @@ impl Checker<'_> {
             let Some(kind) = broken_definition(broken.kind) else {
                 // Its target is intact, and its parse error already fails the program. A method
                 // call on the target that finds no method is poisoned.
-                self.broken_extensions.insert(broken.name.name);
+                let reported = self.proof(broken.name.span); // proof: parser mark
+                self.broken_extensions.insert(broken.name.name, reported);
                 continue;
             };
-            if !(self.built_in(&broken.name) || self.prelude_taken(kind, &broken.name)) {
-                let redeclared = redeclares(first, &broken.name);
-                self.first_definition(first, kind, None, &broken.name);
-                if redeclared {
-                    self.names.poison_language(broken.name.name);
+            if !(self.built_in(&broken.name) || self.prelude_taken(kind, &broken.name).is_some()) {
+                if redeclares(first, &broken.name)
+                    && let Some(reported) = self.report_redeclared(first, kind, None, &broken.name)
+                {
+                    self.names.poison_language(broken.name.name, reported);
+                } else {
+                    self.first_definition(first, kind, None, &broken.name);
                 }
             }
         }
@@ -1716,7 +1758,8 @@ impl Checker<'_> {
     fn poison_broken(&mut self, broken: &[ast::Broken]) {
         for broken in broken {
             if let Some(kind) = broken_definition(broken.kind) {
-                self.names.poison(kind, broken.name.name);
+                let reported = self.proof(broken.name.span); // proof: parser mark
+                self.names.poison(kind, broken.name.name, reported);
             }
         }
     }
@@ -1753,32 +1796,30 @@ impl Checker<'_> {
     fn first_callable(
         &mut self,
         first: &mut FxHashMap<Symbol, (Span, Definition)>,
-        rejected: &mut Vec<(Definition, Symbol)>,
+        rejected: &mut Vec<(Definition, Symbol, Reported)>,
         kind: Definition,
         name: &ast::Ident,
     ) -> bool {
-        if self.prelude_taken(kind, name) {
-            rejected.push((kind, name.name));
+        if let Some(reported) = self.prelude_taken(kind, name) {
+            rejected.push((kind, name.name, reported));
             return false;
         }
-        let redeclared = redeclares(first, name);
-        let is_first = self.first_definition(first, kind, None, name);
-        if redeclared {
-            rejected.push((kind, name.name));
+        if redeclares(first, name)
+            && let Some(reported) = self.report_redeclared(first, kind, None, name)
+        {
+            rejected.push((kind, name.name, reported));
+            return false;
         }
-        is_first
+        self.first_definition(first, kind, None, name)
     }
 
     /// Whether `name` is a prelude function's, which no top-level item of `kind` may take;
-    /// reports it when it is.
-    fn prelude_taken(&mut self, kind: Definition, name: &ast::Ident) -> bool {
+    /// reports it when it is, and gives the token of that report.
+    fn prelude_taken(&mut self, kind: Definition, name: &ast::Ident) -> Option<Reported> {
         // A function the prelude's code writes is taken too, but not in the prelude's own code.
         let written = !name.span.in_prelude() && self.prelude_functions.contains(&name.name);
         let taken = written || PRELUDE.contains(&name.name.as_str());
-        if taken {
-            self.error(defined_twice(kind, name, Earlier::BuiltIn));
-        }
-        taken
+        taken.then(|| self.error(defined_twice(kind, name, Earlier::BuiltIn)))
     }
 
     /// Whether `name` is the first of its name in `first`, which it joins with its `kind`;
@@ -1790,7 +1831,7 @@ impl Checker<'_> {
         owner: Option<&str>,
         name: &ast::Ident,
     ) -> bool {
-        if let Some(&(span, first_kind)) = first.get(&name.name) {
+        if let Some(&(span, _)) = first.get(&name.name) {
             // A user's item took the prelude's name first. For a constructor name, `BuiltInName`
             // has said so. A language interface still takes its name, which only the prelude's
             // code reads. A built-in type never gets here: `built_in` keeps a user item of its
@@ -1798,16 +1839,29 @@ impl Checker<'_> {
             if name.span.in_prelude() && !span.in_prelude() {
                 return is_language_interface(name.name.as_str());
             }
-            let first = Earlier::At {
-                span,
-                kind: first_kind,
-                owner: owner.map(str::to_string),
-            };
-            self.error(defined_twice(kind, name, first));
+            self.report_redeclared(first, kind, owner, name);
             return false;
         }
         first.insert(name.name, (name.span, kind));
         true
+    }
+
+    /// Reports `name` as defined twice when `first` holds an item of its name, and gives the
+    /// token of that report. `owner` is the class whose members `first` holds.
+    fn report_redeclared(
+        &mut self,
+        first: &FxHashMap<Symbol, (Span, Definition)>,
+        kind: Definition,
+        owner: Option<&str>,
+        name: &ast::Ident,
+    ) -> Option<Reported> {
+        let &(span, first_kind) = first.get(&name.name)?;
+        let first = Earlier::At {
+            span,
+            kind: first_kind,
+            owner: owner.map(str::to_string),
+        };
+        Some(self.error(defined_twice(kind, name, first)))
     }
 
     /// How many classes, enums and functions are declared so far, `functions` being the count of
@@ -1921,9 +1975,10 @@ impl Checker<'_> {
             }
             self.body.set_type_params(&[]);
             for method in &class.broken_methods {
+                let reported = self.proof(method.span); // proof: parser mark
                 self.classes[id.0]
                     .methods
-                    .insert(method.name, Declared::Broken);
+                    .insert(method.name, Declared::Poisoned(reported));
             }
             self.body.self_type = SelfType::Absent;
             self.body.assoc = Rc::default();
@@ -2059,7 +2114,7 @@ impl Checker<'_> {
             None => {
                 self.error(DiagnosticKind::NoMain);
             }
-            Some(Declared::Broken) => {}
+            Some(Declared::Poisoned(_)) => {}
             Some(Declared::Known(id)) => {
                 let main = declared[id.0].0;
                 if !main.type_params.is_empty() {
@@ -2150,7 +2205,7 @@ impl Checker<'_> {
             if args.is_empty() {
                 return Some(ty);
             }
-            c.type_args(&ident(), &[], args, angles).map(|_| ty)
+            c.type_args(&ident(), &[], args, angles).ok().map(|_| ty)
         };
         match self.meaning(name, names::Site::new(Position::Type, false)) {
             Resolved::TypeParam(i) => {
@@ -2170,7 +2225,7 @@ impl Checker<'_> {
             },
             // A broken name poisons every use, a built-in type's too. Its own error is reported,
             // and so are the errors of the arguments that the use writes.
-            Resolved::Poisoned(_) => {
+            Resolved::Poisoned(..) => {
                 self.resolve_args(args);
                 None
             }
@@ -2186,7 +2241,7 @@ impl Checker<'_> {
                     TypeArgs::NONE
                 } else {
                     let declared = self.classes[id.0].type_params.clone();
-                    self.type_args(&ident(), &declared, args, angles)?
+                    self.type_args(&ident(), &declared, args, angles).ok()?
                 };
                 let ty = Type::intern(TypeKind::Class(id, list));
                 self.bounded(self.classes[id.0].bounded, ty, args)
@@ -2198,7 +2253,7 @@ impl Checker<'_> {
                     TypeArgs::NONE
                 } else {
                     let declared = self.enums[id.0].type_params.clone();
-                    self.type_args(&ident(), &declared, args, angles)?
+                    self.type_args(&ident(), &declared, args, angles).ok()?
                 };
                 let ty = Type::intern(TypeKind::Enum(id, list));
                 self.bounded(self.enums[id.0].bounded, ty, args)
@@ -2206,7 +2261,7 @@ impl Checker<'_> {
             }
             // `Option<T>` is `T?`: the prelude's declaration of it makes no enum.
             Resolved::OptionType => {
-                let args = self.type_args(&ident(), &[Symbol::intern("T")], args, angles)?;
+                let args = (self.type_args(&ident(), &[Symbol::intern("T")], args, angles)).ok()?;
                 Some(optional_of(args.get()[0]))
             }
             _ => {
@@ -2240,9 +2295,11 @@ impl Checker<'_> {
         }
         // In an alias body, a type that names a parameter waits for each use of the alias.
         if self.body.alias.is_some() && ty.has_param() {
-            return self.make_check(UseCheck::Applied(ty), Span::new(0, 0));
+            return self
+                .make_check(UseCheck::Applied(ty), Span::new(0, 0))
+                .is_ok();
         }
-        self.check_applied(ty, written.iter().map(|arg| arg.span).collect())
+        (self.check_applied(ty, written.iter().map(|arg| arg.span).collect())).is_ok()
     }
 
     /// `function`, except that a method of a block that failed has a failed `self` and is not
@@ -2482,7 +2539,9 @@ impl Checker<'_> {
         {
             // Only a bare name after `break` offers a loop label: a misspelled loop label is one
             // mistake, which neither the loop label's warning nor its loop's type reports again.
-            self.break_meant(&found.name);
+            // The caller reports the diagnostic made here.
+            let reported = self.proof(span); // proof: held misfit
+            self.break_meant(&found.name, reported);
         }
         let wrap = match (&suggestion, self.body.label_typo) {
             (Some(found), Some((_, start))) if found.kind == Definition::LoopLabel => {

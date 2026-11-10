@@ -7,9 +7,11 @@ use super::call::{Dot, takes_range};
 use super::expr::{if_some, local, no_member, path};
 use super::extend::{holder_of, method_holder};
 use super::generic::{Site, named_params};
+use super::reports::Reported;
 use super::unused_names::Used;
 use super::{
-    Checked, Checker, Declared, Expectation, Holder, Poisoned, as_optional, type_of, wrap,
+    Checked, Checker, Declared, Expectation, Holder, Poisoned, as_optional, known_type, type_of,
+    wrap,
 };
 use crate::ast;
 use crate::diagnostic::{Annotate, Definition, Diagnostic, DiagnosticKind, Peel, UnwrapHelp};
@@ -77,9 +79,10 @@ impl Checker<'_> {
         let payload = match self.safe_payload(&scrutinee, receiver, name) {
             Ok(payload) => payload,
             Err(failed) => {
+                let reported = failed.reported();
                 // Only its own diagnostics matter.
                 drop(member(self, Err(failed)));
-                return Err(Poisoned::error());
+                return Err(Poisoned::untyped(reported));
             }
         };
         let bind = self.fresh(payload);
@@ -97,15 +100,17 @@ impl Checker<'_> {
         name: &ast::Ident,
     ) -> Result<Type, Poisoned> {
         let Some(TypeKind::Optional(payload)) = type_of(scrutinee).map(Type::kind) else {
-            if type_of(scrutinee).is_some() {
-                let kind = DiagnosticKind::SafeAccessNotOptional {
-                    value: path(receiver),
-                    at: receiver.span,
-                    access: Span::new(receiver.span.end(), name.span.start()),
-                };
-                self.diagnostics.error(kind);
-            }
-            return Err(Poisoned::of(type_of(scrutinee)));
+            return Err(match known_type(scrutinee) {
+                Ok(ty) => {
+                    let kind = DiagnosticKind::SafeAccessNotOptional {
+                        value: path(receiver),
+                        at: receiver.span,
+                        access: Span::new(receiver.span.end(), name.span.start()),
+                    };
+                    Poisoned::typed(ty, self.diagnostics.error(kind))
+                }
+                Err(reported) => Poisoned::untyped(reported),
+            });
         };
         // `?.` takes one layer off: on a `C??` it leaves a `C?`, which has no members.
         if matches!(payload.kind(), TypeKind::Optional(_)) {
@@ -122,10 +127,10 @@ impl Checker<'_> {
                 }),
                 unwrap: UnwrapHelp::It,
             };
-            self.diagnostics.error(kind);
+            let reported = self.diagnostics.error(kind);
             // The member is checked on the type that the `??` peeled, so that its arguments
             // report only their own mistakes.
-            return Err(Poisoned::typed(innermost(payload)));
+            return Err(Poisoned::typed(innermost(payload), reported));
         }
         Ok(payload)
     }
@@ -138,16 +143,15 @@ impl Checker<'_> {
         receiver: &ast::Expr,
         name: &ast::Ident,
     ) -> Checked {
-        let on_optional = matches!(type_of(&base).map(Type::kind), Some(TypeKind::Optional(_)));
-        let Some((class, index, ty)) =
-            self.find_field(type_of(&base), receiver, name, Access::Read)
-        else {
-            return Err(Poisoned::error());
-        };
-        // E0062 is reported. The member is untyped: the fix of the E0062 decides it.
-        if on_optional {
-            return Err(Poisoned::error());
+        let ty = known_type(&base).map_err(Poisoned::untyped)?;
+        if let TypeKind::Optional(payload) = ty.kind() {
+            let (_, reported) = (self.field_of_payload(payload, receiver, name, Access::Read))
+                .map_err(Poisoned::untyped)?;
+            // E0062 is reported. The member is untyped: the fix of the E0062 decides it.
+            return Err(Poisoned::untyped(reported));
         }
+        let (class, index, ty) =
+            (self.find_field(ty, receiver, name, Access::Read)).map_err(Poisoned::untyped)?;
         self.record(Used::Field(class, index), span);
         match (base, ty) {
             (Ok(base), Some(ty)) => Ok(tir::Expr::new(
@@ -158,7 +162,9 @@ impl Checker<'_> {
                 ty,
                 span,
             )),
-            (_, ty) => Err(Poisoned::of(ty)),
+            (Err(failed), ty) => Err(Poisoned::new(ty, failed.reported())),
+            // The field's declared type did not resolve.
+            (Ok(_), None) => Err(Poisoned::untyped(self.proof(name.span))), // proof: declaration
         }
     }
 
@@ -179,19 +185,18 @@ impl Checker<'_> {
             .and_then(|ty| self.subst(ty, args.get()))
     }
 
-    /// The class, index and type of field `name` of `receiver`, a value of type `base`. `None` when
-    /// there is none, reported unless `base` is `Error`. `access` says how the field is used; no
-    /// `()` can follow the access of a field that is not read. A receiver that may be `None` gets
-    /// the `?.` fix unless an index follows in the chain (`Body::indexed`). On an optional, they
-    /// are the field's on the payload, after E0062.
+    /// The class, index and type of field `name` of `receiver`, a value of type `base`. `Err` with
+    /// the proof when there is none, reported here or before. `access` says how the field is used;
+    /// no `()` can follow the access of a field that is not read. A receiver that may be `None`
+    /// gets the `?.` fix unless an index follows in the chain (`Body::indexed`). On an optional,
+    /// they are the field's on the payload, after E0062.
     pub(super) fn find_field(
         &mut self,
-        base: Option<Type>,
+        ty: Type,
         receiver: &ast::Expr,
         name: &ast::Ident,
         access: Access,
-    ) -> Option<FoundField> {
-        let ty = base?;
+    ) -> Result<FoundField, Reported> {
         let method = |owner, safe: bool| DiagnosticKind::MethodNotField {
             name: name.name.to_string(),
             owner,
@@ -202,7 +207,7 @@ impl Checker<'_> {
             TypeKind::Class(class, _) => {
                 let info = &self.classes[class.0];
                 if let Some(index) = info.field(name.name) {
-                    return Some((class, index, self.field_type(ty, index)));
+                    return Ok((class, index, self.field_type(ty, index)));
                 }
                 match self.own_method(ty, name.name) {
                     Some(Declared::Known(func)) => {
@@ -210,7 +215,7 @@ impl Checker<'_> {
                         method(self.type_name(ty), no_arguments).into()
                     }
                     // Its own error is reported, and what it held is unknown.
-                    Some(Declared::Broken) => return None,
+                    Some(Declared::Poisoned(reported)) => return Err(reported),
                     None => {
                         let fields = info.fields.iter().map(|f| f.name.name.as_str());
                         no_member(Definition::Field, self.type_name(ty), name, fields)
@@ -223,7 +228,7 @@ impl Checker<'_> {
                     method(self.type_name(ty), no_arguments).into()
                 }
                 // Its own error is reported.
-                Some(Declared::Broken) => return None,
+                Some(Declared::Poisoned(reported)) => return Err(reported),
                 None => DiagnosticKind::EnumField {
                     enum_name: self.type_name(ty),
                     at: name.span,
@@ -236,12 +241,12 @@ impl Checker<'_> {
             // A field of the payload gives no value here: `field` and the caller of a write ask
             // for its class, index and type.
             TypeKind::Optional(payload) => {
-                return self.field_of_payload(payload, receiver, name, access);
+                return (self.field_of_payload(payload, receiver, name, access))
+                    .map(|(found, _)| found);
             }
             _ => no_member(Definition::Field, self.type_name(ty), name, []),
         };
-        self.diagnostics.error(d);
-        None
+        Err(self.diagnostics.error(d))
     }
 
     /// The class, index and type of field `name` of the innermost payload of the optional
@@ -250,16 +255,17 @@ impl Checker<'_> {
     /// A field that is missing, or of the wrong kind, is the error: the `?.` fix would lead to
     /// it. A `payload` that is optional too gets no `?.` fix: `?.` takes one layer only. Its help
     /// peels the other layers first (`UnwrapHelp::Peel`), unless an index follows (`indexed`) or
-    /// the field is a `mut` argument: the peeled `?.` fails there.
+    /// the field is a `mut` argument: the peeled `?.` fails there. With the field, the proof of
+    /// the E0062.
     pub(super) fn field_of_payload(
         &mut self,
         payload: Type,
         receiver: &ast::Expr,
         name: &ast::Ident,
         access: Access,
-    ) -> Option<FoundField> {
+    ) -> Result<(FoundField, Reported), Reported> {
         let inner = innermost(payload);
-        let found = self.find_field(Some(inner), receiver, name, access)?;
+        let found = self.find_field(inner, receiver, name, access)?;
         let write = match access {
             Access::Read => false,
             Access::Assign | Access::Mut => true,
@@ -273,9 +279,8 @@ impl Checker<'_> {
         } else {
             self.peel_or(payload, (receiver, name), UnwrapHelp::It)
         };
-        self.diagnostics
-            .error(may_be_none(receiver, name, fix, write, unwrap));
-        Some(found)
+        let reported = (self.diagnostics).error(may_be_none(receiver, name, fix, write, unwrap));
+        Ok((found, reported))
     }
 
     /// Whether `ty` is a class type whose field `name` has an array type or an optional array
@@ -314,7 +319,8 @@ impl Checker<'_> {
                 .then_some(Declared::Known(func))
         });
         plain.or_else(|| {
-            (self.broken_extension_methods.contains(&(holder, name))).then_some(Declared::Broken)
+            let reported = self.broken_extension_methods.get(&(holder, name))?;
+            Some(Declared::Poisoned(*reported))
         })
     }
 
@@ -357,26 +363,26 @@ impl Checker<'_> {
 
     /// The method named by `site` of `receiver`, whose checked value is `value`, in the call that
     /// starts at `span`. The type's own method wins; else the method of the one conformance block
-    /// that has one, or the one that the call's context picks (`pick_conforming`). `None` when
-    /// there is none, reported unless the type is `Error`. The type is no optional:
-    /// `method_of_payload` takes the method from the payload.
+    /// that has one, or the one that the call's context picks (`pick_conforming`). `Err` with
+    /// the proof when there is none, reported unless the type is `Error`. The type is no
+    /// optional: `method_of_payload` takes the method from the payload.
     pub(super) fn find_method(
         &mut self,
         value: &Checked,
         site: Site<'_>,
         (span, nullary): (Span, bool),
-    ) -> Option<Found> {
-        let ty = type_of(value)?;
+    ) -> Result<Found, Reported> {
+        let ty = known_type(value)?;
         let name = site.name;
         let mut masked = None;
         match self.own_method(ty, name.name) {
             Some(Declared::Known(func)) if self.plain_block_holds(func, ty) => {
-                return Some(Found::Func(func));
+                return Ok(Found::Func(func));
             }
             // A conformance that applies answers the call instead.
             Some(Declared::Known(func)) => masked = Some(func),
             // Its own error is reported; the caller checks the arguments.
-            Some(Declared::Broken) => return None,
+            Some(Declared::Poisoned(reported)) => return Err(reported),
             None => {}
         }
         self.conforming_methods(ty, name.name);
@@ -393,27 +399,25 @@ impl Checker<'_> {
                     && written.is_some_and(|func| self.signatures[func.0].own > 0);
                 if name.name.as_str() == "to_string"
                     && ((nullary && !generic) || written.is_none())
-                    && !self.has_broken_block(ty)
+                    && self.broken_block(ty).is_none()
                     && !self.names_to_string_field(ty)
                 {
                     // A masked method with no type parameter took the list in `method_args`.
                     let listed = masked.is_some_and(|func| self.signatures[func.0].own == 0);
-                    return Some(Found::GeneratedDisplay { listed });
+                    return Ok(Found::GeneratedDisplay { listed });
                 }
                 // No conformance answers, and the bounds of the plain block fail for the receiver.
                 if let Some(func) = masked {
                     let at = (self.signatures[func.0].extension)
                         .expect("a method whose block bounds fail should have a block");
-                    self.report_block_bound(at, ty, span, name.name.as_str());
-                    return None;
+                    return Err(self.report_block_bound(at, ty, span, name.name.as_str()));
                 }
                 // A block covered the receiver, and its bounds fail: the type argument is wrong.
                 if let Some((at, _)) = self.failed_block {
-                    self.report_block_bound(at, ty, span, name.name.as_str());
-                    return None;
+                    return Err(self.report_block_bound(at, ty, span, name.name.as_str()));
                 }
             }
-            [(func, ..)] => return Some(Found::Func(func)),
+            [(func, ..)] => return Ok(Found::Func(func)),
             _ => {
                 // Taken while the call picks, so that the buffer is free to the calls it reads.
                 let candidates = std::mem::take(&mut self.candidates);
@@ -423,12 +427,16 @@ impl Checker<'_> {
             }
         }
         // A broken block may have given the type the method.
-        if self.has_broken_block(ty) || self.in_duplicate_block(ty, name.name) {
-            return None;
+        if let Some(reported) = self.broken_block(ty) {
+            return Err(reported);
+        }
+        // The duplicate conformance of the block is reported.
+        if self.in_duplicate_block(ty, name.name) {
+            return Err(self.proof(name.span)); // proof: declaration
         }
         // A rejected block may have given any type the method.
-        if self.rejected_methods.contains(&name.name) {
-            return None;
+        if let Some(&reported) = self.rejected_methods.get(&name.name) {
+            return Err(reported);
         }
         let d = match ty.kind() {
             TypeKind::Class(class, _) => {
@@ -462,15 +470,14 @@ impl Checker<'_> {
             }
             _ => no_member(Definition::Method, self.type_name(ty), name, []),
         };
-        self.report_lookup_failure(d, name);
-        None
+        Err(self.report_lookup_failure(d, name))
     }
 
     /// Reports `d`, the failure to find the method `name`, and records it for E0062 on an
     /// optional receiver (`Body::failed_lookups`). Each report of a lookup at `name` comes here.
-    pub(super) fn report_lookup_failure(&mut self, d: Diagnostic, name: &ast::Ident) {
+    pub(super) fn report_lookup_failure(&mut self, d: Diagnostic, name: &ast::Ident) -> Reported {
         self.body.failed_lookups.insert(name.span);
-        self.diagnostics.error(d);
+        self.diagnostics.error(d)
     }
 
     /// `report_lookup_failure` for a method call that cannot be checked: the arguments report
@@ -481,10 +488,10 @@ impl Checker<'_> {
         name: &ast::Ident,
         args: &[ast::Arg],
     ) -> Checked {
-        self.report_lookup_failure(d, name);
+        let reported = self.report_lookup_failure(d, name);
         self.labels(args);
         self.stray(args);
-        Err(Poisoned::error())
+        Err(Poisoned::untyped(reported))
     }
 
     /// `receiver.method(args)` on `value`, a value of type `payload?`, `receiver` its source. A `.`
@@ -505,25 +512,27 @@ impl Checker<'_> {
         indexed: bool,
     ) -> Checked {
         let inner = innermost(payload);
-        let checked = Err(Poisoned::typed(inner));
+        // The E0062 below, or the failed lookup of the name, is the report. No list holds it yet.
+        let held = self.proof(site.name.span); // proof: held misfit
+        let checked = Err(Poisoned::typed(inner, held));
         // The call reports its own mistakes, and its type waits for the fix.
         drop(self.method_call(span, Dot::Payload, checked, receiver, site, args));
         let name = site.name;
-        if !self.body.failed_lookups.contains(&name.span) {
-            // A `push` onto an optional array writes: the `?.` fix makes it do nothing.
-            let write = name.name.as_str() == "push" && matches!(inner.kind(), TypeKind::Array(_));
-            let unwrap = if write {
-                self.pushed_array_unwrap(receiver, &value)
-            } else if indexed {
-                UnwrapHelp::It
-            } else {
-                self.peel_or(payload, (receiver, name), UnwrapHelp::It)
-            };
-            let fix = payload_fix(payload, indexed);
-            let d = may_be_none(receiver, name, fix, write, unwrap);
-            self.diagnostics.error(d);
+        if self.body.failed_lookups.contains(&name.span) {
+            return Err(Poisoned::untyped(held));
         }
-        Err(Poisoned::error())
+        // A `push` onto an optional array writes: the `?.` fix makes it do nothing.
+        let write = name.name.as_str() == "push" && matches!(inner.kind(), TypeKind::Array(_));
+        let unwrap = if write {
+            self.pushed_array_unwrap(receiver, &value)
+        } else if indexed {
+            UnwrapHelp::It
+        } else {
+            self.peel_or(payload, (receiver, name), UnwrapHelp::It)
+        };
+        let fix = payload_fix(payload, indexed);
+        let d = may_be_none(receiver, name, fix, write, unwrap);
+        Err(Poisoned::untyped(self.diagnostics.error(d)))
     }
 
     /// The help of an E0062 for a `.` after `receiver`, an optional of the `payload?`, before
@@ -601,11 +610,13 @@ impl Checker<'_> {
         })
     }
 
-    /// Whether an `extend` block of the class or enum `ty` is broken: it may have given `ty`
-    /// the method that a call names.
-    fn has_broken_block(&self, ty: Type) -> bool {
-        holder_of(ty)
-            .is_some_and(|holder| self.broken_extensions.contains(&self.holder_name(holder)))
+    /// The proof of the report of a broken `extend` block of the class or enum `ty`, if it has
+    /// one: it may have given `ty` the method that a call names.
+    fn broken_block(&self, ty: Type) -> Option<Reported> {
+        let holder = holder_of(ty)?;
+        self.broken_extensions
+            .get(&self.holder_name(holder))
+            .copied()
     }
 
     /// `own_method`, unless the method is a plain block's and the bounds of its block fail for
@@ -712,15 +723,17 @@ impl Checker<'_> {
         site: Site<'_>,
         span: Span,
         candidates: &[(tir::FuncId, InterfaceId, TypeArgs)],
-    ) -> Option<tir::FuncId> {
+    ) -> Result<tir::FuncId, Reported> {
         if Self::context_failed(site) {
-            return None;
+            return Err(self.proof(span)); // proof: quiet reader
         }
         // A result that is `Error` has its own error.
         let results: Option<Vec<Type>> = (candidates.iter())
             .map(|&(func, ..)| self.signatures[func.0].ret)
             .collect();
-        let results = results?;
+        let Some(results) = results else {
+            return Err(self.proof(span)); // proof: declaration
+        };
         let written = self.written_list(site)?;
         let rets: Vec<Option<Type>> = (candidates.iter().zip(results))
             .map(|(&(func, ..), ret)| self.candidate_result(func, ty, ret, &written))
@@ -729,7 +742,7 @@ impl Checker<'_> {
             .map(|&(_, interface, args)| self.bound_text(interface, args))
             .collect();
         let picked = self.pick_among(ty, site, span, &rets, interfaces)?;
-        Some(candidates[picked].0)
+        Ok(candidates[picked].0)
     }
 
     /// Whether the context of the call that `site` writes failed, and reported it: this call is
@@ -739,12 +752,15 @@ impl Checker<'_> {
     }
 
     /// The type arguments that `site` writes, resolved without a report; none when it writes
-    /// none. `None` when a list does not resolve: it is reported, and poisons the call.
-    pub(super) fn written_list(&mut self, site: Site<'_>) -> Option<Vec<Type>> {
+    /// none. `Err` when a list does not resolve: it is reported, and poisons the call.
+    pub(super) fn written_list(&mut self, site: Site<'_>) -> Result<Vec<Type>, Reported> {
         if site.written.is_empty() {
-            Some(Vec::new())
-        } else {
-            self.written_types(site.written)
+            return Ok(Vec::new());
+        }
+        match self.written_types(site.written) {
+            Some(types) => Ok(types),
+            // `resolve` gives no proof for a written type that does not resolve.
+            None => Err(self.proof(site.angles)), // proof: declaration
         }
     }
 
@@ -760,7 +776,7 @@ impl Checker<'_> {
         span: Span,
         rets: &[Option<Type>],
         interfaces: Vec<String>,
-    ) -> Option<usize> {
+    ) -> Result<usize, Reported> {
         let expected = site.expected;
         // Whether a result is unknown, so that its candidate may return anything the others do.
         let open = rets.contains(&None);
@@ -777,7 +793,7 @@ impl Checker<'_> {
                 (first, more) = matching(payload);
             }
             if let (Some(only), false) = (first, more) {
-                return Some(only);
+                return Ok(only);
             }
         }
         // The first result that exactly one candidate has tells the `let` what to write.
@@ -792,14 +808,13 @@ impl Checker<'_> {
             binding: self.let_binding(span).unwrap_or_else(|| "x".to_string()),
             ty: self.type_name(ret),
         });
-        self.error(DiagnosticKind::Ambiguous {
+        Err(self.error(DiagnosticKind::Ambiguous {
             method: site.name.name.to_string(),
             receiver: self.type_name(ty),
             interfaces,
             at: site.name.span,
             annotate,
-        });
-        None
+        }))
     }
 
     /// The types `written`, resolved as a call's type arguments are, without a report: the call
@@ -892,20 +907,21 @@ pub(super) fn safe_value(
     scrutinee: Checked,
     member: Checked,
 ) -> Checked {
-    let ty = match type_of(&member) {
-        Some(Type::UNIT) => Type::UNIT,
-        Some(ty) => as_optional(ty),
+    let ty = match known_type(&member) {
+        Ok(Type::UNIT) => Type::UNIT,
+        Ok(ty) => as_optional(ty),
         // A misfit's found type is optional already (see `Checker::report_unbound`).
-        None => {
+        Err(reported) => {
             let found = member.err().and_then(|poisoned| poisoned.found);
             return Err(Poisoned {
                 found,
-                ..Poisoned::error()
+                ..Poisoned::untyped(reported)
             });
         }
     };
-    let (Ok(scrutinee), Ok(member)) = (scrutinee, member) else {
-        return Err(Poisoned::typed(ty));
+    let (scrutinee, member) = match (scrutinee, member) {
+        (Ok(scrutinee), Ok(member)) => (scrutinee, member),
+        (Err(failed), _) | (_, Err(failed)) => return Err(Poisoned::typed(ty, failed.reported())),
     };
     let none = (ty != Type::UNIT).then_some(tir::Expr::new(tir::ExprKind::None, ty, span));
     let value = if member.ty == ty {

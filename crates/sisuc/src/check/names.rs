@@ -4,10 +4,11 @@
 //! holds one map for each kind, and its fields are private: a reader asks a getter, so that a
 //! later change of the maps touches this module alone.
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 use super::enums::reserved_name;
 use super::prelude::{self, PRELUDE};
+use super::reports::Reported;
 use super::{Binding, Body, Checker, Declared, Definition, built_in_type, is_language_interface};
 use crate::diagnostic::DiagnosticKind;
 use crate::source::Span;
@@ -117,13 +118,15 @@ pub(super) enum Resolved {
     BuiltinFunction,
     /// `Some`, `Ok` or `Err`, which a program writes without the enum.
     PreludeVariant,
-    /// A rejected or broken item has the name, and reports its own error.
+    /// A rejected or broken item has the name, and reports its own error. The token proves that
+    /// error. An alias that names no type holds none: its declaration reported its error.
     Poisoned(
         #[expect(
             dead_code,
             reason = "no position reads the kind of a poisoned item yet"
         )]
         ItemKind,
+        Option<Reported>,
     ),
     NotFound,
 }
@@ -131,6 +134,10 @@ pub(super) enum Resolved {
 /// The maps from a top-level name to the item that it stands for. Each map holds the first intact
 /// item of a name, and every broken or rejected one.
 #[derive(Default)]
+#[expect(
+    clippy::zero_sized_map_values,
+    reason = "the map holds the proof of a report for each key, and a set cannot hold it"
+)]
 pub(super) struct NameMaps {
     functions: FxHashMap<Symbol, Declared<tir::FuncId>>,
     classes: FxHashMap<Symbol, Declared<tir::ClassId>>,
@@ -141,8 +148,9 @@ pub(super) struct NameMaps {
     aliases: FxHashMap<Symbol, Declared<usize>>,
     /// The language interfaces that a program declares twice. `poison` keeps their names out of
     /// `interfaces`, so a bound, a header and an `any` read the prelude's interface. This set tells
-    /// every other position that the name is poisoned.
-    language_poisoned: FxHashSet<Symbol>,
+    /// every other position that the name is poisoned, and holds the token of the second
+    /// declaration's error.
+    language_poisoned: FxHashMap<Symbol, Reported>,
 }
 
 impl NameMaps {
@@ -178,31 +186,31 @@ impl NameMaps {
 
     /// Poisons the top-level name `name` of an item of `kind` that is rejected or broken: its
     /// uses give no error of their own. The kinds share a namespace, so an item of another kind
-    /// with this name is poisoned too.
-    pub(super) fn poison(&mut self, kind: Definition, name: Symbol) {
+    /// with this name is poisoned too. `reported` proves the item's error.
+    pub(super) fn poison(&mut self, kind: Definition, name: Symbol, reported: Reported) {
         // The prelude's code reads a language interface by its name. No rejected or broken item
         // takes it, as no intact item of the user's does.
         let language = is_language_interface(name.as_str());
         match kind {
             Definition::Function => {
-                self.functions.insert(name, Declared::Broken);
+                self.functions.insert(name, Declared::Poisoned(reported));
             }
             Definition::Class => {
-                self.classes.insert(name, Declared::Broken);
+                self.classes.insert(name, Declared::Poisoned(reported));
             }
             Definition::Interface => {
                 if !language {
-                    self.interfaces.insert(name, Declared::Broken);
+                    self.interfaces.insert(name, Declared::Poisoned(reported));
                 }
             }
             Definition::Enum => {
-                self.enums.insert(name, Declared::Broken);
+                self.enums.insert(name, Declared::Poisoned(reported));
             }
             Definition::Constant => {
-                self.constants.insert(name, Declared::Broken);
+                self.constants.insert(name, Declared::Poisoned(reported));
             }
             Definition::Alias => {
-                self.aliases.insert(name, Declared::Broken);
+                self.aliases.insert(name, Declared::Poisoned(reported));
             }
             Definition::Field
             | Definition::Method
@@ -212,30 +220,31 @@ impl NameMaps {
             | Definition::LoopLabel => {}
         }
         if !language && let Some(interface) = self.interfaces.get_mut(&name) {
-            *interface = Declared::Broken;
+            *interface = Declared::Poisoned(reported);
         }
         if let Some(class) = self.classes.get_mut(&name) {
-            *class = Declared::Broken;
+            *class = Declared::Poisoned(reported);
         }
         if let Some(e) = self.enums.get_mut(&name) {
-            *e = Declared::Broken;
+            *e = Declared::Poisoned(reported);
         }
         if let Some(function) = self.functions.get_mut(&name) {
-            *function = Declared::Broken;
+            *function = Declared::Poisoned(reported);
         }
         if let Some(constant) = self.constants.get_mut(&name) {
-            *constant = Declared::Broken;
+            *constant = Declared::Poisoned(reported);
         }
         if let Some(alias) = self.aliases.get_mut(&name) {
-            *alias = Declared::Broken;
+            *alias = Declared::Poisoned(reported);
         }
     }
 
     /// Poisons `name` at every position but a bound when it is a language interface's name. A
-    /// program declares it twice, or declares it and another item of the name.
-    pub(super) fn poison_language(&mut self, name: Symbol) {
+    /// program declares it twice, or declares it and another item of the name. `reported` proves
+    /// the error of the second declaration.
+    pub(super) fn poison_language(&mut self, name: Symbol, reported: Reported) {
         if is_language_interface(name.as_str()) {
-            self.language_poisoned.insert(name);
+            self.language_poisoned.insert(name, reported);
         }
     }
 
@@ -301,7 +310,7 @@ impl NameMaps {
             .iter()
             .filter_map(|(&name, &declared)| match declared {
                 Declared::Known(id) => Some((name, id)),
-                Declared::Broken => None,
+                Declared::Poisoned(_) => None,
             })
     }
 }
@@ -316,62 +325,72 @@ impl Body {
 }
 
 impl Checker<'_> {
-    /// The kind of the rejected or broken item that poisons the top-level name `name`. A use of
-    /// the name gives no error of its own.
-    fn poison_kind(&self, name: Symbol) -> Option<ItemKind> {
+    /// The kind of the rejected or broken item that poisons the top-level name `name`, and the
+    /// token of its error. A use of the name gives no error of its own.
+    fn poison_kind(&self, name: Symbol) -> Option<(ItemKind, Option<Reported>)> {
         let kinds = [
             (
-                matches!(self.names.class(name), Some(Declared::Broken)),
+                poisoned(self.names.class(name).as_ref()).map(Some),
                 ItemKind::Class,
             ),
             (
-                matches!(self.names.function(name), Some(Declared::Broken)),
+                poisoned(self.names.function(name).as_ref()).map(Some),
                 ItemKind::Function,
             ),
             (
-                matches!(self.names.enum_id(name), Some(Declared::Broken)),
+                poisoned(self.names.enum_id(name).as_ref()).map(Some),
                 ItemKind::Enum,
             ),
             (
-                matches!(self.names.interface(name), Some(Declared::Broken)),
+                poisoned(self.names.interface(name).as_ref()).map(Some),
                 ItemKind::Interface,
             ),
             (
-                matches!(self.names.constant(name), Some(Declared::Broken)),
+                poisoned(self.names.constant(name).as_ref()).map(Some),
                 ItemKind::Constant,
             ),
-            (self.alias_error(name), ItemKind::Alias),
             (
-                self.names.language_poisoned.contains(&name),
+                (self.alias_error(name)).then(|| poisoned(self.names.alias(name).as_ref())),
+                ItemKind::Alias,
+            ),
+            (
+                self.names.language_poisoned.get(&name).map(|&r| Some(r)),
                 ItemKind::Interface,
             ),
         ];
         kinds
             .into_iter()
-            .find_map(|(poisoned, kind)| poisoned.then_some(kind))
-    }
-
-    /// Whether a rejected or broken item poisons the top-level name `name`, so that a use of it
-    /// gives no error of its own.
-    pub(super) fn poisoned(&self, name: Symbol) -> bool {
-        self.poison_kind(name).is_some()
+            .find_map(|(reported, kind)| Some((kind, reported?)))
     }
 
     /// `poison_kind` for a call or a read of the value `name`. `Ok` and `Err`, when no user's
     /// function or class takes them, belong to the prelude's `Result`.
-    fn poison_kind_use(&self, name: Symbol) -> Option<ItemKind> {
+    fn poison_kind_use(&self, name: Symbol) -> Option<(ItemKind, Option<Reported>)> {
         self.poison_kind(name).or_else(|| {
+            let reported = poisoned(self.names.enum_id(Symbol::RESULT).as_ref())?;
             ((name == Symbol::OK || name == Symbol::ERR)
                 && self.names.function(name).is_none()
-                && self.names.class(name).is_none()
-                && matches!(self.names.enum_id(Symbol::RESULT), Some(Declared::Broken)))
-            .then_some(ItemKind::Enum)
+                && self.names.class(name).is_none())
+            .then_some((ItemKind::Enum, Some(reported)))
         })
     }
 
     /// Whether a call or a read of the value `name` is poisoned.
     pub(super) fn poisoned_use(&self, name: Symbol) -> bool {
         self.poison_kind_use(name).is_some()
+    }
+
+    /// The token of the item that poisons a call or a read of the value `name` at `at`, when
+    /// one does.
+    pub(super) fn use_poison(&mut self, name: Symbol, at: Span) -> Option<Reported> {
+        let (_, reported) = self.poison_kind_use(name)?;
+        Some(self.poison_token(reported, at))
+    }
+
+    /// The token of a poisoned item at the use `at`: `reported`, the token of its error. An alias
+    /// that is `Error` holds no token, so its token is a promise.
+    pub(super) fn poison_token(&mut self, reported: Option<Reported>, at: Span) -> Reported {
+        reported.unwrap_or_else(|| self.proof(at)) // proof: declaration
     }
 
     /// The binding of `name` in the innermost open scope that has one.
@@ -399,7 +418,7 @@ impl Checker<'_> {
             local,
             ty,
             hidden: if hides_name {
-                self.poison_kind_use(name)
+                self.poison_kind_use(name).map(|(kind, _)| kind)
             } else {
                 None
             },
@@ -443,8 +462,8 @@ impl Checker<'_> {
         if let Some(Declared::Known(id)) = self.names.constant(name) {
             return Resolved::Constant(id);
         }
-        if let Some(kind) = self.poison_kind_use(name) {
-            return Resolved::Poisoned(kind);
+        if let Some((kind, reported)) = self.poison_kind_use(name) {
+            return Resolved::Poisoned(kind, reported);
         }
         if name == Symbol::SOME || self.result_variant(name).is_some() {
             return Resolved::PreludeVariant;
@@ -492,8 +511,8 @@ impl Checker<'_> {
     }
 
     fn callee_meaning(&self, name: Symbol) -> Resolved {
-        if let Some(kind) = self.poison_kind_use(name) {
-            return Resolved::Poisoned(kind);
+        if let Some((kind, reported)) = self.poison_kind_use(name) {
+            return Resolved::Poisoned(kind, reported);
         }
         if PRELUDE.contains(&name.as_str()) {
             return Resolved::BuiltinFunction;
@@ -552,25 +571,30 @@ impl Checker<'_> {
             return Resolved::AssocType;
         }
         let declared = (self.names.class(name), self.names.enum_id(name));
-        if let (Some(Declared::Broken), _) = declared {
-            return Resolved::Poisoned(ItemKind::Class);
+        if let (Some(Declared::Poisoned(reported)), _) = declared {
+            return Resolved::Poisoned(ItemKind::Class, Some(reported));
         }
-        if let (_, Some(Declared::Broken)) = declared {
-            return Resolved::Poisoned(ItemKind::Enum);
+        if let (_, Some(Declared::Poisoned(reported))) = declared {
+            return Resolved::Poisoned(ItemKind::Enum, Some(reported));
         }
         match self.names.alias(name) {
-            Some(Declared::Broken) => return Resolved::Poisoned(ItemKind::Alias),
+            Some(Declared::Poisoned(reported)) => {
+                return Resolved::Poisoned(ItemKind::Alias, Some(reported));
+            }
             Some(Declared::Known(id)) => return Resolved::Item(ItemId::Alias(id)),
             None => {}
         }
         // A class or an enum that took a language interface's name is the type.
         let taken = declared.0.is_some() || declared.1.is_some();
         if let (false, Some(found)) = (taken, self.names.interface(name)) {
-            return match found {
-                Declared::Known(id) if !self.poisoned(name) => {
-                    Resolved::Item(ItemId::Interface(id))
+            return match (found, self.poison_kind(name)) {
+                (Declared::Known(id), None) => Resolved::Item(ItemId::Interface(id)),
+                (Declared::Poisoned(reported), _) => {
+                    Resolved::Poisoned(ItemKind::Interface, Some(reported))
                 }
-                _ => Resolved::Poisoned(ItemKind::Interface),
+                (Declared::Known(_), Some((_, reported))) => {
+                    Resolved::Poisoned(ItemKind::Interface, reported)
+                }
             };
         }
         if let Some(ty) = built_in_type(name.as_str()) {
@@ -588,7 +612,7 @@ impl Checker<'_> {
         // A broken or rejected function or constant of the name has its own error. An intact one
         // is no type: the caller reports it.
         match self.poison_kind(name) {
-            Some(kind) => Resolved::Poisoned(kind),
+            Some((kind, reported)) => Resolved::Poisoned(kind, reported),
             None => Resolved::NotFound,
         }
     }
@@ -599,7 +623,9 @@ impl Checker<'_> {
         }
         match self.names.interface(name) {
             Some(Declared::Known(id)) => Resolved::Item(ItemId::Interface(id)),
-            Some(Declared::Broken) => Resolved::Poisoned(ItemKind::Interface),
+            Some(Declared::Poisoned(reported)) => {
+                Resolved::Poisoned(ItemKind::Interface, Some(reported))
+            }
             None => Resolved::NotFound,
         }
     }
@@ -611,9 +637,9 @@ impl Checker<'_> {
         }
         let constant = self.names.constant(name);
         if (constant.is_some() || name.as_str().starts_with(char::is_uppercase))
-            && let Some(kind) = self.poison_kind(name)
+            && let Some((kind, reported)) = self.poison_kind(name)
         {
-            return Resolved::Poisoned(kind);
+            return Resolved::Poisoned(kind, reported);
         }
         match constant {
             Some(Declared::Known(id)) => Resolved::Constant(id),
@@ -628,19 +654,19 @@ impl Checker<'_> {
         match self.names.enum_id(name) {
             Some(Declared::Known(id)) => return Resolved::Item(ItemId::Enum(id)),
             // The type arguments make the path to a broken enum a value, which the local answers.
-            Some(Declared::Broken) => {
+            Some(Declared::Poisoned(reported)) => {
                 return match angles.then(|| self.binding(name)).flatten() {
                     Some(b) => self.local_answer(name, b),
-                    None => Resolved::Poisoned(ItemKind::Enum),
+                    None => Resolved::Poisoned(ItemKind::Enum, Some(reported)),
                 };
             }
             None => {}
         }
         // A poisoned name that no local hides gives no error of its own.
-        if let Some(kind) = self.poison_kind(name)
+        if let Some((kind, reported)) = self.poison_kind(name)
             && self.binding(name).is_none()
         {
-            return Resolved::Poisoned(kind);
+            return Resolved::Poisoned(kind, reported);
         }
         if name == Symbol::OPTION {
             return Resolved::OptionType;
@@ -770,5 +796,13 @@ impl Checker<'_> {
             }
             _ => None,
         }
+    }
+}
+
+/// The token of `declared`, when it is a poisoned item.
+fn poisoned<T>(declared: Option<&Declared<T>>) -> Option<Reported> {
+    match declared {
+        Some(&Declared::Poisoned(reported)) => Some(reported),
+        Some(Declared::Known(_)) | None => None,
     }
 }

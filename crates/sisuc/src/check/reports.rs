@@ -103,13 +103,6 @@ impl Diagnostics {
 
     /// Records a promise made at `at`. An error in the list keeps it, wherever the error is, and
     /// so does a parser mark (see `promises_kept`).
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the poisoned values hold its token from the next change on"
-        )
-    )]
     pub(super) fn proof(&mut self, at: Span) -> Reported {
         self.promises.push(at);
         Reported(())
@@ -150,10 +143,12 @@ impl Diagnostics {
         self.promises.extend(held.promises);
     }
 
-    /// Adds `d` at `mark`, before the reports that came after it.
-    pub(super) fn insert_at(&mut self, mark: Mark, d: Diagnostic) {
+    /// Adds the error `d` at `mark`, before the reports that came after it, and proves it.
+    pub(super) fn insert_at(&mut self, mark: Mark, d: Diagnostic) -> Reported {
+        debug_assert_eq!(d.severity(), Severity::Error, "{:?} is no error", d.code());
         self.count(&d);
         self.list.insert(mark.reports, d);
+        Reported(())
     }
 
     /// Puts `d` in place of the report at `index`. The code and the severity stay.

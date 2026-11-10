@@ -7,6 +7,7 @@ use rustc_hash::FxHashSet;
 
 use super::alias::UseCheck;
 use super::interface::{BOUND_CLOSURE_LIMIT, Bound, Check};
+use super::reports::Reported;
 use super::unused_names::Used;
 use super::{
     Checked, CheckedBlock, Checker, DeferredAsType, Expectation, Poisoned, block_type, wrap,
@@ -91,7 +92,8 @@ impl Checker<'_> {
         if let ast::TypeKind::Applied(applied) = &written.kind {
             // In an alias body, an argument that names a parameter waits for each use of the alias.
             if self.body.alias.is_some() && any.has_param() {
-                self.make_check(UseCheck::Applied(any), Span::new(0, 0));
+                // An `any` that names a parameter waits, so the check holds.
+                let _ = self.make_check(UseCheck::Applied(any), Span::new(0, 0));
             } else {
                 let ats = applied.args.iter().map(|arg| arg.span).collect();
                 self.check_arguments(bound, any, ats);
@@ -101,7 +103,7 @@ impl Checker<'_> {
             self.any_written.entry(any).or_insert(ty.bare);
         }
         self.record(Used::Interface(bound.interface), bound.at);
-        self.check_or_wait(Check::Any { bound }).then_some(any)
+        self.check_or_wait(Check::Any { bound }).ok().map(|()| any)
     }
 
     /// Reports that the interface `name`, written as the type `ty` at `at`, is no type. The help
@@ -153,7 +155,7 @@ impl Checker<'_> {
     }
 
     /// Reports that the interface of `bound` cannot be `any`, for the reason `reason`.
-    pub(super) fn cannot_be_any(&mut self, bound: Bound, reason: AnyReason) {
+    pub(super) fn cannot_be_any(&mut self, bound: Bound, reason: AnyReason) -> Reported {
         let method = |this: &Self, at: usize| {
             this.interfaces[reason.owner.0].requirements[at]
                 .name
@@ -190,7 +192,7 @@ impl Checker<'_> {
             owner,
             reason: why,
             at: bound.at,
-        });
+        })
     }
 
     /// Why `interface` cannot be `any`, or `None` when it can. The reason is the first one among
@@ -367,8 +369,8 @@ impl Checker<'_> {
             return Err(checked);
         }
         if !self.conforms(got, interface, args) {
-            self.error(self.not_conform(at, got, target));
-            return Ok((Err(Poisoned::error()), true));
+            let reported = self.error(self.not_conform(at, got, target));
+            return Ok((Err(Poisoned::untyped(reported)), true));
         }
         // A conversion makes a table, which only `mono` reaches.
         self.instantiates = true;
@@ -378,7 +380,7 @@ impl Checker<'_> {
                 let e = to_any(e, target);
                 Ok(if layers == 1 { wrap(e, want) } else { e })
             }
-            Err(_) => Err(Poisoned::typed(want)),
+            Err(poisoned) => Err(Poisoned::typed(want, poisoned.reported())),
         };
         Ok((converted, false))
     }
@@ -393,8 +395,8 @@ impl Checker<'_> {
         if got == want || !any || got == Type::NEVER || got == Type::UNIT {
             return;
         }
-        match std::mem::replace(block, Err(Poisoned::error())) {
-            Ok(mut done) => {
+        match block {
+            Ok(done) => {
                 let value = done
                     .value
                     .take()
@@ -403,20 +405,21 @@ impl Checker<'_> {
                     Ok((Ok(converted), _)) => {
                         done.value = Some(Box::new(converted));
                         done.ty = want;
-                        *block = Ok(done);
                     }
-                    Err(Ok(unchanged)) => {
-                        done.value = Some(Box::new(unchanged));
-                        *block = Ok(done);
-                    }
+                    Err(Ok(unchanged)) => done.value = Some(Box::new(unchanged)),
                     Ok((Err(poisoned), _)) | Err(Err(poisoned)) => *block = Err(poisoned),
                 }
             }
             Err(poisoned) => {
+                let reported = poisoned.reported();
+                let Err(poisoned) = std::mem::replace(block, Err(Poisoned::untyped(reported)))
+                else {
+                    unreachable!("the block should have failed");
+                };
                 *block = match self.any_conversion(at, Err(poisoned), want, got) {
-                    Ok((converted, _)) | Err(converted) => {
-                        Err(converted.err().unwrap_or_else(Poisoned::error))
-                    }
+                    Ok((converted, _)) | Err(converted) => Err(converted
+                        .err()
+                        .unwrap_or_else(|| Poisoned::untyped(reported))),
                 };
             }
         }
