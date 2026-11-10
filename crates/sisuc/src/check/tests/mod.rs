@@ -35,6 +35,7 @@ mod poison;
 mod prelude;
 mod ranges;
 mod recursion;
+mod reports;
 mod shadowing;
 mod strings;
 mod u8;
