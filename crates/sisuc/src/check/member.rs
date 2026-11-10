@@ -9,7 +9,7 @@ use super::extend::{holder_of, method_holder};
 use super::generic::{Site, named_params};
 use super::unused_names::Used;
 use super::{
-    Checked, Checker, Declared, Flag, Holder, Poisoned, UNKNOWN, as_optional, has_remedy_flag,
+    Checked, Checker, Declared, Expectation, Flag, Holder, Poisoned, as_optional, has_remedy_flag,
     is_unwrapped, spread, type_of, wrap,
 };
 use crate::ast;
@@ -742,7 +742,7 @@ impl Checker<'_> {
     /// Whether the context of the call that `site` writes failed, and reported it: this call is
     /// poisoned with it, and picking among its candidates would only add to it.
     pub(super) fn context_failed(site: Site<'_>) -> bool {
-        site.expected == Some(UNKNOWN)
+        site.expected == Expectation::Poisoned
     }
 
     /// The type arguments that `site` writes, resolved without a report; none when it writes
@@ -771,7 +771,7 @@ impl Checker<'_> {
         let expected = site.expected;
         // Whether a result is unknown, so that its candidate may return anything the others do.
         let open = rets.contains(&None);
-        if let Some(expected) = expected.filter(|_| !open) {
+        if let Some(expected) = expected.ty().filter(|_| !open) {
             let matching = |want: Type| {
                 let mut hits = candidate_results(rets).filter(|&(_, ret)| ret == Some(want));
                 let first = hits.next().map(|(i, _)| i);
@@ -834,7 +834,7 @@ impl Checker<'_> {
     pub(super) fn stray(&mut self, args: &[ast::Arg]) {
         for arg in args {
             // Only its diagnostics matter.
-            drop(self.expr(&arg.value, Some(UNKNOWN)));
+            drop(self.expr(&arg.value, Expectation::Poisoned));
         }
     }
 }

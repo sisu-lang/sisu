@@ -10,7 +10,7 @@ use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use super::expr::{fits, local};
 use super::generic::mark;
 use super::place::{Chain, Change, CheckedPlace, Path, Root, build, place_root};
-use super::{Checked, Checker, Poisoned, SelfType, UNKNOWN, block_expr, type_of};
+use super::{Checked, Checker, Expectation, Poisoned, SelfType, block_expr, type_of};
 use crate::ast;
 use crate::diagnostic::{
     ChainForm, ChainLabel, DiagnosticKind, Immutable, MissingFix, NotMutForm, NotPlace, SliceOf,
@@ -414,7 +414,7 @@ impl Checker<'_> {
     /// unknown type is no failure, so the report is made.
     pub(super) fn checked_alone(&mut self, arg: &ast::Expr) -> (Option<Type>, bool) {
         let errors = self.diagnostics.errors;
-        let ty = type_of(&self.expr(arg, Some(UNKNOWN)));
+        let ty = type_of(&self.expr(arg, Expectation::Poisoned));
         let failed = self.diagnostics.errors > errors || ty.is_none() && errors > 0;
         (ty, failed)
     }
@@ -852,7 +852,7 @@ impl Checker<'_> {
         let (Some(want), Some(got)) = (want, got) else {
             return true;
         };
-        want == UNKNOWN || want.holds_hole() || fits(want, got) || self.converts_to_any(got, want)
+        want.holds_hole() || fits(want, got) || self.converts_to_any(got, want)
     }
 
     /// What the report of the missing `mut` of `arg` offers. `check` is the check of the argument,

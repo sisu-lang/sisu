@@ -19,8 +19,8 @@ use super::expr::{bare_none, none_literal};
 use super::generic::{Site, type_meets};
 use super::interface::{Bound, Slot};
 use super::{
-    Body, Checked, Checker, Declared, DiagnosticKind, Poisoned, UnknownForm, built_in_type,
-    own_args, tail, value_span,
+    Body, Checked, Checker, Declared, DiagnosticKind, Expectation, Poisoned, UnknownForm,
+    built_in_type, own_args, tail, value_span,
 };
 use crate::ast;
 use crate::diagnostic::{Definition, NestingForm};
@@ -873,7 +873,7 @@ impl Checker<'_> {
         let site = if through.params.is_empty() {
             Site {
                 written: &[],
-                expected: Some(through.ty),
+                expected: Expectation::Required(through.ty),
                 ..site
             }
         } else {

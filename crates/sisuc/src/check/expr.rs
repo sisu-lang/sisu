@@ -5,7 +5,7 @@ use std::ops::Range;
 use super::generic::Site;
 use super::names::{self, Resolved};
 use super::{
-    Checked, Checker, Flag, Poisoned, SelfType, UNKNOWN, Uninferred, is_kept, is_unwrapped,
+    Checked, Checker, Expectation, Flag, Poisoned, SelfType, Uninferred, is_kept, is_unwrapped,
     payload, spread, tail, type_of, wrap,
 };
 use crate::ast::{self, ExprKind, UnaryOp};
@@ -46,10 +46,10 @@ pub(super) fn read_jump(checked: Checked) -> Checked {
 }
 
 impl Checker<'_> {
-    /// `expected` is the type the context wants, `None` when it wants none. It only types a
-    /// `None`, a `[]` and an integer literal, and flows into `if` and `if let` branches, a
+    /// `expected` is the type the context wants, `Expectation::None` when it wants none. It only
+    /// types a `None`, a `[]` and an integer literal. It flows into `if` and `if let` branches, a
     /// block's value, array elements, arithmetic and unary `-`; it never wraps.
-    pub(super) fn expr(&mut self, e: &ast::Expr, expected: Option<Type>) -> Checked {
+    pub(super) fn expr(&mut self, e: &ast::Expr, expected: Expectation) -> Checked {
         #[cfg(test)]
         super::EXPR_CHECKS.set(super::EXPR_CHECKS.get() + 1);
         // The chain that an index ends runs only through field bases, method receivers and
@@ -93,8 +93,8 @@ impl Checker<'_> {
 
     /// The integer literal `value` at `at`, whose token is `literal`, typed by `expected`. An
     /// `f64` must hold it exactly.
-    fn integer(&mut self, at: Span, value: i64, literal: Span, expected: Option<Type>) -> Checked {
-        let ty = literal_type(expected);
+    fn integer(&mut self, at: Span, value: i64, literal: Span, expected: Expectation) -> Checked {
+        let ty = literal_type(expected.ty());
         if ty == Type::F64 {
             // Through `i128`: 2^63, the nearest `f64` to `i64::MAX`, saturates back to it.
             #[expect(
@@ -148,7 +148,7 @@ impl Checker<'_> {
         clippy::too_many_lines,
         reason = "one arm per node kind, so the dispatch reads in one place"
     )]
-    fn expr_kind(&mut self, e: &ast::Expr, expected: Option<Type>) -> Checked {
+    fn expr_kind(&mut self, e: &ast::Expr, expected: Expectation) -> Checked {
         let node = |kind, ty| Ok(tir::Expr::new(kind, ty, e.span));
         match &e.kind {
             ExprKind::Int { value, literal } => self.integer(e.span, *value, *literal, expected),
@@ -197,7 +197,7 @@ impl Checker<'_> {
                     return Err(value);
                 }
                 let reported = self.diagnostics.len();
-                let checked = self.name(name.span, name.name, None);
+                let checked = self.name(name.span, name.name, Expectation::None);
                 // The type arguments follow the name, so `Holder.W<i64>` followed by `.` does not
                 // parse: the fix of a bare variant would break the syntax.
                 for d in &mut self.diagnostics[reported..] {
@@ -256,7 +256,10 @@ impl Checker<'_> {
             ExprKind::Unary { op, operand } => {
                 let (want, (operand, mismatched)) = match op {
                     UnaryOp::Neg => self.negated(e.span, operand, expected)?,
-                    UnaryOp::Not => (Type::BOOL, self.operand(operand, Some(Type::BOOL))),
+                    UnaryOp::Not => (
+                        Type::BOOL,
+                        self.operand(operand, Expectation::Required(Type::BOOL)),
+                    ),
                 };
                 // `-` of a value that kept its E0050 keeps it, as an operator does.
                 if *op == UnaryOp::Neg && is_kept(&operand) {
@@ -347,7 +350,7 @@ impl Checker<'_> {
 
     /// A read of `name`: a local, a constant, or an unknown name, which is reported. The `expected`
     /// type of a local with no type may give the type that the help of its E0050 writes.
-    fn name(&mut self, span: Span, name: Symbol, expected: Option<Type>) -> Checked {
+    fn name(&mut self, span: Span, name: Symbol, expected: Expectation) -> Checked {
         let quiet = self.body.quiet == Some(span);
         match self.resolve_name(name, names::Site::value(quiet)) {
             Resolved::Local { local, ty, .. } => {
@@ -402,7 +405,7 @@ impl Checker<'_> {
     }
 
     /// An expression whose value is used: not `unit` or `never`.
-    pub(super) fn value(&mut self, e: &ast::Expr, expected: Option<Type>) -> Checked {
+    pub(super) fn value(&mut self, e: &ast::Expr, expected: Expectation) -> Checked {
         let checked = read_jump(self.expr(e, expected));
         match type_of(&checked) {
             Some(ty @ (Type::UNIT | Type::NEVER)) => {
@@ -422,16 +425,16 @@ impl Checker<'_> {
         });
     }
 
-    /// A value of type `want`; `None` is `Error`, which every type matches. A `T` where `want`
-    /// is a `T?` is wrapped.
-    pub(super) fn expect(&mut self, e: &ast::Expr, want: Option<Type>) -> Checked {
+    /// A value of type `want`; `Poisoned` is `Error`, which every type matches. A `T` where
+    /// `want` is a `T?` is wrapped.
+    pub(super) fn expect(&mut self, e: &ast::Expr, want: Expectation) -> Checked {
         self.operand(e, want).0
     }
 
     /// `expect`, and whether it reported a mismatch. A mismatch is the failure of the rule
     /// that wants `want`, so that rule's expression is `Error`.
-    pub(super) fn operand(&mut self, e: &ast::Expr, want: Option<Type>) -> (Checked, bool) {
-        let checked = self.value(e, Some(want.unwrap_or(UNKNOWN)));
+    pub(super) fn operand(&mut self, e: &ast::Expr, want: Expectation) -> (Checked, bool) {
+        let checked = self.value(e, want);
         self.settled(e, checked, want)
     }
 
@@ -440,13 +443,13 @@ impl Checker<'_> {
         &mut self,
         e: &ast::Expr,
         checked: Checked,
-        want: Option<Type>,
+        want: Expectation,
     ) -> (Checked, bool) {
         // `want` was rejected inside `e`, which `against` cannot tell from an `Error` operand.
         if matches!(checked, Err(Poisoned { mismatch: true, .. })) {
             return (checked, true);
         }
-        self.against(e, checked, want, None)
+        self.against(e, checked, want.ty(), None)
     }
 
     /// `operand` for `e`, already checked; `source` is where `want` came from, for a mismatch.
@@ -478,7 +481,7 @@ impl Checker<'_> {
         }
         // A generic call that cannot meet `want` is reported with the type it found, as a
         // concrete call is with its type.
-        if let Some(want) = want.filter(|&want| want != UNKNOWN)
+        if let Some(want) = want
             && let Some(found) = self.misfit_type(&checked).filter(|&found| found != want)
         {
             let d = self.mismatch_from(e.span, Some(e), want, found, source);
@@ -492,13 +495,9 @@ impl Checker<'_> {
     /// `expected` as the expression at `span` takes it, and the type of its siblings: no
     /// expected type and that type when it is the hinted value (see `Body::hint_at`), else
     /// `expected` and none.
-    pub(super) fn hinted(
-        &self,
-        span: Span,
-        expected: Option<Type>,
-    ) -> (Option<Type>, Option<Type>) {
+    pub(super) fn hinted(&self, span: Span, expected: Expectation) -> (Expectation, Option<Type>) {
         match self.body.hint_at {
-            Some((at, siblings)) if at == span => (None, Some(siblings)),
+            Some((at, siblings)) if at == span => (Expectation::None, Some(siblings)),
             _ => (expected, None),
         }
     }
@@ -514,13 +513,13 @@ impl Checker<'_> {
     }
 
     /// A `None`, of the optional type `expected`.
-    pub(super) fn none(&mut self, span: Span, expected: Option<Type>) -> Checked {
+    pub(super) fn none(&mut self, span: Span, expected: Expectation) -> Checked {
         let kind = match expected {
-            Some(ty) if matches!(ty.kind(), TypeKind::Optional(_)) => {
+            Expectation::Poisoned => return Err(Poisoned::error()),
+            Expectation::Required(ty) if matches!(ty.kind(), TypeKind::Optional(_)) => {
                 return Ok(tir::Expr::new(tir::ExprKind::None, ty, span));
             }
-            Some(Type::NEVER) => return Err(Poisoned::error()),
-            Some(ty) => DiagnosticKind::Mismatch {
+            Expectation::Required(ty) => DiagnosticKind::Mismatch {
                 want: Expected::Types(vec![self.want_name(span, ty)]),
                 got: "None".to_string(),
                 at: span,
@@ -529,7 +528,7 @@ impl Checker<'_> {
                 conversion: false,
                 layers: false,
             },
-            None => {
+            Expectation::None => {
                 self.report_uninferred(Literal::None, span);
                 return Err(Poisoned::error());
             }
@@ -609,13 +608,13 @@ impl Checker<'_> {
     pub(super) fn inferred_by_expected(
         &mut self,
         local: tir::LocalId,
-        expected: Option<Type>,
+        expected: Expectation,
         span: Span,
     ) {
         let Some(uninferred) = self.body.uninferred.get(&local) else {
             return;
         };
-        let payload = match (uninferred.literal, expected.map(Type::kind)) {
+        let payload = match (uninferred.literal, expected.ty().map(Type::kind)) {
             (Literal::None, Some(TypeKind::Optional(payload))) => payload,
             (Literal::EmptyArray, Some(TypeKind::Array(element))) => element,
             (Literal::EmptyArray, Some(TypeKind::Optional(inner))) => match inner.kind() {

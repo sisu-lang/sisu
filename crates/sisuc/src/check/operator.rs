@@ -5,8 +5,9 @@ use super::expr::{fits, if_some, literal_type, local, operator, path, typed};
 use super::generic::{Rank, mismatched};
 use super::interface::Operation;
 use super::{
-    Checked, Checker, Flag, Lowered, Poisoned, UNKNOWN, as_optional, beyond_one_layer, block_expr,
-    has_remedy_flag, is_kept, is_unwrapped, optional_of, payload, spread, type_of, wrap,
+    Checked, Checker, Expectation, Flag, Lowered, Poisoned, as_optional, beyond_one_layer,
+    block_expr, has_remedy_flag, is_kept, is_unwrapped, optional_of, payload, spread, type_of,
+    wrap,
 };
 use crate::ast::{self, CompareOp, ExprKind};
 use crate::diagnostic::{Diagnostic, DiagnosticKind, Expected, Literal, PeelIs, PeelLayers};
@@ -24,10 +25,14 @@ impl Checker<'_> {
         &mut self,
         span: Span,
         operand: &ast::Expr,
-        expected: Option<Type>,
+        expected: Expectation,
     ) -> Result<(Type, (Checked, bool)), Poisoned> {
         // A `None` expects an `i64`, as in `None + 1`.
-        let expected = expected.or_else(|| self.none_written(operand).then_some(Type::I64));
+        let expected = if expected == Expectation::None && self.none_written(operand) {
+            Expectation::Required(Type::I64)
+        } else {
+            expected
+        };
         let before = self.diagnostics.len();
         let checked = self.value(operand, expected);
         if let Some(ty) = type_of(&checked).filter(|ty| ty.has_param()) {
@@ -57,7 +62,7 @@ impl Checker<'_> {
         } else {
             Type::I64
         };
-        if expected.map(payload) != Some(Type::I64)
+        if expected.ty().map(payload) != Some(Type::I64)
             && let Some(got) = type_of(&checked)
                 .filter(|&got| got != Type::CHAR && !NEGATABLE.contains(&payload(got)))
         {
@@ -79,7 +84,7 @@ impl Checker<'_> {
         let operands: Vec<_> = operands.iter().collect();
         let op = |i: usize| ops[i.saturating_sub(1)].to_string();
         let (checked, ty, mismatched) =
-            self.ranked(|c| c.integers(&operands, None, Operator::Compare, &op));
+            self.ranked(|c| c.integers(&operands, Expectation::None, Operator::Compare, &op));
         let flagged = checked.iter().any(is_unwrapped);
         let operands = checked.into_iter().collect::<Result<Vec<_>, _>>().ok();
         let chain = match (operands, ty) {
@@ -160,14 +165,14 @@ impl Checker<'_> {
         (op, op_span): (ast::BinaryOp, Span),
         lhs: &ast::Expr,
         rhs: &ast::Expr,
-        expected: Option<Type>,
+        expected: Expectation,
         compound: bool,
     ) -> Checked {
         let Some((tir_op, want)) = operator(op) else {
             return self.ranked(|c| c.equal(span, op == ast::BinaryOp::Ne, lhs, rhs));
         };
         if want == Type::BOOL {
-            let lhs = self.operand(lhs, Some(want));
+            let lhs = self.operand(lhs, Expectation::Required(want));
             return self.arithmetic(span, (tir_op, op_span), want, lhs, rhs, Vec::new());
         }
         let operator = if tir_op == tir::BinaryOp::Add {
@@ -215,16 +220,16 @@ impl Checker<'_> {
         &mut self,
         span: Span,
         operands: &[&ast::Expr],
-        expected: Option<Type>,
+        expected: Expectation,
         operator: Operator,
         op: &dyn Fn(usize) -> String,
     ) -> (Vec<Checked>, Option<Type>, bool) {
         let joins = operator == (Operator::Plus { compound: false });
-        if !joins || literal_type(expected) == Type::I64 {
+        if !joins || literal_type(expected.ty()) == Type::I64 {
             return self.integers(operands, expected, operator, op);
         }
         if self.body.joins.contains(&span) {
-            return self.integers(operands, None, operator, op);
+            return self.integers(operands, Expectation::None, operator, op);
         }
         let (diagnostics, locals, pending, misfits) = (
             self.diagnostics.len(),
@@ -250,7 +255,7 @@ impl Checker<'_> {
         self.pending.truncate(pending);
         self.body.misfits.truncate(misfits);
         self.body.joins.insert(span);
-        self.integers(operands, None, operator, op)
+        self.integers(operands, Expectation::None, operator, op)
     }
 
     /// The operands of one number operator, checked in source order; the type they share,
@@ -294,25 +299,31 @@ impl Checker<'_> {
     fn integers(
         &mut self,
         operands: &[&ast::Expr],
-        expected: Option<Type>,
+        expected: Expectation,
         operator: Operator,
         op: &dyn Fn(usize) -> String,
     ) -> (Vec<Checked>, Option<Type>, bool) {
         let arithmetic = operator != Operator::Compare;
         let compound = operator == (Operator::Plus { compound: true });
         // An `i64` that the context wants holds an `f64` operand to it, in either order.
-        let wants_i64 = expected.map(payload) == Some(Type::I64);
+        let wants_i64 = expected.ty().map(payload) == Some(Type::I64);
         let ranks: Vec<Rank> = operands.iter().map(|e| self.sibling_rank(e)).collect();
         let mut first = None;
         // Whether the operand checked first kept its E0050 (see `Poisoned::kept`).
         let mut kept_first = false;
         // No operand gives the type, so the operator takes `i64` by default, which no one wrote.
-        let defaulted = literal_type(expected) == Type::I64 && !ranks.contains(&Rank::Concrete);
-        let mut ty = if literal_type(expected) != Type::I64 {
-            Some(literal_type(expected))
+        let defaulted =
+            literal_type(expected.ty()) == Type::I64 && !ranks.contains(&Rank::Concrete);
+        let mut ty = if literal_type(expected.ty()) != Type::I64 {
+            Some(literal_type(expected.ty()))
         } else if let Some(k) = ranks.iter().position(|&r| r == Rank::Concrete) {
             // An `i64` the context wants reaches an operator inside, so a nested `f64` is reported.
-            let checked = self.value(operands[k], expected.filter(|_| wants_i64));
+            let hint = if wants_i64 {
+                expected
+            } else {
+                Expectation::None
+            };
+            let checked = self.value(operands[k], hint);
             let ty = type_of(&checked).map(|ty| match payload(ty) {
                 Type::CHAR if !arithmetic => Type::CHAR,
                 Type::STRING if operator != Operator::Arithmetic => Type::STRING,
@@ -411,11 +422,12 @@ impl Checker<'_> {
                 Some((_, operand)) => operand,
                 None if hinted => {
                     let outer_hint = self.pass_hint(Some(e.span), want);
-                    let value = self.value(e, Some(want.unwrap_or(UNKNOWN)));
+                    let value = self.value(e, Expectation::or_poisoned(want));
                     self.body.hint_at = outer_hint;
                     value
                 }
-                None => self.value(e, (!by_char).then(|| want.unwrap_or(UNKNOWN))),
+                None if by_char => self.value(e, Expectation::None),
+                None => self.value(e, Expectation::or_poisoned(want)),
             };
             if ranks[i] != Rank::Concrete {
                 deferred.extend(self.diagnostics.drain(start..));
@@ -586,8 +598,8 @@ impl Checker<'_> {
         rhs: &ast::Expr,
         held: Vec<Diagnostic>,
     ) -> Checked {
-        let expected = type_of(&l).and(Some(want));
-        let checked = self.value(rhs, Some(expected.unwrap_or(UNKNOWN)));
+        let expected = Expectation::or_poisoned(type_of(&l).and(Some(want)));
+        let checked = self.value(rhs, expected);
         let flagged = is_unwrapped(&l) || is_unwrapped(&checked);
         // Only a compound assignment's number gets here with a `char` to its right.
         if want != Type::BOOL && type_of(&checked) == Some(Type::CHAR) {
@@ -629,7 +641,7 @@ impl Checker<'_> {
             self.settle_misfit(&checked);
             return (Err(Poisoned::error()), true);
         }
-        self.settled(e, checked, want)
+        self.settled(e, checked, Expectation::or_poisoned(want))
     }
 
     /// "expected `takes`, found `got`" at `at`: the types an operator takes, `got` not among them.
@@ -658,13 +670,15 @@ impl Checker<'_> {
         let swapped = self.sibling_rank(rhs) < self.sibling_rank(lhs)
             || (self.none_written(lhs) && !self.none_written(rhs));
         let (first, second) = if swapped { (rhs, lhs) } else { (lhs, rhs) };
-        let checked = self.value(first, None);
-        let want = type_of(&checked).map_or_else(|| UNKNOWN, as_optional);
+        let checked = self.value(first, Expectation::None);
+        let want = type_of(&checked).map_or(Expectation::Poisoned, |ty| {
+            Expectation::Required(as_optional(ty))
+        });
         // The first side's type is a hint to the second, as a sibling's is (see `Body::hint_at`):
         // an `if` there reports a branch against it, as one checked first reports against its
         // first branch.
         let outer_hint = self.pass_hint(Some(second.span), type_of(&checked));
-        let other = self.value(second, Some(want));
+        let other = self.value(second, want);
         self.body.hint_at = outer_hint;
         // A side converts through one `?` only: `x == 5` on an `i64??` holds `5` to `i64??`.
         if let (Some(a), Some(b)) = (type_of(&checked), type_of(&other))
@@ -783,7 +797,7 @@ impl Checker<'_> {
             let other = if self.none_written(lhs) { rhs } else { lhs };
             // It goes before the diagnostics of `other`, which the help waits for.
             let at = self.diagnostics.len();
-            let checked = self.value(other, Some(UNKNOWN));
+            let checked = self.value(other, Expectation::Poisoned);
             // `== None` compiles only beside an optional, or a side whose type is unknown.
             let optional =
                 type_of(&checked).is_none_or(|ty| matches!(ty.kind(), TypeKind::Optional(_)));
@@ -792,7 +806,10 @@ impl Checker<'_> {
             self.diagnostics.insert(at, d);
             return Err(Poisoned::error());
         }
-        let (l, r) = (self.value(lhs, None), self.value(rhs, None));
+        let (l, r) = (
+            self.value(lhs, Expectation::None),
+            self.value(rhs, Expectation::None),
+        );
         // Each side peels its own extra layers: peeling one side leaves the other.
         let layers = [self.extra_layers(&l), self.extra_layers(&r)];
         for (side, checked, extra) in [(lhs, &l, layers[0]), (rhs, &r, layers[1])] {
@@ -961,8 +978,8 @@ impl Checker<'_> {
     /// The right side of `??`, checked against `expected`: a value, or one that never finishes,
     /// but not `unit`. A value that kept its E0050 (see `Poisoned::kept`) is the fault, so the
     /// right side still has the type of the left side's value.
-    fn fallback(&mut self, rhs: &ast::Expr, expected: Type) -> Checked {
-        let checked = self.expr(rhs, Some(expected));
+    fn fallback(&mut self, rhs: &ast::Expr, expected: Expectation) -> Checked {
+        let checked = self.expr(rhs, expected);
         if type_of(&checked) == Some(Type::UNIT) {
             self.report(DiagnosticKind::NoValue {
                 at: rhs.span,
@@ -971,7 +988,7 @@ impl Checker<'_> {
             return Err(Poisoned::error());
         }
         if is_kept(&checked) {
-            return Err(Poisoned::typed(payload(expected)));
+            return Err(Poisoned::of(expected.ty().map(payload)));
         }
         checked
     }
@@ -995,9 +1012,9 @@ impl Checker<'_> {
         &mut self,
         span: Span,
         (lhs, rhs): (&ast::Expr, &ast::Expr),
-        expected: Option<Type>,
+        expected: Expectation,
     ) -> Checked {
-        let scrutinee = self.value(lhs, None);
+        let scrutinee = self.value(lhs, Expectation::None);
         let Some(TypeKind::Optional(payload)) = type_of(&scrutinee).map(Type::kind) else {
             // A value that an E0062 typed is optional under its `?.` fix.
             if type_of(&scrutinee).is_some() && !is_unwrapped(&scrutinee) {
@@ -1005,7 +1022,7 @@ impl Checker<'_> {
                     .push(DiagnosticKind::CoalesceNotOptional { at: lhs.span }.into());
             }
             // Only its own diagnostics matter.
-            drop(self.fallback(rhs, UNKNOWN));
+            drop(self.fallback(rhs, Expectation::Poisoned));
             return Err(Poisoned::error());
         };
         // `??` groups to the right, so a `None` that starts a right `??` has no type to take:
@@ -1031,11 +1048,11 @@ impl Checker<'_> {
                 tail = after;
             }
             // Only its own diagnostics matter.
-            drop(self.fallback(tail, UNKNOWN));
+            drop(self.fallback(tail, Expectation::Poisoned));
             return Err(Poisoned::error());
         }
-        let written = (self.hinted(span, expected).0)
-            .filter(|&want| want != UNKNOWN && (is_target(want) || is_target(payload)));
+        let written = (self.hinted(span, expected).0.ty())
+            .filter(|&want| is_target(want) || is_target(payload));
         // The right side expects `P` for an optional `P`, else `P?`: a value converts through
         // one `?` only. That is a hint (see `Body::hint_at`), unless that type is written. Then
         // the right side is checked against it, so `let r: any I = oa ?? None` reports at the
@@ -1044,11 +1061,11 @@ impl Checker<'_> {
             Some(want)
                 if is_target(payload) && (want == payload || want == as_optional(payload)) =>
             {
-                self.fallback(rhs, want)
+                self.fallback(rhs, Expectation::Required(want))
             }
             _ => {
                 let outer_hint = self.pass_hint(Some(rhs.span), Some(payload));
-                let other = self.fallback(rhs, as_optional(payload));
+                let other = self.fallback(rhs, Expectation::Required(as_optional(payload)));
                 self.body.hint_at = outer_hint;
                 other
             }

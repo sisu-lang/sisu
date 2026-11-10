@@ -13,6 +13,7 @@ mod constant;
 mod cycle;
 mod enums;
 mod exhaust;
+mod expectation;
 mod expr;
 mod extend;
 mod generic;
@@ -56,6 +57,7 @@ use alias::{AliasInfo, Aliases, FieldType, UseCheck};
 use assoc::{Choice, Choices, Named};
 use constant::{ConstInfo, ConstantSite};
 use enums::{EnumInfo, HoldsTable, reserved_name};
+use expectation::Expectation;
 use extend::Extension;
 use interface::{Bounds, InterfaceInfo, PendingBound, Required, Scope, Slot, Waiting};
 use names::{ConstantId, ItemId, NameMaps, Position, Resolved};
@@ -258,10 +260,6 @@ fn spread<T>(checked: Result<T, Poisoned>, from: bool) -> Result<T, Poisoned> {
 
 type Checked = Result<tir::Expr, Poisoned>;
 type CheckedBlock = Result<tir::Block, Poisoned>;
-
-/// The expected type a position passes down when its own type is `Error`. No position expects
-/// `never`, so it stands for `Error` there: a `None` it reaches is `Error`, with no diagnostic.
-static UNKNOWN: Type = Type::NEVER;
 
 /// What holds methods: a class or an enum, or, for the prelude's `extend` blocks, every array
 /// type together, or `i64`.
@@ -495,9 +493,9 @@ struct LoopFrame {
     label_used: bool,
     /// Whether a `break` has targeted it.
     broken: bool,
-    /// The type the position around a `loop` expects, each value's hint; `UNKNOWN` for an
-    /// `Error` one.
-    expected: Option<Type>,
+    /// The type the position around a `loop` expects, each value's hint; `Poisoned` when that
+    /// position failed.
+    expected: Expectation,
     /// The type of the first value whose type is neither `never` nor `Error`, and its `break`'s
     /// span; under an expected `T?`, a `T?` value after `T` ones replaces it.
     first: Option<(Type, Span)>,
@@ -527,7 +525,7 @@ impl LoopFrame {
         kind: LoopKind,
         keyword: Span,
         label: Option<ast::Ident>,
-        expected: Option<Type>,
+        expected: Expectation,
     ) -> Self {
         Self {
             kind,
@@ -561,7 +559,7 @@ impl LoopFrame {
                 Type::NEVER
             });
         }
-        // Under an `Error` expectation no value sets `first`.
+        // Under a `Poisoned` expectation no value sets `first`.
         self.first.map(|(ty, _)| ty)
     }
 }
@@ -2459,9 +2457,9 @@ impl Checker<'_> {
                 .collect();
             // A `unit` function discards its body's value, so it expects none.
             let expected = match ret {
-                None => Some(UNKNOWN),
-                Some(Type::UNIT) => None,
-                Some(ret) => Some(ret),
+                None => Expectation::Poisoned,
+                Some(Type::UNIT) => Expectation::None,
+                Some(ret) => Expectation::Required(ret),
             };
             c.show_value(&f.body, ret);
             let mut body = c.block(&f.body, expected);

@@ -11,8 +11,8 @@ use super::interface::Slot;
 use super::mut_args::Callee;
 use super::unused_names::Used;
 use super::{
-    Checked, Checker, Declared, Definition, DiagnosticKind, Poisoned, SelfType, has_remedy_flag,
-    own_args,
+    Checked, Checker, Declared, Definition, DiagnosticKind, Expectation, Poisoned, SelfType,
+    has_remedy_flag, own_args,
 };
 use crate::ast;
 use crate::diagnostic::{BuiltIn, Unbuilt, VariantLabels, suggestion};
@@ -567,7 +567,7 @@ impl Checker<'_> {
         let (checked, mismatched): (Vec<_>, Vec<_>) = args
             .iter()
             .zip(fields)
-            .map(|(arg, field)| self.operand(&arg.value, *field))
+            .map(|(arg, field)| self.operand(&arg.value, Expectation::or_poisoned(*field)))
             .unzip();
         let failed = labeled || mismatched.contains(&true);
         checked

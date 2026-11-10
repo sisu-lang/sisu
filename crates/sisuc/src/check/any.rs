@@ -8,7 +8,9 @@ use rustc_hash::FxHashSet;
 use super::alias::UseCheck;
 use super::interface::{BOUND_CLOSURE_LIMIT, Bound, Check};
 use super::unused_names::Used;
-use super::{Checked, CheckedBlock, Checker, DeferredAsType, Poisoned, block_type, wrap};
+use super::{
+    Checked, CheckedBlock, Checker, DeferredAsType, Expectation, Poisoned, block_type, wrap,
+};
 use crate::ast;
 use crate::conformance::{any_closure, interface_closure};
 use crate::diagnostic::{Diagnostic, DiagnosticKind, NotAny, NotConformForm};
@@ -567,10 +569,10 @@ pub(super) fn is_target(want: Type) -> bool {
 }
 
 /// `expected`, split in two: the context that is no `any` type, and the one that is.
-pub(super) fn split_context(expected: Option<Type>) -> (Option<Type>, Option<Type>) {
+pub(super) fn split_context(expected: Expectation) -> (Option<Type>, Option<Type>) {
     (
-        expected.filter(|&want| !is_target(want)),
-        expected.filter(|&want| is_target(want)),
+        expected.ty().filter(|&want| !is_target(want)),
+        expected.ty().filter(|&want| is_target(want)),
     )
 }
 
