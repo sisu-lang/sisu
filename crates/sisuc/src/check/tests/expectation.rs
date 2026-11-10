@@ -170,6 +170,11 @@ fn a_mismatch_with_a_loop_in_a_failed_array_should_wait() {
             "let _x: Missing = [loop { break 1 }, true]".to_string(),
             vec![FAILED_LET],
         ),
+        (
+            "bool then loop",
+            "let _x: Missing = [1, true, loop { break 2 }]".to_string(),
+            vec![FAILED_LET],
+        ),
     ]
     .into_iter()
     .map(|(name, stmt, wanted)| (name, program(&stmt), wanted))
