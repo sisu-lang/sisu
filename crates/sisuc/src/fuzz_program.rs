@@ -2176,9 +2176,7 @@ mod tests {
     }
 
     /// `program` end to end, all eight builds and every check: it passes and leaves no directory
-    /// behind. Of the seeds under 4000 with rewrites, a value site and a
-    /// panic site that its run reaches, seed 3934 has the shortest program. So its builds are
-    /// quick.
+    /// behind. Seed 3934 has rewrites, a value site and a panic site that its run reaches.
     #[test]
     fn program_should_pass_and_leave_no_directory_behind() {
         let tmp = Scratch::new();
