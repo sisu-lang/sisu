@@ -148,11 +148,14 @@ pub(super) struct Aliases {
     memo: SharedMemo,
     /// How many entries the memo held when the outermost written type that resolves began.
     base: Option<usize>,
-    /// The limit that a use passed in the outermost written type, which is reported at its end.
+    /// The limit that a use passed, which is reported at the end of the outermost written type.
+    /// A limit that `through` passed waits for the next use that reports one.
     too_large: Option<Passed>,
     /// Whether the memo passed `MAX_CHECK_ENTRIES`: every later substitution fails, with no
     /// report of its own, so each later use of an alias is `Error`.
     exhausted: bool,
+    /// The token of the report that the memo passed `MAX_CHECK_ENTRIES`, once it is made.
+    full: Option<Reported>,
     /// How many uses of an alias have resolved.
     pub(super) uses: usize,
     /// The interfaces that an alias body names as `S.Name`. An alias has no owner, so no use
@@ -423,9 +426,12 @@ impl Checker<'_> {
         let params = self.aliases.infos[id].params.clone();
         // The parameters take their written names, as a message prints them.
         let ty = self.substitute(resolved.body, own_args(&params));
-        // The body was within the limits when it resolved, so a substitution of its own
-        // parameters stays within them; if not, the alias is `Error`, and the use reports nothing.
-        self.aliases.too_large = None;
+        // The body was within the limit of a written type when it resolved, so a substitution of
+        // its own parameters stays within it. It can pass the limit of the whole check: then the
+        // alias is `Error`, and the next use that reports a limit reports that one.
+        if self.aliases.too_large == Some(Passed::Type) {
+            self.aliases.too_large = None;
+        }
         match ty {
             Some(ty) => Via::To(Through {
                 params,
@@ -691,8 +697,7 @@ impl Checker<'_> {
                 } => (ty, Some((interface, at, base))),
             };
             let Some(ty) = self.substitute(of, list) else {
-                // `aliases.too_large` holds the report until the written type is done.
-                return Err(self.proof(at)); // proof: held misfit
+                return Err(self.unbuilt_check(at));
             };
             let check = match applied {
                 None => UseCheck::Applied(ty),
@@ -863,10 +868,11 @@ impl Checker<'_> {
     }
 
     /// A use at `at`, with the arguments `args`, of an alias that is `Error`. Its own report says
-    /// why, and no list of the checker holds the token of that report.
+    /// why, and no list of the checker holds the token of that report, unless the memo is full.
     pub(super) fn failed_alias(&mut self, at: Span, args: &[ast::Arg]) -> Checked {
         self.stray(args);
-        Err(Poisoned::untyped(self.proof(at))) // proof: declaration
+        let full = self.memo_report(at);
+        Err(Poisoned::untyped(full.unwrap_or_else(|| self.proof(at)))) // proof: declaration
     }
 
     /// `A.None` and `A.Some(x)`, where the alias `A` names an optional type: the paths of `Option`.
@@ -1013,13 +1019,32 @@ impl Checker<'_> {
         None
     }
 
+    /// The token of a check of an alias use at `at` whose type the memo did not build. A written
+    /// type holds the report of the limit until it is done (`end_written`). A use in a value
+    /// position is in no written type, so it reports the limit here.
+    fn unbuilt_check(&mut self, at: Span) -> Reported {
+        // `aliases.too_large` holds the report until the written type is done.
+        self.memo_report(at).unwrap_or_else(|| self.proof(at)) // proof: held misfit
+    }
+
+    /// The token of the report of a limit of the memo, for a use at `at`. When `at` is in no
+    /// written type, it reports the limit that a use passed. Else the token is the one of the
+    /// report of the full memo, once it is made.
+    fn memo_report(&mut self, at: Span) -> Option<Reported> {
+        if self.aliases.base.is_none()
+            && let Some(reported) = self.report_too_large(at)
+        {
+            return Some(reported);
+        }
+        self.aliases.full
+    }
+
     /// Reports the written type at `at`, when a use passed a limit of the memo in it: once for
     /// the type, and once for the check, as every later substitution fails with no report.
-    fn report_too_large(&mut self, at: Span) {
-        let Some(passed) = self.aliases.too_large.take() else {
-            return;
-        };
-        self.error(DiagnosticKind::AliasTooLarge {
+    /// Gives the token of the report, when it makes one.
+    fn report_too_large(&mut self, at: Span) -> Option<Reported> {
+        let passed = self.aliases.too_large.take()?;
+        let reported = self.error(DiagnosticKind::AliasTooLarge {
             ty: self.source.type_text(at).into_owned(),
             at,
             limit: match passed {
@@ -1028,6 +1053,10 @@ impl Checker<'_> {
             },
             check: passed == Passed::Check,
         });
+        if passed == Passed::Check {
+            self.aliases.full = Some(reported);
+        }
+        Some(reported)
     }
 
     /// The type written as `ty`, when the types it resolved to followed a use of an alias, which
