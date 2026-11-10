@@ -1542,8 +1542,10 @@ impl Checker<'_> {
         self.proof(at) // proof: binding
     }
 
-    /// The token of a value at `at` that a `Poisoned` expectation gives no type. The error of
-    /// the context was reported before, and the reader of the value stays quiet.
+    /// The token of a value at `at` that a `Poisoned` expectation gives no type. The reader of
+    /// the value stays quiet. The error of the context was reported before, or the caller
+    /// reports it after: `checked_alone` gives no error before, and in `g(mut [])` its caller
+    /// reports E0169.
     fn poisoned_context(&mut self, at: Span) -> Reported {
         self.proof(at) // proof: quiet reader
     }
