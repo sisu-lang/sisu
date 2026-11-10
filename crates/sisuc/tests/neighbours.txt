@@ -50,6 +50,16 @@ type OP = (any Pet)??
 class Bq<T> {
     v: T
 }
+enum E2 {
+    V(i64, i64)
+}
+interface Has {
+    type Item
+}
+class Box<A, B> {
+    a: A
+}
+type Alias<T> = Box<T, T.Item>
 type Bqa<T> = Bq<T>
 fn nothing<T>() -> T? { None }
 fn nn<T>() -> T?? { None }
@@ -148,7 +158,7 @@ OP.Some(p, p)
 Option.Some(n: p)
 Bqa(v: p, w: 1)
 Bqa<Fox>(1)
-# A `Some` whose argument has the remedy flag (E0062), bare, with a written list and through `Option`.
+# A `Some` whose argument is poisoned (E0062), bare, with a written list and through `Option`.
 Some(ob.wrap(1))
 Some<i64>(ob.wrap(1))
 Option.Some(ob.wrap(1))
@@ -190,6 +200,10 @@ loop { break None }
 { [] }
 if c { [] } else { [] }
 loop { if c { break 1 }; break "x" }
+# A variant with two fields that is given a name that is not bound, and an alias over `T.Item`
+# that is given an argument that does not conform.
+E2.V(missing, k)
+Alias(a: Rock())
 
 [failed values]
 # A type parameter read: in the function whose bound failed, `u` is unknown.
@@ -282,9 +296,9 @@ opt(keep($))
 # type argument on a method of an optional is checked.
 let _s: string = $.wrap(1)
 print($.none<i64, i64>())
-# A chain that goes on from a flagged value (E0062): a generic method on an optional receiver with
-# a flagged argument, `??` with a flagged left side, `?.` after a flagged optional or with a
-# flagged member, a `match` on a flagged value that is not matchable, and an index of a member
+# A chain that goes on from a poisoned value (E0062): a generic method on an optional receiver with
+# a poisoned argument, `??` with a poisoned left side, `?.` after a poisoned optional or with a
+# poisoned member, a `match` on a poisoned value that is not matchable, and an index of a member
 # that is an optional array.
 let _s: string = $.wrap(ob.wrap(1))
 let _a = ob.wrap(1) ?? $
@@ -300,6 +314,8 @@ $[0..1].push(1)
 $[0..1] = [1]
 { let s = $; s.push(1) }
 $[0].push(1)
+$?.push(1)
+$[0]?.push(1)
 # A chain on each value as the subject of a `for`, which is indexed in its loop, and the value
 # printed or interpolated, which warns when it can be `None`.
 for _x in $.wrap([1]) {}
