@@ -476,7 +476,10 @@ impl Checker<'_> {
                     None => {
                         // Reported below, once the operands after it are checked.
                         pending = Some((self.diagnostics.mark(), e.span, param, i));
-                        self.proof(e.span) // proof: held misfit
+                        match &value {
+                            Err(poisoned) => poisoned.reported(),
+                            Ok(_) => self.proof(e.span), // proof: held misfit
+                        }
                     }
                 };
                 lacks = Some(reported);
@@ -503,7 +506,11 @@ impl Checker<'_> {
                 let beside = first.as_ref().map_or(before, |f| type_of(&f.1));
                 unlabelled = beside.is_none().then_some(deferred.len());
                 deferred.push(self.concat_mismatch(e, got, operands, compound, beside));
-                (Err(Poisoned::untyped(self.proof(e.span))), true) // proof: held misfit
+                let reported = match &value {
+                    Err(poisoned) => poisoned.reported(),
+                    Ok(_) => self.proof(e.span), // proof: held misfit
+                };
+                (Err(Poisoned::untyped(reported)), true)
             } else if joins && !compound && got == Some(Type::STRING) && ty != Some(Type::STRING) {
                 // A `string` in `+` makes it a join, whatever the operand before it, if any, was
                 // held to: that operand is reported against `string` instead. Under an expected
@@ -818,7 +825,11 @@ impl Checker<'_> {
             Some((_, Operation::Run(dispatch))) => dispatch,
             // The type has `Eq` only through a broken block, which is reported.
             Some((_, Operation::Poison)) => {
-                return Err(Poisoned::untyped(self.proof(span))); // proof: declaration
+                let failed = (l.as_ref().err())
+                    .or_else(|| r.as_ref().err())
+                    .map(Poisoned::reported);
+                let reported = failed.unwrap_or_else(|| self.proof(span)); // proof: declaration
+                return Err(Poisoned::untyped(reported));
             }
             _ => Dispatch::Generated,
         };

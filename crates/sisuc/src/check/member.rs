@@ -432,7 +432,8 @@ impl Checker<'_> {
         }
         // The duplicate conformance of the block is reported.
         if self.in_duplicate_block(ty, name.name) {
-            return Err(self.proof(name.span)); // proof: declaration
+            let failed = value.as_ref().err().map(Poisoned::reported);
+            return Err(failed.unwrap_or_else(|| self.proof(name.span))); // proof: declaration
         }
         // A rejected block may have given any type the method.
         if let Some(&reported) = self.rejected_methods.get(&name.name) {

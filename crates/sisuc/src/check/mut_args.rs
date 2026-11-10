@@ -669,7 +669,8 @@ impl Checker<'_> {
         if shape.chain.is_some() {
             call.mut_shapes.push((at, shape));
             // `mut_final` reports the place against the parameter's type once inference is done.
-            let reported = self.proof(arg.value.span); // proof: held misfit
+            let at = arg.value.span;
+            let reported = (place.reported).unwrap_or_else(|| self.proof(at)); // proof: held misfit
             return mark((Err(Poisoned::untyped(reported)), true));
         }
         if !self.bind_param(call, pattern, have, arg.value.span) {

@@ -139,7 +139,10 @@ impl Checker<'_> {
                 match self.none(e.span, Expectation::Required(element)) {
                     Err(failed) => failed.reported(),
                     // An optional element takes the `None`, and the check stays quiet.
-                    Ok(_) => self.proof(e.span), // proof: quiet reader
+                    // Else an element that failed holds the proof.
+                    Ok(_) => (blocks.iter())
+                        .find_map(|block| block.as_ref().err().map(Poisoned::reported))
+                        .unwrap_or_else(|| self.proof(e.span)), // proof: quiet reader
                 }
             } else {
                 let d = self.leaves_any(e.span, Some(e), element, own[at].unwrap_or(joined));

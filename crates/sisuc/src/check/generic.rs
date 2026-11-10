@@ -3224,8 +3224,10 @@ impl Checker<'_> {
                 let want = self.known_in(call, pattern);
                 // `e` bound the base of the associated type that has no choice.
                 if want.is_none() && lacks_choice(call, pattern) {
+                    let failed =
+                        (failure(call)).or_else(|| checked.as_ref().err().map(Poisoned::reported));
                     return Err(Poisoned::untyped(
-                        failure(call).unwrap_or_else(|| self.proof(e.span)), // proof: declaration
+                        failed.unwrap_or_else(|| self.proof(e.span)), // proof: declaration
                     ));
                 }
                 debug_assert!(
