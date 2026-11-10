@@ -1057,7 +1057,7 @@ impl Gen<'_> {
         let literal = self.array_literal(element, max, false);
         self.w.text("; ");
         self.close_slice("b");
-        // It reads a local that a write may change.
+        // It reads elements of `b`, so it is not pure (decision 2).
         Info::of(&[literal], literal.size, false)
     }
 
@@ -2705,10 +2705,7 @@ mod tests {
         let ty = Ty::Array(Box::new(Ty::I64));
         let forms = ["[a..a + ", "[a..=a + ", "[a..]", "[..a + ", "[..=a + "];
         let mut seen = [false; 5];
-        for byte in 0..=255_u8 {
-            let bytes: Vec<u8> = (0..32_u8)
-                .map(|i| byte.wrapping_mul(i + 1).wrapping_add(i))
-                .collect();
+        for bytes in byte_patterns() {
             let mut g = Gen::new(&bytes);
             g.rule(Rule::Slice, &ty, MAX_SIZE, false);
             let text = &g.w.out.program;
@@ -2917,10 +2914,7 @@ mod tests {
     fn a_safe_element_should_use_first_last_or_get_with_a_default() {
         let ty = Ty::Array(Box::new(Ty::I64));
         let (mut first, mut last, mut gets) = (false, false, [false; 6]);
-        for byte in 0..=255_u8 {
-            let bytes: Vec<u8> = (0..32_u8)
-                .map(|i| byte.wrapping_mul(i + 1).wrapping_add(i))
-                .collect();
+        for bytes in byte_patterns() {
             let mut g = Gen::new(&bytes);
             g.scope
                 .vars
@@ -2974,10 +2968,7 @@ mod tests {
         let ty = Ty::Array(Box::new(Ty::I64));
         for (max, expected) in [(4, true), (3, false)] {
             let mut of_xs = false;
-            for byte in 0..=255_u8 {
-                let bytes: Vec<u8> = (0..32_u8)
-                    .map(|i| byte.wrapping_mul(i + 1).wrapping_add(i))
-                    .collect();
+            for bytes in byte_patterns() {
                 let mut g = Gen::new(&bytes);
                 g.scope
                     .vars
@@ -2995,10 +2986,7 @@ mod tests {
     #[test]
     fn an_offset_should_sometimes_be_the_largest_i64_and_otherwise_small() {
         let (mut largest, mut small) = (false, false);
-        for byte in 0..=255_u8 {
-            let bytes: Vec<u8> = (0..32_u8)
-                .map(|i| byte.wrapping_mul(i + 1).wrapping_add(i))
-                .collect();
+        for bytes in byte_patterns() {
             let text = Gen::new(&bytes).offset();
             if text == i64::MAX.to_string() {
                 largest = true;
@@ -3020,10 +3008,7 @@ mod tests {
         let forms = ["[a..a + ", "[a..=a + ", "[a..]", "[..a + ", "[..=a + "];
         let mut seen = [false; 5];
         let (mut literals, mut gets) = (0, 0);
-        for byte in 0..=255_u8 {
-            let bytes: Vec<u8> = (0..32_u8)
-                .map(|i| byte.wrapping_mul(i + 1).wrapping_add(i))
-                .collect();
+        for bytes in byte_patterns() {
             let mut g = Gen::new(&bytes);
             g.rule(Rule::StrSlice, &Ty::String, MAX_SIZE, false);
             let text = &g.w.out.program;
