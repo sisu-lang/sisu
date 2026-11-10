@@ -216,7 +216,7 @@ impl Checker<'_> {
                     | Type::STRING),
                 ) => Some(resolved),
                 Some(_) => {
-                    self.report(DiagnosticKind::ConstantType { at: ty.span });
+                    self.error(DiagnosticKind::ConstantType { at: ty.span });
                     return (None, None);
                 }
             },
@@ -248,7 +248,7 @@ impl Checker<'_> {
         match evaluate(&checked, &mut FxHashMap::default()) {
             Ok(value) => (ty, Some(value)),
             Err(d) => {
-                self.diagnostics.push(d);
+                self.diagnostics.error(d);
                 (ty, None)
             }
         }
@@ -299,7 +299,7 @@ impl Checker<'_> {
                         _ => return true,
                     }
                 };
-                self.report(DiagnosticKind::ConstantOrder {
+                self.error(DiagnosticKind::ConstantOrder {
                     name: name.to_string(),
                     user: user.name.to_string(),
                     at: e.span,
@@ -310,11 +310,11 @@ impl Checker<'_> {
             }
             ExprKind::Range(range) => {
                 let d = Self::range_outside(range, RangePlace::Elsewhere);
-                self.diagnostics.push(d);
+                self.diagnostics.error(d);
                 false
             }
             _ => {
-                self.report(DiagnosticKind::ConstantNotKnown {
+                self.error(DiagnosticKind::ConstantNotKnown {
                     at: e.span,
                     interpolation: matches!(e.kind, ExprKind::Interpolate(_)),
                 });
@@ -330,7 +330,11 @@ impl Checker<'_> {
             ConstInfo {
                 value: Some(value), ..
             } => Ok(value.lower(span)),
-            info => Err(Poisoned::of(info.ty)),
+            info => {
+                let ty = info.ty;
+                let reported = self.proof(span); // proof: declaration
+                Err(Poisoned::new(ty, reported))
+            }
         };
         self.record(Used::Const(id.0), span);
         checked

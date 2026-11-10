@@ -154,12 +154,6 @@ help: mark the field `mut`
 10 |     mut ys: [i64]
    |     +++
 
-error[E0138]: `unit` cannot be a type argument
-  --> E0001-push-may-be-none.sisu:46:8
-   |
-46 |     id(c?.ys.push(1))
-   |        ^^^^^^^^^^^^^
-
 error[E0062]: this value may be `None`
   --> E0001-push-may-be-none.sisu:50:5
    |
@@ -340,5 +334,5 @@ help: mark the field `mut`
 10 |     mut ys: [i64]
    |     +++
 
-sisu: 28 errors
-sisu: for more on a code, run `sisu explain <code>`: E0001, E0033, E0062, E0138
+sisu: 27 errors
+sisu: for more on a code, run `sisu explain <code>`: E0001, E0033, E0062

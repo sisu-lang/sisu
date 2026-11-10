@@ -3,9 +3,10 @@
 //! `todo`, a keyword that panics as `panic` does, is checked here too.
 
 use super::array::pair;
-use super::expr::{path, read_jump, typed};
+use super::expr::{path, read_jump, typed, unlabeled};
 use super::mut_args::Callee;
-use super::{Checked, Checker, Expectation, Poisoned, has_remedy_flag, spread, type_of};
+use super::reports::Reported;
+use super::{Checked, Checker, Expectation, Poisoned, type_of};
 use crate::ast;
 use crate::diagnostic::{DiagnosticKind, Expected, MismatchFix, PrintProblem};
 use crate::source::Span;
@@ -57,13 +58,10 @@ impl Checker<'_> {
             Err(failed) => return failed,
         };
         self.warn_if_optional(&arg.value, &checked);
-        let kind = checked
-            .ok()
-            .filter(|_| !labeled)
-            .map(|operand| tir::ExprKind::Print {
-                stream,
-                operand: Box::new(operand),
-            });
+        let kind = unlabeled(checked, labeled).map(|operand| tir::ExprKind::Print {
+            stream,
+            operand: Box::new(operand),
+        });
         typed(span, Type::UNIT, false, kind)
     }
 
@@ -75,22 +73,19 @@ impl Checker<'_> {
             Ok(shown) => shown,
             Err(failed) => return failed,
         };
-        let Some(ty) = type_of(&checked) else {
-            return Err(Poisoned::error());
+        // No argument settles `T` in a call with a failed part.
+        let ty = match &checked {
+            Ok(value) => value.ty,
+            Err(failed) => return Err(Poisoned::untyped(failed.reported())),
         };
         self.dbg_shown.push((self.body.owner, ty, span));
-        // `dbg<T>(x: T) -> T` has the type of its argument. An E0062 in it would make it optional,
-        // unless the argument is optional already.
-        let flagged = has_remedy_flag(&checked);
-        let kind = checked
-            .ok()
-            .filter(|_| !labeled)
-            .map(|operand| tir::ExprKind::Dbg {
-                at: arg.value.span,
-                text: self.source.text(arg.value.span).to_string(),
-                operand: Box::new(operand),
-            });
-        spread(typed(span, ty, labeled, kind), flagged)
+        // `dbg<T>(x: T) -> T` has the type of its argument.
+        let kind = unlabeled(checked, labeled).map(|operand| tir::ExprKind::Dbg {
+            at: arg.value.span,
+            text: self.source.text(arg.value.span).to_string(),
+            operand: Box::new(operand),
+        });
+        typed(span, ty, labeled.is_some(), kind)
     }
 
     /// The argument of a call of `function` (`print`, `eprint` or `dbg`) at `span`, checked with
@@ -105,21 +100,18 @@ impl Checker<'_> {
         args: &'a [ast::Arg],
         function: &'static str,
         (expected, ret): (Expectation, Option<Type>),
-    ) -> Result<(&'a ast::Arg, Checked, bool), Checked> {
+    ) -> Result<(&'a ast::Arg, Checked, Option<Reported>), Checked> {
         // Not `value()`: a `unit` argument needs this code, not "expression has no value".
-        let wrong = |problem, at| {
-            DiagnosticKind::PrintArgument {
-                function,
-                problem,
-                at,
-            }
-            .into()
+        let wrong = |problem, at| DiagnosticKind::PrintArgument {
+            function,
+            problem,
+            at,
         };
         let labeled = self.labels(args);
         let [arg] = args else {
-            self.diagnostics.push(wrong(PrintProblem::Count, span));
+            let reported = self.diagnostics.error(wrong(PrintProblem::Count, span));
             self.stray(args);
-            return Err(Err(Poisoned::of(ret)));
+            return Err(Err(Poisoned::new(ret, reported)));
         };
         self.refuse_mut(args, Callee::Unnamed(&function));
         // The argument is an operand, not a value part of the value, so a hint does not reach it.
@@ -129,12 +121,10 @@ impl Checker<'_> {
             Some(Type::NEVER) => DiagnosticKind::PrintNever {
                 function,
                 at: self.never_at(arg.value.span),
-            }
-            .into(),
+            },
             _ => return Ok((arg, checked, labeled)),
         };
-        self.diagnostics.push(error);
-        Err(Err(Poisoned::of(ret)))
+        Err(Err(Poisoned::new(ret, self.diagnostics.error(error))))
     }
 
     /// Warns when `checked`, the check of the printed `value`, is an optional: the text may be
@@ -156,7 +146,7 @@ impl Checker<'_> {
             type_of(checked).map(Type::kind),
             Some(TypeKind::Optional(_))
         ) {
-            self.report(DiagnosticKind::PrintsOptional {
+            self.warn(DiagnosticKind::PrintsOptional {
                 value: path(value),
                 at: value.span,
             });
@@ -181,7 +171,7 @@ impl Checker<'_> {
     pub(super) fn todo(&mut self, span: Span, keyword: Span, args: &[ast::Arg]) -> Checked {
         self.body.exits += 1;
         self.body.todo = true;
-        self.report(DiagnosticKind::TodoLeft { at: keyword });
+        self.warn(DiagnosticKind::TodoLeft { at: keyword });
         let labeled = self.labels(args);
         let text = |text: &str| {
             tir::Expr::new(tir::ExprKind::Str(text.to_string()), Type::STRING, keyword)
@@ -209,7 +199,7 @@ impl Checker<'_> {
             return self.argument_count("read_line", 0, span, args, Type::optional(Type::STRING));
         }
         let ty = Type::optional(Type::STRING);
-        typed(span, ty, false, Some(tir::ExprKind::ReadLine))
+        typed(span, ty, false, Ok(tir::ExprKind::ReadLine))
     }
 
     /// `name`'s count error: it takes `want` arguments, and `args` is not that many. The call has
@@ -222,14 +212,14 @@ impl Checker<'_> {
         args: &[ast::Arg],
         ret: Type,
     ) -> Checked {
-        self.report(DiagnosticKind::ArgumentCount {
+        let reported = self.error(DiagnosticKind::ArgumentCount {
             name: name.to_string(),
             want,
             found: args.len(),
             at: span,
         });
         self.stray(args);
-        Err(Poisoned::typed(ret))
+        Err(Poisoned::typed(ret, reported))
     }
 
     /// A `panic` or `todo` message, an expression of type `string`. A value that interpolation
@@ -244,7 +234,7 @@ impl Checker<'_> {
             got,
             Type::I64 | Type::U8 | Type::F64 | Type::BOOL | Type::CHAR
         );
-        self.report(DiagnosticKind::Mismatch {
+        let reported = self.error(DiagnosticKind::Mismatch {
             want: Expected::Types(vec![self.type_name(Type::STRING)]),
             got: self.type_name(got),
             at: arg.span,
@@ -254,16 +244,13 @@ impl Checker<'_> {
             conversion: false,
             layers: false,
         });
-        Err(Poisoned::error())
+        Err(Poisoned::untyped(reported))
     }
 }
 
 /// The panic with `message`, which reports at the start of `span`; `labeled` when its
 /// arguments had a label.
-fn panics(span: Span, labeled: bool, message: Checked) -> Checked {
-    let kind = message
-        .ok()
-        .filter(|_| !labeled)
-        .map(|message| tir::ExprKind::Panic(Box::new(message)));
+fn panics(span: Span, labeled: Option<Reported>, message: Checked) -> Checked {
+    let kind = unlabeled(message, labeled).map(|message| tir::ExprKind::Panic(Box::new(message)));
     typed(span, Type::NEVER, false, kind)
 }

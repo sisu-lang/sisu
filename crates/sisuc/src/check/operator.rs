@@ -4,10 +4,10 @@ use super::any::{is_target, widen};
 use super::expr::{fits, if_some, literal_type, local, operator, path, typed};
 use super::generic::{Rank, mismatched};
 use super::interface::Operation;
+use super::reports::{Held, Reported};
 use super::{
-    Checked, Checker, Expectation, Flag, Lowered, Poisoned, as_optional, beyond_one_layer,
-    block_expr, has_remedy_flag, is_kept, is_unwrapped, optional_of, payload, spread, type_of,
-    wrap,
+    Checked, Checker, Expectation, Lowered, Poisoned, as_optional, beyond_one_layer, block_expr,
+    is_kept, known_type, optional_of, payload, type_of, wrap,
 };
 use crate::ast::{self, CompareOp, ExprKind};
 use crate::diagnostic::{Diagnostic, DiagnosticKind, Expected, Literal, PeelIs, PeelLayers};
@@ -34,28 +34,25 @@ impl Checker<'_> {
         } else {
             expected.plain()
         };
-        let before = self.diagnostics.len();
+        let before = self.diagnostics.mark();
         let checked = self.value(operand, expected);
         if let Some(ty) = type_of(&checked).filter(|ty| ty.has_param()) {
-            self.param_lacks(operand.span, ty, "-");
-            return Err(Poisoned::error());
+            return Err(Poisoned::untyped(self.param_lacks(operand.span, ty, "-")));
         }
         if type_of(&checked) == Some(Type::U8) {
             // A literal's "does not fit" is moot once its negation is an error. That literal is
             // a `u8` only because the context wants one, which the negation rejects.
             let literal = matches!(operand.kind, ExprKind::Int { .. });
             if literal {
-                self.diagnostics.truncate(before);
+                // The operator gives a new poisoned value, so no value outlives the cut reports.
+                self.diagnostics.drop_since(before);
             }
-            self.diagnostics
-                .push(DiagnosticKind::NegatedU8 { at: span }.into());
+            let reported = self
+                .diagnostics
+                .error(DiagnosticKind::NegatedU8 { at: span });
             return Err(Poisoned {
-                ty: None,
                 mismatch: literal,
-                found: None,
-                kept: false,
-                unwrapped: Flag::No,
-                jumped: false,
+                ..Poisoned::untyped(reported)
             });
         }
         let want = if type_of(&checked).map(payload) == Some(Type::F64) {
@@ -68,8 +65,8 @@ impl Checker<'_> {
                 .filter(|&got| got != Type::CHAR && !NEGATABLE.contains(&payload(got)))
         {
             let d = self.takes_mismatch(operand.span, NEGATABLE, got);
-            self.diagnostics.push(d);
-            return Ok((want, (Err(Poisoned::error()), true)));
+            let reported = self.diagnostics.error(d);
+            return Ok((want, (Err(Poisoned::untyped(reported)), true)));
         }
         let checked = self.against(operand, checked, Some(want), None);
         Ok((want, checked))
@@ -86,22 +83,22 @@ impl Checker<'_> {
         let op = |i: usize| ops[i.saturating_sub(1)].to_string();
         let (checked, ty, mismatched) =
             self.ranked(|c| c.integers(&operands, Expectation::None, Operator::Compare, &op));
-        let flagged = checked.iter().any(is_unwrapped);
-        let operands = checked.into_iter().collect::<Result<Vec<_>, _>>().ok();
-        let chain = match (operands, ty) {
-            (Some(operands), Some(Type::STRING)) => Ok(self.string_chain(span, operands, ops)),
-            (Some(operands), Some(ty)) => self.ordered_chain(span, ty, operands, ops),
+        let operands = checked.into_iter().collect::<Result<Vec<_>, _>>();
+        match (operands, ty) {
+            (Ok(operands), Some(Type::STRING)) => Ok(self.string_chain(span, operands, ops)),
+            (Ok(operands), Some(ty)) => self.ordered_chain(span, ty, operands, ops),
             (operands, _) => typed(
                 span,
                 Type::BOOL,
                 mismatched,
-                operands.map(|operands| tir::ExprKind::Compare {
-                    operands,
-                    ops: ops.to_vec(),
-                }),
+                operands
+                    .map(|operands| tir::ExprKind::Compare {
+                        operands,
+                        ops: ops.to_vec(),
+                    })
+                    .map_err(|failed| failed.reported()),
             ),
-        };
-        spread(chain, flagged)
+        }
     }
 
     /// A comparison chain over `operands` of the type `ty`, a class, an enum or a type parameter
@@ -115,8 +112,9 @@ impl Checker<'_> {
         operands: Vec<tir::Expr>,
         ops: &[CompareOp],
     ) -> Checked {
+        // `integers` gives a type with `Ord`, which it has here only through a broken block.
         let Operation::Run(dispatch) = self.operation(ty, self.lang.ord) else {
-            return Err(Poisoned::error());
+            return Err(Poisoned::untyped(self.proof(span))); // proof: declaration
         };
         let (stmts, operands) = self.spill(operands);
         let mut cx = lang::Cx {
@@ -174,7 +172,7 @@ impl Checker<'_> {
         };
         if want == Type::BOOL {
             let lhs = self.operand(lhs, Expectation::Required(want));
-            return self.arithmetic(span, (tir_op, op_span), want, lhs, rhs, Vec::new());
+            return self.arithmetic(span, (tir_op, op_span), want, lhs, rhs, Held::default());
         }
         let operator = if tir_op == tir::BinaryOp::Add {
             Operator::Plus { compound }
@@ -188,29 +186,44 @@ impl Checker<'_> {
         let (checked, ty, mismatched) =
             self.ranked(|c| c.binary_operands(span, &[lhs, rhs], expected, operator, &op));
         if checked.iter().any(|c| type_of(c) == Some(Type::CHAR)) {
-            self.report(DiagnosticKind::ArithmeticOnChar { at: op_span });
-            return Err(Poisoned::error());
+            let reported = self.error(DiagnosticKind::ArithmeticOnChar { at: op_span });
+            return Err(Poisoned::untyped(reported));
         }
-        let kept = checked.iter().any(is_kept);
-        let flagged = checked.iter().any(is_unwrapped);
+        let kept = checked
+            .iter()
+            .find_map(|c| c.as_ref().err().filter(|failed| failed.kept))
+            .map(Poisoned::reported);
         let [l, r]: [Checked; 2] = checked
             .try_into()
             .unwrap_or_else(|_| panic!("`integers` should return one result per operand"));
+        // Only an untyped operand is a failed part: a typed poisoned one reads as its type. With
+        // an untyped right, a typed left of `sibling_rank` `Concrete` decides the type. An
+        // untyped left decides nothing, so the second error waits.
+        let failed = type_of(&l).is_none() || type_of(&r).is_none();
+        let decides =
+            !failed || (type_of(&l).is_some() && self.sibling_rank(lhs) == Rank::Concrete);
         if ty == Some(Type::STRING) {
             self.label_join_literals(start, [lhs, rhs]);
-            return spread(self.concat(span, l, r, mismatched), flagged);
+            return self.concat(span, (l, decides), r, mismatched);
         }
-        if kept {
-            return Err(Poisoned::kept_error());
+        if let Some(reported) = kept {
+            return Err(Poisoned::kept_error(reported));
         }
-        let kind = l.ok().zip(r.ok()).map(|(l, r)| tir::ExprKind::Binary {
-            op: tir_op,
-            lhs: Box::new(l),
-            rhs: Box::new(r),
-        });
-        match ty {
-            Some(ty) => spread(typed(span, ty, mismatched, kind), flagged),
-            None => Err(Poisoned::error()),
+        let kind = l
+            .and_then(|l| {
+                r.map(|r| tir::ExprKind::Binary {
+                    op: tir_op,
+                    lhs: Box::new(l),
+                    rhs: Box::new(r),
+                })
+            })
+            .map_err(|failed| failed.reported());
+        match ty.filter(|_| decides) {
+            Some(ty) => typed(span, ty, mismatched, kind),
+            // An operand that decides nothing has failed, and so has one that leaves no type.
+            None => Err(Poisoned::untyped(kind.expect_err(
+                "an operator with no type should have a failed operand",
+            ))),
         }
     }
 
@@ -235,7 +248,7 @@ impl Checker<'_> {
             return self.integers(operands, Expectation::None, operator, op);
         }
         let (diagnostics, locals, pending, misfits) = (
-            self.diagnostics.len(),
+            self.diagnostics.mark(),
             self.body.locals.len(),
             self.pending.len(),
             self.body.misfits.len(),
@@ -244,9 +257,10 @@ impl Checker<'_> {
         if result.1 != Some(Type::STRING) {
             return result;
         }
-        // The first check is dropped, and its locals, uninferred literals, misfits and findings
-        // with it, so none is left that nothing binds, and none is judged twice.
-        self.diagnostics.truncate(diagnostics);
+        // The first check is dropped with its result, locals, uninferred literals, misfits and
+        // findings. So none is left that nothing binds, none is judged twice, and no value
+        // outlives the cut reports.
+        self.diagnostics.drop_since(diagnostics);
         if !self.body.uninferred.is_empty() {
             for local in locals..self.body.locals.len() {
                 #[cfg(test)]
@@ -277,10 +291,10 @@ impl Checker<'_> {
     /// first operand gives `i64`, not `f64`, and that first operand is checked against
     /// `expected`, so an `f64` is reported in either order and at any depth. Once an operand is
     /// `Error`, the later ones are checked against `Error`. An operand of `arithmetic` that is
-    /// a `char` is left unreported, as the poison `typed` `char`: its caller reports the
-    /// operator, so what the operator's type finds wrong with the other operands is dropped, in
-    /// either order. In a comparison, a `char` after a number reports that number, as a `char`
-    /// before one reports the number.
+    /// a `char` is left unreported, as it was checked. Its caller reports the operator, so what
+    /// the operator's type finds wrong with the other operands is dropped, in either order. In a
+    /// comparison, a `char` after a number reports that number, as a `char` before one reports the
+    /// number.
     ///
     /// The type is `string` beside a `string`, in a comparison and in `+`. In `+` a `string`
     /// drives from either side: an operand of another type is reported against `string`, with
@@ -395,14 +409,17 @@ impl Checker<'_> {
             && ((defaulted && ranks[0] != Rank::Literal) || kept_first || misfit_leader);
         // The diagnostics of the operator's type: mismatches, and a literal's, which that type
         // types. They wait until a `char` operand is ruled out.
-        let mut deferred = Vec::new();
+        let mut deferred = Held::default();
         // The type of the operand checked last, as it was found, before it was held to `want`; and
-        // whether a concrete operand was `Error` as found, which its own diagnostic reported.
-        let (mut before, mut failed) = (None, false);
-        // A mismatch of the first operand, in `deferred` at the index, that waits to be labelled
-        // by the second operand, if that is a `string`.
-        let mut unlabelled = None;
-        let mut lacks = false;
+        // the proof of the first concrete operand that was untyped as found, which its own
+        // diagnostic reported.
+        let (mut before, mut failed) = (None, None);
+        // Whether the mismatch of the first operand waits to be labelled by the second operand,
+        // if that is a `string`. That mismatch is the first report in `deferred`: the first
+        // operand is concrete, so no report of its own is held before it.
+        let mut unlabelled = false;
+        // The proof of the first report of a lacking operator.
+        let mut lacks = None;
         // Where the report of a lacking `Ord` stands, for an operand of the leader's type, once no
         // operand is of another type.
         let mut pending = None;
@@ -420,7 +437,7 @@ impl Checker<'_> {
             {
                 want = Some(Type::I64);
             }
-            let start = self.diagnostics.len();
+            let start = self.diagnostics.mark();
             let value = match first.take_if(|(k, _)| *k == i) {
                 Some((_, operand)) => operand,
                 None if hinted => {
@@ -434,7 +451,8 @@ impl Checker<'_> {
                 None => self.value(e, Expectation::or_poisoned(want)),
             };
             if ranks[i] != Rank::Concrete {
-                deferred.extend(self.diagnostics.drain(start..));
+                // Held for `restore` below, where a `char` operand may cut them with the operator.
+                deferred.absorb(self.diagnostics.take_since(start));
             }
             let char_value = type_of(&value) == Some(Type::CHAR);
             let got = type_of(&value);
@@ -453,15 +471,20 @@ impl Checker<'_> {
                 param || unordered(self, ty)
             });
             if let Some(param) = lacking {
-                if !std::mem::replace(&mut lacks, true) {
-                    if arithmetic {
-                        self.param_lacks(e.span, param, op(i));
-                    } else {
+                let reported = match lacks {
+                    Some(reported) => reported,
+                    None if arithmetic => self.param_lacks(e.span, param, op(i)),
+                    None => {
                         // Reported below, once the operands after it are checked.
-                        pending = Some((self.diagnostics.len(), e.span, param, i));
+                        pending = Some((self.diagnostics.mark(), e.span, param, i));
+                        match &value {
+                            Err(poisoned) => poisoned.reported(),
+                            Ok(_) => self.proof(e.span), // proof: held misfit
+                        }
                     }
-                }
-                checked.push(Err(Poisoned::error()));
+                };
+                lacks = Some(reported);
+                checked.push(Err(Poisoned::untyped(reported)));
                 // The operands after it of a comparison are still held to the leader's type.
                 if arithmetic {
                     want = None;
@@ -469,8 +492,16 @@ impl Checker<'_> {
                 (ty, before) = (None, None);
                 continue;
             }
-            if let (Some(at), Some(found)) = (unlabelled.take(), before) {
-                deferred[at] = self.concat_mismatch(operands[0], found, operands, compound, got);
+            if std::mem::take(&mut unlabelled)
+                && let Some(found) = before
+            {
+                deferred.replace_first(self.concat_mismatch(
+                    operands[0],
+                    found,
+                    operands,
+                    compound,
+                    got,
+                ));
             }
             let joins = matches!(operator, Operator::Plus { .. });
             let (operand, m) = if let Some(got) =
@@ -479,9 +510,13 @@ impl Checker<'_> {
                 // The other operand's type, if it is checked already: the first's is `before`, and
                 // a second that is the leader waits in `first`.
                 let beside = first.as_ref().map_or(before, |f| type_of(&f.1));
-                unlabelled = beside.is_none().then_some(deferred.len());
+                unlabelled = beside.is_none();
                 deferred.push(self.concat_mismatch(e, got, operands, compound, beside));
-                (Err(Poisoned::error()), true)
+                let reported = match &value {
+                    Err(poisoned) => poisoned.reported(),
+                    Ok(_) => self.proof(e.span), // proof: held misfit
+                };
+                (Err(Poisoned::untyped(reported)), true)
             } else if joins && !compound && got == Some(Type::STRING) && ty != Some(Type::STRING) {
                 // A `string` in `+` makes it a join, whatever the operand before it, if any, was
                 // held to: that operand is reported against `string` instead. Under an expected
@@ -489,27 +524,29 @@ impl Checker<'_> {
                 // it again with none.
                 ty = Some(Type::STRING);
                 if let Some(other) = before.take() {
-                    // All that is deferred is that operand's, the first of two.
+                    // All that is deferred is that operand's, the first of two. It becomes untyped
+                    // below, so no value outlives the dropped reports.
                     deferred.clear();
                     // Beside the first operand is this `string`, which `ty` now is.
                     let d = self.concat_mismatch(operands[0], other, operands, false, ty);
-                    self.diagnostics.push(d);
-                    checked[0] = Err(Poisoned::error());
+                    let reported = self.diagnostics.error(d);
+                    checked[0] = Err(Poisoned::untyped(reported));
                     want = None;
-                    (Err(Poisoned::error()), true)
+                    (Err(Poisoned::untyped(reported)), true)
                 } else {
                     // An `Error` before it may be the mistake, so the join is `Error` too.
                     (value, true)
                 }
             } else if arithmetic && char_value {
-                (Err(Poisoned::typed(Type::CHAR)), false)
+                // The caller reports the operator, and drops the value.
+                (value, false)
             } else if let Some(k) = leader.filter(|_| {
                 char_value && !arithmetic && matches!(want, Some(Type::I64 | Type::U8 | Type::F64))
             }) {
                 // A `char` after a number in a comparison: the number is the one converted.
-                self.reject_leader(operands[k], &mut checked[k], Type::CHAR);
+                let reported = self.reject_leader(operands[k], &mut checked[k], Type::CHAR);
                 want = None;
-                (Err(Poisoned::error()), true)
+                (Err(Poisoned::untyped(reported)), true)
             } else if let Some(k) = leader.filter(|_| {
                 got == Some(Type::F64) && matches!(want, Some(Type::I64 | Type::U8)) && !wants_i64
             }) {
@@ -533,15 +570,17 @@ impl Checker<'_> {
                 if operator == Operator::Compare {
                     (value, false)
                 } else {
-                    let start = self.diagnostics.len();
+                    let start = self.diagnostics.mark();
                     let settled = self.settled_by(e, value, want, Some(takes));
-                    deferred.extend(self.diagnostics.drain(start..));
+                    // Held for `restore` below, as above.
+                    deferred.absorb(self.diagnostics.take_since(start));
                     settled
                 }
             } else {
-                let start = self.diagnostics.len();
+                let start = self.diagnostics.mark();
                 let settled = self.settled_by(e, value, want, takes.filter(|_| leader == Some(i)));
-                deferred.extend(self.diagnostics.drain(start..));
+                // Held for `restore` below, as above.
+                deferred.absorb(self.diagnostics.take_since(start));
                 settled
             };
             if type_of(&operand).is_none() {
@@ -549,7 +588,9 @@ impl Checker<'_> {
             }
             kept_seen |= is_kept(&operand);
             mismatched |= m;
-            failed |= got.is_none() && !is_kept(&operand) && ranks[i] == Rank::Concrete;
+            if got.is_none() && !is_kept(&operand) && ranks[i] == Rank::Concrete {
+                failed = failed.or_else(|| operand.as_ref().err().map(Poisoned::reported));
+            }
             checked.push(operand);
             before = got;
         }
@@ -565,29 +606,40 @@ impl Checker<'_> {
             let d = self.missing_operator(at, param, &op(i), ord);
             // A type with no `<` makes the chain `Error`, as a mismatch does.
             mismatched |= matches!(d, DiagnosticKind::NoOperator { .. });
-            self.diagnostics.insert(report, d.into());
+            let reported = self.diagnostics.insert_at(report, d.into());
+            checked[i] = Err(Poisoned::untyped(reported));
         }
         // The operator is rejected whatever stands beside the `char`, unless that is an `Error`:
         // then the operator may be the mistake, as for any other type, and the sum is `Error`.
-        if !(arithmetic && checked.iter().any(|c| type_of(c) == Some(Type::CHAR))) {
-            self.diagnostics.append(&mut deferred);
-        } else if failed {
-            for c in &mut checked {
-                *c = Err(Poisoned::error());
+        if arithmetic && checked.iter().any(|c| type_of(c) == Some(Type::CHAR)) {
+            // The caller reports the `char` alone or, when an operand failed, gives `Error`.
+            // Either way the result is a new poisoned value, so no value outlives the dropped
+            // reports.
+            drop(deferred);
+            if let Some(reported) = failed {
+                for c in &mut checked {
+                    *c = Err(Poisoned::untyped(reported));
+                }
+                ty = None;
             }
-            ty = None;
+        } else {
+            self.diagnostics.restore(deferred);
         }
         (checked, ty, mismatched)
     }
 
     /// The operand `e`, checked as `checked`, reported against `ty`, the type of a later operand,
-    /// and dropped to `Error`.
-    fn reject_leader(&mut self, e: &ast::Expr, checked: &mut Checked, ty: Type) {
-        if let Some(found) = type_of(checked) {
-            let d = self.mismatch(e.span, Some(e), ty, found);
-            self.diagnostics.push(d);
-        }
-        *checked = Err(Poisoned::error());
+    /// and dropped to `Error`. Gives the proof of that report, or of the one that failed `e`.
+    fn reject_leader(&mut self, e: &ast::Expr, checked: &mut Checked, ty: Type) -> Reported {
+        let reported = match known_type(checked) {
+            Ok(found) => {
+                let d = self.mismatch(e.span, Some(e), ty, found);
+                self.diagnostics.error(d)
+            }
+            Err(reported) => reported,
+        };
+        *checked = Err(Poisoned::untyped(reported));
+        reported
     }
 
     /// `lhs op rhs`, its `lhs` already checked against `want`, the type `op` takes; `op` comes
@@ -600,27 +652,30 @@ impl Checker<'_> {
         want: Type,
         (l, l_mismatched): (Checked, bool),
         rhs: &ast::Expr,
-        held: Vec<Diagnostic>,
+        held: Held,
     ) -> Checked {
         let expected = Expectation::or_poisoned(type_of(&l).and(Some(want)));
         let checked = self.value(rhs, expected);
-        let flagged = is_unwrapped(&l) || is_unwrapped(&checked);
         // Only a compound assignment's number gets here with a `char` to its right.
         if want != Type::BOOL && type_of(&checked) == Some(Type::CHAR) {
-            self.report(DiagnosticKind::ArithmeticOnChar { at: op_span });
-            return Err(Poisoned::error());
+            let reported = self.error(DiagnosticKind::ArithmeticOnChar { at: op_span });
+            // The `char` is reported alone and the result is a new poisoned value, so no value
+            // outlives the dropped reports.
+            drop(held);
+            return Err(Poisoned::untyped(reported));
         }
-        self.diagnostics.extend(held);
+        self.diagnostics.restore(held);
         let (r, r_mismatched) = self.settled(rhs, checked, expected);
-        let kind = l.ok().zip(r.ok()).map(|(l, r)| tir::ExprKind::Binary {
-            op,
-            lhs: Box::new(l),
-            rhs: Box::new(r),
-        });
-        spread(
-            typed(span, want, l_mismatched || r_mismatched, kind),
-            flagged,
-        )
+        let kind = l
+            .and_then(|l| {
+                r.map(|r| tir::ExprKind::Binary {
+                    op,
+                    lhs: Box::new(l),
+                    rhs: Box::new(r),
+                })
+            })
+            .map_err(|failed| failed.reported());
+        typed(span, want, l_mismatched || r_mismatched, kind)
     }
 
     /// `settled`, except that a `checked` of a type that is none of `takes`, if given, is
@@ -641,9 +696,9 @@ impl Checker<'_> {
                 .filter(|&got| !takes.contains(&payload(got)))
         {
             let d = self.takes_mismatch(e.span, takes, got);
-            self.diagnostics.push(d);
+            let reported = self.diagnostics.error(d);
             self.settle_misfit(&checked);
-            return (Err(Poisoned::error()), true);
+            return (Err(Poisoned::untyped(reported)), true);
         }
         self.settled(e, checked, Expectation::or_poisoned(want))
     }
@@ -690,20 +745,18 @@ impl Checker<'_> {
                 .find(|&(_, want, got)| beyond_one_layer(want, got))
         {
             let d = self.mismatch(side.span, Some(side), want, got);
-            self.diagnostics.push(d);
-            return Err(Poisoned::error());
+            return Err(Poisoned::untyped(self.diagnostics.error(d)));
         }
         // `second` is the `none_written`, if either is.
-        // A value that an E0062 typed is optional under its `?.` fix.
         if self.none_written(second)
             && let Some(ty) = type_of(&checked)
             && !matches!(ty.kind(), TypeKind::Optional(_))
-            && !is_unwrapped(&checked)
         {
             let value = path(first);
-            self.diagnostics
-                .push(DiagnosticKind::NeverNone { value, at: span }.into());
-            return Err(Poisoned::error());
+            let reported = self
+                .diagnostics
+                .error(DiagnosticKind::NeverNone { value, at: span });
+            return Err(Poisoned::untyped(reported));
         }
         // The numbers are `i64`, `u8`, `f64` and `char`: none is compared with another.
         let number = |ty: Type| matches!(ty, Type::I64 | Type::U8 | Type::F64 | Type::CHAR);
@@ -721,8 +774,7 @@ impl Checker<'_> {
             } else {
                 self.mismatch(second.span, Some(second), payload(want), got)
             };
-            self.diagnostics.push(d);
-            return Err(Poisoned::error());
+            return Err(Poisoned::untyped(self.diagnostics.error(d)));
         }
         let (l, r) = if swapped {
             (other, checked)
@@ -769,8 +821,7 @@ impl Checker<'_> {
                 }
                 let op = if negated { "!=" } else { "==" };
                 let d = self.missing_operator(side.span, ty, op, eq);
-                self.report(d);
-                return Err(Poisoned::error());
+                return Err(Poisoned::untyped(self.error(d)));
             }
         }
         // A class or an enum with a written `Eq` is compared by a call of its `eq`. Any other
@@ -778,7 +829,14 @@ impl Checker<'_> {
         // in a comparison with `None`, which tests presence.
         let dispatch = match both {
             Some((_, Operation::Run(dispatch))) => dispatch,
-            Some((_, Operation::Poison)) => return Err(Poisoned::error()),
+            // The type has `Eq` only through a broken block, which is reported.
+            Some((_, Operation::Poison)) => {
+                let failed = (l.as_ref().err())
+                    .or_else(|| r.as_ref().err())
+                    .map(Poisoned::reported);
+                let reported = failed.unwrap_or_else(|| self.proof(span)); // proof: declaration
+                return Err(Poisoned::untyped(reported));
+            }
             _ => Dispatch::Generated,
         };
         self.nan_comparison(negated, (lhs, &l), (rhs, &r));
@@ -799,15 +857,14 @@ impl Checker<'_> {
         if self.none_written(lhs) || self.none_written(rhs) {
             let other = if self.none_written(lhs) { rhs } else { lhs };
             // It goes before the diagnostics of `other`, which the help waits for.
-            let at = self.diagnostics.len();
+            let at = self.diagnostics.mark();
             let checked = self.value(other, Expectation::Poisoned);
             // `== None` compiles only beside an optional, or a side whose type is unknown.
             let optional =
                 type_of(&checked).is_none_or(|ty| matches!(ty.kind(), TypeKind::Optional(_)));
             let tested = path(other).filter(|_| optional);
             let d = DiagnosticKind::IsTestsNone { tested, at: span }.into();
-            self.diagnostics.insert(at, d);
-            return Err(Poisoned::error());
+            return Err(Poisoned::untyped(self.diagnostics.insert_at(at, d)));
         }
         let (l, r) = (
             self.value(lhs, Expectation::None),
@@ -840,8 +897,7 @@ impl Checker<'_> {
                     at: side.span,
                     make,
                 };
-                self.diagnostics.push(kind.into());
-                return Err(Poisoned::error());
+                return Err(Poisoned::untyped(self.diagnostics.error(kind)));
             }
             let nested = matches!(ty.kind(), TypeKind::Optional(p) if matches!(p.kind(), TypeKind::Optional(_)));
             // Peeling a layer helps only when an object is under the rest.
@@ -867,8 +923,7 @@ impl Checker<'_> {
                         },
                     }),
                 };
-                self.diagnostics.push(kind.into());
-                return Err(Poisoned::error());
+                return Err(Poisoned::untyped(self.diagnostics.error(kind)));
             }
             if matches!(
                 base.kind(),
@@ -885,8 +940,7 @@ impl Checker<'_> {
                         .filter(|_| !nested),
                     peel: None,
                 };
-                self.diagnostics.push(kind.into());
-                return Err(Poisoned::error());
+                return Err(Poisoned::untyped(self.diagnostics.error(kind)));
             }
         }
         self.compared(span, l, r, |lhs, rhs| tir::ExprKind::Is { lhs, rhs })
@@ -935,10 +989,10 @@ impl Checker<'_> {
                 right: self.type_name(rt),
                 at: span,
             };
-            self.diagnostics.push(kind.into());
+            let reported = self.diagnostics.error(kind);
             self.settle_misfit(&l);
             self.settle_misfit(&r);
-            return Err(Poisoned::error());
+            return Err(Poisoned::untyped(reported));
         }
         let (l, r) = match (type_of(&l), type_of(&r)) {
             (Some(lt), Some(rt)) if lt != rt => {
@@ -961,8 +1015,7 @@ impl Checker<'_> {
                         right: self.type_name(rt),
                         at: span,
                     };
-                    self.diagnostics.push(kind.into());
-                    return Err(Poisoned::error());
+                    return Err(Poisoned::untyped(self.diagnostics.error(kind)));
                 }
             }
             _ => (l, r),
@@ -974,7 +1027,9 @@ impl Checker<'_> {
                 );
                 kind(Box::new(lhs), Box::new(rhs))
             })),
-            _ => Err(Poisoned::typed(Type::BOOL)),
+            (Err(failed), _) | (_, Err(failed)) => {
+                Err(Poisoned::typed(Type::BOOL, failed.reported()))
+            }
         }
     }
 
@@ -984,33 +1039,39 @@ impl Checker<'_> {
     fn fallback(&mut self, rhs: &ast::Expr, expected: Expectation) -> Checked {
         let checked = self.expr(rhs, expected);
         if type_of(&checked) == Some(Type::UNIT) {
-            self.report(DiagnosticKind::NoValue {
+            let reported = self.error(DiagnosticKind::NoValue {
                 at: rhs.span,
                 never: false,
             });
-            return Err(Poisoned::error());
+            return Err(Poisoned::untyped(reported));
         }
-        if is_kept(&checked) {
-            return Err(Poisoned::of(expected.ty().map(payload)));
+        if let Err(failed) = &checked
+            && failed.kept
+        {
+            return Err(Poisoned::new(expected.ty().map(payload), failed.reported()));
         }
         checked
     }
 
     /// E0050 for the `None` at `none` that starts the right side of a `??` whose left side starts
     /// at `lhs_start`: the fix groups the left side.
-    fn report_unregrouped(&mut self, none: Span, lhs_start: usize) {
-        self.report(DiagnosticKind::CannotInfer {
+    fn report_unregrouped(&mut self, none: Span, lhs_start: usize) -> Reported {
+        self.error(DiagnosticKind::CannotInfer {
             literal: Literal::None,
             binding: None,
             ty: None,
             at: none,
             regroup: Some(lhs_start),
-        });
+        })
     }
 
     /// `lhs ?? rhs`: `rhs` is a `T` or a `T?` beside the `T?` `lhs`, and gives the result its
     /// type, or never finishes, and the result is a `T`. A type written for an `any` result is
     /// what a default that does not join is reported against (see `leaves_written`).
+    #[expect(
+        clippy::too_many_lines,
+        reason = "each form of the default side reads in one place"
+    )]
     pub(super) fn coalesce(
         &mut self,
         span: Span,
@@ -1019,14 +1080,15 @@ impl Checker<'_> {
     ) -> Checked {
         let scrutinee = self.value(lhs, Expectation::None);
         let Some(TypeKind::Optional(payload)) = type_of(&scrutinee).map(Type::kind) else {
-            // A value that an E0062 typed is optional under its `?.` fix.
-            if type_of(&scrutinee).is_some() && !is_unwrapped(&scrutinee) {
-                self.diagnostics
-                    .push(DiagnosticKind::CoalesceNotOptional { at: lhs.span }.into());
-            }
+            let reported = match known_type(&scrutinee) {
+                Ok(_) => self
+                    .diagnostics
+                    .error(DiagnosticKind::CoalesceNotOptional { at: lhs.span }),
+                Err(reported) => reported,
+            };
             // Only its own diagnostics matter.
             drop(self.fallback(rhs, Expectation::Poisoned));
-            return Err(Poisoned::error());
+            return Err(Poisoned::untyped(reported));
         };
         // `??` groups to the right, so a `None` that starts a right `??` has no type to take:
         // `x ?? None ?? 0` is `x ?? (None ?? 0)`. Grouping the left side helps only when the
@@ -1039,7 +1101,7 @@ impl Checker<'_> {
             && none.span.start() == rhs.span.start()
             && matches!(payload.kind(), TypeKind::Optional(_))
         {
-            self.report_unregrouped(none.span, lhs.span.start());
+            let reported = self.report_unregrouped(none.span, lhs.span.start());
             // The next `None` of a run is for the next fix to report.
             let mut tail: &ast::Expr = tail;
             while let ExprKind::Coalesce {
@@ -1052,7 +1114,7 @@ impl Checker<'_> {
             }
             // Only its own diagnostics matter.
             drop(self.fallback(tail, Expectation::Poisoned));
-            return Err(Poisoned::error());
+            return Err(Poisoned::untyped(reported));
         }
         // A hint is no written type.
         let written =
@@ -1075,14 +1137,13 @@ impl Checker<'_> {
                 self.fallback(rhs, hint)
             }
         };
-        // Under the `?.` fix of an E0062 in either side, the result is optional.
-        let flagged = has_remedy_flag(&scrutinee) || has_remedy_flag(&other);
         // A value converts to an `any` payload, unless it is a wider `any` type, which the
         // payload converts to.
         let other = match type_of(&other) {
             Some(got) if got != payload && self.any_join(payload, got) != Some(got) => {
                 match self.any_conversion(rhs.span, other, payload, got) {
-                    Ok((_, true)) => return Err(Poisoned::error()),
+                    // The conversion failed: its value is untyped, with the proof of its report.
+                    Ok((failed, true)) => return failed,
                     Ok((converted, false)) | Err(converted) => converted,
                 }
             }
@@ -1120,23 +1181,27 @@ impl Checker<'_> {
                         (None, Some((at, want, object))) => self.leaves_any(at, None, want, object),
                         (None, None) => self.mismatch(rhs.span, Some(rhs), payload, ty),
                     };
-                    self.diagnostics.push(d);
+                    let reported = self.diagnostics.error(d);
                     self.settle_misfit(&other);
-                    return Err(Poisoned::error());
+                    return Err(Poisoned::untyped(reported));
                 };
                 self.instantiates = true;
                 // A default that converts to the payload did so above: the payload converts to
                 // this default's `any` type.
                 (other, joined)
             }
-            None => return Err(Poisoned::error()),
+            None => {
+                let reported =
+                    known_type(&other).expect_err("a value with no type should have failed");
+                return Err(Poisoned::untyped(reported));
+            }
         };
         let bind = self.fresh(payload);
         let read = local(bind, payload, lhs.span);
         let value = if read.ty == ty { read } else { widen(read, ty) };
         match (scrutinee, other) {
             (Ok(scrutinee), Ok(other)) => Ok(if_some(bind, scrutinee, value, Some(other), span)),
-            _ => spread(Err(Poisoned::typed(ty)), flagged),
+            (Err(failed), _) | (_, Err(failed)) => Err(Poisoned::typed(ty, failed.reported())),
         }
     }
 }

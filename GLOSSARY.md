@@ -714,6 +714,11 @@ each check that reads it stays silent about that error. It is *typed* when the
 source states its type apart from the poisoned part, and *untyped* otherwise.
 _Avoid_: failed value, poison type, error type
 
+**Promise**:
+A record, made by `proof`, that an error exists by the end of the check. An
+error in the checker's list, or a parser mark, keeps it.
+_Avoid_: delayed error, pending error
+
 **Diagnostic**:
 An error or a warning the compiler reports about the source. An error stops
 the build; a warning does not.

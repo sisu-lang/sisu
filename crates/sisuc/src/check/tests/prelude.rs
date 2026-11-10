@@ -2161,7 +2161,7 @@ fn dbg_in_a_prelude_function_should_hold_the_text_of_its_argument() {
             "(dbg \"\\\"text\\\"\"",
         ),
     ] {
-        let (program, ds) = front_end::checked_with(prelude, main);
+        let (program, ds) = checked_with(prelude, main);
         assert!(ds.is_empty(), "{prelude}: {ds:?}");
         let printed = program.expect("no errors").to_string();
         assert!(printed.contains(part), "{part} in {printed}");
@@ -2371,7 +2371,7 @@ fn match_in_the_prelude_should_give_an_internal_error_when_it_is_wrong() {
             "fn probe(n: bool) -> i64 {\n    match n {\n        true => 1\n    }\n}\n",
         ),
     ] {
-        let caught = std::panic::catch_unwind(|| front_end::checked_with(prelude, "fn main() {}"));
+        let caught = std::panic::catch_unwind(|| checked_with(prelude, "fn main() {}"));
         let message = caught.expect_err(row);
         let message = message
             .downcast_ref::<String>()

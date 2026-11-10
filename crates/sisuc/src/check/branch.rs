@@ -4,27 +4,38 @@ use super::any::{AnyJoin, is_target};
 use super::expr::fits;
 use super::generic::{Ahead, Rank};
 use super::pattern::{LetPattern, arm_key};
+use super::reports::Reported;
 use super::{
-    Checked, CheckedBlock, Checker, Expectation, Flag, Misfit, Poisoned, as_optional, block_type,
-    has_remedy_flag, is_jumped, is_kept, payload, spread, tail, value_span, wrap_block,
+    Checked, CheckedBlock, Checker, Expectation, Misfit, Poisoned, as_optional, block_type,
+    is_jumped, is_kept, payload, tail, value_span, wrap_block,
 };
 use crate::ast;
 use crate::diagnostic::{Diagnostic, DiagnosticKind, Unwrap};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeKind};
 
-/// The failed `if` or `match` whose join is `ty`: as typed as the join is, and flagged (see
-/// `Poisoned::unwrapped`) when a branch is.
-pub(super) fn failed_join(ty: Result<Type, Poisoned>, flagged: bool) -> Checked {
-    spread(
-        Err(ty.map_or_else(|poisoned| poisoned, Poisoned::typed)),
-        flagged,
-    )
+/// The failed `if` or `match` whose join is `ty`: as typed as the join is. A join with a type
+/// fails by a failed part, whose proof is `part`.
+pub(super) fn failed_join(ty: Result<Type, Poisoned>, part: Option<Reported>) -> Checked {
+    Err(match ty {
+        Err(poisoned) => poisoned,
+        Ok(ty) => Poisoned::typed(
+            ty,
+            part.expect("a join with a type should fail by a failed part"),
+        ),
+    })
+}
+
+/// The proof of the first failed branch among `blocks`, of a join that failed by a branch.
+fn failed_branch(blocks: &[CheckedBlock]) -> Reported {
+    (blocks.iter().find_map(|block| block.as_ref().err()))
+        .expect("a join that fails by a branch should have a failed branch")
+        .reported()
 }
 
 impl Checker<'_> {
     /// Without an `else`, `unit`. With one, the branches joined (see `branches`). A condition
-    /// that is not `bool` makes the `if` `Error`, or `Never` when its branches are.
+    /// that is not `bool` makes the `if` untyped, or `Never` when its branches are.
     pub(super) fn if_expr(
         &mut self,
         span: Span,
@@ -42,15 +53,17 @@ impl Checker<'_> {
             |c, expected| c.block(then_block, expected),
         );
         // A failed join keeps its own `mismatch`, and branches that never end keep `Never`.
-        let ty = match ty {
-            Ok(Type::NEVER) if mismatched => Err(Poisoned::typed(Type::NEVER)),
-            Ok(_) if mismatched => Err(Poisoned::error()),
-            ty => ty,
+        let ty = match (ty, &cond) {
+            (Ok(ty), Err(failed)) if mismatched => Err(Poisoned::new(
+                (ty == Type::NEVER).then_some(ty),
+                failed.reported(),
+            )),
+            (ty, _) => ty,
         };
-        // A flagged condition is a `bool?` under the `?.` fix, which fails the `if`.
-        let flagged = has_remedy_flag(&cond)
-            || has_remedy_flag(&then)
-            || other.as_ref().is_some_and(has_remedy_flag);
+        let part = (cond.as_ref().err())
+            .or_else(|| then.as_ref().err())
+            .or_else(|| other.as_ref().and_then(|other| other.as_ref().err()))
+            .map(Poisoned::reported);
         match (cond, then, other.transpose(), ty) {
             (Ok(cond), Ok(then_block), Ok(else_block), Ok(ty)) => Ok(tir::Expr::new(
                 tir::ExprKind::If {
@@ -61,7 +74,7 @@ impl Checker<'_> {
                 ty,
                 span,
             )),
-            (.., ty) => failed_join(ty, flagged),
+            (.., ty) => failed_join(ty, part),
         }
     }
 
@@ -93,16 +106,14 @@ impl Checker<'_> {
             });
         let bound = checked.expect("`branches` should check the first block, which sets it");
         // A failed join keeps its own `mismatch`, and branches that never end keep `Never`.
-        let ty = match ty {
-            Ok(Type::NEVER) if mismatched => Err(Poisoned::typed(Type::NEVER)),
-            Ok(_) if mismatched => Err(Poisoned::error()),
-            ty => ty,
+        let ty = match (ty, &scrutinee) {
+            (Ok(ty), Err(failed)) if mismatched => Err(Poisoned::new(
+                (ty == Type::NEVER).then_some(ty),
+                failed.reported(),
+            )),
+            (ty, _) => ty,
         };
         let ty = ty?;
-        // Under the unwrap the `if let` fails with E0051. Under the `?.` fix its value is optional.
-        let flagged = has_remedy_flag(&scrutinee)
-            || has_remedy_flag(&then)
-            || other.as_ref().is_some_and(has_remedy_flag);
         let kind = match (scrutinee, then, other.transpose(), bound) {
             (Ok(scrutinee), Ok(then_block), Ok(else_block), LetPattern::Some { bind }) => {
                 tir::ExprKind::IfSome {
@@ -117,10 +128,22 @@ impl Checker<'_> {
                 Ok(then_block),
                 Ok(else_block),
                 LetPattern::Match {
-                    pattern: Some(pattern),
+                    pattern: Ok(pattern),
                 },
             ) => self.if_let_match(scrutinee, pattern, then_block, else_block),
-            _ => return spread(Err(Poisoned::typed(ty)), flagged),
+            (scrutinee, then, other, bound) => {
+                // A pattern at an `Error` position fails with the scrutinee, which comes first.
+                let pattern = match bound {
+                    LetPattern::Match { pattern: Err(own) } => own,
+                    LetPattern::Match { pattern: Ok(_) } | LetPattern::Some { .. } => None,
+                };
+                let part = (scrutinee.err().map(|p| p.reported()))
+                    .or_else(|| then.err().map(|p| p.reported()))
+                    .or_else(|| other.err().map(|p| p.reported()))
+                    .or(pattern)
+                    .expect("a failed `if let` should have a failed part");
+                return Err(Poisoned::typed(ty, part));
+            }
         };
         Ok(tir::Expr::new(kind, ty, span))
     }
@@ -227,8 +250,9 @@ impl Checker<'_> {
             }
         }
         let (joined, error, failed) = self.fold_branches(sources, (expected, siblings), &blocks);
+        // A branch with no type makes the join untyped: its repair can change the join.
         let ty = match joined {
-            _ if failed => None,
+            _ if failed.is_some() || error => None,
             Some(ty) => {
                 for (block, source) in blocks.iter_mut().zip(sources) {
                     if block_type(block).is_some_and(|t| t != ty && t != Type::NEVER) {
@@ -242,12 +266,11 @@ impl Checker<'_> {
                 }
                 Some(ty)
             }
-            None if error => None,
             None => Some(Type::NEVER),
         };
         // A join that fails with a type expected rejects that type, as a branch that does, and
         // then the whole is `Error`, whatever type the other branches joined to.
-        let mismatch = failed && expected.ty().is_some()
+        let mismatch = failed.is_some() && expected.ty().is_some()
             || blocks
                 .iter()
                 .any(|b| matches!(b, Err(Poisoned { mismatch: true, .. })));
@@ -260,7 +283,7 @@ impl Checker<'_> {
                 continue;
             }
             match (&found, ty) {
-                (None, Some(ty)) if !failed => {
+                (None, Some(ty)) if failed.is_none() => {
                     found = block
                         .as_ref()
                         .err()
@@ -276,37 +299,35 @@ impl Checker<'_> {
             Some(Type::NEVER) if !mismatch && found.is_none() && blocks.iter().any(is_jumped) => {
                 Err(Poisoned {
                     jumped: true,
-                    ..Poisoned::typed(Type::NEVER)
+                    ..Poisoned::typed(Type::NEVER, failed_branch(&blocks))
                 })
             }
             Some(ty) if !mismatch && found.is_none() => Ok(ty),
             _ => Err(Poisoned {
-                ty: None,
                 mismatch,
                 found,
                 // A join that has no type is kept when a branch is: that call's E0050 is the one
                 // report.
                 kept: ty.is_none() && blocks.iter().any(is_kept),
-                unwrapped: Flag::No,
-                jumped: false,
+                ..Poisoned::untyped(failed.unwrap_or_else(|| failed_branch(&blocks)))
             }),
         };
         (blocks, ty)
     }
 
-    /// The type that the `blocks` join to, whether a block has no type, and whether the join
-    /// failed (reported). With an `any` branch, the join is that type (see `any_join_all`),
-    /// whatever the order. Else the types fold in source order: a `T` and a `T?` make a `T?`,
-    /// and other types that differ are reported. Branches that do not join by themselves join
-    /// to an `any` type that `siblings` gives (see `seeded_join`). A `Some` of an object joins an
-    /// `any` type as the object, and the join is then optional. With an `any` type in reach, the
-    /// branch that does not convert to it is the mistake (see `leaves_any`).
+    /// The type that the `blocks` join to, whether a block has no type, and the proof of the report
+    /// when the join failed. With an `any` branch, the join is that type (see `any_join_all`),
+    /// whatever the order. Else the types fold in source order: a `T` and a `T?` make a `T?`, and
+    /// other types that differ are reported. Branches that do not join by themselves join to an
+    /// `any` type that `siblings` gives (see `seeded_join`). A `Some` of an object joins an `any`
+    /// type as the object, and the join is then optional. With an `any` type in reach, the branch
+    /// that does not convert to it is the mistake (see `leaves_any`).
     fn fold_branches(
         &mut self,
         sources: &[Branch<'_>],
         (expected, siblings): (Expectation, Option<Type>),
         blocks: &[CheckedBlock],
-    ) -> (Option<Type>, bool, bool) {
+    ) -> (Option<Type>, bool, Option<Reported>) {
         // A branch's misfit joins by the type it found (see `Misfit`), as a concrete one would.
         let types: Vec<Option<Type>> = (blocks.iter())
             .map(|b| block_type(b).or_else(|| self.misfit_type(b)))
@@ -316,13 +337,12 @@ impl Checker<'_> {
             .filter_map(|(i, t)| t.filter(|&t| t != Type::NEVER).map(|t| (i, t)))
             .collect();
         if let Some(d) = self.leaves_written(sources, blocks, expected, &members) {
-            self.diagnostics.push(d);
-            return (None, error, true);
+            return (None, error, Some(self.diagnostics.error(d)));
         }
         let failed = match self.any_join_all(&members) {
-            AnyJoin::Joined { ty } => return (Some(ty), error, false),
+            AnyJoin::Joined { ty } => return (Some(ty), error, None),
             AnyJoin::NoAny => match fold_in_order(&members) {
-                Ok(joined) => return (joined.map(|(_, ty)| ty), error, false),
+                Ok(joined) => return (joined.map(|(_, ty)| ty), error, None),
                 Err((earlier, later)) => AnyJoin::Fails { earlier, later },
             },
             failed => failed,
@@ -347,7 +367,7 @@ impl Checker<'_> {
             failed
         } else {
             match self.any_join_all(&objects) {
-                AnyJoin::Joined { ty } => return (Some(made(ty)), error, false),
+                AnyJoin::Joined { ty } => return (Some(made(ty)), error, None),
                 leaves @ AnyJoin::Leaves { .. } => leaves,
                 AnyJoin::NoAny | AnyJoin::Fails { .. } => failed,
             }
@@ -357,7 +377,7 @@ impl Checker<'_> {
             AnyJoin::Joined { ty } => {
                 #[cfg(test)]
                 super::reached("seeded_join for a branch");
-                return (Some(made(ty)), error, false);
+                return (Some(made(ty)), error, None);
             }
             leaves @ AnyJoin::Leaves { .. } => leaves,
             AnyJoin::NoAny | AnyJoin::Fails { .. } => failed,
@@ -388,8 +408,7 @@ impl Checker<'_> {
                 unreachable!("a join that failed should name its mistake")
             }
         };
-        self.diagnostics.push(d);
-        (None, error, true)
+        (None, error, Some(self.diagnostics.error(d)))
     }
 
     /// The mistake when the branch `first`, of type `first_ty`, and the later branch `other`,

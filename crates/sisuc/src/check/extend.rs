@@ -5,6 +5,7 @@ use rustc_hash::FxHashMap;
 
 use super::generic::named_params;
 use super::interface::{Bound, Bounds};
+use super::reports::Reported;
 use super::{Checker, Choices, Declared, Definition, DiagnosticKind, Holder, SelfType, Symbol};
 use crate::ast;
 use crate::conformance::{bind, overlap};
@@ -51,6 +52,10 @@ impl<'a> Checker<'_> {
     /// interface that it can take. Otherwise its methods get signatures, so that the ids of the
     /// functions after them stay in place, and `declared` holds them with a failed `self`:
     /// their bodies are not checked, since the block's own error says what is wrong.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "each way that a block's target or interface fails reads in one place"
+    )]
     pub(super) fn extend_signatures(
         &mut self,
         extend: &'a ast::Extend,
@@ -127,7 +132,7 @@ impl<'a> Checker<'_> {
             }
             if let (Some(mut_self), Some(holder)) = (&method.mut_self, holder) {
                 let owner = method_owner(holder, &name);
-                self.report(DiagnosticKind::MutSelf {
+                self.error(DiagnosticKind::MutSelf {
                     keyword: mut_self.keyword,
                     remove: mut_self_removal(self.source.comments, mut_self),
                     safe: mut_self.annotation.is_none(),
@@ -141,7 +146,9 @@ impl<'a> Checker<'_> {
         self.body.assoc = std::rc::Rc::default();
         if let (Some(target), Some(holder)) = (usable, holder) {
             for method in &extend.broken_methods {
-                self.broken_extension_methods.insert((holder, method.name));
+                let reported = self.proof(method.span); // proof: parser mark
+                self.broken_extension_methods
+                    .insert((holder, method.name), reported);
             }
             self.extensions.push(Extension {
                 holder,
@@ -166,14 +173,17 @@ impl<'a> Checker<'_> {
     /// can take, the block may have given methods to that type. Else it may have given methods of
     /// its names to any type.
     fn record_failed_block(&mut self, extend: &ast::Extend, target: Option<Type>) {
+        // The block's own report, of its target or its interface, is the proof.
+        let reported = self.proof(extend.target.span); // proof: declaration
         if let Some(holder) = target.and_then(method_holder) {
             let name = self.holder_name(holder);
-            self.broken_extensions.insert(name);
+            self.broken_extensions.insert(name, reported);
         } else {
             // No target: its methods may belong to any type (see `Checker.rejected_methods`).
             let names = (extend.methods.iter().map(|m| m.name.name))
                 .chain(extend.broken_methods.iter().map(|m| m.name));
-            self.rejected_methods.extend(names);
+            self.rejected_methods
+                .extend(names.map(|name| (name, reported)));
         }
     }
 
@@ -235,20 +245,22 @@ impl<'a> Checker<'_> {
 
     /// Reports the first bound of the block `extension` that fails for a receiver of type `ty`,
     /// at the call of `method` that starts at `span`: the receiver's type arguments do not meet it.
+    /// The proof of the report.
     pub(super) fn report_block_bound(
         &mut self,
         extension: usize,
         ty: Type,
         span: Span,
         method: &str,
-    ) {
+    ) -> Reported {
         let stands = self
             .covers(extension, ty)
             .expect("a block that fails its bounds should cover the receiver");
         let (i, bound) = (self.first_failed_bound(extension, stands))
             .expect("a block that fails its bounds should have a bound that fails");
         let need = self.block_need(method, stands.get()[i]);
-        self.check_bound_of(span, stands.get()[i], bound, stands.get(), Some(need), None);
+        (self.check_bound_of(span, stands.get()[i], bound, stands.get(), Some(need), None))
+            .expect_err("a bound that fails should be reported")
     }
 
     /// What a call of `method` needs of `ty`, the type that stands for a type parameter of its
@@ -309,7 +321,7 @@ impl<'a> Checker<'_> {
             let remove = (params.len() == 1 && !self.names_in_block(extend, param.name.name))
                 .then_some(header)
                 .filter(|header| !self.comment_in(&[header.range()]));
-            self.report(DiagnosticKind::CannotExtend {
+            self.error(DiagnosticKind::CannotExtend {
                 written: param.name.name.to_string(),
                 at: param.name.span,
                 form: CannotExtendForm::Unused {
@@ -344,7 +356,7 @@ impl<'a> Checker<'_> {
                 _ => unreachable!("an interface name should be a name or an applied name"),
             };
             // Following the advice of `InterfaceAsType` would give `CannotExtend`, so it has none.
-            self.report(DiagnosticKind::InterfaceAsType {
+            self.error(DiagnosticKind::InterfaceAsType {
                 name: name.to_string(),
                 written: None,
                 at: ty.bare,
@@ -383,7 +395,7 @@ impl<'a> Checker<'_> {
         } else {
             ty.to_string()
         };
-        self.report(DiagnosticKind::CannotExtend {
+        self.error(DiagnosticKind::CannotExtend {
             written,
             at: ty.bare,
             form,
@@ -482,7 +494,7 @@ impl<'a> Checker<'_> {
             }
         }
         for report in reports {
-            self.report(report);
+            self.error(report);
         }
     }
 

@@ -1174,7 +1174,7 @@ impl Checker<'_> {
             }
         }
         let holder = graph.headline(&cycle, label);
-        self.report(DiagnosticKind::InstantiationCycle {
+        self.error(DiagnosticKind::InstantiationCycle {
             name: self.node_owner_name(graph, holder),
             at: edge.mark,
             instance: label_spelled,

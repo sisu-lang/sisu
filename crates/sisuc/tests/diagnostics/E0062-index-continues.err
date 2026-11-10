@@ -20,12 +20,6 @@ help: mark the field `mut`
  7 |     mut yss: [[i64]]
    |     +++
 
-error[E0032]: expected `i64`, found `string`
-  --> E0062-index-continues.sisu:12:19
-   |
-12 |     c.yss[0].push("a")
-   |                   ^^^
-
 error[E0062]: `c` may be `None`
   --> E0062-index-continues.sisu:16:5
    |
@@ -47,12 +41,6 @@ help: mark the field `mut`
    |
  7 |     mut yss: [[i64]]
    |     +++
-
-error[E0032]: expected `i64`, found `string`
-  --> E0062-index-continues.sisu:16:17
-   |
-16 |     c.yss[0] = ["a"]
-   |                 ^^^
 
 error[E0062]: `c` may be `None`
   --> E0062-index-continues.sisu:20:5
@@ -76,12 +64,6 @@ help: mark the field `mut`
  7 |     mut yss: [[i64]]
    |     +++
 
-error[E0032]: expected `i64`, found `string`
-  --> E0062-index-continues.sisu:20:19
-   |
-20 |     c.yss[0][0] = "a"
-   |                   ^^^
-
 error[E0062]: `c` may be `None`
   --> E0062-index-continues.sisu:24:5
    |
@@ -104,12 +86,6 @@ help: mark the field `mut`
  7 |     mut yss: [[i64]]
    |     +++
 
-error[E0032]: expected `i64`, found `string`
-  --> E0062-index-continues.sisu:24:20
-   |
-24 |     c.yss[0][0] += "a"
-   |                    ^^^
-
 error[E0062]: `c` may be `None`
   --> E0062-index-continues.sisu:28:21
    |
@@ -118,12 +94,6 @@ error[E0062]: `c` may be `None`
    |
    = help: unwrap it with `if let`, `let ... else` or `?? return`
 
-error[E0032]: expected `string`, found `i64`
-  --> E0062-index-continues.sisu:28:21
-   |
-28 |     let s: string = c.yss[0][0]
-   |                     ^^^^^^^^^^^
-
 error[E0062]: `c` may be `None`
   --> E0062-index-continues.sisu:32:5
    |
@@ -131,12 +101,6 @@ error[E0062]: `c` may be `None`
    |     ^
    |
    = help: unwrap it with `if let`, `let ... else` or `?? return`
-
-error[E0062]: `c.oys` may be `None`
-  --> E0062-index-continues.sisu:32:5
-   |
-32 |     c.oys[0].push("a")
-   |     ^^^^^
 
 error[E0001]: cannot change `oys`
   --> E0062-index-continues.sisu:32:5
@@ -151,12 +115,6 @@ help: mark the field `mut`
    |
  8 |     mut oys: [[i64]]?
    |     +++
-
-error[E0032]: expected `i64`, found `string`
-  --> E0062-index-continues.sisu:32:19
-   |
-32 |     c.oys[0].push("a")
-   |                   ^^^
 
 error[E0001]: cannot change `yss`
   --> E0062-index-continues.sisu:36:5
@@ -422,5 +380,5 @@ error[E0032]: expected `i64`, found `string`
 80 |     c?.oys[0].push("a")
    |                    ^^^
 
-sisu: 47 errors
+sisu: 40 errors
 sisu: for more on a code, run `sisu explain <code>`: E0001, E0032, E0062

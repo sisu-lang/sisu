@@ -1,9 +1,3 @@
-error[E0032]: expected `string`, found `[i64]`
-  --> E0166-expected-let-mut.sisu:13:21
-   |
-13 |     let s: string = gget(ys)
-   |                     ^^^^^^^^
-
 error[E0166]: the parameter `x` of `gget` is `mut`, so its argument needs `mut`
   --> E0166-expected-let-mut.sisu:13:26
    |
@@ -13,5 +7,5 @@ error[E0166]: the parameter `x` of `gget` is `mut`, so its argument needs `mut`
 13 |     let s: string = gget(ys)
    |                          ^^ needs `mut`
 
-sisu: 2 errors
-sisu: for more on a code, run `sisu explain <code>`: E0032, E0166
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0166

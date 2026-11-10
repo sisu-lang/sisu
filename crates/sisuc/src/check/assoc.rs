@@ -131,7 +131,7 @@ impl Checker<'_> {
                 Cause::Loops => UnknownForm::ChoiceLoops,
                 Cause::TooDeep => UnknownForm::ChoiceTooDeep,
             };
-            self.report(DiagnosticKind::UnknownType {
+            self.error(DiagnosticKind::UnknownType {
                 name: self.type_name(assoc),
                 at,
                 form,
@@ -201,7 +201,7 @@ impl Checker<'_> {
                 || self.names.enum_id(name).is_some()
                 || self.names.alias(name).is_some()
                 || built_in_type(name.as_str()).is_some();
-            self.report(DiagnosticKind::UnknownType {
+            self.error(DiagnosticKind::UnknownType {
                 name: name.to_string(),
                 at,
                 form: UnknownForm::ChoiceNamesItself { shadows },
@@ -232,7 +232,7 @@ impl Checker<'_> {
     /// Reports that the written type `ty`, a target or an interface argument of an `extend`
     /// block, names an associated type.
     pub(super) fn cannot_extend_assoc(&mut self, ty: &ast::TypeExpr) {
-        self.report(DiagnosticKind::CannotExtend {
+        self.error(DiagnosticKind::CannotExtend {
             written: ty.to_string(),
             at: ty.bare,
             form: CannotExtendForm::Associated,
@@ -253,7 +253,7 @@ impl Checker<'_> {
         if !matches!(base_ty.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)) {
             let own = matches!(base.kind, ast::TypeKind::SelfType)
                 && self.body.assoc.get(name.name).is_some();
-            self.report(DiagnosticKind::UnknownType {
+            self.error(DiagnosticKind::UnknownType {
                 name: name.name.to_string(),
                 at: ty.bare,
                 form: UnknownForm::ConcreteBase { own },
@@ -264,7 +264,7 @@ impl Checker<'_> {
             // The bounds of an associated type are not known when the aliases resolve, so the
             // body writes no associated type of one.
             if matches!(base_ty.kind(), TypeKind::Assoc(..)) {
-                self.report(DiagnosticKind::UnknownType {
+                self.error(DiagnosticKind::UnknownType {
                     name: name.name.to_string(),
                     at: ty.bare,
                     form: UnknownForm::OfAssociatedInAlias {
@@ -331,7 +331,7 @@ impl Checker<'_> {
                     Some(&[(only, _)]) => self.add_bound(base_ty, only),
                     _ => None,
                 };
-                self.report(DiagnosticKind::UnknownType {
+                self.error(DiagnosticKind::UnknownType {
                     name: name.name.to_string(),
                     at: name.span,
                     form: UnknownForm::NoAssociated {
@@ -342,7 +342,7 @@ impl Checker<'_> {
                 None
             }
             _ => {
-                self.report(DiagnosticKind::Ambiguous {
+                self.error(DiagnosticKind::Ambiguous {
                     method: name.name.to_string(),
                     receiver: self.type_name(base_ty),
                     interfaces: (found.iter())
@@ -486,7 +486,7 @@ impl Checker<'_> {
         self.body.unknown_assoc.insert(ty);
         if self.wide_reported.insert(at) {
             let text = self.source.type_text(at);
-            self.report(DiagnosticKind::BoundTooWide {
+            self.error(DiagnosticKind::BoundTooWide {
                 kind: WideKind::Bound,
                 written: format!("{}: {text}", self.type_name(ty)),
                 limit: BOUND_CLOSURE_LIMIT,

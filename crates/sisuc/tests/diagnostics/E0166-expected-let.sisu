@@ -1,7 +1,7 @@
 // GIVEN `let n: i64 = first(names)`, where `names` is a `let` `[string]` and `first` has a `mut` `[T]`
 // WHEN `sisu check` runs on it
-// THEN it reports E0032 for the result, then E0166 on `names`
-// AND the E0166 has no help: declaring `names` with `let mut` would leave the E0032
+// THEN it reports E0166 on `names`; the E0032 of the result waits, because the call has a failed part
+// AND the E0166 has no help: declaring `names` with `let mut` would leave that E0032
 fn first<T>(mut xs: [T]) -> T {
     let x = xs[0]
     xs[0] = x

@@ -1522,60 +1522,63 @@ fn stray_mut_should_not_be_reported_beside_a_count_error() {
 ///   field of a constructor, with a `let` local, a `let mut` local and a field, for a function
 ///   and a method, generic or not
 /// WHEN it is checked
-/// THEN the mismatch of the result is E0032, as for the call with `mut`, and E0166 follows
+/// THEN E0166 is reported, and the argument that it rejects is a failed part (the call row of
+///   S14). The result of a generic call is untyped and adds no mismatch. The closed `i64` of
+///   `count` is typed, so its mismatch E0032 comes first
 #[test]
-fn unmarked_place_whose_call_misses_its_expected_type_should_report_the_mismatch() {
+fn unmarked_place_should_leave_a_mismatch_only_to_a_closed_result() {
     let decls = "fn first<T>(mut xs: [T]) -> T {\n    let x = xs[0]\n    xs[0] = x\n    x\n}\n\
         fn count(mut xs: [i64]) -> i64 {\n    xs[0] += 1\n    xs[0]\n}\n\
         fn text(s: string) {\n    print(s)\n}\n\
         class Holder {\n    s: string\n}\n\
         class Names {\n    cells: [string]\n    fn pick<T>(self, mut xs: [T]) -> T {\n        let x = xs[0]\n        xs[0] = x\n        x\n    }\n}\n";
-    let rows = [
+    let main = |body: &str| format!("{decls}fn main() {{\n    {body}\n}}");
+    let e166 = Code::MutMarkerMissing;
+    error_rows(&[
         (
             "let",
-            "let names = [\"a\"]\n    let n: i64 = first(names)\n    print(n)",
+            main("let names = [\"a\"]\n    let n: i64 = first(names)\n    print(n)"),
+            vec![(e166, (26, 24))],
         ),
         (
             "let mut",
-            "let mut names = [\"a\"]\n    let n: i64 = first(names)\n    print(n)",
+            main("let mut names = [\"a\"]\n    let n: i64 = first(names)\n    print(n)"),
+            vec![(e166, (26, 24))],
         ),
+        // The closed `i64` of `count` is typed, so its mismatch stays.
         (
             "function that is not generic",
-            "let ys = [1]\n    let s: string = count(ys)\n    print(s)",
+            main("let ys = [1]\n    let s: string = count(ys)\n    print(s)"),
+            vec![(Code::Mismatch, (26, 21)), (e166, (26, 27))],
         ),
         (
             "field",
-            "let b = Names(cells: [\"a\"])\n    let n: i64 = first(b.cells)\n    print(n)",
+            main("let b = Names(cells: [\"a\"])\n    let n: i64 = first(b.cells)\n    print(n)"),
+            vec![(e166, (26, 24))],
         ),
         (
             "method",
-            "let b = Names(cells: [\"a\"])\n    let ys = [\"a\"]\n    let n: i64 = b.pick(ys)\n    print(n)",
+            main(
+                "let b = Names(cells: [\"a\"])\n    let ys = [\"a\"]\n    let n: i64 = b.pick(ys)\n    print(n)",
+            ),
+            vec![(e166, (27, 25))],
         ),
         (
             "argument of another call",
-            "let ys = [1]\n    text(first(ys))",
+            main("let ys = [1]\n    text(first(ys))"),
+            vec![(e166, (26, 16))],
         ),
         (
             "field of a constructor",
-            "let ys = [1]\n    let h = Holder(s: first(ys))\n    print(h.s)",
+            main("let ys = [1]\n    let h = Holder(s: first(ys))\n    print(h.s)"),
+            vec![(e166, (26, 29))],
         ),
-    ];
-    for (row, body) in rows {
-        let src = format!("{decls}fn main() {{\n    {body}\n}}");
-        let mut found = diags(&src);
-        found.sort_by_key(|d| d.span().start());
-        let found: Vec<_> = found.iter().map(Diagnostic::code).collect();
-        assert_eq!(
-            found,
-            [Code::Mismatch, Code::MutMarkerMissing],
-            "row `{row}`: {src}"
-        );
-    }
-    let ret = format!("{decls}fn give(ys: [i64]) -> string {{\n    first(ys)\n}}\nfn main() {{}}");
-    let mut found = diags(&ret);
-    found.sort_by_key(|d| d.span().start());
-    let found: Vec<_> = found.iter().map(Diagnostic::code).collect();
-    assert_eq!(found, [Code::Mismatch, Code::MutMarkerMissing], "return");
+        (
+            "return",
+            format!("{decls}fn give(ys: [i64]) -> string {{\n    first(ys)\n}}\nfn main() {{}}"),
+            vec![(e166, (25, 11))],
+        ),
+    ]);
 }
 
 /// GIVEN two `mut` places, and `f(mut a, mut b)`
@@ -2197,7 +2200,7 @@ fn mut_argument_against_a_written_context_should_be_e0170_only() {
 ///   writes its type arguments, or is a safe call, or is not generic, or the place is behind `?.`,
 ///   or the parameter is an associated type, or a parameter that no argument binds is in context
 /// WHEN the call is checked
-/// THEN the reports are those of the call before: this fix changes none of them
+/// THEN the reports are those of the call before, but a missing `mut` makes the call untyped
 #[test]
 fn mut_argument_against_a_written_context_should_keep_the_other_reports() {
     let rows: &[Row] = &[
@@ -2213,11 +2216,13 @@ fn mut_argument_against_a_written_context_should_keep_the_other_reports() {
             "let n: string = pair(mut names, 1)",
             &[(E32, "1")],
         ),
+        // E0166 rejects `names`, so the call has a failed part and is untyped (the call row of
+        // S14): its mismatch waits.
         (
             "i: no `mut`",
             "",
             "let n: i64 = first(names)",
-            &[(E32, "first(names)"), (Code::MutMarkerMissing, "names")],
+            &[(Code::MutMarkerMissing, "names")],
         ),
         (
             "n: a written type argument",
@@ -2650,4 +2655,13 @@ fn mut_argument_beside_an_earlier_error_should_keep_its_reports() {
     let src = "fn set(mut n: i64) { n = 1 }\nextend [i64] {\n    fn f(self) {\n        \
         set(mut self[0])\n    }\n}\nfn main() {\n    [1].f()\n}";
     assert_eq!(error_texts(src), [(Code::CannotExtend, "[i64]")], "self-in");
+}
+
+/// GIVEN `fn f(mut x: Nope)`, whose parameter type fails with E0030, and `let mut a = 1`
+/// WHEN `main` calls `f(mut a)`
+/// THEN the E0030 of the declaration is the one error: the argument has no error of its own
+#[test]
+fn a_mut_argument_for_a_parameter_with_no_type_should_report_only_the_declaration() {
+    let src = "fn f(mut x: Nope) {}\nfn main() {\n    let mut a = 1\n    f(mut a)\n}";
+    codes(src, &[(Code::NeverReassigned, (1, 10)), (E30, (1, 13))]);
 }

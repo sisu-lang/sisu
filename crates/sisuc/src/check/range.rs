@@ -4,7 +4,7 @@
 use super::array::optional_array;
 use super::call::Dot;
 use super::string::single_term;
-use super::{Checked, Checker, Expectation, Poisoned, is_unwrapped, spread, type_of};
+use super::{Checked, Checker, Expectation, Poisoned, known_type};
 use crate::ast::{self, ExprKind};
 use crate::diagnostic::{
     Diagnostic, DiagnosticKind, GetCall, IndexUsage, MissingBound, RangeForm, RangePlace,
@@ -82,14 +82,15 @@ impl Checker<'_> {
         base: Option<&ast::Expr>,
         args: &[ast::Arg],
     ) -> Checked {
-        self.labels(args);
+        let mut reported = self.labels(args);
         let base = base.map(|base| self.source.line_text(base.span));
         for arg in args {
             if let ExprKind::Range(range) = &arg.value.kind {
-                self.report(DiagnosticKind::ArrayGetTakesIndex {
+                let error = self.error(DiagnosticKind::ArrayGetTakesIndex {
                     at: range.span,
                     base: base.clone(),
                 });
+                reported.get_or_insert(error);
                 self.bounds(range);
             } else {
                 // Only its diagnostics matter.
@@ -97,15 +98,18 @@ impl Checker<'_> {
             }
         }
         // A comparison misread as a call explains the count, which is known after the arguments.
-        if args.len() != 1 && !self.misread_in(args) {
-            self.report(DiagnosticKind::ArgumentCount {
+        if args.len() != 1 && self.misread_in(args).is_none() {
+            let error = self.error(DiagnosticKind::ArgumentCount {
                 name: self.method_name(array, "get"),
                 want: 1,
                 found: args.len(),
                 at: span,
             });
+            reported.get_or_insert(error);
         }
-        Err(Poisoned::error())
+        Err(Poisoned::untyped(
+            reported.expect("a range among the arguments should be reported"),
+        ))
     }
 
     /// The range index `base[range]` at `span`. `base[..]` and `a..=` are errors for good: E0023,
@@ -122,24 +126,26 @@ impl Checker<'_> {
         if error_for_good(range) {
             self.stamp_push(base);
             drop(self.value(base, Expectation::None));
-            self.diagnostics.push(self.index_outside(base, range, None));
-            return Err(Poisoned::error());
+            let d = self.index_outside(base, range, None);
+            return Err(Poisoned::untyped(self.diagnostics.error(d)));
         }
         let outer = std::mem::replace(&mut self.body.indexed, true);
         let checked = self.value(base, Expectation::None);
         // The bounds are not part of the chain that the index ends.
         self.body.indexed = false;
-        let Some(ty) = type_of(&checked) else {
-            // The base has reported itself; the bounds report their own mistakes.
-            self.bounds(range);
-            self.body.indexed = outer;
-            return Err(Poisoned::error());
+        let ty = match known_type(&checked) {
+            Ok(ty) => ty,
+            Err(reported) => {
+                // The base has reported itself; the bounds report their own mistakes.
+                self.bounds(range);
+                self.body.indexed = outer;
+                return Err(Poisoned::untyped(reported));
+            }
         };
         if !matches!(ty.kind(), TypeKind::Array(_)) && ty != Type::STRING {
             self.body.indexed = outer;
             let d = self.cannot_slice(base, ty);
-            self.diagnostics.push(d);
-            return Err(Poisoned::error());
+            return Err(Poisoned::untyped(self.diagnostics.error(d)));
         }
         let sliced = self.slice_of(span, (checked, ty), range, false);
         self.body.indexed = outer;
@@ -158,10 +164,13 @@ impl Checker<'_> {
         let (start, end, mismatched) = self.bounds(range);
         let (has_start, has_end) = (start.is_some(), end.is_some());
         let result = if safe { Type::optional(ty) } else { ty };
-        let flagged = is_unwrapped(&checked);
         let parts = [Some(checked), start, end].into_iter().flatten();
-        let Ok(operands) = parts.collect::<Result<Vec<_>, _>>() else {
-            return spread(Err(Poisoned::of((!mismatched).then_some(result))), flagged);
+        let operands = match parts.collect::<Result<Vec<_>, _>>() {
+            Ok(operands) => operands,
+            Err(failed) => {
+                let ty = (!mismatched).then_some(result);
+                return Err(Poisoned::new(ty, failed.reported()));
+            }
         };
         Ok(self.spilled(span, result, operands, |operands| {
             let mut operands = operands.into_iter().map(Box::new);
@@ -210,33 +219,32 @@ impl Checker<'_> {
                 found: args.len(),
                 at: span,
             };
-            self.diagnostics.push(d.into());
+            let reported = self.diagnostics.error(d);
             self.get_arguments(args);
-            return Err(Poisoned::error());
+            return Err(Poisoned::untyped(reported));
         };
         let ExprKind::Range(range) = &arg.value.kind else {
             // The argument reports its own mistakes, else it is a value that is no range.
             let (_, failed) = self.checked_alone(&arg.value);
-            if !failed {
-                self.report(DiagnosticKind::StringGetNeedsRange {
+            let reported = failed.unwrap_or_else(|| {
+                self.error(DiagnosticKind::StringGetNeedsRange {
                     at: arg.value.span,
                     base: self.source.line_text(receiver_expr.span),
                     call,
-                });
-            }
-            return Err(Poisoned::error());
+                })
+            });
+            return Err(Poisoned::untyped(reported));
         };
         if error_for_good(range) {
             self.stamp_push(receiver_expr);
-            self.diagnostics
-                .push(self.index_outside(receiver_expr, range, Some(call)));
-            return Err(Poisoned::error());
+            let d = self.index_outside(receiver_expr, range, Some(call));
+            return Err(Poisoned::untyped(self.diagnostics.error(d)));
         }
         let sliced = self.slice_of(span, (receiver, Type::STRING), range, true);
         // A label is E0055; the call is poisoned, with its type, so that no error follows.
-        match sliced {
-            Ok(_) if labeled => Err(Poisoned::typed(Type::optional(Type::STRING))),
-            sliced => sliced,
+        match (sliced, labeled) {
+            (Ok(_), Some(labeled)) => Err(Poisoned::typed(Type::optional(Type::STRING), labeled)),
+            (sliced, _) => sliced,
         }
     }
 
@@ -331,19 +339,19 @@ impl Checker<'_> {
         let found = range_index(target)?;
         self.stamp_push(target);
         // The base is read, as `xs[0..2]` reads it, and reports its own mistakes.
-        let base_type = type_of(&self.value(found.base, Expectation::None));
+        let base_type = known_type(&self.value(found.base, Expectation::None));
         let range = found.range;
         // `xs[..][i]` is an element of `xs`, which E0021 helps; `xs[..]` is `xs`.
         let element_of_all = found.parent.is_some() && range.start.is_none() && !range.inclusive;
         let d = if error_for_good(range) && !element_of_all {
-            Some(self.index_outside(found.base, range, None))
+            Ok(self.index_outside(found.base, range, None))
         } else {
             let place = is_place(found.base) && self.rooted(found.base);
             base_type.map(|ty| self.range_write(&found, op, (target, value), (ty, place)))
         };
-        self.diagnostics.extend(d);
+        let reported = d.map_or_else(|reported| reported, |d| self.diagnostics.error(d));
         drop(self.expr(value, Expectation::Poisoned));
-        Some(Err(Poisoned::typed(Type::UNIT)))
+        Some(Err(Poisoned::typed(Type::UNIT, reported)))
     }
 
     /// E0021 for the range index `found` in `target = value`, by the type `ty` of its base, or

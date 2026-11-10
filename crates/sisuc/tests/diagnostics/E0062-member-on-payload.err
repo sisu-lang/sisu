@@ -90,12 +90,6 @@ help: to do nothing when it is `None`, use `?.`
 58 |     c?.v = "a"
    |      +
 
-error[E0032]: expected `i64`, found `string`
-  --> E0062-member-on-payload.sisu:58:11
-   |
-58 |     c.v = "a"
-   |           ^^^
-
 error[E0062]: `c` may be `None`
   --> E0062-member-on-payload.sisu:62:5
    |
@@ -306,12 +300,6 @@ help: to do nothing when it is `None`, use `?.`
 98 |     c?.v += "a"
    |      +
 
-error[E0032]: expected `i64`, found `string`
-  --> E0062-member-on-payload.sisu:98:12
-   |
-98 |     c.v += "a"
-   |            ^^^
-
 error[E0062]: `c` may be `None`
    --> E0062-member-on-payload.sisu:102:5
     |
@@ -341,12 +329,6 @@ error[E0062]: `c` may be `None`
     |     ^
     |
     = help: unwrap it with `if let`, `let ... else` or `?? return`
-
-error[E0032]: expected `i64`, found `string`
-   --> E0062-member-on-payload.sisu:106:15
-    |
-106 |     c.xs[0] = "a"
-    |               ^^^
 
 error[E0062]: `c` may be `None`
    --> E0062-member-on-payload.sisu:110:11
@@ -723,18 +705,6 @@ help: if a `None` result is fine, use `?.`
 214 |     print(b?.inner.q)
     |            +
 
-error[E0063]: `Node` has no field `q`
-   --> E0062-member-on-payload.sisu:214:19
-    |
-214 |     print(b.inner.q)
-    |                   ^
-    |
-help: a field with a similar name exists: `v`
-    |
-214 -     print(b.inner.q)
-214 +     print(b.inner.v)
-    |
-
 error[E0030]: cannot find type `Nope`
    --> E0062-member-on-payload.sisu:217:25
     |
@@ -784,5 +754,5 @@ error[E0023]: `"{nope}".get(..)` has no bounds
     |
     = help: `"{nope}".get(..)` is `Some("{nope}")`
 
-sisu: 83 errors
-sisu: for more on a code, run `sisu explain <code>`: E0001, E0023, E0030, E0032, E0033, E0050, E0053, E0055, E0062, E0063, E0154
+sisu: 79 errors
+sisu: for more on a code, run `sisu explain <code>`: E0001, E0023, E0030, E0032, E0033, E0050, E0053, E0055, E0062, E0154

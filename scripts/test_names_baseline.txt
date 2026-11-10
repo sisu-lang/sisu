@@ -273,7 +273,6 @@ crates/sisuc/src/check/tests/mod.rs::if_let_scope
 crates/sisuc/src/check/tests/mod.rs::if_let_shadows
 crates/sisuc/src/check/tests/mod.rs::if_of_two_nones
 crates/sisuc/src/check/tests/mod.rs::if_with_failed_and_never_branches_is_error
-crates/sisuc/src/check/tests/mod.rs::if_with_failed_branch_takes_other_type
 crates/sisuc/src/check/tests/mod.rs::if_with_two_never_branches_never_produces_a_value
 crates/sisuc/src/check/tests/mod.rs::if_without_else_has_no_value
 crates/sisuc/src/check/tests/mod.rs::inner_break_leaves_only_the_inner_loop

@@ -603,26 +603,45 @@ fn nested_joins_check_in_quadratic_time() {
     assert!(ds.iter().all(|d| d.code() == Code::Mismatch), "{ds:?}");
 }
 
-/// A join with an unknown or a mismatched operand, in either place, is `Error`, so neither an
-/// expected type, a `char` beside it nor its uses report anything more: the operand may have
-/// been meant as a number.
+/// A join with an unknown left operand, or with a mismatched operand in either place, is
+/// untyped. So an expected type, a `char` beside it and its uses report nothing more. The
+/// operand may have been meant as a number. A `string` left decides the join (the `+` row of
+/// S14). So a join with an unknown right operand is a `string`, and its uses are checked.
 #[test]
-fn a_join_with_a_failed_operand_should_have_the_type_error() {
+fn a_join_with_a_failed_operand_should_be_typed_only_by_a_string_left() {
     let params = "s: string, xs: [i64]?, n: i64, c: char";
     for (statement, expected) in [
-        ("let b: u8 = nope + s", (Code::BindingNotFound, (2, 17))),
-        ("let b: u8 = s + nope", (Code::BindingNotFound, (2, 21))),
-        ("let b: u8 = ((1 + n) + s) + s", (Code::Mismatch, (2, 18))),
-        ("print(s + 1 + c)", (Code::Mismatch, (2, 15))),
-        ("print(s + nope + c)", (Code::BindingNotFound, (2, 15))),
+        (
+            "let b: u8 = nope + s",
+            vec![(Code::BindingNotFound, (2, 17))],
+        ),
+        (
+            "let b: u8 = s + nope",
+            vec![(Code::Mismatch, (2, 17)), (Code::BindingNotFound, (2, 21))],
+        ),
+        (
+            "let b: u8 = ((1 + n) + s) + s",
+            vec![(Code::Mismatch, (2, 18))],
+        ),
+        ("print(s + 1 + c)", vec![(Code::Mismatch, (2, 15))]),
+        (
+            "print(s + nope + c)",
+            vec![(Code::BindingNotFound, (2, 15)), (Code::Mismatch, (2, 22))],
+        ),
     ] {
-        codes(&body(params, statement), &[expected]);
+        codes(&body(params, statement), &expected);
     }
     codes(
         &with_main(&format!(
             "fn f({params}) {{\n    let t = s + nope\n    print(t - 1)\n}}"
         )),
-        &[(Code::BindingNotFound, (2, 17))],
+        &[(Code::BindingNotFound, (2, 17)), (Code::Mismatch, (3, 11))],
+    );
+    codes(
+        &with_main(&format!(
+            "fn f({params}) {{\n    let t = nope + s\n    print(t - 1)\n}}"
+        )),
+        &[(Code::BindingNotFound, (2, 13))],
     );
     codes(
         &with_main(&format!(

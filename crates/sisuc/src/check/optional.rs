@@ -4,12 +4,9 @@
 
 use super::alias::Through;
 use super::any::is_target;
-use super::generic::{GenericSig, Site, mark, mismatched, written_args};
+use super::generic::{GenericSig, Site, mark, written_args};
 use super::mut_args::Callee;
-use super::{
-    Checked, Checker, DiagnosticKind, Expectation, Poisoned, has_remedy_flag, optional_of, spread,
-    type_of,
-};
+use super::{Checked, Checker, DiagnosticKind, Expectation, Poisoned, optional_of, type_of};
 use crate::ast;
 use crate::diagnostic::{Definition, suggestion};
 use crate::source::Span;
@@ -64,11 +61,14 @@ impl Checker<'_> {
             },
         );
         let open = through.filter(|t| !t.params.is_empty());
-        let Some(labeled) = self.positional_shape(span, &path, 1, args) else {
-            let (declared, _, ret) = some_shape(open);
-            let fixed = closed_alias(through)
-                .or_else(|| self.counted_result(Some(ret), &declared, &[], &[], site));
-            return Err(Poisoned::of(fixed));
+        let labeled = match self.positional_shape(span, &path, 1, args) {
+            Ok(labeled) => labeled,
+            Err(reported) => {
+                let (declared, _, ret) = some_shape(open);
+                let fixed = closed_alias(through)
+                    .or_else(|| self.counted_result(Some(ret), &declared, &[], &[], site));
+                return Err(Poisoned::new(fixed, reported));
+            }
         };
         // An alias `type M<T> = T?` is `Option` over its parameter: an expected optional fixes
         // the parameter as it fixes the one of `Some`.
@@ -135,46 +135,36 @@ impl Checker<'_> {
                 let written = (site.written, site.angles);
                 let (args, list, found) =
                     self.generic_call(span, &sig, written, args, site.expected)?;
-                let Some(found) = found else {
-                    return Err(Poisoned::error());
-                };
-                if let Some(t) = open
-                    && self.use_checks(&t.checks, list, span) != Some(true)
-                {
-                    return Err(Poisoned::error());
-                }
+                let held = open.map_or(Ok(()), |t| self.use_checks(&t.checks, list, span));
+                let found = self.built_type(found, held, span)?;
+                held.map_err(Poisoned::untyped)?;
                 let arg = (args.into_iter().next())
                     .expect("`Some` should have the one argument it checked");
                 (arg, found, list)
             }
         };
-        let failed = labeled || mismatched(&arg);
-        // The `?.` fix of an E0062 in the argument would make the payload, and so the `Some`, one
-        // optional deeper. The flag follows only when the argument alone binds the type.
-        let flagged = has_remedy_flag(&arg);
-        match arg {
-            Ok(inner) if !failed => Ok(tir::Expr::new(
+        // A mismatched argument is one that failed.
+        match (arg, labeled) {
+            (Ok(inner), None) => Ok(tir::Expr::new(
                 tir::ExprKind::Wrap(Box::new(inner)),
                 found,
                 span,
             )),
-            _ => {
-                // The arguments bind the rest of the type, and they may be the fault.
-                let fixed = if failed || flagged {
-                    self.failed_some((through, open), site, list.get())
-                } else {
-                    None
-                };
-                let found = if failed { fixed } else { Some(found) };
-                spread(Err(Poisoned::of(found)), flagged && fixed.is_none())
+            (arg, labeled) => {
+                let reported = (arg.err().map(|failed| failed.reported()))
+                    .or(labeled)
+                    .expect("a `Some` that fails should have a failed part");
+                // No argument settles the payload in a call with a failed part.
+                let ty = self.failed_some((through, open), site, list.get());
+                Err(Poisoned::new(ty, reported))
             }
         }
     }
 
     /// The type of a `Some` at `site`, through `through`, whose argument fails. `open` is
-    /// `through` when it takes parameters. `list` is the type arguments that the arguments
-    /// bound. An alias with no open parameter fixes the type, as does a written list; else
-    /// `None`, as the arguments may be the fault.
+    /// `through` when it takes parameters. `list` is the type arguments that the call found. An
+    /// alias with no open parameter fixes the type, as does a written list; else `None`, as no
+    /// argument settles the payload in a call with a failed part.
     fn failed_some(
         &mut self,
         (through, open): (Option<&Through>, Option<&Through>),
@@ -220,22 +210,17 @@ impl Checker<'_> {
                 let written = (site.written, site.angles);
                 let (_, list, found) =
                     self.generic_call(span, &sig, written, &[], site.expected)?;
-                let Some(found) = found else {
-                    return Err(Poisoned::error());
-                };
-                if self.use_checks(&t.checks, list, span) != Some(true) {
-                    return Err(Poisoned::error());
-                }
+                let held = self.use_checks(&t.checks, list, span);
+                let found = self.built_type(found, held, span)?;
+                held.map_err(Poisoned::untyped)?;
                 self.none(span, Expectation::Required(found))
             }
             (Symbol::NONE, None) => {
                 let mut expected = site.expected;
                 if !site.written.is_empty() {
                     let param = [Symbol::intern("T")];
-                    let Some(args) = self.type_args(site.name, &param, site.written, site.angles)
-                    else {
-                        return Err(Poisoned::error());
-                    };
+                    let args = (self.type_args(site.name, &param, site.written, site.angles))
+                        .map_err(Poisoned::untyped)?;
                     expected = Expectation::Required(optional_of(args.get()[0]));
                 }
                 self.none(span, expected)
@@ -249,25 +234,25 @@ impl Checker<'_> {
                     ),
                     None => (false, member.span),
                 };
-                self.report(DiagnosticKind::VariantForm {
+                let reported = self.error(DiagnosticKind::VariantForm {
                     path: format!("{}.{}", site.name.name, member.name),
                     payload,
                     held,
                     at,
                 });
                 self.stray(call.map_or(&[], |(args, _)| args));
-                Err(Poisoned::error())
+                Err(Poisoned::untyped(reported))
             }
             _ => {
                 let variants = [("None", Definition::Variant), ("Some", Definition::Variant)];
-                self.report(DiagnosticKind::UnknownVariant {
+                let reported = self.error(DiagnosticKind::UnknownVariant {
                     enum_name: site.name.name.to_string(),
                     name: member.name.to_string(),
                     at: member.span,
                     suggestion: suggestion(member.name.as_str(), variants),
                 });
                 self.stray(call.map_or(&[], |(args, _)| args));
-                Err(Poisoned::error())
+                Err(Poisoned::untyped(reported))
             }
         }
     }

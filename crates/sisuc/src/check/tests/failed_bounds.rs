@@ -15,7 +15,7 @@ const ITEMS: &str = "interface Y {\n    fn y(self) -> i64\n}\nclass Box2<U: Y> {
 /// Asserts that the errors of `src`, in the order of their spans, have the codes `expected`.
 /// A warning is out: the tables list errors. A failure names `row`.
 fn error_codes(row: &str, src: &str, expected: &[Code]) {
-    let (_, ds) = crate::front_end::checked_with(PRELUDE_SOURCE, src);
+    let (_, ds) = checked_with(PRELUDE_SOURCE, src);
     let found: Vec<Code> = ds
         .iter()
         .filter(|d| d.severity() == Severity::Error)
