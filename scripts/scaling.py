@@ -495,7 +495,9 @@ SHAPES = {
     "generic call depth": (24, generic_call_depth),
     "array literal depth": (24, array_literal_depth),
     "array literal width": (250, array_literal_width),
-    "string literal width": (50, string_literal_width),
+    # n = 100: the base is superlinear (2.64, 2.53, 2.84). The head is linear at r3 = 2.14, below
+    # the bound 2.3, so the verdict does not rest on the fall rule.
+    "string literal width": (100, string_literal_width),
     "match arms": (50, match_arms),
     "fields": (50, fields),
     "conformers": (50, conformers),

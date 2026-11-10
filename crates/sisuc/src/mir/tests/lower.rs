@@ -1607,13 +1607,13 @@ fn a_string_literal_should_reach_each_trim_point_untrimmed() {
 /// number of `trim` that the value keeps, and the mir it must hold.
 const KEPT_TRIMS: &[(&str, &str, usize, &[&str])] = &[
     (
-        "an interpolation",
+        "an interpolation (passes before the fix)",
         "class Holder {\n    s: string\n}\nfn f(n: i64) -> Holder { Holder(s: \"a{n}\") }",
         1,
         &["trim move _", "new Holder(move _)"],
     ),
     (
-        "a `Some` of an interpolation",
+        "a `Some` of an interpolation (passes before the fix)",
         "class Holder {\n    top: string?\n}\nfn f(n: i64) -> Holder { Holder(top: Some(\"a{n}\")) }",
         1,
         &["wrap move _", "trim move _", "new Holder(move _)"],

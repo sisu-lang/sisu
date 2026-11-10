@@ -201,7 +201,7 @@ Sizes: 0, 250, 500, 1000, 2000. Growth is the count less the count at size 0.
 
 ## string literal width
 
-Sizes: 0, 50, 100, 200, 400. Growth is the count less the count at size 0.
+Sizes: 0, 100, 200, 400, 800. Growth is the count less the count at size 0.
 
 | stage | g(n) | g(2n) | g(4n) | g(8n) | r1 | r2 | r3 | verdict |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
@@ -656,7 +656,7 @@ class ScalingTest(unittest.TestCase):
             ("generic call depth", 24),
             ("array literal depth", 24),
             ("array literal width", 250),
-            ("string literal width", 50),
+            ("string literal width", 100),
             ("match arms", 50),
             ("fields", 50),
             ("conformers", 50),

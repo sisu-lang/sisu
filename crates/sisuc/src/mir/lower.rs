@@ -165,7 +165,7 @@ fn whole(local: LocalId) -> MirPlace {
 }
 
 /// Whether `e` is a string literal, or a `Some` of one at any depth.
-fn is_literal(mut e: &Expr) -> bool {
+fn is_string_literal(mut e: &Expr) -> bool {
     while let ExprKind::Wrap(inner) = &e.kind {
         e = inner;
     }
@@ -682,7 +682,7 @@ impl<'a> Lowering<'a> {
     /// writable.
     fn placed(&mut self, e: &Expr) -> Option<Operand> {
         let op = self.operand(e)?;
-        if !e.ty.is_trimmable() || is_literal(e) {
+        if !e.ty.is_trimmable() || is_string_literal(e) {
             return Some(op);
         }
         let trimmed = self.assign(e.ty, None, Rvalue::Trim(op));
