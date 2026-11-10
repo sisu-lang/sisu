@@ -994,6 +994,27 @@ struct Uninferred {
     settled: Option<usize>,
 }
 
+/// What `self` and `Self` mean in the code being checked.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+enum SelfType {
+    /// Outside a method: `self` and `Self` are errors (E0041, E0149).
+    #[default]
+    Absent,
+    /// In a block whose target failed: the block reports it, so `self` and `Self` give no error.
+    Failed,
+    Known(Type),
+}
+
+impl SelfType {
+    /// The type, unless there is none or it failed.
+    fn known(self) -> Option<Type> {
+        match self {
+            Self::Known(ty) => Some(ty),
+            Self::Absent | Self::Failed => None,
+        }
+    }
+}
+
 /// What checking one body needs: a function's, a method's, or a constant's initialiser.
 #[derive(Default)]
 struct Body {
@@ -1057,7 +1078,7 @@ struct Body {
     /// `None` is `Error`.
     ret: Option<Type>,
     /// The type of the method being checked, a class or an enum, whose `self` is local 0.
-    self_type: Option<Type>,
+    self_type: SelfType,
     /// Loops open around the code being checked, innermost last: what a `break` would act on.
     loops: Vec<LoopContext>,
     /// The value of the `break` being checked, and the earlier `break` whose value gave the
@@ -1270,10 +1291,10 @@ pub(crate) fn check<'src>(
                 return None;
             }
             let calls = recursion::unconditional(function, tir::FuncId(i))?;
-            let kind = if owner.is_some() {
-                Definition::Method
-            } else {
+            let kind = if owner == SelfType::Absent {
                 Definition::Function
+            } else {
+                Definition::Method
             };
             Some(
                 DiagnosticKind::UnconditionalRecursion {
@@ -1553,7 +1574,7 @@ impl Checker<'_> {
         items: &[&'a ast::Item],
         user_items: usize,
         broken: &[ast::Broken],
-    ) -> Vec<(&'a ast::Function, Option<Type>)> {
+    ) -> Vec<(&'a ast::Function, SelfType)> {
         self.collect_names(items, user_items, broken);
         self.resolve_aliases();
         self.lang = self.language_interfaces();
@@ -1930,7 +1951,7 @@ impl Checker<'_> {
     fn collect_signatures<'a>(
         &mut self,
         items: &[&'a ast::Item],
-    ) -> Vec<(&'a ast::Function, Option<Type>)> {
+    ) -> Vec<(&'a ast::Function, SelfType)> {
         let mut declared = Vec::new();
         let mut next_class = 0;
         let mut next_enum = 0;
@@ -1938,7 +1959,7 @@ impl Checker<'_> {
             let class = match item {
                 ast::Item::Function(f) => {
                     self.signature(f, f.name.name.to_string(), &[], Vec::new());
-                    declared.push((f, None));
+                    declared.push((f, SelfType::Absent));
                     continue;
                 }
                 ast::Item::Class(class) => class,
@@ -1957,7 +1978,7 @@ impl Checker<'_> {
             next_class += 1;
             let owner = self.classes[id.0].type_params.clone();
             let receiver = Type::intern(TypeKind::Class(id, own_args(&owner)));
-            self.body.self_type = Some(receiver);
+            self.body.self_type = SelfType::Known(receiver);
             self.body.set_type_params(&owner);
             let bounds = self.declare_bounds(0, Vec::new(), &class.type_params);
             if self.classes[id.0].bounded {
@@ -2019,7 +2040,7 @@ impl Checker<'_> {
                         let name = format!("{}.{}", class.name.name, method.name.name);
                         let bounds = self.classes[id.0].bounds.clone();
                         self.signature(method, name, &class.type_params, bounds);
-                        declared.push((method, Some(receiver)));
+                        declared.push((method, SelfType::Known(receiver)));
                     }
                 }
             }
@@ -2029,7 +2050,7 @@ impl Checker<'_> {
                     .methods
                     .insert(method.name, Declared::Broken);
             }
-            self.body.self_type = None;
+            self.body.self_type = SelfType::Absent;
             self.body.assoc = Rc::default();
         }
         declared
@@ -2158,11 +2179,12 @@ impl Checker<'_> {
     /// Reports a missing `main`, or one that takes anything but nothing or one `[string]`, or
     /// that returns a value. A `main` rejected as defined twice is not missing, and a type in
     /// its signature that did not resolve is not wrong: each error is reported already.
-    fn check_main(&mut self, declared: &[(&ast::Function, Option<Type>)]) {
+    fn check_main(&mut self, declared: &[(&ast::Function, SelfType)]) {
         match self.names.function(Symbol::intern("main")) {
             None if declared
                 .iter()
-                .any(|(f, owner)| owner.is_none() && f.name.name.as_str() == "main") => {}
+                .any(|(f, owner)| *owner == SelfType::Absent && f.name.name.as_str() == "main") => {
+            }
             None => self.report(DiagnosticKind::NoMain),
             Some(Declared::Broken) => {}
             Some(Declared::Known(id)) => {
@@ -2216,13 +2238,14 @@ impl Checker<'_> {
                 self.named_type(ty, applied.name, &applied.args, applied.angles)?
             }
             ast::TypeKind::Name(name) => self.named_type(ty, *name, &[], ty.span)?,
-            ast::TypeKind::SelfType => {
-                let Some(declared) = self.body.self_type else {
+            ast::TypeKind::SelfType => match self.body.self_type {
+                SelfType::Known(declared) => declared,
+                SelfType::Failed => return None,
+                SelfType::Absent => {
                     self.report(DiagnosticKind::SelfOutside { at: ty.bare });
                     return None;
-                };
-                declared
-            }
+                }
+            },
             ast::TypeKind::Member { base, name } => self.member_type(ty, base, name)?,
             ast::TypeKind::Any(interface) => self.resolve_any(ty, interface)?,
         };
@@ -2349,18 +2372,18 @@ impl Checker<'_> {
         self.check_applied(ty, written.iter().map(|arg| arg.span).collect())
     }
 
-    /// `function`, except that a method of a block that failed has the unknown receiver and is not
+    /// `function`, except that a method of a block that failed has a failed `self` and is not
     /// checked: the block's own error says what is wrong.
     fn method_or_function(
         &mut self,
         f: &ast::Function,
         id: tir::FuncId,
-        owner: Option<Type>,
+        owner: SelfType,
     ) -> Option<tir::Function> {
-        if owner == Some(UNKNOWN) {
+        if owner == SelfType::Failed {
             return None;
         }
-        self.function(f, id, owner)
+        self.function(f, id, owner.known())
     }
 
     /// Checks `f`'s body against its own signature, `id`. The function, unless its return type
@@ -2388,7 +2411,7 @@ impl Checker<'_> {
             owner: Some(Owner::Func(id)),
             ret,
             ret_shown,
-            self_type: owner,
+            self_type: owner.map_or(SelfType::Absent, SelfType::Known),
             ..Body::default()
         };
         fresh.set_type_params(&sig.type_params);

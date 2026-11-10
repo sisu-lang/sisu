@@ -10,7 +10,7 @@ use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use super::expr::{fits, local};
 use super::generic::mark;
 use super::place::{Chain, Change, CheckedPlace, Path, Root, build, place_root};
-use super::{Checked, Checker, Poisoned, UNKNOWN, block_expr, type_of};
+use super::{Checked, Checker, Poisoned, SelfType, UNKNOWN, block_expr, type_of};
 use crate::ast;
 use crate::diagnostic::{
     ChainForm, ChainLabel, DiagnosticKind, Immutable, MissingFix, NotMutForm, NotPlace, SliceOf,
@@ -361,12 +361,12 @@ impl Checker<'_> {
         }
         if matches!(arg.kind, ast::ExprKind::SelfValue) {
             // Outside a method there is no `self` to pass: E0041 says so.
-            if self.body.self_type.is_none() {
+            if self.body.self_type == SelfType::Absent {
                 self.checked_alone(arg);
                 return Ok(CheckedPlace::failed());
             }
             let class = matches!(
-                self.body.self_type.map(Type::kind),
+                self.body.self_type.known().map(Type::kind),
                 Some(TypeKind::Class(..))
             );
             return Err((NotPlace::SelfValue { class }, None));

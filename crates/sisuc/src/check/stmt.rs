@@ -12,8 +12,8 @@ use super::prelude::PRELUDE;
 use super::unused_names::{Owner, Pending};
 use super::{
     Binding, BindingKind, Checked, CheckedBlock, Checker, Declared, LoopContext, LoopFrame,
-    LoopKind, Poisoned, UNKNOWN, block_expr, built_in_type, has_remedy_flag, starts_in, tail,
-    type_of,
+    LoopKind, Poisoned, SelfType, UNKNOWN, block_expr, built_in_type, has_remedy_flag, starts_in,
+    tail, type_of,
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{
@@ -1909,7 +1909,7 @@ impl Checker<'_> {
         if self.holds(self.body.locals[id.0].ty).poison {
             return false;
         }
-        if id.0 == 0 && self.body.self_type.is_some() {
+        if id.0 == 0 && self.body.self_type != SelfType::Absent {
             return self.body.self_written <= writes;
         }
         // A local with no name is a checker temporary, so it has no binding.

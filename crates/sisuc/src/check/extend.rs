@@ -5,7 +5,7 @@ use rustc_hash::FxHashMap;
 
 use super::generic::named_params;
 use super::interface::{Bound, Bounds};
-use super::{Checker, Choices, Declared, Definition, DiagnosticKind, Holder, Symbol, UNKNOWN};
+use super::{Checker, Choices, Declared, Definition, DiagnosticKind, Holder, SelfType, Symbol};
 use crate::ast;
 use crate::conformance::{bind, overlap};
 use crate::diagnostic::{
@@ -49,12 +49,12 @@ impl<'a> Checker<'_> {
     /// adds each method to `declared` with `self`'s type. The block is recorded when its target
     /// is a class or an enum that the checker can take, and its interface, if it writes one, is an
     /// interface that it can take. Otherwise its methods get signatures, so that the ids of the
-    /// functions after them stay in place, and `declared` holds them with an unknown receiver:
+    /// functions after them stay in place, and `declared` holds them with a failed `self`:
     /// their bodies are not checked, since the block's own error says what is wrong.
     pub(super) fn extend_signatures(
         &mut self,
         extend: &'a ast::Extend,
-        declared: &mut Vec<(&'a ast::Function, Option<Type>)>,
+        declared: &mut Vec<(&'a ast::Function, SelfType)>,
     ) {
         let params = self.type_params(&[], &extend.type_params);
         self.body.set_type_params(&params);
@@ -68,7 +68,7 @@ impl<'a> Checker<'_> {
         } else {
             self.extend_target(extend)
         };
-        self.body.self_type = Some(early.unwrap_or(UNKNOWN));
+        self.body.self_type = early.map_or(SelfType::Failed, SelfType::Known);
         let bounds = self.declare_bounds(0, Vec::new(), &extend.type_params);
         let target = if reported_late {
             self.extend_target(extend)
@@ -77,7 +77,7 @@ impl<'a> Checker<'_> {
             self.rescope(queued);
             early
         };
-        self.body.self_type = Some(target.unwrap_or(UNKNOWN));
+        self.body.self_type = target.map_or(SelfType::Failed, SelfType::Known);
         let interface = (extend.interface.as_ref()).map(|ty| {
             let bound = self.bound(ty, target)?;
             // The block's parameters could not be found from the receiver (see `extend_target`).
@@ -95,11 +95,11 @@ impl<'a> Checker<'_> {
         let unused = target.is_some_and(|target| self.unused_params(extend, target));
         let failed = unused || matches!(interface, Some(None));
         let usable = target.filter(|_| !failed);
-        let receiver = usable.unwrap_or(UNKNOWN);
+        let receiver = usable.map_or(SelfType::Failed, SelfType::Known);
         let holder = usable.and_then(method_holder);
-        self.body.self_type = Some(receiver);
+        self.body.self_type = receiver;
         self.body.assoc = std::rc::Rc::clone(&assoc);
-        let name = self.type_name(receiver);
+        let name = self.type_name(usable.unwrap_or(Type::NEVER));
         let at = self.extensions.len();
         let mut methods = FxHashMap::default();
         let mut first = FxHashMap::default();
@@ -134,10 +134,10 @@ impl<'a> Checker<'_> {
                     owner,
                 });
             }
-            declared.push((method, Some(receiver)));
+            declared.push((method, receiver));
         }
         self.body.set_type_params(&[]);
-        self.body.self_type = None;
+        self.body.self_type = SelfType::Absent;
         self.body.assoc = std::rc::Rc::default();
         if let (Some(target), Some(holder)) = (usable, holder) {
             for method in &extend.broken_methods {

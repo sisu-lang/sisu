@@ -8,7 +8,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::extend::holder_of;
 use super::names::{self, ItemId, Position, Resolved};
 use super::{
-    BindingKind, Body, Checker, Choice, Choices, Definition, Holder, LeafAnswers, LeafKey,
+    BindingKind, Body, Checker, Choice, Choices, Definition, Holder, LeafAnswers, LeafKey, SelfType,
 };
 use crate::ast;
 use crate::conformance::{CHOICE_DEPTH_LIMIT, Entered, Generated, ensure_stack, find, generated};
@@ -229,7 +229,7 @@ pub(super) enum Slot {
 pub(super) struct Scope {
     params: Vec<Symbol>,
     bounds: Vec<Bounds>,
-    self_type: Option<Type>,
+    self_type: SelfType,
 }
 
 /// The pending bound checks while `run_pending_bounds` runs them. A query for a generated
@@ -356,7 +356,7 @@ impl Checker<'_> {
     fn interface_signature(&mut self, interface: &ast::Interface, id: InterfaceId) {
         let params = self.interfaces[id.0].type_params.clone();
         self.body.set_type_params(&params);
-        self.body.self_type = Some(Type::intern(TypeKind::Param(params[0], 0)));
+        self.body.self_type = SelfType::Known(Type::intern(TypeKind::Param(params[0], 0)));
         // `Self` conforms to the interface itself, with its own parameters as the arguments.
         let own: Vec<Type> = (1..)
             .zip(&params[1..])
@@ -974,7 +974,7 @@ impl Checker<'_> {
     /// neither a parameter of `interface` nor free of parameters is reported, and so the
     /// inheritance is dropped: the closure of a bound copies arguments and never builds one.
     fn inherited(&mut self, ty: &ast::TypeExpr, interface: &ast::Interface) -> Option<Bound> {
-        let bound = self.bound(ty, self.body.self_type)?;
+        let bound = self.bound(ty, self.body.self_type.known())?;
         let ast::TypeKind::Applied(applied) = &ty.kind else {
             return Some(bound);
         };

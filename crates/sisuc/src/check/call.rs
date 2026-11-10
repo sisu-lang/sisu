@@ -156,7 +156,7 @@ impl Checker<'_> {
         let unlabeled = args.iter().all(|arg| arg.label.is_none());
         let mut first_checked = None;
         // The method of the class or the enum that holds the call, not the first argument's.
-        let own = (self.body.self_type).and_then(|ty| self.idiom_of(callee.name, ty));
+        let own = (self.body.self_type.known()).and_then(|ty| self.idiom_of(callee.name, ty));
         let rest = match args.split_first() {
             Some((first, rest)) if unlabeled => {
                 // The first argument is checked as a receiver. Stamp it for the method of `self`:
@@ -314,8 +314,11 @@ impl Checker<'_> {
     /// The type of the first parameter of the method `name` of `self`. `None` unless the method
     /// takes `count` arguments and has no type parameters of its own.
     fn self_parameter(&self, name: Symbol, count: usize) -> Option<Type> {
-        let Some(Idiom::Method(func, owner)) =
-            self.body.self_type.and_then(|ty| self.idiom_of(name, ty))
+        let Some(Idiom::Method(func, owner)) = self
+            .body
+            .self_type
+            .known()
+            .and_then(|ty| self.idiom_of(name, ty))
         else {
             return None;
         };

@@ -5,8 +5,8 @@ use std::ops::Range;
 use super::generic::Site;
 use super::names::{self, Resolved};
 use super::{
-    Checked, Checker, Flag, Poisoned, UNKNOWN, Uninferred, is_kept, is_unwrapped, payload, spread,
-    tail, type_of, wrap,
+    Checked, Checker, Flag, Poisoned, SelfType, UNKNOWN, Uninferred, is_kept, is_unwrapped,
+    payload, spread, tail, type_of, wrap,
 };
 use crate::ast::{self, ExprKind, UnaryOp};
 use crate::diagnostic::{
@@ -208,14 +208,15 @@ impl Checker<'_> {
                 checked
             }
             ExprKind::Todo { keyword, args } => self.todo(e.span, *keyword, args),
-            ExprKind::SelfValue => {
-                let Some(ty) = self.body.self_type else {
+            ExprKind::SelfValue => match self.body.self_type {
+                SelfType::Known(ty) => node(tir::ExprKind::Local(tir::LocalId(0)), ty),
+                SelfType::Failed => Err(Poisoned::error()),
+                SelfType::Absent => {
                     self.diagnostics
                         .push(DiagnosticKind::SelfOutsideMethod { at: e.span }.into());
-                    return Err(Poisoned::error());
-                };
-                node(tir::ExprKind::Local(tir::LocalId(0)), ty)
-            }
+                    Err(Poisoned::error())
+                }
+            },
             ExprKind::Field { base, name, safe } => {
                 if !safe && let Some(checked) = self.type_path(e.span, base, name, None, expected) {
                     return checked;

@@ -292,10 +292,14 @@ fn broken_param(seen: &mut FxHashSet<Symbol>, name: Symbol) -> bool {
     !seen.insert(name) || built_in_type(name.as_str()).is_some()
 }
 
+/// The binding of a type parameter that has no usable type: a broken one, and one that is unbound
+/// or rejected as a bound sees it. It is the type `NEVER`, which no value has.
+const NO_BINDING: Type = Type::NEVER;
+
 /// Binds each of `names`, a declaration's type parameters, that is broken (see `broken_param`)
-/// and that no argument bound to `UNKNOWN`, and whether any was. Such a parameter may be one no
-/// type names: it poisons the call rather than go uninferred. One pass over the names finds
-/// them, and only a call that leaves one unbound makes it.
+/// and that no argument bound yet, to `NO_BINDING`, and whether any was. Such a parameter may be
+/// one no type names: it poisons the call rather than go uninferred. One pass over the names
+/// finds them, and only a call that leaves one unbound makes it.
 fn poison_broken_params(bindings: &mut Bindings, names: &[Symbol]) -> bool {
     let mut broken = false;
     if bindings.found.contains(&None) {
@@ -305,7 +309,7 @@ fn poison_broken_params(bindings: &mut Bindings, names: &[Symbol]) -> bool {
             SCANNED.set(SCANNED.get() + 1);
             let broken_name = broken_param(&mut seen, name);
             if bindings.found[i].is_none() && broken_name {
-                bindings.found[i] = Some(UNKNOWN);
+                bindings.found[i] = Some(NO_BINDING);
                 broken = true;
             }
         }
@@ -1745,9 +1749,10 @@ fn lacks_choice(call: &Inference<'_>, pattern: Type) -> bool {
     matches!(call.early, Some(Early { assoc: true, .. })) && call.bindings.known(pattern).is_some()
 }
 
-/// `found`, a parameter's binding, as a bound sees it: `UNKNOWN` while it is unbound or rejected.
+/// `found`, a parameter's binding, as a bound sees it: `NO_BINDING` while it is unbound or
+/// rejected.
 fn listed(found: Option<Type>) -> Type {
-    found.filter(|&t| t != *REJECTED).unwrap_or(UNKNOWN)
+    found.filter(|&t| t != *REJECTED).unwrap_or(NO_BINDING)
 }
 
 /// The bounds a call checks as soon as the parameter they bound is bound. An argument that waits
@@ -1764,7 +1769,7 @@ struct Early<'s> {
     owned: usize,
     /// The bounds of the parameters after the receiver's, as `GenericSig::bounds`.
     bounds: &'s [Bounds],
-    /// The type of each parameter as a bound sees it: its binding, or `UNKNOWN` while it is
+    /// The type of each parameter as a bound sees it: its binding, or `NO_BINDING` while it is
     /// unbound or rejected. The first check that needs it builds it. Each later binding changes
     /// only its own entry, so the list is built once for the call.
     with: Option<Vec<Type>>,
@@ -2561,7 +2566,7 @@ impl Checker<'_> {
         for i in rejected {
             bindings.reject(i);
             if let Some(with) = &mut early.with {
-                with[i] = UNKNOWN;
+                with[i] = NO_BINDING;
             }
         }
     }
