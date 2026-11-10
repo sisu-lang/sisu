@@ -110,7 +110,7 @@ options when there are some. Ask with `AskUserQuestion`, as at Stop 1.
 1. Put the issues whose fixes touch the same code into one task.
 2. Order the tasks so that each one builds on the last.
 3. Write one brief for each task from [brief.md](brief.md). Fill every slot.
-4. Before you give a brief that changes behaviour to an executor, have its test list reviewed. Launch one `opus-medium` with the brief and the `origin/main` build. It probes the cases, and reports each neighbouring case that the list does not hold and each wanted output that is wrong. It writes its report to `<ledger folder>/<group>-task-<N>-tests-review.md`. Rule on each finding, as `review-sisu` does, and correct the list. Do the same for each fix-round brief, with the round's head build.
+4. Before you give a brief that changes behaviour to an executor, have its test list reviewed. Launch one `opus-medium` with the brief and the `origin/main` build. It builds the fix as the brief states it, in its export. It runs the existing tests of each module that the fix changes. It reports each existing test that goes red, with its cause. It probes the cases, and reports each neighbouring case that the list does not hold and each wanted output that is wrong. It writes its report to `<ledger folder>/<group>-task-<N>-tests-review.md`. Rule on each finding, as `review-sisu` does, and correct the list. Do the same for each fix-round brief, with the round's head build.
 
 ### 5. Set up the group
 

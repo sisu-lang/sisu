@@ -148,3 +148,4 @@ Reviewers build there, about 7 GB a build, and nothing else removes it.
 | Every finding is accepted, so wrong claims become code | Check each claim before you rule |
 | A reviewer that failed is replaced by another model in silence | Tell the user and ask |
 | A blocking finding is deferred because a fix round costs time | Fix it, or ask the user to agree to defer it |
+| A fix starts before `verify`, so `verify` reports your edit as a reviewer's write | Save every report, run `verify` after the last reviewer ends, then fix |
