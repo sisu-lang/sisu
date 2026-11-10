@@ -59,8 +59,9 @@ pub(super) enum Helper {
     /// in a block of exactly its length and a release of the old block (see `trim`).
     Trim,
     /// `@sisu_rc.concat.string(value, rhs_len) -> value`: makes room for `rhs_len` more bytes
-    /// after `value`, in the ways of `concat`. It stores the new length in the header, and
-    /// returns the value with its old length's bytes. The caller writes the bytes of `rhs`.
+    /// after `value`, in the ways of `concat`. It stores the new length in the header. It
+    /// returns the value with the new length, `value.len() + rhs_len`. The caller writes the last
+    /// `rhs_len` bytes of that value.
     Concat,
     /// `@sisu_rc.walk.<F>(value, heads)`: releases a value's counted parts, listing its boxes.
     Walk,
@@ -398,9 +399,9 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// Both return at once on `null`. Drop does not recurse on a field of a class in its own
     /// cycle: see `define_drop`.
     /// `@sisu_rc.eq.<C>` is `==` on two objects with a written `Eq`; see `define_written_eq`.
-    /// An array's `drop`, `eq` and `unique` come from `define_array_helper`, a string's `drop` and
-    /// `eq` from `define_string_helper`, an enum's `retain`, `release` and `eq` from
-    /// `define_enum_helper`.
+    /// An array's `drop`, `eq`, `unique` and `trim` come from `define_array_helper`. A string's
+    /// `drop`, `eq`, `trim` and `concat` come from `define_string_helper`. An enum's `retain`,
+    /// `release` and `eq` come from `define_enum_helper`.
     /// Defining a body can declare more helpers, so this runs until none is left to define.
     pub(super) fn define_helpers(&self) {
         let (object, done) = self.helper_entry(self.rc_retain);

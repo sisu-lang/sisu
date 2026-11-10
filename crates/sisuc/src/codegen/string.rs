@@ -193,9 +193,10 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.make_value(self.value_block(joined), data, len)
     }
 
-    /// `@sisu_rc.concat.string(lhs, rhs_len)`: the three ways of `concat`. It returns the value of
-    /// `lhs`'s bytes in a block with room for `rhs_len` more, and has stored the new length in
-    /// that block's header. The call consumes `lhs`.
+    /// `@sisu_rc.concat.string(lhs, rhs_len)`: the three ways of `concat`. It returns the bytes of
+    /// `lhs` in a block with room for `rhs_len` more, and stores the new length in that block's
+    /// header. The returned value has the new length, `lhs.len() + rhs_len`. The caller writes
+    /// its last `rhs_len` bytes. The call consumes `lhs`.
     #[expect(
         clippy::too_many_lines,
         reason = "the three ways of a join read best in one place"
@@ -690,7 +691,8 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder.build_unreachable().expect(POSITIONED);
     }
 
-    /// The body of `@sisu_rc.drop.string` or `@sisu_rc.eq.string`.
+    /// The body of `@sisu_rc.drop.string`, `@sisu_rc.eq.string`, `@sisu_rc.trim.string` or
+    /// `@sisu_rc.concat.string`.
     pub(super) fn define_string_helper(&self, kind: Helper, function: FunctionValue<'ctx>) {
         match kind {
             Helper::Drop => self.define_string_drop(function),
@@ -708,7 +710,9 @@ impl<'ctx> Codegen<'ctx, '_> {
             | Helper::Unbox
             | Helper::Free
             | Helper::Reuse => {
-                unreachable!("only a string's `drop` and `eq` should reach `define_string_helper`")
+                unreachable!(
+                    "only a string's `drop`, `eq`, `trim` and `concat` should reach `define_string_helper`"
+                )
             }
         }
     }

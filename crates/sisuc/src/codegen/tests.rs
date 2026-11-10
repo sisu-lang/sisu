@@ -7497,9 +7497,10 @@ fn main() {
 fn each_string_join_should_be_one_call_with_no_phi_at_o2() {
     const HELPER: &str = "@sisu_rc.concat.string";
     let context = Context::create();
-    let module = compiled(
+    let module = compiled_at(
         &context,
         "fn page(t: string) -> string {\n    let mut out = \"\"\n    out = out + \"<p>\" + t\n    out = out + \"<li>\" + t\n    out\n}\n\nfn main() {\n    print(page(\"x\"))\n}",
+        OptLevel::O2,
     );
     keep_functions(&module, "page");
     let machine = target_machine(OptLevel::O2).expect("the host is a target");

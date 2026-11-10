@@ -6,5 +6,5 @@ fn main(args: [string]) {
     let n = args.len()
     let mut s = ("a" + "b{n}")[1..]
     s += "x"
-    print(s)
+    print(s)                         // b0x
 }
