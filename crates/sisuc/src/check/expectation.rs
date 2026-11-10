@@ -14,12 +14,15 @@ pub(super) enum Expectation {
     Poisoned,
     /// The context expects this type.
     Required(Type),
-    /// The siblings that the value joins give it `want`: the branches before it, the earlier
-    /// values of its loop, the other side of its `==` or the left side of its `??`. The context
-    /// did not write it. `want` steers inference as a required type does. But the value does not
-    /// convert to an `any` type for it. A join in the value takes `siblings`, the type of the
-    /// siblings, as its first anchor, not as its expected type (see `split_hint`). Only the value
-    /// itself is hinted: a child at another span takes `plain`.
+    /// The siblings that the value joins give it `want`. Siblings are the branches before it and
+    /// the earlier values of its loop. They are also the other side of its `==`, the left side of
+    /// its `??`, and an element beside an `any` element (`value_beside`). The context did not
+    /// write it. `want` steers inference as a required type does. But the value does not convert
+    /// to an `any` type for it. A join in the value takes `siblings` as its first anchor, not as
+    /// its expected type (see `split_hint`). `siblings` is the type of the siblings. A value part
+    /// of the value keeps the hint. Such a part is the tail of a block or the argument of a
+    /// hinted `Some`. It is also an argument that a hinted call's context bound, or a `break`
+    /// value of a hinted loop. An operand takes `plain`.
     Hint { want: Type, siblings: Type },
 }
 
@@ -37,7 +40,7 @@ impl Expectation {
         ty.map_or(Self::Poisoned, Self::Required)
     }
 
-    /// `Required(want)` for a hint, so that a child at another span does not see it; else `self`.
+    /// `Required(want)` for a hint, so that an operand does not see it; else `self`.
     pub(super) fn plain(self) -> Self {
         match self {
             Self::Hint { want, .. } => Self::Required(want),

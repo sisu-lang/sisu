@@ -292,8 +292,7 @@ fn broken_param(seen: &mut FxHashSet<Symbol>, name: Symbol) -> bool {
     !seen.insert(name) || built_in_type(name.as_str()).is_some()
 }
 
-/// The binding of a type parameter that has no usable type: a broken one, and one that is unbound
-/// or rejected as a bound sees it. It is the type `NEVER`, which no value has.
+/// The binding of a broken type parameter, or of an unbound or rejected one as a bound sees it.
 const NO_BINDING: Type = Type::NEVER;
 
 /// Binds each of `names`, a declaration's type parameters, that is broken (see `broken_param`)

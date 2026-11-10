@@ -994,7 +994,8 @@ enum SelfType {
     /// Outside a method: `self` and `Self` are errors (E0041, E0149).
     #[default]
     Absent,
-    /// In a block whose target failed: the block reports it, so `self` and `Self` give no error.
+    /// In a block that failed (its target, its interface or its parameters): the block reports it,
+    /// so `self` and `Self` give no error.
     Failed,
     Known(Type),
 }
@@ -1071,7 +1072,7 @@ struct Body {
     locals: Vec<tir::Local>,
     /// `None` is `Error`.
     ret: Option<Type>,
-    /// The type of the method being checked, a class or an enum, whose `self` is local 0.
+    /// What `self` is in the code being checked (see `SelfType`); when known, `self` is local 0.
     self_type: SelfType,
     /// Loops open around the code being checked, innermost last: what a `break` would act on.
     loops: Vec<LoopContext>,

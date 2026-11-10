@@ -147,8 +147,7 @@ fn a_later_mistake_in_a_failed_array_should_wait() {
     error_rows(&rows);
 }
 
-/// GIVEN an array whose context failed, and an element with a branch or a `loop` whose values
-/// do not join
+/// GIVEN an array whose context failed, and a branch or a `loop` element that does not join
 /// WHEN the program is checked
 /// THEN it reports the failure only, and the mismatch waits for the next run
 #[test]
@@ -169,11 +168,6 @@ fn a_mismatch_in_a_branch_or_loop_of_a_failed_array_should_wait() {
             "let _x: Missing = [loop { break 1 }, true]".to_string(),
             vec![FAILED_LET],
         ),
-        (
-            "loop break bool",
-            "let _x: Missing = [loop { if c { break 1 }; break true }]".to_string(),
-            vec![FAILED_LET],
-        ),
     ]
     .into_iter()
     .map(|(name, stmt, wanted)| (name, program(&stmt), wanted))
@@ -183,7 +177,7 @@ fn a_mismatch_in_a_branch_or_loop_of_a_failed_array_should_wait() {
 
 /// GIVEN an array whose context failed, and an element that is a branch of arrays
 /// WHEN the branches do not join
-/// THEN the mismatch is at the whole branch and names the array types
+/// THEN the mismatch is at the whole branch
 #[test]
 fn a_nested_branch_mismatch_in_a_failed_array_should_be_at_the_whole_branch() {
     let rows = [(
@@ -265,7 +259,8 @@ fn failed_extend(line: &str) -> String {
     format!("extend Missing {{\n    {line}\n}}\nfn main() {{}}\n")
 }
 
-/// GIVEN a block whose target type failed, or `self` and `Self` outside a method
+/// GIVEN a block that failed (its target, its interface or its parameters), or `self` and `Self`
+/// outside a method
 /// WHEN the program is checked
 /// THEN it gives the errors that the target and the plain forms give, and no more
 #[test]

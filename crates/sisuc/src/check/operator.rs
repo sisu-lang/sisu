@@ -27,8 +27,8 @@ impl Checker<'_> {
         operand: &ast::Expr,
         expected: Expectation,
     ) -> Result<(Type, (Checked, bool)), Poisoned> {
-        // A `None` expects an `i64`, as in `None + 1`. The operand is at another span, so a hint
-        // does not reach it.
+        // A `None` expects an `i64`, as in `None + 1`. The operand is not a value part of the
+        // value, so a hint does not reach it.
         let expected = if expected == Expectation::None && self.none_written(operand) {
             Expectation::Required(Type::I64)
         } else {
@@ -183,7 +183,7 @@ impl Checker<'_> {
         };
         let start = self.diagnostics.len();
         let op = |_| op.to_string();
-        // The operands are at other spans, so a hint does not reach them.
+        // The operands are not value parts of the value, so a hint does not reach them.
         let expected = expected.plain();
         let (checked, ty, mismatched) =
             self.ranked(|c| c.binary_operands(span, &[lhs, rhs], expected, operator, &op));

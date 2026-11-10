@@ -118,8 +118,8 @@ fn operands_spill_before_an_exit() {
 }
 
 /// A literal whose expected type failed still types and joins its elements: only what takes
-/// its type from the context is left quiet. A `loop` takes its type from its `break` values,
-/// which must agree. Each quiet row checks clean with an array type written for `Bad`.
+/// its type from the context is left quiet. A branch or a `loop` that does not join waits (see
+/// `tests/expectation.rs`). Each quiet row checks clean with an array type written for `Bad`.
 #[test]
 fn a_literal_in_a_failed_context_should_still_join_its_elements() {
     let quiet = [

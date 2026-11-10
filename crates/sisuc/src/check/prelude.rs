@@ -122,7 +122,7 @@ impl Checker<'_> {
             return Err(Err(Poisoned::of(ret)));
         };
         self.refuse_mut(args, Callee::Unnamed(&function));
-        // The argument is at another span, so a hint does not reach it.
+        // The argument is an operand, not a value part of the value, so a hint does not reach it.
         let checked = read_jump(self.expr(&arg.value, expected.plain()));
         let error = match type_of(&checked) {
             Some(Type::UNIT) => wrong(PrintProblem::NoValue, arg.value.span),
