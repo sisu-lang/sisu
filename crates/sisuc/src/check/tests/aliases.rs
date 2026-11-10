@@ -278,6 +278,28 @@ fn many_uses_of_an_alias_should_stay_within_the_limit_of_the_check() {
     );
 }
 
+/// GIVEN the aliases `B1` to `B15`, eight signatures that use `B15`, and `type H<T> =
+///   Pair<B15<T>, i64>`
+/// WHEN a value position calls `H(first: x, second: 1)`, whose alias body passes the limit of
+///   the whole check
+/// THEN that use reports the limit: the alias is `Error`, and the report is not lost
+#[test]
+fn an_alias_use_in_a_value_position_should_report_the_limit_that_it_passes() {
+    let mut src = format!("{PAIR}{}type H<T> = Pair<B15<T>, i64>\n", branching(15));
+    for g in 0..8 {
+        let (open, close) = ("[".repeat(g), "]".repeat(g));
+        writeln!(src, "fn g{g}(x: B15<{open}i64{close}>) {{}}")
+            .expect("writing to a string should not fail");
+    }
+    src.push_str("fn h(x: B15<i64>) {\n    let _v = H(first: x, second: 1)\n}\nfn main() {}");
+    let (_, ds) = checked(&src);
+    let errors: Vec<_> = (ds.iter())
+        .filter(|d| d.code().severity() == Severity::Error)
+        .map(|d| (d.code(), at(&src, d.span())))
+        .collect();
+    assert_eq!(errors, [(Code::AliasTooLarge, (30, 14))]);
+}
+
 /// A depth-first resolution that follows each alias by a call would use a frame for each alias of
 /// the chain: 100,000 aliases overflow the stack. The alias that waits for its body takes a place
 /// in a list, so the resolution of a chain has no recursion.
