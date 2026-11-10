@@ -358,3 +358,137 @@ fn a_failed_self_in_a_signature_should_give_no_error_of_its_own() {
     .collect();
     error_rows(&rows);
 }
+
+/// The program of a row: `stmt` is line 6, indented by four spaces.
+fn hint_program(stmt: &str) -> String {
+    format!(
+        "interface I {{}}\nclass P: I {{}}\nclass Q: I {{}}\nfn id<T>(x: T) -> T {{ x }}\nfn f(c: bool, d: bool, o: i64?, p: P, a: any I) {{\n    {stmt}\n}}\nfn main() {{}}\n"
+    )
+}
+
+/// The program of a row with an alias: `stmt` is line 5.
+fn alias_program(stmt: &str) -> String {
+    format!(
+        "type O = i64?\nfn id<T>(x: T) -> T {{ x }}\nclass P {{}}\nfn f(c: bool, d: bool, o: i64?, p: P) {{\n    {stmt}\n}}\nfn main() {{}}\n"
+    )
+}
+
+/// GIVEN a branch, an operand or a call whose value has a hint from its context
+/// WHEN the program is checked
+/// THEN the hint reaches exactly its own value, and no other value
+#[test]
+#[expect(clippy::too_many_lines, reason = "a table of rows")]
+fn a_hint_should_reach_exactly_its_value() {
+    let e = |pos| vec![(Mismatch, pos)];
+    let mut rows: Vec<ErrorRow<'_>> = vec![
+        ("none", "let _a = if c { 1 } else { None }", vec![]),
+        (
+            "nested none",
+            "let _a = if c { 1 } else { if d { 2 } else { None } }",
+            vec![],
+        ),
+        (
+            "tail",
+            "let _a = if c { 1 } else { if d { \"a\" } else { None } }",
+            e((6, 32)),
+        ),
+        (
+            "tail in match block",
+            "let _a = match c {\n        true => 1\n        false => { if d { \"a\" } else { None } }\n    }",
+            e((8, 20)),
+        ),
+        (
+            "match block none",
+            "let _a = match c {\n        true => 1\n        false => { None }\n    }",
+            vec![],
+        ),
+        (
+            "coalesce neg",
+            "let _a = o ?? -if d { None } else { \"a\" }",
+            e((6, 41)),
+        ),
+        ("neg none", "let _a = if c { 1 } else { -None }", e((6, 33))),
+        (
+            "coalesce add",
+            "let _a = o ?? 1 + if d { None } else { \"a\" }",
+            e((6, 44)),
+        ),
+        (
+            "coalesce dbg",
+            "let _a = o ?? dbg(if d { None } else { \"a\" })",
+            e((6, 44)),
+        ),
+        (
+            "dbg none",
+            "let _a = if c { 1 } else { dbg(None) }",
+            vec![],
+        ),
+        ("empty", "let _a = if c { 1 } else { [] }", e((6, 32))),
+        (
+            "loop none",
+            "let _a = loop { if c { break 1 }; break None }",
+            e((6, 45)),
+        ),
+        (
+            "loop value",
+            "let _a = if c { 1 } else { loop { break \"a\" } }",
+            e((6, 32)),
+        ),
+        ("coalesce none", "let _a = o ?? None", vec![]),
+        ("coalesce empty", "let _a = o ?? []", e((6, 19))),
+        ("eq empty", "let _a = o == []", e((6, 19))),
+        (
+            "generic none",
+            "let _a = if c { 1 } else { id(None) }",
+            vec![],
+        ),
+        (
+            "generic empty",
+            "let _a = if c { 1 } else { id([]) }",
+            e((6, 35)),
+        ),
+        ("beside any none", "let _a = [a, None]", vec![]),
+        ("beside any empty", "let _a = [a, []]", e((6, 18))),
+        (
+            "some none",
+            "let _a = if c { Some(1) } else { Some(None) }",
+            e((6, 43)),
+        ),
+        ("any array", "let _a = if c { [a] } else { [] }", vec![]),
+        (
+            "any array class",
+            "let _a = if c { [a] } else { [p] }",
+            vec![],
+        ),
+    ]
+    .into_iter()
+    .map(|(name, stmt, wanted)| (name, hint_program(stmt), wanted))
+    .collect();
+    rows.extend(
+        [
+            ("alias none", "let _a = if c { 1 } else { O.None }", vec![]),
+            (
+                "alias str",
+                "let _a = if c { \"a\" } else { O.None }",
+                e((5, 34)),
+            ),
+            (
+                "alias some",
+                "let _a = if c { 1 } else { O.Some(2) }",
+                vec![],
+            ),
+            (
+                "alias some str",
+                "let _a = if c { \"a\" } else { O.Some(\"b\") }",
+                vec![(Mismatch, (5, 34)), (Mismatch, (5, 41))],
+            ),
+        ]
+        .map(|(name, stmt, wanted)| (name, alias_program(stmt), wanted)),
+    );
+    rows.push((
+        "alias keeps hint",
+        "interface I {}\nclass P: I {}\nclass Q: I {}\ntype O = P?\nfn f(a: any I, q: Q) {\n    let _a: bool = [a, O.Some(q)]\n}\nfn main() {}\n".to_string(),
+        e((6, 20)),
+    ));
+    error_rows(&rows);
+}
