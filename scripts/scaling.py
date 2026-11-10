@@ -13,7 +13,8 @@ stage (its count less its count at size 0), the ratio at each doubling, and the 
 Before callgrind, `sisu check` runs on each shape at size 0 and at 8n. A shape that gives a
 diagnostic stops the run: without this check, the failure shows as a missing stage function.
 The shapes in `CHECK_ONLY` test the path of an error. Each of their programs above size 0 must
-give a diagnostic. Callgrind measures `sisu check` on them, and the stages after `check` count 0.
+give the error code that `CHECK_ONLY` gives for the shape. Callgrind measures `sisu check` on
+them, and the stages after `check` count 0.
 
 The script exits with code 1 in these cases:
 - A superlinear case has no row in `KNOWN`.
@@ -62,8 +63,9 @@ LLVM_STAGES = ("optimize", "object")
 # The cause is LLVM's `ConstraintEliminationPass`, which is cubic in the number of function
 # parameters. Clang does the same on C. #621 is closed.
 O2_SHAPES = ("functions", "statements", "interpolations", "prints", "nested array ==")
-# The shapes whose programs are errors, so that nothing after `check` runs for them.
-CHECK_ONLY = ("failed bounds",)
+# The shapes whose programs are errors, so that nothing after `check` runs for them. The value
+# is the error code that each of their programs above size 0 must give.
+CHECK_ONLY = {"failed bounds": "E0154"}
 # `sisu check` runs lex, parse and check, the first three stages of `STAGES`.
 CHECK_ONLY_STAGES = STAGES[:3]
 O2_SUFFIX = " -O2"
@@ -804,11 +806,13 @@ def measure_shape(
                     if run.returncode != expected:
                         code = f"exit code {run.returncode}, not {expected}"
                         raise Fail(f"{what}: {code}\n{run.stderr[-500:]}")
+                    error = CHECK_ONLY[name]
                     rows = run.stderr.splitlines()
                     if k > 0 and not any(
-                        (m := DIAGNOSTIC.match(row)) and m[1] == "error" for row in rows
+                        (m := DIAGNOSTIC.match(row)) and m.groups() == ("error", error)
+                        for row in rows
                     ):
-                        raise Fail(f"{what}: no error diagnostic\n{run.stderr[-500:]}")
+                        raise Fail(f"{what}: no error[{error}]\n{run.stderr[-500:]}")
                     annotated = deadline.run([*ANNOTATE, profile], what).stdout
                     found = stage_counts(annotated, CHECK_ONLY_STAGES)
                     found = {stage: found.get(stage, 0) for stage, _ in STAGES}

@@ -323,7 +323,7 @@ def stubs(
     annotate: str = ANNOTATE,
     *,
     valgrind: bool = True,
-    check_above_0: str = 'echo "error[E0030]: unknown" >&2; exit 1',
+    check_above_0: str = 'echo "error[E0154]: `i64` does not conform to `I`" >&2; exit 1',
 ) -> str:
     """Writes stub `sisu`, `valgrind` and `callgrind_annotate` in `tmp/bin`; returns that PATH.
 
@@ -809,7 +809,17 @@ class ScalingTest(unittest.TestCase):
         """
         code, _, err = self.stub_run("failed bounds", check_above_0="exit 1")
         self.assertEqual(code, 1)
-        self.assertIn("failed bounds, size 64: no error diagnostic", err)
+        self.assertIn("failed bounds, size 64: no error[E0154]", err)
+
+    def test_a_check_only_shape_should_fail_when_sisu_gives_an_other_error(self) -> None:
+        """GIVEN `sisu check` that exits with 1 and gives E0030, not the failed bound E0154
+        WHEN the failed bounds shape is measured
+        THEN the run fails, because it would measure the path of the wrong error
+        """
+        unknown = 'echo "error[E0030]: unknown type" >&2; exit 1'
+        code, _, err = self.stub_run("failed bounds", check_above_0=unknown)
+        self.assertEqual(code, 1)
+        self.assertIn("failed bounds, size 64: no error[E0154]", err)
 
     def test_stage_counts_should_read_each_stage_from_its_own_line(self) -> None:
         """GIVEN callgrind output with a line for each stage function and a closure of `check::check`
