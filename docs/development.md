@@ -1426,17 +1426,17 @@ other list is not a rule.
 
 To add a rule to a joined page:
 
-1. Write the ID in braces at the start of the item, then one space, then the
-   text of the rule on the same line: ``- {#strings.text.null} A string can hold
-   the null character `\0`.`` The site hides the prefix.
+1. Start the item with the ID in braces. Write one space after it. Write the text
+   of the rule on the same line. Example: ``- {#strings.text.null} A string can
+   hold the null character `\0`.`` The site hides the prefix.
 2. Name the ID `<page>.<section>.<name>`. It has two or more parts that are
    lowercase letters, digits and single hyphens, and each part starts with a
    letter. The first part is the file name of the page, without `.md`. An ID is
    unique on its page, and it does not change when the wording of the rule
    changes.
-3. Run `make test`. The `reference::<page>::rules` trial fails with `<id> has no
-   test. Add `r[verify <id>@<hash>]` to a test that proves it.` That message
-   gives the marker with the right hash.
+3. Run `make test`. The `reference::<page>::rules` trial fails. Its message is
+   ``<id> has no test. Add `r[verify <id>@<hash>]` to a test that proves it.``
+   The message gives the marker with the right hash.
 4. Put the marker in a comment line of the test that proves the rule, alone on
    its line. A `.sisu` case in `crates/sisuc/tests/run` puts it in its header
    comment. A Rust test puts it in its doc comment. One test can name many rules,
@@ -1445,19 +1445,21 @@ To add a rule to a joined page:
    GIVEN line does not start with `r[`.
 
 A rule in a section that holds a `sisu pending` example needs an ID but no test.
-A section that holds a `sisu pending` example and a plain `sisu` example is a
-fault: put the pending part under its own heading.
+A section starts at a `##` or `###` heading. It ends at the next heading of any
+level. A pending example under a `####` heading puts no rule in development. A
+section that holds a `sisu pending` example and a plain `sisu` example is a
+fault. Put the pending part under its own heading.
 
-When the text of a rule changes, its hash changes, and the trial fails with
-`the text of <id> changed. Its hash is now @<hash>. Read these tests again, then
-change each marker's hash:`, followed by the file and line of each marker. Read
-each test again. Check that it still proves the rule. Then change the hash in
+When the text of a rule changes, its hash changes. The trial then fails with
+this message, followed by the file and line of each marker:
+``the text of <id> changed. Its hash is now @<hash>. Read these tests again, then change each marker's hash:``
+Read each test again. Check that it still proves the rule. Then change the hash in
 each marker. No command changes the hashes for you. A rename of the section or a
 change of a link target does not change the hash.
 
 The `reference::markers` trial reads each `.rs` and `.sisu` file under `crates/`.
-It fails with `no rule has the ID <id>.` for a marker whose ID is on no joined
-page, and with `this marker has a bad form` for a marker line that does not
+It fails with ``no rule has the ID <id>.`` for a marker whose ID is on no joined
+page. It fails with ``this marker has a bad form`` for a marker line that does not
 parse. Delete or move the markers of a rule that you remove.
 
 To convert a page:

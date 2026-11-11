@@ -1411,7 +1411,7 @@ def adr_problems(text: str) -> Iterator[str]:
         want = MarkdownIt().renderInline(heading.removeprefix("# "))
         if title != want:
             yield f"titles {path} {title!r}, not its heading {want!r}"
-        if int(num) >= FIRST_ADR_WITH_RECONSIDER and "## Reconsider when" not in lines:
+        if int(file.name[:4]) >= FIRST_ADR_WITH_RECONSIDER and "## Reconsider when" not in lines:
             yield f'{path} has no "## Reconsider when" section'
 
 

@@ -16,15 +16,25 @@ The decision has five parts:
 - **A test names the rule.** A comment in a test, `r[verify <id>@<hash>]`, names
   the rule that the test proves. One test can name many rules, and one rule can
   have many tests. The comment is in a `.rs` file or a `.sisu` case under `crates/`.
-- **The hash finds a change.** The hash is four hex digits of the FNV-1a hash of
-  the normalized text of the rule. When the text changes, the hash of the rule no
-  longer matches the hash in the marker. Then a person reads the tests again and
-  changes each marker. No command rewrites the hashes.
+- **The hash finds a change.** The hash is the high 16 bits of the 32-bit FNV-1a
+  hash of the normalized text of the rule, as four hex digits. `hash_of` in
+  `crates/sisuc/tests/reference_check/rules.rs` defines it. When the text
+  changes, the hash of the rule no longer matches the hash in the marker. Then a
+  person reads the tests again and changes each marker. No command rewrites the
+  hashes.
 - **`make test` checks all of it.** The `reference::<page>::rules` trial fails
-  for a rule with no ID, a bad or repeated ID, a rule with no test and a stale
-  hash. The `reference::markers` trial fails in three cases. A marker names no
-  rule. A marker line does not parse. A marker is in a file that the site shows.
-  A rule in a section that holds a `sisu pending` example needs an ID but no test.
+  in these cases:
+  - A rule has no ID, a bad ID or a repeated ID.
+  - An ID is on an item that is not a rule, or in the index.
+  - A rule has no test, or its text changed after its tests.
+  - A section holds a pending example and a plain example.
+
+  A rule in a section that holds a `sisu pending` example needs an ID but no
+  test. That section starts at a `##` or `###` heading and ends at the next
+  heading of any level.
+
+  The `reference::markers` trial fails in three cases. A marker names no rule. A
+  marker line does not parse. A marker is in a file that the site shows.
 - **The site hides the ID.** `site/build.py` removes the prefix, sets the `id` of
   the rule's `<li>`, and lists the tests that name the rule, with a link to each
   marker. A link such as `strings.html#strings.text.null` opens the page at that
@@ -53,7 +63,7 @@ rule. The review does.
 - The marker form is the form of Tracey, so a later move to Tracey needs only a
   script that converts the markers.
 - A rule that no test can prove leaves the list of rules and goes into the prose
-  of the page. An example is a rule about how the compiler is built.
+  of the page. For example, a rule about how the compiler is built.
 - Each page joins in its own pull request. `strings.md` is the first page. A page
   that has not joined needs no ID and no test.
 - A change to the definition of the hash makes every marker of every joined page
@@ -67,7 +77,9 @@ rule. The review does.
 
 ## Reconsider when
 
-- Tracey reads a rule in a bullet.
-- The config of Tracey can add the `.sisu` file type.
-- Tracey has a way to fail on a rule with no test.
-- The check grows past a few hundred lines.
+- Tracey gets all three abilities: it reads a rule in a bullet, its config can add the
+  `.sisu` file type, and it can fail on a rule with no test.
+- The check doubles from about 900 lines. That is the size that this ADR adds
+  today. It is in `rules.rs`, `markers.rs`, and the rule parts of
+  `reference_check/mod.rs`, `reference.rs` and `site/build.py`.
+- `tracey-core` could replace more than the marker reader.
