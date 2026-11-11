@@ -3,7 +3,7 @@
 //! tests and its section.
 
 use crate::reference_check::markers::{RuleMarker, read_markers};
-use crate::reference_check::rules::{id_faults, proof_faults};
+use crate::reference_check::rules::{id_faults, rule_faults};
 use crate::reference_check::{Kind, read_page};
 
 /// The faults that `id_faults` finds on the page `stem` with `page` as text, each as a line and a
@@ -317,13 +317,9 @@ fn marker(file: &str, line: usize, id: &str, hash: &str) -> RuleMarker {
 }
 
 /// The faults of the page `stem` with `page` as text and `markers`, as the `rules` trial finds
-/// them: those of `id_faults` and `proof_faults`, sorted by line.
+/// them, each as a line and a message.
 fn rule_fault_list(stem: &str, page: &str, markers: &[RuleMarker]) -> Vec<(usize, String)> {
-    let read = read_page(page);
-    let mut faults = id_faults(stem, &read);
-    faults.extend(proof_faults(stem, &read, markers));
-    faults.sort_by_key(|fault| fault.line);
-    faults
+    rule_faults(stem, &read_page(page), markers)
         .into_iter()
         .map(|fault| (fault.line, fault.message))
         .collect()

@@ -16,7 +16,7 @@ mod reference_check;
 mod support;
 
 use reference_check::markers::{markers_in, unknown_ids};
-use reference_check::rules::{id_faults, known_ids, proof_faults};
+use reference_check::rules::{is_index, known_ids, rule_faults};
 use reference_check::{Example, Fault, Page, check, read_page};
 
 /// The repository root, as seen from the crate directory that tests run in.
@@ -67,10 +67,13 @@ fn main() {
             trials.push(Trial::test(
                 format!("reference::{stem}::rules"),
                 move || {
-                    let (markers, _) = markers_in(Path::new(REPO)).map_err(Failed::from)?;
-                    let mut faults = id_faults(&stem, &page);
-                    faults.extend(proof_faults(&stem, &page, &markers));
-                    faults.sort_by_key(|fault| fault.line);
+                    // The index needs no marker, so the walk is for the other pages.
+                    let markers = if is_index(&stem) {
+                        Vec::new()
+                    } else {
+                        markers_in(Path::new(REPO)).map_err(Failed::from)?.0
+                    };
+                    let faults = rule_faults(&stem, &page, &markers);
                     fail_on(&fault_lines(&file, &faults))
                 },
             ));

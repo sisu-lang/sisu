@@ -368,16 +368,25 @@ fn sections(page: &Page) -> Vec<Section> {
         .collect()
 }
 
-/// The faults of the proof of each rule of `page`, the page `stem`: a rule with no test, a rule
-/// whose text changed after its tests, and a section with a pending and a plain example. The
-/// index and a page with no `{#` item have none. A rule whose ID has a fault (see `id_faults`)
-/// has none either. A rule in a section with a pending example needs no test, but its markers
+/// The faults of `page`, the page `stem`, found with the `markers` of the tests, sorted by line.
+/// They are the faults of `id_faults` and the faults of the proof of each rule: a rule with no
+/// test, a rule whose text changed after its tests, and a section with a pending and a plain
+/// example. The index and a page with no `{#` item have no proof fault. A rule whose ID has a
+/// fault has none either. A rule in a section with a pending example needs no test. Its markers
 /// still need the current hash.
-pub(crate) fn proof_faults(stem: &str, page: &Page, markers: &[RuleMarker]) -> Vec<Fault> {
-    if is_index(stem) || page.id_lines.is_empty() {
-        return Vec::new();
+pub(crate) fn rule_faults(stem: &str, page: &Page, markers: &[RuleMarker]) -> Vec<Fault> {
+    let mut faults = id_faults(stem, page);
+    if !is_index(stem) && !page.id_lines.is_empty() {
+        let bad_lines: FxHashSet<usize> = faults.iter().map(|fault| fault.line).collect();
+        faults.extend(proof_faults(page, markers, &bad_lines));
     }
-    let bad_lines: FxHashSet<usize> = id_faults(stem, page).iter().map(|f| f.line).collect();
+    faults.sort_by_key(|fault| fault.line);
+    faults
+}
+
+/// The faults of the proof of each rule of the joined `page`. A rule at one of the `bad_lines`,
+/// where the ID of a rule has a fault, has none.
+fn proof_faults(page: &Page, markers: &[RuleMarker], bad_lines: &FxHashSet<usize>) -> Vec<Fault> {
     let sections = sections(page);
     let mut by_id: FxHashMap<&str, Vec<&RuleMarker>> = FxHashMap::default();
     for marker in markers {
@@ -430,6 +439,5 @@ pub(crate) fn proof_faults(stem: &str, page: &Page, markers: &[RuleMarker]) -> V
                     .to_string(),
         }
     }));
-    faults.sort_by_key(|fault| fault.line);
     faults
 }
