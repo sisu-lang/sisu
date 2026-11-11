@@ -1,14 +1,16 @@
-// GIVEN a string built at run time that the program binds to a second name, passes to a
-// function, and stores in a field and in an array
+// GIVEN a string built at run time, bound to a second name, passed to a function and stored in
+// an array
 // WHEN the program appends to the string in each of these places
 // THEN each place holds its own text, and the first string keeps its text to the end
 // r[verify strings.text.value@1fb8]
-class Holder {
-    mut text: string
-}
-
-fn shout(s: string) -> string {
-    let mut t = s
+// `shout` is recursive, and not in tail position, and `main` calls it from a loop with a depth
+// that changes, so `-O2` keeps the call: the string crosses a real call as an argument.
+// o2-calls: main shout 1
+fn shout(s: string, marks: i64) -> string {
+    if marks == 0 {
+        return s
+    }
+    let mut t = shout(s, marks - 1)
     t += "!"
     t
 }
@@ -18,10 +20,11 @@ fn main() {
     let mut bound = original
     bound += " 1"
     print(bound)                     // sauna 1
-    print(shout(original))           // sauna!
-    let held = Holder(text: original)
-    held.text += " 2"
-    print(held.text)                 // sauna 2
+    let mut total = 0
+    for i in 0..1000 {
+        total += shout(original, i % 5).len()
+    }
+    print(total)                     // 7000: 1000 times 5 bytes, plus 200 times 0 + 1 + 2 + 3 + 4
     let mut texts = [original]
     texts[0] += " 3"
     print(texts[0])                  // sauna 3
