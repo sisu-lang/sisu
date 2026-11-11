@@ -14,7 +14,8 @@ use super::prelude::PRELUDE;
 use super::reports::Reported;
 use super::unused_names::Used;
 use super::{
-    Checked, Checker, Declared, Expectation, Lowered, Poisoned, block_expr, own_args, type_of,
+    Checked, Checker, Declared, Expectation, Lowered, Origin, Poisoned, block_expr, own_args,
+    type_of,
 };
 use super::{array, number, string};
 use crate::ast::{self, ExprKind};
@@ -430,9 +431,9 @@ impl Checker<'_> {
             .iter()
             .zip(params.iter().chain(std::iter::repeat(&None)))
         {
-            let checked = first
-                .take()
-                .unwrap_or_else(|| self.expr(&arg.value, Expectation::or_poisoned(want)));
+            let checked = first.take().unwrap_or_else(|| {
+                self.expr(&arg.value, Expectation::or_poisoned(want, Origin::None))
+            });
             takes &= want.is_some_and(|want| checked.is_ok_and(|checked| fits(want, checked.ty)));
         }
         takes
@@ -883,7 +884,7 @@ impl Checker<'_> {
             return Ok(self.rejected(d.into(), args, Some(Type::BOOL)));
         }
         let labeled = self.labels(args);
-        let (other, _) = self.operand(&args[0].value, Expectation::Required(ty));
+        let (other, _) = self.operand(&args[0].value, Expectation::Required(ty, Origin::None));
         Ok(match (receiver, other) {
             (Ok(lhs), Ok(rhs)) if labeled.is_none() => {
                 let eq = interface == self.lang.eq;
@@ -991,7 +992,7 @@ impl Checker<'_> {
                     if let (Some(want), Some(text)) = (param, text) {
                         self.show(arg.value.span, want, text);
                     }
-                    mark(self.operand(&arg.value, Expectation::or_poisoned(param)))
+                    mark(self.operand(&arg.value, Expectation::or_poisoned(param, Origin::None)))
                 })
                 .collect();
             Ok((checked, TypeArgs::NONE, ret))
@@ -1321,8 +1322,10 @@ impl Checker<'_> {
             if failed {
                 checked.push(self.expr(&arg.value, Expectation::Poisoned));
             } else {
-                let (arg, mismatched) =
-                    self.operand(&arg.value, Expectation::or_poisoned(fields[i].1));
+                let (arg, mismatched) = self.operand(
+                    &arg.value,
+                    Expectation::or_poisoned(fields[i].1, Origin::None),
+                );
                 failed = mismatched;
                 checked.push(arg);
             }

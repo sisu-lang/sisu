@@ -1,0 +1,48 @@
+// GIVEN a loop whose first `break` gives it a type, and a later `break` value that holds a mistake
+// AND the mistake is in an element, a block, a branch, the branch after a `string` branch, or an
+// `if` whose branches take the hint from the earlier `break`
+// WHEN `sisu check` runs on it
+// THEN each E0032 has a secondary label at the first `break`, with the type that it gave the loop
+// AND the label of the element names `[i64]`, the type of the whole value
+fn element(c: bool) {
+    let a = loop {
+        if c { break [1] }
+        break [2, "x"]
+    }
+    print(a)
+}
+fn block(c: bool) {
+    let a = loop {
+        if c { break 1 }
+        break { None }
+    }
+    print(a)
+}
+fn branch() {
+    let a = loop {
+        if true { break 1 }
+        break if true { 1 } else { "x" }
+    }
+    print(a)
+}
+fn first_branch(c: bool, d: bool) {
+    let a = loop {
+        if c { break 1 }
+        break if d { "x" } else { 2 }
+    }
+    print(a)
+}
+fn hinted_branch(c: bool, d: bool) {
+    let a = loop {
+        if c { break 1 }
+        break if d { [] } else { "x" }
+    }
+    print(a)
+}
+fn main() {
+    element(true)
+    block(true)
+    branch()
+    first_branch(true, true)
+    hinted_branch(true, true)
+}

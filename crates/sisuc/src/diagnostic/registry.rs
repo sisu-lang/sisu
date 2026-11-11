@@ -686,7 +686,7 @@ pub(crate) enum DiagnosticKind {
         at: Span,
     },
     /// A value of type `got`, at `at`, where `want` is expected; `fix` is the
-    /// rewrite that would fit. `source` is the place the expectation came from, if the report
+    /// rewrite that would fit. `origin` is where the expected type came from, if the report
     /// points at it. `conversion` is whether the value is a conversion that can fail, whose
     /// optional stands where its payload is expected. `layers` is whether `got` is `want` with
     /// two or more `?` layers taken off: a value converts through one `?` only.
@@ -694,7 +694,7 @@ pub(crate) enum DiagnosticKind {
         want: Expected,
         got: String,
         at: Span,
-        source: Option<MismatchSource>,
+        origin: Option<MismatchOrigin>,
         fix: Option<MismatchFix>,
         conversion: bool,
         layers: bool,
@@ -2112,14 +2112,14 @@ impl Expected {
     }
 }
 
-/// Where a mismatch's expected type came from.
-pub(crate) enum MismatchSource {
+/// Where a mismatch's expected type came from: the fact that the report names.
+pub(crate) enum MismatchOrigin {
     /// The `string` operand of a `+` that expects a `string` of the other.
     Concat(Span),
     /// The earlier alternative's binding of `name`, at `at`, which gave it the type wanted.
-    Binding { name: String, at: Span },
-    /// The `break` at the span, the first of its `loop` whose value set the loop's type.
-    Break(Span),
+    Alternative { name: String, at: Span },
+    /// The `break` at `at`, the first of its `loop` with a value, gave the loop the type `ty`.
+    Break { at: Span, ty: String },
 }
 
 /// The form of an `UnsupportedFormatSpec`, which sets its message and help.
@@ -4408,7 +4408,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 want,
                 got,
                 at,
-                source,
+                origin,
                 fix,
                 conversion,
                 layers,
@@ -4416,15 +4416,15 @@ impl From<DiagnosticKind> for Diagnostic {
                 let want = want.text();
                 let mut d =
                     Diagnostic::coded(code, at, format!("expected {want}, found `{got}`"));
-                match source {
-                    Some(MismatchSource::Concat(operand)) => {
+                match origin {
+                    Some(MismatchOrigin::Concat(operand)) => {
                         d = d.with_secondary(operand, "`+` joins this `string`");
                     }
-                    Some(MismatchSource::Binding { name, at }) => {
+                    Some(MismatchOrigin::Alternative { name, at }) => {
                         d = d.with_secondary(at, format!("`{name}` is {want} here"));
                     }
-                    Some(MismatchSource::Break(at)) => {
-                        d = d.with_secondary(at, format!("this `break` gave the loop the type {want}"));
+                    Some(MismatchOrigin::Break { at, ty }) => {
+                        d = d.with_secondary(at, format!("this `break` gave the loop the type `{ty}`"));
                     }
                     None => {}
                 }

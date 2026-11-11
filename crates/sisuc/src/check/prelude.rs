@@ -6,7 +6,7 @@ use super::array::pair;
 use super::expr::{path, read_jump, typed, unlabeled};
 use super::mut_args::Callee;
 use super::reports::Reported;
-use super::{Checked, Checker, Expectation, Poisoned, type_of};
+use super::{Checked, Checker, Expectation, Origin, Poisoned, type_of};
 use crate::ast;
 use crate::diagnostic::{DiagnosticKind, Expected, MismatchFix, PrintProblem};
 use crate::source::Span;
@@ -225,7 +225,7 @@ impl Checker<'_> {
     /// A `panic` or `todo` message, an expression of type `string`. A value that interpolation
     /// prints, on one line, gets the fix that wraps it in a literal.
     pub(super) fn message(&mut self, arg: &ast::Expr) -> Checked {
-        let checked = self.value(arg, Expectation::Required(Type::STRING));
+        let checked = self.value(arg, Expectation::Required(Type::STRING, Origin::None));
         let got = match type_of(&checked) {
             Some(Type::STRING) | None => return checked,
             Some(got) => got,
@@ -238,7 +238,7 @@ impl Checker<'_> {
             want: Expected::Types(vec![self.type_name(Type::STRING)]),
             got: self.type_name(got),
             at: arg.span,
-            source: None,
+            origin: None,
             fix: (printed && self.one_line(arg.span))
                 .then_some(MismatchFix::WrapInString(arg.span)),
             conversion: false,

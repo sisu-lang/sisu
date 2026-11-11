@@ -46,7 +46,7 @@ use crate::ast;
 use crate::conformance::{self, StuckChoices};
 use crate::diagnostic::{
     BuiltIn, Code, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, Expected, Literal,
-    MainForm, MismatchFix, MismatchSource, Severity, Unbuilt, UnknownForm, suggestion,
+    MainForm, MismatchFix, MismatchOrigin, Severity, Unbuilt, UnknownForm, suggestion,
 };
 use crate::front_end::PreludeProgram;
 use crate::payload_limit;
@@ -58,7 +58,7 @@ use alias::{AliasInfo, Aliases, FieldType, UseCheck};
 use assoc::{Choice, Choices, Named};
 use constant::{ConstInfo, ConstantSite};
 use enums::{EnumInfo, HoldsTable, reserved_name};
-use expectation::Expectation;
+use expectation::{Expectation, Origin};
 use extend::Extension;
 use interface::{Bounds, InterfaceInfo, PendingBound, Required, Scope, Slot, Waiting};
 use names::{ConstantId, ItemId, NameMaps, Position, Resolved};
@@ -956,9 +956,6 @@ struct Body {
     self_type: SelfType,
     /// Loops open around the code being checked, innermost last: what a `break` would act on.
     loops: Vec<LoopContext>,
-    /// The value of the `break` being checked, and the earlier `break` whose value gave the
-    /// loop the type that value expects.
-    break_hint: Option<(Span, Span)>,
     /// The waiting generic call that the outer call is checking as an argument.
     context_hint: Option<generic::ContextHint>,
     /// The E0050 of each generic call whose result cannot meet its context (see `Misfit`). A
@@ -2393,7 +2390,7 @@ impl Checker<'_> {
             let expected = match ret {
                 None => Expectation::Poisoned,
                 Some(Type::UNIT) => Expectation::None,
-                Some(ret) => Expectation::Required(ret),
+                Some(ret) => Expectation::Required(ret, Origin::None),
             };
             c.show_value(&f.body, ret);
             let mut body = c.block(&f.body, expected);
@@ -2434,7 +2431,7 @@ impl Checker<'_> {
                     }
                     .into()
                 } else {
-                    self.mismatch(value_span(&f.body), tail(&f.body), want, got)
+                    self.mismatch(value_span(&f.body), tail(&f.body), want, got, Origin::None)
                 };
                 self.diagnostics.error(d);
             }
@@ -2607,34 +2604,27 @@ impl Checker<'_> {
     /// "expected `want`, found `got`" at `span`, where `source` is the expression found, when
     /// known. Between `u8`, `i64` and `char` it offers to convert `source`, unless that is an
     /// `if`: an `else if` is one, and `else u8(if ...)` does not parse. A conversion to `u8` or
-    /// `char` gives an optional, so it is offered only where one is expected.
+    /// `char` gives an optional, so it is offered only where one is expected. `origin` is where
+    /// `want` comes from.
     fn mismatch(
         &self,
         span: Span,
         source: Option<&ast::Expr>,
         want: Type,
         got: Type,
+        origin: Origin,
     ) -> Diagnostic {
-        self.mismatch_from(span, source, want, got, None)
+        self.mismatch_from(span, source, want, got, self.origin_fact(origin))
     }
 
-    /// Where the type that the value at `span` expects came from: an earlier `break`, when it
-    /// is a `break` value checked against the loop's type.
-    fn expected_from(&self, span: Span) -> Option<MismatchSource> {
-        self.body
-            .break_hint
-            .filter(|&(at, _)| at == span)
-            .map(|(_, first)| MismatchSource::Break(first))
-    }
-
-    /// `mismatch`, where `want` came from `from`.
+    /// `mismatch`, where `want` came from the fact `origin`.
     fn mismatch_from(
         &self,
         span: Span,
         source: Option<&ast::Expr>,
         want: Type,
         got: Type,
-        from: Option<MismatchSource>,
+        origin: Option<MismatchOrigin>,
     ) -> Diagnostic {
         let optional = matches!(want.kind(), TypeKind::Optional(_));
         // `u8` and `char` convert into each other through `i64`, and into `f64` through it.
@@ -2654,7 +2644,7 @@ impl Checker<'_> {
             want: Expected::Types(vec![self.want_name(span, want)]),
             got: self.type_name(got),
             at: span,
-            source: from,
+            origin,
             fix: to
                 .zip(source.filter(|e| {
                     !matches!(

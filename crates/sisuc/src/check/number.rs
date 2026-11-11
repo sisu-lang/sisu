@@ -8,7 +8,7 @@ use super::expr::{no_member, postfix, typed, unlabeled};
 use super::generic::Site;
 use super::names::{self, ItemId, Position, Resolved};
 use super::reports::Reported;
-use super::{Checked, Checker, Expectation, Poisoned};
+use super::{Checked, Checker, Expectation, Origin, Poisoned};
 use crate::ast;
 use crate::diagnostic::{Definition, DiagnosticKind, MathFix, NanFix};
 use crate::source::Span;
@@ -283,7 +283,7 @@ impl Checker<'_> {
     pub(super) fn number_arguments(&mut self, ty: Type, params: usize, rest: &[ast::Arg]) -> bool {
         let checked: Vec<_> = rest
             .iter()
-            .map(|arg| self.expr(&arg.value, Expectation::Required(ty)))
+            .map(|arg| self.expr(&arg.value, Expectation::Required(ty, Origin::None)))
             .collect();
         rest.len() == params
             && checked
@@ -369,7 +369,10 @@ impl Checker<'_> {
         // A mismatched operand is a failed one.
         let checked: Vec<_> = args
             .iter()
-            .map(|arg| self.operand(&arg.value, Expectation::Required(ty)).0)
+            .map(|arg| {
+                self.operand(&arg.value, Expectation::Required(ty, Origin::None))
+                    .0
+            })
             .collect();
         let operands: Result<Vec<_>, Poisoned> = std::iter::once(receiver).chain(checked).collect();
         // Never an owned reference, so no operand needs `spill`.

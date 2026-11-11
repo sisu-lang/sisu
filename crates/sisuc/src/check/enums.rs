@@ -12,8 +12,8 @@ use super::mut_args::Callee;
 use super::reports::Reported;
 use super::unused_names::Used;
 use super::{
-    Checked, Checker, Declared, Definition, DiagnosticKind, Expectation, Poisoned, SelfType,
-    own_args,
+    Checked, Checker, Declared, Definition, DiagnosticKind, Expectation, Origin, Poisoned,
+    SelfType, own_args,
 };
 use crate::ast;
 use crate::diagnostic::{BuiltIn, Unbuilt, VariantLabels, suggestion};
@@ -568,7 +568,9 @@ impl Checker<'_> {
         // A mismatched argument is one that failed. Each argument is checked, so this collects
         // into a `Vec` before it gives up.
         let checked: Vec<_> = (args.iter().zip(fields))
-            .map(|(arg, field)| self.expect(&arg.value, Expectation::or_poisoned(*field)))
+            .map(|(arg, field)| {
+                self.expect(&arg.value, Expectation::or_poisoned(*field, Origin::None))
+            })
             .collect();
         match (
             checked.into_iter().collect::<Result<Vec<_>, Poisoned>>(),

@@ -7,7 +7,7 @@ use rustc_hash::FxHashMap;
 
 use super::names::ConstantId;
 use super::unused_names::{Owner, Used};
-use super::{Body, Checked, Checker, Declared, Expectation, Poisoned, type_of};
+use super::{Body, Checked, Checker, Declared, Expectation, Origin, Poisoned, type_of};
 use crate::ast::{self, ExprKind};
 use crate::diagnostic::{Diagnostic, DiagnosticKind, Panic, RangePlace, TypedLiteral};
 use crate::source::Span;
@@ -237,7 +237,7 @@ impl Checker<'_> {
                 ..Body::default()
             },
             |this| match declared {
-                Some(ty) => this.expect(&c.value, Expectation::Required(ty)),
+                Some(ty) => this.expect(&c.value, Expectation::Required(ty, Origin::None)),
                 None => this.value(&c.value, Expectation::None),
             },
         );

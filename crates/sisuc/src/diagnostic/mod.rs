@@ -13,7 +13,7 @@ pub(crate) use registry::{
     ColonBound, ConformanceForm, Conversion, Definition, DiagnosticKind, Earlier, ElseOf, Expected,
     ForeignPattern, ForeignRange, GetCall, GuardHelp, Hop, Immutable, Implied, IndexUsage,
     InterfaceBodyForm, Join, LetField, Literal, LiteralKind, MainForm, Make, MatchIdiomForm,
-    MathFix, Member, MethodReceiver, MismatchFix, MismatchSource, MissingBound, MissingFix,
+    MathFix, Member, MethodReceiver, MismatchFix, MismatchOrigin, MissingBound, MissingFix,
     MutDiffers, NanFix, NestingForm, NeverReassignedForm, NoOperatorForm, NotAny, NotConformForm,
     NotInterface, NotMutForm, NotPlace, Operand, Owner, Panic, Peel, PeelIs, PeelLayers, Plain,
     PowerFix, PrecisionHelp, PrintProblem, RETIRED, RangeForm, RangePlace, RangePush, RangeTarget,

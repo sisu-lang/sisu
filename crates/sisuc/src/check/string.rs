@@ -10,11 +10,11 @@ use super::array::pair;
 use super::call::Dot;
 use super::expr::{local, no_member, path, postfix, typed, unlabeled};
 use super::mut_args::Callee;
-use super::{Checked, Checker, Expectation, Poisoned, block_expr, is_jumped, type_of};
+use super::{Checked, Checker, Expectation, Origin, Poisoned, block_expr, is_jumped, type_of};
 use crate::ast::{self, CompareOp, ExprKind};
 use crate::conformance::makes_group;
 use crate::diagnostic::{
-    Code, Definition, Diagnostic, DiagnosticKind, Expected, MismatchFix, MismatchSource, Operand,
+    Code, Definition, Diagnostic, DiagnosticKind, Expected, MismatchFix, MismatchOrigin, Operand,
     PrecisionHelp, invisible,
 };
 use crate::lexer::{TokenKind, lex};
@@ -242,7 +242,7 @@ impl Checker<'_> {
             want: Expected::Types(vec![self.type_name(Type::STRING)]),
             got: self.type_name(got),
             at: e.span,
-            source: (beside == Some(Type::STRING)).then_some(MismatchSource::Concat(other)),
+            origin: (beside == Some(Type::STRING)).then_some(MismatchOrigin::Concat(other)),
             fix: unsafe_fix.then(|| MismatchFix::Interpolate {
                 lhs: operand(lhs),
                 rhs: operand(rhs),
@@ -272,7 +272,7 @@ impl Checker<'_> {
                     want: Expected::Types(want.clone()),
                     got: got.to_string(),
                     at: e.span,
-                    source: Some(MismatchSource::Concat(other.span)),
+                    origin: Some(MismatchOrigin::Concat(other.span)),
                     fix: None,
                     conversion: false,
                     layers: false,
@@ -419,7 +419,7 @@ impl Checker<'_> {
             _ => &[Type::I64],
         };
         let expected = if to == Type::STRING {
-            Expectation::Required(chars[0])
+            Expectation::Required(chars[0], Origin::None)
         } else {
             Expectation::None
         };
@@ -459,12 +459,12 @@ impl Checker<'_> {
                 [only] if to == Type::STRING => {
                     self.string_call_mismatch(span, &arg.value, ty, only, &[head, tail])
                 }
-                [only] => self.mismatch(arg.value.span, Some(&arg.value), only, ty),
+                [only] => self.mismatch(arg.value.span, Some(&arg.value), only, ty, Origin::None),
                 _ => DiagnosticKind::Mismatch {
                     want: Expected::Types(from.iter().map(|&ty| self.type_name(ty)).collect()),
                     got: self.type_name(ty),
                     at: arg.value.span,
-                    source: None,
+                    origin: None,
                     fix: None,
                     conversion: false,
                     layers: false,
@@ -514,13 +514,13 @@ impl Checker<'_> {
         );
         let commented = self.comment_in(deleted);
         if !printed || commented || !self.one_line(arg.span) {
-            return self.mismatch(arg.span, Some(arg), want, got);
+            return self.mismatch(arg.span, Some(arg), want, got, Origin::None);
         }
         DiagnosticKind::Mismatch {
             want: Expected::Types(vec![self.type_name(want)]),
             got: self.type_name(got),
             at: arg.span,
-            source: None,
+            origin: None,
             fix: Some(MismatchFix::InterpolateCall {
                 call,
                 arg: arg.span,

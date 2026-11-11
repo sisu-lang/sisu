@@ -5,7 +5,8 @@ use super::expr::{fits, literal_type, no_member, path, typed};
 use super::generic::{Rank, mark, mismatch_poison};
 use super::reports::Reported;
 use super::{
-    Checked, Checker, Declared, Expectation, Poisoned, as_optional, known_type, payload, type_of,
+    Checked, Checker, Declared, Expectation, Origin, Poisoned, as_optional, known_type, payload,
+    type_of,
 };
 use crate::ast;
 use crate::diagnostic::{
@@ -62,7 +63,7 @@ impl Checker<'_> {
         if let Some(element) = expected_element(expected.ty()) {
             let (checked, mismatched): (Vec<_>, Vec<_>) = elements
                 .iter()
-                .map(|e| self.operand(e, Expectation::Required(element)))
+                .map(|e| self.operand(e, Expectation::Required(element, expected.origin())))
                 .unzip();
             return self.array(span, element, checked, mismatched.contains(&true));
         }
@@ -72,12 +73,12 @@ impl Checker<'_> {
                 Expectation::Poisoned => {
                     return Err(Poisoned::untyped(self.poisoned_context(span)));
                 }
-                Expectation::Required(ty) | Expectation::Hint { want: ty, .. } => {
+                Expectation::Required(ty, _) | Expectation::Hint { want: ty, .. } => {
                     DiagnosticKind::Mismatch {
                         want: Expected::Types(vec![self.type_name(ty)]),
                         got: "[]".to_string(),
                         at: span,
-                        source: self.expected_from(span),
+                        origin: self.origin_fact(expected.origin()),
                         fix: None,
                         conversion: false,
                         layers: false,
@@ -107,7 +108,7 @@ impl Checker<'_> {
         // optional of the value's type.
         let mut own: Vec<Option<Type>> = vec![None; elements.len()];
         let sources: Vec<_> = elements.iter().map(|e| self.value_branch(e)).collect();
-        let siblings = (Expectation::None, Some(element));
+        let siblings = (Expectation::None, Some((element, Origin::None)));
         let (blocks, joined) = self.join(&sources, siblings, |c, i, expected| {
             let checked = c.value(&elements[i], expected);
             own[i] = checked.as_ref().ok().map(|e| {
@@ -136,7 +137,7 @@ impl Checker<'_> {
             let e = &elements[at];
             let reported = if matches!(e.kind, ast::ExprKind::NoneLit) {
                 // As in a written array: "found `None`".
-                match self.none(e.span, Expectation::Required(element)) {
+                match self.none(e.span, Expectation::Required(element, Origin::None)) {
                     Err(failed) => failed.reported(),
                     // An optional element takes the `None`, and the check stays quiet.
                     // Else an element that failed holds the proof.
@@ -145,7 +146,8 @@ impl Checker<'_> {
                         .unwrap_or_else(|| self.proof(e.span)), // proof: quiet reader
                 }
             } else {
-                let d = self.leaves_any(e.span, Some(e), element, own[at].unwrap_or(joined));
+                let got = own[at].unwrap_or(joined);
+                let d = self.leaves_any(e.span, Some(e), element, got, Origin::None);
                 self.diagnostics.error(d)
             };
             return Err(Poisoned::untyped(reported));
@@ -204,7 +206,7 @@ impl Checker<'_> {
                 } else {
                     literal
                 };
-                slots[i] = Some(self.value(e, Expectation::Required(want)));
+                slots[i] = Some(self.value(e, Expectation::Required(want, Origin::None)));
             }
         }
         let mut failed = slots.iter().flatten().find_map(|c| known_type(c).err());
@@ -222,7 +224,7 @@ impl Checker<'_> {
                             Some((span, want, object)) => (span, None, want, object),
                             None => (elements[at].span, Some(&elements[at]), want, got),
                         };
-                    let d = self.leaves_any(at_span, source, want, got);
+                    let d = self.leaves_any(at_span, source, want, got, Origin::None);
                     failed = Some(self.diagnostics.error(d));
                 }
                 ObjectJoin::Not => {
@@ -256,9 +258,9 @@ impl Checker<'_> {
                 // What waits and makes no optional by itself (`Ranked::optional`) may still give a
                 // type that the join does not take, such as `[]`.
                 slots[i] = Some(if optional[i] {
-                    self.value(e, Expectation::Required(want))
+                    self.value(e, Expectation::Required(want, Origin::None))
                 } else {
-                    mark(self.operand(e, Expectation::Required(joined)))
+                    mark(self.operand(e, Expectation::Required(joined, Origin::None)))
                 });
             }
         }
@@ -351,6 +353,7 @@ impl Checker<'_> {
         let hint = Expectation::Hint {
             want: as_optional(any),
             siblings: any,
+            origin: Origin::None,
         };
         self.value(e, hint)
     }
@@ -375,7 +378,13 @@ impl Checker<'_> {
         typed: &[(usize, Type)],
     ) -> (Option<Type>, Option<Reported>) {
         let report = |c: &mut Self, at: usize, want: Type, got: Type| {
-            let d = c.mismatch(elements[at].span, Some(&elements[at]), want, got);
+            let d = c.mismatch(
+                elements[at].span,
+                Some(&elements[at]),
+                want,
+                got,
+                Origin::None,
+            );
             Some(c.diagnostics.error(d))
         };
         match self.any_join_all(typed) {
@@ -393,7 +402,13 @@ impl Checker<'_> {
                 ty,
                 member: (at, got),
             } => {
-                let d = self.leaves_any(elements[at].span, Some(&elements[at]), ty, got);
+                let d = self.leaves_any(
+                    elements[at].span,
+                    Some(&elements[at]),
+                    ty,
+                    got,
+                    Origin::None,
+                );
                 return (None, Some(self.diagnostics.error(d)));
             }
             AnyJoin::NoAny => {}
@@ -452,7 +467,7 @@ impl Checker<'_> {
         // Without an element type, a `None` or `[]` cannot be inferred, unless `expected` is
         // `Poisoned`.
         let hint = match element {
-            Some(element) => Expectation::Required(element),
+            Some(element) => Expectation::Required(element, expected.origin()),
             None if expected == Expectation::Poisoned => Expectation::Poisoned,
             None => Expectation::None,
         };
@@ -478,10 +493,11 @@ impl Checker<'_> {
             }));
         }
         let (checked, mismatched) = match element {
-            Some(element) => self.against(value, checked, Some(element), None),
+            Some(_) => self.against(value, checked, hint),
             None => (checked, false),
         };
-        let (len, len_mismatched) = self.operand(len, Expectation::Required(Type::I64));
+        let (len, len_mismatched) =
+            self.operand(len, Expectation::Required(Type::I64, Origin::None));
         let failed = mismatched || same.is_some() || len_mismatched;
         let ty = type_of(&checked).map(Type::array);
         match (checked, len, ty) {
@@ -513,7 +529,8 @@ impl Checker<'_> {
         let (element, report) = self.element(base, type_of(&checked), IndexUsage::Read);
         // The index is not part of the chain that it ends.
         self.body.indexed = false;
-        let (index, mismatched) = self.operand(index, Expectation::Required(Type::I64));
+        let (index, mismatched) =
+            self.operand(index, Expectation::Required(Type::I64, Origin::None));
         self.body.indexed = outer;
         match (checked, index, element) {
             (Ok(base), Ok(index), Some(element)) if !optional => {
@@ -654,7 +671,8 @@ impl Checker<'_> {
         let mut own_mistake = None;
         for (arg, param) in args.iter().zip(params) {
             let want = param.and_then(|param| self.subst(param, &stands));
-            let (argument, mismatched) = self.operand(&arg.value, Expectation::or_poisoned(want));
+            let (argument, mismatched) =
+                self.operand(&arg.value, Expectation::or_poisoned(want, Origin::None));
             // An argument with no type has failed, but a type parameter keeps its report beside
             // the error of such an argument.
             let failed = type_of(&argument).is_none() && !want.is_some_and(Type::has_param);

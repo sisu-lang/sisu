@@ -12,10 +12,10 @@ use super::generic::{Ahead, type_meets};
 use super::names::{self, Position, Resolved};
 use super::reports::Reported;
 use super::stmt::BlockSoFar;
-use super::{Checked, CheckedBlock, Checker, Declared, Expectation, Poisoned, type_of};
+use super::{Checked, CheckedBlock, Checker, Declared, Expectation, Origin, Poisoned, type_of};
 use crate::ast;
 use crate::diagnostic::{
-    BadRange, Definition, DiagnosticKind, Expected, GuardHelp, MismatchSource, Plain, Unwrap,
+    BadRange, Definition, DiagnosticKind, Expected, GuardHelp, MismatchOrigin, Plain, Unwrap,
     suggestion,
 };
 use crate::lexer::{self, TokenKind};
@@ -600,7 +600,7 @@ impl Checker<'_> {
         };
         let guard = arm
             .and_then(|arm| arm.guard.as_ref())
-            .map(|guard| self.expect(guard, Expectation::Required(Type::BOOL)));
+            .map(|guard| self.expect(guard, Expectation::Required(Type::BOOL, Origin::None)));
         (bound, guard)
     }
 
@@ -1421,7 +1421,7 @@ impl Checker<'_> {
                         want: Expected::Types(vec![want]),
                         got,
                         at: name.span,
-                        source: Some(MismatchSource::Binding {
+                        origin: Some(MismatchOrigin::Alternative {
                             name: name.name.to_string(),
                             at: earlier,
                         }),

@@ -19,8 +19,8 @@ use super::prelude::PRELUDE;
 use super::reports::Reported;
 use super::stmt::BlockSoFar;
 use super::{
-    Binding, Checked, Checker, Declared, Definition, DiagnosticKind, Expectation, Misfit, Poisoned,
-    as_optional, built_in_type, is_kept, optional_of, own_args, payload, type_of,
+    Binding, Checked, Checker, Declared, Definition, DiagnosticKind, Expectation, Misfit, Origin,
+    Poisoned, as_optional, built_in_type, is_kept, optional_of, own_args, payload, type_of,
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{ArgumentsForm, Diagnostic, Expected, MainForm, Unwrap};
@@ -2755,7 +2755,7 @@ impl Checker<'_> {
             let reported = if let Some((site, (_, shape))) = sig.mut_site.zip(shape) {
                 self.report_mut_type(&arg.value, &shape, (site, i), (fit, param))
             } else {
-                let d = self.mismatch(arg.value.span, Some(&arg.value), fit, got);
+                let d = self.mismatch(arg.value.span, Some(&arg.value), fit, got, Origin::None);
                 self.diagnostics.error(d)
             };
             call.slots[i] = Some(Err(mismatch_poison(reported)));
@@ -3152,10 +3152,11 @@ impl Checker<'_> {
             let hint = Expectation::Hint {
                 want,
                 siblings: want,
+                origin: Origin::None,
             };
             self.value(e, hint)
         } else {
-            self.value(e, Expectation::Required(want))
+            self.value(e, Expectation::Required(want, Origin::None))
         };
         // A hint is the type of a sibling. Examples are the other side of `==`, the left side of
         // `??`, another branch and an earlier `break` value. The user did not write it. By rule,
@@ -3166,7 +3167,7 @@ impl Checker<'_> {
         if hinted && self.misfit_type(&checked).is_some() {
             return checked;
         }
-        mark(self.settled(e, checked, Expectation::Required(want)))
+        mark(self.settled(e, checked, Expectation::Required(want, Origin::None)))
     }
 
     /// `infer_value` for a `pattern` that names an unbound parameter, with no walk of
@@ -3195,7 +3196,12 @@ impl Checker<'_> {
                 .inferred_array(call, e.span, elements, element, partial, context.is_some())
                 .0;
         }
-        let checked = self.expr(e, context.map_or(Expectation::None, Expectation::Required));
+        let checked = self.expr(
+            e,
+            context.map_or(Expectation::None, |ty| {
+                Expectation::Required(ty, Origin::None)
+            }),
+        );
         debug_assert!(
             type_of(&checked).is_none_or(|ty| !ty.holds_hole()),
             "a context's hole should not reach the type of the argument it was for"
@@ -3208,7 +3214,7 @@ impl Checker<'_> {
                         want,
                         got: self.type_name(ty),
                         at: e.span,
-                        source: None,
+                        origin: None,
                         fix: None,
                         conversion: false,
                         layers: false,
@@ -3216,7 +3222,7 @@ impl Checker<'_> {
                     .into()
                 } else {
                     let want = self.printed(&call.bindings, pattern);
-                    self.mismatch(e.span, Some(e), want, ty)
+                    self.mismatch(e.span, Some(e), want, ty, Origin::None)
                 };
                 Err(mismatch_poison(self.diagnostics.error(d)))
             }
@@ -3234,7 +3240,7 @@ impl Checker<'_> {
                     want.is_some() || call.failed.is_some() || call.rejected.is_some(),
                     "a unified pattern should be known, unless a bound check failed"
                 );
-                mark(self.against(e, checked, want, None))
+                mark(self.against(e, checked, Expectation::or_poisoned(want, Origin::None)))
             }
         }
     }
@@ -3325,7 +3331,7 @@ impl Checker<'_> {
                 .filter(|&(i, _)| ranks[i] == wave)
             {
                 let checked = if let Some(want) = bound {
-                    mark(self.operand(e, Expectation::Required(want)))
+                    mark(self.operand(e, Expectation::Required(want, Origin::None)))
                 } else if !bare_hole(e) {
                     let kept = call.bindings.kept;
                     let part = match (&e.kind, partial.map(Type::kind)) {
@@ -3491,7 +3497,7 @@ impl Checker<'_> {
             found
         };
         if let Some(hint) = hint {
-            let d = self.mismatch(span, None, hint.want, found);
+            let d = self.mismatch(span, None, hint.want, found, Origin::None);
             return (None, self.diagnostics.error(d));
         }
         if context.holds_hole() {

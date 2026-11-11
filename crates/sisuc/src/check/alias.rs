@@ -20,7 +20,7 @@ use super::generic::{Site, type_meets};
 use super::interface::{Bound, Slot};
 use super::reports::Reported;
 use super::{
-    Body, Checked, Checker, Declared, DiagnosticKind, Expectation, Poisoned, UnknownForm,
+    Body, Checked, Checker, Declared, DiagnosticKind, Expectation, Origin, Poisoned, UnknownForm,
     built_in_type, own_args, tail, value_span,
 };
 use crate::ast;
@@ -899,8 +899,9 @@ impl Checker<'_> {
                 Expectation::Hint { siblings, .. } => Expectation::Hint {
                     want: through.ty,
                     siblings,
+                    origin: Origin::None,
                 },
-                _ => Expectation::Required(through.ty),
+                _ => Expectation::Required(through.ty, Origin::None),
             };
             Site {
                 written: &[],
