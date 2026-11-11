@@ -162,7 +162,7 @@ fn a_break_origin_should_reach_each_operand_of_the_value() {
             Explained::Label(3, 16),
         ),
         (
-            "an operand of `<`, which gives the `bool` and takes `i64`",
+            "an operand of `<`, which the loop does not reach: a comparison has no expected type",
             "fn f(c: bool) {\n    let a = loop {\n        if c { break true }\n        break 1 < None\n    }\n    print(a)\n}\nfn main() { f(true) }\n",
             (4, 19),
             Explained::Nothing,
@@ -171,6 +171,12 @@ fn a_break_origin_should_reach_each_operand_of_the_value() {
             "an operand of `&&`, which takes `bool` whatever the loop is",
             "fn f(c: bool) {\n    let a = loop {\n        if c { break true }\n        break true && None\n    }\n    print(a)\n}\nfn main() { f(true) }\n",
             (4, 23),
+            Explained::Nothing,
+        ),
+        (
+            "an operand of `+` held to its own `i64`, not to the `string` of the loop",
+            "fn f(c: bool) {\n    let a = loop {\n        if c { break \"a\" }\n        break 1 + None\n    }\n    print(a)\n}\nfn main() { f(true) }\n",
+            (4, 19),
             Explained::Nothing,
         ),
         (
