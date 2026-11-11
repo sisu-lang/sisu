@@ -268,6 +268,11 @@ class Rulings(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("not Accept, Reject or Defer: sol 2: Accept/Reject", result.stdout)
 
+    def test_rulings_should_fail_on_a_deferral_with_no_destination(self) -> None:
+        result = self.rulings("sol 1: Accept: x.\nsol 2: Defer to : later.\nopus 1: Accept: x.\n")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("not Accept, Reject or Defer: sol 2: Defer to ", result.stdout)
+
     def test_rulings_without_a_rulings_file_should_name_each_finding_without_a_ruling(self) -> None:
         result = subprocess.run(
             ["python3", SCRIPT, "rulings", self.run_dir, "--report", "opus"],
