@@ -130,7 +130,7 @@ id = "text-limits"
 name = "changed text keeps to the sentence and comment limits"
 language = "system"
 entry = "python3 scripts/text_limits.py --diff HEAD"
-files = '\.(rs|py|sh|md)$'
+files = '\.(rs|sisu|py|sh|md)$'
 
 [[repos.hooks]]
 id = "typos"

@@ -29,6 +29,7 @@ class SentenceTests(unittest.TestCase):
             ("a.md", LONG),
             ("a.rs", f"// {LONG}"),
             ("a.rs", f"/// {LONG}"),
+            ("a.sisu", f"// {LONG}"),
             ("a.py", f'"""{LONG}"""'),
             ("a.py", f"x = 1\n# {LONG}"),
             ("a.sh", f"# {LONG}"),
@@ -83,6 +84,7 @@ class SentenceTests(unittest.TestCase):
     def test_each_given_when_then_line_should_be_its_own_sentence(self) -> None:
         half = " ".join(["word"] * 13)
         self.assertEqual(found("a.rs", f"/// GIVEN {half}\n/// WHEN {half}\n/// THEN {half}\n"), [])
+        self.assertEqual(found("a.sisu", f"// GIVEN {half}\n// WHEN {half}\n// THEN {half}\n"), [])
 
     def test_each_list_item_should_be_its_own_sentence(self) -> None:
         half = " ".join(["word"] * 13)
@@ -174,6 +176,11 @@ class MainTests(unittest.TestCase):
         status, out = self.run_main()
         self.assertEqual(status, 1)
         self.assertEqual(out, self.NEW)
+
+    def test_a_changed_file_that_is_not_utf8_should_be_read(self) -> None:
+        Path("a.sisu").write_bytes(f"// {LONG}\n// \xe9\n".encode("latin-1"))
+        self.git("add", "a.sisu")
+        self.assertEqual(self.run_main("a.sisu")[0], 1)
 
     def test_a_removed_line_should_pass(self) -> None:
         self.write("a.md", f"{LONG}\n")

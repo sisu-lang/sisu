@@ -1,5 +1,7 @@
 """Reject a changed sentence of over 25 words in a comment, a docstring or Markdown.
 
+A comment is a whole-line comment of Rust, Sisu, Python or shell.
+
 Also reject a changed Python or shell comment or docstring line of over 100 columns.
 `CODING_STANDARDS.md` (Writing) sets the sentence limit. A sentence that a change touches counts in
 full, also over wrapped lines.
@@ -90,7 +92,7 @@ def prose(path: str, lines: list[str]) -> list[tuple[int, str]]:
         return outside_fences(body)
     if path.endswith(".py"):
         return outside_fences(python_prose(lines))
-    if path.endswith(".rs"):
+    if path.endswith((".rs", ".sisu")):
         comments = [
             (n, t.lstrip().lstrip("/!").strip()) for n, t in numbered if t.lstrip().startswith("//")
         ]
@@ -229,7 +231,8 @@ def main(argv: list[str]) -> int:
         ours = changed.get(os.path.realpath(path))
         if not ours:
             continue
-        with Path(path).open(encoding="utf-8") as f:
+        # A fixture such as `E0072.sisu` holds bytes that are not UTF-8 on purpose.
+        with Path(path).open(encoding="utf-8", errors="replace") as f:
             lines = f.readlines()
         for line in findings(path, lines, ours):
             print(line)
