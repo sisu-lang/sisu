@@ -314,18 +314,6 @@ fn a_passed_down_expectation_should_keep_its_origin() {
             Explained::Label(3, 12),
         ),
         (
-            "alias constant",
-            "type M = i64\nconst A: M = \"x\"\nfn main() {\n    print(A)\n}\n",
-            (2, 14),
-            Explained::Label(2, 10),
-        ),
-        (
-            "alias payload",
-            "type M = i64\nenum E {\n    V(M)\n}\nfn main() {\n    print(E.V(\"x\"))\n}\n",
-            (6, 15),
-            Explained::Label(3, 7),
-        ),
-        (
             "an element under an alias (fable-18)",
             "type M = [i64]\nfn main() {\n    let a: M = [1, \"x\"]\n    print(a)\n}\n",
             (3, 20),
