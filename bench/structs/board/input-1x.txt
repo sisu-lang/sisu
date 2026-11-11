@@ -1,0 +1,4436 @@
+history 0
+add w6 w26 w2
+add w2 w20 w1
+add w9 w22 w2
+add w8 w22 w5
+add w4 w12 w32
+add w22 w7 w3
+select 2
+select 1
+rename w9 w22 w21
+tag auto
+tag auto
+tag red
+select 2
+select 5
+select 5
+add w37 w14 w24
+add w30 w5 w9
+done 5
+rename w15 w9 w3
+add w9 w19 w23
+add w5 w21 w24
+select 8
+add w15 w4 w25
+add w39 w17 w4
+add w0 w6 w4
+rename w2 w8 w15
+add w13 w14 w4
+show
+tag auto
+add w38 w14 w27
+tag red
+select 8
+tag auto
+done 8
+select 7
+add w27 w38 w17
+tag auto
+select 0
+select 3
+tag red
+add w37 w28 w6
+add w23 w18 w26
+rename w14 w21 w5
+tag red
+show
+add w9 w23 w10
+done 18
+done 4
+select 5
+rename w31 w5 w5
+select 3
+select 14
+add w38 w24 w7
+select 16
+done 2
+rename w17 w8 w12
+add w5 w18 w29
+add w19 w39 w33
+tag red
+add w14 w13 w18
+add w20 w11 w38
+show
+add w36 w7 w30
+done 17
+add w2 w37 w25
+add w34 w2 w34
+add w39 w16 w36
+add w21 w9 w4
+add w7 w37 w25
+tag auto
+show
+select 20
+add w19 w33 w15
+add w8 w9 w7
+tag auto
+add w25 w35 w17
+add w33 w34 w26
+select 17
+add w10 w38 w38
+add w38 w12 w14
+add w3 w11 w26
+select 25
+select 5
+select 24
+tag auto
+done 32
+add w20 w20 w33
+done 14
+add w1 w25 w38
+done 15
+select 32
+add w2 w10 w29
+add w25 w18 w33
+select 12
+add w5 w10 w29
+rename w5 w19 w19
+rename w27 w11 w20
+select 19
+add w3 w29 w10
+add w32 w20 w35
+add w35 w19 w0
+add w4 w13 w12
+done 18
+add w2 w15 w34
+add w17 w11 w1
+add w26 w25 w5
+add w12 w30 w31
+select 28
+rename w5 w34 w19
+add w18 w13 w11
+tag blue
+rename w4 w25 w3
+add w21 w9 w6
+add w9 w10 w22
+tag red
+add w2 w11 w38
+rename w21 w31 w33
+add w9 w15 w17
+done 45
+tag red
+tag blue
+tag auto
+add w5 w22 w1
+add w5 w10 w25
+tag red
+add w31 w0 w21
+add w12 w33 w9
+add w9 w38 w28
+add w7 w35 w25
+add w26 w37 w9
+rename w28 w14 w15
+tag red
+tag red
+add w24 w24 w35
+add w26 w37 w5
+add w0 w23 w16
+add w17 w28 w12
+undo
+add w26 w15 w14
+add w4 w3 w3
+tag auto
+add w36 w7 w14
+add w16 w32 w30
+add w18 w32 w2
+tag red
+tag auto
+done 49
+tag auto
+add w37 w12 w27
+rename w13 w12 w14
+select 4
+select 13
+show
+show
+rename w26 w29 w33
+tag blue
+add w17 w7 w9
+select 4
+add w18 w32 w33
+add w11 w4 w7
+add w23 w24 w8
+add w1 w39 w1
+done 39
+add w1 w19 w19
+add w15 w22 w25
+rename w15 w10 w39
+add w2 w29 w35
+add w34 w39 w14
+add w16 w37 w17
+add w32 w16 w35
+tag auto
+select 44
+add w20 w37 w4
+tag red
+add w24 w25 w3
+rename w35 w25 w34
+add w33 w33 w7
+add w37 w6 w14
+add w28 w35 w1
+done 49
+select 53
+add w9 w15 w14
+add w0 w24 w19
+add w24 w32 w33
+add w2 w14 w14
+select 40
+tag blue
+done 21
+rename w28 w8 w33
+tag auto
+add w38 w19 w23
+select 20
+rename w11 w13 w15
+add w21 w25 w14
+select 68
+rename w15 w31 w10
+select 22
+rename w38 w11 w20
+rename w39 w23 w26
+tag red
+add w14 w1 w19
+rename w0 w0 w14
+select 17
+add w24 w18 w5
+tag red
+add w10 w0 w25
+tag auto
+add w9 w2 w31
+rename w26 w7 w16
+rename w20 w25 w32
+select 92
+tag red
+add w26 w7 w39
+add w1 w13 w29
+rename w36 w38 w11
+add w20 w6 w36
+add w6 w36 w7
+add w9 w36 w25
+done 39
+tag auto
+add w4 w24 w6
+tag blue
+add w1 w34 w30
+done 96
+add w33 w32 w25
+rename w11 w3 w3
+rename w11 w13 w10
+add w11 w28 w14
+tag auto
+tag blue
+add w22 w28 w33
+done 97
+tag auto
+add w25 w3 w31
+select 50
+add w10 w36 w20
+rename w13 w13 w6
+select 88
+tag auto
+select 79
+add w6 w9 w13
+add w9 w38 w10
+show
+rename w4 w8 w15
+add w34 w17 w8
+add w0 w10 w29
+tag blue
+add w9 w28 w35
+rename w23 w9 w7
+select 53
+add w16 w28 w6
+add w18 w24 w16
+rename w34 w35 w13
+add w19 w38 w1
+add w28 w38 w7
+add w22 w21 w28
+add w31 w14 w13
+tag red
+add w3 w36 w25
+add w10 w8 w29
+add w5 w31 w32
+add w25 w28 w32
+add w25 w32 w32
+undo
+add w34 w10 w15
+add w26 w12 w19
+rename w26 w14 w37
+add w33 w36 w31
+select 53
+done 53
+tag blue
+done 107
+add w5 w19 w2
+done 119
+add w16 w38 w3
+rename w1 w24 w27
+done 36
+add w28 w25 w13
+add w31 w22 w36
+add w16 w22 w33
+add w19 w13 w39
+add w8 w19 w4
+add w11 w23 w25
+add w22 w16 w22
+add w0 w7 w36
+tag auto
+add w25 w25 w6
+done 3
+add w32 w31 w22
+done 13
+select 107
+select 99
+select 105
+select 3
+add w0 w26 w39
+add w4 w18 w11
+select 37
+tag blue
+add w26 w32 w3
+add w24 w38 w33
+add w37 w29 w18
+add w31 w14 w25
+select 145
+add w11 w24 w26
+done 79
+select 96
+rename w35 w32 w11
+add w10 w6 w36
+add w5 w35 w39
+add w34 w32 w27
+add w3 w22 w31
+tag blue
+add w28 w37 w23
+tag auto
+add w20 w10 w33
+select 46
+done 132
+done 27
+add w18 w3 w12
+add w20 w0 w1
+select 109
+add w17 w23 w24
+add w1 w8 w7
+add w1 w14 w28
+tag blue
+select 60
+show
+add w22 w1 w36
+tag auto
+add w30 w37 w27
+select 95
+add w4 w19 w6
+done 49
+tag red
+done 59
+select 14
+add w18 w35 w17
+add w16 w6 w10
+add w6 w19 w12
+add w39 w2 w35
+select 93
+add w10 w9 w9
+add w35 w2 w29
+add w25 w17 w20
+add w0 w33 w21
+add w1 w16 w11
+add w7 w30 w28
+rename w33 w35 w29
+add w5 w26 w25
+select 104
+done 72
+done 122
+add w26 w9 w22
+add w28 w22 w34
+select 62
+done 97
+select 126
+add w1 w32 w5
+select 49
+add w33 w25 w18
+tag red
+add w19 w20 w11
+add w35 w21 w9
+add w22 w29 w6
+add w37 w31 w13
+done 82
+done 174
+select 5
+add w16 w15 w39
+rename w32 w35 w35
+done 160
+select 133
+add w9 w1 w4
+rename w4 w23 w38
+select 70
+add w3 w21 w33
+rename w8 w15 w21
+select 79
+add w13 w7 w21
+add w36 w6 w38
+select 75
+add w0 w22 w24
+add w2 w15 w17
+select 106
+add w14 w27 w24
+done 121
+add w25 w25 w28
+add w39 w5 w33
+add w14 w14 w21
+add w12 w31 w33
+add w12 w21 w32
+select 82
+add w21 w12 w24
+select 91
+add w27 w18 w0
+select 143
+tag auto
+add w12 w39 w33
+add w26 w11 w13
+add w35 w16 w2
+rename w14 w39 w25
+rename w0 w0 w28
+add w12 w33 w23
+add w7 w30 w22
+add w6 w30 w4
+add w37 w19 w18
+done 82
+add w9 w11 w1
+add w36 w23 w13
+rename w0 w8 w15
+add w23 w6 w0
+add w24 w38 w19
+add w15 w28 w8
+add w28 w0 w34
+add w14 w7 w38
+add w14 w13 w34
+add w2 w4 w33
+select 111
+add w26 w13 w6
+add w7 w21 w31
+add w33 w32 w6
+add w16 w25 w23
+add w24 w8 w34
+rename w3 w34 w29
+add w26 w22 w12
+tag blue
+add w2 w12 w9
+done 118
+tag auto
+add w27 w26 w14
+add w28 w18 w39
+add w25 w7 w4
+tag red
+add w12 w15 w1
+rename w37 w22 w9
+tag auto
+add w30 w26 w36
+select 9
+tag red
+rename w15 w29 w33
+select 87
+rename w29 w33 w25
+select 216
+add w21 w38 w25
+add w38 w6 w13
+add w12 w5 w28
+select 34
+select 194
+done 52
+add w35 w12 w4
+add w4 w12 w18
+add w22 w1 w18
+select 67
+add w19 w17 w7
+add w14 w3 w11
+add w15 w5 w14
+select 184
+done 211
+add w9 w5 w36
+done 160
+add w29 w39 w24
+add w27 w6 w17
+add w1 w17 w7
+add w1 w24 w33
+add w11 w26 w20
+select 109
+rename w32 w2 w27
+rename w22 w16 w14
+rename w11 w13 w35
+done 37
+rename w14 w23 w16
+add w17 w10 w9
+add w29 w8 w33
+add w21 w10 w19
+select 232
+select 112
+add w20 w20 w33
+rename w38 w20 w18
+add w6 w38 w22
+add w14 w24 w16
+add w0 w23 w8
+add w5 w36 w3
+add w4 w29 w14
+tag red
+add w14 w29 w37
+select 83
+done 65
+add w27 w0 w39
+add w0 w4 w32
+add w37 w34 w26
+add w35 w21 w27
+add w17 w0 w39
+select 46
+rename w25 w23 w33
+add w33 w15 w34
+select 33
+select 119
+add w18 w37 w12
+select 23
+rename w29 w5 w15
+select 71
+show
+tag auto
+tag red
+add w13 w12 w39
+select 77
+add w0 w34 w18
+add w30 w37 w23
+add w12 w29 w22
+add w7 w36 w23
+select 219
+tag red
+tag blue
+rename w7 w29 w38
+add w32 w35 w13
+add w10 w25 w0
+rename w32 w6 w34
+add w24 w31 w39
+add w18 w0 w37
+add w24 w28 w13
+add w8 w21 w33
+done 78
+rename w24 w13 w29
+done 232
+select 129
+add w19 w26 w30
+add w25 w16 w39
+rename w4 w21 w8
+add w24 w29 w36
+select 255
+add w36 w36 w15
+add w36 w4 w29
+done 116
+select 114
+add w0 w28 w9
+add w30 w25 w11
+add w22 w6 w34
+select 231
+add w2 w31 w34
+add w30 w17 w17
+show
+add w12 w20 w14
+select 203
+add w20 w9 w17
+tag auto
+rename w5 w29 w20
+select 110
+done 90
+add w10 w38 w7
+add w22 w14 w0
+rename w21 w21 w27
+add w12 w16 w38
+tag auto
+rename w37 w10 w24
+show
+rename w18 w23 w18
+select 193
+add w2 w39 w10
+add w31 w26 w36
+add w33 w34 w13
+select 186
+select 88
+add w26 w7 w37
+add w14 w34 w17
+add w10 w4 w14
+select 228
+rename w17 w19 w31
+add w27 w14 w20
+rename w20 w32 w10
+add w22 w2 w7
+add w12 w9 w33
+select 148
+rename w14 w1 w17
+add w30 w38 w17
+add w15 w23 w36
+add w2 w30 w15
+add w37 w25 w31
+select 212
+show
+select 205
+select 198
+tag auto
+select 102
+tag blue
+add w16 w2 w25
+add w20 w0 w39
+select 152
+select 155
+add w15 w17 w21
+add w2 w21 w14
+rename w28 w5 w37
+add w36 w22 w2
+add w2 w38 w32
+add w31 w11 w28
+add w29 w8 w8
+add w25 w1 w34
+done 84
+select 108
+select 264
+add w3 w31 w38
+add w33 w28 w17
+add w2 w27 w1
+add w9 w23 w12
+tag auto
+add w11 w26 w27
+select 58
+add w14 w26 w8
+select 254
+select 138
+tag auto
+select 77
+rename w2 w13 w17
+add w14 w4 w33
+tag blue
+add w1 w1 w23
+rename w5 w23 w14
+tag red
+add w25 w33 w12
+add w35 w4 w19
+select 21
+select 104
+show
+add w29 w3 w6
+undo
+tag blue
+add w3 w8 w30
+done 93
+add w37 w16 w16
+tag auto
+add w36 w27 w28
+undo
+tag red
+rename w29 w5 w33
+add w33 w31 w34
+tag red
+tag auto
+add w31 w31 w27
+done 173
+rename w36 w17 w12
+select 214
+add w11 w5 w21
+add w33 w24 w11
+show
+done 94
+add w13 w6 w6
+add w35 w31 w24
+add w0 w34 w4
+select 51
+rename w3 w24 w17
+add w26 w25 w15
+done 9
+add w33 w27 w22
+add w20 w6 w24
+add w13 w5 w38
+add w23 w23 w1
+add w23 w39 w25
+add w21 w16 w39
+done 184
+rename w11 w6 w23
+tag auto
+add w20 w27 w36
+add w15 w38 w38
+add w35 w18 w24
+add w27 w14 w12
+add w8 w36 w18
+rename w31 w12 w6
+select 140
+add w28 w15 w32
+add w17 w0 w21
+add w24 w14 w39
+add w37 w29 w13
+select 73
+select 68
+add w27 w36 w2
+done 293
+tag auto
+add w33 w9 w4
+add w28 w28 w24
+tag auto
+add w20 w4 w38
+add w25 w5 w11
+done 174
+add w38 w23 w28
+tag blue
+add w3 w4 w15
+add w26 w35 w2
+select 316
+select 144
+tag blue
+tag blue
+tag auto
+add w16 w33 w25
+select 161
+show
+add w1 w28 w30
+add w6 w31 w18
+select 336
+add w36 w28 w37
+add w29 w15 w32
+add w0 w8 w23
+add w32 w38 w3
+add w22 w36 w34
+rename w35 w19 w25
+add w8 w14 w35
+select 299
+done 122
+tag red
+select 117
+add w22 w29 w8
+add w3 w39 w32
+select 344
+add w22 w23 w16
+add w0 w30 w4
+add w32 w6 w20
+select 36
+done 317
+rename w31 w21 w28
+select 106
+add w33 w32 w18
+tag auto
+select 51
+add w10 w12 w11
+rename w39 w30 w0
+add w27 w30 w8
+select 40
+done 150
+add w28 w10 w12
+add w15 w6 w6
+rename w18 w24 w30
+add w9 w16 w0
+select 122
+add w13 w2 w4
+add w21 w25 w21
+add w30 w35 w28
+tag auto
+rename w29 w30 w9
+add w15 w3 w29
+add w14 w5 w4
+rename w20 w35 w36
+add w4 w12 w16
+add w39 w35 w34
+add w33 w1 w33
+add w8 w14 w13
+add w7 w36 w6
+rename w12 w10 w1
+add w39 w15 w26
+select 66
+add w6 w26 w34
+add w15 w30 w8
+add w0 w3 w15
+add w1 w17 w4
+select 88
+add w9 w13 w2
+add w29 w22 w34
+add w37 w20 w9
+select 239
+add w11 w31 w2
+tag red
+tag blue
+add w23 w36 w3
+done 155
+tag auto
+add w37 w9 w19
+done 110
+add w18 w12 w31
+add w38 w12 w16
+add w28 w22 w30
+done 232
+select 287
+add w38 w5 w5
+add w12 w30 w6
+add w23 w18 w16
+rename w34 w38 w10
+add w2 w36 w4
+add w15 w12 w26
+select 300
+rename w14 w20 w22
+add w35 w22 w7
+rename w2 w29 w24
+add w13 w36 w17
+rename w28 w25 w7
+tag blue
+add w38 w36 w9
+tag blue
+add w10 w1 w5
+rename w25 w18 w18
+select 89
+done 201
+add w38 w30 w33
+add w9 w23 w30
+tag red
+done 7
+select 2
+done 89
+add w28 w39 w0
+add w3 w7 w18
+select 132
+add w37 w10 w10
+rename w27 w10 w31
+add w20 w5 w24
+done 151
+tag auto
+select 405
+done 222
+add w7 w23 w4
+select 169
+tag auto
+rename w27 w24 w36
+show
+add w30 w33 w28
+tag blue
+add w11 w13 w9
+tag auto
+add w2 w15 w19
+done 364
+add w28 w21 w31
+add w34 w37 w22
+select 384
+rename w13 w20 w5
+add w38 w2 w11
+rename w21 w28 w12
+rename w16 w9 w15
+add w13 w4 w9
+add w10 w29 w35
+select 238
+add w8 w31 w29
+add w32 w13 w9
+select 315
+add w6 w29 w13
+rename w2 w0 w9
+add w30 w24 w35
+add w12 w35 w37
+add w14 w15 w4
+add w27 w30 w30
+tag auto
+tag red
+done 420
+add w35 w6 w12
+add w37 w29 w27
+tag red
+add w4 w13 w1
+add w14 w24 w19
+add w18 w16 w32
+add w25 w35 w18
+tag blue
+select 213
+add w38 w9 w8
+add w38 w27 w4
+add w23 w17 w28
+undo
+add w8 w29 w32
+add w37 w29 w6
+tag blue
+tag auto
+rename w15 w33 w36
+add w36 w22 w30
+add w36 w8 w0
+done 236
+add w24 w10 w11
+add w25 w2 w30
+add w28 w29 w9
+add w32 w9 w6
+tag red
+rename w5 w18 w25
+add w30 w9 w7
+done 325
+add w3 w7 w12
+add w16 w33 w30
+select 303
+select 196
+tag blue
+select 260
+rename w36 w16 w17
+add w26 w29 w0
+add w14 w34 w31
+select 282
+add w7 w4 w35
+add w35 w13 w21
+rename w19 w13 w15
+select 34
+add w36 w21 w11
+add w19 w37 w15
+add w2 w32 w5
+add w17 w4 w38
+done 216
+add w34 w30 w23
+add w2 w4 w0
+rename w6 w18 w4
+rename w26 w38 w14
+add w15 w10 w9
+show
+tag blue
+add w0 w25 w26
+add w15 w27 w0
+tag red
+add w39 w8 w26
+done 387
+select 279
+select 424
+tag blue
+select 68
+add w11 w4 w34
+add w19 w28 w8
+add w31 w8 w20
+undo
+add w25 w12 w27
+select 347
+add w24 w34 w29
+add w34 w34 w10
+add w19 w3 w34
+tag blue
+done 172
+add w36 w8 w34
+add w36 w8 w36
+add w39 w2 w15
+done 412
+add w2 w15 w26
+done 350
+add w12 w35 w36
+select 283
+select 48
+add w38 w39 w5
+add w13 w23 w7
+add w8 w4 w11
+add w31 w37 w27
+add w24 w12 w38
+tag auto
+select 56
+rename w37 w39 w27
+rename w10 w38 w3
+add w22 w0 w16
+tag auto
+add w37 w10 w35
+add w33 w39 w4
+add w14 w14 w5
+select 294
+add w19 w18 w30
+add w16 w9 w30
+add w13 w30 w8
+show
+rename w7 w2 w3
+tag blue
+tag red
+select 419
+rename w2 w20 w13
+select 117
+rename w17 w26 w3
+select 208
+add w27 w39 w13
+rename w13 w1 w16
+add w6 w2 w21
+rename w19 w32 w11
+select 223
+add w27 w27 w23
+add w28 w32 w4
+add w8 w37 w10
+rename w14 w28 w11
+add w0 w3 w29
+add w36 w26 w10
+add w15 w26 w0
+select 64
+add w20 w23 w8
+rename w5 w0 w17
+add w21 w11 w30
+add w14 w19 w28
+select 362
+add w10 w12 w27
+select 386
+add w26 w33 w39
+rename w27 w25 w27
+select 311
+select 117
+add w18 w28 w29
+select 364
+add w13 w16 w38
+add w12 w38 w7
+add w2 w26 w9
+done 395
+tag red
+undo
+add w0 w14 w30
+add w1 w28 w8
+rename w24 w11 w8
+done 451
+add w1 w13 w25
+add w18 w9 w17
+rename w16 w13 w9
+add w31 w32 w10
+tag auto
+select 489
+add w31 w4 w10
+tag auto
+rename w2 w36 w7
+add w20 w11 w28
+add w28 w4 w21
+add w34 w8 w35
+done 389
+add w38 w14 w4
+add w0 w35 w8
+add w26 w26 w17
+add w6 w28 w6
+add w29 w1 w8
+rename w27 w19 w18
+select 139
+tag blue
+select 280
+add w27 w21 w24
+rename w29 w12 w5
+select 109
+add w24 w23 w27
+add w33 w7 w33
+add w35 w17 w33
+select 346
+rename w5 w14 w36
+rename w4 w6 w11
+add w29 w3 w8
+rename w38 w22 w0
+tag blue
+rename w35 w15 w21
+tag red
+tag auto
+add w8 w38 w14
+select 365
+add w6 w19 w36
+add w30 w17 w7
+add w37 w26 w9
+add w13 w4 w11
+add w32 w34 w12
+select 174
+add w34 w31 w27
+add w26 w38 w7
+add w6 w35 w12
+add w5 w7 w23
+add w23 w7 w25
+done 39
+rename w23 w37 w6
+add w19 w2 w25
+add w22 w29 w4
+add w8 w10 w33
+select 380
+add w35 w16 w30
+add w29 w18 w19
+undo
+rename w21 w8 w16
+tag red
+add w16 w35 w16
+select 520
+done 9
+add w25 w25 w33
+done 209
+add w15 w0 w11
+add w12 w23 w13
+add w3 w1 w11
+add w29 w2 w37
+tag blue
+add w4 w20 w12
+add w17 w9 w38
+select 285
+done 207
+add w15 w24 w14
+add w5 w10 w33
+select 310
+add w28 w0 w15
+tag auto
+select 426
+add w23 w12 w38
+select 114
+add w2 w27 w23
+rename w11 w22 w0
+select 87
+add w20 w13 w14
+select 422
+undo
+add w28 w14 w27
+add w6 w26 w12
+add w25 w21 w16
+add w22 w20 w7
+add w29 w28 w37
+rename w39 w35 w7
+add w6 w22 w8
+done 336
+add w37 w16 w9
+select 459
+add w38 w14 w39
+tag blue
+add w15 w35 w18
+add w7 w28 w22
+select 333
+add w20 w20 w1
+tag blue
+add w18 w30 w12
+rename w7 w4 w29
+add w8 w26 w7
+undo
+done 31
+add w19 w16 w38
+add w5 w2 w16
+add w19 w15 w25
+add w1 w31 w17
+add w0 w3 w2
+done 101
+select 267
+add w38 w19 w21
+select 516
+select 311
+add w35 w26 w11
+done 387
+add w25 w24 w2
+select 29
+add w35 w25 w23
+rename w19 w25 w21
+add w25 w32 w9
+done 333
+rename w5 w32 w32
+add w20 w15 w13
+add w22 w30 w37
+select 0
+add w21 w37 w2
+add w15 w37 w21
+select 146
+select 157
+done 264
+add w30 w30 w25
+rename w33 w22 w11
+rename w7 w24 w14
+add w27 w26 w4
+tag blue
+add w4 w13 w35
+add w37 w0 w36
+add w9 w26 w34
+rename w4 w15 w8
+tag red
+add w16 w11 w4
+add w11 w34 w25
+add w24 w3 w4
+select 105
+add w28 w25 w20
+show
+add w4 w25 w29
+rename w12 w20 w11
+done 489
+rename w24 w6 w10
+done 20
+select 94
+add w39 w8 w15
+add w26 w27 w18
+add w4 w2 w20
+tag auto
+add w19 w17 w39
+select 305
+tag blue
+add w3 w29 w6
+rename w15 w36 w32
+add w5 w12 w17
+add w19 w1 w29
+add w39 w10 w18
+done 137
+select 195
+add w14 w10 w9
+select 9
+add w34 w31 w28
+select 358
+select 387
+add w34 w23 w30
+rename w25 w25 w19
+tag red
+tag red
+rename w30 w25 w17
+add w19 w7 w36
+add w0 w11 w36
+select 151
+add w37 w38 w0
+add w31 w31 w10
+add w33 w12 w0
+add w14 w25 w13
+add w10 w23 w17
+add w20 w32 w1
+add w10 w27 w9
+rename w19 w34 w14
+add w25 w17 w39
+add w13 w3 w13
+add w21 w6 w31
+select 596
+tag auto
+add w20 w38 w27
+tag auto
+add w22 w25 w14
+add w30 w1 w37
+done 558
+done 352
+rename w17 w38 w37
+select 539
+add w22 w21 w10
+show
+add w19 w14 w35
+add w2 w39 w4
+done 504
+tag blue
+add w20 w5 w3
+add w4 w16 w1
+select 417
+add w29 w8 w22
+select 213
+done 109
+add w29 w13 w20
+select 275
+select 132
+add w25 w2 w9
+add w15 w17 w14
+add w12 w4 w19
+select 52
+done 480
+add w4 w7 w32
+add w23 w39 w28
+select 102
+rename w0 w16 w20
+select 92
+add w32 w7 w28
+add w16 w24 w25
+done 313
+select 599
+rename w17 w29 w11
+add w24 w23 w17
+tag red
+add w14 w1 w33
+add w36 w13 w8
+done 471
+select 556
+add w26 w29 w7
+add w4 w11 w19
+add w11 w11 w13
+rename w35 w26 w4
+add w22 w34 w3
+done 349
+select 120
+add w31 w31 w22
+tag red
+add w24 w9 w31
+rename w13 w7 w17
+add w6 w25 w26
+add w23 w35 w22
+add w20 w19 w22
+rename w33 w1 w2
+add w11 w34 w27
+select 555
+rename w12 w5 w6
+add w12 w5 w12
+add w32 w3 w13
+done 586
+done 336
+add w16 w21 w4
+tag blue
+add w13 w26 w36
+select 525
+add w12 w2 w28
+add w34 w30 w22
+add w5 w2 w34
+add w7 w38 w1
+add w36 w7 w36
+add w36 w4 w5
+rename w32 w27 w37
+add w28 w30 w37
+select 589
+add w19 w11 w38
+rename w12 w29 w19
+add w35 w27 w18
+select 501
+select 407
+add w39 w25 w1
+select 458
+rename w17 w21 w33
+select 222
+done 129
+select 244
+add w8 w0 w10
+add w16 w36 w31
+select 173
+select 477
+done 616
+add w0 w14 w13
+tag red
+add w31 w0 w33
+select 513
+add w14 w39 w21
+add w1 w37 w10
+rename w2 w22 w28
+add w11 w0 w1
+add w28 w26 w3
+add w27 w13 w5
+tag auto
+add w22 w33 w7
+select 449
+add w16 w33 w11
+add w3 w28 w5
+add w23 w27 w28
+add w9 w4 w18
+rename w9 w9 w3
+show
+tag auto
+select 505
+add w29 w26 w14
+add w27 w16 w39
+rename w24 w16 w7
+add w3 w23 w35
+add w8 w25 w29
+add w32 w34 w20
+add w26 w34 w8
+done 184
+tag red
+add w1 w17 w1
+add w24 w21 w10
+rename w0 w28 w38
+tag red
+show
+add w1 w33 w26
+select 479
+add w13 w13 w2
+done 13
+add w35 w21 w25
+add w8 w27 w24
+add w30 w32 w23
+tag auto
+add w39 w15 w34
+add w5 w39 w19
+select 461
+tag blue
+add w37 w15 w3
+add w4 w1 w28
+add w1 w5 w35
+add w22 w15 w10
+rename w13 w18 w39
+add w20 w2 w12
+add w12 w36 w26
+select 555
+tag blue
+add w0 w19 w0
+add w32 w19 w32
+done 150
+add w33 w29 w19
+rename w3 w18 w26
+add w7 w21 w7
+rename w15 w2 w0
+done 175
+add w4 w22 w38
+add w7 w16 w4
+add w15 w4 w31
+add w34 w6 w26
+select 547
+add w35 w26 w3
+add w37 w0 w26
+select 246
+add w21 w33 w39
+add w22 w17 w9
+add w28 w19 w17
+tag blue
+rename w19 w37 w17
+select 305
+add w19 w2 w6
+add w0 w22 w38
+add w31 w12 w16
+tag auto
+add w15 w38 w17
+select 241
+add w1 w38 w21
+select 501
+add w36 w14 w11
+add w10 w19 w39
+tag red
+add w35 w14 w34
+add w33 w27 w8
+done 110
+add w28 w29 w9
+add w4 w11 w34
+add w11 w37 w2
+add w20 w38 w35
+add w12 w12 w15
+add w11 w39 w0
+select 164
+add w35 w9 w1
+rename w30 w38 w20
+tag red
+select 707
+add w16 w13 w9
+rename w38 w38 w34
+rename w32 w32 w38
+select 625
+add w30 w27 w38
+add w13 w9 w39
+add w7 w16 w20
+add w8 w26 w3
+add w29 w15 w15
+add w17 w23 w39
+add w2 w33 w23
+tag red
+done 262
+add w1 w34 w15
+add w13 w5 w12
+done 699
+add w15 w9 w3
+select 32
+add w25 w19 w19
+rename w20 w19 w37
+add w1 w28 w23
+rename w1 w15 w20
+rename w1 w4 w36
+tag auto
+add w38 w16 w26
+done 570
+done 622
+select 474
+tag auto
+add w34 w21 w37
+show
+tag blue
+add w22 w36 w12
+add w6 w19 w26
+tag red
+add w3 w5 w39
+add w28 w24 w19
+add w23 w2 w18
+add w34 w22 w20
+select 691
+add w1 w39 w36
+add w19 w9 w17
+rename w24 w29 w10
+done 378
+add w3 w35 w27
+add w20 w17 w2
+rename w21 w19 w10
+done 715
+add w21 w4 w18
+add w11 w37 w2
+done 398
+show
+tag red
+select 212
+add w22 w29 w6
+done 560
+select 571
+add w13 w13 w34
+add w39 w2 w2
+tag auto
+select 566
+add w21 w19 w5
+select 417
+add w10 w16 w30
+tag blue
+add w5 w21 w14
+add w13 w33 w7
+add w28 w11 w18
+add w24 w38 w16
+add w5 w7 w7
+tag red
+add w27 w23 w10
+rename w17 w24 w26
+tag blue
+add w15 w2 w36
+add w20 w10 w8
+add w35 w9 w14
+rename w24 w17 w16
+rename w19 w8 w11
+select 283
+add w2 w33 w6
+add w6 w37 w30
+add w7 w12 w32
+add w5 w20 w39
+select 400
+tag blue
+select 673
+done 205
+select 517
+add w0 w6 w26
+add w22 w17 w7
+add w4 w31 w23
+add w28 w6 w27
+add w17 w23 w18
+add w35 w33 w30
+add w19 w2 w4
+add w32 w27 w33
+select 552
+rename w8 w39 w9
+add w33 w3 w35
+add w14 w30 w37
+add w14 w29 w4
+select 708
+add w25 w3 w19
+add w3 w21 w35
+add w29 w32 w19
+add w13 w20 w29
+add w33 w19 w0
+add w19 w28 w14
+tag red
+add w12 w36 w17
+done 613
+add w21 w12 w29
+add w31 w21 w16
+tag red
+tag red
+add w32 w10 w3
+rename w6 w33 w6
+tag auto
+done 57
+add w30 w0 w4
+add w20 w5 w17
+select 66
+add w28 w13 w0
+tag blue
+add w39 w36 w37
+tag auto
+add w32 w10 w3
+select 522
+add w36 w27 w19
+add w35 w14 w35
+rename w4 w20 w19
+tag red
+add w33 w9 w32
+add w15 w37 w36
+select 510
+select 162
+done 586
+add w20 w36 w11
+add w18 w3 w10
+add w31 w31 w34
+select 557
+add w0 w3 w28
+add w32 w9 w38
+tag blue
+done 348
+add w34 w32 w17
+add w9 w19 w0
+add w26 w10 w29
+tag blue
+select 317
+rename w34 w38 w35
+rename w7 w39 w28
+tag blue
+rename w15 w18 w21
+rename w17 w11 w35
+add w33 w36 w5
+add w34 w21 w12
+add w2 w9 w20
+rename w33 w22 w30
+select 609
+add w32 w33 w26
+add w16 w18 w4
+add w36 w30 w1
+add w31 w30 w11
+add w19 w8 w34
+rename w32 w6 w13
+tag blue
+select 5
+add w26 w32 w6
+select 521
+rename w4 w10 w12
+add w38 w18 w9
+add w27 w36 w6
+add w33 w20 w4
+rename w18 w24 w17
+select 784
+add w35 w5 w2
+add w7 w19 w5
+rename w9 w12 w0
+add w33 w30 w35
+add w9 w3 w34
+add w9 w1 w22
+add w34 w1 w39
+add w38 w6 w5
+rename w12 w33 w0
+tag auto
+select 216
+done 793
+add w18 w10 w30
+add w33 w35 w14
+add w16 w39 w29
+tag auto
+add w15 w8 w12
+add w27 w8 w20
+select 171
+select 773
+select 148
+select 722
+tag red
+rename w36 w3 w30
+rename w34 w3 w20
+done 359
+add w2 w4 w37
+add w11 w21 w21
+select 593
+select 184
+add w23 w22 w1
+add w21 w14 w39
+add w18 w28 w11
+add w22 w3 w16
+add w20 w30 w32
+add w2 w29 w9
+add w7 w7 w14
+add w35 w39 w3
+add w31 w25 w31
+add w0 w15 w20
+add w22 w38 w10
+rename w9 w22 w31
+add w35 w22 w35
+done 210
+done 430
+tag blue
+tag blue
+add w8 w23 w26
+add w39 w15 w5
+add w32 w10 w23
+rename w37 w0 w28
+add w30 w13 w27
+select 185
+done 120
+add w32 w27 w4
+rename w14 w24 w24
+add w10 w14 w7
+add w31 w13 w37
+add w7 w17 w16
+select 772
+done 712
+add w7 w25 w23
+done 4
+add w19 w5 w29
+add w2 w10 w7
+select 281
+rename w29 w23 w8
+select 115
+add w10 w35 w24
+tag red
+add w2 w15 w30
+add w0 w27 w31
+select 739
+done 280
+rename w26 w6 w20
+add w25 w28 w27
+select 3
+select 409
+rename w20 w21 w33
+tag auto
+add w36 w31 w38
+tag blue
+tag blue
+add w12 w27 w0
+select 292
+add w24 w18 w13
+select 394
+rename w32 w11 w8
+add w2 w27 w37
+add w19 w10 w22
+add w5 w11 w26
+rename w19 w30 w37
+rename w0 w19 w24
+done 381
+add w18 w8 w13
+add w37 w11 w11
+add w23 w6 w15
+add w6 w17 w11
+select 446
+add w5 w17 w14
+tag red
+rename w35 w35 w5
+add w39 w1 w34
+rename w0 w29 w31
+add w11 w3 w28
+add w13 w32 w38
+tag red
+done 97
+add w16 w32 w38
+add w33 w5 w38
+select 363
+tag auto
+tag red
+done 772
+select 496
+rename w35 w19 w23
+add w26 w15 w35
+tag blue
+add w21 w37 w2
+select 771
+add w24 w7 w21
+tag red
+done 736
+rename w13 w23 w7
+tag auto
+add w35 w20 w25
+tag blue
+add w33 w2 w39
+tag red
+add w25 w7 w0
+tag red
+rename w39 w37 w7
+add w1 w33 w22
+add w30 w26 w16
+select 587
+tag red
+add w31 w12 w12
+add w11 w14 w25
+tag blue
+add w33 w12 w13
+done 652
+select 407
+add w17 w16 w8
+select 245
+rename w27 w8 w9
+tag red
+select 738
+select 753
+add w37 w28 w19
+select 831
+add w32 w3 w4
+tag auto
+add w6 w25 w8
+add w34 w39 w12
+select 93
+done 474
+done 637
+add w38 w3 w25
+rename w38 w39 w24
+done 209
+select 673
+add w30 w5 w36
+add w1 w35 w3
+add w2 w14 w30
+rename w29 w26 w0
+add w7 w32 w15
+select 791
+tag blue
+done 680
+add w1 w26 w37
+rename w32 w5 w37
+done 634
+add w19 w20 w37
+tag auto
+tag red
+add w25 w13 w15
+add w33 w3 w20
+show
+add w4 w26 w7
+select 682
+rename w39 w32 w18
+select 418
+tag blue
+select 746
+add w25 w25 w7
+select 405
+done 881
+add w19 w20 w17
+select 329
+add w12 w3 w12
+undo
+select 133
+add w30 w24 w30
+add w22 w23 w4
+add w16 w13 w13
+add w18 w36 w6
+select 612
+add w16 w23 w18
+add w30 w28 w22
+rename w2 w29 w6
+add w36 w12 w38
+add w29 w25 w26
+select 186
+add w20 w5 w6
+add w32 w33 w19
+tag auto
+tag red
+add w19 w35 w3
+tag blue
+rename w23 w16 w15
+add w0 w37 w7
+add w3 w32 w9
+select 902
+tag red
+add w28 w7 w7
+add w33 w18 w1
+add w34 w2 w36
+done 206
+show
+rename w22 w36 w6
+rename w29 w26 w20
+add w25 w13 w27
+select 491
+select 766
+add w12 w39 w34
+tag blue
+tag red
+add w29 w36 w13
+select 455
+add w29 w3 w10
+add w32 w17 w15
+add w33 w5 w28
+add w34 w10 w21
+rename w16 w14 w9
+rename w39 w13 w18
+select 439
+select 168
+select 710
+add w8 w15 w5
+done 781
+add w28 w14 w20
+add w30 w1 w13
+add w18 w39 w17
+add w24 w35 w16
+add w17 w19 w25
+add w4 w0 w35
+select 761
+rename w25 w39 w3
+tag red
+add w29 w32 w31
+rename w2 w18 w37
+add w32 w21 w14
+tag blue
+add w7 w16 w18
+select 17
+done 296
+tag auto
+done 233
+add w37 w17 w18
+done 226
+add w4 w23 w9
+add w28 w27 w30
+add w1 w23 w3
+add w17 w2 w15
+add w13 w38 w1
+select 805
+add w17 w35 w8
+done 418
+add w38 w12 w27
+done 552
+add w2 w15 w30
+add w9 w32 w16
+tag red
+select 366
+add w33 w22 w29
+select 457
+add w0 w30 w20
+add w0 w22 w22
+add w34 w20 w38
+add w16 w21 w14
+select 525
+add w21 w37 w9
+rename w35 w30 w9
+tag auto
+done 567
+add w20 w16 w7
+rename w16 w30 w29
+rename w7 w17 w9
+add w26 w5 w38
+add w20 w19 w9
+rename w15 w27 w30
+rename w28 w31 w12
+select 19
+add w8 w39 w16
+select 375
+tag auto
+add w32 w27 w10
+select 461
+add w5 w31 w7
+add w21 w36 w2
+add w27 w14 w22
+done 661
+add w34 w6 w9
+done 732
+tag auto
+add w34 w11 w36
+rename w27 w34 w7
+add w9 w0 w21
+add w16 w31 w10
+tag blue
+add w4 w28 w22
+select 624
+select 312
+rename w3 w28 w39
+add w5 w21 w23
+add w12 w31 w16
+add w31 w24 w4
+tag blue
+add w17 w21 w30
+select 187
+select 229
+rename w24 w36 w8
+add w31 w25 w23
+add w23 w23 w14
+add w4 w23 w13
+add w29 w4 w13
+done 852
+add w34 w18 w36
+add w24 w38 w28
+add w9 w23 w4
+tag blue
+add w39 w13 w10
+add w34 w10 w35
+add w17 w12 w21
+done 959
+rename w11 w4 w7
+tag red
+select 187
+select 552
+select 42
+add w9 w18 w21
+add w0 w15 w35
+tag blue
+add w5 w37 w16
+rename w29 w27 w27
+add w16 w14 w20
+select 380
+select 577
+add w21 w32 w20
+rename w3 w27 w5
+add w1 w16 w22
+add w20 w11 w0
+tag auto
+tag auto
+tag red
+add w27 w9 w19
+add w8 w0 w10
+add w6 w9 w13
+select 222
+done 623
+add w11 w16 w24
+tag red
+rename w22 w2 w19
+select 904
+add w19 w38 w32
+add w31 w22 w3
+tag red
+add w20 w0 w2
+add w2 w20 w36
+select 707
+tag red
+tag auto
+add w35 w28 w3
+done 168
+select 955
+done 680
+add w12 w23 w16
+add w6 w13 w25
+select 238
+tag blue
+add w15 w37 w17
+show
+tag red
+rename w11 w20 w12
+tag red
+add w13 w14 w26
+add w17 w23 w2
+tag auto
+add w19 w23 w0
+add w25 w21 w11
+select 791
+add w20 w5 w19
+done 463
+tag blue
+rename w11 w29 w7
+select 465
+rename w18 w23 w22
+add w29 w20 w3
+rename w20 w15 w28
+add w0 w11 w25
+add w31 w17 w15
+select 320
+tag blue
+select 115
+rename w13 w25 w6
+done 649
+select 402
+rename w23 w18 w11
+add w4 w15 w18
+add w16 w38 w28
+rename w4 w19 w6
+select 336
+add w3 w8 w24
+rename w23 w16 w17
+select 739
+select 12
+select 719
+select 799
+add w15 w13 w9
+add w1 w15 w17
+add w29 w21 w39
+add w37 w13 w13
+add w27 w7 w28
+select 761
+add w20 w30 w14
+add w7 w34 w15
+add w36 w24 w38
+add w25 w5 w27
+tag blue
+add w31 w3 w19
+rename w39 w17 w17
+add w30 w21 w0
+add w38 w5 w11
+rename w34 w29 w16
+add w34 w7 w2
+add w34 w22 w10
+add w20 w13 w23
+select 656
+add w4 w22 w4
+select 996
+tag auto
+done 951
+rename w1 w37 w8
+done 923
+select 696
+tag auto
+add w22 w10 w6
+add w35 w27 w28
+select 166
+select 88
+add w32 w23 w9
+add w6 w14 w8
+select 494
+add w28 w30 w4
+add w8 w5 w19
+add w21 w38 w35
+select 245
+add w18 w32 w10
+select 128
+tag auto
+done 330
+tag red
+add w11 w24 w2
+add w6 w4 w20
+select 446
+add w20 w33 w23
+rename w19 w3 w36
+select 393
+add w26 w32 w17
+add w32 w27 w3
+add w2 w37 w11
+tag blue
+add w10 w28 w23
+tag blue
+add w12 w37 w37
+tag auto
+add w17 w33 w30
+add w25 w17 w18
+add w7 w16 w5
+select 563
+add w34 w36 w34
+select 369
+tag red
+add w23 w38 w9
+rename w36 w11 w26
+tag red
+add w28 w35 w19
+add w13 w38 w5
+add w17 w9 w36
+select 574
+add w36 w0 w7
+add w9 w1 w6
+add w10 w14 w26
+rename w24 w5 w33
+add w9 w29 w1
+select 882
+add w38 w25 w1
+add w39 w36 w1
+add w19 w36 w26
+select 327
+add w14 w31 w13
+add w25 w10 w28
+tag auto
+select 188
+add w19 w0 w14
+rename w13 w17 w12
+add w26 w16 w1
+add w4 w4 w30
+rename w31 w33 w23
+add w24 w22 w22
+show
+add w23 w7 w2
+done 732
+done 423
+add w13 w28 w21
+add w12 w39 w9
+add w24 w13 w1
+select 283
+select 91
+select 1054
+add w20 w18 w17
+tag red
+add w38 w31 w1
+select 124
+add w10 w30 w13
+add w38 w6 w3
+rename w6 w20 w33
+select 333
+add w28 w27 w34
+add w9 w4 w13
+add w33 w5 w7
+add w21 w11 w22
+select 754
+add w4 w39 w36
+add w15 w39 w16
+add w23 w10 w9
+add w30 w15 w3
+add w25 w36 w21
+add w29 w23 w37
+tag red
+select 507
+add w37 w8 w6
+add w16 w22 w32
+done 898
+rename w37 w34 w19
+show
+add w30 w21 w18
+rename w6 w26 w2
+add w33 w12 w16
+add w0 w2 w15
+done 656
+add w35 w21 w31
+add w25 w37 w9
+add w7 w28 w37
+add w17 w6 w19
+add w6 w2 w3
+add w10 w12 w7
+tag auto
+add w20 w16 w15
+add w20 w27 w19
+add w8 w1 w27
+tag red
+add w1 w17 w7
+add w3 w16 w37
+add w1 w0 w36
+select 987
+add w7 w19 w21
+tag blue
+select 618
+add w27 w27 w17
+rename w28 w15 w10
+add w15 w8 w10
+add w30 w32 w10
+add w15 w16 w2
+add w13 w9 w32
+add w22 w37 w11
+done 203
+add w0 w37 w37
+select 572
+add w31 w39 w26
+add w11 w30 w0
+add w16 w26 w27
+rename w37 w31 w38
+add w4 w38 w21
+add w32 w2 w0
+tag blue
+add w13 w1 w18
+select 616
+tag red
+add w7 w26 w6
+select 605
+done 271
+add w13 w38 w25
+tag red
+tag auto
+add w33 w12 w0
+select 962
+add w7 w35 w39
+add w20 w34 w29
+select 493
+add w16 w26 w37
+add w10 w34 w32
+add w10 w28 w31
+add w16 w7 w9
+add w7 w16 w36
+add w35 w35 w11
+add w24 w36 w19
+select 329
+select 663
+add w35 w5 w5
+select 821
+rename w33 w26 w8
+tag red
+rename w34 w22 w35
+add w1 w38 w8
+select 577
+add w18 w9 w23
+select 39
+rename w8 w18 w1
+add w23 w31 w9
+rename w35 w35 w12
+add w27 w6 w25
+tag auto
+undo
+tag auto
+add w12 w3 w8
+add w13 w13 w39
+tag red
+add w38 w36 w12
+add w23 w23 w18
+add w8 w34 w24
+add w21 w35 w30
+tag blue
+done 543
+add w15 w21 w7
+tag blue
+rename w4 w9 w38
+select 1076
+add w13 w17 w20
+tag red
+add w36 w2 w26
+add w15 w23 w6
+tag red
+add w5 w8 w29
+add w21 w33 w17
+add w26 w14 w11
+add w4 w21 w5
+add w26 w17 w32
+add w37 w21 w1
+add w17 w15 w24
+add w35 w30 w19
+select 511
+add w21 w3 w12
+add w20 w5 w35
+add w39 w36 w8
+add w38 w27 w1
+add w25 w39 w18
+add w32 w0 w21
+select 856
+add w19 w35 w22
+tag auto
+tag blue
+add w33 w15 w34
+tag blue
+tag red
+tag red
+rename w11 w11 w23
+add w21 w17 w22
+done 868
+add w27 w7 w30
+add w38 w8 w35
+rename w21 w25 w26
+rename w26 w25 w4
+select 531
+select 694
+add w9 w39 w21
+select 889
+add w17 w0 w23
+select 272
+done 737
+add w26 w27 w0
+add w32 w0 w20
+tag auto
+done 418
+select 806
+select 669
+select 816
+select 635
+add w10 w31 w3
+add w3 w39 w23
+done 194
+add w27 w32 w26
+select 253
+select 624
+add w14 w30 w25
+tag red
+select 1102
+select 639
+done 359
+add w6 w8 w27
+select 541
+select 689
+show
+add w27 w25 w8
+add w25 w23 w13
+tag auto
+add w29 w27 w4
+add w34 w13 w12
+add w33 w7 w21
+add w28 w17 w6
+select 161
+tag auto
+add w18 w0 w19
+rename w21 w23 w37
+select 111
+undo
+select 343
+add w8 w36 w21
+add w8 w30 w30
+add w37 w6 w9
+tag red
+tag auto
+done 31
+add w9 w18 w12
+done 754
+add w20 w34 w25
+rename w39 w1 w17
+select 815
+add w24 w13 w10
+rename w8 w28 w3
+add w22 w30 w25
+add w6 w12 w18
+add w8 w21 w16
+add w28 w10 w7
+add w23 w24 w28
+rename w20 w17 w30
+add w38 w4 w25
+tag blue
+add w25 w33 w38
+done 559
+add w23 w1 w29
+add w31 w31 w3
+add w26 w9 w25
+tag blue
+add w2 w9 w34
+add w20 w7 w17
+tag auto
+tag auto
+add w27 w38 w2
+add w2 w0 w0
+add w6 w1 w16
+add w26 w5 w7
+add w18 w26 w39
+rename w31 w29 w17
+add w36 w11 w33
+add w27 w18 w18
+tag red
+tag blue
+add w16 w23 w35
+add w33 w38 w37
+add w28 w34 w22
+select 110
+add w19 w25 w17
+add w12 w2 w14
+select 874
+tag blue
+add w7 w25 w27
+add w36 w2 w6
+add w15 w17 w18
+select 463
+done 742
+select 269
+add w1 w34 w35
+add w27 w36 w8
+add w36 w32 w21
+done 100
+select 461
+rename w10 w19 w31
+add w14 w24 w30
+done 1131
+add w13 w12 w35
+rename w26 w38 w10
+tag auto
+tag red
+add w7 w33 w8
+add w2 w19 w1
+add w20 w5 w37
+add w18 w5 w32
+add w0 w6 w9
+select 657
+done 354
+done 96
+rename w12 w16 w8
+add w28 w35 w3
+done 280
+add w39 w31 w18
+select 527
+select 102
+rename w5 w10 w23
+add w27 w13 w12
+add w34 w21 w7
+add w37 w22 w7
+add w27 w15 w32
+rename w22 w1 w6
+tag blue
+select 340
+add w10 w20 w32
+add w12 w34 w26
+add w5 w4 w5
+done 61
+select 1181
+select 371
+tag red
+select 1163
+add w6 w29 w6
+add w12 w17 w20
+add w26 w20 w35
+select 997
+add w32 w23 w11
+tag auto
+select 361
+rename w33 w21 w20
+rename w39 w1 w5
+add w33 w30 w14
+add w34 w36 w18
+rename w12 w13 w0
+add w11 w8 w19
+add w12 w18 w39
+add w4 w34 w2
+rename w9 w28 w33
+rename w10 w15 w36
+add w8 w31 w37
+select 163
+add w9 w8 w33
+add w35 w8 w28
+select 1003
+add w2 w5 w12
+add w39 w6 w26
+add w26 w20 w13
+add w32 w39 w29
+add w25 w27 w31
+done 663
+tag auto
+add w36 w38 w37
+add w7 w11 w21
+add w3 w7 w23
+tag auto
+add w34 w35 w7
+add w25 w30 w13
+done 1139
+add w28 w11 w3
+add w15 w37 w36
+rename w37 w24 w8
+tag auto
+add w11 w30 w31
+add w1 w23 w0
+add w27 w13 w18
+rename w17 w15 w37
+add w37 w35 w4
+add w14 w36 w7
+add w18 w12 w26
+rename w31 w14 w32
+select 763
+add w21 w4 w23
+add w14 w12 w26
+add w5 w32 w35
+add w27 w3 w27
+done 473
+rename w5 w18 w3
+tag red
+select 1124
+tag blue
+add w6 w3 w3
+add w38 w14 w2
+tag red
+add w37 w25 w31
+add w22 w15 w38
+done 712
+add w24 w23 w10
+select 1054
+add w7 w5 w35
+done 410
+add w13 w9 w15
+done 470
+add w2 w35 w2
+add w28 w23 w9
+add w0 w11 w22
+add w29 w10 w16
+add w10 w28 w36
+select 203
+add w0 w21 w24
+add w35 w10 w19
+add w12 w16 w23
+select 677
+add w2 w35 w13
+add w22 w11 w8
+select 450
+select 99
+add w0 w18 w14
+select 42
+add w28 w1 w8
+tag blue
+add w11 w39 w37
+select 726
+tag red
+add w38 w12 w20
+done 522
+add w34 w13 w5
+done 248
+add w7 w20 w17
+add w28 w15 w22
+add w13 w12 w36
+select 1093
+rename w17 w34 w32
+select 1125
+rename w28 w16 w6
+add w8 w7 w23
+select 709
+add w29 w10 w15
+add w1 w34 w33
+add w16 w3 w3
+add w16 w37 w34
+add w14 w39 w10
+rename w4 w34 w29
+tag red
+add w1 w21 w16
+tag auto
+tag auto
+rename w31 w37 w3
+select 554
+select 998
+add w37 w23 w17
+select 673
+rename w15 w20 w15
+show
+add w20 w37 w34
+select 475
+add w24 w12 w8
+add w25 w16 w18
+tag red
+add w29 w34 w21
+add w10 w32 w31
+add w30 w27 w14
+add w39 w4 w16
+add w12 w14 w13
+add w13 w8 w25
+add w35 w30 w29
+add w6 w3 w15
+add w17 w3 w8
+select 845
+add w7 w1 w0
+add w12 w30 w19
+add w5 w28 w39
+add w13 w17 w17
+select 1299
+select 371
+add w19 w21 w7
+select 278
+add w36 w27 w17
+add w38 w23 w20
+add w13 w8 w0
+select 521
+add w8 w19 w24
+add w33 w37 w38
+add w28 w16 w7
+rename w19 w39 w7
+add w14 w36 w3
+select 622
+add w5 w29 w1
+add w5 w11 w1
+tag red
+add w10 w24 w18
+add w28 w29 w26
+done 413
+add w36 w16 w0
+add w25 w4 w17
+add w14 w18 w13
+tag auto
+rename w12 w1 w3
+add w10 w3 w9
+add w31 w14 w21
+select 522
+add w10 w0 w36
+add w33 w22 w37
+add w11 w16 w38
+add w23 w10 w16
+add w31 w35 w37
+tag blue
+add w11 w26 w14
+add w4 w6 w18
+tag blue
+add w21 w5 w15
+done 719
+add w33 w33 w19
+done 82
+rename w17 w19 w13
+select 1002
+select 1083
+add w6 w34 w22
+select 338
+tag blue
+rename w12 w36 w19
+add w17 w6 w37
+rename w1 w34 w1
+done 1129
+add w13 w13 w4
+done 681
+add w20 w21 w16
+add w31 w20 w13
+add w23 w30 w20
+add w23 w15 w25
+done 1110
+add w10 w2 w5
+undo
+select 565
+add w10 w14 w31
+add w8 w22 w16
+done 437
+tag blue
+select 578
+rename w27 w0 w11
+add w17 w5 w39
+rename w2 w21 w33
+done 1274
+add w27 w24 w16
+add w9 w5 w11
+add w38 w26 w25
+select 2
+add w4 w9 w15
+tag auto
+select 535
+tag auto
+rename w3 w34 w30
+add w12 w14 w35
+tag auto
+select 1047
+add w23 w7 w8
+tag blue
+undo
+rename w21 w13 w37
+rename w24 w20 w13
+done 33
+add w4 w15 w23
+tag auto
+add w12 w2 w21
+add w23 w2 w3
+rename w32 w37 w9
+select 607
+add w9 w34 w4
+add w11 w29 w12
+select 1038
+select 535
+add w29 w8 w7
+add w30 w19 w31
+show
+undo
+add w23 w2 w36
+show
+add w37 w6 w15
+add w15 w9 w38
+add w25 w16 w8
+select 990
+add w14 w39 w28
+add w31 w14 w35
+rename w22 w36 w26
+add w14 w18 w4
+tag blue
+add w22 w0 w4
+rename w30 w35 w12
+tag blue
+select 132
+add w0 w24 w4
+done 801
+select 389
+add w12 w11 w35
+tag red
+add w14 w35 w21
+add w27 w27 w7
+add w12 w22 w24
+rename w13 w5 w17
+rename w1 w10 w14
+add w21 w39 w20
+tag red
+select 488
+add w8 w21 w14
+select 902
+tag red
+select 1096
+done 1144
+tag blue
+select 1329
+add w16 w1 w9
+add w38 w3 w35
+rename w0 w13 w23
+tag red
+add w15 w12 w39
+done 570
+add w29 w38 w1
+undo
+add w32 w1 w16
+rename w28 w15 w18
+done 1139
+add w10 w10 w38
+select 1020
+add w37 w7 w27
+add w7 w19 w0
+done 534
+rename w11 w25 w20
+add w12 w11 w12
+add w20 w15 w17
+tag blue
+add w18 w17 w1
+rename w5 w23 w34
+add w14 w21 w16
+rename w37 w10 w2
+add w37 w11 w37
+add w26 w35 w14
+done 663
+tag red
+done 1374
+select 859
+done 627
+rename w9 w0 w34
+select 742
+done 658
+tag blue
+select 969
+add w12 w12 w15
+select 279
+add w15 w35 w29
+tag blue
+tag blue
+select 437
+tag blue
+show
+rename w38 w33 w29
+rename w39 w23 w39
+select 483
+select 989
+add w12 w37 w13
+select 518
+add w1 w26 w0
+rename w7 w4 w20
+add w13 w25 w28
+add w35 w22 w10
+rename w37 w14 w20
+rename w12 w14 w31
+add w19 w25 w22
+add w8 w16 w35
+add w31 w34 w32
+select 805
+add w27 w17 w38
+select 434
+select 575
+add w19 w27 w29
+rename w10 w24 w4
+add w7 w11 w10
+tag red
+add w26 w28 w37
+add w14 w28 w3
+add w38 w16 w31
+select 260
+add w36 w2 w32
+tag auto
+show
+add w8 w1 w5
+tag blue
+select 139
+add w36 w9 w32
+show
+rename w0 w17 w0
+add w23 w35 w1
+tag auto
+select 140
+add w11 w31 w9
+add w37 w22 w9
+add w9 w36 w7
+add w1 w1 w33
+add w13 w13 w25
+select 744
+rename w26 w0 w17
+select 809
+rename w13 w28 w10
+add w26 w15 w6
+select 189
+tag red
+add w7 w17 w23
+rename w34 w2 w19
+select 254
+rename w14 w7 w7
+rename w17 w12 w31
+add w12 w16 w2
+add w27 w5 w7
+add w10 w9 w35
+add w16 w33 w18
+add w27 w0 w39
+add w17 w36 w30
+select 308
+add w32 w0 w20
+tag blue
+select 589
+select 1350
+add w20 w8 w21
+select 1292
+tag auto
+add w22 w9 w39
+add w4 w15 w4
+rename w22 w1 w12
+add w21 w15 w10
+add w33 w17 w20
+tag red
+tag blue
+add w33 w37 w15
+tag blue
+add w10 w15 w29
+add w6 w21 w2
+add w36 w14 w32
+done 1286
+select 300
+rename w33 w17 w24
+add w17 w38 w33
+tag auto
+add w19 w22 w16
+select 388
+add w35 w21 w36
+rename w8 w5 w30
+tag auto
+rename w6 w10 w30
+add w27 w15 w28
+add w26 w32 w33
+tag red
+add w26 w16 w32
+add w32 w26 w9
+tag auto
+tag red
+add w3 w5 w17
+rename w33 w25 w33
+select 745
+add w0 w5 w13
+select 985
+rename w6 w22 w36
+add w35 w0 w22
+add w1 w28 w6
+show
+select 166
+select 240
+add w21 w31 w6
+add w15 w28 w9
+add w20 w18 w13
+add w21 w18 w25
+add w7 w12 w1
+add w16 w37 w27
+undo
+done 842
+rename w33 w13 w22
+rename w23 w7 w11
+add w6 w29 w17
+rename w34 w12 w20
+add w10 w37 w34
+select 917
+tag red
+tag red
+add w32 w12 w23
+select 1255
+rename w11 w11 w30
+add w23 w23 w31
+select 1354
+done 263
+select 433
+add w32 w18 w36
+add w16 w23 w30
+add w8 w19 w30
+add w28 w32 w6
+add w33 w22 w1
+tag red
+add w16 w14 w33
+tag auto
+add w29 w13 w32
+done 452
+add w7 w7 w38
+add w25 w33 w29
+rename w19 w1 w0
+add w8 w1 w17
+add w30 w32 w1
+add w25 w14 w6
+add w17 w11 w25
+done 694
+add w23 w17 w29
+add w28 w18 w30
+add w0 w32 w31
+add w7 w2 w36
+select 756
+tag red
+add w34 w28 w12
+rename w6 w1 w0
+rename w17 w21 w18
+add w19 w26 w21
+tag auto
+select 584
+add w26 w32 w3
+add w39 w31 w39
+add w23 w36 w39
+tag auto
+add w16 w11 w33
+add w38 w8 w5
+add w14 w20 w29
+rename w20 w22 w26
+add w3 w13 w39
+add w35 w4 w7
+undo
+done 1189
+add w14 w14 w13
+add w6 w7 w4
+add w36 w30 w22
+add w9 w32 w11
+rename w27 w25 w20
+add w8 w26 w21
+add w30 w34 w19
+add w9 w1 w9
+select 839
+done 17
+select 698
+add w6 w38 w11
+add w34 w1 w30
+add w34 w24 w14
+show
+select 487
+add w31 w25 w13
+select 1471
+select 1401
+add w30 w37 w24
+select 1020
+select 338
+add w5 w31 w28
+select 952
+add w6 w14 w11
+add w9 w18 w31
+select 673
+add w8 w29 w2
+add w8 w18 w31
+add w36 w3 w1
+add w0 w38 w20
+rename w13 w7 w37
+done 1299
+select 971
+done 1397
+add w2 w34 w0
+add w17 w35 w20
+tag auto
+tag red
+add w35 w1 w18
+add w11 w27 w24
+add w31 w38 w35
+add w20 w26 w20
+rename w31 w20 w25
+undo
+select 987
+tag auto
+add w36 w27 w37
+add w4 w20 w34
+select 1258
+add w15 w30 w31
+add w34 w30 w23
+add w34 w5 w1
+tag auto
+select 1081
+done 850
+add w12 w38 w37
+add w26 w38 w37
+add w27 w39 w28
+done 1386
+add w8 w33 w31
+done 1269
+rename w32 w1 w31
+tag auto
+add w9 w3 w29
+add w31 w6 w32
+add w9 w12 w16
+select 582
+select 1094
+add w13 w20 w6
+rename w21 w9 w3
+add w29 w37 w15
+tag auto
+done 1092
+done 656
+add w6 w37 w39
+done 1086
+tag red
+tag red
+add w25 w28 w16
+done 1501
+undo
+select 818
+add w1 w3 w39
+add w39 w38 w14
+add w20 w8 w18
+tag blue
+add w25 w22 w10
+add w23 w8 w37
+done 1188
+add w20 w16 w10
+add w39 w17 w5
+rename w25 w10 w2
+add w37 w24 w29
+add w35 w23 w21
+rename w33 w6 w8
+add w18 w9 w21
+rename w32 w25 w13
+add w38 w11 w36
+add w12 w2 w7
+select 1000
+select 1055
+add w20 w15 w4
+add w22 w39 w7
+add w34 w4 w12
+select 201
+tag red
+add w21 w20 w3
+add w21 w14 w12
+add w29 w31 w21
+rename w10 w3 w14
+add w17 w24 w2
+add w15 w21 w21
+rename w15 w16 w37
+rename w25 w27 w32
+add w11 w0 w33
+add w2 w10 w20
+add w38 w13 w29
+add w36 w38 w3
+add w1 w18 w37
+add w38 w3 w0
+add w24 w7 w17
+rename w27 w31 w21
+tag blue
+select 1056
+done 494
+select 262
+add w22 w8 w6
+select 694
+add w4 w28 w13
+tag red
+add w1 w21 w18
+add w33 w35 w21
+add w22 w17 w19
+add w24 w36 w1
+add w7 w32 w8
+add w33 w23 w28
+add w29 w26 w7
+add w8 w6 w34
+select 1502
+add w7 w8 w38
+add w37 w1 w27
+select 1047
+tag auto
+rename w8 w16 w17
+add w19 w10 w37
+add w14 w10 w9
+add w37 w9 w26
+add w22 w22 w4
+tag auto
+select 371
+add w12 w5 w11
+add w30 w39 w31
+add w26 w35 w32
+tag red
+select 832
+add w14 w30 w9
+add w5 w6 w13
+add w35 w37 w0
+add w34 w9 w13
+add w20 w0 w39
+rename w29 w30 w6
+tag blue
+add w21 w21 w36
+add w16 w14 w21
+select 1322
+rename w31 w29 w6
+add w7 w25 w25
+done 393
+add w4 w28 w6
+add w29 w10 w6
+done 1388
+add w38 w19 w21
+select 904
+done 929
+rename w14 w5 w38
+rename w17 w30 w34
+add w22 w17 w1
+select 1117
+done 1297
+rename w27 w39 w24
+add w19 w1 w28
+show
+add w35 w26 w18
+add w38 w3 w7
+add w29 w5 w33
+add w26 w10 w17
+rename w9 w8 w32
+select 1356
+tag red
+select 83
+tag red
+add w11 w4 w15
+add w11 w29 w26
+select 464
+add w26 w9 w22
+rename w35 w13 w11
+add w35 w1 w19
+rename w4 w9 w3
+select 1047
+select 738
+add w25 w8 w31
+add w8 w17 w17
+add w7 w2 w21
+rename w13 w5 w24
+add w7 w8 w34
+done 349
+add w37 w33 w11
+select 267
+done 713
+select 906
+add w10 w37 w30
+add w22 w12 w0
+add w15 w29 w32
+add w21 w1 w8
+add w7 w36 w37
+add w0 w27 w36
+add w2 w36 w1
+tag red
+add w19 w36 w19
+add w26 w31 w8
+add w34 w39 w7
+rename w2 w28 w12
+done 933
+tag red
+select 818
+add w14 w23 w8
+tag blue
+rename w7 w7 w17
+add w31 w33 w29
+select 1222
+add w10 w27 w28
+add w23 w27 w20
+done 1223
+rename w34 w26 w30
+done 504
+done 179
+show
+add w27 w39 w26
+select 23
+add w17 w36 w37
+select 670
+add w8 w1 w23
+select 1422
+done 478
+select 47
+select 913
+add w39 w5 w6
+rename w0 w26 w33
+add w24 w9 w18
+add w17 w27 w34
+add w13 w7 w35
+tag red
+undo
+rename w21 w39 w28
+add w16 w29 w9
+tag auto
+add w6 w31 w27
+select 73
+add w20 w13 w32
+select 1115
+select 922
+tag auto
+rename w24 w37 w20
+add w4 w36 w17
+add w18 w24 w14
+tag red
+add w17 w0 w27
+done 766
+add w7 w18 w12
+rename w17 w7 w0
+done 85
+show
+add w19 w22 w12
+add w2 w34 w0
+select 689
+done 307
+add w13 w35 w27
+tag auto
+select 1434
+select 1501
+select 505
+add w16 w28 w10
+add w1 w15 w22
+tag auto
+select 850
+add w33 w3 w20
+select 1336
+rename w35 w18 w11
+add w38 w32 w4
+select 365
+add w24 w33 w6
+add w31 w2 w35
+add w18 w24 w39
+add w25 w3 w21
+select 64
+add w2 w1 w37
+add w14 w39 w13
+add w21 w20 w23
+rename w17 w24 w35
+add w34 w21 w5
+add w12 w30 w17
+add w14 w24 w14
+add w17 w33 w28
+tag blue
+add w25 w34 w39
+select 1017
+tag red
+done 1392
+tag auto
+tag red
+select 870
+select 764
+tag blue
+tag blue
+add w21 w12 w27
+add w25 w19 w23
+select 1264
+add w13 w34 w0
+tag blue
+add w10 w1 w34
+add w27 w37 w17
+add w25 w25 w12
+done 1390
+add w15 w18 w16
+add w5 w32 w28
+rename w2 w34 w16
+select 502
+add w16 w18 w0
+add w26 w35 w38
+add w39 w18 w24
+add w2 w20 w37
+add w28 w34 w27
+done 136
+add w24 w34 w12
+select 729
+done 80
+add w9 w18 w16
+add w37 w33 w6
+add w33 w26 w22
+add w24 w21 w39
+add w25 w10 w25
+add w3 w21 w26
+select 1153
+done 131
+tag auto
+tag red
+add w38 w17 w26
+add w20 w2 w33
+add w39 w1 w34
+select 800
+tag blue
+rename w4 w31 w14
+add w30 w34 w13
+undo
+add w24 w1 w39
+add w12 w36 w16
+tag red
+rename w36 w29 w18
+add w22 w15 w34
+tag blue
+add w30 w38 w31
+select 590
+add w19 w5 w5
+tag red
+add w25 w32 w33
+done 271
+tag red
+tag blue
+show
+add w33 w3 w16
+add w20 w8 w4
+done 1177
+rename w34 w7 w29
+select 817
+tag red
+add w35 w9 w39
+add w8 w2 w14
+add w30 w16 w11
+add w10 w2 w14
+select 768
+done 980
+add w18 w10 w16
+add w27 w39 w39
+rename w37 w10 w36
+add w25 w2 w35
+add w17 w2 w28
+add w9 w36 w22
+add w3 w3 w11
+tag auto
+select 1585
+add w6 w30 w3
+select 461
+tag blue
+select 976
+select 673
+show
+add w30 w26 w2
+add w20 w17 w22
+add w39 w14 w21
+add w4 w1 w29
+add w7 w8 w15
+add w15 w21 w8
+add w30 w1 w7
+add w5 w0 w26
+rename w8 w33 w37
+add w4 w11 w30
+select 435
+add w29 w25 w22
+tag red
+add w16 w33 w28
+rename w9 w11 w1
+select 1175
+add w27 w30 w23
+add w21 w11 w24
+done 1261
+add w21 w11 w4
+select 1
+select 543
+add w5 w25 w37
+add w11 w35 w5
+add w9 w26 w18
+select 1195
+add w13 w39 w30
+select 1663
+tag auto
+tag blue
+add w6 w36 w26
+add w30 w15 w18
+tag blue
+rename w21 w4 w2
+rename w38 w13 w1
+rename w1 w34 w27
+add w33 w1 w22
+tag auto
+tag red
+done 1121
+tag blue
+select 1216
+add w35 w39 w33
+add w17 w12 w14
+tag auto
+add w35 w27 w32
+done 110
+add w9 w32 w30
+add w30 w36 w7
+add w0 w15 w17
+rename w23 w2 w25
+add w37 w36 w30
+add w18 w37 w5
+add w7 w4 w28
+rename w20 w29 w4
+tag auto
+rename w9 w27 w37
+select 1324
+select 274
+add w25 w39 w20
+add w5 w11 w32
+rename w25 w0 w2
+done 175
+add w25 w20 w2
+add w12 w6 w10
+add w36 w17 w7
+done 1251
+tag blue
+rename w33 w36 w19
+done 641
+select 1219
+add w19 w38 w1
+add w24 w22 w18
+done 1378
+add w20 w1 w16
+select 390
+add w0 w25 w7
+done 1684
+add w5 w7 w31
+tag blue
+rename w34 w25 w19
+tag red
+select 1255
+add w24 w31 w24
+add w21 w15 w11
+add w38 w16 w33
+add w10 w19 w11
+add w27 w39 w24
+select 266
+rename w24 w0 w0
+select 703
+rename w36 w29 w6
+rename w1 w8 w17
+tag red
+select 449
+select 643
+add w6 w13 w20
+tag red
+select 1289
+done 1607
+add w18 w29 w2
+add w37 w19 w11
+add w14 w17 w36
+add w33 w7 w1
+tag auto
+rename w0 w25 w18
+show
+tag red
+add w38 w29 w25
+add w23 w8 w18
+add w14 w28 w31
+done 113
+add w4 w25 w21
+rename w20 w37 w28
+tag auto
+show
+add w1 w8 w15
+select 564
+done 752
+add w15 w38 w16
+select 1197
+add w32 w39 w32
+select 477
+add w33 w29 w28
+select 857
+select 319
+add w22 w2 w36
+add w18 w31 w22
+add w14 w21 w20
+select 906
+select 639
+add w33 w16 w16
+add w19 w37 w27
+add w20 w30 w28
+add w30 w11 w14
+add w7 w15 w13
+done 920
+rename w3 w13 w10
+rename w29 w39 w22
+rename w12 w13 w36
+add w10 w31 w9
+add w3 w12 w34
+rename w21 w17 w13
+tag blue
+tag blue
+select 522
+add w1 w14 w21
+add w30 w27 w34
+add w28 w39 w9
+add w28 w14 w22
+add w27 w20 w8
+select 455
+rename w16 w33 w11
+add w30 w35 w34
+select 1
+add w2 w12 w36
+add w15 w37 w8
+add w38 w38 w36
+add w18 w2 w17
+tag blue
+rename w9 w16 w28
+done 1113
+done 575
+add w24 w15 w1
+rename w2 w5 w36
+tag red
+add w14 w18 w13
+add w23 w30 w0
+select 120
+select 709
+select 572
+tag auto
+select 1156
+rename w8 w23 w27
+select 691
+add w21 w34 w10
+add w15 w24 w33
+add w33 w13 w23
+add w11 w29 w33
+add w21 w29 w21
+select 250
+tag auto
+add w27 w39 w30
+add w1 w31 w30
+add w9 w39 w34
+add w32 w31 w37
+tag red
+add w22 w32 w39
+tag blue
+tag auto
+select 550
+select 280
+select 132
+add w35 w16 w12
+rename w9 w20 w21
+add w12 w0 w17
+done 334
+add w16 w9 w17
+add w37 w37 w2
+add w6 w19 w22
+add w20 w19 w31
+add w2 w37 w37
+add w8 w1 w34
+tag blue
+add w18 w38 w33
+select 1723
+add w16 w34 w23
+done 207
+tag red
+select 1122
+rename w15 w3 w5
+add w24 w15 w31
+tag blue
+done 587
+select 893
+add w1 w15 w6
+add w21 w2 w38
+add w19 w35 w21
+add w19 w11 w19
+add w26 w4 w4
+add w38 w15 w9
+rename w30 w28 w11
+done 292
+add w18 w34 w21
+tag red
+add w4 w1 w7
+done 1575
+add w36 w39 w38
+select 735
+rename w29 w39 w35
+add w13 w32 w16
+add w0 w8 w13
+select 863
+add w35 w4 w16
+add w27 w23 w13
+select 544
+add w11 w30 w0
+add w7 w12 w34
+add w11 w36 w18
+select 269
+add w7 w2 w17
+add w18 w18 w36
+add w31 w22 w39
+rename w0 w15 w13
+rename w7 w3 w39
+select 1150
+add w25 w22 w36
+add w10 w25 w35
+rename w5 w27 w29
+tag auto
+tag red
+select 1011
+add w2 w32 w32
+select 55
+tag red
+add w31 w39 w32
+undo
+add w27 w28 w19
+add w35 w19 w14
+add w6 w36 w13
+select 947
+add w19 w5 w9
+rename w23 w6 w26
+add w22 w29 w36
+undo
+done 906
+select 304
+select 1093
+add w19 w31 w30
+select 437
+add w37 w7 w4
+tag red
+rename w38 w34 w38
+tag auto
+add w20 w24 w7
+add w34 w9 w33
+add w1 w0 w32
+add w29 w30 w6
+tag red
+add w20 w24 w8
+select 1600
+select 894
+tag red
+done 1634
+done 1373
+add w25 w34 w15
+add w13 w3 w8
+tag auto
+add w1 w0 w19
+add w0 w35 w33
+add w3 w10 w31
+add w27 w11 w22
+add w19 w37 w26
+add w20 w1 w21
+add w31 w30 w16
+add w3 w36 w11
+rename w13 w20 w32
+show
+add w11 w26 w38
+add w4 w12 w15
+add w11 w36 w19
+add w34 w36 w15
+add w5 w19 w34
+rename w33 w30 w34
+select 471
+select 253
+rename w11 w17 w4
+add w9 w25 w32
+add w25 w18 w12
+done 1807
+add w33 w26 w1
+add w35 w16 w1
+rename w14 w13 w31
+add w11 w21 w12
+add w20 w36 w17
+add w10 w39 w32
+add w27 w11 w11
+add w16 w37 w26
+tag auto
+add w7 w11 w6
+select 1604
+select 240
+add w4 w31 w26
+done 788
+add w0 w8 w33
+select 1392
+select 797
+add w30 w8 w13
+select 203
+done 1661
+add w19 w9 w0
+select 1757
+add w35 w38 w12
+add w30 w32 w3
+add w3 w11 w22
+tag auto
+add w18 w6 w0
+add w22 w25 w12
+add w11 w16 w16
+add w29 w6 w36
+done 1835
+rename w3 w38 w8
+add w36 w18 w15
+tag blue
+rename w19 w37 w11
+done 1046
+add w31 w24 w8
+select 1737
+select 1716
+add w38 w25 w1
+select 420
+add w17 w34 w5
+undo
+add w22 w25 w1
+done 298
+select 1218
+rename w12 w3 w2
+add w2 w35 w3
+select 1127
+add w10 w33 w8
+rename w9 w16 w23
+select 1130
+done 520
+done 1194
+add w25 w6 w0
+add w15 w2 w12
+done 720
+add w10 w6 w8
+rename w28 w39 w1
+add w7 w11 w28
+add w9 w24 w32
+add w34 w29 w4
+add w35 w39 w15
+select 1601
+done 1019
+select 853
+add w20 w24 w0
+done 52
+undo
+add w39 w20 w34
+add w8 w29 w18
+add w1 w36 w16
+tag red
+add w37 w18 w10
+add w18 w31 w3
+tag red
+done 414
+select 1075
+add w21 w30 w35
+add w22 w39 w27
+add w13 w28 w8
+tag red
+add w19 w14 w11
+select 989
+add w35 w24 w29
+tag red
+add w15 w21 w13
+add w29 w26 w37
+add w0 w17 w15
+select 249
+add w16 w27 w12
+add w4 w9 w8
+add w24 w17 w14
+rename w23 w9 w1
+rename w35 w30 w19
+tag red
+tag red
+add w17 w27 w36
+add w20 w29 w31
+select 1309
+add w21 w4 w19
+add w27 w23 w11
+select 1359
+add w26 w25 w3
+add w3 w6 w28
+rename w38 w28 w0
+rename w38 w5 w4
+add w10 w29 w13
+select 981
+tag blue
+add w35 w39 w14
+add w8 w17 w31
+select 947
+add w13 w24 w38
+add w36 w27 w22
+add w3 w30 w12
+add w12 w9 w30
+done 830
+add w19 w21 w1
+select 1531
+tag auto
+select 871
+add w6 w31 w29
+rename w34 w28 w19
+select 408
+add w29 w10 w1
+add w34 w27 w30
+add w26 w11 w32
+select 81
+add w19 w5 w21
+select 1550
+select 1696
+tag auto
+add w11 w10 w12
+add w25 w25 w12
+add w5 w26 w8
+add w7 w1 w27
+select 797
+add w26 w37 w27
+done 1725
+add w35 w18 w3
+select 115
+done 1284
+select 984
+select 1813
+add w20 w17 w13
+rename w22 w21 w12
+add w35 w33 w35
+select 1369
+tag red
+select 712
+add w13 w0 w17
+select 229
+tag blue
+tag auto
+add w21 w6 w15
+add w1 w6 w2
+select 1350
+rename w18 w18 w39
+rename w27 w33 w19
+add w14 w10 w15
+tag auto
+tag blue
+done 1008
+done 456
+add w15 w16 w39
+add w9 w34 w3
+rename w8 w21 w7
+add w8 w25 w3
+add w21 w29 w32
+select 445
+add w31 w19 w11
+select 1071
+done 1388
+show
+add w37 w34 w27
+add w38 w23 w22
+select 958
+select 1572
+rename w17 w0 w16
+done 1233
+select 77
+rename w19 w2 w38
+add w16 w10 w31
+add w7 w7 w17
+add w18 w39 w2
+rename w16 w37 w30
+rename w0 w33 w32
+select 1887
+select 1278
+add w16 w0 w13
+add w7 w32 w39
+add w27 w35 w4
+add w14 w11 w31
+add w1 w28 w3
+rename w26 w12 w34
+add w29 w25 w20
+add w29 w17 w36
+add w23 w39 w23
+rename w26 w12 w19
+add w10 w4 w21
+add w7 w7 w35
+rename w37 w37 w39
+select 1017
+add w6 w18 w10
+rename w21 w26 w33
+add w15 w3 w22
+rename w20 w3 w0
+select 793
+add w23 w5 w20
+select 54
+add w21 w15 w39
+add w19 w20 w0
+add w28 w12 w28
+select 1170
+add w23 w0 w22
+done 1406
+add w13 w24 w36
+tag red
+add w23 w14 w21
+rename w12 w23 w39
+select 886
+add w23 w8 w33
+add w30 w27 w29
+add w18 w38 w5
+add w25 w13 w13
+tag blue
+add w4 w27 w8
+add w15 w16 w36
+select 466
+tag red
+add w38 w36 w23
+add w9 w1 w33
+select 1061
+add w2 w29 w35
+add w21 w24 w13
+select 1087
+rename w31 w29 w13
+undo
+add w36 w0 w24
+add w30 w4 w16
+select 1201
+add w35 w27 w8
+rename w4 w10 w22
+tag auto
+add w15 w1 w31
+rename w26 w0 w39
+add w21 w34 w31
+add w7 w24 w12
+add w18 w22 w34
+add w30 w1 w0
+add w30 w39 w6
+done 975
+rename w2 w19 w9
+add w6 w36 w29
+tag blue
+add w24 w23 w3
+add w38 w13 w20
+add w25 w2 w14
+add w28 w18 w3
+select 1091
+add w2 w8 w35
+add w39 w29 w27
+tag auto
+tag red
+rename w17 w12 w27
+add w26 w34 w32
+add w8 w32 w18
+add w37 w30 w29
+add w32 w28 w37
+select 1772
+select 166
+add w31 w28 w9
+add w19 w23 w35
+add w35 w20 w4
+tag red
+add w14 w37 w26
+select 1089
+show
+select 1794
+add w9 w35 w2
+select 29
+add w24 w21 w8
+add w23 w8 w21
+add w19 w29 w13
+add w20 w6 w21
+add w22 w6 w20
+add w29 w0 w11
+rename w21 w16 w13
+add w0 w9 w10
+tag red
+add w32 w11 w29
+add w1 w6 w17
+add w3 w0 w16
+done 452
+tag red
+add w6 w28 w18
+select 638
+add w33 w29 w28
+rename w23 w6 w9
+add w24 w29 w28
+rename w37 w23 w4
+add w30 w5 w7
+add w8 w4 w12
+add w20 w19 w33
+tag blue
+add w29 w29 w10
+add w3 w37 w13
+add w19 w34 w19
+tag red
+add w16 w2 w20
+select 357
+tag auto
+add w6 w10 w37
+add w28 w0 w19
+add w36 w16 w34
+add w39 w38 w17
+add w15 w18 w36
+done 1552
+add w10 w37 w5
+add w38 w0 w33
+select 215
+add w9 w10 w17
+add w12 w4 w29
+done 398
+add w1 w38 w19
+select 1605
+done 705
+tag auto
+add w18 w32 w8
+tag blue
+add w1 w34 w10
+select 489
+add w39 w31 w36
+add w14 w34 w39
+tag red
+select 1609
+done 1891
+tag red
+add w26 w14 w3
+add w21 w19 w34
+tag blue
+add w15 w13 w5
+add w16 w18 w27
+add w15 w39 w23
+select 1293
+tag blue
+add w19 w3 w16
+select 1341
+add w13 w27 w23
+tag blue
+add w39 w23 w0
+add w35 w4 w31
+add w1 w6 w37
+done 807
+add w15 w21 w20
+add w27 w35 w38
+add w8 w2 w32
+tag blue
+add w25 w25 w29
+add w38 w17 w1
+rename w4 w8 w11
+add w6 w13 w9
+add w28 w21 w24
+add w6 w34 w19
+show
+select 714
+add w17 w25 w21
+add w22 w9 w18
+rename w15 w30 w9
+add w16 w35 w26
+tag auto
+add w0 w2 w24
+add w10 w15 w22
+select 2
+add w25 w19 w15
+add w36 w18 w13
+add w5 w21 w7
+add w6 w34 w25
+done 645
+select 461
+add w16 w35 w18
+rename w27 w37 w15
+select 1790
+add w19 w6 w30
+tag red
+add w14 w30 w20
+tag auto
+rename w15 w38 w39
+add w20 w13 w4
+add w12 w5 w38
+select 577
+tag auto
+add w34 w26 w35
+tag auto
+rename w29 w35 w34
+select 106
+add w36 w32 w31
+add w10 w31 w8
+tag blue
+add w19 w15 w37
+rename w7 w18 w12
+done 755
+done 824
+done 263
+tag blue
+rename w5 w26 w29
+select 1806
+add w0 w24 w21
+tag red
+done 643
+rename w11 w11 w21
+rename w12 w19 w28
+add w35 w29 w22
+add w39 w0 w17
+add w20 w4 w35
+select 27
+add w35 w1 w27
+add w38 w39 w39
+add w16 w29 w26
+add w18 w21 w0
+add w26 w11 w18
+rename w21 w26 w13
+show
+add w37 w16 w11
+rename w39 w20 w9
+add w28 w15 w2
+show
+add w21 w4 w27
+add w16 w32 w12
+select 1011
+rename w39 w25 w10
+select 1602
+add w4 w38 w38
+add w34 w0 w35
+add w15 w1 w30
+rename w20 w36 w0
+add w11 w12 w37
+tag red
+add w39 w28 w31
+add w18 w33 w9
+add w5 w22 w7
+done 826
+add w13 w10 w29
+add w2 w24 w4
+add w32 w3 w10
+select 1789
+undo
+add w24 w30 w21
+add w16 w0 w36
+add w11 w0 w32
+rename w2 w2 w35
+select 1640
+rename w7 w10 w19
+add w31 w10 w38
+rename w2 w10 w1
+add w4 w0 w24
+add w31 w16 w9
+add w22 w5 w21
+select 1254
+add w10 w6 w20
+tag red
+add w3 w6 w39
+rename w12 w31 w16
+add w15 w24 w16
+add w6 w7 w3
+add w23 w24 w27
+add w18 w33 w14
+add w8 w19 w3
+rename w22 w2 w36
+done 1478
+add w2 w20 w2
+rename w26 w22 w6
+add w27 w2 w13
+add w32 w10 w12
+select 1937
+select 1117
+done 444
+add w13 w14 w25
+select 1945
+add w8 w7 w28
+add w7 w16 w33
+add w39 w23 w32
+add w25 w16 w25
+rename w16 w35 w33
+done 1766
+select 104
+done 292
+rename w32 w31 w11
+tag blue
+add w9 w15 w2
+rename w39 w24 w33
+rename w3 w27 w9
+add w17 w1 w35
+rename w36 w13 w7
+add w6 w39 w15
+done 1980
+rename w10 w7 w30
+add w23 w23 w15
+add w30 w18 w0
+rename w33 w12 w21
+tag blue
+add w14 w39 w16
+rename w0 w17 w31
+select 147
+tag auto
+add w15 w36 w17
+done 1756
+select 884
+rename w33 w34 w35
+add w2 w8 w22
+tag blue
+add w11 w18 w9
+rename w23 w12 w33
+show
+select 1887
+rename w7 w18 w20
+add w1 w14 w36
+select 2040
+add w35 w25 w10
+tag blue
+tag blue
+add w36 w35 w26
+done 1697
+tag red
+rename w25 w16 w37
+add w17 w6 w22
+select 1460
+tag red
+add w10 w22 w30
+select 406
+add w8 w39 w25
+select 2017
+tag red
+add w19 w29 w17
+add w33 w17 w24
+add w19 w33 w6
+add w12 w30 w7
+tag auto
+add w2 w34 w19
+add w20 w33 w2
+add w3 w15 w2
+tag blue
+add w6 w33 w31
+add w19 w0 w31
+add w3 w34 w34
+add w37 w30 w23
+add w3 w9 w5
+add w20 w14 w38
+select 478
+add w8 w31 w26
+rename w19 w18 w21
+add w3 w13 w17
+tag blue
+tag red
+add w31 w4 w32
+rename w13 w11 w37
+done 1117
+add w8 w5 w18
+select 142
+rename w15 w14 w11
+tag blue
+add w8 w15 w13
+select 961
+tag blue
+rename w1 w4 w4
+show
+done 1512
+select 146
+add w32 w22 w13
+add w32 w7 w7
+add w9 w7 w34
+add w32 w6 w31
+add w14 w13 w35
+add w33 w22 w16
+add w33 w33 w20
+add w23 w18 w8
+select 1542
+add w34 w10 w0
+select 1831
+add w37 w9 w27
+add w28 w21 w11
+add w10 w6 w6
+add w1 w30 w11
+rename w0 w17 w5
+add w37 w27 w16
+select 1755
+tag red
+rename w33 w35 w36
+tag blue
+done 1100
+select 282
+tag auto
+add w3 w34 w10
+add w1 w17 w25
+add w22 w30 w35
+select 1443
+select 1934
+select 1478
+add w26 w5 w21
+rename w2 w4 w30
+done 1720
+add w27 w35 w28
+add w5 w39 w22
+add w7 w19 w19
+tag auto
+add w37 w27 w25
+rename w6 w38 w16
+add w1 w26 w14
+add w34 w22 w4
+select 337
+add w16 w29 w8
+tag blue
+add w35 w35 w23
+select 850
+add w15 w16 w8
+rename w12 w6 w34
+select 1848
+add w6 w1 w6
+done 1373
+add w1 w22 w38
+rename w4 w16 w19
+tag red
+add w9 w24 w32
+add w29 w15 w18
+add w24 w18 w23
+add w14 w17 w30
+done 586
+done 311
+tag auto
+rename w20 w13 w38
+done 965
+tag red
+select 2061
+add w18 w28 w18
+rename w25 w16 w20
+add w29 w29 w8
+done 1146
+done 1372
+select 1459
+select 2090
+add w16 w18 w27
+select 72
+select 90
+select 1940
+done 2059
+select 470
+rename w36 w28 w2
+tag auto
+rename w2 w31 w33
+add w34 w13 w2
+add w38 w0 w19
+tag red
+add w14 w7 w13
+select 1391
+add w27 w19 w30
+add w20 w17 w19
+tag auto
+add w6 w37 w17
+add w8 w5 w25
+select 2015
+tag auto
+select 1292
+add w26 w17 w27
+done 1273
+select 1052
+select 410
+rename w28 w25 w2
+rename w21 w8 w37
+rename w11 w37 w15
+add w18 w33 w23
+done 906
+add w28 w0 w15
+add w18 w1 w7
+add w37 w33 w38
+rename w0 w24 w19
+add w35 w39 w8
+tag auto
+add w34 w35 w28
+rename w0 w27 w27
+add w17 w15 w14
+add w15 w20 w7
+select 788
+add w32 w23 w14
+rename w35 w39 w35
+select 2033
+tag blue
+add w16 w39 w30
+rename w18 w3 w30
+tag auto
+add w19 w19 w19
+rename w25 w4 w35
+add w32 w18 w25
+add w11 w36 w37
+select 1913
+rename w32 w4 w30
+add w38 w26 w10
+add w18 w0 w11
+add w15 w21 w30
+select 1246
+select 1966
+select 1078
+rename w23 w3 w0
+select 1749
+tag blue
+add w14 w19 w4
+done 1394
+rename w24 w27 w27
+add w20 w1 w27
+add w8 w8 w9
+add w24 w31 w11
+select 1412
+add w28 w38 w1
+add w34 w18 w10
+tag red
+select 1622
+rename w11 w27 w1
+done 1565
+add w15 w34 w5
+select 269
+add w19 w3 w4
+tag auto
+select 954
+add w13 w10 w29
+done 1193
+add w8 w29 w3
+rename w20 w0 w14
+rename w34 w13 w14
+add w5 w23 w18
+add w0 w21 w33
+add w25 w3 w11
+select 1628
+add w10 w26 w0
+select 1146
+tag blue
+select 2110
+tag red
+add w10 w12 w28
+add w20 w12 w20
+tag blue
+add w11 w9 w33
+add w34 w4 w25
+add w14 w4 w36
+rename w29 w11 w33
+tag red
+select 1675
+rename w1 w0 w36
+add w39 w15 w28
+add w27 w2 w33
+rename w33 w7 w30
+done 1893
+add w3 w5 w24
+show
+tag blue
+rename w16 w14 w22
+add w15 w30 w15
+add w27 w24 w3
+add w24 w31 w39
+add w13 w23 w19
+select 397
+add w15 w24 w35
+add w9 w34 w25
+add w35 w30 w39
+add w9 w37 w0
+add w37 w13 w28
+tag auto
+add w23 w38 w2
+add w3 w0 w31
+add w18 w19 w28
+add w30 w32 w12
+tag auto
+select 204
+tag red
+add w2 w22 w34
+rename w24 w0 w22
+add w26 w38 w29
+add w14 w6 w3
+rename w33 w5 w31
+select 1794
+add w6 w21 w5
+tag red
+add w35 w7 w3
+select 35
+add w39 w37 w24
+add w22 w24 w30
+rename w11 w9 w5
+select 643
+add w26 w26 w10
+add w2 w34 w38
+tag blue
+rename w21 w30 w19
+show
+select 1572
+select 392
+tag red
+add w20 w23 w33
+add w20 w28 w17
+tag auto
+add w34 w10 w31
+add w15 w26 w21
+tag red
+done 2104
+add w1 w22 w8
+select 383
+add w3 w21 w27
+add w29 w6 w9
+add w2 w19 w17
+done 381
+tag red
+add w25 w4 w29
+select 1096
+add w32 w16 w24
+add w21 w13 w4
+add w35 w17 w8
+select 339
+add w7 w27 w32
+add w10 w38 w0
+rename w23 w13 w14
+tag red
+select 939
+add w6 w17 w9
+add w26 w17 w29
+rename w18 w5 w4
+select 1772
+rename w2 w37 w5
+add w9 w37 w22
+rename w4 w22 w28
+add w31 w15 w5
+add w17 w7 w13
+add w8 w36 w19
+rename w22 w19 w0
+select 1858
+add w38 w9 w31
+select 456
+add w1 w36 w36
+add w34 w6 w39
+add w8 w32 w18
+tag red
+add w19 w36 w28
+select 45
+add w11 w0 w1
+add w19 w3 w4
+add w12 w0 w30
+add w29 w9 w19
+add w5 w22 w20
+add w5 w16 w24
+add w32 w36 w14
+add w27 w26 w4
+done 1471
+add w33 w23 w10
+add w23 w1 w39
+add w5 w34 w39
+select 1674
+add w24 w33 w3
+add w25 w18 w0
+add w18 w29 w12
+add w18 w37 w6
+add w13 w4 w36

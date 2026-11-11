@@ -1,0 +1,3632 @@
+// The lexer of Sisu, written in Sisu. It reads standard input and prints the tokens that
+// `sisu build --emit tokens` prints for the same text, one `line:col Kind text` line each.
+// A test compares the two outputs byte for byte. The program follows the clean path only: on text
+// that the compiler's lexer reports an error for, its output is not specified.
+//
+// It has two passes. The first reads each line with `read_line` and walks its `chars()` once. It
+// keeps the tokens in an array, and it decides at each line break whether a `Newline` follows.
+// The second pass judges each run of `;` (ADR 0028) and prints the tokens.
+
+// One variant for each `TokenKind` of the compiler's lexer. A variant has the name that
+// `TokenKind::name()` gives it, so the generated `Display` prints the kind as the dump does.
+enum Kind {
+    Ident
+    Underscore
+    Int
+    Float
+    Char
+    Str
+    StrHead
+    StrMiddle
+    StrTail
+    FormatSpec
+    Fn
+    Let
+    Mut
+    Var
+    Reserved
+    Todo
+    If
+    Else
+    While
+    For
+    Loop
+    In
+    Return
+    Break
+    Continue
+    Class
+    Struct
+    Const
+    Enum
+    Interface
+    Extend
+    Type
+    Match
+    NoneKw
+    Is
+    SelfKw
+    SelfType
+    True
+    False
+    Plus
+    Minus
+    Star
+    StarStar
+    Slash
+    Percent
+    PlusEq
+    MinusEq
+    StarEq
+    SlashEq
+    PercentEq
+    EqEq
+    NotEq
+    Lt
+    Le
+    Gt
+    Ge
+    AndAnd
+    Amp
+    OrOr
+    Bang
+    Eq
+    LParen
+    RParen
+    LBrace
+    RBrace
+    Comma
+    Colon
+    Arrow
+    FatArrow
+    Pipe
+    Dot
+    DotDot
+    DotDotEq
+    LBracket
+    RBracket
+    Semicolon
+    Question
+    QuestionDot
+    QuestionQuestion
+    Newline
+    Eof
+}
+
+// A token as the dump prints it: its kind, its position, and its text as written in the source.
+struct Token: Display {
+    kind: Kind
+    line: i64
+    col: i64
+    text: string
+
+    fn to_string(self) -> string {
+        match self.kind {
+            Newline | Eof => "{self.line}:{self.col} {self.kind}"
+            _ => "{self.line}:{self.col} {self.kind} {self.text}"
+        }
+    }
+}
+
+struct Cell<T> {
+    value: T
+    next: Cell<T>?
+}
+
+struct Stack<T> {
+    head: Cell<T>?
+    size: i64
+
+    fn push(mut self, x: T) {
+        self.head = Cell(value: x, next: self.head)
+        self.size += 1
+    }
+
+    fn pop(mut self) -> T? {
+        if let cell = self.head {
+            self.head = cell.next
+            self.size -= 1
+            cell.value
+        } else {
+            None
+        }
+    }
+
+    fn top(self) -> T? {
+        if let cell = self.head {
+            cell.value
+        } else {
+            None
+        }
+    }
+
+    fn len(self) -> i64 {
+        self.size
+    }
+}
+
+// The cursor over one line: the line's chars, its number, and where the next char is.
+struct Text {
+    cs: [char]
+    line: i64
+    at: i64
+
+    fn peek(self, k: i64) -> char? {
+        let i = self.at + k
+        if i < self.cs.len() {
+            self.cs[i]
+        } else {
+            None
+        }
+    }
+
+    // gap: no marker says that a caller may drop this result, so a call that skips the char is
+    // `let _ = text.next()`.
+    fn next(mut self) -> char? {
+        let c = self.peek(0)
+        self.at += 1
+        c
+    }
+
+    // The chars from `from` up to, but not including, `to`, as a string.
+    fn slice(self, from: i64, to: i64) -> string {
+        string(self.cs[from..to])
+    }
+}
+
+interface CharClass {
+    fn has(self, c: char) -> bool
+}
+
+// gap: a `char` has no classification methods, so these two read the ranges.
+fn is_digit(c: char) -> bool {
+    match c {
+        '0'..='9' => true
+        _ => false
+    }
+}
+
+fn is_alpha(c: char) -> bool {
+    match c {
+        'a'..='z' | 'A'..='Z' => true
+        _ => false
+    }
+}
+
+// ASCII letters, digits and `_`: what a name takes after its first char, and what a prefixed
+// number takes after its prefix.
+struct NameChar: CharClass {
+    fn has(self, c: char) -> bool {
+        is_alpha(c) || is_digit(c) || c == '_'
+    }
+}
+
+struct DigitOrSeparator: CharClass {
+    fn has(self, c: char) -> bool {
+        is_digit(c) || c == '_'
+    }
+}
+
+// Moves the cursor past the chars that `predicate` accepts.
+fn take_while<C: CharClass>(mut text: Text, predicate: C) {
+    while let c = text.peek(0) {
+        if !predicate.has(c) {
+            break
+        }
+        let _ = text.next()
+    }
+}
+
+// gap: the exit code of a panic is 101, and a program cannot set another one.
+fn unexpected(text: Text, at: i64) -> string {
+    "lexer.sisu: unexpected input at {text.line}:{at + 1}"
+}
+
+fn keyword(word: string) -> Kind {
+    match word {
+        "fn" => Kind.Fn
+        "let" => Kind.Let
+        "mut" => Kind.Mut
+        "var" => Kind.Var
+        "import" | "pub" | "record" | "weak" | "test" | "extern" | "as" => Kind.Reserved
+        "todo" => Kind.Todo
+        "if" => Kind.If
+        "else" => Kind.Else
+        "while" => Kind.While
+        "for" => Kind.For
+        "loop" => Kind.Loop
+        "in" => Kind.In
+        "return" => Kind.Return
+        "break" => Kind.Break
+        "continue" => Kind.Continue
+        "class" => Kind.Class
+        "struct" => Kind.Struct
+        "const" => Kind.Const
+        "enum" => Kind.Enum
+        "interface" => Kind.Interface
+        "extend" => Kind.Extend
+        "type" => Kind.Type
+        "match" => Kind.Match
+        "None" => Kind.NoneKw
+        "is" => Kind.Is
+        "self" => Kind.SelfKw
+        "Self" => Kind.SelfType
+        "true" => Kind.True
+        "false" => Kind.False
+        "_" => Kind.Underscore
+        _ => Kind.Ident
+    }
+}
+
+// Moves the cursor past the next char when it is `want`.
+fn eat(mut text: Text, want: char) -> bool {
+    if text.peek(0) == want {
+        let _ = text.next()
+        true
+    } else {
+        false
+    }
+}
+
+// The operator or punctuation that starts with `c`, by longest match.
+fn symbol(c: char, mut text: Text) -> Kind? {
+    match c {
+        '+' => if eat(mut text, '=') { Kind.PlusEq } else { Kind.Plus }
+        '-' => if eat(mut text, '=') {
+            Kind.MinusEq
+        } else if eat(mut text, '>') {
+            Kind.Arrow
+        } else {
+            Kind.Minus
+        }
+        '*' => if eat(mut text, '=') {
+            Kind.StarEq
+        } else if eat(mut text, '*') {
+            Kind.StarStar
+        } else {
+            Kind.Star
+        }
+        '/' => if eat(mut text, '=') { Kind.SlashEq } else { Kind.Slash }
+        '%' => if eat(mut text, '=') { Kind.PercentEq } else { Kind.Percent }
+        '=' => if eat(mut text, '=') {
+            Kind.EqEq
+        } else if eat(mut text, '>') {
+            Kind.FatArrow
+        } else {
+            Kind.Eq
+        }
+        '!' => if eat(mut text, '=') { Kind.NotEq } else { Kind.Bang }
+        '<' => if eat(mut text, '=') { Kind.Le } else { Kind.Lt }
+        '>' => if eat(mut text, '=') { Kind.Ge } else { Kind.Gt }
+        '&' => if eat(mut text, '&') { Kind.AndAnd } else { Kind.Amp }
+        '|' => if eat(mut text, '|') { Kind.OrOr } else { Kind.Pipe }
+        '(' => Kind.LParen
+        ')' => Kind.RParen
+        '{' => Kind.LBrace
+        '}' => Kind.RBrace
+        ',' => Kind.Comma
+        ':' => Kind.Colon
+        '.' => if eat(mut text, '.') {
+            if eat(mut text, '=') { Kind.DotDotEq } else { Kind.DotDot }
+        } else {
+            Kind.Dot
+        }
+        '[' => Kind.LBracket
+        ']' => Kind.RBracket
+        ';' => Kind.Semicolon
+        '?' => if eat(mut text, '.') {
+            Kind.QuestionDot
+        } else if eat(mut text, '?') {
+            Kind.QuestionQuestion
+        } else {
+            Kind.Question
+        }
+        _ => None
+    }
+}
+
+// The opener that a closer closes.
+fn opened_by(kind: Kind) -> char? {
+    match kind {
+        RParen => '('
+        RBracket => '['
+        RBrace => '{'
+        _ => None
+    }
+}
+
+fn opener(kind: Kind) -> char? {
+    match kind {
+        LParen => '('
+        LBracket => '['
+        LBrace => '{'
+        _ => None
+    }
+}
+
+// Whether a line break after a token of this kind ends a statement (Go's rule).
+fn can_end_statement(kind: Kind) -> bool {
+    match kind {
+        Ident | Underscore | Int | Float | Char | Str | StrTail | True | False | Return | Todo |
+        Break | Continue | NoneKw | SelfKw | SelfType | Question | RParen | RBracket |
+        RBrace => true
+        _ => false
+    }
+}
+
+// Whether a token of this kind starts a header, which a `}` ends.
+fn declares(kind: Kind) -> bool {
+    match kind {
+        Fn | Class | Enum | Interface | Extend => true
+        _ => false
+    }
+}
+
+// Whether a line break may follow a token of this kind inside an open bound list.
+fn ends_in_list(kind: Kind) -> bool {
+    match kind {
+        Ident | Gt | RBracket | Question | QuestionQuestion | SelfType => true
+        _ => false
+    }
+}
+
+// Whether a line that starts with a token of this kind goes on with an open bound list. A `.`
+// that goes on is `QuestionDot` or `Dot`, which every line continues.
+fn goes_on_in_list(kind: Kind) -> bool {
+    match kind {
+        Ident | Comma | Colon | RBracket | Question | QuestionQuestion | Amp | Gt => true
+        _ => false
+    }
+}
+
+// What the first token of a statement was, and whether the statement may take a bound list.
+enum Head {
+    Unseen
+    Plain
+    Declaration
+}
+
+enum Start {
+    Unseen
+    TypeWord
+    Other
+}
+
+// What the tokens of a statement so far, outside its closed brackets, show. The compiler's lexer
+// keeps the same facts in its `Statement`.
+struct Statement {
+    head: Head
+    // After its last `:` or `->` that no `=` follows, how many more `>` than `<` there are.
+    annotation: i64?
+    tokens: i64
+    // Whether a bound list is open, and how many `<` of a bound's arguments are open in it.
+    params: bool
+    nested: i64
+    first: Start
+    grouped: bool
+
+    // Counts a token of `kind` into the bound list that is open, and tells whether the list was
+    // open before it.
+    fn keep_list_open(mut self, kind: Kind) -> bool {
+        let opened = self.params
+        let stays = match kind {
+            Ident | Comma | Colon | Amp | Lt | LBracket | RBracket | Dot | Question |
+            QuestionQuestion | SelfType => true
+            Gt => self.nested > 0
+            _ => false
+        }
+        self.params = opened && stays
+        opened
+    }
+}
+
+// gap: the parameters of a constructor have no defaults, so `fresh()` lists every field.
+fn fresh() -> Statement {
+    Statement(head: Head.Unseen, annotation: None, tokens: 0, params: false, nested: 0,
+        first: Start.Unseen, grouped: false)
+}
+
+// Reads the tokens in order and keeps the statement that they end in, one for each open
+// bracket.
+struct Tracker {
+    current: Statement
+    enclosing: Stack<Statement>
+    prev: Kind
+
+    // Whether a `>` or `??` that ends the tokens closes a type annotation.
+    fn annotates(self) -> bool {
+        self.current.annotation == 0
+    }
+
+    fn feed(mut self, kind: Kind) {
+        if self.current.first == Start.Unseen {
+            self.current.first = if kind == Kind.Type {
+                Start.TypeWord
+            } else {
+                Start.Other
+            }
+        }
+        if self.current.head == Head.Unseen {
+            self.current.head = if declares(kind) { Head.Declaration } else { Head.Plain }
+        }
+        self.current.tokens += 1
+        let opened = self.current.keep_list_open(kind)
+        match kind {
+            LBrace | LParen | LBracket | StrHead => {
+                let block = kind == Kind.LBrace
+                self.enclosing.push(self.current)
+                let head = if block { Head.Unseen } else { self.current.head }
+                let first = if block { Start.Unseen } else { self.current.first }
+                self.current = Statement(head: head, annotation: None, tokens: 0, params: false,
+                    nested: 0, first: first, grouped: !block)
+            }
+            RBrace | RParen | RBracket | StrTail => {
+                let around = self.enclosing.pop() ?? fresh()
+                // The `}` that ends the body of a declaration ends the item.
+                let ends_item = kind == Kind.RBrace && around.head == Head.Declaration
+                self.current = if ends_item && !around.grouped { fresh() } else { around }
+            }
+            Newline | Semicolon => {
+                self.current = fresh()
+            }
+            Colon | Arrow => {
+                self.current.annotation = 0
+                if kind == Kind.Colon {
+                    self.open_bounds(opened)
+                }
+            }
+            Eq | Ge | While | For | Loop => {
+                // The first `=` of `type Item = ...` or `type P<T> = ...` starts the type of an
+                // associated type's choice or of an alias.
+                let chooses = kind == Kind.Eq && self.current.annotation == None && self.current.first == Start.TypeWord
+                self.current.annotation = if chooses { 0 } else { None }
+            }
+            Gt => {
+                if let a = self.current.annotation {
+                    self.current.annotation = a + 1
+                }
+                if self.current.params {
+                    self.current.nested -= 1
+                }
+            }
+            Lt => {
+                if let a = self.current.annotation {
+                    self.current.annotation = a - 1
+                }
+                if self.current.params {
+                    self.current.nested += 1
+                } else {
+                    self.current.params = self.current.head == Head.Declaration && opens_list(self.prev, self.current.tokens)
+                }
+            }
+            _ => {}
+        }
+        self.prev = kind
+    }
+
+    // Reads the `:` that was just counted. In an open list it starts the bounds of a parameter.
+    // Outside one, the `:` of a `type Item:` opens the list of its bounds.
+    fn open_bounds(mut self, in_list: bool) {
+        let in_bounds = in_list && self.current.nested == 0
+        if !in_bounds && self.current.tokens == 3 && self.prev == Kind.Ident && self.current.first == Start.TypeWord {
+            self.current.params = true
+        }
+    }
+}
+
+// Whether a `<` after `prev`, the `tokens`th token of a header, opens its type-parameter list.
+fn opens_list(prev: Kind, tokens: i64) -> bool {
+    match prev {
+        Ident => tokens == 3
+        Extend => tokens == 2
+        _ => false
+    }
+}
+
+// A `;` that separates statements, which the second pass judges.
+struct Semi {
+    // Where its token stands among the tokens.
+    at: i64
+    // Whether it stands between top-level items, after a `fn`, `class`, `enum`, `interface` or
+    // `extend`.
+    between_items: bool
+    // Whether a `>` or `??` before it closes a type annotation.
+    annotates: bool
+}
+
+// A `Newline` that a line break may leave: the next token can still go on with the line.
+struct Pending {
+    line: i64
+    col: i64
+    // Whether an open bound list lets the line go on with a name, `,`, `:`, `&`, `>`, `]` or `?`.
+    params: bool
+}
+
+// Skips the rest of an escape after its `\`: the char after it, and for `\u{...}` the digits
+// through the `}`.
+fn skip_escape(mut text: Text, start: i64) {
+    let c = text.next() ?? panic(unexpected(text, start))
+    if c == 'u' && text.peek(0) == '{' {
+        while let d = text.next() {
+            if d == '}' {
+                break
+            }
+        }
+    }
+}
+
+// Whether a float literal goes on after its digits: a fraction, an exponent, or both.
+fn float_rest(mut text: Text) -> bool {
+    let mut float = false
+    if text.peek(0) == '.' && is_digit(text.peek(1) ?? ' ') {
+        let _ = text.next()
+        take_while(mut text, DigitOrSeparator())
+        float = true
+    }
+    if text.peek(0) == 'e' || text.peek(0) == 'E' {
+        let _ = text.next()
+        if text.peek(0) == '+' || text.peek(0) == '-' {
+            let _ = text.next()
+        }
+        take_while(mut text, DigitOrSeparator())
+        float = true
+    }
+    float
+}
+
+// The first pass. It reads the lines and keeps their tokens, with the `Newline`s that line breaks
+// leave.
+struct Lexer {
+    tokens: [Token]
+    semis: [Semi]
+    // The open brackets, innermost on top. An interpolation's `{` is the char `"`.
+    open: Stack<char>
+    interps: i64
+    tracker: Tracker
+    // How many `;` that separate statements end the tokens, which the tracker has not read.
+    trailing: i64
+    // Whether the top-level item so far is a `fn`, `class`, `enum`, `interface` or `extend`. Such
+    // an item ends at its `}`. A `const` or a `type` ends at a line break.
+    self_ending: bool
+    // The kind of the last token that is not a `;`.
+    last_code: Kind
+    pending: Pending?
+
+    // Whether the innermost open bracket is a block's `{`, or there is none.
+    fn in_block(self) -> bool {
+        match self.open.top() {
+            Some(c) => c == '{'
+            None => true
+        }
+    }
+
+    // Whether a `}` or `:` now ends the expression of the innermost interpolation.
+    fn at_end(self) -> bool {
+        self.open.top() == '"'
+    }
+
+    // Adds a token that the source holds. A `Newline` that the last line break left goes in first,
+    // unless this token goes on with the line.
+    fn push(mut self, kind: Kind, text: Text, start: i64, spelled: string) {
+        if let p = self.pending {
+            self.pending = None
+            let goes_on = kind == Kind.Dot || kind == Kind.QuestionDot ||
+                p.params && goes_on_in_list(kind)
+            if !goes_on {
+                self.put(Kind.Newline, p.line, p.col, "")
+            }
+        }
+        self.put(kind, text.line, start + 1, spelled)
+    }
+
+    // Adds a token to the tokens, and tells the tracker.
+    fn put(mut self, kind: Kind, line: i64, col: i64, spelled: string) {
+        let separator = kind == Kind.Semicolon && self.in_block()
+        if self.open.len() == 0 {
+            if declares(kind) {
+                self.self_ending = true
+            } else if kind == Kind.Const || kind == Kind.Type {
+                self.self_ending = false
+            }
+        }
+        if separator {
+            let between_items = self.open.len() == 0 && self.self_ending
+            let at = self.tokens.len()
+            self.semis.push(Semi(at: at, between_items: between_items,
+                annotates: self.tracker.annotates()))
+            self.trailing += 1
+        } else {
+            // The `;`s before this token end the statement, whatever the first of them does.
+            if self.trailing > 0 {
+                self.tracker.feed(Kind.Semicolon)
+            }
+            self.tracker.feed(kind)
+            self.trailing = 0
+        }
+        if kind != Kind.Semicolon {
+            self.last_code = kind
+        }
+        self.tokens.push(Token(kind: kind, line: line, col: col, text: spelled))
+    }
+
+    // Whether a line break here ends a statement. The token before the `;`s that end the tokens
+    // must be one that can end a statement. The innermost open bracket must be a block's `{`.
+    fn ends_statement(self) -> bool {
+        let n = self.tokens.len()
+        if n <= self.trailing || !self.in_block() {
+            return false
+        }
+        let last = self.tokens[n - self.trailing - 1].kind
+        can_end_statement(last) ||
+            (last == Kind.Gt || last == Kind.QuestionQuestion) && self.tracker.annotates()
+    }
+
+    // The end of a line, whose text is `text`. The `Newline` goes at the column after the text.
+    fn line_break(mut self, text: Text) {
+        if self.interps > 0 {
+            panic(unexpected(text, text.cs.len()))
+        }
+        if self.pending == None && self.ends_statement() {
+            let n = self.tokens.len()
+            let in_list = self.trailing == 0 && ends_in_list(self.tokens[n - 1].kind)
+            let params = in_list && self.tracker.current.params
+            self.pending = Pending(line: text.line, col: text.cs.len() + 1, params: params)
+        }
+    }
+
+    fn lex_line(mut self, mut text: Text) {
+        while let c = text.peek(0) {
+            if c == ' ' || c == '\t' || c == '\r' {
+                let _ = text.next()
+            } else if c == '/' && text.peek(1) == '/' {
+                text.at = text.cs.len()
+            } else if is_alpha(c) || c == '_' {
+                self.name(mut text)
+            } else if is_digit(c) {
+                self.number(mut text)
+            } else if c == '\'' {
+                self.char_literal(mut text)
+            } else if c == '"' {
+                self.string_part(mut text, false)
+            } else if (c == '}' || c == ':') && self.at_end() {
+                if c == '}' {
+                    self.string_part(mut text, true)
+                } else {
+                    self.format_spec(mut text)
+                }
+            } else {
+                self.operator(mut text)
+            }
+        }
+        self.line_break(text)
+    }
+
+    fn name(mut self, mut text: Text) {
+        let start = text.at
+        take_while(mut text, NameChar())
+        let word = text.slice(start, text.at)
+        self.push(keyword(word), text, start, word)
+    }
+
+    fn number(mut self, mut text: Text) {
+        let start = text.at
+        let first = text.cs[start]
+        let _ = text.next()
+        // A digit run after a `.` is a tuple index or a fraction. The parser reads it. No fraction
+        // and no exponent goes on after it.
+        let after_dot = self.last_code == Kind.Dot || self.last_code == Kind.QuestionDot
+        let p = text.peek(0)
+        let prefixed = first == '0' &&
+            (p == 'x' || p == 'X' || p == 'b' || p == 'B' || p == 'o' || p == 'O')
+        let mut float = false
+        if prefixed {
+            let _ = text.next()
+            take_while(mut text, NameChar())
+        } else {
+            take_while(mut text, DigitOrSeparator())
+            if !after_dot {
+                float = float_rest(mut text)
+            }
+        }
+        let kind = if float { Kind.Float } else { Kind.Int }
+        self.push(kind, text, start, text.slice(start, text.at))
+    }
+
+    fn char_literal(mut self, mut text: Text) {
+        let start = text.at
+        let _ = text.next()
+        loop {
+            let c = text.next() ?? panic(unexpected(text, start))
+            if c == '\'' {
+                break
+            }
+            if c == '\\' {
+                skip_escape(mut text, start)
+            }
+        }
+        self.push(Kind.Char, text, start, text.slice(start, text.at))
+    }
+
+    // The text of a string literal. It starts at the `"`, or, when `resumed`, at the `}` that ends
+    // an interpolation. It ends at the closing `"` or at the `{` that opens an interpolation.
+    fn string_part(mut self, mut text: Text, resumed: bool) {
+        let start = text.at
+        let _ = text.next()
+        if resumed {
+            let _ = self.open.pop()
+            self.interps -= 1
+        }
+        let mut brace = false
+        loop {
+            let c = text.next() ?? panic(unexpected(text, start))
+            if c == '"' {
+                break
+            }
+            if c == '{' {
+                brace = true
+                break
+            }
+            if c == '\\' {
+                skip_escape(mut text, start)
+            }
+        }
+        // gap: a `match` takes no tuple pattern, so the two flags are two nested `if`s.
+        let kind = if brace {
+            if resumed { Kind.StrMiddle } else { Kind.StrHead }
+        } else {
+            if resumed { Kind.StrTail } else { Kind.Str }
+        }
+        if brace {
+            self.open.push('"')
+            self.interps += 1
+        }
+        self.push(kind, text, start, text.slice(start, text.at))
+    }
+
+    // The format spec after the `:` that ends an interpolation's expression: up to the `}` that
+    // ends the interpolation, which is not part of it. A `{` in the spec opens a pair, and a `\`
+    // is an ordinary char.
+    fn format_spec(mut self, mut text: Text) {
+        let start = text.at
+        let mut pairs = 0
+        loop {
+            let c = text.peek(0) ?? panic(unexpected(text, start))
+            if c == '"' {
+                panic(unexpected(text, start))
+            }
+            if c == '}' && pairs == 0 {
+                break
+            }
+            if c == '{' {
+                pairs += 1
+            } else if c == '}' {
+                pairs -= 1
+            }
+            let _ = text.next()
+        }
+        self.push(Kind.FormatSpec, text, start, text.slice(start, text.at))
+    }
+
+    fn operator(mut self, mut text: Text) {
+        let start = text.at
+        let c = text.next() ?? panic(unexpected(text, start))
+        let kind = symbol(c, mut text) ?? panic(unexpected(text, start))
+        if let bracket = opener(kind) {
+            self.open.push(bracket)
+        } else if let bracket = opened_by(kind) {
+            let top = self.open.pop() ?? panic(unexpected(text, start))
+            if top != bracket {
+                panic(unexpected(text, start))
+            }
+        }
+        self.push(kind, text, start, text.slice(start, text.at))
+    }
+
+    // The end of the input: no bracket is open, and a `Newline` that the last line break left
+    // stays.
+    fn finish(mut self, text: Text) {
+        if self.open.len() > 0 {
+            panic(unexpected(text, text.cs.len()))
+        }
+        if let p = self.pending {
+            self.pending = None
+            self.put(Kind.Newline, p.line, p.col, "")
+        }
+    }
+}
+
+enum Judgement {
+    Separator
+    Redundant
+    Kept
+}
+
+// What becomes of the first `;` of the run `tokens[i..end]`, in statement context. A `;` that
+// separates two statements prints as a `Newline`, a redundant one prints nothing, and any other
+// one prints as a `;`.
+fn judge(tokens: [Token], i: i64, end: i64, semi: Semi) -> Judgement {
+    let first = tokens[i]
+    let has_prev = i > 0
+    let prev = if has_prev { tokens[i - 1].kind } else { Kind.Newline }
+    let has_next = end < tokens.len()
+    let next = if has_next { tokens[end].kind } else { Kind.Eof }
+    let break_before = !has_prev || prev == Kind.Newline || tokens[i - 1].line != first.line
+    let break_after = !has_next || next == Kind.Newline || tokens[end].line != first.line
+    // A `>` or `??` that closes a type annotation ends a statement, as at a line's end.
+    let ends = has_prev && (can_end_statement(prev) ||
+        (prev == Kind.Gt || prev == Kind.QuestionQuestion) && semi.annotates)
+    if next == Kind.Dot || next == Kind.QuestionDot {
+        // Without the `;`, the line break before the `.` would continue the line.
+        if ends && !break_before {
+            Judgement.Separator
+        } else {
+            Judgement.Kept
+        }
+    } else if has_prev && !ends && prev != Kind.LBrace && prev != Kind.Newline && !break_before {
+        // Without the `;`, the lines would join into a different statement.
+        Judgement.Kept
+    } else if next == Kind.Else || break_before || break_after || prev == Kind.LBrace ||
+        next == Kind.RBrace || semi.between_items && starts_item(next) {
+        Judgement.Redundant
+    } else if semi.between_items && prev != Kind.RBrace && next == Kind.LBrace {
+        // The `;` cuts an item's header, and no item starts with `{`.
+        Judgement.Kept
+    } else {
+        Judgement.Separator
+    }
+}
+
+// Whether a token of this kind starts a top-level item, which needs no `;` before it.
+fn starts_item(kind: Kind) -> bool {
+    declares(kind) || kind == Kind.Const || kind == Kind.Type
+}
+
+// The second pass: collects the tokens, and the `Eof` after the last one that is not a `Newline`.
+struct Printer {
+    out: [Token]
+    eof_line: i64
+    eof_col: i64
+
+    fn show(mut self, t: Token) {
+        self.out.push(t)
+        if t.kind != Kind.Newline {
+            self.eof_line = t.line
+            self.eof_col = t.col + t.text.chars().len()
+        }
+    }
+}
+
+fn separate(tokens: [Token], semis: [Semi]) -> [Token] {
+    let mut printer = Printer(out: [], eof_line: 1, eof_col: 1)
+    let mut i = 0
+    let mut k = 0
+    while i < tokens.len() {
+        let t = tokens[i]
+        if t.kind == Kind.Semicolon && k < semis.len() && semis[k].at == i {
+            let mut end = i
+            while end < tokens.len() && tokens[end].kind == Kind.Semicolon {
+                end += 1
+            }
+            let verdict = judge(tokens, i, end, semis[k])
+            if verdict == Judgement.Separator {
+                printer.show(Token(kind: Kind.Newline, line: t.line, col: t.col, text: ""))
+            } else if verdict == Judgement.Kept {
+                printer.show(t)
+            }
+            k += end - i
+            i = end
+        } else {
+            printer.show(t)
+            i += 1
+        }
+    }
+    printer.out.push(Token(kind: Kind.Eof, line: printer.eof_line, col: printer.eof_col, text: ""))
+    printer.out
+}
+
+// Reads standard input and returns its tokens.
+fn lex_stdin() -> [Token] {
+    let tracker = Tracker(current: fresh(), enclosing: Stack(head: None, size: 0),
+        prev: Kind.Newline)
+    let mut lexer = Lexer(tokens: [], semis: [], open: Stack(head: None, size: 0), interps: 0,
+        tracker: tracker, trailing: 0, self_ending: false, last_code: Kind.Newline,
+        pending: None)
+    let mut last = Text(cs: [], line: 1, at: 0)
+    let mut line = 0
+    while let row = read_line() {
+        line += 1
+        last = Text(cs: row.chars(), line: line, at: 0)
+        lexer.lex_line(mut last)
+    }
+    lexer.finish(last)
+    separate(lexer.tokens, lexer.semis)
+}
+
+// ---- The parser part starts here. ----
+
+// ---- Text helpers. They are the same in both versions. ----
+
+fn hex_digit(c: char) -> i64 {
+    match c {
+        '0'..='9' => i64(c) - 48
+        'a'..='f' => i64(c) - 87
+        'A'..='F' => i64(c) - 55
+        _ => -1
+    }
+}
+
+fn hex_text(v: i64) -> string {
+    let digits = "0123456789abcdef".chars()
+    if v < 16 {
+        return string([digits[v]])
+    }
+    hex_text(v / 16) + string([digits[v % 16]])
+}
+
+// The value of an integer literal as written: decimal, or `0x`, `0b` or `0o`; `_` separates.
+fn int_value(text: string) -> i64 {
+    let cs = text.chars()
+    let mut radix = 10
+    let mut i = 0
+    if cs.len() > 2 && cs[0] == '0' {
+        match cs[1] {
+            'x' | 'X' => {
+                radix = 16
+                i = 2
+            }
+            'b' | 'B' => {
+                radix = 2
+                i = 2
+            }
+            'o' | 'O' => {
+                radix = 8
+                i = 2
+            }
+            _ => {}
+        }
+    }
+    let mut v = 0
+    while i < cs.len() {
+        if cs[i] != '_' {
+            v = v * radix + hex_digit(cs[i])
+        }
+        i += 1
+    }
+    v
+}
+
+// The chars `cs[from..to]` of a literal, with each escape decoded.
+fn unescape(cs: [char], from: i64, to: i64) -> string {
+    let mut out: [char] = []
+    let mut i = from
+    while i < to {
+        let c = cs[i]
+        if c == '\\' {
+            i += 1
+            let e = cs[i]
+            match e {
+                'n' => out.push('\n')
+                't' => out.push('\t')
+                'r' => out.push('\r')
+                '0' => out.push('\0')
+                'u' => {
+                    i += 2
+                    let mut v = 0
+                    while cs[i] != '}' {
+                        v = v * 16 + hex_digit(cs[i])
+                        i += 1
+                    }
+                    out.push(char(v) ?? '?')
+                }
+                _ => out.push(e)
+            }
+        } else {
+            out.push(c)
+        }
+        i += 1
+    }
+    string(out)
+}
+
+// The text of a literal piece without its first and last char: `"..."`, `'.'`, and the pieces
+// of an interpolated string.
+fn inner_text(text: string) -> string {
+    let cs = text.chars()
+    unescape(cs, 1, cs.len() - 1)
+}
+
+// Rust's `{:?}` of a string or a char: the text in `quote`, with the escapes that it writes.
+fn debug_text(s: string, quote: char) -> string {
+    let mut out: [char] = [quote]
+    for c in s.chars() {
+        let code = i64(c)
+        if c == quote || c == '\\' {
+            out.push('\\')
+            out.push(c)
+        } else if c == '\n' {
+            out.push('\\')
+            out.push('n')
+        } else if c == '\t' {
+            out.push('\\')
+            out.push('t')
+        } else if c == '\r' {
+            out.push('\\')
+            out.push('r')
+        } else if c == '\0' {
+            out.push('\\')
+            out.push('0')
+        } else if code < 32 || code == 127 {
+            for d in ("\\u\{" + hex_text(code) + "\}").chars() {
+                out.push(d)
+            }
+        } else {
+            out.push(c)
+        }
+    }
+    out.push(quote)
+    string(out)
+}
+
+// The text that Rust's `{:?}` writes for the float literal `text`: the shortest digits, a `.0`
+// when there is no fraction, and an exponent below 1e-4 and from 1e16. The digits are the ones
+// written, so a literal that is not the shortest text of its value prints wrong.
+fn float_text(text: string) -> string {
+    let mut digits: [char] = []
+    let mut point = 0
+    let mut seen_point = false
+    let mut exp = 0
+    let mut exp_neg = false
+    let cs = text.chars()
+    let mut i = 0
+    while i < cs.len() {
+        let c = cs[i]
+        if c == '_' {
+            // A separator adds no digit.
+        } else if c == '.' {
+            seen_point = true
+        } else if c == 'e' || c == 'E' {
+            i += 1
+            if cs[i] == '-' {
+                exp_neg = true
+                i += 1
+            } else if cs[i] == '+' {
+                i += 1
+            }
+            while i < cs.len() {
+                exp = exp * 10 + hex_digit(cs[i])
+                i += 1
+            }
+            break
+        } else {
+            digits.push(c)
+            if !seen_point {
+                point += 1
+            }
+        }
+        i += 1
+    }
+    if exp_neg {
+        exp = -exp
+    }
+    point += exp
+    // Drop the leading zeros, and the trailing ones.
+    let mut start = 0
+    while start < digits.len() && digits[start] == '0' {
+        start += 1
+        point -= 1
+    }
+    let mut end = digits.len()
+    while end > start && digits[end - 1] == '0' {
+        end -= 1
+    }
+    if start == end {
+        return "0.0"
+    }
+    let sig = digits[start..end]
+    let n = sig.len()
+    // The value is 0.d1d2...dn * 10^point.
+    let e10 = point - 1
+    if e10 < -4 || e10 >= 16 {
+        let mut s = string([sig[0]])
+        if n > 1 {
+            s += "." + string(sig[1..n])
+        }
+        return s + "e{e10}"
+    }
+    if point <= 0 {
+        let mut zeros = ""
+        let mut k = point
+        while k < 0 {
+            zeros += "0"
+            k += 1
+        }
+        return "0." + zeros + string(sig)
+    }
+    if n <= point {
+        let mut zeros = ""
+        let mut k = n
+        while k < point {
+            zeros += "0"
+            k += 1
+        }
+        return string(sig) + zeros + ".0"
+    }
+    string(sig[0..point]) + "." + string(sig[point..n])
+}
+
+// ---- The syntax tree, in an arena. A link is an `Id`, which a slot's generation checks. ----
+
+struct Id {
+    index: i64
+    generation: i64
+}
+
+fn same(a: Id, b: Id) -> bool {
+    a.index == b.index && a.generation == b.generation
+}
+
+struct Slot<T> {
+    value: T
+    live: bool
+    generation: i64
+}
+
+// gap: a generic arena cannot hand out a place, so a caller writes a field of a node through
+// `slots[arena.at(id)].value`.
+struct Arena<T> {
+    slots: [Slot<T>]
+    free: [i64]
+    free_len: i64
+
+    fn add(mut self, value: T) -> Id {
+        if self.free_len > 0 {
+            self.free_len -= 1
+            let i = self.free[self.free_len]
+            self.slots[i].value = value
+            self.slots[i].live = true
+            return Id(index: i, generation: self.slots[i].generation)
+        }
+        self.slots.push(Slot(value: value, live: true, generation: 0))
+        Id(index: self.slots.len() - 1, generation: 0)
+    }
+
+    fn is_live(self, id: Id) -> bool {
+        id.index >= 0 && id.index < self.slots.len() && self.slots[id.index].live &&
+            self.slots[id.index].generation == id.generation
+    }
+
+    // The slot of a live id. A stale id stops the program.
+    fn at(self, id: Id) -> i64 {
+        if !self.is_live(id) {
+            panic("stale id {id.index}/{id.generation}")
+        }
+        id.index
+    }
+
+    fn remove(mut self, id: Id) {
+        let i = self.at(id)
+        self.slots[i].live = false
+        self.slots[i].generation += 1
+        if self.free_len == self.free.len() {
+            self.free.push(i)
+        } else {
+            self.free[self.free_len] = i
+        }
+        self.free_len += 1
+    }
+}
+
+// What a node is. `Node.children` holds the same positions for a kind in the parser, the dump and
+// the resolver:
+//   Program: items
+//   Fn: [type params, params, return type or Empty, body]; text name, flag has self
+//   Param: [type]; text name, flag mut
+//   TypeParam: bounds; text name
+//   Class: [type params, interfaces, associated types, members]; text name
+//   Field: [type]; text name, flag mut
+//   AssocChoice: [type]; text name
+//   Enum: [type params, interfaces, associated types, variants, methods]; text name
+//   Variant: payload fields; text name, flag has payload
+//   PayloadField: [type]; text label, flag has label
+//   Interface: [type params, inherited, associated types, requirements]; text name
+//   AssocType: bounds; text name
+//   Requirement: [type params, params, return type or Empty]; text name
+//   Extend: [type params, target, interface or Empty, associated types, methods]
+//   Const: [type or Empty, value]; text name
+//   Alias: [params as Ident, type]; text name
+//   TName, TApplied (args), TArray [element], TSelf, TMember [base], TAny [interface]:
+//     text name, n the count of `?`
+//   Let: [type or Empty, init]; text name, flag mut
+//   LetElse: [pattern, value, else block or Empty]; flag mut
+//   While: [cond, body]; aux label
+//   WhileLet: [pattern, value, body]; aux label
+//   For: [source, body]; text variable, aux label
+//   Assign, CompoundAssign: [target, value]; text op
+//   LitInt (n value), LitFloat, LitBool, LitChar, LitStr: text decoded
+//   Interp: parts; Fmt: [value]; text spec
+//   Name; Call: [type args, args]; text callee; Arg: [value]; text label, flag mut
+//   Applied: type args; text name; Todo: args; SelfValue; NoneLit
+//   Access: [base]; text name, flag safe
+//   MethodCall: [receiver, type args, args]; text method, flag safe
+//   Unary, Binary: operands; text op. Compare: operands; text the operators
+//   Coalesce, Is: [lhs, rhs]; ArrayLit: elements; ArrayFill: [value, len]; Index: [base, index]
+//   Range: [start or Empty, end or Empty]; flag inclusive
+//   If: [cond, then, else or Empty]; IfLet: [pattern, value, then, else or Empty]
+//   Match: [scrutinee, arms]; Arm: [pattern, guard or Empty, body]
+//   Loop: [body]; aux label; Block: statements
+//   Return: [value or Empty]; Break: [value or Empty], aux label; Continue: aux label
+//   PWild, PName (text), PNone, PVariant (subpatterns; text name, aux qualifier, flag parens),
+//   PLit (text; aux i, c, s or b), PRange [start, end] (flag inclusive), POr
+//   List: any list; Empty: a part that is not there
+enum NK {
+    Program
+    Fn
+    Param
+    TypeParam
+    Class
+    Field
+    AssocChoice
+    Enum
+    Variant
+    PayloadField
+    Interface
+    AssocType
+    Requirement
+    Extend
+    Const
+    Alias
+    Ident
+    TName
+    TApplied
+    TArray
+    TSelf
+    TMember
+    TAny
+    Let
+    LetElse
+    While
+    WhileLet
+    For
+    Assign
+    CompoundAssign
+    LitInt
+    LitFloat
+    LitBool
+    LitChar
+    LitStr
+    Interp
+    Fmt
+    Name
+    Call
+    Arg
+    Applied
+    Todo
+    SelfValue
+    NoneLit
+    Access
+    MethodCall
+    Unary
+    Binary
+    Compare
+    Coalesce
+    Is
+    ArrayLit
+    ArrayFill
+    Index
+    Range
+    If
+    IfLet
+    Match
+    Arm
+    Loop
+    Block
+    Return
+    Break
+    Continue
+    PWild
+    PName
+    PNone
+    PVariant
+    PLit
+    PRange
+    POr
+    List
+    Empty
+}
+
+struct Node {
+    kind: NK
+    parent: Id?
+    children: [Id]
+    text: string
+    aux: string
+    line: i64
+    col: i64
+    flag: bool
+    n: i64
+    // The symbol that the resolver found for a name, or -1.
+    sym: i64
+}
+
+enum SymKind {
+    Item
+    Variant
+    TypeParam
+    Param
+    Local
+    SelfParam
+}
+
+struct Symbol {
+    name: string
+    kind: SymKind
+    // The node that declares it.
+    decl: Id
+    // The nodes that use it.
+    uses: [Id]
+}
+
+// The whole program's state after the parse: the nodes, the root, and the symbols.
+struct Tree {
+    nodes: Arena<Node>
+    root: Id
+    symbols: [Symbol]
+
+    fn kind(self, id: Id) -> NK {
+        self.nodes.slots[self.nodes.at(id)].value.kind
+    }
+
+    fn text(self, id: Id) -> string {
+        self.nodes.slots[self.nodes.at(id)].value.text
+    }
+
+    fn aux(self, id: Id) -> string {
+        self.nodes.slots[self.nodes.at(id)].value.aux
+    }
+
+    fn flag(self, id: Id) -> bool {
+        self.nodes.slots[self.nodes.at(id)].value.flag
+    }
+
+    fn n(self, id: Id) -> i64 {
+        self.nodes.slots[self.nodes.at(id)].value.n
+    }
+
+    fn line(self, id: Id) -> i64 {
+        self.nodes.slots[self.nodes.at(id)].value.line
+    }
+
+    fn col(self, id: Id) -> i64 {
+        self.nodes.slots[self.nodes.at(id)].value.col
+    }
+
+    fn sym(self, id: Id) -> i64 {
+        self.nodes.slots[self.nodes.at(id)].value.sym
+    }
+
+    fn children(self, id: Id) -> [Id] {
+        self.nodes.slots[self.nodes.at(id)].value.children
+    }
+
+    fn child(self, id: Id, k: i64) -> Id {
+        self.nodes.slots[self.nodes.at(id)].value.children[k]
+    }
+
+    fn parent(self, id: Id) -> Id? {
+        self.nodes.slots[self.nodes.at(id)].value.parent
+    }
+
+    fn set_sym(mut self, id: Id, s: i64) {
+        self.nodes.slots[self.nodes.at(id)].value.sym = s
+    }
+
+    // Gives the node and every node under it back to the arena.
+    fn free_subtree(mut self, id: Id) {
+        for c in self.children(id) {
+            self.free_subtree(c)
+        }
+        self.nodes.remove(id)
+    }
+}
+
+// ---- The parser: tokens to nodes. ----
+
+// The loop labels that are open around the next token.
+struct Labels {
+    names: [string]
+    top: i64
+
+    fn push(mut self, name: string) {
+        if self.top == self.names.len() {
+            self.names.push(name)
+        } else {
+            self.names[self.top] = name
+        }
+        self.top += 1
+    }
+
+    fn has(self, name: string) -> bool {
+        let mut i = 0
+        while i < self.top {
+            if self.names[i] == name {
+                return true
+            }
+            i += 1
+        }
+        false
+    }
+}
+
+// A function's signature as written: everything before its body.
+struct Sig {
+    name: Token
+    type_params: Id
+    params: Id
+    ret: Id
+    has_self: bool
+}
+
+fn level_of(kind: Kind) -> i64 {
+    match kind {
+        OrOr => 1
+        AndAnd => 2
+        EqEq | NotEq | Is => 3
+        QuestionQuestion => 5
+        Plus | Minus => 6
+        Star | Slash | Percent => 7
+        _ => 0
+    }
+}
+
+fn is_compare(kind: Kind) -> bool {
+    match kind {
+        Lt | Le | Gt | Ge => true
+        _ => false
+    }
+}
+
+// Whether a token of this kind starts an operand.
+fn starts_operand(kind: Kind) -> bool {
+    match kind {
+        Int | Float | Char | Str | StrHead | Ident | True | False | SelfKw | NoneKw | Todo |
+        LParen | LBracket | If | Loop | Match | Return | Break | Continue | Minus | Bang => true
+        _ => false
+    }
+}
+
+fn assign_op(kind: Kind) -> string? {
+    match kind {
+        Eq => ""
+        PlusEq => "+"
+        MinusEq => "-"
+        StarEq => "*"
+        SlashEq => "/"
+        PercentEq => "%"
+        _ => None
+    }
+}
+
+struct Parser {
+    toks: [Token]
+    pos: i64
+    nodes: Arena<Node>
+    // Whether the parser reads the head of a `for`, `if`, `while` or `match`.
+    header: bool
+    labels: Labels
+
+    fn kind(self) -> Kind {
+        self.toks[self.pos].kind
+    }
+
+    fn kind_abs(self, i: i64) -> Kind {
+        if i < self.toks.len() {
+            self.toks[i].kind
+        } else {
+            Kind.Eof
+        }
+    }
+
+    fn kind_at(self, k: i64) -> Kind {
+        self.kind_abs(self.pos + k)
+    }
+
+    fn tok(self) -> Token {
+        self.toks[self.pos]
+    }
+
+    fn at(self, kind: Kind) -> bool {
+        self.toks[self.pos].kind == kind
+    }
+
+    fn bump(mut self) -> Token {
+        let t = self.toks[self.pos]
+        if t.kind != Kind.Eof {
+            self.pos += 1
+        }
+        t
+    }
+
+    fn eat(mut self, kind: Kind) -> bool {
+        if self.toks[self.pos].kind == kind {
+            self.pos += 1
+            true
+        } else {
+            false
+        }
+    }
+
+    fn err(self, what: string) -> string {
+        let t = self.toks[self.pos]
+        "parse error at {t.line}:{t.col}: expected {what}, found {t.kind}"
+    }
+
+    fn expect(mut self, kind: Kind) -> Token {
+        if self.toks[self.pos].kind != kind {
+            panic(self.err("{kind}"))
+        }
+        self.bump()
+    }
+
+    fn skip_newlines(mut self) {
+        while self.at(Kind.Newline) {
+            self.pos += 1
+        }
+    }
+
+    fn line_end(self) {
+        if !self.at(Kind.RBrace) && !self.at(Kind.Newline) {
+            panic(self.err("the end of the line"))
+        }
+    }
+
+    // ---- Building nodes. A node takes its children's parent links. ----
+
+    fn make(mut self, kind: NK, line: i64, col: i64, text: string, aux: string, flag: bool,
+            n: i64, children: [Id]) -> Id {
+        let id = self.nodes.add(Node(kind: kind, parent: None, children: children, text: text,
+            aux: aux, line: line, col: col, flag: flag, n: n, sym: -1))
+        for c in children {
+            self.nodes.slots[self.nodes.at(c)].value.parent = Some(id)
+        }
+        id
+    }
+
+    fn mk(mut self, kind: NK, t: Token, children: [Id]) -> Id {
+        self.make(kind, t.line, t.col, "", "", false, 0, children)
+    }
+
+    fn mk_text(mut self, kind: NK, t: Token, text: string, children: [Id]) -> Id {
+        self.make(kind, t.line, t.col, text, "", false, 0, children)
+    }
+
+    fn list_at(mut self, t: Token, children: [Id]) -> Id {
+        self.mk(NK.List, t, children)
+    }
+
+    fn empty(mut self) -> Id {
+        let t = self.toks[self.pos]
+        self.mk(NK.Empty, t, [])
+    }
+
+    fn kind_of(self, id: Id) -> NK {
+        self.nodes.slots[self.nodes.at(id)].value.kind
+    }
+
+    // ---- Types ----
+
+    fn parse_type(mut self) -> Id {
+        let start = self.tok()
+        if self.at_any() {
+            return self.parse_any()
+        }
+        let mut grouped = false
+        let mut ty = if self.eat(Kind.LBracket) {
+            let element = self.parse_type()
+            let _ = self.expect(Kind.RBracket)
+            self.mk(NK.TArray, start, [element])
+        } else if self.eat(Kind.LParen) {
+            grouped = true
+            let inner = self.parse_type()
+            let _ = self.expect(Kind.RParen)
+            inner
+        } else if self.at(Kind.SelfType) {
+            let t = self.bump()
+            self.mk(NK.TSelf, t, [])
+        } else {
+            self.named_type()
+        }
+        while !grouped && self.kind_of(ty) != NK.TArray && self.at(Kind.Dot) &&
+                self.kind_at(1) == Kind.Ident {
+            let _ = self.bump()
+            let name = self.bump()
+            ty = self.mk_text(NK.TMember, start, name.text, [ty])
+        }
+        let mut layers = 0
+        loop {
+            if self.eat(Kind.Question) {
+                layers += 1
+            } else if self.eat(Kind.QuestionQuestion) {
+                layers += 2
+            } else {
+                break
+            }
+        }
+        if layers > 0 {
+            self.nodes.slots[self.nodes.at(ty)].value.n += layers
+        }
+        ty
+    }
+
+    // A name, and its type arguments if `<` follows.
+    fn named_type(mut self) -> Id {
+        let t = self.expect(Kind.Ident)
+        if !self.at(Kind.Lt) {
+            return self.mk_text(NK.TName, t, t.text, [])
+        }
+        let args = self.type_args()
+        self.mk_text(NK.TApplied, t, t.text, args)
+    }
+
+    fn at_any(self) -> bool {
+        self.kind() == Kind.Ident && self.toks[self.pos].text == "any" && self.kind_at(1) == Kind.Ident
+    }
+
+    fn parse_any(mut self) -> Id {
+        let keyword = self.bump()
+        let iface = self.named_type()
+        self.mk(NK.TAny, keyword, [iface])
+    }
+
+    // `<` types `>`, at the `<`.
+    fn type_args(mut self) -> [Id] {
+        let _ = self.bump()
+        let mut args: [Id] = []
+        loop {
+            args.push(self.parse_type())
+            if !self.eat(Kind.Comma) || self.at(Kind.Gt) || self.at(Kind.Ge) {
+                break
+            }
+        }
+        // A `>=` closes the list too, and reads as the `=` that it holds.
+        if self.at(Kind.Ge) {
+            let t = self.toks[self.pos]
+            self.toks[self.pos] = Token(kind: Kind.Eq, line: t.line, col: t.col + 1, text: "=")
+        } else {
+            let _ = self.expect(Kind.Gt)
+        }
+        args
+    }
+
+    // Whether the `<` here starts a type-argument list in an expression: a list, and then a `(` or
+    // a `.`. Anything else is a comparison.
+    fn type_args_follow(self) -> bool {
+        let end = self.scan_list(self.pos)
+        end >= 0 && (self.kind_abs(end) == Kind.LParen || self.kind_abs(end) == Kind.Dot)
+    }
+
+    fn scans_any(self, at: i64) -> bool {
+        self.kind_abs(at) == Kind.Ident && self.toks[at].text == "any" && self.kind_abs(at + 1) == Kind.Ident
+    }
+
+    // The index after the list that starts with the `<` at `at`, or -1.
+    fn scan_list(self, at: i64) -> i64 {
+        let mut i = at + 1
+        loop {
+            i = self.scan_type(i)
+            if i < 0 {
+                return -1
+            }
+            if self.kind_abs(i) == Kind.Comma {
+                i += 1
+                if self.kind_abs(i) == Kind.Gt {
+                    return i + 1
+                }
+            } else if self.kind_abs(i) == Kind.Gt {
+                return i + 1
+            } else {
+                return -1
+            }
+        }
+    }
+
+    // The index after the type at `at`, or -1.
+    fn scan_type(self, at: i64) -> i64 {
+        let mut i = at
+        let k = self.kind_abs(i)
+        if k == Kind.LBracket {
+            i = self.scan_type(i + 1)
+            if i < 0 || self.kind_abs(i) != Kind.RBracket {
+                return -1
+            }
+            i += 1
+        } else if k == Kind.LParen {
+            let any = self.scans_any(i + 1)
+            i = self.scan_type(i + 1)
+            if i < 0 || self.kind_abs(i) != Kind.RParen {
+                return -1
+            }
+            i += 1
+            if !any && self.kind_abs(i) != Kind.Question && self.kind_abs(i) != Kind.QuestionQuestion {
+                return -1
+            }
+        } else if k == Kind.Ident || k == Kind.SelfType {
+            let mut iface = false
+            if self.scans_any(i) {
+                i += 1
+                iface = true
+            }
+            i += 1
+            if self.kind_abs(i) == Kind.Lt {
+                i = self.scan_list(i)
+                if i < 0 {
+                    return -1
+                }
+            }
+            while !iface && self.kind_abs(i) == Kind.Dot && self.kind_abs(i + 1) == Kind.Ident {
+                i += 2
+            }
+        } else {
+            return -1
+        }
+        while self.kind_abs(i) == Kind.Question || self.kind_abs(i) == Kind.QuestionQuestion {
+            i += 1
+        }
+        i
+    }
+
+    // `: A & B` after a type parameter or an associated type.
+    fn bounds(mut self) -> [Id] {
+        let mut out: [Id] = []
+        if self.eat(Kind.Colon) {
+            loop {
+                out.push(self.parse_type())
+                if !self.eat(Kind.Amp) {
+                    break
+                }
+            }
+        }
+        out
+    }
+
+    // `: A, B` after the name of a class, an enum or an interface.
+    fn interface_list(mut self) -> [Id] {
+        let mut out: [Id] = []
+        if self.eat(Kind.Colon) {
+            loop {
+                out.push(self.parse_type())
+                if !self.eat(Kind.Comma) {
+                    break
+                }
+            }
+        }
+        out
+    }
+
+    // `<T: A & B, U>`, or an empty list.
+    fn type_params(mut self) -> Id {
+        let t = self.toks[self.pos]
+        let mut params: [Id] = []
+        if self.eat(Kind.Lt) {
+            loop {
+                let name = self.expect(Kind.Ident)
+                let bounds = self.bounds()
+                params.push(self.mk_text(NK.TypeParam, name, name.text, bounds))
+                if !self.eat(Kind.Comma) || self.at(Kind.Gt) {
+                    break
+                }
+            }
+            let _ = self.expect(Kind.Gt)
+        }
+        self.list_at(t, params)
+    }
+
+    // ---- Items ----
+
+    fn program(mut self) -> Id {
+        let t = self.toks[self.pos]
+        let mut items: [Id] = []
+        self.skip_newlines()
+        while !self.at(Kind.Eof) {
+            items.push(self.item())
+            self.skip_newlines()
+        }
+        self.mk(NK.Program, t, items)
+    }
+
+    fn item(mut self) -> Id {
+        match self.kind() {
+            Fn => self.function()
+            Class | Struct => self.class_decl()
+            Enum => self.enum_decl()
+            Interface => self.interface_decl()
+            Extend => self.extend_decl()
+            Const => self.const_decl()
+            Type => self.alias_decl()
+            _ => panic(self.err("an item"))
+        }
+    }
+
+    fn signature(mut self) -> Sig {
+        let _ = self.expect(Kind.Fn)
+        let name = self.expect(Kind.Ident)
+        let type_params = self.type_params()
+        let _ = self.expect(Kind.LParen)
+        let open = self.toks[self.pos]
+        let mut has_self = false
+        let mut params: [Id] = []
+        if !self.at(Kind.RParen) {
+            loop {
+                let mut mutable = false
+                if self.at(Kind.Mut) {
+                    if self.kind_at(1) == Kind.SelfKw {
+                        let _ = self.bump()
+                    } else if self.kind_at(1) == Kind.Ident {
+                        let _ = self.bump()
+                        mutable = true
+                    }
+                }
+                if self.at(Kind.SelfKw) {
+                    let _ = self.bump()
+                    has_self = true
+                    if !self.eat(Kind.Comma) {
+                        break
+                    }
+                    continue
+                }
+                let p = self.expect(Kind.Ident)
+                let _ = self.expect(Kind.Colon)
+                let ty = self.parse_type()
+                params.push(self.make(NK.Param, p.line, p.col, p.text, "", mutable, 0, [ty]))
+                if !self.eat(Kind.Comma) {
+                    break
+                }
+            }
+        }
+        let _ = self.expect(Kind.RParen)
+        let ret = if self.eat(Kind.Arrow) { self.parse_type() } else { self.empty() }
+        let plist = self.list_at(open, params)
+        Sig(name: name, type_params: type_params, params: plist, ret: ret, has_self: has_self)
+    }
+
+    fn function(mut self) -> Id {
+        let sig = self.signature()
+        let body = self.block()
+        self.make(NK.Fn, sig.name.line, sig.name.col, sig.name.text, "", sig.has_self, 0,
+            [sig.type_params, sig.params, sig.ret, body])
+    }
+
+    fn requirement(mut self) -> Id {
+        let sig = self.signature()
+        self.make(NK.Requirement, sig.name.line, sig.name.col, sig.name.text, "", true, 0,
+            [sig.type_params, sig.params, sig.ret])
+    }
+
+    // `type Item = i64`
+    fn assoc_choice(mut self) -> Id {
+        let _ = self.bump()
+        let name = self.expect(Kind.Ident)
+        let _ = self.expect(Kind.Eq)
+        let ty = self.parse_type()
+        self.mk_text(NK.AssocChoice, name, name.text, [ty])
+    }
+
+    fn class_decl(mut self) -> Id {
+        let keyword = self.bump()
+        let name = self.expect(Kind.Ident)
+        let type_params = self.type_params()
+        let ifaces = self.interface_list()
+        let conforms = self.list_at(name, ifaces)
+        let _ = self.expect(Kind.LBrace)
+        let chooses = ifaces.len() > 0
+        let mut assoc: [Id] = []
+        let mut members: [Id] = []
+        self.skip_newlines()
+        while !self.at(Kind.RBrace) {
+            if chooses && self.at(Kind.Type) {
+                assoc.push(self.assoc_choice())
+            } else if self.at(Kind.Fn) {
+                members.push(self.function())
+            } else {
+                let mutable = self.eat(Kind.Mut)
+                let field = self.expect(Kind.Ident)
+                let _ = self.expect(Kind.Colon)
+                let ty = self.parse_type()
+                members.push(self.make(NK.Field, field.line, field.col, field.text, "", mutable, 0, [ty]))
+            }
+            self.line_end()
+            self.skip_newlines()
+        }
+        let close = self.bump()
+        let assoc_list = self.list_at(close, assoc)
+        let member_list = self.list_at(close, members)
+        self.make(NK.Class, name.line, name.col, name.text, "", keyword.kind == Kind.Struct, 0,
+            [type_params, conforms, assoc_list, member_list])
+    }
+
+    fn enum_decl(mut self) -> Id {
+        let _ = self.bump()
+        let name = self.expect(Kind.Ident)
+        let type_params = self.type_params()
+        let ifaces = self.interface_list()
+        let conforms = self.list_at(name, ifaces)
+        let _ = self.expect(Kind.LBrace)
+        let chooses = ifaces.len() > 0
+        let mut assoc: [Id] = []
+        let mut variants: [Id] = []
+        let mut methods: [Id] = []
+        self.skip_newlines()
+        while !self.at(Kind.RBrace) {
+            if self.at(Kind.Fn) {
+                methods.push(self.function())
+            } else if chooses && self.at(Kind.Type) {
+                assoc.push(self.assoc_choice())
+            } else {
+                variants.push(self.variant())
+            }
+            self.line_end()
+            self.skip_newlines()
+        }
+        let close = self.bump()
+        let assoc_list = self.list_at(close, assoc)
+        let variant_list = self.list_at(close, variants)
+        let method_list = self.list_at(close, methods)
+        self.make(NK.Enum, name.line, name.col, name.text, "", false, 0,
+            [type_params, conforms, assoc_list, variant_list, method_list])
+    }
+
+    // `Name`, or `Name(payload)`.
+    fn variant(mut self) -> Id {
+        let name = self.expect(Kind.Ident)
+        let mut fields: [Id] = []
+        let payload = self.eat(Kind.LParen)
+        if payload {
+            loop {
+                let t = self.tok()
+                let labeled = t.kind == Kind.Ident && self.kind_at(1) == Kind.Colon
+                let mut label = ""
+                if labeled {
+                    label = self.bump().text
+                    let _ = self.bump()
+                }
+                let ty = self.parse_type()
+                fields.push(self.make(NK.PayloadField, t.line, t.col, label, "", labeled, 0, [ty]))
+                if !self.eat(Kind.Comma) || self.at(Kind.RParen) {
+                    break
+                }
+            }
+            let _ = self.expect(Kind.RParen)
+        }
+        self.make(NK.Variant, name.line, name.col, name.text, "", payload, 0, fields)
+    }
+
+    fn interface_decl(mut self) -> Id {
+        let _ = self.bump()
+        let name = self.expect(Kind.Ident)
+        let type_params = self.type_params()
+        let inherited = self.interface_list()
+        let inherits = self.list_at(name, inherited)
+        let _ = self.expect(Kind.LBrace)
+        let mut assoc: [Id] = []
+        let mut requirements: [Id] = []
+        self.skip_newlines()
+        while !self.at(Kind.RBrace) {
+            if self.at(Kind.Fn) {
+                requirements.push(self.requirement())
+            } else {
+                let _ = self.expect(Kind.Type)
+                let item = self.expect(Kind.Ident)
+                let bounds = self.bounds()
+                assoc.push(self.mk_text(NK.AssocType, item, item.text, bounds))
+            }
+            self.line_end()
+            self.skip_newlines()
+        }
+        let close = self.bump()
+        let assoc_list = self.list_at(close, assoc)
+        let requirement_list = self.list_at(close, requirements)
+        self.make(NK.Interface, name.line, name.col, name.text, "", false, 0,
+            [type_params, inherits, assoc_list, requirement_list])
+    }
+
+    fn extend_decl(mut self) -> Id {
+        let keyword = self.bump()
+        let type_params = self.type_params()
+        let target = self.parse_type()
+        let iface = if self.eat(Kind.Colon) { self.parse_type() } else { self.empty() }
+        let chooses = self.kind_of(iface) != NK.Empty
+        let _ = self.expect(Kind.LBrace)
+        let mut assoc: [Id] = []
+        let mut methods: [Id] = []
+        self.skip_newlines()
+        while !self.at(Kind.RBrace) {
+            if self.at(Kind.Fn) {
+                methods.push(self.function())
+            } else if chooses && self.at(Kind.Type) {
+                assoc.push(self.assoc_choice())
+            } else {
+                panic(self.err("`fn`"))
+            }
+            self.line_end()
+            self.skip_newlines()
+        }
+        let close = self.bump()
+        let assoc_list = self.list_at(close, assoc)
+        let method_list = self.list_at(close, methods)
+        self.mk(NK.Extend, keyword, [type_params, target, iface, assoc_list, method_list])
+    }
+
+    fn const_decl(mut self) -> Id {
+        let _ = self.bump()
+        let name = self.expect(Kind.Ident)
+        let ty = if self.eat(Kind.Colon) { self.parse_type() } else { self.empty() }
+        let _ = self.expect(Kind.Eq)
+        let value = self.expr()
+        self.end_of_item()
+        self.mk_text(NK.Const, name, name.text, [ty, value])
+    }
+
+    fn alias_decl(mut self) -> Id {
+        let _ = self.bump()
+        let name = self.expect(Kind.Ident)
+        let open = self.toks[self.pos]
+        let mut params: [Id] = []
+        if self.eat(Kind.Lt) {
+            loop {
+                let p = self.expect(Kind.Ident)
+                params.push(self.mk_text(NK.Ident, p, p.text, []))
+                if !self.eat(Kind.Comma) || self.at(Kind.Gt) {
+                    break
+                }
+            }
+            let _ = self.expect(Kind.Gt)
+        }
+        let plist = self.list_at(open, params)
+        let _ = self.expect(Kind.Eq)
+        let ty = self.parse_type()
+        self.end_of_item()
+        self.mk_text(NK.Alias, name, name.text, [plist, ty])
+    }
+
+    fn end_of_item(self) {
+        if !self.at(Kind.Newline) && !self.at(Kind.Eof) {
+            panic(self.err("the end of the item"))
+        }
+    }
+
+    // ---- Statements ----
+
+    fn block(mut self) -> Id {
+        let outer = self.header
+        self.header = false
+        let open = self.expect(Kind.LBrace)
+        let mut stmts: [Id] = []
+        self.skip_newlines()
+        while !self.at(Kind.RBrace) {
+            if self.at(Kind.Else) {
+                panic(self.err("a statement"))
+            }
+            let s = self.stmt()
+            if !self.at(Kind.RBrace) && !self.at(Kind.Newline) {
+                panic(self.err("the end of the statement"))
+            }
+            stmts.push(s)
+            self.skip_newlines()
+        }
+        let _ = self.bump()
+        self.header = outer
+        self.mk(NK.Block, open, stmts)
+    }
+
+    fn stmt(mut self) -> Id {
+        let open = self.labels.top
+        let s = self.stmt_inner()
+        // A loop label closes with the loop.
+        self.labels.top = open
+        s
+    }
+
+    fn stmt_inner(mut self) -> Id {
+        let label = self.loop_label()
+        match self.kind() {
+            Let => self.let_stmt()
+            While => self.while_stmt(label)
+            For => self.for_stmt(label)
+            Return | Break | Continue => self.jump()
+            Mut => panic(self.err("an expression"))
+            _ => self.expr_or_assign()
+        }
+    }
+
+    // The label `name:` before a `while` or a `for`, consumed and opened. A `loop` reads its own.
+    fn loop_label(mut self) -> string {
+        if self.kind() == Kind.Ident && self.kind_at(1) == Kind.Colon &&
+                (self.kind_at(2) == Kind.While || self.kind_at(2) == Kind.For) {
+            let name = self.bump()
+            let _ = self.bump()
+            self.labels.push(name.text)
+            return name.text
+        }
+        ""
+    }
+
+    fn headed_expr(mut self) -> Id {
+        let outer = self.header
+        self.header = true
+        let e = self.expr()
+        self.header = outer
+        e
+    }
+
+    // What the tokens after `let` and `mut` read as: 0 a name, 1 a pattern.
+    fn let_head(self) -> i64 {
+        match self.kind() {
+            NoneKw | Minus | Int | Char | Str | StrHead | True | False => 1
+            Ident => match self.kind_at(1) {
+                LParen | LBrace | Pipe | DotDot | DotDotEq => 1
+                Dot => if self.kind_at(2) == Kind.Ident || self.kind_at(2) == Kind.NoneKw {
+                    match self.kind_at(3) {
+                        LParen | LBrace | Pipe | Eq | Colon => 1
+                        _ => 0
+                    }
+                } else {
+                    0
+                }
+                _ => 0
+            }
+            _ => 0
+        }
+    }
+
+    fn let_stmt(mut self) -> Id {
+        let keyword = self.bump()
+        let mutable = self.eat(Kind.Mut)
+        if self.let_head() == 1 && !mutable {
+            let pattern = self.pattern()
+            let _ = self.expect(Kind.Eq)
+            let value = self.expr()
+            let otherwise = if self.eat(Kind.Else) { self.block() } else { self.empty() }
+            return self.make(NK.LetElse, keyword.line, keyword.col, "", "", false, 0,
+                [pattern, value, otherwise])
+        }
+        let name = if self.at(Kind.Underscore) { self.bump() } else { self.expect(Kind.Ident) }
+        let ty = if self.eat(Kind.Colon) { self.parse_type() } else { self.empty() }
+        let _ = self.expect(Kind.Eq)
+        let init = self.expr()
+        if self.at(Kind.Else) && self.kind_of(ty) == NK.Empty {
+            let _ = self.bump()
+            let pattern = if name.kind == Kind.Underscore {
+                self.mk(NK.PWild, name, [])
+            } else {
+                self.mk_text(NK.PName, name, name.text, [])
+            }
+            let otherwise = self.block()
+            return self.make(NK.LetElse, keyword.line, keyword.col, "", "", mutable, 0,
+                [pattern, init, otherwise])
+        }
+        self.make(NK.Let, name.line, name.col, name.text, "", mutable, 0, [ty, init])
+    }
+
+    fn while_stmt(mut self, label: string) -> Id {
+        let keyword = self.bump()
+        if self.eat(Kind.Let) {
+            let pattern = self.pattern()
+            let _ = self.expect(Kind.Eq)
+            let value = self.headed_expr()
+            let body = self.block()
+            return self.make(NK.WhileLet, keyword.line, keyword.col, "", label, false, 0,
+                [pattern, value, body])
+        }
+        let cond = self.headed_expr()
+        let body = self.block()
+        self.make(NK.While, keyword.line, keyword.col, "", label, false, 0, [cond, body])
+    }
+
+    fn for_stmt(mut self, label: string) -> Id {
+        let _ = self.bump()
+        let name = if self.at(Kind.Underscore) { self.bump() } else { self.expect(Kind.Ident) }
+        let _ = self.expect(Kind.In)
+        let outer = self.header
+        self.header = true
+        let source = self.range_expr()
+        self.header = outer
+        let body = self.block()
+        self.make(NK.For, name.line, name.col, name.text, label, false, 0, [source, body])
+    }
+
+    // `return`, `break` or `continue`, with its value or label.
+    fn jump(mut self) -> Id {
+        let keyword = self.bump()
+        if keyword.kind == Kind.Return {
+            let value = self.jump_value()
+            return self.mk(NK.Return, keyword, [value])
+        }
+        if keyword.kind == Kind.Break {
+            let label = self.jump_label(false)
+            let value = self.jump_value()
+            return self.make(NK.Break, keyword.line, keyword.col, "", label, false, 0, [value])
+        }
+        let label = self.jump_label(true)
+        self.make(NK.Continue, keyword.line, keyword.col, "", label, false, 0, [])
+    }
+
+    fn jump_value(mut self) -> Id {
+        if self.jump_ends() {
+            self.empty()
+        } else {
+            self.expr()
+        }
+    }
+
+    // Whether the next token ends a jump, which then takes no value.
+    fn jump_ends(self) -> bool {
+        match self.kind() {
+            Newline | Semicolon | RBrace | Comma | RParen | RBracket | FatArrow | Else | Eof |
+            StrMiddle | StrTail | FormatSpec => true
+            _ => false
+        }
+    }
+
+    // The label after `break` or `continue`: an open label, or any name for `continue`.
+    fn jump_label(mut self, any: bool) -> string {
+        if self.kind() == Kind.Ident && (any || self.labels.has(self.toks[self.pos].text)) {
+            return self.bump().text
+        }
+        ""
+    }
+
+    fn expr_or_assign(mut self) -> Id {
+        let target = self.expr()
+        let op = assign_op(self.kind())
+        if let o = op {
+            let t = self.bump()
+            let value = self.expr()
+            let kind = if o == "" { NK.Assign } else { NK.CompoundAssign }
+            return self.make(kind, t.line, t.col, o, "", false, 0, [target, value])
+        }
+        target
+    }
+
+    // ---- Expressions ----
+
+    fn expr(mut self) -> Id {
+        self.range_expr()
+    }
+
+    fn at_range_op(self) -> bool {
+        self.kind() == Kind.DotDot || self.kind() == Kind.DotDotEq
+    }
+
+    fn range_end_starts(self) -> bool {
+        let k = self.kind()
+        starts_operand(k) || (k == Kind.LBrace && !self.header)
+    }
+
+    fn range_expr(mut self) -> Id {
+        let t = self.tok()
+        if self.at_range_op() {
+            let start = self.empty()
+            return self.finish_range(t, start)
+        }
+        let start = self.binary(1)
+        if !self.at_range_op() {
+            return start
+        }
+        self.finish_range(t, start)
+    }
+
+    fn finish_range(mut self, t: Token, start: Id) -> Id {
+        let op = self.bump()
+        let end = if self.range_end_starts() { self.binary(1) } else { self.empty() }
+        self.make(NK.Range, t.line, t.col, "", "", op.kind == Kind.DotDotEq, 0, [start, end])
+    }
+
+    // Precedence climbing over levels 1 to 7; `min` is the lowest level to accept.
+    fn binary(mut self, min: i64) -> Id {
+        let mut lhs = self.unary()
+        loop {
+            let k = self.kind()
+            let level = level_of(k)
+            if is_compare(k) {
+                if min > 4 {
+                    return lhs
+                }
+                lhs = self.comparison_chain(lhs)
+            } else if level > 0 {
+                if level < min {
+                    return lhs
+                }
+                let op = self.bump()
+                // `??` is right-associative.
+                let rhs = if k == Kind.QuestionQuestion { self.binary(level) } else { self.binary(level + 1) }
+                let kind = if k == Kind.Is {
+                    NK.Is
+                } else if k == Kind.QuestionQuestion {
+                    NK.Coalesce
+                } else {
+                    NK.Binary
+                }
+                lhs = self.mk_text(kind, op, op.text, [lhs, rhs])
+            } else {
+                return lhs
+            }
+        }
+    }
+
+    // Level 4: `first` and every `<`, `<=`, `>` or `>=` operand after it, as one node.
+    fn comparison_chain(mut self, first: Id) -> Id {
+        let t = self.tok()
+        let mut operands: [Id] = [first]
+        let mut ops = ""
+        while is_compare(self.kind()) {
+            let op = self.bump()
+            if ops != "" {
+                ops += " "
+            }
+            ops += op.text
+            operands.push(self.binary(5))
+        }
+        self.mk_text(NK.Compare, t, ops, operands)
+    }
+
+    fn unary(mut self) -> Id {
+        let k = self.kind()
+        if k == Kind.Minus || k == Kind.Bang {
+            let op = self.bump()
+            // `i64::MIN` has no positive twin, so `-9223372036854775808` is one literal.
+            if k == Kind.Minus && self.kind() == Kind.Int && self.toks[self.pos].text == "9223372036854775808" {
+                let t = self.bump()
+                return self.make(NK.LitInt, op.line, op.col, t.text, "", false, -9223372036854775807 - 1, [])
+            }
+            let operand = self.unary()
+            return self.mk_text(NK.Unary, op, op.text, [operand])
+        }
+        if k == Kind.Mut {
+            panic(self.err("an expression"))
+        }
+        self.postfix()
+    }
+
+    // An index, `base[index]`, at the `[`.
+    fn index(mut self, base: Id) -> Id {
+        let open = self.bump()
+        let outer = self.header
+        self.header = false
+        let index = self.expr()
+        self.header = outer
+        let _ = self.expect(Kind.RBracket)
+        self.mk(NK.Index, open, [base, index])
+    }
+
+    fn postfix(mut self) -> Id {
+        let mut e = self.primary()
+        loop {
+            if self.at(Kind.LBracket) {
+                e = self.index(e)
+                continue
+            }
+            if !self.at(Kind.Dot) && !self.at(Kind.QuestionDot) {
+                return e
+            }
+            let access = self.bump()
+            let safe = access.kind == Kind.QuestionDot
+            let name = if !safe && self.at(Kind.NoneKw) { self.bump() } else { self.expect(Kind.Ident) }
+            let mut types: [Id] = []
+            if self.at(Kind.Lt) && self.type_args_follow() {
+                types = self.type_args()
+            }
+            if types.len() > 0 || self.at(Kind.LParen) {
+                let args = self.args()
+                let tlist = self.list_at(name, types)
+                let alist = self.list_at(name, args)
+                e = self.make(NK.MethodCall, name.line, name.col, name.text, "", safe, 0, [e, tlist, alist])
+            } else {
+                e = self.make(NK.Access, name.line, name.col, name.text, "", safe, 0, [e])
+            }
+        }
+    }
+
+    // `(` arguments `)`.
+    fn args(mut self) -> [Id] {
+        let _ = self.expect(Kind.LParen)
+        let outer = self.header
+        self.header = false
+        let mut out: [Id] = []
+        if !self.at(Kind.RParen) {
+            loop {
+                out.push(self.arg())
+                if !self.eat(Kind.Comma) {
+                    break
+                }
+            }
+        }
+        let _ = self.expect(Kind.RParen)
+        self.header = outer
+        out
+    }
+
+    // An argument: `value`, `label: value`, with a `mut` before the value or the label.
+    fn arg(mut self) -> Id {
+        let t = self.tok()
+        let mut mutable = self.eat(Kind.Mut)
+        let mut label = ""
+        if self.kind() == Kind.Ident && self.kind_at(1) == Kind.Colon {
+            label = self.bump().text
+            let _ = self.bump()
+            if !mutable {
+                mutable = self.eat(Kind.Mut)
+            }
+        }
+        let value = self.expr()
+        self.make(NK.Arg, t.line, t.col, label, "", mutable, 0, [value])
+    }
+
+    fn literal_node(mut self, kind: NK, t: Token, text: string) -> Id {
+        let _ = self.bump()
+        self.mk_text(kind, t, text, [])
+    }
+
+    fn primary(mut self) -> Id {
+        let t = self.tok()
+        match t.kind {
+            Int => {
+                let _ = self.bump()
+                self.make(NK.LitInt, t.line, t.col, t.text, "", false, int_value(t.text), [])
+            }
+            Float => self.literal_node(NK.LitFloat, t, float_text(t.text))
+            True | False => self.literal_node(NK.LitBool, t, t.text)
+            Char => self.literal_node(NK.LitChar, t, inner_text(t.text))
+            Str => self.literal_node(NK.LitStr, t, inner_text(t.text))
+            StrHead => {
+                let _ = self.bump()
+                self.interpolation(t)
+            }
+            SelfKw => self.literal_node(NK.SelfValue, t, "self")
+            NoneKw => self.literal_node(NK.NoneLit, t, "None")
+            Ident => self.name_expr(t)
+            Todo => {
+                let _ = self.bump()
+                let args = if self.at(Kind.LParen) { self.args() } else { [] }
+                self.mk(NK.Todo, t, args)
+            }
+            Return | Break | Continue => self.jump()
+            LParen => {
+                let _ = self.bump()
+                let outer = self.header
+                self.header = false
+                let inner = self.expr()
+                self.header = outer
+                let _ = self.expect(Kind.RParen)
+                inner
+            }
+            LBracket => self.array()
+            If => self.if_expr()
+            Loop => self.loop_expr("")
+            Match => self.match_expr()
+            LBrace => self.block()
+            _ => panic(self.err("an expression"))
+        }
+    }
+
+    // A name, a call, a name with type arguments, or a labeled `loop`.
+    fn name_expr(mut self, t: Token) -> Id {
+        if self.kind_at(1) == Kind.Colon && self.kind_at(2) == Kind.Loop {
+            let _ = self.bump()
+            let _ = self.bump()
+            self.labels.push(t.text)
+            let e = self.loop_expr(t.text)
+            self.labels.top -= 1
+            return e
+        }
+        let _ = self.bump()
+        let mut types: [Id] = []
+        if self.at(Kind.Lt) && self.type_args_follow() {
+            types = self.type_args()
+        }
+        if self.at(Kind.LParen) {
+            let args = self.args()
+            let tlist = self.list_at(t, types)
+            let alist = self.list_at(t, args)
+            return self.mk_text(NK.Call, t, t.text, [tlist, alist])
+        }
+        if types.len() > 0 {
+            return self.mk_text(NK.Applied, t, t.text, types)
+        }
+        self.mk_text(NK.Name, t, t.text, [])
+    }
+
+    // `[` at the next token: `[]`, `[value; len]` or `[a, b, ...]`.
+    fn array(mut self) -> Id {
+        let open = self.bump()
+        let outer = self.header
+        self.header = false
+        let mut elements: [Id] = []
+        let mut fill = false
+        while !self.at(Kind.RBracket) {
+            elements.push(self.expr())
+            if elements.len() == 1 && self.eat(Kind.Semicolon) {
+                elements.push(self.expr())
+                fill = true
+                break
+            }
+            if !self.eat(Kind.Comma) {
+                break
+            }
+        }
+        let _ = self.expect(Kind.RBracket)
+        self.header = outer
+        self.mk(if fill { NK.ArrayFill } else { NK.ArrayLit }, open, elements)
+    }
+
+    // The rest of a string with interpolations, after its `StrHead`.
+    fn interpolation(mut self, head: Token) -> Id {
+        let mut parts: [Id] = []
+        let first = inner_text(head.text)
+        if first.len() > 0 {
+            parts.push(self.mk_text(NK.LitStr, head, first, []))
+        }
+        loop {
+            let outer = self.header
+            self.header = false
+            let value = self.expr()
+            self.header = outer
+            if self.at(Kind.FormatSpec) {
+                let spec = self.bump()
+                let written = spec.text.chars()
+                parts.push(self.mk_text(NK.Fmt, spec, string(written[1..written.len()]), [value]))
+            } else {
+                parts.push(value)
+            }
+            let t = self.tok()
+            if t.kind == Kind.StrMiddle {
+                let piece = inner_text(t.text)
+                if piece.len() > 0 {
+                    parts.push(self.mk_text(NK.LitStr, t, piece, []))
+                }
+                let _ = self.bump()
+            } else if t.kind == Kind.StrTail {
+                let piece = inner_text(t.text)
+                if piece.len() > 0 {
+                    parts.push(self.mk_text(NK.LitStr, t, piece, []))
+                }
+                let _ = self.bump()
+                break
+            } else {
+                panic(self.err("`\}`"))
+            }
+        }
+        self.mk(NK.Interp, head, parts)
+    }
+
+    fn if_expr(mut self) -> Id {
+        let keyword = self.bump()
+        if self.eat(Kind.Let) {
+            let pattern = self.pattern()
+            let _ = self.expect(Kind.Eq)
+            let value = self.headed_expr()
+            let then_block = self.block()
+            let otherwise = self.else_part()
+            return self.mk(NK.IfLet, keyword, [pattern, value, then_block, otherwise])
+        }
+        let cond = self.headed_expr()
+        let then_block = self.block()
+        let otherwise = self.else_part()
+        self.mk(NK.If, keyword, [cond, then_block, otherwise])
+    }
+
+    // `else` and its block, or an `else if` as a block that holds the inner `if`.
+    fn else_part(mut self) -> Id {
+        if !self.eat(Kind.Else) {
+            return self.empty()
+        }
+        if self.at(Kind.If) {
+            let t = self.tok()
+            let inner = self.if_expr()
+            return self.mk(NK.Block, t, [inner])
+        }
+        self.block()
+    }
+
+    fn loop_expr(mut self, label: string) -> Id {
+        let keyword = self.expect(Kind.Loop)
+        let body = self.block()
+        self.make(NK.Loop, keyword.line, keyword.col, "", label, false, 0, [body])
+    }
+
+    fn match_expr(mut self) -> Id {
+        let keyword = self.bump()
+        let scrutinee = self.headed_expr()
+        let _ = self.expect(Kind.LBrace)
+        self.skip_newlines()
+        let mut kids: [Id] = [scrutinee]
+        while !self.at(Kind.RBrace) {
+            kids.push(self.arm())
+            if !self.at(Kind.RBrace) && !self.at(Kind.Newline) {
+                panic(self.err("the end of the line"))
+            }
+            self.skip_newlines()
+        }
+        let _ = self.bump()
+        self.mk(NK.Match, keyword, kids)
+    }
+
+    fn arm(mut self) -> Id {
+        let t = self.tok()
+        let pattern = self.pattern()
+        let guard = if self.eat(Kind.If) { self.expr() } else { self.empty() }
+        let _ = self.expect(Kind.FatArrow)
+        let body = self.arm_body()
+        self.mk(NK.Arm, t, [pattern, guard, body])
+    }
+
+    // An arm's body: an expression, or a statement that is not one in a block that holds it.
+    fn arm_body(mut self) -> Id {
+        let t = self.tok()
+        let k = self.kind()
+        let s = if k == Kind.Return || k == Kind.Break || k == Kind.Continue {
+            self.jump()
+        } else {
+            self.expr_or_assign()
+        }
+        let nk = self.kind_of(s)
+        if nk == NK.Assign || nk == NK.CompoundAssign || nk == NK.Return || nk == NK.Break ||
+                nk == NK.Continue {
+            return self.mk(NK.Block, t, [s])
+        }
+        s
+    }
+
+    // ---- Patterns ----
+
+    fn pattern(mut self) -> Id {
+        let t = self.tok()
+        let first = self.single_pattern()
+        if !self.at(Kind.Pipe) {
+            return first
+        }
+        let mut alternatives: [Id] = [first]
+        while self.eat(Kind.Pipe) {
+            alternatives.push(self.single_pattern())
+        }
+        self.mk(NK.POr, t, alternatives)
+    }
+
+    // A literal of a pattern, with its `-` if it has one.
+    fn literal_pattern(mut self) -> Id {
+        let t = self.tok()
+        let negative = self.eat(Kind.Minus)
+        let v = self.bump()
+        let sign = if negative { "-" } else { "" }
+        match v.kind {
+            Int => self.make(NK.PLit, t.line, t.col, sign + "{int_value(v.text)}", "i", false, 0, [])
+            Char => self.make(NK.PLit, t.line, t.col, inner_text(v.text), "c", false, 0, [])
+            Str => self.make(NK.PLit, t.line, t.col, inner_text(v.text), "s", false, 0, [])
+            True | False => self.make(NK.PLit, t.line, t.col, v.text, "b", false, 0, [])
+            _ => panic(self.err("a literal"))
+        }
+    }
+
+    fn single_pattern(mut self) -> Id {
+        let t = self.tok()
+        match t.kind {
+            Minus | Int | Char | Str | True | False => {
+                let start = self.literal_pattern()
+                if self.at_range_op() {
+                    let op = self.bump()
+                    let end = self.literal_pattern()
+                    return self.make(NK.PRange, t.line, t.col, "", "", op.kind == Kind.DotDotEq, 0, [start, end])
+                }
+                start
+            }
+            Underscore => {
+                let _ = self.bump()
+                self.mk(NK.PWild, t, [])
+            }
+            NoneKw => {
+                let _ = self.bump()
+                self.mk(NK.PNone, t, [])
+            }
+            Ident => {
+                let first = self.bump()
+                let mut qualifier = ""
+                let mut name = first
+                if self.at(Kind.Dot) {
+                    let _ = self.bump()
+                    qualifier = first.text
+                    name = if self.at(Kind.NoneKw) { self.bump() } else { self.expect(Kind.Ident) }
+                }
+                if self.at(Kind.LParen) {
+                    let _ = self.bump()
+                    let mut subs: [Id] = []
+                    while !self.at(Kind.RParen) {
+                        subs.push(self.pattern())
+                        if !self.eat(Kind.Comma) {
+                            break
+                        }
+                    }
+                    let _ = self.expect(Kind.RParen)
+                    return self.make(NK.PVariant, first.line, first.col, name.text, qualifier, true, 0, subs)
+                }
+                if qualifier != "" {
+                    return self.make(NK.PVariant, first.line, first.col, name.text, qualifier, false, 0, [])
+                }
+                self.mk_text(NK.PName, first, first.text, [])
+            }
+            _ => panic(self.err("a pattern"))
+        }
+    }
+}
+
+// Parses the tokens of a file.
+fn parse(tokens: [Token]) -> Tree {
+    let mut p = Parser(toks: tokens, pos: 0, nodes: Arena(slots: [], free: [], free_len: 0),
+        header: false, labels: Labels(names: [], top: 0))
+    let root = p.program()
+    Tree(nodes: p.nodes, root: root, symbols: [])
+}
+
+// ---- The dump: the tree as `sisu build --emit ast` prints it. ----
+
+fn join(parts: [string], sep: string) -> string {
+    let mut out = ""
+    let mut first = true
+    for p in parts {
+        if !first {
+            out += sep
+        }
+        out += p
+        first = false
+    }
+    out
+}
+
+fn layers(n: i64) -> string {
+    let mut out = ""
+    let mut i = 0
+    while i < n {
+        out += "?"
+        i += 1
+    }
+    out
+}
+
+// A type as written.
+fn ty(tree: Tree, id: Id) -> string {
+    let kids = tree.children(id)
+    let n = tree.n(id)
+    match tree.kind(id) {
+        NK.TName => tree.text(id) + layers(n)
+        NK.TApplied => tree.text(id) + angled_types(tree, kids) + layers(n)
+        NK.TArray => "[" + ty(tree, kids[0]) + "]" + layers(n)
+        NK.TSelf => "Self" + layers(n)
+        NK.TMember => ty(tree, kids[0]) + "." + tree.text(id) + layers(n)
+        NK.TAny => if n > 0 {
+            "(any " + ty(tree, kids[0]) + ")" + layers(n)
+        } else {
+            "any " + ty(tree, kids[0])
+        }
+        _ => panic("not a type: {tree.kind(id)}")
+    }
+}
+
+fn types(tree: Tree, ids: [Id]) -> [string] {
+    let mut out: [string] = []
+    for c in ids {
+        out.push(ty(tree, c))
+    }
+    out
+}
+
+// `<a, b>`, or nothing for no types.
+fn angled_types(tree: Tree, ids: [Id]) -> string {
+    if ids.len() == 0 {
+        return ""
+    }
+    "<" + join(types(tree, ids), ", ") + ">"
+}
+
+// `<T: A & B, U>` of the list node `list`, or nothing.
+fn angled_params(tree: Tree, list: Id) -> string {
+    let kids = tree.children(list)
+    if kids.len() == 0 {
+        return ""
+    }
+    let mut parts: [string] = []
+    for p in kids {
+        parts.push(tree.text(p) + bounds(tree, tree.children(p)))
+    }
+    "<" + join(parts, ", ") + ">"
+}
+
+// `: A & B`, or nothing.
+fn bounds(tree: Tree, ids: [Id]) -> string {
+    if ids.len() == 0 {
+        return ""
+    }
+    ": " + join(types(tree, ids), " & ")
+}
+
+// ` (: A B)`, or nothing, for the interfaces that a declaration lists.
+fn listed(tree: Tree, list: Id) -> string {
+    let kids = tree.children(list)
+    if kids.len() == 0 {
+        return ""
+    }
+    " (: " + join(types(tree, kids), " ") + ")"
+}
+
+fn spaced(tree: Tree, ids: [Id]) -> string {
+    let mut out = ""
+    for c in ids {
+        out += " " + show(tree, c)
+    }
+    out
+}
+
+fn label(tree: Tree, id: Id) -> string {
+    let l = tree.aux(id)
+    if l == "" {
+        ""
+    } else {
+        " :" + l
+    }
+}
+
+fn dot(safe: bool) -> string {
+    if safe {
+        "?."
+    } else {
+        "."
+    }
+}
+
+// The parameters of a function, `self` first, as `(self (a i64))` writes them.
+fn params(tree: Tree, has_self: bool, list: Id) -> string {
+    let mut parts: [string] = []
+    if has_self {
+        parts.push("self")
+    }
+    for p in tree.children(list) {
+        parts.push("({tree.text(p)} {ty(tree, tree.child(p, 0))})")
+    }
+    join(parts, " ")
+}
+
+fn ret(tree: Tree, id: Id) -> string {
+    if tree.kind(id) == NK.Empty {
+        "unit"
+    } else {
+        ty(tree, id)
+    }
+}
+
+fn literal(tree: Tree, id: Id) -> string {
+    match tree.aux(id) {
+        "c" => debug_text(tree.text(id), '\'')
+        "s" => debug_text(tree.text(id), '"')
+        _ => tree.text(id)
+    }
+}
+
+fn show(tree: Tree, id: Id) -> string {
+    let kids = tree.children(id)
+    let text = tree.text(id)
+    match tree.kind(id) {
+        NK.Fn => {
+            let has_self = tree.flag(id)
+            "(fn {text}{angled_params(tree, kids[0])} ({params(tree, has_self, kids[1])}) {ret(tree, kids[2])} {show(tree, kids[3])})"
+        }
+        NK.Requirement => {
+            "(fn {text}{angled_params(tree, kids[0])} ({params(tree, true, kids[1])}) {ret(tree, kids[2])})"
+        }
+        NK.Class => {
+            let mut members = ""
+            for m in tree.children(kids[3]) {
+                if tree.kind(m) == NK.Field {
+                    let keyword = if tree.flag(m) { "mut " } else { "" }
+                    members += " ({keyword}{tree.text(m)} {ty(tree, tree.child(m, 0))})"
+                } else {
+                    members += " " + show(tree, m)
+                }
+            }
+            "(class {text}{angled_params(tree, kids[0])}{listed(tree, kids[1])}{spaced(tree, tree.children(kids[2]))}{members})"
+        }
+        NK.AssocChoice => "(type {text} {ty(tree, kids[0])})"
+        NK.AssocType => "(type {text}{bounds(tree, kids)})"
+        NK.Enum => {
+            let mut variants = ""
+            for v in tree.children(kids[3]) {
+                if tree.flag(v) {
+                    let mut fields = ""
+                    for f in tree.children(v) {
+                        if tree.flag(f) {
+                            fields += " ({tree.text(f)} {ty(tree, tree.child(f, 0))})"
+                        } else {
+                            fields += " " + ty(tree, tree.child(f, 0))
+                        }
+                    }
+                    variants += " ({tree.text(v)}{fields})"
+                } else {
+                    variants += " " + tree.text(v)
+                }
+            }
+            "(enum {text}{angled_params(tree, kids[0])}{listed(tree, kids[1])}{spaced(tree, tree.children(kids[2]))}{variants}{spaced(tree, tree.children(kids[4]))})"
+        }
+        NK.Interface => {
+            "(interface {text}{angled_params(tree, kids[0])}{listed(tree, kids[1])}{spaced(tree, tree.children(kids[2]))}{spaced(tree, tree.children(kids[3]))})"
+        }
+        NK.Extend => {
+            let iface = if tree.kind(kids[2]) == NK.Empty { "" } else { ": " + ty(tree, kids[2]) }
+            "(extend{angled_params(tree, kids[0])} {ty(tree, kids[1])}{iface}{spaced(tree, tree.children(kids[3]))}{spaced(tree, tree.children(kids[4]))})"
+        }
+        NK.Const => {
+            let declared = if tree.kind(kids[0]) == NK.Empty { "" } else { " " + ty(tree, kids[0]) }
+            "(const {text}{declared} {show(tree, kids[1])})"
+        }
+        NK.Alias => {
+            let mut names: [string] = []
+            for p in tree.children(kids[0]) {
+                names.push(tree.text(p))
+            }
+            let angled = if names.len() == 0 { "" } else { "<" + join(names, ", ") + ">" }
+            "(type {text}{angled} {ty(tree, kids[1])})"
+        }
+        NK.Let => {
+            let keyword = if tree.flag(id) { "let mut" } else { "let" }
+            let declared = if tree.kind(kids[0]) == NK.Empty { "" } else { " " + ty(tree, kids[0]) }
+            "({keyword} {text}{declared} {show(tree, kids[1])})"
+        }
+        NK.LetElse => {
+            let keyword = if tree.flag(id) { "mut " } else { "" }
+            let otherwise = if tree.kind(kids[2]) == NK.Empty { "" } else { " " + show(tree, kids[2]) }
+            "(let-else {keyword}{show(tree, kids[0])} {show(tree, kids[1])}{otherwise})"
+        }
+        NK.While => "(while{label(tree, id)} {show(tree, kids[0])} {show(tree, kids[1])})"
+        NK.WhileLet => "(while-let{label(tree, id)} {show(tree, kids[0])} {show(tree, kids[1])} {show(tree, kids[2])})"
+        NK.For => "(for{label(tree, id)} {text} {show(tree, kids[0])} {show(tree, kids[1])})"
+        NK.Assign | NK.CompoundAssign => "({text}= {show(tree, kids[0])} {show(tree, kids[1])})"
+        NK.LitInt => "{tree.n(id)}"
+        NK.LitFloat | NK.LitBool => text
+        NK.LitChar => debug_text(text, '\'')
+        NK.LitStr => debug_text(text, '"')
+        NK.Interp => "(interp{spaced(tree, kids)})"
+        NK.Fmt => "(fmt {show(tree, kids[0])} \"{text}\")"
+        NK.Name => text
+        NK.Call => "(call {text}{angled_types(tree, tree.children(kids[0]))}{spaced(tree, tree.children(kids[1]))})"
+        NK.Arg => {
+            let value = show(tree, kids[0])
+            let inner = if tree.flag(id) { "(mut " + value + ")" } else { value }
+            if text == "" {
+                inner
+            } else {
+                "(: {text} {inner})"
+            }
+        }
+        NK.Applied => text + angled_types(tree, kids)
+        NK.Todo => "(todo{spaced(tree, kids)})"
+        NK.SelfValue => "self"
+        NK.NoneLit => "None"
+        NK.Access => "({dot(tree.flag(id))} {show(tree, kids[0])} {text})"
+        NK.MethodCall => {
+            "(call ({dot(tree.flag(id))} {show(tree, kids[0])} {text}{angled_types(tree, tree.children(kids[1]))}){spaced(tree, tree.children(kids[2]))})"
+        }
+        NK.Unary | NK.Binary => "({text}{spaced(tree, kids)})"
+        NK.Coalesce => "(??{spaced(tree, kids)})"
+        NK.Is => "(is{spaced(tree, kids)})"
+        NK.Compare => {
+            let ops = text.words()
+            let mut out = "({ops[0]} {show(tree, kids[0])} {show(tree, kids[1])}"
+            let mut i = 1
+            while i < ops.len() {
+                out += " {ops[i]} {show(tree, kids[i + 1])}"
+                i += 1
+            }
+            out + ")"
+        }
+        NK.ArrayLit => "(array{spaced(tree, kids)})"
+        NK.ArrayFill => "(array-fill{spaced(tree, kids)})"
+        NK.Index => "(index{spaced(tree, kids)})"
+        NK.Range => {
+            let op = if tree.flag(id) { "..=" } else { ".." }
+            "({op} {show(tree, kids[0])} {show(tree, kids[1])})"
+        }
+        NK.Empty => "_"
+        NK.If => {
+            let otherwise = if tree.kind(kids[2]) == NK.Empty { "" } else { " " + show(tree, kids[2]) }
+            "(if {show(tree, kids[0])} {show(tree, kids[1])}{otherwise})"
+        }
+        NK.IfLet => {
+            let otherwise = if tree.kind(kids[3]) == NK.Empty { "" } else { " " + show(tree, kids[3]) }
+            "(if-let {show(tree, kids[0])} {show(tree, kids[1])} {show(tree, kids[2])}{otherwise})"
+        }
+        NK.Match => "(match{spaced(tree, kids)})"
+        NK.Arm => {
+            let guard = if tree.kind(kids[1]) == NK.Empty { "" } else { " (if {show(tree, kids[1])})" }
+            "(arm {show(tree, kids[0])}{guard} {show(tree, kids[2])})"
+        }
+        NK.Loop => "(loop{label(tree, id)} {show(tree, kids[0])})"
+        NK.Block => "(block{spaced(tree, kids)})"
+        NK.Return => {
+            if tree.kind(kids[0]) == NK.Empty {
+                "(return)"
+            } else {
+                "(return {show(tree, kids[0])})"
+            }
+        }
+        NK.Break => {
+            if tree.kind(kids[0]) == NK.Empty {
+                "(break{label(tree, id)})"
+            } else {
+                "(break{label(tree, id)} {show(tree, kids[0])})"
+            }
+        }
+        NK.Continue => "(continue{label(tree, id)})"
+        NK.PWild => "_"
+        NK.PName => text
+        NK.PNone => "None"
+        NK.PVariant => {
+            let path = if tree.aux(id) == "" { text } else { tree.aux(id) + "." + text }
+            if !tree.flag(id) {
+                path
+            } else if kids.len() == 0 {
+                "({path} ())"
+            } else {
+                "({path}{spaced(tree, kids)})"
+            }
+        }
+        NK.PLit => literal(tree, id)
+        NK.PRange => {
+            let op = if tree.flag(id) { "..=" } else { ".." }
+            "({op} {show(tree, kids[0])} {show(tree, kids[1])})"
+        }
+        NK.POr => "(|{spaced(tree, kids)})"
+        _ => panic("cannot show {tree.kind(id)}")
+    }
+}
+
+fn dump(tree: Tree) {
+    // A program with no item still prints its line break.
+    if tree.children(tree.root).len() == 0 {
+        print("")
+    }
+    for item in tree.children(tree.root) {
+        print(show(tree, item))
+    }
+}
+
+// ---- The resolver: finds the symbol of each name, and lists the uses of each symbol. ----
+
+fn hash(s: string) -> i64 {
+    let mut h = 7
+    for b in s.bytes() {
+        h = (h * 31 + i64(b)) % 1000000007
+    }
+    h
+}
+
+// A hash table from names to numbers, with linear probing.
+struct Table {
+    keys: [string]
+    vals: [i64]
+    // For each slot, the index of its entry in `keys`, or -1.
+    slots: [i64]
+
+    fn find(self, key: string) -> i64 {
+        let size = self.slots.len()
+        let mut i = hash(key) % size
+        loop {
+            let e = self.slots[i]
+            if e < 0 {
+                return -1
+            }
+            if self.keys[e] == key {
+                return self.vals[e]
+            }
+            i = (i + 1) % size
+        }
+    }
+
+    fn put(mut self, key: string, val: i64) {
+        if (self.keys.len() + 1) * 2 > self.slots.len() {
+            self.grow()
+        }
+        let size = self.slots.len()
+        let mut i = hash(key) % size
+        loop {
+            let e = self.slots[i]
+            if e < 0 {
+                self.slots[i] = self.keys.len()
+                self.keys.push(key)
+                self.vals.push(val)
+                return
+            }
+            if self.keys[e] == key {
+                self.vals[e] = val
+                return
+            }
+            i = (i + 1) % size
+        }
+    }
+
+    fn grow(mut self) {
+        let size = self.slots.len() * 2
+        self.slots = [-1; size]
+        let mut e = 0
+        while e < self.keys.len() {
+            let mut i = hash(self.keys[e]) % size
+            while self.slots[i] >= 0 {
+                i = (i + 1) % size
+            }
+            self.slots[i] = e
+            e += 1
+        }
+    }
+}
+
+fn new_table() -> Table {
+    Table(keys: [], vals: [], slots: [-1; 16])
+}
+
+// The names that are in scope inside the function or block that the resolver is in, innermost
+// last. `top` is how many are in scope; the entries above it are dead.
+struct Frame {
+    names: [string]
+    syms: [i64]
+    top: i64
+
+    fn declare(mut self, name: string, sym: i64) {
+        if self.top == self.names.len() {
+            self.names.push(name)
+            self.syms.push(sym)
+        } else {
+            self.names[self.top] = name
+            self.syms[self.top] = sym
+        }
+        self.top += 1
+    }
+
+    fn find(self, name: string) -> i64 {
+        let mut i = self.top - 1
+        while i >= 0 {
+            if self.names[i] == name {
+                return self.syms[i]
+            }
+            i -= 1
+        }
+        -1
+    }
+}
+
+// The scope stack and the tables of the pass. The symbols are in the tree.
+struct Resolver {
+    frame: Frame
+    // The top-level items, and the variants of the enums.
+    globals: Table
+    variants: Table
+    // The names that nothing declares, with how many times each is used.
+    unresolved: Table
+    un_names: [string]
+    un_counts: [i64]
+
+    fn declare(mut self, mut tree: Tree, name: string, kind: SymKind, decl: Id) -> i64 {
+        let s = tree.symbols.len()
+        tree.symbols.push(Symbol(name: name, kind: kind, decl: decl, uses: []))
+        s
+    }
+
+    // Declares a name in the scope that is open.
+    fn bind(mut self, mut tree: Tree, name: string, kind: SymKind, decl: Id) {
+        let s = self.declare(mut tree, name, kind, decl)
+        self.frame.declare(name, s)
+    }
+
+    fn lookup(self, name: string) -> i64 {
+        let s = self.frame.find(name)
+        if s >= 0 {
+            s
+        } else {
+            self.globals.find(name)
+        }
+    }
+
+    fn note_unresolved(mut self, name: string) {
+        let i = self.unresolved.find(name)
+        if i >= 0 {
+            self.un_counts[i] += 1
+        } else {
+            self.unresolved.put(name, self.un_names.len())
+            self.un_names.push(name)
+            self.un_counts.push(1)
+        }
+    }
+
+    // Writes the symbol of `name` into the node `id`, and adds the node to the uses of the symbol.
+    fn use_symbol(mut self, mut tree: Tree, id: Id, s: i64, name: string) {
+        tree.set_sym(id, s)
+        if s >= 0 {
+            tree.symbols[s].uses.push(id)
+        } else {
+            self.note_unresolved(name)
+        }
+    }
+
+    fn use_name(mut self, mut tree: Tree, id: Id, name: string) {
+        let s = self.lookup(name)
+        self.use_symbol(mut tree, id, s, name)
+    }
+
+    fn use_variant(mut self, mut tree: Tree, id: Id, name: string) {
+        let v = self.variants.find(name)
+        if v >= 0 {
+            self.use_symbol(mut tree, id, v, name)
+        } else {
+            self.use_name(mut tree, id, name)
+        }
+    }
+
+    // The top-level items, and the variants of the enums, before any body is walked.
+    fn declare_items(mut self, mut tree: Tree, items: [Id]) {
+        for item in items {
+            let kids = tree.children(item)
+            match tree.kind(item) {
+                NK.Fn | NK.Class | NK.Interface | NK.Const | NK.Alias | NK.Enum => {
+                    let s = self.declare(mut tree, tree.text(item), SymKind.Item, item)
+                    self.globals.put(tree.text(item), s)
+                }
+                _ => {}
+            }
+            if tree.kind(item) == NK.Enum {
+                for v in tree.children(kids[3]) {
+                    let s = self.declare(mut tree, tree.text(v), SymKind.Variant, v)
+                    self.variants.put(tree.text(v), s)
+                }
+            }
+        }
+    }
+
+    // The type parameters of a list node, in the scope that is open.
+    fn declare_type_params(mut self, mut tree: Tree, list: Id) {
+        for p in tree.children(list) {
+            self.bind(mut tree, tree.text(p), SymKind.TypeParam, p)
+        }
+    }
+
+    fn walk_all(mut self, mut tree: Tree, ids: [Id]) {
+        for c in ids {
+            self.walk(mut tree, c)
+        }
+    }
+
+    // Declares the names of a pattern in the scope that is open, and resolves its variants.
+    fn bind_pattern(mut self, mut tree: Tree, id: Id) {
+        let name = tree.text(id)
+        match tree.kind(id) {
+            NK.PName => {
+                let v = self.variants.find(name)
+                if v >= 0 {
+                    self.use_symbol(mut tree, id, v, name)
+                } else {
+                    self.bind(mut tree, name, SymKind.Local, id)
+                }
+            }
+            NK.PVariant => {
+                if tree.aux(id) == "" {
+                    self.use_variant(mut tree, id, name)
+                } else {
+                    self.use_name(mut tree, id, tree.aux(id))
+                }
+                for sub in tree.children(id) {
+                    self.bind_pattern(mut tree, sub)
+                }
+            }
+            NK.POr => {
+                for alternative in tree.children(id) {
+                    self.bind_pattern(mut tree, alternative)
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn walk(mut self, mut tree: Tree, id: Id) {
+        let kids = tree.children(id)
+        let text = tree.text(id)
+        let mark = self.frame.top
+        match tree.kind(id) {
+            NK.Program => {
+                self.declare_items(mut tree, kids)
+                self.walk_all(mut tree, kids)
+            }
+            NK.Fn | NK.Requirement => {
+                self.declare_type_params(mut tree, kids[0])
+                if tree.flag(id) {
+                    self.bind(mut tree, "self", SymKind.SelfParam, id)
+                }
+                self.walk(mut tree, kids[0])
+                self.walk(mut tree, kids[1])
+                self.walk(mut tree, kids[2])
+                for p in tree.children(kids[1]) {
+                    self.bind(mut tree, tree.text(p), SymKind.Param, p)
+                }
+                if kids.len() > 3 {
+                    self.walk(mut tree, kids[3])
+                }
+                self.frame.top = mark
+            }
+            NK.Class | NK.Enum | NK.Interface | NK.Extend | NK.Alias => {
+                self.declare_type_params(mut tree, kids[0])
+                self.walk_all(mut tree, kids)
+                self.frame.top = mark
+            }
+            NK.TName => self.use_name(mut tree, id, text)
+            NK.TApplied | NK.Applied => {
+                self.use_name(mut tree, id, text)
+                self.walk_all(mut tree, kids)
+            }
+            NK.Name => self.use_name(mut tree, id, text)
+            NK.SelfValue => self.use_name(mut tree, id, "self")
+            NK.Call => {
+                self.use_name(mut tree, id, text)
+                self.walk_all(mut tree, kids)
+            }
+            NK.Let => {
+                self.walk_all(mut tree, kids)
+                if text != "_" {
+                    self.bind(mut tree, text, SymKind.Local, id)
+                }
+            }
+            NK.LetElse => {
+                self.walk(mut tree, kids[1])
+                self.walk(mut tree, kids[2])
+                self.bind_pattern(mut tree, kids[0])
+            }
+            NK.WhileLet => {
+                self.walk(mut tree, kids[1])
+                self.bind_pattern(mut tree, kids[0])
+                self.walk(mut tree, kids[2])
+                self.frame.top = mark
+            }
+            NK.IfLet => {
+                self.walk(mut tree, kids[1])
+                self.bind_pattern(mut tree, kids[0])
+                self.walk(mut tree, kids[2])
+                self.frame.top = mark
+                self.walk(mut tree, kids[3])
+            }
+            NK.For => {
+                self.walk(mut tree, kids[0])
+                if text != "_" {
+                    self.bind(mut tree, text, SymKind.Local, id)
+                }
+                self.walk(mut tree, kids[1])
+                self.frame.top = mark
+            }
+            NK.Arm => {
+                self.bind_pattern(mut tree, kids[0])
+                self.walk(mut tree, kids[1])
+                self.walk(mut tree, kids[2])
+                self.frame.top = mark
+            }
+            NK.Block => {
+                self.walk_all(mut tree, kids)
+                self.frame.top = mark
+            }
+            NK.TMember | NK.Access => self.walk(mut tree, kids[0])
+            _ => self.walk_all(mut tree, kids)
+        }
+    }
+
+    // The names that nothing declares, sorted, as `name count` lines.
+    fn unresolved_lines(self) -> [string] {
+        let mut order: [i64] = []
+        let mut i = 0
+        while i < self.un_names.len() {
+            // Insert `i` among the earlier entries, so that the names stay in order.
+            order.push(i)
+            let mut k = order.len() - 1
+            while k > 0 && self.un_names[order[k - 1]] > self.un_names[order[k]] {
+                let t = order[k]
+                order[k] = order[k - 1]
+                order[k - 1] = t
+                k -= 1
+            }
+            i += 1
+        }
+        let mut lines: [string] = []
+        for e in order {
+            lines.push("  {self.un_names[e]} {self.un_counts[e]}")
+        }
+        lines
+    }
+}
+
+// Finds the symbol of each name of the tree again from nothing.
+fn resolve(mut tree: Tree) -> Resolver {
+    tree.symbols = []
+    let mut r = Resolver(frame: Frame(names: [], syms: [], top: 0), globals: new_table(),
+        variants: new_table(), unresolved: new_table(), un_names: [], un_counts: [])
+    let root = tree.root
+    r.walk(mut tree, root)
+    r
+}
+
+fn count_uses(tree: Tree) -> i64 {
+    let mut n = 0
+    for s in tree.symbols {
+        n += s.uses.len()
+    }
+    n
+}
+
+// A sum over the uses of the hash of the symbol's name, the line and the column of the use.
+fn checksum(tree: Tree) -> i64 {
+    let m = 1000000007
+    let mut sum = 0
+    for s in tree.symbols {
+        let h = hash(s.name)
+        for u in s.uses {
+            sum = (sum + (h * 1000003 + tree.line(u) * 10007 + tree.col(u)) % m) % m
+        }
+    }
+    sum
+}
+
+// The number of links that do not agree: a use whose node names another symbol, and a symbol
+// whose declaration has another name.
+fn bad_links(tree: Tree) -> i64 {
+    let mut bad = 0
+    let mut s = 0
+    while s < tree.symbols.len() {
+        for u in tree.symbols[s].uses {
+            if tree.sym(u) != s {
+                bad += 1
+            }
+        }
+        let symbol = tree.symbols[s]
+        if symbol.kind != SymKind.SelfParam && tree.text(symbol.decl) != symbol.name {
+            bad += 1
+        }
+        s += 1
+    }
+    bad
+}
+
+// How many symbols there are of each kind.
+fn kinds(tree: Tree) -> string {
+    let mut counts = [0; 6]
+    for s in tree.symbols {
+        let k = match s.kind {
+            SymKind.Item => 0
+            SymKind.Variant => 1
+            SymKind.TypeParam => 2
+            SymKind.Param => 3
+            SymKind.Local => 4
+            SymKind.SelfParam => 5
+        }
+        counts[k] += 1
+    }
+    "items {counts[0]}, variants {counts[1]}, type params {counts[2]}, params {counts[3]}, locals {counts[4]}, self {counts[5]}"
+}
+
+fn report(mut tree: Tree) {
+    let r = resolve(mut tree)
+    print("symbols: {tree.symbols.len()}")
+    print(kinds(tree))
+    print("uses: {count_uses(tree)}")
+    let lines = r.unresolved_lines()
+    print("unresolved: {lines.len()}")
+    for line in lines {
+        print(line)
+    }
+    print("checksum: {checksum(tree)}")
+    print("bad links: {bad_links(tree)}")
+}
+
+// ---- Edit and undo ----
+
+fn collect_fns(tree: Tree, id: Id, mut out: [Id]) {
+    match tree.kind(id) {
+        NK.Fn => out.push(id)
+        NK.Program | NK.Class | NK.Enum | NK.Extend | NK.List => {
+            for c in tree.children(id) {
+                collect_fns(tree, c, mut out)
+            }
+        }
+        _ => {}
+    }
+}
+
+// Gives the body of the function `f` back to the arena, and puts an empty block in its place.
+fn remove_body(mut tree: Tree, f: Id) {
+    tree.free_subtree(tree.child(f, 3))
+    let empty = Node(kind: NK.Block, parent: Some(f), children: [], text: "", aux: "",
+        line: tree.line(f), col: tree.col(f), flag: false, n: 0, sym: -1)
+    let fresh = tree.nodes.add(empty)
+    tree.nodes.slots[tree.nodes.at(f)].value.children[3] = fresh
+}
+
+// The number of nodes under `id` whose parent link does not lead back to the node that holds them.
+fn bad_parents(tree: Tree, id: Id) -> i64 {
+    let mut bad = 0
+    for c in tree.children(id) {
+        if let p = tree.parent(c) {
+            if !same(p, id) {
+                bad += 1
+            }
+        } else {
+            bad += 1
+        }
+        bad += bad_parents(tree, c)
+    }
+    bad
+}
+
+// How many handles in the symbols point at a node that the arena has taken back.
+fn stale_handles(tree: Tree) -> i64 {
+    let mut n = 0
+    for s in tree.symbols {
+        if !tree.nodes.is_live(s.decl) {
+            n += 1
+        }
+        for u in s.uses {
+            if !tree.nodes.is_live(u) {
+                n += 1
+            }
+        }
+    }
+    n
+}
+
+fn edit(mut tree: Tree) {
+    let _ = resolve(mut tree)
+    let first = checksum(tree)
+    let mut fns: [Id] = []
+    collect_fns(tree, tree.root, mut fns)
+    let mut total = 0
+    let mut stale = 0
+    for f in fns {
+        let before = tree
+        remove_body(mut tree, f)
+        stale += stale_handles(tree)
+        let _ = resolve(mut tree)
+        total += count_uses(tree)
+        tree = before
+    }
+    let restored = checksum(tree)
+    let _ = resolve(mut tree)
+    let again = checksum(tree)
+    // The class version has no such count: its old uses are objects that nothing tells apart.
+    eprint("stale handles after the removals: {stale}")
+    print("functions: {fns.len()}")
+    print("uses without a body: {total}")
+    print("checksum: {first}")
+    print("undo: {restored == first && again == first}")
+    print("bad parent links: {bad_parents(tree, tree.root)}")
+    print("bad links: {bad_links(tree)}")
+}
+
+// Reads a file on standard input and runs the pass that the mode names: `dump`, `resolve` or
+// `edit`. The mode `tokens` prints the lexer's tokens, and `lex` counts them.
+fn main(args: [string]) {
+    let mode = args.get(0) ?? "dump"
+    let tokens = lex_stdin()
+    if mode == "tokens" {
+        for t in tokens {
+            print(t)
+        }
+        return
+    }
+    if mode == "lex" {
+        print("tokens: {tokens.len()}")
+        return
+    }
+    let mut tree = parse(tokens)
+    if mode == "dump" {
+        dump(tree)
+    } else if mode == "resolve" {
+        report(mut tree)
+    } else if mode == "edit" {
+        edit(mut tree)
+    } else {
+        panic("unknown mode {mode}")
+    }
+}

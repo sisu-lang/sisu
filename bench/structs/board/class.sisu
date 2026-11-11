@@ -1,0 +1,536 @@
+// The same task board with classes. Each part holds the objects it works on, so its signatures
+// name only what the part does. An object that was removed stays alive, so it carries a flag.
+
+class Task {
+    mut title: string
+    mut done: bool
+    mut tags: [string]
+    mut removed: bool
+}
+
+// What undo needs of one task. The objects stay, because the index, the events and the detail panel
+// hold them.
+class TaskState {
+    task: Task
+    title: string
+    done: bool
+    tags: [string]
+}
+
+class BoardState {
+    tasks: [TaskState]
+}
+
+class Board {
+    mut all: [Task]
+    mut order: [Task]
+
+    fn at(self, n: i64) -> Task? {
+        if n < 0 || n >= self.order.len() {
+            return None
+        }
+        self.order[n]
+    }
+
+    fn drop_from_order(self, task: Task) {
+        let mut kept: [Task] = []
+        for other in self.order {
+            if !(other is task) {
+                kept.push(other)
+            }
+        }
+        self.order = kept
+    }
+
+    fn state(self) -> BoardState {
+        let mut tasks: [TaskState] = []
+        for t in self.order {
+            tasks.push(TaskState(task: t, title: t.title, done: t.done, tags: t.tags))
+        }
+        BoardState(tasks: tasks)
+    }
+
+    fn restore(self, state: BoardState) {
+        for t in self.all {
+            t.removed = true
+        }
+        let mut order: [Task] = []
+        for s in state.tasks {
+            s.task.title = s.title
+            s.task.done = s.done
+            s.task.tags = s.tags
+            s.task.removed = false
+            order.push(s.task)
+        }
+        self.order = order
+    }
+}
+
+enum Event {
+    Added(Task)
+    Finished(Task)
+    Renamed(Task)
+    Tagged(Task, string)
+    Removed(Task)
+    Undone
+}
+
+class Bus {
+    mut queue: [Event]
+    mut observers: [any Observer]
+
+    fn emit(self, ev: Event) {
+        self.queue.push(ev)
+    }
+
+    // An observer can emit an event. That event goes last in the queue, after this one has reached
+    // every observer.
+    fn drain(self) {
+        let mut at = 0
+        while at < self.queue.len() {
+            let ev = self.queue[at]
+            at += 1
+            for o in self.observers {
+                o.on(ev)
+            }
+        }
+        self.queue = []
+    }
+}
+
+class CacheEntry {
+    word: string
+    hits: i64
+}
+
+class IndexEntry {
+    word: string
+    mut tasks: [Task]
+}
+
+class SearchIndex {
+    mut entries: [IndexEntry]
+
+    fn add(self, word: string, task: Task) {
+        for entry in self.entries {
+            if entry.word == word {
+                entry.tasks.push(task)
+                return
+            }
+        }
+        self.entries.push(IndexEntry(word: word, tasks: [task]))
+    }
+
+    // Counts the mentions: a task that had this word twice counts twice.
+    fn mentions(self, word: string) -> i64 {
+        for entry in self.entries {
+            if entry.word == word {
+                let mut hits = 0
+                for task in entry.tasks {
+                    if !task.removed && has_word(task.title, word) {
+                        hits += 1
+                    }
+                }
+                return hits
+            }
+        }
+        0
+    }
+}
+
+// The two panels hold this one object.
+class Cache {
+    index: SearchIndex
+    mut entries: [CacheEntry]
+    mut found: i64
+    mut missed: i64
+
+    fn clear(self) {
+        self.entries = []
+    }
+
+    fn search(self, word: string) -> i64 {
+        for entry in self.entries {
+            if entry.word == word {
+                self.found += 1
+                return entry.hits
+            }
+        }
+        let hits = self.index.mentions(word)
+        self.missed += 1
+        self.entries.push(CacheEntry(word: word, hits: hits))
+        hits
+    }
+}
+
+class History {
+    board: Board
+    bus: Bus
+    cap: i64
+    mut states: [BoardState]
+    mut at: i64
+    mut len: i64
+
+    fn remember(self) {
+        if self.cap == 0 {
+            return
+        }
+        if self.states.len() < self.cap {
+            self.states.push(self.board.state())
+        } else {
+            self.states[self.at] = self.board.state()
+        }
+        self.at = (self.at + 1) % self.cap
+        if self.len < self.cap {
+            self.len += 1
+        }
+    }
+
+    fn undo(self) -> bool {
+        if self.len == 0 {
+            return false
+        }
+        self.at = (self.at + self.cap - 1) % self.cap
+        self.len -= 1
+        self.board.restore(self.states[self.at])
+        self.bus.emit(Event.Undone)
+        self.bus.drain()
+        true
+    }
+}
+
+fn finish(bus: Bus, task: Task) -> bool {
+    if task.done {
+        return false
+    }
+    task.done = true
+    bus.emit(Event.Finished(task))
+    true
+}
+
+interface Observer {
+    fn on(self, ev: Event)
+}
+
+class StatusBar: Observer {
+    board: Board
+    mut open: i64
+    mut finished: i64
+
+    fn on(self, ev: Event) {
+        match ev {
+            Added(_) => self.open += 1
+            Finished(_) => {
+                self.open -= 1
+                self.finished += 1
+            }
+            Removed(_) | Undone => self.count()
+            Renamed(_) | Tagged(_, _) => {}
+        }
+    }
+
+    fn count(self) {
+        self.open = 0
+        self.finished = 0
+        for task in self.board.order {
+            if task.done {
+                self.finished += 1
+            } else {
+                self.open += 1
+            }
+        }
+    }
+}
+
+class Indexer: Observer {
+    board: Board
+    index: SearchIndex
+    cache: Cache
+
+    fn on(self, ev: Event) {
+        match ev {
+            Added(task) | Renamed(task) => {
+                for word in words(task.title) {
+                    self.index.add(word, task)
+                }
+                self.cache.clear()
+            }
+            Removed(_) | Finished(_) | Tagged(_, _) => self.cache.clear()
+            Undone => {
+                self.index.entries = []
+                for task in self.board.order {
+                    for word in words(task.title) {
+                        self.index.add(word, task)
+                    }
+                }
+                self.cache.clear()
+            }
+        }
+    }
+}
+
+class AuditLog: Observer {
+    mut lines: [string]
+
+    fn on(self, ev: Event) {
+        match ev {
+            Added(t) => self.lines.push("added {t.title}")
+            Finished(t) => self.lines.push("finished {t.title}")
+            Renamed(t) => self.lines.push("renamed {t.title}")
+            Tagged(t, tag) => self.lines.push("tagged {t.title} {tag}")
+            Removed(t) => self.lines.push("removed {t.title}")
+            Undone => self.lines.push("undone")
+        }
+    }
+}
+
+// A rule that changes the model: a task tagged "auto" finishes, and that fires one more event.
+class AutoClose: Observer {
+    bus: Bus
+
+    fn on(self, ev: Event) {
+        match ev {
+            Tagged(task, tag) => {
+                if tag == "auto" {
+                    let _ = finish(self.bus, task)
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+// Added at run time. It holds its own count.
+class Watch: Observer {
+    word: string
+    mut count: i64
+
+    fn on(self, ev: Event) {
+        match ev {
+            Added(task) | Renamed(task) => {
+                if has_word(task.title, self.word) {
+                    self.count += 1
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+class ListPanel {
+    board: Board
+    bus: Bus
+    cache: Cache
+    history: History
+
+    fn add(self, title: string) -> string {
+        self.history.remember()
+        let task = Task(title: title, done: false, tags: [], removed: false)
+        self.board.all.push(task)
+        self.board.order.push(task)
+        self.bus.emit(Event.Added(task))
+        self.bus.drain()
+        "added {self.board.order.len() - 1}"
+    }
+
+    fn finish_at(self, n: i64) -> string {
+        if let task = self.board.at(n) {
+            self.history.remember()
+            if finish(self.bus, task) {
+                self.bus.drain()
+                return "finished"
+            }
+            return "already"
+        }
+        "no such"
+    }
+
+    fn remove_at(self, n: i64) -> string {
+        if let task = self.board.at(n) {
+            self.history.remember()
+            task.removed = true
+            self.board.drop_from_order(task)
+            self.bus.emit(Event.Removed(task))
+            self.bus.drain()
+            return "removed"
+        }
+        "no such"
+    }
+
+    fn find(self, word: string) -> string {
+        "list {self.cache.search(word)}"
+    }
+}
+
+class DetailPanel {
+    board: Board
+    bus: Bus
+    cache: Cache
+    history: History
+    mut selected: Task?
+
+    fn select(self, n: i64) -> string {
+        self.selected = self.board.at(n)
+        if let _ = self.selected {
+            return "selected"
+        }
+        "no such"
+    }
+
+    fn rename(self, title: string) -> string {
+        if let task = self.selected {
+            if task.removed {
+                return "gone"
+            }
+            self.history.remember()
+            task.title = title
+            self.bus.emit(Event.Renamed(task))
+            self.bus.drain()
+            return "renamed"
+        }
+        "none selected"
+    }
+
+    fn tag(self, tag: string) -> string {
+        if let task = self.selected {
+            if task.removed {
+                return "gone"
+            }
+            self.history.remember()
+            task.tags.push(tag)
+            self.bus.emit(Event.Tagged(task, tag))
+            self.bus.drain()
+            return "tagged"
+        }
+        "none selected"
+    }
+
+    fn related(self) -> string {
+        if let task = self.selected {
+            if task.removed {
+                return "gone"
+            }
+            let mut sum = 0
+            for word in words(task.title) {
+                sum += self.cache.search(word)
+            }
+            return "detail {sum}"
+        }
+        "none selected"
+    }
+}
+
+class Screen {
+    status: StatusBar
+    log: AuditLog
+    cache: Cache
+    bus: Bus
+    mut watches: [Watch]
+
+    fn watch(self, word: string) -> string {
+        let w = Watch(word: word, count: 0)
+        self.watches.push(w)
+        self.bus.observers.push(w)
+        "watching {self.watches.len()}"
+    }
+
+    fn show(self) -> string {
+        let mut seen = 0
+        for w in self.watches {
+            seen += w.count
+        }
+        "open {self.status.open} finished {self.status.finished} log {self.log.lines.len()} cache {self.cache.found} {self.cache.missed} watched {seen}"
+    }
+}
+
+fn words(line: string) -> [string] {
+    let mut out: [string] = []
+    let mut word = ""
+    for c in line.chars() {
+        if c == ' ' {
+            if word.len() > 0 {
+                out.push(word)
+                word = ""
+            }
+        } else {
+            word += "{c}"
+        }
+    }
+    if word.len() > 0 {
+        out.push(word)
+    }
+    out
+}
+
+fn has_word(line: string, word: string) -> bool {
+    for w in words(line) {
+        if w == word {
+            return true
+        }
+    }
+    false
+}
+
+fn number(text: string) -> i64 {
+    let mut n = 0
+    for c in text.chars() {
+        n = n * 10 + i64(c) - i64('0')
+    }
+    n
+}
+
+fn rest(w: [string]) -> string {
+    let mut out = ""
+    for i in 1..w.len() {
+        if i > 1 {
+            out += " "
+        }
+        out += w[i]
+    }
+    out
+}
+
+fn main() {
+    let first = words(read_line() ?? "history 0")
+    let board = Board(all: [], order: [])
+    let index = SearchIndex(entries: [])
+    let cache = Cache(index: index, entries: [], found: 0, missed: 0)
+    let bus = Bus(queue: [], observers: [])
+    let status = StatusBar(board: board, open: 0, finished: 0)
+    let log = AuditLog(lines: [])
+    let observers: [any Observer] = [status, Indexer(board: board, index: index, cache: cache), log,
+        AutoClose(bus: bus)]
+    bus.observers = observers
+    let history = History(board: board, bus: bus, cap: number(first[1]), states: [], at: 0, len: 0)
+    let list = ListPanel(board: board, bus: bus, cache: cache, history: history)
+    let detail = DetailPanel(board: board, bus: bus, cache: cache, history: history, selected: None)
+    let screen = Screen(status: status, log: log, cache: cache, bus: bus, watches: [])
+    while let line = read_line() {
+        let w = words(line)
+        let verb = w[0]
+        if verb == "add" {
+            print(list.add(rest(w)))
+        } else if verb == "done" {
+            print(list.finish_at(number(w[1])))
+        } else if verb == "del" {
+            print(list.remove_at(number(w[1])))
+        } else if verb == "find" {
+            print(list.find(w[1]))
+        } else if verb == "select" {
+            print(detail.select(number(w[1])))
+        } else if verb == "rename" {
+            print(detail.rename(rest(w)))
+        } else if verb == "tag" {
+            print(detail.tag(w[1]))
+        } else if verb == "related" {
+            print(detail.related())
+        } else if verb == "watch" {
+            print(screen.watch(w[1]))
+        } else if verb == "undo" {
+            print(history.undo())
+        } else if verb == "show" {
+            print(screen.show())
+        }
+    }
+    print(screen.show())
+}

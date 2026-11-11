@@ -1,0 +1,153 @@
+// A small server with shared state, written with classes. Sisu has no sockets and no threads yet,
+// so requests are lines of standard input, one after the other.
+// Each handler object holds the state that it needs. Many handlers hold the same bank and log.
+
+class Account {
+    name: string
+    mut balance: i64
+}
+
+class Bank {
+    mut accounts: [Account]
+
+    fn find(self, name: string) -> Account? {
+        for a in self.accounts {
+            if a.name == name {
+                return a
+            }
+        }
+        None
+    }
+}
+
+class Log {
+    mut lines: [string]
+
+    fn add(self, line: string) {
+        self.lines.push(line)
+    }
+}
+
+class Metrics {
+    mut hits: i64
+    mut failures: i64
+}
+
+interface Handler {
+    fn verb(self) -> string
+    fn handle(self, words: [string]) -> string?
+}
+
+class Deposit: Handler {
+    bank: Bank
+    log: Log
+
+    fn verb(self) -> string { "deposit" }
+
+    fn handle(self, words: [string]) -> string? {
+        if let a = self.bank.find(words[1]) {
+            let n = number(words[2])
+            a.balance += n
+            self.log.add("deposit {a.name} {n}")
+            return "ok {a.balance}"
+        }
+        None
+    }
+}
+
+class Transfer: Handler {
+    bank: Bank
+    log: Log
+
+    fn verb(self) -> string { "transfer" }
+
+    fn handle(self, words: [string]) -> string? {
+        if let from = self.bank.find(words[1]) {
+            if let to = self.bank.find(words[2]) {
+                let n = number(words[3])
+                if from.balance < n {
+                    return None
+                }
+                from.balance -= n
+                to.balance += n
+                self.log.add("transfer {from.name} {to.name} {n}")
+                return "ok {from.balance} {to.balance}"
+            }
+        }
+        None
+    }
+}
+
+class Balance: Handler {
+    bank: Bank
+
+    fn verb(self) -> string { "balance" }
+
+    fn handle(self, words: [string]) -> string? {
+        if let a = self.bank.find(words[1]) {
+            return "{a.balance}"
+        }
+        None
+    }
+}
+
+class Stats: Handler {
+    metrics: Metrics
+    log: Log
+
+    fn verb(self) -> string { "stats" }
+
+    fn handle(self, words: [string]) -> string? {
+        "{self.metrics.hits} {self.metrics.failures} {self.log.lines.len()}"
+    }
+}
+
+class Router {
+    handlers: [any Handler]
+    metrics: Metrics
+
+    fn serve(self, line: string) -> string {
+        let words = line.words()
+        self.metrics.hits += 1
+        for h in self.handlers {
+            if h.verb() == words[0] {
+                if let reply = h.handle(words) {
+                    return reply
+                }
+                self.metrics.failures += 1
+                return "refused"
+            }
+        }
+        self.metrics.failures += 1
+        "unknown"
+    }
+}
+
+fn number(text: string) -> i64 {
+    let mut n = 0
+    for c in text.chars() {
+        n = n * 10 + i64(c) - 48
+    }
+    n
+}
+
+fn main() {
+    let bank = Bank(accounts: [])
+    for i in 0..100 {
+        bank.accounts.push(Account(name: "u{i}", balance: 1000))
+    }
+    let log = Log(lines: [])
+    let metrics = Metrics(hits: 0, failures: 0)
+    let router = Router(
+        handlers: [
+            Deposit(bank: bank, log: log),
+            Transfer(bank: bank, log: log),
+            Balance(bank: bank),
+            Stats(metrics: metrics, log: log)
+        ],
+        metrics: metrics
+    )
+    while let line = read_line() {
+        print(router.serve(line))
+    }
+}

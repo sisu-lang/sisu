@@ -9,7 +9,7 @@ BENCH =
 ARGS =
 
 .DEFAULT_GOAL := help
-.PHONY: help setup audit-setup build test test-health bless lint deny miri check coverage mutation-test mutation-status fuzz fuzz-coverage fuzz-gaps bench compile-speed scaling callgrind site
+.PHONY: help setup audit-setup build test test-health bless lint deny miri check coverage mutation-test mutation-status fuzz fuzz-coverage fuzz-gaps bench compile-speed scaling structs-gate callgrind site
 
 help: ## List the targets
 	@awk 'BEGIN { FS = ":.*## " } /^[a-z-]+:.*## / { printf "  %-15s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -80,6 +80,10 @@ compile-speed: ## Compare compile speed with rustc, clang++ and Go (ARGS='--chec
 scaling: ## Find the shapes of program for which a compiler stage is superlinear (ARGS='--shapes ...')
 	cargo build --release --quiet -p sisuc
 	python3 scripts/scaling.py $(ARGS)
+
+structs-gate: ## Run the gates of the structs spec on bench/structs/ (ARGS='--class-only' runs the class versions only)
+	cargo build --release --quiet -p sisuc -p sisu-runtime-system
+	python3 scripts/structs_gate.py $(ARGS)
 
 callgrind: ## Count the instructions of sisu check, as CodSpeed does
 	scripts/codspeed-prep.sh

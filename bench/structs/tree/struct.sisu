@@ -1,0 +1,134 @@
+// The same directory tree with structs only. A struct cannot refer to another, so the tree owns
+// all of its directories in one array. A link is the index of a directory in that array.
+
+struct Dir {
+    name: string
+    size: i64
+    parent: i64?
+    children: [i64]
+}
+
+struct Tree {
+    dirs: [Dir]
+
+    fn add(mut self, under: i64, name: string, size: i64) -> i64 {
+        let id = self.dirs.len()
+        self.dirs.push(Dir(name: name, size: size, parent: under, children: []))
+        self.dirs[under].children.push(id)
+        id
+    }
+
+    fn path(self, id: i64) -> string {
+        if let up = self.dirs[id].parent {
+            return self.path(up) + "/" + self.dirs[id].name
+        }
+        self.dirs[id].name
+    }
+
+    fn total(self, id: i64) -> i64 {
+        let mut sum = self.dirs[id].size
+        for c in self.dirs[id].children {
+            sum += self.total(c)
+        }
+        sum
+    }
+
+    fn is_inside(self, id: i64, other: i64) -> bool {
+        if id == other {
+            return true
+        }
+        if let up = self.dirs[id].parent {
+            return self.is_inside(up, other)
+        }
+        false
+    }
+
+    fn remove_child(mut self, id: i64, child: i64) {
+        let mut kept: [i64] = []
+        for c in self.dirs[id].children {
+            if c != child {
+                kept.push(c)
+            }
+        }
+        self.dirs[id].children = kept
+    }
+
+    fn move_to(mut self, id: i64, target: i64) -> bool {
+        if self.is_inside(target, id) {
+            return false
+        }
+        if let up = self.dirs[id].parent {
+            self.remove_child(up, id)
+        }
+        self.dirs[id].parent = target
+        self.dirs[target].children.push(id)
+        true
+    }
+}
+
+fn build(mut tree: Tree, under: i64, depth: i64, width: i64) {
+    if depth == 0 {
+        return
+    }
+    for i in 0..width {
+        let child = tree.add(under, "d{i}", i + 1)
+        build(mut tree, child, depth - 1, width)
+    }
+}
+
+fn main() {
+    // The input is one line, the size of the work: a count of 1 is 8 subtrees under `big`.
+    let mut n = 0
+    for c in (read_line() ?? "").chars() {
+        n = n * 10 + i64(c) - 48
+    }
+    let mut t = Tree(dirs: [Dir(name: "root", size: 1, parent: None, children: [])])
+    let root = 0
+    let home = t.add(root, "home", 10)
+    let etc = t.add(root, "etc", 20)
+    let aino = t.add(home, "aino", 30)
+    let docs = t.add(aino, "docs", 40)
+    print(t.path(docs))
+    print(t.total(root))
+
+    t.dirs[docs].size += 5
+    t.dirs[docs].name = "papers"
+    print(t.path(docs))
+    print(t.total(root))
+
+    print(t.move_to(aino, etc))
+    print(t.path(docs))
+    print(t.total(home))
+    print(t.total(etc))
+    print(t.move_to(etc, docs))
+    print(t.total(root))
+
+    // The work to measure: a large tree, many walks to the root, many moves.
+    let big = t.add(root, "big", 0)
+    for k in 0..8 * n {
+        let sub = t.add(big, "d{k}", k % 8 + 1)
+        build(mut t, sub, 3, 8)
+    }
+    let mut sum = 0
+    for i in 0..200 * n {
+        let a = t.dirs[big].children[i % 8]
+        let b = t.dirs[a].children[i % 7]
+        let c = t.dirs[b].children[i % 5]
+        sum += t.path(c).chars().len()
+        t.dirs[c].size += 1
+        let d = t.dirs[c].children[i % 3]
+        t.dirs[d].size += i
+    }
+    for i in 0..2000 * n {
+        let a = t.dirs[big].children[i % 8]
+        let from = t.dirs[a].children[i % 7]
+        let b = t.dirs[big].children[(i + 1) % 8]
+        let to = t.dirs[b].children[i % 7]
+        if t.dirs[from].children.len() > 0 {
+            let _ = t.move_to(t.dirs[from].children[0], to)
+        }
+        sum += t.dirs[to].children.len()
+    }
+    print(sum)
+    print(t.total(big))
+}
