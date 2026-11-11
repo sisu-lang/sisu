@@ -39,7 +39,7 @@ def add(ledger: str, kind: str, text: str, now: datetime) -> str:
 
 def set_group(ledger: str, group: str, state: str) -> str:
     """Return the ledger text with `state` in the last cell of the row of `group` in Groups."""
-    if "|" in state or "\n" in state:
+    if "|" in state or state.splitlines() not in ([], [state]):
         raise ValueError("the state has a `|` or a line break, which would split its row")
     lines = ledger.splitlines()
     if "## Groups" not in lines:

@@ -80,6 +80,11 @@ class SetGroup(unittest.TestCase):
         with self.assertRaises(ValueError):
             ledger.set_group(GROUPS, "G1", "a\nb")
 
+    def test_a_state_with_any_break_of_splitlines_should_be_an_error(self) -> None:
+        for state in ("a\rb", "a\u2028b"):
+            with self.subTest(state=state), self.assertRaises(ValueError):
+                ledger.set_group(GROUPS, "G1", state)
+
     def test_a_group_line_with_no_state_should_print_the_usage(self) -> None:
         with tempfile.TemporaryDirectory() as d, redirect_stderr(StringIO()) as err:
             path = Path(d) / "progress.md"

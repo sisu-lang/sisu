@@ -806,7 +806,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder.position_at_end(done);
     }
 
-    /// The body of the helper of an array of `element`. `define_helpers` routes each one here.
+    /// The body of a helper of an array of `element` that `define_helpers` routes here.
     pub(super) fn define_array_helper(
         &self,
         kind: Helper,
@@ -830,7 +830,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             | Helper::Free
             | Helper::Reuse => {
                 unreachable!(
-                    "`define_helpers` should route only an array's helpers to `define_array_helper`"
+                    "`helper` should queue for an array only a helper that `define_array_helper` defines"
                 )
             }
         }

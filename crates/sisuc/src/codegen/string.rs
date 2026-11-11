@@ -691,7 +691,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder.build_unreachable().expect(POSITIONED);
     }
 
-    /// The body of a string's helper. `define_helpers` routes each one here.
+    /// The body of a string's helper that `define_helpers` routes here.
     pub(super) fn define_string_helper(&self, kind: Helper, function: FunctionValue<'ctx>) {
         match kind {
             Helper::Drop => self.define_string_drop(function),
@@ -710,7 +710,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             | Helper::Free
             | Helper::Reuse => {
                 unreachable!(
-                    "`define_helpers` should route only a string's helpers to `define_string_helper`"
+                    "`helper` should queue for a string only a helper that `define_string_helper` defines"
                 )
             }
         }
