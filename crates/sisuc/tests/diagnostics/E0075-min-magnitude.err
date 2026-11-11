@@ -1,13 +1,13 @@
 error[E0075]: base prefixes are lower case
- --> E0075-min-magnitude.sisu:2:13
+ --> E0075-min-magnitude.sisu:2:14
   |
-2 |     let n = 0X8000_0000_0000_0000
-  |             ^^
+2 |     let n = -0X8000_0000_0000_0000
+  |              ^^
   |
 help: write the prefix in lower case
   |
-2 -     let n = 0X8000_0000_0000_0000
-2 +     let n = 0x8000_0000_0000_0000
+2 -     let n = -0X8000_0000_0000_0000
+2 +     let n = -0x8000_0000_0000_0000
   |
 
 sisu: 1 error
