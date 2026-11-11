@@ -689,10 +689,18 @@ fn one_test_should_prove_two_rules() {
 /// AND the rule of the section gives no fault for a missing test
 #[test]
 fn pending_example_with_a_fault_should_keep_its_section_in_development() {
-    let text =
-        "### S\n\n```sisu pending args=\"a\"\nfn main() {}\n```\n\n**Rules**\n\n- {#strings.a} x\n";
-    let page = read_page(text);
-    let lines: Vec<usize> = page.faults.iter().map(|fault| fault.line).collect();
-    assert_eq!(lines, [3], "the faults of the page are {:?}", page.faults);
-    assert_faults("args", &rule_fault_list("strings", text, &[]), &[]);
+    // Each row is a name and the info string of the fence. Each gives one fault, at line 3.
+    let rows = [
+        ("an argument it cannot take", "pending args=\"a\""),
+        ("an unknown word", "pending bogus"),
+    ];
+    for (row, info) in rows {
+        let text = format!(
+            "### S\n\n```sisu {info}\nfn main() {{}}\n```\n\n**Rules**\n\n- {{#strings.a}} x\n"
+        );
+        let page = read_page(&text);
+        let lines: Vec<usize> = page.faults.iter().map(|fault| fault.line).collect();
+        assert_eq!(lines, [3], "row {row}: the faults are {:?}", page.faults);
+        assert_faults(row, &rule_fault_list("strings", &text, &[]), &[]);
+    }
 }

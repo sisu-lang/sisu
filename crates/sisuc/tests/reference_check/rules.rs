@@ -11,7 +11,7 @@ use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::markers::RuleMarker;
-use super::{Fault, Kind, Page};
+use super::{Fault, Page};
 
 /// One top-level item of a list of rules.
 #[derive(Debug)]
@@ -343,29 +343,34 @@ struct Section {
     plain: bool,
 }
 
-/// The sections of `page`. A heading of any level ends a section, but only `##` and `###` start
-/// one, as on the site.
+/// The sections of `page`, in page order. A heading of any level ends a section, but only `##` and
+/// `###` start one, as on the site. One pass over the headings and the fences.
 fn sections(page: &Page) -> Vec<Section> {
     let ends = page.headings.iter().skip(1).map(|&(line, _)| line);
-    page.headings
+    let mut fences = page.fences.iter().peekable();
+    let mut sections = Vec::new();
+    for (&(start, level), end) in page
+        .headings
         .iter()
         .zip(ends.chain(std::iter::once(usize::MAX)))
-        .filter(|((_, level), _)| matches!(level, 2 | 3))
-        .map(|(&(start, _), end)| {
-            let kinds: Vec<Kind> = page
-                .examples
-                .iter()
-                .filter(|example| (start..end).contains(&example.line))
-                .map(|example| example.kind)
-                .collect();
-            Section {
+    {
+        // The fences before this heading are in no section.
+        while fences.next_if(|&&(line, _)| line < start).is_some() {}
+        let (mut pending, mut plain) = (false, false);
+        while let Some(&(_, is_pending)) = fences.next_if(|&&(line, _)| line < end) {
+            pending |= is_pending;
+            plain |= !is_pending;
+        }
+        if matches!(level, 2 | 3) {
+            sections.push(Section {
                 start,
                 end,
-                pending: kinds.contains(&Kind::Pending),
-                plain: kinds.iter().any(|&kind| kind != Kind::Pending),
-            }
-        })
-        .collect()
+                pending,
+                plain,
+            });
+        }
+    }
+    sections
 }
 
 /// The faults of `page`, the page `stem`, found with the `markers` of the tests, sorted by line.
@@ -393,7 +398,12 @@ fn proof_faults(page: &Page, markers: &[RuleMarker], bad_lines: &FxHashSet<usize
         by_id.entry(&marker.id).or_default().push(marker);
     }
     let mut faults = Vec::new();
+    // The rules are in page order, like the sections: one cursor moves over the sections.
+    let mut section = 0;
     for rule in &page.rules {
+        while sections.get(section).is_some_and(|s| s.end <= rule.line) {
+            section += 1;
+        }
         let Some(id) = rule
             .id
             .as_deref()
@@ -406,8 +416,8 @@ fn proof_faults(page: &Page, markers: &[RuleMarker], bad_lines: &FxHashSet<usize
         let stale: Vec<&&RuleMarker> = named.iter().filter(|m| m.hash != *hash).collect();
         let message = if named.is_empty() {
             let in_development = sections
-                .iter()
-                .any(|s| (s.start..s.end).contains(&rule.line) && s.pending);
+                .get(section)
+                .is_some_and(|s| s.start <= rule.line && s.pending);
             if in_development {
                 continue;
             }

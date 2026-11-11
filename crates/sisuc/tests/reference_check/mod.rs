@@ -31,6 +31,9 @@ pub(crate) struct Page {
     pub(crate) id_lines: Vec<usize>,
     /// The line and the level (1 to 6) of each heading, in page order.
     pub(crate) headings: Vec<(usize, u8)>,
+    /// The line of each `sisu` fence, in page order, and whether it is `pending`. This holds also
+    /// an example with a fault, which `examples` leaves out.
+    pub(crate) fences: Vec<(usize, bool)>,
 }
 
 /// A fault in a page's Markdown, on its 1-based `line`.
@@ -91,6 +94,7 @@ pub(crate) fn read_page(text: &str) -> Page {
     let mut reader = Reader {
         examples: Vec::new(),
         dropped: Vec::new(),
+        fences: Vec::new(),
         faults: Vec::new(),
         open: Open::Nothing,
     };
@@ -137,6 +141,7 @@ pub(crate) fn read_page(text: &str) -> Page {
     let Reader {
         examples,
         dropped,
+        fences,
         mut faults,
         ..
     } = reader;
@@ -163,6 +168,7 @@ pub(crate) fn read_page(text: &str) -> Page {
         rules,
         id_lines,
         headings,
+        fences,
     }
 }
 
@@ -171,6 +177,8 @@ struct Reader {
     examples: Vec<Example>,
     /// For each example, if a companion block of it has a fault.
     dropped: Vec<bool>,
+    /// The line of each `sisu` fence, and whether it is `pending`.
+    fences: Vec<(usize, bool)>,
     faults: Vec<Fault>,
     open: Open,
 }
@@ -201,6 +209,7 @@ impl Reader {
                     // Markdown decodes escapes and entities in an info string, and the site's
                     // parser decodes some of them in a different way.
                     "sisu" if fence_line.contains(['\\', '&']) => {
+                        self.fences.push((line, is_pending(words)));
                         self.open = Open::Faulted;
                         self.faults.push(Fault {
                             line,
@@ -214,19 +223,22 @@ impl Reader {
                         }
                         Some("a companion block's info string cannot hold `\\` or `&`".to_string())
                     }
-                    "sisu" => match example(line, words, body) {
-                        Ok(found) => {
-                            self.examples.push(found);
-                            self.dropped.push(false);
-                            self.open = Open::Example(self.examples.len() - 1);
-                            None
+                    "sisu" => {
+                        self.fences.push((line, is_pending(words)));
+                        match example(line, words, body) {
+                            Ok(found) => {
+                                self.examples.push(found);
+                                self.dropped.push(false);
+                                self.open = Open::Example(self.examples.len() - 1);
+                                None
+                            }
+                            Err(fault) => {
+                                self.open = Open::Faulted;
+                                self.faults.push(fault);
+                                None
+                            }
                         }
-                        Err(fault) => {
-                            self.open = Open::Faulted;
-                            self.faults.push(fault);
-                            None
-                        }
-                    },
+                    }
                     "output" | "input" | "stderr" if words.is_empty() => match self.open {
                         Open::Nothing => Some(format!(
                             "this `{name}` block follows no example; put it directly \
@@ -311,6 +323,15 @@ fn example(line: usize, words: &str, source: String) -> Result<Example, Fault> {
         input: None,
         stderr: None,
     })
+}
+
+/// Whether the info `words` after `sisu` make the example `pending`. A fault in the words does
+/// not change the answer: the words with a fault are read for the word `pending`.
+fn is_pending(words: &str) -> bool {
+    match info(words) {
+        Ok((kind, _)) => kind == Kind::Pending,
+        Err(_) => words.split_whitespace().any(|word| word == "pending"),
+    }
 }
 
 /// The kind and the arguments that the info `words` after `sisu` give.
