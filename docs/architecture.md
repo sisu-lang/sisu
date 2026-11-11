@@ -630,7 +630,7 @@ source line with the code underlined. Before it renders a long ASCII line with
 every span on it, it cuts the line to the bytes near the spans. The renderer
 gets only those bytes. The text is the same as for the whole line. Labels at most 3
 lines apart share one snippet. A label farther away gets its own snippet, with a
-`:::` header. The snippet of the primary span comes first. Each notes line is a
+`:::` header. The snippet of the primary span comes first. Each note is a
 `= note:` line. Each
 diagnostic still scans the line once for its checks (a `shortcut:` in
 `render.rs`). `diagnostic/json.rs` writes the same
