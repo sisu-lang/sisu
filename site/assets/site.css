@@ -308,6 +308,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 15px; }
 .prose ul.rules > li { margin: 0; padding: 10px 0; border-top: 1px solid var(--rule); }
 .prose ul.rules > li:first-child { border-top: 0; }
 .prose ul.rules ul { margin: 6px 0 0; }
+.prose ul.rules .proofs { margin: 4px 0 0; font-size: 13px; color: var(--mute); }
 .prose a.tag { display: inline-block; margin-left: 6px; padding: 0 7px; border: 1px solid var(--rule2); border-radius: 99px; font: 500 12px/1.6 "JetBrains Mono", monospace; color: var(--mute); text-decoration: none; vertical-align: 1px; white-space: nowrap; }
 .prose a.tag:hover { border-color: var(--accent); color: var(--accent-ink); }
 .prose .cards { list-style: none; margin: 24px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }

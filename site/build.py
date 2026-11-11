@@ -594,7 +594,7 @@ def mark_rules(tokens: list[Token]) -> None:  # noqa: C901  one scan of the toke
             and kids[-1].type == "strong_close"
             and sum(k.type == "strong_open" for k in kids) == 1
         ):
-            # One plain paragraph can stand between the label and its list, as a note.
+            # One paragraph of any content can stand between the label and its list, as a note.
             note = i + 3 < len(tokens) and tokens[i + 3].type == "paragraph_open"
             at = i + 6 if note else i + 3
             if at < len(tokens) and tokens[at].type == "bullet_list_open":
@@ -625,13 +625,110 @@ def mark_rules(tokens: list[Token]) -> None:  # noqa: C901  one scan of the toke
                     break
 
 
-def rule_proofs(_root: Path, _files: Iterable[str]) -> dict[str, list[tuple[str, int]]]:
-    """Map each rule ID to its test markers (red commit: stub)."""
-    return {}
+RULE_ID = re.compile(r"\{#([^\s}]+)\} (?=\S)")
+# The marker grammar of the reference check (`reference_check/markers.rs`, `parse_marker`).
+RULE_MARKER = re.compile(r"\s*//[/!]?\s*r\[verify ([^\s@\]]+)@[0-9a-f]{4}\]\s*")
 
 
-def rule_anchors(tokens: list[Token], proofs: Mapping[str, list[tuple[str, int]]]) -> None:
-    """Give each rule its ID (red commit: stub)."""
+def rule_proofs(root: Path, files: Iterable[str]) -> dict[str, list[tuple[str, int]]]:
+    """Map each rule ID to the (path, line) of each test marker that names it.
+
+    The files are the ones of `files` that the reference check reads for markers: `.rs` and
+    `.sisu` files under `crates/`, read from `root`. The map does not check the ID or the hash:
+    `make test` does.
+    """
+    proofs: dict[str, list[tuple[str, int]]] = {}
+    for path in sorted(files):
+        if not (path.startswith("crates/") and path.endswith((".rs", ".sisu"))):
+            continue
+        try:
+            text = (root / path).read_bytes().decode(errors="replace")
+        except FileNotFoundError:  # tracked, but removed from the working tree
+            continue
+        for number, line in enumerate(text.split("\n"), 1):
+            if marker := RULE_MARKER.fullmatch(line):
+                proofs.setdefault(marker[1], []).append((path, number))
+    return proofs
+
+
+def first_line(inline: Token | None) -> str:
+    """Return the text of the first line of `inline`, with the content of its code spans."""
+    text = []
+    for kid in inline.children or [] if inline else []:
+        if kid.type == "softbreak":
+            break
+        text.append(kid.content)
+    return "".join(text)
+
+
+def proof_html(proofs: list[tuple[str, int]]) -> str:
+    """Return the "Proved by" line for the markers `proofs`, (path, line) pairs."""
+    links = ", ".join(
+        f'<a href="{html.escape(BLOB + path)}#L{line}">'
+        f"{escape(path.removeprefix('crates/'))}:{line}</a>"
+        for path, line in proofs
+    )
+    return f'<div class="proofs">Proved by {links}</div>'
+
+
+def rule_anchors(tokens: list[Token], proofs: Mapping[str, list[tuple[str, int]]]) -> None:  # noqa: C901  one scan of the tokens, with one branch for each token kind
+    """Give each rule of `tokens` its ID, and list the tests that prove it.
+
+    A top-level item of a list of rules (see `mark_rules`) that starts with `{#id} ` loses that
+    prefix. The ID becomes the `id` of its `<li>`.
+    A rule with an ID in `proofs` ends with a line that links to its markers.
+    The match is the one the reference check makes. A link, bold text or a character reference
+    before the `{#` gives no ID.
+    The page is not built when a `<li>` still starts with `{#`. It is not built either when only
+    some of its rules have an ID. Then the site and the check disagree.
+    """
+    lists: list[bool] = []  # for each open list, whether it is a list of rules
+    ids: list[tuple[int, str]] = []
+    bare: list[str] = []  # the text of each rule with no ID
+    for i, token in enumerate(tokens):
+        if token.type in ("bullet_list_open", "ordered_list_open"):
+            lists.append(token.attrGet("class") == "rules")
+        elif token.type in ("bullet_list_close", "ordered_list_close"):
+            lists.pop()
+        elif token.type == "list_item_open":
+            inline = tokens[i + 2] if tokens[i + 1].type == "paragraph_open" else None
+            kids = (inline.children if inline else None) or []
+            text = first_line(inline)
+            if (
+                lists[-1]
+                and inline
+                and kids
+                and kids[0].type == "text"
+                and inline.content.startswith(("{#", "\\{#"))
+                and (found := RULE_ID.match(text))
+                and kids[0].content.startswith(found[0])
+            ):
+                kids[0].content = kids[0].content.removeprefix(found[0])
+                token.attrSet("id", found[1])
+                ids.append((i, found[1]))
+                text = first_line(inline)
+            elif lists[-1]:
+                bare.append(text)
+            if text.startswith("{#"):
+                raise BuildError(
+                    f'the list item "{text}" starts with "{{#" and is not a rule with an ID. '
+                    'Write a rule as "- {#page.name} text" in a list of rules.'
+                )
+    if ids and bare:
+        raise BuildError(
+            f'the rule "{bare[0]}" has no ID, and another rule of the page has one. '
+            "Give each rule an ID."
+        )
+    for i, rule_id in reversed(ids):  # the end, so that an insert keeps the earlier indexes
+        if rule_id in proofs:
+            end = next(
+                j
+                for j in range(i + 1, len(tokens))
+                if tokens[j].type == "list_item_close" and tokens[j].level == tokens[i].level
+            )
+            block = Token("html_block", "", 0)
+            block.content = proof_html(proofs[rule_id])
+            tokens.insert(end, block)
 
 
 def reference_html(  # noqa: C901, PLR0912  both count the same branches: one scan of the tokens, with one branch for each token kind
@@ -710,14 +807,16 @@ def reference_pages(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Return each page of `pages` read from docs/reference/ and rendered once.
 
     A page is its entry with its title, the title's id, its body, its headings and its tag.
+    A rule shows the tests that prove it (see `rule_proofs`).
     """
     prepared = []
+    proofs = rule_proofs(ROOT, check_links.TRACKED)
     for page in pages:
         path = REFERENCE / f"{page['file']}.md"
         try:
             text = path.read_text(encoding="utf-8")
             title = reference_title(text)
-            body, headings, tagged = reference_html(text, path)
+            body, headings, tagged = reference_html(text, path, proofs=proofs)
         except (OSError, BuildError) as e:
             raise BuildError(f"docs/reference/{page['file']}.md: {e}") from e
         prepared.append(
