@@ -23,6 +23,8 @@ pub(crate) struct Rule {
     pub(crate) prefix: Option<String>,
     /// The ID of the item, when its prefix is `{#id} ` and the text follows on the same line.
     pub(crate) id: Option<String>,
+    /// Whether a white space character that the site does not see stands before the prefix.
+    pub(crate) after_space: bool,
     /// The hash of the text of the rule (see `hash_of`): four lowercase hex digits.
     pub(crate) hash: String,
 }
@@ -80,22 +82,28 @@ pub(crate) fn read_rules(text: &str) -> (Vec<Rule>, Vec<usize>) {
         // The text of an item starts at its first event, when that event is text, code or the
         // start of a paragraph. Any other first block (such as indented code) has no prefix.
         if let Some((line, is_rule)) = item.take() {
+            // `Event::Code` can never give a prefix, because a code span does not start with
+            // `{#`. It stays in the list so that every first event of a text is one case.
             let starts_text = matches!(
                 event,
                 Event::Text(_) | Event::Code(_) | Event::Start(Tag::Paragraph)
             );
+            let at = &text[range.start..];
+            let after_space = at.trim_start_matches([' ', '\t']).starts_with(is_stripped);
             let prefix = starts_text
-                .then(|| read_prefix(&text[range.start..]))
+                .then(|| read_prefix(at.trim_start_matches(is_stripped_or_blank)))
                 .flatten();
             if prefix.is_some() {
                 id_lines.push(line);
             }
             if is_rule {
+                let after_space = after_space && prefix.is_some();
                 let (prefix, id) = prefix.map_or((None, None), |(written, id)| (Some(written), id));
                 rules.push(Rule {
                     line,
                     prefix,
-                    id,
+                    id: id.filter(|_| !after_space),
+                    after_space,
                     hash: String::new(),
                 });
             }
@@ -162,6 +170,19 @@ pub(crate) fn read_rules(text: &str) -> (Vec<Rule>, Vec<usize>) {
         }
     }
     (rules, id_lines)
+}
+
+/// Whether markdown-it strips `c` from the start of a paragraph, and the reader of the check does
+/// not: Python `str.strip` white space that is not an ASCII space or tab. `pulldown-cmark` skips
+/// a space or a tab after the bullet and keeps any other character. The site then sees the ID
+/// that this reader does not (`site/build.py`, `rule_anchors`).
+fn is_stripped(c: char) -> bool {
+    c.is_whitespace() && !matches!(c, ' ' | '\t') || ('\u{1c}'..='\u{1f}').contains(&c)
+}
+
+/// Whether Python `str.strip` strips `c`.
+fn is_stripped_or_blank(c: char) -> bool {
+    is_stripped(c) || matches!(c, ' ' | '\t')
 }
 
 /// Adds what `event` gives to the plain text of a rule. A `Text`, `Code` or `InlineHtml` event
@@ -256,6 +277,10 @@ pub(crate) fn id_faults(stem: &str, page: &Page) -> Vec<Fault> {
     for rule in &page.rules {
         let line = rule.line;
         let message = match (&rule.id, &rule.prefix) {
+            _ if rule.after_space => {
+                "write the ID at the start of the item, with no other character before it."
+                    .to_string()
+            }
             (None, Some(written)) if written.ends_with('}') => {
                 format!("write one space and then the text of the rule after `{written}`.")
             }
