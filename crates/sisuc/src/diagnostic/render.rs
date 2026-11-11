@@ -400,33 +400,43 @@ fn is_header(line: &str) -> bool {
 
 /// `text` with the true column in the header of each cut snippet. `headers` gives the header fix
 /// of each snippet of the first group, in render order. The header lines of the first group come
-/// first in the text. Only those lines change, because a source line can show the same text.
-/// One pass copies each line once, so the cost is linear in the text.
+/// first in the text. Only those lines change, because a source line can show the same text. A
+/// header takes one more line for each line break in `path`. One pass copies each line once, so
+/// the cost is linear in the text.
 fn true_headers(
     text: &str,
     path: &str,
     mut headers: impl Iterator<Item = Option<(usize, usize, usize)>>,
 ) -> String {
+    let line_end = |from: usize| text[from..].find('\n').map_or(text.len(), |i| from + i + 1);
+    let breaks = path.matches('\n').count();
     let mut out = String::with_capacity(text.len() + 16);
-    for line in text.split_inclusive('\n') {
-        let fix = if is_header(line) {
+    let mut start = 0;
+    while start < text.len() {
+        let mut end = line_end(start);
+        let fix = if is_header(&text[start..end]) {
+            for _ in 0..breaks {
+                end = line_end(end);
+            }
             headers.next().flatten()
         } else {
             None
         };
+        let record = &text[start..end];
         let repaired = fix.and_then(|(number, cut, column)| {
             let shown = format!("{path}:{number}:{cut}");
-            let at = line.rfind(&shown)?;
+            let at = record.rfind(&shown)?;
             Some((at, shown.len(), format!("{path}:{number}:{column}")))
         });
         match repaired {
             Some((at, len, header)) => {
-                out.push_str(&line[..at]);
+                out.push_str(&record[..at]);
                 out.push_str(&header);
-                out.push_str(&line[at + len..]);
+                out.push_str(&record[at + len..]);
             }
-            None => out.push_str(line),
+            None => out.push_str(record),
         }
+        start = end;
     }
     out
 }
