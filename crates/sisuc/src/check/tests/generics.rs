@@ -2679,32 +2679,38 @@ fn an_argument_that_contradicts_the_context_should_be_reported_at_the_argument()
 #[test]
 fn a_blamed_argument_should_be_the_only_error_of_its_call() {
     let pick = "fn pick<T>(a: T, b: T) -> T {\n    a\n}\n";
-    for (body, at) in [
+    for (body, at, secondary) in [
         // `1`, `None` and `[]` meet the `T` of the context, not the `string` that `s` bound.
         (
             "fn g(s: string) {\n    let x: [i64] = pair(s, 1)\n}",
             (5, 25, "s"),
+            &[][..],
         ),
         (
             "fn g(s: string) {\n    let x: [i64?] = pair(s, None)\n}",
             (5, 26, "s"),
+            &[],
         ),
         (
             "fn g(s: string) {\n    let x: [[i64]] = pair(s, [])\n}",
             (5, 27, "s"),
+            &[],
         ),
-        // `n` was rejected beside `s` already, which is the only error.
+        // `n` was rejected beside `s` already, which is the only error. The argument that bound
+        // `T` has the label.
         (
             "fn g(s: string, n: i64) {\n    let x: [i64] = pair(s, n)\n}",
             (5, 28, "n"),
+            &[(5, 25)],
         ),
         (
             "fn g(s: string, n: i64) {\n    let x: string = pick(n, s)\n}",
             (5, 29, "s"),
+            &[(5, 26)],
         ),
     ] {
         let src = with_generics(&format!("{pick}{body}"));
-        diagnostic(&src, Code::Mismatch, at, &[]);
+        diagnostic(&src, Code::Mismatch, at, secondary);
     }
     // The context leaves `B` open, so `s` keeps it, and the literal `1` is checked against it.
     let src = with_generics(

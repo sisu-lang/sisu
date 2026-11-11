@@ -1704,6 +1704,8 @@ pub(super) struct Inference<'s> {
     pub(super) mut_shapes: Vec<(usize, PlaceShape)>,
     /// The function or method that the call calls (see `GenericSig::function`).
     function: Option<tir::FuncId>,
+    /// The call's arguments, for the one that bound a parameter (see `inferred_origin`).
+    args: &'s [ast::Arg],
 }
 
 mod origins {
@@ -1744,6 +1746,29 @@ use origins::Origins;
 /// hint or a type the user wrote.
 fn bound_by_context(call: &Inference<'_>, pattern: Type) -> bool {
     names_marked(pattern, |j| call.origin.get(j) == Some(call.at), true)
+}
+
+/// The argument that bound the one type parameter that `pattern` is, under its array and optional
+/// layers. None for any other pattern, and for a parameter that a written type argument or the
+/// context bound: neither is in an argument.
+fn inferred_origin(call: &Inference<'_>, pattern: Type) -> Option<Origin> {
+    let mut ty = pattern;
+    let (param, j) = loop {
+        match ty.kind() {
+            TypeKind::Array(inner) | TypeKind::Optional(inner) => ty = inner,
+            TypeKind::Param(param, j) => break (param, j as usize),
+            _ => return None,
+        }
+    };
+    let bound = call.origin.get(j)?;
+    let arg = (call.args.iter()).find(|arg| {
+        arg.value.span.start() <= bound.start() && bound.end() <= arg.value.span.end()
+    })?;
+    Some(Origin::Inferred {
+        at: arg.value.span,
+        param,
+        ty: call.bindings.found[j]?,
+    })
 }
 
 /// The proof of the first failed part of `call`: a failed bound, a rejected context, or a failed
@@ -2253,6 +2278,7 @@ impl Checker<'_> {
             bound: Vec::new(),
             mut_shapes: Vec::new(),
             function: sig.function,
+            args,
         };
         // How many type arguments the call writes. They bind the result of a call that fails.
         let mut named = 0;
@@ -3156,6 +3182,7 @@ impl Checker<'_> {
         let Some(want) = self.known_in(call, pattern) else {
             return self.infer_unbound(call, e, pattern, context);
         };
+        let origin = inferred_origin(call, pattern).unwrap_or(origin);
         // A hinted call hands its hint on to an argument that its context bound, as a hinted
         // `Some` does (see `Checker::some`): the inner call is hinted too.
         let hinted = call.hinted && bound_by_context(call, pattern);
@@ -3334,6 +3361,8 @@ impl Checker<'_> {
         // `element`'s type once an element binds all it names. A later element meets it with
         // no new walk of `element`, so the work does not grow with elements times its depth.
         let mut bound = None;
+        // The element that set `bound`, which a later element that does not meet it names.
+        let mut bound_at = span;
         let ranks: Vec<Rank> = elements.iter().map(|e| self.sibling_rank(e)).collect();
         for wave in [Rank::Concrete, Rank::Literal, Rank::Waits] {
             for (i, e) in elements
@@ -3342,7 +3371,11 @@ impl Checker<'_> {
                 .filter(|&(i, _)| ranks[i] == wave)
             {
                 let checked = if let Some(want) = bound {
-                    mark(self.operand(e, Expectation::Required(want, Origin::None)))
+                    let origin = Origin::Element {
+                        at: bound_at,
+                        ty: want,
+                    };
+                    mark(self.operand(e, Expectation::Required(want, origin)))
                 } else if !bare_hole(e) {
                     let kept = call.bindings.kept;
                     let part = match (&e.kind, partial.map(Type::kind)) {
@@ -3379,6 +3412,7 @@ impl Checker<'_> {
                             Some(inner) => inner.map(Type::array),
                             None => self.known_in(call, element),
                         };
+                        bound_at = e.span;
                     }
                     checked
                 } else {

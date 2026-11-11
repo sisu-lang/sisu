@@ -392,8 +392,8 @@ fn an_earlier_value_should_explain_the_type() {
             Explained::Label(2, 20),
         ),
         (
-            "an operand in a branch (fable-2)",
-            "fn f(c: bool) {\n    let a = if c { 1 } else { 2 + None }\n    print(a)\n}\nfn main() {\n    f(true)\n}\n",
+            "an operand under the hint of a branch",
+            "fn f(c: bool, n: i64) {\n    let a = if c { n } else { 1 + None }\n    print(a)\n}\nfn main() { f(true, 1) }\n",
             (2, 35),
             Explained::Label(2, 20),
         ),
@@ -427,6 +427,12 @@ fn an_earlier_value_should_explain_the_type() {
 #[test]
 fn a_form_that_waits_should_have_no_origin() {
     origin_rows(&[
+        (
+            "the type that the operator gives in a branch: the branch is checked first (fable-2)",
+            "fn f(c: bool) {\n    let a = if c { 1 } else { 2 + None }\n    print(a)\n}\nfn main() {\n    f(true)\n}\n",
+            (2, 35),
+            Explained::Nothing,
+        ),
         (
             "some under let",
             "fn main() {\n    let a: i64? = Some(\"x\")\n    print(a)\n}\n",

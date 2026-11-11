@@ -324,10 +324,12 @@ impl Checker<'_> {
         let compound = operator == (Operator::Plus { compound: true });
         // An `i64` that the context wants holds an `f64` operand to it, in either order.
         let wants_i64 = expected.ty().map(payload) == Some(Type::I64);
-        // An operand held to the type of the context keeps the origin of that type.
+        // An operand held to the type of the context keeps the origin of that type. A branch
+        // hints its type made optional, so an operand held to the branch's own type keeps it too.
         let (context, context_origin) = (expected.ty(), expected.origin());
         let origin_of = |want: Option<Type>| {
-            if want.is_some() && want == context {
+            let branch = matches!(context_origin, Origin::Branch { ty, .. } if want == Some(ty));
+            if want.is_some() && want == context || branch {
                 context_origin
             } else {
                 Origin::None

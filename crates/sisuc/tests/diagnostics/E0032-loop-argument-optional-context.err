@@ -21,7 +21,7 @@ error[E0032]: expected `u8`, found `u8?`
   --> E0032-loop-argument-optional-context.sisu:31:23
    |
 31 |     let d: u8? = pick(Some(1), v)
-   |                       ^^^^^^^
+   |                       ^^^^^^^  - this argument gives `T` the type `u8`
 
 error[E0032]: expected `u8?`, found `i64`
   --> E0032-loop-argument-optional-context.sisu:32:21

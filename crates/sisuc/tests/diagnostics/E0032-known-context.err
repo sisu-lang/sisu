@@ -2,7 +2,7 @@ error[E0032]: expected `i64?`, found `Two<X, bool>?`
   --> E0032-known-context.sisu:19:13
    |
 19 |     print(g(mkp(), mk()))
-   |             ^^^^^
+   |             ^^^^^  ---- this argument gives `T` the type `i64`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0032

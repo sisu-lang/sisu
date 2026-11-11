@@ -371,20 +371,22 @@ impl Checker<'_> {
 
     /// The type that the typed `elements` join to, each an index and a type, and whether the join
     /// failed (reported). With an `any` element, the join is that type, whatever the order. Else
-    /// the types fold in source order.
+    /// the types fold in source order. A report names the first element in source order of the
+    /// type it expects, which gave the array that type.
     fn fold_elements(
         &mut self,
         elements: &[ast::Expr],
         typed: &[(usize, Type)],
     ) -> (Option<Type>, Option<Reported>) {
         let report = |c: &mut Self, at: usize, want: Type, got: Type| {
-            let d = c.mismatch(
-                elements[at].span,
-                Some(&elements[at]),
-                want,
-                got,
-                Origin::None,
-            );
+            let origin =
+                (typed.iter())
+                    .find(|&&(_, ty)| ty == want)
+                    .map_or(Origin::None, |&(i, _)| Origin::Element {
+                        at: elements[i].span,
+                        ty: want,
+                    });
+            let d = c.mismatch(elements[at].span, Some(&elements[at]), want, got, origin);
             Some(c.diagnostics.error(d))
         };
         match self.any_join_all(typed) {

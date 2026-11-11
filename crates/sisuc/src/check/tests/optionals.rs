@@ -96,31 +96,47 @@ fn one_layer_should_be_taken_at_a_time() {
 /// `tests/diagnostics/E0032-nested-optional` pins the wording.
 #[test]
 fn a_value_should_convert_through_one_layer_only() {
-    for (body, at, layers) in [
-        ("let r: i64?? = 5", (2, 20, "5"), true),
-        ("let r: i64??? = 5", (2, 21, "5"), true),
-        ("let r = x ?? \"a\"", (2, 18, "\"a\""), false),
-        ("let r = x == 5", (2, 18, "5"), true),
+    // Each row: the body, the E0032, its label, and whether the help names the layers. A join
+    // names the first member of its type.
+    type Row = (
+        &'static str,
+        (usize, usize, &'static str),
+        &'static [(usize, usize)],
+        bool,
+    );
+    let rows: [Row; 8] = [
+        ("let r: i64?? = 5", (2, 20, "5"), &[(2, 12)], true),
+        ("let r: i64??? = 5", (2, 21, "5"), &[(2, 12)], true),
+        ("let r = x ?? \"a\"", (2, 18, "\"a\""), &[], false),
+        ("let r = x == 5", (2, 18, "5"), &[], true),
         // A join of three depths: the `i64` is two layers below the join, in either order.
-        ("let n = 1\n    let r = [n, w, x]", (3, 14, "n"), true),
-        ("let n = 1\n    let r = [x, w, n]", (3, 20, "n"), true),
+        (
+            "let n = 1\n    let r = [n, w, x]",
+            (3, 14, "n"),
+            &[(3, 20)],
+            true,
+        ),
+        (
+            "let n = 1\n    let r = [x, w, n]",
+            (3, 20, "n"),
+            &[(3, 14)],
+            true,
+        ),
         (
             "let n = 1\n    let r = match n {\n        0 => n\n        1 => w\n        _ => x\n    }",
             (4, 14, "n"),
+            &[(6, 14)],
             true,
         ),
         (
             "let n = 1\n    let r = match n {\n        0 => x\n        1 => w\n        _ => n\n    }",
             (6, 14, "n"),
+            &[(4, 14)],
             true,
         ),
-    ] {
-        let written: &[_] = if body.starts_with("let r:") {
-            &[(2, 12)]
-        } else {
-            &[]
-        };
-        let d = diagnostic(&with_body(body), Code::Mismatch, at, written);
+    ];
+    for (body, at, secondary, layers) in rows {
+        let d = diagnostic(&with_body(body), Code::Mismatch, at, secondary);
         assert_eq!(d.help().is_some(), layers, "{body}");
     }
 }

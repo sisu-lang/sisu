@@ -2,7 +2,7 @@ error[E0032]: expected `i64??`, found `i64`
  --> E0032-three-depths.sisu:5:15
   |
 5 |     let xs = [a, b, c]
-  |               ^
+  |               ^     - this element gives the type `i64??`
   |
   = help: a value converts through one `?` only: wrap it in `Some(...)` for each further layer
 

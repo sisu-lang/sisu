@@ -228,7 +228,10 @@ impl Checker<'_> {
                 (Some(Type::NEVER), _) => {}
                 (Some(t), None | Some(None | Some(Type::UNIT))) => {
                     anchor = Some(Some(t));
-                    origin = Origin::None;
+                    origin = Origin::Branch {
+                        at: sources[i].span,
+                        ty: t,
+                    };
                 }
                 (Some(t), Some(Some(a))) if t != a && t != Type::UNIT => {
                     if let Some(wider) = self.any_join(a, t) {
@@ -424,6 +427,17 @@ impl Checker<'_> {
         (first, first_ty): (usize, Type),
         (other, other_ty): (usize, Type),
     ) -> Diagnostic {
+        // With no type expected, the first branch in source order of the type `first_ty` gave
+        // it: a later `T?` branch keeps the index of an earlier `T` one (`fold_in_order`).
+        let given = (0..blocks.len())
+            .find(|&i| {
+                block_type(&blocks[i]).or_else(|| self.misfit_type(&blocks[i])) == Some(first_ty)
+            })
+            .unwrap_or(first);
+        let given = Origin::Branch {
+            at: sources[given].span,
+            ty: first_ty,
+        };
         let mut report = |i: usize, want: Type, got: Type, origin: Origin| {
             let (at, tail, want, got) = self.reported(&sources[i], &blocks[i], want, got);
             self.leaves_any(at, tail, want, got, origin)
@@ -441,7 +455,7 @@ impl Checker<'_> {
             .into(),
             Some(want) if fits(want, first_ty) => report(other, want, other_ty, expected.origin()),
             Some(want) => report(first, want, first_ty, expected.origin()),
-            None => report(other, first_ty, other_ty, Origin::None),
+            None => report(other, first_ty, other_ty, given),
         }
     }
 

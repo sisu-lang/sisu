@@ -16,7 +16,7 @@ error[E0032]: expected `[i64]`, found `[i64]?`
   --> E0050-waiting-shapes.sisu:56:21
    |
 56 |     print(f_payload(mko(), mk()))
-   |                     ^^^^^
+   |                     ^^^^^  ---- this argument gives `T` the type `i64`
 
 error[E0032]: expected `Two<any I<i64>, any J<T>>`, found `Two<any J<i64>, any J<i64>>`
   --> E0050-waiting-shapes.sisu:67:19

@@ -4,6 +4,7 @@ use super::Checker;
 use super::unused_names::Owner;
 use crate::diagnostic::MismatchOrigin;
 use crate::source::Span;
+use crate::symbol::Symbol;
 use crate::tir::Type;
 use std::rc::Rc;
 
@@ -37,6 +38,12 @@ pub(super) enum Origin {
     Index,
     /// The rule that an index of a place is an `i64`: a place takes no range.
     PlaceIndex,
+    /// The element at `at` of an inferred array, which gave the array its type `ty`.
+    Element { at: Span, ty: Type },
+    /// The branch value at `at`, which gave its `if` or `match` the type `ty`.
+    Branch { at: Span, ty: Type },
+    /// The argument at `at`, which bound the type parameter `param` of a call to `ty`.
+    Inferred { at: Span, param: Symbol, ty: Type },
 }
 
 impl Origin {
@@ -208,6 +215,19 @@ impl Checker<'_> {
             Origin::Condition => Some(MismatchOrigin::Condition),
             Origin::Index => Some(MismatchOrigin::Index),
             Origin::PlaceIndex => Some(MismatchOrigin::PlaceIndex),
+            Origin::Element { at, ty } => Some(MismatchOrigin::Element {
+                at,
+                ty: self.type_name(ty),
+            }),
+            Origin::Branch { at, ty } => Some(MismatchOrigin::Branch {
+                at,
+                ty: self.type_name(ty),
+            }),
+            Origin::Inferred { at, param, ty } => Some(MismatchOrigin::Inferred {
+                at,
+                param: param.to_string(),
+                ty: self.type_name(ty),
+            }),
         }
     }
 }
