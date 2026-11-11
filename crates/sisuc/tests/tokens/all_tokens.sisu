@@ -22,7 +22,7 @@ class Names {
 }
 
 // Reserved words: each one is `Reserved`, and `var` and `todo` are not.
-import pub record weak test extern as
+import pub struct move weak test extern as
 
 // Operators and punctuation: each one, by longest match.
 fn operators() {

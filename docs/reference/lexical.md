@@ -106,11 +106,11 @@ These words are keywords. A keyword cannot be a name.
 
 These words are reserved for a later version of Sisu. A reserved word cannot be a name or start an expression ([E0083](../diagnostics/E0083.md)).
 
-`as`, `extern`, `import`, `pub`, `record`, `test`, `weak`
+`as`, `extern`, `import`, `move`, `pub`, `struct`, `test`, `weak`
 
 ```sisu
 fn main() {
-    let record = 1         // error[E0083]
+    let extern = 1         // error[E0083]
 }
 ```
 

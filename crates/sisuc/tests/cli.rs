@@ -157,13 +157,13 @@ fn emit_tokens_should_split_an_interpolated_string_into_head_middle_and_tail_tok
     }
 }
 
-/// GIVEN a source with the words `record` and `const` on two lines
+/// GIVEN a source with the words `struct` and `const` on two lines
 /// WHEN it is built with `--emit tokens`
-/// THEN `record` is a `Reserved` token at 1:1 and `const` is a `Const` token at 2:1
+/// THEN `struct` is a `Reserved` token at 1:1 and `const` is a `Const` token at 2:1
 #[test]
 fn emit_tokens_should_print_reserved_and_const_words_as_their_own_tokens() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
-    fs::write(dir.join("emit_tokens_reserved.sisu"), "record\nconst\n").expect("writes");
+    fs::write(dir.join("emit_tokens_reserved.sisu"), "struct\nconst\n").expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
         .current_dir(dir)
         .args(["build", "--emit", "tokens", "emit_tokens_reserved.sisu"])
@@ -171,7 +171,7 @@ fn emit_tokens_should_print_reserved_and_const_words_as_their_own_tokens() {
         .expect("sisu starts");
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.starts_with("1:1 Reserved record\n"), "{stdout}");
+    assert!(stdout.starts_with("1:1 Reserved struct\n"), "{stdout}");
     assert!(stdout.contains("\n2:1 Const const\n"), "{stdout}");
 }
 

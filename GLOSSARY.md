@@ -15,13 +15,23 @@ be reassigned.
 _Avoid_: mutable binding, `var` (the keyword before milestone 4)
 
 **Place**:
-An expression that names storage and can stand on the left of `=`. It is a
-variable, a `mut` field, or an element of an array held in a place, such as
-`grid[i][j]`. A `mut` argument is any place except a path through `?.`: if
-`x = v` compiles and `x` has no `?.`, `f(mut x)` does. A path through `?.` is a
-place, but it is not a `mut` argument (the error E0170). In mir, a place can
-also name a payload field under a known variant, which only `match` reads.
+A local, a parameter, `self`, or a path from one of them through fields,
+elements and `?.`. It names storage. It can stand on the left of `=` when its
+root can change, such as `grid[i][j]`. A `mut` argument is any place except a
+path through `?.`: if `x = v` compiles and `x` has no `?.`, `f(mut x)` does. A
+path through `?.` is a place, but it is not a `mut` argument (the error E0170).
+In mir, a place can also name a payload field under a known variant, which only
+`match` reads.
 _Avoid_: lvalue
+
+**Root of a place**:
+The local, parameter or `self` at the start of a place. The root decides
+whether a write through the place is allowed. The glossary's **Root** is the
+import root, and it stays.
+
+**Read binding**:
+A name that `for`, `if let`, `while let`, `let ... else` or `match` binds to a
+part of a place. It reads the part and does not own it.
 
 **`mut` parameter**:
 A parameter written `mut name: T`. The function can change it, and the change
@@ -234,7 +244,7 @@ _Avoid_: global, static
 
 **Reserved keyword**:
 A word that the lexer already treats as a keyword for a feature that comes in
-a later milestone, such as `record` or `import`. Using one as a name is an
+a later milestone, such as `struct` or `import`. Using one as a name is an
 error, so a program written today does not break when the feature lands.
 _Avoid_: future keyword
 
@@ -243,13 +253,12 @@ _Avoid_: future keyword
 **Class**:
 A named type whose values are references to objects with the same fields and
 methods. Sisu classes have no inheritance.
-_Avoid_: struct, record (a value type, milestone 10)
 
-**Record**:
-A named type with fields and methods whose values are not shared: binding,
-passing or storing one behaves as a copy, as an array does. Records come in milestone 10.
-The name changes to **struct** in milestone 9 part 1 (`docs/register.md`).
-_Avoid_: data class
+**Struct**:
+A named value with fields, held inline. It has no identity and no count of its
+own. Binding, passing or storing one behaves as a copy, as an array does. The
+word `struct` is reserved until structs work in the compiler.
+_Avoid_: record, data class
 
 **Object**:
 One heap-allocated value of a class, shared by every reference to it.
@@ -261,13 +270,13 @@ reference, not the object.
 _Avoid_: pointer, handle
 
 **Field**:
-A named, typed slot in every object of a class or value of a record, declared
+A named, typed slot in every object of a class or value of a struct, declared
 on its own line in the type's body. A class field marked `mut` can be
 reassigned; a bare one is set by the constructor and never changes.
 _Avoid_: property, member variable, attribute
 
 **Method**:
-A function declared inside a class, enum or record, or in an `extend` block,
+A function declared inside a class, enum or struct, or in an `extend` block,
 whose first parameter is `self`, called as `receiver.name(args)`.
 _Avoid_: member function
 
@@ -845,9 +854,9 @@ whose variants hold none are copied whole and are not counted.
 _Avoid_: reference type, heap type
 
 **Box**:
-The counted heap block the compiler puts behind a value: a payload field that
-closes a recursion cycle, such as each `Expr` in `Add(Expr, Expr)`, or a value
-that is not an object held in an interface value. A program never names one.
+A counted heap block that holds one value. A field that closes a cycle holds a
+box, such as each `Expr` in `Add(Expr, Expr)`. An `any` value holds its value in
+a box. A program never names one.
 _Avoid_: indirection, `Box<T>`, pointer
 
 **Owned reference**:

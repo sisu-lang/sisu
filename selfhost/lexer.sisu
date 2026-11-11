@@ -227,7 +227,7 @@ fn keyword(word: string) -> Kind {
         "let" => Kind.Let
         "mut" => Kind.Mut
         "var" => Kind.Var
-        "import" | "pub" | "record" | "weak" | "test" | "extern" | "as" => Kind.Reserved
+        "import" | "pub" | "struct" | "move" | "weak" | "test" | "extern" | "as" => Kind.Reserved
         "todo" => Kind.Todo
         "if" => Kind.If
         "else" => Kind.Else

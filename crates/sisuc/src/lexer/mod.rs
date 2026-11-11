@@ -1644,8 +1644,9 @@ pub(crate) fn keyword(text: &str) -> Option<TokenKind> {
         "var" => TokenKind::Var,
         "import" => TokenKind::Reserved("import"),
         "pub" => TokenKind::Reserved("pub"),
-        "record" => TokenKind::Reserved("record"),
         "type" => TokenKind::Type,
+        "struct" => TokenKind::Reserved("struct"),
+        "move" => TokenKind::Reserved("move"),
         "weak" => TokenKind::Reserved("weak"),
         "test" => TokenKind::Reserved("test"),
         "todo" => TokenKind::Todo,
@@ -1846,7 +1847,9 @@ mod tests {
     #[test]
     fn reserved_words_should_lex_as_reserved_tokens() {
         use TokenKind::{Eof, Reserved};
-        let words = ["import", "pub", "record", "weak", "test", "extern", "as"];
+        let words = [
+            "import", "pub", "struct", "move", "weak", "test", "extern", "as",
+        ];
         let mut expected: Vec<_> = words.iter().map(|w| Reserved(w)).collect();
         expected.extend([
             ident("matches"),
@@ -1983,7 +1986,9 @@ mod tests {
             missing.is_empty(),
             "all_tokens.sisu has no token of the kinds at these places of `slot`: {missing:?}"
         );
-        for word in ["import", "pub", "record", "weak", "test", "extern", "as"] {
+        for word in [
+            "import", "pub", "struct", "move", "weak", "test", "extern", "as",
+        ] {
             assert!(
                 tokens.iter().any(|t| t.kind == TokenKind::Reserved(word)),
                 "all_tokens.sisu has no reserved word `{word}`"

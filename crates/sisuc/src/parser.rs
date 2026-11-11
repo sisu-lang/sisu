@@ -10428,7 +10428,7 @@ mod tests {
         // One row per place that wants a name or an expression.
         for (src, line, col) in [
             ("fn main() {\n    let weak = 1\n}", 2, 9),
-            ("class C {\n    record: i64\n}", 2, 5),
+            ("class C {\n    move: i64\n}", 2, 5),
             ("fn main() {\n    print(p.weak)\n}", 2, 13),
             ("import x", 1, 1),
         ] {
