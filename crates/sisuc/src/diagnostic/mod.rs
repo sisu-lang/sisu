@@ -46,9 +46,22 @@ pub(crate) struct Diagnostic {
     secondary: Vec<(Span, String)>,
     /// Advice that is not an edit.
     help: Option<Box<str>>,
+    /// Facts that explain the error and have no span in the user's code. `None` when there is
+    /// none: the box keeps a `Diagnostic` under clippy's `result_large_err` limit.
+    #[expect(
+        clippy::box_collection,
+        reason = "one pointer, not a Vec's three words, keeps Diagnostic under 128 bytes"
+    )]
+    notes: Option<Box<Vec<Box<str>>>>,
     /// Alternative edits, each of which resolves the diagnostic.
     fixes: Vec<Fix>,
 }
+
+// `parser.rs` returns `Result<_, Diagnostic>`: at 128 bytes `clippy::result_large_err` fires.
+const _: () = assert!(
+    size_of::<Diagnostic>() < 128,
+    "a Diagnostic of 128 bytes or more makes clippy::result_large_err fire"
+);
 
 /// An edit to the source, with a message, that resolves a diagnostic.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -77,6 +90,7 @@ impl Diagnostic {
             label: None,
             secondary: Vec::new(),
             help: None,
+            notes: None,
             fixes: Vec::new(),
         }
     }
@@ -127,6 +141,10 @@ impl Diagnostic {
 
     pub(crate) fn help(&self) -> Option<&str> {
         self.help.as_deref()
+    }
+
+    pub(crate) fn notes(&self) -> &[Box<str>] {
+        self.notes.as_deref().map_or(&[], Vec::as_slice)
     }
 
     pub(crate) fn fixes(&self) -> &[Fix] {

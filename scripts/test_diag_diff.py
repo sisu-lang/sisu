@@ -197,6 +197,64 @@ class DiagDiff(unittest.TestCase):
             }
             self.assertEqual(reported, set(changed))
 
+    def test_full_should_report_a_diagnostic_whose_notes_alone_differ(self) -> None:
+        """GIVEN two diagnostics that differ only in `notes`, and one with no `notes` key and one
+        with `"notes":[]`
+        WHEN diag_diff runs in the default mode
+        THEN it reports the first pair and not the second
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            for stem in ["noted", "missing"]:
+                Path(tmp, f"{stem}.sisu").touch()
+            base = fake_sisu(
+                tmp,
+                "base",
+                {"noted": E0032.replace("}]}", '}],"notes":[]}'), "missing": E0032},
+            )
+            head = fake_sisu(
+                tmp,
+                "head",
+                {
+                    "noted": E0032.replace("}]}", '}],"notes":["a note"]}'),
+                    "missing": E0032.replace("}]}", '}],"notes":[]}'),
+                },
+            )
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                status = dd.main(base, head, tmp)
+        self.assertEqual(status, 1)
+        lines = out.getvalue().splitlines()
+        self.assertEqual(
+            [line for line in lines if line.startswith("changed: ")],
+            [f"changed: {Path(tmp, 'noted.sisu')}"],
+        )
+        self.assertEqual(lines[-1], "diag_diff: 2 programs, 1 changed")
+
+    def test_primary_should_ignore_a_secondary_position_that_codes_reports(self) -> None:
+        """GIVEN two diagnostics that differ only in the position of a secondary label
+        WHEN diag_diff runs with `--primary` and with `--codes`
+        THEN `--primary` reports no difference and `--codes` reports one
+        """
+        script = Path(dd.__file__).absolute().parent / "diag_diff.py"
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "moved.sisu").touch()
+            base = fake_sisu(tmp, "base", {"moved": E0032})
+            head = fake_sisu(tmp, "head", {"moved": E0032.replace('"column":9', '"column":10')})
+            runs = {
+                flag: subprocess.run(
+                    [sys.executable, script, flag, base, head, tmp],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                for flag in ("--primary", "--codes")
+            }
+        self.assertEqual(
+            (runs["--primary"].returncode, runs["--primary"].stdout),
+            (0, "diag_diff: 1 programs, no differences\n"),
+        )
+        self.assertEqual(runs["--codes"].returncode, 1)
+
     def test_jobs_should_bound_the_sisu_processes_that_run_at_once(self) -> None:
         self.assertLessEqual(max(peak_runs(lambda sisu, tmp: dd.main(sisu, sisu, tmp, jobs=2))), 2)
 

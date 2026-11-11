@@ -246,6 +246,9 @@ impl Diagnostic {
             );
         }
         let mut group = title.element(snippet.path(path));
+        for note in self.notes() {
+            group = group.element(Level::NOTE.message(&**note));
+        }
         if let Some(help) = self.help() {
             group = group.element(Level::HELP.message(help));
         }
@@ -361,6 +364,36 @@ error[E0001]: cannot assign to `n`
 2 |     n = 1
   |     ^^^^^
   |
+  = help: copy it into a variable: `let mut n = n`";
+        assert_eq!(
+            d.render("test.sisu", source, &LineIndex::new(source), false),
+            expected
+        );
+    }
+
+    #[test]
+    fn a_note_should_render_before_the_help() {
+        let source = "fn f(n: i64) {\n    n = 1\n}\n";
+        let mut d: Diagnostic = DiagnosticKind::AssignToImmutable {
+            name: "n".to_string(),
+            at: Span::new(19, 24),
+            element: false,
+            cause: Immutable::Param {
+                declared: Span::new(5, 6),
+            },
+        }
+        .into();
+        d.notes = Some(Box::new(vec!["`n` is a parameter".into()]));
+        let expected = "\
+error[E0001]: cannot assign to `n`
+ --> test.sisu:2:5
+  |
+1 | fn f(n: i64) {
+  |      - declared as a parameter here
+2 |     n = 1
+  |     ^^^^^
+  |
+  = note: `n` is a parameter
   = help: copy it into a variable: `let mut n = n`";
         assert_eq!(
             d.render("test.sisu", source, &LineIndex::new(source), false),

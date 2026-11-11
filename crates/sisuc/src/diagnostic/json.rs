@@ -22,6 +22,7 @@ struct DiagnosticLine<'a> {
     primary: Location<'a>,
     secondary: Vec<Location<'a>>,
     help: Option<&'a str>,
+    notes: &'a [Box<str>],
     fixes: Vec<FixObject<'a>>,
 }
 
@@ -89,6 +90,7 @@ pub(crate) fn diagnostic(d: &Diagnostic, path: &str, source: &str, lines: &LineI
             .map(|(span, label)| location(*span, Some(label)))
             .collect(),
         help: d.help(),
+        notes: d.notes(),
         fixes: d
             .fixes()
             .iter()
@@ -180,7 +182,7 @@ mod tests {
     use crate::source::Span;
 
     #[test]
-    fn json_offsets_are_bytes() {
+    fn json_offsets_should_be_bytes() {
         // The `ä` on line 1 takes two bytes, so byte offsets run one ahead of char offsets.
         let source = "// ä\nfn main() {\n    let n = 0\n    n = 1\n}\n";
         let (_, diagnostics) = front_end(source);
@@ -189,7 +191,7 @@ mod tests {
         };
         assert_eq!(
             diagnostic(d, "a.sisu", source, &LineIndex::new(source)),
-            r#"{"version":1,"kind":"diagnostic","code":"E0001","severity":"error","message":"cannot assign to `n`","primary":{"file":"a.sisu","start":36,"end":41,"line":4,"column":5,"label":"cannot assign twice"},"secondary":[{"file":"a.sisu","start":26,"end":27,"line":3,"column":9,"label":"declared with `let` here"}],"help":null,"fixes":[{"message":"declare it with `let mut`","safe":true,"edits":[{"start":26,"end":26,"line":3,"column":9,"replacement":"mut "}]}]}"#
+            r#"{"version":1,"kind":"diagnostic","code":"E0001","severity":"error","message":"cannot assign to `n`","primary":{"file":"a.sisu","start":36,"end":41,"line":4,"column":5,"label":"cannot assign twice"},"secondary":[{"file":"a.sisu","start":26,"end":27,"line":3,"column":9,"label":"declared with `let` here"}],"help":null,"notes":[],"fixes":[{"message":"declare it with `let mut`","safe":true,"edits":[{"start":26,"end":26,"line":3,"column":9,"replacement":"mut "}]}]}"#
         );
     }
 
@@ -207,7 +209,7 @@ mod tests {
         .into();
         assert_eq!(
             diagnostic(&d, "a.sisu", source, &LineIndex::new(source)),
-            r#"{"version":1,"kind":"diagnostic","code":"E0062","severity":"error","message":"`n` may be `None`","primary":{"file":"a.sisu","start":24,"end":25,"line":2,"column":11,"label":null},"secondary":[],"help":"to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`","fixes":[{"message":"if a `None` result is fine, use `?.`","safe":false,"edits":[{"start":25,"end":26,"line":2,"column":12,"replacement":"?."}]}]}"#
+            r#"{"version":1,"kind":"diagnostic","code":"E0062","severity":"error","message":"`n` may be `None`","primary":{"file":"a.sisu","start":24,"end":25,"line":2,"column":11,"label":null},"secondary":[],"help":"to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`","notes":[],"fixes":[{"message":"if a `None` result is fine, use `?.`","safe":false,"edits":[{"start":25,"end":26,"line":2,"column":12,"replacement":"?."}]}]}"#
         );
     }
 
@@ -228,6 +230,27 @@ mod tests {
         assert_eq!(d.code().as_str(), "E0032");
         assert!(line.starts_with(r#"{"version":1,"#), "{line}");
         assert!(line.contains(r#""help":null,"notes":[],"fixes""#), "{line}");
+    }
+
+    #[test]
+    fn a_note_should_be_in_the_notes_key() {
+        let source = "fn main() {\n    let a: i64 = \"x\"\n}\n";
+        let mut d: Diagnostic = DiagnosticKind::Mismatch {
+            want: Expected::Types(vec!["i64".to_string()]),
+            got: "string".to_string(),
+            at: Span::new(31, 34),
+            source: None,
+            fix: None,
+            conversion: false,
+            layers: false,
+        }
+        .into();
+        d.notes = Some(Box::new(vec!["`min` declares `other` as `i64`".into()]));
+        let line = diagnostic(&d, "a.sisu", source, &LineIndex::new(source));
+        assert!(
+            line.contains(r#""help":null,"notes":["`min` declares `other` as `i64`"],"fixes""#),
+            "{line}"
+        );
     }
 
     #[test]
