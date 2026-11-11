@@ -76,6 +76,7 @@ impl Site {
 pub(super) enum ItemKind {
     Function,
     Class,
+    Struct,
     Enum,
     Interface,
     Constant,
@@ -141,6 +142,7 @@ pub(super) enum Resolved {
 pub(super) struct NameMaps {
     functions: FxHashMap<Symbol, Declared<tir::FuncId>>,
     classes: FxHashMap<Symbol, Declared<tir::ClassId>>,
+    structs: FxHashMap<Symbol, Declared<tir::StructId>>,
     enums: FxHashMap<Symbol, Declared<tir::EnumId>>,
     interfaces: FxHashMap<Symbol, Declared<tir::InterfaceId>>,
     constants: FxHashMap<Symbol, Declared<ConstantId>>,
@@ -197,6 +199,9 @@ impl NameMaps {
             }
             Definition::Class => {
                 self.classes.insert(name, Declared::Poisoned(reported));
+            }
+            Definition::Struct => {
+                self.structs.insert(name, Declared::Poisoned(reported));
             }
             Definition::Interface => {
                 if !language {
@@ -256,6 +261,11 @@ impl NameMaps {
     /// What `name` stands for as a class, if it is the name of one.
     pub(super) fn class(&self, name: Symbol) -> Option<Declared<tir::ClassId>> {
         self.classes.get(&name).copied()
+    }
+
+    /// What `name` stands for as a struct, if it is the name of one.
+    pub(super) fn struct_id(&self, name: Symbol) -> Option<Declared<tir::StructId>> {
+        self.structs.get(&name).copied()
     }
 
     /// What `name` stands for as an enum, if it is the name of one.
@@ -332,6 +342,10 @@ impl Checker<'_> {
             (
                 poisoned(self.names.class(name).as_ref()).map(Some),
                 ItemKind::Class,
+            ),
+            (
+                poisoned(self.names.struct_id(name).as_ref()).map(Some),
+                ItemKind::Struct,
             ),
             (
                 poisoned(self.names.function(name).as_ref()).map(Some),
@@ -573,6 +587,9 @@ impl Checker<'_> {
         let declared = (self.names.class(name), self.names.enum_id(name));
         if let (Some(Declared::Poisoned(reported)), _) = declared {
             return Resolved::Poisoned(ItemKind::Class, Some(reported));
+        }
+        if let Some(Declared::Poisoned(reported)) = self.names.struct_id(name) {
+            return Resolved::Poisoned(ItemKind::Struct, Some(reported));
         }
         if let (_, Some(Declared::Poisoned(reported))) = declared {
             return Resolved::Poisoned(ItemKind::Enum, Some(reported));

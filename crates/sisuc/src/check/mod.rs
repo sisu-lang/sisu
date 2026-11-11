@@ -255,6 +255,7 @@ enum Declared<T> {
 fn item_name(item: &ast::Item) -> Option<&ast::Ident> {
     match item {
         ast::Item::Class(class) => Some(&class.name),
+        ast::Item::Struct(s) => Some(&s.name),
         ast::Item::Function(f) => Some(&f.name),
         ast::Item::Enum(e) => Some(&e.name),
         ast::Item::Const(c) => Some(&c.name),
@@ -269,6 +270,7 @@ fn broken_definition(kind: ast::BrokenKind) -> Option<Definition> {
     match kind {
         ast::BrokenKind::Function => Some(Definition::Function),
         ast::BrokenKind::Class => Some(Definition::Class),
+        ast::BrokenKind::Struct => Some(Definition::Struct),
         ast::BrokenKind::Interface => Some(Definition::Interface),
         ast::BrokenKind::Enum => Some(Definition::Enum),
         ast::BrokenKind::Constant => Some(Definition::Constant),
@@ -1113,6 +1115,7 @@ fn parser_marked(program: &ast::Program, items: &[&ast::Item]) -> bool {
     !program.broken.is_empty()
         || items.iter().any(|item| match item {
             ast::Item::Class(class) => !class.broken_methods.is_empty(),
+            ast::Item::Struct(s) => !s.broken_methods.is_empty(),
             ast::Item::Enum(e) => !e.broken_methods.is_empty(),
             ast::Item::Extend(extend) => !extend.broken_methods.is_empty(),
             // The checker reads no requirement that an interface lost to a syntax error: a call of
@@ -1595,6 +1598,18 @@ impl Checker<'_> {
                         .filter(|m| matches!(m, ast::Member::Method(_)))
                         .count();
                 }
+                ast::Item::Struct(s) => {
+                    // A stopgap until structs lower: the name stays known and poisoned, so each
+                    // use gives no error of its own.
+                    let reported = self.error(DiagnosticKind::ReservedWord {
+                        word: "struct",
+                        at: s.keyword,
+                    });
+                    if !self.built_in(&s.name) {
+                        self.first_callable(&mut first, &mut rejected, Definition::Struct, &s.name);
+                        rejected.push((Definition::Struct, s.name.name, reported));
+                    }
+                }
                 ast::Item::Function(f) => {
                     if !self.built_in(&f.name)
                         && self.first_callable(
@@ -1880,6 +1895,10 @@ impl Checker<'_> {
     /// Pass 2: each class's fields, each enum's variants and every signature, in `FuncId`
     /// order. Returns each function with the type of a method's `self`. A class's fields and
     /// methods share a namespace.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per kind of item, so the signatures of all of them are collected in one place"
+    )]
     fn collect_signatures<'a>(
         &mut self,
         items: &[&'a ast::Item],
@@ -1904,7 +1923,11 @@ impl Checker<'_> {
                     self.extend_signatures(extend, &mut declared);
                     continue;
                 }
-                ast::Item::Const(_) | ast::Item::Alias(_) | ast::Item::Interface(_) => continue,
+                // A struct has no signature to collect until it lowers.
+                ast::Item::Struct(_)
+                | ast::Item::Const(_)
+                | ast::Item::Alias(_)
+                | ast::Item::Interface(_) => continue,
             };
             let id = tir::ClassId(next_class);
             next_class += 1;

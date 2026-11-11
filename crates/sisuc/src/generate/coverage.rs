@@ -55,6 +55,11 @@ const EXCLUDED: &[(&str, &str)] = &[
         "only an item with a syntax error is broken",
     ),
     (
+        "ast::BrokenKind::Struct",
+        "only an item with a syntax error is broken",
+    ),
+    ("ast::Item::Struct", "lands in Task 9"),
+    (
         "ast::BrokenKind::Enum",
         "only an item with a syntax error is broken",
     ),
@@ -990,6 +995,10 @@ impl Walk {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one list or arm per kind of item and of broken item"
+    )]
     fn ast(&mut self, program: &ast::Program) {
         self.funcs = program
             .items
@@ -997,6 +1006,7 @@ impl Walk {
             .filter_map(|item| match item {
                 ast::Item::Function(f) => Some(f.name.name.as_str().to_string()),
                 ast::Item::Class(_)
+                | ast::Item::Struct(_)
                 | ast::Item::Enum(_)
                 | ast::Item::Const(_)
                 | ast::Item::Alias(_)
@@ -1007,6 +1017,7 @@ impl Walk {
         self.generic_funcs = generic_names(program, |item| match item {
             ast::Item::Function(f) => Some((&f.name, &f.type_params)),
             ast::Item::Class(_)
+            | ast::Item::Struct(_)
             | ast::Item::Enum(_)
             | ast::Item::Const(_)
             | ast::Item::Alias(_)
@@ -1016,6 +1027,7 @@ impl Walk {
         self.generic_classes = generic_names(program, |item| match item {
             ast::Item::Class(c) => Some((&c.name, &c.type_params)),
             ast::Item::Function(_)
+            | ast::Item::Struct(_)
             | ast::Item::Enum(_)
             | ast::Item::Const(_)
             | ast::Item::Alias(_)
@@ -1026,6 +1038,7 @@ impl Walk {
             ast::Item::Enum(e) => Some((&e.name, &e.type_params)),
             ast::Item::Function(_)
             | ast::Item::Class(_)
+            | ast::Item::Struct(_)
             | ast::Item::Const(_)
             | ast::Item::Alias(_)
             | ast::Item::Interface(_)
@@ -1045,6 +1058,7 @@ impl Walk {
                 )),
                 ast::Item::Function(_)
                 | ast::Item::Class(_)
+                | ast::Item::Struct(_)
                 | ast::Item::Const(_)
                 | ast::Item::Alias(_)
                 | ast::Item::Interface(_)
@@ -1055,6 +1069,7 @@ impl Walk {
             self.mark(match broken.kind {
                 ast::BrokenKind::Function => "ast::BrokenKind::Function",
                 ast::BrokenKind::Class => "ast::BrokenKind::Class",
+                ast::BrokenKind::Struct => "ast::BrokenKind::Struct",
                 ast::BrokenKind::Enum => "ast::BrokenKind::Enum",
                 ast::BrokenKind::Constant => "ast::BrokenKind::Constant",
                 ast::BrokenKind::Alias => "ast::BrokenKind::Alias",
@@ -1070,6 +1085,8 @@ impl Walk {
                     self.note_bounds(f);
                 }
                 ast::Item::Class(c) => self.ast_class(c),
+                // The generator writes no struct yet.
+                ast::Item::Struct(_) => {}
                 ast::Item::Interface(interface) => self.ast_interface(interface),
                 ast::Item::Extend(extend) => self.ast_extend(extend),
                 ast::Item::Enum(e) => self.ast_enum(e),
@@ -4021,6 +4038,7 @@ fn main_should_hold_several_statements() {
                     }
                     ast::Item::Function(_)
                     | ast::Item::Class(_)
+                    | ast::Item::Struct(_)
                     | ast::Item::Enum(_)
                     | ast::Item::Const(_)
                     | ast::Item::Alias(_)
@@ -9511,7 +9529,10 @@ fn without_unused(source: &str) -> (String, usize) {
                 cuts.push(i.span.range());
                 interfaces.insert(i.name.name.as_str().to_string());
             }
-            ast::Item::Const(_) | ast::Item::Alias(_) | ast::Item::Interface(_) => {}
+            ast::Item::Struct(_)
+            | ast::Item::Const(_)
+            | ast::Item::Alias(_)
+            | ast::Item::Interface(_) => {}
         }
     }
     for f in methods

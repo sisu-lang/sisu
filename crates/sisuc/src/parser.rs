@@ -11,8 +11,8 @@ use crate::ast::{
     AliasDecl, Align, Applied, Arg, Arm, AssocChoice, AssocType, BinaryOp, Block, Bound, Broken,
     BrokenKind, Class, CompareOp, Const, Enum, Expr, ExprKind, Extend, FieldDecl, ForSource,
     FormatSpec, Function, Ident, Interface, Item, Literal, Member, MutSelf, Param, Part, Pattern,
-    PatternKind, PayloadField, Program, Range as RangeExpr, Requirement, Stmt, StmtKind, TypeExpr,
-    TypeKind, TypeParam, UnaryOp, Variant,
+    PatternKind, PayloadField, Program, Range as RangeExpr, Requirement, Stmt, StmtKind, Struct,
+    TypeExpr, TypeKind, TypeParam, UnaryOp, Variant,
 };
 use crate::diagnostic::{
     self, AnyFormKind, BuiltIn, ClashForm, ColonBound, Diagnostic, DiagnosticKind, ElseOf,
@@ -1371,6 +1371,9 @@ impl<'a> Parser<'a> {
             TokenKind::Class => self.with_methods(end, |p, errors, methods| {
                 p.class_body(errors, methods).map(Item::Class)
             }),
+            TokenKind::Struct => self.with_methods(end, |p, errors, methods| {
+                p.struct_body(errors, methods).map(Item::Struct)
+            }),
             TokenKind::Enum => self.with_methods(end, |p, errors, methods| {
                 p.enum_body(errors, methods).map(Item::Enum)
             }),
@@ -1385,7 +1388,9 @@ impl<'a> Parser<'a> {
             }
             TokenKind::Type => self.checked(end, |p| Ok((Item::Alias(p.alias(end)?), Vec::new()))),
             _ => self.checked(end, |p| {
-                Err(p.expected("`fn`, `class`, `enum`, `interface`, `extend`, `const` or `type`"))
+                Err(p.expected(
+                    "`fn`, `class`, `struct`, `enum`, `interface`, `extend`, `const` or `type`",
+                ))
             }),
         }
     }
@@ -1398,6 +1403,7 @@ impl<'a> Parser<'a> {
         let kind = match self.tokens[start].kind {
             TokenKind::Fn => BrokenKind::Function,
             TokenKind::Class => BrokenKind::Class,
+            TokenKind::Struct => BrokenKind::Struct,
             TokenKind::Enum => BrokenKind::Enum,
             TokenKind::Const => BrokenKind::Constant,
             TokenKind::Type => BrokenKind::Alias,
@@ -1494,6 +1500,7 @@ impl<'a> Parser<'a> {
             self.tokens[i].kind,
             TokenKind::Fn
                 | TokenKind::Class
+                | TokenKind::Struct
                 | TokenKind::Const
                 | TokenKind::Type
                 | TokenKind::Enum
@@ -1646,14 +1653,58 @@ impl<'a> Parser<'a> {
         errors: &mut Vec<Diagnostic>,
         methods: &mut Vec<Range<usize>>,
     ) -> Result<Class, Diagnostic> {
-        self.expect(&TokenKind::Class)?;
-        let name = self.name("a class name")?;
+        let Struct {
+            name,
+            type_params,
+            conforms,
+            assoc,
+            members,
+            broken_methods,
+            ..
+        } = self.record_body(errors, methods, &TokenKind::Class, "a class name")?;
+        Ok(Class {
+            name,
+            type_params,
+            conforms,
+            assoc,
+            members,
+            broken_methods,
+        })
+    }
+
+    /// The struct itself, as `class_body` reads a class. A `mut` field parses with `mutable`
+    /// false, and gets no code until a later part.
+    fn struct_body(
+        &mut self,
+        errors: &mut Vec<Diagnostic>,
+        methods: &mut Vec<Range<usize>>,
+    ) -> Result<Struct, Diagnostic> {
+        let mut item = self.record_body(errors, methods, &TokenKind::Struct, "a struct name")?;
+        for member in &mut item.members {
+            if let Member::Field(field) = member {
+                field.mutable = false;
+            }
+        }
+        Ok(item)
+    }
+
+    /// The body of a class or a struct, which start with `word` and then a name that `what`
+    /// describes. The keyword of a class is dropped by its caller.
+    fn record_body(
+        &mut self,
+        errors: &mut Vec<Diagnostic>,
+        methods: &mut Vec<Range<usize>>,
+        word: &TokenKind,
+        what: &str,
+    ) -> Result<Struct, Diagnostic> {
+        let keyword = self.expect(word)?.span;
+        let name = self.name(what)?;
         let type_params = self.type_params()?;
         let conforms = self.interface_list()?;
         self.expect(&TokenKind::LBrace)?;
         let mut members = Vec::new();
         let mut assoc = Vec::new();
-        // Only a class that lists an interface may choose an associated type.
+        // Only a type that lists an interface may choose an associated type.
         let chooses = !conforms.is_empty();
         let broken_methods = self.member_lines(errors, methods, |p, end| {
             match p.checked(end, |p| p.class_line(chooses))? {
@@ -1663,7 +1714,8 @@ impl<'a> Parser<'a> {
             Ok(())
         })?;
         self.bump();
-        Ok(Class {
+        Ok(Struct {
+            keyword,
             name,
             type_params,
             conforms,
@@ -11059,6 +11111,27 @@ mod tests {
             }
             items => panic!("expected class D alone, found {items:?}"),
         }
+    }
+
+    /// GIVEN a struct with a `mut` field and a struct with a syntax error
+    /// WHEN the parser reads them
+    /// THEN the first is a struct item that keeps its `struct` keyword and reads the field as
+    /// not mutable. The second keeps its name as a broken struct
+    #[test]
+    fn struct_items_should_parse_like_classes() {
+        let parsed = parsed("struct   P { mut x: i64 }\nstruct Q {\n    y i64\n}\n");
+        assert_eq!(parsed.program.to_string(), "(struct P (x i64))");
+        let [Item::Struct(p)] = parsed.program.items.as_slice() else {
+            panic!("expected struct P alone, found {:?}", parsed.program.items);
+        };
+        assert_eq!(p.keyword, Span::new(0, 6));
+        let [Broken { name, kind }] = parsed.program.broken.as_slice() else {
+            panic!(
+                "expected one broken item, found {:?}",
+                parsed.program.broken
+            );
+        };
+        assert_eq!((name.name.as_str(), *kind), ("Q", BrokenKind::Struct));
     }
 
     #[test]

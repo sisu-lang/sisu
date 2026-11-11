@@ -9,7 +9,7 @@ error[E0034]: interface `Source` is defined twice
 1 | interface Source {
   |           ------ first defined here
 
-error[E0004]: `{` must be on the same line as `fn`, `class`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`
+error[E0004]: `{` must be on the same line as `fn`, `class`, `struct`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`
  --> E0034-broken-duplicate.sisu:6:1
   |
 6 | {   fn get(self) -> i64

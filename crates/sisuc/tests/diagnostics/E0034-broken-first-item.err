@@ -1,4 +1,4 @@
-error[E0004]: `{` must be on the same line as `fn`, `class`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`
+error[E0004]: `{` must be on the same line as `fn`, `class`, `struct`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`
  --> E0034-broken-first-item.sisu:2:1
   |
 2 | {
@@ -40,7 +40,7 @@ error[E0034]: class `B` is defined twice
 11 | class B
    |       ^
 
-error[E0004]: `{` must be on the same line as `fn`, `class`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`
+error[E0004]: `{` must be on the same line as `fn`, `class`, `struct`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`
   --> E0034-broken-first-item.sisu:12:1
    |
 12 | {
@@ -82,7 +82,7 @@ error[E0034]: class `C` is defined twice
 17 | class C {}
    |       - first defined here
 
-error[E0004]: `{` must be on the same line as `fn`, `class`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`
+error[E0004]: `{` must be on the same line as `fn`, `class`, `struct`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`
   --> E0034-broken-first-item.sisu:22:1
    |
 22 | {
@@ -93,7 +93,7 @@ help: move `{` to the end of the line above
 21 | class C {
    |        +
 
-error[E0004]: `{` must be on the same line as `fn`, `class`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`
+error[E0004]: `{` must be on the same line as `fn`, `class`, `struct`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`
   --> E0034-broken-first-item.sisu:26:1
    |
 26 | {
@@ -115,7 +115,7 @@ error[E0034]: class `D` is defined twice
 25 | class D
    |       - first defined here
 
-error[E0004]: `{` must be on the same line as `fn`, `class`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`
+error[E0004]: `{` must be on the same line as `fn`, `class`, `struct`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`
   --> E0034-broken-first-item.sisu:30:1
    |
 30 | {
@@ -146,7 +146,7 @@ error[E0034]: class `E` is defined twice
 37 | class E
    |       ^
 
-error[E0004]: `{` must be on the same line as `fn`, `class`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`
+error[E0004]: `{` must be on the same line as `fn`, `class`, `struct`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`
   --> E0034-broken-first-item.sisu:38:1
    |
 38 | {
@@ -168,7 +168,7 @@ error[E0034]: class `E` is defined twice
 35 | class E {}
    |       - first defined here
 
-error[E0004]: `{` must be on the same line as `fn`, `class`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`
+error[E0004]: `{` must be on the same line as `fn`, `class`, `struct`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`
   --> E0034-broken-first-item.sisu:42:1
    |
 42 | {
@@ -179,7 +179,7 @@ help: move `{` to the end of the line above
 41 | class E {
    |        +
 
-error[E0004]: `{` must be on the same line as `fn`, `class`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`
+error[E0004]: `{` must be on the same line as `fn`, `class`, `struct`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`
   --> E0034-broken-first-item.sisu:46:1
    |
 46 | {

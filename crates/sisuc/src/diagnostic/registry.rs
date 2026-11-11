@@ -1880,6 +1880,7 @@ fn instances(n: usize) -> String {
 pub(crate) enum Definition {
     Function,
     Class,
+    Struct,
     Field,
     Method,
     Binding,
@@ -1905,6 +1906,7 @@ impl Definition {
         match self {
             Definition::Function => "function",
             Definition::Class => "class",
+            Definition::Struct => "struct",
             Definition::Field => "field",
             Definition::Method => "method",
             Definition::Binding => "binding",
@@ -1922,7 +1924,9 @@ impl Definition {
     fn unused_verb(self) -> &'static str {
         match self {
             Definition::Function | Definition::Method => "called",
-            Definition::Class | Definition::Enum | Definition::Variant => "built",
+            Definition::Class | Definition::Struct | Definition::Enum | Definition::Variant => {
+                "built"
+            }
             Definition::Field => "read",
             Definition::Constant
             | Definition::Binding
@@ -3205,7 +3209,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 let d = Diagnostic::coded(
                     code,
                     at,
-                    "`{` must be on the same line as `fn`, `class`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`",
+                    "`{` must be on the same line as `fn`, `class`, `struct`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`",
                 );
                 match join {
                     Some(join) => d.with_fix(join_fix(

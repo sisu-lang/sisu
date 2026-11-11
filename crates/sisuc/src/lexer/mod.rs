@@ -54,6 +54,7 @@ pub(crate) enum TokenKind {
     Break,
     Continue,
     Class,
+    Struct,
     Const,
     Enum,
     Interface,
@@ -160,6 +161,7 @@ impl TokenKind {
             TokenKind::Break => "Break",
             TokenKind::Continue => "Continue",
             TokenKind::Class => "Class",
+            TokenKind::Struct => "Struct",
             TokenKind::Const => "Const",
             TokenKind::Enum => "Enum",
             TokenKind::Interface => "Interface",
@@ -244,6 +246,7 @@ impl TokenKind {
             TokenKind::Break => "break",
             TokenKind::Continue => "continue",
             TokenKind::Class => "class",
+            TokenKind::Struct => "struct",
             TokenKind::Const => "const",
             TokenKind::Enum => "enum",
             TokenKind::Interface => "interface",
@@ -560,7 +563,7 @@ fn judge(
 ) -> Judgement {
     use TokenKind::{
         Class, Const, Dot, Else, Enum, Extend, Fn, Gt, Interface, LBrace, Newline, QuestionDot,
-        QuestionQuestion, RBrace, Type,
+        QuestionQuestion, RBrace, Struct, Type,
     };
     let (i, end) = (run.start, run.end);
     let (prev, next) = (i.checked_sub(1).map(|p| &tokens[p]), tokens.get(end));
@@ -600,7 +603,7 @@ fn judge(
         || (between_items
             && matches!(
                 next,
-                Some(Fn | Class | Enum | Interface | Extend | Type | Const)
+                Some(Fn | Class | Struct | Enum | Interface | Extend | Type | Const)
             ))
     {
         Judgement::Redundant
@@ -804,6 +807,7 @@ impl Statements {
                 t.kind,
                 TokenKind::Fn
                     | TokenKind::Class
+                    | TokenKind::Struct
                     | TokenKind::Enum
                     | TokenKind::Interface
                     | TokenKind::Extend
@@ -984,6 +988,7 @@ impl Brackets {
         match kind {
             TokenKind::Fn
             | TokenKind::Class
+            | TokenKind::Struct
             | TokenKind::Enum
             | TokenKind::Interface
             | TokenKind::Extend
@@ -1459,6 +1464,7 @@ fn is_header(t: &Token) -> bool {
         t.kind,
         TokenKind::Fn
             | TokenKind::Class
+            | TokenKind::Struct
             | TokenKind::Enum
             | TokenKind::Interface
             | TokenKind::Extend
@@ -1645,7 +1651,7 @@ pub(crate) fn keyword(text: &str) -> Option<TokenKind> {
         "import" => TokenKind::Reserved("import"),
         "pub" => TokenKind::Reserved("pub"),
         "type" => TokenKind::Type,
-        "struct" => TokenKind::Reserved("struct"),
+        "struct" => TokenKind::Struct,
         "move" => TokenKind::Reserved("move"),
         "weak" => TokenKind::Reserved("weak"),
         "test" => TokenKind::Reserved("test"),
@@ -1847,9 +1853,7 @@ mod tests {
     #[test]
     fn reserved_words_should_lex_as_reserved_tokens() {
         use TokenKind::{Eof, Reserved};
-        let words = [
-            "import", "pub", "struct", "move", "weak", "test", "extern", "as",
-        ];
+        let words = ["import", "pub", "move", "weak", "test", "extern", "as"];
         let mut expected: Vec<_> = words.iter().map(|w| Reserved(w)).collect();
         expected.extend([
             ident("matches"),
@@ -1963,11 +1967,12 @@ mod tests {
             TokenKind::QuestionQuestion => 77,
             TokenKind::Newline => 78,
             TokenKind::Eof => 79,
+            TokenKind::Struct => 80,
         }
     }
 
     /// How many kinds `slot` has.
-    const KINDS: usize = 80;
+    const KINDS: usize = 81;
 
     /// The file that the check of `selfhost/lexer.sisu` lexes holds a token of each kind and each
     /// reserved word, so that the check sees every one. The reserved words are listed by hand, as
@@ -1986,9 +1991,7 @@ mod tests {
             missing.is_empty(),
             "all_tokens.sisu has no token of the kinds at these places of `slot`: {missing:?}"
         );
-        for word in [
-            "import", "pub", "struct", "move", "weak", "test", "extern", "as",
-        ] {
+        for word in ["import", "pub", "move", "weak", "test", "extern", "as"] {
             assert!(
                 tokens.iter().any(|t| t.kind == TokenKind::Reserved(word)),
                 "all_tokens.sisu has no reserved word `{word}`"

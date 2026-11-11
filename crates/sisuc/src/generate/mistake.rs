@@ -134,6 +134,7 @@ pub(crate) fn item_sites(program: &str) -> Vec<MistakeSite> {
             TokenKind::Extend if depth == 0 => items.push((token.span.range().start, None)),
             TokenKind::Fn
             | TokenKind::Class
+            | TokenKind::Struct
             | TokenKind::Enum
             | TokenKind::Interface
             | TokenKind::Const

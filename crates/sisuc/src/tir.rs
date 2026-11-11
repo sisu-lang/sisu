@@ -32,6 +32,9 @@ pub(crate) struct FuncId(pub(crate) usize);
 pub(crate) struct ClassId(pub(crate) usize);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct StructId(pub(crate) usize);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct EnumId(pub(crate) usize);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
