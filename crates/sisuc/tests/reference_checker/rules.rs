@@ -267,7 +267,7 @@ fn id_should_fail_after_a_white_space_that_the_site_skips() {
         \u{2002}\u{2003}\u{2004}\u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\u{200a}\u{2028}\
         \u{2029}\u{202f}\u{205f}\u{3000}";
     for c in skipped.chars() {
-        let rows: [(&str, String, usize); 5] = [
+        let rows: [(&str, String, usize); 9] = [
             (
                 "not joined",
                 format!("**Rules**\n\n- {c}{{#strings.a.b}} x\n"),
@@ -287,6 +287,26 @@ fn id_should_fail_after_a_white_space_that_the_site_skips() {
                 "after a tab",
                 format!("**Rules**\n\n- \t{c}{{#strings.a.b}} x\n"),
                 3,
+            ),
+            (
+                "a blank after the character",
+                format!("**Rules**\n\n- {c} {{#strings.a.b}} x\n"),
+                3,
+            ),
+            (
+                "a tab after the character",
+                format!("**Rules**\n\n- {c}\t{{#strings.a.b}} x\n"),
+                3,
+            ),
+            (
+                "an escaped prefix, not joined",
+                format!("**Rules**\n\n- {c}\\{{#strings.a.b}} x\n"),
+                3,
+            ),
+            (
+                "an escaped prefix, joined",
+                format!("**Rules**\n\n- {{#strings.a.a}} w\n- {c}\\{{#strings.a.b}} x\n"),
+                4,
             ),
             (
                 "loose",

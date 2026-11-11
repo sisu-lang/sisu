@@ -129,6 +129,22 @@ fn marker_should_fail_on_an_id_of_the_index() {
     assert_one_fault("index ID", &faults, "crates/a.rs", "no rule has the ID");
 }
 
+/// GIVEN a `strings` page with the item `- <U+00A0>{#strings.a.b} x`, which has an ID fault
+/// AND the marker `r[verify strings.a.b@1234]`
+/// WHEN the marker is checked against the known IDs of the pages
+/// THEN the marker has no fault, because the ID is known
+#[test]
+fn marker_should_have_no_fault_on_an_id_that_has_a_fault() {
+    let pages = [(
+        "strings".to_string(),
+        read_page("**Rules**\n\n- \u{a0}{#strings.a.b} x\n"),
+    )];
+    let (markers, faults) = read_markers("crates/a.rs", b"// r[verify strings.a.b@1234]\n");
+    assert!(faults.is_empty(), "faults are {faults:?}");
+    let faults = unknown_ids(&markers, &known_ids(&pages));
+    assert!(faults.is_empty(), "faults are {faults:?}");
+}
+
 /// GIVEN the pages `README` and `strings`
 /// AND `strings` has a rule with an ID, a rule with an ID of another page, and a rule with no ID
 /// WHEN the known IDs are found
