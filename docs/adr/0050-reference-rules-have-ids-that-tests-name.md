@@ -79,7 +79,7 @@ rule. The review does.
 
 - Tracey gets all three abilities: it reads a rule in a bullet, its config can add the
   `.sisu` file type, and it can fail on a rule with no test.
-- The check doubles from about 900 lines. That is the size that this ADR adds
-  today. It is in `rules.rs`, `markers.rs`, and the rule parts of
-  `reference_check/mod.rs`, `reference.rs` and `site/build.py`.
+- The check doubles from about 900 lines. That is the size of the check today. It is in
+  `rules.rs`, `markers.rs`, and the rule parts of `reference_check/mod.rs`,
+  `reference.rs` and `site/build.py`.
 - `tracey-core` could replace more than the marker reader.

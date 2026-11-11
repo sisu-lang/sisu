@@ -7,6 +7,8 @@
 // AND a child that a comma follows breaks one column earlier than the last child
 // AND a scalar, a `string` and a class are as `{x}` writes them
 // AND the layout of `"abc{x:#}"` is `abc` before the first line of `"{x:#}"`
+// AND text built at run time before a part does not count, so a fitting group stays on one
+//     line past column 80
 // AND a written `to_string` with a line break breaks every group around it
 // AND a `string` that holds `\n` is escaped and breaks nothing
 // AND `laid` lays out the value of its type argument, and a scalar or a class as it is
