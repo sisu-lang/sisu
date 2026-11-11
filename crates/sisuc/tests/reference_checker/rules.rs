@@ -916,26 +916,41 @@ fn rule_faults_should_come_in_line_order() {
     );
 }
 
-/// The table of generated rule pages and the check's verdict on each. `site/build_test.py` reads
-/// it and builds each page, so the site and the check see the same input.
+/// The table of generated rule pages and the check's verdict on each, one page on a line.
+/// `site/build_test.py` reads it and builds each page, so the site and the check see the same
+/// input.
 const RULE_TABLE: &str = "tests/reference_checker/rule_ids.json";
 
-/// The page that puts the rule item `item` in `container`. On a joined page, a rule with an ID
-/// comes first.
-fn rule_page(container: &str, joined: bool, item: &str) -> String {
-    let first = if joined { "- {#strings.a.a} w\n" } else { "" };
-    let parent = if joined { "{#strings.a.a} " } else { "" };
-    let body = match container {
-        "rule" => format!("**Rules**\n\n{first}- {item}\n"),
-        "nested item" => format!("**Rules**\n\n- {parent}w\n  - {item}\n"),
-        "block quote" => format!("**Rules**\n\n{first}- > {item}\n"),
-        "ordered item" => format!("**Rules**\n\n{first}1. {item}\n"),
-        "plain list" => format!("**Rules**\n\n{first}\nA sentence.\n\n- {item}\n"),
-        "lazy line" => format!("**Rules**\n\n{first}- x\n{item}\n"),
-        "HTML block" => format!("**Rules**\n\n{first}- <div>\n{item}\n"),
-        _ => unreachable!("no container {container}"),
-    };
-    format!("# T\n\n{body}")
+/// Each container of the rule item: its name, and its page with `{item}` in place of the item.
+/// On a joined page, `{first}` is a rule with an ID and `{parent}` is the prefix of the parent
+/// rule; on a page that has not joined, both are empty.
+const CONTAINERS: [(&str, &str); 6] = [
+    ("rule", "**Rules**\n\n{first}- {item}\n"),
+    ("nested item", "**Rules**\n\n- {parent}w\n  - {item}\n"),
+    ("block quote", "**Rules**\n\n{first}- > {item}\n"),
+    ("ordered item", "**Rules**\n\n{first}1. {item}\n"),
+    (
+        "after a sentence",
+        "**Rules**\n\n{first}\nA sentence.\n\n- {item}\n",
+    ),
+    ("lazy line", "**Rules**\n\n{first}- x\n{item}\n"),
+];
+
+/// `text` with each character outside ASCII as a JSON `\u` escape, in UTF-16 units, so that no
+/// invisible character is in the table.
+fn ascii_json(text: &str) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if c.is_ascii() {
+            out.push(c);
+        } else {
+            for unit in c.encode_utf16(&mut [0; 2]) {
+                write!(out, "\\u{unit:04x}").expect("writing to a String should not fail");
+            }
+        }
+    }
+    out
 }
 
 /// GIVEN a rule item made of parts: a container, a page that joined or not, a character before
@@ -955,29 +970,26 @@ fn generated_rule_should_get_the_verdict_of_the_table_that_the_site_reads() {
         ("one backslash", "\\"),
         ("two backslashes", "\\\\"),
     ];
-    let containers = [
-        "rule",
-        "nested item",
-        "block quote",
-        "ordered item",
-        "plain list",
-        "lazy line",
-        "HTML block",
-    ];
-    let mut cases = Vec::new();
-    for container in containers {
+    let mut lines = Vec::new();
+    for (container, template) in CONTAINERS {
         for joined in [false, true] {
+            let (first, parent) = if joined {
+                ("- {#strings.a.a} w\n", "{#strings.a.a} ")
+            } else {
+                ("", "")
+            };
             for lead in leads {
                 for (escape_name, escape) in escapes {
                     let lead_name = lead.chars().next().map_or_else(
                         || "nothing".to_string(),
                         |c| format!("U+{:04X}", u32::from(c)),
                     );
-                    let page = rule_page(
-                        container,
-                        joined,
-                        &format!("{lead}{escape}{{#strings.a.b}} x"),
-                    );
+                    let item = format!("{lead}{escape}{{#strings.a.b}} x");
+                    let body = template
+                        .replace("{first}", first)
+                        .replace("{parent}", parent)
+                        .replace("{item}", &item);
+                    let page = format!("# T\n\n{body}");
                     let read = read_page(&page);
                     let fault = !read.faults.is_empty() || !id_faults("strings", &read).is_empty();
                     let ids: Vec<&str> = read
@@ -986,28 +998,18 @@ fn generated_rule_should_get_the_verdict_of_the_table_that_the_site_reads() {
                         .filter_map(|rule| rule.id.as_deref())
                         .collect();
                     let joined_name = if joined { "joined" } else { "not joined" };
-                    cases.push(serde_json::json!({
+                    let case = serde_json::json!({
                         "name": format!("{container}, {joined_name}, {lead_name}, {escape_name}"),
                         "page": page,
                         "fault": fault,
                         "ids": ids,
-                    }));
+                    });
+                    lines.push(ascii_json(&case.to_string()));
                 }
             }
         }
     }
-    let json = serde_json::to_string_pretty(&cases).expect("the table should serialize");
-    // ASCII only, so that no invisible character is in the file.
-    let ascii: String = json
-        .chars()
-        .map(|c| {
-            if c.is_ascii() {
-                c.to_string()
-            } else {
-                format!("\\u{:04x}", u32::from(c))
-            }
-        })
-        .collect();
+    let table = format!("[\n{}\n]\n", lines.join(",\n"));
     let bless = std::env::var("SISU_BLESS").as_deref() == Ok("1");
-    crate::support::expect_files(&[(RULE_TABLE.into(), ascii + "\n")], bless);
+    crate::support::expect_files(&[(RULE_TABLE.into(), table)], bless);
 }

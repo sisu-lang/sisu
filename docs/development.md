@@ -1445,6 +1445,13 @@ To add a rule to a joined page:
    the site shows. A comment line that starts with `r[` is read as a marker, so a
    GIVEN line does not start with `r[`.
 
+The site and the check must read a rule in the same way. A test makes rule
+pages from parts and writes the check's verdict on each to
+`crates/sisuc/tests/reference_checker/rule_ids.json`. `make site` builds each
+page of it and compares the IDs. After a change to how the check reads
+rules, rewrite the file with `SISU_BLESS=1 cargo nextest run --test reference_checker`
+and read its diff.
+
 A rule in a section that holds a `sisu pending` example needs an ID but no test.
 A section starts at a `##` or `###` heading. It ends at the next heading of any
 level. A pending example under a `####` heading puts no rule in development. A

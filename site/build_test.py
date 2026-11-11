@@ -1389,18 +1389,28 @@ class Build(unittest.TestCase):
         with the verdict of the reference check on it: a fault, or the IDs of its rules
         WHEN `site/build.py` builds the page
         THEN it raises `BuildError`, or the check has a fault, or both give the same IDs
+        AND more than 100 pages build with no fault on either side, some of them with IDs.
+        A page that the site refuses and the check accepts passes, as for spec S21 a loud
+        failure is enough.
         """
         self.maxDiff = None
         table = build.ROOT / "crates/sisuc/tests/reference_checker/rule_ids.json"
-        disagree = []
+        disagree: list[str] = []
+        compared: list[list[str]] = []
         for case in json.loads(table.read_text(encoding="utf-8")):
             try:
                 body = ref_html(self, case["page"])[0]
             except build.BuildError:
                 continue
-            if not case["fault"] and re.findall(r'<li id="([^"]+)"', body) != case["ids"]:
+            if case["fault"]:
+                continue
+            ids = re.findall(r'<li id="([^"]+)"', body)
+            compared.append(ids)
+            if ids != case["ids"]:
                 disagree.append(case["name"])
         self.assertEqual(disagree, [])
+        self.assertGreater(len(compared), 100)
+        self.assertTrue(any(compared))
 
     def test_rule_should_list_the_tests_that_prove_it(self) -> None:
         """
