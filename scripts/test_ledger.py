@@ -86,6 +86,16 @@ class SetGroup(unittest.TestCase):
         text = GROUPS.replace("| G2 | #2 | waiting |", "| G2 | #2 | waiting")
         self.assertIn("| G2 | #2 | done |\n", ledger.set_group(text, "G2", "done"))
 
+    def test_a_groups_section_with_no_table_should_not_read_the_next_section(self) -> None:
+        text = "## Groups\n\nNone yet.\n\n## Other\n\n| A | B |\n| --- | --- |\n| G1 | x |\n"
+        with self.assertRaises(ValueError):
+            ledger.set_group(text, "G1", "done")
+
+    def test_a_row_with_fewer_cells_than_the_header_should_be_an_error(self) -> None:
+        text = GROUPS.replace("| G2 | #2 | waiting |", "| G2 | #2 |")
+        with self.assertRaises(ValueError):
+            ledger.set_group(text, "G2", "done")
+
     def test_a_state_with_a_bar_should_be_an_error(self) -> None:
         with self.assertRaises(ValueError):
             ledger.set_group(GROUPS, "G1", "a | b")

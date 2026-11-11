@@ -46,16 +46,24 @@ def set_group(ledger: str, group: str, state: str) -> str:
         raise ValueError("the ledger has no '## Groups' section")
     rows = lines.index("## Groups") + 1
     table_row = 0
+    header: list[str] = []
     for row in range(rows, len(lines)):
         line = lines[row].strip()
+        if line.startswith("## "):
+            break  # the next section starts
         if not line.startswith("|"):
             if table_row:
                 break  # the table has ended
             continue
         table_row += 1
         cells = line.removeprefix("|").removesuffix("|").split("|")
+        if table_row == 1:
+            header = cells
         # The first two rows of the table are its header and its delimiter, not groups.
         if table_row > 2 and cells[0].strip() == group:  # noqa: PLR2004  the header and the delimiter
+            if len(cells) != len(header):
+                msg = f"the row of group {group!r} has {len(cells)} cells, the header {len(header)}"
+                raise ValueError(msg)
             cells[-1] = f" {state} "
             lines[row] = "|" + "|".join(cells) + "|"
             return "\n".join(lines) + "\n"
