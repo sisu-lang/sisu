@@ -140,7 +140,10 @@ vague or generic error, or with none.
   staging rules in `CODING_STANDARDS.md` hold.
 - **Assertions.** No sentence lets the executor change an expected value,
   a count or a marker to fit what the code does. Each test states the
-  property it must prove.
+  property it must prove. A defect here blocks.
+- **Self-reporting defects.** Some plan defects show at the task's first
+  build, clippy run or named test, such as a dead variant under
+  `-D warnings`. Such a defect is a nit, because the executor sees it.
 - **Diagnostic text.** Each message, label and help text a task names
   matches the spec word for word.
 - **Claims.** As in "Check, for every kind", item 8.
@@ -159,7 +162,10 @@ vague or generic error, or with none.
 - A defect the diff adds blocks. A defect the old code had too is a nit.
 - Check cheap claims yourself: build, run the tests, write a probe
   program. When "Focus" lists a prebuilt `sisu` for a commit, run it and
-  do not build that commit. Build only what Focus does not list, such as
+  do not build that compiler again. It holds no tests. To run a test of
+  the diff, export the commit and run `cargo nextest run <filter>` there.
+  Plain `cargo test` fails, because only the nextest setup script builds
+  the runtime. Build only what Focus does not list, such as
   a prototype of a fix. To build a commit, export it as "Export a commit to build it"
   in `CODING_STANDARDS.md` says. Keep two export directories in your
   scratch directory, `base` and `head`; for another commit, empty one and
@@ -203,7 +209,9 @@ vague or generic error, or with none.
 # Re-review
 
 This is round <round>. For a diff, the target is the range of the last
-fix round; for a spec or a plan, it is the new version. The earlier
+fix round; for a spec or a plan, it is the new version. For a spec or a
+plan, review the text that differs from the previous version, and the
+sections of the accepted findings. The earlier
 reports are <prior reports>, and the caller's rulings on them are in
 <rulings>. The first brief, <path of the first brief>, names the whole
 work under review.
@@ -219,7 +227,7 @@ work under review.
 - Compare with the base of the whole work, not with the base of this
   round. A defect that the work added blocks, also when an earlier fix
   round added it.
-- Report a defect in code that this round did not change under
+- Report a defect in code or text that this round did not change under
   "Outside this round", after "Unverified", not as a finding.
 
 # Focus
@@ -228,7 +236,8 @@ work under review.
 
 # Report
 
-Your final reply is the report. It has these parts, in this order:
+Your final reply is the report. Its first line is `Model: <your exact model
+ID>`. Then it has these parts, in this order:
 
 1. `Verdict: approve` or `Verdict: changes needed`, with the count of
    blocking findings and of nits.
@@ -258,5 +267,5 @@ Your final reply is the report. It has these parts, in this order:
 3. `Checked and clean:` one line per item of the checks above that found
    nothing, with what you looked at.
 4. `Unverified:` each claim you could not check, and why.
-5. In a re-review, `Outside this round:` each defect in code that this
-   round did not change.
+5. In a re-review, `Outside this round:` each defect in code or text that
+   this round did not change.

@@ -20,17 +20,17 @@ The caller names one target. Infer its kind; ask when it is unclear.
 | plan | the path of an implementation plan, a document of numbered tasks | the spec it implements, which the plan names |
 | diff | a range `<base>..<head>` or a branch, against `origin/main` by default | the spec and plan, when the caller names them |
 
+For the final diff of a branch, also follow [final-diff.md](final-diff.md).
+
 ## Steps
 
 ### 1. Set up
 
 1. The repository root is `git rev-parse --show-toplevel` in the checkout that holds the target, which may be a worktree.
-2. `mktemp -d "<scratch>/sisu-review-<name>-XXXX"` makes the run directory, `RUN`. `<scratch>` is the session's scratchpad directory. When the harness gives none, it is `${TMPDIR:-/tmp}`. `$TMPDIR` changes with the sandbox mode. So a sandboxed reviewer cannot write in a directory that an unsandboxed call made under `/tmp`. Then `mkdir RUN/opus-scratch RUN/copilot-scratch` makes the reviewers' scratch directories, and `mkdir RUN/probes` makes the directory that keeps the probe programs of every round. `<name>` says what is under review, such as `m8p5-task3` or `attributes-final`. Prompts and reports stay there, outside the repository. Shell variables do not survive between tool calls, so write `RUN` as a literal path.
+2. `mktemp -d "<scratch>/sisu-review-<name>-XXXX"` makes the run directory, `RUN`. `<scratch>` is the session's scratchpad directory. When the harness gives none, it is `${TMPDIR:-/tmp}`. `$TMPDIR` changes with the sandbox mode. So a sandboxed reviewer cannot write in a directory that an unsandboxed call made under `/tmp`. Then `mkdir RUN/opus-scratch RUN/outside-scratch` makes the reviewers' scratch directories, and `mkdir RUN/probes` makes the directory that keeps the probe programs of every round. `<name>` says what is under review, such as `m8p5-task3` or `attributes-final`. Prompts and reports stay there, outside the repository. Shell variables do not survive between tool calls, so write `RUN` as a literal path.
 3. Delete the build directories that have not changed for a day, because a run that never reaches section 6 (Report) keeps its builds: `find <scratch>/sisu-review-*/ -mindepth 1 -maxdepth 1 -type d ! -name probes -mtime +0 -exec rm -rf {} +`.
 4. Run `git fetch origin` before every review: the brief and its script come from `origin/main`, so a branch that started before a change to the criteria gets the current ones.
-5. For the final diff of a branch, review what will merge. When `git merge-base --is-ancestor origin/main <head>` fails, `main` has moved: bring it in, run `make test` and `make site`, and review the range from `origin/main` to the new head. Rebase onto `origin/main` when the branch's commits replay cleanly. Merge `origin/main` instead when a rebase conflicts in commits that later fix rounds rewrote: run `git rebase --abort` first, then merge, because one merge resolves the conflict against the final code. A new check on `main`, such as a warning, can fail the branch's own tests with no conflict, so `make test` is part of the merge. `review_round.py prepare` stops before it builds when a diff starts on `main` and `origin/main` is not an ancestor of its head. Pass `--old-main` only for the diff of one task.
-6. Run the fuzz target when the final diff of a branch changes `crates/sisuc/src/parser.rs` or `crates/sisuc/src/lexer/`. Run `make fuzz SECS=900` (the `front_end` target) on the head, in the branch's worktree, with Bash `run_in_background`. Read its exit status and `fuzz/artifacts/summary.md`. When `make fuzz` succeeds but the summary warns of few new inputs or says that no job finished, run it again with twice the seconds. Each run writes the summary anew. Do not list `fuzz/artifacts/front_end/`: it keeps the inputs of earlier runs. When the summary lists a crash, a timeout or an out-of-memory input, put it in the first round. Give its input path and, for a crash, its replay at the end of `fuzz/artifacts/fuzz.log`. The target needs cargo-fuzz (`make setup`). `docs/development.md` (Fuzz the front end) says how to replay an input.
-7. Run the generator gap check when the final diff of a branch changes `crates/sisuc/src`, `crates/sisuc/tests/run` or `crates/sisuc/tests/run-fail`. Run `make fuzz-gaps` on the head, in the branch's worktree, with Bash `run_in_background`, after step 6. Read the section `## Generator gaps` that it prints. Its exit status tells only pass from fail, because `make` returns 2 for each failure. A section that says valid programs reach functions that no seed reaches names a new gap. Add its generator rule or its known key before you launch the reviewers (`docs/development.md`, Add a fixed form for a generator gap). A section that says the check did not finish, or no section, means that the measurement failed, so fix that first. A warning names a stale key, so remove the key from `fuzz/known_gaps.txt`.
+5. For the final diff of a branch, do the steps of [final-diff.md](final-diff.md) (Before the launch).
 
 ### 2. Write the brief
 
@@ -51,35 +51,51 @@ It takes `build_sisu.sh` and `diff_brief.py` from `origin/main`, because a branc
 - `<target>` is the path of a spec or a plan, or `<base>..<head>` for a diff. Write a branch as `origin/main..<branch>`. The brief writes a diff's range as full SHAs, and copies a spec or a plan to `RUN/target-<round>.md`, which the reviewer reads.
 - Repeat `--doc` for each document the reviewer reads with the target; leave it out when there is none.
 - The brief lists each build in `RUN/bin`, and each line that the diff removes from the tests.
-- For a diff, pass the `LOG=` file of each `make mutation-test` run as `--mutation-log` (repeat the option for more than one log; Focus gets one line for each, and the script checks each one), and the output of `make coverage BASE=<base> > RUN/coverage.txt` as `--coverage`. Leave out each one that did not run. The script stops when the log measured uncommitted changes or a commit outside the range, and when the coverage output measured uncommitted changes or a commit other than the head. A stage or a group runs mutation tests once, on its final head after the task reviews, so a task review has no log; the final review gets it. A large fix round of the final review runs one more (step 5). A log from an earlier commit of the range is still accepted, and the brief lists the commits after it.
+- For a diff, pass the `LOG=` file of each `make mutation-test` run as `--mutation-log`. Repeat the option for more than one log; Focus gets one line for each, and the script checks each one. Pass the output of `make coverage BASE=<base> > RUN/coverage.txt` as `--coverage`. Leave out each one that did not run. The script stops when the log measured uncommitted changes or a commit outside the range. It also stops when the coverage output measured uncommitted changes or a commit other than the head. A stage or a group runs mutation tests once, on its final head after the task reviews, so a task review has no log; the final review gets it. A large fix round of the final review runs one more ([final-diff.md](final-diff.md)). A log from an earlier commit of the range is still accepted, and the brief lists the commits after it.
 - The script drops a skill line it cannot find. Tell the user in the report.
 
 ### 3. Launch the reviewers
 
-| Review | First round | Later rounds |
+Each review has a Claude seat. Round 1 can also have an outside seat.
+
+| Review | Claude seat | Outside seat |
 | --- | --- | --- |
-| spec or plan | `gpt-6.1-sol` medium, `opus-high` | both |
-| the diff of one task | `gpt-6.1-sol` medium, `opus-medium` | `opus-medium`; it also checks the fixes for Sol's findings |
-| the final diff of a branch or a milestone | `gpt-6.1-sol` medium, `opus-high` | both |
+| spec or plan | `opus-high` | round 1, when chosen |
+| the diff of one task | `opus-medium` | round 1, when chosen |
+| the diff of one task in the light flow of `solve-issues` | `opus-medium` | none |
+| the final diff of a branch or a milestone | `opus-high` | round 1, when chosen |
 
-The user or the caller's plan may change an effort or add a reviewer.
-Launch the reviewers together. Each launcher must let its reviewer read
-`RUN` and the skill paths in the brief.
+The Claude seat reviews every round. In a later round it reviews alone, and
+it also checks the fixes for the outside seat's findings.
 
-After the last reviewer ends, run `python3 <skill base>/scripts/review_round.py verify <repository root> RUN --round <round> --report <stem>`,
-with one `--report` for each reviewer, such as `--report sol --report opus`.
-It fails when a report is missing, or when the checkout differs from the record of `prepare`. A
-missing report means that the reviewer failed or that you did not save its reply. A difference
+The outside seat is a model that is not the caller's: Sol, Fable 5.2, or
+another model the user names. Its model and its CLI change with the user's
+token limits, so this skill names none. Take the model and the CLI from the
+first of these that gives them:
+
+1. what the user said for this review;
+2. the reviewers row of the plan's `## Execution` section;
+3. the user's answer: ask before the launch.
+
+Ask the user for the effort of the outside seat every time, unless the user
+named it for this review. "None" is a correct answer: then the Claude seat
+reviews alone.
+
+Launch the seats together. Each launcher must let its reviewer read `RUN`
+and the skill paths in the brief.
+
+- **Claude seat:** the Agent tool with the `subagent_type` from the table, and the prompt `Read RUN/brief.md and follow it. Your scratch directory is RUN/opus-scratch. Your final reply is the whole report.` with `RUN` written out, and `brief-<round>.md` in a later round. Pass no `model` or `effort`. A read-only reviewer such as `opus-medium` cannot write a file. So save each reply word for word with `python3 <skill base>/scripts/review_round.py save-report RUN opus --agent <agent ID> --round <round>`, which writes `RUN/opus.md` (`opus-<round>.md` in a later round) from the agent's transcript.
+- **Outside seat:** the command for its CLI in [launchers.md](launchers.md). Its report stem is the model's short name, such as `sol` or `fable`. When it fails, hits a usage limit or leaves no report, show the user the error it prints and ask how to go on. Do not put another model in its place without asking.
+
+After the last reviewer ends and you saved each report, run `python3 <skill base>/scripts/review_round.py verify <repository root> RUN --round <round> --report <stem>`,
+with one `--report` for each reviewer, such as `--report sol --report opus`. Run it before a fix commit.
+It fails when a report is missing or has no `Model:` first line, or when the checkout differs from the record of `prepare`. A
+missing report means that the reviewer failed or that you did not save its reply. Check that the `Model:` line names the model you launched. A difference
 means that a reviewer wrote in the repository, so the round is a failed run: show the user the difference and
-ask how to go on. Sol's launch can write anywhere, so this check is the guard. It does not see a
-write to an ignored file.
-
-Run `verify` as soon as the last report is saved, before a fix commit. When only HEAD moved, `verify`
+ask how to go on. An outside seat's launch can write anywhere, so this check is the guard. It does not see a
+write to an ignored file. When only HEAD moved, `verify`
 names the new commits and still fails, because a reviewer can commit too. When you made each of
 those commits, the round is good.
-
-- **Sol:** `copilot -p "Read RUN/brief.md and follow it. Your scratch directory is RUN/copilot-scratch. Write your report to RUN/sol.md; your final reply is that report." --model gpt-6.1-sol --reasoning-effort <effort> --allow-all -s -C RUN/copilot-scratch --add-dir <repository root> --add-dir RUN`, with one more `--add-dir` for the directory of each skill in the brief, and with `brief-<round>.md` and `sol-<round>.md` in a later round. Run it through Bash with `run_in_background` and the sandbox off: copilot needs the network and writes under `~/.copilot`. Start the call with `copilot`, because the permission rule matches that word. The completion notification ends the wait; do not poll. When it fails or leaves no report, show the user the error it prints and ask how to go on. Do not put another model in Sol's place without asking.
-- **Opus:** the Agent tool with the `subagent_type` from the table, and the prompt `Read RUN/brief.md and follow it. Your scratch directory is RUN/opus-scratch. Your final reply is the whole report.` with `RUN` written out, and `brief-<round>.md` in a later round. Pass no `model` or `effort`. A read-only reviewer such as `opus-medium` cannot write a file. So save each reply word for word with `python3 <skill base>/scripts/review_round.py save-report RUN opus --agent <agent ID> --round <round>`, which writes `RUN/opus.md` (`opus-<round>.md` in a later round) from the agent's transcript, before `verify`.
 
 ### 4. Rule on each finding
 
@@ -89,9 +105,11 @@ on.
 
 Give every finding one ruling, and write each ruling as one line of
 `RUN/rulings-<round>.md`:
-`<reviewer> <n>: Accept | Reject | Defer to <where>: <reason>`. When two
-reviewers report one defect, give both lines the same ruling and name the
-other line.
+`<stem> <n>: Accept | Reject | Defer to <where>: <reason>`, where `<stem>` is
+the report's stem. When two reviewers report one defect, give both lines the
+same ruling and name the other line. Then run `python3 <skill base>/scripts/review_round.py rulings RUN --round <round> --report <stem>`,
+with the same `--report` options as `verify`. It fails on a finding that has
+no ruling, and its counts go into the report to the user.
 
 - **Accept:** you will fix it.
 - **Reject:** with a reason that cites the target, the code, or `CODING_STANDARDS.md`.
@@ -115,7 +133,7 @@ passing. A fix that changes behavior adds its tests in a commit before the
 fix, red at the round base. The reviewer runs those tests at that commit:
 each must fail, and for the stated cause.
 
-In the final review of a diff whose flow runs mutation tests, a fix round that changes more than 50 Rust lines outside the tests, such as a new algorithm, runs one mutation test on its head before the re-review. The stage's or group's run came before that round, so no line is mutated twice. `git diff --shortstat <round base> HEAD -- '*.rs' ':!**/tests/**' ':!**/tests.rs'` gives the count. Run `(cd <worktree> && env CARGO_MUTANTS_JOBS=2 nice -n 19 make mutation-test BASE=<round base> LOG=RUN/mutation-<round>.log)` with Bash `run_in_background`. Put each surviving mutant into the round, with a test that kills it or a reason it is equivalent, and pass the log as another `--mutation-log`.
+A large fix round of a final diff runs one more mutation test ([final-diff.md](final-diff.md), A large fix round).
 
 When you fixed a blocking finding, review again. Write `RUN/focus-<round>.md`
 with the fixes and what you probed. Run `review_round.py prepare` with
@@ -123,35 +141,42 @@ the round's target (for a diff, the fix range) and `--round <round>`. It writes
 `RUN/brief-<round>.md` and takes `RUN/rulings-<round - 1>.md` and each earlier report from `RUN`.
 Its "Re-review" section asks for a verdict on each accepted finding, the
 neighbours of each fix, and regressions against the base of the whole
-work. Send it to the later-round reviewers in the table; their reports
-go to `RUN/sol-<round>.md` and `RUN/opus-<round>.md`. Allow at most two
+work. Send it to the Claude seat; its report goes to `RUN/opus-<round>.md`. Allow at most two
 fix rounds. After the review of the second fix round, ask the user about
 each blocking finding that is still open: a third round, or a deferral.
-A blocking finding whose fix changes fewer than 10 lines and no `sisu`
-output, such as a pattern in a hook, needs no question: give it one more
+In a diff, a blocking finding can have a small fix, such as a pattern in a hook:
+fewer than 10 lines, and no change to `sisu` output. It needs no question: give it one more
 round, reviewed by `opus-medium` alone. Do this extra round once, for all
 such findings together. Ask the user about each blocking finding that its
-review reports. Defer the nits.
+review reports. A spec or a plan gets no such round. Defer the nits.
+
+When two fix rounds in a row each add a blocking regression, or the second
+fix of one finding fails, stop patching. Choose a fresh executor one seat above the
+one that failed, and `opus-high` at the least. It first commits failing tests for
+each open finding and its neighbours, then fixes the code until they pass.
+When that fails too, or the work already ran on `opus-high`, ask the user.
+
+In a `solve-issues` batch, the rules of `solve-issues` (Scope) replace
+the fix-round rules of this step.
 
 ### 6. Report
 
 Tell the user:
 
-1. which reviewers ran, with model and effort, and the `RUN` path;
-2. one line per finding: its title, its severity, your ruling, and the reason;
+1. which reviewers ran, with model, CLI and effort, and the `RUN` path;
+2. the counts of `rulings`, then one line per finding: its title, its severity, your ruling, and the reason;
 3. the fixes you made, and where each deferred finding went;
 4. the questions that wait for the user.
 
-Then delete everything in `RUN` except the briefs, the reports and `probes`, after the
-last round: `find RUN -mindepth 1 -maxdepth 1 -type d ! -name probes -exec rm -rf {} +`.
+After the last round, keep the record of the review in the main checkout,
+so that a later review of this skill can measure it. The main checkout is the
+directory above `git rev-parse --path-format=absolute --git-common-dir`.
+`.scratch/` is git-ignored.
+
+```
+mkdir -p <main checkout>/.scratch/reviews/<RUN name> && cp RUN/*.md <main checkout>/.scratch/reviews/<RUN name>/ && cp -r RUN/probes <main checkout>/.scratch/reviews/<RUN name>/
+```
+
+Then delete everything in `RUN` except the briefs, the reports and `probes`:
+`find RUN -mindepth 1 -maxdepth 1 -type d ! -name probes -exec rm -rf {} +`.
 Reviewers build there, about 7 GB a build, and nothing else removes it.
-
-## Common mistakes
-
-| Mistake | Instead |
-| --- | --- |
-| The brief restates the target, so the reviewer reviews your summary | Name the target; the reviewer reads it |
-| Every finding is accepted, so wrong claims become code | Check each claim before you rule |
-| A reviewer that failed is replaced by another model in silence | Tell the user and ask |
-| A blocking finding is deferred because a fix round costs time | Fix it, or ask the user to agree to defer it |
-| A fix starts before `verify`, so `verify` reports your edit as a reviewer's write | Save every report, run `verify` after the last reviewer ends, then fix |

@@ -124,7 +124,7 @@ def check_main(repo: Path, target: str) -> None:
     if is_ancestor(repo, base, main) and not is_ancestor(repo, main, head):
         raise SystemExit(
             f"review_round: {main} is not an ancestor of {head}: main moved, so the diff is not"
-            " what will merge. Bring main in first (SKILL.md, step 1.5), or pass --old-main"
+            " what will merge. Bring main in first (final-diff.md, step 1), or pass --old-main"
             " for the diff of one task or a range that main has passed."
         )
 

@@ -16,12 +16,21 @@ You rule on their findings. Two planned stops wait for the user, and
 | --- | --- | --- |
 | Controller | you | picks, groups, finds root causes, writes briefs, rules on findings, keeps the ledger |
 | Executor | `sonnet-high` (Agent tool, `subagent_type` only) | implements one task brief or fix-round brief; never does root-cause work |
-| Task review | `gpt-6.1-sol` medium in the first round only, `opus-medium` in every round | through `review-sisu` |
-| Final review | `gpt-6.1-sol` medium and `opus-high` | through `review-sisu`, on the whole branch |
+| Task review | `opus-medium` in every round, and the outside seat in the first round | through `review-sisu` |
+| Final review | `opus-high`, and the outside seat in the first round | through `review-sisu`, on the whole branch |
 
-These are the reviewers of the full flow. When this table and the table in
+These are the reviewers of the full flow. `review-sisu` (step 3) says how
+to choose the outside seat. When this table and the table in
 `review-sisu` (step 3) differ, `review-sisu` wins. The light flow
 (step 2.3) replaces both tables for its group.
+
+## Scope
+
+A batch fixes what each issue reports, and the cases in the same function.
+Drop every other finding, except one that gives wrong output, a crash, or a
+false error on a valid program. Ask the user before you file a new issue.
+Each review has one round, and one re-check for each blocking finding; no
+third round. These rules replace the fix-round rules of `review-sisu`.
 
 ## The ledger
 
@@ -93,9 +102,9 @@ group:
 
 1. Reproduce it with the `origin/main` build.
 2. Find the cause in the code: the function, the line, and why it gives this output.
-3. List the neighbouring cases: the same rule in each position the language allows it. Take the values and the positions from `crates/sisuc/tests/neighbours.txt`, and add there each new one that you find. Probe each case. Keep the probes in the ledger folder.
+3. List the neighbouring cases in the same function (Scope): the same rule in each position the language allows it. Take the values and the positions from `crates/sisuc/tests/neighbours.txt`, and add there each new one that you find. Probe each case. Keep the probes in the ledger folder.
 4. A new bug can have the same cause. Then it joins the group, and the pull request names it.
-5. A new bug can have a different cause. Then file a new issue (`docs/agents/issue-tracker.md`). Keep it out of the group.
+5. A new bug can have a different cause. Then ask the user whether to file a new issue (`docs/agents/issue-tracker.md`). Keep it out of the group.
 6. Fix the cause in the shared code, so that all the cases are right. Rank the options as ADR 0006 does: correctness, simplicity, readability, performance.
 7. Check each claim that will go into a brief:
    - **Diagnostic text.** Write the full output for a probe with user names: a type parameter `U`, a class `Node`. The text names only what the user wrote. A diagnostic has a message, a label, secondary labels, a help and fixes. It has no note. For each fix, write its message, its edit, and safe or unsafe. Apply each fix by hand. The result must pass `sisu check`.

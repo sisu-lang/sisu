@@ -20,7 +20,7 @@ Run plain git from the repository root, one command per call. Start with
 
 Before a pull request, run `git merge-tree --write-tree --name-only origin/main HEAD`.
 Exit status 1 means the branch conflicts with `main`, and the output names the
-files. Bring `origin/main` in first, as `review-sisu` (step 1.5) says: rebase
+files. Bring `origin/main` in first, as `review-sisu` (`final-diff.md`, step 1) says: rebase
 when the commits replay cleanly. When a rebase stops on a conflict, run
 `git rebase --abort`, then merge. Then document the result: the docs describe
 what merges.
