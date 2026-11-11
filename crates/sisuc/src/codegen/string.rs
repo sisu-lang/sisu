@@ -691,27 +691,29 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder.build_unreachable().expect(POSITIONED);
     }
 
-    /// The body of `@sisu_rc.drop.string`, `@sisu_rc.eq.string`, `@sisu_rc.trim.string` or
-    /// `@sisu_rc.concat.string`.
+    /// The body of a string's helper that `define_helpers` routes here.
     pub(super) fn define_string_helper(&self, kind: Helper, function: FunctionValue<'ctx>) {
         match kind {
             Helper::Drop => self.define_string_drop(function),
             Helper::Eq => self.define_string_eq(function),
             Helper::Trim => self.define_string_trim(function),
             Helper::Concat => self.define_string_concat(function),
+            Helper::Release | Helper::Show(_) => {
+                unreachable!(
+                    "`define_helpers` should define every `release` and `show` helper itself"
+                )
+            }
             Helper::Retain
-            | Helper::Release
             | Helper::Unique
             | Helper::Walk
             | Helper::Drain
             | Helper::EqComponent
-            | Helper::Show(_)
             | Helper::ShowComponent(_)
             | Helper::Unbox
             | Helper::Free
             | Helper::Reuse => {
                 unreachable!(
-                    "only a string's `drop`, `eq`, `trim` and `concat` should reach `define_string_helper`"
+                    "`helper` should queue for a string only a helper that `define_string_helper` defines"
                 )
             }
         }

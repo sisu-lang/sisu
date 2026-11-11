@@ -399,9 +399,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// Both return at once on `null`. Drop does not recurse on a field of a class in its own
     /// cycle: see `define_drop`.
     /// `@sisu_rc.eq.<C>` is `==` on two objects with a written `Eq`; see `define_written_eq`.
-    /// An array's `drop`, `eq`, `unique` and `trim` come from `define_array_helper`. A string's
-    /// `drop`, `eq`, `trim` and `concat` come from `define_string_helper`. An enum's `retain`,
-    /// `release` and `eq` come from `define_enum_helper`.
+    /// The `match` below takes some helpers first, then gives the others of an array, a string and
+    /// an enum to `define_array_helper`, `define_string_helper` and `define_enum_helper`.
     /// Defining a body can declare more helpers, so this runs until none is left to define.
     pub(super) fn define_helpers(&self) {
         let (object, done) = self.helper_entry(self.rc_retain);
@@ -440,7 +439,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 }
                 (Helper::Unique | Helper::Trim | Helper::Concat, _) => {
                     unreachable!(
-                        "only an array or string type should be queued for a `unique` or `trim` helper, and only a string for a `concat` helper"
+                        "`helper` should queue a helper of this kind only for an array or a string"
                     )
                 }
                 (Helper::Walk | Helper::EqComponent | Helper::ShowComponent(_), _) => {
@@ -1168,9 +1167,9 @@ impl<'ctx> Codegen<'ctx, '_> {
                 self.branch_to(done);
                 self.builder.position_at_end(done);
             }
-            _ => unreachable!(
-                "a counted type that is not a pointer should be an enum or its optional"
-            ),
+            _ => {
+                unreachable!("`retain_or_release` should pass only a type that `is_counted` counts")
+            }
         }
     }
 }

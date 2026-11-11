@@ -31,6 +31,7 @@ the briefs, the logs and the root-cause notes in the same folder. Update the
 ledger after each event: a stop answered, a dispatch, a report, a ruling, a
 commit. Add an event or an "After the merge" line with
 `python3 .agents/skills/solve-issues/scripts/ledger.py <progress.md> event|after-merge "<text>"`.
+Set a group's State cell with `ledger.py <progress.md> group <group> "<state>"`.
 When the user asks you to resume, read the ledger first. Go on from
 its last event.
 

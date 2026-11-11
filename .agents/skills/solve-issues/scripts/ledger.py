@@ -1,10 +1,12 @@
-"""Add one line to a batch ledger (ledger.md gives its form).
+"""Add one line to a batch ledger, or set a group's state in it (ledger.md gives its form).
 
 Usage:
   python3 ledger.py <progress.md> event "<text>"
-      adds "- <date time> <text>" at the end of Events
+      adds "- <date time> <text>" at the end of Events.
   python3 ledger.py <progress.md> after-merge "<text>"
-      adds "- <text>" at the end of "After the merge"
+      adds "- <text>" at the end of "After the merge".
+  python3 ledger.py <progress.md> group <group> "<state>"
+      sets the State cell of the group's row in Groups.
 """
 
 import sys
@@ -35,15 +37,52 @@ def add(ledger: str, kind: str, text: str, now: datetime) -> str:
     return "\n".join(lines) + "\n"
 
 
+def set_group(ledger: str, group: str, state: str) -> str:
+    """Return the ledger text with `state` in the last cell of the row of `group` in Groups."""
+    if "|" in state or state.splitlines() not in ([], [state]):
+        raise ValueError("the state has a `|` or a line break, which would split its row")
+    lines = ledger.splitlines()
+    if "## Groups" not in lines:
+        raise ValueError("the ledger has no '## Groups' section")
+    rows = lines.index("## Groups") + 1
+    table_row = 0
+    header: list[str] = []
+    for row in range(rows, len(lines)):
+        line = lines[row].strip()
+        if line.startswith("## "):
+            break  # the next section starts
+        if not line.startswith("|"):
+            if table_row:
+                break  # the table has ended
+            continue
+        table_row += 1
+        cells = line.removeprefix("|").removesuffix("|").split("|")
+        if table_row == 1:
+            header = cells
+        # The first two rows of the table are its header and its delimiter, not groups.
+        if table_row > 2 and cells[0].strip() == group:  # noqa: PLR2004  the header and the delimiter
+            if len(cells) != len(header):
+                msg = f"the row of group {group!r} has {len(cells)} cells, the header {len(header)}"
+                raise ValueError(msg)
+            cells[-1] = f" {state} "
+            lines[row] = "|" + "|".join(cells) + "|"
+            return "\n".join(lines) + "\n"
+    raise ValueError(f"Groups has no row for group {group!r}")
+
+
 def main(argv: list[str]) -> int:
     """Add the line that `argv` gives to the ledger file, and return the exit code."""
-    if len(argv) != 3:  # noqa: PLR2004  the three words of the usage line
+    group = len(argv) > 1 and argv[1] == "group"
+    if len(argv) != (4 if group else 3):  # the words of a group line, then of the others
         print(__doc__, file=sys.stderr)
         return 2
-    path, kind, text = argv
+    path = argv[0]
     ledger = Path(path).read_text(encoding="utf-8")
     try:
-        updated = add(ledger, kind, text, datetime.now().astimezone())
+        if group:
+            updated = set_group(ledger, argv[2], argv[3])
+        else:
+            updated = add(ledger, argv[1], argv[2], datetime.now().astimezone())
     except ValueError as e:
         print(f"ledger.py: {e}", file=sys.stderr)
         return 2

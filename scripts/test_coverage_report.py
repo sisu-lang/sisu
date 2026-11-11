@@ -60,7 +60,7 @@ def run(
 
 
 def sections(text: str) -> tuple[str, list[str], list[str]]:
-    head, touching, other = text.split("\n\n")
+    head, touching, other, _tail = text.split("\n\n")
     return head, touching.splitlines()[1:], other.splitlines()[1:]
 
 
@@ -207,6 +207,11 @@ class Report(unittest.TestCase):
     def test_changed_lines_coverage_counts_only_instrumented_lines(self) -> None:
         out = run(export(), lcov(**{"a.rs": {1: 1, 2: 1, 3: 0}}), diff(start=1, count=4))
         self.assertIn("changed lines 66.7% (2 of 3).", out.splitlines()[0])
+
+    def test_the_report_should_end_with_its_figures(self) -> None:
+        out = run(export(), lcov(**{"a.rs": {1: 1, 2: 1, 3: 0}}), diff(start=1, count=4))
+        self.assertEqual(out.splitlines()[-1], out.splitlines()[0])
+        self.assertIn("changed lines 66.7% (2 of 3).", out.splitlines()[-1])
 
     def test_no_changed_rust_line_says_none(self) -> None:
         head, touching, other = sections(run(export(func("f", [(1, 1, 2, 1, 1)]))))

@@ -806,8 +806,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder.position_at_end(done);
     }
 
-    /// The body of `@sisu_rc.drop.[T]`, `@sisu_rc.eq.[T]` or `@sisu_rc.unique.[T]`, `T`
-    /// being `element`.
+    /// The body of a helper of an array of `element` that `define_helpers` routes here.
     pub(super) fn define_array_helper(
         &self,
         kind: Helper,
@@ -819,19 +818,22 @@ impl<'ctx> Codegen<'ctx, '_> {
             Helper::Eq => self.define_array_eq(element, function),
             Helper::Unique => self.define_array_unique(element, function),
             Helper::Trim => self.define_array_trim(element, function),
+            Helper::Release | Helper::Show(_) => {
+                unreachable!(
+                    "`define_helpers` should define every `release` and `show` helper itself"
+                )
+            }
             Helper::Retain
-            | Helper::Release
             | Helper::Concat
             | Helper::Walk
             | Helper::Drain
             | Helper::EqComponent
-            | Helper::Show(_)
             | Helper::ShowComponent(_)
             | Helper::Unbox
             | Helper::Free
             | Helper::Reuse => {
                 unreachable!(
-                    "`define_helpers` should define every `release` itself, and queue `retain`, the component helpers and a box's only for an enum, and `concat` only for a string"
+                    "`helper` should queue for an array only a helper that `define_array_helper` defines"
                 )
             }
         }
