@@ -77,6 +77,15 @@ class SetGroup(unittest.TestCase):
             with self.subTest(group=group), self.assertRaises(ValueError):
                 ledger.set_group(GROUPS, group, "x")
 
+    def test_a_line_after_the_table_should_not_match_a_group(self) -> None:
+        text = GROUPS.replace("\n\n## Events", "\nNote for | G3 | see #3\n\n## Events")
+        with self.assertRaises(ValueError):
+            ledger.set_group(text, "G3", "x")
+
+    def test_a_row_with_no_last_bar_should_get_its_state_in_the_last_cell(self) -> None:
+        text = GROUPS.replace("| G2 | #2 | waiting |", "| G2 | #2 | waiting")
+        self.assertIn("| G2 | #2 | done |\n", ledger.set_group(text, "G2", "done"))
+
     def test_a_state_with_a_bar_should_be_an_error(self) -> None:
         with self.assertRaises(ValueError):
             ledger.set_group(GROUPS, "G1", "a | b")

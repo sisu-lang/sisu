@@ -44,18 +44,21 @@ def set_group(ledger: str, group: str, state: str) -> str:
     lines = ledger.splitlines()
     if "## Groups" not in lines:
         raise ValueError("the ledger has no '## Groups' section")
-    row = lines.index("## Groups") + 1
+    rows = lines.index("## Groups") + 1
     table_row = 0
-    while row < len(lines) and not lines[row].startswith("## "):
-        cells = lines[row].split("|")
-        if len(cells) > 2:  # noqa: PLR2004  a row has a cell between two bars
-            table_row += 1
-            # The first two rows of the table are its header and its delimiter, not groups.
-            if table_row > 2 and cells[1].strip() == group:  # noqa: PLR2004  the header and the delimiter
-                cells[-2] = f" {state} "
-                lines[row] = "|".join(cells)
-                return "\n".join(lines) + "\n"
-        row += 1
+    for row in range(rows, len(lines)):
+        line = lines[row].strip()
+        if not line.startswith("|"):
+            if table_row:
+                break  # the table has ended
+            continue
+        table_row += 1
+        cells = line.removeprefix("|").removesuffix("|").split("|")
+        # The first two rows of the table are its header and its delimiter, not groups.
+        if table_row > 2 and cells[0].strip() == group:  # noqa: PLR2004  the header and the delimiter
+            cells[-1] = f" {state} "
+            lines[row] = "|" + "|".join(cells) + "|"
+            return "\n".join(lines) + "\n"
     raise ValueError(f"Groups has no row for group {group!r}")
 
 
