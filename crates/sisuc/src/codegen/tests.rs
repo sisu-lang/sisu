@@ -1275,22 +1275,23 @@ fn trim_should_call_one_function_per_type() {
     const FUNCTIONS: [(&str, usize); 2] =
         [("@\"sisu_rc.trim.[i64]\"", 3), ("@sisu_rc.trim.string", 2)];
     let context = Context::create();
-    let module = compiled(
+    let module = optimized_after(
         &context,
         "class Holder {\n    mut xs: [i64]\n    mut s: string\n}\n\nfn first(h: Holder, xs: [i64]) {\n    h.xs = xs[..1]\n}\n\nfn second(h: Holder, xs: [i64]) {\n    h.xs = xs[..2]\n}\n\nfn text(h: Holder, s: string) {\n    h.s = s[..1]\n}\n\nfn main(args: [string]) {\n    let n = args.len()\n    let h = Holder(xs: [0; n + 1], s: \"abc\")\n    let xs = [7; n + 400]\n    first(h, xs)\n    second(h, xs)\n    text(h, \"{n} and more\")\n    print(h.xs.len() + h.s.len())\n}",
+        OptLevel::O2,
+        |module| {
+            let ir = module.print_to_string().to_string();
+            for (symbol, calls) in FUNCTIONS {
+                assert_eq!(
+                    ir.lines()
+                        .filter(|l| l.contains(" = call ") && l.contains(&format!("{symbol}(")))
+                        .count(),
+                    calls,
+                    "calls of {symbol} in\n{ir}"
+                );
+            }
+        },
     );
-    let ir = module.print_to_string().to_string();
-    for (symbol, calls) in FUNCTIONS {
-        assert_eq!(
-            ir.lines()
-                .filter(|l| l.contains(" = call ") && l.contains(&format!("{symbol}(")))
-                .count(),
-            calls,
-            "calls of {symbol} in\n{ir}"
-        );
-    }
-    let machine = target_machine(OptLevel::O2).expect("the host is a target");
-    optimize(&module, &machine, OptLevel::O2, None).expect("the module should optimize");
     let ir = module.print_to_string().to_string();
     let mut outside = ir.clone();
     for (symbol, _) in FUNCTIONS {
@@ -1365,9 +1366,7 @@ fn eq_helper_of_a_deep_array_should_not_be_inlined() {
 #[test]
 fn eq_chain_of_a_deep_array_should_stay_in_separate_functions_at_o2() {
     let context = Context::create();
-    let module = compiled(&context, &nested_eq_program(40));
-    let machine = target_machine(OptLevel::O2).expect("the host is a target");
-    optimize(&module, &machine, OptLevel::O2, None).expect("the module should optimize");
+    let module = optimized_at(&context, &nested_eq_program(40), OptLevel::O2);
     let ir = module.print_to_string().to_string();
     let defined: Vec<&str> = ir
         .lines()
@@ -1467,7 +1466,21 @@ fn mut_locals_program(n: usize) -> String {
 
 /// `src`, built and optimized at `level`.
 fn optimized_at<'ctx>(context: &'ctx Context, src: &str, level: OptLevel) -> Module<'ctx> {
+    optimized_after(context, src, level, |_| {})
+}
+
+/// `optimized_at`, where `before` first reads or changes the built module. This is the one place
+/// in these tests that calls `optimize`, so a module is always optimized at the level that built
+/// it: codegen writes different IR at each level. The test
+/// `codegen_tests_should_call_optimize_only_in_optimized_after` checks this.
+fn optimized_after<'ctx>(
+    context: &'ctx Context,
+    src: &str,
+    level: OptLevel,
+    before: impl FnOnce(&Module<'ctx>),
+) -> Module<'ctx> {
     let module = compiled_at(context, src, level);
+    before(&module);
     let machine = target_machine(level).expect("the host is a target");
     optimize(&module, &machine, level, None).expect("the module should optimize");
     module
@@ -3684,12 +3697,11 @@ fn binary_should_take_and_and_or_as_the_eager_operations_of_two_computed_bools()
 #[test]
 fn len_should_read_the_length_word_of_a_string_and_an_array_with_no_load() {
     let context = Context::create();
-    let module = compiled(
+    let module = optimized_at(
         &context,
         "fn size(s: string, a: [i64]) -> i64 {\n    s.len() + a.len()\n}\nfn main() {}",
+        OptLevel::O0,
     );
-    let machine = target_machine(OptLevel::O0).expect("the host is a target");
-    optimize(&module, &machine, OptLevel::O0, None).expect("the module should optimize");
     let function = module
         .get_function("sisu.size")
         .expect("the module should define `size`");
@@ -4103,12 +4115,11 @@ fn many_panic_sites_should_compile_in_linear_time() {
 #[test]
 fn float_ops_should_have_no_fast_math() {
     let context = Context::create();
-    let module = compiled(
+    let module = optimized_at(
         &context,
         "fn ops(a: f64, b: f64) -> bool {\n    let s = -(a + b - a * b / a % b)\n    print(s < a)\n    print(s <= b)\n    print(s > a)\n    print(s >= b)\n    print(s == a)\n    s != b\n}\n\nfn main(args: [string]) {\n    let n = args.len()\n    print(ops(f64(n) / f64(n), f64(n + 1)))\n}",
+        OptLevel::O2,
     );
-    let machine = target_machine(OptLevel::O2).expect("the host is a target");
-    optimize(&module, &machine, OptLevel::O2, None).expect("the module should optimize");
     let ir = module.print_to_string().to_string();
     for wanted in ["fadd", "frem", "fcmp une"] {
         assert!(ir.contains(wanted), "missing {wanted:?} in\n{ir}");
@@ -4247,16 +4258,12 @@ fn classification_is_float_compares() {
 #[test]
 fn integer_min_max_clamp_should_be_smin_and_smax_at_o2() {
     let context = Context::create();
-    let module = compiled_over(
+    let module = optimized_after(
         &context,
-        crate::front_end::PRELUDE_SOURCE,
         "fn lo(a: i64, b: i64) -> i64 { a.min(b) }\nfn hi(a: i64, b: i64) -> i64 { a.max(b) }\nfn both(a: i64, b: i64, c: i64) -> i64 { a.clamp(b, c) }\nfn main(args: [string]) {\n    let a = 5 - args.len()\n    let b = args.len() - 7\n    print(lo(a, b) + hi(a, b) + both(a, b, 3 - a))\n}",
-        false,
-        |_| {},
+        OptLevel::O2,
+        |module| keep_functions(module, "lo,hi,both"),
     );
-    keep_functions(&module, "lo,hi,both");
-    let machine = target_machine(OptLevel::O2).expect("the host is a target");
-    optimize(&module, &machine, OptLevel::O2, None).expect("the module should optimize");
     let ir = module.print_to_string().to_string();
     let lo = function_body(&ir, "@sisu.lo(");
     let hi = function_body(&ir, "@sisu.hi(");
@@ -4510,9 +4517,11 @@ fn a_prelude_class_or_enum_named_only_by_a_type_should_compile() {
 #[test]
 fn sum_should_be_inlined_at_o2() {
     let context = Context::create();
-    let module = compiled(&context, "fn main() {\n    print([1, 2].sum())\n}");
-    let machine = target_machine(OptLevel::O2).expect("the host is a target");
-    optimize(&module, &machine, OptLevel::O2, None).expect("the module should optimize");
+    let module = optimized_at(
+        &context,
+        "fn main() {\n    print([1, 2].sum())\n}",
+        OptLevel::O2,
+    );
     let ir = module.print_to_string().to_string();
     assert!(!ir.contains("[i64].sum"), "{ir}");
     assert!(!ir.contains("sisu_panic_message"), "{ir}");
@@ -4527,13 +4536,12 @@ fn sum_should_be_inlined_at_o2() {
 #[test]
 fn partition_should_make_its_array_unique_once() {
     let context = Context::create();
-    let module = compiled(
+    let module = optimized_after(
         &context,
         "fn partition(xs: [i64], pivot: i64) -> [i64] {\n    let mut a = xs\n    let mut i = 0\n    for j in 0..a.len() {\n        if a[j] < pivot {\n            let t = a[i]\n            a[i] = a[j]\n            a[j] = t\n            i += 1\n        }\n    }\n    a\n}\n\nfn main() {\n    print(partition([3, 1, 2], 2).sum())\n}",
+        OptLevel::O2,
+        |module| keep_functions(module, "partition"),
     );
-    keep_functions(&module, "partition");
-    let machine = target_machine(OptLevel::O2).expect("the host is a target");
-    optimize(&module, &machine, OptLevel::O2, None).expect("the module should optimize");
     let ir = module.print_to_string().to_string();
     let partition = function_body(&ir, "@sisu.partition(");
     assert_eq!(
@@ -4551,13 +4559,12 @@ fn partition_should_make_its_array_unique_once() {
 #[test]
 fn tail_call_returning_an_array_should_be_a_loop_at_o2() {
     let context = Context::create();
-    let module = compiled(
+    let module = optimized_after(
         &context,
         "fn walk(acc: [i64], n: i64) -> [i64] {\n    if n == 0 {\n        acc\n    } else {\n        walk(acc, n - 1)\n    }\n}\n\nfn main() {\n    let k = (read_line() ?? \"\").len()\n    print(walk([1; k + 2], 100_000).len())\n}",
+        OptLevel::O2,
+        |module| keep_functions(module, "walk"),
     );
-    keep_functions(&module, "walk");
-    let machine = target_machine(OptLevel::O2).expect("the host is a target");
-    optimize(&module, &machine, OptLevel::O2, None).expect("the module should optimize");
     let ir = module.print_to_string().to_string();
     let walk = function_body(&ir, "@sisu.walk(");
     assert!(
@@ -4682,13 +4689,12 @@ fn call_before_an_endless_loop_should_compile() {
 #[test]
 fn an_index_modulo_the_length_should_have_no_bounds_check_at_o2() {
     let context = Context::create();
-    let module = compiled(
+    let module = optimized_after(
         &context,
         "fn wrap(ys: [i64], n: i64) -> i64 {\n    let mut s = 0\n    for i in 0..n {\n        s += ys[i % ys.len()]\n    }\n    s\n}\n\nfn main(args: [string]) {\n    print(wrap([1, 2, 3], args.len()))\n}",
+        OptLevel::O2,
+        |module| keep_functions(module, "wrap"),
     );
-    keep_functions(&module, "wrap");
-    let machine = target_machine(OptLevel::O2).expect("the host is a target");
-    optimize(&module, &machine, OptLevel::O2, None).expect("the module should optimize");
     let ir = module.print_to_string().to_string();
     let wrap = function_body(&ir, "@sisu.wrap(");
     assert!(wrap.contains("rem i64"), "{wrap}");
@@ -4711,13 +4717,12 @@ fn an_index_modulo_the_length_should_have_no_bounds_check_at_o2() {
 #[test]
 fn an_index_modulo_the_length_of_a_returned_array_should_have_no_bounds_check_at_o2() {
     let context = Context::create();
-    let module = compiled(
+    let module = optimized_after(
         &context,
         "fn make(n: i64) -> [u8] {\n    \"abc{n}\".bytes()\n}\n\nfn wrap(n: i64, m: i64) -> i64 {\n    let ys = make(n)\n    let mut t = 0\n    for i in 0..m {\n        t += i64(ys[i % ys.len()])\n    }\n    t\n}\n\nfn main(args: [string]) {\n    print(wrap(args.len() + 1, args.len() * 7))\n}",
+        OptLevel::O2,
+        |module| keep_functions(module, "make,wrap"),
     );
-    keep_functions(&module, "make,wrap");
-    let machine = target_machine(OptLevel::O2).expect("the host is a target");
-    optimize(&module, &machine, OptLevel::O2, None).expect("the module should optimize");
     let ir = module.print_to_string().to_string();
     let wrap = function_body(&ir, "@sisu.wrap(");
     assert!(wrap.contains("rem i64"), "{wrap}");
@@ -4744,13 +4749,12 @@ fn an_index_modulo_the_length_of_a_returned_array_should_have_no_bounds_check_at
 #[test]
 fn an_index_modulo_the_length_of_a_returned_slice_should_have_no_bounds_check_at_o2() {
     let context = Context::create();
-    let module = compiled(
+    let module = optimized_after(
         &context,
         "fn make(n: i64) -> [u8] {\n    let ys = \"abc{n}\".bytes()\n    if n > 3 { ys[1..] } else { ys }\n}\n\nfn wrap(n: i64, m: i64) -> i64 {\n    let ys = make(n)\n    let mut t = 0\n    for i in 0..m {\n        t += i64(ys[i % ys.len()])\n    }\n    t\n}\n\nfn main(args: [string]) {\n    print(wrap(args.len() + 1, args.len() * 7))\n}",
+        OptLevel::O2,
+        |module| keep_functions(module, "make,wrap"),
     );
-    keep_functions(&module, "make,wrap");
-    let machine = target_machine(OptLevel::O2).expect("the host is a target");
-    optimize(&module, &machine, OptLevel::O2, None).expect("the module should optimize");
     let ir = module.print_to_string().to_string();
     let wrap = function_body(&ir, "@sisu.wrap(");
     assert!(wrap.contains("rem i64"), "{wrap}");
@@ -4784,10 +4788,9 @@ fn an_index_modulo_the_length_of_a_built_array_should_have_no_bounds_check_at_o2
         let src = format!(
             "fn wrap(n: i64, m: i64) -> i64 {{\n    {build}\n    let mut t = 0\n    for i in 0..m {{\n        t += {read}\n    }}\n    t\n}}\n\nfn main(args: [string]) {{\n    print(wrap(args.len() + 1, args.len() * 7))\n}}"
         );
-        let module = compiled(&context, &src);
-        keep_functions(&module, "wrap");
-        let machine = target_machine(OptLevel::O2).expect("the host is a target");
-        optimize(&module, &machine, OptLevel::O2, None).expect("the module should optimize");
+        let module = optimized_after(&context, &src, OptLevel::O2, |module| {
+            keep_functions(module, "wrap");
+        });
         let ir = module.print_to_string().to_string();
         let wrap = function_body(&ir, "@sisu.wrap(");
         assert!(wrap.contains("rem i64"), "{name}: {wrap}");
@@ -4806,13 +4809,12 @@ fn an_index_modulo_the_length_of_a_built_array_should_have_no_bounds_check_at_o2
 #[test]
 fn array_parameter_should_be_three_scalars_with_a_ranged_length() {
     let context = Context::create();
-    let module = compiled(
+    let module = optimized_at(
         &context,
         "fn f(xs: [i64]) -> i64 {\n    xs.len()\n}\n\nfn main() {\n    print(f([1]))\n}",
+        OptLevel::O0,
     );
     // `mem2reg` only, so that `f` stays a function and its slots become values.
-    let machine = target_machine(OptLevel::O0).expect("the host is a target");
-    optimize(&module, &machine, OptLevel::O0, None).expect("the module should optimize");
     let ir = module.print_to_string().to_string();
     let header = ir
         .lines()
@@ -4869,15 +4871,14 @@ fn optional_array_should_use_a_null_block_as_none() {
 #[test]
 fn optional_field_method_should_count_nothing() {
     let context = Context::create();
-    let module = compiled(
+    let module = optimized_after(
         &context,
         "class Node {\n    left: Node?\n    right: Node?\n\n    fn check(self) -> i64 {\n        1 + (self.left?.check() ?? 0) + (self.right?.check() ?? 0)\n    }\n}\n\n\
          fn make(depth: i64) -> Node {\n    if depth == 0 {\n        Node(left: None, right: None)\n    } else {\n        Node(left: make(depth - 1), right: make(depth - 1))\n    }\n}\n\n\
          fn main() {\n    print(make(4).check())\n}",
+        OptLevel::O2,
+        |module| keep_functions(module, "Node.check"),
     );
-    keep_functions(&module, "Node.check");
-    let machine = target_machine(OptLevel::O2).expect("the host is a target");
-    optimize(&module, &machine, OptLevel::O2, None).expect("the module should optimize");
     let ir = module.print_to_string().to_string();
     let check = function_body(&ir, "define internal fastcc i64 @sisu.Node.check(");
     assert!(!check.contains("@sisu_rc."), "{check}");
@@ -4889,13 +4890,12 @@ fn optional_field_method_should_count_nothing() {
 #[test]
 fn a_barred_partition_should_make_its_array_unique_once() {
     let context = Context::create();
-    let module = compiled(
+    let module = optimized_after(
         &context,
         "fn partition(xs: [i64], pivot: i64, stop: i64) -> [i64] {\n    let mut a = xs\n    let mut i = 0\n    for j in 0..a.len() {\n        if j == stop {\n            return a\n        }\n        if a[j] < pivot {\n            let t = a[i]\n            a[i] = a[j]\n            a[j] = t\n            i += 1\n        }\n    }\n    a\n}\n\nfn main(args: [string]) {\n    print(partition([3; args.len() + 1], 2, 5).sum())\n}",
+        OptLevel::O2,
+        |module| keep_functions(module, "partition"),
     );
-    keep_functions(&module, "partition");
-    let machine = target_machine(OptLevel::O2).expect("the host is a target");
-    optimize(&module, &machine, OptLevel::O2, None).expect("the module should optimize");
     let ir = module.print_to_string().to_string();
     let partition = function_body(&ir, "@sisu.partition(");
     assert_eq!(
@@ -4912,16 +4912,17 @@ fn a_barred_partition_should_make_its_array_unique_once() {
 #[test]
 fn objects_that_stay_local_should_not_be_allocated_at_o2() {
     let context = Context::create();
-    let module = compiled(
+    let module = optimized_after(
         &context,
         "class Point {\n    x: i64\n    y: i64\n}\n\nfn dist(a: Point, b: Point) -> i64 {\n    (a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y)\n}\n\nfn f(n: i64) -> i64 {\n    let mut total = 0\n    for i in 0..n {\n        let p = Point(x: i, y: i + 1)\n        let q = Point(x: 2 * i, y: 3)\n        total += dist(p, q) % 7\n        let xs = [i, i + 1, i + 2]\n        total += xs[1] % 5\n    }\n    total\n}\n\nfn main() {\n    print(f(10))\n}",
+        OptLevel::O2,
+        |module| {
+            keep_functions(module, "f");
+            let ir = module.print_to_string().to_string();
+            let f = function_body(&ir, "@sisu.f(");
+            assert_eq!(f.matches("@sisu_alloc(").count(), 3, "{f}");
+        },
     );
-    keep_functions(&module, "f");
-    let ir = module.print_to_string().to_string();
-    let f = function_body(&ir, "@sisu.f(");
-    assert_eq!(f.matches("@sisu_alloc(").count(), 3, "{f}");
-    let machine = target_machine(OptLevel::O2).expect("the host is a target");
-    optimize(&module, &machine, OptLevel::O2, None).expect("the module should optimize");
     let ir = module.print_to_string().to_string();
     let f = function_body(&ir, "@sisu.f(");
     assert_eq!(f.matches("@sisu_alloc(").count(), 0, "{f}");
@@ -4932,13 +4933,12 @@ fn objects_that_stay_local_should_not_be_allocated_at_o2() {
 #[test]
 fn a_bool_fill_should_be_a_memset_at_o2() {
     let context = Context::create();
-    let module = compiled(
+    let module = optimized_after(
         &context,
         "fn f(n: i64) -> [bool] {\n    [true; n]\n}\n\nfn g(b: bool, n: i64) -> [bool] {\n    [b; n]\n}\n\nfn main(args: [string]) {\n    let n = args.len()\n    print(f(n).len() + g(n > 1, n).len())\n}",
+        OptLevel::O2,
+        |module| keep_functions(module, "f,g"),
     );
-    keep_functions(&module, "f,g");
-    let machine = target_machine(OptLevel::O2).expect("the host is a target");
-    optimize(&module, &machine, OptLevel::O2, None).expect("the module should optimize");
     let ir = module.print_to_string().to_string();
     for name in ["f", "g"] {
         let body = function_body(&ir, &format!("@sisu.{name}("));
@@ -4952,13 +4952,12 @@ fn a_bool_fill_should_be_a_memset_at_o2() {
 #[test]
 fn element_comparison_in_a_loop_should_retain_nothing() {
     let context = Context::create();
-    let module = compiled(
+    let module = optimized_after(
         &context,
         "fn repeats(xs: [string]) -> i64 {\n    let mut n = 0\n    for i in 0..xs.len() {\n        for j in 0..i {\n            if xs[i] == xs[j] { n += 1 }\n        }\n    }\n    n\n}\n\nfn main() {\n    print(repeats([\"a\", \"b\", \"a\"]))\n}",
+        OptLevel::O2,
+        |module| keep_functions(module, "repeats"),
     );
-    keep_functions(&module, "repeats");
-    let machine = target_machine(OptLevel::O2).expect("the host is a target");
-    optimize(&module, &machine, OptLevel::O2, None).expect("the module should optimize");
     let ir = module.print_to_string().to_string();
     let repeats = function_body(&ir, "@sisu.repeats(");
     assert!(!repeats.contains("sisu_rc.retain"), "{repeats}");
@@ -4969,14 +4968,13 @@ fn element_comparison_in_a_loop_should_retain_nothing() {
 #[test]
 fn size_of_a_borrowed_array_should_count_nothing() {
     let context = Context::create();
-    let module = compiled(
+    let module = optimized_after(
         &context,
         "fn size(xs: [i64]) -> i64 {\n    xs.len() + 1\n}\nfn look(xs: [i64]) -> i64 { size(xs) }\n\
          fn main(args: [string]) {\n    print(look([0; args.len()]) + look([1, 2]))\n}",
+        OptLevel::O2,
+        |module| keep_functions(module, "look,size"),
     );
-    keep_functions(&module, "look,size");
-    let machine = target_machine(OptLevel::O2).expect("the host is a target");
-    optimize(&module, &machine, OptLevel::O2, None).expect("the module should optimize");
     let ir = module.print_to_string().to_string();
     for name in ["look", "size"] {
         let body = function_body(&ir, &format!("@sisu.{name}("));
@@ -5459,14 +5457,16 @@ fn generic_largest_should_emit_the_hand_written_body() {
         body("T"),
         body("i64")
     );
-    let machine = target_machine(OptLevel::O2).expect("the host is a target");
     for (level, optimized) in [("O0", false), ("O2", true)] {
         let context = Context::create();
-        let module = compiled(&context, &src);
-        keep_functions(&module, "largest<i64>,largest_i64");
-        if optimized {
-            optimize(&module, &machine, OptLevel::O2, None).expect("the module should optimize");
-        }
+        let keep = |module: &Module<'_>| keep_functions(module, "largest<i64>,largest_i64");
+        let module = if optimized {
+            optimized_after(&context, &src, OptLevel::O2, keep)
+        } else {
+            let module = compiled(&context, &src);
+            keep(&module);
+            module
+        };
         let ir = module.print_to_string().to_string();
         // A panic names its position in the source, which differs between the two functions: the
         // message global and its length are placeholders. So is a loop's metadata number.

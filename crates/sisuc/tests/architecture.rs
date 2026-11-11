@@ -1,8 +1,9 @@
 //! The compiler's modules depend on each other in pipeline order: a top-level module of `src/`
 //! uses only the modules of its own layer and of earlier layers. The test reads the source with
 //! `syn` from `lib.rs` through each `mod` item, and skips the items under `#[cfg(test)]`. It also
-//! checks each field count that `docs/register.md` gives for a struct, and that the compiler turns
-//! on no feature in a package that the runtime archives link.
+//! checks each field count that `docs/register.md` gives for a struct. It checks that the compiler
+//! turns on no feature in a package that the runtime archives link. It also checks that the codegen
+//! tests optimize a module only at the level that built it.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -475,4 +476,52 @@ fn runtime_archives_should_get_no_feature_from_the_compiler() {
     for (package, features) in &alone {
         assert_eq!(workspace.get(package), Some(features), "{package}");
     }
+}
+
+/// The functions of a file that call `optimize`, by name. The visitor keeps the name of the
+/// function it is in.
+#[derive(Default)]
+struct OptimizeCalls {
+    inside: Vec<String>,
+    callers: Vec<String>,
+}
+
+impl<'ast> Visit<'ast> for OptimizeCalls {
+    fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
+        self.inside.push(item.sig.ident.to_string());
+        visit::visit_item_fn(self, item);
+        self.inside.pop();
+    }
+
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        if let syn::Expr::Path(path) = &*call.func
+            && path
+                .path
+                .segments
+                .last()
+                .is_some_and(|s| s.ident == "optimize")
+        {
+            self.callers
+                .push(self.inside.last().cloned().unwrap_or_default());
+        }
+        visit::visit_expr_call(self, call);
+    }
+}
+
+/// GIVEN the codegen tests in `src/codegen/tests.rs`, which build a module at an `OptLevel`
+/// WHEN each call of `optimize` is looked up
+/// THEN only `optimized_after` calls it, which builds and optimizes at one `level`. Codegen
+/// writes different IR at each level, so a module built at `-O0` and optimized at `-O2` is IR that
+/// `sisu -O2` never makes. A text scan stands in for an API that hides `optimize`: `tests.rs` reads
+/// it through `use super::*`, and a glob import cannot be hidden.
+#[test]
+fn codegen_tests_should_call_optimize_only_in_optimized_after() {
+    let ast = source(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src/codegen/tests.rs"));
+    let mut calls = OptimizeCalls::default();
+    calls.visit_file(&ast);
+    assert_eq!(
+        calls.callers,
+        ["optimized_after"],
+        "build each module that a test optimizes with `optimized_at` or `optimized_after`"
+    );
 }
