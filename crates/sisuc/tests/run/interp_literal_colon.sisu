@@ -1,0 +1,11 @@
+// GIVEN interpolations whose expressions hold a `:` in a string literal or a character literal
+// WHEN the program builds their text
+// THEN each `:` in a literal is text, and only a `:` after the expression starts a format spec
+// r[verify strings.spec.literal-colon@59f0]
+fn main() {
+    print("[{"a:b"}]")               // [a:b]
+    print("[{':'}]")                 // [:]
+    print("[{"x:" + "y"}]")          // [x:y]
+    print("[{"a:b":>5}]")            // [  a:b]
+    print("[{':':^3}]")              // [ : ]
+}

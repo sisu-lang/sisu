@@ -3,7 +3,11 @@
 
 use std::path::Path;
 
+#[path = "reference_checker/markers.rs"]
+mod markers;
 mod reference_check;
+#[path = "reference_checker/rules.rs"]
+mod rules;
 #[expect(dead_code, reason = "this binary uses only part of the shared helpers")]
 mod support;
 

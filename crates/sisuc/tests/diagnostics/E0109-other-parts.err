@@ -1,0 +1,14 @@
+error[E0109]: Sisu's format specs take `#`, or an alignment, a width and a precision
+ --> E0109-other-parts.sisu:8:14
+  |
+8 |     print("{x:*>8}")
+  |              ^^^^
+
+error[E0109]: Sisu's format specs take `#`, or an alignment, a width and a precision
+ --> E0109-other-parts.sisu:9:14
+  |
+9 |     print("{n:x}")
+  |              ^^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0109

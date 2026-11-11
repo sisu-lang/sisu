@@ -1,7 +1,7 @@
 error[E0109]: Sisu's format specs take `#`, or an alignment, a width and a precision
- --> E0109.sisu:3:14
+ --> E0109.sisu:4:14
   |
-3 |     print("{n:03}")
+4 |     print("{n:03}")
   |              ^^^
 
 sisu: 1 error

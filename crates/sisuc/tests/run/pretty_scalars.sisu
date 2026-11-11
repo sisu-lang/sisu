@@ -1,0 +1,29 @@
+// GIVEN a value of each scalar type, `i64`, `u8`, `f64`, `bool`, `char` and `string`, and a
+// string of 100 characters
+// WHEN the program writes each value with `{x:#}` and with `{x}`
+// THEN the two texts are equal, also for the string that does not fit in 80 columns
+// r[verify strings.flag.scalars@e4ef]
+fn main() {
+    let n = -9_223_372_036_854_775_807 - 1
+    let b: u8 = 255
+    let x = 1.5e-7
+    let t = true
+    let c = 'ä'
+    let mut s = ""
+    for _ in 0..25 {
+        s += "a, ["
+    }
+    print("{n:#}")                   // -9223372036854775808
+    print("{b:#}")                   // 255
+    print("{x:#}")                   // 1.5e-7
+    print("{t:#}")                   // true
+    print("{c:#}")                   // ä
+    print("{s:#}")                   // a, [ 25 times, on one line
+    print("{n:#}" == "{n}")          // true
+    print("{b:#}" == "{b}")          // true
+    print("{x:#}" == "{x}")          // true
+    print("{t:#}" == "{t}")          // true
+    print("{c:#}" == "{c}")          // true
+    print("{s:#}" == "{s}")          // true
+    print(s.len())                   // 100
+}

@@ -1,6 +1,10 @@
 // A precision prints that many decimals, rounded half to even from the exact binary value, and
 // never in exponent form; `inf`, `-inf` and `nan` ignore it. Each value reaches the
 // interpolation through a parameter, so it is a run-time value.
+// r[verify strings.spec.round-even@631d]
+// r[verify strings.spec.no-exponent@06c0]
+// r[verify strings.spec.precision-zero@d3df]
+// r[verify strings.spec.special-no-decimals@2ea5]
 fn show(x: f64) {
     print("{x:.2} {x:.0}")
 }

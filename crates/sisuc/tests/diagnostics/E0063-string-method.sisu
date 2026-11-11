@@ -1,0 +1,11 @@
+// GIVEN calls of `to_string`, `eq` and `less` on a string, and a call of another method
+// WHEN `sisu check` runs on it
+// THEN it reports E0063 only at the name of the other method
+// r[verify strings.methods.only-three@13ea]
+fn main() {
+    let s = "sauna"
+    print(s.to_string())
+    print(s.eq("sauna"))
+    print(s.less("tupa"))
+    print(s.upper())
+}

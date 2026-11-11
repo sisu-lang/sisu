@@ -29,7 +29,7 @@ import unicodedata
 import unittest
 from bisect import bisect_left
 from collections import Counter
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from decimal import ROUND_HALF_UP, Decimal
 from functools import cache
 from html.parser import HTMLParser
@@ -594,7 +594,7 @@ def mark_rules(tokens: list[Token]) -> None:  # noqa: C901  one scan of the toke
             and kids[-1].type == "strong_close"
             and sum(k.type == "strong_open" for k in kids) == 1
         ):
-            # One plain paragraph can stand between the label and its list, as a note.
+            # One paragraph of any content can stand between the label and its list, as a note.
             note = i + 3 < len(tokens) and tokens[i + 3].type == "paragraph_open"
             at = i + 6 if note else i + 3
             if at < len(tokens) and tokens[at].type == "bullet_list_open":
@@ -625,8 +625,129 @@ def mark_rules(tokens: list[Token]) -> None:  # noqa: C901  one scan of the toke
                     break
 
 
+# The white space of the reference check: Rust `char::is_whitespace` (Unicode White_Space). It
+# is not Python `\s`, which also holds U+001C to U+001F.
+WS = "\t-\r \x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000"
+RULE_ID = re.compile(rf"\{{#([^{WS}}}]+)\}} (?=[^{WS}])")
+# The marker grammar of the reference check (`reference_check/markers.rs`, `parse_marker`).
+RULE_MARKER = re.compile(rf"[{WS}]*//[/!]?[{WS}]*r\[verify ([^{WS}@\]]+)@[0-9a-f]{{4}}\][{WS}]*")
+
+
+def rule_proofs(root: Path, files: Iterable[str]) -> dict[str, list[tuple[str, int]]]:
+    """Map each rule ID to the (path, line) of each test marker that names it.
+
+    The files are the ones of `files` that the reference check reads for markers: `.rs` and
+    `.sisu` files under `crates/`, read from `root`. The map does not check the ID or the hash:
+    `make test` does.
+    """
+    proofs: dict[str, list[tuple[str, int]]] = {}
+    for path in sorted(files):
+        if not (path.startswith("crates/") and path.endswith((".rs", ".sisu"))):
+            continue
+        try:
+            text = (root / path).read_bytes().decode(errors="replace")
+        except FileNotFoundError:  # tracked, but removed from the working tree
+            continue
+        for number, line in enumerate(text.split("\n"), 1):
+            if marker := RULE_MARKER.fullmatch(line):
+                proofs.setdefault(marker[1], []).append((path, number))
+    return proofs
+
+
+def first_line(kids: list[Token]) -> str:
+    """Return the text of the first line of the inline children `kids`, with its code spans."""
+    text = []
+    for kid in kids:
+        if kid.type == "softbreak":
+            break
+        text.append(kid.content)
+    return "".join(text)
+
+
+def quoted_line(tokens: list[Token], item: int) -> str:
+    """Return the first line of the paragraph in the block quotes that start the item at `item`."""
+    at = item + 1
+    while tokens[at].type == "blockquote_open":
+        at += 1
+    return first_line(tokens[at + 1].children or []) if tokens[at].type == "paragraph_open" else ""
+
+
+def proof_html(proofs: list[tuple[str, int]]) -> str:
+    """Return the "Proved by" line for the markers `proofs`, (path, line) pairs."""
+    links = ", ".join(
+        f'<a href="{html.escape(BLOB + path)}#L{line}">'
+        f"{escape(path.removeprefix('crates/'))}:{line}</a>"
+        for path, line in proofs
+    )
+    return f'<div class="proofs">Proved by {links}</div>'
+
+
+def rule_anchors(tokens: list[Token], proofs: Mapping[str, list[tuple[str, int]]]) -> None:  # noqa: C901  one scan of the tokens, with one branch for each token kind
+    """Give each rule of `tokens` its ID, and list the tests that prove it.
+
+    A top-level item of a list of rules (see `mark_rules`) that starts with `{#id} ` loses that
+    prefix. The ID becomes the `id` of its `<li>`.
+    A rule with an ID in `proofs` ends with a line that links to its markers.
+    The match is the one the reference check makes. A link, bold text or a character reference
+    before the `{#` gives no ID.
+    The page is not built when a `<li>` still starts with `{#`, also in a block quote that starts
+    it. It is not built either when only some of its rules have an ID. Then the site and the
+    check disagree.
+    """
+    lists: list[bool] = []  # for each open list, whether it is a list of rules
+    items: list[str | None] = []  # for each open item, its ID
+    ids: list[str] = []
+    bare: list[str] = []  # the text of each rule with no ID
+    proved: dict[int, Token] = {}  # the index of an item's close token, and its proofs line
+    for i, token in enumerate(tokens):
+        if token.type in ("bullet_list_open", "ordered_list_open"):
+            lists.append(token.attrGet("class") == "rules")
+        elif token.type in ("bullet_list_close", "ordered_list_close"):
+            lists.pop()
+        elif token.type == "list_item_open":
+            paragraph = tokens[i + 1].type == "paragraph_open"
+            inline = tokens[i + 2] if paragraph else Token("inline", "", 0)
+            kids = inline.children or []
+            text = first_line(kids)
+            items.append(None)
+            if (
+                lists[-1]
+                and kids
+                and kids[0].type == "text"
+                and inline.content.startswith(("{#", "\\{#"))
+                and (found := RULE_ID.match(text))
+            ):
+                kids[0].content = kids[0].content.removeprefix(found[0])
+                token.attrSet("id", found[1])
+                items[-1] = found[1]
+                ids.append(found[1])
+                text = first_line(kids)
+            elif lists[-1]:
+                bare.append(text)
+            text = text or quoted_line(tokens, i)
+            if text.startswith("{#"):
+                raise BuildError(
+                    f'the text "{text}" starts with "{{#" but is not an ID. '
+                    'Only a rule has an ID, at its start: "- {#page.name} text".'
+                )
+        elif token.type == "list_item_close" and (rule_id := items.pop()) and rule_id in proofs:
+            proved[i] = Token("html_block", "", 0, content=proof_html(proofs[rule_id]))
+    if ids and bare:
+        raise BuildError(
+            f'the rule "{bare[0]}" has no ID, and another rule of the page has one. '
+            "Give each rule an ID."
+        )
+    if proved:  # one pass: an insert in the list for each rule would be slow
+        rebuilt: list[Token] = []
+        for i, token in enumerate(tokens):
+            if i in proved:
+                rebuilt.append(proved[i])
+            rebuilt.append(token)
+        tokens[:] = rebuilt
+
+
 def reference_html(  # noqa: C901, PLR0912  both count the same branches: one scan of the tokens, with one branch for each token kind
-    markdown: str, path: Path
+    markdown: str, path: Path, proofs: Mapping[str, list[tuple[str, int]]] | None = None
 ) -> tuple[str, list[tuple[int, str, str, bool]], bool]:
     """Return a language reference page without its `#` title, its headings and its tag.
 
@@ -675,6 +796,7 @@ def reference_html(  # noqa: C901, PLR0912  both count the same branches: one sc
             if pending and current is not None:
                 headings[current][3] = True
     mark_rules(tokens)
+    rule_anchors(tokens, proofs or {})
     for heading in headings:
         if heading[3]:
             heading[2].children.append(Token("html_inline", "", 0, content=IN_DEVELOPMENT))
@@ -700,14 +822,16 @@ def reference_pages(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Return each page of `pages` read from docs/reference/ and rendered once.
 
     A page is its entry with its title, the title's id, its body, its headings and its tag.
+    A rule shows the tests that prove it (see `rule_proofs`).
     """
     prepared = []
+    proofs = rule_proofs(ROOT, check_links.TRACKED)
     for page in pages:
         path = REFERENCE / f"{page['file']}.md"
         try:
             text = path.read_text(encoding="utf-8")
             title = reference_title(text)
-            body, headings, tagged = reference_html(text, path)
+            body, headings, tagged = reference_html(text, path, proofs=proofs)
         except (OSError, BuildError) as e:
             raise BuildError(f"docs/reference/{page['file']}.md: {e}") from e
         prepared.append(
@@ -1272,6 +1396,10 @@ ADR_ROW = re.compile(
 ADR_NOTE = re.compile(r'<(?:small>|span class="soon">)')
 
 
+# The first ADR that must have a "## Reconsider when" section (ADR 0050).
+FIRST_ADR_WITH_RECONSIDER = 50
+
+
 def adr_problems(text: str) -> Iterator[str]:
     """Each ADR is listed once, by its GitHub link, under its heading rendered inline."""
     rows: dict[str, list[tuple[str, str]]] = {}
@@ -1282,14 +1410,8 @@ def adr_problems(text: str) -> Iterator[str]:
         if len(rows.get(path, [])) != 1:
             yield f"lists {path} {len(rows.get(path, []))} times, not once"
             continue
-        heading = next(
-            (
-                line
-                for line in file.read_text(encoding="utf-8").splitlines()
-                if line.startswith("# ")
-            ),
-            None,
-        )
+        lines = file.read_text(encoding="utf-8").splitlines()
+        heading = next((line for line in lines if line.startswith("# ")), None)
         if heading is None:
             yield f'{path} has no "# " heading'
             continue
@@ -1299,6 +1421,8 @@ def adr_problems(text: str) -> Iterator[str]:
         want = MarkdownIt().renderInline(heading.removeprefix("# "))
         if title != want:
             yield f"titles {path} {title!r}, not its heading {want!r}"
+        if int(file.name[:4]) >= FIRST_ADR_WITH_RECONSIDER and "## Reconsider when" not in lines:
+            yield f'{path} has no "## Reconsider when" section'
 
 
 def check_site(out: Path, *, forbid_tk: bool = False) -> list[str]:

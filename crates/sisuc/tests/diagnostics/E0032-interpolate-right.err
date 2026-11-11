@@ -1,13 +1,13 @@
 error[E0032]: expected `string`, found `i64`
- --> E0032-interpolate-right.sisu:3:11
+ --> E0032-interpolate-right.sisu:4:11
   |
-3 |     print(n + " items")
+4 |     print(n + " items")
   |           ^   -------- `+` joins this `string`
   |
 help: use interpolation
   |
-3 -     print(n + " items")
-3 +     print("{n} items")
+4 -     print(n + " items")
+4 +     print("{n} items")
   |
 
 sisu: 1 error
