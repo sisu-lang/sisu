@@ -77,9 +77,16 @@ pub(crate) fn read_rules(text: &str) -> (Vec<Rule>, Vec<usize>) {
     // The plain text of the open rule, which the hash covers.
     let mut body: Option<String> = None;
     for (event, range) in Parser::new_ext(text, Options::ENABLE_TABLES).into_offset_iter() {
-        // The first event of an item starts its text.
+        // The text of an item starts at its first event, when that event is text, code or the
+        // start of a paragraph. Any other first block (such as indented code) has no prefix.
         if let Some((line, is_rule)) = item.take() {
-            let prefix = read_prefix(&text[range.start..]);
+            let starts_text = matches!(
+                event,
+                Event::Text(_) | Event::Code(_) | Event::Start(Tag::Paragraph)
+            );
+            let prefix = starts_text
+                .then(|| read_prefix(&text[range.start..]))
+                .flatten();
             if prefix.is_some() {
                 id_lines.push(line);
             }

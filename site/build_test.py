@@ -1477,7 +1477,7 @@ class Build(unittest.TestCase):
 
     def test_item_that_starts_with_a_block_should_get_no_id(self) -> None:
         """
-        GIVEN a rule whose first block is code or a quote that holds `{#`
+        GIVEN a rule whose first block is code, a quote or HTML that holds `{#`
         WHEN `site/build.py` builds the page
         THEN the item gets no `id` and the page builds
         """
@@ -1485,6 +1485,7 @@ class Build(unittest.TestCase):
             "indented code": "-     {#strings.a.b} x\n",
             "fenced code": "- ```\n  {#strings.a.b} x\n  ```\n",
             "block quote": "- > {#strings.a.b} x\n",
+            "HTML block": "- <div>{#strings.a.b} x\n",
         }
         for name, item in rows.items():
             with self.subTest(name):

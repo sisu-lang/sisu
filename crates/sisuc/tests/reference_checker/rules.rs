@@ -243,11 +243,12 @@ fn prefix_should_be_one_space_then_the_text() {
 /// THEN the page does not join, and the rule has no ID
 #[test]
 fn rule_should_get_no_prefix_from_a_block_that_is_not_text() {
-    let rows: [(&str, &str); 4] = [
+    let rows: [(&str, &str); 5] = [
         ("indented code", "-     {#strings.a.b} x\n"),
         ("fenced code", "- ```\n  {#strings.a.b} x\n  ```\n"),
         ("block quote", "- > {#strings.a.b} x\n"),
         ("heading", "- # {#strings.a.b} x\n"),
+        ("HTML block", "- <div>{#strings.a.b} x\n"),
     ];
     for (row, item) in rows {
         let page = read_page(&format!("**Rules**\n\n{item}"));

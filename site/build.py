@@ -625,9 +625,12 @@ def mark_rules(tokens: list[Token]) -> None:  # noqa: C901  one scan of the toke
                     break
 
 
-RULE_ID = re.compile(r"\{#([^\s}]+)\} (?=\S)")
+# The white space of the reference check: Rust `char::is_whitespace` (Unicode White_Space). It
+# is not Python `\s`, which also holds U+001C to U+001F.
+WS = "\t-\r \x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000"
+RULE_ID = re.compile(rf"\{{#([^{WS}}}]+)\}} (?=[^{WS}])")
 # The marker grammar of the reference check (`reference_check/markers.rs`, `parse_marker`).
-RULE_MARKER = re.compile(r"\s*//[/!]?\s*r\[verify ([^\s@\]]+)@[0-9a-f]{4}\]\s*")
+RULE_MARKER = re.compile(rf"[{WS}]*//[/!]?[{WS}]*r\[verify ([^{WS}@\]]+)@[0-9a-f]{{4}}\][{WS}]*")
 
 
 def rule_proofs(root: Path, files: Iterable[str]) -> dict[str, list[tuple[str, int]]]:
@@ -651,10 +654,10 @@ def rule_proofs(root: Path, files: Iterable[str]) -> dict[str, list[tuple[str, i
     return proofs
 
 
-def first_line(inline: Token | None) -> str:
-    """Return the text of the first line of `inline`, with the content of its code spans."""
+def first_line(kids: list[Token]) -> str:
+    """Return the text of the first line of the inline children `kids`, with its code spans."""
     text = []
-    for kid in inline.children or [] if inline else []:
+    for kid in kids:
         if kid.type == "softbreak":
             break
         text.append(kid.content)
@@ -683,52 +686,54 @@ def rule_anchors(tokens: list[Token], proofs: Mapping[str, list[tuple[str, int]]
     some of its rules have an ID. Then the site and the check disagree.
     """
     lists: list[bool] = []  # for each open list, whether it is a list of rules
-    ids: list[tuple[int, str]] = []
+    items: list[str | None] = []  # for each open item, its ID
+    ids: list[str] = []
     bare: list[str] = []  # the text of each rule with no ID
+    proved: dict[int, Token] = {}  # the index of an item's close token, and its proofs line
     for i, token in enumerate(tokens):
         if token.type in ("bullet_list_open", "ordered_list_open"):
             lists.append(token.attrGet("class") == "rules")
         elif token.type in ("bullet_list_close", "ordered_list_close"):
             lists.pop()
         elif token.type == "list_item_open":
-            inline = tokens[i + 2] if tokens[i + 1].type == "paragraph_open" else None
-            kids = (inline.children if inline else None) or []
-            text = first_line(inline)
+            paragraph = tokens[i + 1].type == "paragraph_open"
+            inline = tokens[i + 2] if paragraph else Token("inline", "", 0)
+            kids = inline.children or []
+            text = first_line(kids)
+            items.append(None)
             if (
                 lists[-1]
-                and inline
                 and kids
                 and kids[0].type == "text"
                 and inline.content.startswith(("{#", "\\{#"))
                 and (found := RULE_ID.match(text))
-                and kids[0].content.startswith(found[0])
             ):
                 kids[0].content = kids[0].content.removeprefix(found[0])
                 token.attrSet("id", found[1])
-                ids.append((i, found[1]))
-                text = first_line(inline)
+                items[-1] = found[1]
+                ids.append(found[1])
+                text = first_line(kids)
             elif lists[-1]:
                 bare.append(text)
             if text.startswith("{#"):
                 raise BuildError(
-                    f'the list item "{text}" starts with "{{#" and is not a rule with an ID. '
-                    'Write a rule as "- {#page.name} text" in a list of rules.'
+                    f'the text "{text}" starts with "{{#" but is not an ID. '
+                    'Only a rule has an ID, at its start: "- {#page.name} text".'
                 )
+        elif token.type == "list_item_close" and (rule_id := items.pop()) and rule_id in proofs:
+            proved[i] = Token("html_block", "", 0, content=proof_html(proofs[rule_id]))
     if ids and bare:
         raise BuildError(
             f'the rule "{bare[0]}" has no ID, and another rule of the page has one. '
             "Give each rule an ID."
         )
-    for i, rule_id in reversed(ids):  # the end, so that an insert keeps the earlier indexes
-        if rule_id in proofs:
-            end = next(
-                j
-                for j in range(i + 1, len(tokens))
-                if tokens[j].type == "list_item_close" and tokens[j].level == tokens[i].level
-            )
-            block = Token("html_block", "", 0)
-            block.content = proof_html(proofs[rule_id])
-            tokens.insert(end, block)
+    if proved:  # one pass: an insert in the list for each rule would be slow
+        rebuilt: list[Token] = []
+        for i, token in enumerate(tokens):
+            if i in proved:
+                rebuilt.append(proved[i])
+            rebuilt.append(token)
+        tokens[:] = rebuilt
 
 
 def reference_html(  # noqa: C901, PLR0912  both count the same branches: one scan of the tokens, with one branch for each token kind
