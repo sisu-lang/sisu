@@ -204,14 +204,24 @@ class GateTest(unittest.TestCase):
         self.assertRegex(out, r"observer\s+struct\s+547,000\s+1,447,000\s+2\.65\s+pass")
 
     def test_gate_should_fail_a_class_version_that_does_not_grow_with_the_input(self) -> None:
-        """GIVEN a class version with 100 instructions at 1x and 300 at 4x
+        """GIVEN a class version with 100 instructions at 1x and 200 at 4x
         WHEN `scripts/structs_gate.py` runs it
         THEN the exit code is 1 and the class row says that the input does not scale
         """
-        counts = {"tree-class": (100, 300), "tree-struct": (100, 400)}
+        counts = {"tree-class": (100, 200), "tree-struct": (100, 400)}
         code, out, _ = self.run_gate("tree", counts)
         self.assertEqual(code, 1)
-        self.assertRegex(out, r"tree\s+class\s+100\s+300\s+3\.00\s+FAIL: .*input")
+        self.assertRegex(out, r"tree\s+class\s+100\s+200\s+2\.00\s+FAIL: .*input")
+
+    def test_gate_should_pass_a_class_version_just_above_the_input_limit(self) -> None:
+        """GIVEN a class version with 100 instructions at 1x and 210 at 4x
+        WHEN `scripts/structs_gate.py` runs it
+        THEN the exit code is 0, because a fixed cost can bring a sound input this low
+        """
+        counts = {"tree-class": (100, 210), "tree-struct": (100, 400)}
+        code, out, _ = self.run_gate("tree", counts)
+        self.assertEqual(code, 0, out)
+        self.assertRegex(out, r"tree\s+class\s+100\s+210\s+2\.10\s+-")
 
     def test_class_only_should_fail_a_class_version_that_does_not_grow_with_the_input(self) -> None:
         """GIVEN a class version with 100 instructions at 1x and 110 at 4x
