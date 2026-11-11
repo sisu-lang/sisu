@@ -985,7 +985,7 @@ impl<'a> Parser<'a> {
                 args,
                 angles,
             })),
-            Span::new(ident.span.start(), self.closing_angle()),
+            Span::new(ident.span.start(), self.consumed_end()),
         ))
     }
 
@@ -1067,7 +1067,7 @@ impl<'a> Parser<'a> {
         }
         self.close_angle()?;
         self.depth = reach;
-        Ok((args, Span::new(open.start(), self.closing_angle())))
+        Ok((args, Span::new(open.start(), self.consumed_end())))
     }
 
     /// The `>` that closes a list. A `>=` closes it too, and then reads as the `=` it holds: in
@@ -1083,8 +1083,9 @@ impl<'a> Parser<'a> {
         Err(self.expected("`,` or `>`"))
     }
 
-    /// Where the `>` that `close_angle` just took ends.
-    fn closing_angle(&self) -> usize {
+    /// Where the text that the parser consumed ends. A `>=` that `close_angle` split counts only
+    /// as the `>` it gave to the list.
+    fn consumed_end(&self) -> usize {
         if self.split() {
             // What is left of the `>=` starts where the `>` ends.
             self.peek().span.start()
@@ -2077,20 +2078,7 @@ impl<'a> Parser<'a> {
                     // `mut` is never `Eof`, so the token after it exists.
                     match (&self.tokens[self.pos + 1].kind, receiver) {
                         (TokenKind::SelfKw, Receiver::Of(owner)) => {
-                            // `self` is not `Eof`, so the token after it exists.
-                            let after = &self.tokens[self.pos + 2].kind;
-                            let keyword = self.peek().span;
-                            let receiver = self.tokens[self.pos + 1].span;
-                            return Err(DiagnosticKind::MutSelf {
-                                keyword,
-                                remove: Span::new(
-                                    keyword.start(),
-                                    self.removal_end(keyword.end(), receiver.start()),
-                                ),
-                                safe: matches!(after, TokenKind::Comma | TokenKind::RParen),
-                                owner: owner.clone(),
-                            }
-                            .into());
+                            return Err(self.mut_self_error(owner.clone()));
                         }
                         (TokenKind::SelfKw, Receiver::Extension) => {
                             mut_self = Some(MutSelf {
@@ -2121,8 +2109,9 @@ impl<'a> Parser<'a> {
                     if let Some(mut_self) = &mut mut_self
                         && let Some(colon) = self.eat(&TokenKind::Colon)
                     {
-                        let ty = self.parse_type()?;
-                        mut_self.annotation = Some(colon.span.to(ty.span));
+                        self.parse_type()?;
+                        mut_self.annotation =
+                            Some(Span::new(colon.span.start(), self.consumed_end()));
                     }
                     if self.eat(&TokenKind::Comma).is_none() {
                         break;
@@ -3369,6 +3358,45 @@ impl<'a> Parser<'a> {
     /// (`x // c`, then `: a`) is still lost.
     fn removal_end(&self, after: usize, next: usize) -> usize {
         removal_end(self.comments, after, next)
+    }
+
+    /// The E0018 for the `mut self` at the next token, in a method of `owner`.
+    fn mut_self_error(&mut self, owner: Owner) -> Diagnostic {
+        // `self` is not `Eof`, so the token after it exists.
+        let after = &self.tokens[self.pos + 2].kind;
+        let keyword = self.peek().span;
+        let receiver = self.tokens[self.pos + 1].span;
+        let remove = Span::new(
+            keyword.start(),
+            self.removal_end(keyword.end(), receiver.start()),
+        );
+        let safe = matches!(after, TokenKind::Comma | TokenKind::RParen);
+        let annotation = if matches!(after, TokenKind::Colon) {
+            self.mut_self_type()
+        } else {
+            None
+        };
+        DiagnosticKind::MutSelf {
+            keyword,
+            remove,
+            annotation,
+            safe,
+            owner,
+        }
+        .into()
+    }
+
+    /// The `: Type` of a `mut self: Type` at `mut`, when the type parses and a `,` or a `)`
+    /// follows it. The span runs to the end of the text that the type consumed, as the node span
+    /// of `(i64)` leaves its `)` out. The error of a type that does not parse is dropped: the
+    /// caller reports the `mut`, and `checked` resumes at the end of the item.
+    fn mut_self_type(&mut self) -> Option<Span> {
+        // `mut`, `self` and `:` are not `Eof`, so the tokens up to the type exist.
+        let colon = self.tokens[self.pos + 2].span;
+        self.pos += 3;
+        self.parse_type().ok()?;
+        matches!(self.peek().kind, TokenKind::Comma | TokenKind::RParen)
+            .then(|| Span::new(colon.start(), self.consumed_end()))
     }
 
     /// Skips a `label:` before a sub-pattern, and returns the label's span and the span from it

@@ -393,10 +393,11 @@ pub(crate) enum DiagnosticKind {
     /// A `mut` at `keyword` in front of the `self`, in a method of `owner`; the fix removes
     /// `remove`, from the `mut` to the `self` or to a comment before it. In a class or an
     /// interface, removing it is `safe` when `self` is the whole parameter; in an enum it never
-    /// is.
+    /// is. `annotation` is the `: Type` after `self`, when the fix can remove it too.
     MutSelf {
         keyword: Span,
         remove: Span,
+        annotation: Option<Span>,
         safe: bool,
         owner: Owner,
     },
@@ -3411,25 +3412,36 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::MutSelf {
                 keyword,
                 remove,
+                annotation,
                 safe,
                 owner,
             } => {
+                // The fix removes the `mut`, and the type of a typed receiver with it: `self`
+                // takes no type, so the source would still not parse.
+                let drop_mut = |d: Diagnostic, safe: bool, message: &str| {
+                    let message = if annotation.is_some() {
+                        "remove the `mut` and the type"
+                    } else {
+                        message
+                    };
+                    d.with_fix(Fix {
+                        message: message.to_string(),
+                        safe,
+                        edits: std::iter::once(remove)
+                            .chain(annotation)
+                            .map(|span| Edit {
+                                span,
+                                replacement: String::new(),
+                            })
+                            .collect(),
+                    })
+                };
                 // The fix of a class or an interface method: safe when only `,` or `)` follows
                 // `self`.
-                let drop_mut = |d: Diagnostic| {
-                    d.with_fix(Fix {
-                        message: if safe {
-                            "remove the `mut`"
-                        } else {
-                            "try removing the `mut`; the receiver may need another change"
-                        }
-                        .to_string(),
-                        safe,
-                        edits: vec![Edit {
-                            span: remove,
-                            replacement: String::new(),
-                        }],
-                    })
+                let message = if safe {
+                    "remove the `mut`"
+                } else {
+                    "try removing the `mut`; the receiver may need another change"
                 };
                 match owner {
                     Owner::Class => drop_mut(
@@ -3439,6 +3451,8 @@ impl From<DiagnosticKind> for Diagnostic {
                             "a class method takes `self`, not `mut self`",
                         )
                         .with_help("an object is shared: `self` can already write every `mut` field"),
+                        safe,
+                        message,
                     ),
                     Owner::Interface => drop_mut(
                         Diagnostic::coded(
@@ -3449,15 +3463,20 @@ impl From<DiagnosticKind> for Diagnostic {
                         .with_help(
                             "a class method changes its object's `mut` fields through plain `self`",
                         ),
+                        safe,
+                        message,
                     ),
                     // The body may still assign `self`, so the fix is never safe.
-                    Owner::Enum(name) => Diagnostic::coded(
-                        code,
-                        keyword,
-                        format!("`{name}` is an enum, and enum values never change"),
-                    )
-                    .with_help(format!("return a new `{name}`"))
-                    .with_fix(unsafe_fix("remove the `mut`", remove, "")),
+                    Owner::Enum(name) => drop_mut(
+                        Diagnostic::coded(
+                            code,
+                            keyword,
+                            format!("`{name}` is an enum, and enum values never change"),
+                        )
+                        .with_help(format!("return a new `{name}`")),
+                        false,
+                        "remove the `mut`",
+                    ),
                 }
             }
             DiagnosticKind::InterfaceBody { at, form } => {
