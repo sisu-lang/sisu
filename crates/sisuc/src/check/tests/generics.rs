@@ -6266,6 +6266,26 @@ fn misfitting_arguments_should_read_the_origins_of_their_own_parameters_only() {
     assert_near_linear(reads(20), reads(40), reads(60));
 }
 
+/// A clean call of `n` arguments, whose last argument binds `T`, finds that argument once for
+/// each other argument. A walk of the arguments before it for each would cost n².
+#[test]
+fn the_argument_that_bound_a_parameter_should_be_found_without_a_walk() {
+    let reads = |n: usize| {
+        let params: Vec<_> = (0..n).map(|k| format!("_p{k}: T")).collect();
+        let args: Vec<_> = (1..n).map(|_| "1").chain(["v"]).collect();
+        let src = format!(
+            "fn f<T>({}) {{}}\nfn g(v: i64) {{\n    f({})\n}}\nfn main() {{}}",
+            params.join(", "),
+            args.join(", ")
+        );
+        generic::ARGS_READ.set(0);
+        let (_, ds) = checked(&src);
+        assert!(ds.is_empty(), "{ds:?}");
+        generic::ARGS_READ.get()
+    };
+    assert_near_linear(reads(20), reads(40), reads(60));
+}
+
 /// The declarations of the parity tables. Each generic callee has a concrete twin of the same
 /// name length (see `CONCRETE_TWINS`), which returns `Two<i64, bool>` where it returns
 /// `Two<X, bool>`.

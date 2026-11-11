@@ -424,6 +424,86 @@ fn an_earlier_value_should_explain_the_type() {
     ]);
 }
 
+/// A branch or an element that took its type from a sibling's hint did not give that type: the
+/// label names the value that gave it, in the order of the check.
+#[test]
+fn a_value_that_took_a_hint_should_not_be_the_origin() {
+    origin_rows(&[
+        (
+            "a literal arm that took a later arm's type (opus-1)",
+            "fn f(n: i64, b: u8) {\n    let a = match n {\n        1 => 5\n        2 => b\n        _ => \"x\"\n    }\n    print(a)\n}\nfn main() {}\n",
+            (5, 14),
+            Explained::Label(4, 14),
+        ),
+        (
+            "an empty array arm that took a later arm's type",
+            "fn f(n: i64, b: [i64]) {\n    let a = match n {\n        1 => []\n        2 => b\n        _ => \"x\"\n    }\n    print(a)\n}\nfn main() {}\n",
+            (5, 14),
+            Explained::Label(4, 14),
+        ),
+        (
+            "a `None` arm before an optional arm (sol-1)",
+            "fn f(n: i64, v: i64?) {\n    let a = match n {\n        0 => None\n        1 => v\n        _ => \"x\"\n    }\n    print(a)\n}\nfn main() {}\n",
+            (5, 14),
+            Explained::Label(4, 14),
+        ),
+        (
+            "a block arm that holds `None`",
+            "fn f(n: i64, v: i64?) {\n    let a = match n {\n        0 => { None }\n        1 => v\n        _ => \"x\"\n    }\n    print(a)\n}\nfn main() {}\n",
+            (5, 14),
+            Explained::Label(4, 14),
+        ),
+        (
+            "an `if` arm whose branches are both `None`",
+            "fn f(n: i64, v: i64?, c: bool) {\n    let a = match n {\n        0 => if c { None } else { None }\n        1 => v\n        _ => \"x\"\n    }\n    print(a)\n}\nfn main() {}\n",
+            (5, 14),
+            Explained::Label(4, 14),
+        ),
+        (
+            "a `None` arm that makes a later arm optional: that arm gives its own type",
+            "fn f(n: i64, v: i64) {\n    let a = match n {\n        0 => None\n        1 => v\n        _ => \"x\"\n    }\n    print(a)\n}\nfn main() {}\n",
+            (5, 14),
+            Explained::Label(4, 14),
+        ),
+        (
+            "a `None` arm before an inner join that gives the type",
+            "fn f(n: i64, v: i64?, c: bool) {\n    let a = match n {\n        0 => None\n        1 => if c { v } else { 1 }\n        _ => \"x\"\n    }\n    print(a)\n}\nfn main() {}\n",
+            (5, 14),
+            Explained::Label(4, 14),
+        ),
+        (
+            "an `else if` chain whose first branch took the type",
+            "fn f(c: bool, d: bool, b: u8) {\n    let a = if c { 5 } else if d { b } else { \"x\" }\n    print(a)\n}\nfn main() {}\n",
+            (2, 47),
+            Explained::Label(2, 36),
+        ),
+        (
+            "a literal element that took a later element's type (opus-2)",
+            "fn f(b: u8) {\n    let a = [5, b, \"x\"]\n    print(a)\n}\nfn main() {}\n",
+            (2, 20),
+            Explained::Label(2, 17),
+        ),
+        (
+            "a literal element that took a later element's type, against a `bool`",
+            "fn f(b: u8) {\n    let a = [5, b, true]\n    print(a)\n}\nfn main() {}\n",
+            (2, 20),
+            Explained::Label(2, 17),
+        ),
+        (
+            "a literal element of a generic call's array that took a later element's type",
+            "fn g<T>(a: [T]) -> i64 { 0 }\nfn f(b: u8) {\n    print(g([5, b, \"x\"]))\n}\nfn main() {}\n",
+            (3, 20),
+            Explained::Label(3, 17),
+        ),
+        (
+            "a `Some` element after `None` and a concrete element",
+            "fn f(n: i64) {\n    let a = [None, n, Some(2), \"x\"]\n    print(a)\n}\nfn main() {}\n",
+            (2, 32),
+            Explained::Label(2, 23),
+        ),
+    ]);
+}
+
 #[test]
 fn a_form_that_waits_should_have_no_origin() {
     origin_rows(&[

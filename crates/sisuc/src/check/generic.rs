@@ -1580,6 +1580,9 @@ thread_local! {
     pub(super) static MARKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many parameter origins `Origins::get` has read on this thread.
     pub(super) static ORIGINS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many arguments the search for the one that bound a parameter has read on this thread
+    /// (see `inferred_origin`).
+    pub(super) static ARGS_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many entries of the substitution lists of early bound checks have been written on this
     /// thread.
     pub(super) static LISTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -1762,6 +1765,8 @@ fn inferred_origin(call: &Inference<'_>, pattern: Type) -> Option<Origin> {
     };
     let bound = call.origin.get(j)?;
     let arg = (call.args.iter()).find(|arg| {
+        #[cfg(test)]
+        ARGS_READ.set(ARGS_READ.get() + 1);
         arg.value.span.start() <= bound.start() && bound.end() <= arg.value.span.end()
     })?;
     Some(Origin::Inferred {
