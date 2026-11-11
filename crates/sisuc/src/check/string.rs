@@ -392,7 +392,8 @@ impl Checker<'_> {
     /// take an `i64`; and `string(x)` takes a `[char]`. The argument of a scalar conversion
     /// expects no type, so a literal one is an `i64`; `string([])` is the empty string. `u8(x)`,
     /// `char(x)` and `i64(x)` from an `f64` can fail, so they give an optional, and in a constant
-    /// they are an error, typed as `to`.
+    /// they are an error, typed as `to`. A failed argument with no type leaves `i64(x)` untyped,
+    /// because `x` can be an `f64`.
     pub(super) fn convert(
         &mut self,
         span: Span,
@@ -489,9 +490,11 @@ impl Checker<'_> {
                 } else {
                     tir::ExprKind::Convert
                 };
+                // `i64(x)` is `i64?` for an `f64` `x`, so an untyped `x` leaves the call untyped.
+                let unknown = to == Type::I64 && type_of(&checked).is_none();
                 let kind = unlabeled(checked, labeled).map(|arg| node(Box::new(arg)));
                 let ty = if fails { Type::optional(to) } else { to };
-                return typed(span, ty, labeled.is_some(), kind);
+                return typed(span, ty, labeled.is_some() || unknown, kind);
             }
         };
         Err(Poisoned::untyped(self.diagnostics.error(d)))

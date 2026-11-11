@@ -199,6 +199,10 @@ impl Checker<'_> {
     /// that fails for a branch that rejected `expected` is a mismatch too. With no branches, the
     /// type is `never`. A `never` join with a branch that only a failed `break` or `continue`
     /// makes `never` is `Err` with that mark (see `Poisoned::jumped`): one such branch is enough.
+    ///
+    /// In a failed context (`Expectation::Poisoned`), the branches are in the same order. Only a
+    /// branch of literals expects the type of the first branch. Each other branch stays in the
+    /// failed context, so its mismatch waits for the next run.
     #[expect(
         clippy::too_many_lines,
         reason = "one pass checks the branches and keeps the anchor, its origin and the givers"
@@ -210,7 +214,7 @@ impl Checker<'_> {
         mut check: impl FnMut(&mut Self, usize, Expectation) -> CheckedBlock,
     ) -> (Vec<CheckedBlock>, Result<Type, Poisoned>) {
         let mut order: Vec<usize> = (0..sources.len()).collect();
-        if expected == Expectation::None {
+        if matches!(expected, Expectation::None | Expectation::Poisoned) {
             order.sort_by_key(|&i| sources[i].rank);
         }
         let mut checked: Vec<Option<CheckedBlock>> = sources.iter().map(|_| None).collect();
@@ -223,10 +227,12 @@ impl Checker<'_> {
         let mut kept = 0;
         for k in 0..order.len() {
             let i = order[k];
-            let carried = if expected == Expectation::None {
-                anchor.map_or(Expectation::None, |a| {
-                    after_branch(a, sources[i].exact(), origin)
-                })
+            // In a failed context, only a branch of literals takes the type of the anchor. Another
+            // branch that does not fit waits for the next run.
+            let carried = if expected == Expectation::None
+                || expected == Expectation::Poisoned && sources[i].literal
+            {
+                anchor.map_or(expected, |a| after_branch(a, sources[i].exact(), origin))
             } else {
                 expected
             };
@@ -559,6 +565,9 @@ impl Checker<'_> {
 pub(super) struct Branch<'a> {
     rank: Rank,
     optional: bool,
+    /// Whether the value is made of literals only (`8`, `[8]`), so that its type is the default
+    /// of those literals.
+    literal: bool,
     span: Span,
     tail: Option<&'a ast::Expr>,
 }
@@ -572,9 +581,9 @@ impl Branch<'_> {
 }
 
 impl Checker<'_> {
-    /// The branch for the value of `block`. Its value is ranked only when no type is expected,
-    /// as `join` orders the branches only then. `bind` binds what the block sees (see
-    /// `block_rank`).
+    /// The branch for the value of `block`. Its value is ranked only when no type is expected or
+    /// the context failed, as `join` orders the branches only then. `bind` binds what the block
+    /// sees (see `block_rank`).
     pub(super) fn block_branch<'a>(
         &mut self,
         block: &'a ast::Block,
@@ -582,12 +591,13 @@ impl Checker<'_> {
         bind: impl FnOnce(&mut Self) -> Option<(LetPattern, Option<Checked>)>,
     ) -> Branch<'a> {
         let mut fit = true;
-        let ranked = (expected == Expectation::None)
+        let ranked = matches!(expected, Expectation::None | Expectation::Poisoned)
             .then(|| self.block_rank(block, &mut fit, bind))
             .flatten();
         Branch {
             rank: ranked.map_or(Rank::Concrete, |ranked| ranked.sibling(fit)),
             optional: ranked.is_some_and(|ranked| ranked.optional),
+            literal: fit && ranked.is_some_and(|ranked| ranked.rank == Rank::Literal),
             span: value_span(block),
             tail: tail(block),
         }
@@ -600,6 +610,7 @@ impl Checker<'_> {
         Branch {
             rank,
             optional,
+            literal: rank == Rank::Literal,
             span: e.span,
             tail: Some(e),
         }
@@ -615,11 +626,12 @@ impl Checker<'_> {
         bind: impl FnOnce(&mut Self) -> Option<(LetPattern, Option<Checked>)>,
     ) -> Branch<'a> {
         let mut fit = true;
-        let ranked = (expected == Expectation::None)
+        let ranked = matches!(expected, Expectation::None | Expectation::Poisoned)
             .then(|| self.tail_rank(arm_key(arm), None, e, &mut fit, bind));
         Branch {
             rank: ranked.map_or(Rank::Concrete, |ranked| ranked.sibling(fit)),
             optional: ranked.is_some_and(|ranked| ranked.optional),
+            literal: fit && ranked.is_some_and(|ranked| ranked.rank == Rank::Literal),
             span: e.span,
             tail: Some(e),
         }

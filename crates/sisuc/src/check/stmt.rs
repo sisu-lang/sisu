@@ -1473,6 +1473,8 @@ impl Checker<'_> {
         // With no expected type, an earlier value gives a hint, as the siblings of a hinted loop
         // do.
         let hint = match (frame.expected, frame.first) {
+            // A failed value gives no type, so the next one waits for the next run.
+            (Expectation::None, None) if frame.failed.is_some() => Expectation::Poisoned,
             (Expectation::None, Some((ty, at))) => Expectation::Hint {
                 want: ty,
                 siblings: ty,
