@@ -45,6 +45,9 @@ pub(super) struct VariantInfo {
     pub(super) fields: Vec<Option<Type>>,
     /// Where each field's type is written.
     pub(super) spans: Vec<Span>,
+    /// Each field's type as the payload writes it, when it names an alias and the enum takes no
+    /// type parameter.
+    pub(super) shown: Vec<Option<std::rc::Rc<str>>>,
     /// For each field, the class and enum types written in its type, each with its span.
     pub(super) inner: Vec<Vec<(Type, Span)>>,
     /// The payload's labels, one for each field.
@@ -204,15 +207,15 @@ impl Checker<'_> {
             }
             // The checks that each field's type queues.
             let mut queued = Vec::new();
-            let (fields, inner): (Vec<_>, Vec<_>) = payload
-                .iter()
-                .map(|field| {
-                    let from = self.queued();
-                    let resolved = self.resolve_written(&field.ty);
-                    queued.push(from..self.queued());
-                    resolved
-                })
-                .unzip();
+            let (mut fields, mut inner, mut shown) = (Vec::new(), Vec::new(), Vec::new());
+            for field in payload {
+                let from = self.queued();
+                let written = self.resolve_field(&field.ty, e.type_params.is_empty());
+                queued.push(from..self.queued());
+                fields.push(written.ty);
+                inner.push(written.inner);
+                shown.push(written.shown);
+            }
             if self.first_definition(&mut first, Definition::Variant, Some(owner), name) {
                 let variant = self.enums[id.0].variants.len();
                 for (i, queued) in queued.into_iter().enumerate() {
@@ -224,6 +227,7 @@ impl Checker<'_> {
                     name: name.clone(),
                     fields,
                     spans: payload.iter().map(|field| field.ty.span).collect(),
+                    shown,
                     inner,
                     labels: payload
                         .iter()
@@ -571,6 +575,11 @@ impl Checker<'_> {
         // into a `Vec` before it gives up.
         let checked: Vec<_> = (args.iter().zip(fields).enumerate())
             .map(|(i, (arg, field))| {
+                // A mismatch shows a field's alias as written.
+                let text = self.enums[id.0].variants[variant].shown[i].clone();
+                if let (Some(want), Some(text)) = (*field, text) {
+                    self.show(arg.value.span, want, &text);
+                }
                 let origin = Origin::Payload {
                     enum_: Origin::id(id.0),
                     variant: Origin::id(variant),

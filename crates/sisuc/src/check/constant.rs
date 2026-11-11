@@ -203,6 +203,7 @@ impl Checker<'_> {
     /// The type and value of `c`, the constant at `order`; each is `None` when not known. The
     /// first step that fails reports its errors, and the rest do not run.
     fn fold(&mut self, c: &ast::Const, order: usize) -> (Option<Type>, Option<Constant>) {
+        let uses = self.aliases.uses;
         let declared = match &c.ty {
             None => None,
             Some(ty) => match self.resolve(ty) {
@@ -221,6 +222,7 @@ impl Checker<'_> {
                 }
             },
         };
+        let shown = c.ty.as_ref().and_then(|ty| self.shown_text(ty, uses));
         if !self.gate(&c.value, &c.name, order) {
             return (declared, None);
         }
@@ -236,15 +238,20 @@ impl Checker<'_> {
                 in_constant: Some(site),
                 ..Body::default()
             },
-            |this| match (declared, &c.ty) {
-                (Some(ty), Some(written)) => {
+            |this| match c.ty.as_ref().zip(declared) {
+                Some((written, ty)) => {
+                    // The message and the label name an alias as the constant writes it.
+                    if let Some(text) = &shown {
+                        this.show(c.value.span, ty, text);
+                        this.show(written.span, ty, text);
+                    }
                     let origin = Origin::Declared {
                         at: written.span,
                         ty,
                     };
                     this.expect(&c.value, Expectation::Required(ty, origin))
                 }
-                _ => this.value(&c.value, Expectation::None),
+                None => this.value(&c.value, Expectation::None),
             },
         );
         let ty = declared.or_else(|| type_of(&checked));

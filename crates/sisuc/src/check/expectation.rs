@@ -33,8 +33,10 @@ pub(super) enum Origin {
     Assigned { at: Span, ty: Type },
     /// The rule that a condition is a `bool`.
     Condition,
-    /// The rule that an index is an `i64` or a range.
+    /// The rule that an index of an array value is an `i64` or a range.
     Index,
+    /// The rule that an index of a place is an `i64`: a place takes no range.
+    PlaceIndex,
 }
 
 impl Origin {
@@ -141,8 +143,8 @@ impl Checker<'_> {
     }
 
     /// The fact that a report gives for `origin`, with its types named; none for `Origin::None`,
-    /// a type that failed, and a declared type that names a type parameter: a call or an object
-    /// can give that parameter another type.
+    /// a type that failed, and a parameter, a field or a payload whose declared type names a type
+    /// parameter: a call or an object can give that parameter another type.
     pub(super) fn origin_fact(&self, origin: Origin) -> Option<MismatchOrigin> {
         let named = |ty: Type, shown: Option<&Rc<str>>| {
             shown.map_or_else(|| self.type_name(ty), ToString::to_string)
@@ -195,7 +197,7 @@ impl Checker<'_> {
                 Some(MismatchOrigin::Payload {
                     at: variant.spans[field as usize],
                     variant: variant.name.name.to_string(),
-                    ty: self.type_name(ty),
+                    ty: named(ty, variant.shown[field as usize].as_ref()),
                 })
             }
             Origin::Assigned { at, ty } => Some(MismatchOrigin::Assigned {
@@ -205,6 +207,7 @@ impl Checker<'_> {
             }),
             Origin::Condition => Some(MismatchOrigin::Condition),
             Origin::Index => Some(MismatchOrigin::Index),
+            Origin::PlaceIndex => Some(MismatchOrigin::PlaceIndex),
         }
     }
 }

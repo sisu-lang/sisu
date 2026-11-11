@@ -361,8 +361,8 @@ impl Checker<'_> {
                 let init_expr = init;
                 self.body.let_init = Some((init.span, name.name, mutable.is_some()));
                 self.body.failed_let = matches!(declared, Some(None)).then_some(init.span);
-                let init = match (declared, ty) {
-                    (Some(declared), Some(ty)) => {
+                let init = match ty.as_ref().zip(declared) {
+                    Some((ty, declared)) => {
                         // The label at the written type names an alias as the message does.
                         if let (Some(want), Some(text)) = (declared, &shown) {
                             self.show(init.span, want, text);
@@ -374,7 +374,7 @@ impl Checker<'_> {
                         });
                         self.expect(init, Expectation::or_poisoned(declared, origin))
                     }
-                    _ => self.value(init, Expectation::None),
+                    None => self.value(init, Expectation::None),
                 };
                 let uninferred = self.uninferred_of(init_expr);
                 self.body.let_init = None;

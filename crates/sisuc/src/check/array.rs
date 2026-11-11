@@ -529,8 +529,13 @@ impl Checker<'_> {
         let (element, report) = self.element(base, type_of(&checked), IndexUsage::Read);
         // The index is not part of the chain that it ends.
         self.body.indexed = false;
-        let (index, mismatched) =
-            self.operand(index, Expectation::Required(Type::I64, Origin::Index));
+        // A base with no element, such as a string, takes no `i64` index either.
+        let origin = if element.is_some() {
+            Origin::Index
+        } else {
+            Origin::None
+        };
+        let (index, mismatched) = self.operand(index, Expectation::Required(Type::I64, origin));
         self.body.indexed = outer;
         match (checked, index, element) {
             (Ok(base), Ok(index), Some(element)) if !optional => {

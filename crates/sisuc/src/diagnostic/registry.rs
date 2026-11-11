@@ -2147,8 +2147,10 @@ pub(crate) enum MismatchOrigin {
     Assigned { at: Span, name: String, ty: String },
     /// The rule that a condition is a `bool`.
     Condition,
-    /// The rule that an index is an `i64` or a range.
+    /// The rule that an index of an array value is an `i64` or a range.
     Index,
+    /// The rule that an index of a place is an `i64`.
+    PlaceIndex,
 }
 
 impl MismatchOrigin {
@@ -2179,6 +2181,7 @@ impl MismatchOrigin {
             Self::Assigned { at, name, ty } => (Some(at), format!("`{name}` has the type `{ty}`")),
             Self::Condition => (None, "a condition must be `bool`".to_string()),
             Self::Index => (None, "an index must be `i64` or a range".to_string()),
+            Self::PlaceIndex => (None, "an index must be `i64`".to_string()),
         }
     }
 }

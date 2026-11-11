@@ -1052,8 +1052,14 @@ impl Checker<'_> {
                 };
                 // The index is not part of the chain that it ends.
                 self.body.indexed = false;
+                // A base with no element, such as a string, takes no `i64` index either.
+                let origin = if element.is_some() {
+                    Origin::PlaceIndex
+                } else {
+                    Origin::None
+                };
                 let (index, mismatched) =
-                    self.operand(index, Expectation::Required(Type::I64, Origin::Index));
+                    self.operand(index, Expectation::Required(Type::I64, origin));
                 self.body.indexed = outer;
                 let reported = (inner.reported.or(element_report))
                     .or_else(|| index.as_ref().err().map(Poisoned::reported));
