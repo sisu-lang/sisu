@@ -353,6 +353,78 @@ fn a_passed_down_expectation_should_keep_its_origin() {
 }
 
 #[test]
+fn an_earlier_value_should_explain_the_type() {
+    origin_rows(&[
+        (
+            "element inferred",
+            "fn main() {\n    let a = [1, \"x\"]\n    print(a)\n}\n",
+            (2, 17),
+            Explained::Label(2, 14),
+        ),
+        (
+            "branch",
+            "fn main() {\n    let a = if true { 1 } else { \"x\" }\n    print(a)\n}\n",
+            (2, 34),
+            Explained::Label(2, 23),
+        ),
+        (
+            "type parameter",
+            "fn g<T>(a: T, b: T) -> T { a }\nfn main() {\n    g(1, \"x\")\n}\n",
+            (3, 7),
+            Explained::Label(3, 10),
+        ),
+        (
+            "an inner `if` against the outer first branch (fable-9)",
+            "fn f(c: bool, d: bool) {\n    let a = if c { 1 } else { if d { \"x\" } else { \"y\" } }\n    print(a)\n}\nfn main() {\n    f(true, true)\n}\n",
+            (2, 31),
+            Explained::Label(2, 20),
+        ),
+        (
+            "an inner join whose first branch gives the type (fable-10)",
+            "fn f(c: bool, d: bool) {\n    let a = if c { 1 } else { if d { \"x\" } else { 2 } }\n    print(a)\n}\nfn main() {\n    f(true, true)\n}\n",
+            (2, 51),
+            Explained::Label(2, 38),
+        ),
+        (
+            "a value that reads the join's hint (fable-20)",
+            "fn f(c: bool) {\n    let a = if c { 1 } else { [] }\n    print(a)\n}\nfn main() {\n    f(true)\n}\n",
+            (2, 31),
+            Explained::Label(2, 20),
+        ),
+        (
+            "an operand in a branch (fable-2)",
+            "fn f(c: bool) {\n    let a = if c { 1 } else { 2 + None }\n    print(a)\n}\nfn main() {\n    f(true)\n}\n",
+            (2, 35),
+            Explained::Label(2, 20),
+        ),
+        (
+            "a later arm makes the join optional (opus-41)",
+            "fn f(n: i64) {\n    let a = match n {\n        1 => 5\n        2 => Some(1)\n        _ => \"x\"\n    }\n    print(a)\n}\nfn main() {\n    f(1)\n}\n",
+            (5, 14),
+            Explained::Label(4, 14),
+        ),
+        (
+            "a later element makes the array optional (opus-43)",
+            "fn main() {\n    let a = [5, Some(1), \"x\"]\n    print(a)\n}\n",
+            (2, 26),
+            Explained::Label(2, 17),
+        ),
+        (
+            "the element that set the bound of `T` (opus-12)",
+            "fn f<T>(a: [T]) -> i64 { 0 }\nfn g(n: i64) {\n    print(f([None, n, \"x\"]))\n}\nfn main() { g(1) }\n",
+            (3, 23),
+            Explained::Label(3, 20),
+        ),
+        (
+            "the argument that holds the binding element (opus4-3)",
+            "fn has<T>(a: [T], x: T) -> bool { true }\nfn g(n: i64) {\n    print(has([\"a\", \"b\"], n))\n}\nfn main() { g(1) }\n",
+            (3, 27),
+            Explained::Label(3, 15),
+        ),
+    ]);
+}
+
+#[test]
 fn a_form_that_waits_should_have_no_origin() {
     origin_rows(&[
         (
