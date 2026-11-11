@@ -664,6 +664,14 @@ def first_line(kids: list[Token]) -> str:
     return "".join(text)
 
 
+def quoted_line(tokens: list[Token], item: int) -> str:
+    """Return the first line of the paragraph in the block quotes that start the item at `item`."""
+    at = item + 1
+    while tokens[at].type == "blockquote_open":
+        at += 1
+    return first_line(tokens[at + 1].children or []) if tokens[at].type == "paragraph_open" else ""
+
+
 def proof_html(proofs: list[tuple[str, int]]) -> str:
     """Return the "Proved by" line for the markers `proofs`, (path, line) pairs."""
     links = ", ".join(
@@ -682,7 +690,8 @@ def rule_anchors(tokens: list[Token], proofs: Mapping[str, list[tuple[str, int]]
     A rule with an ID in `proofs` ends with a line that links to its markers.
     The match is the one the reference check makes. A link, bold text or a character reference
     before the `{#` gives no ID.
-    The page is not built when a `<li>` still starts with `{#`. It is not built either when only
+    The page is not built when a `<li>` still starts with `{#`, also in a block quote that starts
+    it. It is not built either when only
     some of its rules have an ID. Then the site and the check disagree.
     """
     lists: list[bool] = []  # for each open list, whether it is a list of rules
@@ -715,6 +724,7 @@ def rule_anchors(tokens: list[Token], proofs: Mapping[str, list[tuple[str, int]]
                 text = first_line(kids)
             elif lists[-1]:
                 bare.append(text)
+            text = text or quoted_line(tokens, i)
             if text.startswith("{#"):
                 raise BuildError(
                     f'the text "{text}" starts with "{{#" but is not an ID. '
