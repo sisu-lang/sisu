@@ -29,6 +29,8 @@ pub(crate) struct Page {
     pub(crate) rules: Vec<Rule>,
     /// The line of each list item, in any list, whose text starts with `{#`.
     pub(crate) id_lines: Vec<usize>,
+    /// The line and the level (1 to 6) of each heading, in page order.
+    pub(crate) headings: Vec<(usize, u8)>,
 }
 
 /// A fault in a page's Markdown, on its 1-based `line`.
@@ -155,6 +157,7 @@ pub(crate) fn read_page(text: &str) -> Page {
         faults,
         rules,
         id_lines,
+        headings: Vec::new(),
     }
 }
 

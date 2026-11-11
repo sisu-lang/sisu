@@ -1,7 +1,9 @@
 //! The reference checker's reading of rules and their IDs: which list items are rules, what a
-//! page's `{#` items need, and the faults of a bad ID.
+//! page's `{#` items need, the faults of a bad ID, and the proof of each rule: its hash, its
+//! tests and its section.
 
-use crate::reference_check::rules::id_faults;
+use crate::reference_check::markers::{RuleMarker, read_markers};
+use crate::reference_check::rules::{id_faults, proof_faults};
 use crate::reference_check::{Kind, read_page};
 
 /// The faults that `id_faults` finds on the page `stem` with `page` as text, each as a line and a
@@ -298,5 +300,377 @@ fn repeated_id_should_fail_with_both_lines() {
         faults[0].1.ends_with("at line 3."),
         "the message should name line 3: {:?}",
         faults[0].1
+    );
+}
+
+/// A table row: its name, a page, its markers, and the faults that the page should give.
+type ProofRow<'a> = (&'a str, &'a str, Vec<RuleMarker>, &'a [(usize, &'a str)]);
+
+/// A marker of the rule `id`, with `hash`, on `line` of `file`.
+fn marker(file: &str, line: usize, id: &str, hash: &str) -> RuleMarker {
+    RuleMarker {
+        file: file.to_string(),
+        line,
+        id: id.to_string(),
+        hash: hash.to_string(),
+    }
+}
+
+/// The faults of the page `stem` with `page` as text and `markers`, as the `rules` trial finds
+/// them: those of `id_faults` and `proof_faults`, sorted by line.
+fn rule_fault_list(stem: &str, page: &str, markers: &[RuleMarker]) -> Vec<(usize, String)> {
+    let read = read_page(page);
+    let mut faults = id_faults(stem, &read);
+    faults.extend(proof_faults(stem, &read, markers));
+    faults.sort_by_key(|fault| fault.line);
+    faults
+        .into_iter()
+        .map(|fault| (fault.line, fault.message))
+        .collect()
+}
+
+/// The hash of each rule of `page` that has an ID, as a marker in a test file.
+fn current_markers(page: &str) -> Vec<RuleMarker> {
+    read_page(page)
+        .rules
+        .iter()
+        .filter_map(|rule| {
+            let id = rule.id.as_deref()?;
+            Some(marker("crates/sisuc/tests/run/t.sisu", 1, id, &rule.hash))
+        })
+        .collect()
+}
+
+/// GIVEN the one rule of `**Rules**` and `- {#strings.text.null} A string can hold the null
+/// character `\0`. It counts as one byte.`
+/// WHEN its hash is found
+/// THEN the hash is `3958`
+#[test]
+fn hash_should_be_fnv1a_of_the_normalized_text() {
+    let text = "**Rules**\n\n- {#strings.text.null} A string can hold the null character `\\0`. \
+                It counts as one byte.\n";
+    let page = read_page(text);
+    let [rule] = page.rules.as_slice() else {
+        panic!("rules are {:?}", page.rules)
+    };
+    assert_eq!(rule.hash, "3958");
+}
+
+/// GIVEN a joined page whose one rule has the ID `strings.text.null`
+/// AND a `tests/run` case with a marker for `strings.text.null` that has the rule's hash
+/// WHEN its faults are found
+/// THEN it passes
+#[test]
+fn rule_with_a_current_marker_should_pass() {
+    let text = "**Rules**\n\n- {#strings.text.null} A string can hold the null character.\n";
+    let hash = read_page(text).rules[0].hash.clone();
+    let markers = [marker(
+        "crates/sisuc/tests/run/null.sisu",
+        1,
+        "strings.text.null",
+        &hash,
+    )];
+    assert_faults(
+        "current marker",
+        &rule_fault_list("strings", text, &markers),
+        &[],
+    );
+}
+
+/// GIVEN a joined page with a rule `strings.text.null` that no test names
+/// WHEN its faults are found
+/// THEN it fails with "strings.text.null has no test"
+/// AND the message holds the marker with the current hash
+#[test]
+fn rule_without_a_marker_should_fail_with_its_hash() {
+    let text = "**Rules**\n\n- {#strings.text.null} A string can hold the null character `\\0`. \
+                It counts as one byte.\n";
+    let faults = rule_fault_list("strings", text, &[]);
+    assert_faults(
+        "no marker",
+        &faults,
+        &[(3, "strings.text.null has no test")],
+    );
+    assert!(
+        faults[0].1.contains("r[verify strings.text.null@3958]"),
+        "the message should hold the marker: {:?}",
+        faults[0].1
+    );
+}
+
+/// GIVEN a joined page where the ID of a rule has a fault
+/// WHEN the faults of its IDs and of its proofs are found
+/// THEN the rule has the fault of its ID and no fault for a missing or a changed test
+#[test]
+fn rule_with_a_bad_id_should_get_no_proof_fault() {
+    // The second page has the ID of line 3 twice, with different texts.
+    let repeat = "**Rules**\n\n- {#strings.text.null} first\n- {#strings.text.null} second\n";
+    let hash = read_page(repeat).rules[0].hash.clone();
+    let rows: [ProofRow<'_>; 2] = [
+        (
+            "a wrong stem",
+            "**Rules**\n\n- {#text.null} x\n",
+            Vec::new(),
+            &[(3, "must start with")],
+        ),
+        (
+            "a repeated ID",
+            repeat,
+            vec![marker("crates/a.sisu", 1, "strings.text.null", &hash)],
+            &[(4, "is also the ID of")],
+        ),
+    ];
+    for (row, text, markers, want) in rows {
+        assert_faults(row, &rule_fault_list("strings", text, &markers), want);
+    }
+}
+
+/// GIVEN a joined page with the rules `- {#text.null} x` and `- {#strings.a.b} y`
+/// AND no marker
+/// WHEN the faults of its IDs and of its proofs are found
+/// THEN the first rule has the fault of its ID only
+/// AND the second rule has a fault for a missing test
+#[test]
+fn proof_check_should_skip_a_rule_and_not_the_page() {
+    let text = "**Rules**\n\n- {#text.null} x\n- {#strings.a.b} y\n";
+    assert_faults(
+        "two rules",
+        &rule_fault_list("strings", text, &[]),
+        &[(3, "must start with"), (4, "strings.a.b has no test")],
+    );
+}
+
+/// GIVEN a rule whose marker holds the hash of its old text
+/// WHEN its faults are found
+/// THEN it fails with "the text of strings.text.null changed"
+/// AND the message names each file and line of a marker with the old hash
+/// AND it gives the new hash
+#[test]
+fn changed_rule_should_list_each_stale_marker() {
+    let text = "**Rules**\n\n- {#strings.text.null} A string can hold the null character.\n";
+    let hash = read_page(text).rules[0].hash.clone();
+    let markers = [
+        marker(
+            "crates/sisuc/tests/run/a.sisu",
+            3,
+            "strings.text.null",
+            "0000",
+        ),
+        marker(
+            "crates/sisuc/tests/run/c.sisu",
+            1,
+            "strings.text.null",
+            &hash,
+        ),
+        marker("crates/sisuc/tests/b.rs", 9, "strings.text.null", "0000"),
+    ];
+    let faults = rule_fault_list("strings", text, &markers);
+    assert_faults(
+        "stale",
+        &faults,
+        &[(3, "the text of strings.text.null changed")],
+    );
+    let message = &faults[0].1;
+    for part in [
+        format!("@{hash}"),
+        "a.sisu:3".to_string(),
+        "b.rs:9".to_string(),
+        "@0000".to_string(),
+    ] {
+        assert!(message.contains(&part), "{message:?} should hold {part:?}");
+    }
+    assert!(
+        !message.contains("c.sisu"),
+        "{message:?} names a current marker"
+    );
+    let (first, second) = (message.find("a.sisu:3"), message.find("b.rs:9"));
+    assert!(
+        first < second,
+        "{message:?} should list the markers in order"
+    );
+}
+
+/// GIVEN a rule with a current marker
+/// WHEN the rule changes by a change in the rows
+/// AND its faults are found
+/// THEN a change to the white space, a link target, a code span or emphasis gives no fault
+/// AND a change to a word, a link text, a code text or a nested item gives a stale-hash fault
+#[test]
+fn hash_should_change_only_with_the_meaning() {
+    let base = "**Rules**\n\n- {#strings.a} A string with [E0068](x.md) and `len` and \
+                [`cap`](c.md) and a word.\n  - nested note\n";
+    let change = |from: &str, to: &str| (base.to_string(), base.replace(from, to));
+    // Each row is a name, the old page, the new page, and whether the hash should change.
+    let rows: [(&str, (String, String), bool); 11] = [
+        (
+            "a new line break",
+            change(" and `len`", "\n  and `len`"),
+            false,
+        ),
+        ("a new link target", change("(x.md)", "(y.md)"), false),
+        ("a changed word", change("a word.", "a verb."), true),
+        (
+            "a changed diagnostic code",
+            change("[E0068]", "[E0069]"),
+            true,
+        ),
+        (
+            "a changed nested item",
+            change("nested note", "nested other"),
+            true,
+        ),
+        (
+            "a word that becomes a code span",
+            change("a word.", "a `word`."),
+            false,
+        ),
+        (
+            "a word that gets emphasis",
+            change("a word.", "a *word*."),
+            false,
+        ),
+        (
+            "a changed word in a code span",
+            change("`len`", "`size`"),
+            true,
+        ),
+        (
+            "a changed word in a code link",
+            change("[`cap`]", "[`top`]"),
+            true,
+        ),
+        (
+            "a letter moves into the nested item",
+            (
+                "**Rules**\n\n- {#strings.a} ab\n  - c\n".to_string(),
+                "**Rules**\n\n- {#strings.a} a\n  - bc\n".to_string(),
+            ),
+            true,
+        ),
+        (
+            "the list becomes loose",
+            (
+                "**Rules**\n\n- {#strings.a} one\n- {#strings.b} two\n".to_string(),
+                "**Rules**\n\n- {#strings.a} one\n\n- {#strings.b} two\n".to_string(),
+            ),
+            false,
+        ),
+    ];
+    for (row, (old, new), stale) in rows {
+        assert_ne!(old, new, "row {row}: the page should change");
+        let faults = rule_fault_list("strings", &new, &current_markers(&old));
+        let want: &[(usize, &str)] = if stale { &[(3, "changed")] } else { &[] };
+        assert_faults(row, &faults, want);
+    }
+}
+
+/// GIVEN a joined page with a rule with an ID, and a place for a pending example
+/// WHEN its faults are found
+/// THEN a rule in a `###` section with a `sisu pending` example needs no test
+/// AND a stale marker of it still fails
+/// AND a pending example before the first `##` or under a `####` heading puts no rule in
+/// development
+#[test]
+fn rule_in_development_should_need_no_test() {
+    let pending = "```sisu pending\nfn main() {}\n```\n";
+    let stale = [marker("crates/a.sisu", 1, "strings.a", "0000")];
+    let section = format!("### S\n\n{pending}\n**Rules**\n\n- {{#strings.a}} x\n");
+    let before = format!("{pending}\n## S\n\n**Rules**\n\n- {{#strings.a}} x\n");
+    let deeper = format!("### S\n\n**Rules**\n\n- {{#strings.a}} x\n\n#### T\n\n{pending}");
+    let rows: [(&str, &str, &[RuleMarker], &str, usize); 4] = [
+        ("pending in the section", &section, &[], "", 0),
+        ("pending and a stale marker", &section, &stale, "changed", 9),
+        (
+            "pending before the first heading",
+            &before,
+            &[],
+            "has no test",
+            9,
+        ),
+        (
+            "pending under a deeper heading",
+            &deeper,
+            &[],
+            "has no test",
+            5,
+        ),
+    ];
+    for (row, text, markers, fragment, line) in rows {
+        let faults = rule_fault_list("strings", text, markers);
+        let want: &[(usize, &str)] = if fragment.is_empty() {
+            &[]
+        } else {
+            &[(line, fragment)]
+        };
+        assert_faults(row, &faults, want);
+    }
+}
+
+/// GIVEN a joined page with a `###` section that holds a `sisu pending` example and a plain `sisu`
+/// example
+/// WHEN its faults are found
+/// THEN it fails with a fault that says to split the section, at the line of its heading
+#[test]
+fn mixed_section_should_fail_at_its_heading() {
+    let text = "\
+## One
+
+**Rules**
+
+- {#strings.a} x
+
+### Two
+
+```sisu pending
+fn main() {}
+```
+
+```sisu
+fn main() {}
+```
+";
+    let page = read_page(text);
+    assert_eq!(
+        page.examples.len(),
+        2,
+        "the examples are {:?}",
+        page.examples
+    );
+    let markers = current_markers(text);
+    assert_faults(
+        "mixed",
+        &rule_fault_list("strings", text, &markers),
+        &[(7, "a pending example and a plain example")],
+    );
+}
+
+/// GIVEN a joined page with the rules `strings.a` and `strings.b`
+/// AND one test file with a marker line for each, with current hashes
+/// WHEN its faults are found
+/// THEN there is no fault
+#[test]
+fn one_test_should_prove_two_rules() {
+    let text = "**Rules**\n\n- {#strings.a} one\n- {#strings.b} two\n";
+    let hashes: Vec<String> = read_page(text)
+        .rules
+        .iter()
+        .map(|r| r.hash.clone())
+        .collect();
+    let file = format!(
+        "// r[verify strings.a@{}]\n// r[verify strings.b@{}]\n",
+        hashes[0], hashes[1]
+    );
+    let (markers, faults) = read_markers("crates/sisuc/tests/run/a.sisu", file.as_bytes());
+    assert!(faults.is_empty(), "marker faults are {faults:?}");
+    let got: Vec<(usize, &str)> = markers.iter().map(|m| (m.line, m.id.as_str())).collect();
+    assert_eq!(
+        got,
+        [(1, "strings.a"), (2, "strings.b")],
+        "markers are {markers:?}"
+    );
+    assert_faults(
+        "two rules",
+        &rule_fault_list("strings", text, &markers),
+        &[],
     );
 }

@@ -15,6 +15,8 @@ pub(crate) struct RuleMarker {
     /// The 1-based line of the marker.
     pub(crate) line: usize,
     pub(crate) id: String,
+    /// The hash of the rule text when the test was last read: four lowercase hex digits.
+    pub(crate) hash: String,
 }
 
 /// A fault in a marker line, or in the file that holds it.
@@ -112,6 +114,7 @@ pub(crate) fn read_markers(file: &str, bytes: &[u8]) -> (Vec<RuleMarker>, Vec<Ma
                 file: file.to_string(),
                 line,
                 id: id.to_string(),
+                hash: String::from("0000"),
             });
         } else {
             faults.push(fault(

@@ -10,6 +10,7 @@ use std::collections::hash_map::Entry;
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use super::markers::RuleMarker;
 use super::{Fault, Page};
 
 /// One top-level item of a list of rules.
@@ -22,6 +23,8 @@ pub(crate) struct Rule {
     pub(crate) prefix: Option<String>,
     /// The ID of the item, when its prefix is `{#id} ` and the text follows on the same line.
     pub(crate) id: Option<String>,
+    /// The hash of the text of the rule: four lowercase hex digits.
+    pub(crate) hash: String,
 }
 
 /// A block at the top level of the page, as far as the test for a list of rules needs it.
@@ -80,7 +83,12 @@ pub(crate) fn read_rules(text: &str) -> (Vec<Rule>, Vec<usize>) {
             }
             if is_rule {
                 let (prefix, id) = prefix.map_or((None, None), |(written, id)| (Some(written), id));
-                rules.push(Rule { line, prefix, id });
+                rules.push(Rule {
+                    line,
+                    prefix,
+                    id,
+                    hash: String::from("0000"),
+                });
             }
         }
         if let Some(inline) = &mut paragraph
@@ -258,4 +266,10 @@ pub(crate) fn known_ids(pages: &[(String, Page)]) -> FxHashSet<String> {
         .filter(|(stem, _)| !is_index(stem))
         .flat_map(|(_, page)| page.rules.iter().filter_map(|rule| rule.id.clone()))
         .collect()
+}
+
+/// The faults of the proof of each rule of `page`, the page `stem`: a rule with no test, a rule
+/// whose text changed after its tests, and a section with a pending and a plain example.
+pub(crate) fn proof_faults(_stem: &str, _page: &Page, _markers: &[RuleMarker]) -> Vec<Fault> {
+    Vec::new()
 }

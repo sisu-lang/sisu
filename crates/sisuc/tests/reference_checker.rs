@@ -5,6 +5,10 @@ use std::path::Path;
 
 #[path = "reference_checker/markers.rs"]
 mod markers;
+#[expect(
+    dead_code,
+    reason = "red commit: Task 3 uses the headings and the marker hash"
+)]
 mod reference_check;
 #[path = "reference_checker/rules.rs"]
 mod rules;

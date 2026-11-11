@@ -7,15 +7,17 @@
 
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 
 use libtest_mimic::{Arguments, Failed, Trial};
 
+#[expect(dead_code, reason = "red commit: Task 3 uses the hashes")]
 mod reference_check;
 #[expect(dead_code, reason = "this binary uses only part of the shared helpers")]
 mod support;
 
 use reference_check::markers::{markers_in, unknown_ids};
-use reference_check::rules::{id_faults, known_ids};
+use reference_check::rules::{id_faults, known_ids, proof_faults};
 use reference_check::{Example, Fault, Page, check, read_page};
 
 /// The repository root, as seen from the crate directory that tests run in.
@@ -51,6 +53,7 @@ fn main() {
     let known = known_ids(&pages);
     let mut trials = Vec::new();
     for (stem, page) in pages {
+        let page = Arc::new(page);
         let file = format!("docs/reference/{stem}.md");
         let faults = fault_lines(&file, &page.faults);
         trials.push(Trial::test(
@@ -58,22 +61,31 @@ fn main() {
             move || fail_on(&faults),
         ));
         // A page with a `{#` item gets a rules trial. The index never joins, but the trial
-        // reports its IDs.
+        // reports its IDs. The walk runs in the closure, not in `main`: nextest starts this
+        // binary for each trial.
         if !page.id_lines.is_empty() {
-            let faults = fault_lines(&file, &id_faults(&stem, &page));
+            let (stem, page, file) = (stem.clone(), Arc::clone(&page), file.clone());
             trials.push(Trial::test(
                 format!("reference::{stem}::rules"),
-                move || fail_on(&faults),
+                move || {
+                    let (markers, _) = markers_in(Path::new(REPO)).map_err(Failed::from)?;
+                    let mut faults = id_faults(&stem, &page);
+                    faults.extend(proof_faults(&stem, &page, &markers));
+                    faults.sort_by_key(|fault| fault.line);
+                    fail_on(&fault_lines(&file, &faults))
+                },
             ));
         }
-        for example in page.examples {
-            let name = format!("reference::{stem}::{}", example.line);
-            let case = format!("reference/{stem}/{}", example.line);
-            let file = file.clone();
+        for index in 0..page.examples.len() {
+            let example_line = page.examples[index].line;
+            let name = format!("reference::{stem}::{example_line}");
+            let case = format!("reference/{stem}/{example_line}");
+            let (file, page) = (file.clone(), Arc::clone(&page));
             trials.push(Trial::test(name, move || {
+                let example = &page.examples[index];
                 let dir = support::case_dir(Path::new(&case));
-                check(&example, &dir)
-                    .map_err(|message| Failed::from(located(&file, &example, &message)))
+                check(example, &dir)
+                    .map_err(|message| Failed::from(located(&file, example, &message)))
             }));
         }
     }
