@@ -38,5 +38,13 @@ error[E0032]: expected `i64`, found `[]`
 38 |         break if d { [] } else { "x" }
    |                      ^^
 
-sisu: 5 errors
+error[E0032]: expected `i64`, found `None`
+  --> E0032-origin-break.sisu:45:19
+   |
+44 |         if c { break 1 }
+   |                ------- this `break` gave the loop the type `i64`
+45 |         break 1 + None
+   |                   ^^^^
+
+sisu: 6 errors
 sisu: for more on a code, run `sisu explain <code>`: E0032

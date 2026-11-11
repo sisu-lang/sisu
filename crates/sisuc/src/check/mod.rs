@@ -46,7 +46,7 @@ use crate::ast;
 use crate::conformance::{self, StuckChoices};
 use crate::diagnostic::{
     BuiltIn, Code, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, Expected, Literal,
-    MainForm, MismatchFix, MismatchOrigin, Severity, Unbuilt, UnknownForm, suggestion,
+    MainForm, MismatchFix, Severity, Unbuilt, UnknownForm, suggestion,
 };
 use crate::front_end::PreludeProgram;
 use crate::payload_limit;
@@ -2614,18 +2614,6 @@ impl Checker<'_> {
         got: Type,
         origin: Origin,
     ) -> Diagnostic {
-        self.mismatch_from(span, source, want, got, self.origin_fact(origin))
-    }
-
-    /// `mismatch`, where `want` came from the fact `origin`.
-    fn mismatch_from(
-        &self,
-        span: Span,
-        source: Option<&ast::Expr>,
-        want: Type,
-        got: Type,
-        origin: Option<MismatchOrigin>,
-    ) -> Diagnostic {
         let optional = matches!(want.kind(), TypeKind::Optional(_));
         // `u8` and `char` convert into each other through `i64`, and into `f64` through it.
         let (to, through) = match (payload(want), got) {
@@ -2644,7 +2632,7 @@ impl Checker<'_> {
             want: Expected::Types(vec![self.want_name(span, want)]),
             got: self.type_name(got),
             at: span,
-            origin,
+            origin: self.origin_fact(origin),
             fix: to
                 .zip(source.filter(|e| {
                     !matches!(

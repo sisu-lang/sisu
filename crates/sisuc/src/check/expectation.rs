@@ -11,7 +11,7 @@ use crate::tir::Type;
 pub(super) enum Origin {
     /// No origin that a report names.
     None,
-    /// The `break` at `at`, the first of its loop with a value, gave the loop the type `ty`.
+    /// The `break` at `at`, which gave the loop its type `ty`.
     Break { at: Span, ty: Type },
 }
 

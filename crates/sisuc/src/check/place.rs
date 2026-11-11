@@ -688,7 +688,13 @@ impl Checker<'_> {
         } else {
             // The place's own mismatch waits for `arithmetic`, which drops it beside a `char`.
             let start = self.diagnostics.mark();
-            let place = self.settled_by(target, read, Some(want), Some(operator.takes()));
+            let place = self.settled_by(
+                target,
+                read,
+                Some(want),
+                Origin::None,
+                Some(operator.takes()),
+            );
             // `arithmetic` restores them, or cuts them with the place, which is `Error` then.
             let held = self.diagnostics.take_since(start);
             self.arithmetic(span, (op, op_span), want, place, value, held)

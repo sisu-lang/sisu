@@ -324,6 +324,15 @@ impl Checker<'_> {
         let compound = operator == (Operator::Plus { compound: true });
         // An `i64` that the context wants holds an `f64` operand to it, in either order.
         let wants_i64 = expected.ty().map(payload) == Some(Type::I64);
+        // An operand held to the type of the context keeps the origin of that type.
+        let (context, context_origin) = (expected.ty(), expected.origin());
+        let origin_of = |want: Option<Type>| {
+            if want.is_some() && want == context {
+                context_origin
+            } else {
+                Origin::None
+            }
+        };
         let ranks: Vec<Rank> = operands.iter().map(|e| self.sibling_rank(e)).collect();
         let mut first = None;
         // Whether the operand checked first kept its E0050 (see `Poisoned::kept`).
@@ -444,12 +453,12 @@ impl Checker<'_> {
                     let hint = want.map_or(Expectation::Poisoned, |want| Expectation::Hint {
                         want,
                         siblings: want,
-                        origin: Origin::None,
+                        origin: origin_of(Some(want)),
                     });
                     self.value(e, hint)
                 }
                 None if by_char => self.value(e, Expectation::None),
-                None => self.value(e, Expectation::or_poisoned(want, Origin::None)),
+                None => self.value(e, Expectation::or_poisoned(want, origin_of(want))),
             };
             if ranks[i] != Rank::Concrete {
                 // Held for `restore` below, where a `char` operand may cut them with the operator.
@@ -572,14 +581,15 @@ impl Checker<'_> {
                     (value, false)
                 } else {
                     let start = self.diagnostics.mark();
-                    let settled = self.settled_by(e, value, want, Some(takes));
+                    let settled = self.settled_by(e, value, want, origin_of(want), Some(takes));
                     // Held for `restore` below, as above.
                     deferred.absorb(self.diagnostics.take_since(start));
                     settled
                 }
             } else {
                 let start = self.diagnostics.mark();
-                let settled = self.settled_by(e, value, want, takes.filter(|_| leader == Some(i)));
+                let takes = takes.filter(|_| leader == Some(i));
+                let settled = self.settled_by(e, value, want, origin_of(want), takes);
                 // Held for `restore` below, as above.
                 deferred.absorb(self.diagnostics.take_since(start));
                 settled
@@ -679,14 +689,15 @@ impl Checker<'_> {
         typed(span, want, l_mismatched || r_mismatched, kind)
     }
 
-    /// `settled`, except that a `checked` of a type that is none of `takes`, if given, is
-    /// reported against all of them. Such a `checked` was found with no expected type, so no
-    /// `mismatch` poison is in it for `settled` to pass on.
+    /// `settled` against `want` from `origin`, except that a `checked` of a type that is none of
+    /// `takes`, if given, is reported against all of them. Such a `checked` was found with no
+    /// expected type, so no `mismatch` poison is in it for `settled` to pass on.
     pub(super) fn settled_by(
         &mut self,
         e: &ast::Expr,
         checked: Checked,
         want: Option<Type>,
+        origin: Origin,
         takes: Option<&[Type]>,
     ) -> (Checked, bool) {
         // An operand before it that failed has left `want` unset: one error is enough.
@@ -701,7 +712,7 @@ impl Checker<'_> {
             self.settle_misfit(&checked);
             return (Err(Poisoned::untyped(reported)), true);
         }
-        self.settled(e, checked, Expectation::or_poisoned(want, Origin::None))
+        self.settled(e, checked, Expectation::or_poisoned(want, origin))
     }
 
     /// "expected `takes`, found `got`" at `at`: the types an operator takes, `got` not among them.
