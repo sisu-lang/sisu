@@ -58,6 +58,11 @@ pub(super) enum Helper {
     /// `@sisu_rc.trim.[T](value)` and `@sisu_rc.trim.string(value)`: return the value, or a copy
     /// in a block of exactly its length and a release of the old block (see `trim`).
     Trim,
+    /// `@sisu_rc.concat.string(value, rhs_len) -> value`: makes room for `rhs_len` more bytes
+    /// after `value`, in the ways of `concat`. It stores the new length in the header. It
+    /// returns the value with the new length, `value.len() + rhs_len`. The caller writes the last
+    /// `rhs_len` bytes of that value.
+    Concat,
     /// `@sisu_rc.walk.<F>(value, heads)`: releases a value's counted parts, listing its boxes.
     Walk,
     /// `@sisu_rc.drain.<F0>(heads)`: frees the boxes of an enum component, or the objects of
@@ -198,10 +203,14 @@ thread_local! {
 }
 
 impl<'ctx> Codegen<'ctx, '_> {
-    /// Declares `sisu_rc.<kind>.<name>` on first use and queues its body: `kind` is `retain`,
-    /// `release`, `drop`, `eq`, `unique`, `walk`, `drain`, `eq_component`, `unbox`, `free` or
-    /// `reuse`, and `name` is a class's or an enum's name, `string`, or `[<element name>]` for an
-    /// array (`[Node?]`, `[[i64]]`).
+    /// Declares `sisu_rc.<kind>.<name>` on first use and queues its body. The `kind` is `retain`,
+    /// `release`, `drop`, `eq`, `unique`, `trim`, `concat`, `walk`, `drain`, `eq_component`,
+    /// `unbox`, `free` or `reuse`. The `name` is a class's or an enum's name, `string`, or
+    /// `[<element name>]` for an array (`[Node?]`, `[[i64]]`).
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm for each kind of helper reads best in one place"
+    )]
     pub(super) fn helper(&self, kind: Helper, ty: Type) -> FunctionValue<'ctx> {
         // A type that holds no class is written the same in both modes, by one helper. Only the
         // `dbg` helper of a type that holds a class asks for a `dbg` component helper, and the
@@ -233,6 +242,13 @@ impl<'ctx> Codegen<'ctx, '_> {
             Helper::Trim => (
                 "trim",
                 self.value_type().fn_type(&self.param_types(ty), false),
+            ),
+            Helper::Concat => (
+                "concat",
+                self.value_type().fn_type(
+                    &[self.param_types(ty), vec![self.context.i64_type().into()]].concat(),
+                    false,
+                ),
             ),
             Helper::Walk => (
                 "walk",
@@ -290,7 +306,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         match kind {
             Helper::Eq => self.mark_eq(function, ty),
             Helper::Show(_) => self.mark_len_params(function, 1, &[ty]),
-            Helper::Trim => self.mark_trim(function, ty),
+            Helper::Trim | Helper::Concat => self.mark_out_of_line(function, ty),
             Helper::Retain
             | Helper::Release
             | Helper::Drop
@@ -317,11 +333,13 @@ impl<'ctx> Codegen<'ctx, '_> {
         }
     }
 
-    /// Gives `@sisu_rc.trim.[T]` and `@sisu_rc.trim.string`, which take a value of the type `ty`,
-    /// the facts of a value's length, and `noinline`. The trim point tests the common case itself,
-    /// so the optimizer keeps this call out of line there: the size tests and the copy would be
-    /// repeated at each point.
-    fn mark_trim(&self, function: FunctionValue<'ctx>, ty: Type) {
+    /// Gives a helper that takes a value of the type `ty` the facts of a value's length, and
+    /// `noinline`. The helpers are `@sisu_rc.trim.[T]`, `@sisu_rc.trim.string` and
+    /// `@sisu_rc.concat.string`. The trim point tests the common case itself, so the optimizer
+    /// keeps this call out of line there: the size tests and the copy would be repeated at each
+    /// point. The join helper inlined at each `+` would chain its `phi` nodes through the joins
+    /// of a function again (#633).
+    fn mark_out_of_line(&self, function: FunctionValue<'ctx>, ty: Type) {
         self.mark_len_params(function, 0, &[ty]);
         self.mark_noinline(function);
     }
@@ -381,9 +399,9 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// Both return at once on `null`. Drop does not recurse on a field of a class in its own
     /// cycle: see `define_drop`.
     /// `@sisu_rc.eq.<C>` is `==` on two objects with a written `Eq`; see `define_written_eq`.
-    /// An array's `drop`, `eq` and `unique` come from `define_array_helper`, a string's `drop` and
-    /// `eq` from `define_string_helper`, an enum's `retain`, `release` and `eq` from
-    /// `define_enum_helper`.
+    /// An array's `drop`, `eq`, `unique` and `trim` come from `define_array_helper`. A string's
+    /// `drop`, `eq`, `trim` and `concat` come from `define_string_helper`. An enum's `retain`,
+    /// `release` and `eq` come from `define_enum_helper`.
     /// Defining a body can declare more helpers, so this runs until none is left to define.
     pub(super) fn define_helpers(&self) {
         let (object, done) = self.helper_entry(self.rc_retain);
@@ -420,9 +438,9 @@ impl<'ctx> Codegen<'ctx, '_> {
                         "only a class with a written `Eq` should be queued for a class `eq` helper"
                     )
                 }
-                (Helper::Unique | Helper::Trim, _) => {
+                (Helper::Unique | Helper::Trim | Helper::Concat, _) => {
                     unreachable!(
-                        "only an array or string type should be queued for a `unique` or `trim` helper"
+                        "only an array or string type should be queued for a `unique` or `trim` helper, and only a string for a `concat` helper"
                     )
                 }
                 (Helper::Walk | Helper::EqComponent | Helper::ShowComponent(_), _) => {

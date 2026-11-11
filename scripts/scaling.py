@@ -69,6 +69,8 @@ O2_SHAPES = (
     "string literal width",
     "prints",
     "nested array ==",
+    "string left",
+    "string statements",
 )
 # The shapes whose programs are errors, so that nothing after `check` runs for them. The value
 # is the error code that each of their programs above size 0 must give.
@@ -163,6 +165,15 @@ def string_call_depth(k: int) -> str:
     return (
         "fn _g(_a: string, b: string) -> string {\n    b\n}\n\n"
         f'fn main() {{\n    let x = {call}\n    print("{{x}}")\n}}\n'
+    )
+
+
+def string_statements(k: int) -> str:
+    """Return a `main` that adds to a string in `k + 1` statements."""
+    lines = "".join(f'    out = out + "<p{tag(i)}>" + t\n' for i in range(k))
+    return (
+        'fn main(args: [string]) {\n    let t = "{args.len()}"\n    let mut out = ""\n'
+        f"    out = out + t\n{lines}    print(out)\n}}\n"
     )
 
 
@@ -511,6 +522,7 @@ SHAPES = {
     "float left": (12, float_left),
     "string left": (12, string_left),
     "string call depth": (12, string_call_depth),
+    "string statements": (10, string_statements),
     "comments": (250, comments),
     "mut parameters": (250, mut_parameters),
     "mut returns": (250, mut_returns),
