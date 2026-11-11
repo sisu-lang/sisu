@@ -3,6 +3,7 @@
 import contextlib
 import html
 import io
+import json
 import re
 import tempfile
 import unittest
@@ -1381,6 +1382,25 @@ class Build(unittest.TestCase):
         self.assertEqual(
             [page["body"].count("<li") for page in build.reference_pages(entries)], [2]
         )
+
+    def test_site_should_agree_with_the_check_on_each_generated_rule(self) -> None:
+        """
+        GIVEN each page of `crates/sisuc/tests/reference_checker/rule_ids.json`, made from parts,
+        with the verdict of the reference check on it: a fault, or the IDs of its rules
+        WHEN `site/build.py` builds the page
+        THEN it raises `BuildError`, or the check has a fault, or both give the same IDs
+        """
+        self.maxDiff = None
+        table = build.ROOT / "crates/sisuc/tests/reference_checker/rule_ids.json"
+        disagree = []
+        for case in json.loads(table.read_text(encoding="utf-8")):
+            try:
+                body = ref_html(self, case["page"])[0]
+            except build.BuildError:
+                continue
+            if not case["fault"] and re.findall(r'<li id="([^"]+)"', body) != case["ids"]:
+                disagree.append(case["name"])
+        self.assertEqual(disagree, [])
 
     def test_rule_should_list_the_tests_that_prove_it(self) -> None:
         """

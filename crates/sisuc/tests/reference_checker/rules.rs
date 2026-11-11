@@ -915,3 +915,99 @@ fn rule_faults_should_come_in_line_order() {
         &[(3, "strings.a has no test"), (4, "must start with")],
     );
 }
+
+/// The table of generated rule pages and the check's verdict on each. `site/build_test.py` reads
+/// it and builds each page, so the site and the check see the same input.
+const RULE_TABLE: &str = "tests/reference_checker/rule_ids.json";
+
+/// The page that puts the rule item `item` in `container`. On a joined page, a rule with an ID
+/// comes first.
+fn rule_page(container: &str, joined: bool, item: &str) -> String {
+    let first = if joined { "- {#strings.a.a} w\n" } else { "" };
+    let parent = if joined { "{#strings.a.a} " } else { "" };
+    let body = match container {
+        "rule" => format!("**Rules**\n\n{first}- {item}\n"),
+        "nested item" => format!("**Rules**\n\n- {parent}w\n  - {item}\n"),
+        "block quote" => format!("**Rules**\n\n{first}- > {item}\n"),
+        "ordered item" => format!("**Rules**\n\n{first}1. {item}\n"),
+        "plain list" => format!("**Rules**\n\n{first}\nA sentence.\n\n- {item}\n"),
+        "lazy line" => format!("**Rules**\n\n{first}- x\n{item}\n"),
+        "HTML block" => format!("**Rules**\n\n{first}- <div>\n{item}\n"),
+        _ => unreachable!("no container {container}"),
+    };
+    format!("# T\n\n{body}")
+}
+
+/// GIVEN a rule item made of parts: a container, a page that joined or not, a character before
+/// the ID, and backslashes before the `{#`
+/// WHEN the check reads each page
+/// THEN its verdict, a fault or the IDs of the rules, is the one that `rule_ids.json` holds
+/// AND `site/build_test.py` checks that the site gives no other IDs when neither side fails.
+/// `SISU_BLESS=1 cargo nextest run --test reference_checker` rewrites the table.
+#[test]
+fn generated_rule_should_get_the_verdict_of_the_table_that_the_site_reads() {
+    let leads = [
+        "", " ", "\t", "\u{a0}", "\u{3000}", "\u{1c}", "\u{1d}", "\u{1e}", "\u{1f}", "\u{200b}",
+        "\u{feff}",
+    ];
+    let escapes = [
+        ("no backslash", ""),
+        ("one backslash", "\\"),
+        ("two backslashes", "\\\\"),
+    ];
+    let containers = [
+        "rule",
+        "nested item",
+        "block quote",
+        "ordered item",
+        "plain list",
+        "lazy line",
+        "HTML block",
+    ];
+    let mut cases = Vec::new();
+    for container in containers {
+        for joined in [false, true] {
+            for lead in leads {
+                for (escape_name, escape) in escapes {
+                    let lead_name = lead.chars().next().map_or_else(
+                        || "nothing".to_string(),
+                        |c| format!("U+{:04X}", u32::from(c)),
+                    );
+                    let page = rule_page(
+                        container,
+                        joined,
+                        &format!("{lead}{escape}{{#strings.a.b}} x"),
+                    );
+                    let read = read_page(&page);
+                    let fault = !read.faults.is_empty() || !id_faults("strings", &read).is_empty();
+                    let ids: Vec<&str> = read
+                        .rules
+                        .iter()
+                        .filter_map(|rule| rule.id.as_deref())
+                        .collect();
+                    let joined_name = if joined { "joined" } else { "not joined" };
+                    cases.push(serde_json::json!({
+                        "name": format!("{container}, {joined_name}, {lead_name}, {escape_name}"),
+                        "page": page,
+                        "fault": fault,
+                        "ids": ids,
+                    }));
+                }
+            }
+        }
+    }
+    let json = serde_json::to_string_pretty(&cases).expect("the table should serialize");
+    // ASCII only, so that no invisible character is in the file.
+    let ascii: String = json
+        .chars()
+        .map(|c| {
+            if c.is_ascii() {
+                c.to_string()
+            } else {
+                format!("\\u{:04x}", u32::from(c))
+            }
+        })
+        .collect();
+    let bless = std::env::var("SISU_BLESS").as_deref() == Ok("1");
+    crate::support::expect_files(&[(RULE_TABLE.into(), ascii + "\n")], bless);
+}

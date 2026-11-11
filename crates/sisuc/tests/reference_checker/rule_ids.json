@@ -1,0 +1,3326 @@
+[
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "rule, not joined, nothing, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "rule, not joined, nothing, one backslash",
+    "page": "# T\n\n**Rules**\n\n- \\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "rule, not joined, nothing, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- \\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "rule, not joined, U+0020, no backslash",
+    "page": "# T\n\n**Rules**\n\n-  {#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "rule, not joined, U+0020, one backslash",
+    "page": "# T\n\n**Rules**\n\n-  \\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "rule, not joined, U+0020, two backslashes",
+    "page": "# T\n\n**Rules**\n\n-  \\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "rule, not joined, U+0009, no backslash",
+    "page": "# T\n\n**Rules**\n\n- \t{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "rule, not joined, U+0009, one backslash",
+    "page": "# T\n\n**Rules**\n\n- \t\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "rule, not joined, U+0009, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- \t\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "rule, not joined, U+00A0, no backslash",
+    "page": "# T\n\n**Rules**\n\n- \u00a0{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "rule, not joined, U+00A0, one backslash",
+    "page": "# T\n\n**Rules**\n\n- \u00a0\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "rule, not joined, U+00A0, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- \u00a0\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "rule, not joined, U+3000, no backslash",
+    "page": "# T\n\n**Rules**\n\n- \u3000{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "rule, not joined, U+3000, one backslash",
+    "page": "# T\n\n**Rules**\n\n- \u3000\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "rule, not joined, U+3000, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- \u3000\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "rule, not joined, U+001C, no backslash",
+    "page": "# T\n\n**Rules**\n\n- \u001c{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "rule, not joined, U+001C, one backslash",
+    "page": "# T\n\n**Rules**\n\n- \u001c\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "rule, not joined, U+001C, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- \u001c\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "rule, not joined, U+001D, no backslash",
+    "page": "# T\n\n**Rules**\n\n- \u001d{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "rule, not joined, U+001D, one backslash",
+    "page": "# T\n\n**Rules**\n\n- \u001d\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "rule, not joined, U+001D, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- \u001d\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "rule, not joined, U+001E, no backslash",
+    "page": "# T\n\n**Rules**\n\n- \u001e{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "rule, not joined, U+001E, one backslash",
+    "page": "# T\n\n**Rules**\n\n- \u001e\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "rule, not joined, U+001E, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- \u001e\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "rule, not joined, U+001F, no backslash",
+    "page": "# T\n\n**Rules**\n\n- \u001f{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "rule, not joined, U+001F, one backslash",
+    "page": "# T\n\n**Rules**\n\n- \u001f\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "rule, not joined, U+001F, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- \u001f\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "rule, not joined, U+200B, no backslash",
+    "page": "# T\n\n**Rules**\n\n- \u200b{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "rule, not joined, U+200B, one backslash",
+    "page": "# T\n\n**Rules**\n\n- \u200b\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "rule, not joined, U+200B, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- \u200b\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "rule, not joined, U+FEFF, no backslash",
+    "page": "# T\n\n**Rules**\n\n- \ufeff{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "rule, not joined, U+FEFF, one backslash",
+    "page": "# T\n\n**Rules**\n\n- \ufeff\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "rule, not joined, U+FEFF, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- \ufeff\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a",
+      "strings.a.b"
+    ],
+    "name": "rule, joined, nothing, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- {#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a",
+      "strings.a.b"
+    ],
+    "name": "rule, joined, nothing, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- \\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "rule, joined, nothing, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- \\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a",
+      "strings.a.b"
+    ],
+    "name": "rule, joined, U+0020, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n-  {#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a",
+      "strings.a.b"
+    ],
+    "name": "rule, joined, U+0020, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n-  \\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "rule, joined, U+0020, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n-  \\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a",
+      "strings.a.b"
+    ],
+    "name": "rule, joined, U+0009, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- \t{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a",
+      "strings.a.b"
+    ],
+    "name": "rule, joined, U+0009, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- \t\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "rule, joined, U+0009, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- \t\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a",
+      "strings.a.b"
+    ],
+    "name": "rule, joined, U+00A0, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- \u00a0{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a",
+      "strings.a.b"
+    ],
+    "name": "rule, joined, U+00A0, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- \u00a0\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "rule, joined, U+00A0, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- \u00a0\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a",
+      "strings.a.b"
+    ],
+    "name": "rule, joined, U+3000, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- \u3000{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a",
+      "strings.a.b"
+    ],
+    "name": "rule, joined, U+3000, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- \u3000\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "rule, joined, U+3000, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- \u3000\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a",
+      "strings.a.b"
+    ],
+    "name": "rule, joined, U+001C, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- \u001c{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a",
+      "strings.a.b"
+    ],
+    "name": "rule, joined, U+001C, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- \u001c\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "rule, joined, U+001C, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- \u001c\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a",
+      "strings.a.b"
+    ],
+    "name": "rule, joined, U+001D, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- \u001d{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a",
+      "strings.a.b"
+    ],
+    "name": "rule, joined, U+001D, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- \u001d\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "rule, joined, U+001D, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- \u001d\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a",
+      "strings.a.b"
+    ],
+    "name": "rule, joined, U+001E, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- \u001e{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a",
+      "strings.a.b"
+    ],
+    "name": "rule, joined, U+001E, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- \u001e\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "rule, joined, U+001E, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- \u001e\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a",
+      "strings.a.b"
+    ],
+    "name": "rule, joined, U+001F, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- \u001f{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a",
+      "strings.a.b"
+    ],
+    "name": "rule, joined, U+001F, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- \u001f\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "rule, joined, U+001F, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- \u001f\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "rule, joined, U+200B, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- \u200b{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "rule, joined, U+200B, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- \u200b\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "rule, joined, U+200B, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- \u200b\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "rule, joined, U+FEFF, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- \ufeff{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "rule, joined, U+FEFF, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- \ufeff\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "rule, joined, U+FEFF, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- \ufeff\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "nested item, not joined, nothing, no backslash",
+    "page": "# T\n\n**Rules**\n\n- w\n  - {#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "nested item, not joined, nothing, one backslash",
+    "page": "# T\n\n**Rules**\n\n- w\n  - \\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "nested item, not joined, nothing, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- w\n  - \\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "nested item, not joined, U+0020, no backslash",
+    "page": "# T\n\n**Rules**\n\n- w\n  -  {#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "nested item, not joined, U+0020, one backslash",
+    "page": "# T\n\n**Rules**\n\n- w\n  -  \\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "nested item, not joined, U+0020, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- w\n  -  \\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "nested item, not joined, U+0009, no backslash",
+    "page": "# T\n\n**Rules**\n\n- w\n  - \t{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "nested item, not joined, U+0009, one backslash",
+    "page": "# T\n\n**Rules**\n\n- w\n  - \t\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "nested item, not joined, U+0009, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- w\n  - \t\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "nested item, not joined, U+00A0, no backslash",
+    "page": "# T\n\n**Rules**\n\n- w\n  - \u00a0{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "nested item, not joined, U+00A0, one backslash",
+    "page": "# T\n\n**Rules**\n\n- w\n  - \u00a0\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "nested item, not joined, U+00A0, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- w\n  - \u00a0\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "nested item, not joined, U+3000, no backslash",
+    "page": "# T\n\n**Rules**\n\n- w\n  - \u3000{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "nested item, not joined, U+3000, one backslash",
+    "page": "# T\n\n**Rules**\n\n- w\n  - \u3000\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "nested item, not joined, U+3000, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- w\n  - \u3000\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "nested item, not joined, U+001C, no backslash",
+    "page": "# T\n\n**Rules**\n\n- w\n  - \u001c{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "nested item, not joined, U+001C, one backslash",
+    "page": "# T\n\n**Rules**\n\n- w\n  - \u001c\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "nested item, not joined, U+001C, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- w\n  - \u001c\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "nested item, not joined, U+001D, no backslash",
+    "page": "# T\n\n**Rules**\n\n- w\n  - \u001d{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "nested item, not joined, U+001D, one backslash",
+    "page": "# T\n\n**Rules**\n\n- w\n  - \u001d\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "nested item, not joined, U+001D, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- w\n  - \u001d\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "nested item, not joined, U+001E, no backslash",
+    "page": "# T\n\n**Rules**\n\n- w\n  - \u001e{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "nested item, not joined, U+001E, one backslash",
+    "page": "# T\n\n**Rules**\n\n- w\n  - \u001e\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "nested item, not joined, U+001E, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- w\n  - \u001e\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "nested item, not joined, U+001F, no backslash",
+    "page": "# T\n\n**Rules**\n\n- w\n  - \u001f{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "nested item, not joined, U+001F, one backslash",
+    "page": "# T\n\n**Rules**\n\n- w\n  - \u001f\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "nested item, not joined, U+001F, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- w\n  - \u001f\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "nested item, not joined, U+200B, no backslash",
+    "page": "# T\n\n**Rules**\n\n- w\n  - \u200b{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "nested item, not joined, U+200B, one backslash",
+    "page": "# T\n\n**Rules**\n\n- w\n  - \u200b\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "nested item, not joined, U+200B, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- w\n  - \u200b\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "nested item, not joined, U+FEFF, no backslash",
+    "page": "# T\n\n**Rules**\n\n- w\n  - \ufeff{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "nested item, not joined, U+FEFF, one backslash",
+    "page": "# T\n\n**Rules**\n\n- w\n  - \ufeff\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "nested item, not joined, U+FEFF, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- w\n  - \ufeff\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, nothing, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - {#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, nothing, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - \\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, nothing, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - \\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+0020, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  -  {#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+0020, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  -  \\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+0020, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  -  \\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+0009, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - \t{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+0009, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - \t\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+0009, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - \t\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+00A0, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - \u00a0{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+00A0, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - \u00a0\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+00A0, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - \u00a0\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+3000, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - \u3000{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+3000, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - \u3000\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+3000, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - \u3000\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+001C, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - \u001c{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+001C, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - \u001c\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+001C, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - \u001c\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+001D, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - \u001d{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+001D, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - \u001d\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+001D, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - \u001d\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+001E, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - \u001e{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+001E, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - \u001e\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+001E, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - \u001e\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+001F, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - \u001f{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+001F, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - \u001f\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+001F, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - \u001f\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+200B, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - \u200b{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+200B, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - \u200b\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+200B, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - \u200b\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+FEFF, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - \ufeff{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+FEFF, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - \ufeff\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "nested item, joined, U+FEFF, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n  - \ufeff\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, nothing, no backslash",
+    "page": "# T\n\n**Rules**\n\n- > {#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, nothing, one backslash",
+    "page": "# T\n\n**Rules**\n\n- > \\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, nothing, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- > \\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, U+0020, no backslash",
+    "page": "# T\n\n**Rules**\n\n- >  {#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, U+0020, one backslash",
+    "page": "# T\n\n**Rules**\n\n- >  \\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, U+0020, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- >  \\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "block quote, not joined, U+0009, no backslash",
+    "page": "# T\n\n**Rules**\n\n- > \t{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "block quote, not joined, U+0009, one backslash",
+    "page": "# T\n\n**Rules**\n\n- > \t\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "block quote, not joined, U+0009, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- > \t\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, U+00A0, no backslash",
+    "page": "# T\n\n**Rules**\n\n- > \u00a0{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, U+00A0, one backslash",
+    "page": "# T\n\n**Rules**\n\n- > \u00a0\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, U+00A0, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- > \u00a0\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, U+3000, no backslash",
+    "page": "# T\n\n**Rules**\n\n- > \u3000{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, U+3000, one backslash",
+    "page": "# T\n\n**Rules**\n\n- > \u3000\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, U+3000, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- > \u3000\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, U+001C, no backslash",
+    "page": "# T\n\n**Rules**\n\n- > \u001c{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, U+001C, one backslash",
+    "page": "# T\n\n**Rules**\n\n- > \u001c\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, U+001C, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- > \u001c\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, U+001D, no backslash",
+    "page": "# T\n\n**Rules**\n\n- > \u001d{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, U+001D, one backslash",
+    "page": "# T\n\n**Rules**\n\n- > \u001d\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, U+001D, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- > \u001d\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, U+001E, no backslash",
+    "page": "# T\n\n**Rules**\n\n- > \u001e{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, U+001E, one backslash",
+    "page": "# T\n\n**Rules**\n\n- > \u001e\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, U+001E, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- > \u001e\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, U+001F, no backslash",
+    "page": "# T\n\n**Rules**\n\n- > \u001f{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, U+001F, one backslash",
+    "page": "# T\n\n**Rules**\n\n- > \u001f\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, U+001F, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- > \u001f\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, U+200B, no backslash",
+    "page": "# T\n\n**Rules**\n\n- > \u200b{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, U+200B, one backslash",
+    "page": "# T\n\n**Rules**\n\n- > \u200b\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, U+200B, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- > \u200b\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, U+FEFF, no backslash",
+    "page": "# T\n\n**Rules**\n\n- > \ufeff{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, U+FEFF, one backslash",
+    "page": "# T\n\n**Rules**\n\n- > \ufeff\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "block quote, not joined, U+FEFF, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- > \ufeff\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, nothing, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > {#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, nothing, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > \\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, nothing, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > \\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+0020, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- >  {#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+0020, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- >  \\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+0020, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- >  \\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+0009, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > \t{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+0009, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > \t\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+0009, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > \t\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+00A0, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > \u00a0{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+00A0, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > \u00a0\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+00A0, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > \u00a0\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+3000, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > \u3000{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+3000, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > \u3000\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+3000, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > \u3000\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+001C, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > \u001c{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+001C, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > \u001c\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+001C, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > \u001c\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+001D, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > \u001d{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+001D, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > \u001d\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+001D, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > \u001d\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+001E, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > \u001e{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+001E, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > \u001e\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+001E, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > \u001e\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+001F, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > \u001f{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+001F, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > \u001f\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+001F, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > \u001f\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+200B, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > \u200b{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+200B, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > \u200b\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+200B, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > \u200b\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+FEFF, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > \ufeff{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+FEFF, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > \ufeff\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "block quote, joined, U+FEFF, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- > \ufeff\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "ordered item, not joined, nothing, no backslash",
+    "page": "# T\n\n**Rules**\n\n1. {#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "ordered item, not joined, nothing, one backslash",
+    "page": "# T\n\n**Rules**\n\n1. \\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "ordered item, not joined, nothing, two backslashes",
+    "page": "# T\n\n**Rules**\n\n1. \\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "ordered item, not joined, U+0020, no backslash",
+    "page": "# T\n\n**Rules**\n\n1.  {#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "ordered item, not joined, U+0020, one backslash",
+    "page": "# T\n\n**Rules**\n\n1.  \\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "ordered item, not joined, U+0020, two backslashes",
+    "page": "# T\n\n**Rules**\n\n1.  \\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "ordered item, not joined, U+0009, no backslash",
+    "page": "# T\n\n**Rules**\n\n1. \t{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "ordered item, not joined, U+0009, one backslash",
+    "page": "# T\n\n**Rules**\n\n1. \t\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "ordered item, not joined, U+0009, two backslashes",
+    "page": "# T\n\n**Rules**\n\n1. \t\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "ordered item, not joined, U+00A0, no backslash",
+    "page": "# T\n\n**Rules**\n\n1. \u00a0{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "ordered item, not joined, U+00A0, one backslash",
+    "page": "# T\n\n**Rules**\n\n1. \u00a0\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "ordered item, not joined, U+00A0, two backslashes",
+    "page": "# T\n\n**Rules**\n\n1. \u00a0\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "ordered item, not joined, U+3000, no backslash",
+    "page": "# T\n\n**Rules**\n\n1. \u3000{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "ordered item, not joined, U+3000, one backslash",
+    "page": "# T\n\n**Rules**\n\n1. \u3000\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "ordered item, not joined, U+3000, two backslashes",
+    "page": "# T\n\n**Rules**\n\n1. \u3000\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "ordered item, not joined, U+001C, no backslash",
+    "page": "# T\n\n**Rules**\n\n1. \u001c{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "ordered item, not joined, U+001C, one backslash",
+    "page": "# T\n\n**Rules**\n\n1. \u001c\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "ordered item, not joined, U+001C, two backslashes",
+    "page": "# T\n\n**Rules**\n\n1. \u001c\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "ordered item, not joined, U+001D, no backslash",
+    "page": "# T\n\n**Rules**\n\n1. \u001d{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "ordered item, not joined, U+001D, one backslash",
+    "page": "# T\n\n**Rules**\n\n1. \u001d\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "ordered item, not joined, U+001D, two backslashes",
+    "page": "# T\n\n**Rules**\n\n1. \u001d\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "ordered item, not joined, U+001E, no backslash",
+    "page": "# T\n\n**Rules**\n\n1. \u001e{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "ordered item, not joined, U+001E, one backslash",
+    "page": "# T\n\n**Rules**\n\n1. \u001e\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "ordered item, not joined, U+001E, two backslashes",
+    "page": "# T\n\n**Rules**\n\n1. \u001e\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "ordered item, not joined, U+001F, no backslash",
+    "page": "# T\n\n**Rules**\n\n1. \u001f{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "ordered item, not joined, U+001F, one backslash",
+    "page": "# T\n\n**Rules**\n\n1. \u001f\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "ordered item, not joined, U+001F, two backslashes",
+    "page": "# T\n\n**Rules**\n\n1. \u001f\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "ordered item, not joined, U+200B, no backslash",
+    "page": "# T\n\n**Rules**\n\n1. \u200b{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "ordered item, not joined, U+200B, one backslash",
+    "page": "# T\n\n**Rules**\n\n1. \u200b\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "ordered item, not joined, U+200B, two backslashes",
+    "page": "# T\n\n**Rules**\n\n1. \u200b\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "ordered item, not joined, U+FEFF, no backslash",
+    "page": "# T\n\n**Rules**\n\n1. \ufeff{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "ordered item, not joined, U+FEFF, one backslash",
+    "page": "# T\n\n**Rules**\n\n1. \ufeff\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "ordered item, not joined, U+FEFF, two backslashes",
+    "page": "# T\n\n**Rules**\n\n1. \ufeff\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, nothing, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. {#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, nothing, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. \\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, nothing, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. \\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+0020, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1.  {#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+0020, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1.  \\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+0020, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1.  \\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+0009, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. \t{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+0009, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. \t\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+0009, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. \t\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+00A0, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. \u00a0{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+00A0, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. \u00a0\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+00A0, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. \u00a0\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+3000, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. \u3000{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+3000, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. \u3000\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+3000, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. \u3000\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+001C, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. \u001c{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+001C, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. \u001c\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+001C, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. \u001c\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+001D, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. \u001d{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+001D, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. \u001d\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+001D, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. \u001d\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+001E, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. \u001e{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+001E, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. \u001e\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+001E, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. \u001e\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+001F, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. \u001f{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+001F, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. \u001f\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+001F, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. \u001f\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+200B, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. \u200b{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+200B, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. \u200b\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+200B, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. \u200b\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+FEFF, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. \ufeff{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+FEFF, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. \ufeff\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "ordered item, joined, U+FEFF, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n1. \ufeff\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "plain list, not joined, nothing, no backslash",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- {#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "plain list, not joined, nothing, one backslash",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- \\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "plain list, not joined, nothing, two backslashes",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- \\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "plain list, not joined, U+0020, no backslash",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n-  {#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "plain list, not joined, U+0020, one backslash",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n-  \\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "plain list, not joined, U+0020, two backslashes",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n-  \\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "plain list, not joined, U+0009, no backslash",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- \t{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "plain list, not joined, U+0009, one backslash",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- \t\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "plain list, not joined, U+0009, two backslashes",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- \t\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "plain list, not joined, U+00A0, no backslash",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- \u00a0{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "plain list, not joined, U+00A0, one backslash",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- \u00a0\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "plain list, not joined, U+00A0, two backslashes",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- \u00a0\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "plain list, not joined, U+3000, no backslash",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- \u3000{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "plain list, not joined, U+3000, one backslash",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- \u3000\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "plain list, not joined, U+3000, two backslashes",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- \u3000\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "plain list, not joined, U+001C, no backslash",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- \u001c{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "plain list, not joined, U+001C, one backslash",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- \u001c\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "plain list, not joined, U+001C, two backslashes",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- \u001c\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "plain list, not joined, U+001D, no backslash",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- \u001d{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "plain list, not joined, U+001D, one backslash",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- \u001d\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "plain list, not joined, U+001D, two backslashes",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- \u001d\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "plain list, not joined, U+001E, no backslash",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- \u001e{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "plain list, not joined, U+001E, one backslash",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- \u001e\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "plain list, not joined, U+001E, two backslashes",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- \u001e\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "plain list, not joined, U+001F, no backslash",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- \u001f{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.b"
+    ],
+    "name": "plain list, not joined, U+001F, one backslash",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- \u001f\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "plain list, not joined, U+001F, two backslashes",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- \u001f\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "plain list, not joined, U+200B, no backslash",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- \u200b{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "plain list, not joined, U+200B, one backslash",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- \u200b\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "plain list, not joined, U+200B, two backslashes",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- \u200b\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "plain list, not joined, U+FEFF, no backslash",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- \ufeff{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "plain list, not joined, U+FEFF, one backslash",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- \ufeff\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "plain list, not joined, U+FEFF, two backslashes",
+    "page": "# T\n\n**Rules**\n\n\nA sentence.\n\n- \ufeff\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, nothing, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- {#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, nothing, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- \\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, nothing, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- \\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+0020, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n-  {#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+0020, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n-  \\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+0020, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n-  \\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+0009, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- \t{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+0009, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- \t\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+0009, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- \t\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+00A0, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- \u00a0{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+00A0, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- \u00a0\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+00A0, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- \u00a0\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+3000, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- \u3000{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+3000, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- \u3000\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+3000, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- \u3000\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+001C, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- \u001c{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+001C, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- \u001c\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+001C, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- \u001c\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+001D, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- \u001d{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+001D, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- \u001d\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+001D, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- \u001d\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+001E, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- \u001e{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+001E, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- \u001e\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+001E, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- \u001e\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+001F, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- \u001f{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+001F, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- \u001f\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+001F, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- \u001f\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+200B, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- \u200b{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+200B, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- \u200b\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+200B, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- \u200b\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+FEFF, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- \ufeff{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+FEFF, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- \ufeff\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "plain list, joined, U+FEFF, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n\nA sentence.\n\n- \ufeff\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, nothing, no backslash",
+    "page": "# T\n\n**Rules**\n\n- x\n{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, nothing, one backslash",
+    "page": "# T\n\n**Rules**\n\n- x\n\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, nothing, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- x\n\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+0020, no backslash",
+    "page": "# T\n\n**Rules**\n\n- x\n {#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+0020, one backslash",
+    "page": "# T\n\n**Rules**\n\n- x\n \\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+0020, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- x\n \\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+0009, no backslash",
+    "page": "# T\n\n**Rules**\n\n- x\n\t{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+0009, one backslash",
+    "page": "# T\n\n**Rules**\n\n- x\n\t\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+0009, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- x\n\t\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+00A0, no backslash",
+    "page": "# T\n\n**Rules**\n\n- x\n\u00a0{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+00A0, one backslash",
+    "page": "# T\n\n**Rules**\n\n- x\n\u00a0\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+00A0, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- x\n\u00a0\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+3000, no backslash",
+    "page": "# T\n\n**Rules**\n\n- x\n\u3000{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+3000, one backslash",
+    "page": "# T\n\n**Rules**\n\n- x\n\u3000\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+3000, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- x\n\u3000\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+001C, no backslash",
+    "page": "# T\n\n**Rules**\n\n- x\n\u001c{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+001C, one backslash",
+    "page": "# T\n\n**Rules**\n\n- x\n\u001c\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+001C, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- x\n\u001c\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+001D, no backslash",
+    "page": "# T\n\n**Rules**\n\n- x\n\u001d{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+001D, one backslash",
+    "page": "# T\n\n**Rules**\n\n- x\n\u001d\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+001D, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- x\n\u001d\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+001E, no backslash",
+    "page": "# T\n\n**Rules**\n\n- x\n\u001e{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+001E, one backslash",
+    "page": "# T\n\n**Rules**\n\n- x\n\u001e\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+001E, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- x\n\u001e\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+001F, no backslash",
+    "page": "# T\n\n**Rules**\n\n- x\n\u001f{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+001F, one backslash",
+    "page": "# T\n\n**Rules**\n\n- x\n\u001f\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+001F, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- x\n\u001f\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+200B, no backslash",
+    "page": "# T\n\n**Rules**\n\n- x\n\u200b{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+200B, one backslash",
+    "page": "# T\n\n**Rules**\n\n- x\n\u200b\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+200B, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- x\n\u200b\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+FEFF, no backslash",
+    "page": "# T\n\n**Rules**\n\n- x\n\ufeff{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+FEFF, one backslash",
+    "page": "# T\n\n**Rules**\n\n- x\n\ufeff\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": false,
+    "ids": [],
+    "name": "lazy line, not joined, U+FEFF, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- x\n\ufeff\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, nothing, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, nothing, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, nothing, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+0020, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n {#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+0020, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n \\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+0020, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n \\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+0009, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n\t{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+0009, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n\t\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+0009, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n\t\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+00A0, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n\u00a0{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+00A0, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n\u00a0\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+00A0, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n\u00a0\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+3000, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n\u3000{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+3000, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n\u3000\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+3000, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n\u3000\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+001C, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n\u001c{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+001C, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n\u001c\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+001C, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n\u001c\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+001D, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n\u001d{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+001D, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n\u001d\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+001D, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n\u001d\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+001E, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n\u001e{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+001E, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n\u001e\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+001E, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n\u001e\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+001F, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n\u001f{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+001F, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n\u001f\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+001F, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n\u001f\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+200B, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n\u200b{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+200B, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n\u200b\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+200B, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n\u200b\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+FEFF, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n\ufeff{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+FEFF, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n\ufeff\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "lazy line, joined, U+FEFF, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- x\n\ufeff\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, nothing, no backslash",
+    "page": "# T\n\n**Rules**\n\n- <div>\n{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, nothing, one backslash",
+    "page": "# T\n\n**Rules**\n\n- <div>\n\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, nothing, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- <div>\n\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+0020, no backslash",
+    "page": "# T\n\n**Rules**\n\n- <div>\n {#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+0020, one backslash",
+    "page": "# T\n\n**Rules**\n\n- <div>\n \\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+0020, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- <div>\n \\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+0009, no backslash",
+    "page": "# T\n\n**Rules**\n\n- <div>\n\t{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+0009, one backslash",
+    "page": "# T\n\n**Rules**\n\n- <div>\n\t\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+0009, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- <div>\n\t\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+00A0, no backslash",
+    "page": "# T\n\n**Rules**\n\n- <div>\n\u00a0{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+00A0, one backslash",
+    "page": "# T\n\n**Rules**\n\n- <div>\n\u00a0\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+00A0, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- <div>\n\u00a0\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+3000, no backslash",
+    "page": "# T\n\n**Rules**\n\n- <div>\n\u3000{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+3000, one backslash",
+    "page": "# T\n\n**Rules**\n\n- <div>\n\u3000\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+3000, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- <div>\n\u3000\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+001C, no backslash",
+    "page": "# T\n\n**Rules**\n\n- <div>\n\u001c{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+001C, one backslash",
+    "page": "# T\n\n**Rules**\n\n- <div>\n\u001c\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+001C, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- <div>\n\u001c\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+001D, no backslash",
+    "page": "# T\n\n**Rules**\n\n- <div>\n\u001d{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+001D, one backslash",
+    "page": "# T\n\n**Rules**\n\n- <div>\n\u001d\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+001D, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- <div>\n\u001d\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+001E, no backslash",
+    "page": "# T\n\n**Rules**\n\n- <div>\n\u001e{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+001E, one backslash",
+    "page": "# T\n\n**Rules**\n\n- <div>\n\u001e\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+001E, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- <div>\n\u001e\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+001F, no backslash",
+    "page": "# T\n\n**Rules**\n\n- <div>\n\u001f{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+001F, one backslash",
+    "page": "# T\n\n**Rules**\n\n- <div>\n\u001f\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+001F, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- <div>\n\u001f\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+200B, no backslash",
+    "page": "# T\n\n**Rules**\n\n- <div>\n\u200b{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+200B, one backslash",
+    "page": "# T\n\n**Rules**\n\n- <div>\n\u200b\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+200B, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- <div>\n\u200b\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+FEFF, no backslash",
+    "page": "# T\n\n**Rules**\n\n- <div>\n\ufeff{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+FEFF, one backslash",
+    "page": "# T\n\n**Rules**\n\n- <div>\n\ufeff\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [],
+    "name": "HTML block, not joined, U+FEFF, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- <div>\n\ufeff\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, nothing, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, nothing, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, nothing, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+0020, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n {#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+0020, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n \\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+0020, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n \\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+0009, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n\t{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+0009, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n\t\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+0009, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n\t\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+00A0, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n\u00a0{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+00A0, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n\u00a0\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+00A0, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n\u00a0\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+3000, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n\u3000{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+3000, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n\u3000\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+3000, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n\u3000\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+001C, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n\u001c{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+001C, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n\u001c\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+001C, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n\u001c\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+001D, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n\u001d{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+001D, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n\u001d\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+001D, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n\u001d\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+001E, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n\u001e{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+001E, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n\u001e\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+001E, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n\u001e\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+001F, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n\u001f{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+001F, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n\u001f\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+001F, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n\u001f\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+200B, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n\u200b{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+200B, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n\u200b\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+200B, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n\u200b\\\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+FEFF, no backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n\ufeff{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+FEFF, one backslash",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n\ufeff\\{#strings.a.b} x\n"
+  },
+  {
+    "fault": true,
+    "ids": [
+      "strings.a.a"
+    ],
+    "name": "HTML block, joined, U+FEFF, two backslashes",
+    "page": "# T\n\n**Rules**\n\n- {#strings.a.a} w\n- <div>\n\ufeff\\\\{#strings.a.b} x\n"
+  }
+]
