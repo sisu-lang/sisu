@@ -175,7 +175,7 @@ fn to_line(value: &impl Serialize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diagnostic::{DiagnosticKind, UnwrapHelp};
+    use crate::diagnostic::{DiagnosticKind, Expected, UnwrapHelp};
     use crate::front_end::front_end;
     use crate::source::Span;
 
@@ -209,6 +209,25 @@ mod tests {
             diagnostic(&d, "a.sisu", source, &LineIndex::new(source)),
             r#"{"version":1,"kind":"diagnostic","code":"E0062","severity":"error","message":"`n` may be `None`","primary":{"file":"a.sisu","start":24,"end":25,"line":2,"column":11,"label":null},"secondary":[],"help":"to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`","fixes":[{"message":"if a `None` result is fine, use `?.`","safe":false,"edits":[{"start":25,"end":26,"line":2,"column":12,"replacement":"?."}]}]}"#
         );
+    }
+
+    #[test]
+    fn a_diagnostic_with_no_note_should_have_an_empty_notes_key() {
+        let source = "fn main() {\n    let a: i64 = \"x\"\n}\n";
+        let d: Diagnostic = DiagnosticKind::Mismatch {
+            want: Expected::Types(vec!["i64".to_string()]),
+            got: "string".to_string(),
+            at: Span::new(31, 34),
+            source: None,
+            fix: None,
+            conversion: false,
+            layers: false,
+        }
+        .into();
+        let line = diagnostic(&d, "a.sisu", source, &LineIndex::new(source));
+        assert_eq!(d.code().as_str(), "E0032");
+        assert!(line.starts_with(r#"{"version":1,"#), "{line}");
+        assert!(line.contains(r#""help":null,"notes":[],"fixes""#), "{line}");
     }
 
     #[test]
