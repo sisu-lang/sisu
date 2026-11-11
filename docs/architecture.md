@@ -644,7 +644,8 @@ judgement parses the source again, so it judges only the first 100 fixes and
 drops the rest. It judges a checker fix only at a line's end or around a
 dropped `;`, where the fix can change where a statement ends. Judging every one
 would cost a parse for each, and the checker runs only on items that parse. The fuzz
-target checks that no fix shown makes the syntax worse. The explanations in
+target checks that no fix shown makes the syntax worse. A test applies each fix that a
+fixture shows, and fails when the result has a syntax error that the source does not have. The explanations in
 [`docs/diagnostics`](diagnostics/README.md) are what `sisu explain` prints.
 
 **Module order.** `crates/sisuc/tests/architecture.rs` puts the top-level

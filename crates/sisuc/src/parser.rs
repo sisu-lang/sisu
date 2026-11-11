@@ -985,7 +985,7 @@ impl<'a> Parser<'a> {
                 args,
                 angles,
             })),
-            Span::new(ident.span.start(), self.closing_angle()),
+            Span::new(ident.span.start(), self.consumed_end()),
         ))
     }
 
@@ -1067,7 +1067,7 @@ impl<'a> Parser<'a> {
         }
         self.close_angle()?;
         self.depth = reach;
-        Ok((args, Span::new(open.start(), self.closing_angle())))
+        Ok((args, Span::new(open.start(), self.consumed_end())))
     }
 
     /// The `>` that closes a list. A `>=` closes it too, and then reads as the `=` it holds: in
@@ -1083,8 +1083,9 @@ impl<'a> Parser<'a> {
         Err(self.expected("`,` or `>`"))
     }
 
-    /// Where the `>` that `close_angle` just took ends.
-    fn closing_angle(&self) -> usize {
+    /// Where the text that the parser consumed ends. A `>=` that `close_angle` split counts only
+    /// as the `>` it gave to the list.
+    fn consumed_end(&self) -> usize {
         if self.split() {
             // What is left of the `>=` starts where the `>` ends.
             self.peek().span.start()
@@ -2077,20 +2078,7 @@ impl<'a> Parser<'a> {
                     // `mut` is never `Eof`, so the token after it exists.
                     match (&self.tokens[self.pos + 1].kind, receiver) {
                         (TokenKind::SelfKw, Receiver::Of(owner)) => {
-                            // `self` is not `Eof`, so the token after it exists.
-                            let after = &self.tokens[self.pos + 2].kind;
-                            let keyword = self.peek().span;
-                            let receiver = self.tokens[self.pos + 1].span;
-                            return Err(DiagnosticKind::MutSelf {
-                                keyword,
-                                remove: Span::new(
-                                    keyword.start(),
-                                    self.removal_end(keyword.end(), receiver.start()),
-                                ),
-                                safe: matches!(after, TokenKind::Comma | TokenKind::RParen),
-                                owner: owner.clone(),
-                            }
-                            .into());
+                            return Err(self.mut_self_error(owner.clone()));
                         }
                         (TokenKind::SelfKw, Receiver::Extension) => {
                             mut_self = Some(MutSelf {
@@ -2121,8 +2109,9 @@ impl<'a> Parser<'a> {
                     if let Some(mut_self) = &mut mut_self
                         && let Some(colon) = self.eat(&TokenKind::Colon)
                     {
-                        let ty = self.parse_type()?;
-                        mut_self.annotation = Some(colon.span.to(ty.span));
+                        self.parse_type()?;
+                        mut_self.annotation =
+                            Some(Span::new(colon.span.start(), self.consumed_end()));
                     }
                     if self.eat(&TokenKind::Comma).is_none() {
                         break;
@@ -2849,23 +2838,37 @@ impl<'a> Parser<'a> {
     /// follows the `else` of a `let ... else`; the join puts it after the value. A value that
     /// ends in `}` would then read the `else` as its own (E0173), so the join is only a hint.
     fn let_else_on_new_line(&self, else_at: usize) -> Diagnostic {
-        let at = self.tokens[else_at].span;
-        let last = self.tokens[..self.pos]
-            .iter()
-            .rfind(|t| t.kind != TokenKind::Newline);
-        let end = last.map_or(0, |t| t.span.end());
-        let ends_in_brace = last.is_some_and(|t| t.kind == TokenKind::RBrace);
-        let join =
-            (self.tokens[else_at + 1].kind == TokenKind::LBrace && !ends_in_brace).then(|| Join {
-                gap: Span::new(end, at.start()),
-                safe: self.source.slice(end..at.start()).trim().is_empty(),
-            });
+        let join = self.else_gap(else_at).map(|gap| Join {
+            gap,
+            safe: self.source.slice(gap.start()..gap.end()).trim().is_empty(),
+        });
         DiagnosticKind::ElseOnNewLine {
-            at,
+            at: self.tokens[else_at].span,
             of: ElseOf::Let,
             join,
         }
         .into()
+    }
+
+    /// The gap that a join of the `else` at token `else_at` replaces: from the end of the last
+    /// token before it that is not a line break, to the `else`. There is none when no `{` follows
+    /// the `else`, or when that token is a `}`: the `else` would then read as its own.
+    fn else_gap(&self, else_at: usize) -> Option<Span> {
+        let last = self.tokens[..else_at]
+            .iter()
+            .rfind(|t| t.kind != TokenKind::Newline);
+        let end = last.map_or(0, |t| t.span.end());
+        let ends_in_brace = last.is_some_and(|t| t.kind == TokenKind::RBrace);
+        (self.tokens[else_at + 1].kind == TokenKind::LBrace && !ends_in_brace)
+            .then(|| Span::new(end, self.tokens[else_at].span.start()))
+    }
+
+    /// The gap of the `else` at token `else_at` of a typed `let`, when a line break lies in it.
+    /// The fix of the type joins such an `else` to the value, as the fixed source would report
+    /// E0006 otherwise.
+    fn type_fix_join(&self, else_at: usize) -> Option<Span> {
+        self.else_gap(else_at)
+            .filter(|gap| self.source.slice(gap.start()..gap.end()).contains('\n'))
     }
 
     /// Where the code before the next token ends: the `}` of the statement before it.
@@ -3371,6 +3374,45 @@ impl<'a> Parser<'a> {
         removal_end(self.comments, after, next)
     }
 
+    /// The E0018 for the `mut self` at the next token, in a method of `owner`.
+    fn mut_self_error(&mut self, owner: Owner) -> Diagnostic {
+        // `self` is not `Eof`, so the token after it exists.
+        let after = &self.tokens[self.pos + 2].kind;
+        let keyword = self.peek().span;
+        let receiver = self.tokens[self.pos + 1].span;
+        let remove = Span::new(
+            keyword.start(),
+            self.removal_end(keyword.end(), receiver.start()),
+        );
+        let safe = matches!(after, TokenKind::Comma | TokenKind::RParen);
+        let annotation = if matches!(after, TokenKind::Colon) {
+            self.mut_self_type()
+        } else {
+            None
+        };
+        DiagnosticKind::MutSelf {
+            keyword,
+            remove,
+            annotation,
+            safe,
+            owner,
+        }
+        .into()
+    }
+
+    /// The `: Type` of a `mut self: Type` at `mut`, when the type parses and a `,` or a `)`
+    /// follows it. The span runs to the end of the text that the type consumed, as the node span
+    /// of `(i64)` leaves its `)` out. The error of a type that does not parse is dropped: the
+    /// caller reports the `mut`, and `checked` resumes at the end of the item.
+    fn mut_self_type(&mut self) -> Option<Span> {
+        // `mut`, `self` and `:` are not `Eof`, so the tokens up to the type exist.
+        let colon = self.tokens[self.pos + 2].span;
+        self.pos += 3;
+        self.parse_type().ok()?;
+        matches!(self.peek().kind, TokenKind::Comma | TokenKind::RParen)
+            .then(|| Span::new(colon.start(), self.consumed_end()))
+    }
+
     /// Skips a `label:` before a sub-pattern, and returns the label's span and the span from it
     /// to the sub-pattern. `Name::` is no label: `pattern` reports the path.
     fn pattern_label(&mut self) -> Option<(Span, Span)> {
@@ -3674,7 +3716,8 @@ impl<'a> Parser<'a> {
         let (ty, annotation) = match self.eat(&TokenKind::Colon) {
             Some(colon) => {
                 let ty = self.child(base, &mut reach, Self::parse_type)?;
-                let annotation = colon.span.to(ty.span);
+                // Not `ty.span`: a grouped type keeps its inner span, which leaves the `)`.
+                let annotation = Span::new(colon.span.start(), self.consumed_end());
                 (Some(ty), Some(annotation))
             }
             None => (None, None),
@@ -3692,11 +3735,12 @@ impl<'a> Parser<'a> {
         // A typed `let` takes no `else`, which can start the next line.
         if let Some(at) = annotation
             && pattern_forms
-            && self.else_after(&init).is_some()
+            && let Some(else_at) = self.else_after(&init)
         {
             return Err(DiagnosticKind::LetTakesNoType {
                 at,
                 with_else: true,
+                join: self.type_fix_join(else_at),
             }
             .into());
         }
@@ -3786,15 +3830,24 @@ impl<'a> Parser<'a> {
         if let Some(colon) = self.eat(&TokenKind::Colon) {
             // With no `else` on this line or the next, it is no `let ... else`, so the `.` is the
             // first mistake, before the type.
-            if qualified && !self.else_in_statement(first, true) {
+            if qualified && self.else_in_statement(first, true).is_none() {
                 return Err(self.dot_error(first));
             }
-            let ty = self.child(base, &mut reach, Self::parse_type)?;
-            // An `else` on the next line is E0006, which the fixed source reports.
-            let with_else = self.else_in_statement(first, false);
+            self.child(base, &mut reach, Self::parse_type)?;
+            let at = Span::new(colon.span.start(), self.consumed_end());
+            // With an `else` on the line, the fix leaves it as it is. With one on a later line
+            // and a value after the type, the fix joins it to the value.
+            let same_line = self.else_in_statement(first, false).is_some();
+            let join = if same_line || !self.at(&TokenKind::Eq) {
+                None
+            } else {
+                self.else_in_statement(first, true)
+                    .and_then(|else_at| self.type_fix_join(else_at))
+            };
             return Err(DiagnosticKind::LetTakesNoType {
-                at: colon.span.to(ty.span),
-                with_else,
+                at,
+                with_else: same_line || join.is_some(),
+                join,
             }
             .into());
         }
@@ -3809,7 +3862,7 @@ impl<'a> Parser<'a> {
             Ok(value) => value,
             // With no `else` in the statement, it is no `let ... else`, so the `.` is the first
             // mistake. With one, the pattern is right and the value's error is the mistake.
-            Err(_) if qualified && !self.else_in_statement(first, false) => {
+            Err(_) if qualified && self.else_in_statement(first, false).is_none() => {
                 return Err(self.dot_error(first));
             }
             Err(error) => return Err(error),
@@ -3844,12 +3897,13 @@ impl<'a> Parser<'a> {
             .filter(|&at| self.tokens[at].kind == TokenKind::Else && !ends_in_open_if(value))
     }
 
-    /// Whether an `else` of the statement that starts at token `first` is not the `else` of an
-    /// `if` in it: one at the statement's own level, before its line break, or with `next_line`
-    /// after it. A line break inside `{ }` does not end the statement. It runs on an error path
-    /// only.
-    fn else_in_statement(&self, first: usize, next_line: bool) -> bool {
+    /// The token index of the last `else` of the statement that starts at token `first` that is
+    /// not the `else` of an `if` in it: one at the statement's own level, before its line break,
+    /// or with `next_line` after it. `None` when there is none. A line break inside `{ }` does
+    /// not end the statement. It runs on an error path only.
+    fn else_in_statement(&self, first: usize, next_line: bool) -> Option<usize> {
         let (mut depth, mut elses, mut ifs) = (0_usize, 0_usize, 0_usize);
+        let mut last = None;
         for (at, token) in self.tokens[first..].iter().enumerate() {
             // A closing bracket at the statement's own level ends the statement.
             let Some(next) = nested(&token.kind, depth) else {
@@ -3860,18 +3914,24 @@ impl<'a> Parser<'a> {
                 TokenKind::Newline if depth == 0 => {
                     let after = self.tokens[first + at..]
                         .iter()
-                        .find(|t| t.kind != TokenKind::Newline);
-                    elses +=
-                        usize::from(next_line && after.is_some_and(|t| t.kind == TokenKind::Else));
+                        .position(|t| t.kind != TokenKind::Newline)
+                        .map(|n| first + at + n)
+                        .filter(|&n| next_line && self.tokens[n].kind == TokenKind::Else);
+                    if after.is_some() {
+                        elses += 1;
+                        last = after;
+                    }
                     break;
                 }
-                TokenKind::Eof if depth == 0 => break,
-                TokenKind::Else if depth == 0 => elses += 1,
+                TokenKind::Else if depth == 0 => {
+                    elses += 1;
+                    last = Some(first + at);
+                }
                 TokenKind::If if depth == 0 => ifs += 1,
                 _ => {}
             }
         }
-        elses > ifs
+        last.filter(|_| elses > ifs)
     }
 
     /// "expected `=`, found `.`", as a `let` that reads a name reports `Enum.Variant`. The
@@ -7932,6 +7992,7 @@ mod tests {
     /// THEN the error is E0011 at the `: type`, with one fix that removes it
     /// AND the fix is unsafe: the parser stops at the type, so it has not read the rest of the
     /// statement, and the fixed source can have an error of its own
+    /// AND the fix also joins an `else` on a later line to the value, when an edit can
     /// AND the fixed source has the errors in `after`
     /// AND a `let` with a type and no `else`, and a `const`, report nothing
     #[test]
@@ -7944,16 +8005,52 @@ mod tests {
             ("let _: i64 = o else { return }", ": i64", vec![]),
             ("let Some(w): i64? = o else { return }", ": i64?", vec![]),
             ("let Shape.Sq: Shape = e else { return }", ": Shape", vec![]),
-            // The fixed source has the `else` on its own line, which is E0006.
+            // The fix joins the `else` to the value, so that the fixed source has no E0006: two
+            // edits. The gap can hold a comment or a blank line.
+            ("let w: i64 = o\n    else { return }", ": i64", vec![]),
             (
-                "let w: i64 = o\n    else { return }",
+                "let Some(w): i64? = o\n    else { return }",
+                ": i64?",
+                vec![],
+            ),
+            (
+                "let w: i64 = o\n    // why\n    else { return }",
+                ": i64",
+                vec![],
+            ),
+            ("let w: i64 = o\n\n    else { return }", ": i64", vec![]),
+            // No edit can repair these: the fixed source has the `else` on its own line, which is
+            // E0006, and the fix has one edit.
+            (
+                "let x: i64 = { 1 }\n    else { return }",
                 ": i64",
                 vec![Code::ElseOnNewLine],
             ),
             (
-                "let Some(w): i64? = o\n    else { return }",
-                ": i64?",
+                "let w: i64 = o\n    else return",
+                ": i64",
                 vec![Code::ElseOnNewLine],
+            ),
+            // Controls: an `else` on the line already, and no `=`, give one edit.
+            (
+                "let Some(w): i64? = o else return\n    else { x }",
+                ": i64?",
+                vec![Code::Expected],
+            ),
+            (
+                "let Some(w): i64?\n    else { return }",
+                ": i64?",
+                vec![Code::Expected],
+            ),
+            // The span of the type covers a `( )`, and a `>` that a `>=` closes.
+            ("let w: (i64) = o else { return }", ": (i64)", vec![]),
+            ("let w: (i64) = o\n    else { return }", ": (i64)", vec![]),
+            ("let w: Box<i64>= o else { return }", ": Box<i64>", vec![]),
+            ("let Some(w): (i64) = o else { return }", ": (i64)", vec![]),
+            (
+                "let Some(w): Box<i64>= o else { return }",
+                ": Box<i64>",
+                vec![],
             ),
             // A pattern with no `else` reports the type first. Then the checker, not the parser,
             // reports the pattern (E0174).
@@ -7994,8 +8091,12 @@ mod tests {
             let at = d.span();
             assert_eq!(&src[at.start()..at.end()], ty, "{src}");
             assert_eq!(d.fixes().len(), 1, "{src}");
-            let (safe, _) = fix_edits(&d).expect("the error has a fix");
+            let (safe, edits) = fix_edits(&d).expect("the error has a fix");
             assert!(!safe, "{src}");
+            // A fix that joins an `else` on a later line has two edits. Each row with a line
+            // break and no error after the fix is such a row.
+            let joins = line.contains('\n') && after.is_empty();
+            assert_eq!(edits.len(), if joins { 2 } else { 1 }, "{src}");
             let fixed = apply_fix(&src, &d);
             let found: Vec<_> = parsed(&fixed)
                 .diagnostics
@@ -8017,7 +8118,7 @@ mod tests {
     /// THEN the first mistake is the `.`: E0011 "expected `=`, found `.`", as for a `let` with a
     /// name and no type
     /// AND with an `else` on the line, the error is the type; with one on the next line, it is
-    /// the type too, and its fix leads to E0006
+    /// the type too, and its fix joins the `else`
     #[test]
     fn qualified_let_with_a_type_and_no_else_should_report_the_dot() {
         for (line, col) in [
@@ -8032,10 +8133,7 @@ mod tests {
         }
         for (line, after) in [
             ("let Shape.Sq: Shape = e else { return }", vec![]),
-            (
-                "let Shape.Sq: Shape = e\n    else { return }",
-                vec![Code::ElseOnNewLine],
-            ),
+            ("let Shape.Sq: Shape = e\n    else { return }", vec![]),
         ] {
             let src = format!("fn main() {{\n    {line}\n}}");
             let d = parse_diagnostic(&src);
@@ -8048,6 +8146,24 @@ mod tests {
                 .collect();
             assert_eq!(found, after, "{fixed}");
         }
+        let src = "fn main() {\n    let Shape.Sq: Shape = e\n    else { return }\n}";
+        assert_eq!(
+            apply_fix(src, &parse_diagnostic(src)),
+            "fn main() {\n    let Shape.Sq = e else { return }\n}"
+        );
+    }
+
+    /// GIVEN a typed `let ... else` with CRLF line endings and the `else` on the next line
+    /// WHEN the fix is applied
+    /// THEN the fixed source parses with no error
+    /// AND it holds no `\r` that a `\n` does not follow
+    #[test]
+    fn a_let_type_fix_should_join_across_crlf() {
+        let src = "fn main() {\r\n    let w: i64 = o\r\n    else { return }\r\n}";
+        let fixed = apply_fix(src, &parse_diagnostic(src));
+        assert_eq!(fixed, "fn main() {\r\n    let w = o else { return }\r\n}");
+        assert!(parsed(&fixed).diagnostics.is_empty(), "{fixed:?}");
+        assert!(!fixed.replace("\r\n", "").contains('\r'), "{fixed:?}");
     }
 
     /// A pattern that is not a name and has no `else` is no parse error: the parser keeps it as
@@ -10613,8 +10729,9 @@ mod tests {
     }
 
     #[test]
-    fn mut_self_fix() {
-        // Safe only when `self` ends the parameter: `mut self: i64` stays broken without `mut`.
+    fn mut_self_fix_should_be_safe_only_when_self_ends_the_parameter() {
+        // Safe only when `self` ends the parameter. A type that does not parse, or a token other
+        // than `,` or `)` after the type, keeps the one edit that removes `mut `.
         for (src, edit, safe) in [
             ("class C {\n    fn f(mut self) {}\n}", (19, 23), true),
             (
@@ -10622,7 +10739,12 @@ mod tests {
                 (19, 25),
                 true,
             ),
-            ("class C {\n    fn f(mut self: i64) {}\n}", (19, 23), false),
+            ("class C {\n    fn f(mut self: ) {}\n}", (19, 23), false),
+            (
+                "class C {\n    fn f(mut self: i64 x) {}\n}",
+                (19, 23),
+                false,
+            ),
         ] {
             let d = parse_diagnostic(src);
             assert_eq!(d.code(), Code::MutSelf, "{src}");
@@ -10633,6 +10755,77 @@ mod tests {
                 "{src}"
             );
             assert!(d.help().is_some(), "{src}");
+        }
+        // A typed receiver also loses its type, as the parser refuses a type on `self`.
+        let typed = "class C {\n    fn f(mut self: i64) {}\n}";
+        let d = parse_diagnostic(typed);
+        assert_eq!(
+            fix_edits(&d),
+            Some((
+                false,
+                vec![(19, 23, String::new()), (27, 32, String::new())]
+            ))
+        );
+    }
+
+    /// GIVEN a `mut self` with a type, in a class, an enum or an interface
+    /// WHEN the fix is applied
+    /// THEN the `mut` and the whole type are gone, and the source has no syntax error
+    #[test]
+    fn a_typed_receiver_fix_should_remove_the_mut_and_the_type() {
+        for (src, line, want) in [
+            (
+                "class C {\n    fn f(mut self: i64) {}\n}",
+                2,
+                "class C {\n    fn f(self) {}\n}",
+            ),
+            (
+                "class C {\n    fn f(mut self: i64, a: i64) {}\n}",
+                2,
+                "class C {\n    fn f(self, a: i64) {}\n}",
+            ),
+            (
+                "enum E {\n    A\n    fn f(mut self: i64) {}\n}",
+                3,
+                "enum E {\n    A\n    fn f(self) {}\n}",
+            ),
+            (
+                "interface I {\n    fn f(mut self: i64)\n}",
+                2,
+                "interface I {\n    fn f(self)\n}",
+            ),
+            (
+                "class C {\n    fn f(mut self: Box<i64>) {}\n}",
+                2,
+                "class C {\n    fn f(self) {}\n}",
+            ),
+            (
+                "class C {\n    fn f(mut self: [i64]?) {}\n}",
+                2,
+                "class C {\n    fn f(self) {}\n}",
+            ),
+            (
+                "class C {\n    fn f(mut self: (i64)) {}\n}",
+                2,
+                "class C {\n    fn f(self) {}\n}",
+            ),
+            (
+                "class C {\n    fn f(mut self: (Box<i64>)) {}\n}",
+                2,
+                "class C {\n    fn f(self) {}\n}",
+            ),
+        ] {
+            let d = parse_diagnostic(src);
+            assert_eq!(d.code(), Code::MutSelf, "{src}");
+            assert_eq!(line_col(src, d.span().start()), (line, 10), "{src}");
+            assert!(
+                matches!(d.fixes(), [fix] if !fix.safe()),
+                "{src}: {:?}",
+                d.fixes()
+            );
+            let result = apply_fix(src, &d);
+            assert_eq!(result, want, "{src}");
+            assert!(parsed(&result).diagnostics.is_empty(), "{result}");
         }
     }
 

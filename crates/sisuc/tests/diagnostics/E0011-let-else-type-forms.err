@@ -1,0 +1,29 @@
+error[E0011]: a `let ... else` takes no type
+ --> E0011-let-else-type-forms.sisu:6:16
+  |
+6 |     let Some(w): i64? = o
+  |                ^^^^^^
+  |
+help: remove the type, and move `else` after the value
+  |
+6 -     let Some(w): i64? = o
+7 -     else { return }
+6 +     let Some(w) = o else { return }
+  |
+
+error[E0011]: a `let ... else` takes no type
+  --> E0011-let-else-type-forms.sisu:12:16
+   |
+12 |     let Some(w): i64? = o
+   |                ^^^^^^
+   |
+help: remove the type, and move `else` after the value
+   |
+12 -     let Some(w): i64? = o
+13 -     // there is no value
+14 -     else { return }
+12 +     let Some(w) = o else { return }
+   |
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0011

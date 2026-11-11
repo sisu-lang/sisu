@@ -1272,10 +1272,34 @@ fn mut_self_in_an_extend_block_should_be_reported_as_in_a_declaration() {
         [(true, vec![(5, 13, "mut ", String::new())])]
     );
     fix_removes_its_code(class, &d);
-    // The type annotation makes the fix unsafe, as it does in a class.
+    // The type annotation makes the fix unsafe, as it does in a class, and the fix removes it.
     let typed = "class Circle {\n    r: f64\n}\nextend Circle {\n    fn grow(mut self: Circle) {}\n}\nfn main() {}";
     let d = diagnostic(typed, Code::MutSelf, (5, 13, "mut"), &[]);
-    assert!(!fixes(typed, &d)[0].0);
+    assert_eq!(
+        fixes(typed, &d),
+        [(
+            false,
+            vec![
+                (5, 13, "mut ", String::new()),
+                (5, 21, ": Circle", String::new())
+            ]
+        )]
+    );
+    assert!(applied(typed, &d).contains("fn grow(self) {}"));
+    // A grouped type is removed whole, with its brackets.
+    let grouped = "class Circle {\n    r: f64\n}\nextend Circle {\n    fn grow(mut self: (Circle)) {}\n}\nfn main() {}";
+    let d = diagnostic(grouped, Code::MutSelf, (5, 13, "mut"), &[]);
+    assert_eq!(
+        fixes(grouped, &d),
+        [(
+            false,
+            vec![
+                (5, 13, "mut ", String::new()),
+                (5, 21, ": (Circle)", String::new())
+            ]
+        )]
+    );
+    assert!(applied(grouped, &d).contains("fn grow(self) {}"));
     let e = "enum Dir {\n    North\n}\nextend Dir {\n    fn flip(mut self) {}\n}\nfn main() {}";
     let d = diagnostic(e, Code::MutSelf, (5, 13, "mut"), &[]);
     assert!(!fixes(e, &d)[0].0);

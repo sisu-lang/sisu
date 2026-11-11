@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::{Code, Diagnostic, Edit, Fix, RETIRED};
-use crate::front_end::{decode, front_end};
+use crate::front_end::{decode, front_end, sound_fixes};
 use crate::fuzz::assert_spans;
 use crate::lexer::lex;
 use crate::parser::{parse, parse_ok};
@@ -317,6 +317,12 @@ fn minus(mut a: Vec<Code>, b: &[Code]) -> Vec<Code> {
     a
 }
 
+/// The syntax-error codes that `result` has and `source` does not. It compares codes, so a fix that
+/// trades one E0011 for another E0011 passes.
+fn added_syntax(source: &str, result: &str) -> Vec<Code> {
+    minus(syntax_codes(result), &syntax_codes(source))
+}
+
 /// Applying one safe fix removes the diagnostics that carry it and no other, and adds no syntax
 /// error: a diagnostic that disappears with it was a cascade of the same mistake (ADR 0013). The
 /// checker may still report errors the fix reveals.
@@ -340,7 +346,7 @@ fn each_safe_fix_should_remove_exactly_its_diagnostic() {
                     d.span()
                 );
                 assert_eq!(
-                    minus(syntax_codes(&result), &syntax_codes(&source)),
+                    added_syntax(&source, &result),
                     [],
                     "{at} added a syntax error:\n{result}"
                 );
@@ -359,6 +365,37 @@ fn each_safe_fix_should_remove_exactly_its_diagnostic() {
         }
     }
     assert!(applied > 0, "no fixture has a safe fix");
+}
+
+/// Applying one unsafe fix that `sisu check` shows adds no syntax error that the source does not
+/// have. The message lists every fix that does.
+#[test]
+fn each_unsafe_fix_should_parse() {
+    let mut applied = 0;
+    let mut failing = Vec::new();
+    for (path, _) in all_fixtures() {
+        let Some(source) = fixture_text(&path) else {
+            continue;
+        };
+        for d in crate::on_compiler_stack(|| sound_fixes(&source, &diagnostics(&source))) {
+            for fix in d.fixes().iter().filter(|f| !f.safe()) {
+                let edits: Vec<&Edit> = fix.edits().iter().collect();
+                let result = apply(&source, &edits);
+                applied += 1;
+                let added = added_syntax(&source, &result);
+                if !added.is_empty() {
+                    failing.push(format!(
+                        "{}: fixing {:?} at {:?} added {added:?}:\n{result}",
+                        path.display(),
+                        d.code(),
+                        d.span()
+                    ));
+                }
+            }
+        }
+    }
+    assert!(applied > 0, "no fixture has an unsafe fix");
+    assert!(failing.is_empty(), "{}", failing.join("\n"));
 }
 
 /// A fixture whose code's diagnostics have no safe fix has nothing to apply.

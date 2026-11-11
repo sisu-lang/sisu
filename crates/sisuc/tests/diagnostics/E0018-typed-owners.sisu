@@ -1,0 +1,40 @@
+// GIVEN a `mut self` with a type in a class method with a later parameter
+// AND the same in an enum method, an interface method and a method of an `extend` block
+// AND the same in a class method with a generic type
+// WHEN `sisu check` runs on it
+// THEN each E0018 has a fix that removes the `mut` and the whole type
+class Counter {
+    mut n: i64
+
+    fn add(mut self: i64, by: i64) {
+        self.n += by
+    }
+}
+
+enum Dir {
+    North
+
+    fn flip(mut self: i64) -> Dir { Dir.North }
+}
+
+interface Shape {
+    fn area(mut self: i64) -> i64
+}
+
+class Circle {
+    r: f64
+}
+
+extend Circle {
+    fn grow(mut self: Circle) {}
+}
+
+class Pair {
+    mut a: i64
+
+    fn first(mut self: Box<i64>) {}
+}
+
+fn main() {
+    print(1)
+}

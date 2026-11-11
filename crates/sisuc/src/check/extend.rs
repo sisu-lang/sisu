@@ -135,6 +135,7 @@ impl<'a> Checker<'_> {
                 self.error(DiagnosticKind::MutSelf {
                     keyword: mut_self.keyword,
                     remove: mut_self_removal(self.source.comments, mut_self),
+                    annotation: mut_self.annotation,
                     safe: mut_self.annotation.is_none(),
                     owner,
                 });
