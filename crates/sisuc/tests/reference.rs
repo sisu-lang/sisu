@@ -47,7 +47,8 @@ fn main() {
             format!("reference::{stem}::grammar"),
             move || fail_on(&faults),
         ));
-        // A page with a `{#` item has joined: its rules are checked.
+        // A page with a `{#` item gets a rules trial. The index never joins, but the trial
+        // reports its IDs.
         if !page.id_lines.is_empty() {
             let faults = fault_lines(&file, &id_faults(&stem, &page));
             trials.push(Trial::test(

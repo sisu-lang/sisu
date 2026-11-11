@@ -5,10 +5,10 @@
 //! paragraph, the note. `site/build.py` (`mark_rules`) uses the same test. A page joins when the
 //! text of one of its list items starts with `{#`. From then on, each of its rules needs an ID.
 
-use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+use rustc_hash::FxHashMap;
 
 use super::{Fault, Page};
 
@@ -17,7 +17,10 @@ use super::{Fault, Page};
 pub(crate) struct Rule {
     /// The Markdown line of the item.
     pub(crate) line: usize,
-    /// The ID of the item, when its text starts with a well-formed `{#id} ` prefix.
+    /// The prefix as written, when the text of the item starts with `{#`: up to the first `}` or
+    /// white space, with the `}`.
+    pub(crate) prefix: Option<String>,
+    /// The ID of the item, when its prefix is `{#id} ` and the text follows on the same line.
     pub(crate) id: Option<String>,
 }
 
@@ -71,15 +74,13 @@ pub(crate) fn read_rules(text: &str) -> (Vec<Rule>, Vec<usize>) {
     for (event, range) in Parser::new_ext(text, Options::ENABLE_TABLES).into_offset_iter() {
         // The first event of an item starts its text.
         if let Some((line, is_rule)) = item.take() {
-            let at = &text[range.start..];
-            if at.starts_with("{#") {
+            let prefix = read_prefix(&text[range.start..]);
+            if prefix.is_some() {
                 id_lines.push(line);
             }
             if is_rule {
-                rules.push(Rule {
-                    line,
-                    id: prefix_id(at),
-                });
+                let (prefix, id) = prefix.map_or((None, None), |(written, id)| (Some(written), id));
+                rules.push(Rule { line, prefix, id });
             }
         }
         if let Some(inline) = &mut paragraph
@@ -100,7 +101,8 @@ pub(crate) fn read_rules(text: &str) -> (Vec<Rule>, Vec<usize>) {
             Event::Start(Tag::List(first)) => {
                 let [older, last] = previous;
                 let note = matches!(last, Block::Label | Block::Paragraph) && older == Block::Label;
-                lists.push(depth == 0 && first.is_none() && (last == Block::Label || note));
+                // An item is a rule only at depth 0 (see `Start(Tag::Item)`).
+                lists.push(first.is_none() && (last == Block::Label || note));
             }
             Event::Start(Tag::Item) => {
                 item = Some((
@@ -119,10 +121,11 @@ pub(crate) fn read_rules(text: &str) -> (Vec<Rule>, Vec<usize>) {
                 lists.pop();
                 ended = Some(Block::Other);
             }
-            Event::End(
-                TagEnd::Heading(_) | TagEnd::CodeBlock | TagEnd::HtmlBlock | TagEnd::Table,
-            )
-            | Event::Rule => ended = Some(Block::Other),
+            // The site parses with HTML off, so an HTML block is a paragraph there: a note.
+            Event::End(TagEnd::HtmlBlock) => ended = Some(Block::Paragraph),
+            Event::End(TagEnd::Heading(_) | TagEnd::CodeBlock | TagEnd::Table) | Event::Rule => {
+                ended = Some(Block::Other);
+            }
             _ => {}
         }
         if let Some(block) = ended.filter(|_| depth == 0) {
@@ -132,14 +135,22 @@ pub(crate) fn read_rules(text: &str) -> (Vec<Rule>, Vec<usize>) {
     (rules, id_lines)
 }
 
-/// The ID of the prefix `{#id} ` that `at`, the text of an item, starts with. The ID runs to the
-/// first `}` or white space. Exactly one space, and then the text of the rule, must follow `}`.
-fn prefix_id(at: &str) -> Option<String> {
+/// The prefix that `at`, the text of an item, starts with, as written, and its ID. The prefix runs
+/// from `{#` to the first `}` or white space. It has an ID when `}` ends it and exactly one space,
+/// and then the text of the rule, follow.
+fn read_prefix(at: &str) -> Option<(String, Option<String>)> {
     let rest = at.strip_prefix("{#")?;
-    let (id, after) = rest.split_at(rest.find(|c: char| c == '}' || c.is_whitespace())?);
-    let text = after.strip_prefix("} ")?;
-    text.starts_with(|c: char| !c.is_whitespace())
-        .then(|| id.to_string())
+    let end = rest
+        .find(|c: char| c == '}' || c.is_whitespace())
+        .unwrap_or(rest.len());
+    let name = &rest[..end];
+    let after = rest[end..].strip_prefix('}');
+    let written = format!("{{#{name}{}", if after.is_some() { "}" } else { "" });
+    let id = after
+        .and_then(|text| text.strip_prefix(' '))
+        .is_some_and(|text| text.starts_with(|c: char| !c.is_whitespace()))
+        .then(|| name.to_string());
+    Some((written, id))
 }
 
 /// The faults of the IDs of `page`, the page `stem`, by line. A page with no `{#` item has no
@@ -158,46 +169,32 @@ pub(crate) fn id_faults(stem: &str, page: &Page) -> Vec<Fault> {
     if page.id_lines.is_empty() {
         return Vec::new();
     }
-    let is_rule = |line| {
-        page.rules
-            .binary_search_by_key(&line, |rule| rule.line)
-            .is_ok()
-    };
-    let mut faults: Vec<Fault> = page
-        .id_lines
-        .iter()
-        .filter(|&&line| !is_rule(line))
-        .map(|&line| {
-            fault(
-                line,
-                "an ID is only for a top-level item of a list of rules.".to_string(),
-            )
-        })
-        .collect();
-    let mut seen: HashMap<&str, usize> = HashMap::new();
+    let mut faults = Vec::new();
+    let mut seen: FxHashMap<&str, usize> = FxHashMap::default();
     for rule in &page.rules {
         let line = rule.line;
-        let message = match &rule.id {
-            None if page.id_lines.binary_search(&line).is_ok() => {
-                "write one space and then the text of the rule on the same line, after the \
-                 `{#id}` prefix."
-                    .to_string()
+        let message = match (&rule.id, &rule.prefix) {
+            (None, Some(written)) if written.ends_with('}') => {
+                format!("write one space and then the text of the rule after `{written}`.")
             }
-            None => {
+            (None, Some(written)) => {
+                format!("write `}}`, one space and then the text of the rule after `{written}`.")
+            }
+            (None, None) => {
                 "this rule has no ID. The page has rule IDs, so each rule needs one.".to_string()
             }
-            Some(id) if !has_valid_form(id) => format!(
-                "the ID {id} has a bad form. Write lowercase parts that start with a letter, \
+            (Some(id), _) if !has_valid_form(id) => format!(
+                "the ID \"{id}\" has a bad form. Write lowercase parts that start with a letter, \
                  joined by dots."
             ),
-            Some(id)
+            (Some(id), _)
                 if !id
                     .strip_prefix(stem)
                     .is_some_and(|rest| rest.starts_with('.')) =>
             {
                 format!("the ID {id} must start with \"{stem}.\".")
             }
-            Some(id) => match seen.entry(id) {
+            (Some(id), _) => match seen.entry(id) {
                 Entry::Occupied(first) => {
                     format!("{id} is also the ID of the rule at line {}.", first.get())
                 }
@@ -209,6 +206,24 @@ pub(crate) fn id_faults(stem: &str, page: &Page) -> Vec<Fault> {
         };
         faults.push(fault(line, message));
     }
+    // A `{#` item is a rule only when it is the item of a rule that has the prefix. The test is
+    // by item, not by line: a nested item can start on the line of its parent rule.
+    let has_prefix = |line| {
+        page.rules
+            .binary_search_by_key(&line, |rule| rule.line)
+            .is_ok_and(|at| page.rules[at].prefix.is_some())
+    };
+    faults.extend(
+        page.id_lines
+            .iter()
+            .filter(|&&line| !has_prefix(line))
+            .map(|&line| {
+                fault(
+                    line,
+                    "an ID is only for a top-level item of a list of rules.".to_string(),
+                )
+            }),
+    );
     faults.sort_by_key(|fault| fault.line);
     faults
 }
