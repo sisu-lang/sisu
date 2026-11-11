@@ -1,22 +1,26 @@
 error[E0166]: the parameter `a` of `swap` is `mut`, so its argument needs `mut`
   --> E0166-generic-let.sisu:15:10
    |
- 6 | fn swap<T>(mut a: T, mut b: T) {
-   |                - declared `mut` here
-...
 15 |     swap(x, y)
    |          ^ needs `mut`
+   |
+  ::: E0166-generic-let.sisu:6:16
+   |
+ 6 | fn swap<T>(mut a: T, mut b: T) {
+   |                - declared `mut` here
    |
    = help: declare `x` with `let mut`, and pass `mut x`
 
 error[E0166]: the parameter `b` of `swap` is `mut`, so its argument needs `mut`
   --> E0166-generic-let.sisu:15:13
    |
- 6 | fn swap<T>(mut a: T, mut b: T) {
-   |                          - declared `mut` here
-...
 15 |     swap(x, y)
    |             ^ needs `mut`
+   |
+  ::: E0166-generic-let.sisu:6:26
+   |
+ 6 | fn swap<T>(mut a: T, mut b: T) {
+   |                          - declared `mut` here
    |
    = help: declare `y` with `let mut`, and pass `mut y`
 

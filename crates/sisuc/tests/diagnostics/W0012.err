@@ -3,7 +3,9 @@ warning[W0012]: function `format_row` is never called
   |
 1 | fn format_row() {
   |    ^^^^^^^^^^ never called
-...
+  |
+ ::: W0012.sisu:5:5
+  |
 5 |     format_row()
   |     ------------ used here, in `old_report`, which is never called
   |

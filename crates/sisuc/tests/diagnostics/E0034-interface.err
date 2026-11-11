@@ -1,11 +1,13 @@
 error[E0034]: `Shape` is already an interface
  --> E0034-interface.sisu:5:7
   |
-1 | interface Shape {
-  |           ----- first defined here
-...
 5 | class Shape {
   |       ^^^^^
+  |
+ ::: E0034-interface.sisu:1:11
+  |
+1 | interface Shape {
+  |           ----- first defined here
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0034

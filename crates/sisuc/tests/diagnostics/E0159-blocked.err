@@ -1,221 +1,267 @@
 error[E0159]: `Pair<Node>` has no `==`
   --> E0159-blocked.sisu:35:11
    |
-13 | extend<A: Eq> Pair<A>: Eq {
-   |           -- this conformance needs `A: Eq`
-...
 35 |     print(Pair(a: Node(v: 1)) == Pair(a: Node(v: 1)))
    |           ^^^^^^^^^^^^^^^^^^^ this has type `Pair<Node>`
+   |
+  ::: E0159-blocked.sisu:13:11
+   |
+13 | extend<A: Eq> Pair<A>: Eq {
+   |           -- this conformance needs `A: Eq`
    |
    = help: make `Node` conform to `Eq`
 
 error[E0159]: `Pair<Node>` has no `!=`
   --> E0159-blocked.sisu:39:11
    |
-13 | extend<A: Eq> Pair<A>: Eq {
-   |           -- this conformance needs `A: Eq`
-...
 39 |     print(Pair(a: Node(v: 1)) != Pair(a: Node(v: 1)))
    |           ^^^^^^^^^^^^^^^^^^^ this has type `Pair<Node>`
+   |
+  ::: E0159-blocked.sisu:13:11
+   |
+13 | extend<A: Eq> Pair<A>: Eq {
+   |           -- this conformance needs `A: Eq`
    |
    = help: make `Node` conform to `Eq`
 
 error[E0159]: `Pair<Node>?` has no `==`, since `Pair<Node>` has none
   --> E0159-blocked.sisu:41:11
    |
-13 | extend<A: Eq> Pair<A>: Eq {
-   |           -- this conformance needs `A: Eq`
-...
 41 |     print(o == o)
    |           ^ this has type `Pair<Node>?`
+   |
+  ::: E0159-blocked.sisu:13:11
+   |
+13 | extend<A: Eq> Pair<A>: Eq {
+   |           -- this conformance needs `A: Eq`
    |
    = help: make `Node` conform to `Eq`
 
 error[E0159]: `Pair<Node>` has no `<`
   --> E0159-blocked.sisu:45:11
    |
-19 | extend<A: Ord> Pair<A>: Ord {
-   |           --- this conformance needs `A: Ord`
-...
 45 |     print(Pair(a: Node(v: 1)) < Pair(a: Node(v: 1)))
    |           ^^^^^^^^^^^^^^^^^^^ this has type `Pair<Node>`
+   |
+  ::: E0159-blocked.sisu:19:11
+   |
+19 | extend<A: Ord> Pair<A>: Ord {
+   |           --- this conformance needs `A: Ord`
    |
    = help: make `Node` conform to `Ord`
 
 error[E0159]: `Pair<bool>` has no `<`
   --> E0159-blocked.sisu:46:11
    |
-19 | extend<A: Ord> Pair<A>: Ord {
-   |           --- this conformance needs `A: Ord`
-...
 46 |     print(Pair(a: true) < Pair(a: true))
    |           ^^^^^^^^^^^^^ this has type `Pair<bool>`
+   |
+  ::: E0159-blocked.sisu:19:11
+   |
+19 | extend<A: Ord> Pair<A>: Ord {
+   |           --- this conformance needs `A: Ord`
 
 error[E0159]: `[Pair<Node>]` has no `==`, since `Pair<Node>` has none
   --> E0159-blocked.sisu:50:11
    |
-13 | extend<A: Eq> Pair<A>: Eq {
-   |           -- this conformance needs `A: Eq`
-...
 50 |     print([Pair(a: Node(v: 1))] == [Pair(a: Node(v: 1))])
    |           ^^^^^^^^^^^^^^^^^^^^^ this has type `[Pair<Node>]`
+   |
+  ::: E0159-blocked.sisu:13:11
+   |
+13 | extend<A: Eq> Pair<A>: Eq {
+   |           -- this conformance needs `A: Eq`
    |
    = help: make `Node` conform to `Eq`
 
 error[E0159]: `Outer` has no `==`, since `Pair<Node>` has none
   --> E0159-blocked.sisu:54:11
    |
-13 | extend<A: Eq> Pair<A>: Eq {
-   |           -- this conformance needs `A: Eq`
-...
 54 |     print(Outer.Has(Pair(a: Node(v: 1))) == Outer.Has(Pair(a: Node(v: 1))))
    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this has type `Outer`
+   |
+  ::: E0159-blocked.sisu:13:11
+   |
+13 | extend<A: Eq> Pair<A>: Eq {
+   |           -- this conformance needs `A: Eq`
    |
    = help: make `Node` conform to `Eq`
 
 error[E0159]: `Pair<any Shape>` has no `==`
   --> E0159-blocked.sisu:58:5
    |
-13 | extend<A: Eq> Pair<A>: Eq {
-   |           -- this conformance needs `A: Eq`
-...
 58 |     x == x || y < y
    |     ^ this has type `Pair<any Shape>`
+   |
+  ::: E0159-blocked.sisu:13:11
+   |
+13 | extend<A: Eq> Pair<A>: Eq {
+   |           -- this conformance needs `A: Eq`
 
 error[E0159]: `Pair<bool>` has no `<`
   --> E0159-blocked.sisu:58:15
    |
-19 | extend<A: Ord> Pair<A>: Ord {
-   |           --- this conformance needs `A: Ord`
-...
 58 |     x == x || y < y
    |               ^ this has type `Pair<bool>`
+   |
+  ::: E0159-blocked.sisu:19:11
+   |
+19 | extend<A: Ord> Pair<A>: Ord {
+   |           --- this conformance needs `A: Ord`
 
 error[E0159]: `Pair<Chain>` has no `==`
   --> E0159-blocked.sisu:62:11
    |
-13 | extend<A: Eq> Pair<A>: Eq {
-   |           -- this conformance needs `A: Eq`
-...
 62 |     print(Pair(a: Chain.Leaf(Node(v: 1))) == Pair(a: Chain.Leaf(Node(v: 1))))
    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this has type `Pair<Chain>`
+   |
+  ::: E0159-blocked.sisu:13:11
+   |
+13 | extend<A: Eq> Pair<A>: Eq {
+   |           -- this conformance needs `A: Eq`
 
 error[E0159]: `P<T>` has no `==`
    --> E0159-blocked.sisu:100:5
     |
- 87 | extend<A: Conv<i64>> P<A>: Eq {
-    |           --------- this conformance needs `A: Conv<i64>`
-...
 100 |     x == x
     |     ^ this has type `P<T>`
+    |
+   ::: E0159-blocked.sisu:87:11
+    |
+ 87 | extend<A: Conv<i64>> P<A>: Eq {
+    |           --------- this conformance needs `A: Conv<i64>`
 
 error[E0159]: `P<T>` has no `<`
    --> E0159-blocked.sisu:104:5
     |
- 93 | extend<A: Conv<i64>> P<A>: Ord {
-    |           --------- this conformance needs `A: Conv<i64>`
-...
 104 |     x < x
     |     ^ this has type `P<T>`
+    |
+   ::: E0159-blocked.sisu:93:11
+    |
+ 93 | extend<A: Conv<i64>> P<A>: Ord {
+    |           --------- this conformance needs `A: Conv<i64>`
 
 error[E0159]: `P<T>?` has no `==`, since `P<T>` has none
    --> E0159-blocked.sisu:108:5
     |
- 87 | extend<A: Conv<i64>> P<A>: Eq {
-    |           --------- this conformance needs `A: Conv<i64>`
-...
 108 |     x == x
     |     ^ this has type `P<T>?`
+    |
+   ::: E0159-blocked.sisu:87:11
+    |
+ 87 | extend<A: Conv<i64>> P<A>: Eq {
+    |           --------- this conformance needs `A: Conv<i64>`
 
 error[E0159]: `P<S.Item>` has no `==`
    --> E0159-blocked.sisu:112:5
     |
- 87 | extend<A: Conv<i64>> P<A>: Eq {
-    |           --------- this conformance needs `A: Conv<i64>`
-...
 112 |     x == x
     |     ^ this has type `P<S.Item>`
+    |
+   ::: E0159-blocked.sisu:87:11
+    |
+ 87 | extend<A: Conv<i64>> P<A>: Eq {
+    |           --------- this conformance needs `A: Conv<i64>`
 
 error[E0159]: `Two<T, bool>` has no `==`
    --> E0159-blocked.sisu:158:5
     |
-120 | extend<A: Eq, B: Ord> Two<A, B>: Eq {
-    |           -- this conformance needs `A: Eq`
-...
 158 |     x == x
     |     ^ this has type `Two<T, bool>`
+    |
+   ::: E0159-blocked.sisu:120:11
+    |
+120 | extend<A: Eq, B: Ord> Two<A, B>: Eq {
+    |           -- this conformance needs `A: Eq`
 
 error[E0159]: `Two<T, Node>` has no `==`
    --> E0159-blocked.sisu:162:5
     |
-120 | extend<A: Eq, B: Ord> Two<A, B>: Eq {
-    |           -- this conformance needs `A: Eq`
-...
 162 |     x == x
     |     ^ this has type `Two<T, Node>`
+    |
+   ::: E0159-blocked.sisu:120:11
+    |
+120 | extend<A: Eq, B: Ord> Two<A, B>: Eq {
+    |           -- this conformance needs `A: Eq`
 
 error[E0159]: `Two<Node, bool>` has no `==`
    --> E0159-blocked.sisu:166:5
     |
-120 | extend<A: Eq, B: Ord> Two<A, B>: Eq {
-    |           -- this conformance needs `A: Eq`
-...
 166 |     x == x
     |     ^ this has type `Two<Node, bool>`
+    |
+   ::: E0159-blocked.sisu:120:11
+    |
+120 | extend<A: Eq, B: Ord> Two<A, B>: Eq {
+    |           -- this conformance needs `A: Eq`
 
 error[E0159]: `Two<T, U>` has no `==`
    --> E0159-blocked.sisu:170:5
     |
-120 | extend<A: Eq, B: Ord> Two<A, B>: Eq {
-    |           -- this conformance needs `A: Eq`
-...
 170 |     x == x
     |     ^ this has type `Two<T, U>`
+    |
+   ::: E0159-blocked.sisu:120:11
+    |
+120 | extend<A: Eq, B: Ord> Two<A, B>: Eq {
+    |           -- this conformance needs `A: Eq`
 
 error[E0159]: `Two<T, T>` has no `==`
    --> E0159-blocked.sisu:174:5
     |
-120 | extend<A: Eq, B: Ord> Two<A, B>: Eq {
-    |           -- this conformance needs `A: Eq`
-...
 174 |     x == x
     |     ^ this has type `Two<T, T>`
+    |
+   ::: E0159-blocked.sisu:120:11
+    |
+120 | extend<A: Eq, B: Ord> Two<A, B>: Eq {
+    |           -- this conformance needs `A: Eq`
 
 error[E0159]: `Q<T>` has no `==`
    --> E0159-blocked.sisu:178:5
     |
-130 | extend<A: Eq & Conv<i64>> Q<A>: Eq {
-    |           -- this conformance needs `A: Eq`
-...
 178 |     x == x
     |     ^ this has type `Q<T>`
+    |
+   ::: E0159-blocked.sisu:130:11
+    |
+130 | extend<A: Eq & Conv<i64>> Q<A>: Eq {
+    |           -- this conformance needs `A: Eq`
 
 error[E0159]: `R<T>` has no `==`
    --> E0159-blocked.sisu:182:5
     |
-140 | extend<A: Eq & Ord> R<A>: Eq {
-    |           -- this conformance needs `A: Eq`
-...
 182 |     x == x
     |     ^ this has type `R<T>`
+    |
+   ::: E0159-blocked.sisu:140:11
+    |
+140 | extend<A: Eq & Ord> R<A>: Eq {
+    |           -- this conformance needs `A: Eq`
 
 error[E0159]: `Pair<Two<T, bool>>` has no `==`
    --> E0159-blocked.sisu:186:5
     |
- 13 | extend<A: Eq> Pair<A>: Eq {
-    |           -- this conformance needs `A: Eq`
-...
 186 |     x == x
     |     ^ this has type `Pair<Two<T, bool>>`
+    |
+   ::: E0159-blocked.sisu:13:11
+    |
+ 13 | extend<A: Eq> Pair<A>: Eq {
+    |           -- this conformance needs `A: Eq`
 
 error[E0159]: `Two<T, bool>?` has no `==`, since `Two<T, bool>` has none
    --> E0159-blocked.sisu:190:5
     |
-120 | extend<A: Eq, B: Ord> Two<A, B>: Eq {
-    |           -- this conformance needs `A: Eq`
-...
 190 |     x == x
     |     ^ this has type `Two<T, bool>?`
+    |
+   ::: E0159-blocked.sisu:120:11
+    |
+120 | extend<A: Eq, B: Ord> Two<A, B>: Eq {
+    |           -- this conformance needs `A: Eq`
 
 error[E0139]: `Two<T, i64>` has no `==`
    --> E0159-blocked.sisu:194:5
@@ -228,11 +274,13 @@ error[E0139]: `Two<T, i64>` has no `==`
 error[E0159]: `Two<Node, i64>` has no `==`
    --> E0159-blocked.sisu:198:5
     |
-120 | extend<A: Eq, B: Ord> Two<A, B>: Eq {
-    |           -- this conformance needs `A: Eq`
-...
 198 |     x == x
     |     ^ this has type `Two<Node, i64>`
+    |
+   ::: E0159-blocked.sisu:120:11
+    |
+120 | extend<A: Eq, B: Ord> Two<A, B>: Eq {
+    |           -- this conformance needs `A: Eq`
     |
     = help: make `Node` conform to `Eq`
 
@@ -255,11 +303,13 @@ error[E0139]: `Same2<T, T?>` has no `==`
 error[E0159]: `Same2<Node, Node>` has no `==`
    --> E0159-blocked.sisu:210:5
     |
-151 | extend<A: Eq, B: Eq> Same2<A, B>: Eq {
-    |           -- this conformance needs `A: Eq`
-...
 210 |     x == x
     |     ^ this has type `Same2<Node, Node>`
+    |
+   ::: E0159-blocked.sisu:151:11
+    |
+151 | extend<A: Eq, B: Eq> Same2<A, B>: Eq {
+    |           -- this conformance needs `A: Eq`
     |
     = help: make `Node` conform to `Eq`
 

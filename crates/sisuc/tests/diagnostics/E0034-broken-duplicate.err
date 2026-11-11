@@ -1,11 +1,13 @@
 error[E0034]: interface `Source` is defined twice
  --> E0034-broken-duplicate.sisu:5:11
   |
-1 | interface Source {
-  |           ------ first defined here
-...
 5 | interface Source
   |           ^^^^^^
+  |
+ ::: E0034-broken-duplicate.sisu:1:11
+  |
+1 | interface Source {
+  |           ------ first defined here
 
 error[E0004]: `{` must be on the same line as `fn`, `class`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`
  --> E0034-broken-duplicate.sisu:6:1

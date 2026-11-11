@@ -11,7 +11,9 @@ warning[W0012]: interface `Named` is never used
    |
  5 | interface Named {
    |           ^^^^^ never used
-...
+   |
+  ::: W0012-interface.sisu:19:12
+   |
 19 | fn dead<T: Named>(x: T) -> T {
    |            ----- used here, in `dead`, which is never called
    |

@@ -198,6 +198,96 @@ impl<'s> Excerpt<'s> {
     }
 }
 
+/// The most lines between two labelled spans that share a snippet.
+const NEAR: usize = 3;
+
+/// Labelled spans that render in one snippet.
+struct Cluster {
+    /// The greatest last line of a span in the cluster.
+    last: usize,
+    has_primary: bool,
+    /// The indexes into the secondary spans.
+    held: Vec<usize>,
+}
+
+/// One excerpt for each cluster of labelled spans, with the indexes into `secondary` that it
+/// holds. A span joins the cluster before it when its first line is at most `NEAR` lines after
+/// the cluster's last line. That is the greatest last line of a span in the cluster. The
+/// cluster of `primary` comes first, then the others in source order.
+fn excerpts<'s>(
+    source: &'s str,
+    lines: &LineIndex,
+    primary: Span,
+    secondary: &[Span],
+) -> Vec<(Excerpt<'s>, Vec<usize>)> {
+    let line_of = |s: Span| {
+        (
+            lines.render_line(source, s.start()),
+            lines.render_line(source, s.end()),
+        )
+    };
+    // `None` is the primary span. The sort is stable, so equal lines keep this order.
+    let mut spans: Vec<(usize, usize, Option<usize>)> = std::iter::once((primary, None))
+        .chain(secondary.iter().enumerate().map(|(i, s)| (*s, Some(i))))
+        .map(|(s, i)| {
+            let (first, last) = line_of(s);
+            (first, last, i)
+        })
+        .collect();
+    spans.sort_by_key(|&(first, ..)| first);
+    let mut clusters: Vec<Cluster> = Vec::new();
+    for (first, last, index) in spans {
+        let cluster = match clusters.last_mut() {
+            Some(cluster) if first <= cluster.last + NEAR => cluster,
+            _ => {
+                clusters.push(Cluster {
+                    last,
+                    has_primary: false,
+                    held: Vec::new(),
+                });
+                clusters
+                    .last_mut()
+                    .expect("a cluster should have been pushed")
+            }
+        };
+        cluster.last = cluster.last.max(last);
+        match index {
+            Some(i) => cluster.held.push(i),
+            None => cluster.has_primary = true,
+        }
+    }
+    let primary_at = clusters
+        .iter()
+        .position(|c| c.has_primary)
+        .expect("a cluster should hold the primary span");
+    clusters[..=primary_at].rotate_right(1);
+    clusters
+        .into_iter()
+        .map(
+            |Cluster {
+                 has_primary,
+                 mut held,
+                 ..
+             }| {
+                held.sort_unstable();
+                // A `:::` header names the first annotation of its first line
+                // (`render_snippet_annotations` in annotate-snippets 0.12.17). So that span gets
+                // the header fix of a cut.
+                let header = if has_primary {
+                    primary
+                } else {
+                    secondary[held[0]]
+                };
+                let spans = has_primary
+                    .then_some(primary)
+                    .into_iter()
+                    .chain(held.iter().map(|&i| secondary[i]));
+                (Excerpt::new(source, lines, spans, header), held)
+            },
+        )
+        .collect()
+}
+
 impl Diagnostic {
     /// Renders the diagnostic as text; `path` is shown as given, `lines` is the index of
     /// `source`, and `color` adds ANSI styles. Each fix renders as its own `help:` with the
@@ -230,22 +320,35 @@ impl Diagnostic {
             Severity::Warning => Level::WARNING,
         };
         let title = level.primary_title(self.message()).id(self.code().as_str());
-        let excerpt = Excerpt::new(source, lines, labelled.clone(), self.span());
-        let mut primary = AnnotationKind::Primary.span(excerpt.rebased(self.span()));
-        if let Some(label) = self.label() {
-            primary = primary.label(label);
+        let spans: Vec<Span> = self.secondary().iter().map(|(s, _)| *s).collect();
+        let excerpts = excerpts(source, lines, self.span(), &spans);
+        let mut snippets = excerpts.iter().enumerate().map(|(n, (excerpt, held))| {
+            let mut snippet = Snippet::source(&*excerpt.text).line_start(excerpt.first);
+            // `excerpts` gives the cluster of the primary span first.
+            if n == 0 {
+                let mut primary = AnnotationKind::Primary.span(excerpt.rebased(self.span()));
+                if let Some(label) = self.label() {
+                    primary = primary.label(label);
+                }
+                snippet = snippet.annotation(primary);
+            }
+            for &i in held {
+                let (span, text) = &self.secondary()[i];
+                snippet = snippet.annotation(
+                    AnnotationKind::Context
+                        .span(excerpt.rebased(*span))
+                        .label(text),
+                );
+            }
+            snippet.path(path)
+        });
+        let first = snippets
+            .next()
+            .expect("`excerpts` should give the cluster of the primary span");
+        let mut group = title.element(first);
+        for snippet in snippets {
+            group = group.element(snippet);
         }
-        let mut snippet = Snippet::source(&*excerpt.text)
-            .line_start(excerpt.first)
-            .annotation(primary);
-        for (span, text) in self.secondary() {
-            snippet = snippet.annotation(
-                AnnotationKind::Context
-                    .span(excerpt.rebased(*span))
-                    .label(text),
-            );
-        }
-        let mut group = title.element(snippet.path(path));
         for note in self.notes() {
             group = group.element(Level::NOTE.message(&**note));
         }
@@ -273,15 +376,24 @@ impl Diagnostic {
         } else {
             Renderer::plain()
         };
-        let text = renderer.render(&groups);
-        match excerpt.header {
-            Some((line, cut, column)) => text.replacen(
-                &format!("{path}:{line}:{cut}"),
-                &format!("{path}:{line}:{column}"),
-                1,
-            ),
-            None => text,
+        let mut text = renderer.render(&groups);
+        // The snippets render in order, so each header is after the one before it. A header
+        // ends at the column, so the next byte is not a digit.
+        let mut from = 0;
+        for (line, cut, column) in excerpts.iter().filter_map(|(e, _)| e.header) {
+            let shown = format!("{path}:{line}:{cut}");
+            let Some(at) = text[from..]
+                .match_indices(&shown)
+                .map(|(at, _)| from + at)
+                .find(|&at| !text[at + shown.len()..].starts_with(|c: char| c.is_ascii_digit()))
+            else {
+                break;
+            };
+            let true_header = format!("{path}:{line}:{column}");
+            text.replace_range(at..at + shown.len(), &true_header);
+            from = at + true_header.len();
         }
+        text
     }
 }
 
@@ -289,7 +401,7 @@ impl Diagnostic {
 mod tests {
     use annotate_snippets::{AnnotationKind, Level, Patch, Renderer, Snippet};
 
-    use super::{Excerpt, MARGIN, window};
+    use super::{Excerpt, MARGIN, excerpts, window};
     use crate::diagnostic::{
         Code, Diagnostic, DiagnosticKind, Edit, Fix, Immutable, NeverReassignedForm, Severity,
     };
@@ -511,22 +623,36 @@ error[E0011]: expected `=`, found end of line
         }
     }
 
-    /// The rendering before the windowing: the renderer gets the whole source.
+    /// The rendering before the windowing: the renderer gets the whole source for the snippet of
+    /// each cluster that `excerpts` gives, in the same order.
     fn render_whole(d: &Diagnostic, path: &str, source: &str) -> String {
         let level = match d.severity() {
             Severity::Error => Level::ERROR,
             Severity::Warning => Level::WARNING,
         };
-        let mut primary = AnnotationKind::Primary.span(d.span().range());
-        if let Some(label) = d.label() {
-            primary = primary.label(label);
-        }
-        let mut snippet = Snippet::source(source).path(path).annotation(primary);
-        for (span, text) in d.secondary() {
-            snippet = snippet.annotation(AnnotationKind::Context.span(span.range()).label(text));
-        }
+        let spans: Vec<Span> = d.secondary().iter().map(|(s, _)| *s).collect();
+        let clusters = excerpts(source, &LineIndex::new(source), d.span(), &spans);
+        let mut snippets = clusters.iter().enumerate().map(|(n, (_, held))| {
+            let mut snippet = Snippet::source(source).path(path);
+            if n == 0 {
+                let mut primary = AnnotationKind::Primary.span(d.span().range());
+                if let Some(label) = d.label() {
+                    primary = primary.label(label);
+                }
+                snippet = snippet.annotation(primary);
+            }
+            for &i in held {
+                let (span, text) = &d.secondary()[i];
+                snippet =
+                    snippet.annotation(AnnotationKind::Context.span(span.range()).label(text));
+            }
+            snippet
+        });
         let title = level.primary_title(d.message()).id(d.code().as_str());
-        let mut group = title.element(snippet);
+        let mut group = title.element(snippets.next().expect("a diagnostic should have a snippet"));
+        for snippet in snippets {
+            group = group.element(snippet);
+        }
         if let Some(help) = d.help() {
             group = group.element(Level::HELP.message(help));
         }
@@ -765,13 +891,66 @@ error[E0011]: expected `=`, found end of line
     fn a_far_label_on_a_long_line_should_keep_its_column() {
         let pad = "y".repeat(999);
         let source = format!("{pad}ab{pad}\n{}", &numbered(10)[3..]);
-        let d = error(line(&source, 10), "m").with_secondary(Span::new(999, 1001), "s");
+        let label = Span::new(999, 1001);
+        let d = error(line(&source, 10), "m").with_secondary(label, "s");
+        // Without the cut, the renderer gives the true column itself.
+        let far = excerpts(&source, &LineIndex::new(&source), d.span(), &[label]);
+        assert!(far[1].0.text.len() < 2000, "the far snippet should be cut");
         let text = rendered(&d, &source);
         assert_eq!(
             headers(&text),
             ["--> t.sisu:10:1", "::: t.sisu:1:1000"],
             "{text}"
         );
+    }
+
+    /// The sum of the bytes of the text that the renderer gets for `d`.
+    fn excerpt_bytes(d: &Diagnostic, source: &str, lines: &LineIndex) -> usize {
+        let spans: Vec<Span> = d.secondary().iter().map(|(s, _)| *s).collect();
+        excerpts(source, lines, d.span(), &spans)
+            .iter()
+            .map(|(e, _)| e.text.len())
+            .sum()
+    }
+
+    #[test]
+    fn a_far_origin_should_cost_a_bounded_source() {
+        let source = numbered(5002);
+        let d = error(line(&source, 5002), "m").with_secondary(line(&source, 1), "s");
+        let bytes = excerpt_bytes(&d, &source, &LineIndex::new(&source));
+        assert!(bytes < 1024, "{bytes} bytes");
+    }
+
+    /// Each case line, and each line between line 3 and the first case, has the same length at
+    /// every `N`. The first case is more than 3 lines after line 3. So each diagnostic costs
+    /// the same, and the sum is exactly `N` times that cost. The ratio is then 4 for correct
+    /// code, and a line that grows with `N` fails the test.
+    #[test]
+    fn many_labels_on_one_early_line_should_cost_linear_source() {
+        let costs: Vec<usize> = [64, 256, 1024]
+            .into_iter()
+            .map(|n| {
+                let cases: String = (0..n)
+                    .map(|i| format!("case {i:05}\n"))
+                    .collect::<Vec<_>>()
+                    .concat();
+                let source = format!("a\nb\nlet x = 1\n{}{cases}", "case -----\n".repeat(4));
+                let lines = LineIndex::new(&source);
+                let label = line(&source, 3);
+                (0..n)
+                    .map(|i| {
+                        let start = lines
+                            .line_start(8 + i)
+                            .expect("the case should be in the source");
+                        let d = error(Span::new(start, start + 10), "m").with_secondary(label, "s");
+                        excerpt_bytes(&d, &source, &lines)
+                    })
+                    .sum()
+            })
+            .collect();
+        for pair in costs.windows(2) {
+            assert!(pair[1] <= 4 * pair[0], "{costs:?} bytes");
+        }
     }
 
     /// The label on line 14 is 2 lines after the end of the primary span, and 10 lines after

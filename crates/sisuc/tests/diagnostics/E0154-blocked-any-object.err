@@ -1,11 +1,13 @@
 error[E0154]: `Pair<Dir>` does not conform to `Eq`
   --> E0154-blocked-any-object.sisu:16:11
    |
- 9 | extend<A: AnyObject> Pair<A>: Eq {
-   |           --------- this conformance needs `A: AnyObject`
-...
 16 |     print([Pair(a: Dir.North)].contains(Pair(a: Dir.North)))
    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `contains` needs `Pair<Dir>: Eq`
+   |
+  ::: E0154-blocked-any-object.sisu:9:11
+   |
+ 9 | extend<A: AnyObject> Pair<A>: Eq {
+   |           --------- this conformance needs `A: AnyObject`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0154

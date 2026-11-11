@@ -3,7 +3,9 @@ error[E0140]: `W<T>.eq` instantiates itself without end
    |
  6 |         E.Has(W(v: [self.v])) == E.Has(W(v: [other.v]))
    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `==` here
-...
+   |
+  ::: E0140-operator-enum-after-use.sisu:10:9
+   |
 10 |     Has(W<T>)
    |         ---- the `==` of `E` here may call `W<T>.eq` through `Eq`
    |

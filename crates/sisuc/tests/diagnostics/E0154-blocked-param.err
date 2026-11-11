@@ -1,44 +1,52 @@
 error[E0154]: `Pair<T>` does not conform to `Eq`
   --> E0154-blocked-param.sisu:27:5
    |
-10 | extend<A: Eq> Pair<A>: Eq {
-   |           -- this conformance needs `A: Eq`
-...
 27 |     [x].contains(x)
    |     ^^^^^^^^^^^^^^^ `contains` needs `Pair<T>: Eq`
+   |
+  ::: E0154-blocked-param.sisu:10:11
+   |
+10 | extend<A: Eq> Pair<A>: Eq {
+   |           -- this conformance needs `A: Eq`
    |
    = help: add a bound: `T: Eq`
 
 error[E0154]: `Pair<T>` does not conform to `Eq`
   --> E0154-blocked-param.sisu:31:5
    |
-10 | extend<A: Eq> Pair<A>: Eq {
-   |           -- this conformance needs `A: Eq`
-...
 31 |     [x].contains(x)
    |     ^^^^^^^^^^^^^^^ `contains` needs `Pair<T>: Eq`
+   |
+  ::: E0154-blocked-param.sisu:10:11
+   |
+10 | extend<A: Eq> Pair<A>: Eq {
+   |           -- this conformance needs `A: Eq`
    |
    = help: add a bound: `T: Display & Eq`
 
 error[E0154]: `Pair<S.Item>` does not conform to `Eq`
   --> E0154-blocked-param.sisu:35:5
    |
-10 | extend<A: Eq> Pair<A>: Eq {
-   |           -- this conformance needs `A: Eq`
-...
 35 |     [x].contains(x)
    |     ^^^^^^^^^^^^^^^ `contains` needs `Pair<S.Item>: Eq`
+   |
+  ::: E0154-blocked-param.sisu:10:11
+   |
+10 | extend<A: Eq> Pair<A>: Eq {
+   |           -- this conformance needs `A: Eq`
    |
    = help: add a bound in `Seq`: `type Item: Eq`
 
 error[E0154]: `Held<T>` does not conform to `Eq`
   --> E0154-blocked-param.sisu:39:5
    |
-20 | extend<A: AnyObject> Held<A>: Eq {
-   |           --------- this conformance needs `A: AnyObject`
-...
 39 |     [x].contains(x)
    |     ^^^^^^^^^^^^^^^ `contains` needs `Held<T>: Eq`
+   |
+  ::: E0154-blocked-param.sisu:20:11
+   |
+20 | extend<A: AnyObject> Held<A>: Eq {
+   |           --------- this conformance needs `A: AnyObject`
    |
    = help: add a bound: `T: AnyObject`
 

@@ -3,7 +3,9 @@ warning[W0013]: field `x` is never read
   |
 2 |     x: i64
   |     ^ never read
-...
+  |
+ ::: W0013-dbg.sisu:7:5
+  |
 7 |     dbg(p)
   |     ------ `dbg` can show `x` here, but `dbg` is not a read
   |
@@ -14,7 +16,9 @@ warning[W0013]: field `y` is never read
   |
 3 |     y: i64
   |     ^ never read
-...
+  |
+ ::: W0013-dbg.sisu:7:5
+  |
 7 |     dbg(p)
   |     ------ `dbg` can show `y` here, but `dbg` is not a read
   |

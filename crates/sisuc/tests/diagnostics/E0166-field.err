@@ -1,11 +1,13 @@
 error[E0166]: the parameter `xs` of `set` is `mut`, so its argument needs `mut`
   --> E0166-field.sisu:15:9
    |
- 9 | fn set(mut xs: [i64]) {
-   |            -- declared `mut` here
-...
 15 |     set(b.cells)
    |         ^^^^^^^ needs `mut`
+   |
+  ::: E0166-field.sisu:9:12
+   |
+ 9 | fn set(mut xs: [i64]) {
+   |            -- declared `mut` here
    |
    = help: declare the field `cells` as `mut`, and pass it `mut`
 

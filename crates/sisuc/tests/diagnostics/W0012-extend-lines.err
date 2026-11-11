@@ -20,7 +20,9 @@ warning[W0012]: interface `Shape` is never used
    |
  9 | interface Shape {
    |           ^^^^^ never used
-...
+   |
+  ::: W0012-extend-lines.sisu:16:11
+   |
 16 | extend<T: Shape> Crate<T, // second
    |           ----- used here, in the `extend` block of `Crate<T, i64>`, which is never used
    |

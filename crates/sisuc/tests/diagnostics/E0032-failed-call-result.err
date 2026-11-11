@@ -886,11 +886,13 @@ help: a class with a similar name exists: `Node`
 error[E0154]: `Node` does not conform to `Eq`
    --> E0032-failed-call-result.sisu:334:22
     |
- 90 | class Bq2<T: Eq> {
-    |              -- required by this bound
-...
 334 |     let _s: string = A(a: Node(), b: missing)
     |                      ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+   ::: E0032-failed-call-result.sisu:90:14
+    |
+ 90 | class Bq2<T: Eq> {
+    |              -- required by this bound
     |
     = help: make `Node` conform to `Eq`
 

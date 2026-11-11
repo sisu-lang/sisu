@@ -3,7 +3,9 @@ error[E0140]: `W<T>.to_string` instantiates itself without end
    |
  6 |         print(E.Has(W(v: [self.v])))
    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `print` here
-...
+   |
+  ::: E0140-print-enum-after-use.sisu:11:9
+   |
 11 |     Has(W<T>)
    |         ---- the `to_string` of `E` here may call `W<T>.to_string` through `Display`
    |

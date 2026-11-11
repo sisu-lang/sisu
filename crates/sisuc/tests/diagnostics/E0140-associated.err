@@ -3,7 +3,9 @@ error[E0140]: `go` instantiates itself without end
    |
 13 |         x.poke()
    |         ^^^^^^^^ `Deep.poke` here
-...
+   |
+  ::: E0140-associated.sisu:25:9
+   |
 25 |         go(self.value)
    |         -------------- which instantiates `go<T>`
    |

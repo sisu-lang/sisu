@@ -9,11 +9,13 @@ error[E0030]: cannot find type `Nope`
 error[E0166]: the parameter `x` of `rw` is `mut`, so its argument needs `mut`
   --> E0166-type-arguments-unknown.sisu:11:14
    |
- 5 | fn rw<T>(mut x: T, v: T) {
-   |              - declared `mut` here
-...
 11 |     rw<Nope>(x, 5)
    |              ^ needs `mut`
+   |
+  ::: E0166-type-arguments-unknown.sisu:5:14
+   |
+ 5 | fn rw<T>(mut x: T, v: T) {
+   |              - declared `mut` here
 
 sisu: 2 errors
 sisu: for more on a code, run `sisu explain <code>`: E0030, E0166

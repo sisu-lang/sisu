@@ -1,11 +1,13 @@
 error[E0153]: `Box<i64>` conforms to `Convert<i64>` twice
   --> E0153-box.sisu:15:19
    |
- 9 | extend<T> Box<T>: Convert<T> {
-   |                   ---------- first conformance here
-...
 15 | extend<U> Box<U>: Convert<i64> {
    |                   ^^^^^^^^^^^^
+   |
+  ::: E0153-box.sisu:9:19
+   |
+ 9 | extend<T> Box<T>: Convert<T> {
+   |                   ---------- first conformance here
    |
    = help: a type conforms to an interface once for each list of the interface's type arguments
 

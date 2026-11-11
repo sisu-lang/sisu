@@ -1,11 +1,13 @@
 error[E0154]: `Circle` does not conform to `Convert<i64>`
   --> E0154-inherited-arguments.sisu:13:16
    |
- 5 | interface Wide: Convert<i64> {
-   |                 ------------ `Wide` requires `Convert<i64>`
-...
 13 | extend Circle: Wide {
    |                ^^^^
+   |
+  ::: E0154-inherited-arguments.sisu:5:17
+   |
+ 5 | interface Wide: Convert<i64> {
+   |                 ------------ `Wide` requires `Convert<i64>`
    |
    = help: write `extend Circle: Convert<i64> { ... }`
 

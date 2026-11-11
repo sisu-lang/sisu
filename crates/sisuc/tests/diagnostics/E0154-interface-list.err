@@ -1,11 +1,13 @@
 error[E0154]: `Node` does not conform to `Same`
   --> E0154-interface-list.sisu:13:20
    |
- 5 | interface Feed<T: Same> {
-   |                   ---- required by this bound
-...
 13 | class Feeder: Feed<Node> {
    |                    ^^^^
+   |
+  ::: E0154-interface-list.sisu:5:19
+   |
+ 5 | interface Feed<T: Same> {
+   |                   ---- required by this bound
    |
    = help: make `Node` conform to `Same`
 

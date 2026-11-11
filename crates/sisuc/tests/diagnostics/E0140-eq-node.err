@@ -3,7 +3,9 @@ error[E0140]: `E` instantiates itself without end
    |
  8 |     One(W<[U]>)
    |         ^^^^^^ the `==` of `E` compares `W<[U]>` here
-...
+   |
+  ::: E0140-eq-node.sisu:17:9
+   |
 17 |         E.One(W(x: [self.x])) == E.One(W(x: [other.x]))
    |         ----------------------------------------------- which instantiates `E<T>`
    |

@@ -3,7 +3,9 @@ error[E0140]: `E` instantiates itself without end
    |
  8 |     One(W<[U]>)
    |         ^^^^^^ the `to_string` of `E` shows `W<[U]>` here
-...
+   |
+  ::: E0140-display-node.sisu:17:9
+   |
 17 |         print(E.One(W(x: [self.x])))
    |         ---------------------------- which instantiates `E<T>`
    |

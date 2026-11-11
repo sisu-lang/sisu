@@ -3,7 +3,9 @@ error[E0140]: `E` instantiates itself without end
    |
 22 |     type Item = E<W<W<T>>>
    |                 ^^^^^^^^^^ `E<W<W<T>>>` here
-...
+   |
+  ::: E0140-choice-cautious.sisu:26:7
+   |
 26 |     A(T.Other.Item)
    |       ------------ which instantiates `T.Other.Item`
    |

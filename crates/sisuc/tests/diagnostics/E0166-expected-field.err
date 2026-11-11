@@ -1,11 +1,13 @@
 error[E0166]: the parameter `xs` of `first` is `mut`, so its argument needs `mut`
   --> E0166-expected-field.sisu:17:24
    |
- 9 | fn first<T>(mut xs: [T]) -> T {
-   |                 -- declared `mut` here
-...
 17 |     let n: i64 = first(b.cells)
    |                        ^^^^^^^ needs `mut`
+   |
+  ::: E0166-expected-field.sisu:9:17
+   |
+ 9 | fn first<T>(mut xs: [T]) -> T {
+   |                 -- declared `mut` here
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0166

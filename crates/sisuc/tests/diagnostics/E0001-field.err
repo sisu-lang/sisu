@@ -1,11 +1,13 @@
 error[E0001]: cannot assign to `count`
  --> E0001-field.sisu:7:5
   |
-2 |     count: i64
-  |     ----- declared without `mut` here
-...
 7 |     c.count = 1
   |     ^^^^^^^^^^^
+  |
+ ::: E0001-field.sisu:2:5
+  |
+2 |     count: i64
+  |     ----- declared without `mut` here
   |
 help: mark the field `mut`
   |

@@ -17,11 +17,13 @@ error[E0034]: method `show` is defined twice
 error[E0034]: class `Point` is defined twice
  --> E0034-members.sisu:9:7
   |
-1 | class Point {
-  |       ----- first defined here
-...
 9 | class Point {
   |       ^^^^^
+  |
+ ::: E0034-members.sisu:1:7
+  |
+1 | class Point {
+  |       ----- first defined here
 
 sisu: 3 errors
 sisu: for more on a code, run `sisu explain <code>`: E0034

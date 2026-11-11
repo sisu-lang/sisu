@@ -1,11 +1,13 @@
 error[E0170]: the `mut` argument `x` has type `string`, but the parameter `x` of `set` has type `i64`
   --> E0170-associated.sisu:23:22
    |
-17 | fn set<T: I>(c: T, mut x: T.Item) {
-   |                        - declared `T.Item` here
-...
 23 |     set(C(n: 2), mut x)
    |                      ^ has type `string`
+   |
+  ::: E0170-associated.sisu:17:24
+   |
+17 | fn set<T: I>(c: T, mut x: T.Item) {
+   |                        - declared `T.Item` here
    |
    = help: a `mut` argument must have exactly the parameter's type: the callee stores an `i64` back into the place
 

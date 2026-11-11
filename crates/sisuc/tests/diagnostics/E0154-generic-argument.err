@@ -1,14 +1,18 @@
 error[E0154]: `Pair<Node>` does not conform to `Same`
   --> E0154-generic-argument.sisu:26:17
    |
-14 | extend<T: Same> Pair<T>: Same {
-   |           ---- this conformance needs `T: Same`
-...
-20 | fn agree<T: Same>(a: T, b: T) -> bool {
-   |             ---- required by this bound
-...
 26 |     print(agree(p, p))
    |                 ^
+   |
+  ::: E0154-generic-argument.sisu:14:11
+   |
+14 | extend<T: Same> Pair<T>: Same {
+   |           ---- this conformance needs `T: Same`
+   |
+  ::: E0154-generic-argument.sisu:20:13
+   |
+20 | fn agree<T: Same>(a: T, b: T) -> bool {
+   |             ---- required by this bound
    |
    = help: make `Node` conform to `Same`
 

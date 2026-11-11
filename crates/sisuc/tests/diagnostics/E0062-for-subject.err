@@ -147,11 +147,13 @@ error[E0062]: `c` may be `None`
 error[E0166]: the parameter `x` of `take` is `mut`, so its argument needs `mut`
   --> E0062-for-subject.sisu:67:20
    |
-58 | fn take<T>(mut x: T?) {
-   |                - declared `mut` here
-...
 67 |     take<i64, i64>(c.v)
    |                    ^^^ needs `mut`
+   |
+  ::: E0062-for-subject.sisu:58:16
+   |
+58 | fn take<T>(mut x: T?) {
+   |                - declared `mut` here
 
 sisu: 19 errors
 sisu: for more on a code, run `sisu explain <code>`: E0053, E0055, E0062, E0070, E0137, E0166, E0167

@@ -3,7 +3,9 @@ warning[W0013]: field `x` is never read
   |
 2 |     x: i64
   |     ^ never read
-...
+  |
+ ::: W0013-dbg-enum.sisu:9:5
+  |
 9 |     dbg(E.A(P(x: 1)))
   |     ----------------- `dbg` can show `x` here, but `dbg` is not a read
   |

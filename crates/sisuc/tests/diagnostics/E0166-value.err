@@ -1,11 +1,13 @@
 error[E0166]: the parameter `n` of `add_one` is `mut`, so its argument needs `mut`
   --> E0166-value.sisu:12:19
    |
- 6 | fn add_one(mut n: i64) -> i64 {
-   |                - declared `mut` here
-...
 12 |     print(add_one(1))
    |                   ^ needs `mut`
+   |
+  ::: E0166-value.sisu:6:16
+   |
+ 6 | fn add_one(mut n: i64) -> i64 {
+   |                - declared `mut` here
    |
    = help: to change only a local copy, remove `mut` here and write `let mut n = n` in the body
 
