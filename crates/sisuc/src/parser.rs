@@ -3923,7 +3923,6 @@ impl<'a> Parser<'a> {
                     }
                     break;
                 }
-                TokenKind::Eof if depth == 0 => break,
                 TokenKind::Else if depth == 0 => {
                     elses += 1;
                     last = Some(first + at);

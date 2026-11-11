@@ -377,7 +377,7 @@ fn each_unsafe_fix_should_parse() {
         let Some(source) = fixture_text(&path) else {
             continue;
         };
-        for d in sound_fixes(&source, &diagnostics(&source)) {
+        for d in crate::on_compiler_stack(|| sound_fixes(&source, &diagnostics(&source))) {
             for fix in d.fixes().iter().filter(|f| !f.safe()) {
                 let edits: Vec<&Edit> = fix.edits().iter().collect();
                 let result = apply(&source, &edits);

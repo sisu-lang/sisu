@@ -374,8 +374,9 @@ pub(crate) enum DiagnosticKind {
         grouped: Option<String>,
     },
     /// The `: type` at `at` of a `let ... else`, or of a `let` whose pattern is not a name. The
-    /// value gives the names their types. `with_else` is whether an `else` follows the value: on
-    /// its line, or on a later line. `join` is the gap before an `else` on a later line, when the
+    /// value gives the names their types. `with_else` is whether an `else` follows the value.
+    /// After a name, any later-line `else` counts. After a pattern, a later-line `else` counts
+    /// only when `join` is set. `join` is the gap before an `else` on a later line, when the
     /// fix can move that `else` after the value.
     LetTakesNoType {
         at: Span,

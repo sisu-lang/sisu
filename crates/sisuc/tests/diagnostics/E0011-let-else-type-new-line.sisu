@@ -1,6 +1,6 @@
 // GIVEN a typed `let v: i64? = o` whose `else { return 0 }` starts the next line
 // WHEN `sisu check` runs on it
-// THEN it reports E0011 at the `: i64?` (5:10), with a fix that removes the type and moves the
+// THEN it reports E0011 at the `: i64?` (6:10), with a fix that removes the type and moves the
 // `else` after the value
 fn f(o: i64?) -> i64 {
     let v: i64? = o
