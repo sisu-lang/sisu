@@ -1427,8 +1427,9 @@ other list is not a rule.
 To add a rule to a joined page:
 
 1. Start the item with the ID in braces, with no character before it. Write one
-   space after it. Write the text of the rule on the same line. Example: ``- {#strings.text.null} A string can
-   hold the null character `\0`.`` The site hides the prefix.
+   space after it. Write the text of the rule on the same line. Example:
+   ``- {#strings.text.null} A string can hold the null character `\0`.`` The
+   site hides the prefix.
 2. Name the ID `<page>.<section>.<name>`. It has two or more parts that are
    lowercase letters, digits and single hyphens, and each part starts with a
    letter. The first part is the file name of the page, without `.md`. An ID is
