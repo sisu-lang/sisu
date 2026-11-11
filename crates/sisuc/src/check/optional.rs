@@ -6,7 +6,9 @@ use super::alias::Through;
 use super::any::is_target;
 use super::generic::{GenericSig, Site, mark, written_args};
 use super::mut_args::Callee;
-use super::{Checked, Checker, DiagnosticKind, Expectation, Poisoned, optional_of, type_of};
+use super::{
+    Checked, Checker, DiagnosticKind, Expectation, Origin, Poisoned, optional_of, type_of,
+};
 use crate::ast;
 use crate::diagnostic::{Definition, suggestion};
 use crate::source::Span;
@@ -89,10 +91,11 @@ impl Checker<'_> {
                     let hint = Expectation::Hint {
                         want: payload,
                         siblings: payload,
+                        origin: Origin::None,
                     };
                     self.value(e, hint)
                 } else {
-                    self.value(e, Expectation::Required(payload))
+                    self.value(e, Expectation::Required(payload, Origin::None))
                 };
                 match type_of(&checked) {
                     // An object that does not convert to the hint keeps its own type: the join
@@ -114,7 +117,11 @@ impl Checker<'_> {
                         (checked, optional_of(got), TypeArgs::NONE)
                     }
                     _ => (
-                        mark(self.settled(e, checked, Expectation::Required(payload))),
+                        mark(self.settled(
+                            e,
+                            checked,
+                            Expectation::Required(payload, Origin::None),
+                        )),
                         want,
                         TypeArgs::NONE,
                     ),
@@ -131,6 +138,7 @@ impl Checker<'_> {
                     ret: Some(ret),
                     bounds: &[],
                     mut_site: None,
+                    function: None,
                 };
                 let written = (site.written, site.angles);
                 let (args, list, found) =
@@ -206,6 +214,7 @@ impl Checker<'_> {
                     ret: Some(t.ty),
                     bounds: &[],
                     mut_site: None,
+                    function: None,
                 };
                 let written = (site.written, site.angles);
                 let (_, list, found) =
@@ -213,7 +222,7 @@ impl Checker<'_> {
                 let held = self.use_checks(&t.checks, list, span);
                 let found = self.built_type(found, held, span)?;
                 held.map_err(Poisoned::untyped)?;
-                self.none(span, Expectation::Required(found))
+                self.none(span, Expectation::Required(found, Origin::None))
             }
             (Symbol::NONE, None) => {
                 let mut expected = site.expected;
@@ -221,7 +230,7 @@ impl Checker<'_> {
                     let param = [Symbol::intern("T")];
                     let args = (self.type_args(site.name, &param, site.written, site.angles))
                         .map_err(Poisoned::untyped)?;
-                    expected = Expectation::Required(optional_of(args.get()[0]));
+                    expected = Expectation::Required(optional_of(args.get()[0]), Origin::None);
                 }
                 self.none(span, expected)
             }

@@ -13,11 +13,13 @@ help: to do nothing when it is `None`, use `?.`
 error[E0001]: cannot change `ys`
   --> E0062-chain-continues.sisu:24:9
    |
- 7 |     ys: [i64]
-   |     -- declared without `mut` here
-...
 24 |         self.o.ys.push("a")
    |         ^^^^^^^^^ `push` changes `ys`
+   |
+  ::: E0062-chain-continues.sisu:7:5
+   |
+ 7 |     ys: [i64]
+   |     -- declared without `mut` here
    |
 help: mark the field `mut`
    |
@@ -167,11 +169,13 @@ help: to do nothing when it is `None`, use `?.`
 error[E0001]: cannot change `oa`
   --> E0062-chain-continues.sisu:99:5
    |
-17 |     oa: [i64]?
-   |     -- declared without `mut` here
-...
 99 |     c.oa.push(1)
    |     ^^^^ `push` changes `oa`
+   |
+  ::: E0062-chain-continues.sisu:17:5
+   |
+17 |     oa: [i64]?
+   |     -- declared without `mut` here
    |
 help: mark the field `mut`
    |
@@ -192,11 +196,13 @@ help: to do nothing when it is `None`, use `?.`
 error[E0001]: cannot change `oa`
    --> E0062-chain-continues.sisu:103:5
     |
- 17 |     oa: [i64]?
-    |     -- declared without `mut` here
-...
 103 |     c.oa.push(1)
     |     ^^^^ `push` changes `oa`
+    |
+   ::: E0062-chain-continues.sisu:17:5
+    |
+ 17 |     oa: [i64]?
+    |     -- declared without `mut` here
     |
 help: mark the field `mut`
     |
@@ -584,11 +590,13 @@ error[E0062]: this value may be `None`
 error[E0001]: cannot assign to an element of `rows`
    --> E0062-chain-continues.sisu:235:5
     |
-219 |     rows: [[i64]?]
-    |     ---- declared without `mut` here
-...
 235 |     c?.rows[nope][0] = 1
     |     ^^^^^^^^^^^^^^^^^^^^
+    |
+   ::: E0062-chain-continues.sisu:219:5
+    |
+219 |     rows: [[i64]?]
+    |     ---- declared without `mut` here
     |
 help: mark the field `mut`
     |

@@ -12,20 +12,24 @@ help: move `{` to the end of the line above
 error[E0034]: class `A` is defined twice
  --> E0034-broken-first-item.sisu:5:7
   |
-1 | class A
-  |       - first defined here
-...
 5 | class A {}
   |       ^
+  |
+ ::: E0034-broken-first-item.sisu:1:7
+  |
+1 | class A
+  |       - first defined here
 
 error[E0034]: class `A` is defined twice
  --> E0034-broken-first-item.sisu:7:7
   |
-1 | class A
-  |       - first defined here
-...
 7 | class A {}
   |       ^
+  |
+ ::: E0034-broken-first-item.sisu:1:7
+  |
+1 | class A
+  |       - first defined here
 
 error[E0034]: class `B` is defined twice
   --> E0034-broken-first-item.sisu:11:7
@@ -50,11 +54,13 @@ help: move `{` to the end of the line above
 error[E0034]: class `B` is defined twice
   --> E0034-broken-first-item.sisu:15:7
    |
- 9 | class B {}
-   |       - first defined here
-...
 15 | class B {}
    |       ^
+   |
+  ::: E0034-broken-first-item.sisu:9:7
+   |
+ 9 | class B {}
+   |       - first defined here
 
 error[E0034]: class `C` is defined twice
   --> E0034-broken-first-item.sisu:19:7
@@ -68,11 +74,13 @@ error[E0034]: class `C` is defined twice
 error[E0034]: class `C` is defined twice
   --> E0034-broken-first-item.sisu:21:7
    |
-17 | class C {}
-   |       - first defined here
-...
 21 | class C
    |       ^
+   |
+  ::: E0034-broken-first-item.sisu:17:7
+   |
+17 | class C {}
+   |       - first defined here
 
 error[E0004]: `{` must be on the same line as `fn`, `class`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`
   --> E0034-broken-first-item.sisu:22:1
@@ -99,11 +107,13 @@ help: move `{` to the end of the line above
 error[E0034]: class `D` is defined twice
   --> E0034-broken-first-item.sisu:29:7
    |
-25 | class D
-   |       - first defined here
-...
 29 | class D
    |       ^
+   |
+  ::: E0034-broken-first-item.sisu:25:7
+   |
+25 | class D
+   |       - first defined here
 
 error[E0004]: `{` must be on the same line as `fn`, `class`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`
   --> E0034-broken-first-item.sisu:30:1
@@ -119,11 +129,13 @@ help: move `{` to the end of the line above
 error[E0034]: class `D` is defined twice
   --> E0034-broken-first-item.sisu:33:7
    |
-25 | class D
-   |       - first defined here
-...
 33 | class D {}
    |       ^
+   |
+  ::: E0034-broken-first-item.sisu:25:7
+   |
+25 | class D
+   |       - first defined here
 
 error[E0034]: class `E` is defined twice
   --> E0034-broken-first-item.sisu:37:7
@@ -148,11 +160,13 @@ help: move `{` to the end of the line above
 error[E0034]: class `E` is defined twice
   --> E0034-broken-first-item.sisu:41:7
    |
-35 | class E {}
-   |       - first defined here
-...
 41 | class E
    |       ^
+   |
+  ::: E0034-broken-first-item.sisu:35:7
+   |
+35 | class E {}
+   |       - first defined here
 
 error[E0004]: `{` must be on the same line as `fn`, `class`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`
   --> E0034-broken-first-item.sisu:42:1
@@ -179,20 +193,24 @@ help: move `{` to the end of the line above
 error[E0034]: `F` is already a function
   --> E0034-broken-first-item.sisu:49:7
    |
-45 | fn F()
-   |    - first defined here
-...
 49 | class F {}
    |       ^
+   |
+  ::: E0034-broken-first-item.sisu:45:4
+   |
+45 | fn F()
+   |    - first defined here
 
 error[E0034]: `F` is already a function
   --> E0034-broken-first-item.sisu:51:6
    |
-45 | fn F()
-   |    - first defined here
-...
 51 | enum F { X }
    |      ^
+   |
+  ::: E0034-broken-first-item.sisu:45:4
+   |
+45 | fn F()
+   |    - first defined here
 
 sisu: 20 errors
 sisu: for more on a code, run `sisu explain <code>`: E0004, E0034

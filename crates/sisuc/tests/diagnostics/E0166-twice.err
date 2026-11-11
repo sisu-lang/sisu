@@ -1,20 +1,24 @@
 error[E0166]: the parameter `x` of `swap` is `mut`, so its argument needs `mut`
   --> E0166-twice.sisu:13:10
    |
- 5 | fn swap(mut x: i64, mut y: i64) {
-   |             - declared `mut` here
-...
 13 |     swap(a, a)
    |          ^ needs `mut`
+   |
+  ::: E0166-twice.sisu:5:13
+   |
+ 5 | fn swap(mut x: i64, mut y: i64) {
+   |             - declared `mut` here
 
 error[E0166]: the parameter `y` of `swap` is `mut`, so its argument needs `mut`
   --> E0166-twice.sisu:13:13
    |
- 5 | fn swap(mut x: i64, mut y: i64) {
-   |                         - declared `mut` here
-...
 13 |     swap(a, a)
    |             ^ needs `mut`
+   |
+  ::: E0166-twice.sisu:5:25
+   |
+ 5 | fn swap(mut x: i64, mut y: i64) {
+   |                         - declared `mut` here
 
 sisu: 2 errors
 sisu: for more on a code, run `sisu explain <code>`: E0166

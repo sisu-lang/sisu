@@ -1,11 +1,13 @@
 error[E0166]: the parameter `x` of `B.put` is `mut`, so its argument needs `mut`
   --> E0166-generic-method.sisu:15:11
    |
- 7 |     fn put<T>(self, mut x: T) {
-   |                         - declared `mut` here
-...
 15 |     b.put(ys)
    |           ^^ needs `mut`
+   |
+  ::: E0166-generic-method.sisu:7:25
+   |
+ 7 |     fn put<T>(self, mut x: T) {
+   |                         - declared `mut` here
    |
    = help: declare `ys` with `let mut`, and pass `mut ys`
 

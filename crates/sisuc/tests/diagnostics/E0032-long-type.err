@@ -2,7 +2,9 @@ error[E0032]: expected `string`, found `P<P<P<P<P<P<P<P<P<P<P<P<P<P<P<P<P<P<P<P<
   --> E0032-long-type.sisu:27:21
    |
 27 |     let s: string = y20
-   |                     ^^^
+   |            ------   ^^^
+   |            |
+   |            declared as `string` here
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0032

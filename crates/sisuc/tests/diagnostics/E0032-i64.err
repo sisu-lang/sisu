@@ -4,6 +4,11 @@ error[E0032]: expected `i64`, found `u8`
 7 |     show(b)
   |          ^
   |
+ ::: E0032-i64.sisu:1:12
+  |
+1 | fn show(n: i64) {
+  |            --- `show` declares `n` as `i64`
+  |
 help: if the types are right, convert it with `i64(...)`
   |
 7 |     show(i64(b))

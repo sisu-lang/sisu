@@ -1,11 +1,13 @@
 error[E0154]: `Key` does not conform to `Eq`
  --> E0154-any-alias.sisu:9:13
   |
-1 | interface Keyed<T: Eq> {}
-  |                    -- required by this bound
-...
 9 |     let _b: ByKey<Key>? = None
   |             ^^^^^^^^^^
+  |
+ ::: E0154-any-alias.sisu:1:20
+  |
+1 | interface Keyed<T: Eq> {}
+  |                    -- required by this bound
   |
   = help: make `Key` conform to `Eq`
 

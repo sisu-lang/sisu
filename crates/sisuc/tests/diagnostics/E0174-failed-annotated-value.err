@@ -3,6 +3,11 @@ error[E0032]: expected `i64`, found `string`
    |
 12 |     let w: Only = Only.One("x")
    |                            ^^^
+   |
+  ::: E0174-failed-annotated-value.sisu:8:9
+   |
+ 8 |     One(i64)
+   |         --- `One` holds `i64`
 
 error[E0174]: a `let` without `else` takes only a name or `_`
   --> E0174-failed-annotated-value.sisu:13:9

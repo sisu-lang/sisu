@@ -1,11 +1,13 @@
 error[E0166]: the parameter `n` of `bump` is `mut`, so its argument needs `mut`
   --> E0166-parenthesized-name.sisu:11:10
    |
- 5 | fn bump(mut n: i64) {
-   |             - declared `mut` here
-...
 11 |     bump((x))
    |          ^^^ needs `mut`
+   |
+  ::: E0166-parenthesized-name.sisu:5:13
+   |
+ 5 | fn bump(mut n: i64) {
+   |             - declared `mut` here
    |
    = help: declare `x` with `let mut`, and pass `mut (x)`
 

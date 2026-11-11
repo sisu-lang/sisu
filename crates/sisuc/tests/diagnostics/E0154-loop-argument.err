@@ -1,11 +1,13 @@
 error[E0154]: `Lone` does not conform to `Nm`
   --> E0154-loop-argument.sisu:14:19
    |
- 9 | fn named<T: Nm>(a: T) -> T {
-   |             -- required by this bound
-...
 14 |     let a: Lone = named(loop { break Lone(n: 1) })
    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+  ::: E0154-loop-argument.sisu:9:13
+   |
+ 9 | fn named<T: Nm>(a: T) -> T {
+   |             -- required by this bound
    |
    = help: make `Lone` conform to `Nm`
 

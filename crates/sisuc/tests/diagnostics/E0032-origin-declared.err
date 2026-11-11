@@ -1,0 +1,174 @@
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:17:18
+   |
+15 | fn add(a: i64, b: i64) -> i64 { a + b }
+   |                   --- `add` declares `b` as `i64`
+16 | fn parameter() {
+17 |     print(add(1, "x"))
+   |                  ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:23:15
+   |
+20 |     fn m(self, n: i64) -> i64 { n }
+   |                   --- `m` declares `n` as `i64`
+...
+23 |     print(p.m("x"))
+   |               ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:26:18
+   |
+26 |     let a: i64 = "x"
+   |            ---   ^^^
+   |            |
+   |            declared as `i64` here
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:30:12
+   |
+29 | fn returned() -> i64 {
+   |                  --- `returned` returns `i64`
+30 |     return "x"
+   |            ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:33:5
+   |
+32 | fn tail() -> i64 {
+   |              --- `tail` returns `i64`
+33 |     "x"
+   |     ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:42:14
+   |
+39 | fn match_tail(e: E) -> i64 {
+   |                        --- `match_tail` returns `i64`
+...
+42 |         B => "x"
+   |              ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:49:18
+   |
+46 |     v: i64
+   |        --- `v` is declared as `i64`
+...
+49 |     let q = Q(v: "x")
+   |                  ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:56:17
+   |
+53 |     V(i64)
+   |       --- `V` holds `i64`
+...
+56 |     let f = F.V("x")
+   |                 ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:59:16
+   |
+59 | const C: i64 = "x"
+   |          ---   ^^^
+   |          |
+   |          declared as `i64` here
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:62:9
+   |
+61 |     let mut a = 1
+   |             - `a` has the type `i64`
+62 |     a = "x"
+   |         ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:66:24
+   |
+66 |     let a: [i64] = [1, "x"]
+   |            -----       ^^^
+   |            |
+   |            declared as `[i64]` here
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:71:22
+   |
+69 | fn generic<T>(a: T, n: i64) -> T { a }
+   |                        --- `generic` declares `n` as `i64`
+70 | fn generic_parameter() {
+71 |     print(generic(1, "x"))
+   |                      ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:74:9
+   |
+73 | fn mut_parameter(mut n: i64) {
+   |                      - `n` has the type `i64`
+74 |     n = "x"
+   |         ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:78:17
+   |
+78 |     print(5.min("x"))
+   |                 ^^^
+   |
+   = note: `min` declares `other` as `i64`
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:82:17
+   |
+82 |     print(a.get("x") ?? 0)
+   |                 ^^^
+   |
+   = note: `get` declares `i` as `i64`
+
+error[E0032]: expected `bool`, found `i64`
+  --> E0032-origin-declared.sisu:85:8
+   |
+85 |     if 1 { }
+   |        ^ a condition must be `bool`
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:89:13
+   |
+89 |     print(a["x"])
+   |             ^^^ an index must be `i64` or a range
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:93:7
+   |
+93 |     a["x"] = 2
+   |       ^^^ an index must be `i64`
+
+error[E0032]: expected `i64`, found `string`
+   --> E0032-origin-declared.sisu:101:15
+    |
+101 |     print(far("x"))
+    |               ^^^
+    |
+   ::: E0032-origin-declared.sisu:96:11
+    |
+ 96 | fn far(n: i64) -> i64 { n }
+    |           --- `far` declares `n` as `i64`
+
+error[E0032]: expected `M`, found `string`
+   --> E0032-origin-declared.sisu:104:14
+    |
+104 | const D: M = "x"
+    |          -   ^^^
+    |          |
+    |          declared as `M` here
+
+error[E0032]: expected `M`, found `string`
+   --> E0032-origin-declared.sisu:109:17
+    |
+106 |     W(M)
+    |       - `W` holds `M`
+...
+109 |     let g = G.W("x")
+    |                 ^^^
+
+sisu: 21 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

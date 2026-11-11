@@ -4,7 +4,7 @@
 use super::array::optional_array;
 use super::call::Dot;
 use super::string::single_term;
-use super::{Checked, Checker, Expectation, Poisoned, known_type};
+use super::{Checked, Checker, Expectation, Origin, Poisoned, known_type};
 use crate::ast::{self, ExprKind};
 use crate::diagnostic::{
     Diagnostic, DiagnosticKind, GetCall, IndexUsage, MissingBound, RangeForm, RangePlace,
@@ -283,7 +283,8 @@ impl Checker<'_> {
         let mut mismatched = false;
         let mut bound = |checker: &mut Self, bound: &Option<Box<ast::Expr>>| {
             bound.as_ref().map(|bound| {
-                let (checked, wrong) = checker.operand(bound, Expectation::Required(Type::I64));
+                let (checked, wrong) =
+                    checker.operand(bound, Expectation::Required(Type::I64, Origin::None));
                 mismatched |= wrong;
                 checked
             })

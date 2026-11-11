@@ -94,7 +94,6 @@ crates/sisuc/src/check/tests/chars.rs::already_converted_groups_what_is_not_one_
 crates/sisuc/src/check/tests/chars.rs::already_converted_keeps_comments_it_does_not_delete
 crates/sisuc/src/check/tests/chars.rs::already_converted_with_a_comment_is_unsafe
 crates/sisuc/src/check/tests/chars.rs::already_converted_with_a_label_has_no_fix
-crates/sisuc/src/check/tests/chars.rs::char_arithmetic
 crates/sisuc/src/check/tests/chars.rs::char_as_a_type_name_suggestion
 crates/sisuc/src/check/tests/chars.rs::char_beside_a_number_in_equality
 crates/sisuc/src/check/tests/chars.rs::char_built_in_names
@@ -103,7 +102,6 @@ crates/sisuc/src/check/tests/chars.rs::char_comparison_takes_chars
 crates/sisuc/src/check/tests/chars.rs::char_compound_inside_arithmetic
 crates/sisuc/src/check/tests/chars.rs::char_conversions
 crates/sisuc/src/check/tests/chars.rs::char_copy_compound_assignment
-crates/sisuc/src/check/tests/chars.rs::char_mismatch
 crates/sisuc/src/check/tests/chars.rs::char_names_leave_the_did_you_mean_candidates
 crates/sisuc/src/check/tests/chars.rs::char_negated
 crates/sisuc/src/check/tests/chars.rs::char_not
@@ -148,15 +146,11 @@ crates/sisuc/src/check/tests/floats.rs::f64_constant_errors
 crates/sisuc/src/check/tests/floats.rs::f64_constant_in_const
 crates/sisuc/src/check/tests/floats.rs::f64_constants
 crates/sisuc/src/check/tests/floats.rs::float_constants
-crates/sisuc/src/check/tests/floats.rs::float_conversions
-crates/sisuc/src/check/tests/floats.rs::float_never_integer
 crates/sisuc/src/check/tests/floats.rs::int_to_float
 crates/sisuc/src/check/tests/floats.rs::literal_typing
 crates/sisuc/src/check/tests/floats.rs::math_is_a_name_like_any_other
 crates/sisuc/src/check/tests/floats.rs::math_prints
 crates/sisuc/src/check/tests/floats.rs::mixing
-crates/sisuc/src/check/tests/floats.rs::mixing_under_an_integer
-crates/sisuc/src/check/tests/floats.rs::mixing_under_an_integer_nested
 crates/sisuc/src/check/tests/floats.rs::nan_comparison
 crates/sisuc/src/check/tests/floats.rs::negation_type
 crates/sisuc/src/check/tests/floats.rs::shadowed_type_path
@@ -535,7 +529,6 @@ crates/sisuc/src/check/tests/strings.rs::concat_mismatch
 crates/sisuc/src/check/tests/strings.rs::concat_mismatch_layout
 crates/sisuc/src/check/tests/strings.rs::concat_spills
 crates/sisuc/src/check/tests/strings.rs::interpolation_spills
-crates/sisuc/src/check/tests/strings.rs::join_literal_after_another_mismatch
 crates/sisuc/src/check/tests/strings.rs::join_literal_in_element_compound
 crates/sisuc/src/check/tests/strings.rs::minus_assign_on_string_field
 crates/sisuc/src/check/tests/strings.rs::nested_joins_check_in_quadratic_time
@@ -557,19 +550,15 @@ crates/sisuc/src/check/tests/u8.rs::built_in_names
 crates/sisuc/src/check/tests/u8.rs::compound_assign_types_literal
 crates/sisuc/src/check/tests/u8.rs::conversion_argument_type
 crates/sisuc/src/check/tests/u8.rs::conversion_arity
-crates/sisuc/src/check/tests/u8.rs::conversion_fix_needs_optional
 crates/sisuc/src/check/tests/u8.rs::conversion_types
 crates/sisuc/src/check/tests/u8.rs::conversions
 crates/sisuc/src/check/tests/u8.rs::expected_flows_into_arithmetic
-crates/sisuc/src/check/tests/u8.rs::failed_conversion_as_value
 crates/sisuc/src/check/tests/u8.rs::hex_literal_follows_the_u8_rules
 crates/sisuc/src/check/tests/u8.rs::literal_argument_is_optional
 crates/sisuc/src/check/tests/u8.rs::literal_does_not_fit
 crates/sisuc/src/check/tests/u8.rs::literal_from_each_source
 crates/sisuc/src/check/tests/u8.rs::literal_typed_by_sibling
 crates/sisuc/src/check/tests/u8.rs::mismatch_fix_converts_the_expression_found
-crates/sisuc/src/check/tests/u8.rs::mismatch_has_no_fix_between_other_types
-crates/sisuc/src/check/tests/u8.rs::mismatch_has_no_fix_for_an_else_if
 crates/sisuc/src/check/tests/u8.rs::no_mixing
 crates/sisuc/src/check/tests/u8.rs::optional_literal
 crates/sisuc/src/check/tests/u8.rs::print_takes_u8
@@ -635,7 +624,6 @@ crates/sisuc/src/diagnostic/explanations.rs::readme_lists_every_code
 crates/sisuc/src/diagnostic/explanations.rs::retired_explanations_say_so
 crates/sisuc/src/diagnostic/explanations.rs::safe_fixes_make_broken_examples_clean
 crates/sisuc/src/diagnostic/explanations.rs::safe_fixes_remove_their_code_in_every_fixture
-crates/sisuc/src/diagnostic/json.rs::json_offsets_are_bytes
 crates/sisuc/src/diagnostic/json.rs::summary_orders_explanations_by_code
 crates/sisuc/src/diagnostic/json.rs::tool_error_line
 crates/sisuc/src/diagnostic/registry.rs::code_parses_both_cases

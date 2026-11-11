@@ -31,11 +31,13 @@ help: to do nothing when it is `None`, use `?.`
 error[E0001]: cannot assign to `w`
   --> E0062-member-on-payload.sisu:46:19
    |
-10 |     w: i64
-   |     - declared without `mut` here
-...
 46 |     fn wr(self) { self.o.w = 1 }
    |                   ^^^^^^^^^^^^
+   |
+  ::: E0062-member-on-payload.sisu:10:5
+   |
+10 |     w: i64
+   |     - declared without `mut` here
    |
 help: mark the field `mut`
    |
@@ -105,11 +107,13 @@ help: to do nothing when it is `None`, use `?.`
 error[E0001]: cannot assign to `w`
   --> E0062-member-on-payload.sisu:62:5
    |
-10 |     w: i64
-   |     - declared without `mut` here
-...
 62 |     c.w = 2
    |     ^^^^^^^
+   |
+  ::: E0062-member-on-payload.sisu:10:5
+   |
+10 |     w: i64
+   |     - declared without `mut` here
    |
 help: mark the field `mut`
    |
@@ -131,11 +135,13 @@ help: to do nothing when it is `None`, use `?.`
 error[E0001]: cannot assign to `w`
   --> E0062-member-on-payload.sisu:66:5
    |
-10 |     w: i64
-   |     - declared without `mut` here
-...
 66 |     c.w += 2
    |     ^^^^^^^^
+   |
+  ::: E0062-member-on-payload.sisu:10:5
+   |
+10 |     w: i64
+   |     - declared without `mut` here
    |
 help: mark the field `mut`
    |
@@ -153,11 +159,13 @@ error[E0062]: `c` may be `None`
 error[E0001]: cannot assign to an element of `ys`
   --> E0062-member-on-payload.sisu:70:5
    |
-12 |     ys: [i64]
-   |     -- declared without `mut` here
-...
 70 |     c.ys[0] = 1
    |     ^^^^^^^^^^^
+   |
+  ::: E0062-member-on-payload.sisu:12:5
+   |
+12 |     ys: [i64]
+   |     -- declared without `mut` here
    |
 help: mark the field `mut`
    |
@@ -311,11 +319,13 @@ error[E0062]: `c` may be `None`
 error[E0001]: cannot assign to an element of `ys`
    --> E0062-member-on-payload.sisu:102:5
     |
- 12 |     ys: [i64]
-    |     -- declared without `mut` here
-...
 102 |     c.ys[0] += 1
     |     ^^^^^^^^^^^^
+    |
+   ::: E0062-member-on-payload.sisu:12:5
+    |
+ 12 |     ys: [i64]
+    |     -- declared without `mut` here
     |
 help: mark the field `mut`
     |
@@ -525,11 +535,13 @@ help: if a `None` result is fine, use `?.`
 error[E0154]: `Node` does not conform to `Named`
    --> E0062-member-on-payload.sisu:150:11
     |
- 36 | extend<T: Named> W<T> {
-    |           ----- required by this bound
-...
 150 |     print(g.only())
     |           ^^^^^^^^ `only` needs `Node: Named`
+    |
+   ::: E0062-member-on-payload.sisu:36:11
+    |
+ 36 | extend<T: Named> W<T> {
+    |           ----- required by this bound
     |
     = help: make `Node` conform to `Named`
 
@@ -582,11 +594,13 @@ error[E0062]: `c` may be `None`
 error[E0001]: cannot assign to `w`
    --> E0062-member-on-payload.sisu:170:5
     |
- 10 |     w: i64
-    |     - declared without `mut` here
-...
 170 |     c.w = 1
     |     ^^^^^^^
+    |
+   ::: E0062-member-on-payload.sisu:10:5
+    |
+ 10 |     w: i64
+    |     - declared without `mut` here
     |
 help: mark the field `mut`
     |
@@ -729,11 +743,13 @@ error[E0050]: cannot infer the type of `None`
 error[E0001]: cannot assign to `w`
    --> E0062-member-on-payload.sisu:226:5
     |
- 10 |     w: i64
-    |     - declared without `mut` here
-...
 226 |     c?.w = 1
     |     ^^^^^^^^
+    |
+   ::: E0062-member-on-payload.sisu:10:5
+    |
+ 10 |     w: i64
+    |     - declared without `mut` here
     |
 help: mark the field `mut`
     |

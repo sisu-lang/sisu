@@ -497,7 +497,7 @@ fn optional_string_after_literal_should_be_the_one_reported() {
 /// A `None` beside a `string` that holds a mismatch of its own gets the label, and that
 /// mismatch is left as it is.
 #[test]
-fn join_literal_after_another_mismatch() {
+fn a_none_beside_a_mismatched_string_should_get_the_label() {
     let src = with_items(&body(
         "s: string",
         "print({ let x: i64 = true\n s } + None)",
@@ -505,7 +505,7 @@ fn join_literal_after_another_mismatch() {
     assert_eq!(
         found(&src),
         [
-            (Code::Mismatch, (2, 26), vec![]),
+            (Code::Mismatch, (2, 26), vec![(2, 20)]),
             (Code::Mismatch, (3, 8), vec![(2, 11)]),
         ]
     );

@@ -3,6 +3,7 @@ diagnostic/mod.rs	<sisuc::diagnostic::Diagnostic>::demote_fixes
 diagnostic/mod.rs	<sisuc::diagnostic::Diagnostic>::help
 diagnostic/mod.rs	<sisuc::diagnostic::Diagnostic>::label
 diagnostic/mod.rs	<sisuc::diagnostic::Diagnostic>::message
+diagnostic/mod.rs	<sisuc::diagnostic::Diagnostic>::notes
 diagnostic/mod.rs	<sisuc::diagnostic::Edit>::replacement
 diagnostic/mod.rs	<sisuc::diagnostic::Fix>::apply
 diagnostic/mod.rs	<sisuc::diagnostic::Fix>::message

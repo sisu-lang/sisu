@@ -1,0 +1,96 @@
+// GIVEN a value whose type is not the type that an earlier value gave its context
+// AND the earlier value is an element of an inferred array, a branch of an `if` or a `match`,
+// or an argument that bound a type parameter of a generic call
+// WHEN `sisu check` runs on it
+// THEN each E0032 says which earlier value gave its required type
+// AND an inferred array names its first element of the type in the message
+// AND a join names its first branch of the type in the message, also when a later branch makes
+// the join optional
+// AND a value that reads the hint of a join names the branch that gave the hint
+// AND a generic call names the argument that bound the type parameter
+// AND an element of an array argument binds for the whole argument
+// AND a literal, `None` or `[]` that took its type from a later sibling is not the origin
+fn element() {
+    let a = [1, "x"]
+    print(a)
+}
+fn branch() {
+    let a = if true { 1 } else { "x" }
+    print(a)
+}
+fn g<T>(a: T, b: T) -> T { a }
+fn type_parameter() {
+    g(1, "x")
+}
+fn inner_if(c: bool, d: bool) {
+    let a = if c { 1 } else { if d { "x" } else { "y" } }
+    print(a)
+}
+fn inner_join(c: bool, d: bool) {
+    let a = if c { 1 } else { if d { "x" } else { 2 } }
+    print(a)
+}
+fn reads_the_hint(c: bool) {
+    let a = if c { 1 } else { [] }
+    print(a)
+}
+fn operand(c: bool, n: i64) {
+    let a = if c { n } else { 1 + None }
+    print(a)
+}
+fn optional_arm(n: i64) {
+    let a = match n {
+        1 => 5
+        2 => Some(1)
+        _ => "x"
+    }
+    print(a)
+}
+fn optional_element() {
+    let a = [5, Some(1), "x"]
+    print(a)
+}
+fn f<T>(a: [T]) -> i64 { 0 }
+fn bound_element(n: i64) {
+    print(f([None, n, "x"]))
+}
+fn has<T>(a: [T], x: T) -> bool { true }
+fn bound_argument(n: i64) {
+    print(has(["a", "b"], n))
+}
+fn literal_arm(n: i64, b: u8) {
+    let a = match n {
+        1 => 5
+        2 => b
+        _ => "x"
+    }
+    print(a)
+}
+fn none_arm(n: i64, v: i64) {
+    let a = match n {
+        0 => None
+        1 => v
+        _ => "x"
+    }
+    print(a)
+}
+fn literal_element(b: u8) {
+    let a = [5, b, "x"]
+    print(a)
+}
+fn main() {
+    element()
+    branch()
+    type_parameter()
+    inner_if(true, true)
+    inner_join(true, true)
+    reads_the_hint(true)
+    operand(true, 1)
+    optional_arm(1)
+    optional_element()
+    bound_element(1)
+    bound_argument(1)
+    literal_arm(1, 2)
+    none_arm(1, 2)
+    literal_element(2)
+}

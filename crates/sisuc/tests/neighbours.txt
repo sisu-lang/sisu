@@ -35,6 +35,9 @@ class Fox: Pet {
     fn tail(self) -> i64 { 1 }
 }
 class Rock {}
+class P {
+    v: i64
+}
 enum E {
     A
     fn push(self, x: i64) -> i64 { x }
@@ -336,3 +339,14 @@ $ = 1
 "abc".get($)
 n.name().get($)
 sn()?.name?.get($)
+# A value where a written type, an assignment target, a labelled class argument, a payload or a
+# return type gives the expected type, and where an earlier `break`, branch or element does.
+let _a: i64 = $
+{ let mut x = 1; x = $ }
+P(v: $)
+E2.V($, 1)
+return $
+let _a = loop { if c { break 1 }; break 1 + $ }
+let _a = loop { if c { break 1 }; break $ }
+let _a = match k { 0 => 5; 1 => Some(1); _ => $ }
+let _a = [5, Some(1), $]

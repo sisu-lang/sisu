@@ -13,11 +13,13 @@ help: to do nothing when it is `None`, use `?.`
 error[E0001]: cannot change `ys`
   --> E0001-push-may-be-none.sisu:25:9
    |
-10 |     ys: [i64]
-   |     -- declared without `mut` here
-...
 25 |         self.o?.ys.push(1)
    |         ^^^^^^^^^^ `push` changes `ys`
+   |
+  ::: E0001-push-may-be-none.sisu:10:5
+   |
+10 |     ys: [i64]
+   |     -- declared without `mut` here
    |
 help: mark the field `mut`
    |
@@ -39,11 +41,13 @@ help: to do nothing when it is `None`, use `?.`
 error[E0001]: cannot change `ys`
   --> E0001-push-may-be-none.sisu:29:9
    |
-10 |     ys: [i64]
-   |     -- declared without `mut` here
-...
 29 |         self.o.ys.push(1)
    |         ^^^^^^^^^ `push` changes `ys`
+   |
+  ::: E0001-push-may-be-none.sisu:10:5
+   |
+10 |     ys: [i64]
+   |     -- declared without `mut` here
    |
 help: mark the field `mut`
    |
@@ -65,11 +69,13 @@ help: to do nothing when it is `None`, use `?.`
 error[E0001]: cannot change `ys`
   --> E0001-push-may-be-none.sisu:34:5
    |
-10 |     ys: [i64]
-   |     -- declared without `mut` here
-...
 34 |     c?.ys.push(1)
    |     ^^^^^ `push` changes `ys`
+   |
+  ::: E0001-push-may-be-none.sisu:10:5
+   |
+10 |     ys: [i64]
+   |     -- declared without `mut` here
    |
 help: mark the field `mut`
    |
@@ -91,11 +97,13 @@ help: to do nothing when it is `None`, use `?.`
 error[E0001]: cannot change `ys`
   --> E0001-push-may-be-none.sisu:38:5
    |
-10 |     ys: [i64]
-   |     -- declared without `mut` here
-...
 38 |     c.ys.push(1)
    |     ^^^^ `push` changes `ys`
+   |
+  ::: E0001-push-may-be-none.sisu:10:5
+   |
+10 |     ys: [i64]
+   |     -- declared without `mut` here
    |
 help: mark the field `mut`
    |
@@ -117,11 +125,13 @@ help: to do nothing when it is `None`, use `?.`
 error[E0001]: cannot change `ys`
   --> E0001-push-may-be-none.sisu:42:5
    |
-10 |     ys: [i64]
-   |     -- declared without `mut` here
-...
 42 |     b?.inner.ys.push(1)
    |     ^^^^^^^^^^^ `push` changes `ys`
+   |
+  ::: E0001-push-may-be-none.sisu:10:5
+   |
+10 |     ys: [i64]
+   |     -- declared without `mut` here
    |
 help: mark the field `mut`
    |
@@ -143,11 +153,13 @@ help: to do nothing when it is `None`, use `?.`
 error[E0001]: cannot change `ys`
   --> E0001-push-may-be-none.sisu:46:8
    |
-10 |     ys: [i64]
-   |     -- declared without `mut` here
-...
 46 |     id(c?.ys.push(1))
    |        ^^^^^ `push` changes `ys`
+   |
+  ::: E0001-push-may-be-none.sisu:10:5
+   |
+10 |     ys: [i64]
+   |     -- declared without `mut` here
    |
 help: mark the field `mut`
    |
@@ -169,11 +181,13 @@ help: to do nothing when it is `None`, use `?.`
 error[E0001]: cannot change `ys`
   --> E0001-push-may-be-none.sisu:50:5
    |
-10 |     ys: [i64]
-   |     -- declared without `mut` here
-...
 50 |     cs[0]?.ys.push(1)
    |     ^^^^^^^^^ `push` changes `ys`
+   |
+  ::: E0001-push-may-be-none.sisu:10:5
+   |
+10 |     ys: [i64]
+   |     -- declared without `mut` here
    |
 help: mark the field `mut`
    |
@@ -195,11 +209,13 @@ help: to do nothing when it is `None`, use `?.`
 error[E0001]: cannot change `ys`
   --> E0001-push-may-be-none.sisu:54:5
    |
-10 |     ys: [i64]
-   |     -- declared without `mut` here
-...
 54 |     cs[0].ys.push(1)
    |     ^^^^^^^^ `push` changes `ys`
+   |
+  ::: E0001-push-may-be-none.sisu:10:5
+   |
+10 |     ys: [i64]
+   |     -- declared without `mut` here
    |
 help: mark the field `mut`
    |
@@ -221,11 +237,13 @@ help: to do nothing when it is `None`, use `?.`
 error[E0001]: cannot change `ys`
   --> E0001-push-may-be-none.sisu:58:5
    |
-10 |     ys: [i64]
-   |     -- declared without `mut` here
-...
 58 |     c?.ys.push(1)
    |     ^^^^^ `push` changes `ys`
+   |
+  ::: E0001-push-may-be-none.sisu:10:5
+   |
+10 |     ys: [i64]
+   |     -- declared without `mut` here
    |
 help: mark the field `mut`
    |
@@ -247,11 +265,13 @@ help: to do nothing when it is `None`, use `?.`
 error[E0001]: cannot change `ys`
   --> E0001-push-may-be-none.sisu:62:5
    |
-10 |     ys: [i64]
-   |     -- declared without `mut` here
-...
 62 |     c?.ys.push(nope)
    |     ^^^^^ `push` changes `ys`
+   |
+  ::: E0001-push-may-be-none.sisu:10:5
+   |
+10 |     ys: [i64]
+   |     -- declared without `mut` here
    |
 help: mark the field `mut`
    |
@@ -275,11 +295,13 @@ error[E0062]: `c` may be `None`
 error[E0001]: cannot change `yss`
   --> E0001-push-may-be-none.sisu:66:5
    |
-13 |     yss: [[i64]]
-   |     --- declared without `mut` here
-...
 66 |     c.yss[0].push(1)
    |     ^^^^^^^^ `push` changes `yss`
+   |
+  ::: E0001-push-may-be-none.sisu:13:5
+   |
+13 |     yss: [[i64]]
+   |     --- declared without `mut` here
    |
 help: mark the field `mut`
    |
@@ -297,11 +319,13 @@ error[E0062]: `c` may be `None`
 error[E0001]: cannot change `ys`
   --> E0001-push-may-be-none.sisu:70:5
    |
-10 |     ys: [i64]
-   |     -- declared without `mut` here
-...
 70 |     c.ys.push(1)
    |     ^^^^ `push` changes `ys`
+   |
+  ::: E0001-push-may-be-none.sisu:10:5
+   |
+10 |     ys: [i64]
+   |     -- declared without `mut` here
    |
 help: mark the field `mut`
    |
@@ -323,11 +347,13 @@ help: to do nothing when it is `None`, use `?.`
 error[E0001]: cannot change `ys`
   --> E0001-push-may-be-none.sisu:74:5
    |
-10 |     ys: [i64]
-   |     -- declared without `mut` here
-...
 74 |     (c?.ys).push(1)
    |     ^^^^^^^ `push` changes `ys`
+   |
+  ::: E0001-push-may-be-none.sisu:10:5
+   |
+10 |     ys: [i64]
+   |     -- declared without `mut` here
    |
 help: mark the field `mut`
    |

@@ -1,11 +1,13 @@
 error[E0170]: the `mut` argument `n` has type `i64`, but the parameter `n` of `clear` has type `i64?`
  --> E0170.sisu:7:15
   |
-1 | fn clear(mut n: i64?) {
-  |              - declared `i64?` here
-...
 7 |     clear(mut n)
   |               ^ has type `i64`
+  |
+ ::: E0170.sisu:1:14
+  |
+1 | fn clear(mut n: i64?) {
+  |              - declared `i64?` here
   |
   = help: a `mut` argument must have exactly the parameter's type: the callee can store `None`, which an `i64` cannot hold
 

@@ -3,7 +3,9 @@ error[E0140]: `W<T>.eq` instantiates itself without end
    |
 10 |         P(w: W(x: [self.x])) == P(w: W(x: [other.x]))
    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `==` here
-...
+   |
+  ::: E0140-lowered-call.sisu:14:40
+   |
 14 |     fn eq(self, other: Self) -> bool { self.w == other.w }
    |                                        ----------------- `==` here may call `W<T>.eq` through `Eq`
    |

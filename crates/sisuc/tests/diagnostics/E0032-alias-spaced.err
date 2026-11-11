@@ -2,7 +2,9 @@ error[E0032]: expected `Pairs<i64>`, found `string`
  --> E0032-alias-spaced.sisu:4:28
   |
 4 |     let x: Pairs<  i64 > = "s"
-  |                            ^^^
+  |            -------------   ^^^
+  |            |
+  |            declared as `Pairs<i64>` here
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0032

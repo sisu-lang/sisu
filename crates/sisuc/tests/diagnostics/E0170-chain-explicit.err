@@ -1,11 +1,13 @@
 error[E0170]: `b?.cells` can be missing, so it cannot be a `mut` argument
   --> E0170-chain-explicit.sisu:15:19
    |
- 9 | fn fill<T>(mut xs: [T], value: T) {
-   |                -- declared `[T]` here
-...
 15 |     fill<i64>(mut b?.cells, 3)
    |                   ^^^^^^^^ this reads as `[i64]?`, but `fill` reads and writes back `[i64]`
+   |
+  ::: E0170-chain-explicit.sisu:9:16
+   |
+ 9 | fn fill<T>(mut xs: [T], value: T) {
+   |                -- declared `[T]` here
    |
    = help: unwrap `b` with `if let`, and pass the field of the unwrapped object
 

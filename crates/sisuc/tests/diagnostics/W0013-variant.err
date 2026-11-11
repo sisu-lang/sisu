@@ -3,7 +3,9 @@ warning[W0013]: variant `Red` is never built
   |
 2 |     Red
   |     ^^^ never built
-...
+  |
+ ::: W0013-variant.sisu:6:5
+  |
 6 |     Light.Red
   |     --------- used here, in `old_report`, which is never called
   |

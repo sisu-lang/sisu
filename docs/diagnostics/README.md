@@ -229,12 +229,13 @@ error is clap's text on stderr, with exit code 2, in either format.
 
 Every object has `version`, which is `1` and is bumped on any breaking
 change, and `kind`, one of `diagnostic`, `tool_error` and `summary`. Keys
-come in the order shown.
+come in the order shown. A new key is not a breaking change: a reader skips a
+key that it does not know.
 
 A diagnostic about the source:
 
 ```json
-{"version":1,"kind":"diagnostic","code":"E0001","severity":"error","message":"cannot assign to `n`","primary":{"file":"a.sisu","start":36,"end":41,"line":4,"column":5,"label":"cannot assign twice"},"secondary":[{"file":"a.sisu","start":26,"end":27,"line":3,"column":9,"label":"declared with `let` here"}],"help":null,"fixes":[{"message":"declare it with `let mut`","safe":true,"edits":[{"start":26,"end":26,"line":3,"column":9,"replacement":"mut "}]}]}
+{"version":1,"kind":"diagnostic","code":"E0001","severity":"error","message":"cannot assign to `n`","primary":{"file":"a.sisu","start":36,"end":41,"line":4,"column":5,"label":"cannot assign twice"},"secondary":[{"file":"a.sisu","start":26,"end":27,"line":3,"column":9,"label":"declared with `let` here"}],"help":null,"notes":[],"fixes":[{"message":"declare it with `let mut`","safe":true,"edits":[{"start":26,"end":26,"line":3,"column":9,"replacement":"mut "}]}]}
 ```
 
 - `code`: the diagnostic's code, such as `E0001`.
@@ -250,6 +251,9 @@ A diagnostic about the source:
   - `label`: the text about the span, or `null`.
 - `help`: advice that is not an edit, or `null`. A fix's message is in the
   fix, never here.
+- `notes`: facts that explain the diagnostic and have no span in your code, as
+  a list of strings, empty when there is none. Text output shows each as a
+  `note:` line.
 - `fixes`: a list of edits that resolve the diagnostic, each with:
   - `message`: what the fix does;
   - `safe`: `true` for a safe fix, whose edits always remove the diagnostic

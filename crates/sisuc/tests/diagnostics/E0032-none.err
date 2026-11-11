@@ -2,7 +2,9 @@ error[E0032]: expected `i64`, found `None`
  --> E0032-none.sisu:2:18
   |
 2 |     let n: i64 = None
-  |                  ^^^^
+  |            ---   ^^^^
+  |            |
+  |            declared as `i64` here
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0032

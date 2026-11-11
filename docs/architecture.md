@@ -163,7 +163,17 @@ no error of its own
 ([ADR 0049](adr/0049-one-name-resolver-and-one-poison-rule.md)).
 `check/expectation.rs` holds `Expectation`, what the context expects of a value: nothing, a
 required type, a poisoned context (`Poisoned`), or a hint. The siblings of a value give it a
-hint, and an operator can hint its operands. A hint holds at one value and
+hint, and an operator can hint its operands. A required type and a hint hold an
+`Origin`: the declaration, the earlier value or the language rule that made the context
+ask for the type. An E0032 shows it. An origin is a declaration, an assignment to a local
+name, or an earlier `break`, element or branch. It can also be the argument that bound a type
+parameter.
+Other forms wait and hold no origin: operators, patterns, field, index and compound assignments,
+`while` conditions and match guards. The fallback of `??`, a `Some` value, and a generic field,
+payload or prelude parameter hold no origin either. `check/expectation.rs` maps an origin to its
+fact, and the registry gives the words. A fact with a span in your code is a secondary label.
+A fact with a span in the prelude is a note. An `if` condition or an index gets a primary label
+that names its rule. A hint holds at one value and
 the parts that give the value. An operand does not see the hint of the value that holds it. A
 mistake that follows from a poisoned context waits for the next run.
 `check/reports.rs` holds `Diagnostics`, the checker's list of diagnostics, and `Reported`, a
@@ -617,8 +627,11 @@ the registry turns it into a `Diagnostic` with a stable code
 ([ADR 0013](adr/0013-diagnostics-have-stable-codes.md)). `diagnostic/render.rs`
 writes it in the style of `rustc`: the message, the `file:line:col`, and the
 source line with the code underlined. Before it renders a long ASCII line with
-every span on it, it cuts the line to the bytes near the spans, so the renderer
-gets only those bytes; the text is the same as for the whole line. Each
+every span on it, it cuts the line to the bytes near the spans. The renderer
+gets only those bytes. The text is the same as for the whole line. Labels at most 3
+lines apart share one snippet. A label farther away gets its own snippet, with a
+`:::` header. The snippet of the primary span comes first. Each note is a
+`= note:` line. Each
 diagnostic still scans the line once for its checks (a `shortcut:` in
 `render.rs`). `diagnostic/json.rs` writes the same
 diagnostic as one JSON line, and `diagnostic/suggest.rs` finds the closest

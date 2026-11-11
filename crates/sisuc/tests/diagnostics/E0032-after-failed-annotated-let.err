@@ -2,13 +2,17 @@ error[E0032]: expected `i64`, found `string`
  --> E0032-after-failed-annotated-let.sisu:7:18
   |
 7 |     let w: i64 = "x"
-  |                  ^^^
+  |            ---   ^^^
+  |            |
+  |            declared as `i64` here
 
 error[E0032]: expected `string`, found `i64`
  --> E0032-after-failed-annotated-let.sisu:8:21
   |
 8 |     let q: string = w
-  |                     ^
+  |            ------   ^
+  |            |
+  |            declared as `string` here
 
 sisu: 2 errors
 sisu: for more on a code, run `sisu explain <code>`: E0032

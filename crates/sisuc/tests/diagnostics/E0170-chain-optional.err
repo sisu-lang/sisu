@@ -1,11 +1,13 @@
 error[E0170]: `b?.cells` can be missing, so it cannot be a `mut` argument
   --> E0170-chain-optional.sisu:15:15
    |
- 9 | fn fill2(mut xs: [i64]?) {
-   |              -- declared `[i64]?` here
-...
 15 |     fill2(mut b?.cells)
    |               ^^^^^^^^ `fill2` can write `None` back, and the field `cells` cannot hold `None`
+   |
+  ::: E0170-chain-optional.sisu:9:14
+   |
+ 9 | fn fill2(mut xs: [i64]?) {
+   |              -- declared `[i64]?` here
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0170

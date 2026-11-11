@@ -1,0 +1,50 @@
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-break.sisu:10:19
+   |
+ 9 |         if c { break [1] }
+   |                --------- this `break` gave the loop the type `[i64]`
+10 |         break [2, "x"]
+   |                   ^^^
+
+error[E0032]: expected `i64`, found `None`
+  --> E0032-origin-break.sisu:17:17
+   |
+16 |         if c { break 1 }
+   |                ------- this `break` gave the loop the type `i64`
+17 |         break { None }
+   |                 ^^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-break.sisu:24:36
+   |
+23 |         if true { break 1 }
+   |                   ------- this `break` gave the loop the type `i64`
+24 |         break if true { 1 } else { "x" }
+   |                                    ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-break.sisu:31:22
+   |
+30 |         if c { break 1 }
+   |                ------- this `break` gave the loop the type `i64`
+31 |         break if d { "x" } else { 2 }
+   |                      ^^^
+
+error[E0032]: expected `i64`, found `[]`
+  --> E0032-origin-break.sisu:38:22
+   |
+37 |         if c { break 1 }
+   |                ------- this `break` gave the loop the type `i64`
+38 |         break if d { [] } else { "x" }
+   |                      ^^
+
+error[E0032]: expected `i64`, found `None`
+  --> E0032-origin-break.sisu:45:19
+   |
+44 |         if c { break 1 }
+   |                ------- this `break` gave the loop the type `i64`
+45 |         break 1 + None
+   |                   ^^^^
+
+sisu: 6 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

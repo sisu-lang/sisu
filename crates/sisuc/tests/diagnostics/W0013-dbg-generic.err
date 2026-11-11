@@ -3,7 +3,9 @@ warning[W0013]: field `v` is never read
   |
 2 |     v: T
   |     ^ never read
-...
+  |
+ ::: W0013-dbg-generic.sisu:8:5
+  |
 8 |     dbg(Box(v: P(x: 1)))
   |     -------------------- `dbg` can show `v` here, but `dbg` is not a read
   |

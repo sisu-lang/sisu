@@ -9,8 +9,8 @@ use super::operator::Operator;
 use super::reports::Reported;
 use super::unused_names::Used;
 use super::{
-    BindingKind, Checked, Checker, Declared, Expectation, Poisoned, as_optional, block_expr,
-    known_type, payload, type_of,
+    BindingKind, Checked, Checker, Declared, Expectation, Origin, Poisoned, as_optional,
+    block_expr, known_type, payload, type_of,
 };
 use crate::ast;
 use crate::diagnostic::{DiagnosticKind, Immutable, IndexUsage, UnwrapHelp};
@@ -159,10 +159,22 @@ impl Checker<'_> {
             return reported;
         }
         let place = self.place(span, target, Change::Assign);
+        // A local's type comes from where its name is declared. A field or an index waits.
+        let declared = match target.kind {
+            ast::ExprKind::Name(name) => self.lookup(name).map(|b| b.span),
+            _ => None,
+        };
         if let (Some(want), Some(text)) = (place.ty, &place.shown) {
             self.show(value.span, want, text);
+            if let Some(at) = declared {
+                self.show(at, want, text);
+            }
         }
-        let value = self.expect(value, Expectation::or_poisoned(place.ty));
+        let origin = match (declared, place.ty) {
+            (Some(at), Some(ty)) => Origin::Assigned { at, ty },
+            _ => Origin::None,
+        };
+        let value = self.expect(value, Expectation::or_poisoned(place.ty, origin));
         self.inferred_by_write(target, &value, span.end());
         self.assigned(span, place, value)
     }
@@ -443,7 +455,7 @@ impl Checker<'_> {
         };
         // A label or a mismatch is reported, and an error withholds the `tir`.
         self.labels(args);
-        let value = self.expect(&arg.value, Expectation::or_poisoned(element));
+        let value = self.expect(&arg.value, Expectation::or_poisoned(element, Origin::None));
         match (value, read, place) {
             (Ok(value), Ok(read), Some(place)) if place.writable => {
                 let path = unread(read);
@@ -620,7 +632,7 @@ impl Checker<'_> {
             (op, op_span),
             target,
             value,
-            Expectation::or_poisoned(want),
+            Expectation::or_poisoned(want, Origin::None),
             true,
         );
         let expanded = ast::Expr {
@@ -632,7 +644,11 @@ impl Checker<'_> {
             },
             span,
         };
-        let (checked, _) = self.settled(&expanded, checked, Expectation::or_poisoned(want));
+        let (checked, _) = self.settled(
+            &expanded,
+            checked,
+            Expectation::or_poisoned(want, Origin::None),
+        );
         self.assigned(span, place, checked)
     }
 
@@ -659,7 +675,7 @@ impl Checker<'_> {
             // A `string?` place is what `binary` reports first, and the value is checked with no
             // expected type.
             let expected = if ty == Type::STRING {
-                Expectation::Required(ty)
+                Expectation::Required(ty, Origin::None)
             } else {
                 Expectation::Poisoned
             };
@@ -678,13 +694,19 @@ impl Checker<'_> {
                 let d = self.concat_mismatch(value, got, &[target, value], true, Some(ty));
                 (Err(Poisoned::untyped(self.diagnostics.error(d))), true)
             } else {
-                self.settled(value, checked, Expectation::Required(ty))
+                self.settled(value, checked, Expectation::Required(ty, Origin::None))
             };
             self.concat(span, (read, true), value, mismatched)
         } else {
             // The place's own mismatch waits for `arithmetic`, which drops it beside a `char`.
             let start = self.diagnostics.mark();
-            let place = self.settled_by(target, read, Some(want), Some(operator.takes()));
+            let place = self.settled_by(
+                target,
+                read,
+                Some(want),
+                Origin::None,
+                Some(operator.takes()),
+            );
             // `arithmetic` restores them, or cuts them with the place, which is `Error` then.
             let held = self.diagnostics.take_since(start);
             self.arithmetic(span, (op, op_span), want, place, value, held)
@@ -1030,7 +1052,14 @@ impl Checker<'_> {
                 };
                 // The index is not part of the chain that it ends.
                 self.body.indexed = false;
-                let (index, mismatched) = self.operand(index, Expectation::Required(Type::I64));
+                // A base with no element, such as a string, takes no `i64` index either.
+                let origin = if element.is_some() {
+                    Origin::PlaceIndex
+                } else {
+                    Origin::None
+                };
+                let (index, mismatched) =
+                    self.operand(index, Expectation::Required(Type::I64, origin));
                 self.body.indexed = outer;
                 let reported = (inner.reported.or(element_report))
                     .or_else(|| index.as_ref().err().map(Poisoned::reported));

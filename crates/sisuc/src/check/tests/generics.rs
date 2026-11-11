@@ -2679,32 +2679,38 @@ fn an_argument_that_contradicts_the_context_should_be_reported_at_the_argument()
 #[test]
 fn a_blamed_argument_should_be_the_only_error_of_its_call() {
     let pick = "fn pick<T>(a: T, b: T) -> T {\n    a\n}\n";
-    for (body, at) in [
+    for (body, at, secondary) in [
         // `1`, `None` and `[]` meet the `T` of the context, not the `string` that `s` bound.
         (
             "fn g(s: string) {\n    let x: [i64] = pair(s, 1)\n}",
             (5, 25, "s"),
+            &[][..],
         ),
         (
             "fn g(s: string) {\n    let x: [i64?] = pair(s, None)\n}",
             (5, 26, "s"),
+            &[],
         ),
         (
             "fn g(s: string) {\n    let x: [[i64]] = pair(s, [])\n}",
             (5, 27, "s"),
+            &[],
         ),
-        // `n` was rejected beside `s` already, which is the only error.
+        // `n` was rejected beside `s` already, which is the only error. The argument that bound
+        // `T` has the label.
         (
             "fn g(s: string, n: i64) {\n    let x: [i64] = pair(s, n)\n}",
             (5, 28, "n"),
+            &[(5, 25)],
         ),
         (
             "fn g(s: string, n: i64) {\n    let x: string = pick(n, s)\n}",
             (5, 29, "s"),
+            &[(5, 26)],
         ),
     ] {
         let src = with_generics(&format!("{pick}{body}"));
-        diagnostic(&src, Code::Mismatch, at, &[]);
+        diagnostic(&src, Code::Mismatch, at, secondary);
     }
     // The context leaves `B` open, so `s` keeps it, and the literal `1` is checked against it.
     let src = with_generics(
@@ -2745,7 +2751,7 @@ fn a_call_with_written_type_arguments_should_report_a_mismatch_at_the_call() {
         ),
     ] {
         let src = with_generics(body);
-        diagnostic(&src, Code::Mismatch, at, &[]);
+        diagnostic(&src, Code::Mismatch, at, &[(2, 12)]);
     }
 }
 
@@ -2793,15 +2799,15 @@ fn a_context_that_fits_or_does_not_fit_alone_should_keep_its_report() {
     clean(&with_generics("fn g(n: i64) {\n    let x: i64? = id(n)\n}"));
     // `[T]` meets no `string`, so the context says nothing of the argument.
     let src = with_generics("fn g(n: i64) {\n    let s: string = wrap(n)\n}");
-    diagnostic(&src, Code::Mismatch, (2, 21, "wrap(n)"), &[]);
+    diagnostic(&src, Code::Mismatch, (2, 21, "wrap(n)"), &[(2, 12)]);
     // `T?` meets a value that is not optional, which a result cannot: `string?` is no `string`.
     let src = with_generics("fn g(ns: [i64]) {\n    let x: string = first(ns)\n}");
-    diagnostic(&src, Code::Mismatch, (2, 21, "first(ns)"), &[]);
+    diagnostic(&src, Code::Mismatch, (2, 21, "first(ns)"), &[(2, 12)]);
     let src = with_generics("fn g(ns: [string]) {\n    let x: string = first(ns)\n}");
-    diagnostic(&src, Code::Mismatch, (2, 21, "first(ns)"), &[]);
+    diagnostic(&src, Code::Mismatch, (2, 21, "first(ns)"), &[(2, 12)]);
     // `n` converts to the `i64?` that the context makes of `T`, so no argument is to blame.
     let src = with_generics("fn g(n: i64) {\n    let xs: [i64?] = wrap(n)\n}");
-    diagnostic(&src, Code::Mismatch, (2, 22, "wrap(n)"), &[]);
+    diagnostic(&src, Code::Mismatch, (2, 22, "wrap(n)"), &[(2, 13)]);
 }
 
 /// A type parameter and a built-in type take no type arguments.
@@ -6258,6 +6264,46 @@ fn misfitting_arguments_should_read_the_origins_of_their_own_parameters_only() {
         generic::ORIGINS.get()
     };
     assert_near_linear(reads(20), reads(40), reads(60));
+}
+
+/// A clean call of `n` arguments, whose last argument binds `T`, finds that argument once for
+/// each other argument. A walk of the arguments before it for each would cost n².
+#[test]
+fn the_argument_that_bound_a_parameter_should_be_found_without_a_walk() {
+    let reads = |n: usize| {
+        let params: Vec<_> = (0..n).map(|k| format!("_p{k}: T")).collect();
+        let args: Vec<_> = (1..n).map(|_| "1").chain(["v"]).collect();
+        let src = format!(
+            "fn f<T>({}) {{}}\nfn g(v: i64) {{\n    f({})\n}}\nfn main() {{}}",
+            params.join(", "),
+            args.join(", ")
+        );
+        generic::PEELED.set(0);
+        let (_, ds) = checked(&src);
+        assert!(ds.is_empty(), "{ds:?}");
+        generic::PEELED.get()
+    };
+    assert_near_linear(reads(20), reads(40), reads(60));
+}
+
+/// A pattern that names no type parameter gives no origin of one. So the search for the
+/// argument that bound it reads none of its layers. Else `n` arguments of an `n`-deep alias cost
+/// n².
+#[test]
+fn a_concrete_pattern_should_not_be_peeled_for_an_origin() {
+    let n = 16;
+    let params: Vec<_> = (0..n).map(|k| format!("_p{k}: A")).collect();
+    let src = format!(
+        "type A = {}i64{}\nfn f<T>(_t: T, {}) {{}}\nfn g(v: A) {{\n    f(1, {})\n}}\nfn main() {{}}",
+        "[".repeat(n),
+        "]".repeat(n),
+        params.join(", "),
+        vec!["v"; n].join(", ")
+    );
+    generic::PEELED.set(0);
+    let (_, ds) = checked(&src);
+    assert!(ds.is_empty(), "{ds:?}");
+    assert_eq!(generic::PEELED.get(), 0);
 }
 
 /// The declarations of the parity tables. Each generic callee has a concrete twin of the same

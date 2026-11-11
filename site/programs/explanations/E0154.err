@@ -1,11 +1,13 @@
 error[E0154]: `Square` does not conform to `Named`
   --> E0154.sisu:13:16
    |
- 5 | interface Shape: Named {
-   |                  ----- `Shape` requires `Named`
-...
 13 | extend Square: Shape {
    |                ^^^^^
+   |
+  ::: E0154.sisu:5:18
+   |
+ 5 | interface Shape: Named {
+   |                  ----- `Shape` requires `Named`
    |
    = help: write `extend Square: Named { ... }`
 

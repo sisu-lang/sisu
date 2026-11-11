@@ -46,7 +46,7 @@ use crate::ast;
 use crate::conformance::{self, StuckChoices};
 use crate::diagnostic::{
     BuiltIn, Code, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, Expected, Literal,
-    MainForm, MismatchFix, MismatchSource, Severity, Unbuilt, UnknownForm, suggestion,
+    MainForm, MismatchFix, Severity, Unbuilt, UnknownForm, suggestion,
 };
 use crate::front_end::PreludeProgram;
 use crate::payload_limit;
@@ -58,7 +58,7 @@ use alias::{AliasInfo, Aliases, FieldType, UseCheck};
 use assoc::{Choice, Choices, Named};
 use constant::{ConstInfo, ConstantSite};
 use enums::{EnumInfo, HoldsTable, reserved_name};
-use expectation::Expectation;
+use expectation::{Expectation, Origin};
 use extend::Extension;
 use interface::{Bounds, InterfaceInfo, PendingBound, Required, Scope, Slot, Waiting};
 use names::{ConstantId, ItemId, NameMaps, Position, Resolved};
@@ -226,6 +226,10 @@ struct Signature {
     param_shown: Vec<Option<Rc<str>>>,
     /// The return type as written, under the same rule.
     ret_shown: Option<Rc<str>>,
+    /// Where each of `params` writes its type: a mismatch with one points there.
+    param_spans: Vec<Span>,
+    /// Where the return type is written; none when the function writes none.
+    ret_span: Option<Span>,
     /// The name's span.
     span: Span,
     /// `fn` through the end of the signature, before the body.
@@ -956,9 +960,6 @@ struct Body {
     self_type: SelfType,
     /// Loops open around the code being checked, innermost last: what a `break` would act on.
     loops: Vec<LoopContext>,
-    /// The value of the `break` being checked, and the earlier `break` whose value gave the
-    /// loop the type that value expects.
-    break_hint: Option<(Span, Span)>,
     /// The waiting generic call that the outer call is checking as an argument.
     context_hint: Option<generic::ContextHint>,
     /// The E0050 of each generic call whose result cannot meet its context (see `Misfit`). A
@@ -2038,6 +2039,8 @@ impl Checker<'_> {
             anys,
             param_shown,
             ret_shown,
+            param_spans: f.params.iter().map(|p| p.ty.span).collect(),
+            ret_span: f.ret.as_ref().map(|ty| ty.span),
             span: f.name.span,
             header: Span::new(f.span.start(), f.body.span.start()),
             conformance: None,
@@ -2393,7 +2396,7 @@ impl Checker<'_> {
             let expected = match ret {
                 None => Expectation::Poisoned,
                 Some(Type::UNIT) => Expectation::None,
-                Some(ret) => Expectation::Required(ret),
+                Some(ret) => Expectation::Required(ret, c.returns()),
             };
             c.show_value(&f.body, ret);
             let mut body = c.block(&f.body, expected);
@@ -2434,7 +2437,10 @@ impl Checker<'_> {
                     }
                     .into()
                 } else {
-                    self.mismatch(value_span(&f.body), tail(&f.body), want, got)
+                    let origin = Origin::Returns {
+                        function: Origin::id(id.0),
+                    };
+                    self.mismatch(value_span(&f.body), tail(&f.body), want, got, origin)
                 };
                 self.diagnostics.error(d);
             }
@@ -2607,34 +2613,15 @@ impl Checker<'_> {
     /// "expected `want`, found `got`" at `span`, where `source` is the expression found, when
     /// known. Between `u8`, `i64` and `char` it offers to convert `source`, unless that is an
     /// `if`: an `else if` is one, and `else u8(if ...)` does not parse. A conversion to `u8` or
-    /// `char` gives an optional, so it is offered only where one is expected.
+    /// `char` gives an optional, so it is offered only where one is expected. `origin` is where
+    /// `want` comes from.
     fn mismatch(
         &self,
         span: Span,
         source: Option<&ast::Expr>,
         want: Type,
         got: Type,
-    ) -> Diagnostic {
-        self.mismatch_from(span, source, want, got, None)
-    }
-
-    /// Where the type that the value at `span` expects came from: an earlier `break`, when it
-    /// is a `break` value checked against the loop's type.
-    fn expected_from(&self, span: Span) -> Option<MismatchSource> {
-        self.body
-            .break_hint
-            .filter(|&(at, _)| at == span)
-            .map(|(_, first)| MismatchSource::Break(first))
-    }
-
-    /// `mismatch`, where `want` came from `from`.
-    fn mismatch_from(
-        &self,
-        span: Span,
-        source: Option<&ast::Expr>,
-        want: Type,
-        got: Type,
-        from: Option<MismatchSource>,
+        origin: Origin,
     ) -> Diagnostic {
         let optional = matches!(want.kind(), TypeKind::Optional(_));
         // `u8` and `char` convert into each other through `i64`, and into `f64` through it.
@@ -2654,7 +2641,7 @@ impl Checker<'_> {
             want: Expected::Types(vec![self.want_name(span, want)]),
             got: self.type_name(got),
             at: span,
-            source: from,
+            origin: self.origin_fact(origin),
             fix: to
                 .zip(source.filter(|e| {
                     !matches!(

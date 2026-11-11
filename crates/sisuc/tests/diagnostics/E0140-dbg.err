@@ -3,7 +3,9 @@ error[E0140]: `Hold` instantiates itself without end
    |
  6 |     v: W<[T]>
    |        ^^^^^^ `Display.to_string` here
-...
+   |
+  ::: E0140-dbg.sisu:11:17
+   |
 11 |         let _ = dbg(Hold(v: W(x: [self.x])))
    |                 ---------------------------- which instantiates `Hold<T>`
    |

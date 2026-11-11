@@ -3,7 +3,9 @@ error[E0140]: `Box<T>.run` instantiates itself without end
    |
 11 |         dispatch(Box(value: self))
    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^ `dispatch<Box<Box<T>>>` here
-...
+   |
+  ::: E0140-conformance.sisu:16:5
+   |
 16 |     x.run()
    |     ------- which may call `Box<T>.run` through `Run`
    |

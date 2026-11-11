@@ -10,7 +10,7 @@ use super::interface::{BOUND_CLOSURE_LIMIT, Bound, Check};
 use super::reports::Reported;
 use super::unused_names::Used;
 use super::{
-    Checked, CheckedBlock, Checker, DeferredAsType, Expectation, Poisoned, block_type, wrap,
+    Checked, CheckedBlock, Checker, DeferredAsType, Expectation, Origin, Poisoned, block_type, wrap,
 };
 use crate::ast;
 use crate::conformance::{any_closure, interface_closure};
@@ -514,13 +514,15 @@ impl Checker<'_> {
     }
 
     /// The mistake when the value at `at`, of type `got`, leaves a join whose `any` type is
-    /// `want` (`AnyJoin::Leaves`): a value that does not conform, or else a mismatch.
+    /// `want` (`AnyJoin::Leaves`): a value that does not conform, or else a mismatch, which
+    /// names `origin`.
     pub(super) fn leaves_any(
         &mut self,
         at: Span,
         source: Option<&ast::Expr>,
         want: Type,
         got: Type,
+        origin: Origin,
     ) -> Diagnostic {
         let target = match want.kind() {
             TypeKind::Optional(payload) => payload,
@@ -535,7 +537,7 @@ impl Checker<'_> {
             {
                 self.not_conform(at, got, target).into()
             }
-            _ => self.mismatch(at, source, want, got),
+            _ => self.mismatch(at, source, want, got, origin),
         }
     }
 
