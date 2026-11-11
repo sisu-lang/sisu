@@ -149,8 +149,12 @@ vague or generic error, or with none.
   its options, so that the user decides it before the plan grows.
 - **Hooks.** Each text that a task gives for a tracked file must pass the
   commit hooks. A sentence in a doc, a comment or a fixture header has at
-  most 25 words (`scripts/text_limits.py`). An expected `.err` or `.out`
-  line has no trailing whitespace. Count each one; a break is a finding.
+  most 25 words (`scripts/text_limits.py`). The script counts a code span
+  as one word. A `;` or a `:` ends a sentence, and so does a list item or
+  a GIVEN, WHEN or THEN line. An expected `.err` line of a diagnostic
+  case (`tests/diagnostics`, `site/programs/diagnostics`,
+  `site/programs/explanations`) has no trailing whitespace. Count each
+  one; a break is a finding.
 - **Tests.** Each task names its unit tests and end-to-end cases, and they
   pass the `test-audit` value bar.
 - **Scenarios.** Each spec scenario is in exactly one task, with the test
