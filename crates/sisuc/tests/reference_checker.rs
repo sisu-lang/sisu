@@ -3,7 +3,6 @@
 
 use std::path::Path;
 
-#[expect(dead_code, reason = "red commit: Task 1 uses them")]
 mod reference_check;
 #[path = "reference_checker/rules.rs"]
 mod rules;

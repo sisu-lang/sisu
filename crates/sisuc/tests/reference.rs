@@ -10,7 +10,6 @@ use std::path::Path;
 
 use libtest_mimic::{Arguments, Failed, Trial};
 
-#[expect(dead_code, reason = "red commit: Task 1 uses them")]
 mod reference_check;
 #[expect(dead_code, reason = "this binary uses only part of the shared helpers")]
 mod support;
