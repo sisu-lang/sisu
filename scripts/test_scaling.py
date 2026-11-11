@@ -199,9 +199,9 @@ Sizes: 0, 250, 500, 1000, 2000. Growth is the count less the count at size 0.
 | optimize | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | object | 0 | 0 | 0 | 0 | - | - | - | not judged |
 
-## match arms
+## string literal width
 
-Sizes: 0, 50, 100, 200, 400. Growth is the count less the count at size 0.
+Sizes: 0, 100, 200, 400, 800. Growth is the count less the count at size 0.
 
 | stage | g(n) | g(2n) | g(4n) | g(8n) | r1 | r2 | r3 | verdict |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
@@ -214,7 +214,7 @@ Sizes: 0, 50, 100, 200, 400. Growth is the count less the count at size 0.
 | optimize | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | object | 0 | 0 | 0 | 0 | - | - | - | not judged |
 
-## fields
+## match arms
 
 Sizes: 0, 50, 100, 200, 400. Growth is the count less the count at size 0.
 
@@ -229,7 +229,7 @@ Sizes: 0, 50, 100, 200, 400. Growth is the count less the count at size 0.
 | optimize | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | object | 0 | 0 | 0 | 0 | - | - | - | not judged |
 
-## conformers
+## fields
 
 Sizes: 0, 50, 100, 200, 400. Growth is the count less the count at size 0.
 
@@ -244,9 +244,9 @@ Sizes: 0, 50, 100, 200, 400. Growth is the count less the count at size 0.
 | optimize | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | object | 0 | 0 | 0 | 0 | - | - | - | not judged |
 
-## type depth
+## conformers
 
-Sizes: 0, 24, 48, 96, 192. Growth is the count less the count at size 0.
+Sizes: 0, 50, 100, 200, 400. Growth is the count less the count at size 0.
 
 | stage | g(n) | g(2n) | g(4n) | g(8n) | r1 | r2 | r3 | verdict |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
@@ -259,9 +259,9 @@ Sizes: 0, 24, 48, 96, 192. Growth is the count less the count at size 0.
 | optimize | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | object | 0 | 0 | 0 | 0 | - | - | - | not judged |
 
-## interpolations
+## type depth
 
-Sizes: 0, 50, 100, 200, 400. Growth is the count less the count at size 0.
+Sizes: 0, 24, 48, 96, 192. Growth is the count less the count at size 0.
 
 | stage | g(n) | g(2n) | g(4n) | g(8n) | r1 | r2 | r3 | verdict |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
@@ -642,7 +642,7 @@ class ScalingTest(unittest.TestCase):
         self.assertIn("scaling: cannot write the report", err)
 
     def test_each_shape_should_have_its_size_in_its_structure(self) -> None:
-        """GIVEN the 32 shapes
+        """GIVEN the 33 shapes
         WHEN each makes its program at size k
         THEN the repeated part of the program has a size of base + k
         AND the base is what the program at size 0 needs to check clean
@@ -656,6 +656,7 @@ class ScalingTest(unittest.TestCase):
             ("generic call depth", 24),
             ("array literal depth", 24),
             ("array literal width", 250),
+            ("string literal width", 100),
             ("match arms", 50),
             ("fields", 50),
             ("conformers", 50),
@@ -719,6 +720,7 @@ class ScalingTest(unittest.TestCase):
             "generic call depth": (lambda t: depth(line(t, "let v"), "(", ")"), 1),
             "array literal depth": (lambda t: depth(t, "[", "]"), 1),
             "array literal width": (lambda t: t.count("7"), 0),
+            "string literal width": (lambda t: t.count('"w'), 0),
             "match arms": (lambda t: t.count("=>"), 1),
             "fields": (lambda t: t.count(": i64"), 1),
             "conformers": (lambda t: t.count("class "), 1),
@@ -753,7 +755,7 @@ class ScalingTest(unittest.TestCase):
                     self.assertEqual(measure(make(k)), base + k)
 
     def test_text_of_each_shape_should_grow_linearly_with_its_size(self) -> None:
-        """GIVEN the 32 shapes at their sizes 0, n, 2n, 4n and 8n
+        """GIVEN the 33 shapes at their sizes 0, n, 2n, 4n and 8n
         WHEN the bytes of each program are counted
         THEN the growth in bytes at each size is below 2.01 times the growth at half that size
         """
