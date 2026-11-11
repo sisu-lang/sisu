@@ -6278,12 +6278,32 @@ fn the_argument_that_bound_a_parameter_should_be_found_without_a_walk() {
             params.join(", "),
             args.join(", ")
         );
-        generic::ARGS_READ.set(0);
+        generic::PEELED.set(0);
         let (_, ds) = checked(&src);
         assert!(ds.is_empty(), "{ds:?}");
-        generic::ARGS_READ.get()
+        generic::PEELED.get()
     };
     assert_near_linear(reads(20), reads(40), reads(60));
+}
+
+/// A pattern that names no type parameter gives no origin of one. So the search for the
+/// argument that bound it reads none of its layers. Else `n` arguments of an `n`-deep alias cost
+/// n².
+#[test]
+fn a_concrete_pattern_should_not_be_peeled_for_an_origin() {
+    let n = 16;
+    let params: Vec<_> = (0..n).map(|k| format!("_p{k}: A")).collect();
+    let src = format!(
+        "type A = {}i64{}\nfn f<T>(_t: T, {}) {{}}\nfn g(v: A) {{\n    f(1, {})\n}}\nfn main() {{}}",
+        "[".repeat(n),
+        "]".repeat(n),
+        params.join(", "),
+        vec!["v"; n].join(", ")
+    );
+    generic::PEELED.set(0);
+    let (_, ds) = checked(&src);
+    assert!(ds.is_empty(), "{ds:?}");
+    assert_eq!(generic::PEELED.get(), 0);
 }
 
 /// The declarations of the parity tables. Each generic callee has a concrete twin of the same

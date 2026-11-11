@@ -1580,9 +1580,9 @@ thread_local! {
     pub(super) static MARKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many parameter origins `Origins::get` has read on this thread.
     pub(super) static ORIGINS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many arguments the search for the one that bound a parameter has read on this thread
-    /// (see `inferred_origin`).
-    pub(super) static ARGS_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many layers of patterns the search for the argument that bound a parameter has read on
+    /// this thread (see `inferred_origin`).
+    pub(super) static PEELED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many entries of the substitution lists of early bound checks have been written on this
     /// thread.
     pub(super) static LISTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -1770,6 +1770,8 @@ fn bound_by_context(call: &Inference<'_>, pattern: Type) -> bool {
 fn inferred_origin(call: &Inference<'_>, pattern: Type) -> Option<Origin> {
     let mut ty = pattern;
     let (param, j) = loop {
+        #[cfg(test)]
+        PEELED.set(PEELED.get() + 1);
         match ty.kind() {
             TypeKind::Array(inner) | TypeKind::Optional(inner) => ty = inner,
             TypeKind::Param(param, j) => break (param, j as usize),
@@ -1778,8 +1780,6 @@ fn inferred_origin(call: &Inference<'_>, pattern: Type) -> Option<Origin> {
     };
     let bound = call.origin.get(j)?;
     let arg = call.args.get(call.origin.arg(j)?)?;
-    #[cfg(test)]
-    ARGS_READ.set(ARGS_READ.get() + 1);
     // A binding by the context while the argument is checked is not in the argument.
     let inside = arg.value.span.start() <= bound.start() && bound.end() <= arg.value.span.end();
     inside.then_some(Origin::Inferred {
