@@ -40,7 +40,7 @@ With no argument, run all ten; otherwise run the named ones.
 From the repository root:
 
 1. `cargo build --workspace`. Every probe uses this checkout's `target/debug/sisu`. Then `make audit-setup`, which adds `opt` and `clang` to `.llvm/23/bin` for the ASan, lint and layout-shim recipes; it does nothing when they are there.
-2. `mktemp -d "${TMPDIR:-/tmp}/sisu-audit-XXXXXXXX"` makes the run directory, `RUN`, and `mkdir RUN/copilot-scratch` makes Sol's scratch directory. Shell variables do not survive between tool calls, so from here on write `RUN`, the repository root and the tool paths as literal paths.
+2. `mktemp -d "${TMPDIR:-/tmp}/sisu-audit-XXXXXXXX"` makes the run directory, `RUN`, and `mkdir RUN/outside-scratch` makes the outside seat's scratch directory. Shell variables do not survive between tool calls, so from here on write `RUN`, the repository root and the tool paths as literal paths.
 3. Write `RUN/known-tickets.md`: the number and title of every open GitHub issue (`gh api 'repos/sisu-lang/sisu/issues?state=open&per_page=100'`, without the items that have a `pull_request` field), then the title and path of every fallback issue under `.scratch/*/issues/` with a `GitHub: pending` line. `.scratch/` is untracked, so read it in the main checkout, the first path `git worktree list` prints. Write "none" when there are no issues.
 
 Done when `sisu` builds, `.llvm/23/bin/opt` and `.llvm/23/bin/clang` run, and `RUN/known-tickets.md` exists.
@@ -92,8 +92,8 @@ it is a real defect or behavior that `README.md`, an implemented ADR or
 `finding.md`; whether the fix reaches the root cause; and whether the test
 would fail as `finding.md` requires.
 
-- When `copilot` is on `PATH`, launch Sol at `high` effort with the command in `review-sisu` section 3, through Bash with `run_in_background` and the sandbox off. Record and compare the checkout as that section says. The brief is `RUN/cross-check.md` and the report is `RUN/cross-check-report.md`.
-- Otherwise, dispatch one read-only subagent with the same prompt.
+- Choose an outside seat and its effort as `review-sisu` step 3 says, and launch it with its command in `review-sisu`'s `launchers.md`. The brief is `RUN/cross-check.md` and the report is `RUN/cross-check-report.md`; the brief asks for `Model: <model ID>` as the report's first line. Before the launch, run `python3 <review-sisu base>/scripts/review_round.py record <repository root> RUN`. After it, run `verify <repository root> RUN --report cross-check-report` with the same script, and act on a failure as `review-sisu` step 3 says.
+- When the user chooses no outside seat, dispatch one read-only subagent with the same prompt.
 
 Wait for its report. Drop a finding it shows is intended or not a defect,
 citing its reason. Change a severity when it cites `finding.md`. Keep every

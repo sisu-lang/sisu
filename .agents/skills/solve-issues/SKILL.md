@@ -16,12 +16,23 @@ You rule on their findings. Two planned stops wait for the user, and
 | --- | --- | --- |
 | Controller | you | picks, groups, finds root causes, writes briefs, rules on findings, keeps the ledger |
 | Executor | `sonnet-high` (Agent tool, `subagent_type` only) | implements one task brief or fix-round brief; never does root-cause work |
-| Task review | `gpt-6.1-sol` medium in the first round only, `opus-medium` in every round | through `review-sisu` |
-| Final review | `gpt-6.1-sol` medium and `opus-high` | through `review-sisu`, on the whole branch |
+| Task review | `opus-medium` in every round, and the outside seat in the first round | through `review-sisu` |
+| Final review | `opus-high`, and the outside seat in the first round | through `review-sisu`, on the whole branch |
 
-These are the reviewers of the full flow. When this table and the table in
+These are the reviewers of the full flow. `review-sisu` (step 3) says how
+to choose the outside seat. When this table and the table in
 `review-sisu` (step 3) differ, `review-sisu` wins. The light flow
 (step 2.3) replaces both tables for its group.
+
+## Scope
+
+A batch fixes what each issue reports, and the cases in the same function.
+Keep each regression that the batch's own change adds, in any function.
+Drop every other finding, except one that gives wrong output, a crash, or a
+false error on a valid program. Ask the user before you file a new issue.
+Each review has one round, and one re-check for each blocking finding; no
+third round. When a blocking finding is still open after its re-check, ask
+the user to defer it or to fix it. These rules replace the fix-round rules of `review-sisu`.
 
 ## The ledger
 
@@ -64,7 +75,7 @@ its last event.
 1. Put issues in one group when their fixes change the same functions. One group is one branch and one pull request.
 2. Order the groups. Two groups that change the same code run one after the other. A group that changes code an open branch changes waits for that branch to merge.
 3. For each group, propose a review flow, with the reason:
-   - **Full:** the roles above, and one mutation test for the group, which you run after the last task review (step 7.2), and one for each large fix round of the final review (`review-sisu`, step 5).
+   - **Full:** the roles above, and one mutation test for the group, which you run after the last task review (step 7.2). Each large fix round of the final review runs one more (`review-sisu`, `final-diff.md`).
    - **Light:** `opus-medium` for each task and for the final review. `make test` and `make coverage` only; no mutation test.
 4. For each language decision, write the options and their costs. Post them on the issue, as in step 3.8.
 
@@ -75,7 +86,9 @@ its last event.
 - each language decision, with its risk and a short Sisu example.
 
 Then ask with `AskUserQuestion`. One call takes at most four questions. Ask
-one question that approves the table or asks for changes. Ask one question
+one question that approves the table or asks for changes. For the full flow, ask
+one question that chooses the outside seat and its effort for all the reviews of the batch
+(`review-sisu`, step 3). Ask one question
 for each language decision. With more than three decisions, use more than
 one call. Write the answers in the ledger.
 
@@ -93,9 +106,9 @@ group:
 
 1. Reproduce it with the `origin/main` build.
 2. Find the cause in the code: the function, the line, and why it gives this output.
-3. List the neighbouring cases: the same rule in each position the language allows it. Take the values and the positions from `crates/sisuc/tests/neighbours.txt`, and add there each new one that you find. Probe each case. Keep the probes in the ledger folder.
+3. List the neighbouring cases in the same function (Scope): the same rule in each position the language allows it. Take the values and the positions from `crates/sisuc/tests/neighbours.txt`, and add there each new one that you find. Probe each case. Keep the probes in the ledger folder.
 4. A new bug can have the same cause. Then it joins the group, and the pull request names it.
-5. A new bug can have a different cause. Then file a new issue (`docs/agents/issue-tracker.md`). Keep it out of the group.
+5. A new bug can have a different cause. Then ask the user whether to file a new issue (`docs/agents/issue-tracker.md`). Keep it out of the group.
 6. Fix the cause in the shared code, so that all the cases are right. Rank the options as ADR 0006 does: correctness, simplicity, readability, performance.
 7. Check each claim that will go into a brief:
    - **Diagnostic text.** Write the full output for a probe with user names: a type parameter `U`, a class `Node`. The text names only what the user wrote. A diagnostic has a message, a label, secondary labels, a help and fixes. It has no note. For each fix, write its message, its edit, and safe or unsafe. Apply each fix by hand. The result must pass `sisu check`.

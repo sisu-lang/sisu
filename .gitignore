@@ -15,3 +15,5 @@ __pycache__/
 /.codspeed-main-merged.yml
 # The built site, from make site.
 /site/_site/
+# Private notes: ledgers, fallback issues, review records (docs/agents/issue-tracker.md).
+/.scratch/
