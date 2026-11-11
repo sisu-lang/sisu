@@ -1322,6 +1322,34 @@ error[E0011]: expected `=`, found end of line
         }
     }
 
+    /// A path that holds a line break, or text like a header, still gets the true column of a cut
+    /// line: for a cut primary span and for a cut far label, plain and styled.
+    #[test]
+    fn a_header_whose_path_holds_a_line_break_should_give_the_true_column() {
+        let source = format!("{}{}", long_line(), &numbered(10)[3..]);
+        let cases = [
+            error(ab(&source, 1), "m"),
+            error(line(&source, 10), "m").with_secondary(ab(&source, 1), "s"),
+        ];
+        for path in [
+            "long\nname.sisu",
+            "end.sisu\n",
+            "a\n--> b.sisu",
+            "a --> b.sisu",
+            "a ::: b.sisu",
+        ] {
+            for d in &cases {
+                for color in [false, true] {
+                    let text = d.render(path, &source, &LineIndex::new(&source), color);
+                    assert!(
+                        text.contains(&format!("{path}:1:1000")),
+                        "{path:?}, color {color}: {text}"
+                    );
+                }
+            }
+        }
+    }
+
     /// With the styled renderer the header's column is still the true one.
     #[test]
     fn styled_header_of_a_cut_line_should_give_the_true_column() {
