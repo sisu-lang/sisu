@@ -375,8 +375,13 @@ pub(crate) enum DiagnosticKind {
     },
     /// The `: type` at `at` of a `let ... else`, or of a `let` whose pattern is not a name. The
     /// value gives the names their types. `with_else` is whether an `else` follows the value: on
-    /// its line, or, after a name, on the next line.
-    LetTakesNoType { at: Span, with_else: bool },
+    /// its line, or on a later line. `join` is the gap before an `else` on a later line, when the
+    /// fix can move that `else` after the value.
+    LetTakesNoType {
+        at: Span,
+        with_else: bool,
+        join: Option<Span>,
+    },
     /// A `var` at `at`, on a field or on a binding.
     Var { at: Span, field: bool },
     /// A `,` at `at` after a `member`. `replacement` is what takes the comma: nothing when it ends
@@ -3340,16 +3345,28 @@ impl From<DiagnosticKind> for Diagnostic {
                     None => d,
                 }
             }
-            DiagnosticKind::LetTakesNoType { at, with_else } => {
+            DiagnosticKind::LetTakesNoType {
+                at,
+                with_else,
+                join,
+            } => {
                 let what = if with_else {
                     "`let ... else`"
                 } else {
                     "`let` pattern"
                 };
                 // The parser stops at the type, so it has not read the rest of the statement: the
-                // fixed source can have an error of its own, and the fix is not safe.
-                Diagnostic::coded(code, at, format!("a {what} takes no type"))
-                    .with_fix(unsafe_fix("remove the type", at, ""))
+                // fixed source can have an error of its own, and the fix is not safe. An `else` on
+                // a later line moves after the value, as E0006 would ask next.
+                let mut fix = unsafe_fix("remove the type", at, "");
+                if let Some(gap) = join {
+                    fix.message = "remove the type, and move `else` after the value".to_string();
+                    fix.edits.push(Edit {
+                        span: gap,
+                        replacement: " ".to_string(),
+                    });
+                }
+                Diagnostic::coded(code, at, format!("a {what} takes no type")).with_fix(fix)
             }
             DiagnosticKind::Var { at, field } => {
                 let d = Diagnostic::coded(code, at, "there is no `var` in Sisu");

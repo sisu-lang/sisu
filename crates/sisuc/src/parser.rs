@@ -2838,23 +2838,37 @@ impl<'a> Parser<'a> {
     /// follows the `else` of a `let ... else`; the join puts it after the value. A value that
     /// ends in `}` would then read the `else` as its own (E0173), so the join is only a hint.
     fn let_else_on_new_line(&self, else_at: usize) -> Diagnostic {
-        let at = self.tokens[else_at].span;
-        let last = self.tokens[..self.pos]
-            .iter()
-            .rfind(|t| t.kind != TokenKind::Newline);
-        let end = last.map_or(0, |t| t.span.end());
-        let ends_in_brace = last.is_some_and(|t| t.kind == TokenKind::RBrace);
-        let join =
-            (self.tokens[else_at + 1].kind == TokenKind::LBrace && !ends_in_brace).then(|| Join {
-                gap: Span::new(end, at.start()),
-                safe: self.source.slice(end..at.start()).trim().is_empty(),
-            });
+        let join = self.else_gap(else_at).map(|gap| Join {
+            gap,
+            safe: self.source.slice(gap.start()..gap.end()).trim().is_empty(),
+        });
         DiagnosticKind::ElseOnNewLine {
-            at,
+            at: self.tokens[else_at].span,
             of: ElseOf::Let,
             join,
         }
         .into()
+    }
+
+    /// The gap that a join of the `else` at token `else_at` replaces: from the end of the last
+    /// token before it that is not a line break, to the `else`. There is none when no `{` follows
+    /// the `else`, or when that token is a `}`: the `else` would then read as its own.
+    fn else_gap(&self, else_at: usize) -> Option<Span> {
+        let last = self.tokens[..else_at]
+            .iter()
+            .rfind(|t| t.kind != TokenKind::Newline);
+        let end = last.map_or(0, |t| t.span.end());
+        let ends_in_brace = last.is_some_and(|t| t.kind == TokenKind::RBrace);
+        (self.tokens[else_at + 1].kind == TokenKind::LBrace && !ends_in_brace)
+            .then(|| Span::new(end, self.tokens[else_at].span.start()))
+    }
+
+    /// The gap of the `else` at token `else_at` of a typed `let`, when a line break lies in it.
+    /// The fix of the type joins such an `else` to the value, as the fixed source would report
+    /// E0006 otherwise.
+    fn type_fix_join(&self, else_at: usize) -> Option<Span> {
+        self.else_gap(else_at)
+            .filter(|gap| self.source.slice(gap.start()..gap.end()).contains('\n'))
     }
 
     /// Where the code before the next token ends: the `}` of the statement before it.
@@ -3702,7 +3716,8 @@ impl<'a> Parser<'a> {
         let (ty, annotation) = match self.eat(&TokenKind::Colon) {
             Some(colon) => {
                 let ty = self.child(base, &mut reach, Self::parse_type)?;
-                let annotation = colon.span.to(ty.span);
+                // Not `ty.span`: a grouped type keeps its inner span, which leaves the `)`.
+                let annotation = Span::new(colon.span.start(), self.consumed_end());
                 (Some(ty), Some(annotation))
             }
             None => (None, None),
@@ -3720,11 +3735,12 @@ impl<'a> Parser<'a> {
         // A typed `let` takes no `else`, which can start the next line.
         if let Some(at) = annotation
             && pattern_forms
-            && self.else_after(&init).is_some()
+            && let Some(else_at) = self.else_after(&init)
         {
             return Err(DiagnosticKind::LetTakesNoType {
                 at,
                 with_else: true,
+                join: self.type_fix_join(else_at),
             }
             .into());
         }
@@ -3814,15 +3830,24 @@ impl<'a> Parser<'a> {
         if let Some(colon) = self.eat(&TokenKind::Colon) {
             // With no `else` on this line or the next, it is no `let ... else`, so the `.` is the
             // first mistake, before the type.
-            if qualified && !self.else_in_statement(first, true) {
+            if qualified && self.else_in_statement(first, true).is_none() {
                 return Err(self.dot_error(first));
             }
-            let ty = self.child(base, &mut reach, Self::parse_type)?;
-            // An `else` on the next line is E0006, which the fixed source reports.
-            let with_else = self.else_in_statement(first, false);
+            self.child(base, &mut reach, Self::parse_type)?;
+            let at = Span::new(colon.span.start(), self.consumed_end());
+            // With an `else` on the line, the fix leaves it as it is. With one on a later line
+            // and a value after the type, the fix joins it to the value.
+            let same_line = self.else_in_statement(first, false).is_some();
+            let join = if same_line || !self.at(&TokenKind::Eq) {
+                None
+            } else {
+                self.else_in_statement(first, true)
+                    .and_then(|else_at| self.type_fix_join(else_at))
+            };
             return Err(DiagnosticKind::LetTakesNoType {
-                at: colon.span.to(ty.span),
-                with_else,
+                at,
+                with_else: same_line || join.is_some(),
+                join,
             }
             .into());
         }
@@ -3837,7 +3862,7 @@ impl<'a> Parser<'a> {
             Ok(value) => value,
             // With no `else` in the statement, it is no `let ... else`, so the `.` is the first
             // mistake. With one, the pattern is right and the value's error is the mistake.
-            Err(_) if qualified && !self.else_in_statement(first, false) => {
+            Err(_) if qualified && self.else_in_statement(first, false).is_none() => {
                 return Err(self.dot_error(first));
             }
             Err(error) => return Err(error),
@@ -3872,12 +3897,13 @@ impl<'a> Parser<'a> {
             .filter(|&at| self.tokens[at].kind == TokenKind::Else && !ends_in_open_if(value))
     }
 
-    /// Whether an `else` of the statement that starts at token `first` is not the `else` of an
-    /// `if` in it: one at the statement's own level, before its line break, or with `next_line`
-    /// after it. A line break inside `{ }` does not end the statement. It runs on an error path
-    /// only.
-    fn else_in_statement(&self, first: usize, next_line: bool) -> bool {
+    /// The token index of the last `else` of the statement that starts at token `first` that is
+    /// not the `else` of an `if` in it: one at the statement's own level, before its line break,
+    /// or with `next_line` after it. `None` when there is none. A line break inside `{ }` does
+    /// not end the statement. It runs on an error path only.
+    fn else_in_statement(&self, first: usize, next_line: bool) -> Option<usize> {
         let (mut depth, mut elses, mut ifs) = (0_usize, 0_usize, 0_usize);
+        let mut last = None;
         for (at, token) in self.tokens[first..].iter().enumerate() {
             // A closing bracket at the statement's own level ends the statement.
             let Some(next) = nested(&token.kind, depth) else {
@@ -3888,18 +3914,25 @@ impl<'a> Parser<'a> {
                 TokenKind::Newline if depth == 0 => {
                     let after = self.tokens[first + at..]
                         .iter()
-                        .find(|t| t.kind != TokenKind::Newline);
-                    elses +=
-                        usize::from(next_line && after.is_some_and(|t| t.kind == TokenKind::Else));
+                        .position(|t| t.kind != TokenKind::Newline)
+                        .map(|n| first + at + n)
+                        .filter(|&n| next_line && self.tokens[n].kind == TokenKind::Else);
+                    if after.is_some() {
+                        elses += 1;
+                        last = after;
+                    }
                     break;
                 }
                 TokenKind::Eof if depth == 0 => break,
-                TokenKind::Else if depth == 0 => elses += 1,
+                TokenKind::Else if depth == 0 => {
+                    elses += 1;
+                    last = Some(first + at);
+                }
                 TokenKind::If if depth == 0 => ifs += 1,
                 _ => {}
             }
         }
-        elses > ifs
+        last.filter(|_| elses > ifs)
     }
 
     /// "expected `=`, found `.`", as a `let` that reads a name reports `Enum.Variant`. The

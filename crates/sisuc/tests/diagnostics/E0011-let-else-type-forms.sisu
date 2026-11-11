@@ -1,0 +1,21 @@
+// GIVEN a typed `let Some(w): i64? = o` whose `else` starts the next line, and one with a comment
+// line between the value and the `else`, one function each
+// WHEN `sisu check` runs on it
+// THEN each E0011 has a fix that removes the type and moves the `else` after the value
+fn next_line(o: i64?) {
+    let Some(w): i64? = o
+    else { return }
+    print(w)
+}
+
+fn comment_line(o: i64?) {
+    let Some(w): i64? = o
+    // there is no value
+    else { return }
+    print(w)
+}
+
+fn main() {
+    next_line(Some(1))
+    comment_line(Some(2))
+}
