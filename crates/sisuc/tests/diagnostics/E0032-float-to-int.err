@@ -1,6 +1,8 @@
 error[E0032]: expected `i64`, found `i64?`
  --> E0032-float-to-int.sisu:2:5
   |
+1 | fn whole(x: f64) -> i64 {
+  |                     --- `whole` returns `i64`
 2 |     i64(x)
   |     ^^^^^^
   |

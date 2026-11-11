@@ -236,9 +236,15 @@ impl Checker<'_> {
                 in_constant: Some(site),
                 ..Body::default()
             },
-            |this| match declared {
-                Some(ty) => this.expect(&c.value, Expectation::Required(ty, Origin::None)),
-                None => this.value(&c.value, Expectation::None),
+            |this| match (declared, &c.ty) {
+                (Some(ty), Some(written)) => {
+                    let origin = Origin::Declared {
+                        at: written.span,
+                        ty,
+                    };
+                    this.expect(&c.value, Expectation::Required(ty, origin))
+                }
+                _ => this.value(&c.value, Expectation::None),
             },
         );
         let ty = declared.or_else(|| type_of(&checked));

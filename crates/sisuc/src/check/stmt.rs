@@ -361,14 +361,20 @@ impl Checker<'_> {
                 let init_expr = init;
                 self.body.let_init = Some((init.span, name.name, mutable.is_some()));
                 self.body.failed_let = matches!(declared, Some(None)).then_some(init.span);
-                let init = match declared {
-                    Some(declared) => {
+                let init = match (declared, ty) {
+                    (Some(declared), Some(ty)) => {
+                        // The label at the written type names an alias as the message does.
                         if let (Some(want), Some(text)) = (declared, &shown) {
                             self.show(init.span, want, text);
+                            self.show(ty.span, want, text);
                         }
-                        self.expect(init, Expectation::or_poisoned(declared, Origin::None))
+                        let origin = declared.map_or(Origin::None, |declared| Origin::Declared {
+                            at: ty.span,
+                            ty: declared,
+                        });
+                        self.expect(init, Expectation::or_poisoned(declared, origin))
                     }
-                    None => self.value(init, Expectation::None),
+                    _ => self.value(init, Expectation::None),
                 };
                 let uninferred = self.uninferred_of(init_expr);
                 self.body.let_init = None;
@@ -972,7 +978,10 @@ impl Checker<'_> {
                     self.show(value.span, want, &text);
                 }
                 let value = self
-                    .expect(value, Expectation::or_poisoned(self.body.ret, Origin::None))
+                    .expect(
+                        value,
+                        Expectation::or_poisoned(self.body.ret, self.returns()),
+                    )
                     .map_err(|failed| never(failed.reported))?;
                 Some(Box::new(value))
             }

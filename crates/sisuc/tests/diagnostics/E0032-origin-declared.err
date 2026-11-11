@@ -1,0 +1,157 @@
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:13:18
+   |
+11 | fn add(a: i64, b: i64) -> i64 { a + b }
+   |                   --- `add` declares `b` as `i64`
+12 | fn parameter() {
+13 |     print(add(1, "x"))
+   |                  ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:19:15
+   |
+16 |     fn m(self, n: i64) -> i64 { n }
+   |                   --- `m` declares `n` as `i64`
+...
+19 |     print(p.m("x"))
+   |               ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:22:18
+   |
+22 |     let a: i64 = "x"
+   |            ---   ^^^
+   |            |
+   |            declared as `i64` here
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:26:12
+   |
+25 | fn returned() -> i64 {
+   |                  --- `returned` returns `i64`
+26 |     return "x"
+   |            ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:29:5
+   |
+28 | fn tail() -> i64 {
+   |              --- `tail` returns `i64`
+29 |     "x"
+   |     ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:38:14
+   |
+35 | fn match_tail(e: E) -> i64 {
+   |                        --- `match_tail` returns `i64`
+...
+38 |         B => "x"
+   |              ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:45:18
+   |
+42 |     v: i64
+   |        --- `v` is declared as `i64`
+...
+45 |     let q = Q(v: "x")
+   |                  ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:52:17
+   |
+49 |     V(i64)
+   |       --- `V` holds `i64`
+...
+52 |     let f = F.V("x")
+   |                 ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:55:16
+   |
+55 | const C: i64 = "x"
+   |          ---   ^^^
+   |          |
+   |          declared as `i64` here
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:58:9
+   |
+57 |     let mut a = 1
+   |             - `a` has the type `i64`
+58 |     a = "x"
+   |         ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:62:24
+   |
+62 |     let a: [i64] = [1, "x"]
+   |            -----       ^^^
+   |            |
+   |            declared as `[i64]` here
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:67:22
+   |
+65 | fn generic<T>(a: T, n: i64) -> T { a }
+   |                        --- `generic` declares `n` as `i64`
+66 | fn generic_parameter() {
+67 |     print(generic(1, "x"))
+   |                      ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:70:9
+   |
+69 | fn mut_parameter(mut n: i64) {
+   |                      - `n` has the type `i64`
+70 |     n = "x"
+   |         ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:74:17
+   |
+74 |     print(5.min("x"))
+   |                 ^^^
+   |
+   = note: `min` declares `other` as `i64`
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:78:17
+   |
+78 |     print(a.get("x") ?? 0)
+   |                 ^^^
+   |
+   = note: `get` declares `i` as `i64`
+
+error[E0032]: expected `bool`, found `i64`
+  --> E0032-origin-declared.sisu:81:8
+   |
+81 |     if 1 { }
+   |        ^ a condition must be `bool`
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:85:13
+   |
+85 |     print(a["x"])
+   |             ^^^ an index must be `i64` or a range
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:89:7
+   |
+89 |     a["x"] = 2
+   |       ^^^ an index must be `i64` or a range
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-declared.sisu:97:15
+   |
+97 |     print(far("x"))
+   |               ^^^
+   |
+  ::: E0032-origin-declared.sisu:92:11
+   |
+92 | fn far(n: i64) -> i64 { n }
+   |           --- `far` declares `n` as `i64`
+
+sisu: 19 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

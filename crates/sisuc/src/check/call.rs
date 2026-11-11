@@ -427,13 +427,17 @@ impl Checker<'_> {
             .map(|ty| ty.and_then(|ty| self.subst(ty, owner)))
             .collect();
         let mut first = first;
-        for (arg, &want) in args
-            .iter()
+        for (i, (arg, &want)) in (args.iter())
             .zip(params.iter().chain(std::iter::repeat(&None)))
+            .enumerate()
         {
-            let checked = first.take().unwrap_or_else(|| {
-                self.expr(&arg.value, Expectation::or_poisoned(want, Origin::None))
-            });
+            let origin = Origin::Parameter {
+                function: Origin::id(func.0),
+                index: Origin::id(i),
+            };
+            let checked = first
+                .take()
+                .unwrap_or_else(|| self.expr(&arg.value, Expectation::or_poisoned(want, origin)));
             takes &= want.is_some_and(|want| checked.is_ok_and(|checked| fits(want, checked.ty)));
         }
         takes
@@ -992,7 +996,11 @@ impl Checker<'_> {
                     if let (Some(want), Some(text)) = (param, text) {
                         self.show(arg.value.span, want, text);
                     }
-                    mark(self.operand(&arg.value, Expectation::or_poisoned(param, Origin::None)))
+                    let origin = Origin::Parameter {
+                        function: Origin::id(func.0),
+                        index: Origin::id(i),
+                    };
+                    mark(self.operand(&arg.value, Expectation::or_poisoned(param, origin)))
                 })
                 .collect();
             Ok((checked, TypeArgs::NONE, ret))
@@ -1012,6 +1020,7 @@ impl Checker<'_> {
                 ret,
                 bounds: &bounds,
                 mut_site: (!muts.is_empty()).then_some(&mut_site),
+                function: Some(func),
             };
             let written = (written, site.angles);
             self.generic_call_mut(span, &sig, written, args, site.expected, &mut parts)
@@ -1222,6 +1231,7 @@ impl Checker<'_> {
                 ret: Some(ret),
                 bounds,
                 mut_site: None,
+                function: None,
             };
             // An alias's type arguments, when the call wrote them, are applied already.
             let written = (
@@ -1260,7 +1270,11 @@ impl Checker<'_> {
                 self.show(arg.value.span, *want, text);
             }
         }
-        match self.construct(span, &name, &fields, args) {
+        let field = |index| Origin::Field {
+            class: Origin::id(class.0),
+            index: Origin::id(index),
+        };
+        match self.construct(span, &name, &fields, args, field) {
             Ok(args) => Ok(self.spilled(span, ty, args, |args| tir::ExprKind::New { class, args })),
             Err(reported) => Err(Poisoned::typed(ty, reported)),
         }
@@ -1303,13 +1317,14 @@ impl Checker<'_> {
     /// The arguments of `name(f: e, ...)`, a class's constructor or a variant with labels,
     /// which name every one of `fields` in declaration order. Only the first mistake is
     /// reported; every argument is still checked for its own. `Err` with the token of a mistake,
-    /// here or in an argument.
+    /// here or in an argument. `origin` gives where the type of each field comes from.
     pub(super) fn construct(
         &mut self,
         span: Span,
         name: &dyn fmt::Display,
         fields: &[(Symbol, Option<Type>)],
         args: &[ast::Arg],
+        origin: impl Fn(usize) -> Origin,
     ) -> Result<Vec<tir::Expr>, Reported> {
         let names: Vec<_> = fields.iter().map(|(f, _)| *f).collect();
         let (mut failed, mut reported) = (false, None);
@@ -1322,10 +1337,8 @@ impl Checker<'_> {
             if failed {
                 checked.push(self.expr(&arg.value, Expectation::Poisoned));
             } else {
-                let (arg, mismatched) = self.operand(
-                    &arg.value,
-                    Expectation::or_poisoned(fields[i].1, Origin::None),
-                );
+                let (arg, mismatched) =
+                    self.operand(&arg.value, Expectation::or_poisoned(fields[i].1, origin(i)));
                 failed = mismatched;
                 checked.push(arg);
             }

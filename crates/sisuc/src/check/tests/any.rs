@@ -1019,11 +1019,12 @@ fn a_join_should_report_the_member_that_leaves_it_against_the_written_type() {
         let src = format!(
             "{DECLS}fn main() {{\n    let o: Circle? = None\n    let s: any Shape = Circle(r: 1.0)\n    let os: (any Shape)? = None\n    let r{written} = {join}\n}}"
         );
-        // `NotConform` points at where `any Shape` is first written too.
-        let secondary: &[_] = if code == Code::NotConform {
-            &[(3 + LINES, 12)]
-        } else {
-            &[]
+        // `NotConform` points at where `any Shape` is first written too, and a mismatch at the
+        // written type of `r`, unless a `??` stands between them.
+        let secondary: &[_] = match code {
+            Code::NotConform => &[(3 + LINES, 12)],
+            Code::Mismatch if !join.starts_with("os ??") => &[(5 + LINES, 12)],
+            _ => &[],
         };
         diagnostic_row(row, &src, code, (line + LINES, col, text), secondary);
     }

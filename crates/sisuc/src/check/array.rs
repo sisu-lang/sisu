@@ -530,7 +530,7 @@ impl Checker<'_> {
         // The index is not part of the chain that it ends.
         self.body.indexed = false;
         let (index, mismatched) =
-            self.operand(index, Expectation::Required(Type::I64, Origin::None));
+            self.operand(index, Expectation::Required(Type::I64, Origin::Index));
         self.body.indexed = outer;
         match (checked, index, element) {
             (Ok(base), Ok(index), Some(element)) if !optional => {

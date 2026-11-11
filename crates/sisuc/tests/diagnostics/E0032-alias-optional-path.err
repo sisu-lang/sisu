@@ -2,7 +2,9 @@ error[E0032]: expected `bool?`, found `i64?`
  --> E0032-alias-optional-path.sisu:4:20
   |
 4 |     let a: bool? = O.None
-  |                    ^^^^^^
+  |            -----   ^^^^^^
+  |            |
+  |            declared as `bool?` here
 
 error[E0119]: `O.Some` needs its payload: `O.Some(...)`
  --> E0032-alias-optional-path.sisu:5:15

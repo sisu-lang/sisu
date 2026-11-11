@@ -159,10 +159,22 @@ impl Checker<'_> {
             return reported;
         }
         let place = self.place(span, target, Change::Assign);
+        // A local's type comes from where its name is declared. A field or an index waits.
+        let declared = match target.kind {
+            ast::ExprKind::Name(name) => self.lookup(name).map(|b| b.span),
+            _ => None,
+        };
         if let (Some(want), Some(text)) = (place.ty, &place.shown) {
             self.show(value.span, want, text);
+            if let Some(at) = declared {
+                self.show(at, want, text);
+            }
         }
-        let value = self.expect(value, Expectation::or_poisoned(place.ty, Origin::None));
+        let origin = match (declared, place.ty) {
+            (Some(at), Some(ty)) => Origin::Assigned { at, ty },
+            _ => Origin::None,
+        };
+        let value = self.expect(value, Expectation::or_poisoned(place.ty, origin));
         self.inferred_by_write(target, &value, span.end());
         self.assigned(span, place, value)
     }
@@ -1041,7 +1053,7 @@ impl Checker<'_> {
                 // The index is not part of the chain that it ends.
                 self.body.indexed = false;
                 let (index, mismatched) =
-                    self.operand(index, Expectation::Required(Type::I64, Origin::None));
+                    self.operand(index, Expectation::Required(Type::I64, Origin::Index));
                 self.body.indexed = outer;
                 let reported = (inner.reported.or(element_report))
                     .or_else(|| index.as_ref().err().map(Poisoned::reported));

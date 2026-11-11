@@ -110,6 +110,11 @@ impl Diagnostic {
         self
     }
 
+    fn with_note(mut self, note: impl Into<Box<str>>) -> Diagnostic {
+        self.notes.get_or_insert_default().push(note.into());
+        self
+    }
+
     fn with_fix(mut self, fix: Fix) -> Diagnostic {
         self.fixes.push(fix);
         self

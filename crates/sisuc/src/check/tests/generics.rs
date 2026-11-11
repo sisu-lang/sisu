@@ -2745,7 +2745,7 @@ fn a_call_with_written_type_arguments_should_report_a_mismatch_at_the_call() {
         ),
     ] {
         let src = with_generics(body);
-        diagnostic(&src, Code::Mismatch, at, &[]);
+        diagnostic(&src, Code::Mismatch, at, &[(2, 12)]);
     }
 }
 
@@ -2793,15 +2793,15 @@ fn a_context_that_fits_or_does_not_fit_alone_should_keep_its_report() {
     clean(&with_generics("fn g(n: i64) {\n    let x: i64? = id(n)\n}"));
     // `[T]` meets no `string`, so the context says nothing of the argument.
     let src = with_generics("fn g(n: i64) {\n    let s: string = wrap(n)\n}");
-    diagnostic(&src, Code::Mismatch, (2, 21, "wrap(n)"), &[]);
+    diagnostic(&src, Code::Mismatch, (2, 21, "wrap(n)"), &[(2, 12)]);
     // `T?` meets a value that is not optional, which a result cannot: `string?` is no `string`.
     let src = with_generics("fn g(ns: [i64]) {\n    let x: string = first(ns)\n}");
-    diagnostic(&src, Code::Mismatch, (2, 21, "first(ns)"), &[]);
+    diagnostic(&src, Code::Mismatch, (2, 21, "first(ns)"), &[(2, 12)]);
     let src = with_generics("fn g(ns: [string]) {\n    let x: string = first(ns)\n}");
-    diagnostic(&src, Code::Mismatch, (2, 21, "first(ns)"), &[]);
+    diagnostic(&src, Code::Mismatch, (2, 21, "first(ns)"), &[(2, 12)]);
     // `n` converts to the `i64?` that the context makes of `T`, so no argument is to blame.
     let src = with_generics("fn g(n: i64) {\n    let xs: [i64?] = wrap(n)\n}");
-    diagnostic(&src, Code::Mismatch, (2, 22, "wrap(n)"), &[]);
+    diagnostic(&src, Code::Mismatch, (2, 22, "wrap(n)"), &[(2, 13)]);
 }
 
 /// A type parameter and a built-in type take no type arguments.

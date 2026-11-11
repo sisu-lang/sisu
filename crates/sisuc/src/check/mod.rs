@@ -226,6 +226,10 @@ struct Signature {
     param_shown: Vec<Option<Rc<str>>>,
     /// The return type as written, under the same rule.
     ret_shown: Option<Rc<str>>,
+    /// Where each of `params` writes its type: a mismatch with one points there.
+    param_spans: Vec<Span>,
+    /// Where the return type is written; none when the function writes none.
+    ret_span: Option<Span>,
     /// The name's span.
     span: Span,
     /// `fn` through the end of the signature, before the body.
@@ -2035,6 +2039,8 @@ impl Checker<'_> {
             anys,
             param_shown,
             ret_shown,
+            param_spans: f.params.iter().map(|p| p.ty.span).collect(),
+            ret_span: f.ret.as_ref().map(|ty| ty.span),
             span: f.name.span,
             header: Span::new(f.span.start(), f.body.span.start()),
             conformance: None,
@@ -2390,7 +2396,7 @@ impl Checker<'_> {
             let expected = match ret {
                 None => Expectation::Poisoned,
                 Some(Type::UNIT) => Expectation::None,
-                Some(ret) => Expectation::Required(ret, Origin::None),
+                Some(ret) => Expectation::Required(ret, c.returns()),
             };
             c.show_value(&f.body, ret);
             let mut body = c.block(&f.body, expected);
@@ -2431,7 +2437,10 @@ impl Checker<'_> {
                     }
                     .into()
                 } else {
-                    self.mismatch(value_span(&f.body), tail(&f.body), want, got, Origin::None)
+                    let origin = Origin::Returns {
+                        function: Origin::id(id.0),
+                    };
+                    self.mismatch(value_span(&f.body), tail(&f.body), want, got, origin)
                 };
                 self.diagnostics.error(d);
             }

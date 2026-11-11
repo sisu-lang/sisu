@@ -8,7 +8,9 @@ error[E0032]: expected `i64`, found `bool`
  --> two_errors.sisu:3:18
   |
 3 |     let n: i64 = true
-  |                  ^^^^
+  |            ---   ^^^^
+  |            |
+  |            declared as `i64` here
 
 error[E0033]: cannot find binding `second`
  --> two_errors.sisu:4:11

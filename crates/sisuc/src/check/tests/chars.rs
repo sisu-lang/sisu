@@ -19,8 +19,9 @@ fn only_fix<'a>(
     src: &'a str,
     code: Code,
     pos: (usize, usize, &str),
+    secondary: &[(usize, usize)],
 ) -> (Diagnostic, Vec<FixAt<'a>>) {
-    let d = diagnostic(src, code, pos, &[]);
+    let d = diagnostic(src, code, pos, secondary);
     let found = fixes(src, &d);
     (d, found)
 }
@@ -48,7 +49,7 @@ fn char_comparison_takes_chars() {
 
 /// Arithmetic on a `char` has no fix: converting the result back gives a `char?`.
 #[test]
-fn char_arithmetic() {
+fn arithmetic_on_a_char_should_have_no_fix() {
     let rows = [
         ("fn f(c: char) {\n    let d = c + 1\n}", (2, 15, "+")),
         ("fn f(c: char) {\n    print(c + 1)\n}", (2, 13, "+")),
@@ -103,7 +104,7 @@ fn char_arithmetic() {
     ];
     for (src, pos) in rows {
         let src = with_main(src);
-        let (_, found) = only_fix(&src, Code::ArithmeticOnChar, pos);
+        let (_, found) = only_fix(&src, Code::ArithmeticOnChar, pos, &[]);
         assert_eq!(found, [], "{src}");
     }
 }
@@ -460,7 +461,7 @@ fn char_built_in_names() {
 }
 
 #[test]
-fn char_mismatch() {
+fn a_char_mismatch_should_offer_an_unsafe_conversion() {
     let edit = |col, replacement: &str| (2, col, "", replacement.to_owned());
     let rows = [
         ("let x: char? = b", 20, "char(i64(", "))"),
@@ -471,7 +472,12 @@ fn char_mismatch() {
     ];
     for (body, col, open, close) in rows {
         let src = scalars(body);
-        let (d, found) = only_fix(&src, Code::Mismatch, (2, col, &body[body.len() - 1..]));
+        let (d, found) = only_fix(
+            &src,
+            Code::Mismatch,
+            (2, col, &body[body.len() - 1..]),
+            &[(2, 12)],
+        );
         assert_eq!(
             found,
             [(false, vec![edit(col, open), edit(col + 1, close)])],

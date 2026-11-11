@@ -218,7 +218,9 @@ error[E0032]: expected `string`, found `i64`
   --> E0062-index-continues.sisu:52:21
    |
 52 |     let s: string = c.yss[0][0]
-   |                     ^^^^^^^^^^^
+   |            ------   ^^^^^^^^^^^
+   |            |
+   |            declared as `string` here
 
 error[E0062]: `c.oys` may be `None`
   --> E0062-index-continues.sisu:56:5
@@ -380,7 +382,9 @@ error[E0032]: expected `string`, found `i64`
   --> E0062-index-continues.sisu:76:21
    |
 76 |     let s: string = c?.yss[0][0]
-   |                     ^^^^^^^^^^^^
+   |            ------   ^^^^^^^^^^^^
+   |            |
+   |            declared as `string` here
 
 error[E0062]: `c?.oys` may be `None`
   --> E0062-index-continues.sisu:80:5

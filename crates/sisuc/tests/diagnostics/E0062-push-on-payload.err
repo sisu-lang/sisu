@@ -108,6 +108,11 @@ error[E0032]: expected `i64`, found `string`
    |
 62 |     s.push("a")
    |            ^^^
+   |
+  ::: E0062-push-on-payload.sisu:20:22
+   |
+20 |     fn push(self, v: i64) {}
+   |                      --- `push` declares `v` as `i64`
 
 error[E0062]: `b?.s` may be `None`
   --> E0062-push-on-payload.sisu:66:5
@@ -126,6 +131,11 @@ error[E0032]: expected `i64`, found `string`
    |
 66 |     b?.s.push("a")
    |               ^^^
+   |
+  ::: E0062-push-on-payload.sisu:20:22
+   |
+20 |     fn push(self, v: i64) {}
+   |                      --- `push` declares `v` as `i64`
 
 error[E0062]: this value may be `None`
   --> E0062-push-on-payload.sisu:70:5

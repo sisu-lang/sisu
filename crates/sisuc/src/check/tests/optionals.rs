@@ -115,7 +115,12 @@ fn a_value_should_convert_through_one_layer_only() {
             true,
         ),
     ] {
-        let d = diagnostic(&with_body(body), Code::Mismatch, at, &[]);
+        let written: &[_] = if body.starts_with("let r:") {
+            &[(2, 12)]
+        } else {
+            &[]
+        };
+        let d = diagnostic(&with_body(body), Code::Mismatch, at, written);
         assert_eq!(d.help().is_some(), layers, "{body}");
     }
 }
@@ -439,7 +444,12 @@ fn a_wrong_use_of_option_or_some_should_be_reported() {
             (2, 23, "a"),
         ),
     ] {
-        diagnostic(&with_body(body), code, at, &[]);
+        let written: &[_] = if code == Code::Mismatch && body.starts_with("let r:") {
+            &[(2, 12)]
+        } else {
+            &[]
+        };
+        diagnostic(&with_body(body), code, at, written);
     }
 }
 

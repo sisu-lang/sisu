@@ -1,9 +1,11 @@
 //! The type that the context of a value expects of it.
 
 use super::Checker;
+use super::unused_names::Owner;
 use crate::diagnostic::MismatchOrigin;
 use crate::source::Span;
 use crate::tir::Type;
+use std::rc::Rc;
 
 /// Where the type that a context requires or hints comes from: a declaration, an earlier value or
 /// a language rule. A report that names the type points at it.
@@ -13,6 +15,33 @@ pub(super) enum Origin {
     None,
     /// The `break` at `at`, which gave the loop its type `ty`.
     Break { at: Span, ty: Type },
+    /// Parameter `index` of the function or method `function` (a `FuncId`).
+    Parameter { function: u32, index: u32 },
+    /// The return type of the function or method `function`.
+    Returns { function: u32 },
+    /// The type `ty` that a `let` or a constant writes at `at`.
+    Declared { at: Span, ty: Type },
+    /// Field `index` of the class `class` (a `ClassId`).
+    Field { class: u32, index: u32 },
+    /// Payload field `field` of the variant `variant` of the enum `enum_` (an `EnumId`).
+    Payload {
+        enum_: u32,
+        variant: u32,
+        field: u32,
+    },
+    /// The local of the type `ty` that the name at `at` declares, which an assignment writes.
+    Assigned { at: Span, ty: Type },
+    /// The rule that a condition is a `bool`.
+    Condition,
+    /// The rule that an index is an `i64` or a range.
+    Index,
+}
+
+impl Origin {
+    /// `index` as an `Origin` stores it.
+    pub(super) fn id(index: usize) -> u32 {
+        u32::try_from(index).expect("an index of the program should fit in a `u32`")
+    }
 }
 
 /// What a value is checked against: the type that the context expects of it, if there is one.
@@ -100,14 +129,87 @@ impl Expectation {
 }
 
 impl Checker<'_> {
-    /// The fact that a report gives for `origin`, with its types named; none for `Origin::None`.
+    /// The origin of the return type of the function that the body is in; `Origin::None` in a
+    /// constant.
+    pub(super) fn returns(&self) -> Origin {
+        match self.body.owner {
+            Some(Owner::Func(f)) => Origin::Returns {
+                function: Origin::id(f.0),
+            },
+            _ => Origin::None,
+        }
+    }
+
+    /// The fact that a report gives for `origin`, with its types named; none for `Origin::None`,
+    /// a type that failed, and a declared type that names a type parameter: a call or an object
+    /// can give that parameter another type.
     pub(super) fn origin_fact(&self, origin: Origin) -> Option<MismatchOrigin> {
+        let named = |ty: Type, shown: Option<&Rc<str>>| {
+            shown.map_or_else(|| self.type_name(ty), ToString::to_string)
+        };
         match origin {
             Origin::None => None,
             Origin::Break { at, ty } => Some(MismatchOrigin::Break {
                 at,
                 ty: self.type_name(ty),
             }),
+            Origin::Parameter { function, index } => {
+                let sig = &self.signatures[function as usize];
+                let i = index as usize;
+                let ty = sig.params[i].filter(|ty| !ty.has_param())?;
+                Some(MismatchOrigin::Parameter {
+                    at: sig.param_spans[i],
+                    function: own_name(&sig.name).to_string(),
+                    param: sig.param_names[i].name.to_string(),
+                    ty: named(ty, sig.param_shown[i].as_ref()),
+                })
+            }
+            Origin::Returns { function } => {
+                let sig = &self.signatures[function as usize];
+                Some(MismatchOrigin::Returns {
+                    at: sig.ret_span?,
+                    function: own_name(&sig.name).to_string(),
+                    ty: named(sig.ret?, sig.ret_shown.as_ref()),
+                })
+            }
+            Origin::Declared { at, ty } => Some(MismatchOrigin::Declared {
+                at,
+                ty: self.want_name(at, ty),
+            }),
+            Origin::Field { class, index } => {
+                let field = &self.classes[class as usize].fields[index as usize];
+                let ty = field.ty.filter(|ty| !ty.has_param())?;
+                Some(MismatchOrigin::Field {
+                    at: field.ty_span,
+                    field: field.name.name.to_string(),
+                    ty: named(ty, field.shown.as_ref()),
+                })
+            }
+            Origin::Payload {
+                enum_,
+                variant,
+                field,
+            } => {
+                let variant = &self.enums[enum_ as usize].variants[variant as usize];
+                let ty = variant.fields[field as usize].filter(|ty| !ty.has_param())?;
+                Some(MismatchOrigin::Payload {
+                    at: variant.spans[field as usize],
+                    variant: variant.name.name.to_string(),
+                    ty: self.type_name(ty),
+                })
+            }
+            Origin::Assigned { at, ty } => Some(MismatchOrigin::Assigned {
+                at,
+                name: self.source.text(at).to_string(),
+                ty: self.want_name(at, ty),
+            }),
+            Origin::Condition => Some(MismatchOrigin::Condition),
+            Origin::Index => Some(MismatchOrigin::Index),
         }
     }
+}
+
+/// The function's or method's own name: `m` of `P.m`.
+fn own_name(name: &str) -> &str {
+    name.rsplit('.').next().unwrap_or(name)
 }

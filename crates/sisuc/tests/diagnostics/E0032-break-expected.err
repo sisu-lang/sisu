@@ -1,6 +1,8 @@
 error[E0032]: expected `i64`, found `string`
  --> E0032-break-expected.sisu:3:15
   |
+2 |     let x: i64 = loop {
+  |            --- declared as `i64` here
 3 |         break "s"
   |               ^^^
 

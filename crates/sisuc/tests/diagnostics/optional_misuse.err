@@ -2,7 +2,9 @@ error[E0032]: expected `i64`, found `i64?`
  --> optional_misuse.sisu:3:18
   |
 3 |     let n: i64 = maybe
-  |                  ^^^^^
+  |            ---   ^^^^^
+  |            |
+  |            declared as `i64` here
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0032

@@ -2,7 +2,9 @@ error[E0032]: expected `string`, found `i64`
   --> E0032-match.sisu:8:21
    |
  8 |       let v: string = match e {
-   |  _____________________^
+   |  ____________------___^
+   | |            |
+   | |            declared as `string` here
  9 | |         Num(n) => n
 10 | |         _ => 2
 11 | |     }

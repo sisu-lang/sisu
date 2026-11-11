@@ -2,7 +2,9 @@ error[E0032]: expected `u8`, found `u8?`
  --> E0032-conversion.sisu:3:17
   |
 3 |     let b: u8 = u8(n)
-  |                 ^^^^^
+  |            --   ^^^^^
+  |            |
+  |            declared as `u8` here
   |
   = help: a conversion that can fail gives an optional: give a default with `??`, or unwrap it with `if let`
 

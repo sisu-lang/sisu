@@ -1623,6 +1623,9 @@ pub(super) struct GenericSig<'a> {
     /// The callee's `mut` parameters, when it has any: an argument at one is a place, checked
     /// before the others.
     pub(super) mut_site: Option<&'a MutSite<'a>>,
+    /// The function or method, which declares `params`; none for a constructor, a variant or a
+    /// requirement of an interface.
+    pub(super) function: Option<tir::FuncId>,
 }
 
 /// The shape of a variant that a call of a generic enum builds: the type that it builds, its
@@ -1699,6 +1702,8 @@ pub(super) struct Inference<'s> {
     /// The place of each `mut` argument that checked, by its place among the arguments, until
     /// `mut_final` compares it with the parameter's final type.
     pub(super) mut_shapes: Vec<(usize, PlaceShape)>,
+    /// The function or method that the call calls (see `GenericSig::function`).
+    function: Option<tir::FuncId>,
 }
 
 mod origins {
@@ -2247,6 +2252,7 @@ impl Checker<'_> {
             early: Early::of(sig),
             bound: Vec::new(),
             mut_shapes: Vec::new(),
+            function: sig.function,
         };
         // How many type arguments the call writes. They bind the result of a call that fails.
         let mut named = 0;
@@ -3121,7 +3127,11 @@ impl Checker<'_> {
                 .then(|| self.call_context(call, e, pattern))
                 .flatten()
         });
-        let checked = read_jump(self.infer_value(call, e, pattern, context));
+        let origin = call.function.map_or(Origin::None, |f| Origin::Parameter {
+            function: Origin::id(f.0),
+            index: Origin::id(i),
+        });
+        let checked = read_jump(self.infer_value(call, e, (pattern, origin), context));
         if unbound && let Some(ty @ (Type::UNIT | Type::NEVER)) = type_of(&checked) {
             let at = self.never_at(e.span);
             call.last.push((i, ty, at));
@@ -3134,12 +3144,13 @@ impl Checker<'_> {
     /// type fixes. A non-empty array literal is the exception: unless its element type is a
     /// type parameter or an associated type that nothing binds or hints, its elements bind the
     /// parameters one by one (see `inferred_array`).
-    /// A value of type `unit` or `never` binds nothing, for `infer_arg` to defer.
+    /// A value of type `unit` or `never` binds nothing, for `infer_arg` to defer. `origin` is
+    /// where `pattern` comes from.
     fn infer_value(
         &mut self,
         call: &mut Inference<'_>,
         e: &ast::Expr,
-        pattern: Type,
+        (pattern, origin): (Type, Origin),
         context: Option<Type>,
     ) -> Checked {
         let Some(want) = self.known_in(call, pattern) else {
@@ -3156,7 +3167,7 @@ impl Checker<'_> {
             };
             self.value(e, hint)
         } else {
-            self.value(e, Expectation::Required(want, Origin::None))
+            self.value(e, Expectation::Required(want, origin))
         };
         // A hint is the type of a sibling. Examples are the other side of `==`, the left side of
         // `??`, another branch and an earlier `break` value. The user did not write it. By rule,
@@ -3167,7 +3178,7 @@ impl Checker<'_> {
         if hinted && self.misfit_type(&checked).is_some() {
             return checked;
         }
-        mark(self.settled(e, checked, Expectation::Required(want, Origin::None)))
+        mark(self.settled(e, checked, Expectation::Required(want, origin)))
     }
 
     /// `infer_value` for a `pattern` that names an unbound parameter, with no walk of

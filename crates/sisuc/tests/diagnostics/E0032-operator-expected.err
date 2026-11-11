@@ -2,13 +2,17 @@ error[E0032]: expected `i64`, found `bool`
  --> E0032-operator-expected.sisu:3:18
   |
 3 |     let x: i64 = p + p
-  |                  ^
+  |            ---   ^
+  |            |
+  |            declared as `i64` here
 
 error[E0032]: expected `f64`, found `bool`
  --> E0032-operator-expected.sisu:4:18
   |
 4 |     let y: f64 = p + p
-  |                  ^
+  |            ---   ^
+  |            |
+  |            declared as `f64` here
 
 error[E0032]: expected `i64` or `f64`, found `bool`
  --> E0032-operator-expected.sisu:5:19

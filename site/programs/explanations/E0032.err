@@ -2,7 +2,9 @@ error[E0032]: expected `u8`, found `i64`
  --> E0032.sisu:3:17
   |
 3 |     let b: u8 = n
-  |                 ^
+  |            --   ^
+  |            |
+  |            declared as `u8` here
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0032

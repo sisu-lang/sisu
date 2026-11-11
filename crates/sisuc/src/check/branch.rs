@@ -45,7 +45,7 @@ impl Checker<'_> {
         expected: Expectation,
     ) -> Checked {
         let (cond, mismatched) =
-            self.operand(cond, Expectation::Required(Type::BOOL, Origin::None));
+            self.operand(cond, Expectation::Required(Type::BOOL, Origin::Condition));
         let (then, other, ty) = self.branches(
             then_block,
             else_block,

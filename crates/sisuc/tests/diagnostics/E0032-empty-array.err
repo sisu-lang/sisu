@@ -2,7 +2,9 @@ error[E0032]: expected `i64`, found `[]`
  --> E0032-empty-array.sisu:2:18
   |
 2 |     let x: i64 = []
-  |                  ^^
+  |            ---   ^^
+  |            |
+  |            declared as `i64` here
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0032

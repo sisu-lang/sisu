@@ -92,6 +92,7 @@ impl Checker<'_> {
             ret,
             bounds: &bounds,
             mut_site: (!muts.is_empty()).then_some(&mut_site),
+            function: None,
         };
         let mut parts = MutParts::default();
         let written = (site.written, site.angles);

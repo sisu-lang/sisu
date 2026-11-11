@@ -337,10 +337,10 @@ impl Checker<'_> {
                         .copied()
                         .zip(v.fields.iter().copied())
                         .collect();
-                    self.construct(span, &path, &named, args)
+                    self.construct(span, &path, &named, args, |_| Origin::None)
                 } else if v.labels.iter().all(Option::is_none) {
                     let fields = v.fields.clone();
-                    self.positional(span, &path, &fields, args)
+                    self.positional(span, (&path, id, variant), &fields, args)
                 } else {
                     // Mixed labels are reported at the declaration.
                     let reported = v.mixed.expect("mixed labels should be reported");
@@ -476,6 +476,7 @@ impl Checker<'_> {
             ret: Some(ret),
             bounds: &bounds,
             mut_site: None,
+            function: None,
         };
         // An alias's type arguments, when the call wrote them, are applied already.
         let written = (
@@ -555,21 +556,27 @@ impl Checker<'_> {
         Ok(labeled)
     }
 
-    /// The arguments of `path(args)`, a variant whose payload declares no labels, checked
-    /// against its `fields` in order. `Err` with the token of a mistake, here or in an argument.
+    /// The arguments of `path(args)`, the variant `variant` of the enum `id`, whose payload
+    /// declares no labels, checked against its `fields` in order. `Err` with the token of a
+    /// mistake, here or in an argument.
     fn positional(
         &mut self,
         span: Span,
-        path: &dyn fmt::Display,
+        (path, id, variant): (&dyn fmt::Display, EnumId, usize),
         fields: &[Option<Type>],
         args: &[ast::Arg],
     ) -> Result<Vec<tir::Expr>, Reported> {
         let labeled = self.positional_shape(span, path, fields.len(), args)?;
         // A mismatched argument is one that failed. Each argument is checked, so this collects
         // into a `Vec` before it gives up.
-        let checked: Vec<_> = (args.iter().zip(fields))
-            .map(|(arg, field)| {
-                self.expect(&arg.value, Expectation::or_poisoned(*field, Origin::None))
+        let checked: Vec<_> = (args.iter().zip(fields).enumerate())
+            .map(|(i, (arg, field))| {
+                let origin = Origin::Payload {
+                    enum_: Origin::id(id.0),
+                    variant: Origin::id(variant),
+                    field: Origin::id(i),
+                };
+                self.expect(&arg.value, Expectation::or_poisoned(*field, origin))
             })
             .collect();
         match (

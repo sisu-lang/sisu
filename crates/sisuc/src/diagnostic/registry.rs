@@ -2120,6 +2120,67 @@ pub(crate) enum MismatchOrigin {
     Alternative { name: String, at: Span },
     /// The `break` at `at`, the first of its `loop` with a value, gave the loop the type `ty`.
     Break { at: Span, ty: String },
+    /// `function` declares its parameter `param` as `ty`, written at `at`.
+    Parameter {
+        at: Span,
+        function: String,
+        param: String,
+        ty: String,
+    },
+    /// `function` returns `ty`, written at `at`.
+    Returns {
+        at: Span,
+        function: String,
+        ty: String,
+    },
+    /// A `let` or a constant declares the type `ty` at `at`.
+    Declared { at: Span, ty: String },
+    /// The class declares its field `field` as `ty`, written at `at`.
+    Field { at: Span, field: String, ty: String },
+    /// The payload of `variant` holds `ty`, written at `at`.
+    Payload {
+        at: Span,
+        variant: String,
+        ty: String,
+    },
+    /// The local `name`, declared at `at`, has the type `ty`.
+    Assigned { at: Span, name: String, ty: String },
+    /// The rule that a condition is a `bool`.
+    Condition,
+    /// The rule that an index is an `i64` or a range.
+    Index,
+}
+
+impl MismatchOrigin {
+    /// Where the fact points, and its text: no span for a language rule.
+    fn text(self, want: &str) -> (Option<Span>, String) {
+        match self {
+            Self::Concat(operand) => (Some(operand), "`+` joins this `string`".to_string()),
+            Self::Alternative { name, at } => (Some(at), format!("`{name}` is {want} here")),
+            Self::Break { at, ty } => (
+                Some(at),
+                format!("this `break` gave the loop the type `{ty}`"),
+            ),
+            Self::Parameter {
+                at,
+                function,
+                param,
+                ty,
+            } => (
+                Some(at),
+                format!("`{function}` declares `{param}` as `{ty}`"),
+            ),
+            Self::Returns { at, function, ty } => {
+                (Some(at), format!("`{function}` returns `{ty}`"))
+            }
+            Self::Declared { at, ty } => (Some(at), format!("declared as `{ty}` here")),
+            Self::Field { at, field, ty } => (Some(at), format!("`{field}` is declared as `{ty}`")),
+            Self::Payload { at, variant, ty } => (Some(at), format!("`{variant}` holds `{ty}`")),
+            Self::Assigned { at, name, ty } => (Some(at), format!("`{name}` has the type `{ty}`")),
+            Self::Condition => (None, "a condition must be `bool`".to_string()),
+            Self::Index => (None, "an index must be `i64` or a range".to_string()),
+        }
+    }
 }
 
 /// The form of an `UnsupportedFormatSpec`, which sets its message and help.
@@ -4416,18 +4477,14 @@ impl From<DiagnosticKind> for Diagnostic {
                 let want = want.text();
                 let mut d =
                     Diagnostic::coded(code, at, format!("expected {want}, found `{got}`"));
-                match origin {
-                    Some(MismatchOrigin::Concat(operand)) => {
-                        d = d.with_secondary(operand, "`+` joins this `string`");
-                    }
-                    Some(MismatchOrigin::Alternative { name, at }) => {
-                        d = d.with_secondary(at, format!("`{name}` is {want} here"));
-                    }
-                    Some(MismatchOrigin::Break { at, ty }) => {
-                        d = d.with_secondary(at, format!("this `break` gave the loop the type `{ty}`"));
-                    }
-                    None => {}
-                }
+                // A rule labels the mistake. No diagnostic points into the prelude, so a fact
+                // there is a note.
+                d = match origin.map(|origin| origin.text(&want)) {
+                    Some((None, text)) => d.with_label(text),
+                    Some((Some(at), text)) if at.in_prelude() => d.with_note(text),
+                    Some((Some(at), text)) => d.with_secondary(at, text),
+                    None => d,
+                };
                 if conversion {
                     d = d.with_help(
                         "a conversion that can fail gives an optional: give a default with `??`, or unwrap it with `if let`",

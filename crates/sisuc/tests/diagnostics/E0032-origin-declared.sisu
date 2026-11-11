@@ -1,0 +1,120 @@
+// GIVEN a value whose type is not the type that a declaration or a language rule requires
+// AND the declaration is a parameter, a method's parameter, a `let`, a return type, a field, a
+// payload, a constant, a local that an assignment writes, or a parameter of a generic function
+// WHEN `sisu check` runs on it
+// THEN each E0032 has a secondary label at the type that the declaration writes
+// AND the label of an element names the type of the whole declaration
+// AND a parameter of the prelude gives a note in place of a label
+// AND a condition or an index gives the rule as the primary label
+// AND the label of `add` shares the snippet of its call, 2 lines below it
+// AND the label of `far` gets a snippet of its own, as its call is 5 lines below it
+fn add(a: i64, b: i64) -> i64 { a + b }
+fn parameter() {
+    print(add(1, "x"))
+}
+class P {
+    fn m(self, n: i64) -> i64 { n }
+}
+fn method(p: P) {
+    print(p.m("x"))
+}
+fn declared() {
+    let a: i64 = "x"
+    print(a)
+}
+fn returned() -> i64 {
+    return "x"
+}
+fn tail() -> i64 {
+    "x"
+}
+enum E {
+    A
+    B
+}
+fn match_tail(e: E) -> i64 {
+    match e {
+        A => 1
+        B => "x"
+    }
+}
+class Q {
+    v: i64
+}
+fn field() {
+    let q = Q(v: "x")
+    print(q.v)
+}
+enum F {
+    V(i64)
+}
+fn payload() {
+    let f = F.V("x")
+    print(f)
+}
+const C: i64 = "x"
+fn assigned() {
+    let mut a = 1
+    a = "x"
+    print(a)
+}
+fn element() {
+    let a: [i64] = [1, "x"]
+    print(a)
+}
+fn generic<T>(a: T, n: i64) -> T { a }
+fn generic_parameter() {
+    print(generic(1, "x"))
+}
+fn mut_parameter(mut n: i64) {
+    n = "x"
+    print(n)
+}
+fn prelude() {
+    print(5.min("x"))
+}
+fn get() {
+    let a = [1]
+    print(a.get("x") ?? 0)
+}
+fn condition() {
+    if 1 { }
+}
+fn index() {
+    let a = [1]
+    print(a["x"])
+}
+fn index_place() {
+    let mut a = [1]
+    a["x"] = 2
+    print(a)
+}
+fn far(n: i64) -> i64 { n }
+fn far_call() {
+    // These lines put the call
+    // 5 lines below the type
+    // of the parameter.
+    print(far("x"))
+}
+fn main() {
+    parameter()
+    method(P())
+    declared()
+    print(returned())
+    print(tail())
+    print(match_tail(E.A))
+    field()
+    payload()
+    print(C)
+    assigned()
+    element()
+    generic_parameter()
+    let mut b = 1
+    mut_parameter(mut b)
+    prelude()
+    get()
+    condition()
+    index()
+    index_place()
+    far_call()
+}
