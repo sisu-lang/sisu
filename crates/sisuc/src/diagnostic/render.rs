@@ -652,6 +652,140 @@ error[E0011]: expected `=`, found end of line
         }
     }
 
+    /// Labels 3 lines apart share a snippet, and labels 4 lines apart do not, with LF and CRLF
+    /// line breaks.
+    #[test]
+    fn labels_three_and_four_lines_apart_should_render_as_the_whole_source_does() {
+        for source in [numbered(12), numbered(12).replace('\n', "\r\n")] {
+            for primary in [6, 7] {
+                let d = error(
+                    between(&source, &format!("l{primary}"), &format!("l{primary}")),
+                    "m",
+                )
+                .with_secondary(between(&source, "l3", "l3"), "s");
+                assert_eq!(
+                    rendered(&d, &source),
+                    render_whole(&d, "t.sisu", &source),
+                    "{source:?} {d:?}"
+                );
+            }
+        }
+    }
+
+    /// A source of `n` lines, where line `k` is `l<k>`.
+    fn numbered(n: usize) -> String {
+        let lines: Vec<String> = (1..=n).map(|k| format!("l{k}\n")).collect();
+        lines.concat()
+    }
+
+    /// The span of the text of line `k` of `source`, without its line break.
+    fn line(source: &str, k: usize) -> Span {
+        let start = LineIndex::new(source)
+            .line_start(k)
+            .expect("the line should be in the source");
+        let len = source[start..]
+            .find('\n')
+            .expect("the line should end with a line break");
+        Span::new(start, start + len)
+    }
+
+    /// `d` rendered without color, with the path `t.sisu`.
+    fn rendered(d: &Diagnostic, source: &str) -> String {
+        d.render("t.sisu", source, &LineIndex::new(source), false)
+    }
+
+    /// The header of each snippet of `rendered`, in order: `-->` or `:::`, then the position.
+    fn headers(rendered: &str) -> Vec<&str> {
+        rendered
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.starts_with("--> ") || l.starts_with("::: "))
+            .collect()
+    }
+
+    /// The number of each source line that `rendered` shows, in order.
+    fn shown_lines(rendered: &str) -> Vec<usize> {
+        rendered
+            .lines()
+            .filter_map(|l| l.split_once(" |"))
+            .filter_map(|(number, _)| number.trim().parse().ok())
+            .collect()
+    }
+
+    #[test]
+    fn near_labels_should_share_a_snippet() {
+        let source = numbered(8);
+        let d = error(line(&source, 5), "m").with_secondary(line(&source, 2), "s");
+        assert_eq!(headers(&rendered(&d, &source)), ["--> t.sisu:5:1"]);
+    }
+
+    #[test]
+    fn a_far_label_should_get_its_own_snippet() {
+        let source = numbered(8);
+        let d = error(line(&source, 6), "m").with_secondary(line(&source, 2), "s");
+        let text = rendered(&d, &source);
+        assert_eq!(
+            headers(&text),
+            ["--> t.sisu:6:1", "::: t.sisu:2:1"],
+            "{text}"
+        );
+        assert_eq!(shown_lines(&text), [6, 2], "{text}");
+        assert!(!text.contains("..."), "{text}");
+    }
+
+    #[test]
+    fn the_primary_snippet_should_come_first() {
+        let source = numbered(41);
+        let d = error(line(&source, 40), "m").with_secondary(line(&source, 2), "s");
+        let text = rendered(&d, &source);
+        assert_eq!(
+            headers(&text),
+            ["--> t.sisu:40:1", "::: t.sisu:2:1"],
+            "{text}"
+        );
+        assert_eq!(shown_lines(&text), [40, 2], "{text}");
+    }
+
+    #[test]
+    fn a_far_origin_should_render_two_snippets() {
+        let source = numbered(5002);
+        let d = error(line(&source, 5002), "m").with_secondary(line(&source, 1), "s");
+        let text = rendered(&d, &source);
+        assert_eq!(
+            headers(&text),
+            ["--> t.sisu:5002:1", "::: t.sisu:1:1"],
+            "{text}"
+        );
+        assert_eq!(shown_lines(&text), [5002, 1], "{text}");
+    }
+
+    /// A cut of line 1 moves the column that the renderer gives, so the `:::` header needs the
+    /// fix that a `-->` header gets.
+    #[test]
+    fn a_far_label_on_a_long_line_should_keep_its_column() {
+        let pad = "y".repeat(999);
+        let source = format!("{pad}ab{pad}\n{}", &numbered(10)[3..]);
+        let d = error(line(&source, 10), "m").with_secondary(Span::new(999, 1001), "s");
+        let text = rendered(&d, &source);
+        assert_eq!(
+            headers(&text),
+            ["--> t.sisu:10:1", "::: t.sisu:1:1000"],
+            "{text}"
+        );
+    }
+
+    /// The label on line 14 is 2 lines after the end of the primary span, and 10 lines after
+    /// the label on line 4.
+    #[test]
+    fn a_label_near_the_end_of_a_long_span_should_share_its_snippet() {
+        let source = numbered(16);
+        let primary = line(&source, 2).to(line(&source, 12));
+        let d = error(primary, "m")
+            .with_secondary(line(&source, 4), "s")
+            .with_secondary(line(&source, 14), "s");
+        assert_eq!(headers(&rendered(&d, &source)), ["--> t.sisu:2:1"]);
+    }
+
     /// Whether the renderer gets less than the whole lines of `d`'s main snippet.
     fn is_cut(d: &Diagnostic, source: &str) -> bool {
         let lines = LineIndex::new(source);
