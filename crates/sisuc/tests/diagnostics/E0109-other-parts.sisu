@@ -1,0 +1,10 @@
+// GIVEN format specs with a fill character and with a type letter
+// WHEN `sisu check` runs on it
+// THEN it reports E0109 at each spec
+// r[verify strings.spec.other-parts@f716]
+fn main() {
+    let x = 2.5
+    let n = 7
+    print("{x:*>8}")
+    print("{n:x}")
+}

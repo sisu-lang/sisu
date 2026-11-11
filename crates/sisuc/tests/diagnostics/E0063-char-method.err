@@ -1,0 +1,8 @@
+error[E0063]: `char` has no method `code`
+  --> E0063-char-method.sisu:12:13
+   |
+12 |     print(c.code())
+   |             ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0063

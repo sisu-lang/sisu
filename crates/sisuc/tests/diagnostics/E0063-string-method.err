@@ -1,0 +1,8 @@
+error[E0063]: `string` has no method `upper`
+  --> E0063-string-method.sisu:10:13
+   |
+10 |     print(s.upper())
+   |             ^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0063

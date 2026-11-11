@@ -3,6 +3,7 @@
 import contextlib
 import html
 import io
+import json
 import re
 import tempfile
 import unittest
@@ -285,10 +286,12 @@ def built_site(
 
 
 def ref_html(
-    test: unittest.TestCase, markdown: str
+    test: unittest.TestCase,
+    markdown: str,
+    proofs: Mapping[str, list[tuple[str, int]]] | None = None,
 ) -> tuple[str, list[tuple[int, str, str, bool]], bool]:
     """reference_html of `markdown`, read from a file as a page is."""
-    return build.reference_html(markdown, temp_file(test, markdown))
+    return build.reference_html(markdown, temp_file(test, markdown), proofs=proofs)
 
 
 def companion_blocks(markdown: str) -> int:
@@ -716,6 +719,35 @@ class Build(unittest.TestCase):
                     self.assertEqual(found, [])
                 else:
                     self.assert_fails("decisions.html", found)
+
+    def test_new_adr_should_have_a_reconsider_when_section(self) -> None:
+        path = "docs/adr/0050-new.md"
+        with_section = "# New\n\n## Reconsider when\n\nA tool changes.\n"
+        cases = [
+            ("0049 without it, 0050 with it", "# Old\n", with_section, True),
+            ("0050 without it", "# Old\n", "# New\n\nBody.\n", False),
+        ]
+        for name, old, new, ok in cases:
+            with self.subTest(name):
+                fake_site(self, {}, {"docs/adr/0049-old.md": old, path: new})
+                self.enterContext(
+                    mock.patch.object(build.check_links, "TRACKED", {"docs/adr/0049-old.md", path})
+                )
+                rows = adr_row("0049", "old", "Old") + adr_row("0050", "new", "New")
+                found = problems(self, {"decisions.html": PAGE.format(f"<ul>{rows}</ul>")})
+                if ok:
+                    self.assertEqual(found, [], name)
+                else:
+                    self.assertEqual(len(found), 1, name)
+                    self.assertIn(path, found[0], name)
+
+    def test_reconsider_when_check_should_read_the_number_from_the_file_name(self) -> None:
+        path = "docs/adr/0050-x.md"
+        fake_site(self, {}, {path: "# X\n\nBody.\n"})
+        self.enterContext(mock.patch.object(build.check_links, "TRACKED", {path}))
+        rows = adr_row("0050", "x", "X", shown="0049")
+        found = problems(self, {"decisions.html": PAGE.format(f"<ul>{rows}</ul>")})
+        self.assertTrue(any("Reconsider when" in p for p in found), found)
 
     def test_decisions_should_check_adr_rows_without_building(self) -> None:
         adrs = {"docs/adr/0001-first.md": "# First\n", "docs/adr/0002-second.md": "# Second\n"}
@@ -1297,6 +1329,244 @@ class Build(unittest.TestCase):
             '<p class="rules-h"><strong>Label</strong></p>\n<p class="rules-note">A note.</p>\n<ul class="rules">',
             noted,
         )
+
+    def test_rule_should_get_its_id_and_lose_its_prefix(self) -> None:
+        """
+        GIVEN `strings.md` with the rule `- {#strings.text.null} A string can hold ...`
+        WHEN `make site` runs `site/build_test.py`, which CI also runs (`ci.yml`, `make site`)
+        THEN the `<li>` of the rule has `id="strings.text.null"`
+        AND its text starts with "A string can hold", with no `{#`
+        """
+        body = ref_html(
+            self,
+            "# T\n\n**Rules**\n\n- {#strings.text.null} A string can hold a null\n"
+            "- {#strings.text.join} `+` joins two strings\n",
+        )[0]
+        self.assertIn('<li id="strings.text.null">A string can hold', body)
+        self.assertIn('<li id="strings.text.join"><code>+</code> joins', body)
+        self.assertNotIn("{#", body)
+        escaped = ref_html(self, "# T\n\n**Rules**\n\n- \\{#strings.a.e} x\n")[0]
+        self.assertIn('<li id="strings.a.e">x', escaped)
+        self.assertNotIn("{#", escaped)
+
+    def test_reference_page_should_fail_when_the_site_and_the_check_disagree(self) -> None:
+        """
+        GIVEN a reference page with an `<li>` whose text starts with `{#`.
+        The `<li>` is in a list that is not rules.
+        Or GIVEN a reference page with rule IDs and a rule `<li>` with no ID.
+        WHEN `site/build.py` builds it
+        THEN it raises `BuildError` that names the page
+        """
+        rows = {
+            "in a plain list": "A sentence.\n\n- {#strings.a.b} x\n",
+            "in a nested item": "**Rules**\n\n- {#strings.a.b} x\n  - {#strings.a.c} y\n",
+            "in an ordered list": "**Rules**\n\n1. {#strings.a.b} x\n",
+            "a rule with no ID": "**Rules**\n\n- {#strings.a.b} x\n- y\n",
+            "a rule with two spaces": "**Rules**\n\n- {#strings.a.b}  x\n",
+            "a rule with its text on the next line": "**Rules**\n\n- {#strings.a.b}\n  x\n",
+            "a rule with a link first": "**Rules**\n\n- [{#strings.a.b}](u) x\n",
+            "a rule with a character reference": "**Rules**\n\n- &#123;#strings.a.b} x\n",
+        }
+        for name, body in rows.items():
+            with self.subTest(name):
+                entries = reference_dir(self, {"t": f"# T\n\n{body}"})
+                with self.assertRaisesRegex(build.BuildError, r"docs/reference/t\.md"):
+                    build.reference_pages(entries)
+        entries = reference_dir(
+            self, {"t": "# T\n\n**Rules**\n\n- {#strings.a.b} x\n- {#strings.a.c} y\n"}
+        )
+        self.assertEqual(
+            [page["body"].count("<li id=") for page in build.reference_pages(entries)], [2]
+        )
+        entries = reference_dir(self, {"t": "# T\n\n**Rules**\n\n- x\n- y\n"})
+        self.assertEqual(
+            [page["body"].count("<li") for page in build.reference_pages(entries)], [2]
+        )
+
+    def test_site_should_agree_with_the_check_on_each_generated_rule(self) -> None:
+        """
+        GIVEN each page of `crates/sisuc/tests/reference_checker/rule_ids.json`, made from parts,
+        with the verdict of the reference check on it: a fault, or the IDs of its rules
+        WHEN `site/build.py` builds the page
+        THEN it raises `BuildError`, or the check has a fault, or both give the same IDs
+        AND more than 100 pages build with no fault on either side, some of them with IDs.
+        A page that the site refuses and the check accepts passes, as for spec S21 a loud
+        failure is enough.
+        """
+        self.maxDiff = None
+        table = build.ROOT / "crates/sisuc/tests/reference_checker/rule_ids.json"
+        disagree: list[str] = []
+        compared: list[list[str]] = []
+        for case in json.loads(table.read_text(encoding="utf-8")):
+            try:
+                body = ref_html(self, case["page"])[0]
+            except build.BuildError:
+                continue
+            if case["fault"]:
+                continue
+            ids = re.findall(r'<li id="([^"]+)"', body)
+            compared.append(ids)
+            if ids != case["ids"]:
+                disagree.append(case["name"])
+        self.assertEqual(disagree, [])
+        self.assertGreater(len(compared), 100)
+        self.assertTrue(any(compared))
+
+    def test_rule_should_list_the_tests_that_prove_it(self) -> None:
+        """
+        GIVEN `strings.md` with the rule `- {#strings.text.null} A string can hold ...`
+        AND the marker `// r[verify strings.text.null@3958]` on line 1 of one test file and on
+        line 3 of another
+        WHEN `make site` builds the page
+        THEN the `<li>` of the rule ends with "Proved by" and two links, in path order
+        AND each link goes to the file and line of its marker on GitHub
+        """
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        marker = "// r[verify strings.text.null@3958]\n"
+        files = {
+            "crates/a/tests/run/x.sisu": marker,
+            "crates/a/src/y.rs": "fn f() {}\n\n    /// r[verify strings.text.null@0000]\n",
+            "site/programs/z.sisu": marker,
+        }
+        for name, text in files.items():
+            (root / name).parent.mkdir(parents=True, exist_ok=True)
+            (root / name).write_text(text, encoding="utf-8")
+        tracked = ["crates/a/tests/run/x.sisu", "site/programs/z.sisu", "crates/a/src/y.rs"]
+        self.assertEqual(
+            build.rule_proofs(root, tracked),
+            {"strings.text.null": [("crates/a/src/y.rs", 3), ("crates/a/tests/run/x.sisu", 1)]},
+        )
+        page = (
+            "# T\n\n**Rules**\n\n- {#strings.text.null} A string can hold a null\n"
+            "- {#strings.text.join} `+` joins two strings\n"
+        )
+        self.enterContext(mock.patch.object(build, "ROOT", root))
+        self.enterContext(mock.patch.object(build.check_links, "TRACKED", set(tracked)))
+        body = build.reference_pages(reference_dir(self, {"t": page}))[0]["body"]
+        want = (
+            '<div class="proofs">Proved by '
+            f'<a href="{build.BLOB}crates/a/src/y.rs#L3">a/src/y.rs:3</a>, '
+            f'<a href="{build.BLOB}crates/a/tests/run/x.sisu#L1">a/tests/run/x.sisu:1</a></div>'
+        )
+        self.assertRegex(body, rf'<li id="strings.text.null">[^<]*{re.escape(want)}</li>')
+        self.assertEqual(body.count("proofs"), 1)
+        self.assertNotIn("proofs", ref_html(self, page)[0])
+
+    def test_second_id_in_a_rule_should_fail_with_its_text(self) -> None:
+        """
+        GIVEN a reference page with the rule `- {#strings.a.b} {#strings.a.c} x`
+        WHEN `site/build.py` builds it
+        THEN it raises `BuildError` that names the text `{#strings.a.c} x`, which is not an ID
+        """
+        entries = reference_dir(
+            self, {"t": "# T\n\n**Rules**\n\n- {#strings.a.b} {#strings.a.c} x\n"}
+        )
+        with self.assertRaisesRegex(
+            build.BuildError, r'the text "\{#strings\.a\.c\} x" starts with "\{#" but is not an ID'
+        ):
+            build.reference_pages(entries)
+
+    def test_plain_list_before_rules_should_get_no_anchor_and_no_proofs(self) -> None:
+        """
+        GIVEN a reference page with rule IDs and a plain list before the rules
+        WHEN `site/build.py` builds it with proofs
+        THEN the plain list items get no `id` and no proofs
+        AND the page builds
+        """
+        proofs = {"strings.a.b": [("crates/a/src/y.rs", 3)]}
+        body = ref_html(
+            self, "# T\n\nA note.\n\n- plain\n\n**Rules**\n\n- {#strings.a.b} x\n", proofs
+        )[0]
+        self.assertIn("<li>plain</li>", body)
+        self.assertEqual(body.count("<li id="), 1)
+        self.assertEqual(body.count("proofs"), 1)
+
+    def test_proofs_should_come_after_the_nested_list_and_be_escaped(self) -> None:
+        """
+        GIVEN a rule with a nested list and a proof path that holds `&`
+        WHEN `site/build.py` builds the page
+        THEN the proofs line comes after the nested list, in the item of the rule
+        AND the `&` is escaped in the link and in its text
+        """
+        proofs = {"strings.a.b": [("crates/a/src/y&z.rs", 4)]}
+        body = ref_html(
+            self,
+            "# T\n\n**Rules**\n\n- {#strings.a.b} x\n  - y\n- {#strings.a.c} z\n",
+            proofs,
+        )[0]
+        self.assertIn('</ul>\n<div class="proofs">Proved by ', body)
+        self.assertIn(f'href="{build.BLOB}crates/a/src/y&amp;z.rs#L4">a/src/y&amp;z.rs:4</a>', body)
+        self.assertRegex(
+            body,
+            r'(?s)<li id="strings.a.b">.*</ul>\n<div class="proofs">.*</div></li>\n<li id="strings.a.c">z</li>',
+        )
+
+    def test_marker_and_id_should_use_the_whitespace_of_the_check(self) -> None:
+        """
+        GIVEN marker lines and rules that hold U+001C to U+001F, or a space that is not ASCII
+        WHEN `site/build.py` reads them
+        THEN it reads the same markers and IDs as the Rust check, whose white space is
+        `char::is_whitespace`
+        """
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        marker = "// r[verify a.b@1234]"
+        lines: list[tuple[str, bool]] = []  # a line, and whether the check reads it as a marker
+        for c in "\x1c\x1d\x1e\x1f":
+            lines += [(f"{c}{marker}", False), (f"//{c} r[verify a.b@1234]", False)]
+            lines += [(f"{marker}{c}", False)]
+        for c in "\x85\xa0\u2003\u3000":
+            lines += [(f"{c}{marker}", True), (f"//{c}r[verify a.b@1234]", True)]
+            lines += [(f"{marker}{c}", True)]
+        (root / "crates").mkdir()
+        (root / "crates/a.rs").write_text("\n".join(text for text, _ in lines), encoding="utf-8")
+        got = build.rule_proofs(root, ["crates/a.rs"])
+        want = [("crates/a.rs", n) for n, (_, read) in enumerate(lines, 1) if read]
+        self.assertEqual(got.get("a.b", []), want)
+        page = "# T\n\n**Rules**\n\n- {#strings.a.b} "
+        self.assertIn('<li id="strings.a.b">', ref_html(self, page + "\x1cx\n")[0])
+        for c in "\x85\xa0\u2003\u3000":
+            with self.subTest(repr(c)):
+                entries = reference_dir(self, {"t": f"{page}{c}x\n"})
+                with self.assertRaisesRegex(build.BuildError, r"docs/reference/t\.md"):
+                    build.reference_pages(entries)
+
+    def test_item_that_starts_with_a_block_should_get_no_id(self) -> None:
+        """
+        GIVEN a rule whose first block is code or HTML that holds `{#`
+        WHEN `site/build.py` builds the page
+        THEN the item gets no `id` and the page builds
+        """
+        rows = {
+            "indented code": "-     {#strings.a.b} x\n",
+            "fenced code": "- ```\n  {#strings.a.b} x\n  ```\n",
+            "HTML block": "- <div>{#strings.a.b} x\n",
+        }
+        for name, item in rows.items():
+            with self.subTest(name):
+                body = ref_html(self, f"# T\n\n**Rules**\n\n{item}")[0]
+                self.assertNotIn("<li id=", body)
+
+    def test_item_that_starts_with_a_block_quote_should_fail_on_a_prefix(self) -> None:
+        """
+        GIVEN a rule whose first block is a block quote, and the first text of the quote starts
+        with `{#` or with `\\{#`
+        WHEN `site/build.py` builds the page
+        THEN it raises `BuildError`, so a wrong ID never shows as plain text
+        """
+        for name, item in {
+            "plain": "- > {#strings.a.b} x\n",
+            "escaped": "- > \\{#strings.a.b} x\n",
+            "nested": "- > > {#strings.a.b} x\n",
+        }.items():
+            with (
+                self.subTest(name),
+                self.assertRaisesRegex(build.BuildError, r'starts with "\{#" but is not an ID'),
+            ):
+                ref_html(self, f"# T\n\n**Rules**\n\n{item}")
 
     def test_overview_should_have_a_card_for_each_other_page(self) -> None:
         entries = build.reference_pages(reference_dir(self, REF_PAGES))

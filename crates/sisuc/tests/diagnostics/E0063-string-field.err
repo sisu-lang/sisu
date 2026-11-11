@@ -1,0 +1,8 @@
+error[E0063]: `string` has no field `size`
+ --> E0063-string-field.sisu:7:13
+  |
+7 |     print(s.size)
+  |             ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0063

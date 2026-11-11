@@ -127,6 +127,24 @@ The pages that state what each construct of Sisu means and its rules, with
 checked examples.
 _Avoid_: spec, manual
 
+**Reference rule**:
+One item of a list of rules on a language reference page: one statement of what
+a program does, which a test can prove.
+_Avoid_: rule (alone), requirement, spec item
+
+**Joined page**:
+A language reference page whose rules have rule IDs, and which the `rules` trial
+checks. A page other than the index joins when a list item starts with `{#`.
+
+**Rule ID**:
+The name of a reference rule, such as `strings.text.null`. It starts with the
+page's name and does not change when the rule's wording changes.
+
+**Rule marker**:
+A comment in a test, `r[verify <id>@<hash>]`. It names the reference rule that the
+test proves. It also holds the hash of the rule's text when the test was last read.
+_Avoid_: marker (alone; the diagnostic markers of the examples have that name)
+
 ## Arrays
 
 **Array**:

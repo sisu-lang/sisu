@@ -1,5 +1,6 @@
 // Every comparison operator on `char`, by code point rather than by byte or alphabet, and on
 // `string`, byte by byte, which for UTF-8 is code-point order.
+// r[verify strings.text.compare@7bd4]
 fn main() {
     let a = 'a'
     let z = 'z'

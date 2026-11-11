@@ -1,0 +1,22 @@
+// GIVEN a string built at run time, and the arrays that `chars()`, `bytes()` and `words()` make
+// WHEN the program changes each array, and then calls the method again
+// THEN the string keeps its text, and each new call gives the old elements
+// r[verify strings.methods.new-array@473c]
+fn main() {
+    let s = "ab" + " cd"
+    let mut cs = s.chars()
+    cs[0] = 'z'
+    print(string(cs))                // zb cd
+    print(s.chars()[0])              // a
+    let mut bs = s.bytes()
+    bs[0] = 120
+    print(bs[0])                     // 120
+    print(s.bytes()[0])              // 97
+    let mut ws = s.words()
+    ws[0] = "x"
+    ws.push("y")
+    print(ws.len())                  // 3
+    print(s.words().len())           // 2
+    print(s.words()[0])              // ab
+    print(s)                         // ab cd: no change to an array changed it
+}
