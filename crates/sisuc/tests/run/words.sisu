@@ -7,7 +7,7 @@
 // o2-calls: main show_optional 1
 // r[verify strings.methods.word@7498]
 // r[verify strings.methods.no-words@2acb]
-// r[verify strings.methods.optional@3c92]
+// r[verify strings.methods.optional@dad7]
 fn show(s: string) {
     let ws = s.words()
     print("{ws.len()}")           // the word count

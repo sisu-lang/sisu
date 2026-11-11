@@ -1,0 +1,16 @@
+// GIVEN a `string?` that holds a string built at run time, and a `string?` that is `None`
+// WHEN the program calls `len`, `chars`, `bytes`, `words` and `get` on each with `?.`
+// THEN each call on the string gives `Some` of the result, and each call on `None` gives `None`
+// r[verify strings.methods.optional@dad7]
+fn show(s: string?) {
+    print(s?.len() ?? -1)            // the byte count
+    print(s?.chars()?.len() ?? -1)   // the character count
+    print(s?.bytes()?.contains(195) ?? false) // whether a byte is 195, the first byte of `ä`
+    print(s?.words()?.len() ?? -1)   // the word count
+    print(s?.get(1..3) ?? "none")    // the substring of bytes 1 and 2
+}
+
+fn main() {
+    show("hä" + "st x")              // 7, 6, true, 2, ä
+    show(None)                       // -1, -1, false, -1, none
+}

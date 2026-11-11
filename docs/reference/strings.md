@@ -139,7 +139,7 @@ fn main() {
 
 - {#strings.methods.only-three} A string has no other methods than `to_string`, `eq` and `less`, which come with `Display`, `Eq` and `Ord` ([Display, Eq and Ord](generics.md#display-eq-and-ord)). [E0063](../diagnostics/E0063.md)
 - {#strings.methods.char-methods} A `char` has only those three methods. Convert it with `i64(c)` ([Types](types.md#conversions)).
-- {#strings.methods.optional} A method of an optional string is called with `?.` ([Optional chaining](operators.md#optional-chaining)).
+- {#strings.methods.optional} To call `len`, `chars`, `bytes`, `words` or `get` on an optional string, use `?.` ([Optional chaining](operators.md#optional-chaining)).
 
 ```sisu
 fn main() {
