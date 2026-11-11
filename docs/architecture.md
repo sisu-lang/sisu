@@ -165,9 +165,14 @@ no error of its own
 required type, a poisoned context (`Poisoned`), or a hint. The siblings of a value give it a
 hint, and an operator can hint its operands. A required type and a hint hold an
 `Origin`: the declaration, the earlier value or the language rule that made the context
-ask for the type. An E0032 shows it. `check/expectation.rs` maps an origin to its fact,
-and the registry gives the words. A fact with a span in your code is a secondary label.
-A fact with a span in the prelude is a note. A condition or an index gets a primary label
+ask for the type. An E0032 shows it. An origin is a declaration, an assignment to a local
+name, or an earlier `break`, element or branch. It can also be the argument that bound a type
+parameter.
+Other forms wait and hold no origin: operators, patterns, field, index and compound assignments,
+`while` conditions and match guards. The fallback of `??`, a `Some` value, and a generic field,
+payload or prelude parameter hold no origin either. `check/expectation.rs` maps an origin to its
+fact, and the registry gives the words. A fact with a span in your code is a secondary label.
+A fact with a span in the prelude is a note. An `if` condition or an index gets a primary label
 that names its rule. A hint holds at one value and
 the parts that give the value. An operand does not see the hint of the value that holds it. A
 mistake that follows from a poisoned context waits for the next run.
