@@ -1,11 +1,13 @@
 error[E0166]: the parameter `guests` of `invite` is `mut`, so its argument needs `mut`
  --> invite.sisu:7:12
   |
-1 | fn invite(mut guests: [string], name: string) {
-  |               ------ declared `mut` here
-...
 7 |     invite(guests, "Eino")
   |            ^^^^^^ needs `mut`
+  |
+ ::: invite.sisu:1:15
+  |
+1 | fn invite(mut guests: [string], name: string) {
+  |               ------ declared `mut` here
   |
 help: add `mut`
   |

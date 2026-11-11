@@ -1,11 +1,13 @@
 error[E0154]: `Color` does not conform to `AnyObject`
  --> E0154-anyobject-enum.sisu:5:17
   |
-1 | interface Holder<T: AnyObject> {}
-  |                     --------- required by this bound
-...
 5 | class H: Holder<Color> {}
   |                 ^^^^^ only classes conform to `AnyObject`
+  |
+ ::: E0154-anyobject-enum.sisu:1:21
+  |
+1 | interface Holder<T: AnyObject> {}
+  |                     --------- required by this bound
 
 error[E0154]: `Color` does not conform to `AnyObject`
  --> E0154-anyobject-enum.sisu:8:10

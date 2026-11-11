@@ -45,6 +45,11 @@ error[E0032]: expected `i64`, found `string`
    |
 27 |     g("s").push("a")
    |       ^^^
+   |
+  ::: E0021-push-failed-call.sisu:15:9
+   |
+15 | fn g(n: i64) -> [string] { [] }
+   |         --- `g` declares `n` as `i64`
 
 error[E0021]: cannot push to a temporary value
   --> E0021-push-failed-call.sisu:30:5
@@ -75,6 +80,11 @@ error[E0032]: expected `i64`, found `string`
    |
 33 |     c.ys("s").push("a")
    |          ^^^
+   |
+  ::: E0021-push-failed-call.sisu:10:20
+   |
+10 |     fn ys(self, n: i64) -> [string] { [] }
+   |                    --- `ys` declares `n` as `i64`
 
 error[E0053]: `h` takes 1 argument, found 2
   --> E0021-push-failed-call.sisu:36:5

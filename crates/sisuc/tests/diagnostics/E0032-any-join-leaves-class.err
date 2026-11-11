@@ -2,7 +2,9 @@ error[E0032]: expected `Circle?`, found `any Shape`
   --> E0032-any-join-leaves-class.sisu:12:29
    |
 12 |     let r: Circle? = if c { s } else { o }
-   |                             ^
+   |            -------          ^
+   |            |
+   |            declared as `Circle?` here
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0032

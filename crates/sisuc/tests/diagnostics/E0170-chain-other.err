@@ -1,11 +1,13 @@
 error[E0170]: `b?.cells` can be missing, so it cannot be a `mut` argument
   --> E0170-chain-other.sisu:15:15
    |
- 9 | fn fill3(mut n: i64) {
-   |              - declared `i64` here
-...
 15 |     fill3(mut b?.cells)
    |               ^^^^^^^^ this reads as `[i64]?`, but `fill3` reads and writes back `i64`
+   |
+  ::: E0170-chain-other.sisu:9:14
+   |
+ 9 | fn fill3(mut n: i64) {
+   |              - declared `i64` here
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0170

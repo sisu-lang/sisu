@@ -6,8 +6,8 @@ use super::generic::{Rank, mismatched};
 use super::interface::Operation;
 use super::reports::{Held, Reported};
 use super::{
-    Checked, Checker, Expectation, Lowered, Poisoned, as_optional, beyond_one_layer, block_expr,
-    is_kept, known_type, optional_of, payload, type_of, wrap,
+    Checked, Checker, Expectation, Lowered, Origin, Poisoned, as_optional, beyond_one_layer,
+    block_expr, is_kept, known_type, optional_of, payload, type_of, wrap,
 };
 use crate::ast::{self, CompareOp, ExprKind};
 use crate::diagnostic::{Diagnostic, DiagnosticKind, Expected, Literal, PeelIs, PeelLayers};
@@ -30,7 +30,7 @@ impl Checker<'_> {
         // A `None` expects an `i64`, as in `None + 1`. The operand is not a value part of the
         // value, so a hint does not reach it.
         let expected = if expected == Expectation::None && self.none_written(operand) {
-            Expectation::Required(Type::I64)
+            Expectation::Required(Type::I64, Origin::None)
         } else {
             expected.plain()
         };
@@ -68,7 +68,7 @@ impl Checker<'_> {
             let reported = self.diagnostics.error(d);
             return Ok((want, (Err(Poisoned::untyped(reported)), true)));
         }
-        let checked = self.against(operand, checked, Some(want), None);
+        let checked = self.against(operand, checked, Expectation::Required(want, Origin::None));
         Ok((want, checked))
     }
 
@@ -171,7 +171,7 @@ impl Checker<'_> {
             return self.ranked(|c| c.equal(span, op == ast::BinaryOp::Ne, lhs, rhs));
         };
         if want == Type::BOOL {
-            let lhs = self.operand(lhs, Expectation::Required(want));
+            let lhs = self.operand(lhs, Expectation::Required(want, Origin::None));
             return self.arithmetic(span, (tir_op, op_span), want, lhs, rhs, Held::default());
         }
         let operator = if tir_op == tir::BinaryOp::Add {
@@ -324,6 +324,17 @@ impl Checker<'_> {
         let compound = operator == (Operator::Plus { compound: true });
         // An `i64` that the context wants holds an `f64` operand to it, in either order.
         let wants_i64 = expected.ty().map(payload) == Some(Type::I64);
+        // An operand held to the type of the context keeps the origin of that type. A branch
+        // hints its type made optional, so an operand held to the branch's own type keeps it too.
+        let (context, context_origin) = (expected.ty(), expected.origin());
+        let origin_of = |want: Option<Type>| {
+            let branch = matches!(context_origin, Origin::Branch { ty, .. } if want == Some(ty));
+            if (want.is_some() && want == context) || branch {
+                context_origin
+            } else {
+                Origin::None
+            }
+        };
         let ranks: Vec<Rank> = operands.iter().map(|e| self.sibling_rank(e)).collect();
         let mut first = None;
         // Whether the operand checked first kept its E0050 (see `Poisoned::kept`).
@@ -444,11 +455,12 @@ impl Checker<'_> {
                     let hint = want.map_or(Expectation::Poisoned, |want| Expectation::Hint {
                         want,
                         siblings: want,
+                        origin: origin_of(Some(want)),
                     });
                     self.value(e, hint)
                 }
                 None if by_char => self.value(e, Expectation::None),
-                None => self.value(e, Expectation::or_poisoned(want)),
+                None => self.value(e, Expectation::or_poisoned(want, origin_of(want))),
             };
             if ranks[i] != Rank::Concrete {
                 // Held for `restore` below, where a `char` operand may cut them with the operator.
@@ -571,14 +583,15 @@ impl Checker<'_> {
                     (value, false)
                 } else {
                     let start = self.diagnostics.mark();
-                    let settled = self.settled_by(e, value, want, Some(takes));
+                    let settled = self.settled_by(e, value, want, origin_of(want), Some(takes));
                     // Held for `restore` below, as above.
                     deferred.absorb(self.diagnostics.take_since(start));
                     settled
                 }
             } else {
                 let start = self.diagnostics.mark();
-                let settled = self.settled_by(e, value, want, takes.filter(|_| leader == Some(i)));
+                let takes = takes.filter(|_| leader == Some(i));
+                let settled = self.settled_by(e, value, want, origin_of(want), takes);
                 // Held for `restore` below, as above.
                 deferred.absorb(self.diagnostics.take_since(start));
                 settled
@@ -633,7 +646,7 @@ impl Checker<'_> {
     fn reject_leader(&mut self, e: &ast::Expr, checked: &mut Checked, ty: Type) -> Reported {
         let reported = match known_type(checked) {
             Ok(found) => {
-                let d = self.mismatch(e.span, Some(e), ty, found);
+                let d = self.mismatch(e.span, Some(e), ty, found, Origin::None);
                 self.diagnostics.error(d)
             }
             Err(reported) => reported,
@@ -654,7 +667,7 @@ impl Checker<'_> {
         rhs: &ast::Expr,
         held: Held,
     ) -> Checked {
-        let expected = Expectation::or_poisoned(type_of(&l).and(Some(want)));
+        let expected = Expectation::or_poisoned(type_of(&l).and(Some(want)), Origin::None);
         let checked = self.value(rhs, expected);
         // Only a compound assignment's number gets here with a `char` to its right.
         if want != Type::BOOL && type_of(&checked) == Some(Type::CHAR) {
@@ -678,14 +691,15 @@ impl Checker<'_> {
         typed(span, want, l_mismatched || r_mismatched, kind)
     }
 
-    /// `settled`, except that a `checked` of a type that is none of `takes`, if given, is
-    /// reported against all of them. Such a `checked` was found with no expected type, so no
-    /// `mismatch` poison is in it for `settled` to pass on.
+    /// `settled` against `want` from `origin`, except that a `checked` of a type that is none of
+    /// `takes`, if given, is reported against all of them. Such a `checked` was found with no
+    /// expected type, so no `mismatch` poison is in it for `settled` to pass on.
     pub(super) fn settled_by(
         &mut self,
         e: &ast::Expr,
         checked: Checked,
         want: Option<Type>,
+        origin: Origin,
         takes: Option<&[Type]>,
     ) -> (Checked, bool) {
         // An operand before it that failed has left `want` unset: one error is enough.
@@ -700,7 +714,7 @@ impl Checker<'_> {
             self.settle_misfit(&checked);
             return (Err(Poisoned::untyped(reported)), true);
         }
-        self.settled(e, checked, Expectation::or_poisoned(want))
+        self.settled(e, checked, Expectation::or_poisoned(want, origin))
     }
 
     /// "expected `takes`, found `got`" at `at`: the types an operator takes, `got` not among them.
@@ -709,7 +723,7 @@ impl Checker<'_> {
             want: Expected::Types(takes.iter().map(|&ty| self.type_name(ty)).collect()),
             got: self.type_name(got),
             at,
-            source: None,
+            origin: None,
             fix: None,
             conversion: false,
             layers: false,
@@ -736,6 +750,7 @@ impl Checker<'_> {
         let want = type_of(&checked).map_or(Expectation::Poisoned, |ty| Expectation::Hint {
             want: as_optional(ty),
             siblings: ty,
+            origin: Origin::None,
         });
         let other = self.value(second, want);
         // A side converts through one `?` only: `x == 5` on an `i64??` holds `5` to `i64??`.
@@ -744,7 +759,7 @@ impl Checker<'_> {
                 .into_iter()
                 .find(|&(_, want, got)| beyond_one_layer(want, got))
         {
-            let d = self.mismatch(side.span, Some(side), want, got);
+            let d = self.mismatch(side.span, Some(side), want, got, Origin::None);
             return Err(Poisoned::untyped(self.diagnostics.error(d)));
         }
         // `second` is the `none_written`, if either is.
@@ -770,9 +785,9 @@ impl Checker<'_> {
             let d = if payload(got) == Type::CHAR
                 || (payload(got) == Type::F64 && payload(want) != Type::CHAR)
             {
-                self.mismatch(first.span, Some(first), payload(got), want)
+                self.mismatch(first.span, Some(first), payload(got), want, Origin::None)
             } else {
-                self.mismatch(second.span, Some(second), payload(want), got)
+                self.mismatch(second.span, Some(second), payload(want), got, Origin::None)
             };
             return Err(Poisoned::untyped(self.diagnostics.error(d)));
         }
@@ -1127,12 +1142,13 @@ impl Checker<'_> {
             Some(want)
                 if is_target(payload) && (want == payload || want == as_optional(payload)) =>
             {
-                self.fallback(rhs, Expectation::Required(want))
+                self.fallback(rhs, Expectation::Required(want, Origin::None))
             }
             _ => {
                 let hint = Expectation::Hint {
                     want: as_optional(payload),
                     siblings: payload,
+                    origin: Origin::None,
                 };
                 self.fallback(rhs, hint)
             }
@@ -1172,14 +1188,18 @@ impl Checker<'_> {
                         // With a written type, the first side that leaves it, as in a join.
                         (Some((want, e, t)), _) => {
                             let source = (e.span == rhs.span).then_some(rhs);
-                            self.leaves_any(e.span, source, want, t)
+                            self.leaves_any(e.span, source, want, t, Origin::None)
                         }
                         // A class payload leaves an `any` default, as a member leaves a join.
                         _ if is_target(ty) && matches!(payload.kind(), TypeKind::Class(..)) => {
-                            self.leaves_any(lhs.span, None, ty, payload)
+                            self.leaves_any(lhs.span, None, ty, payload, Origin::None)
                         }
-                        (None, Some((at, want, object))) => self.leaves_any(at, None, want, object),
-                        (None, None) => self.mismatch(rhs.span, Some(rhs), payload, ty),
+                        (None, Some((at, want, object))) => {
+                            self.leaves_any(at, None, want, object, Origin::None)
+                        }
+                        (None, None) => {
+                            self.mismatch(rhs.span, Some(rhs), payload, ty, Origin::None)
+                        }
                     };
                     let reported = self.diagnostics.error(d);
                     self.settle_misfit(&other);

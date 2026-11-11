@@ -3,10 +3,14 @@ warning[W0012]: interface `Shape` is never used
    |
  1 | interface Shape {
    |           ^^^^^ never used
-...
+   |
+  ::: W0012-extend.sisu:9:11
+   |
  9 | extend<T: Shape> Crate<T> {
    |           ----- used here, in the `extend` block of `Crate<T>`, which is never used
-...
+   |
+  ::: W0012-extend.sisu:23:11
+   |
 23 | extend<T: Shape> Spare<T> {
    |           ----- used here, in the `extend` block of `Spare<T>`, whose type is never built
    |
@@ -33,7 +37,9 @@ warning[W0012]: the `extend` block of `Plain` is never used
    |
 33 | extend Plain {
    | ^^^^^^^^^^^^ never used
-...
+   |
+  ::: W0012-extend.sisu:40:5
+   |
 40 |     p.grow()
    |     -------- used here, in `stale`, which is never called
    |

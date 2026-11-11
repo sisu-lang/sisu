@@ -1,11 +1,13 @@
 error[E0154]: `Node` does not conform to `Same`
   --> E0154-associated.sisu:15:17
    |
- 6 |     type Item: Same
-   |                ---- required by this bound
-...
 15 |     type Item = Node
    |                 ^^^^
+   |
+  ::: E0154-associated.sisu:6:16
+   |
+ 6 |     type Item: Same
+   |                ---- required by this bound
    |
    = help: make `Node` conform to `Same`
 

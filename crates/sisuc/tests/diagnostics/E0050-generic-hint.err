@@ -330,7 +330,9 @@ error[E0032]: expected `string`, found `i64`
   --> E0050-generic-hint.sisu:50:21
    |
 50 |     let w: string = z
-   |                     ^
+   |            ------   ^
+   |            |
+   |            declared as `string` here
 
 error[E0032]: expected `i64`, found `Two<X, bool>`
   --> E0050-generic-hint.sisu:55:36
@@ -404,7 +406,9 @@ error[E0032]: expected `string`, found `bool`
   --> E0050-generic-hint.sisu:73:21
    |
 73 |     let w: string = z
-   |                     ^
+   |            ------   ^
+   |            |
+   |            declared as `string` here
 
 error[E0050]: cannot infer `X` for `mk2`
   --> E0050-generic-hint.sisu:76:34
@@ -758,7 +762,9 @@ error[E0032]: expected `string`, found `bool`
    --> E0050-generic-hint.sisu:123:21
     |
 123 |     let w: string = z
-    |                     ^
+    |            ------   ^
+    |            |
+    |            declared as `string` here
 
 error[E0050]: cannot infer `X` for `mk2`
    --> E0050-generic-hint.sisu:126:13
@@ -772,7 +778,9 @@ error[E0032]: expected `string`, found `bool`
    --> E0050-generic-hint.sisu:127:21
     |
 127 |     let w: string = z
-    |                     ^
+    |            ------   ^
+    |            |
+    |            declared as `string` here
 
 error[E0050]: cannot infer `X` for `mk2`
    --> E0050-generic-hint.sisu:130:17
@@ -794,7 +802,9 @@ error[E0032]: expected `string`, found `bool`
    --> E0050-generic-hint.sisu:131:21
     |
 131 |     let w: string = z
-    |                     ^
+    |            ------   ^
+    |            |
+    |            declared as `string` here
 
 error[E0050]: cannot infer `X` for `mk2`
    --> E0050-generic-hint.sisu:134:16
@@ -808,7 +818,9 @@ error[E0032]: expected `string`, found `bool`
    --> E0050-generic-hint.sisu:135:21
     |
 135 |     let w: string = z
-    |                     ^
+    |            ------   ^
+    |            |
+    |            declared as `string` here
 
 error[E0050]: cannot infer `X` for `mk2`
    --> E0050-generic-hint.sisu:138:17
@@ -838,7 +850,9 @@ error[E0032]: expected `string`, found `bool`
    --> E0050-generic-hint.sisu:139:21
     |
 139 |     let w: string = z
-    |                     ^
+    |            ------   ^
+    |            |
+    |            declared as `string` here
 
 error[E0050]: cannot infer `X` for `mk2`
    --> E0050-generic-hint.sisu:142:16
@@ -858,7 +872,9 @@ error[E0032]: expected `string`, found `bool`
    --> E0050-generic-hint.sisu:143:21
     |
 143 |     let w: string = z
-    |                     ^
+    |            ------   ^
+    |            |
+    |            declared as `string` here
 
 error[E0050]: cannot infer `X` for `mk2`
    --> E0050-generic-hint.sisu:146:31
@@ -872,7 +888,9 @@ error[E0032]: expected `string`, found `bool`
    --> E0050-generic-hint.sisu:147:21
     |
 147 |     let w: string = z
-    |                     ^
+    |            ------   ^
+    |            |
+    |            declared as `string` here
 
 error[E0050]: cannot infer `X` for `mk2`
    --> E0050-generic-hint.sisu:149:58
@@ -950,7 +968,9 @@ error[E0032]: expected `string`, found `i64`
    --> E0050-generic-hint.sisu:168:21
     |
 168 |     let w: string = z
-    |                     ^
+    |            ------   ^
+    |            |
+    |            declared as `string` here
 
 error[E0050]: cannot infer `X` for `mk2`
    --> E0050-generic-hint.sisu:172:25
@@ -994,7 +1014,9 @@ error[E0032]: expected `string`, found `i64`
    --> E0050-generic-hint.sisu:186:21
     |
 186 |     let w: string = z
-    |                     ^
+    |            ------   ^
+    |            |
+    |            declared as `string` here
 
 error[E0050]: cannot infer `X` for `mk2`
    --> E0050-generic-hint.sisu:189:27
@@ -1008,7 +1030,9 @@ error[E0032]: expected `string`, found `i64`
    --> E0050-generic-hint.sisu:190:21
     |
 190 |     let w: string = z
-    |                     ^
+    |            ------   ^
+    |            |
+    |            declared as `string` here
 
 error[E0050]: cannot infer `X` for `mk2`
    --> E0050-generic-hint.sisu:193:30
@@ -1140,7 +1164,9 @@ error[E0032]: expected `string`, found `i64`
    --> E0050-generic-hint.sisu:244:21
     |
 244 |     let w: string = z
-    |                     ^
+    |            ------   ^
+    |            |
+    |            declared as `string` here
 
 error[E0050]: cannot infer `X` for `mk2`
    --> E0050-generic-hint.sisu:246:48
@@ -1176,7 +1202,9 @@ error[E0032]: expected `string`, found `u8`
    --> E0050-generic-hint.sisu:252:21
     |
 252 |     let w: string = z
-    |                     ^
+    |            ------   ^
+    |            |
+    |            declared as `string` here
 
 error[E0050]: cannot infer `X` for `mk2`
    --> E0050-generic-hint.sisu:255:20

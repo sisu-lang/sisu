@@ -13,7 +13,7 @@ pub(crate) use registry::{
     ColonBound, ConformanceForm, Conversion, Definition, DiagnosticKind, Earlier, ElseOf, Expected,
     ForeignPattern, ForeignRange, GetCall, GuardHelp, Hop, Immutable, Implied, IndexUsage,
     InterfaceBodyForm, Join, LetField, Literal, LiteralKind, MainForm, Make, MatchIdiomForm,
-    MathFix, Member, MethodReceiver, MismatchFix, MismatchSource, MissingBound, MissingFix,
+    MathFix, Member, MethodReceiver, MismatchFix, MismatchOrigin, MissingBound, MissingFix,
     MutDiffers, NanFix, NestingForm, NeverReassignedForm, NoOperatorForm, NotAny, NotConformForm,
     NotInterface, NotMutForm, NotPlace, Operand, Owner, Panic, Peel, PeelIs, PeelLayers, Plain,
     PowerFix, PrecisionHelp, PrintProblem, RETIRED, RangeForm, RangePlace, RangePush, RangeTarget,
@@ -46,9 +46,22 @@ pub(crate) struct Diagnostic {
     secondary: Vec<(Span, String)>,
     /// Advice that is not an edit.
     help: Option<Box<str>>,
+    /// Facts that explain the error and have no span in the user's code. `None` when there is
+    /// none: the box keeps a `Diagnostic` under clippy's `result_large_err` limit.
+    #[expect(
+        clippy::box_collection,
+        reason = "one pointer, not a Vec's three words, keeps Diagnostic under 128 bytes"
+    )]
+    notes: Option<Box<Vec<Box<str>>>>,
     /// Alternative edits, each of which resolves the diagnostic.
     fixes: Vec<Fix>,
 }
+
+// `parser.rs` returns `Result<_, Diagnostic>`: at 128 bytes `clippy::result_large_err` fires.
+const _: () = assert!(
+    size_of::<Diagnostic>() < 128,
+    "a Diagnostic of 128 bytes or more makes clippy::result_large_err fire"
+);
 
 /// An edit to the source, with a message, that resolves a diagnostic.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -77,6 +90,7 @@ impl Diagnostic {
             label: None,
             secondary: Vec::new(),
             help: None,
+            notes: None,
             fixes: Vec::new(),
         }
     }
@@ -93,6 +107,11 @@ impl Diagnostic {
 
     fn with_help(mut self, text: impl Into<String>) -> Diagnostic {
         self.help = Some(text.into().into_boxed_str());
+        self
+    }
+
+    fn with_note(mut self, note: impl Into<Box<str>>) -> Diagnostic {
+        self.notes.get_or_insert_default().push(note.into());
         self
     }
 
@@ -127,6 +146,10 @@ impl Diagnostic {
 
     pub(crate) fn help(&self) -> Option<&str> {
         self.help.as_deref()
+    }
+
+    pub(crate) fn notes(&self) -> &[Box<str>] {
+        self.notes.as_deref().map_or(&[], Vec::as_slice)
     }
 
     pub(crate) fn fixes(&self) -> &[Fix] {

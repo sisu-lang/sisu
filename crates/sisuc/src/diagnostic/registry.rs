@@ -686,7 +686,7 @@ pub(crate) enum DiagnosticKind {
         at: Span,
     },
     /// A value of type `got`, at `at`, where `want` is expected; `fix` is the
-    /// rewrite that would fit. `source` is the place the expectation came from, if the report
+    /// rewrite that would fit. `origin` is where the expected type came from, if the report
     /// points at it. `conversion` is whether the value is a conversion that can fail, whose
     /// optional stands where its payload is expected. `layers` is whether `got` is `want` with
     /// two or more `?` layers taken off: a value converts through one `?` only.
@@ -694,7 +694,7 @@ pub(crate) enum DiagnosticKind {
         want: Expected,
         got: String,
         at: Span,
-        source: Option<MismatchSource>,
+        origin: Option<MismatchOrigin>,
         fix: Option<MismatchFix>,
         conversion: bool,
         layers: bool,
@@ -2112,14 +2112,90 @@ impl Expected {
     }
 }
 
-/// Where a mismatch's expected type came from.
-pub(crate) enum MismatchSource {
+/// Where a mismatch's expected type came from: the fact that the report names.
+pub(crate) enum MismatchOrigin {
     /// The `string` operand of a `+` that expects a `string` of the other.
     Concat(Span),
     /// The earlier alternative's binding of `name`, at `at`, which gave it the type wanted.
-    Binding { name: String, at: Span },
-    /// The `break` at the span, the first of its `loop` whose value set the loop's type.
-    Break(Span),
+    Alternative { name: String, at: Span },
+    /// The `break` at `at`, the first of its `loop` with a value, gave the loop the type `ty`.
+    Break { at: Span, ty: String },
+    /// `function` declares its parameter `param` as `ty`, written at `at`.
+    Parameter {
+        at: Span,
+        function: String,
+        param: String,
+        ty: String,
+    },
+    /// `function` returns `ty`, written at `at`.
+    Returns {
+        at: Span,
+        function: String,
+        ty: String,
+    },
+    /// A `let` or a constant declares the type `ty` at `at`.
+    Declared { at: Span, ty: String },
+    /// The class declares its field `field` as `ty`, written at `at`.
+    Field { at: Span, field: String, ty: String },
+    /// The payload of `variant` holds `ty`, written at `at`.
+    Payload {
+        at: Span,
+        variant: String,
+        ty: String,
+    },
+    /// The local `name`, declared at `at`, has the type `ty`.
+    Assigned { at: Span, name: String, ty: String },
+    /// The rule that a condition is a `bool`.
+    Condition,
+    /// The rule that an index of an array value is an `i64` or a range.
+    Index,
+    /// The rule that an index of a place is an `i64`.
+    PlaceIndex,
+    /// The element at `at` gave its inferred array the type `ty`.
+    Element { at: Span, ty: String },
+    /// The branch value at `at` gave its `if` or `match` the type `ty`.
+    Branch { at: Span, ty: String },
+    /// The argument at `at` gave the type parameter `param` the type `ty`.
+    Inferred { at: Span, param: String, ty: String },
+}
+
+impl MismatchOrigin {
+    /// Where the fact points, and its text: no span for a language rule.
+    fn text(self, want: &str) -> (Option<Span>, String) {
+        match self {
+            Self::Concat(operand) => (Some(operand), "`+` joins this `string`".to_string()),
+            Self::Alternative { name, at } => (Some(at), format!("`{name}` is {want} here")),
+            Self::Break { at, ty } => (
+                Some(at),
+                format!("this `break` gave the loop the type `{ty}`"),
+            ),
+            Self::Parameter {
+                at,
+                function,
+                param,
+                ty,
+            } => (
+                Some(at),
+                format!("`{function}` declares `{param}` as `{ty}`"),
+            ),
+            Self::Returns { at, function, ty } => {
+                (Some(at), format!("`{function}` returns `{ty}`"))
+            }
+            Self::Declared { at, ty } => (Some(at), format!("declared as `{ty}` here")),
+            Self::Field { at, field, ty } => (Some(at), format!("`{field}` is declared as `{ty}`")),
+            Self::Payload { at, variant, ty } => (Some(at), format!("`{variant}` holds `{ty}`")),
+            Self::Assigned { at, name, ty } => (Some(at), format!("`{name}` has the type `{ty}`")),
+            Self::Condition => (None, "a condition must be `bool`".to_string()),
+            Self::Index => (None, "an index must be `i64` or a range".to_string()),
+            Self::PlaceIndex => (None, "an index must be `i64`".to_string()),
+            Self::Element { at, ty } => (Some(at), format!("this element gives the type `{ty}`")),
+            Self::Branch { at, ty } => (Some(at), format!("this branch gives the type `{ty}`")),
+            Self::Inferred { at, param, ty } => (
+                Some(at),
+                format!("this argument gives `{param}` the type `{ty}`"),
+            ),
+        }
+    }
 }
 
 /// The form of an `UnsupportedFormatSpec`, which sets its message and help.
@@ -4408,7 +4484,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 want,
                 got,
                 at,
-                source,
+                origin,
                 fix,
                 conversion,
                 layers,
@@ -4416,18 +4492,14 @@ impl From<DiagnosticKind> for Diagnostic {
                 let want = want.text();
                 let mut d =
                     Diagnostic::coded(code, at, format!("expected {want}, found `{got}`"));
-                match source {
-                    Some(MismatchSource::Concat(operand)) => {
-                        d = d.with_secondary(operand, "`+` joins this `string`");
-                    }
-                    Some(MismatchSource::Binding { name, at }) => {
-                        d = d.with_secondary(at, format!("`{name}` is {want} here"));
-                    }
-                    Some(MismatchSource::Break(at)) => {
-                        d = d.with_secondary(at, format!("this `break` gave the loop the type {want}"));
-                    }
-                    None => {}
-                }
+                // A rule labels the mistake. No diagnostic points into the prelude, so a fact
+                // there is a note.
+                d = match origin.map(|origin| origin.text(&want)) {
+                    Some((None, text)) => d.with_label(text),
+                    Some((Some(at), text)) if at.in_prelude() => d.with_note(text),
+                    Some((Some(at), text)) => d.with_secondary(at, text),
+                    None => d,
+                };
                 if conversion {
                     d = d.with_help(
                         "a conversion that can fail gives an optional: give a default with `??`, or unwrap it with `if let`",

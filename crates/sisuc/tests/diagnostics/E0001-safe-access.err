@@ -1,11 +1,13 @@
 error[E0001]: cannot assign to `id`
  --> E0001-safe-access.sisu:7:5
   |
-2 |     id: i64
-  |     -- declared without `mut` here
-...
 7 |     node?.id = 2
   |     ^^^^^^^^^^^^
+  |
+ ::: E0001-safe-access.sisu:2:5
+  |
+2 |     id: i64
+  |     -- declared without `mut` here
   |
 help: mark the field `mut`
   |

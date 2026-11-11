@@ -3,7 +3,9 @@ error[E0140]: `E` instantiates itself without end
    |
 18 |     type Item = E<W<W<T>>>
    |                 ^^^^^^^^^^ `E<W<W<T>>>` here
-...
+   |
+  ::: E0140-unbounded-base.sisu:23:7
+   |
 23 |     A(T.Next.Item)
    |       ----------- which instantiates `T.Next.Item`
    |

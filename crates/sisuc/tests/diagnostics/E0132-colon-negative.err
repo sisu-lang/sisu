@@ -109,11 +109,13 @@ error[E0132]: Sisu has no negative index
 error[E0001]: cannot assign to `xs`
   --> E0132-colon-negative.sisu:39:16
    |
-14 |     let xs = [1, 2, 3, 4]
-   |         -- declared with `let` here
-...
 39 |     print(xs[{ xs = [7]; 0 }:-1])
    |                ^^^^^^^^ cannot assign twice
+   |
+  ::: E0132-colon-negative.sisu:14:9
+   |
+14 |     let xs = [1, 2, 3, 4]
+   |         -- declared with `let` here
    |
 help: declare it with `let mut`
    |

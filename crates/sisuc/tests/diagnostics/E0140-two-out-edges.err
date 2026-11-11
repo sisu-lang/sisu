@@ -1,12 +1,16 @@
 error[E0140]: `W<T>.to_string` instantiates itself without end
   --> E0140-two-out-edges.sisu:10:12
    |
- 2 |     Item(T)
-   |          - the `==` of `Wrap` here may call `W<T>.eq` through `Eq`
-...
 10 |         if Wrap.Item(W(x: [self.x])) == Wrap.Item(W(x: [self.x])) { "{self.x}" } else { "b" }
    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `==` here
-...
+   |
+  ::: E0140-two-out-edges.sisu:2:10
+   |
+ 2 |     Item(T)
+   |          - the `==` of `Wrap` here may call `W<T>.eq` through `Eq`
+   |
+  ::: E0140-two-out-edges.sisu:15:11
+   |
 15 |         "{self}" == "{other}"
    |           ---- the interpolation here may call `W<T>.to_string` through `Display`
    |

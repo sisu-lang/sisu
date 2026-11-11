@@ -3,7 +3,9 @@ error[E0140]: `Ring.wrap` instantiates itself without end
    |
 11 |         go(self, [x])
    |         ^^^^^^^^^^^^^ `go<Ring, [U]>` here
-...
+   |
+  ::: E0140-requirement.sisu:16:5
+   |
 16 |     t.wrap(x)
    |     --------- which may call `Ring.wrap<U>` through `Wrap`
    |

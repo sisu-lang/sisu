@@ -1,12 +1,16 @@
 error[E0032]: expected `Grid`, found `string`
   --> E0032-alias.sisu:13:5
    |
+12 | fn pick() -> Grid {
+   |              ---- `pick` returns `Grid`
 13 |     "x"
    |     ^^^
 
 error[E0032]: expected `Grid`, found `string`
   --> E0032-alias.sisu:17:12
    |
+16 | fn early() -> Grid {
+   |               ---- `early` returns `Grid`
 17 |     return "x"
    |            ^^^
 
@@ -14,13 +18,20 @@ error[E0032]: expected `Grid`, found `string`
   --> E0032-alias.sisu:25:19
    |
 25 |     let a: Grid = "x"
-   |                   ^^^
+   |            ----   ^^^
+   |            |
+   |            declared as `Grid` here
 
 error[E0032]: expected `Grid`, found `string`
   --> E0032-alias.sisu:27:30
    |
 27 |     let board = Board(cells: "z")
    |                              ^^^
+   |
+  ::: E0032-alias.sisu:5:16
+   |
+ 5 |     mut cells: Grid
+   |                ---- `cells` is declared as `Grid`
 
 error[E0032]: expected `Grid`, found `string`
   --> E0032-alias.sisu:29:19
@@ -33,18 +44,33 @@ error[E0032]: expected `Grid`, found `string`
    |
 30 |     g = "w"
    |         ^^^
+   |
+  ::: E0032-alias.sisu:26:13
+   |
+26 |     let mut g: Grid = [[None]]
+   |             - `g` has the type `Grid`
 
 error[E0032]: expected `Grid`, found `string`
   --> E0032-alias.sisu:31:10
    |
 31 |     size("y")
    |          ^^^
+   |
+  ::: E0032-alias.sisu:8:12
+   |
+ 8 | fn size(g: Grid) -> i64 {
+   |            ---- `size` declares `g` as `Grid`
 
 error[E0032]: expected `[Grid]`, found `string`
   --> E0032-alias.sisu:32:10
    |
 32 |     pass("v")
    |          ^^^
+   |
+  ::: E0032-alias.sisu:20:12
+   |
+20 | fn pass(g: [Grid]) {}
+   |            ------ `pass` declares `g` as `[Grid]`
 
 error[E0032]: expected `[[string]]`, found `string`
   --> E0032-alias.sisu:33:18

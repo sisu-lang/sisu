@@ -108,6 +108,11 @@ error[E0032]: expected `i64`, found `string`
    |
 62 |     s.push("a")
    |            ^^^
+   |
+  ::: E0062-push-on-payload.sisu:20:22
+   |
+20 |     fn push(self, v: i64) {}
+   |                      --- `push` declares `v` as `i64`
 
 error[E0062]: `b?.s` may be `None`
   --> E0062-push-on-payload.sisu:66:5
@@ -126,6 +131,11 @@ error[E0032]: expected `i64`, found `string`
    |
 66 |     b?.s.push("a")
    |               ^^^
+   |
+  ::: E0062-push-on-payload.sisu:20:22
+   |
+20 |     fn push(self, v: i64) {}
+   |                      --- `push` declares `v` as `i64`
 
 error[E0062]: this value may be `None`
   --> E0062-push-on-payload.sisu:70:5
@@ -340,11 +350,13 @@ help: to do nothing when it is `None`, use `?.`
 error[E0001]: cannot change `ys`
    --> E0062-push-on-payload.sisu:125:5
     |
- 10 |     ys: [i64]
-    |     -- declared without `mut` here
-...
 125 |     c?.ys?.push(1)
     |     ^^^^^ `push` changes `ys`
+    |
+   ::: E0062-push-on-payload.sisu:10:5
+    |
+ 10 |     ys: [i64]
+    |     -- declared without `mut` here
     |
 help: mark the field `mut`
     |

@@ -12,11 +12,13 @@ error[E0154]: `Mix<T>` does not conform to `Eq`
 error[E0154]: `Flip<T>` does not conform to `Eq`
   --> E0154-bound-param-order.sisu:20:10
    |
-13 | fn need<U: Eq>(u: U) {}
-   |            -- required by this bound
-...
 20 |     need(a)
    |          ^ `Flip<T>` holds `Node`, which does not conform to `Eq`
+   |
+  ::: E0154-bound-param-order.sisu:13:12
+   |
+13 | fn need<U: Eq>(u: U) {}
+   |            -- required by this bound
    |
    = help: make `Node` conform to `Eq`
 

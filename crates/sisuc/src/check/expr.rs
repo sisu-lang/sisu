@@ -6,12 +6,11 @@ use super::generic::{Site, mismatch_poison};
 use super::names::{self, Resolved};
 use super::reports::Reported;
 use super::{
-    Checked, Checker, Expectation, Poisoned, SelfType, Uninferred, payload, type_of, wrap,
+    Checked, Checker, Expectation, Origin, Poisoned, SelfType, Uninferred, payload, type_of, wrap,
 };
 use crate::ast::{self, ExprKind, UnaryOp};
 use crate::diagnostic::{
-    Code, Definition, Diagnostic, DiagnosticKind, Expected, Literal, MismatchSource, RangePlace,
-    suggestion,
+    Code, Definition, Diagnostic, DiagnosticKind, Expected, Literal, RangePlace, suggestion,
 };
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -246,7 +245,7 @@ impl Checker<'_> {
                     UnaryOp::Neg => self.negated(e.span, operand, expected)?,
                     UnaryOp::Not => (
                         Type::BOOL,
-                        self.operand(operand, Expectation::Required(Type::BOOL)),
+                        self.operand(operand, Expectation::Required(Type::BOOL, Origin::None)),
                     ),
                 };
                 // `-` of a value that kept its E0050 keeps it, as an operator does.
@@ -438,17 +437,17 @@ impl Checker<'_> {
         if matches!(checked, Err(Poisoned { mismatch: true, .. })) {
             return (checked, true);
         }
-        self.against(e, checked, want.ty(), None)
+        self.against(e, checked, want)
     }
 
-    /// `operand` for `e`, already checked; `source` is where `want` came from, for a mismatch.
+    /// `operand` for `e`, already checked; a mismatch names where `want` came from.
     pub(super) fn against(
         &mut self,
         e: &ast::Expr,
         checked: Checked,
-        want: Option<Type>,
-        source: Option<MismatchSource>,
+        want: Expectation,
     ) -> (Checked, bool) {
+        let (want, origin) = (want.ty(), want.origin());
         if let (Some(want), Some(got)) = (want, type_of(&checked))
             && want != got
         {
@@ -464,7 +463,7 @@ impl Checker<'_> {
             if let Ok(done) = self.any_conversion(e.span, checked, want, got) {
                 return done;
             }
-            let d = self.mismatch_from(e.span, Some(e), want, got, source);
+            let d = self.mismatch(e.span, Some(e), want, got, origin);
             return (Err(Poisoned::untyped(self.diagnostics.error(d))), true);
         }
         // A generic call that cannot meet `want` is reported with the type it found, as a
@@ -472,7 +471,7 @@ impl Checker<'_> {
         if let Some(want) = want
             && let Some(found) = self.misfit_type(&checked).filter(|&found| found != want)
         {
-            let d = self.mismatch_from(e.span, Some(e), want, found, source);
+            let d = self.mismatch(e.span, Some(e), want, found, origin);
             let reported = self.diagnostics.error(d);
             self.settle_misfit(&checked);
             return (Err(Poisoned::untyped(reported)), true);
@@ -484,17 +483,17 @@ impl Checker<'_> {
     pub(super) fn none(&mut self, span: Span, expected: Expectation) -> Checked {
         let kind = match expected {
             Expectation::Poisoned => return Err(Poisoned::untyped(self.poisoned_context(span))),
-            Expectation::Required(ty) | Expectation::Hint { want: ty, .. }
+            Expectation::Required(ty, _) | Expectation::Hint { want: ty, .. }
                 if matches!(ty.kind(), TypeKind::Optional(_)) =>
             {
                 return Ok(tir::Expr::new(tir::ExprKind::None, ty, span));
             }
-            Expectation::Required(ty) | Expectation::Hint { want: ty, .. } => {
+            Expectation::Required(ty, _) | Expectation::Hint { want: ty, .. } => {
                 DiagnosticKind::Mismatch {
                     want: Expected::Types(vec![self.want_name(span, ty)]),
                     got: "None".to_string(),
                     at: span,
-                    source: self.expected_from(span),
+                    origin: self.origin_fact(expected.origin()),
                     fix: None,
                     conversion: false,
                     layers: false,

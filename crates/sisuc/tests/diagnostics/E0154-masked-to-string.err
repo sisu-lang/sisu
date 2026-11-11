@@ -9,11 +9,13 @@ error[E0152]: `to_string` does not match `Display`'s requirement
 error[E0154]: `Node` does not conform to `Eq`
   --> E0154-masked-to-string.sisu:14:11
    |
- 7 | extend<T: Eq> Own<T> {
-   |           -- required by this bound
-...
 14 |     print(Own(_value: Node()).to_string<i64>())
    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `to_string` needs `Node: Eq`
+   |
+  ::: E0154-masked-to-string.sisu:7:11
+   |
+ 7 | extend<T: Eq> Own<T> {
+   |           -- required by this bound
    |
    = help: make `Node` conform to `Eq`
 

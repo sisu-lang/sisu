@@ -190,7 +190,9 @@ error[E0032]: expected `u8`, found `string`
    --> E0050-later-use-none.sisu:114:17
     |
 114 |       let n: u8 = "a" + if true {
-    |  _________________^
+    |  ____________--___^
+    | |            |
+    | |            declared as `u8` here
 115 | |         let inner = []
 116 | |         "b"
 117 | |     } else {

@@ -1,6 +1,8 @@
 error[E0032]: expected `P`, found `i64`
  --> E0032-self-written.sisu:5:9
   |
+4 |     fn me(self) -> Self {
+  |                    ---- `me` returns `P`
 5 |         1
   |         ^
 
@@ -8,13 +10,20 @@ error[E0032]: expected `P`, found `i64`
   --> E0032-self-written.sisu:11:23
    |
 11 |         let a: Self = 1
-   |                       ^
+   |                ----   ^
+   |                |
+   |                declared as `P` here
 
 error[E0032]: expected `P`, found `i64`
   --> E0032-self-written.sisu:12:19
    |
 12 |         self.take(1)
    |                   ^
+   |
+  ::: E0032-self-written.sisu:8:26
+   |
+ 8 |     fn take(self, other: Self) {}
+   |                          ---- `take` declares `other` as `P`
 
 sisu: 3 errors
 sisu: for more on a code, run `sisu explain <code>`: E0032

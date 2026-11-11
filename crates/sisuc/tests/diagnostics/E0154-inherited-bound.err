@@ -1,38 +1,50 @@
 error[E0154]: `Heap<T>` does not conform to `Same`
   --> E0154-inherited-bound.sisu:19:26
    |
- 5 | interface Ord2: Same {
-   |                 ---- `Ord2` requires `Same`
-...
-13 | extend<T: Ord2> Heap<T>: Same {
-   |           ---- this conformance needs `T: Ord2`
-...
 19 | extend<T: Same> Heap<T>: Ord2 {
    |                          ^^^^
+   |
+  ::: E0154-inherited-bound.sisu:5:17
+   |
+ 5 | interface Ord2: Same {
+   |                 ---- `Ord2` requires `Same`
+   |
+  ::: E0154-inherited-bound.sisu:13:11
+   |
+13 | extend<T: Ord2> Heap<T>: Same {
+   |           ---- this conformance needs `T: Ord2`
    |
    = help: add a bound: `T: Same & Ord2`
 
 error[E0154]: `Heap2<A, B>` does not conform to `Same`
   --> E0154-inherited-bound.sisu:30:39
    |
- 5 | interface Ord2: Same {
-   |                 ---- `Ord2` requires `Same`
-...
 30 | extend<A: Same, B: Same> Heap2<A, B>: Ord2 {
    |                                       ^^^^
-...
+   |
+  ::: E0154-inherited-bound.sisu:5:17
+   |
+ 5 | interface Ord2: Same {
+   |                 ---- `Ord2` requires `Same`
+   |
+  ::: E0154-inherited-bound.sisu:36:11
+   |
 36 | extend<A: Ord2, B: Ord2> Heap2<A, B>: Same {
    |           ---- this conformance needs `A: Ord2`
 
 error[E0154]: `Heap1<A, B>` does not conform to `Same`
   --> E0154-inherited-bound.sisu:47:39
    |
- 5 | interface Ord2: Same {
-   |                 ---- `Ord2` requires `Same`
-...
 47 | extend<A: Same, B: Ord2> Heap1<A, B>: Ord2 {
    |                                       ^^^^
-...
+   |
+  ::: E0154-inherited-bound.sisu:5:17
+   |
+ 5 | interface Ord2: Same {
+   |                 ---- `Ord2` requires `Same`
+   |
+  ::: E0154-inherited-bound.sisu:53:11
+   |
 53 | extend<A: Ord2, B: Ord2> Heap1<A, B>: Same {
    |           ---- this conformance needs `A: Ord2`
    |

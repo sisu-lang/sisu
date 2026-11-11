@@ -1,11 +1,13 @@
 error[E0034]: `Shape` is already an enum
  --> E0034-enum-class.sisu:5:7
   |
-1 | enum Shape {
-  |      ----- first defined here
-...
 5 | class Shape {
   |       ^^^^^
+  |
+ ::: E0034-enum-class.sisu:1:6
+  |
+1 | enum Shape {
+  |      ----- first defined here
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0034

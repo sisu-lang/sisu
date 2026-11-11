@@ -1,137 +1,167 @@
 error[E0154]: `Pair<Node>` does not conform to `Eq`
   --> E0154-blocked-part.sisu:61:11
    |
- 9 | extend<A: Eq> Pair<A>: Eq {
-   |           -- this conformance needs `A: Eq`
-...
 61 |     print(ps.contains(Pair(a: Node(v: 1))))
    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `contains` needs `Pair<Node>: Eq`
+   |
+  ::: E0154-blocked-part.sisu:9:11
+   |
+ 9 | extend<A: Eq> Pair<A>: Eq {
+   |           -- this conformance needs `A: Eq`
    |
    = help: make `Node` conform to `Eq`
 
 error[E0154]: `Pair<Node>` does not conform to `Eq`
   --> E0154-blocked-part.sisu:65:13
    |
- 9 | extend<A: Eq> Pair<A>: Eq {
-   |           -- this conformance needs `A: Eq`
-...
-57 | fn need_eq<T: Eq>(_x: T) {}
-   |               -- required by this bound
-...
 65 |     need_eq(Pair(a: Node(v: 1)))
    |             ^^^^^^^^^^^^^^^^^^^
+   |
+  ::: E0154-blocked-part.sisu:9:11
+   |
+ 9 | extend<A: Eq> Pair<A>: Eq {
+   |           -- this conformance needs `A: Eq`
+   |
+  ::: E0154-blocked-part.sisu:57:15
+   |
+57 | fn need_eq<T: Eq>(_x: T) {}
+   |               -- required by this bound
    |
    = help: make `Node` conform to `Eq`
 
 error[E0154]: `[Pair<Node>]` does not conform to `Eq`
   --> E0154-blocked-part.sisu:70:11
    |
- 9 | extend<A: Eq> Pair<A>: Eq {
-   |           -- this conformance needs `A: Eq`
-...
 70 |     print(ps.contains([Pair(a: Node(v: 1))]))
    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `contains` needs `[Pair<Node>]: Eq`
+   |
+  ::: E0154-blocked-part.sisu:9:11
+   |
+ 9 | extend<A: Eq> Pair<A>: Eq {
+   |           -- this conformance needs `A: Eq`
    |
    = help: make `Node` conform to `Eq`
 
 error[E0154]: `Pair<[Node]>` does not conform to `Eq`
   --> E0154-blocked-part.sisu:75:11
    |
- 9 | extend<A: Eq> Pair<A>: Eq {
-   |           -- this conformance needs `A: Eq`
-...
 75 |     print(ps.contains(Pair(a: [Node(v: 1)])))
    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `contains` needs `Pair<[Node]>: Eq`
+   |
+  ::: E0154-blocked-part.sisu:9:11
+   |
+ 9 | extend<A: Eq> Pair<A>: Eq {
+   |           -- this conformance needs `A: Eq`
    |
    = help: make `Node` conform to `Eq`
 
 error[E0154]: `Box<Pair<Node>>` does not conform to `Eq`
   --> E0154-blocked-part.sisu:80:11
    |
-19 | extend<B: Eq> Box<B>: Eq {
-   |           -- this conformance needs `B: Eq`
-...
 80 |     print(ps.contains(Box(b: Pair(a: Node(v: 1)))))
    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `contains` needs `Box<Pair<Node>>: Eq`
+   |
+  ::: E0154-blocked-part.sisu:19:11
+   |
+19 | extend<B: Eq> Box<B>: Eq {
+   |           -- this conformance needs `B: Eq`
    |
    = help: make `Node` conform to `Eq`
 
 error[E0154]: `Wrap<Node>` does not conform to `Eq`
   --> E0154-blocked-part.sisu:85:11
    |
-29 | extend<A: Eq> Wrap<A>: Eq {
-   |           -- this conformance needs `A: Eq`
-...
 85 |     print(ps.contains(Wrap.One(Node(v: 1))))
    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `contains` needs `Wrap<Node>: Eq`
+   |
+  ::: E0154-blocked-part.sisu:29:11
+   |
+29 | extend<A: Eq> Wrap<A>: Eq {
+   |           -- this conformance needs `A: Eq`
    |
    = help: make `Node` conform to `Eq`
 
 error[E0154]: `Two<i64, Node>` does not conform to `Eq`
   --> E0154-blocked-part.sisu:90:11
    |
-40 | extend<A: Eq, B: Eq> Two<A, B>: Eq {
-   |                  -- this conformance needs `B: Eq`
-...
 90 |     print(ps.contains(Two(a: 1, b: Node(v: 1))))
    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `contains` needs `Two<i64, Node>: Eq`
+   |
+  ::: E0154-blocked-part.sisu:40:18
+   |
+40 | extend<A: Eq, B: Eq> Two<A, B>: Eq {
+   |                  -- this conformance needs `B: Eq`
    |
    = help: make `Node` conform to `Eq`
 
 error[E0154]: `Pair<Node>?` does not conform to `Eq`
   --> E0154-blocked-part.sisu:95:11
    |
- 9 | extend<A: Eq> Pair<A>: Eq {
-   |           -- this conformance needs `A: Eq`
-...
 95 |     print(ps.contains(None))
    |           ^^^^^^^^^^^^^^^^^ `contains` needs `Pair<Node>?: Eq`
+   |
+  ::: E0154-blocked-part.sisu:9:11
+   |
+ 9 | extend<A: Eq> Pair<A>: Eq {
+   |           -- this conformance needs `A: Eq`
    |
    = help: make `Node` conform to `Eq`
 
 error[E0154]: `Pair<[Box<Pair<Node>>?]>` does not conform to `Eq`
    --> E0154-blocked-part.sisu:101:11
     |
-  9 | extend<A: Eq> Pair<A>: Eq {
-    |           -- this conformance needs `A: Eq`
-...
 101 |     print(xs.contains(Pair(a: [o])))
     |           ^^^^^^^^^^^^^^^^^^^^^^^^^ `contains` needs `Pair<[Box<Pair<Node>>?]>: Eq`
+    |
+   ::: E0154-blocked-part.sisu:9:11
+    |
+  9 | extend<A: Eq> Pair<A>: Eq {
+    |           -- this conformance needs `A: Eq`
     |
     = help: make `Node` conform to `Eq`
 
 error[E0154]: `Mix<T, bool>` does not conform to `Eq`
    --> E0154-blocked-part.sisu:105:5
     |
- 51 | extend<A: Eq, B: Ord> Mix<A, B>: Eq {
-    |           -- this conformance needs `A: Eq`
-...
 105 |     [x].contains(x)
     |     ^^^^^^^^^^^^^^^ `contains` needs `Mix<T, bool>: Eq`
+    |
+   ::: E0154-blocked-part.sisu:51:11
+    |
+ 51 | extend<A: Eq, B: Ord> Mix<A, B>: Eq {
+    |           -- this conformance needs `A: Eq`
 
 error[E0154]: `Mix<T, bool>` does not conform to `Eq`
    --> E0154-blocked-part.sisu:109:13
     |
- 51 | extend<A: Eq, B: Ord> Mix<A, B>: Eq {
-    |           -- this conformance needs `A: Eq`
-...
- 57 | fn need_eq<T: Eq>(_x: T) {}
-    |               -- required by this bound
-...
 109 |     need_eq(x)
     |             ^
+    |
+   ::: E0154-blocked-part.sisu:51:11
+    |
+ 51 | extend<A: Eq, B: Ord> Mix<A, B>: Eq {
+    |           -- this conformance needs `A: Eq`
+    |
+   ::: E0154-blocked-part.sisu:57:15
+    |
+ 57 | fn need_eq<T: Eq>(_x: T) {}
+    |               -- required by this bound
 
 error[E0154]: `Mix<T, i64>` does not conform to `Eq`
    --> E0154-blocked-part.sisu:113:13
     |
- 51 | extend<A: Eq, B: Ord> Mix<A, B>: Eq {
-    |           -- this conformance needs `A: Eq`
-...
- 57 | fn need_eq<T: Eq>(_x: T) {}
-    |               -- required by this bound
-...
 113 |     need_eq(x)
     |             ^
+    |
+   ::: E0154-blocked-part.sisu:51:11
+    |
+ 51 | extend<A: Eq, B: Ord> Mix<A, B>: Eq {
+    |           -- this conformance needs `A: Eq`
+    |
+   ::: E0154-blocked-part.sisu:57:15
+    |
+ 57 | fn need_eq<T: Eq>(_x: T) {}
+    |               -- required by this bound
     |
     = help: add a bound: `T: Eq`
 

@@ -41,11 +41,13 @@ error[E0062]: `c` may be `None`
 error[E0001]: cannot assign to `v`
   --> E0062-peel-dot.sisu:33:5
    |
-11 |     v: i64
-   |     - declared without `mut` here
-...
 33 |     c.v = 2
    |     ^^^^^^^
+   |
+  ::: E0062-peel-dot.sisu:11:5
+   |
+11 |     v: i64
+   |     - declared without `mut` here
    |
 help: mark the field `mut`
    |
@@ -505,11 +507,13 @@ error[E0062]: `c` may be `None`
 error[E0166]: the parameter `x` of `bump` is `mut`, so its argument needs `mut`
    --> E0062-peel-dot.sisu:221:10
     |
- 88 | fn bump(mut x: i64) {
-    |             - declared `mut` here
-...
 221 |     bump(c.m.v)
     |          ^^^^^ needs `mut`
+    |
+   ::: E0062-peel-dot.sisu:88:13
+    |
+ 88 | fn bump(mut x: i64) {
+    |             - declared `mut` here
 
 error[E0055]: this call takes no labels on its arguments
    --> E0062-peel-dot.sisu:225:10
@@ -695,11 +699,13 @@ error[E0062]: `c` may be `None`
 error[E0166]: the parameter `x` of `take` is `mut`, so its argument needs `mut`
    --> E0062-peel-dot.sisu:305:20
     |
-288 | fn take<T>(mut x: T?) {
-    |                - declared `mut` here
-...
 305 |     take<i64, i64>(c.m.v)
     |                    ^^^^^ needs `mut`
+    |
+   ::: E0062-peel-dot.sisu:288:16
+    |
+288 | fn take<T>(mut x: T?) {
+    |                - declared `mut` here
 
 error[E0053]: `Bp.bp` takes 1 argument, found 2
    --> E0062-peel-dot.sisu:309:5
@@ -804,11 +810,13 @@ error[E0062]: `c` may be `None`
 error[E0166]: the parameter `x` of `Bx.put` is `mut`, so its argument needs `mut`
    --> E0062-peel-dot.sisu:333:24
     |
-283 |     fn put<T>(self, mut x: T?, n: i64) {
-    |                         - declared `mut` here
-...
 333 |     Bx().put<i64, i64>(c.m.v, 1)
     |                        ^^^^^ needs `mut`
+    |
+   ::: E0062-peel-dot.sisu:283:25
+    |
+283 |     fn put<T>(self, mut x: T?, n: i64) {
+    |                         - declared `mut` here
 
 error[E0053]: `exchange` takes 2 arguments, found 3
    --> E0062-peel-dot.sisu:337:13

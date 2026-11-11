@@ -13,13 +13,13 @@ use super::reports::Reported;
 use super::unused_names::{Owner, Pending};
 use super::{
     Binding, BindingKind, Checked, CheckedBlock, Checker, Declared, Expectation, LoopContext,
-    LoopFrame, LoopKind, Poisoned, SelfType, block_expr, built_in_type, known_type, starts_in,
-    tail, type_of,
+    LoopFrame, LoopKind, Origin, Poisoned, SelfType, block_expr, built_in_type, known_type,
+    starts_in, tail, type_of,
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{
-    ClashForm, ClashKind, DiagnosticKind, MismatchSource, NeverReassignedForm, RangePlace, Unwrap,
-    UnwrapHelp, closest,
+    ClashForm, ClashKind, DiagnosticKind, NeverReassignedForm, RangePlace, Unwrap, UnwrapHelp,
+    closest,
 };
 use crate::source::{Span, removal_end};
 use crate::symbol::Symbol;
@@ -361,12 +361,18 @@ impl Checker<'_> {
                 let init_expr = init;
                 self.body.let_init = Some((init.span, name.name, mutable.is_some()));
                 self.body.failed_let = matches!(declared, Some(None)).then_some(init.span);
-                let init = match declared {
-                    Some(declared) => {
+                let init = match ty.as_ref().zip(declared) {
+                    Some((ty, declared)) => {
+                        // The label at the written type names an alias as the message does.
                         if let (Some(want), Some(text)) = (declared, &shown) {
                             self.show(init.span, want, text);
+                            self.show(ty.span, want, text);
                         }
-                        self.expect(init, Expectation::or_poisoned(declared))
+                        let origin = declared.map_or(Origin::None, |declared| Origin::Declared {
+                            at: ty.span,
+                            ty: declared,
+                        });
+                        self.expect(init, Expectation::or_poisoned(declared, origin))
                     }
                     None => self.value(init, Expectation::None),
                 };
@@ -428,7 +434,7 @@ impl Checker<'_> {
                 let before = (self.diagnostics.errors(), self.body.writes, self.body.exits);
                 let nans = self.body.nans;
                 let cond = self.in_header(*keyword, label.clone(), |c| {
-                    c.expect(cond_ast, Expectation::Required(Type::BOOL))
+                    c.expect(cond_ast, Expectation::Required(Type::BOOL, Origin::None))
                 });
                 // W0005 reports a comparison with `nan` in it, and its fix changes the condition.
                 let nan = self.body.nans != nans;
@@ -901,12 +907,12 @@ impl Checker<'_> {
             let d = Self::range_outside(range, RangePlace::ForSource);
             let reported = self.diagnostics.error(d);
             for bound in [&range.start, &range.end].into_iter().flatten() {
-                drop(self.expect(bound, Expectation::Required(Type::I64)));
+                drop(self.expect(bound, Expectation::Required(Type::I64, Origin::None)));
             }
             return (Err(reported), Some(Type::I64));
         };
-        let start = self.expect(start, Expectation::Required(Type::I64));
-        let end = self.expect(end, Expectation::Required(Type::I64));
+        let start = self.expect(start, Expectation::Required(Type::I64, Origin::None));
+        let end = self.expect(end, Expectation::Required(Type::I64, Origin::None));
         let counter = self.fresh_var(Type::I64);
         let limit = self.fresh(Type::I64);
         let go = inclusive.then(|| self.fresh_var(Type::BOOL));
@@ -972,7 +978,10 @@ impl Checker<'_> {
                     self.show(value.span, want, &text);
                 }
                 let value = self
-                    .expect(value, Expectation::or_poisoned(self.body.ret))
+                    .expect(
+                        value,
+                        Expectation::or_poisoned(self.body.ret, self.returns()),
+                    )
                     .map_err(|failed| never(failed.reported))?;
                 Some(Box::new(value))
             }
@@ -1397,16 +1406,16 @@ impl Checker<'_> {
             AnyJoin::Leaves {
                 ty,
                 member: (i, got),
-            } => self.leaves_any(span(i), None, ty, got),
+            } => self.leaves_any(span(i), None, ty, got, Origin::None),
             AnyJoin::Fails {
                 earlier: (_, want),
                 later: (i, got),
-            } => self.mismatch_from(span(i), None, want, got, Some(MismatchSource::Break(at))),
+            } => self.mismatch(span(i), None, want, got, Origin::Break { at, ty: want }),
             // Objects that join to no `any` type: each is not the first value's.
             AnyJoin::NoAny => {
                 for &(at_value, got) in &deferred {
-                    let source = Some(MismatchSource::Break(at));
-                    let d = self.mismatch_from(at_value, None, first, got, source);
+                    let origin = Origin::Break { at, ty: first };
+                    let d = self.mismatch(at_value, None, first, got, origin);
                     let reported = self.diagnostics.error(d);
                     frame.failed.get_or_insert(reported);
                 }
@@ -1463,22 +1472,17 @@ impl Checker<'_> {
         let frame = self.frame(target);
         // With no expected type, an earlier value gives a hint, as the siblings of a hinted loop
         // do.
-        let (hint, first_at) = match (frame.expected, frame.first) {
-            (Expectation::None, Some((ty, at))) => {
-                let hint = Expectation::Hint {
-                    want: ty,
-                    siblings: ty,
-                };
-                (hint, Some(at))
-            }
-            (expected, _) => (expected, None),
+        let hint = match (frame.expected, frame.first) {
+            (Expectation::None, Some((ty, at))) => Expectation::Hint {
+                want: ty,
+                siblings: ty,
+                origin: Origin::Break { at, ty },
+            },
+            (expected, _) => expected,
         };
-        let from = first_at.map(|first| (v.span, first));
-        let outer = std::mem::replace(&mut self.body.break_hint, from);
         self.body.label_typo = typo.map(|name| (name.span, span.start()));
         let checked = self.expr(v, hint);
         self.body.label_typo = None;
-        self.body.break_hint = outer;
         // A failed value fails the loop, and gives it no type and no second report. A generic
         // call's misfit is joined by the type it found, as a concrete call is by its type.
         let misfit = self.misfit_type(&checked);
@@ -1501,7 +1505,7 @@ impl Checker<'_> {
                 if expected == Expectation::Poisoned {
                     checked
                 } else {
-                    let want = (expected.ty(), hinted, first);
+                    let want = (expected, hinted, first);
                     self.join_break((v, span), (checked, got), want, target)
                 }
             }
@@ -1521,14 +1525,14 @@ impl Checker<'_> {
         &mut self,
         (v, span): (&ast::Expr, Span),
         (checked, got): (Checked, Type),
-        (expected, hinted, first): (Option<Type>, bool, Option<(Type, Span)>),
+        (expected, hinted, first): (Expectation, bool, Option<(Type, Span)>),
         target: usize,
     ) -> Checked {
         // A value that does not fit the expected type converts to it, or is the mismatch. No
         // value converts to an `any` hint: the join of the values does.
-        let (checked, got) = match expected {
+        let (checked, got) = match expected.ty() {
             Some(ty) if !fits(ty, got) && (!hinted || !is_target(ty)) => {
-                (self.against(v, checked, Some(ty), None).0, ty)
+                (self.against(v, checked, expected).0, ty)
             }
             _ => (checked, got),
         };
@@ -1536,7 +1540,8 @@ impl Checker<'_> {
         if let Some((first, at)) = first
             && self.misfit_type(&checked).is_some()
         {
-            return (self.against(v, checked, Some(first), Some(MismatchSource::Break(at)))).0;
+            let want = Expectation::Required(first, Origin::Break { at, ty: first });
+            return self.against(v, checked, want).0;
         }
         let value = checked?;
         let Some((first, at)) = first else {
@@ -1546,9 +1551,10 @@ impl Checker<'_> {
             return Ok(value);
         };
         // Without an expected type, a `T` and a `T?` do not join.
-        let joined = if first == got || expected.is_some() && fits(first, got) {
+        let expects = expected.ty().is_some();
+        let joined = if first == got || expects && fits(first, got) {
             Some(first)
-        } else if expected.is_some() && fits(got, first) {
+        } else if expects && fits(got, first) {
             Some(got)
         } else {
             self.any_join(first, got)
@@ -1563,17 +1569,17 @@ impl Checker<'_> {
             }
             // A `Some` of an object is the mistake at the object, as in a branch.
             if let Some((at, want, object)) = self.object_in_some(&value, first) {
-                let d = self.leaves_any(at, None, want, object);
+                let d = self.leaves_any(at, None, want, object, Origin::None);
                 return Err(Poisoned::untyped(self.diagnostics.error(d)));
             }
-            return self
-                .against(v, Ok(value), Some(first), Some(MismatchSource::Break(at)))
-                .0;
+            let want = Expectation::Required(first, Origin::Break { at, ty: first });
+            return self.against(v, Ok(value), want).0;
         };
         let checked = if got == joined {
             Ok(value)
         } else {
-            self.against(v, Ok(value), Some(joined), None).0
+            self.against(v, Ok(value), Expectation::Required(joined, Origin::None))
+                .0
         };
         if joined != first {
             let frame = self.frame(target);

@@ -2,13 +2,20 @@ error[E0032]: expected `i64`, found `[string]`
    --> E0032-failed-call-result.sisu:112:19
     |
 112 |     let _n: i64 = g("s")
-    |                   ^^^^^^
+    |             ---   ^^^^^^
+    |             |
+    |             declared as `i64` here
 
 error[E0032]: expected `i64`, found `string`
    --> E0032-failed-call-result.sisu:112:21
     |
 112 |     let _n: i64 = g("s")
     |                     ^^^
+    |
+   ::: E0032-failed-call-result.sisu:70:9
+    |
+ 70 | fn g(n: i64) -> [string] { [] }
+    |         --- `g` declares `n` as `i64`
 
 error[E0053]: `g` takes 1 argument, found 2
    --> E0032-failed-call-result.sisu:115:19
@@ -20,13 +27,17 @@ error[E0032]: expected `i64`, found `[string]`
    --> E0032-failed-call-result.sisu:115:19
     |
 115 |     let _n: i64 = g(1, 2)
-    |                   ^^^^^^^
+    |             ---   ^^^^^^^
+    |             |
+    |             declared as `i64` here
 
 error[E0032]: expected `i64`, found `Pair`
    --> E0032-failed-call-result.sisu:118:19
     |
 118 |     let _n: i64 = Pair([], [])
-    |                   ^^^^^^^^^^^^
+    |             ---   ^^^^^^^^^^^^
+    |             |
+    |             declared as `i64` here
 
 error[E0065]: this argument needs a label
    --> E0032-failed-call-result.sisu:118:24
@@ -43,25 +54,39 @@ error[E0032]: expected `i64`, found `Pair`
    --> E0032-failed-call-result.sisu:121:19
     |
 121 |     let _n: i64 = Pair(a: 1)
-    |                   ^^^^^^^^^^
+    |             ---   ^^^^^^^^^^
+    |             |
+    |             declared as `i64` here
 
 error[E0032]: expected `[string]`, found `i64`
    --> E0032-failed-call-result.sisu:121:27
     |
 121 |     let _n: i64 = Pair(a: 1)
     |                           ^
+    |
+   ::: E0032-failed-call-result.sisu:48:8
+    |
+ 48 |     a: [string]
+    |        -------- `a` is declared as `[string]`
 
 error[E0032]: expected `i64`, found `Opt`
    --> E0032-failed-call-result.sisu:124:19
     |
 124 |     let _n: i64 = Opt.Wrap(1)
-    |                   ^^^^^^^^^^^
+    |             ---   ^^^^^^^^^^^
+    |             |
+    |             declared as `i64` here
 
 error[E0032]: expected `[string]`, found `i64`
    --> E0032-failed-call-result.sisu:124:28
     |
 124 |     let _n: i64 = Opt.Wrap(1)
     |                            ^
+    |
+   ::: E0032-failed-call-result.sisu:60:10
+    |
+ 60 |     Wrap([string])
+    |          -------- `Wrap` holds `[string]`
 
 error[E0053]: `Opt.Wrap` takes 1 argument, found 2
    --> E0032-failed-call-result.sisu:127:19
@@ -73,7 +98,9 @@ error[E0032]: expected `i64`, found `Opt`
    --> E0032-failed-call-result.sisu:127:19
     |
 127 |     let _n: i64 = Opt.Wrap([], [])
-    |                   ^^^^^^^^^^^^^^^^
+    |             ---   ^^^^^^^^^^^^^^^^
+    |             |
+    |             declared as `i64` here
 
 error[E0053]: `[i64].len` takes 0 arguments, found 1
    --> E0032-failed-call-result.sisu:130:22
@@ -85,7 +112,9 @@ error[E0032]: expected `string`, found `i64`
    --> E0032-failed-call-result.sisu:130:22
     |
 130 |     let _s: string = xs.len(1)
-    |                      ^^^^^^^^^
+    |             ------   ^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0053]: `string.len` takes 0 arguments, found 1
    --> E0032-failed-call-result.sisu:133:22
@@ -97,7 +126,9 @@ error[E0032]: expected `string`, found `i64`
    --> E0032-failed-call-result.sisu:133:22
     |
 133 |     let _n: string = s.len(1)
-    |                      ^^^^^^^^
+    |             ------   ^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0053]: `read_line` takes 0 arguments, found 1
    --> E0032-failed-call-result.sisu:136:19
@@ -109,7 +140,9 @@ error[E0032]: expected `i64`, found `string?`
    --> E0032-failed-call-result.sisu:136:19
     |
 136 |     let _n: i64 = read_line(1)
-    |                   ^^^^^^^^^^^^
+    |             ---   ^^^^^^^^^^^^
+    |             |
+    |             declared as `i64` here
 
 error[E0053]: `Bx<i64>.get` takes 1 argument, found 2
    --> E0032-failed-call-result.sisu:139:22
@@ -121,7 +154,9 @@ error[E0032]: expected `string`, found `i64`
    --> E0032-failed-call-result.sisu:139:22
     |
 139 |     let _s: string = x.get(1, 2)
-    |                      ^^^^^^^^^^^
+    |             ------   ^^^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0053]: `Bx<i64>.n` takes 1 argument, found 2
    --> E0032-failed-call-result.sisu:142:22
@@ -133,19 +168,28 @@ error[E0032]: expected `string`, found `i64`
    --> E0032-failed-call-result.sisu:142:22
     |
 142 |     let _s: string = x.n(1, 2)
-    |                      ^^^^^^^^^
+    |             ------   ^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0032]: expected `string`, found `i64`
    --> E0032-failed-call-result.sisu:145:22
     |
 145 |     let _s: string = x.get("s")
-    |                      ^^^^^^^^^^
+    |             ------   ^^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0032]: expected `i64`, found `string`
    --> E0032-failed-call-result.sisu:145:28
     |
 145 |     let _s: string = x.get("s")
     |                            ^^^
+    |
+   ::: E0032-failed-call-result.sisu:52:21
+    |
+ 52 |     fn get(self, n: i64) -> T { self.v }
+    |                     --- `get` declares `n` as `i64`
 
 error[E0053]: `Named.name` takes 0 arguments, found 1
    --> E0032-failed-call-result.sisu:148:19
@@ -157,7 +201,9 @@ error[E0032]: expected `i64`, found `string`
    --> E0032-failed-call-result.sisu:148:19
     |
 148 |     let _k: i64 = n.name(1)
-    |                   ^^^^^^^^^
+    |             ---   ^^^^^^^^^
+    |             |
+    |             declared as `i64` here
 
 error[E0053]: `Named.name` takes 0 arguments, found 1
    --> E0032-failed-call-result.sisu:151:19
@@ -169,7 +215,9 @@ error[E0032]: expected `i64`, found `string`
    --> E0032-failed-call-result.sisu:151:19
     |
 151 |     let _k: i64 = t.name(1)
-    |                   ^^^^^^^^^
+    |             ---   ^^^^^^^^^
+    |             |
+    |             declared as `i64` here
 
 error[E0053]: `Named.name` takes 0 arguments, found 1
    --> E0032-failed-call-result.sisu:154:5
@@ -247,7 +295,9 @@ error[E0032]: expected `i64`, found `string`
    --> E0032-failed-call-result.sisu:172:19
     |
 172 |     let _n: i64 = k.to_string(1)
-    |                   ^^^^^^^^^^^^^^
+    |             ---   ^^^^^^^^^^^^^^
+    |             |
+    |             declared as `i64` here
 
 error[E0053]: `Flag.eq` takes 1 argument, found 2
    --> E0032-failed-call-result.sisu:175:22
@@ -259,7 +309,9 @@ error[E0032]: expected `string`, found `bool`
    --> E0032-failed-call-result.sisu:175:22
     |
 175 |     let _s: string = a.eq(Flag.A, Flag.B)
-    |                      ^^^^^^^^^^^^^^^^^^^^
+    |             ------   ^^^^^^^^^^^^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0053]: `f64.sqrt` takes 0 arguments, found 1
    --> E0032-failed-call-result.sisu:178:22
@@ -271,7 +323,9 @@ error[E0032]: expected `string`, found `f64`
    --> E0032-failed-call-result.sisu:178:22
     |
 178 |     let _s: string = f.sqrt(1)
-    |                      ^^^^^^^^^
+    |             ------   ^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0053]: `[i64].push` takes 1 argument, found 2
    --> E0032-failed-call-result.sisu:182:22
@@ -307,7 +361,9 @@ error[E0032]: expected `string`, found `[i64]`
    --> E0032-failed-call-result.sisu:189:22
     |
 189 |     let _s: string = gen<i64>(1, 2)
-    |                      ^^^^^^^^^^^^^^
+    |             ------   ^^^^^^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0053]: `Option.Some` takes 1 argument, found 2
    --> E0032-failed-call-result.sisu:192:22
@@ -371,7 +427,7 @@ error[E0032]: expected `bool`, found `i64`
    --> E0032-failed-call-result.sisu:205:8
     |
 205 |     if b(1, 2) {}
-    |        ^^^^^^^
+    |        ^^^^^^^ a condition must be `bool`
 
 error[E0053]: `o` takes 1 argument, found 2
    --> E0032-failed-call-result.sisu:208:22
@@ -383,7 +439,9 @@ error[E0032]: expected `string`, found `i64`
    --> E0032-failed-call-result.sisu:208:22
     |
 208 |     let _s: string = o(1, 2) ?? 0
-    |                      ^^^^^^^^^^^^
+    |             ------   ^^^^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0053]: `g` takes 1 argument, found 2
    --> E0032-failed-call-result.sisu:211:22
@@ -395,13 +453,17 @@ error[E0032]: expected `string`, found `i64`
    --> E0032-failed-call-result.sisu:211:22
     |
 211 |     let _s: string = g(1, 2).len()
-    |                      ^^^^^^^^^^^^^
+    |             ------   ^^^^^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0032]: expected `i64`, found `[string]`
    --> E0032-failed-call-result.sisu:214:19
     |
 214 |     let _n: i64 = Pair([], []).a
-    |                   ^^^^^^^^^^^^^^
+    |             ---   ^^^^^^^^^^^^^^
+    |             |
+    |             declared as `i64` here
 
 error[E0065]: this argument needs a label
    --> E0032-failed-call-result.sisu:214:24
@@ -424,7 +486,9 @@ error[E0032]: expected `i64`, found `[string]`
    --> E0032-failed-call-result.sisu:217:19
     |
 217 |     let _n: i64 = c.zs(1, 2)
-    |                   ^^^^^^^^^^
+    |             ---   ^^^^^^^^^^
+    |             |
+    |             declared as `i64` here
 
 error[E0053]: `bq` takes 1 argument, found 2
    --> E0032-failed-call-result.sisu:220:22
@@ -472,7 +536,9 @@ error[E0032]: expected `string`, found `i64`
    --> E0032-failed-call-result.sisu:238:22
     |
 238 |     let _s: string = ge<i64>(1, 2)
-    |                      ^^^^^^^^^^^^^
+    |             ------   ^^^^^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0053]: `h` takes 1 argument, found 2
    --> E0032-failed-call-result.sisu:241:22
@@ -484,7 +550,9 @@ error[E0032]: expected `string`, found `[string]`
    --> E0032-failed-call-result.sisu:241:22
     |
 241 |     let _s: string = h<i64>(1, 2)
-    |                      ^^^^^^^^^^^^
+    |             ------   ^^^^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0053]: `hb` takes 1 argument, found 2
    --> E0032-failed-call-result.sisu:244:22
@@ -588,7 +656,9 @@ error[E0032]: expected `string`, found `[string]`
    --> E0032-failed-call-result.sisu:265:22
     |
 265 |     let _s: string = k<i64>(1)
-    |                      ^^^^^^^^^
+    |             ------   ^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0137]: `k` takes no type arguments
    --> E0032-failed-call-result.sisu:265:23
@@ -606,7 +676,9 @@ error[E0032]: expected `string`, found `f64`
    --> E0032-failed-call-result.sisu:268:22
     |
 268 |     let _s: string = b.pow(n: 1.0)
-    |                      ^^^^^^^^^^^^^
+    |             ------   ^^^^^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0055]: this call takes no labels on its arguments
    --> E0032-failed-call-result.sisu:268:28
@@ -620,7 +692,9 @@ error[E0032]: expected `string`, found `f64`
    --> E0032-failed-call-result.sisu:271:22
     |
 271 |     let _s: string = b.pow("x")
-    |                      ^^^^^^^^^^
+    |             ------   ^^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0032]: expected `f64`, found `string`
    --> E0032-failed-call-result.sisu:271:28
@@ -632,7 +706,9 @@ error[E0032]: expected `string`, found `bool`
    --> E0032-failed-call-result.sisu:274:22
     |
 274 |     let _s: string = e.eq(1)
-    |                      ^^^^^^^
+    |             ------   ^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0032]: expected `Flag`, found `i64`
    --> E0032-failed-call-result.sisu:274:27
@@ -712,13 +788,17 @@ error[E0032]: expected `string`, found `B<i64>`
    --> E0032-failed-call-result.sisu:289:22
     |
 289 |     let _s: string = B<i64>()
-    |                      ^^^^^^^^
+    |             ------   ^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0032]: expected `string`, found `B<i64>`
    --> E0032-failed-call-result.sisu:292:22
     |
 292 |     let _s: string = B<i64>(w: 1)
-    |                      ^^^^^^^^^^^^
+    |             ------   ^^^^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0063]: `B` has no field `w`
    --> E0032-failed-call-result.sisu:292:29
@@ -736,7 +816,9 @@ error[E0032]: expected `string`, found `B<i64>`
    --> E0032-failed-call-result.sisu:295:22
     |
 295 |     let _s: string = B<i64>(v: "x")
-    |                      ^^^^^^^^^^^^^^
+    |             ------   ^^^^^^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0032]: expected `i64`, found `string`
    --> E0032-failed-call-result.sisu:295:32
@@ -754,13 +836,17 @@ error[E0032]: expected `string`, found `E<i64>`
    --> E0032-failed-call-result.sisu:298:22
     |
 298 |     let _s: string = E<i64>.V()
-    |                      ^^^^^^^^^^
+    |             ------   ^^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0032]: expected `string`, found `E<i64>`
    --> E0032-failed-call-result.sisu:301:22
     |
 301 |     let _s: string = E<i64>.V(n: 1)
-    |                      ^^^^^^^^^^^^^^
+    |             ------   ^^^^^^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0055]: `E.V` takes no labels
    --> E0032-failed-call-result.sisu:301:31
@@ -778,7 +864,9 @@ error[E0032]: expected `string`, found `E<i64>`
    --> E0032-failed-call-result.sisu:304:22
     |
 304 |     let _s: string = E<i64>.V("x")
-    |                      ^^^^^^^^^^^^^
+    |             ------   ^^^^^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0032]: expected `i64`, found `string`
    --> E0032-failed-call-result.sisu:304:31
@@ -796,13 +884,17 @@ error[E0032]: expected `string`, found `i64?`
    --> E0032-failed-call-result.sisu:307:22
     |
 307 |     let _s: string = Some<i64>(1, 2)
-    |                      ^^^^^^^^^^^^^^^
+    |             ------   ^^^^^^^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0032]: expected `string`, found `i64?`
    --> E0032-failed-call-result.sisu:310:22
     |
 310 |     let _s: string = Some<i64>("x")
-    |                      ^^^^^^^^^^^^^^
+    |             ------   ^^^^^^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0032]: expected `i64`, found `string`
    --> E0032-failed-call-result.sisu:310:32
@@ -820,7 +912,9 @@ error[E0032]: expected `string`, found `Result<i64, string>`
    --> E0032-failed-call-result.sisu:313:22
     |
 313 |     let _s: string = Ok<i64, string>(1, 2)
-    |                      ^^^^^^^^^^^^^^^^^^^^^
+    |             ------   ^^^^^^^^^^^^^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0053]: `C.V` takes 1 argument, found 0
    --> E0032-failed-call-result.sisu:316:22
@@ -832,7 +926,9 @@ error[E0032]: expected `string`, found `E<i64>`
    --> E0032-failed-call-result.sisu:316:22
     |
 316 |     let _s: string = C.V()
-    |                      ^^^^^
+    |             ------   ^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0053]: `Some` takes 1 argument, found 2
    --> E0032-failed-call-result.sisu:319:22
@@ -886,11 +982,13 @@ help: a class with a similar name exists: `Node`
 error[E0154]: `Node` does not conform to `Eq`
    --> E0032-failed-call-result.sisu:334:22
     |
- 90 | class Bq2<T: Eq> {
-    |              -- required by this bound
-...
 334 |     let _s: string = A(a: Node(), b: missing)
     |                      ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+   ::: E0032-failed-call-result.sisu:90:14
+    |
+ 90 | class Bq2<T: Eq> {
+    |              -- required by this bound
     |
     = help: make `Node` conform to `Eq`
 
@@ -918,7 +1016,9 @@ error[E0032]: expected `string`, found `[i64]?`
    --> E0032-failed-call-result.sisu:337:22
     |
 337 |     let _s: string = W<i64>.Some(1, 2)
-    |                      ^^^^^^^^^^^^^^^^^
+    |             ------   ^^^^^^^^^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0053]: `O.Some` takes 1 argument, found 2
    --> E0032-failed-call-result.sisu:340:22
@@ -930,7 +1030,9 @@ error[E0032]: expected `string`, found `i64?`
    --> E0032-failed-call-result.sisu:340:22
     |
 340 |     let _s: string = O.Some(1, 2)
-    |                      ^^^^^^^^^^^^
+    |             ------   ^^^^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0053]: `G.Some` takes 1 argument, found 2
    --> E0032-failed-call-result.sisu:343:22
@@ -942,13 +1044,17 @@ error[E0032]: expected `string`, found `i64?`
    --> E0032-failed-call-result.sisu:343:22
     |
 343 |     let _s: string = G<i64?>.Some(1, 2)
-    |                      ^^^^^^^^^^^^^^^^^^
+    |             ------   ^^^^^^^^^^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0032]: expected `string`, found `[i64]?`
    --> E0032-failed-call-result.sisu:346:22
     |
 346 |     let _s: string = W<i64>.Some(n: [1])
-    |                      ^^^^^^^^^^^^^^^^^^^
+    |             ------   ^^^^^^^^^^^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0055]: `W.Some` takes no labels
    --> E0032-failed-call-result.sisu:346:34
@@ -966,7 +1072,9 @@ error[E0032]: expected `string`, found `i64?`
    --> E0032-failed-call-result.sisu:349:22
     |
 349 |     let _s: string = O.Some(n: 1)
-    |                      ^^^^^^^^^^^^
+    |             ------   ^^^^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0055]: `O.Some` takes no labels
    --> E0032-failed-call-result.sisu:349:29
@@ -984,7 +1092,9 @@ error[E0032]: expected `string`, found `[i64]?`
    --> E0032-failed-call-result.sisu:352:22
     |
 352 |     let _s: string = W<i64>.Some("a")
-    |                      ^^^^^^^^^^^^^^^^
+    |             ------   ^^^^^^^^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0032]: expected `[i64]`, found `string`
    --> E0032-failed-call-result.sisu:352:34
@@ -996,7 +1106,9 @@ error[E0032]: expected `string`, found `i64?`
    --> E0032-failed-call-result.sisu:355:22
     |
 355 |     let _s: string = O.Some("a")
-    |                      ^^^^^^^^^^^
+    |             ------   ^^^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0032]: expected `i64`, found `string`
    --> E0032-failed-call-result.sisu:355:29
@@ -1039,13 +1151,17 @@ error[E0032]: expected `string`, found `i64?`
    --> E0032-failed-call-result.sisu:361:22
     |
 361 |     let _s: string = P<i64>.Some(1, 2)
-    |                      ^^^^^^^^^^^^^^^^^
+    |             ------   ^^^^^^^^^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0032]: expected `string`, found `i64??`
    --> E0032-failed-call-result.sisu:364:22
     |
 364 |     let _s: string = MM<i64>.Some(n: Some(1))
-    |                      ^^^^^^^^^^^^^^^^^^^^^^^^
+    |             ------   ^^^^^^^^^^^^^^^^^^^^^^^^
+    |             |
+    |             declared as `string` here
 
 error[E0055]: `MM.Some` takes no labels
    --> E0032-failed-call-result.sisu:364:35

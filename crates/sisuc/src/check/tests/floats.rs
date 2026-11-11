@@ -50,9 +50,9 @@ fn negation_type() {
 }
 
 #[test]
-fn float_never_integer() {
+fn a_float_literal_should_never_be_an_integer() {
     let src = "fn main() {\n    let n: i64 = 1.5\n}";
-    let d = diagnostic(src, Code::Mismatch, (2, 18, "1.5"), &[]);
+    let d = diagnostic(src, Code::Mismatch, (2, 18, "1.5"), &[(2, 12)]);
     assert_eq!(fixes(src, &d), []);
 }
 
@@ -155,7 +155,7 @@ fn char_after_a_rejected_integer_adds_no_error() {
 /// assignment's target and a declared type are not what changes. The `f64` is reported in
 /// either order.
 #[test]
-fn mixing_under_an_integer() {
+fn an_f64_operand_under_an_integer_should_be_reported() {
     let rows = [
         (
             "fn main() {\n    let mut n = 1\n    n += 1.5\n    print(n)\n}",
@@ -191,7 +191,16 @@ fn mixing_under_an_integer() {
         ),
     ];
     for (src, at) in rows {
-        let d = diagnostic(src, Code::Mismatch, at, &[]);
+        // The written `i64` is labelled: a return type or a `let`'s type. A compound assignment
+        // has none.
+        let secondary: &[_] = if src.contains("-> i64") {
+            &[(1, 25)]
+        } else if src.contains("let y: i64") {
+            &[(2, 12)]
+        } else {
+            &[]
+        };
+        let d = diagnostic(src, Code::Mismatch, at, secondary);
         assert_eq!(fixes(src, &d), [], "{src}");
     }
 }
@@ -199,7 +208,7 @@ fn mixing_under_an_integer() {
 /// The `i64` the context wants reaches an operator inside the first operand, so the `f64` is
 /// reported however deep it sits. A `+` that a `string` makes a join is reported as before.
 #[test]
-fn mixing_under_an_integer_nested() {
+fn a_nested_f64_operand_under_an_integer_should_be_reported() {
     let function = |body: &str| {
         format!("fn f(x: f64, n: i64, s: string) -> i64 {{\n    {body}\n}}\nfn main() {{}}")
     };
@@ -212,7 +221,7 @@ fn mixing_under_an_integer_nested() {
     ];
     for (body, at) in rows {
         let src = function(body);
-        let d = diagnostic(&src, Code::Mismatch, at, &[]);
+        let d = diagnostic(&src, Code::Mismatch, at, &[(1, 36)]);
         assert_eq!(fixes(&src, &d), [], "{src}");
     }
     // An `i64?` wants an `i64` too.
@@ -236,12 +245,12 @@ fn mixing_under_an_integer_nested() {
 /// `i64(x)` can fail, so it gives an `i64?`. `u8(x)` and `char(x)` take only an `i64`, and get
 /// no fix: no one conversion turns an `f64` into one.
 #[test]
-fn float_conversions() {
+fn a_conversion_from_f64_should_give_an_optional_or_no_fix() {
     clean("fn f(x: f64) -> i64? { i64(x) }\nfn main() {}");
     clean("fn f(x: f64) -> i64 { i64(x) ?? 0 }\nfn main() {}");
     // The plain `i64` is a mismatch at the call; see tests/diagnostics/E0032-float-to-int.
     let src = "fn f(x: f64) -> i64 { i64(x) }\nfn main() {}";
-    let d = diagnostic(src, Code::Mismatch, (1, 23, "i64(x)"), &[]);
+    let d = diagnostic(src, Code::Mismatch, (1, 23, "i64(x)"), &[(1, 17)]);
     assert_eq!(fixes(src, &d), [], "{src}");
     for (expr, col) in [("u8(x)", 16), ("char(x)", 18)] {
         let src = scalars(expr);

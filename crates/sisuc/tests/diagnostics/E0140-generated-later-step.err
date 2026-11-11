@@ -1,12 +1,16 @@
 error[E0140]: `W<T>.eq` instantiates itself without end
   --> E0140-generated-later-step.sisu:10:9
    |
- 2 |     Item(T)
-   |          - the `==` of `Wrap` here may call `W<T>.eq` through `Eq`
-...
 10 |         helper([self.x])
    |         ^^^^^^^^^^^^^^^^ `helper<[T]>` here
-...
+   |
+  ::: E0140-generated-later-step.sisu:2:10
+   |
+ 2 |     Item(T)
+   |          - the `==` of `Wrap` here may call `W<T>.eq` through `Eq`
+   |
+  ::: E0140-generated-later-step.sisu:14:5
+   |
 14 |     Wrap.Item(W(x: [u])) == Wrap.Item(W(x: [u]))
    |     -------------------------------------------- which instantiates `Wrap<W<[U]>>`
    |

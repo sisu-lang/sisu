@@ -3,7 +3,9 @@ error[E0140]: `E` instantiates itself without end
    |
 10 |     type Item = E<V<V<T>>>
    |                 ^^^^^^^^^^ `E<V<V<T>>>` here
-...
+   |
+  ::: E0140-choice-holders.sisu:14:8
+   |
 14 |     Go(T.Item)
    |        ------ which instantiates `T.Item`
    |
@@ -14,10 +16,14 @@ error[E0140]: `G` instantiates itself without end
    |
 22 |     type Item = F<W<W<T>>>
    |                 ^^^^^^^^^^ `F<W<W<T>>>` here
-...
+   |
+  ::: E0140-choice-holders.sisu:26:8
+   |
 26 |     Go(G<T>)
    |        ---- which instantiates `G<T>`
-...
+   |
+  ::: E0140-choice-holders.sisu:30:8
+   |
 30 |     Go(T.Item)
    |        ------ which instantiates `T.Item`
    |

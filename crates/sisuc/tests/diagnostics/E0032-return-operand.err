@@ -1,6 +1,8 @@
 error[E0032]: expected `i64`, found `string`
  --> E0032-return-operand.sisu:5:20
   |
+4 | fn f() -> i64 {
+  |           --- `f` returns `i64`
 5 |     let x = return "a"
   |                    ^^^
 

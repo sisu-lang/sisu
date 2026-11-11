@@ -3,7 +3,9 @@ error[E0170]: `self.b?.next` can be missing, so it cannot be a `mut` argument
    |
 13 |         relink(mut self.b?.next)
    |                    ^^^^^^^^^^^^ `self.b` can be `None`, and then there is no place to store back to
-...
+   |
+  ::: E0170-chain-self.sisu:17:15
+   |
 17 | fn relink(mut n: Node?) {
    |               - declared `Node?` here
    |

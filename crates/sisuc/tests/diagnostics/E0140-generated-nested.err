@@ -1,14 +1,18 @@
 error[E0140]: `W<T>.eq` instantiates itself without end
   --> E0140-generated-nested.sisu:14:9
    |
- 3 |     Item(T)
-   |          - the `==` of `Wrap` here may call `W<T>.eq` through `Eq`
-...
- 7 |     In(Wrap<T>)
-   |        ------- which instantiates `Wrap<T>`
-...
 14 |         Outer.In(Wrap.Item(W(x: [self.x]))) == Outer.In(Wrap.Item(W(x: [other.x])))
    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `==` here
+   |
+  ::: E0140-generated-nested.sisu:3:10
+   |
+ 3 |     Item(T)
+   |          - the `==` of `Wrap` here may call `W<T>.eq` through `Eq`
+   |
+  ::: E0140-generated-nested.sisu:7:8
+   |
+ 7 |     In(Wrap<T>)
+   |        ------- which instantiates `Wrap<T>`
    |
    = help: a call through `Eq` counts as reaching every conformance to `Eq`. `Outer<W<[T]>>` holds `W<[T]>`, whose argument grows
 

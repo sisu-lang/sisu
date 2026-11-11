@@ -1,11 +1,13 @@
 error[E0170]: `b?.cells` can be missing, so it cannot be a `mut` argument
   --> E0170-chain-generic-optional.sisu:15:14
    |
- 9 | fn fill<T>(mut xs: [T]?, value: T) {
-   |                -- declared `[T]?` here
-...
 15 |     fill(mut b?.cells, 3)
    |              ^^^^^^^^ `fill` can write `None` back, and the field `cells` cannot hold `None`
+   |
+  ::: E0170-chain-generic-optional.sisu:9:16
+   |
+ 9 | fn fill<T>(mut xs: [T]?, value: T) {
+   |                -- declared `[T]?` here
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0170

@@ -104,11 +104,11 @@ fn conversion_types() {
 /// The optional a conversion gives is not its payload: the mismatch gets the help, and no fix,
 /// since the default is not known.
 #[test]
-fn failed_conversion_as_value() {
+fn a_conversion_as_its_payload_should_get_help_and_no_fix() {
     for (decl, found) in [("b: u8", "u8(n)"), ("c: char", "char(n)")] {
         let src = format!("fn main() {{\n    let n = 1\n    let {decl} = {found}\n}}");
         let col = 12 + decl.len();
-        let d = diagnostic(&src, Code::Mismatch, (3, col, found), &[]);
+        let d = diagnostic(&src, Code::Mismatch, (3, col, found), &[(3, 12)]);
         assert!(d.help().is_some(), "{d:?}");
         assert_eq!(fixes(&src, &d), []);
     }
@@ -146,7 +146,7 @@ fn literal_argument_is_optional() {
 
 /// `u8(...)` and `char(...)` give an optional, so they are offered only where one fits.
 #[test]
-fn conversion_fix_needs_optional() {
+fn a_conversion_fix_should_be_offered_only_where_an_optional_fits() {
     let program =
         |line: &str| format!("fn main() {{\n    let n = 1\n    let k = 'a'\n    {line}\n}}");
     for (declared, fixed) in [
@@ -160,7 +160,12 @@ fn conversion_fix_needs_optional() {
     ] {
         let src = program(declared);
         let col = declared.len() + 4;
-        let d = diagnostic(&src, Code::Mismatch, (4, col, &declared[col - 5..]), &[]);
+        let d = diagnostic(
+            &src,
+            Code::Mismatch,
+            (4, col, &declared[col - 5..]),
+            &[(4, 12)],
+        );
         match fixed {
             Some(fixed) => {
                 assert!(d.fixes().iter().all(|f| !f.safe()), "{src}");
@@ -336,37 +341,41 @@ fn mismatch_fix_converts_the_expression_found() {
 }
 
 #[test]
-fn mismatch_has_no_fix_between_other_types() {
-    for (src, pos) in [
-        ("fn main() { let b: bool = 1 }", (1, 27, "1")),
+fn a_mismatch_between_other_types_should_have_no_fix() {
+    for (src, pos, written) in [
+        ("fn main() { let b: bool = 1 }", (1, 27, "1"), (1, 20)),
         (
             "fn f(n: i64) {\n    let b: bool = n\n}\nfn main() {}",
             (2, 19, "n"),
+            (2, 12),
         ),
         (
             "fn f(b: bool) {\n    let n: u8 = b\n}\nfn main() {}",
             (2, 17, "b"),
+            (2, 12),
         ),
     ] {
-        let d = diagnostic(src, Code::Mismatch, pos, &[]);
+        let d = diagnostic(src, Code::Mismatch, pos, &[written]);
         assert!(d.fixes().is_empty(), "{src}: {:?}", d.fixes());
     }
 }
 
 /// An `else if` or `else if let` is no expression to wrap: `else u8(if ...)` would not parse.
 #[test]
-fn mismatch_has_no_fix_for_an_else_if() {
-    for (src, found) in [
+fn a_mismatch_of_an_else_if_should_have_no_fix() {
+    for (src, found, returns) in [
         (
             "fn f(c: bool, d: bool, b: u8) -> i64 {\n    if c { 1 } else if d { b } else { b }\n}\nfn main() {}",
             "if d { b } else { b }",
+            (1, 34),
         ),
         (
             "fn f(c: bool, d: u8?, b: u8) -> i64 {\n    if c { 1 } else if let x = d { b } else { b }\n}\nfn main() {}",
             "if let x = d { b } else { b }",
+            (1, 33),
         ),
     ] {
-        let d = diagnostic(src, Code::Mismatch, (2, 21, found), &[]);
+        let d = diagnostic(src, Code::Mismatch, (2, 21, found), &[returns]);
         assert!(d.fixes().is_empty(), "{src}: {:?}", d.fixes());
     }
 }

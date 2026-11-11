@@ -1,11 +1,13 @@
 error[E0166]: the parameter `xs` of `set` is `mut`, so its argument needs `mut`
   --> E0166-param.sisu:10:9
    |
- 5 | fn set(mut xs: [i64]) {
-   |            -- declared `mut` here
-...
 10 |     set(p)
    |         ^ needs `mut`
+   |
+  ::: E0166-param.sisu:5:12
+   |
+ 5 | fn set(mut xs: [i64]) {
+   |            -- declared `mut` here
    |
    = help: to change only a local copy, remove `mut` here and write `let mut xs = xs` in the body
 

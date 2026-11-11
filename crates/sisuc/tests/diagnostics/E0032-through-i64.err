@@ -2,7 +2,9 @@ error[E0032]: expected `char?`, found `u8`
  --> E0032-through-i64.sisu:3:20
   |
 3 |     let c: char? = b
-  |                    ^
+  |            -----   ^
+  |            |
+  |            declared as `char?` here
   |
 help: if the types are right, convert it with `char(...)`
   |
