@@ -9,6 +9,7 @@
 // AND a value that reads the hint of a join names the branch that gave the hint
 // AND a generic call names the argument that bound the type parameter
 // AND an element of an array argument binds for the whole argument
+// AND a literal, `None` or `[]` that took its type from a later sibling is not the origin
 fn element() {
     let a = [1, "x"]
     print(a)
@@ -57,6 +58,26 @@ fn has<T>(a: [T], x: T) -> bool { true }
 fn bound_argument(n: i64) {
     print(has(["a", "b"], n))
 }
+fn literal_arm(n: i64, b: u8) {
+    let a = match n {
+        1 => 5
+        2 => b
+        _ => "x"
+    }
+    print(a)
+}
+fn none_arm(n: i64, v: i64) {
+    let a = match n {
+        0 => None
+        1 => v
+        _ => "x"
+    }
+    print(a)
+}
+fn literal_element(b: u8) {
+    let a = [5, b, "x"]
+    print(a)
+}
 fn main() {
     element()
     branch()
@@ -69,4 +90,7 @@ fn main() {
     optional_element()
     bound_element(1)
     bound_argument(1)
+    literal_arm(1, 2)
+    none_arm(1, 2)
+    literal_element(2)
 }

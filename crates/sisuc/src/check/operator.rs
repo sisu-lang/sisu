@@ -329,7 +329,7 @@ impl Checker<'_> {
         let (context, context_origin) = (expected.ty(), expected.origin());
         let origin_of = |want: Option<Type>| {
             let branch = matches!(context_origin, Origin::Branch { ty, .. } if want == Some(ty));
-            if want.is_some() && want == context || branch {
+            if (want.is_some() && want == context) || branch {
                 context_origin
             } else {
                 Origin::None

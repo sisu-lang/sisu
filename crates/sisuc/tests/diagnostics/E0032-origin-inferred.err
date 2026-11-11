@@ -1,88 +1,112 @@
 error[E0032]: expected `i64`, found `string`
-  --> E0032-origin-inferred.sisu:13:17
+  --> E0032-origin-inferred.sisu:14:17
    |
-13 |     let a = [1, "x"]
+14 |     let a = [1, "x"]
    |              -  ^^^
    |              |
    |              this element gives the type `i64`
 
 error[E0032]: expected `i64`, found `string`
-  --> E0032-origin-inferred.sisu:17:34
+  --> E0032-origin-inferred.sisu:18:34
    |
-17 |     let a = if true { 1 } else { "x" }
+18 |     let a = if true { 1 } else { "x" }
    |                       -          ^^^
    |                       |
    |                       this branch gives the type `i64`
 
 error[E0032]: expected `string`, found `i64`
-  --> E0032-origin-inferred.sisu:22:7
+  --> E0032-origin-inferred.sisu:23:7
    |
-22 |     g(1, "x")
+23 |     g(1, "x")
    |       ^  --- this argument gives `T` the type `string`
 
 error[E0032]: expected `i64`, found `string`
-  --> E0032-origin-inferred.sisu:25:31
+  --> E0032-origin-inferred.sisu:26:31
    |
-25 |     let a = if c { 1 } else { if d { "x" } else { "y" } }
+26 |     let a = if c { 1 } else { if d { "x" } else { "y" } }
    |                    -          ^^^^^^^^^^^^^^^^^^^^^^^^^
    |                    |
    |                    this branch gives the type `i64`
 
 error[E0032]: expected `string`, found `i64`
-  --> E0032-origin-inferred.sisu:29:51
+  --> E0032-origin-inferred.sisu:30:51
    |
-29 |     let a = if c { 1 } else { if d { "x" } else { 2 } }
+30 |     let a = if c { 1 } else { if d { "x" } else { 2 } }
    |                                      ---          ^
    |                                      |
    |                                      this branch gives the type `string`
 
 error[E0032]: expected `i64`, found `[]`
-  --> E0032-origin-inferred.sisu:33:31
+  --> E0032-origin-inferred.sisu:34:31
    |
-33 |     let a = if c { 1 } else { [] }
+34 |     let a = if c { 1 } else { [] }
    |                    -          ^^
    |                    |
    |                    this branch gives the type `i64`
 
 error[E0032]: expected `i64`, found `None`
-  --> E0032-origin-inferred.sisu:37:35
+  --> E0032-origin-inferred.sisu:38:35
    |
-37 |     let a = if c { n } else { 1 + None }
+38 |     let a = if c { n } else { 1 + None }
    |                    -              ^^^^
    |                    |
    |                    this branch gives the type `i64`
 
 error[E0032]: expected `i64?`, found `string`
-  --> E0032-origin-inferred.sisu:44:14
+  --> E0032-origin-inferred.sisu:45:14
    |
-43 |         2 => Some(1)
+44 |         2 => Some(1)
    |              ------- this branch gives the type `i64?`
-44 |         _ => "x"
+45 |         _ => "x"
    |              ^^^
 
 error[E0032]: expected `i64?`, found `string`
-  --> E0032-origin-inferred.sisu:49:26
+  --> E0032-origin-inferred.sisu:50:26
    |
-49 |     let a = [5, Some(1), "x"]
+50 |     let a = [5, Some(1), "x"]
    |                 -------  ^^^
    |                 |
    |                 this element gives the type `i64?`
 
 error[E0032]: expected `i64`, found `string`
-  --> E0032-origin-inferred.sisu:54:23
+  --> E0032-origin-inferred.sisu:55:23
    |
-54 |     print(f([None, n, "x"]))
+55 |     print(f([None, n, "x"]))
    |                    -  ^^^
    |                    |
    |                    this element gives the type `i64`
 
 error[E0032]: expected `string`, found `i64`
-  --> E0032-origin-inferred.sisu:58:27
+  --> E0032-origin-inferred.sisu:59:27
    |
-58 |     print(has(["a", "b"], n))
+59 |     print(has(["a", "b"], n))
    |               ----------  ^
    |               |
    |               this argument gives `T` the type `string`
 
-sisu: 11 errors
+error[E0032]: expected `u8`, found `string`
+  --> E0032-origin-inferred.sisu:65:14
+   |
+64 |         2 => b
+   |              - this branch gives the type `u8`
+65 |         _ => "x"
+   |              ^^^
+
+error[E0032]: expected `i64?`, found `string`
+  --> E0032-origin-inferred.sisu:73:14
+   |
+72 |         1 => v
+   |              - this branch gives the type `i64`
+73 |         _ => "x"
+   |              ^^^
+
+error[E0032]: expected `u8`, found `string`
+  --> E0032-origin-inferred.sisu:78:20
+   |
+78 |     let a = [5, b, "x"]
+   |                 -  ^^^
+   |                 |
+   |                 this element gives the type `u8`
+
+sisu: 14 errors
 sisu: for more on a code, run `sisu explain <code>`: E0032

@@ -197,7 +197,8 @@ impl Checker<'_> {
                 slots[i] = Some(checked);
             }
         }
-        let literal = literal_type(slots.iter().flatten().next().and_then(type_of));
+        let first = slots.iter().flatten().next().and_then(type_of);
+        let literal = literal_type(first);
         for (i, e) in elements.iter().enumerate() {
             if ranks[i] == Rank::Literal {
                 // An `optional` element may be `None`, which the literal's type does not hold.
@@ -228,7 +229,7 @@ impl Checker<'_> {
                     failed = Some(self.diagnostics.error(d));
                 }
                 ObjectJoin::Not => {
-                    (joined, failed) = self.fold_elements(elements, &typed);
+                    (joined, failed) = self.fold_elements(elements, &typed, (&ranks, first));
                 }
             }
         }
@@ -371,21 +372,23 @@ impl Checker<'_> {
 
     /// The type that the typed `elements` join to, each an index and a type, and whether the join
     /// failed (reported). With an `any` element, the join is that type, whatever the order. Else
-    /// the types fold in source order. A report names the first element in source order of the
-    /// type it expects, which gave the array that type.
+    /// the types fold in source order. A report names the element that gave the array the type
+    /// it expects: the first of that type in the order of the waves (`ranks`), except one that
+    /// took it from `first`, the first concrete element (see `Rank::took`).
     fn fold_elements(
         &mut self,
         elements: &[ast::Expr],
         typed: &[(usize, Type)],
+        (ranks, first): (&[Rank], Option<Type>),
     ) -> (Option<Type>, Option<Reported>) {
         let report = |c: &mut Self, at: usize, want: Type, got: Type| {
-            let origin =
-                (typed.iter())
-                    .find(|&&(_, ty)| ty == want)
-                    .map_or(Origin::None, |&(i, _)| Origin::Element {
-                        at: elements[i].span,
-                        ty: want,
-                    });
+            let origin = (typed.iter())
+                .filter(|&&(i, ty)| ty == want && !first.is_some_and(|s| ranks[i].took(s)))
+                .min_by_key(|&&(i, _)| ranks[i])
+                .map_or(Origin::None, |&(i, _)| Origin::Element {
+                    at: elements[i].span,
+                    ty: want,
+                });
             let d = c.mismatch(elements[at].span, Some(&elements[at]), want, got, origin);
             Some(c.diagnostics.error(d))
         };

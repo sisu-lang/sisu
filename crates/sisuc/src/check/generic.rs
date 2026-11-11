@@ -10,7 +10,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::alias::{Through, Via};
 use super::any;
 use super::array::innermost;
-use super::expr::{bare_hole, dbg_argument, option_written, read_jump};
+use super::expr::{bare_hole, dbg_argument, literal_type, option_written, read_jump};
 use super::interface::{Bounds, Required};
 use super::mut_args::{MutParts, MutSite, PlaceShape, marked};
 use super::names::{self, ItemId, Resolved};
@@ -1709,14 +1709,18 @@ pub(super) struct Inference<'s> {
     function: Option<tir::FuncId>,
     /// The call's arguments, for the one that bound a parameter (see `inferred_origin`).
     args: &'s [ast::Arg],
+    /// The place among `args` of the argument that the call checks now, which a binding in it
+    /// records (see `Origins::set_first`).
+    arg: Option<usize>,
 }
 
 mod origins {
     use crate::source::Span;
 
-    /// Where each parameter of a call was bound (see `Inference::origin`). The list is private,
-    /// so each read goes through `get`, which a test counts.
-    pub(super) struct Origins(Vec<Option<Span>>);
+    /// Where each parameter of a call was bound (see `Inference::origin`), and the place of the
+    /// argument that the call checked then. The list is private, so each read goes through `get`
+    /// or `arg`, which a test counts.
+    pub(super) struct Origins(Vec<Option<(Span, Option<usize>)>>);
 
     impl Origins {
         /// No place yet for each of `count` parameters.
@@ -1728,17 +1732,26 @@ mod origins {
         pub(super) fn get(&self, i: usize) -> Option<Span> {
             #[cfg(test)]
             super::ORIGINS.set(super::ORIGINS.get() + 1);
-            self.0[i]
+            self.0[i].map(|(at, _)| at)
         }
 
-        /// Records that parameter `i` was bound at `at`.
+        /// The place of the argument that the call checked when parameter `i` was bound. Panics
+        /// when `i` is not a parameter of the call.
+        pub(super) fn arg(&self, i: usize) -> Option<usize> {
+            #[cfg(test)]
+            super::ORIGINS.set(super::ORIGINS.get() + 1);
+            self.0[i].and_then(|(_, arg)| arg)
+        }
+
+        /// Records that parameter `i` was bound at `at`, outside an argument.
         pub(super) fn set(&mut self, i: usize, at: Option<Span>) {
-            self.0[i] = at;
+            self.0[i] = at.map(|at| (at, None));
         }
 
-        /// Records that parameter `i` was bound at `at`, unless it has a place already.
-        pub(super) fn set_first(&mut self, i: usize, at: Span) {
-            self.0[i].get_or_insert(at);
+        /// Records that parameter `i` was bound at `at` while the call checked the argument at
+        /// `arg`, unless it has a place already.
+        pub(super) fn set_first(&mut self, i: usize, at: Span, arg: Option<usize>) {
+            self.0[i].get_or_insert((at, arg));
         }
     }
 }
@@ -1764,12 +1777,12 @@ fn inferred_origin(call: &Inference<'_>, pattern: Type) -> Option<Origin> {
         }
     };
     let bound = call.origin.get(j)?;
-    let arg = (call.args.iter()).find(|arg| {
-        #[cfg(test)]
-        ARGS_READ.set(ARGS_READ.get() + 1);
-        arg.value.span.start() <= bound.start() && bound.end() <= arg.value.span.end()
-    })?;
-    Some(Origin::Inferred {
+    let arg = call.args.get(call.origin.arg(j)?)?;
+    #[cfg(test)]
+    ARGS_READ.set(ARGS_READ.get() + 1);
+    // A binding by the context while the argument is checked is not in the argument.
+    let inside = arg.value.span.start() <= bound.start() && bound.end() <= arg.value.span.end();
+    inside.then_some(Origin::Inferred {
         at: arg.value.span,
         param,
         ty: call.bindings.found[j]?,
@@ -1921,6 +1934,19 @@ pub(super) enum Rank {
     Literal,
     /// Its type cannot come from itself: it needs the context of its call.
     Waits,
+}
+
+impl Rank {
+    /// Whether a value of this rank, checked beside siblings of type `siblings`, took its type
+    /// from them, so that it did not give that type. A value that waits always took it. A literal
+    /// took it when the siblings give its literals a type that is not their default.
+    pub(super) fn took(self, siblings: Type) -> bool {
+        match self {
+            Self::Concrete => false,
+            Self::Literal => literal_type(Some(siblings)) != literal_type(None),
+            Self::Waits => true,
+        }
+    }
 }
 
 /// What `rank_value` finds about a value.
@@ -2284,6 +2310,7 @@ impl Checker<'_> {
             mut_shapes: Vec::new(),
             function: sig.function,
             args,
+            arg: None,
         };
         // How many type arguments the call writes. They bind the result of a call that fails.
         let mut named = 0;
@@ -2313,6 +2340,7 @@ impl Checker<'_> {
                 if !site.muts[i] {
                     continue;
                 }
+                call.arg = Some(i);
                 let slot = if marked(arg) {
                     Some(self.infer_mut_arg(&mut call, arg, i, (sig.params[i], site), parts))
                 } else {
@@ -2320,6 +2348,7 @@ impl Checker<'_> {
                     // other arguments are no cascade.
                     self.unmarked_place(arg, i, parts, Some((&mut call, sig.params[i])))
                 };
+                call.arg = None;
                 call.slots[i] = slot;
             }
         }
@@ -3162,7 +3191,9 @@ impl Checker<'_> {
             function: Origin::id(f.0),
             index: Origin::id(i),
         });
+        let outer = call.arg.replace(i);
         let checked = read_jump(self.infer_value(call, e, (pattern, origin), context));
+        call.arg = outer;
         if unbound && let Some(ty @ (Type::UNIT | Type::NEVER)) = type_of(&checked) {
             let at = self.never_at(e.span);
             call.last.push((i, ty, at));
@@ -3363,11 +3394,10 @@ impl Checker<'_> {
         let entry = call.bindings.kept;
         let mut slots: Vec<Option<Checked>> = elements.iter().map(|_| None).collect();
         let mut quiet = false;
-        // `element`'s type once an element binds all it names. A later element meets it with
-        // no new walk of `element`, so the work does not grow with elements times its depth.
-        let mut bound = None;
-        // The element that set `bound`, which a later element that does not meet it names.
-        let mut bound_at = span;
+        // `element`'s type once an element binds all it names, and that element, which a later
+        // element that does not meet it names. A later element meets it with no new walk of
+        // `element`, so the work does not grow with elements times its depth.
+        let mut bound: Option<(Type, Span)> = None;
         let ranks: Vec<Rank> = elements.iter().map(|e| self.sibling_rank(e)).collect();
         for wave in [Rank::Concrete, Rank::Literal, Rank::Waits] {
             for (i, e) in elements
@@ -3375,11 +3405,8 @@ impl Checker<'_> {
                 .enumerate()
                 .filter(|&(i, _)| ranks[i] == wave)
             {
-                let checked = if let Some(want) = bound {
-                    let origin = Origin::Element {
-                        at: bound_at,
-                        ty: want,
-                    };
+                let checked = if let Some((want, at)) = bound {
+                    let origin = Origin::Element { at, ty: want };
                     mark(self.operand(e, Expectation::Required(want, origin)))
                 } else if !bare_hole(e) {
                     let kept = call.bindings.kept;
@@ -3416,8 +3443,8 @@ impl Checker<'_> {
                         bound = match nested {
                             Some(inner) => inner.map(Type::array),
                             None => self.known_in(call, element),
-                        };
-                        bound_at = e.span;
+                        }
+                        .map(|ty| (ty, e.span));
                     }
                     checked
                 } else {
@@ -3453,7 +3480,7 @@ impl Checker<'_> {
                 });
             }
         }
-        let Some(bound) = bound else {
+        let Some((bound, _)) = bound else {
             // An element that binds nothing failed, and holds the proof, else the call failed.
             let reported = first_failed(&slots).or_else(|| failure(call));
             let reported = reported.unwrap_or_else(|| self.proof(span)); // proof: quiet reader
@@ -3490,7 +3517,7 @@ impl Checker<'_> {
         for &i in &call.bindings.fresh {
             #[cfg(test)]
             VISITS.set(VISITS.get() + 1);
-            call.origin.set_first(i, at);
+            call.origin.set_first(i, at, call.arg);
             call.bound.push(i);
             let ty = call.bindings.found[i].expect("a fresh parameter should be bound");
             // The context rejected it, and the outer call reported why.

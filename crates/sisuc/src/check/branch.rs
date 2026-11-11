@@ -199,6 +199,10 @@ impl Checker<'_> {
     /// that fails for a branch that rejected `expected` is a mismatch too. With no branches, the
     /// type is `never`. A `never` join with a branch that only a failed `break` or `continue`
     /// makes `never` is `Err` with that mark (see `Poisoned::jumped`): one such branch is enough.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one pass checks the branches and keeps the anchor, its origin and the givers"
+    )]
     pub(super) fn join(
         &mut self,
         sources: &[Branch<'_>],
@@ -213,6 +217,9 @@ impl Checker<'_> {
         let mut anchor = siblings.map(|(ty, _)| Some(ty));
         // The hint's origin holds until a branch sets the anchor.
         let mut origin = siblings.map_or(Origin::None, |(_, origin)| origin);
+        // The branches that can give the join its type, in the order of the check: a branch that
+        // took its type from the hint did not give it (see `Rank::took`).
+        let mut givers = Vec::with_capacity(sources.len());
         for i in order {
             let carried = if expected == Expectation::None {
                 anchor.map_or(Expectation::None, |a| {
@@ -221,6 +228,9 @@ impl Checker<'_> {
             } else {
                 expected
             };
+            if !carried.siblings().is_some_and(|s| sources[i].rank.took(s)) {
+                givers.push(i);
+            }
             let block = check(self, i, carried);
             // The first branch of a known type anchors the rest; a failed or `unit` one only
             // until then. An `any` branch widens the anchor, which only the hints read.
@@ -254,7 +264,8 @@ impl Checker<'_> {
                 self.any_block(block, want, source.span);
             }
         }
-        let (joined, error, failed) = self.fold_branches(sources, (expected, siblings), &blocks);
+        let (joined, error, failed) =
+            self.fold_branches(sources, (expected, siblings), &blocks, (&givers, origin));
         // A branch with no type makes the join untyped: its repair can change the join.
         let ty = match joined {
             _ if failed.is_some() || error => None,
@@ -326,12 +337,14 @@ impl Checker<'_> {
     /// other types that differ are reported. Branches that do not join by themselves join to an
     /// `any` type that `siblings` gives (see `seeded_join`). A `Some` of an object joins an `any`
     /// type as the object, and the join is then optional. With an `any` type in reach, the branch
-    /// that does not convert to it is the mistake (see `leaves_any`).
+    /// that does not convert to it is the mistake (see `leaves_any`). `givers` are what
+    /// `join_mismatch` names as the origin.
     fn fold_branches(
         &mut self,
         sources: &[Branch<'_>],
         (expected, siblings): (Expectation, Option<(Type, Origin)>),
         blocks: &[CheckedBlock],
+        givers: (&[usize], Origin),
     ) -> (Option<Type>, bool, Option<Reported>) {
         // A branch's misfit joins by the type it found (see `Misfit`), as a concrete one would.
         let types: Vec<Option<Type>> = (blocks.iter())
@@ -407,7 +420,7 @@ impl Checker<'_> {
                     (Expectation::None, Some((ty, origin))) => Expectation::Required(ty, origin),
                     _ => expected,
                 };
-                self.join_mismatch((sources, blocks), want, earlier, later)
+                self.join_mismatch((sources, blocks), want, (earlier, later), givers)
             }
             AnyJoin::NoAny | AnyJoin::Joined { .. } => {
                 unreachable!("a join that failed should name its mistake")
@@ -419,25 +432,26 @@ impl Checker<'_> {
     /// The mistake when the branch `first`, of type `first_ty`, and the later branch `other`,
     /// of type `other_ty`, do not join. With a type expected, the branch that fits it neither as
     /// is nor as its payload is the mistake; without one, `other` is, against `first_ty`. A
-    /// branch with no value is that mistake, not a type mismatch.
+    /// branch with no value is that mistake, not a type mismatch. `givers` are the branches that
+    /// can give the join its type, in the order of the check, and the origin of the anchor.
     fn join_mismatch(
         &mut self,
         (sources, blocks): (&[Branch<'_>], &[CheckedBlock]),
         expected: Expectation,
-        (first, first_ty): (usize, Type),
-        (other, other_ty): (usize, Type),
+        ((first, first_ty), (other, other_ty)): ((usize, Type), (usize, Type)),
+        (givers, anchor): (&[usize], Origin),
     ) -> Diagnostic {
-        // With no type expected, the first branch in source order of the type `first_ty` gave
-        // it: a later `T?` branch keeps the index of an earlier `T` one (`fold_in_order`).
-        let given = (0..blocks.len())
-            .find(|&i| {
+        // With no type expected, the first giver of the type `first_ty` gave it: a later `T?`
+        // branch keeps the index of an earlier `T` one (`fold_in_order`). With no such giver, the
+        // branch that set the anchor gave its own type.
+        let given = (givers.iter())
+            .find(|&&i| {
                 block_type(&blocks[i]).or_else(|| self.misfit_type(&blocks[i])) == Some(first_ty)
             })
-            .unwrap_or(first);
-        let given = Origin::Branch {
-            at: sources[given].span,
-            ty: first_ty,
-        };
+            .map_or(anchor, |&i| Origin::Branch {
+                at: sources[i].span,
+                ty: first_ty,
+            });
         let mut report = |i: usize, want: Type, got: Type, origin: Origin| {
             let (at, tail, want, got) = self.reported(&sources[i], &blocks[i], want, got);
             self.leaves_any(at, tail, want, got, origin)
