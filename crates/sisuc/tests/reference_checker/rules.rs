@@ -570,19 +570,31 @@ fn hash_should_change_only_with_the_meaning() {
 /// AND a stale marker of it still fails
 /// AND a pending example before the first `##` or under a `####` heading puts no rule in
 /// development
+/// AND a `##` section is a section in development, as a `###` section is
 #[test]
 fn rule_in_development_should_need_no_test() {
     let pending = "```sisu pending\nfn main() {}\n```\n";
     let stale = [marker("crates/a.sisu", 1, "strings.a", "0000")];
     let section = format!("### S\n\n{pending}\n**Rules**\n\n- {{#strings.a}} x\n");
-    let before = format!("{pending}\n## S\n\n**Rules**\n\n- {{#strings.a}} x\n");
+    // The rule is in the same region as the pending example, under a `#` title.
+    let before = format!("# T\n\n{pending}\n**Rules**\n\n- {{#strings.a}} x\n\n## S\n");
+    let level_two = format!("## S\n\n{pending}\n**Rules**\n\n- {{#strings.a}} x\n");
+    let level_four = format!("#### T\n\n{pending}\n**Rules**\n\n- {{#strings.a}} x\n");
     let deeper = format!("### S\n\n**Rules**\n\n- {{#strings.a}} x\n\n#### T\n\n{pending}");
-    let rows: [(&str, &str, &[RuleMarker], &str, usize); 4] = [
+    let rows: [(&str, &str, &[RuleMarker], &str, usize); 6] = [
         ("pending in the section", &section, &[], "", 0),
         ("pending and a stale marker", &section, &stale, "changed", 9),
+        ("pending in a `##` section", &level_two, &[], "", 0),
         (
-            "pending before the first heading",
+            "pending before the first `##`, under a title",
             &before,
+            &[],
+            "has no test",
+            9,
+        ),
+        (
+            "pending under a `####` heading, with the rule",
+            &level_four,
             &[],
             "has no test",
             9,
@@ -673,4 +685,18 @@ fn one_test_should_prove_two_rules() {
         &rule_fault_list("strings", text, &markers),
         &[],
     );
+}
+
+/// GIVEN a joined page with a `###` section whose `sisu pending` example has a fault
+/// WHEN its faults are found
+/// THEN the example gives its fault in the page
+/// AND the rule of the section gives no fault for a missing test
+#[test]
+fn pending_example_with_a_fault_should_keep_its_section_in_development() {
+    let text =
+        "### S\n\n```sisu pending args=\"a\"\nfn main() {}\n```\n\n**Rules**\n\n- {#strings.a} x\n";
+    let page = read_page(text);
+    let lines: Vec<usize> = page.faults.iter().map(|fault| fault.line).collect();
+    assert_eq!(lines, [3], "the faults of the page are {:?}", page.faults);
+    assert_faults("args", &rule_fault_list("strings", text, &[]), &[]);
 }
