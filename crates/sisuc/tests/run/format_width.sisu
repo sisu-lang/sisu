@@ -20,6 +20,7 @@ fn main() {
     // A code point is one column, whatever its bytes; centre puts the odd space on the right.
     print("[{"é":>5}]")                    // [    é]
     print("[{"日本":^7}]")                  // [  日本   ]
+    print("[{"😀":>3}]")                    // [  😀]
     // A value longer than its width is not cut.
     print("[{"héllo":>3}]")                // [héllo]
 
