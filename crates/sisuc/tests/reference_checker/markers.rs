@@ -46,7 +46,7 @@ fn bad_marker_should_fail_at_its_line() {
     let test = "crates/sisuc/tests/run/a.sisu";
     let known = id_set(&["strings.text.null"]);
     // Each row is a name, a file, the bytes of the file and the fragment of the one fault.
-    let rows: [(&str, &str, &[u8], &str); 5] = [
+    let rows: [(&str, &str, &[u8], &str); 9] = [
         (
             "unknown ID",
             test,
@@ -69,6 +69,30 @@ fn bad_marker_should_fail_at_its_line() {
             "text after the marker",
             test,
             b"// r[verify strings.text.null@7c1e] x\n",
+            "marker has a bad form",
+        ),
+        (
+            "white space in the ID",
+            test,
+            b"// r[verify strings.text null@1234]\n",
+            "marker has a bad form",
+        ),
+        (
+            "empty ID",
+            test,
+            b"// r[verify @1234]\n",
+            "marker has a bad form",
+        ),
+        (
+            "bracket in the ID",
+            test,
+            b"// r[verify strings]text@1234]\n",
+            "marker has a bad form",
+        ),
+        (
+            "commented-out code that starts with r[",
+            test,
+            b"// r[i] = 0\n",
             "marker has a bad form",
         ),
         (
@@ -239,6 +263,10 @@ fn walk_should_find_files_under_each_root() {
             "row {path}: no file under {dir}"
         );
     }
+    assert!(
+        files.windows(2).all(|pair| pair[0].0 < pair[1].0),
+        "the paths should be sorted"
+    );
     let bytes = files
         .iter()
         .find(|(file, _)| file == "crates/sisuc/tests/diagnostics/E0072.sisu")
@@ -270,4 +298,61 @@ fn unreadable_file_should_fail_the_walk() {
         markers_err.contains("crates/x.sisu"),
         "markers error: {markers_err}"
     );
+}
+
+/// GIVEN a temporary directory with `crates/a.rs`, which holds a marker and a marker that does not
+/// parse
+/// AND `site/programs/a.sisu`, which holds a marker
+/// WHEN the markers of the directory are read
+/// THEN the result is the one good marker, at its file and line
+/// AND the result is a fault for the bad marker and a fault for the file that the site shows
+#[test]
+fn markers_in_should_keep_the_markers_and_the_faults() {
+    let dir = support::case_dir(Path::new("reference_checker/markers_in"));
+    fs::create_dir_all(dir.join("crates")).expect("creates crates");
+    fs::create_dir_all(dir.join("site/programs")).expect("creates site/programs");
+    fs::write(
+        dir.join("crates/a.rs"),
+        "// r[verify strings.text.null@7c1e]\n// r[verify strings.text.null]\n",
+    )
+    .expect("writes a.rs");
+    fs::write(
+        dir.join("site/programs/a.sisu"),
+        "// r[verify strings.text.null@7c1e]\n",
+    )
+    .expect("writes a.sisu");
+    let (markers, faults) = markers_in(&dir).expect("markers_in should read the directory");
+    let found: Vec<_> = markers.iter().map(|m| (m.file.as_str(), m.line)).collect();
+    assert_eq!(found, [("crates/a.rs", 1)], "markers are {markers:?}");
+    let [bad, shown] = faults.as_slice() else {
+        panic!("faults are {faults:?}")
+    };
+    assert_eq!((bad.file.as_str(), bad.line), ("crates/a.rs", 2), "{bad:?}");
+    assert!(bad.message.contains("marker has a bad form"), "{bad:?}");
+    assert_eq!(
+        (shown.file.as_str(), shown.line),
+        ("site/programs/a.sisu", 1),
+        "{shown:?}"
+    );
+    assert!(
+        shown.message.contains("the site shows this file"),
+        "{shown:?}"
+    );
+}
+
+/// GIVEN a temporary directory with `crates/real/b.rs`
+/// AND a symlink to `crates/real`, and a symlink to `crates`, both under `crates/`
+/// WHEN the walk runs on that directory
+/// THEN the result is `crates/real/b.rs` only, and no failure
+#[test]
+fn walk_should_not_go_into_a_symlinked_directory() {
+    let dir = support::case_dir(Path::new("reference_checker/symlinked_directory"));
+    fs::create_dir_all(dir.join("crates/real")).expect("creates crates/real");
+    fs::create_dir_all(dir.join("site/programs")).expect("creates site/programs");
+    fs::write(dir.join("crates/real/b.rs"), "fn b() {}\n").expect("writes b.rs");
+    symlink(dir.join("crates/real"), dir.join("crates/alias")).expect("creates the alias");
+    symlink(dir.join("crates"), dir.join("crates/loop")).expect("creates the loop");
+    let files = walk(&dir).expect("the walk should not follow a directory symlink");
+    let paths: Vec<&str> = files.iter().map(|(path, _)| path.as_str()).collect();
+    assert_eq!(paths, ["crates/real/b.rs"]);
 }
