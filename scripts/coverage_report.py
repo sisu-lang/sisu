@@ -126,7 +126,8 @@ def line_hits(lcov: str, root: str) -> dict[str, dict[int, int]]:
 def report(
     export: dict[str, Any], lcov: str, diff: str, root: str, read_line: Callable[[str, int], str]
 ) -> str:
-    """Return the report text: the coverage figures and the uncovered regions in changed files."""
+    """Return the figures, the uncovered regions in changed files, then the figures again."""
+    # The figures come last too: a `make coverage` log is long, and its end is what a reader sees.
     totals = export["data"][0]["totals"]
     changed = changed_lines(diff)
     hits = line_hits(lcov, root)
@@ -167,6 +168,7 @@ def report(
         + "\n".join(touching or ["(none)"])
         + "\n\nOther uncovered regions in changed files (advisory):\n"
         + "\n".join(other or ["(none)"])
+        + f"\n\n{head}"
     )
 
 
