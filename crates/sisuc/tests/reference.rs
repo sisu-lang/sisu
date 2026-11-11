@@ -10,7 +10,6 @@ use std::path::Path;
 
 use libtest_mimic::{Arguments, Failed, Trial};
 
-#[expect(dead_code, reason = "red commit: Task 2 uses them")]
 mod reference_check;
 #[expect(dead_code, reason = "this binary uses only part of the shared helpers")]
 mod support;
@@ -82,6 +81,7 @@ fn main() {
     trials.push(Trial::test("reference::markers", move || {
         let (markers, mut faults) = markers_in(Path::new(REPO)).map_err(Failed::from)?;
         faults.extend(unknown_ids(&markers, &known));
+        faults.sort_by(|a, b| (&a.file, a.line).cmp(&(&b.file, b.line)));
         let lines: Vec<String> = faults
             .iter()
             .map(|fault| format!("{}:{}: {}", fault.file, fault.line, fault.message))

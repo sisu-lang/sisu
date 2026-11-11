@@ -252,6 +252,10 @@ pub(crate) fn is_index(stem: &str) -> bool {
 
 /// The IDs that a marker can name: each ID of each joined page. The index never joins, so its
 /// IDs are unknown. An ID with a fault is known, so a marker that names it has no second fault.
-pub(crate) fn known_ids(_pages: &[(String, Page)]) -> FxHashSet<String> {
-    FxHashSet::default()
+pub(crate) fn known_ids(pages: &[(String, Page)]) -> FxHashSet<String> {
+    pages
+        .iter()
+        .filter(|(stem, page)| !is_index(stem) && !page.id_lines.is_empty())
+        .flat_map(|(_, page)| page.rules.iter().filter_map(|rule| rule.id.clone()))
+        .collect()
 }
