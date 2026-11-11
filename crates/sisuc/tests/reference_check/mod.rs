@@ -194,6 +194,13 @@ impl Reader {
         kind: &CodeBlockKind<'_>,
         body: String,
     ) {
+        // Each `sisu` fence is kept, also with a fault in its form, so one fault stays one fault.
+        if let CodeBlockKind::Fenced(info) = kind {
+            let (name, words) = info.split_once(' ').unwrap_or((info, ""));
+            if name == "sisu" {
+                self.fences.push((line, is_pending(words)));
+            }
+        }
         let fault = match kind {
             CodeBlockKind::Indented => {
                 Some("an indented code block is not checked; use a ``` fence".to_string())
@@ -209,7 +216,6 @@ impl Reader {
                     // Markdown decodes escapes and entities in an info string, and the site's
                     // parser decodes some of them in a different way.
                     "sisu" if fence_line.contains(['\\', '&']) => {
-                        self.fences.push((line, is_pending(words)));
                         self.open = Open::Faulted;
                         self.faults.push(Fault {
                             line,
@@ -223,22 +229,19 @@ impl Reader {
                         }
                         Some("a companion block's info string cannot hold `\\` or `&`".to_string())
                     }
-                    "sisu" => {
-                        self.fences.push((line, is_pending(words)));
-                        match example(line, words, body) {
-                            Ok(found) => {
-                                self.examples.push(found);
-                                self.dropped.push(false);
-                                self.open = Open::Example(self.examples.len() - 1);
-                                None
-                            }
-                            Err(fault) => {
-                                self.open = Open::Faulted;
-                                self.faults.push(fault);
-                                None
-                            }
+                    "sisu" => match example(line, words, body) {
+                        Ok(found) => {
+                            self.examples.push(found);
+                            self.dropped.push(false);
+                            self.open = Open::Example(self.examples.len() - 1);
+                            None
                         }
-                    }
+                        Err(fault) => {
+                            self.open = Open::Faulted;
+                            self.faults.push(fault);
+                            None
+                        }
+                    },
                     "output" | "input" | "stderr" if words.is_empty() => match self.open {
                         Open::Nothing => Some(format!(
                             "this `{name}` block follows no example; put it directly \
@@ -325,13 +328,24 @@ fn example(line: usize, words: &str, source: String) -> Result<Example, Fault> {
     })
 }
 
-/// Whether the info `words` after `sisu` make the example `pending`. A fault in the words does
-/// not change the answer: the words with a fault are read for the word `pending`.
+/// Whether the info `words` after `sisu` hold the word `pending`. The words are split at spaces,
+/// and the value of `args="..."` is skipped, as `info` and `example_info` in `site/build.py` read
+/// them. So a fault in the words does not change the answer.
 fn is_pending(words: &str) -> bool {
-    match info(words) {
-        Ok((kind, _)) => kind == Kind::Pending,
-        Err(_) => words.split_whitespace().any(|word| word == "pending"),
+    let mut rest = words.trim_start();
+    while !rest.is_empty() {
+        if let Some(value) = rest.strip_prefix("args=\"") {
+            rest = value.split_once('"').map_or("", |(_, tail)| tail);
+        } else {
+            let (word, tail) = rest.split_once(' ').unwrap_or((rest, ""));
+            if word == "pending" {
+                return true;
+            }
+            rest = tail;
+        }
+        rest = rest.trim_start();
     }
+    false
 }
 
 /// The kind and the arguments that the info `words` after `sisu` give.
