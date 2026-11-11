@@ -109,6 +109,9 @@ The end-to-end cases are files. The `cases` test binary runs one test per
 | `run-fail/` | panic with exit code 101, the same in a plain and an `-O2` build | `<name>.out`: stdout; `<name>.err`: stderr |
 | `diagnostics/` | report diagnostics under `sisu check` (`sisu build --emit mir` for a code that only `mono` reports, such as E0163, because `check` does not run `mono`), exiting 1 if one is an error and 0 if all are warnings; a case named `<CODE>.sisu` or `<CODE>-<case>.sisu` reports that code | `<name>.err`: the diagnostics; `<name>.json`: the same under `--format json` |
 
+The top comment of a `diagnostics/` case can name a position, such as `at 7:9`
+or `(6:10)`. Each one must be where a primary or a secondary span of the
+case's JSON output starts.
 The in-process tests in `crates/sisuc/src/diagnostic/explanations.rs` also read these fixtures.
 They also run each program again with multi-byte comments put in (except the slow E0162 and E0163 programs),
 and check that no span splits a character.
