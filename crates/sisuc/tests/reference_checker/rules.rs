@@ -577,10 +577,16 @@ fn rule_in_development_should_need_no_test() {
     let level_two = format!("## S\n\n{pending}\n**Rules**\n\n- {{#strings.a}} x\n");
     let level_four = format!("#### T\n\n{pending}\n**Rules**\n\n- {{#strings.a}} x\n");
     let deeper = format!("### S\n\n**Rules**\n\n- {{#strings.a}} x\n\n#### T\n\n{pending}");
-    let rows: [(&str, &str, &[RuleMarker], &str, usize); 6] = [
+    let second = format!(
+        "## A\n\n```sisu\nfn main() {{}}\n```\n\n## B\n\n{pending}\n**Rules**\n\n- {{#strings.a}} x\n"
+    );
+    let gap = format!("# T\n\n**Rules**\n\n- {{#strings.a}} x\n\n## S\n\n{pending}");
+    let rows: [(&str, &str, &[RuleMarker], &str, usize); 8] = [
         ("pending in the section", &section, &[], "", 0),
         ("pending and a stale marker", &section, &stale, "changed", 9),
         ("pending in a `##` section", &level_two, &[], "", 0),
+        ("pending in the second section", &second, &[], "", 0),
+        ("rule before a pending section", &gap, &[], "has no test", 5),
         (
             "pending before the first `##`, under a title",
             &before,
@@ -689,10 +695,39 @@ fn one_test_should_prove_two_rules() {
 /// AND the rule of the section gives no fault for a missing test
 #[test]
 fn pending_example_with_a_fault_should_keep_its_section_in_development() {
-    // Each row is a name and the info string of the fence. Each gives one fault, at line 3.
+    // Each row is a name, the first line of the fence and its last line. Each gives one fault, at
+    // line 3.
     let rows = [
-        ("an argument it cannot take", "pending args=\"a\""),
-        ("an unknown word", "pending bogus"),
+        (
+            "an argument it cannot take",
+            "```sisu pending args=\"a\"",
+            "```",
+        ),
+        ("an unknown word", "```sisu pending bogus", "```"),
+        ("a `&` in the info string", "```sisu pending &amp;", "```"),
+        ("a fence of tildes", "~~~sisu pending", "~~~"),
+        ("a fence with an indent", " ```sisu pending", " ```"),
+    ];
+    for (row, open, close) in rows {
+        let text = format!(
+            "### S\n\n{open}\nfn main() {{}}\n{close}\n\n**Rules**\n\n- {{#strings.a}} x\n"
+        );
+        let page = read_page(&text);
+        let lines: Vec<usize> = page.faults.iter().map(|fault| fault.line).collect();
+        assert_eq!(lines, [3], "row {row}: the faults are {:?}", page.faults);
+        assert_faults(row, &rule_fault_list("strings", &text, &[]), &[]);
+    }
+}
+
+/// GIVEN a joined page with a `###` section whose `sisu` example has a fault in its info string
+/// AND the word `pending` is in the value of `args`, or joined to another word by a tab
+/// WHEN its faults are found
+/// THEN the section is not in development, so its rule gives a fault for a missing test
+#[test]
+fn pending_word_should_be_read_as_the_site_reads_it() {
+    let rows = [
+        ("in the value of args", "args=\"a pending b\" bogus"),
+        ("joined by a tab", "pending\tx"),
     ];
     for (row, info) in rows {
         let text = format!(
@@ -701,6 +736,23 @@ fn pending_example_with_a_fault_should_keep_its_section_in_development() {
         let page = read_page(&text);
         let lines: Vec<usize> = page.faults.iter().map(|fault| fault.line).collect();
         assert_eq!(lines, [3], "row {row}: the faults are {:?}", page.faults);
-        assert_faults(row, &rule_fault_list("strings", &text, &[]), &[]);
+        assert_faults(
+            row,
+            &rule_fault_list("strings", &text, &[]),
+            &[(9, "has no test")],
+        );
     }
+}
+
+/// GIVEN a joined page with a rule with no test, and after it a rule whose ID has a fault
+/// WHEN its faults are found
+/// THEN the fault for the missing test comes first, as its line is first
+#[test]
+fn rule_faults_should_come_in_line_order() {
+    let text = "**Rules**\n\n- {#strings.a} x\n- {#text.b} y\n";
+    assert_faults(
+        "two rules",
+        &rule_fault_list("strings", text, &[]),
+        &[(3, "strings.a has no test"), (4, "must start with")],
+    );
 }
