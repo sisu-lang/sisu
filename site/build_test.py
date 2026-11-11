@@ -740,6 +740,14 @@ class Build(unittest.TestCase):
                     self.assertEqual(len(found), 1, name)
                     self.assertIn(path, found[0], name)
 
+    def test_reconsider_when_check_should_read_the_number_from_the_file_name(self) -> None:
+        path = "docs/adr/0050-x.md"
+        fake_site(self, {}, {path: "# X\n\nBody.\n"})
+        self.enterContext(mock.patch.object(build.check_links, "TRACKED", {path}))
+        rows = adr_row("0050", "x", "X", shown="0049")
+        found = problems(self, {"decisions.html": PAGE.format(f"<ul>{rows}</ul>")})
+        self.assertTrue(any("Reconsider when" in p for p in found), found)
+
     def test_decisions_should_check_adr_rows_without_building(self) -> None:
         adrs = {"docs/adr/0001-first.md": "# First\n", "docs/adr/0002-second.md": "# Second\n"}
         listed = adr_row("0001", "first", "First") + adr_row("0002", "second", "Second")
