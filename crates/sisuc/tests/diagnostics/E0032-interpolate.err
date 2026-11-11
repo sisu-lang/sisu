@@ -1,15 +1,15 @@
 error[E0032]: expected `string`, found `i64`
- --> E0032-interpolate.sisu:3:23
+ --> E0032-interpolate.sisu:4:23
   |
-3 |     print("count: " + n)
+4 |     print("count: " + n)
   |           ---------   ^
   |           |
   |           `+` joins this `string`
   |
 help: use interpolation
   |
-3 -     print("count: " + n)
-3 +     print("count: {n}")
+4 -     print("count: " + n)
+4 +     print("count: {n}")
   |
 
 sisu: 1 error

@@ -1,7 +1,7 @@
 error[E0068]: a string has no single index
- --> E0068-string.sisu:3:11
+ --> E0068-string.sisu:4:11
   |
-3 |     print(s[0])
+4 |     print(s[0])
   |           ^ this is a string
   |
   = help: for bytes, write `let bs = s.bytes()` once, then `bs[i]`; for characters, write `let cs = s.chars()` once, then `cs[i]`

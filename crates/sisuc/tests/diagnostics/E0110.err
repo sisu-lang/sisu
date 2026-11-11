@@ -1,7 +1,7 @@
 error[E0110]: a width is at most 1000
- --> E0110.sisu:3:14
+ --> E0110.sisu:4:14
   |
-3 |     print("{x:1001}")
+4 |     print("{x:1001}")
   |              ^^^^^
 
 sisu: 1 error
