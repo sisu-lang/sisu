@@ -72,6 +72,11 @@ class SetGroup(unittest.TestCase):
         with self.assertRaises(ValueError):
             ledger.set_group(GROUPS, "G", "x")
 
+    def test_the_header_and_the_delimiter_should_not_match_a_group(self) -> None:
+        for group in ("Group", "---"):
+            with self.subTest(group=group), self.assertRaises(ValueError):
+                ledger.set_group(GROUPS, group, "x")
+
     def test_a_state_with_a_bar_should_be_an_error(self) -> None:
         with self.assertRaises(ValueError):
             ledger.set_group(GROUPS, "G1", "a | b")
