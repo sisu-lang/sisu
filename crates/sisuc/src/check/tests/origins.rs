@@ -109,3 +109,81 @@ fn a_break_origin_should_reach_each_part_of_the_value() {
         ),
     ]);
 }
+
+#[test]
+fn a_break_origin_should_reach_each_operand_of_the_value() {
+    origin_rows(&[
+        (
+            "the right operand of `+`",
+            "fn f(c: bool, d: bool) {\n    let a = loop {\n        if c { break 1 }\n        break 1 + None\n    }\n    print(a)\n}\nfn main() { f(true, false) }\n",
+            (4, 19),
+            Explained::Label(3, 16),
+        ),
+        (
+            "the left operand of `+`",
+            "fn f(c: bool, d: bool) {\n    let a = loop {\n        if c { break 1 }\n        break None + 1\n    }\n    print(a)\n}\nfn main() { f(true, false) }\n",
+            (4, 15),
+            Explained::Label(3, 16),
+        ),
+        (
+            "a block operand of `+`",
+            "fn f(c: bool, d: bool) {\n    let a = loop {\n        if c { break 1 }\n        break 1 + { None }\n    }\n    print(a)\n}\nfn main() { f(true, false) }\n",
+            (4, 21),
+            Explained::Label(3, 16),
+        ),
+        (
+            "the right operand of `-`",
+            "fn f(c: bool, d: bool) {\n    let a = loop {\n        if c { break 1 }\n        break 1 - None\n    }\n    print(a)\n}\nfn main() { f(true, false) }\n",
+            (4, 19),
+            Explained::Label(3, 16),
+        ),
+        (
+            "the left operand of `*`",
+            "fn f(c: bool, d: bool) {\n    let a = loop {\n        if c { break 1 }\n        break None * 1\n    }\n    print(a)\n}\nfn main() { f(true, false) }\n",
+            (4, 15),
+            Explained::Label(3, 16),
+        ),
+        (
+            "an operand of `+` in an `f64` loop",
+            "fn f(c: bool, d: bool) {\n    let a = loop {\n        if c { break 1.0 }\n        break None + 1\n    }\n    print(a)\n}\nfn main() { f(true, false) }\n",
+            (4, 15),
+            Explained::Label(3, 16),
+        ),
+        (
+            "an operand of a nested `+`",
+            "fn f(c: bool) {\n    let a = loop {\n        if c { break 1 }\n        break 1 + (2 + None)\n    }\n    print(a)\n}\nfn main() { f(true) }\n",
+            (4, 24),
+            Explained::Label(3, 16),
+        ),
+        (
+            "an `f64` leader of `+` in an `i64` loop",
+            "fn f(c: bool, x: f64) {\n    let a = loop {\n        if c { break 1 }\n        break x + None\n    }\n    print(a)\n}\nfn main() { f(true, 1.5) }\n",
+            (4, 15),
+            Explained::Label(3, 16),
+        ),
+        (
+            "an operand of `<`, which gives the `bool` and takes `i64`",
+            "fn f(c: bool) {\n    let a = loop {\n        if c { break true }\n        break 1 < None\n    }\n    print(a)\n}\nfn main() { f(true) }\n",
+            (4, 19),
+            Explained::Nothing,
+        ),
+        (
+            "an operand of `&&`, which takes `bool` whatever the loop is",
+            "fn f(c: bool) {\n    let a = loop {\n        if c { break true }\n        break true && None\n    }\n    print(a)\n}\nfn main() { f(true) }\n",
+            (4, 23),
+            Explained::Nothing,
+        ),
+        (
+            "the fallback of `??`, which takes the payload of its left side",
+            "fn f(c: bool, d: bool) {\n    let a = loop {\n        if c { break 1 }\n        break Some(1) ?? \"x\"\n    }\n    print(a)\n}\nfn main() { f(true, false) }\n",
+            (4, 26),
+            Explained::Nothing,
+        ),
+        (
+            "a `string` leader of `+`, whose join is the origin",
+            "fn f(c: bool, s: string) {\n    let a = loop {\n        if c { break 1 }\n        break s + 1\n    }\n    print(a)\n}\nfn main() { f(true, \"s\") }\n",
+            (4, 19),
+            Explained::Label(4, 15),
+        ),
+    ]);
+}
