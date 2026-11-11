@@ -89,10 +89,15 @@ pub(crate) fn read_rules(text: &str) -> (Vec<Rule>, Vec<usize>) {
                 Event::Text(_) | Event::Code(_) | Event::Start(Tag::Paragraph)
             );
             let at = &text[range.start..];
-            let after_space = at.trim_start_matches([' ', '\t']).starts_with(is_stripped);
-            let prefix = starts_text
-                .then(|| read_prefix(at.trim_start_matches(is_stripped_or_blank)))
-                .flatten();
+            let after_space = at.starts_with(is_stripped);
+            // The site accepts `\{#` too, and `pulldown-cmark` drops the `\` only when no
+            // stripped character comes first.
+            let trimmed = at.trim_start_matches(is_stripped_or_blank);
+            let trimmed = trimmed
+                .strip_prefix('\\')
+                .filter(|rest| rest.starts_with("{#"))
+                .unwrap_or(trimmed);
+            let prefix = starts_text.then(|| read_prefix(trimmed)).flatten();
             if prefix.is_some() {
                 id_lines.push(line);
             }
@@ -102,7 +107,7 @@ pub(crate) fn read_rules(text: &str) -> (Vec<Rule>, Vec<usize>) {
                 rules.push(Rule {
                     line,
                     prefix,
-                    id: id.filter(|_| !after_space),
+                    id,
                     after_space,
                     hash: String::new(),
                 });
