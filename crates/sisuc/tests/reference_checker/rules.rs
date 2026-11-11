@@ -237,6 +237,26 @@ fn prefix_should_be_one_space_then_the_text() {
     }
 }
 
+/// GIVEN a page whose only `{#` text is in the first block of a rule, and that block is not a
+/// paragraph
+/// WHEN `read_page` reads it
+/// THEN the page does not join, and the rule has no ID
+#[test]
+fn rule_should_get_no_prefix_from_a_block_that_is_not_text() {
+    let rows: [(&str, &str); 4] = [
+        ("indented code", "-     {#strings.a.b} x\n"),
+        ("fenced code", "- ```\n  {#strings.a.b} x\n  ```\n"),
+        ("block quote", "- > {#strings.a.b} x\n"),
+        ("heading", "- # {#strings.a.b} x\n"),
+    ];
+    for (row, item) in rows {
+        let page = read_page(&format!("**Rules**\n\n{item}"));
+        assert!(page.id_lines.is_empty(), "row {row}: {:?}", page.id_lines);
+        let ids: Vec<_> = page.rules.iter().map(|rule| rule.id.as_deref()).collect();
+        assert_eq!(ids, [None], "row {row}");
+    }
+}
+
 /// GIVEN `README.md` with the item `- {#README.a.b} x`
 /// WHEN `read_page` reads it and its faults are found
 /// THEN the result is the fault "the index cannot have rule IDs" at that line

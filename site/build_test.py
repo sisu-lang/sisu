@@ -1374,7 +1374,9 @@ class Build(unittest.TestCase):
         for name, text in files.items():
             (root / name).parent.mkdir(parents=True, exist_ok=True)
             (root / name).write_text(text, encoding="utf-8")
-        proofs = build.rule_proofs(root, reversed(files))
+        proofs = build.rule_proofs(
+            root, ["crates/a/tests/run/x.sisu", "site/programs/z.sisu", "crates/a/src/y.rs"]
+        )
         self.assertEqual(
             proofs,
             {"strings.text.null": [("crates/a/src/y.rs", 3), ("crates/a/tests/run/x.sisu", 1)]},
@@ -1392,6 +1394,102 @@ class Build(unittest.TestCase):
         self.assertRegex(body, rf'<li id="strings.text.null">[^<]*{re.escape(want)}</li>')
         self.assertEqual(body.count("proofs"), 1)
         self.assertNotIn("proofs", ref_html(self, page)[0])
+
+    def test_second_id_in_a_rule_should_fail_with_its_text(self) -> None:
+        """
+        GIVEN a reference page with the rule `- {#strings.a.b} {#strings.a.c} x`
+        WHEN `site/build.py` builds it
+        THEN it raises `BuildError` that names the text `{#strings.a.c} x`, which is not an ID
+        """
+        entries = reference_dir(
+            self, {"t": "# T\n\n**Rules**\n\n- {#strings.a.b} {#strings.a.c} x\n"}
+        )
+        with self.assertRaisesRegex(
+            build.BuildError, r'the text "\{#strings\.a\.c\} x" starts with "\{#" but is not an ID'
+        ):
+            build.reference_pages(entries)
+
+    def test_plain_list_before_rules_should_get_no_anchor_and_no_proofs(self) -> None:
+        """
+        GIVEN a reference page with rule IDs and a plain list before the rules
+        WHEN `site/build.py` builds it with proofs
+        THEN the plain list items get no `id` and no proofs
+        AND the page builds
+        """
+        proofs = {"strings.a.b": [("crates/a/src/y.rs", 3)]}
+        body = ref_html(
+            self, "# T\n\nA note.\n\n- plain\n\n**Rules**\n\n- {#strings.a.b} x\n", proofs
+        )[0]
+        self.assertIn("<li>plain</li>", body)
+        self.assertEqual(body.count("<li id="), 1)
+        self.assertEqual(body.count("proofs"), 1)
+
+    def test_proofs_should_come_after_the_nested_list_and_be_escaped(self) -> None:
+        """
+        GIVEN a rule with a nested list and a proof path that holds `&`
+        WHEN `site/build.py` builds the page
+        THEN the proofs line comes after the nested list, in the item of the rule
+        AND the `&` is escaped in the link and in its text
+        """
+        proofs = {"strings.a.b": [("crates/a/src/y&z.rs", 4)]}
+        body = ref_html(
+            self,
+            "# T\n\n**Rules**\n\n- {#strings.a.b} x\n  - y\n- {#strings.a.c} z\n",
+            proofs,
+        )[0]
+        self.assertIn('</ul>\n<div class="proofs">Proved by ', body)
+        self.assertIn(f'href="{build.BLOB}crates/a/src/y&amp;z.rs#L4">a/src/y&amp;z.rs:4</a>', body)
+        self.assertRegex(
+            body,
+            r'(?s)<li id="strings.a.b">.*</ul>\n<div class="proofs">.*</div></li>\n<li id="strings.a.c">z</li>',
+        )
+
+    def test_marker_and_id_should_use_the_whitespace_of_the_check(self) -> None:
+        """
+        GIVEN marker lines and rules that hold U+001C to U+001F, or a space that is not ASCII
+        WHEN `site/build.py` reads them
+        THEN it reads the same markers and IDs as the Rust check, whose white space is
+        `char::is_whitespace`
+        """
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        marker = "// r[verify a.b@1234]"
+        lines: list[tuple[str, bool]] = []  # a line, and whether the check reads it as a marker
+        for c in "\x1c\x1d\x1e\x1f":
+            lines += [(f"{c}{marker}", False), (f"//{c} r[verify a.b@1234]", False)]
+            lines += [(f"{marker}{c}", False)]
+        for c in "\x85\xa0\u2003\u3000":
+            lines += [(f"{c}{marker}", True), (f"//{c}r[verify a.b@1234]", True)]
+            lines += [(f"{marker}{c}", True)]
+        (root / "crates").mkdir()
+        (root / "crates/a.rs").write_text("\n".join(text for text, _ in lines), encoding="utf-8")
+        got = build.rule_proofs(root, ["crates/a.rs"])
+        want = [("crates/a.rs", n) for n, (_, read) in enumerate(lines, 1) if read]
+        self.assertEqual(got.get("a.b", []), want)
+        page = "# T\n\n**Rules**\n\n- {#strings.a.b} "
+        self.assertIn('<li id="strings.a.b">', ref_html(self, page + "\x1cx\n")[0])
+        for c in "\x85\xa0\u2003\u3000":
+            with self.subTest(repr(c)):
+                entries = reference_dir(self, {"t": f"{page}{c}x\n"})
+                with self.assertRaisesRegex(build.BuildError, r"docs/reference/t\.md"):
+                    build.reference_pages(entries)
+
+    def test_item_that_starts_with_a_block_should_get_no_id(self) -> None:
+        """
+        GIVEN a rule whose first block is code or a quote that holds `{#`
+        WHEN `site/build.py` builds the page
+        THEN the item gets no `id` and the page builds
+        """
+        rows = {
+            "indented code": "-     {#strings.a.b} x\n",
+            "fenced code": "- ```\n  {#strings.a.b} x\n  ```\n",
+            "block quote": "- > {#strings.a.b} x\n",
+        }
+        for name, item in rows.items():
+            with self.subTest(name):
+                body = ref_html(self, f"# T\n\n**Rules**\n\n{item}")[0]
+                self.assertNotIn("<li id=", body)
 
     def test_overview_should_have_a_card_for_each_other_page(self) -> None:
         entries = build.reference_pages(reference_dir(self, REF_PAGES))

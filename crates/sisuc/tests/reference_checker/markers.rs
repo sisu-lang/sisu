@@ -156,7 +156,7 @@ fn only_a_marker_line_should_be_read() {
     let file = "crates/sisuc/tests/a.rs";
     // Each row is a name, the bytes of the file, and the line and ID of each marker. No row has
     // a fault.
-    let rows: [Row<'_>; 10] = [
+    let rows: [Row<'_>; 15] = [
         (
             "// opener",
             b"// r[verify strings.text.null@7c1e]",
@@ -201,6 +201,33 @@ fn only_a_marker_line_should_be_read() {
         (
             "CRLF line end",
             b"// r[verify strings.text.null@7c1e]\r\n",
+            &[(1, "strings.text.null")],
+        ),
+        // The white space is `char::is_whitespace`: U+001C to U+001F are not in it, and a space
+        // that is not ASCII is.
+        (
+            "U+001C before the opener",
+            b"\x1c// r[verify strings.text.null@7c1e]",
+            &[],
+        ),
+        (
+            "U+001F after the opener",
+            b"//\x1f r[verify strings.text.null@7c1e]",
+            &[],
+        ),
+        (
+            "U+00A0 before the opener",
+            "\u{a0}// r[verify strings.text.null@7c1e]".as_bytes(),
+            &[(1, "strings.text.null")],
+        ),
+        (
+            "U+2003 after the opener",
+            "//\u{2003}r[verify strings.text.null@7c1e]".as_bytes(),
+            &[(1, "strings.text.null")],
+        ),
+        (
+            "U+0085 after the marker",
+            "// r[verify strings.text.null@7c1e]\u{85}".as_bytes(),
             &[(1, "strings.text.null")],
         ),
     ];
