@@ -1403,18 +1403,18 @@ class Build(unittest.TestCase):
         for name, text in files.items():
             (root / name).parent.mkdir(parents=True, exist_ok=True)
             (root / name).write_text(text, encoding="utf-8")
-        proofs = build.rule_proofs(
-            root, ["crates/a/tests/run/x.sisu", "site/programs/z.sisu", "crates/a/src/y.rs"]
-        )
+        tracked = ["crates/a/tests/run/x.sisu", "site/programs/z.sisu", "crates/a/src/y.rs"]
         self.assertEqual(
-            proofs,
+            build.rule_proofs(root, tracked),
             {"strings.text.null": [("crates/a/src/y.rs", 3), ("crates/a/tests/run/x.sisu", 1)]},
         )
         page = (
             "# T\n\n**Rules**\n\n- {#strings.text.null} A string can hold a null\n"
             "- {#strings.text.join} `+` joins two strings\n"
         )
-        body = ref_html(self, page, proofs)[0]
+        self.enterContext(mock.patch.object(build, "ROOT", root))
+        self.enterContext(mock.patch.object(build.check_links, "TRACKED", set(tracked)))
+        body = build.reference_pages(reference_dir(self, {"t": page}))[0]["body"]
         want = (
             '<div class="proofs">Proved by '
             f'<a href="{build.BLOB}crates/a/src/y.rs#L3">a/src/y.rs:3</a>, '

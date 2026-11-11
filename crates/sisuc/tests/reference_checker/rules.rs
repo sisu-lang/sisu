@@ -79,7 +79,7 @@ fn rule_without_an_id_should_fail_when_the_page_has_ids() {
 )]
 fn id_should_fail_on_an_item_that_is_not_a_rule() {
     // Each row is a name, a page, and the faults. The `{#` item is the only one in its page.
-    let rows: [Row<'_>; 19] = [
+    let rows: [Row<'_>; 22] = [
         (
             "a list after a plain sentence",
             "Some words.\n\n- {#strings.x} x\n",
@@ -168,6 +168,21 @@ fn id_should_fail_on_an_item_that_is_not_a_rule() {
         (
             "a block quote between the label and the list",
             "**Rules**\n\n> q\n\n- {#strings.a} x\n",
+            &[(5, "only for a top-level item")],
+        ),
+        (
+            "a code fence between the label and the list",
+            "**Rules**\n\n```\ncode\n```\n\n- {#strings.a} x\n",
+            &[(7, "only for a top-level item")],
+        ),
+        (
+            "a table between the label and the list",
+            "**Rules**\n\n| a |\n|---|\n| b |\n\n- {#strings.a} x\n",
+            &[(7, "only for a top-level item")],
+        ),
+        (
+            "a thematic break between the label and the list",
+            "**Rules**\n\n---\n\n- {#strings.a} x\n",
             &[(5, "only for a top-level item")],
         ),
         (
@@ -326,6 +341,7 @@ fn rule_should_get_no_prefix_from_a_block_that_is_not_text() {
 /// GIVEN `README.md` with the item `- {#README.a.b} x`
 /// WHEN `read_page` reads it and its faults are found
 /// THEN the result is the fault "the index cannot have rule IDs" at that line
+/// AND the index gets no other fault, also with a section of a pending and a plain example
 #[test]
 fn index_should_fail_on_each_id_item() {
     // The third rule has no ID, and the index never gets "has no ID".
@@ -333,6 +349,17 @@ fn index_should_fail_on_each_id_item() {
     assert_faults(
         "README",
         &id_fault_list("README", text),
+        &[
+            (3, "the index cannot have rule IDs"),
+            (4, "the index cannot have rule IDs"),
+        ],
+    );
+    let mixed = format!(
+        "{text}\n## Mixed\n\n```sisu pending\nfn main() {{}}\n```\n\n```sisu\nfn main() {{}}\n```\n"
+    );
+    assert_faults(
+        "README with a mixed section",
+        &rule_fault_list("README", &mixed, &[]),
         &[
             (3, "the index cannot have rule IDs"),
             (4, "the index cannot have rule IDs"),
