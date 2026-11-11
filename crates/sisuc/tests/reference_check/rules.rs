@@ -8,7 +8,7 @@
 use std::collections::hash_map::Entry;
 
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{Fault, Page};
 
@@ -248,4 +248,10 @@ fn has_valid_form(id: &str) -> bool {
 /// Whether the page `stem` is the index of the reference, which never has rule IDs.
 pub(crate) fn is_index(stem: &str) -> bool {
     stem == "README"
+}
+
+/// The IDs that a marker can name: each ID of each joined page. The index never joins, so its
+/// IDs are unknown. An ID with a fault is known, so a marker that names it has no second fault.
+pub(crate) fn known_ids(_pages: &[(String, Page)]) -> FxHashSet<String> {
+    FxHashSet::default()
 }

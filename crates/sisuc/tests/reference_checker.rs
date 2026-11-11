@@ -3,6 +3,8 @@
 
 use std::path::Path;
 
+#[path = "reference_checker/markers.rs"]
+mod markers;
 mod reference_check;
 #[path = "reference_checker/rules.rs"]
 mod rules;

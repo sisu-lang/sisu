@@ -10,12 +10,17 @@ use std::path::Path;
 
 use libtest_mimic::{Arguments, Failed, Trial};
 
+#[expect(dead_code, reason = "red commit: Task 2 uses them")]
 mod reference_check;
 #[expect(dead_code, reason = "this binary uses only part of the shared helpers")]
 mod support;
 
-use reference_check::rules::id_faults;
-use reference_check::{Example, Fault, check, read_page};
+use reference_check::markers::{markers_in, unknown_ids};
+use reference_check::rules::{id_faults, known_ids};
+use reference_check::{Example, Fault, Page, check, read_page};
+
+/// The repository root, as seen from the crate directory that tests run in.
+const REPO: &str = "../..";
 
 /// The pages, as seen from the crate directory that tests run in.
 const PAGES: &str = "../../docs/reference";
@@ -32,15 +37,21 @@ fn main() {
         !pages.is_empty(),
         "docs/reference should hold at least one page"
     );
+    let pages: Vec<(String, Page)> = pages
+        .iter()
+        .map(|path| {
+            let stem = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .expect("a page name should be UTF-8")
+                .to_string();
+            let text = fs::read_to_string(path).expect("a page should be UTF-8 text");
+            (stem, read_page(&text))
+        })
+        .collect();
+    let known = known_ids(&pages);
     let mut trials = Vec::new();
-    for path in pages {
-        let stem = path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .expect("a page name should be UTF-8")
-            .to_string();
-        let text = fs::read_to_string(&path).expect("a page should be UTF-8 text");
-        let page = read_page(&text);
+    for (stem, page) in pages {
         let file = format!("docs/reference/{stem}.md");
         let faults = fault_lines(&file, &page.faults);
         trials.push(Trial::test(
@@ -67,6 +78,16 @@ fn main() {
             }));
         }
     }
+    // The walk runs in the closure, not in `main`: nextest starts this binary for each trial.
+    trials.push(Trial::test("reference::markers", move || {
+        let (markers, mut faults) = markers_in(Path::new(REPO)).map_err(Failed::from)?;
+        faults.extend(unknown_ids(&markers, &known));
+        let lines: Vec<String> = faults
+            .iter()
+            .map(|fault| format!("{}:{}: {}", fault.file, fault.line, fault.message))
+            .collect();
+        fail_on(&lines)
+    }));
     libtest_mimic::run(&args, trials).exit()
 }
 

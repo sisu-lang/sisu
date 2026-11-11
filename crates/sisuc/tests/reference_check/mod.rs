@@ -16,6 +16,7 @@ use serde_json::Value;
 
 use crate::support;
 
+pub(crate) mod markers;
 pub(crate) mod rules;
 use rules::Rule;
 
