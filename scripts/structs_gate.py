@@ -29,6 +29,9 @@ version at or below `GROWTH_FLOOR` times its 1x count is an input failure. This 
 `--class-only` runs the class versions only. It builds no struct version and judges no gate. It
 proves that the programs and the inputs work, before `struct` compiles.
 
+The script does not compare the outputs of the two versions. Part 7 runs the struct versions for
+the first time, and it adds that check.
+
 The script exits with code 1 when a gate fails, or when a build or a run fails.
 """
 
@@ -53,8 +56,10 @@ RATIO_LIMIT = 5.0
 OBSERVER_LIMIT = 100_000_000
 OBSERVER_EVENTS = 20_000
 # Input check: a class version at or below this ratio shows an input that the program ignores.
+# An ignored input gives about 1x. The room above it is for the fixed cost of a program, which
+# changes with the environment (the observer measures 3.0x to 3.3x).
 # Both versions read the same input. A struct version has no lower limit (it may do less work).
-GROWTH_FLOOR = 3.0
+GROWTH_FLOOR = 2.0
 # The modes of the `parser` program: `dump` is the work, and `lex` is the lexing in it.
 PARSER_MODES = ("dump", "lex")
 # The columns of the table that hold numbers: 1x, 4x and ratio.
