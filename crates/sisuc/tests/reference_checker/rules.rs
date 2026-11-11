@@ -71,9 +71,13 @@ fn rule_without_an_id_should_fail_when_the_page_has_ids() {
 /// THEN the page joins
 /// AND the result is "an ID is only for a top-level item" at that line
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a table of pages, one row for each place"
+)]
 fn id_should_fail_on_an_item_that_is_not_a_rule() {
     // Each row is a name, a page, and the faults. The `{#` item is the only one in its page.
-    let rows: [Row<'_>; 9] = [
+    let rows: [Row<'_>; 19] = [
         (
             "a list after a plain sentence",
             "Some words.\n\n- {#strings.x} x\n",
@@ -120,6 +124,61 @@ fn id_should_fail_on_an_item_that_is_not_a_rule() {
             "**Rules**\n\n- {#strings.a} one\n\n- {#strings.b} two\n",
             &[],
         ),
+        (
+            "a nested item on the line of its parent rule",
+            "**Rules**\n\n- - {#strings.x} z\n",
+            &[(3, "has no ID"), (3, "only for a top-level item")],
+        ),
+        (
+            "a nested item on the line of its parent rule, in a loose list",
+            "**Rules**\n\n- - {#strings.x} z\n\n- w\n",
+            &[
+                (3, "has no ID"),
+                (3, "only for a top-level item"),
+                (5, "has no ID"),
+            ],
+        ),
+        (
+            "a nested item on the line of its parent rule, with `*` bullets",
+            "**Rules**\n\n* * {#strings.x} z\n",
+            &[(3, "has no ID"), (3, "only for a top-level item")],
+        ),
+        (
+            "a nested item on the line of its parent rule, with `+` bullets",
+            "**Rules**\n\n+ + {#strings.x} z\n",
+            &[(3, "has no ID"), (3, "only for a top-level item")],
+        ),
+        (
+            "an item two levels deep on the line of its parent rule",
+            "**Rules**\n\n- - - {#strings.x} z\n",
+            &[(3, "has no ID"), (3, "only for a top-level item")],
+        ),
+        (
+            "a nested item under a parent rule that has an ID",
+            "**Rules**\n\n- {#strings.a} x\n  - {#strings.b} y\n",
+            &[(4, "only for a top-level item")],
+        ),
+        (
+            "a heading between the label and the list",
+            "**Rules**\n\n## H\n\n- {#strings.a} x\n",
+            &[(5, "only for a top-level item")],
+        ),
+        (
+            "a block quote between the label and the list",
+            "**Rules**\n\n> q\n\n- {#strings.a} x\n",
+            &[(5, "only for a top-level item")],
+        ),
+        (
+            // The site parses with HTML off, so this block is a paragraph there: the note.
+            "an HTML block between the label and the list",
+            "**Rules**\n\n<!-- c -->\n\n- {#strings.a} x\n",
+            &[],
+        ),
+        (
+            "an HTML block and a paragraph between the label and the list",
+            "**Rules**\n\n<!-- c -->\n\nnote\n\n- {#strings.a} x\n",
+            &[(7, "only for a top-level item")],
+        ),
     ];
     for (row, text, want) in rows {
         let page = read_page(text);
@@ -134,7 +193,7 @@ fn id_should_fail_on_an_item_that_is_not_a_rule() {
 /// THEN the result is a fault for the form of the prefix at that line
 #[test]
 fn prefix_should_be_one_space_then_the_text() {
-    let rows: [Row<'_>; 5] = [
+    let rows: [Row<'_>; 7] = [
         (
             "the text on the next line",
             "**Rules**\n\n- {#strings.text.null}\n  A string\n",
@@ -146,6 +205,11 @@ fn prefix_should_be_one_space_then_the_text() {
             &[(3, "one space")],
         ),
         (
+            "no space, and the message names the ID",
+            "**Rules**\n\n- {#strings.text.null}A string\n",
+            &[(3, "after `{#strings.text.null}`")],
+        ),
+        (
             "two spaces",
             "**Rules**\n\n- {#strings.text.null}  A string\n",
             &[(3, "one space")],
@@ -154,6 +218,11 @@ fn prefix_should_be_one_space_then_the_text() {
             "no closing brace",
             "**Rules**\n\n- {#strings.text.null A map {k} is\n",
             &[(3, "one space")],
+        ),
+        (
+            "an empty ID, and the message names it",
+            "**Rules**\n\n- {#} x\n",
+            &[(3, "the ID \"\" has a bad form")],
         ),
         (
             "a code span after the space",
@@ -226,7 +295,7 @@ fn repeated_id_should_fail_with_both_lines() {
     let faults = id_fault_list("strings", text);
     assert_faults("repeat", &faults, &[(4, "is also the ID of")]);
     assert!(
-        faults[0].1.contains('3'),
+        faults[0].1.ends_with("at line 3."),
         "the message should name line 3: {:?}",
         faults[0].1
     );
