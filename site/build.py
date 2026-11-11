@@ -691,8 +691,8 @@ def rule_anchors(tokens: list[Token], proofs: Mapping[str, list[tuple[str, int]]
     The match is the one the reference check makes. A link, bold text or a character reference
     before the `{#` gives no ID.
     The page is not built when a `<li>` still starts with `{#`, also in a block quote that starts
-    it. It is not built either when only
-    some of its rules have an ID. Then the site and the check disagree.
+    it. It is not built either when only some of its rules have an ID. Then the site and the
+    check disagree.
     """
     lists: list[bool] = []  # for each open list, whether it is a list of rules
     items: list[str | None] = []  # for each open item, its ID

@@ -1530,6 +1530,7 @@ class Build(unittest.TestCase):
         for name, item in {
             "plain": "- > {#strings.a.b} x\n",
             "escaped": "- > \\{#strings.a.b} x\n",
+            "nested": "- > > {#strings.a.b} x\n",
         }.items():
             with (
                 self.subTest(name),
