@@ -66,6 +66,7 @@ O2_SHAPES = (
     "functions",
     "statements",
     "interpolations",
+    "string literal width",
     "prints",
     "nested array ==",
     "string left",
@@ -205,6 +206,12 @@ def array_literal_width(k: int) -> str:
     return (
         f'fn main() {{\n    let a: [i64] = [{", ".join(["7"] * k)}]\n    print("{{a.len()}}")\n}}\n'
     )
+
+
+def string_literal_width(k: int) -> str:
+    """Return a program with an array literal of `k` distinct string literals."""
+    words = ", ".join(f'"w{tag(i)}"' for i in range(k))
+    return f'fn main() {{\n    let a: [string] = [{words}]\n    print("{{a.len()}}")\n}}\n'
 
 
 def match_arms(k: int) -> str:
@@ -499,6 +506,9 @@ SHAPES = {
     "generic call depth": (24, generic_call_depth),
     "array literal depth": (24, array_literal_depth),
     "array literal width": (250, array_literal_width),
+    # n = 100: the base is superlinear (2.64, 2.53, 2.84). The head is linear at r3 = 2.14, below
+    # the bound 2.3, so the verdict does not rest on the fall rule.
+    "string literal width": (100, string_literal_width),
     "match arms": (50, match_arms),
     "fields": (50, fields),
     "conformers": (50, conformers),
