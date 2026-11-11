@@ -1506,20 +1506,36 @@ class Build(unittest.TestCase):
 
     def test_item_that_starts_with_a_block_should_get_no_id(self) -> None:
         """
-        GIVEN a rule whose first block is code, a quote or HTML that holds `{#`
+        GIVEN a rule whose first block is code or HTML that holds `{#`
         WHEN `site/build.py` builds the page
         THEN the item gets no `id` and the page builds
         """
         rows = {
             "indented code": "-     {#strings.a.b} x\n",
             "fenced code": "- ```\n  {#strings.a.b} x\n  ```\n",
-            "block quote": "- > {#strings.a.b} x\n",
             "HTML block": "- <div>{#strings.a.b} x\n",
         }
         for name, item in rows.items():
             with self.subTest(name):
                 body = ref_html(self, f"# T\n\n**Rules**\n\n{item}")[0]
                 self.assertNotIn("<li id=", body)
+
+    def test_item_that_starts_with_a_block_quote_should_fail_on_a_prefix(self) -> None:
+        """
+        GIVEN a rule whose first block is a block quote, and the first text of the quote starts
+        with `{#` or with `\\{#`
+        WHEN `site/build.py` builds the page
+        THEN it raises `BuildError`, so a wrong ID never shows as plain text
+        """
+        for name, item in {
+            "plain": "- > {#strings.a.b} x\n",
+            "escaped": "- > \\{#strings.a.b} x\n",
+        }.items():
+            with (
+                self.subTest(name),
+                self.assertRaisesRegex(build.BuildError, r'starts with "\{#" but is not an ID'),
+            ):
+                ref_html(self, f"# T\n\n**Rules**\n\n{item}")
 
     def test_overview_should_have_a_card_for_each_other_page(self) -> None:
         entries = build.reference_pages(reference_dir(self, REF_PAGES))
