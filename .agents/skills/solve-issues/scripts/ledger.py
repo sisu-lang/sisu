@@ -1,10 +1,12 @@
-"""Add one line to a batch ledger (ledger.md gives its form).
+"""Add one line to a batch ledger, or set a group's state in it (ledger.md gives its form).
 
 Usage:
   python3 ledger.py <progress.md> event "<text>"
-      adds "- <date time> <text>" at the end of Events
+      adds "- <date time> <text>" at the end of Events.
   python3 ledger.py <progress.md> after-merge "<text>"
-      adds "- <text>" at the end of "After the merge"
+      adds "- <text>" at the end of "After the merge".
+  python3 ledger.py <progress.md> group <group> "<state>"
+      sets the State cell of the group's row in Groups.
 """
 
 import sys
@@ -35,15 +37,37 @@ def add(ledger: str, kind: str, text: str, now: datetime) -> str:
     return "\n".join(lines) + "\n"
 
 
+def set_group(ledger: str, group: str, state: str) -> str:
+    """Return the ledger text with `state` in the last cell of the row of `group` in Groups."""
+    if "|" in state:
+        raise ValueError("the state has a `|`, which would split its cell")
+    lines = ledger.splitlines()
+    if "## Groups" not in lines:
+        raise ValueError("the ledger has no '## Groups' section")
+    row = lines.index("## Groups") + 1
+    while row < len(lines) and not lines[row].startswith("## "):
+        cells = lines[row].split("|")
+        if len(cells) > 2 and cells[1].strip() == group:  # noqa: PLR2004  a row has a cell between two bars
+            cells[-2] = f" {state} "
+            lines[row] = "|".join(cells)
+            return "\n".join(lines) + "\n"
+        row += 1
+    raise ValueError(f"Groups has no row for group {group!r}")
+
+
 def main(argv: list[str]) -> int:
     """Add the line that `argv` gives to the ledger file, and return the exit code."""
-    if len(argv) != 3:  # noqa: PLR2004  the three words of the usage line
+    group = len(argv) == 4 and argv[1] == "group"  # noqa: PLR2004  the four words of the group line
+    if len(argv) != 3 and not group:  # noqa: PLR2004  the three words of the other lines
         print(__doc__, file=sys.stderr)
         return 2
-    path, kind, text = argv
+    path = argv[0]
     ledger = Path(path).read_text(encoding="utf-8")
     try:
-        updated = add(ledger, kind, text, datetime.now().astimezone())
+        if group:
+            updated = set_group(ledger, argv[2], argv[3])
+        else:
+            updated = add(ledger, argv[1], argv[2], datetime.now().astimezone())
     except ValueError as e:
         print(f"ledger.py: {e}", file=sys.stderr)
         return 2
