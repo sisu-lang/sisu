@@ -11,7 +11,7 @@ use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::markers::RuleMarker;
-use super::{Fault, Page};
+use super::{Fault, Kind, Page};
 
 /// One top-level item of a list of rules.
 #[derive(Debug)]
@@ -23,7 +23,7 @@ pub(crate) struct Rule {
     pub(crate) prefix: Option<String>,
     /// The ID of the item, when its prefix is `{#id} ` and the text follows on the same line.
     pub(crate) id: Option<String>,
-    /// The hash of the text of the rule: four lowercase hex digits.
+    /// The hash of the text of the rule (see `hash_of`): four lowercase hex digits.
     pub(crate) hash: String,
 }
 
@@ -74,6 +74,8 @@ pub(crate) fn read_rules(text: &str) -> (Vec<Rule>, Vec<usize>) {
     let mut paragraph: Option<Inline> = None;
     // The line of an item that just opened, and whether it is a rule.
     let mut item: Option<(usize, bool)> = None;
+    // The plain text of the open rule, which the hash covers.
+    let mut body: Option<String> = None;
     for (event, range) in Parser::new_ext(text, Options::ENABLE_TABLES).into_offset_iter() {
         // The first event of an item starts its text.
         if let Some((line, is_rule)) = item.take() {
@@ -87,9 +89,12 @@ pub(crate) fn read_rules(text: &str) -> (Vec<Rule>, Vec<usize>) {
                     line,
                     prefix,
                     id,
-                    hash: String::from("0000"),
+                    hash: String::new(),
                 });
             }
+        }
+        if let Some(body) = &mut body {
+            push_plain(body, &event);
         }
         if let Some(inline) = &mut paragraph
             && !matches!(event, Event::End(TagEnd::Paragraph))
@@ -113,14 +118,23 @@ pub(crate) fn read_rules(text: &str) -> (Vec<Rule>, Vec<usize>) {
                 lists.push(first.is_none() && (last == Block::Label || note));
             }
             Event::Start(Tag::Item) => {
-                item = Some((
-                    line_of(range.start),
-                    depth == 0 && lists.last() == Some(&true),
-                ));
+                let is_rule = depth == 0 && lists.last() == Some(&true);
+                item = Some((line_of(range.start), is_rule));
+                if is_rule {
+                    body = Some(String::new());
+                }
                 depth += 1;
             }
             Event::Start(Tag::BlockQuote(_)) => depth += 1,
-            Event::End(TagEnd::Item) => depth -= 1,
+            Event::End(TagEnd::Item) => {
+                depth -= 1;
+                // The end of the rule, not of an item nested in it.
+                if depth == 0
+                    && let (Some(body), Some(rule)) = (body.take(), rules.last_mut())
+                {
+                    rule.hash = hash_of(&body, rule.prefix.as_deref());
+                }
+            }
             Event::End(TagEnd::BlockQuote(_)) => {
                 depth -= 1;
                 ended = Some(Block::Other);
@@ -141,6 +155,59 @@ pub(crate) fn read_rules(text: &str) -> (Vec<Rule>, Vec<usize>) {
         }
     }
     (rules, id_lines)
+}
+
+/// Adds what `event` gives to the plain text of a rule. A `Text`, `Code` or `InlineHtml` event
+/// gives its text. A line break gives one space. So does the start or the end of a block, an item
+/// or a table cell. Any other event gives nothing.
+fn push_plain(body: &mut String, event: &Event<'_>) {
+    let inline_start = |tag: &Tag<'_>| {
+        matches!(
+            tag,
+            Tag::Emphasis
+                | Tag::Strong
+                | Tag::Strikethrough
+                | Tag::Superscript
+                | Tag::Subscript
+                | Tag::Link { .. }
+                | Tag::Image { .. }
+        )
+    };
+    let inline_end = |tag: &TagEnd| {
+        matches!(
+            tag,
+            TagEnd::Emphasis
+                | TagEnd::Strong
+                | TagEnd::Strikethrough
+                | TagEnd::Superscript
+                | TagEnd::Subscript
+                | TagEnd::Link
+                | TagEnd::Image
+        )
+    };
+    match event {
+        Event::Text(text) | Event::Code(text) | Event::InlineHtml(text) => body.push_str(text),
+        Event::SoftBreak | Event::HardBreak => body.push(' '),
+        Event::Start(tag) if !inline_start(tag) => body.push(' '),
+        Event::End(tag) if !inline_end(tag) => body.push(' '),
+        _ => {}
+    }
+}
+
+/// The hash of a rule whose plain text is `body`: the high 16 bits of the 32-bit FNV-1a hash of
+/// the text, as four lowercase hex digits. The text has one space for each run of white space,
+/// no `prefix` (the `{#id}` as written) and no space at the ends. A marker stores this output, so
+/// a change here makes every marker stale.
+fn hash_of(body: &str, prefix: Option<&str>) -> String {
+    let words = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    let text = prefix
+        .and_then(|prefix| words.strip_prefix(prefix))
+        .unwrap_or(&words)
+        .trim_start();
+    let hash = text.bytes().fold(0x811c_9dc5_u32, |hash, byte| {
+        (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
+    });
+    format!("{:04x}", hash >> 16)
 }
 
 /// The prefix that `at`, the text of an item, starts with, as written, and its ID. The prefix runs
@@ -268,8 +335,101 @@ pub(crate) fn known_ids(pages: &[(String, Page)]) -> FxHashSet<String> {
         .collect()
 }
 
+/// A `##` or `###` section of a page: the lines from its heading to the next heading.
+struct Section {
+    start: usize,
+    end: usize,
+    pending: bool,
+    plain: bool,
+}
+
+/// The sections of `page`. A heading of any level ends a section, but only `##` and `###` start
+/// one, as on the site.
+fn sections(page: &Page) -> Vec<Section> {
+    let ends = page.headings.iter().skip(1).map(|&(line, _)| line);
+    page.headings
+        .iter()
+        .zip(ends.chain(std::iter::once(usize::MAX)))
+        .filter(|((_, level), _)| matches!(level, 2 | 3))
+        .map(|(&(start, _), end)| {
+            let kinds: Vec<Kind> = page
+                .examples
+                .iter()
+                .filter(|example| (start..end).contains(&example.line))
+                .map(|example| example.kind)
+                .collect();
+            Section {
+                start,
+                end,
+                pending: kinds.contains(&Kind::Pending),
+                plain: kinds.iter().any(|&kind| kind != Kind::Pending),
+            }
+        })
+        .collect()
+}
+
 /// The faults of the proof of each rule of `page`, the page `stem`: a rule with no test, a rule
-/// whose text changed after its tests, and a section with a pending and a plain example.
-pub(crate) fn proof_faults(_stem: &str, _page: &Page, _markers: &[RuleMarker]) -> Vec<Fault> {
-    Vec::new()
+/// whose text changed after its tests, and a section with a pending and a plain example. The
+/// index and a page with no `{#` item have none. A rule whose ID has a fault (see `id_faults`)
+/// has none either. A rule in a section with a pending example needs no test, but its markers
+/// still need the current hash.
+pub(crate) fn proof_faults(stem: &str, page: &Page, markers: &[RuleMarker]) -> Vec<Fault> {
+    if is_index(stem) || page.id_lines.is_empty() {
+        return Vec::new();
+    }
+    let bad_lines: FxHashSet<usize> = id_faults(stem, page).iter().map(|f| f.line).collect();
+    let sections = sections(page);
+    let mut by_id: FxHashMap<&str, Vec<&RuleMarker>> = FxHashMap::default();
+    for marker in markers {
+        by_id.entry(&marker.id).or_default().push(marker);
+    }
+    let mut faults = Vec::new();
+    for rule in &page.rules {
+        let Some(id) = rule
+            .id
+            .as_deref()
+            .filter(|_| !bad_lines.contains(&rule.line))
+        else {
+            continue;
+        };
+        let hash = &rule.hash;
+        let named = by_id.get(id).map_or(&[][..], Vec::as_slice);
+        let stale: Vec<&&RuleMarker> = named.iter().filter(|m| m.hash != *hash).collect();
+        let message = if named.is_empty() {
+            let in_development = sections
+                .iter()
+                .any(|s| (s.start..s.end).contains(&rule.line) && s.pending);
+            if in_development {
+                continue;
+            }
+            format!("{id} has no test. Add `r[verify {id}@{hash}]` to a test that proves it.")
+        } else if stale.is_empty() {
+            continue;
+        } else {
+            let list: Vec<String> = stale
+                .iter()
+                .map(|m| format!("{}:{} (@{})", m.file, m.line, m.hash))
+                .collect();
+            format!(
+                "the text of {id} changed. Its hash is now @{hash}. Read these tests again, \
+                 then change each marker's hash:\n  {}",
+                list.join("\n  ")
+            )
+        };
+        faults.push(Fault {
+            line: rule.line,
+            message,
+        });
+    }
+    faults.extend(sections.iter().filter(|s| s.pending && s.plain).map(|s| {
+        Fault {
+            line: s.start,
+            message:
+                "this section has a pending example and a plain example. Put the pending part \
+                  under its own heading."
+                    .to_string(),
+        }
+    }));
+    faults.sort_by_key(|fault| fault.line);
+    faults
 }

@@ -109,12 +109,12 @@ pub(crate) fn read_markers(file: &str, bytes: &[u8]) -> (Vec<RuleMarker>, Vec<Ma
             faults.push(fault(
                 "the site shows this file, so a marker cannot go in it.",
             ));
-        } else if let Some(id) = parse_marker(rest) {
+        } else if let Some((id, hash)) = parse_marker(rest) {
             markers.push(RuleMarker {
                 file: file.to_string(),
                 line,
                 id: id.to_string(),
-                hash: String::from("0000"),
+                hash: hash.to_string(),
             });
         } else {
             faults.push(fault(
@@ -134,15 +134,16 @@ fn after_opener(line: &str) -> Option<&str> {
     comment.trim_start().strip_prefix("r[")
 }
 
-/// The ID of the marker whose text after `r[` is `rest`: `verify `, an ID, `@`, four lowercase hex
-/// digits, `]`, and then only white space. The ID is not empty and holds no white space or `]`.
-fn parse_marker(rest: &str) -> Option<&str> {
+/// The ID and the hash of the marker whose text after `r[` is `rest`: `verify `, an ID, `@`, four
+/// lowercase hex digits, `]`, and then only white space. The ID is not empty and holds no white
+/// space or `]`.
+fn parse_marker(rest: &str) -> Option<(&str, &str)> {
     let (id, rest) = rest.strip_prefix("verify ")?.split_once('@')?;
     let id_ok = !id.is_empty() && !id.contains(|c: char| c.is_whitespace() || c == ']');
     let hash = rest.get(..4)?;
     let hash_ok = hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
     let after = rest[4..].strip_prefix(']')?;
-    (id_ok && hash_ok && after.trim().is_empty()).then_some(id)
+    (id_ok && hash_ok && after.trim().is_empty()).then_some((id, hash))
 }
 
 /// The fault for each of `markers` whose ID is not in `known`.

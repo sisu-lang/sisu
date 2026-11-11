@@ -96,9 +96,14 @@ pub(crate) fn read_page(text: &str) -> Page {
     };
     // The code block being read: its start offset, its kind and its text so far.
     let mut block: Option<(usize, CodeBlockKind<'_>, String)> = None;
+    let mut headings = Vec::new();
     let mut events = Parser::new_ext(text, Options::ENABLE_TABLES).into_offset_iter();
     for (event, range) in events.by_ref() {
         match event {
+            Event::Start(Tag::Heading { level, .. }) => {
+                headings.push((line_of(range.start), level as u8));
+                reader.open = Open::Nothing;
+            }
             Event::Start(Tag::CodeBlock(kind)) => block = Some((range.start, kind, String::new())),
             // Text outside a code block is inside a paragraph or a heading, whose start
             // already closed the open example.
@@ -157,7 +162,7 @@ pub(crate) fn read_page(text: &str) -> Page {
         faults,
         rules,
         id_lines,
-        headings: Vec::new(),
+        headings,
     }
 }
 
