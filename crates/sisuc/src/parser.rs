@@ -10613,8 +10613,9 @@ mod tests {
     }
 
     #[test]
-    fn mut_self_fix() {
-        // Safe only when `self` ends the parameter: `mut self: i64` stays broken without `mut`.
+    fn mut_self_fix_should_be_safe_only_when_self_ends_the_parameter() {
+        // Safe only when `self` ends the parameter. A type that does not parse, or a token other
+        // than `,` or `)` after the type, keeps the one edit that removes `mut `.
         for (src, edit, safe) in [
             ("class C {\n    fn f(mut self) {}\n}", (19, 23), true),
             (
@@ -10622,7 +10623,12 @@ mod tests {
                 (19, 25),
                 true,
             ),
-            ("class C {\n    fn f(mut self: i64) {}\n}", (19, 23), false),
+            ("class C {\n    fn f(mut self: ) {}\n}", (19, 23), false),
+            (
+                "class C {\n    fn f(mut self: i64 x) {}\n}",
+                (19, 23),
+                false,
+            ),
         ] {
             let d = parse_diagnostic(src);
             assert_eq!(d.code(), Code::MutSelf, "{src}");
@@ -10633,6 +10639,77 @@ mod tests {
                 "{src}"
             );
             assert!(d.help().is_some(), "{src}");
+        }
+        // A typed receiver also loses its type, as the parser refuses a type on `self`.
+        let typed = "class C {\n    fn f(mut self: i64) {}\n}";
+        let d = parse_diagnostic(typed);
+        assert_eq!(
+            fix_edits(&d),
+            Some((
+                false,
+                vec![(19, 23, String::new()), (27, 32, String::new())]
+            ))
+        );
+    }
+
+    /// GIVEN a `mut self` with a type, in a class, an enum or an interface
+    /// WHEN the fix is applied
+    /// THEN the `mut` and the whole type are gone, and the source has no syntax error
+    #[test]
+    fn a_typed_receiver_fix_should_remove_the_mut_and_the_type() {
+        for (src, line, want) in [
+            (
+                "class C {\n    fn f(mut self: i64) {}\n}",
+                2,
+                "class C {\n    fn f(self) {}\n}",
+            ),
+            (
+                "class C {\n    fn f(mut self: i64, a: i64) {}\n}",
+                2,
+                "class C {\n    fn f(self, a: i64) {}\n}",
+            ),
+            (
+                "enum E {\n    A\n    fn f(mut self: i64) {}\n}",
+                3,
+                "enum E {\n    A\n    fn f(self) {}\n}",
+            ),
+            (
+                "interface I {\n    fn f(mut self: i64)\n}",
+                2,
+                "interface I {\n    fn f(self)\n}",
+            ),
+            (
+                "class C {\n    fn f(mut self: Box<i64>) {}\n}",
+                2,
+                "class C {\n    fn f(self) {}\n}",
+            ),
+            (
+                "class C {\n    fn f(mut self: [i64]?) {}\n}",
+                2,
+                "class C {\n    fn f(self) {}\n}",
+            ),
+            (
+                "class C {\n    fn f(mut self: (i64)) {}\n}",
+                2,
+                "class C {\n    fn f(self) {}\n}",
+            ),
+            (
+                "class C {\n    fn f(mut self: (Box<i64>)) {}\n}",
+                2,
+                "class C {\n    fn f(self) {}\n}",
+            ),
+        ] {
+            let d = parse_diagnostic(src);
+            assert_eq!(d.code(), Code::MutSelf, "{src}");
+            assert_eq!(line_col(src, d.span().start()), (line, 10), "{src}");
+            assert!(
+                matches!(d.fixes(), [fix] if !fix.safe()),
+                "{src}: {:?}",
+                d.fixes()
+            );
+            let result = apply_fix(src, &d);
+            assert_eq!(result, want, "{src}");
+            assert!(parsed(&result).diagnostics.is_empty(), "{result}");
         }
     }
 
