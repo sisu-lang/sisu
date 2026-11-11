@@ -1,6 +1,9 @@
 // An observer in a run-time list keeps its own growing state, with `mut self` through `any`.
 struct Model { n: i64 }
-interface Observer { fn on(mut self, mut m: Model, x: i64) }
+interface Observer {
+    fn on(mut self, mut m: Model, x: i64)
+    fn count(self) -> i64
+}
 struct Seen: Observer {
     xs: [i64]
     fn on(mut self, mut m: Model, x: i64) {
@@ -9,7 +12,10 @@ struct Seen: Observer {
     }
     fn count(self) -> i64 { self.xs.len() }
 }
-struct Empty: Observer { fn on(mut self, mut m: Model, x: i64) { } }
+struct Empty: Observer {
+    fn on(mut self, mut m: Model, x: i64) { }
+    fn count(self) -> i64 { 0 }
+}
 fn main() {
     let mut n = 0
     for c in (read_line() ?? "").chars() {
@@ -24,4 +30,5 @@ fn main() {
         list[1].on(mut m, x)
     }
     print(m.n)
+    print(list[0].count())
 }

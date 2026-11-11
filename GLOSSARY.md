@@ -21,13 +21,15 @@ root can change, such as `grid[i][j]`. A `mut` argument is any place except a
 path through `?.`: if `x = v` compiles and `x` has no `?.`, `f(mut x)` does. A
 path through `?.` is a place, but it is not a `mut` argument (the error E0170).
 In mir, a place can also name a payload field under a known variant, which only
-`match` reads.
+`match` reads. Until classes go, a path through a class object follows the
+object's `mut` field (ADR 0011).
 _Avoid_: lvalue
 
 **Root of a place**:
 The local, parameter or `self` at the start of a place. The root decides
-whether a write through the place is allowed. The glossary's **Root** is the
-import root, and it stays.
+whether a write through the place is allowed. Until classes go, a path through
+a class object follows the object's `mut` field (ADR 0011). The glossary's
+**Root** is the import root, and it stays.
 
 **Read binding**:
 A name that `for`, `if let`, `while let`, `let ... else` or `match` binds to a

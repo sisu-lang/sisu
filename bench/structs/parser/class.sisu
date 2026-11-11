@@ -1,7 +1,11 @@
-// The lexer of Sisu, written in Sisu. It reads standard input and prints the tokens that
-// `sisu build --emit tokens` prints for the same text, one `line:col Kind text` line each.
-// A test compares the two outputs byte for byte. The program follows the clean path only: on text
-// that the compiler's lexer reports an error for, its output is not specified.
+// The class version of the parser benchmark. `weak` is not built yet, so the parent links of its
+// tree are reference cycles, and this program leaks them at exit.
+//
+// A lexer for Sisu, written in Sisu: the lexer of the structs spike, kept as a frozen workload.
+// It reads standard input and prints one `line:col Kind text` line for each token. Its keyword
+// list is the spike's, so it does not match `sisu build --emit tokens` of today. It follows the
+// clean path only: on text that the compiler's lexer reports an error for, its output is not
+// specified.
 //
 // It has two passes. The first reads each line with `read_line` and walks its `chars()` once. It
 // keeps the tokens in an array, and it decides at each line break whether a `Newline` follows.

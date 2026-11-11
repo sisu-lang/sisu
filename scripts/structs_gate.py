@@ -22,6 +22,10 @@ The gates of the spec ("The reversal tests"):
 The `parser` program has two modes. The script runs `dump` and `lex` at each size. It measures
 the parser part: the count of `dump` less the count of `lex`.
 
+Both versions read the same input, so the class version proves that the input scales. A class
+version at or below `GROWTH_FLOOR` times its 1x count is an input failure. This holds under
+`--class-only` too. A struct version has no lower limit.
+
 `--class-only` runs the class versions only. It builds no struct version and judges no gate. It
 proves that the programs and the inputs work, before `struct` compiles.
 
@@ -29,13 +33,13 @@ The script exits with code 1 when a gate fails, or when a build or a run fails.
 """
 
 import argparse
-import re
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from compile_speed import Deadline, Fail
+from count_instructions import total
 
 ROOT = Path(__file__).resolve().parent.parent
 BENCH = ROOT / "bench" / "structs"
@@ -48,14 +52,13 @@ RATIO_LIMIT = 5.0
 # Gate: the observer, at its 4x input of `OBSERVER_EVENTS` events.
 OBSERVER_LIMIT = 100_000_000
 OBSERVER_EVENTS = 20_000
-# A 4x count at or below this many times the 1x count shows an input that the program ignores.
+# Input check: a class version at or below this ratio shows an input that the program ignores.
+# Both versions read the same input. A struct version has no lower limit (it may do less work).
 GROWTH_FLOOR = 3.0
 # The modes of the `parser` program: `dump` is the work, and `lex` is the lexing in it.
 PARSER_MODES = ("dump", "lex")
 # The columns of the table that hold numbers: 1x, 4x and ratio.
 NUMBER_COLUMNS = (2, 3, 4)
-# The last line of a callgrind run: `==123== Collected : 617810176`.
-COLLECTED = re.compile(r"^==\d+== Collected : (\d+)$", re.MULTILINE)
 
 
 @dataclass(frozen=True)
@@ -94,14 +97,6 @@ def generated(program: str, size: str, bench: Path, out: Path, deadline: Deadlin
     return target
 
 
-def instructions(stderr: str) -> int:
-    """Return the instruction count in the stderr of a callgrind run, or raise Fail."""
-    found = COLLECTED.findall(stderr)
-    if not found:
-        raise Fail("callgrind gave no instruction count")
-    return int(found[-1])
-
-
 def build(deadline: Deadline, sisu: str, source: Path, exe: Path) -> None:
     """Build `source` into `exe` with the system allocator and one codegen unit."""
     cmd = [sisu, "build", "--allocator", "system", "--codegen-units", "1", "-o", exe, source]
@@ -113,7 +108,7 @@ def count(deadline: Deadline, exe: Path, args: list[str], stdin: Path) -> int:
     cmd = ["valgrind", "--tool=callgrind", "--callgrind-out-file=/dev/null", exe, *args]
     with stdin.open() as source:
         result = deadline.run(cmd, f"callgrind {exe.name}", stdin=source, stdout=subprocess.DEVNULL)
-    return instructions(result.stderr)
+    return total(result.stderr)
 
 
 def measure(
@@ -138,9 +133,7 @@ def judge(program: str, struct: Row, cls: Row) -> str:
     """Return `pass`, `excused ...`, or `FAIL ...` for the struct version of `program`."""
     problems = []
     excused = ""
-    if struct.ratio <= GROWTH_FLOOR:
-        problems.append(f"the count grows {struct.ratio:.2f}x at 4x the input")
-    elif struct.ratio > RATIO_LIMIT:
+    if struct.ratio > RATIO_LIMIT:
         if cls.ratio >= RATIO_LIMIT:
             excused = f"excused: the class version is at {cls.ratio:.2f}x"
         else:
@@ -153,6 +146,13 @@ def judge(program: str, struct: Row, cls: Row) -> str:
     if problems:
         return "FAIL: " + "; ".join(problems)
     return excused or "pass"
+
+
+def check_input(cls: Row) -> str | None:
+    """Return the failure of the input check on the class version, or None when the input scales."""
+    if cls.ratio <= GROWTH_FLOOR:
+        return f"FAIL: the input does not scale: the class count grows {cls.ratio:.2f}x at 4x"
+    return None
 
 
 def table(rows: list[tuple[Row, str]]) -> str:
@@ -205,15 +205,17 @@ def main(argv: list[str]) -> int:
             cls = measure(
                 deadline, args.sisu, args.bench / program / "class.sisu", inputs, args.out
             )
+            unscaled = check_input(cls)
+            failed = failed or unscaled is not None
             if args.class_only:
-                rows.append((cls, "measured"))
+                rows.append((cls, unscaled or "measured"))
                 continue
             struct = measure(
                 deadline, args.sisu, args.bench / program / "struct.sisu", inputs, args.out
             )
             result = judge(program, struct, cls)
             failed = failed or result.startswith("FAIL")
-            rows.extend([(cls, "-"), (struct, result)])
+            rows.extend([(cls, unscaled or "-"), (struct, result)])
     except Fail as e:
         print(f"structs_gate: {e}", file=sys.stderr)
         return 1

@@ -1,5 +1,7 @@
 // The same task board with classes. Each part holds the objects it works on, so its signatures
 // name only what the part does. An object that was removed stays alive, so it carries a flag.
+// `weak` is not built yet, so the bus and its observers refer to each other. These are reference
+// cycles, and this program leaks them at exit.
 
 class Task {
     mut title: string

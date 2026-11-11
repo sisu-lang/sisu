@@ -1,12 +1,16 @@
 // The same observer as a class in an `any` list.
 class Model { mut n: i64 }
-interface Observer { fn on(self, m: Model, x: i64) }
+interface Observer {
+    fn on(self, m: Model, x: i64)
+    fn count(self) -> i64
+}
 class Seen: Observer {
     mut xs: [i64]
     fn on(self, m: Model, x: i64) {
         m.n += 1
         self.xs.push(x)
     }
+    fn count(self) -> i64 { self.xs.len() }
 }
 fn main() {
     let mut n = 0
@@ -19,4 +23,5 @@ fn main() {
         list[0].on(m, x)
     }
     print(m.n)
+    print(list[0].count())
 }
