@@ -719,6 +719,27 @@ class Build(unittest.TestCase):
                 else:
                     self.assert_fails("decisions.html", found)
 
+    def test_new_adr_should_have_a_reconsider_when_section(self) -> None:
+        path = "docs/adr/0050-new.md"
+        with_section = "# New\n\n## Reconsider when\n\nA tool changes.\n"
+        cases = [
+            ("0049 without it, 0050 with it", "# Old\n", with_section, True),
+            ("0050 without it", "# Old\n", "# New\n\nBody.\n", False),
+        ]
+        for name, old, new, ok in cases:
+            with self.subTest(name):
+                fake_site(self, {}, {"docs/adr/0049-old.md": old, path: new})
+                self.enterContext(
+                    mock.patch.object(build.check_links, "TRACKED", {"docs/adr/0049-old.md", path})
+                )
+                rows = adr_row("0049", "old", "Old") + adr_row("0050", "new", "New")
+                found = problems(self, {"decisions.html": PAGE.format(f"<ul>{rows}</ul>")})
+                if ok:
+                    self.assertEqual(found, [], name)
+                else:
+                    self.assertEqual(len(found), 1, name)
+                    self.assertIn(path, found[0], name)
+
     def test_decisions_should_check_adr_rows_without_building(self) -> None:
         adrs = {"docs/adr/0001-first.md": "# First\n", "docs/adr/0002-second.md": "# Second\n"}
         listed = adr_row("0001", "first", "First") + adr_row("0002", "second", "Second")
