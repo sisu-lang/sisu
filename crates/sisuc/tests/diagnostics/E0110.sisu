@@ -1,3 +1,4 @@
+// r[verify strings.spec.limits@b82d]
 fn main() {
     let x = 2.5
     print("{x:1001}")

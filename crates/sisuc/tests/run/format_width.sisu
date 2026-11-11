@@ -1,6 +1,9 @@
 // Format specs pad a part to a width in code points, by its alignment or its type's default:
 // numbers right, `bool`, `char` and `string` left. Each padded part sits between brackets or
 // other text, so a wrong offset after the padding shows.
+// r[verify strings.spec.pad@ba75]
+// r[verify strings.spec.characters@120c]
+// r[verify strings.spec.centre@4085]
 fn first() -> f64 {
     print("first")
     1.25

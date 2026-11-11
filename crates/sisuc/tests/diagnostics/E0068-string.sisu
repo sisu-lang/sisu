@@ -1,3 +1,4 @@
+// r[verify strings.text.no-index@81f8]
 fn main() {
     let s = "häst"
     print(s[0])

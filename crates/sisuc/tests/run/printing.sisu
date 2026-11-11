@@ -5,6 +5,8 @@
 // by the Some rule `Some(` wraps only a `None`; a variant has no enum name and keeps its labels;
 // a class is its name with its type arguments; a written `to_string`'s text is raw wherever the
 // value sits. `printing_optionals.sisu` prints an optional at the top level.
+// r[verify strings.spec.number-right@9f0c]
+// r[verify strings.spec.other-left@d704]
 class Node {}
 
 class Stack<T> {

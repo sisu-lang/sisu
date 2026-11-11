@@ -1,6 +1,7 @@
 // An append reads its place first, then the appended text, and copies when another holder
 // shares the string or an array on its path. Every string a line drops is built at run time, so
 // Valgrind checks that each is released exactly once.
+// r[verify strings.text.join-assign@2b7f]
 class Q {
     mut s: string
 }

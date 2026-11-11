@@ -5,6 +5,9 @@
 // `[string]` in a local, so it is built; `s.words().len()` in `main` only counts the words.
 // o2-calls: main show 4
 // o2-calls: main show_optional 1
+// r[verify strings.methods.word@7498]
+// r[verify strings.methods.no-words@2acb]
+// r[verify strings.methods.optional@3c92]
 fn show(s: string) {
     let ws = s.words()
     print("{ws.len()}")           // the word count

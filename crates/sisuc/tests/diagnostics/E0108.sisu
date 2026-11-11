@@ -1,3 +1,4 @@
+// r[verify strings.spec.empty@dce7]
 fn main() {
     let x = 2.5
     print("{x:}")

@@ -10,6 +10,10 @@
 // AND a written `to_string` with a line break breaks every group around it
 // AND a `string` that holds `\n` is escaped and breaks nothing
 // AND `laid` lays out the value of its type argument, and a scalar or a class as it is
+// r[verify strings.flag.fits@5b6a]
+// r[verify strings.flag.break@ea8b]
+// r[verify strings.flag.nested@eeb8]
+// r[verify strings.flag.to-string@5ef9]
 class Stack<T> {
     _items: [T]
 }

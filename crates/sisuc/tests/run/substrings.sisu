@@ -3,6 +3,7 @@
 // substring, and lets a `get` fail at the last use of a string
 // THEN each substring covers the bytes of its range, `get` gives `None` where the index would
 // stop the program, an append does not change the parent, and no block leaks
+// r[verify strings.text.range-index@5615]
 fn show(t: string?) {
     if let Some(text) = t {
         print("some[{text}]")
