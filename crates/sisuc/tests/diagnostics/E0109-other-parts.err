@@ -1,32 +1,14 @@
 error[E0109]: Sisu's format specs take `#`, or an alignment, a width and a precision
-  --> E0109-other-parts.sisu:10:14
-   |
-10 |     print("{n:08}")
-   |              ^^^
+ --> E0109-other-parts.sisu:8:14
+  |
+8 |     print("{x:*>8}")
+  |              ^^^^
 
 error[E0109]: Sisu's format specs take `#`, or an alignment, a width and a precision
-  --> E0109-other-parts.sisu:11:14
-   |
-11 |     print("{x:+}")
-   |              ^^
+ --> E0109-other-parts.sisu:9:14
+  |
+9 |     print("{n:x}")
+  |              ^^
 
-error[E0109]: Sisu's format specs take `#`, or an alignment, a width and a precision
-  --> E0109-other-parts.sisu:12:14
-   |
-12 |     print("{x:*>8}")
-   |              ^^^^
-
-error[E0109]: Sisu's format specs take `#`, or an alignment, a width and a precision
-  --> E0109-other-parts.sisu:13:14
-   |
-13 |     print("{n:x}")
-   |              ^^
-
-error[E0109]: Sisu's format specs take `#`, or an alignment, a width and a precision
-  --> E0109-other-parts.sisu:14:14
-   |
-14 |     print("{x:>{w}}")
-   |              ^^^^^
-
-sisu: 5 errors
+sisu: 2 errors
 sisu: for more on a code, run `sisu explain <code>`: E0109

@@ -1,3 +1,4 @@
+// r[verify strings.spec.other-parts@f716]
 fn main() {
     let x = 2.5
     print("{x:+}")

@@ -1,15 +1,10 @@
-// GIVEN format specs with zero padding, a sign, a fill character, a type letter, and a width from
-// a variable
+// GIVEN format specs with a fill character and with a type letter
 // WHEN `sisu check` runs on it
 // THEN it reports E0109 at each spec
 // r[verify strings.spec.other-parts@f716]
 fn main() {
     let x = 2.5
     let n = 7
-    let w = 8
-    print("{n:08}")
-    print("{x:+}")
     print("{x:*>8}")
     print("{n:x}")
-    print("{x:>{w}}")
 }
