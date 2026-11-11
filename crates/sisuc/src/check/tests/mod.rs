@@ -39,6 +39,7 @@ mod recursion;
 mod reports;
 mod shadowing;
 mod strings;
+mod structs;
 mod u8;
 mod unused;
 mod unused_names;
