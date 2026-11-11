@@ -269,10 +269,10 @@ fn excerpts<'s>(
                  mut held,
                  ..
              }| {
-                held.sort_unstable();
                 // A `:::` header names the first annotation of its first line
-                // (`render_snippet_annotations` in annotate-snippets 0.12.17). So that span gets
-                // the header fix of a cut.
+                // (`render_snippet_annotations` in annotate-snippets 0.12.17). In this order that
+                // is the leftmost label, as a `-->` header names the leftmost primary span.
+                held.sort_unstable_by_key(|&i| (secondary[i].start(), i));
                 let header = if has_primary {
                     primary
                 } else {
@@ -376,25 +376,59 @@ impl Diagnostic {
         } else {
             Renderer::plain()
         };
-        let mut text = renderer.render(&groups);
-        // The snippets render in order, so each header is after the one before it. A header
-        // ends at the column, so the next byte is not a digit.
-        let mut from = 0;
-        for (line, cut, column) in excerpts.iter().filter_map(|(e, _)| e.header) {
-            let shown = format!("{path}:{line}:{cut}");
-            let Some(at) = text[from..]
-                .match_indices(&shown)
-                .map(|(at, _)| from + at)
-                .find(|&at| !text[at + shown.len()..].starts_with(|c: char| c.is_ascii_digit()))
-            else {
-                break;
-            };
-            let true_header = format!("{path}:{line}:{column}");
-            text.replace_range(at..at + shown.len(), &true_header);
-            from = at + true_header.len();
+        let text = renderer.render(&groups);
+        if excerpts.iter().all(|(e, _)| e.header.is_none()) {
+            return text;
         }
-        text
+        true_headers(&text, path, excerpts.iter().map(|(e, _)| e.header))
     }
+}
+
+/// Whether `line` of the rendered text is the header of a snippet, plain or styled: white space
+/// and ANSI styles, then `-->` or `:::`. A source line starts with its gutter, so it is not one.
+fn is_header(line: &str) -> bool {
+    let mut rest = line.trim_start_matches(' ');
+    while let Some(style) = rest.strip_prefix("\u{1b}[") {
+        // An ANSI style ends at its first letter.
+        let Some(end) = style.find(|c: char| c.is_ascii_alphabetic()) else {
+            return false;
+        };
+        rest = style[end + 1..].trim_start_matches(' ');
+    }
+    rest.starts_with("--> ") || rest.starts_with("::: ")
+}
+
+/// `text` with the true column in the header of each cut snippet. `headers` gives the header fix
+/// of each snippet of the first group, in render order. The header lines of the first group come
+/// first in the text. Only those lines change, because a source line can show the same text.
+/// One pass copies each line once, so the cost is linear in the text.
+fn true_headers(
+    text: &str,
+    path: &str,
+    mut headers: impl Iterator<Item = Option<(usize, usize, usize)>>,
+) -> String {
+    let mut out = String::with_capacity(text.len() + 16);
+    for line in text.split_inclusive('\n') {
+        let fix = if is_header(line) {
+            headers.next().flatten()
+        } else {
+            None
+        };
+        let repaired = fix.and_then(|(number, cut, column)| {
+            let shown = format!("{path}:{number}:{cut}");
+            let at = line.rfind(&shown)?;
+            Some((at, shown.len(), format!("{path}:{number}:{column}")))
+        });
+        match repaired {
+            Some((at, len, header)) => {
+                out.push_str(&line[..at]);
+                out.push_str(&header);
+                out.push_str(&line[at + len..]);
+            }
+            None => out.push_str(line),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -778,8 +812,7 @@ error[E0011]: expected `=`, found end of line
         }
     }
 
-    /// Labels 3 lines apart share a snippet, and labels 4 lines apart do not, with LF and CRLF
-    /// line breaks.
+    /// At the cluster boundary, with LF and CRLF, each snippet renders as the whole source does.
     #[test]
     fn labels_three_and_four_lines_apart_should_render_as_the_whole_source_does() {
         for source in [numbered(12), numbered(12).replace('\n', "\r\n")] {
@@ -1063,9 +1096,10 @@ error[E0011]: expected `=`, found end of line
     /// Whether the renderer gets less than the whole lines of `d`'s main snippet.
     fn is_cut(d: &Diagnostic, source: &str) -> bool {
         let lines = LineIndex::new(source);
-        let labelled = std::iter::once(d.span()).chain(d.secondary().iter().map(|(s, _)| *s));
-        let (range, _) = window(source, &lines, labelled.clone());
-        let excerpt = Excerpt::new(source, &lines, labelled, d.span());
+        let spans: Vec<Span> = d.secondary().iter().map(|(s, _)| *s).collect();
+        let (excerpt, held) = excerpts(source, &lines, d.span(), &spans).swap_remove(0);
+        let labelled = std::iter::once(d.span()).chain(held.iter().map(|&i| spans[i]));
+        let (range, _) = window(source, &lines, labelled);
         excerpt.text.len() < range.len()
     }
 
