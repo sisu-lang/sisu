@@ -228,8 +228,9 @@ work under review.
 - Compare with the base of the whole work, not with the base of this
   round. A defect that the work added blocks, also when an earlier fix
   round added it.
-- Report a defect in code or text that this round did not change under
-  "Outside this round", after "Unverified", not as a finding.
+- A defect can be in code or text that this round did not change. When
+  the work did not add it, report it under "Outside this round", after
+  "Unverified", not as a finding.
 
 # Focus
 

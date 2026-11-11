@@ -87,7 +87,7 @@ its last event.
 
 Then ask with `AskUserQuestion`. One call takes at most four questions. Ask
 one question that approves the table or asks for changes. For the full flow, ask
-one question for the outside seat and its effort, for each review of the batch
+one question that chooses the outside seat and its effort for all the reviews of the batch
 (`review-sisu`, step 3). Ask one question
 for each language decision. With more than three decisions, use more than
 one call. Write the answers in the ledger.

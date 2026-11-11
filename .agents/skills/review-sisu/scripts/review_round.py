@@ -190,7 +190,11 @@ def rulings(run: Path, round_number: int, reports: list[str]) -> int:
     """Return 1 when a finding of a report has no ruling. Print the rulings of each reviewer."""
     path = run / f"rulings-{round_number}.md"
     lines = path.read_text(encoding="utf-8") if path.exists() else ""
-    ruled = dict(re.findall(r"^(\S+ \d+): (\w+)", lines, flags=re.MULTILINE))
+    # The ruling ends at the next colon; "Defer to <where>" counts as Defer.
+    ruled = {
+        finding: "Defer" if ruling.startswith("Defer to ") else ruling
+        for finding, ruling in re.findall(r"^(\S+ \d+): ([^:\n]+)", lines, flags=re.MULTILINE)
+    }
     status = 0
     for stem in reports:
         report = (run / numbered(stem, round_number)).read_text(encoding="utf-8")
