@@ -174,8 +174,8 @@ fn write_through_a_root_that_cannot_change_should_be_e0001() {
 }
 
 /// GIVEN a struct method with plain `self`. WHEN it writes a field, assigns to `self`, or another
-/// method takes `mut self`. THEN the codes are E0001, E0073 and E0018, each with no fix. The first
-/// two have a help.
+/// method takes `mut self`. THEN the codes are E0001, E0073 and E0018, each with no fix and a
+/// help.
 #[test]
 fn plain_self_should_report_its_codes() {
     let src = "struct P {\n    n: i64\n    fn a(self) {\n        self.n = 1\n    }\n    fn b(self) {\n        self = P(n: 2)\n    }\n    fn c(mut self) {}\n}\nfn main() {}";
@@ -190,8 +190,7 @@ fn plain_self_should_report_its_codes() {
     );
     for d in ds.iter().filter(|d| d.code().severity() == Severity::Error) {
         assert!(d.fixes().is_empty(), "{d:?}");
-        let helped = d.code() != MutSelf;
-        assert_eq!(d.help().is_some(), helped, "{d:?}");
+        assert!(d.help().is_some(), "{d:?}");
     }
 }
 
@@ -469,7 +468,7 @@ struct In {{ n: i64; xs: [i64] }}
 struct P {{ n: i64; i: In; xs: [i64]; c: C; e: E; cs: [C] }}
 struct Q {{ n: i64 }}
 fn f() -> P {{
-    f()
+    P(n: 1, i: In(n: 1, xs: []), xs: [], c: C(n: 1, i: In(n: 1, xs: [])), e: E.A, cs: [])
 }}
 fn add(mut a: i64, b: i64) {{
     a += b
@@ -629,7 +628,7 @@ class D {{
 struct P {{ n: i64; xs: [i64] }}
 struct S {{ c: C }}
 fn f() -> S {{
-    f()
+    S(c: C(p: P(n: 1, xs: []), xs: []))
 }}
 fn put(mut a: [i64], b: i64) {{
     a.push(b)
@@ -798,7 +797,7 @@ fn plain_self_write_should_report_by_its_form() {
 /// one.
 #[test]
 fn broken_base_should_report_once() {
-    let decls = "class Cn {\n    mut n: i64\n}\nclass A {\n    c: Cn\n}\nstruct P { n: i64 }\nstruct T { xs: [P]; n: i64 }\nfn f() -> P {\n    f()\n}\n";
+    let decls = "class Cn {\n    mut n: i64\n}\nclass A {\n    c: Cn\n}\nstruct P { n: i64 }\nstruct T { xs: [P]; n: i64 }\nfn f() -> P {\n    P(n: 1)\n}\n";
     let program = |body: &str| format!("{decls}fn main() {{\n    {body}\n}}");
     let l = 14;
     lowered_row(
@@ -882,4 +881,21 @@ fn generic_struct_should_be_rejected_until_task_6() {
     for (row, src, pos) in rows {
         codes_row(row, src, &[(ReservedWord, pos)]);
     }
+}
+
+/// GIVEN a write through a path of `.xs[0]` steps in a struct `T`. WHEN the path is 10, 20 and 30
+/// steps deep. THEN the path walks grow in step with the depth, so each step is walked once.
+#[test]
+fn struct_path_should_check_each_step_once() {
+    let steps = |depth: usize| {
+        let path = ".xs[0]".repeat(depth);
+        let src = format!(
+            "struct T {{ xs: [T]; n: i64 }}\nfn main() {{\n    let mut t = T(xs: [], n: 1)\n    t{path}.n = 2\n    print(t.n)\n}}"
+        );
+        PATH_STEPS.set(0);
+        let (_, ds) = checked(&src);
+        assert!(ds.iter().all(|d| d.code() == ReservedWord), "{ds:?}");
+        PATH_STEPS.get()
+    };
+    assert_near_linear(steps(10), steps(20), steps(30));
 }

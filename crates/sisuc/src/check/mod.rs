@@ -32,6 +32,7 @@ mod recursion;
 mod reports;
 mod stmt;
 mod string;
+mod structs;
 mod unused_names;
 
 use std::borrow::Cow;
@@ -193,6 +194,7 @@ type CheckedBlock = Result<tir::Block, Poisoned>;
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Holder {
     Class(tir::ClassId),
+    Struct(tir::StructId),
     Enum(tir::EnumId),
     Array,
     I64,
@@ -588,6 +590,8 @@ thread_local! {
     /// How many calls written `.push` have read a place of a type that is no array, on this
     /// thread.
     pub(crate) static OWN_PUSH_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many steps of a struct path `try_unread` and `is_path` have walked on this thread.
+    pub(super) static PATH_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many times `pushed_value` has been called on this thread.
     pub(crate) static PUSHED_VALUES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many type parameter names have been indexed or looked up on this thread.
@@ -671,6 +675,8 @@ struct Checker<'src> {
     signatures: Vec<Signature>,
     /// Indexed by `ClassId`, so a duplicate class has fields and methods of its own.
     classes: Vec<ClassInfo>,
+    /// Indexed by `StructId`, so a duplicate struct has fields and methods of its own.
+    structs: Vec<ClassInfo>,
     /// Indexed by `EnumId`, so a duplicate enum has variants of its own.
     enums: Vec<EnumInfo>,
     /// Indexed by `InterfaceId`, so a duplicate interface has requirements of its own.
@@ -989,6 +995,10 @@ struct Body {
     /// Whether an index follows the expression being checked in its chain (field bases, method
     /// receivers, indexed bases). A `?.` that fixes a `.` there leads to an index on an optional.
     indexed: bool,
+    /// The span and the change of the write whose chain holds the expression being checked: its
+    /// field bases and indexed bases up to the written place. A `?.` on a struct value there
+    /// leads to a write that part 1 cannot make.
+    write_chain: Option<(Span, place::Change)>,
     /// The initializer of the `let` being checked, and what that `let` writes before its type
     /// (`mut`, then the name): E0050 uses it in its example when the initializer is the whole
     /// `None` or `[]`.
@@ -1134,6 +1144,10 @@ fn parser_marked(program: &ast::Program, items: &[&ast::Item]) -> bool {
 /// it: `front_end` takes one that does for an internal error. `source` is the user's text, and
 /// `prelude` holds the prelude's. The prelude's `Option` is no item here: it defines the optional
 /// type, which has no enum.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the passes run in order, and the order is the design"
+)]
 // `scripts/scaling.py` reads this function's instruction count.
 #[inline(never)]
 pub(crate) fn check<'src>(
@@ -1165,6 +1179,7 @@ pub(crate) fn check<'src>(
     checker.instantiation_cycles(&functions, &unbuilt);
     checker.report_loops();
     let classes = checker.classes.iter().map(lower_class).collect();
+    let structs = checker.structs.iter().map(structs::lower_struct).collect();
     let broken = parser_marked(program, &items);
     debug_assert!(
         checker.diagnostics.promises_kept(broken),
@@ -1201,6 +1216,17 @@ pub(crate) fn check<'src>(
         })
         .collect();
     diagnostics.extend(warnings);
+    // A stopgap until structs lower: a struct that the checker takes must not reach the mir.
+    let erred = |ds: &[Diagnostic]| ds.iter().any(|d| d.severity() == Severity::Error);
+    if !erred(&diagnostics)
+        && !erred(parsed)
+        && let Some(at) = program.items.iter().find_map(|item| match item {
+            ast::Item::Struct(s) => Some(s.keyword),
+            _ => None,
+        })
+    {
+        diagnostics.push(DiagnosticKind::ReservedWord { word: "struct", at }.into());
+    }
     diagnostics.sort_by_key(order);
     let failed = diagnostics.iter().any(|d| d.severity() == Severity::Error);
     // A use in a failed expression may not be recorded, so an error stops the pass. Only the
@@ -1219,9 +1245,11 @@ pub(crate) fn check<'src>(
         .into_iter()
         .collect::<Option<_>>()
         .zip(classes)
+        .zip(structs)
         .filter(|_| !failed)
-        .map(|(functions, classes)| tir::Program {
+        .map(|((functions, classes), structs)| tir::Program {
             classes,
+            structs,
             enums,
             functions,
             instantiates,
@@ -1361,6 +1389,7 @@ impl<'src> Checker<'src> {
             prelude_functions: FxHashSet::default(),
             signatures: Vec::new(),
             classes: Vec::new(),
+            structs: Vec::new(),
             enums: Vec::new(),
             interfaces: Vec::new(),
             meets: FxHashMap::default(),
@@ -1570,6 +1599,7 @@ impl Checker<'_> {
         // redeclare a name of the program.
         let mut rejected = Vec::new();
         let mut next_function = 0;
+        let extended = structs::extended(items);
         let mut waiting = broken.iter().peekable();
         for (at, item) in items.iter().enumerate() {
             if at == user_items {
@@ -1599,16 +1629,7 @@ impl Checker<'_> {
                         .count();
                 }
                 ast::Item::Struct(s) => {
-                    // A stopgap until structs lower: the name stays known and poisoned, so each
-                    // use gives no error of its own.
-                    let reported = self.error(DiagnosticKind::ReservedWord {
-                        word: "struct",
-                        at: s.keyword,
-                    });
-                    if !self.built_in(&s.name) {
-                        self.first_callable(&mut first, &mut rejected, Definition::Struct, &s.name);
-                        rejected.push((Definition::Struct, s.name.name, reported));
-                    }
+                    next_function += self.collect_struct(s, &extended, &mut first, &mut rejected);
                 }
                 ast::Item::Function(f) => {
                     if !self.built_in(&f.name)
@@ -1906,6 +1927,7 @@ impl Checker<'_> {
         let mut declared = Vec::new();
         let mut next_class = 0;
         let mut next_enum = 0;
+        let mut next_struct = 0;
         for item in items {
             let class = match item {
                 ast::Item::Function(f) => {
@@ -1923,11 +1945,12 @@ impl Checker<'_> {
                     self.extend_signatures(extend, &mut declared);
                     continue;
                 }
-                // A struct has no signature to collect until it lowers.
-                ast::Item::Struct(_)
-                | ast::Item::Const(_)
-                | ast::Item::Alias(_)
-                | ast::Item::Interface(_) => continue,
+                ast::Item::Struct(s) => {
+                    next_struct +=
+                        usize::from(self.struct_signatures(s, next_struct, &mut declared));
+                    continue;
+                }
+                ast::Item::Const(_) | ast::Item::Alias(_) | ast::Item::Interface(_) => continue,
             };
             let id = tir::ClassId(next_class);
             next_class += 1;
@@ -2275,6 +2298,14 @@ impl Checker<'_> {
                 self.bounded(self.classes[id.0].bounded, ty, args)
                     .then_some(ty)
             }
+            Resolved::Item(ItemId::Struct(id)) => {
+                let list = if args.is_empty() {
+                    TypeArgs::NONE
+                } else {
+                    self.type_args(&ident(), &[], args, angles).ok()?
+                };
+                Some(Type::intern(TypeKind::Struct(id, list)))
+            }
             Resolved::Item(ItemId::Enum(id)) => {
                 self.reaches_prelude(id.0 >= self.prelude.enums, ident().span);
                 let list = if args.is_empty() && self.enums[id.0].type_params.is_empty() {
@@ -2495,9 +2526,10 @@ impl Checker<'_> {
         }
     }
 
-    /// The classes, as candidates for a name.
+    /// The classes and the structs, as candidates for a name.
     fn class_names(&self) -> impl Iterator<Item = (&str, Definition)> {
-        (self.names.class_names()).map(|class| (class.as_str(), Definition::Class))
+        let classes = (self.names.class_names()).map(|class| (class.as_str(), Definition::Class));
+        classes.chain((self.names.struct_names()).map(|s| (s.as_str(), Definition::Struct)))
     }
 
     /// The variant `name`, at `span`, written without its enum: `None` when a binding or an item
@@ -2509,6 +2541,7 @@ impl Checker<'_> {
             .iter()
             .any(|scope| scope.contains_key(&name))
             || self.names.class(name).is_some()
+            || self.names.struct_id(name).is_some()
             || self.names.function(name).is_some()
             || self.names.enum_id(name).is_some()
             || self.names.interface(name).is_some()
@@ -2624,6 +2657,7 @@ impl Checker<'_> {
     fn head(&self, head: Head) -> &'static str {
         match head {
             Head::Class(id) => self.classes[id.0].name.name.as_str(),
+            Head::Struct(id) => self.structs[id.0].name.name.as_str(),
             Head::Enum(id) => self.enums[id.0].name.name.as_str(),
             Head::Interface(id) => self.interfaces[id.0].name.name.as_str(),
             Head::Assoc(interface, k) => self.interfaces[interface.0].assoc[k as usize]

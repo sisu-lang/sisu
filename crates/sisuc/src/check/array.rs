@@ -3,6 +3,7 @@
 use super::any::{AnyJoin, is_target, widen};
 use super::expr::{fits, literal_type, no_member, path, typed};
 use super::generic::{Rank, mark, mismatch_poison};
+use super::place::{Change, first_safe};
 use super::reports::Reported;
 use super::{
     Checked, Checker, Declared, Expectation, Origin, Poisoned, as_optional, known_type, payload,
@@ -535,6 +536,7 @@ impl Checker<'_> {
         let (element, report) = self.element(base, type_of(&checked), IndexUsage::Read);
         // The index is not part of the chain that it ends.
         self.body.indexed = false;
+        let chain = std::mem::take(&mut self.body.write_chain);
         // A base with no element, such as a string, takes no `i64` index either.
         let origin = if element.is_some() {
             Origin::Index
@@ -543,6 +545,7 @@ impl Checker<'_> {
         };
         let (index, mismatched) = self.operand(index, Expectation::Required(Type::I64, origin));
         self.body.indexed = outer;
+        self.body.write_chain = chain;
         match (checked, index, element) {
             (Ok(base), Ok(index), Some(element)) if !optional => {
                 Ok(self.spilled(span, element, vec![base, index], |operands| {
@@ -580,8 +583,26 @@ impl Checker<'_> {
         let d: Diagnostic = match ty.kind() {
             TypeKind::Array(element) => return (Some(element), None),
             TypeKind::Optional(payload) if matches!(payload.kind(), TypeKind::Array(_)) => {
-                let reported = self.diagnostics.error(optional_array(base, UnwrapHelp::It));
-                return (optional_element(ty), Some(reported));
+                let element = optional_element(ty);
+                // A struct element under the chain of a write, after a `?.`: part 1 cannot write
+                // through that `?.`, and an unwrap gives a copy.
+                let chain = (self.body.write_chain)
+                    .filter(|&(_, change)| change != Change::MutArg)
+                    .filter(|_| element.is_some_and(|e| matches!(e.kind(), TypeKind::Struct(..))))
+                    .zip(first_safe(base));
+                let reported = match chain {
+                    Some((write, object)) => {
+                        let d = match self.chain_write(write, base, object) {
+                            DiagnosticKind::ChainWriteOnStruct { at, .. } => {
+                                DiagnosticKind::ChainWriteOnStruct { at, replace: None }
+                            }
+                            d => d,
+                        };
+                        self.error(d)
+                    }
+                    None => self.diagnostics.error(optional_array(base, UnwrapHelp::It)),
+                };
+                return (element, Some(reported));
             }
             _ if ty == Type::STRING => DiagnosticKind::StringIndex {
                 at: base.span,

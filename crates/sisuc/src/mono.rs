@@ -117,6 +117,7 @@ fn prelude_method_of_outside_type(program: &Program) -> bool {
             // `head_of` gives only a class or an enum, and `Conformances::add` admits only those
             // targets. `false` leaves the fast path.
             Some(Head::Interface(_) | Head::Assoc(..)) | None => false,
+            Some(Head::Struct(_)) => panic!("a struct lands in Task 3"),
         };
         !in_prelude && conformance.methods.iter().any(|f| f.0 >= prelude.funcs)
     })
@@ -567,6 +568,7 @@ impl Mono {
         // An optional or an array of an instance has the instance in its type. The entry of the
         // inner type, which `output` has just made, says which: no walk down the type.
         let (done, held) = ensure_stack(|| match ty.kind() {
+            TypeKind::Struct(..) => panic!("a struct lands in Task 3"),
             TypeKind::Class(id, args) => (
                 Type::intern(TypeKind::Class(self.class(id, args), TypeArgs::NONE)),
                 None,
@@ -782,6 +784,7 @@ impl Mono {
         match head {
             Head::Assoc(..) => unreachable!("mono should replace every associated type"),
             Head::Interface(id) => &self.out.interfaces[id.0].name,
+            Head::Struct(_) => panic!("a struct lands in Task 3"),
             Head::Class(id) => match &self.class_decls[id.0] {
                 Some(decl) => &decl.name,
                 None => &self.out.classes[self.class_ids[&(id, TypeArgs::NONE)].0].name,
@@ -948,6 +951,7 @@ impl Mono {
                 self.expr(index, args);
             }
             Place::Some(base) => self.place(base, args),
+            Place::StructField { .. } => panic!("a struct lands in Task 3"),
         }
     }
 
@@ -1071,6 +1075,7 @@ impl Mono {
             | K::Break { value: None, .. }
             | K::Continue { .. }
             | K::Return(None) => {}
+            K::Struct { .. } | K::StructField { .. } => panic!("a struct lands in Task 3"),
             K::Call {
                 func,
                 types,
@@ -1481,6 +1486,7 @@ fn assert_concrete(program: &Program) {
 fn concrete(ty: Type) -> bool {
     match ty.kind() {
         TypeKind::Param(..) | TypeKind::Assoc(..) => false,
+        TypeKind::Struct(..) => panic!("a struct lands in Task 3"),
         TypeKind::Class(_, args) | TypeKind::Enum(_, args) => args == TypeArgs::NONE,
         TypeKind::Any(_, args) => args.get().iter().all(|&arg| concrete(arg)),
         TypeKind::Array(inner) | TypeKind::Optional(inner) => concrete(inner),

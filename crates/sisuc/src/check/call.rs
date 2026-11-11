@@ -7,7 +7,7 @@ use super::alias::{Through, Via};
 use super::expr::{fits, no_member, option_written, path, postfix};
 use super::generic::{GenericSig, Site, mark, mismatched, written_args};
 use super::interface::{Bounds, LangPath};
-use super::member::Found;
+use super::member::{FieldOwner, Found};
 use super::mut_args::{Callee, MutParts, MutSite, site_of};
 use super::names::{self, ItemId, Position, Resolved};
 use super::prelude::PRELUDE;
@@ -77,7 +77,10 @@ impl Checker<'_> {
                 self.convert(span, callee.span, to, args)
             }
             Resolved::Item(ItemId::Class(class)) => {
-                self.construct_class(span, class, site, args, None)
+                self.construct_class(span, FieldOwner::Class(class), site, args, None)
+            }
+            Resolved::Item(ItemId::Struct(id)) => {
+                self.construct_class(span, FieldOwner::Struct(id), site, args, None)
             }
             Resolved::Item(ItemId::Function(func)) => self.invoke(span, func, None, site, args),
             Resolved::Item(ItemId::Interface(_)) => {
@@ -122,7 +125,7 @@ impl Checker<'_> {
     ) -> Checked {
         match through.ty.kind() {
             TypeKind::Class(class, _) => {
-                self.construct_class(span, class, site, args, Some(through))
+                self.construct_class(span, FieldOwner::Class(class), site, args, Some(through))
             }
             TypeKind::I64 | TypeKind::U8 | TypeKind::F64 | TypeKind::Char | TypeKind::String => {
                 let converted = self.convert(span, site.name.span, through.ty, args);
@@ -746,6 +749,10 @@ impl Checker<'_> {
             && let Some(&Declared::Known(func)) = self.classes[id.0].methods.get(&method)
         {
             self.signatures[func.0].muts.clone()
+        } else if let Some(Declared::Known(id)) = self.names.struct_id(name)
+            && let Some(&Declared::Known(func)) = self.structs[id.0].methods.get(&method)
+        {
+            self.signatures[func.0].muts.clone()
         } else if let Some(Declared::Known(id)) = self.names.interface(name)
             && let Some(found) = (self.interfaces[id.0].requirements.iter())
                 .find(|requirement| requirement.name.name == method)
@@ -1172,15 +1179,28 @@ impl Checker<'_> {
     /// `C(f: e, ...)`, a construction of the class `class`, which `site` writes. Through an alias,
     /// the object has the type that the alias names, and the alias's parameters are the type
     /// arguments that the arguments bind.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "a class and a struct share the one construction, step by step"
+    )]
     fn construct_class(
         &mut self,
         span: Span,
-        class: tir::ClassId,
+        owner: FieldOwner,
         site: Site<'_>,
         args: &[ast::Arg],
         through: Option<&Through>,
     ) -> Checked {
-        self.record(Used::Class(class), span);
+        let class = match owner {
+            FieldOwner::Class(class) => {
+                self.record(Used::Class(class), span);
+                Some(class)
+            }
+            FieldOwner::Struct(id) => {
+                self.record(Used::Struct(id), span);
+                None
+            }
+        };
         self.refuse_mut(
             args,
             Callee::Construct {
@@ -1189,15 +1209,19 @@ impl Checker<'_> {
                 labeled: true,
             },
         );
+        let info = self.owner_info(owner);
         let quiet = self.body.failed_let == Some(span);
-        let info = &self.classes[class.0];
         let name = info.name.name.as_str();
+        let own = match owner {
+            FieldOwner::Class(class) => TypeKind::Class(class, own_args(&info.type_params)),
+            FieldOwner::Struct(id) => TypeKind::Struct(id, TypeArgs::NONE),
+        };
         let (declared, bounds, ret, fields): (_, _, _, Vec<(Symbol, Option<Type>)>) = match through
         {
             None => (
                 info.type_params.clone(),
                 info.bounds.clone(),
-                Type::intern(TypeKind::Class(class, own_args(&info.type_params))),
+                Type::intern(own),
                 info.fields.iter().map(|f| (f.name.name, f.ty)).collect(),
             ),
             // The fields have the types that the alias's arguments for the class's parameters
@@ -1245,6 +1269,7 @@ impl Checker<'_> {
                 _ => Ok(()),
             };
             let ty = self.built_type(ty, held, span)?;
+            let class = class.expect("only a class should take type parameters");
             return match (args.into_iter().collect::<Result<Vec<_>, Poisoned>>(), held) {
                 (Ok(args), Ok(())) => {
                     Ok(self.spilled(span, ty, args, |args| tir::ExprKind::New { class, args }))
@@ -1260,8 +1285,7 @@ impl Checker<'_> {
         }
         let ty = ret;
         // A mismatch shows a field's alias as written.
-        let shown: Vec<_> = self.classes[class.0]
-            .fields
+        let shown: Vec<_> = (self.owner_info(owner).fields)
             .iter()
             .map(|f| f.shown.clone())
             .collect();
@@ -1270,12 +1294,21 @@ impl Checker<'_> {
                 self.show(arg.value.span, *want, text);
             }
         }
-        let field = |index| Origin::Field {
-            class: Origin::id(class.0),
-            index: Origin::id(index),
+        let field = |index| match owner {
+            FieldOwner::Class(class) => Origin::Field {
+                class: Origin::id(class.0),
+                index: Origin::id(index),
+            },
+            FieldOwner::Struct(id) => Origin::StructField {
+                id: Origin::id(id.0),
+                index: Origin::id(index),
+            },
         };
         match self.construct(span, &name, &fields, args, field) {
-            Ok(args) => Ok(self.spilled(span, ty, args, |args| tir::ExprKind::New { class, args })),
+            Ok(args) => Ok(self.spilled(span, ty, args, |args| match owner {
+                FieldOwner::Class(class) => tir::ExprKind::New { class, args },
+                FieldOwner::Struct(id) => tir::ExprKind::Struct { id, args },
+            })),
             Err(reported) => Err(Poisoned::typed(ty, reported)),
         }
     }

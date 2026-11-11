@@ -279,6 +279,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             TypeKind::Unit | TypeKind::Never => None,
             // An object is a pointer to its block.
             TypeKind::Class(..) => Some(self.context.ptr_type(AddressSpace::default()).into()),
+            TypeKind::Struct(..) => panic!("a struct lands in Task 3"),
             // An array or a string is three words: its block, its data and its length.
             TypeKind::String | TypeKind::Array(_) => Some(self.value_type().into()),
             TypeKind::Enum(id, _) => Some(self.enum_layout(id).ty),

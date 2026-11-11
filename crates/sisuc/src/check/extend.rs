@@ -408,6 +408,7 @@ impl<'a> Checker<'_> {
     pub(super) fn holder_name(&self, holder: Holder) -> Symbol {
         match holder {
             Holder::Class(c) => self.classes[c.0].name.name,
+            Holder::Struct(s) => self.structs[s.0].name.name,
             Holder::Enum(e) => self.enums[e.0].name.name,
             Holder::Array => Symbol::intern("[]"),
             Holder::I64 => Symbol::intern("i64"),
@@ -503,8 +504,12 @@ impl<'a> Checker<'_> {
     fn body_definition(&self, holder: Holder, name: Symbol) -> Option<(Span, Definition)> {
         match holder {
             Holder::Array | Holder::I64 => None,
-            Holder::Class(c) => {
-                let info = &self.classes[c.0];
+            Holder::Class(_) | Holder::Struct(_) => {
+                let info = match holder {
+                    Holder::Struct(s) => &self.structs[s.0],
+                    Holder::Class(c) => &self.classes[c.0],
+                    _ => unreachable!("this arm should take a class or a struct"),
+                };
                 match info.methods.get(&name) {
                     Some(&Declared::Known(f)) => {
                         Some((self.signatures[f.0].span, Definition::Method))
@@ -535,6 +540,7 @@ impl<'a> Checker<'_> {
 pub(super) fn holder_of(ty: Type) -> Option<Holder> {
     match ty.kind() {
         TypeKind::Class(id, _) => Some(Holder::Class(id)),
+        TypeKind::Struct(id, _) => Some(Holder::Struct(id)),
         TypeKind::Enum(id, _) => Some(Holder::Enum(id)),
         _ => None,
     }
@@ -564,6 +570,7 @@ fn mut_self_removal(comments: &[usize], mut_self: &ast::MutSelf) -> Span {
 fn method_owner(holder: Holder, name: &str) -> MethodOwner {
     match holder {
         Holder::Class(_) => MethodOwner::Class,
+        Holder::Struct(_) => MethodOwner::Struct,
         Holder::Enum(_) => MethodOwner::Enum(name.to_string()),
         Holder::Array | Holder::I64 => {
             unreachable!("the prelude should write no `mut self` on a built-in type")

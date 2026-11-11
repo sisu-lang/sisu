@@ -633,7 +633,6 @@ crates/sisuc/src/diagnostic/render.rs::empty_span_at_the_end_of_a_line_renders_o
 crates/sisuc/src/diagnostic/render.rs::fix_renders_as_a_patch
 crates/sisuc/src/diagnostic/render.rs::header_carries_the_code
 crates/sisuc/src/diagnostic/render.rs::rendering_many_diagnostics_in_a_large_file_is_linear
-crates/sisuc/src/diagnostic/render.rs::renders_error_with_secondary_and_help
 crates/sisuc/src/diagnostic/render.rs::span_over_a_line_break_is_rejected
 crates/sisuc/src/diagnostic/render.rs::styled_render_has_escapes
 crates/sisuc/src/diagnostic/render.rs::windowed_fix_rendering_matches_rendering_the_whole_source

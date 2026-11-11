@@ -1175,6 +1175,10 @@ impl Checker<'_> {
             let span = at(id, |id| self.classes[id.0].name.span);
             return Some((ClashKind::Class, span));
         }
+        if let Some(id) = self.names.struct_id(name) {
+            let span = at(id, |id| self.structs[id.0].name.span);
+            return Some((ClashKind::Struct, span));
+        }
         if let Some(id) = self.names.enum_id(name) {
             let span = at(id, |id| self.enums[id.0].name.span);
             return Some((ClashKind::Enum, span));

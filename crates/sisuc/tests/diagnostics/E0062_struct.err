@@ -1,0 +1,38 @@
+error[E0062]: `?.` cannot write a field of a struct value yet
+  --> E0062_struct.sisu:22:6
+   |
+22 |     o?.n = 1
+   |      ^^^
+   |
+   = help: replace the value: `o = Some(...)`
+
+error[E0062]: `?.` cannot write a field of a struct value yet
+  --> E0062_struct.sisu:23:8
+   |
+23 |     s.o?.n = 1
+   |        ^^^
+   |
+   = help: replace the value: `s.o = Some(...)`
+
+error[E0062]: `?.` cannot write a field of a struct value yet
+  --> E0062_struct.sisu:24:8
+   |
+24 |     f()?.n = 1
+   |        ^^^
+
+error[E0062]: `?.` cannot write a field of a struct value yet
+  --> E0062_struct.sisu:25:9
+   |
+25 |     c?.p?.n = 1
+   |         ^^^
+
+error[E0062]: `?.` cannot write a field of a struct value yet
+  --> E0062_struct.sisu:26:6
+   |
+26 |     o?.xs[0] = 1
+   |      ^^^^
+   |
+   = help: replace the value: `o = Some(...)`
+
+sisu: 5 errors
+sisu: for more on a code, run `sisu explain <code>`: E0062

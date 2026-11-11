@@ -942,7 +942,7 @@ impl Checker<'_> {
             }
             if matches!(
                 base.kind(),
-                TypeKind::Array(_) | TypeKind::String | TypeKind::Enum(..)
+                TypeKind::Array(_) | TypeKind::String | TypeKind::Struct(..) | TypeKind::Enum(..)
             ) || !(object_param || ty.is_counted(&self.lowered_enums))
             {
                 let kind = DiagnosticKind::IsNeedsObjects {

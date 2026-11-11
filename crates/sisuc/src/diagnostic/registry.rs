@@ -114,7 +114,7 @@ codes! {
     FieldNotMethod = "E0058",
     PrintArgument = "E0059",
     PrintNever = "E0061",
-    MayBeNone = "E0062",
+    MayBeNone | ChainWriteOnStruct = "E0062",
     NoMember = "E0063",
     TooManyArguments = "E0064",
     ArgumentNeedsLabel = "E0065",
@@ -286,11 +286,12 @@ impl Code {
 
 /// What went wrong, and where: the facts each diagnostic code is built from.
 pub(crate) enum DiagnosticKind {
-    /// An assignment at `at` to `name`, or to an element of it, which cannot change.
+    /// An assignment at `at` to `name`, or to a part of it, which cannot change. `written` says
+    /// which part.
     AssignToImmutable {
         name: String,
         at: Span,
-        element: bool,
+        written: Written,
         cause: Immutable,
     },
     /// A `push` at `at` onto `name`, or onto an element of it, which cannot change.
@@ -923,6 +924,9 @@ pub(crate) enum DiagnosticKind {
         /// What the help says to unwrap.
         unwrap: UnwrapHelp,
     },
+    /// A write at `at`, from the end of a `?.`'s base to its field, that the `?.` on a struct
+    /// value leads to. `replace` is the base as written, when the help can name it.
+    ChainWriteOnStruct { at: Span, replace: Option<String> },
     /// The `kind` member `name`, at `at`, which `owner` does not have.
     NoMember {
         owner: String,
@@ -1008,8 +1012,8 @@ pub(crate) enum DiagnosticKind {
     },
     /// The first byte at `at` that is not UTF-8, which the text shown in its place replaces.
     InvalidUtf8 { at: Span },
-    /// An assignment to the `self` at `at`.
-    AssignToSelf { at: Span },
+    /// An assignment to the `self` at `at`, the `self` of a struct method when `struct_self`.
+    AssignToSelf { at: Span, struct_self: bool },
     /// An assignment to `name`, at `at`, which is a function.
     AssignToFunction { name: String, at: Span },
     /// A `let` that binds the `_` at `at`. The fix removes `remove`: the `mut` and the white
@@ -1674,6 +1678,7 @@ pub(crate) enum ClashKind {
     Function,
     Constant,
     Class,
+    Struct,
     Enum,
     Interface,
     Alias,
@@ -1687,6 +1692,7 @@ impl ClashKind {
             ClashKind::Function => "function",
             ClashKind::Constant => "constant",
             ClashKind::Class => "class",
+            ClashKind::Struct => "struct",
             ClashKind::Enum => "enum",
             ClashKind::Interface => "interface",
             ClashKind::Alias => "type alias",
@@ -2290,6 +2296,9 @@ pub(crate) enum UnwrapHelp {
     Object(String),
     /// Nothing: no `if let` of the optional gives a place that can be written.
     Nothing,
+    /// The optional struct value `base`, as written: an unwrap gives a copy, so the help says to
+    /// replace the value.
+    Replace(String),
     /// A `.` on an optional of an optional: `?.` takes one layer only, so the help peels the
     /// other layers first. `receiver` and `member` are as written; `layers` is the count of
     /// `?? None`.
@@ -2320,8 +2329,14 @@ fn unwrap_text(unwrap: UnwrapHelp, fix: bool) -> Option<String> {
             member,
             layers,
         } => Some(peel_text("extra", &receiver, &member, layers)),
+        UnwrapHelp::Replace(base) => Some(replace_text(&base)),
         UnwrapHelp::Nothing => None,
     }
+}
+
+/// The help that replaces the optional struct value `base`, as written.
+fn replace_text(base: &str) -> String {
+    format!("replace the value: `{base} = Some(...)`")
 }
 
 /// The help "peel the `which` layer first": `receiver` with `layers` of `?? None` around it, then
@@ -2712,6 +2727,7 @@ pub(crate) enum Owner {
     Class,
     Enum(String),
     Interface,
+    Struct,
 }
 
 /// What is wrong with a conformance.
@@ -3141,6 +3157,19 @@ pub(crate) enum Immutable {
     Constant {
         declared: Span,
     },
+    /// The plain `self` of a struct method.
+    StructSelf,
+}
+
+/// What a write changes of its root.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Written {
+    /// The root itself: `t = v`.
+    Whole,
+    /// An element of the root: `t[i] = v`.
+    Element,
+    /// A part of the root, through a struct field: `t.n = v` or `t.i.xs[0] = v`.
+    Part,
 }
 impl From<DiagnosticKind> for Diagnostic {
     #[expect(
@@ -3153,12 +3182,16 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::AssignToImmutable {
                 name,
                 at,
-                element,
+                written,
                 cause,
             } => {
-                let what = if element { "an element of " } else { "" };
+                let what = match written {
+                    Written::Whole => "",
+                    Written::Element => "an element of ",
+                    Written::Part => "a part of ",
+                };
                 let d = Diagnostic::coded(code, at, format!("cannot assign to {what}`{name}`"));
-                immutable_cause(d, &name, element, &cause)
+                immutable_cause(d, &name, written != Written::Whole, &cause)
             }
             DiagnosticKind::PushToImmutable { name, at, cause } => {
                 let d = Diagnostic::coded(code, at, format!("cannot change `{name}`"))
@@ -3499,6 +3532,13 @@ impl From<DiagnosticKind> for Diagnostic {
                         false,
                         "remove the `mut`",
                     ),
+                    // The body may still write through `self`, so no fix is exact.
+                    Owner::Struct => Diagnostic::coded(
+                        code,
+                        keyword,
+                        "a struct method cannot take `mut self` yet",
+                    )
+                    .with_help("take `self` and return the changed copy"),
                 }
             }
             DiagnosticKind::InterfaceBody { at, form } => {
@@ -5066,6 +5106,13 @@ impl From<DiagnosticKind> for Diagnostic {
                     None => d,
                 }
             }
+            DiagnosticKind::ChainWriteOnStruct { at, replace } => {
+                let d = Diagnostic::coded(code, at, "`?.` cannot write a field of a struct value yet");
+                match replace {
+                    Some(base) => d.with_help(replace_text(&base)),
+                    None => d,
+                }
+            }
             DiagnosticKind::NoMember {
                 owner,
                 kind,
@@ -5330,9 +5377,12 @@ impl From<DiagnosticKind> for Diagnostic {
                 Diagnostic::coded(code, at, "source is not valid UTF-8")
                     .with_help("save the file as UTF-8")
             }
-            DiagnosticKind::AssignToSelf { at } => {
-                Diagnostic::coded(code, at, "cannot assign to `self`")
-                    .with_help("an object is shared: `self` can already write every `mut` field")
+            DiagnosticKind::AssignToSelf { at, struct_self } => {
+                Diagnostic::coded(code, at, "cannot assign to `self`").with_help(if struct_self {
+                    STRUCT_SELF_HELP
+                } else {
+                    "an object is shared: `self` can already write every `mut` field"
+                })
             }
             DiagnosticKind::AssignToFunction { name, at } => {
                 Diagnostic::coded(code, at, format!("`{name}` is a function, not a variable"))
@@ -6760,8 +6810,12 @@ fn immutable_cause(d: Diagnostic, name: &str, element: bool, cause: &Immutable) 
             d.with_label("cannot assign")
         }
         .with_secondary(declared, "declared with `const` here"),
+        Immutable::StructSelf => d.with_help(STRUCT_SELF_HELP),
     }
 }
+
+/// The help of a write through the plain `self` of a struct method.
+const STRUCT_SELF_HELP: &str = "copy `self` into a `let mut` variable";
 
 /// The indefinite article before the type `ty`: "an" before a vowel letter, except the types
 /// `u8` and the like, which say "you".
@@ -6822,6 +6876,7 @@ fn mut_not_place(d: Diagnostic, name: &str, cause: &NotPlace) -> Diagnostic {
         NotPlace::Immutable(Immutable::Constant { declared }) => {
             d.with_secondary(declared, "declared with `const` here")
         }
+        NotPlace::Immutable(Immutable::StructSelf) => d.with_help(STRUCT_SELF_HELP),
     }
 }
 

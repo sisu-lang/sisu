@@ -59,6 +59,11 @@ const EXCLUDED: &[(&str, &str)] = &[
         "only an item with a syntax error is broken",
     ),
     ("ast::Item::Struct", "lands in Task 9"),
+    ("types::TypeKind::Struct", "lands in Task 9"),
+    ("types::Head::Struct", "lands in Task 9"),
+    ("tir::Place::StructField", "lands in Task 9"),
+    ("tir::ExprKind::Struct", "lands in Task 9"),
+    ("tir::ExprKind::StructField", "lands in Task 9"),
     (
         "ast::BrokenKind::Enum",
         "only an item with a syntax error is broken",
@@ -2573,6 +2578,7 @@ impl Walk {
             TypeKind::Unit => ("types::TypeKind::Unit", None),
             TypeKind::Never => ("types::TypeKind::Never", None),
             TypeKind::Class(..) => ("types::TypeKind::Class", None),
+            TypeKind::Struct(..) => ("types::TypeKind::Struct", None),
             TypeKind::Enum(..) => ("types::TypeKind::Enum", None),
             TypeKind::Param(..) => ("types::TypeKind::Param", None),
             TypeKind::Array(element) => ("types::TypeKind::Array", Some(element)),
@@ -2646,7 +2652,9 @@ impl Walk {
                             tir::Place::Index { .. } => {
                                 self.mark("reach: `?.push` follows an index");
                             }
-                            tir::Place::Local(_) | tir::Place::Some(_) => {}
+                            tir::Place::Local(_)
+                            | tir::Place::Some(_)
+                            | tir::Place::StructField { .. } => {}
                         }
                     }
                     self.place(place);
@@ -2701,6 +2709,7 @@ impl Walk {
                 true
             }
             TypeKind::Array(inner) | TypeKind::Optional(inner) => self.holds_class(inner, seen),
+            TypeKind::Struct(..) => panic!("a struct lands in Task 9"),
             TypeKind::Enum(id, args) => {
                 !seen.contains(&id) && {
                     seen.push(id);
@@ -2728,6 +2737,7 @@ impl Walk {
         match ty.kind() {
             TypeKind::Optional(_) => true,
             TypeKind::Array(inner) => self.holds_optional(inner, seen),
+            TypeKind::Struct(..) => panic!("a struct lands in Task 9"),
             TypeKind::Enum(id, args) => {
                 !seen.contains(&id) && {
                     seen.push(id);
@@ -2768,6 +2778,10 @@ impl Walk {
                 self.mark("tir::Place::Some");
                 self.place(base);
             }
+            tir::Place::StructField { base, .. } => {
+                self.mark("tir::Place::StructField");
+                self.place(base);
+            }
         }
     }
 
@@ -2802,6 +2816,7 @@ impl Walk {
                 | TypeKind::Array(_)
                 | TypeKind::Optional(_)
                 | TypeKind::Class(..)
+                | TypeKind::Struct(..)
                 | TypeKind::Enum(..)
                 | TypeKind::Param(..)
                 | TypeKind::Assoc(..)
@@ -2907,6 +2922,14 @@ impl Walk {
             tir::ExprKind::New { args, .. } => {
                 self.mark("tir::ExprKind::New");
                 self.tir_exprs(args);
+            }
+            tir::ExprKind::Struct { args, .. } => {
+                self.mark("tir::ExprKind::Struct");
+                self.tir_exprs(args);
+            }
+            tir::ExprKind::StructField { base, .. } => {
+                self.mark("tir::ExprKind::StructField");
+                self.tir_expr(base, Parent::Other);
             }
             tir::ExprKind::Variant { args, .. } => {
                 self.mark("tir::ExprKind::Variant");
@@ -3318,6 +3341,7 @@ fn kind_name(ty: Type) -> &'static str {
         TypeKind::Unit => "Unit",
         TypeKind::Never => "Never",
         TypeKind::Class(..) => "Class",
+        TypeKind::Struct(..) => "Struct",
         TypeKind::Enum(..) => "Enum",
         TypeKind::Param(..) => "Param",
         TypeKind::Array(_) => "Array",
@@ -8622,7 +8646,7 @@ impl<'f> Lets<'f> {
                 self.place(base);
                 self.expr(index);
             }
-            tir::Place::Some(base) => self.place(base),
+            tir::Place::Some(base) | tir::Place::StructField { base, .. } => self.place(base),
         }
     }
 
@@ -8657,6 +8681,7 @@ impl<'f> Lets<'f> {
             | tir::ExprKind::InterfaceCall { args, .. }
             | tir::ExprKind::DynCall { args, .. }
             | tir::ExprKind::New { args, .. }
+            | tir::ExprKind::Struct { args, .. }
             | tir::ExprKind::Variant { args, .. }
             | tir::ExprKind::ArrayLit(args)
             | tir::ExprKind::Math { operands: args, .. }
@@ -8666,6 +8691,7 @@ impl<'f> Lets<'f> {
                 }
             }
             tir::ExprKind::Field { base: x, .. }
+            | tir::ExprKind::StructField { base: x, .. }
             | tir::ExprKind::Wrap(x)
             | tir::ExprKind::ToAny(x)
             | tir::ExprKind::Convert(x)
@@ -8783,7 +8809,9 @@ impl<'f> Lets<'f> {
             | tir::ExprKind::Str(_)
             | tir::ExprKind::None => true,
             tir::ExprKind::Local(local) => reads || !self.locals[local.0].mutable,
-            tir::ExprKind::Field { base, .. } => reads && self.pure(base, reads),
+            tir::ExprKind::Field { base, .. } | tir::ExprKind::StructField { base, .. } => {
+                reads && self.pure(base, reads)
+            }
             tir::ExprKind::Call { func, args, .. } => self.pure_calls[func.0] && all(args),
             tir::ExprKind::InterfaceCall { .. }
             | tir::ExprKind::DynCall { .. }
@@ -8813,6 +8841,7 @@ impl<'f> Lets<'f> {
                 self.value(len).is_some_and(|n| n >= 0) && self.pure(value, reads)
             }
             tir::ExprKind::New { args, .. }
+            | tir::ExprKind::Struct { args, .. }
             | tir::ExprKind::Variant { args, .. }
             | tir::ExprKind::ArrayLit(args)
             | tir::ExprKind::Interpolate { parts: args, .. }

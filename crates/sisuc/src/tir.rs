@@ -133,6 +133,8 @@ impl MathOp {
 pub(crate) struct Program {
     pub(crate) classes: Vec<Class>,
     pub(crate) enums: Vec<Enum>,
+    /// Indexed by `StructId`. Only the checker sets it.
+    pub(crate) structs: Vec<Struct>,
     pub(crate) functions: Vec<Function>,
     /// Whether the checker recorded a type argument: a written one, or one a call inferred, or
     /// whether the user's file reaches a function, a class or an enum of the prelude: a call, a
@@ -329,6 +331,14 @@ pub(crate) struct Class {
     pub(crate) fields: Vec<Field>,
 }
 
+/// A struct: its fields, held inline, with no tag.
+#[derive(Debug)]
+pub(crate) struct Struct {
+    pub(crate) name: String,
+    /// Each field, in declaration order. Its `label` is the field's name.
+    pub(crate) fields: Vec<Payload>,
+}
+
 /// An enum: a tag and its variant's payload, held inline.
 #[derive(Debug)]
 pub(crate) struct Enum {
@@ -507,6 +517,11 @@ pub(crate) enum Place {
     Index {
         base: Box<Place>,
         index: Expr,
+    },
+    /// Field `index` of the struct in the place `base`.
+    StructField {
+        base: Box<Place>,
+        index: usize,
     },
     /// The value inside the optional that the place `base` stores: a `push` to it goes there
     /// when it holds one, and does nothing when it does not. Only a `Push` has one.
@@ -698,6 +713,16 @@ pub(crate) enum ExprKind {
     },
     /// Field `index` of the class `base` has.
     Field {
+        base: Box<Expr>,
+        index: usize,
+    },
+    /// A value of the struct `id`, holding `args` in declaration order.
+    Struct {
+        id: StructId,
+        args: Vec<Expr>,
+    },
+    /// Field `index` of the struct value `base`.
+    StructField {
         base: Box<Expr>,
         index: usize,
     },
@@ -912,8 +937,15 @@ impl Type {
     /// which codegen counts. `enums` are the program's.
     pub(crate) fn is_counted(self, enums: &[Enum]) -> bool {
         match self.kind() {
-            // An `any` is counted through its data pointer, an object or a box.
-            TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_) | TypeKind::Any(..) => true,
+            // An `any` is counted through its data pointer, an object or a box. The checker
+            // spills by this answer, so a struct cannot panic here: counting too much only spills
+            // more, and no struct reaches codegen yet.
+            // shortcut: a struct counts as counted, until Task 3 gives `Struct` its own `counted`.
+            TypeKind::String
+            | TypeKind::Class(..)
+            | TypeKind::Array(_)
+            | TypeKind::Any(..)
+            | TypeKind::Struct(..) => true,
             TypeKind::Enum(id, _) => enums[id.0].counted,
             TypeKind::Optional(payload) => {
                 #[cfg(test)]
@@ -1085,6 +1117,7 @@ impl ExprKind {
             | ExprKind::InterfaceCall { args, .. }
             | ExprKind::DynCall { args, .. }
             | ExprKind::New { args, .. }
+            | ExprKind::Struct { args, .. }
             | ExprKind::Variant { args, .. } => args.iter().any(Expr::exits),
             ExprKind::Compare { operands, .. }
             | ExprKind::Math { operands, .. }
@@ -1093,6 +1126,7 @@ impl ExprKind {
                 parts: operands, ..
             } => operands.iter().any(Expr::exits),
             ExprKind::Field { base: operand, .. }
+            | ExprKind::StructField { base: operand, .. }
             | ExprKind::Len(operand)
             | ExprKind::Chars(operand)
             | ExprKind::Bytes(operand)
@@ -1181,12 +1215,14 @@ impl Expr {
             | ExprKind::InterfaceCall { args, .. }
             | ExprKind::DynCall { args, .. }
             | ExprKind::New { args, .. }
+            | ExprKind::Struct { args, .. }
             | ExprKind::Variant { args, .. }
             | ExprKind::Compare { operands: args, .. }
             | ExprKind::Math { operands: args, .. }
             | ExprKind::ArrayLit(args)
             | ExprKind::Interpolate { parts: args, .. } => args.iter_mut().for_each(f),
             ExprKind::Field { base: operand, .. }
+            | ExprKind::StructField { base: operand, .. }
             | ExprKind::Len(operand)
             | ExprKind::Chars(operand)
             | ExprKind::Bytes(operand)
@@ -1307,7 +1343,7 @@ impl Place {
                 base.each_expr_mut(f);
                 f(index);
             }
-            Place::Some(base) => base.each_expr_mut(f),
+            Place::Some(base) | Place::StructField { base, .. } => base.each_expr_mut(f),
         }
     }
 }
@@ -1340,7 +1376,7 @@ impl Place {
             Place::Local(_) => false,
             Place::Field { base, .. } => base.exits(),
             Place::Index { base, index } => base.exits() || index.exits(),
-            Place::Some(base) => base.exits(),
+            Place::Some(base) | Place::StructField { base, .. } => base.exits(),
         }
     }
 }
@@ -1389,12 +1425,14 @@ impl Expr {
             | K::InterfaceCall { args, .. }
             | K::DynCall { args, .. }
             | K::New { args, .. }
+            | K::Struct { args, .. }
             | K::Variant { args, .. }
             | K::ArrayLit(args)
             | K::Math { operands: args, .. }
             | K::Interpolate { parts: args, .. }
             | K::Compare { operands: args, .. } => args.iter().for_each(|a| a.exprs(out)),
             K::Field { base: e, .. }
+            | K::StructField { base: e, .. }
             | K::Wrap(e)
             | K::ToAny(e)
             | K::Convert(e)
@@ -1500,7 +1538,7 @@ impl Place {
                 base.exprs(out);
                 index.exprs(out);
             }
-            Place::Some(base) => base.exprs(out),
+            Place::Some(base) | Place::StructField { base, .. } => base.exprs(out),
         }
     }
 }
@@ -1520,6 +1558,7 @@ impl fmt::Display for Type {
             TypeKind::Param(name, _) => return write!(f, "{name}"),
             TypeKind::Assoc(base, _, _, k) => return write!(f, "{base}.assoc#{k}"),
             TypeKind::Class(id, _) => return write!(f, "class#{}", id.0),
+            TypeKind::Struct(id, _) => return write!(f, "struct#{}", id.0),
             TypeKind::Enum(id, _) => return write!(f, "enum#{}", id.0),
             TypeKind::Any(id, _) => return write!(f, "any#{}", id.0),
             TypeKind::Array(element) => return write!(f, "[{element}]"),
@@ -1666,6 +1705,15 @@ impl Printer<'_> {
                 self.list(f, format_args!("variant {}.{name}", e.name), args)
             }
             ExprKind::Field { base, index } => self.field(f, base, *index),
+            ExprKind::Struct { id, args } => {
+                let name = &self.program.structs[id.0].name;
+                self.list(f, format_args!("struct {name}"), args)
+            }
+            ExprKind::StructField { base, index } => {
+                f.write_str("(. ")?;
+                self.expr(f, base)?;
+                write!(f, " {})", self.program.struct_field(base.ty, *index))
+            }
             ExprKind::DynCall {
                 interface,
                 iargs,
@@ -1932,6 +1980,41 @@ impl Printer<'_> {
                 self.place(f, base)?;
                 f.write_str(")")
             }
+            Place::StructField { base, index } => {
+                f.write_str("(. ")?;
+                self.place(f, base)?;
+                write!(
+                    f,
+                    " {})",
+                    self.program.struct_field(self.place_type(base), *index)
+                )
+            }
+        }
+    }
+
+    /// The type of the value that `place` stores.
+    fn place_type(&self, place: &Place) -> Type {
+        let ty = match place {
+            Place::Local(local) => return self.function.locals[local.0].ty,
+            Place::Field { base, index } => {
+                let TypeKind::Class(class, args) = base.ty.kind() else {
+                    panic!("a field place should have a class base, not `{}`", base.ty)
+                };
+                return self.program.classes[class.0].fields[*index]
+                    .ty
+                    .subst(args.get());
+            }
+            Place::StructField { base, index } => {
+                let TypeKind::Struct(id, _) = self.place_type(base).kind() else {
+                    panic!("a struct field place should have a struct base")
+                };
+                return self.program.structs[id.0].fields[*index].ty;
+            }
+            Place::Index { base, .. } | Place::Some(base) => self.place_type(base),
+        };
+        match ty.kind() {
+            TypeKind::Array(inner) | TypeKind::Optional(inner) => inner,
+            _ => panic!("an element or a payload place should hold an array or an optional"),
         }
     }
 
@@ -2045,9 +2128,19 @@ impl Program {
         Some((name, cut))
     }
 
+    /// The name of field `index` of the struct type `ty`.
+    fn struct_field(&self, ty: Type, index: usize) -> &str {
+        let TypeKind::Struct(id, _) = ty.kind() else {
+            panic!("the checker should only emit a struct field on a struct, not `{ty}`")
+        };
+        (self.structs[id.0].fields[index].label.as_deref())
+            .expect("a struct field should have its name as its label")
+    }
+
     fn head(&self, head: Head) -> &str {
         match head {
             Head::Class(id) => &self.classes[id.0].name,
+            Head::Struct(id) => &self.structs[id.0].name,
             Head::Enum(id) => &self.enums[id.0].name,
             Head::Interface(id) => &self.interfaces[id.0].name,
             Head::Assoc(interface, k) => &self.interfaces[interface.0].assoc[k as usize],
@@ -2070,6 +2163,15 @@ impl fmt::Display for Program {
                 let keyword = if field.mutable { "mut " } else { "" };
                 let ty = self.type_name(field.ty);
                 write!(f, " ({keyword}{} {ty})", field.name)?;
+            }
+            f.write_str(")")?;
+            separator = "\n";
+        }
+        for s in &self.structs {
+            write!(f, "{separator}(struct {}", s.name)?;
+            for field in &s.fields {
+                let name = field.label.as_deref().unwrap_or_default();
+                write!(f, " ({name} {})", self.type_name(field.ty))?;
             }
             f.write_str(")")?;
             separator = "\n";

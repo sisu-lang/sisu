@@ -416,6 +416,7 @@ pub(crate) fn parts<P: Payloads + ?Sized>(
         | TypeKind::Unit
         | TypeKind::Never
         | TypeKind::Class(..)
+        | TypeKind::Struct(..)
         | TypeKind::Param(..)
         | TypeKind::Assoc(..)
         | TypeKind::Any(..) => {}
@@ -432,6 +433,7 @@ pub(crate) fn prints_by_helper(ty: Type) -> bool {
             | TypeKind::Optional(_)
             | TypeKind::Class(..)
             | TypeKind::Enum(..)
+            | TypeKind::Struct(..)
             | TypeKind::Any(..)
     )
 }
@@ -454,6 +456,7 @@ pub(crate) fn makes_group(mut ty: Type) -> bool {
         ty.kind(),
         TypeKind::Array(_)
             | TypeKind::Enum(..)
+            | TypeKind::Struct(..)
             | TypeKind::Param(..)
             | TypeKind::Assoc(..)
             | TypeKind::Any(..)
@@ -1179,6 +1182,7 @@ fn matches(pattern: Type, ty: Type, slots: &mut [Option<Type>]) -> Option<()> {
             | TypeKind::Optional(_)
             | TypeKind::Class(..)
             | TypeKind::Enum(..)
+            | TypeKind::Struct(..)
             | TypeKind::Assoc(..)
             | TypeKind::Any(..),
             _,
@@ -1338,6 +1342,9 @@ impl Unifier {
             TypeKind::Array(element) => Type::array(self.resolve(element)?),
             TypeKind::Optional(payload) => Type::optional(self.resolve(payload)?),
             TypeKind::Class(id, args) => Type::intern(TypeKind::Class(id, self.resolve_all(args)?)),
+            TypeKind::Struct(id, args) => {
+                Type::intern(TypeKind::Struct(id, self.resolve_all(args)?))
+            }
             TypeKind::Enum(id, args) => Type::intern(TypeKind::Enum(id, self.resolve_all(args)?)),
             TypeKind::Any(id, args) => Type::intern(TypeKind::Any(id, self.resolve_all(args)?)),
             // An associated type is opaque here, as it is to `unify`.
@@ -1420,6 +1427,7 @@ impl Unifier {
                 | TypeKind::Optional(_)
                 | TypeKind::Class(..)
                 | TypeKind::Enum(..)
+                | TypeKind::Struct(..)
                 | TypeKind::Assoc(..)
                 | TypeKind::Any(..),
                 _,

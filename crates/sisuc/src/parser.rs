@@ -75,6 +75,7 @@ pub(crate) fn parse(lexed: Lexed<'_>, prelude: bool) -> Parsed {
         labels: Vec::new(),
         loops: Vec::new(),
         prelude,
+        struct_self: false,
     }
     .program()
 }
@@ -613,6 +614,10 @@ enum LetHead {
     Qualified,
 }
 
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is a separate state of the parse"
+)]
 struct Parser<'a> {
     /// The text the token spans index.
     source: Source<'a>,
@@ -650,6 +655,9 @@ struct Parser<'a> {
     loops: Vec<LoopPart>,
     /// Whether this is the prelude, which may declare a variant `None`.
     prelude: bool,
+    /// Whether the parser reads the body of a struct, whose methods take a `self` that cannot
+    /// change.
+    struct_self: bool,
     /// `tokens`, or once a type-argument list takes the `>` of a `>=` (a split), the tokens before
     /// it. `peek` reads it with the bounds check it needs anyway, so only a split pays for one.
     window: &'a [Token],
@@ -1707,13 +1715,21 @@ impl<'a> Parser<'a> {
         let mut assoc = Vec::new();
         // Only a type that lists an interface may choose an associated type.
         let chooses = !conforms.is_empty();
+        let owner = if *word == TokenKind::Struct {
+            Owner::Struct
+        } else {
+            Owner::Class
+        };
+        let outer = mem::replace(&mut self.struct_self, matches!(owner, Owner::Struct));
         let broken_methods = self.member_lines(errors, methods, |p, end| {
-            match p.checked(end, |p| p.class_line(chooses))? {
+            match p.checked(end, |p| p.class_line(chooses, &owner))? {
                 ClassLine::Member(member) => members.push(member),
                 ClassLine::Assoc(choice) => assoc.push(choice),
             }
             Ok(())
-        })?;
+        });
+        self.struct_self = outer;
+        let broken_methods = broken_methods?;
         self.bump();
         Ok(Struct {
             keyword,
@@ -1726,15 +1742,15 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// A class member or, when `chooses`, the choice of an associated type, and the end of its
-    /// line.
-    fn class_line(&mut self, chooses: bool) -> Result<ClassLine, Diagnostic> {
+    /// A member of a class or a struct, whose methods `owner` owns, and the end of its line. When
+    /// `chooses`, it can also be the choice of an associated type.
+    fn class_line(&mut self, chooses: bool, owner: &Owner) -> Result<ClassLine, Diagnostic> {
         if chooses && self.at(&TokenKind::Type) {
             let choice = self.assoc_choice()?;
             self.line_end()?;
             return Ok(ClassLine::Assoc(choice));
         }
-        self.member_line().map(ClassLine::Member)
+        self.member_line(owner).map(ClassLine::Member)
     }
 
     /// `type Item = i64`, in a class, an enum or an `extend` block.
@@ -1767,9 +1783,9 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// A class member, and the end of its line.
-    fn member_line(&mut self) -> Result<Member, Diagnostic> {
-        let member = self.member()?;
+    /// A member whose methods `owner` owns, and the end of its line.
+    fn member_line(&mut self, owner: &Owner) -> Result<Member, Diagnostic> {
+        let member = self.member(owner)?;
         if matches!(member, Member::Field(_)) && self.at(&TokenKind::Comma) {
             return Err(self.member_comma(diagnostic::Member::Field));
         }
@@ -1801,7 +1817,7 @@ impl<'a> Parser<'a> {
         .into()
     }
 
-    fn member(&mut self) -> Result<Member, Diagnostic> {
+    fn member(&mut self, owner: &Owner) -> Result<Member, Diagnostic> {
         match self.peek().kind {
             TokenKind::Ident(_) | TokenKind::Underscore | TokenKind::Mut => {
                 let mutable = self.eat(&TokenKind::Mut).is_some();
@@ -1823,7 +1839,7 @@ impl<'a> Parser<'a> {
                 field: true,
             }
             .into()),
-            TokenKind::Fn => Ok(Member::Method(self.method(Receiver::Of(&Owner::Class))?)),
+            TokenKind::Fn => Ok(Member::Method(self.method(Receiver::Of(owner))?)),
             _ => Err(self.expected("a field or `fn`")),
         }
     }
@@ -2001,6 +2017,7 @@ impl<'a> Parser<'a> {
             labels: Vec::new(),
             loops: Vec::new(),
             prelude: self.prelude,
+            struct_self: self.struct_self,
             window: self.tokens,
             halves: self.halves,
             halved: None,
@@ -2244,7 +2261,8 @@ impl<'a> Parser<'a> {
             | TokenKind::Var => {
                 // A field that is itself wrong gets its own error.
                 let start = self.peek().span;
-                self.member()?;
+                // Its token is no `fn`, so no method takes the owner.
+                self.member(&Owner::Class)?;
                 return Err(DiagnosticKind::InterfaceBody {
                     at: start.to(self.last_span()),
                     form: InterfaceBodyForm::Field,
@@ -4049,7 +4067,11 @@ impl<'a> Parser<'a> {
             _ => return Ok(StmtKind::Expr(target)),
         };
         if matches!(target.kind, ExprKind::SelfValue) {
-            return Err(DiagnosticKind::AssignToSelf { at: target.span }.into());
+            return Err(DiagnosticKind::AssignToSelf {
+                at: target.span,
+                struct_self: self.struct_self,
+            }
+            .into());
         }
         if !is_place(&target) && !is_range_target(&target) {
             return Err(DiagnosticKind::AssignToExpression {
@@ -7485,6 +7507,7 @@ mod tests {
             labels: Vec::new(),
             loops: Vec::new(),
             prelude: false,
+            struct_self: false,
             window: &lexed.tokens,
             halves: &OnceCell::new(),
             halved: None,

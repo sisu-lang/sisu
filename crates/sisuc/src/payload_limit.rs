@@ -134,7 +134,8 @@ fn layout_of(ty: Type, known: &Known) -> Option<Layout> {
         }
         // The pointer to the data and the pointer to the table.
         TypeKind::Any(..) => Some(Layout::new(2 * WORD, WORD)),
-        TypeKind::Param(..) | TypeKind::Assoc(..) => None,
+        // shortcut: a struct field is not measured, until structs lower in Task 3.
+        TypeKind::Struct(..) | TypeKind::Param(..) | TypeKind::Assoc(..) => None,
     }
 }
 

@@ -599,9 +599,10 @@ impl Graph {
     fn parts(&self, ty: Type) -> Vec<(Type, i64)> {
         let (inner, args, weight) = match ty.kind() {
             TypeKind::Array(inner) | TypeKind::Optional(inner) => (Some(inner), &[][..], 1),
-            TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
-                (None, args.get(), 1)
-            }
+            TypeKind::Class(_, args)
+            | TypeKind::Struct(_, args)
+            | TypeKind::Enum(_, args)
+            | TypeKind::Any(_, args) => (None, args.get(), 1),
             TypeKind::Assoc(base, interface, args, k) => {
                 let place = self.assocs.first[interface.0] + k as usize;
                 let Some(growth) = self.assocs.growth_of(place, args) else {
@@ -1232,7 +1233,7 @@ impl Checker<'_> {
             #[cfg(test)]
             GROWTH_VISITS.set(GROWTH_VISITS.get() + 1);
             match ty.kind() {
-                TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+                TypeKind::Class(_, args) | TypeKind::Struct(_, args) | TypeKind::Enum(_, args) => {
                     let grows =
                         |a: &Type| a.has_param() && !matches!(a.kind(), TypeKind::Param(..));
                     if head.is_some_and(|head| holder_of(ty) == Some(head))
@@ -2327,7 +2328,10 @@ fn depths_and_assoc(ty: Type, count: usize) -> (Vec<Option<i64>>, Vec<AssocUse>)
                 *slot = (*slot).max(Some(depth));
             }
             TypeKind::Array(inner) | TypeKind::Optional(inner) => stack.push((inner, depth + 1)),
-            TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
+            TypeKind::Class(_, args)
+            | TypeKind::Struct(_, args)
+            | TypeKind::Enum(_, args)
+            | TypeKind::Any(_, args) => {
                 stack.extend(args.get().iter().map(|&a| (a, depth + 1)));
             }
             TypeKind::Assoc(..) => {

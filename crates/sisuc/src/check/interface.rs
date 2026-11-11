@@ -21,7 +21,7 @@ use crate::graph::{components, cycle_through};
 use crate::lang::Dispatch;
 use crate::source::Span;
 use crate::symbol::Symbol;
-use crate::tir::{ClassId, EnumId, FuncId, InterfaceId, Type, TypeArgs, TypeKind};
+use crate::tir::{ClassId, EnumId, FuncId, InterfaceId, StructId, Type, TypeArgs, TypeKind};
 
 /// The most interfaces that one bound, or one list of interfaces a type conforms to, may give
 /// with the interfaces they inherit (see `conformance::BOUND_CLOSURE_LIMIT`).
@@ -218,6 +218,7 @@ pub(super) enum Slot {
     Param(FuncId, usize),
     Ret(FuncId),
     Field(ClassId, usize),
+    StructField(StructId, usize),
     Payload(EnumId, usize, usize),
     RequirementParam(InterfaceId, usize, usize),
     RequirementRet(InterfaceId, usize),
@@ -1279,7 +1280,9 @@ impl Checker<'_> {
         let name = match holder {
             Holder::Class(id) => &self.classes[id.0].name,
             Holder::Enum(id) => &self.enums[id.0].name,
-            Holder::Array | Holder::I64 => unreachable!("a conforms query keys a class or an enum"),
+            Holder::Array | Holder::I64 | Holder::Struct(_) => {
+                unreachable!("a conforms query keys a class or an enum")
+            }
         };
         let (holder, at) = (name.name.to_string(), name.span);
         let (root, interface, args) = self
@@ -1418,7 +1421,9 @@ impl Checker<'_> {
         let own = match holder {
             Holder::Class(id) => self.growing_classes[id.0],
             Holder::Enum(id) => self.marked[id.0],
-            Holder::Array | Holder::I64 => unreachable!("a conforms query keys a class or an enum"),
+            Holder::Array | Holder::I64 | Holder::Struct(_) => {
+                unreachable!("a conforms query keys a class or an enum")
+            }
         };
         let answer = if self.open.depth() > depth_limit() && !own {
             // The query holds, as it does for a marked enum: the report of `too_deep` is its only
@@ -2331,6 +2336,7 @@ impl Checker<'_> {
             Slot::Param(f, i) => self.signatures[f.0].params[i] = None,
             Slot::Ret(f) => self.signatures[f.0].ret = None,
             Slot::Field(c, i) => self.classes[c.0].fields[i].ty = None,
+            Slot::StructField(s, i) => self.structs[s.0].fields[i].ty = None,
             Slot::Payload(e, v, i) => self.enums[e.0].variants[v].fields[i] = None,
             Slot::RequirementParam(interface, r, i) => {
                 self.interfaces[interface.0].requirements[r].params[i] = None;

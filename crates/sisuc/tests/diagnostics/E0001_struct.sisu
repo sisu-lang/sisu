@@ -1,0 +1,28 @@
+struct In {
+    xs: [i64]
+}
+
+struct T {
+    n: i64
+    i: In
+}
+
+fn by_param(t: T) {
+    t.n = 2
+    t.i.xs[0] = 1
+}
+
+fn by_pattern(o: T?) {
+    if let Some(t) = o {
+        t.n = 2
+        t.i.xs[0] = 1
+    }
+}
+
+fn main() {
+    let t = T(n: 1, i: In(xs: [1]))
+    t.n = 2
+    t.i.xs[0] = 1
+    by_param(t)
+    by_pattern(t)
+}

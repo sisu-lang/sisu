@@ -642,6 +642,10 @@ impl<'a> Lowering<'a> {
                 place: Place::Some(_),
                 ..
             } => unreachable!("only a `push` should write through `Some`"),
+            Stmt::Assign {
+                place: Place::StructField { .. },
+                ..
+            } => panic!("a struct lands in Task 3"),
             Stmt::Append { place, value } => self.append(place, value)?,
             Stmt::Push { place, value, span } => self.array_push(place, value, *span)?,
             Stmt::LetElse {
@@ -905,6 +909,9 @@ impl<'a> Lowering<'a> {
                     self.release(Some(temp));
                 }
                 return Some(dest);
+            }
+            ExprKind::Struct { .. } | ExprKind::StructField { .. } => {
+                panic!("a struct lands in Task 3")
             }
             ExprKind::New { class, args } => Rvalue::New {
                 class: *class,
@@ -1468,6 +1475,7 @@ impl<'a> Lowering<'a> {
             }
             Place::Index { .. } => unreachable!("the loop above should stop at the root"),
             Place::Some(_) => unreachable!("a `Some` should end a written place, never lead it"),
+            Place::StructField { .. } => panic!("a struct lands in Task 3"),
         };
         let later: Vec<&Expr> = indexes.iter().copied().chain([value]).collect();
         let mut ops = Vec::with_capacity(indexes.len());
@@ -1620,6 +1628,9 @@ fn leaves_locals(expr: &Expr) -> bool {
         | ExprKind::Convert(operand)
         | ExprKind::Len(operand)
         | ExprKind::Field { base: operand, .. } => leaves_locals(operand),
+        ExprKind::Struct { .. } | ExprKind::StructField { .. } => {
+            panic!("a struct lands in Task 3")
+        }
         ExprKind::Binary { lhs, rhs, .. } => leaves_locals(lhs) && leaves_locals(rhs),
         ExprKind::Compare { operands, .. } => operands.iter().all(leaves_locals),
         ExprKind::Float(_)
@@ -1811,6 +1822,9 @@ fn expr_mentions(e: &Expr, found: &mut Mentions) {
         | ExprKind::Return(None) => {}
         ExprKind::Local(local) => found.found.push(local.0),
         ExprKind::InterfaceCall { .. } => unreachable!("mono should replace every interface call"),
+        ExprKind::Struct { .. } | ExprKind::StructField { .. } => {
+            panic!("a struct lands in Task 3")
+        }
         ExprKind::Call { args, .. }
         | ExprKind::DynCall { args, .. }
         | ExprKind::New { args, .. }
@@ -1948,5 +1962,6 @@ fn place_mentions(place: &Place, found: &mut Mentions) {
             mentions(index, found);
         }
         Place::Some(base) => place_mentions(base, found),
+        Place::StructField { .. } => panic!("a struct lands in Task 3"),
     }
 }

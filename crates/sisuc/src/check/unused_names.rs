@@ -54,10 +54,13 @@ pub(super) enum Owner {
 pub(super) enum Used {
     Func(tir::FuncId),
     Class(tir::ClassId),
+    Struct(tir::StructId),
     /// A variant, by its index in its enum.
     Variant(tir::EnumId, usize),
     /// A field read, by the field's index in its class.
     Field(tir::ClassId, usize),
+    /// A field read, by the field's index in its struct.
+    StructField(tir::StructId, usize),
     Const(usize),
     /// An interface: a bound that names it, or a call of a method that meets one of its
     /// requirements, or of the requirement itself.
@@ -114,7 +117,12 @@ impl Used {
         match self {
             Used::Func(f) => Some(Owner::Func(f)),
             Used::Const(c) => Some(Owner::Const(c)),
-            Used::Class(_) | Used::Variant(..) | Used::Field(..) | Used::Interface(_) => None,
+            Used::Class(_)
+            | Used::Struct(_)
+            | Used::Variant(..)
+            | Used::Field(..)
+            | Used::StructField(..)
+            | Used::Interface(_) => None,
         }
     }
 }
@@ -183,7 +191,11 @@ impl Checker<'_> {
             Used::Func(func) => func.0 >= self.prelude.funcs,
             Used::Class(class) => class.0 >= self.prelude.classes,
             Used::Variant(id, _) => id.0 >= self.prelude.enums,
-            Used::Field(..) | Used::Const(_) | Used::Interface(_) => false,
+            Used::Struct(_)
+            | Used::Field(..)
+            | Used::StructField(..)
+            | Used::Const(_)
+            | Used::Interface(_) => false,
         };
         self.reaches_prelude(of_prelude, at);
         if let Some(from) = self.body.owner {
@@ -255,7 +267,8 @@ impl Checker<'_> {
         let built = |holder: Holder| match holder {
             Holder::Class(c) => reached.built[c.0],
             Holder::Enum(e) => reached.enum_built[e.0],
-            Holder::Array | Holder::I64 => true,
+            // The stopgap keeps each program with a struct out until Task 3.
+            Holder::Array | Holder::I64 | Holder::Struct(_) => true,
         };
         let named = |o: Owner| match o {
             Owner::Func(f) => (
@@ -527,8 +540,9 @@ impl Checker<'_> {
                 Used::Interface(interface) => {
                     self.cite(&mut cited[slots.interfaces + interface.0], i);
                 }
-                // An owner is cited next.
-                Used::Func(_) | Used::Const(_) => {}
+                // An owner is cited next. The stopgap keeps a program with a struct out of this
+                // pass until Task 3.
+                Used::Func(_) | Used::Const(_) | Used::Struct(_) | Used::StructField(..) => {}
             }
             if let Some(owner) = u.to.owner() {
                 self.cite(&mut cited[self.owner_index(owner)], i);
@@ -657,8 +671,13 @@ impl Checker<'_> {
                     Used::Interface(interface) => {
                         use_interface(&mut interfaces, &mut to_follow, interface.0);
                     }
-                    // A class is built above, and an owner is reached next.
-                    Used::Class(_) | Used::Func(_) | Used::Const(_) => {}
+                    // A class is built above, and an owner is reached next. The stopgap keeps a
+                    // program with a struct out of this pass until Task 3.
+                    Used::Class(_)
+                    | Used::Func(_)
+                    | Used::Const(_)
+                    | Used::Struct(_)
+                    | Used::StructField(..) => {}
                 }
                 if let Some(owner) = to.owner() {
                     make_live(&mut live, &mut stack, self.owner_index(owner));
@@ -761,7 +780,7 @@ impl Checker<'_> {
                         .flat_map(|v| v.fields.iter().flatten().copied()),
                 ),
             ),
-            Holder::Array | Holder::I64 => {
+            Holder::Struct(_) | Holder::Array | Holder::I64 => {
                 unreachable!("only a class or an enum is started by a use")
             }
         };

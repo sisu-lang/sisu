@@ -78,6 +78,14 @@ class Sn {
     name: string?
 }
 fn sn() -> Sn? { None }
+class Pc {
+    fn push(self, x: i64) -> i64 { x }
+}
+struct Sc {
+    c: Pc
+}
+fn sc() -> Sc { Sc(c: Pc()) }
+fn osc() -> Sc? { None }
 fn take<T>(mut x: T?) { x = None }
 fn take2<T>(mut x: T?, n: i64) { x = None }
 fn keep<T>(mut x: T?) -> T? { x }
@@ -212,6 +220,10 @@ loop { if c { break 1 }; break "x" }
 # that is given an argument that does not conform.
 E2.V(missing, k)
 Alias(a: Rock())
+# A class with its own `push`, in a field of a struct value that is no place: `$.push(1)` and
+# `$?.push(1)` call that method, and a held report must not reach the write.
+sc().c
+osc()?.c
 
 [failed values]
 # A type parameter read: in the function whose bound failed, `u` is unknown.

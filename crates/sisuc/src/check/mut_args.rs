@@ -9,7 +9,7 @@ use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 
 use super::expr::{fits, local};
 use super::generic::mark;
-use super::place::{Chain, Change, CheckedPlace, Path, Root, build, place_root};
+use super::place::{Chain, Change, CheckedPlace, Path, PathStep, Root, build, place_root};
 use super::reports::Reported;
 use super::{Checked, Checker, Expectation, Poisoned, SelfType, block_expr, type_of};
 use crate::ast;
@@ -391,6 +391,10 @@ impl Checker<'_> {
             return Err((NotPlace::Temporary, None));
         }
         let mut place = self.place(arg.span, arg, Change::MutArg);
+        // A part of a value that a call gives is lost after the call.
+        if place.temporary.is_some() {
+            return Err((NotPlace::Temporary, None));
+        }
         if let Some(cause) = place.refused.take() {
             let kept = place.path.as_ref().map(|path| Kept {
                 key: self.mut_key(path),
@@ -402,6 +406,7 @@ impl Checker<'_> {
         if place.guard.is_some() {
             place.chain = Some(Chain {
                 name: self.chain_head(arg),
+                class_object: place.guards_class(&self.body.locals),
             });
         }
         Ok(place)
@@ -560,8 +565,10 @@ impl Checker<'_> {
             let shown = self
                 .one_line(arg.span)
                 .then(|| self.source.text(arg.span).to_string());
+            // An unwrap of a struct gives a copy: only a class object makes its field a place.
             let help = chain.name.as_ref().filter(|_| {
-                shown.is_some()
+                chain.class_object
+                    && shown.is_some()
                     && Self::chain_steps(arg) == 1
                     && matches!(label, ChainLabel::WriteType | ChainLabel::NoPlace { .. })
             });
@@ -992,35 +999,41 @@ impl Checker<'_> {
 
     /// The key of the place `path`.
     fn mut_key(&self, path: &Path) -> MutPlaceKey {
-        let mut operands = path.operands.iter();
-        let (root, mut steps) = match path.root {
-            Root::Local(id) => (RootKey::Local(id), Vec::new()),
+        let (root, mut steps, class) = match path.root {
+            Root::Local(id) => (RootKey::Local(id), Vec::new(), None),
             Root::Field(index) => {
-                let base = operands
-                    .next()
-                    .expect("a field root's base should be the first operand of its path");
-                let (root, mut steps) = self.read_key(base);
+                let base = (path.base.as_ref()).expect("a field root's base should be in its path");
+                let (root, mut steps, _) = self.read_key(base);
+                // The prefix before the field of a class object is that object.
+                let class = steps.len();
                 steps.push(Step::Field(index));
-                (root, steps)
+                (root, steps, Some(class))
             }
         };
-        steps.extend(operands.map(|index| self.index_step(index)));
-        // Every field step is a field of a class object, so the prefix before it is one.
-        let class = steps
-            .iter()
-            .rposition(|step| matches!(step, Step::Field(_)))
-            .map_or(-1, |at| {
-                isize::try_from(at).expect("a path should fit in `isize`")
-            });
+        steps.extend(path.steps.iter().map(|step| match step {
+            PathStep::Field(index) => Step::Field(*index),
+            PathStep::Index(index) => self.index_step(index),
+        }));
+        let class = class.map_or(-1, |at| {
+            isize::try_from(at).expect("a path should fit in `isize`")
+        });
         MutPlaceKey { root, steps, class }
     }
 
-    /// The root and the steps of the read `e`, a chain of fields and indexes.
-    fn read_key(&self, mut e: &tir::Expr) -> (RootKey, Vec<Step>) {
+    /// The root and the steps of the read `e`, a chain of fields and indexes. Also the place of
+    /// its last step that is the field of a class object.
+    fn read_key(&self, mut e: &tir::Expr) -> (RootKey, Vec<Step>, Option<usize>) {
         let mut steps = Vec::new();
+        // Counted from the end, as the steps are found.
+        let mut class = None;
         let root = loop {
             match &e.kind {
                 ExprKind::Field { base, index } => {
+                    class = class.or(Some(steps.len()));
+                    steps.push(Step::Field(*index));
+                    e = base;
+                }
+                ExprKind::StructField { base, index } => {
                     steps.push(Step::Field(*index));
                     e = base;
                 }
@@ -1033,7 +1046,8 @@ impl Checker<'_> {
             }
         };
         steps.reverse();
-        (root, steps)
+        let class = class.map(|from_end| steps.len() - 1 - from_end);
+        (root, steps, class)
     }
 
     /// The step of the index `e`: a literal, or a local that no argument can change.
@@ -1101,6 +1115,10 @@ impl Checker<'_> {
                 let base = Box::new(self.bind_base(*base, rebound, lets, keep));
                 tir::Expr::new(ExprKind::Field { base, index }, ty, span)
             }
+            ExprKind::StructField { base, index } => {
+                let base = Box::new(self.bind_base(*base, rebound, lets, keep));
+                tir::Expr::new(ExprKind::StructField { base, index }, ty, span)
+            }
             ExprKind::Index { base, index } => {
                 let base = Box::new(self.bind_base(*base, rebound, lets, keep));
                 let index = Box::new(self.hide(*index, lets));
@@ -1123,35 +1141,60 @@ impl Checker<'_> {
     /// the first is a `let` in the block of the test that reads it. So the path is read once. The
     /// block releases these arrays before the store-back. So the store-back finds them unique.
     fn indexes_in_range(&mut self, place: &tir::Place, at: Span) -> Option<tir::Expr> {
-        let mut indexes = Vec::new();
+        // The steps from the root outwards: an index, or `Err` with a struct field.
+        let mut steps = Vec::new();
         let mut root = place;
-        while let tir::Place::Index { base, index } = root {
-            indexes.push(index);
-            root = base;
+        loop {
+            root = match root {
+                tir::Place::Index { base, index } => {
+                    steps.push(Ok(index));
+                    &**base
+                }
+                tir::Place::StructField { base, index } => {
+                    steps.push(Err(*index));
+                    &**base
+                }
+                _ => break,
+            };
         }
-        indexes.reverse();
-        let first = self.read(root.clone(), at);
+        steps.reverse();
+        let count = steps.iter().filter(|step| step.is_ok()).count();
+        let mut array = self.read(root.clone(), at);
         // `arrays[k]` is the array that `indexes[k]` indexes: the root's, then one `let` each.
-        let mut arrays = vec![first];
-        let mut lets = Vec::new();
-        for (k, index) in indexes
-            .iter()
-            .enumerate()
-            .take(indexes.len().saturating_sub(1))
-        {
-            let TypeKind::Array(element) = arrays[k].ty.kind() else {
+        let (mut indexes, mut arrays, mut lets) = (Vec::new(), Vec::new(), Vec::new());
+        for step in steps {
+            let index = match step {
+                Ok(index) => index,
+                Err(field) => {
+                    let ty = (self.field_type(array.ty, field))
+                        .expect("a place whose type is known should have typed fields");
+                    let read = ExprKind::StructField {
+                        base: Box::new(array),
+                        index: field,
+                    };
+                    array = tir::Expr::new(read, ty, at);
+                    continue;
+                }
+            };
+            indexes.push(index);
+            if indexes.len() == count {
+                arrays.push(array);
+                break;
+            }
+            let TypeKind::Array(element) = array.ty.kind() else {
                 panic!("an indexed place should hold an array, as `element` checked")
             };
-            let array = self.fresh(element);
+            let next = self.fresh(element);
             let read = ExprKind::Index {
-                base: Box::new(arrays[k].clone()),
-                index: Box::new((*index).clone()),
+                base: Box::new(array.clone()),
+                index: Box::new(index.clone()),
             };
             lets.push(tir::Stmt::Let {
-                local: array,
+                local: next,
                 init: tir::Expr::new(read, element, at),
             });
-            arrays.push(local(array, element, at));
+            arrays.push(array);
+            array = local(next, element, at);
         }
         let mut tests: Vec<tir::Expr> = indexes
             .iter()
@@ -1229,9 +1272,11 @@ impl Checker<'_> {
                 span: at,
                 ..
             } = part;
-            let mut operands = path.operands.into_iter();
+            let field_root = matches!(path.root, Root::Field(_));
+            let (shape, operands) = path.split();
+            let mut operands = operands.into_iter();
             let (mut bound, mut keep) = (Vec::new(), Vec::new());
-            if matches!(path.root, Root::Field(_)) {
+            if field_root {
                 let base = operands
                     .next()
                     .expect("a field root's base should be the first operand of its path");
@@ -1240,7 +1285,7 @@ impl Checker<'_> {
             for index in operands {
                 bound.push(self.hide(index, &mut lets));
             }
-            let place = build(path.root, bound);
+            let place = build(shape.path(bound));
             let read = self.read(place.clone(), at);
             let in_range = self.indexes_in_range(&place, at);
             let store = tir::Stmt::Assign {
