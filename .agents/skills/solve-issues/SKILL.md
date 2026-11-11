@@ -27,10 +27,12 @@ to choose the outside seat. When this table and the table in
 ## Scope
 
 A batch fixes what each issue reports, and the cases in the same function.
+Keep each regression that the batch's own change adds, in any function.
 Drop every other finding, except one that gives wrong output, a crash, or a
 false error on a valid program. Ask the user before you file a new issue.
 Each review has one round, and one re-check for each blocking finding; no
-third round. These rules replace the fix-round rules of `review-sisu`.
+third round. When a blocking finding is still open after its re-check, ask
+the user to defer it or to fix it. These rules replace the fix-round rules of `review-sisu`.
 
 ## The ledger
 
@@ -73,7 +75,7 @@ its last event.
 1. Put issues in one group when their fixes change the same functions. One group is one branch and one pull request.
 2. Order the groups. Two groups that change the same code run one after the other. A group that changes code an open branch changes waits for that branch to merge.
 3. For each group, propose a review flow, with the reason:
-   - **Full:** the roles above, and one mutation test for the group, which you run after the last task review (step 7.2), and one for each large fix round of the final review (`review-sisu`, step 5).
+   - **Full:** the roles above, and one mutation test for the group, which you run after the last task review (step 7.2). Each large fix round of the final review runs one more (`review-sisu`, `final-diff.md`).
    - **Light:** `opus-medium` for each task and for the final review. `make test` and `make coverage` only; no mutation test.
 4. For each language decision, write the options and their costs. Post them on the issue, as in step 3.8.
 
@@ -84,7 +86,9 @@ its last event.
 - each language decision, with its risk and a short Sisu example.
 
 Then ask with `AskUserQuestion`. One call takes at most four questions. Ask
-one question that approves the table or asks for changes. Ask one question
+one question that approves the table or asks for changes. For the full flow, ask
+one question for the outside seat and its effort, for each review of the batch
+(`review-sisu`, step 3). Ask one question
 for each language decision. With more than three decisions, use more than
 one call. Write the answers in the ledger.
 

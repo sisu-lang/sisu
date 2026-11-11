@@ -5,6 +5,8 @@ checkout. verify records the checkout again, compares the records and checks tha
 exists. A reviewer that wrote in the repository, or a report that is not there, makes verify fail.
 save-report copies the final reply of a subagent reviewer from its transcript to its report file,
 word for word. rulings checks that each finding of each report has a ruling, and counts them.
+record only records the checkout, for a review that has no target to prepare, such as a
+cross-check.
 
 Run this file from any checkout. It runs origin/main's build_sisu.sh and diff_brief.py, so a
 branch that started before a change to the criteria gets the current ones.
@@ -16,6 +18,8 @@ Verify: python3 review_round.py verify REPO RUN --report STEM [--report STEM]...
 Save a report: python3 review_round.py save-report RUN STEM --agent ID [--round N]
 
 Check the rulings: python3 review_round.py rulings RUN --report STEM [--report STEM]... [--round N]
+
+Record only: python3 review_round.py record REPO RUN [--round N]
 
 REPO is the root of the checkout that holds the target. A worktree is fine.
 RUN is the run directory.
@@ -184,7 +188,8 @@ def verify(repo: Path, run: Path, round_number: int, reports: list[str]) -> int:
 
 def rulings(run: Path, round_number: int, reports: list[str]) -> int:
     """Return 1 when a finding of a report has no ruling. Print the rulings of each reviewer."""
-    lines = (run / f"rulings-{round_number}.md").read_text(encoding="utf-8")
+    path = run / f"rulings-{round_number}.md"
+    lines = path.read_text(encoding="utf-8") if path.exists() else ""
     ruled = dict(re.findall(r"^(\S+ \d+): (\w+)", lines, flags=re.MULTILINE))
     status = 0
     for stem in reports:
@@ -195,6 +200,9 @@ def rulings(run: Path, round_number: int, reports: list[str]) -> int:
             ruling = ruled.get(f"{stem} {n}")
             if ruling is None:
                 print(f"review_round: no ruling: {stem} {n}")
+                status = 1
+            elif ruling not in ("Accept", "Reject", "Defer"):
+                print(f"review_round: not Accept, Reject or Defer: {stem} {n}: {ruling}")
                 status = 1
             else:
                 counts[ruling] = counts.get(ruling, 0) + 1
@@ -255,9 +263,10 @@ def main() -> int:
     verify_parser = commands.add_parser("verify")
     save_parser = commands.add_parser("save-report")
     rulings_parser = commands.add_parser("rulings")
+    record_parser = commands.add_parser("record")
     rulings_parser.add_argument("run", type=Path)
     rulings_parser.add_argument("--report", action="append", required=True, metavar="STEM")
-    for command in (prepare_parser, verify_parser):
+    for command in (prepare_parser, verify_parser, record_parser):
         command.add_argument("repo", type=Path)
         command.add_argument("run", type=Path)
     prepare_parser.add_argument("target")
@@ -269,7 +278,7 @@ def main() -> int:
     save_parser.add_argument(
         "--transcripts", type=Path, default=Path.home() / ".claude" / "projects"
     )
-    for command in (prepare_parser, verify_parser, save_parser, rulings_parser):
+    for command in (prepare_parser, verify_parser, save_parser, rulings_parser, record_parser):
         command.add_argument("--round", type=int, default=1)
     args, extra = parser.parse_known_args()
     if args.command != "prepare" and extra:
@@ -278,6 +287,9 @@ def main() -> int:
         return verify(args.repo, args.run, args.round, args.report)
     if args.command == "rulings":
         return rulings(args.run, args.round, args.report)
+    if args.command == "record":
+        record(args.repo, args.run / f"tree-{args.round}.txt")
+        return 0
     if args.command == "save-report":
         return save_report(args.run, args.stem, args.agent, args.round, args.transcripts)
     # parse_known_args would take the value of an option before TARGET as the target.

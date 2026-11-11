@@ -161,9 +161,10 @@ vague or generic error, or with none.
   condition in the spec, the plan or "Focus".
 - A defect the diff adds blocks. A defect the old code had too is a nit.
 - Check cheap claims yourself: build, run the tests, write a probe
-  program. When "Focus" lists a prebuilt `sisu` for a commit, run it and
-  do not build that compiler again. It holds no tests. To run a test of
-  the diff, export the commit and run `cargo nextest run <filter>` there.
+  program. When "Focus" lists a prebuilt `sisu` for a commit, run it, and
+  do not build that commit only to get `sisu`. It holds no tests. To run a test of
+  the diff, export the commit and run `cargo nextest run <filter>` there,
+  which builds what the test needs.
   Plain `cargo test` fails, because only the nextest setup script builds
   the runtime. Build only what Focus does not list, such as
   a prototype of a fix. To build a commit, export it as "Export a commit to build it"

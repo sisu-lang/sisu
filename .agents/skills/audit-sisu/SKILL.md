@@ -92,7 +92,7 @@ it is a real defect or behavior that `README.md`, an implemented ADR or
 `finding.md`; whether the fix reaches the root cause; and whether the test
 would fail as `finding.md` requires.
 
-- Choose an outside seat and its effort as `review-sisu` step 3 says, and launch it with its command in `review-sisu`'s `launchers.md`. Record and compare the checkout as that step says. The brief is `RUN/cross-check.md` and the report is `RUN/cross-check-report.md`.
+- Choose an outside seat and its effort as `review-sisu` step 3 says, and launch it with its command in `review-sisu`'s `launchers.md`. The brief is `RUN/cross-check.md` and the report is `RUN/cross-check-report.md`; the brief asks for `Model: <model ID>` as the report's first line. Before the launch, run `python3 <review-sisu base>/scripts/review_round.py record <repository root> RUN`. After it, run `verify <repository root> RUN --report cross-check-report` with the same script, and act on a failure as `review-sisu` step 3 says.
 - When the user chooses no outside seat, dispatch one read-only subagent with the same prompt.
 
 Wait for its report. Drop a finding it shows is intended or not a defect,

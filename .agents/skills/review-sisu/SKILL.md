@@ -70,12 +70,15 @@ it also checks the fixes for the outside seat's findings.
 
 The outside seat is a model that is not the caller's: Sol, Fable 5.2, or
 another model the user names. Its model and its CLI change with the user's
-token limits, so this skill names none. Take the model and the CLI from the
+token limits, so this skill fixes no model or CLI. Take the model and the CLI from the
 first of these that gives them:
 
 1. what the user said for this review;
 2. the reviewers row of the plan's `## Execution` section;
 3. the user's answer: ask before the launch.
+
+A source can name a model but no CLI, or a CLI that
+[launchers.md](launchers.md) does not list. Then ask the user for the CLI and its command.
 
 Ask the user for the effort of the outside seat every time, unless the user
 named it for this review. "None" is a correct answer: then the Claude seat
@@ -142,7 +145,8 @@ the round's target (for a diff, the fix range) and `--round <round>`. It writes
 Its "Re-review" section asks for a verdict on each accepted finding, the
 neighbours of each fix, and regressions against the base of the whole
 work. Send it to the Claude seat; its report goes to `RUN/opus-<round>.md`. Allow at most two
-fix rounds. After the review of the second fix round, ask the user about
+fix rounds. After the review of the second fix round, do the redo below when
+it applies. Otherwise ask the user about
 each blocking finding that is still open: a third round, or a deferral.
 In a diff, a blocking finding can have a small fix, such as a pattern in a hook:
 fewer than 10 lines, and no change to `sisu` output. It needs no question: give it one more
@@ -150,11 +154,12 @@ round, reviewed by `opus-medium` alone. Do this extra round once, for all
 such findings together. Ask the user about each blocking finding that its
 review reports. A spec or a plan gets no such round. Defer the nits.
 
-When two fix rounds in a row each add a blocking regression, or the second
-fix of one finding fails, stop patching. Choose a fresh executor one seat above the
-one that failed, and `opus-high` at the least. It first commits failing tests for
+Two fix rounds in a row can each add a blocking regression, or the second
+fix of one finding can fail. Then stop patching and do a redo. Give it to a fresh `opus-high` executor.
+It first commits failing tests for
 each open finding and its neighbours, then fixes the code until they pass.
-When that fails too, or the work already ran on `opus-high`, ask the user.
+The Claude seat reviews the redo as one more round. When that review finds a blocking
+defect, or the failed rounds already ran on `opus-high`, ask the user.
 
 In a `solve-issues` batch, the rules of `solve-issues` (Scope) replace
 the fix-round rules of this step.

@@ -5,7 +5,6 @@ gives the command for each CLI. Run each one through Bash with
 `run_in_background` and the sandbox off, because each CLI needs the network
 and writes under its own home directory. The completion notification ends
 the wait; do not poll. Write `RUN`, `<effort>` and each path as a literal.
-In a later round, write `brief-<round>.md` and `<stem>-<round>.md`.
 
 Each launch can write anywhere, so `verify` is the guard (step 3).
 

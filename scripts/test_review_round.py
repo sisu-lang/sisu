@@ -152,6 +152,15 @@ class ReviewRound(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("run prepare first", result.stderr)
 
+    def test_record_should_let_verify_check_a_checkout_without_prepare(self) -> None:
+        self.script("record")
+        (self.run_dir / "cross-check-report.md").write_text(REPORT)
+        result = self.script("verify", "--report", "cross-check-report")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        (self.repo / "new").write_text("x")
+        result = self.script("verify", "--report", "cross-check-report")
+        self.assertEqual(result.returncode, 1, result.stdout)
+
     def test_verify_should_pass_on_an_unchanged_checkout_with_each_report(self) -> None:
         self.script("prepare", "main..main")
         (self.run_dir / "opus.md").write_text(REPORT)
@@ -246,6 +255,36 @@ class Rulings(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("no ruling: sol 2", result.stdout)
         self.assertNotIn("no ruling: sol 1", result.stdout)
+
+    def test_rulings_should_fail_on_a_word_other_than_accept_reject_or_defer(self) -> None:
+        result = self.rulings("sol 1: Accept: x.\nsol 2: Pending: later.\nopus 1: Accept: x.\n")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("not Accept, Reject or Defer: sol 2: Pending", result.stdout)
+
+    def test_rulings_without_a_rulings_file_should_name_each_finding_without_a_ruling(self) -> None:
+        result = subprocess.run(
+            ["python3", SCRIPT, "rulings", self.run_dir, "--report", "opus"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=ENV,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no ruling: opus 1", result.stdout)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_rulings_should_read_the_report_and_the_rulings_of_the_given_round(self) -> None:
+        (self.run_dir / "opus-2.md").write_text(REPORT + "### 1. A\n### 2. B\n")
+        (self.run_dir / "rulings-2.md").write_text("opus 1: Accept: x.\nopus 2: Reject: y.\n")
+        result = subprocess.run(
+            ["python3", SCRIPT, "rulings", self.run_dir, "--report", "opus", "--round", "2"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=ENV,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("opus: 2 findings: 1 Accept, 1 Reject", result.stdout)
 
 
 class SaveReport(unittest.TestCase):
