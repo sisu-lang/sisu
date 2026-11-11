@@ -1,6 +1,6 @@
 // GIVEN a `main` that passes `continue` as an argument, outside a loop
 // WHEN `sisu check` runs on it
-// THEN it reports E0038 at 7:13 and no other error
+// THEN it reports E0038 at 9:13 and no other error
 fn f(x: i64) -> i64 {
     x
 }

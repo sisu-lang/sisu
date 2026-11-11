@@ -434,7 +434,7 @@ fn report_args(code: &str) -> &'static [&'static str] {
 /// one diagnostic, prints nothing on stdout, and exits 1 when a stderr line starts with `error`,
 /// else 0. A source named after a code (`E0001.sisu`, `E0001-field.sisu`) reports that code.
 /// `sisu check --format json` exits the same, and each of its stderr lines is a JSON object,
-/// the summary last. Each `(line:column)` in the comment lines at the top of `source` is where
+/// the summary last. Each `line:column` in the comment lines at the top of `source` is where
 /// a primary or a secondary span of the JSON starts. Then the two stderrs are `expected` with the
 /// extensions `err` and `json`; with `bless`, rewrites both files instead.
 pub(crate) fn diagnose(source: &Path, expected: &Path, bless: bool) {
@@ -494,11 +494,11 @@ pub(crate) fn diagnose(source: &Path, expected: &Path, bless: bool) {
             .is_some_and(|l| l.contains(r#""kind":"summary""#)),
         "{display}: the summary is not last: {json}"
     );
-    let header = fs::read(source).expect("a case should be readable");
-    for (line, column) in header_positions(&String::from_utf8_lossy(&header)) {
+    let bytes = fs::read(source).expect("a case should be readable");
+    for (line, column) in header_positions(&String::from_utf8_lossy(&bytes)) {
         assert!(
             reports_at(&json, line, column),
-            "{display}: the header names ({line}:{column}), but no primary or secondary span \
+            "{display}: the header names {line}:{column}, but no primary or secondary span \
              starts there"
         );
     }
@@ -511,8 +511,9 @@ pub(crate) fn diagnose(source: &Path, expected: &Path, bless: bool) {
     );
 }
 
-/// Each `(line:column)` in the comment lines at the top of `source`, such as the `(6:10)` of
-/// `// THEN it reports E0011 at the type (6:10)`.
+/// Each `line:column` in the comment lines at the top of `source`, such as the `7:9` of
+/// `// THEN it reports E0038 at 7:9` or the `(6:10)` of `// THEN it reports E0011 (6:10)`. A word
+/// that holds a letter, such as `E0038:3`, is not a position.
 pub(crate) fn header_positions(source: &str) -> Vec<(u64, u64)> {
     let number = |text: &str| -> Option<u64> {
         (!text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()))
@@ -522,10 +523,9 @@ pub(crate) fn header_positions(source: &str) -> Vec<(u64, u64)> {
     source
         .lines()
         .take_while(|line| line.starts_with("//"))
-        .flat_map(|line| line.split('(').skip(1))
-        .filter_map(|after| {
-            let (line, rest) = after.split_once(':')?;
-            let (column, _) = rest.split_once(')')?;
+        .flat_map(|line| line.split(|c: char| !c.is_ascii_alphanumeric() && c != ':'))
+        .filter_map(|word| {
+            let (line, column) = word.split_once(':')?;
             Some((number(line)?, number(column)?))
         })
         .collect()
