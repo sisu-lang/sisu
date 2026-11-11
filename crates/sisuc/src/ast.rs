@@ -993,19 +993,42 @@ impl fmt::Display for AliasDecl {
 
 impl fmt::Display for Class {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_record(f, "class", self)
+        let Self {
+            name,
+            type_params,
+            conforms,
+            assoc,
+            members,
+            ..
+        } = self;
+        write_type_item(f, "class", name, type_params, conforms, assoc, members)
     }
 }
 
 impl fmt::Display for Struct {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_record(f, "struct", self)
+        let Self {
+            name,
+            type_params,
+            conforms,
+            assoc,
+            members,
+            ..
+        } = self;
+        write_type_item(f, "struct", name, type_params, conforms, assoc, members)
     }
 }
 
 /// The form of a class or a struct: `(word Name<T>: Shape assoc members)`.
-fn write_record(f: &mut fmt::Formatter<'_>, word: &str, item: &impl Record) -> fmt::Result {
-    let (name, type_params, conforms, assoc, members) = item.parts();
+fn write_type_item(
+    f: &mut fmt::Formatter<'_>,
+    word: &str,
+    name: &Ident,
+    type_params: &[TypeParam],
+    conforms: &[TypeExpr],
+    assoc: &[AssocChoice],
+    members: &[Member],
+) -> fmt::Result {
     write!(
         f,
         "({word} {}{}{}",
@@ -1024,35 +1047,6 @@ fn write_record(f: &mut fmt::Formatter<'_>, word: &str, item: &impl Record) -> f
         }
     }
     f.write_str(")")
-}
-
-/// The parts that a class and a struct share.
-trait Record {
-    fn parts(&self) -> (&Ident, &[TypeParam], &[TypeExpr], &[AssocChoice], &[Member]);
-}
-
-impl Record for Class {
-    fn parts(&self) -> (&Ident, &[TypeParam], &[TypeExpr], &[AssocChoice], &[Member]) {
-        (
-            &self.name,
-            &self.type_params,
-            &self.conforms,
-            &self.assoc,
-            &self.members,
-        )
-    }
-}
-
-impl Record for Struct {
-    fn parts(&self) -> (&Ident, &[TypeParam], &[TypeExpr], &[AssocChoice], &[Member]) {
-        (
-            &self.name,
-            &self.type_params,
-            &self.conforms,
-            &self.assoc,
-            &self.members,
-        )
-    }
 }
 
 impl fmt::Display for Enum {

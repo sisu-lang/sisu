@@ -586,8 +586,8 @@ class Lexer {
     tracker: Tracker
     // How many `;` that separate statements end the tokens, which the tracker has not read.
     mut trailing: i64
-    // Whether the top-level item so far is a `fn`, `class`, `struct`, `enum`, `interface` or `extend`. Such
-    // an item ends at its `}`. A `const` or a `type` ends at a line break.
+    // Whether the top-level item so far is a `fn`, `class`, `struct`, `enum`, `interface` or
+    // `extend`. Such an item ends at its `}`. A `const` or a `type` ends at a line break.
     mut self_ending: bool
     // The kind of the last token that is not a `;`.
     mut last_code: Kind

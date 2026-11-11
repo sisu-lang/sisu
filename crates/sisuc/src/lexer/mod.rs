@@ -3781,6 +3781,7 @@ mod tests {
             // A blank first line puts the newline before the header at byte 0.
             ("\nfn main()\n{\n}\n", (10, 11), (3, 1)),
             ("class A\n{\n}", (7, 8), (2, 1)),
+            ("struct A\n{\n}", (8, 9), (2, 1)),
             ("enum A\n{\n}", (6, 7), (2, 1)),
             ("interface Shape\n{}", (15, 16), (2, 1)),
             ("extend C\n{}", (8, 9), (2, 1)),
@@ -4013,6 +4014,9 @@ mod tests {
             // after one is redundant. After a `const`, a `;` separates.
             ("fn f() {};interface I {}", vec![Gone(1, 10)]),
             ("fn f() {};extend C {}", vec![Gone(1, 10)]),
+            // `struct` ends at its `}` too.
+            ("fn f() {};struct S {}", vec![Gone(1, 10)]),
+            ("struct S {}; fn main() {}", vec![Gone(1, 12)]),
             (
                 "const A = 1\ninterface I {}; fn main() {}",
                 vec![Gone(2, 15)],
@@ -4832,6 +4836,7 @@ mod tests {
                 "fn f<T: A & B & C>(x: T) {}",
             ),
             ("class C<T: A\n    & B> {}", "class C<T: A & B> {}"),
+            ("struct S<T: A\n    & B> {}", "struct S<T: A & B> {}"),
             ("enum E<T: A\n    & B> {}", "enum E<T: A & B> {}"),
             ("interface I<T: A\n    & B> {}", "interface I<T: A & B> {}"),
             ("extend<T: A\n    & B> K<T> {}", "extend<T: A & B> K<T> {}"),

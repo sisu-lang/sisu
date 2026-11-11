@@ -157,9 +157,9 @@ fn emit_tokens_should_split_an_interpolated_string_into_head_middle_and_tail_tok
     }
 }
 
-/// GIVEN a source with the words `struct` and `const` on two lines
+/// GIVEN a source with the words `import` and `const` on two lines
 /// WHEN it is built with `--emit tokens`
-/// THEN `struct` is a `Reserved` token at 1:1 and `const` is a `Const` token at 2:1
+/// THEN `import` is a `Reserved` token at 1:1 and `const` is a `Const` token at 2:1
 #[test]
 fn emit_tokens_should_print_reserved_and_const_words_as_their_own_tokens() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));

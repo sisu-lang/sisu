@@ -1661,7 +1661,7 @@ impl<'a> Parser<'a> {
             members,
             broken_methods,
             ..
-        } = self.record_body(errors, methods, &TokenKind::Class, "a class name")?;
+        } = self.type_body(errors, methods, &TokenKind::Class, "a class name")?;
         Ok(Class {
             name,
             type_params,
@@ -1679,7 +1679,7 @@ impl<'a> Parser<'a> {
         errors: &mut Vec<Diagnostic>,
         methods: &mut Vec<Range<usize>>,
     ) -> Result<Struct, Diagnostic> {
-        let mut item = self.record_body(errors, methods, &TokenKind::Struct, "a struct name")?;
+        let mut item = self.type_body(errors, methods, &TokenKind::Struct, "a struct name")?;
         for member in &mut item.members {
             if let Member::Field(field) = member {
                 field.mutable = false;
@@ -1689,8 +1689,9 @@ impl<'a> Parser<'a> {
     }
 
     /// The body of a class or a struct, which start with `word` and then a name that `what`
-    /// describes. The keyword of a class is dropped by its caller.
-    fn record_body(
+    /// describes. The two share it, so it gives an `ast::Struct`, the one with a keyword: a class
+    /// drops the keyword.
+    fn type_body(
         &mut self,
         errors: &mut Vec<Diagnostic>,
         methods: &mut Vec<Range<usize>>,
