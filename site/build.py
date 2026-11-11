@@ -29,7 +29,7 @@ import unicodedata
 import unittest
 from bisect import bisect_left
 from collections import Counter
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from decimal import ROUND_HALF_UP, Decimal
 from functools import cache
 from html.parser import HTMLParser
@@ -625,8 +625,17 @@ def mark_rules(tokens: list[Token]) -> None:  # noqa: C901  one scan of the toke
                     break
 
 
+def rule_proofs(_root: Path, _files: Iterable[str]) -> dict[str, list[tuple[str, int]]]:
+    """Map each rule ID to its test markers (red commit: stub)."""
+    return {}
+
+
+def rule_anchors(tokens: list[Token], proofs: Mapping[str, list[tuple[str, int]]]) -> None:
+    """Give each rule its ID (red commit: stub)."""
+
+
 def reference_html(  # noqa: C901, PLR0912  both count the same branches: one scan of the tokens, with one branch for each token kind
-    markdown: str, path: Path
+    markdown: str, path: Path, proofs: Mapping[str, list[tuple[str, int]]] | None = None
 ) -> tuple[str, list[tuple[int, str, str, bool]], bool]:
     """Return a language reference page without its `#` title, its headings and its tag.
 
@@ -675,6 +684,7 @@ def reference_html(  # noqa: C901, PLR0912  both count the same branches: one sc
             if pending and current is not None:
                 headings[current][3] = True
     mark_rules(tokens)
+    rule_anchors(tokens, proofs or {})
     for heading in headings:
         if heading[3]:
             heading[2].children.append(Token("html_inline", "", 0, content=IN_DEVELOPMENT))
