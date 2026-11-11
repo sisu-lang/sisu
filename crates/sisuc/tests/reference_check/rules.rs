@@ -90,12 +90,13 @@ pub(crate) fn read_rules(text: &str) -> (Vec<Rule>, Vec<usize>) {
             );
             let at = &text[range.start..];
             let after_space = at.starts_with(is_stripped);
-            // The site accepts `\{#` too, and `pulldown-cmark` drops the `\` only when no
-            // stripped character comes first.
+            // The site accepts `\{#` after a stripped character, because `pulldown-cmark` then
+            // keeps the `\` in the text. With no stripped character first, `at` starts at the
+            // escaped `\` of `\\{#`. That `\` is text on the site, so it gives no prefix.
             let trimmed = at.trim_start_matches(is_stripped_or_blank);
             let trimmed = trimmed
                 .strip_prefix('\\')
-                .filter(|rest| rest.starts_with("{#"))
+                .filter(|rest| after_space && rest.starts_with("{#"))
                 .unwrap_or(trimmed);
             let prefix = starts_text.then(|| read_prefix(trimmed)).flatten();
             if prefix.is_some() {
