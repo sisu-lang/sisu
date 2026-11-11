@@ -17,6 +17,7 @@ SCRIPT = Path(__file__).resolve().parents[1] / ".agents/skills/review-sisu/scrip
 # A pre-commit hook runs these tests with GIT_DIR and its kin set to the outer repository.
 ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 FAKE_BUILD = 'echo "$@" > "$2/build-args"\n'
+REPORT = "Model: m\nVerdict: approve\n"
 FAKE_BRIEF = """import sys
 from pathlib import Path
 out = Path(sys.argv[3])
@@ -89,6 +90,19 @@ class ReviewRound(unittest.TestCase):
         self.assertIn(f"--prior {self.run_dir / 'opus.md'}", brief)
         self.assertIn(f"--focus {self.run_dir / 'focus-2.md'}", brief)
 
+    def test_a_later_round_should_take_the_report_of_every_reviewer_and_no_other_file(
+        self,
+    ) -> None:
+        names = ("rulings-1.md", "fable.md", "sol.md", "opus.md", "brief.md", "focus.md")
+        for name in (*names, "target-1.md", "diagnostic-issues.md", "focus-2.md"):
+            (self.run_dir / name).write_text(name)
+        result = self.script("prepare", "main..main", "--round", "2")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        words = (self.run_dir / "brief-2.md").read_text().split()
+        prior = [words[i + 1] for i, word in enumerate(words) if word == "--prior"]
+        reports = [str(self.run_dir / name) for name in ("fable.md", "opus.md", "sol.md")]
+        self.assertEqual(prior, reports)
+
     def test_a_later_round_without_rulings_should_fail(self) -> None:
         result = self.script("prepare", "main..main", "--round", "2")
         self.assertNotEqual(result.returncode, 0)
@@ -140,8 +154,8 @@ class ReviewRound(unittest.TestCase):
 
     def test_verify_should_pass_on_an_unchanged_checkout_with_each_report(self) -> None:
         self.script("prepare", "main..main")
-        (self.run_dir / "opus.md").write_text("report")
-        (self.run_dir / "sol.md").write_text("report")
+        (self.run_dir / "opus.md").write_text(REPORT)
+        (self.run_dir / "sol.md").write_text(REPORT)
         result = self.script("verify", "--report", "opus", "--report", "sol")
         self.assertEqual(result.returncode, 0, result.stdout)
 
@@ -172,7 +186,7 @@ class ReviewRound(unittest.TestCase):
 
     def test_verify_should_fail_and_name_a_missing_report(self) -> None:
         self.script("prepare", "main..main")
-        (self.run_dir / "sol.md").write_text("report")
+        (self.run_dir / "sol.md").write_text(REPORT)
         result = self.script("verify", "--report", "sol", "--report", "opus")
         self.assertEqual(result.returncode, 1)
         self.assertIn(f"no report: {self.run_dir / 'opus.md'}", result.stdout)
@@ -186,11 +200,52 @@ class ReviewRound(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("opus-2.md", result.stdout)
 
+    def test_verify_should_fail_on_a_report_without_a_model_line(self) -> None:
+        self.script("prepare", "main..main")
+        (self.run_dir / "opus.md").write_text("Verdict: approve\n")
+        result = self.script("verify", "--report", "opus")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(f"no Model line: {self.run_dir / 'opus.md'}", result.stdout)
+
     def test_verify_with_no_report_named_should_fail(self) -> None:
         self.script("prepare", "main..main")
         result = self.script("verify")
         self.assertEqual(result.returncode, 2)
         self.assertIn("--report", result.stderr)
+
+
+class Rulings(unittest.TestCase):
+    @override
+    def setUp(self) -> None:
+        self.run_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.run_dir)
+        finding = "### {n}. A title\nSeverity: nit\n"
+        (self.run_dir / "sol.md").write_text(REPORT + finding.format(n=1) + finding.format(n=2))
+        (self.run_dir / "opus.md").write_text(REPORT + finding.format(n=1))
+
+    def rulings(self, lines: str) -> subprocess.CompletedProcess[str]:
+        (self.run_dir / "rulings-1.md").write_text(lines)
+        return subprocess.run(
+            ["python3", SCRIPT, "rulings", self.run_dir, "--report", "sol", "--report", "opus"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=ENV,
+        )
+
+    def test_rulings_should_count_each_ruling_of_each_reviewer(self) -> None:
+        result = self.rulings(
+            "sol 1: Accept: same as opus 1.\nsol 2: Defer to #12: later.\nopus 1: Accept: x.\n"
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("sol: 2 findings: 1 Accept, 1 Defer", result.stdout)
+        self.assertIn("opus: 1 findings: 1 Accept", result.stdout)
+
+    def test_rulings_should_fail_and_name_a_finding_without_a_ruling(self) -> None:
+        result = self.rulings("sol 1: Reject: the code at a.rs:3 does it.\nopus 1: Accept: x.\n")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no ruling: sol 2", result.stdout)
+        self.assertNotIn("no ruling: sol 1", result.stdout)
 
 
 class SaveReport(unittest.TestCase):
