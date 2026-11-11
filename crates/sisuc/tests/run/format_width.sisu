@@ -2,6 +2,8 @@
 // numbers right, `bool`, `char` and `string` left. Each padded part sits between brackets or
 // other text, so a wrong offset after the padding shows.
 // r[verify strings.spec.pad@ba75]
+// r[verify strings.spec.number-right@9f0c]
+// r[verify strings.spec.other-left@d704]
 // r[verify strings.spec.characters@120c]
 // r[verify strings.spec.centre@4085]
 fn first() -> f64 {
@@ -32,6 +34,8 @@ fn main() {
     let b = true
     let c = 'ä'
     print("[{n:5}][{x:7}][{b:6}][{c:3}]")    // [   42][   -2.5][true  ][ä  ]
+    let u: u8 = 200
+    print("[{u:5}][{name:7}]")               // [  200][Väinö  ]
     print("[{b:>6}][{c:^5}][{name:^9}]")      // [  true][  ä  ][  Väinö  ]
 
     // Parts run left to right, and each is written at its own offset.

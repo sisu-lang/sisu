@@ -10,6 +10,7 @@
 // AND a written `to_string` with a line break breaks every group around it
 // AND a `string` that holds `\n` is escaped and breaks nothing
 // AND `laid` lays out the value of its type argument, and a scalar or a class as it is
+// r[verify strings.flag.column-zero@fcb2]
 // r[verify strings.flag.fits@5b6a]
 // r[verify strings.flag.break@ea8b]
 // r[verify strings.flag.nested@eeb8]
@@ -116,4 +117,13 @@ fn main() {
     print(laid(n))
     print(laid(Stack(_items: ["a"])))
     print(laid(nested))
+
+    // A prefix of 70 columns, built at run time: the array of 21 columns after it stays on one
+    // line, because the layout starts at column 0 and does not count the prefix.
+    let mut p = ""
+    for _ in 0..70 {
+        p += "-"
+    }
+    let xs = [11111, 22222, 33333]
+    print("{p}{xs:#}")              // 70 `-`, then [11111, 22222, 33333] on the same line
 }
