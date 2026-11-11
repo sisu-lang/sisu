@@ -255,7 +255,7 @@ pub(crate) fn is_index(stem: &str) -> bool {
 pub(crate) fn known_ids(pages: &[(String, Page)]) -> FxHashSet<String> {
     pages
         .iter()
-        .filter(|(stem, page)| !is_index(stem) && !page.id_lines.is_empty())
+        .filter(|(stem, _)| !is_index(stem))
         .flat_map(|(_, page)| page.rules.iter().filter_map(|rule| rule.id.clone()))
         .collect()
 }

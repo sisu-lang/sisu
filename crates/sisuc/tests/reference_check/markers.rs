@@ -115,8 +115,8 @@ pub(crate) fn read_markers(file: &str, bytes: &[u8]) -> (Vec<RuleMarker>, Vec<Ma
             });
         } else {
             faults.push(fault(
-                "this marker has a bad form. Write it as `r[verify <id>@<4 lowercase hex \
-                 digits>]`, alone on its line.",
+                "a comment line that starts with `r[` is a rule marker, and this marker has a bad \
+                 form. Write it as `r[verify <id>@<4 lowercase hex digits>]`, alone on its line.",
             ));
         }
     }
