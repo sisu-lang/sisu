@@ -64,8 +64,8 @@ def stubs(tmp: Path, counts: Counts) -> str:
         'name="${3##*/}"; mode="${4:--}"\n'
         "read -r size\n"
         f'n=$(/usr/bin/awk -v k="$name $mode $size" \'$1 " " $2 " " $3 == k {{ print $4 }}\' {table})\n'
-        f'[ -n "$n" ] || {{ echo "stub: no count for $name $mode $size" >&2; exit 3; }}\n'
-        'echo "==1== Collected : $n" >&2\n',
+        # A key with no count is a run that ends with exit code 0 and no `Collected` line.
+        '[ -z "$n" ] || echo "==1== Collected : $n" >&2\n',
     )
     return str(bin_dir)
 
@@ -149,7 +149,7 @@ class GateTest(unittest.TestCase):
         """
         counts = {
             "observer-class": (25_000_000, 100_000_000),
-            "observer-struct": (25_000_000, sg.OBSERVER_LIMIT + 1),
+            "observer-struct": (25_000_000, 100_000_001),
         }
         code, out, _ = self.run_gate("observer", counts)
         self.assertEqual(code, 1)
@@ -175,20 +175,52 @@ class GateTest(unittest.TestCase):
         """
         counts = {
             "observer-class": (25_000_000, 100_000_000),
-            "observer-struct": (25_000_000, sg.OBSERVER_LIMIT),
+            "observer-struct": (25_000_000, 100_000_000),
         }
         code, _, _ = self.run_gate("observer", counts)
         self.assertEqual(code, 0)
 
-    def test_gate_should_fail_a_program_whose_count_does_not_grow_with_the_input(self) -> None:
-        """GIVEN a struct version with 100 instructions at 1x and 110 at 4x
-        WHEN `scripts/structs_gate.py` runs it
-        THEN the exit code is 1, because the program does not read its input
+    def test_gate_should_pass_a_struct_version_at_3x_when_the_class_version_scales(self) -> None:
+        """GIVEN a class version at 4x and a struct version at 3.00x
+        WHEN `scripts/structs_gate.py` runs them
+        THEN the exit code is 0, because a struct version has no lower limit
         """
-        counts = {"tree-class": (100, 400), "tree-struct": (100, 110)}
+        counts = {"tree-class": (100, 400), "tree-struct": (100, 300)}
+        code, out, _ = self.run_gate("tree", counts)
+        self.assertEqual(code, 0, out)
+        self.assertRegex(out, r"tree\s+struct\s+100\s+300\s+3\.00\s+pass")
+
+    def test_gate_should_pass_a_struct_version_at_2_65x_when_the_class_version_scales(self) -> None:
+        """GIVEN a class version at 3.28x and an observer struct version at 2.65x
+        WHEN `scripts/structs_gate.py` runs them
+        THEN the exit code is 0, because a struct version has no lower limit
+        """
+        counts = {
+            "observer-class": (1_017_959, 3_334_512),
+            "observer-struct": (547_000, 1_447_000),
+        }
+        code, out, _ = self.run_gate("observer", counts)
+        self.assertEqual(code, 0, out)
+        self.assertRegex(out, r"observer\s+struct\s+547,000\s+1,447,000\s+2\.65\s+pass")
+
+    def test_gate_should_fail_a_class_version_that_does_not_grow_with_the_input(self) -> None:
+        """GIVEN a class version with 100 instructions at 1x and 300 at 4x
+        WHEN `scripts/structs_gate.py` runs it
+        THEN the exit code is 1 and the class row says that the input does not scale
+        """
+        counts = {"tree-class": (100, 300), "tree-struct": (100, 400)}
         code, out, _ = self.run_gate("tree", counts)
         self.assertEqual(code, 1)
-        self.assertRegex(out, r"tree\s+struct\s+.*FAIL")
+        self.assertRegex(out, r"tree\s+class\s+100\s+300\s+3\.00\s+FAIL: .*input")
+
+    def test_class_only_should_fail_a_class_version_that_does_not_grow_with_the_input(self) -> None:
+        """GIVEN a class version with 100 instructions at 1x and 110 at 4x
+        WHEN `scripts/structs_gate.py --class-only` runs it
+        THEN the exit code is 1 and the class row says that the input does not scale
+        """
+        code, out, _ = self.run_gate("tree", {"tree-class": (100, 110)}, "--class-only")
+        self.assertEqual(code, 1)
+        self.assertRegex(out, r"tree\s+class\s+100\s+110\s+1\.10\s+FAIL: .*input")
 
     def test_gate_should_measure_the_parser_as_the_dump_less_lexing(self) -> None:
         """GIVEN struct counts `dump` 110 and 480 and `lex` 100 and 400, and a class ratio below 5x
@@ -232,13 +264,13 @@ class GateTest(unittest.TestCase):
         self.assertNotIn("struct", out)
 
     def test_gate_should_stop_when_callgrind_gives_no_count(self) -> None:
-        """GIVEN a program that valgrind has no count for
+        """GIVEN a valgrind run that exits with code 0 and prints no `Collected` line
         WHEN `scripts/structs_gate.py` runs it
-        THEN the exit code is 1 and the error says that the run has no count
+        THEN the exit code is 1 and the error says that callgrind gave no instruction count
         """
         code, _, err = self.run_gate("tree", {})
         self.assertEqual(code, 1)
-        self.assertIn("tree-class", err)
+        self.assertIn("no instruction count", err)
 
     def test_gate_should_know_each_program_of_the_bench_directory(self) -> None:
         """GIVEN the programs of `bench/structs/`
