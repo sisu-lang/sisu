@@ -337,6 +337,32 @@ fn id_should_fail_after_a_white_space_that_the_site_skips() {
     }
 }
 
+/// GIVEN an item that starts with `\\{#strings.a.b}`, with no skipped white space before it
+/// WHEN `read_page` reads it and its faults are found
+/// THEN the page does not join, the rule has no prefix and no ID, and there is no fault
+/// AND the site shows the text `\{#strings.a.b}` and gives the item no ID
+#[test]
+fn rule_should_get_no_prefix_from_an_escaped_backslash() {
+    let rows: [(&str, &str); 3] = [
+        ("unjoined", "**Rules**\n\n- \\\\{#strings.a.b} x\n"),
+        (
+            "after text",
+            "# T\n\nSome text.\n\n- \\\\{#strings.a.b} x\n",
+        ),
+        ("nested", "**Rules**\n\n- y\n  - \\\\{#strings.a.b} x\n"),
+    ];
+    for (row, text) in rows {
+        let page = read_page(text);
+        assert!(page.id_lines.is_empty(), "row {row}: {:?}", page.id_lines);
+        assert!(
+            page.rules.iter().all(|rule| rule.prefix.is_none()),
+            "row {row}: {:?}",
+            page.rules
+        );
+        assert_faults(row, &id_fault_list("strings", text), &[]);
+    }
+}
+
 /// GIVEN a page whose only `{#` text is in the first block of a rule, and that block is not a
 /// paragraph
 /// WHEN `read_page` reads it
