@@ -513,7 +513,7 @@ pub(crate) fn diagnose(source: &Path, expected: &Path, bless: bool) {
 
 /// Each `(line:column)` in the comment lines at the top of `source`, such as the `(6:10)` of
 /// `// THEN it reports E0011 at the type (6:10)`.
-fn header_positions(source: &str) -> Vec<(u64, u64)> {
+pub(crate) fn header_positions(source: &str) -> Vec<(u64, u64)> {
     let number = |text: &str| -> Option<u64> {
         (!text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()))
             .then(|| text.parse().ok())
@@ -533,7 +533,7 @@ fn header_positions(source: &str) -> Vec<(u64, u64)> {
 
 /// Whether a diagnostic of `json`, one JSON object a line, has a primary or a secondary span
 /// that starts at `line` and `column`.
-fn reports_at(json: &str, line: u64, column: u64) -> bool {
+pub(crate) fn reports_at(json: &str, line: u64, column: u64) -> bool {
     let at = |span: &serde_json::Value| span["line"] == line && span["column"] == column;
     json.lines()
         .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())

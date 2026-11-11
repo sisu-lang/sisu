@@ -2,7 +2,8 @@
 //! counterparts under `site/programs/`, with `site/programs/explanations`. Each lists its
 //! directory once, and fails with every entry that no case reads: a file that is neither a
 //! `.sisu` case nor an expectation file of one, as the directory's mode reads them, and any
-//! hidden entry.
+//! hidden entry. The tests at the end check the helpers that read the top comment of a
+//! diagnostic fixture.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -175,4 +176,28 @@ fn explanation_orphans_should_list_a_subdirectory() {
     let messages = explanation_orphans(&dir);
     assert_eq!(messages.len(), 1, "{messages:?}");
     assert!(messages[0].contains("sub is a directory"), "{messages:?}");
+}
+
+/// GIVEN a top comment that names `7:9`, `(6:10)` and `E0038:3`, then code and a comment with `1:2`
+/// WHEN `header_positions` reads the source
+/// THEN it returns `7:9` and `6:10`, in that order
+#[test]
+fn header_positions_should_read_bare_and_parenthesized_positions_of_the_top_comment() {
+    let source = "// THEN it reports E0038 at 7:9, and E0011 (6:10)\n\
+                  // AND the code E0038:3 is not a position\n\
+                  fn main() {}\n\
+                  // 1:2\n";
+    assert_eq!(support::header_positions(source), [(7, 9), (6, 10)]);
+}
+
+/// GIVEN a diagnostic with a primary span at 3:5 and a secondary span at 7:9
+/// WHEN `reports_at` checks a position against it
+/// THEN 3:5 and 7:9 match, and 7:8 and 9:7 do not
+#[test]
+fn reports_at_should_match_the_start_of_a_primary_or_a_secondary_span() {
+    let json = r#"{"version":1,"kind":"diagnostic","primary":{"line":3,"column":5},"secondary":[{"line":7,"column":9}]}"#;
+    assert!(support::reports_at(json, 3, 5));
+    assert!(support::reports_at(json, 7, 9));
+    assert!(!support::reports_at(json, 7, 8));
+    assert!(!support::reports_at(json, 9, 7));
 }
