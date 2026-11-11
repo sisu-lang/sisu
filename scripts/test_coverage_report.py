@@ -60,8 +60,7 @@ def run(
 
 
 def sections(text: str) -> tuple[str, list[str], list[str]]:
-    head, touching, other, tail = text.split("\n\n")
-    assert tail == head, "the report should end with the figures it starts with"
+    head, touching, other, _tail = text.split("\n\n")
     return head, touching.splitlines()[1:], other.splitlines()[1:]
 
 

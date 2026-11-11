@@ -478,8 +478,9 @@ fn runtime_archives_should_get_no_feature_from_the_compiler() {
     }
 }
 
-/// The functions of a file that call `optimize`, by name. The visitor keeps the name of the
-/// function it is in.
+/// The functions of a file that name `optimize`, by name, once for each use. A use is a call, a
+/// function pointer, or either one in the arguments of a macro such as `assert!`. The visitor keeps
+/// the name of the function it is in.
 #[derive(Default)]
 struct OptimizeCalls {
     inside: Vec<String>,
@@ -493,35 +494,72 @@ impl<'ast> Visit<'ast> for OptimizeCalls {
         self.inside.pop();
     }
 
-    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
-        if let syn::Expr::Path(path) = &*call.func
-            && path
-                .path
-                .segments
-                .last()
-                .is_some_and(|s| s.ident == "optimize")
+    fn visit_expr_path(&mut self, path: &'ast syn::ExprPath) {
+        if path
+            .path
+            .segments
+            .last()
+            .is_some_and(|s| s.ident == "optimize")
         {
             self.callers
                 .push(self.inside.last().cloned().unwrap_or_default());
         }
-        visit::visit_expr_call(self, call);
+        visit::visit_expr_path(self, path);
+    }
+
+    // `syn` keeps the body of a macro as tokens, so the default visitor does not see a call in
+    // `assert!(optimize(..).is_ok())`. A body that is not a list of expressions is not read.
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        let parser = syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated;
+        if let Ok(args) = mac.parse_body_with(parser) {
+            for arg in &args {
+                self.visit_expr(arg);
+            }
+        }
+        visit::visit_macro(self, mac);
     }
 }
 
+/// The functions of `file` that name `optimize`, once for each use.
+fn optimize_callers(file: &syn::File) -> Vec<String> {
+    let mut calls = OptimizeCalls::default();
+    calls.visit_file(file);
+    calls.callers
+}
+
 /// GIVEN the codegen tests in `src/codegen/tests.rs`, which build a module at an `OptLevel`
-/// WHEN each call of `optimize` is looked up
-/// THEN only `optimized_after` calls it, which builds and optimizes at one `level`. Codegen
+/// WHEN each use of `optimize` is looked up in the syntax tree
+/// THEN only `optimized_after` uses it, which builds and optimizes at one `level`. Codegen
 /// writes different IR at each level, so a module built at `-O0` and optimized at `-O2` is IR that
-/// `sisu -O2` never makes. A text scan stands in for an API that hides `optimize`: `tests.rs` reads
-/// it through `use super::*`, and a glob import cannot be hidden.
+/// `sisu -O2` never makes. A walk of the syntax tree stands in for an API that hides `optimize`:
+/// `tests.rs` reads it through `use super::*`, and a glob import cannot be hidden. The walk does
+/// not see `optimize` under another name, or a direct call of `run_passes`.
 #[test]
 fn codegen_tests_should_call_optimize_only_in_optimized_after() {
     let ast = source(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src/codegen/tests.rs"));
-    let mut calls = OptimizeCalls::default();
-    calls.visit_file(&ast);
     assert_eq!(
-        calls.callers,
+        optimize_callers(&ast),
         ["optimized_after"],
         "build each module that a test optimizes with `optimized_at` or `optimized_after`"
+    );
+}
+
+/// GIVEN tests that use `optimize` in a call, in a function pointer, and in the arguments of
+/// `assert!` and of `assert_eq!` inside a closure
+/// WHEN the guard looks up each use of `optimize`
+/// THEN it finds each one in the function that holds it
+#[test]
+fn the_optimize_guard_should_find_each_use_of_optimize() {
+    let file = syn::parse_file(
+        "fn call() { optimize(&m, &t, level, None).expect(\"ok\"); }
+         fn pointer() { let f = optimize; }
+         fn in_assert() { assert!(optimize(&m, &t, level, None).is_ok()); }
+         fn in_closure() { let g = || assert_eq!(super::optimize(&m, &t, level, None), Ok(())); }
+         fn clean() { optimized_at(&c, \"fn main() {}\", level); }",
+    )
+    .expect("the probe should parse");
+    assert_eq!(
+        optimize_callers(&file),
+        ["call", "pointer", "in_assert", "in_closure"]
     );
 }

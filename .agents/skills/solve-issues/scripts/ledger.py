@@ -39,8 +39,8 @@ def add(ledger: str, kind: str, text: str, now: datetime) -> str:
 
 def set_group(ledger: str, group: str, state: str) -> str:
     """Return the ledger text with `state` in the last cell of the row of `group` in Groups."""
-    if "|" in state:
-        raise ValueError("the state has a `|`, which would split its cell")
+    if "|" in state or "\n" in state:
+        raise ValueError("the state has a `|` or a line break, which would split its row")
     lines = ledger.splitlines()
     if "## Groups" not in lines:
         raise ValueError("the ledger has no '## Groups' section")
@@ -57,8 +57,8 @@ def set_group(ledger: str, group: str, state: str) -> str:
 
 def main(argv: list[str]) -> int:
     """Add the line that `argv` gives to the ledger file, and return the exit code."""
-    group = len(argv) == 4 and argv[1] == "group"  # noqa: PLR2004  the four words of the group line
-    if len(argv) != 3 and not group:  # noqa: PLR2004  the three words of the other lines
+    group = len(argv) > 1 and argv[1] == "group"
+    if len(argv) != (4 if group else 3):  # the words of a group line, then of the others
         print(__doc__, file=sys.stderr)
         return 2
     path = argv[0]

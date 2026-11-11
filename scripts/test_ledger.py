@@ -3,7 +3,9 @@
 import importlib.util
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from datetime import UTC, datetime
+from io import StringIO
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / ".agents/skills/solve-issues/scripts/ledger.py"
@@ -73,6 +75,18 @@ class SetGroup(unittest.TestCase):
     def test_a_state_with_a_bar_should_be_an_error(self) -> None:
         with self.assertRaises(ValueError):
             ledger.set_group(GROUPS, "G1", "a | b")
+
+    def test_a_state_with_a_line_break_should_be_an_error(self) -> None:
+        with self.assertRaises(ValueError):
+            ledger.set_group(GROUPS, "G1", "a\nb")
+
+    def test_a_group_line_with_no_state_should_print_the_usage(self) -> None:
+        with tempfile.TemporaryDirectory() as d, redirect_stderr(StringIO()) as err:
+            path = Path(d) / "progress.md"
+            path.write_text(GROUPS, encoding="utf-8")
+            self.assertEqual(ledger.main([str(path), "group", "G2"]), 2)
+            self.assertEqual(path.read_text(encoding="utf-8"), GROUPS)
+        self.assertIn("group <group>", err.getvalue())
 
     def test_main_should_write_the_new_state_to_the_file(self) -> None:
         with tempfile.TemporaryDirectory() as d:

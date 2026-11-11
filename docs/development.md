@@ -389,7 +389,7 @@ should reach. It also names a region on an `assert!`, `assert_eq!` or
 which runs only when the assert fails. Test code is left out:
 `crates/*/tests/`, and unit-test modules in their own file, `src/**/tests.rs`
 or under `src/**/tests/`. The `Coverage:` line comes again as the last line,
-so the end of a long log gives the figures. It never fails on low
+so the end of a long log gives the figures. The report never fails on low
 coverage. Commit new files, or
 `git add -N` them, so the diff sees them. Before the report, the output has a
 line `coverage: measured (HEAD <sha>)`, with `with uncommitted changes` when the

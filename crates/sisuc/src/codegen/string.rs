@@ -691,8 +691,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder.build_unreachable().expect(POSITIONED);
     }
 
-    /// The body of `@sisu_rc.drop.string`, `@sisu_rc.eq.string`, `@sisu_rc.trim.string` or
-    /// `@sisu_rc.concat.string`.
+    /// The body of a string's helper. `define_helpers` routes each one here.
     pub(super) fn define_string_helper(&self, kind: Helper, function: FunctionValue<'ctx>) {
         match kind {
             Helper::Drop => self.define_string_drop(function),
@@ -711,7 +710,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             | Helper::Free
             | Helper::Reuse => {
                 unreachable!(
-                    "only a string's `drop`, `eq`, `trim` and `concat` should reach `define_string_helper`"
+                    "`define_helpers` should route only a string's helpers to `define_string_helper`"
                 )
             }
         }
