@@ -49,3 +49,7 @@ If the concept you need isn't in the glossary yet, that's a signal: either you'r
 If your output contradicts an existing ADR, surface it explicitly rather than silently overriding:
 
 > _Contradicts ADR-0007 (event-sourced orders), but worth reopening because…_
+
+## ADR sections
+
+An ADR has a `## Reconsider when` section. It names the facts that would reopen the decision, such as a measurement, a release of a tool or a new language feature. One line is enough. The `adr_problems` check in `site/build.py` fails for each ADR numbered 0050 or later without it. ADR 0046 has the same idea under `## What would reverse this`; the next pull request that amends it renames that heading.

@@ -1386,6 +1386,10 @@ ADR_ROW = re.compile(
 ADR_NOTE = re.compile(r'<(?:small>|span class="soon">)')
 
 
+# The first ADR that must have a "## Reconsider when" section (ADR 0050).
+FIRST_ADR_WITH_RECONSIDER = 50
+
+
 def adr_problems(text: str) -> Iterator[str]:
     """Each ADR is listed once, by its GitHub link, under its heading rendered inline."""
     rows: dict[str, list[tuple[str, str]]] = {}
@@ -1396,14 +1400,8 @@ def adr_problems(text: str) -> Iterator[str]:
         if len(rows.get(path, [])) != 1:
             yield f"lists {path} {len(rows.get(path, []))} times, not once"
             continue
-        heading = next(
-            (
-                line
-                for line in file.read_text(encoding="utf-8").splitlines()
-                if line.startswith("# ")
-            ),
-            None,
-        )
+        lines = file.read_text(encoding="utf-8").splitlines()
+        heading = next((line for line in lines if line.startswith("# ")), None)
         if heading is None:
             yield f'{path} has no "# " heading'
             continue
@@ -1413,6 +1411,8 @@ def adr_problems(text: str) -> Iterator[str]:
         want = MarkdownIt().renderInline(heading.removeprefix("# "))
         if title != want:
             yield f"titles {path} {title!r}, not its heading {want!r}"
+        if int(num) >= FIRST_ADR_WITH_RECONSIDER and "## Reconsider when" not in lines:
+            yield f'{path} has no "## Reconsider when" section'
 
 
 def check_site(out: Path, *, forbid_tk: bool = False) -> list[str]:
