@@ -129,7 +129,8 @@ fix rounds. After the review of the second fix round, ask the user about
 each blocking finding that is still open: a third round, or a deferral.
 A blocking finding whose fix changes fewer than 10 lines and no `sisu`
 output, such as a pattern in a hook, needs no question: give it one more
-round, reviewed by `opus-medium` alone. Defer the nits.
+round, reviewed by `opus-medium` alone. This extra round runs once: ask the
+user about a blocking finding of that round. Defer the nits.
 
 ### 6. Report
 
