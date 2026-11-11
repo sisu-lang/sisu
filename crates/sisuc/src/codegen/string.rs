@@ -698,13 +698,16 @@ impl<'ctx> Codegen<'ctx, '_> {
             Helper::Eq => self.define_string_eq(function),
             Helper::Trim => self.define_string_trim(function),
             Helper::Concat => self.define_string_concat(function),
+            Helper::Release | Helper::Show(_) => {
+                unreachable!(
+                    "`define_helpers` should define every `release` and `show` helper itself"
+                )
+            }
             Helper::Retain
-            | Helper::Release
             | Helper::Unique
             | Helper::Walk
             | Helper::Drain
             | Helper::EqComponent
-            | Helper::Show(_)
             | Helper::ShowComponent(_)
             | Helper::Unbox
             | Helper::Free

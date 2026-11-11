@@ -818,13 +818,16 @@ impl<'ctx> Codegen<'ctx, '_> {
             Helper::Eq => self.define_array_eq(element, function),
             Helper::Unique => self.define_array_unique(element, function),
             Helper::Trim => self.define_array_trim(element, function),
+            Helper::Release | Helper::Show(_) => {
+                unreachable!(
+                    "`define_helpers` should define every `release` and `show` helper itself"
+                )
+            }
             Helper::Retain
-            | Helper::Release
             | Helper::Concat
             | Helper::Walk
             | Helper::Drain
             | Helper::EqComponent
-            | Helper::Show(_)
             | Helper::ShowComponent(_)
             | Helper::Unbox
             | Helper::Free
