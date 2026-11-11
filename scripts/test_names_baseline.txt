@@ -616,7 +616,6 @@ crates/sisuc/src/codegen/tests.rs::read_line_declaration_has_no_memory_attribute
 crates/sisuc/src/codegen/tests.rs::scalar_optional_is_a_pair
 crates/sisuc/src/codegen/tests.rs::store_to_a_moved_root_faults
 crates/sisuc/src/codegen/tests.rs::string_drop_frees_header_and_capacity
-crates/sisuc/src/codegen/tests.rs::string_grow_reallocates_from_the_old_capacity
 crates/sisuc/src/codegen/tests.rs::string_pattern_borrows_its_literal
 crates/sisuc/src/codegen/tests.rs::switch_on_a_field_of_a_moved_class_faults
 crates/sisuc/src/codegen/tests.rs::take_apart_of_swap_retains_nothing

@@ -62,7 +62,16 @@ LLVM_STAGES = ("optimize", "object")
 # `mut call width` is not in it (#621): under callgrind, its -O2 build at 8n ran over 25 minutes.
 # The cause is LLVM's `ConstraintEliminationPass`, which is cubic in the number of function
 # parameters. Clang does the same on C. #621 is closed.
-O2_SHAPES = ("functions", "statements", "interpolations", "prints", "nested array ==")
+O2_SHAPES = (
+    "functions",
+    "statements",
+    "interpolations",
+    "string literal width",
+    "prints",
+    "nested array ==",
+    "string left",
+    "string statements",
+)
 # The shapes whose programs are errors, so that nothing after `check` runs for them. The value
 # is the error code that each of their programs above size 0 must give.
 CHECK_ONLY = {"failed bounds": "E0154"}
@@ -159,6 +168,15 @@ def string_call_depth(k: int) -> str:
     )
 
 
+def string_statements(k: int) -> str:
+    """Return a `main` that adds to a string in `k + 1` statements."""
+    lines = "".join(f'    out = out + "<p{tag(i)}>" + t\n' for i in range(k))
+    return (
+        'fn main(args: [string]) {\n    let t = "{args.len()}"\n    let mut out = ""\n'
+        f"    out = out + t\n{lines}    print(out)\n}}\n"
+    )
+
+
 def block_depth(k: int) -> str:
     """Return a program with `k` nested `if` blocks."""
     # No indentation: it would make the text grow with the square of the depth, and so the lexer.
@@ -188,6 +206,12 @@ def array_literal_width(k: int) -> str:
     return (
         f'fn main() {{\n    let a: [i64] = [{", ".join(["7"] * k)}]\n    print("{{a.len()}}")\n}}\n'
     )
+
+
+def string_literal_width(k: int) -> str:
+    """Return a program with an array literal of `k` distinct string literals."""
+    words = ", ".join(f'"w{tag(i)}"' for i in range(k))
+    return f'fn main() {{\n    let a: [string] = [{words}]\n    print("{{a.len()}}")\n}}\n'
 
 
 def match_arms(k: int) -> str:
@@ -482,6 +506,9 @@ SHAPES = {
     "generic call depth": (24, generic_call_depth),
     "array literal depth": (24, array_literal_depth),
     "array literal width": (250, array_literal_width),
+    # n = 100: the base is superlinear (2.64, 2.53, 2.84). The head is linear at r3 = 2.14, below
+    # the bound 2.3, so the verdict does not rest on the fall rule.
+    "string literal width": (100, string_literal_width),
     "match arms": (50, match_arms),
     "fields": (50, fields),
     "conformers": (50, conformers),
@@ -495,6 +522,7 @@ SHAPES = {
     "float left": (12, float_left),
     "string left": (12, string_left),
     "string call depth": (12, string_call_depth),
+    "string statements": (10, string_statements),
     "comments": (250, comments),
     "mut parameters": (250, mut_parameters),
     "mut returns": (250, mut_returns),

@@ -1277,7 +1277,7 @@ fn trim_should_call_one_function_per_type() {
     let context = Context::create();
     let module = optimized_after(
         &context,
-        "class Holder {\n    mut xs: [i64]\n    mut s: string\n}\n\nfn first(h: Holder, xs: [i64]) {\n    h.xs = xs[..1]\n}\n\nfn second(h: Holder, xs: [i64]) {\n    h.xs = xs[..2]\n}\n\nfn text(h: Holder, s: string) {\n    h.s = s[..1]\n}\n\nfn main(args: [string]) {\n    let n = args.len()\n    let h = Holder(xs: [0; n + 1], s: \"abc\")\n    let xs = [7; n + 400]\n    first(h, xs)\n    second(h, xs)\n    text(h, \"{n} and more\")\n    print(h.xs.len() + h.s.len())\n}",
+        "class Holder {\n    mut xs: [i64]\n    mut s: string\n}\n\nfn first(h: Holder, xs: [i64]) {\n    h.xs = xs[..1]\n}\n\nfn second(h: Holder, xs: [i64]) {\n    h.xs = xs[..2]\n}\n\nfn text(h: Holder, s: string) {\n    h.s = s[..1]\n}\n\nfn main(args: [string]) {\n    let n = args.len()\n    let h = Holder(xs: [0; n + 1], s: \"abc{n}\")\n    let xs = [7; n + 400]\n    first(h, xs)\n    second(h, xs)\n    text(h, \"{n} and more\")\n    print(h.xs.len() + h.s.len())\n}",
         OptLevel::O2,
         |module| {
             let ir = module.print_to_string().to_string();
@@ -1628,14 +1628,17 @@ fn string_drop_frees_header_and_capacity() {
 }
 
 /// A string append that outgrows its block reallocates it from the size it was allocated with:
-/// the header plus the old capacity, not the new one.
+/// the header plus the old capacity, not the new one. The join helper does the reallocation.
 #[test]
-fn string_grow_reallocates_from_the_old_capacity() {
+fn string_grow_should_reallocate_from_the_old_capacity() {
     let context = Context::create();
     let ir = compiled(&context, STRING_PROGRAM)
         .print_to_string()
         .to_string();
-    let body = function_body(&ir, "define internal void @sisu.main(");
+    let body = function_body(
+        &ir,
+        "define internal { ptr, ptr, i64 } @sisu_rc.concat.string(",
+    );
     let line = body
         .split_once("call ptr @sisu_realloc(ptr ")
         .and_then(|(_, rest)| rest.lines().next())
@@ -4551,6 +4554,23 @@ fn partition_should_make_its_array_unique_once() {
     );
     let bounds = partition.matches("call void @sisu_panic_bounds(").count();
     assert!(bounds <= 2, "{bounds} bounds checks in\n{partition}");
+}
+
+/// A string literal at a trim point is not trimmed: its value covers its block, so its trim never
+/// copies. The global of the literal is writable. So `-O2` cannot fold the size test of a trim,
+/// and a table of literals would keep one call each.
+#[test]
+fn a_table_of_string_literals_should_call_no_trim_at_o2() {
+    let context = Context::create();
+    let module = optimized_after(
+        &context,
+        "fn table() -> [string] {\n    [\"w0\", \"w1\", \"w2\", \"w3\"]\n}\n\nfn main() {\n    print(table().len())\n}",
+        OptLevel::O2,
+        |module| keep_functions(module, "table"),
+    );
+    let ir = module.print_to_string().to_string();
+    let table = function_body(&ir, "@sisu.table(");
+    assert!(!table.contains("@sisu_rc.trim.string"), "{table}");
 }
 
 /// A tail call whose result is an array is a loop at `-O2`. Both branches of the `if` join in
@@ -7482,4 +7502,122 @@ fn main() {
         .get_function("sisu.step")
         .expect("the other unit has `step`");
     assert_eq!(step.get_linkage(), Linkage::External);
+}
+
+/// Two statements join `out` and a parameter, each with a literal, so `page` has four `+`. At
+/// `-O2` each `+` is one call of the join helper `@sisu_rc.concat.string`, which is `noinline`.
+/// The three ways of a join stay out of `page`, so it holds no `phi` and no call of the
+/// allocator. The result of a call ends the chain of `phi` nodes that LLVM walks (#633). The
+/// argument of `page` is a literal, which `-O2` puts into `page`. An argument made at run time
+/// lets jump threading copy one call, and leaves one `phi`.
+#[test]
+fn each_string_join_should_be_one_call_with_no_phi_at_o2() {
+    const HELPER: &str = "@sisu_rc.concat.string";
+    let context = Context::create();
+    let module = optimized_after(
+        &context,
+        "fn page(t: string) -> string {\n    let mut out = \"\"\n    out = out + \"<p>\" + t\n    out = out + \"<li>\" + t\n    out\n}\n\nfn main() {\n    print(page(\"x\"))\n}",
+        OptLevel::O2,
+        |module| keep_functions(module, "page"),
+    );
+    let ir = module.print_to_string().to_string();
+    let page = function_body(&ir, "@sisu.page(");
+    let calls = page
+        .lines()
+        .filter(|l| l.contains("call ") && l.contains(&format!("{HELPER}(")))
+        .count();
+    assert_eq!(calls, 4, "calls of {HELPER} in\n{page}");
+    assert!(!page.contains("phi "), "a `phi` in\n{page}");
+    // The caller copies the bytes of `rhs`, so a literal gives a copy of a constant size. A copy
+    // in the helper would leave `page` with no `memcpy`.
+    let copies: Vec<&str> = (page.lines())
+        .filter(|l| l.contains("call void @llvm.memcpy"))
+        .collect();
+    assert!(!copies.is_empty(), "no `memcpy` in\n{page}");
+    for copy in copies {
+        let length = copy.rsplit_once(", i64 ").map(|(_, rest)| rest);
+        assert!(
+            length.is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit())),
+            "a `memcpy` of a length that is not constant: {copy}"
+        );
+    }
+    for allocator in ["@sisu_alloc(", "@sisu_realloc("] {
+        assert!(
+            !page.contains(allocator),
+            "a call of {allocator} in\n{page}"
+        );
+    }
+    let mut headers = ir
+        .lines()
+        .filter(|l| l.starts_with("define ") && l.contains(&format!("{HELPER}(")));
+    let header = headers
+        .next()
+        .unwrap_or_else(|| panic!("{HELPER} is not defined in\n{ir}"));
+    assert!(
+        headers.next().is_none(),
+        "{HELPER} is defined twice in\n{ir}"
+    );
+    let (_, group) = header
+        .trim_end_matches(" {")
+        .rsplit_once(" #")
+        .unwrap_or_else(|| panic!("{HELPER} has no attribute group in\n{ir}"));
+    let attributes = ir
+        .lines()
+        .find(|l| l.starts_with(&format!("attributes #{group} =")))
+        .unwrap_or_else(|| panic!("no attributes #{group} in\n{ir}"));
+    assert!(attributes.contains("noinline"), "{HELPER}: {attributes}");
+}
+
+/// The length of the joined string is the sum of the two lengths, which the caller of the join
+/// helper computes. So at `-O2` the index `a.len()` is in the bounds of `a + "!"`, and `at` holds
+/// no bounds check. A length that is read from the result of the call would keep the check.
+#[test]
+fn the_length_of_a_string_join_should_reach_a_bounds_check_at_o2() {
+    let context = Context::create();
+    let module = optimized_after(
+        &context,
+        "fn at(a: string) -> u8 {\n    let b = (a + \"!\").bytes()\n    b[a.len()]\n}\n\nfn main(args: [string]) {\n    print(at(\"x{args.len()}\"))\n}",
+        OptLevel::O2,
+        |module| keep_functions(module, "at"),
+    );
+    let ir = module.print_to_string().to_string();
+    let at = function_body(&ir, "@sisu.at(");
+    assert!(
+        !at.contains("@sisu_panic_bounds"),
+        "a bounds check in\n{at}"
+    );
+}
+
+/// The length of `a + b` folds with `a.len() + b.len()` at `-O2`, so `same` returns `true`.
+#[test]
+fn the_length_of_a_string_join_should_fold_in_a_compare_at_o2() {
+    let context = Context::create();
+    let module = optimized_at(
+        &context,
+        "fn same(a: string, b: string) -> bool {\n    let s = a + b\n    s.len() == a.len() + b.len()\n}\n\nfn main(args: [string]) {\n    print(same(\"x{args.len()}\", \"y{args.len()}\"))\n}",
+        OptLevel::O2,
+    );
+    let ir = module.print_to_string().to_string();
+    assert!(
+        ir.contains("@sisu_print_bool(i1 zeroext true)"),
+        "no constant `true` for `print_bool` in\n{ir}"
+    );
+}
+
+/// `+=` on a field and on an element lower to the same join as `+`, so each is one call of the
+/// join helper.
+#[test]
+fn a_string_append_to_a_field_or_an_element_should_call_the_join_helper() {
+    let context = Context::create();
+    let module = compiled(
+        &context,
+        "class Holder {\n    mut s: string\n}\n\nfn f(h: Holder, xs: [string]) -> string {\n    let mut ys = xs\n    h.s += \"x\"\n    ys[0] += \"y\"\n    ys[0]\n}\n\nfn main() {\n    let h = Holder(s: \"a\")\n    print(f(h, [\"b\"]))\n    print(h.s)\n}",
+    );
+    let ir = module.print_to_string().to_string();
+    let f = function_body(&ir, "@sisu.f(");
+    let calls = f
+        .lines()
+        .filter(|l| l.contains("call ") && l.contains("@sisu_rc.concat.string("))
+        .count();
+    assert_eq!(calls, 2, "calls of the join helper in\n{f}");
 }

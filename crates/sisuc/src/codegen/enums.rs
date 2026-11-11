@@ -852,9 +852,9 @@ impl<'ctx> Codegen<'ctx, '_> {
             Helper::Unbox => self.define_unbox(id, function),
             Helper::Free => self.define_free(id, function),
             Helper::Reuse => self.define_reuse(id, function),
-            Helper::Drop | Helper::Unique | Helper::Trim => {
+            Helper::Drop | Helper::Unique | Helper::Trim | Helper::Concat => {
                 unreachable!(
-                    "an enum should never be queued for a `drop`, `unique` or `trim` helper"
+                    "an enum should never be queued for a `drop`, `unique`, `trim` or `concat` helper"
                 )
             }
             Helper::Show(_) | Helper::ShowComponent(_) => {

@@ -943,7 +943,8 @@ impl Type {
     }
 
     /// Whether a value of this type is an array or a string, or one inside `?` at any depth:
-    /// the values that a trim point checks (`Rvalue::Trim`).
+    /// the values that a trim point checks (`Rvalue::Trim`), except a string literal, which
+    /// `Lowering::placed` passes as it is.
     pub(crate) fn is_trimmable(self) -> bool {
         matches!(
             self.without_optionals().kind(),

@@ -1,0 +1,10 @@
+// GIVEN a string with count 1 that ends a full block but starts after its first byte: the
+// slice `[1..]` of `"a" + "b0"`, whose block holds exactly its three bytes
+// WHEN the program appends `"x"` to it
+// THEN the join takes the copy way, not the grow way, and the program prints `b0x`
+fn main(args: [string]) {
+    let n = args.len()
+    let mut s = ("a" + "b{n}")[1..]
+    s += "x"
+    print(s)                         // b0x
+}

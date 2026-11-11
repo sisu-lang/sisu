@@ -164,6 +164,14 @@ fn whole(local: LocalId) -> MirPlace {
     }
 }
 
+/// Whether `e` is a string literal, or a `Some` of one at any depth.
+fn is_string_literal(mut e: &Expr) -> bool {
+    while let ExprKind::Wrap(inner) = &e.kind {
+        e = inner;
+    }
+    matches!(e.kind, ExprKind::Str(_))
+}
+
 /// The constant `e` is, if it is one; `counted` tells whether a type is counted.
 fn constant(e: &Expr, counted: impl Fn(Type) -> bool) -> Option<Const> {
     if let ExprKind::Int(n) = e.kind {
@@ -668,10 +676,13 @@ impl<'a> Lowering<'a> {
 
     /// `e` as an operand that is placed inside another value, at a trim point: when its type is
     /// an array or a string, or one inside `?`, it goes through a `trim` first. The `trim` reads
-    /// the value where it stands, so a later operand cannot change what it reads.
+    /// the value where it stands, so a later operand cannot change what it reads. A string
+    /// literal, or a `Some` of one, goes through no `trim`: its value covers its block, so its
+    /// `trim` never copies, and `-O2` cannot fold the test because the count of its global is
+    /// writable.
     fn placed(&mut self, e: &Expr) -> Option<Operand> {
         let op = self.operand(e)?;
-        if !e.ty.is_trimmable() {
+        if !e.ty.is_trimmable() || is_string_literal(e) {
             return Some(op);
         }
         let trimmed = self.assign(e.ty, None, Rvalue::Trim(op));
