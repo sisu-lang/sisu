@@ -237,6 +237,71 @@ fn prefix_should_be_one_space_then_the_text() {
     }
 }
 
+/// GIVEN a rule whose `{#strings.a.b}` follows a white space character that the site does not see
+/// AND the page has joined, or it has not
+/// (markdown-it strips that character from the start of a paragraph)
+/// WHEN `read_page` reads it and its faults are found
+/// THEN the page joins
+/// AND the fault at the line of the rule says to write the ID at the start of the item
+/// AND a space or a tab before the ID, which both readers skip, gives no fault
+#[test]
+fn id_should_fail_after_a_white_space_that_the_site_skips() {
+    // Python `str.strip` white space other than a newline, a tab and a space: the rest is U+000B,
+    // U+000C, U+001C to U+001F, and Rust `char::is_whitespace` characters that are not ASCII.
+    let skipped = "\u{b}\u{c}\u{1c}\u{1d}\u{1e}\u{1f}\u{85}\u{a0}\u{1680}\u{2000}\u{2001}\
+        \u{2002}\u{2003}\u{2004}\u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\u{200a}\u{2028}\
+        \u{2029}\u{202f}\u{205f}\u{3000}";
+    for c in skipped.chars() {
+        let rows: [(&str, String, usize); 5] = [
+            (
+                "not joined",
+                format!("**Rules**\n\n- {c}{{#strings.a.b}} x\n"),
+                3,
+            ),
+            (
+                "joined",
+                format!("**Rules**\n\n- {{#strings.a.a}} w\n- {c}{{#strings.a.b}} x\n"),
+                4,
+            ),
+            (
+                "after a space",
+                format!("**Rules**\n\n-  {c}{{#strings.a.b}} x\n"),
+                3,
+            ),
+            (
+                "after a tab",
+                format!("**Rules**\n\n- \t{c}{{#strings.a.b}} x\n"),
+                3,
+            ),
+            (
+                "loose",
+                format!("**Rules**\n\n- {c}{{#strings.a.b}} x\n\n- y\n"),
+                3,
+            ),
+        ];
+        for (row, text, line) in rows {
+            let row = format!("{c:?} {row}");
+            let page = read_page(&text);
+            assert!(
+                page.id_lines.contains(&line),
+                "row {row}: {:?}",
+                page.id_lines
+            );
+            let faults = id_fault_list("strings", &text);
+            assert!(
+                faults.iter().any(
+                    |(at, message)| *at == line && message.contains("at the start of the item")
+                ),
+                "row {row}: faults are {faults:?}"
+            );
+        }
+    }
+    for c in [' ', '\t'] {
+        let text = format!("**Rules**\n\n- {c}{{#strings.a.b}} x\n");
+        assert_faults(&format!("{c:?}"), &id_fault_list("strings", &text), &[]);
+    }
+}
+
 /// GIVEN a page whose only `{#` text is in the first block of a rule, and that block is not a
 /// paragraph
 /// WHEN `read_page` reads it
