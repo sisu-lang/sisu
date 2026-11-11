@@ -218,9 +218,11 @@ impl Checker<'_> {
         // The hint's origin holds until a branch sets the anchor.
         let mut origin = siblings.map_or(Origin::None, |(_, origin)| origin);
         // The branches that can give the join its type, in the order of the check: a branch that
-        // took its type from the hint did not give it (see `Rank::took`).
-        let mut givers = Vec::with_capacity(sources.len());
-        for i in order {
+        // took its type from the hint did not give it (see `Rank::took`). They move to the front
+        // of `order`, so the join makes no second list.
+        let mut kept = 0;
+        for k in 0..order.len() {
+            let i = order[k];
             let carried = if expected == Expectation::None {
                 anchor.map_or(Expectation::None, |a| {
                     after_branch(a, sources[i].exact(), origin)
@@ -229,7 +231,8 @@ impl Checker<'_> {
                 expected
             };
             if !carried.siblings().is_some_and(|s| sources[i].rank.took(s)) {
-                givers.push(i);
+                order[kept] = i;
+                kept += 1;
             }
             let block = check(self, i, carried);
             // The first branch of a known type anchors the rest; a failed or `unit` one only
@@ -254,6 +257,8 @@ impl Checker<'_> {
             }
             checked[i] = Some(block);
         }
+        order.truncate(kept);
+        let givers = order;
         let mut blocks: Vec<CheckedBlock> = checked
             .into_iter()
             .map(|block| block.expect("`join` should check every branch"))
