@@ -255,6 +255,25 @@ class DiagDiff(unittest.TestCase):
         )
         self.assertEqual(runs["--codes"].returncode, 1)
 
+    def test_primary_should_report_a_primary_position_that_differs(self) -> None:
+        """GIVEN two diagnostics that differ only in the column of the primary position
+        WHEN diag_diff runs with `--primary`
+        THEN it exits 1 and reports the program as changed
+        """
+        script = Path(dd.__file__).absolute().parent / "diag_diff.py"
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "moved.sisu").touch()
+            base = fake_sisu(tmp, "base", {"moved": E0032})
+            head = fake_sisu(tmp, "head", {"moved": E0032.replace('"column":5', '"column":6')})
+            run = subprocess.run(
+                [sys.executable, script, "--primary", base, head, tmp],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(run.returncode, 1)
+        self.assertIn("changed: ", run.stdout)
+
     def test_jobs_should_bound_the_sisu_processes_that_run_at_once(self) -> None:
         self.assertLessEqual(max(peak_runs(lambda sisu, tmp: dd.main(sisu, sisu, tmp, jobs=2))), 2)
 

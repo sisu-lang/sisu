@@ -219,7 +219,7 @@ mod tests {
         let d: Diagnostic = DiagnosticKind::Mismatch {
             want: Expected::Types(vec!["i64".to_string()]),
             got: "string".to_string(),
-            at: Span::new(31, 34),
+            at: Span::new(29, 32),
             source: None,
             fix: None,
             conversion: false,
@@ -238,7 +238,7 @@ mod tests {
         let mut d: Diagnostic = DiagnosticKind::Mismatch {
             want: Expected::Types(vec!["i64".to_string()]),
             got: "string".to_string(),
-            at: Span::new(31, 34),
+            at: Span::new(29, 32),
             source: None,
             fix: None,
             conversion: false,
