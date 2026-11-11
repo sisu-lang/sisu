@@ -1,5 +1,6 @@
 // String `+` appends into a left operand nobody else holds and copies one that is shared. Each
 // line prints the whole text, so a wrong append, a lost byte or a written literal shows.
+// r[verify strings.text.join@5a7d]
 fn abc() -> string {
     let mut s = "ab"
     s += "c"

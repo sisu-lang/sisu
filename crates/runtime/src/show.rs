@@ -1348,6 +1348,7 @@ mod tests {
     /// column 80. It does so at each nesting. It counts `char`s and not bytes. It counts a column
     /// from the last line break of a piece. It ignores the text before it in the inner sink.
     /// Each row is also laid out after 40 bytes of earlier text, and must give the same text.
+    /// r[verify strings.flag.column-zero@fcb2]
     #[test]
     fn layout_should_break_a_group_only_past_column_80() {
         for (name, events, want) in boundary_rows().into_iter().chain(column_rows()) {

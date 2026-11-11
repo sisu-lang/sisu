@@ -16,11 +16,24 @@ use serde_json::Value;
 
 use crate::support;
 
-/// The examples of a page and the faults in its Markdown.
+pub(crate) mod markers;
+pub(crate) mod rules;
+use rules::Rule;
+
+/// The examples of a page, its rules, and the faults in its Markdown.
 #[derive(Debug)]
 pub(crate) struct Page {
     pub(crate) examples: Vec<Example>,
     pub(crate) faults: Vec<Fault>,
+    /// Each top-level item of a list of rules, in page order.
+    pub(crate) rules: Vec<Rule>,
+    /// The line of each list item, in any list, whose text starts with `{#`.
+    pub(crate) id_lines: Vec<usize>,
+    /// The line and the level (1 to 6) of each heading, in page order.
+    pub(crate) headings: Vec<(usize, u8)>,
+    /// The line of each `sisu` fence, in page order, and whether it is `pending`. This holds also
+    /// an example with a fault, which `examples` leaves out.
+    pub(crate) fences: Vec<(usize, bool)>,
 }
 
 /// A fault in a page's Markdown, on its 1-based `line`.
@@ -81,14 +94,20 @@ pub(crate) fn read_page(text: &str) -> Page {
     let mut reader = Reader {
         examples: Vec::new(),
         dropped: Vec::new(),
+        fences: Vec::new(),
         faults: Vec::new(),
         open: Open::Nothing,
     };
     // The code block being read: its start offset, its kind and its text so far.
     let mut block: Option<(usize, CodeBlockKind<'_>, String)> = None;
+    let mut headings = Vec::new();
     let mut events = Parser::new_ext(text, Options::ENABLE_TABLES).into_offset_iter();
     for (event, range) in events.by_ref() {
         match event {
+            Event::Start(Tag::Heading { level, .. }) => {
+                headings.push((line_of(range.start), level as u8));
+                reader.open = Open::Nothing;
+            }
             Event::Start(Tag::CodeBlock(kind)) => block = Some((range.start, kind, String::new())),
             // Text outside a code block is inside a paragraph or a heading, whose start
             // already closed the open example.
@@ -122,6 +141,7 @@ pub(crate) fn read_page(text: &str) -> Page {
     let Reader {
         examples,
         dropped,
+        fences,
         mut faults,
         ..
     } = reader;
@@ -141,7 +161,15 @@ pub(crate) fn read_page(text: &str) -> Page {
         .zip(dropped)
         .filter_map(|(example, dropped)| (!dropped).then_some(example))
         .collect();
-    Page { examples, faults }
+    let (rules, id_lines) = rules::read_rules(text);
+    Page {
+        examples,
+        faults,
+        rules,
+        id_lines,
+        headings,
+        fences,
+    }
 }
 
 /// What `read_page` has found so far, and what a companion block attaches to.
@@ -149,6 +177,8 @@ struct Reader {
     examples: Vec<Example>,
     /// For each example, if a companion block of it has a fault.
     dropped: Vec<bool>,
+    /// The line of each `sisu` fence, and whether it is `pending`.
+    fences: Vec<(usize, bool)>,
     faults: Vec<Fault>,
     open: Open,
 }
@@ -164,6 +194,13 @@ impl Reader {
         kind: &CodeBlockKind<'_>,
         body: String,
     ) {
+        // Each `sisu` fence is kept, also with a fault in its form, so one fault stays one fault.
+        if let CodeBlockKind::Fenced(info) = kind {
+            let (name, words) = info.split_once(' ').unwrap_or((info, ""));
+            if name == "sisu" {
+                self.fences.push((line, is_pending(words)));
+            }
+        }
         let fault = match kind {
             CodeBlockKind::Indented => {
                 Some("an indented code block is not checked; use a ``` fence".to_string())
@@ -289,6 +326,26 @@ fn example(line: usize, words: &str, source: String) -> Result<Example, Fault> {
         input: None,
         stderr: None,
     })
+}
+
+/// Whether the info `words` after `sisu` hold the word `pending`. The words are split at spaces,
+/// and the value of `args="..."` is skipped, as `info` and `example_info` in `site/build.py` read
+/// them. So a fault in the words does not change the answer.
+fn is_pending(words: &str) -> bool {
+    let mut rest = words.trim_start();
+    while !rest.is_empty() {
+        if let Some(value) = rest.strip_prefix("args=\"") {
+            rest = value.split_once('"').map_or("", |(_, tail)| tail);
+        } else {
+            let (word, tail) = rest.split_once(' ').unwrap_or((rest, ""));
+            if word == "pending" {
+                return true;
+            }
+            rest = tail;
+        }
+        rest = rest.trim_start();
+    }
+    false
 }
 
 /// The kind and the arguments that the info `words` after `sisu` give.

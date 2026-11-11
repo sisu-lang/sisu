@@ -1413,6 +1413,75 @@ line.
 
 `make test` runs these tests.
 
+### Rule IDs
+
+A page that has joined gives each rule an ID, and a test names the ID. A page
+joins when the text of one of its list items starts with `{#`. The index,
+`README.md`, never joins. A page that has not joined needs no ID and no test.
+
+A rule is one top-level item of a list of rules: a bullet list after a label
+that is only bold text (`**Rules**`), with at most one more paragraph between
+the label and the list. A nested item belongs to its parent item. A bullet in any
+other list is not a rule.
+
+To add a rule to a joined page:
+
+1. Start the item with the ID in braces, with no character before it. Write one
+   space after it. Write the text of the rule on the same line. Example:
+   ``- {#strings.text.null} A string can hold the null character `\0`.`` The
+   site hides the prefix.
+2. Name the ID `<page>.<section>.<name>`. It has two or more parts that are
+   lowercase letters, digits and single hyphens, and each part starts with a
+   letter. The first part is the file name of the page, without `.md`. An ID is
+   unique on its page, and it does not change when the wording of the rule
+   changes.
+3. Run `make test`. The `reference::<page>::rules` trial fails. Its message is
+   ``<id> has no test. Add `r[verify <id>@<hash>]` to a test that proves it.``
+   The message gives the marker with the right hash.
+4. Put the marker in a comment line of the test that proves the rule, alone on
+   its line. A `.sisu` case in `crates/sisuc/tests/run` puts it in its header
+   comment. A Rust test puts it in its doc comment. One test can name many rules,
+   one marker line for each rule. Do not put a marker in `site/programs/`, which
+   the site shows. A comment line that starts with `r[` is read as a marker, so a
+   GIVEN line does not start with `r[`.
+
+The site and the check must read a rule in the same way. A test makes rule
+pages from parts and writes the check's verdict on each to
+`crates/sisuc/tests/reference_checker/rule_ids.json`. `make site` builds each
+page of it and compares the IDs. After a change to how the check reads
+rules, rewrite the file with `SISU_BLESS=1 cargo nextest run --test reference_checker`
+and read its diff.
+
+A rule in a section that holds a `sisu pending` example needs an ID but no test.
+A section starts at a `##` or `###` heading. It ends at the next heading of any
+level. A pending example under a `####` heading puts no rule in development. A
+section that holds a `sisu pending` example and a plain `sisu` example is a
+fault. Put the pending part under its own heading.
+
+When the text of a rule changes, its hash changes. The trial then fails with
+this message, followed by the file and line of each marker:
+``the text of <id> changed. Its hash is now @<hash>. Read these tests again, then change each marker's hash:``
+Read each test again. Check that it still proves the rule. Then change the hash in
+each marker. No command changes the hashes for you. A rename of the section or a
+change of a link target does not change the hash.
+
+The `reference::markers` trial reads each `.rs` and `.sisu` file under `crates/`.
+It fails with ``no rule has the ID <id>.`` for a marker whose ID is on no joined
+page. It fails with ``this marker has a bad form`` for a marker line that does not
+parse. Delete or move the markers of a rule that you remove.
+
+To convert a page:
+
+1. Give each rule an ID, in one change. A page cannot join in part.
+2. Move each bullet that no test can prove into the prose of the page. For
+   example, a bullet about how the compiler is built tells nothing about what a
+   program does.
+3. Split a section that holds a pending example and a plain example.
+4. Add the markers, with `make test` as the list of what is missing.
+
+Each later page joins in its own pull request. `docs/reference/strings.md` is the
+first.
+
 ## Look inside the compiler
 
 These flags run the pipeline up to one stage and stop there.

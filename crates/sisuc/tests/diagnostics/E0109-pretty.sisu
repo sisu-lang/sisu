@@ -1,3 +1,4 @@
+// r[verify strings.flag.alone@eaa7]
 fn main() {
     let xs = [1, 2, 3]
     print("{xs:#>8}")

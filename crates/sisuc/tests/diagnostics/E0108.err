@@ -1,7 +1,7 @@
 error[E0108]: a format spec is `#` or `[<^>][width][.precision]`
- --> E0108.sisu:3:14
+ --> E0108.sisu:4:14
   |
-3 |     print("{x:}")
+4 |     print("{x:}")
   |              ^
 
 sisu: 1 error

@@ -1,0 +1,13 @@
+// GIVEN calls of `to_string`, `eq` and `less` on a `char`, a conversion `i64(c)`, and a call of
+// another method
+// WHEN `sisu check` runs on it
+// THEN it reports E0063 only at the name of the other method
+// r[verify strings.methods.char-methods@05ac]
+fn main() {
+    let c = 'a'
+    print(c.to_string())
+    print(c.eq('a'))
+    print(c.less('b'))
+    print(i64(c))
+    print(c.code())
+}

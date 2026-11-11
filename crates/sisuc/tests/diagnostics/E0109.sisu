@@ -1,3 +1,4 @@
+// r[verify strings.spec.other-parts@f716]
 fn main() {
     let n = 7
     print("{n:03}")

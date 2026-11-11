@@ -2,6 +2,8 @@
 // zero byte and what follows it reach standard output. Comparison and `len` read lengths too,
 // never a terminating zero. `\u{E4}` is `ä` precomposed and `a\u{308}` is `a` plus a combining
 // diaeresis: written as escapes so that no editor can normalise them, they are not equal.
+// r[verify strings.text.no-normalize@5a9c]
+// r[verify strings.text.null@3958]
 fn main() {
     // tab<TAB>line
     // quote" apostrophe' backslash\ braces{} zero<NUL>after return<CR> umlaut ä emoji 😀

@@ -1,0 +1,8 @@
+// GIVEN a read of a field of a string
+// WHEN `sisu check` runs on it
+// THEN it reports E0063 at the name of the field
+// r[verify strings.text.no-fields@1056]
+fn main() {
+    let s = "sauna"
+    print(s.size)
+}

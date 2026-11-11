@@ -1,7 +1,7 @@
 error[E0110]: a precision is at most 30
- --> E0110-precision.sisu:3:14
+ --> E0110-precision.sisu:4:14
   |
-3 |     print("{x:.31}")
+4 |     print("{x:.31}")
   |              ^^^^
 
 sisu: 1 error

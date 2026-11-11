@@ -1,12 +1,12 @@
 error[E0111]: precision needs an `f64`
- --> E0111.sisu:3:14
+ --> E0111.sisu:4:14
   |
-3 |     print("{n:.2}")
+4 |     print("{n:.2}")
   |              ^^^ the value is `i64`
   |
 help: convert it with `f64(...)`
   |
-3 |     print("{f64(n):.2}")
+4 |     print("{f64(n):.2}")
   |             ++++ +
 
 sisu: 1 error
