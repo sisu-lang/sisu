@@ -904,6 +904,101 @@ error[E0011]: expected `=`, found end of line
         );
     }
 
+    /// A line of 2,000 ASCII bytes with `ab` at column 1000: a span on `ab` is cut, and the
+    /// renderer gives column 385 for it.
+    fn long_line() -> String {
+        let pad = "y".repeat(999);
+        format!("{pad}ab{pad}\n")
+    }
+
+    /// The span of `ab` on line `k` of `source`, a line from `long_line`.
+    fn ab(source: &str, k: usize) -> Span {
+        let start = LineIndex::new(source)
+            .line_start(k)
+            .expect("the line should be in the source")
+            + 999;
+        Span::new(start, start + 2)
+    }
+
+    /// Line 10 shows the text of the `:::` header before the renderer gives that header.
+    #[test]
+    fn source_text_like_a_later_header_should_not_change() {
+        let source = format!("{}{}x // t.sisu:1:385\n", long_line(), &numbered(9)[3..]);
+        let d = error(Span::new(source.len() - 18, source.len() - 17), "m")
+            .with_secondary(ab(&source, 1), "s");
+        assert_eq!(rendered(&d, &source), render_whole(&d, "t.sisu", &source));
+    }
+
+    #[test]
+    fn source_text_like_a_later_header_should_not_change_in_styled_output() {
+        let source = format!("{}{}x // t.sisu:1:385\n", long_line(), &numbered(9)[3..]);
+        let d = error(Span::new(source.len() - 18, source.len() - 17), "m")
+            .with_secondary(ab(&source, 1), "s");
+        let text = d.render("t.sisu", &source, &LineIndex::new(&source), true);
+        assert!(text.contains("// t.sisu:1:385"), "{text}");
+        assert_eq!(text.matches("t.sisu:1:1000").count(), 1, "{text}");
+    }
+
+    /// The label with the lower index is to the right of the other on the far cut line.
+    #[test]
+    fn a_far_header_should_name_the_leftmost_label_of_its_line() {
+        let pad = "y".repeat(999);
+        let source = format!("{pad}ab{}cd{pad}\n{}", "y".repeat(100), &numbered(10)[3..]);
+        let d = error(line(&source, 10), "m")
+            .with_secondary(Span::new(1101, 1103), "right")
+            .with_secondary(Span::new(999, 1001), "left");
+        let text = rendered(&d, &source);
+        assert_eq!(
+            headers(&text),
+            ["--> t.sisu:10:1", "::: t.sisu:1:1000"],
+            "{text}"
+        );
+    }
+
+    /// Text that a header shows, in a later snippet and on a cut line of its own snippet: both
+    /// render as the whole source does, before and after the repair reads only header lines.
+    #[test]
+    fn source_text_like_an_earlier_header_should_not_change() {
+        let later = format!("{}{}x // t.sisu:1:385\n", long_line(), &numbered(9)[3..]);
+        let pad = "y".repeat(999);
+        let own = format!("{pad}ab t.sisu:1:385 {pad}\n{}", &numbered(10)[3..]);
+        let cases = [
+            (
+                error(ab(&later, 1), "m")
+                    .with_secondary(Span::new(later.len() - 18, later.len() - 17), "s"),
+                later.as_str(),
+            ),
+            (
+                error(line(&own, 10), "m").with_secondary(Span::new(999, 1001), "s"),
+                own.as_str(),
+            ),
+        ];
+        for (d, source) in &cases {
+            assert_eq!(
+                rendered(d, source),
+                render_whole(d, "t.sisu", source),
+                "{d:?}"
+            );
+        }
+    }
+
+    /// 64 far labels, each on its own cut line, and a cut primary span: each header names its
+    /// true column.
+    #[test]
+    fn many_far_cut_labels_should_each_keep_their_column() {
+        let block = format!("{}f\nf\nf\nf\n", long_line());
+        let source = block.repeat(65);
+        let lines = |k: usize| 5 * k + 1;
+        let mut d = error(ab(&source, lines(64)), "m");
+        for k in 0..64 {
+            d = d.with_secondary(ab(&source, lines(k)), "s");
+        }
+        let want: Vec<String> = std::iter::once(format!("--> t.sisu:{}:1000", lines(64)))
+            .chain((0..64).map(|k| format!("::: t.sisu:{}:1000", lines(k))))
+            .collect();
+        assert_eq!(headers(&rendered(&d, &source)), want);
+    }
+
     /// The sum of the bytes of the text that the renderer gets for `d`.
     fn excerpt_bytes(d: &Diagnostic, source: &str, lines: &LineIndex) -> usize {
         let spans: Vec<Span> = d.secondary().iter().map(|(s, _)| *s).collect();
