@@ -7960,6 +7960,7 @@ mod tests {
     /// THEN the error is E0011 at the `: type`, with one fix that removes it
     /// AND the fix is unsafe: the parser stops at the type, so it has not read the rest of the
     /// statement, and the fixed source can have an error of its own
+    /// AND the fix also joins an `else` on a later line to the value, when an edit can
     /// AND the fixed source has the errors in `after`
     /// AND a `let` with a type and no `else`, and a `const`, report nothing
     #[test]
@@ -7972,16 +7973,52 @@ mod tests {
             ("let _: i64 = o else { return }", ": i64", vec![]),
             ("let Some(w): i64? = o else { return }", ": i64?", vec![]),
             ("let Shape.Sq: Shape = e else { return }", ": Shape", vec![]),
-            // The fixed source has the `else` on its own line, which is E0006.
+            // The fix joins the `else` to the value, so that the fixed source has no E0006: two
+            // edits. The gap can hold a comment or a blank line.
+            ("let w: i64 = o\n    else { return }", ": i64", vec![]),
             (
-                "let w: i64 = o\n    else { return }",
+                "let Some(w): i64? = o\n    else { return }",
+                ": i64?",
+                vec![],
+            ),
+            (
+                "let w: i64 = o\n    // why\n    else { return }",
+                ": i64",
+                vec![],
+            ),
+            ("let w: i64 = o\n\n    else { return }", ": i64", vec![]),
+            // No edit can repair these: the fixed source has the `else` on its own line, which is
+            // E0006, and the fix has one edit.
+            (
+                "let x: i64 = { 1 }\n    else { return }",
                 ": i64",
                 vec![Code::ElseOnNewLine],
             ),
             (
-                "let Some(w): i64? = o\n    else { return }",
-                ": i64?",
+                "let w: i64 = o\n    else return",
+                ": i64",
                 vec![Code::ElseOnNewLine],
+            ),
+            // Controls: an `else` on the line already, and no `=`, give one edit.
+            (
+                "let Some(w): i64? = o else return\n    else { x }",
+                ": i64?",
+                vec![Code::Expected],
+            ),
+            (
+                "let Some(w): i64?\n    else { return }",
+                ": i64?",
+                vec![Code::Expected],
+            ),
+            // The span of the type covers a `( )`, and a `>` that a `>=` closes.
+            ("let w: (i64) = o else { return }", ": (i64)", vec![]),
+            ("let w: (i64) = o\n    else { return }", ": (i64)", vec![]),
+            ("let w: Box<i64>= o else { return }", ": Box<i64>", vec![]),
+            ("let Some(w): (i64) = o else { return }", ": (i64)", vec![]),
+            (
+                "let Some(w): Box<i64>= o else { return }",
+                ": Box<i64>",
+                vec![],
             ),
             // A pattern with no `else` reports the type first. Then the checker, not the parser,
             // reports the pattern (E0174).
@@ -8022,8 +8059,12 @@ mod tests {
             let at = d.span();
             assert_eq!(&src[at.start()..at.end()], ty, "{src}");
             assert_eq!(d.fixes().len(), 1, "{src}");
-            let (safe, _) = fix_edits(&d).expect("the error has a fix");
+            let (safe, edits) = fix_edits(&d).expect("the error has a fix");
             assert!(!safe, "{src}");
+            // A fix that joins an `else` on a later line has two edits. Each row with a line
+            // break and no error after the fix is such a row.
+            let joins = line.contains('\n') && after.is_empty();
+            assert_eq!(edits.len(), if joins { 2 } else { 1 }, "{src}");
             let fixed = apply_fix(&src, &d);
             let found: Vec<_> = parsed(&fixed)
                 .diagnostics
@@ -8045,7 +8086,7 @@ mod tests {
     /// THEN the first mistake is the `.`: E0011 "expected `=`, found `.`", as for a `let` with a
     /// name and no type
     /// AND with an `else` on the line, the error is the type; with one on the next line, it is
-    /// the type too, and its fix leads to E0006
+    /// the type too, and its fix joins the `else`
     #[test]
     fn qualified_let_with_a_type_and_no_else_should_report_the_dot() {
         for (line, col) in [
@@ -8060,10 +8101,7 @@ mod tests {
         }
         for (line, after) in [
             ("let Shape.Sq: Shape = e else { return }", vec![]),
-            (
-                "let Shape.Sq: Shape = e\n    else { return }",
-                vec![Code::ElseOnNewLine],
-            ),
+            ("let Shape.Sq: Shape = e\n    else { return }", vec![]),
         ] {
             let src = format!("fn main() {{\n    {line}\n}}");
             let d = parse_diagnostic(&src);
@@ -8076,6 +8114,24 @@ mod tests {
                 .collect();
             assert_eq!(found, after, "{fixed}");
         }
+        let src = "fn main() {\n    let Shape.Sq: Shape = e\n    else { return }\n}";
+        assert_eq!(
+            apply_fix(src, &parse_diagnostic(src)),
+            "fn main() {\n    let Shape.Sq = e else { return }\n}"
+        );
+    }
+
+    /// GIVEN a typed `let ... else` with CRLF line endings and the `else` on the next line
+    /// WHEN the fix is applied
+    /// THEN the fixed source parses with no error
+    /// AND it holds no `\r` that a `\n` does not follow
+    #[test]
+    fn a_let_type_fix_should_join_across_crlf() {
+        let src = "fn main() {\r\n    let w: i64 = o\r\n    else { return }\r\n}";
+        let fixed = apply_fix(src, &parse_diagnostic(src));
+        assert_eq!(fixed, "fn main() {\r\n    let w = o else { return }\r\n}");
+        assert!(parsed(&fixed).diagnostics.is_empty(), "{fixed:?}");
+        assert!(!fixed.replace("\r\n", "").contains('\r'), "{fixed:?}");
     }
 
     /// A pattern that is not a name and has no `else` is no parse error: the parser keeps it as
