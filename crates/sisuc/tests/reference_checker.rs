@@ -3,7 +3,10 @@
 
 use std::path::Path;
 
+#[expect(dead_code, reason = "red commit: Task 1 uses them")]
 mod reference_check;
+#[path = "reference_checker/rules.rs"]
+mod rules;
 #[expect(dead_code, reason = "this binary uses only part of the shared helpers")]
 mod support;
 

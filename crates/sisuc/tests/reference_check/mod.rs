@@ -16,11 +16,18 @@ use serde_json::Value;
 
 use crate::support;
 
-/// The examples of a page and the faults in its Markdown.
+pub(crate) mod rules;
+use rules::Rule;
+
+/// The examples of a page, its rules, and the faults in its Markdown.
 #[derive(Debug)]
 pub(crate) struct Page {
     pub(crate) examples: Vec<Example>,
     pub(crate) faults: Vec<Fault>,
+    /// Each top-level item of a list of rules, in page order.
+    pub(crate) rules: Vec<Rule>,
+    /// The line of each list item, in any list, whose text starts with `{#`.
+    pub(crate) id_lines: Vec<usize>,
 }
 
 /// A fault in a page's Markdown, on its 1-based `line`.
@@ -141,7 +148,13 @@ pub(crate) fn read_page(text: &str) -> Page {
         .zip(dropped)
         .filter_map(|(example, dropped)| (!dropped).then_some(example))
         .collect();
-    Page { examples, faults }
+    let (rules, id_lines) = rules::read_rules(text);
+    Page {
+        examples,
+        faults,
+        rules,
+        id_lines,
+    }
 }
 
 /// What `read_page` has found so far, and what a companion block attaches to.

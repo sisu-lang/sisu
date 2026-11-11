@@ -10,11 +10,13 @@ use std::path::Path;
 
 use libtest_mimic::{Arguments, Failed, Trial};
 
+#[expect(dead_code, reason = "red commit: Task 1 uses them")]
 mod reference_check;
 #[expect(dead_code, reason = "this binary uses only part of the shared helpers")]
 mod support;
 
-use reference_check::{Example, check, read_page};
+use reference_check::rules::id_faults;
+use reference_check::{Example, Fault, check, read_page};
 
 /// The pages, as seen from the crate directory that tests run in.
 const PAGES: &str = "../../docs/reference";
@@ -41,21 +43,19 @@ fn main() {
         let text = fs::read_to_string(&path).expect("a page should be UTF-8 text");
         let page = read_page(&text);
         let file = format!("docs/reference/{stem}.md");
-        let faults: Vec<String> = page
-            .faults
-            .iter()
-            .map(|fault| format!("{file}:{}: {}", fault.line, fault.message))
-            .collect();
+        let faults = fault_lines(&file, &page.faults);
         trials.push(Trial::test(
             format!("reference::{stem}::grammar"),
-            move || {
-                if faults.is_empty() {
-                    Ok(())
-                } else {
-                    Err(Failed::from(faults.join("\n")))
-                }
-            },
+            move || fail_on(&faults),
         ));
+        // A page with a `{#` item has joined: its rules are checked.
+        if !page.id_lines.is_empty() {
+            let faults = fault_lines(&file, &id_faults(&stem, &page));
+            trials.push(Trial::test(
+                format!("reference::{stem}::rules"),
+                move || fail_on(&faults),
+            ));
+        }
         for example in page.examples {
             let name = format!("reference::{stem}::{}", example.line);
             let case = format!("reference/{stem}/{}", example.line);
@@ -68,6 +68,23 @@ fn main() {
         }
     }
     libtest_mimic::run(&args, trials).exit()
+}
+
+/// Each of `faults` as `file:line: message`.
+fn fault_lines(file: &str, faults: &[Fault]) -> Vec<String> {
+    faults
+        .iter()
+        .map(|fault| format!("{file}:{}: {}", fault.line, fault.message))
+        .collect()
+}
+
+/// Fails with every line of `faults`, or passes when there is none.
+fn fail_on(faults: &[String]) -> Result<(), Failed> {
+    if faults.is_empty() {
+        Ok(())
+    } else {
+        Err(Failed::from(faults.join("\n")))
+    }
 }
 
 /// `message` from `check`, led by `file` and the Markdown line. A message that starts `line N: `
