@@ -373,8 +373,9 @@ impl Checker<'_> {
     /// The type that the typed `elements` join to, each an index and a type, and whether the join
     /// failed (reported). With an `any` element, the join is that type, whatever the order. Else
     /// the types fold in source order. A report names the element that gave the array the type
-    /// it expects: the first of that type in the order of the waves (`ranks`), except one that
-    /// took it from `first`, the first concrete element (see `Rank::took`).
+    /// it expects. That is the first of that type, the concrete elements before the literal ones
+    /// (`ranks`). A literal that took it from `first`, the first concrete element, is skipped (see
+    /// `Rank::took`).
     fn fold_elements(
         &mut self,
         elements: &[ast::Expr],

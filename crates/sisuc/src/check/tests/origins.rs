@@ -472,7 +472,7 @@ fn a_value_that_took_a_hint_should_not_be_the_origin() {
             Explained::Label(4, 14),
         ),
         (
-            "an `else if` chain whose first branch took the type",
+            "a control that passes before and after the fix: an `else if` chain whose first branch took the type",
             "fn f(c: bool, d: bool, b: u8) {\n    let a = if c { 5 } else if d { b } else { \"x\" }\n    print(a)\n}\nfn main() {}\n",
             (2, 47),
             Explained::Label(2, 36),
@@ -496,10 +496,22 @@ fn a_value_that_took_a_hint_should_not_be_the_origin() {
             Explained::Label(3, 17),
         ),
         (
-            "a `Some` element after `None` and a concrete element",
+            "a control that passes before and after the fix: a `Some` element after `None` and a concrete element",
             "fn f(n: i64) {\n    let a = [None, n, Some(2), \"x\"]\n    print(a)\n}\nfn main() {}\n",
             (2, 32),
             Explained::Label(2, 23),
+        ),
+        (
+            "an `if` arm of a literal and `None` that took a `u8` arm's type",
+            "fn f(n: i64, b: u8, c: bool) {\n    let a = match n {\n        1 => b\n        2 => if c { 5 } else { None }\n        _ => \"x\"\n    }\n    print(a)\n}\nfn main() {}\n",
+            (5, 14),
+            Explained::Label(3, 14),
+        ),
+        (
+            "an `if` element of a literal and `None` that took a `u8` element's type",
+            "fn f(b: u8, c: bool) {\n    let a = [b, if c { 5 } else { None }, \"x\"]\n    print(a)\n}\nfn main() {}\n",
+            (2, 43),
+            Explained::Nothing,
         ),
     ]);
 }
