@@ -1,5 +1,6 @@
 //! The origin of an expected type: an E0032 says where its required type comes from, as a
-//! secondary label (S21). These tests read positions and counts, never text.
+//! secondary label, a note or a label at the primary span (S21). These tests read positions and
+//! counts, never text.
 
 use super::*;
 
@@ -9,7 +10,9 @@ enum Explained {
     Label(u32, u32),
     /// Exactly one note, and no secondary label: the origin is in the prelude.
     Note,
-    /// No secondary label and no note.
+    /// A label at the primary span, and no secondary label and no note: a language rule.
+    Rule,
+    /// No label of either kind and no note.
     Nothing,
 }
 
@@ -45,15 +48,17 @@ fn origin_rows(rows: &[(&str, &str, (u32, u32), Explained)]) {
             .map(|(s, _)| position(src, *s))
             .collect();
         let notes = d.notes().len();
-        let (wanted, wanted_notes) = match explained {
-            Explained::Label(line, col) => (vec![(*line, *col)], 0),
-            Explained::Note => (Vec::new(), 1),
-            Explained::Nothing => (Vec::new(), 0),
+        let rule = d.label().is_some();
+        let (wanted, wanted_notes, wanted_rule) = match explained {
+            Explained::Label(line, col) => (vec![(*line, *col)], 0, false),
+            Explained::Note => (Vec::new(), 1, false),
+            Explained::Rule => (Vec::new(), 0, true),
+            Explained::Nothing => (Vec::new(), 0, false),
         };
-        if labels != wanted || notes != wanted_notes {
+        if labels != wanted || notes != wanted_notes || rule != wanted_rule {
             red.push(format!(
-                "row `{name}`: labels at {labels:?} and {notes} notes, wanted labels at \
-                 {wanted:?} and {wanted_notes} notes"
+                "row `{name}`: labels at {labels:?}, {notes} notes and a primary label {rule}, \
+                 wanted labels at {wanted:?}, {wanted_notes} notes and {wanted_rule}"
             ));
         }
     }
@@ -309,6 +314,18 @@ fn a_passed_down_expectation_should_keep_its_origin() {
             Explained::Label(3, 12),
         ),
         (
+            "alias constant",
+            "type M = i64\nconst A: M = \"x\"\nfn main() {\n    print(A)\n}\n",
+            (2, 14),
+            Explained::Label(2, 10),
+        ),
+        (
+            "alias payload",
+            "type M = i64\nenum E {\n    V(M)\n}\nfn main() {\n    print(E.V(\"x\"))\n}\n",
+            (6, 15),
+            Explained::Label(3, 7),
+        ),
+        (
             "an element under an alias (fable-18)",
             "type M = [i64]\nfn main() {\n    let a: M = [1, \"x\"]\n    print(a)\n}\n",
             (3, 20),
@@ -381,10 +398,130 @@ fn a_form_that_waits_should_have_no_origin() {
             Explained::Nothing,
         ),
         (
+            "the fallback of `??` (opus-6)",
+            "fn f(o: i64?) {\n    let a: i64 = o ?? \"x\"\n    print(a)\n}\nfn main() {\n    f(None)\n}\n",
+            (2, 23),
+            Explained::Nothing,
+        ),
+        (
+            "a compound assignment (opus-6)",
+            "fn main() {\n    let mut a = 1\n    a += \"x\"\n    print(a)\n}\n",
+            (3, 10),
+            Explained::Nothing,
+        ),
+        (
+            "an index assignment (opus-6)",
+            "fn main() {\n    let mut a = [1]\n    a[0] = \"x\"\n    print(a)\n}\n",
+            (3, 12),
+            Explained::Nothing,
+        ),
+        (
+            "a match guard (opus-6)",
+            "fn f(n: i64) {\n    match n {\n        m if 1 => print(m)\n        _ => print(0)\n    }\n}\nfn main() {\n    f(1)\n}\n",
+            (3, 14),
+            Explained::Nothing,
+        ),
+        (
+            "a range endpoint (opus-6)",
+            "fn main() {\n    for i in 0..\"x\" {\n        print(i)\n    }\n}\n",
+            (2, 17),
+            Explained::Nothing,
+        ),
+        (
+            "a range endpoint of a range index",
+            "fn main() {\n    let a = [1, 2]\n    print(a[0..\"x\"])\n}\n",
+            (3, 16),
+            Explained::Nothing,
+        ),
+        (
             "a field assignment (claude-2)",
             "class P {\n    mut v: i64\n}\nfn main() {\n    let p = P(v: 1)\n    p.v = \"x\"\n    print(p.v)\n}\n",
             (6, 11),
             Explained::Nothing,
         ),
     ]);
+}
+
+#[test]
+fn a_language_rule_should_label_the_primary_span() {
+    origin_rows(&[
+        (
+            "an `if` condition",
+            "fn main() {\n    if 1 { print(1) }\n}\n",
+            (2, 8),
+            Explained::Rule,
+        ),
+        (
+            "a value index",
+            "fn main() {\n    let a = [1]\n    print(a[\"x\"])\n}\n",
+            (3, 13),
+            Explained::Rule,
+        ),
+        (
+            "a value index under a value index",
+            "fn main() {\n    let a = [[1]]\n    print(a[0][\"x\"])\n}\n",
+            (3, 16),
+            Explained::Rule,
+        ),
+        (
+            "a place index",
+            "fn main() {\n    let mut a = [1]\n    a[\"x\"] = 2\n    print(a)\n}\n",
+            (3, 7),
+            Explained::Rule,
+        ),
+        (
+            "a place index under a place index",
+            "fn main() {\n    let mut a = [[1]]\n    a[0][\"x\"] = 1\n    print(a)\n}\n",
+            (3, 10),
+            Explained::Rule,
+        ),
+        (
+            "a place index under `push`",
+            "fn main() {\n    let mut a = [[1]]\n    a[\"x\"].push(2)\n    print(a)\n}\n",
+            (3, 7),
+            Explained::Rule,
+        ),
+        (
+            "a place index under `mut`",
+            "fn f(mut v: [i64]) {\n    v = []\n}\nfn main() {\n    let mut a = [[1]]\n    f(mut a[\"x\"])\n    print(a)\n}\n",
+            (6, 13),
+            Explained::Rule,
+        ),
+    ]);
+}
+
+/// The base of an index that gives no element is reported, and the index after it states no
+/// rule: a string or a value that is no array takes no `i64` index either.
+#[test]
+fn an_index_on_a_base_with_no_element_should_state_no_rule() {
+    for (src, base, index) in [
+        (
+            "fn main() {\n    let s = \"abc\"\n    print(s[\"x\"])\n}\n",
+            (3, 11),
+            (3, 13),
+        ),
+        (
+            "fn main() {\n    let n = 5\n    print(n[\"x\"])\n}\n",
+            (3, 11),
+            (3, 13),
+        ),
+        (
+            "fn main() {\n    let mut s = \"abc\"\n    s[\"x\"] = \"y\"\n    print(s)\n}\n",
+            (3, 5),
+            (3, 7),
+        ),
+        (
+            "fn main() {\n    let mut n = 1\n    n[\"x\"] = 2\n    print(n)\n}\n",
+            (3, 5),
+            (3, 7),
+        ),
+    ] {
+        codes(src, &[(Code::CannotIndex, base), (Code::Mismatch, index)]);
+        let ds = diags(src);
+        let mismatch = (ds.iter())
+            .find(|d| d.code() == Code::Mismatch)
+            .expect("the index is a mismatch");
+        assert!(mismatch.label().is_none(), "{src}");
+        assert!(mismatch.secondary().is_empty(), "{src}");
+    }
 }

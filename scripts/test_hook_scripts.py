@@ -128,10 +128,12 @@ class TestWording(unittest.TestCase):
                 self.assertEqual(code, 1)
                 self.assertIn("f.rs:3: a unit test reads diagnostic wording", out)
 
-    def test_a_help_check_should_pass(self) -> None:
+    def test_a_help_or_label_check_should_pass(self) -> None:
         for body in (
             "    Diagnostic::help(d).is_none();\n",
             "    assert_eq!(Diagnostic::help(d), None);\n",
+            "    d.label().is_some();\n",
+            "    Diagnostic::label(d).is_none();\n",
         ):
             with self.subTest(body=body):
                 self.assertEqual(

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Fails when a unit test reads a diagnostic's wording: its message, its label,
-# or its help text beyond whether there is one. Unit tests assert codes and
+# Fails when a unit test reads a diagnostic's wording: its message, or its label
+# or help text beyond whether there is one. Unit tests assert codes and
 # positions; the tests/diagnostics fixtures pin the wording (CODING_STANDARDS.md,
 # Tests). The writers' own tests in render.rs, json.rs and report.rs may read it.
 # So may crates/sisuc/src/check/tests/parity.rs, which holds only `parity_found`: it compares the
@@ -43,7 +43,7 @@ done
 perl -0777 -ne '
   $start = $ARGV =~ m{/tests/|/tests\.rs$} ? 0 : /^#\[cfg\(test\)\]\n(?:#\[(?:[^][]|\[[^]]*\])*\]\n|\/\/[^\n]*\n|\n)*(?:pub(?:\([^)\n]*\))? )?mod \w+ \{/m ? $-[0] : length;
   pos = $start;
-  while (/\.(?:message|label)\(\)|\bDiagnostic::(?:message|label)\b|(?:\.help\(\)|\bDiagnostic::help\b(?:\([^()]*\))?+)(?!\.is_(?:some|none)\(\)|,\s*None\b)/g) {
+  while (/\.message\(\)|\bDiagnostic::message\b|(?:\.(?:help|label)\(\)|\bDiagnostic::(?:help|label)\b(?:\([^()]*\))?+)(?!\.is_(?:some|none)\(\)|,\s*None\b)/g) {
     my $line = 1 + (substr($_, 0, $-[0]) =~ tr/\n//);
     print "$ARGV:$line: a unit test reads diagnostic wording; assert the code, and pin the text in a tests/diagnostics fixture\n";
     $bad = 1;

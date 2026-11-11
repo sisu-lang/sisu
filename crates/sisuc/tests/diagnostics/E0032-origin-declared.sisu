@@ -2,10 +2,14 @@
 // AND the declaration is a parameter, a method's parameter, a `let`, a return type, a field, a
 // payload, a constant, a local that an assignment writes, or a parameter of a generic function
 // WHEN `sisu check` runs on it
-// THEN each E0032 has a secondary label at the type that the declaration writes
+// THEN each E0032 says where its required type comes from
+// AND a declaration gives a secondary label at the type that it writes
+// AND an assigned local gives a secondary label at its name
+// AND an alias that a constant or a payload writes stays an alias
 // AND the label of an element names the type of the whole declaration
 // AND a parameter of the prelude gives a note in place of a label
 // AND a condition or an index gives the rule as the primary label
+// AND an index of a place gives the rule with no range in it
 // AND the label of `add` shares the snippet of its call, 2 lines below it
 // AND the label of `far` gets a snippet of its own, as its call is 5 lines below it
 fn add(a: i64, b: i64) -> i64 { a + b }
@@ -96,6 +100,15 @@ fn far_call() {
     // of the parameter.
     print(far("x"))
 }
+type M = i64
+const D: M = "x"
+enum G {
+    W(M)
+}
+fn alias_payload() {
+    let g = G.W("x")
+    print(g)
+}
 fn main() {
     parameter()
     method(P())
@@ -117,4 +130,6 @@ fn main() {
     index()
     index_place()
     far_call()
+    print(D)
+    alias_payload()
 }
