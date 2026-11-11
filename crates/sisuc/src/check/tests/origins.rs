@@ -7,6 +7,8 @@ use super::*;
 enum Explained {
     /// Exactly one secondary label, at this line and column, and no note.
     Label(u32, u32),
+    /// Exactly one note, and no secondary label: the origin is in the prelude.
+    Note,
     /// No secondary label and no note.
     Nothing,
 }
@@ -43,14 +45,15 @@ fn origin_rows(rows: &[(&str, &str, (u32, u32), Explained)]) {
             .map(|(s, _)| position(src, *s))
             .collect();
         let notes = d.notes().len();
-        let wanted = match explained {
-            Explained::Label(line, col) => vec![(*line, *col)],
-            Explained::Nothing => Vec::new(),
+        let (wanted, wanted_notes) = match explained {
+            Explained::Label(line, col) => (vec![(*line, *col)], 0),
+            Explained::Note => (Vec::new(), 1),
+            Explained::Nothing => (Vec::new(), 0),
         };
-        if labels != wanted || notes != 0 {
+        if labels != wanted || notes != wanted_notes {
             red.push(format!(
                 "row `{name}`: labels at {labels:?} and {notes} notes, wanted labels at \
-                 {wanted:?} and no note"
+                 {wanted:?} and {wanted_notes} notes"
             ));
         }
     }
@@ -190,6 +193,198 @@ fn a_break_origin_should_reach_each_operand_of_the_value() {
             "fn f(c: bool, s: string) {\n    let a = loop {\n        if c { break 1 }\n        break s + 1\n    }\n    print(a)\n}\nfn main() { f(true, \"s\") }\n",
             (4, 19),
             Explained::Label(4, 15),
+        ),
+    ]);
+}
+
+#[test]
+fn a_declaration_should_explain_its_required_type() {
+    origin_rows(&[
+        (
+            "parameter",
+            "fn add(a: i64, b: i64) -> i64 { a + b }\nfn main() {\n    print(add(1, \"x\"))\n}\n",
+            (3, 18),
+            Explained::Label(1, 19),
+        ),
+        (
+            "method",
+            "class P {\n    fn m(self, n: i64) -> i64 { n }\n}\nfn f(p: P) {\n    p.m(\"x\")\n}\nfn main() {\n    f(P())\n}\n",
+            (5, 9),
+            Explained::Label(2, 19),
+        ),
+        (
+            "let",
+            "fn main() {\n    let a: i64 = \"x\"\n    print(a)\n}\n",
+            (2, 18),
+            Explained::Label(2, 12),
+        ),
+        (
+            "return",
+            "fn f() -> i64 {\n    return \"x\"\n}\nfn main() {\n    print(f())\n}\n",
+            (2, 12),
+            Explained::Label(1, 11),
+        ),
+        (
+            "tail",
+            "fn f() -> i64 {\n    \"x\"\n}\nfn main() {\n    print(f())\n}\n",
+            (2, 5),
+            Explained::Label(1, 11),
+        ),
+        (
+            "match tail",
+            "enum E {\n    A\n    B\n}\nfn f(e: E) -> i64 {\n    match e {\n        A => 1\n        B => \"x\"\n    }\n}\nfn main() {\n    print(f(E.A))\n}\n",
+            (8, 14),
+            Explained::Label(5, 15),
+        ),
+        (
+            "field",
+            "class P {\n    v: i64\n}\nfn main() {\n    let p = P(v: \"x\")\n    print(p.v)\n}\n",
+            (5, 18),
+            Explained::Label(2, 8),
+        ),
+        (
+            "payload",
+            "enum E {\n    V(i64)\n}\nfn main() {\n    let e = E.V(\"x\")\n    print(e)\n}\n",
+            (5, 17),
+            Explained::Label(2, 7),
+        ),
+        (
+            "constant",
+            "const A: i64 = \"x\"\nfn main() {\n    print(A)\n}\n",
+            (1, 16),
+            Explained::Label(1, 10),
+        ),
+        (
+            "assignment",
+            "fn main() {\n    let mut a = 1\n    a = \"x\"\n    print(a)\n}\n",
+            (3, 9),
+            Explained::Label(2, 13),
+        ),
+        (
+            "element declared",
+            "fn main() {\n    let a: [i64] = [1, \"x\"]\n    print(a)\n}\n",
+            (2, 24),
+            Explained::Label(2, 12),
+        ),
+        (
+            "a parameter with no type parameter on the generic path (fable-16)",
+            "fn f<T>(a: T, n: i64) -> T { a }\nfn main() {\n    print(f(1, \"x\"))\n}\n",
+            (3, 16),
+            Explained::Label(1, 18),
+        ),
+        (
+            "an assignment to a `mut` parameter (claude-1)",
+            "fn f(mut n: i64) {\n    n = \"x\"\n    print(n)\n}\nfn main() {\n    let mut a = 1\n    f(mut a)\n}\n",
+            (2, 9),
+            Explained::Label(1, 10),
+        ),
+    ]);
+}
+
+#[test]
+fn a_prelude_origin_should_be_a_note() {
+    origin_rows(&[
+        (
+            "prelude",
+            "fn main() {\n    print(5.min(\"x\"))\n}\n",
+            (2, 17),
+            Explained::Note,
+        ),
+        (
+            "an array's `get` (opus-35)",
+            "fn main() {\n    let a = [1]\n    print(a.get(\"x\"))\n}\n",
+            (3, 17),
+            Explained::Note,
+        ),
+    ]);
+}
+
+#[test]
+fn a_passed_down_expectation_should_keep_its_origin() {
+    origin_rows(&[
+        (
+            "alias let",
+            "type M = i64\nfn main() {\n    let a: M = \"x\"\n    print(a)\n}\n",
+            (3, 16),
+            Explained::Label(3, 12),
+        ),
+        (
+            "an element under an alias (fable-18)",
+            "type M = [i64]\nfn main() {\n    let a: M = [1, \"x\"]\n    print(a)\n}\n",
+            (3, 20),
+            Explained::Label(3, 12),
+        ),
+        (
+            "an operand (fable-1)",
+            "fn main() {\n    let a: i64 = 1 + None\n    print(a)\n}\n",
+            (2, 22),
+            Explained::Label(2, 12),
+        ),
+        (
+            "branch under let",
+            "fn main() {\n    let a: i64 = if true { 1 } else { \"x\" }\n    print(a)\n}\n",
+            (2, 39),
+            Explained::Label(2, 12),
+        ),
+        (
+            "branch under return",
+            "fn f() -> i64 {\n    if true { 1 } else { \"x\" }\n}\nfn main() {\n    print(f())\n}\n",
+            (2, 26),
+            Explained::Label(1, 11),
+        ),
+        (
+            "element of parameter",
+            "fn f(a: [i64]) -> i64 { 1 }\nfn main() {\n    print(f([1, \"x\"]))\n}\n",
+            (3, 17),
+            Explained::Label(1, 9),
+        ),
+        (
+            "explicit type arg, a control: the declaration names a type parameter",
+            "fn f<T>(a: T) -> T { a }\nfn main() {\n    let x: i64 = f<i64>(\"x\")\n    print(x)\n}\n",
+            (3, 25),
+            Explained::Nothing,
+        ),
+    ]);
+}
+
+#[test]
+fn a_form_that_waits_should_have_no_origin() {
+    origin_rows(&[
+        (
+            "some under let",
+            "fn main() {\n    let a: i64? = Some(\"x\")\n    print(a)\n}\n",
+            (2, 24),
+            Explained::Nothing,
+        ),
+        (
+            "generic prelude",
+            "fn main() {\n    let mut a = [1]\n    a.push(\"x\")\n}\n",
+            (3, 12),
+            Explained::Nothing,
+        ),
+        (
+            "while",
+            "fn main() {\n    while 1 { }\n}\n",
+            (2, 11),
+            Explained::Nothing,
+        ),
+        (
+            "the type that the operator gives (fable-27)",
+            "fn main() {\n    print(1 - \"x\")\n}\n",
+            (2, 15),
+            Explained::Nothing,
+        ),
+        (
+            "a type parameter that the context binds (fable-17)",
+            "fn g<T>(a: T, b: T) -> T { a }\nfn main() {\n    let a: i64 = g(\"x\", 2)\n    print(a)\n}\n",
+            (3, 20),
+            Explained::Nothing,
+        ),
+        (
+            "a field assignment (claude-2)",
+            "class P {\n    mut v: i64\n}\nfn main() {\n    let p = P(v: 1)\n    p.v = \"x\"\n    print(p.v)\n}\n",
+            (6, 11),
+            Explained::Nothing,
         ),
     ]);
 }
