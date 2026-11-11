@@ -1768,6 +1768,10 @@ fn bound_by_context(call: &Inference<'_>, pattern: Type) -> bool {
 /// layers. None for any other pattern, and for a parameter that a written type argument or the
 /// context bound: neither is in an argument.
 fn inferred_origin(call: &Inference<'_>, pattern: Type) -> Option<Origin> {
+    // A pattern with no type parameter has none to name: its layers are not read.
+    if !pattern.has_param() {
+        return None;
+    }
     let mut ty = pattern;
     let (param, j) = loop {
         #[cfg(test)]
