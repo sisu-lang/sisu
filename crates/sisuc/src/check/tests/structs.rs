@@ -2388,7 +2388,7 @@ fn write_to_a_copy_should_warn_only_when_nothing_reads_it() {
 }
 
 /// The programs of the fixtures of W0016, one for each help.
-const COPY_FIXTURES: [&str; 9] = [
+const COPY_FIXTURES: [&str; 11] = [
     include_str!("../../../tests/diagnostics/W0016.sisu"),
     include_str!("../../../tests/diagnostics/W0016-let.sisu"),
     include_str!("../../../tests/diagnostics/W0016-parameter.sisu"),
@@ -2398,6 +2398,8 @@ const COPY_FIXTURES: [&str; 9] = [
     include_str!("../../../tests/diagnostics/W0016-lines.sisu"),
     include_str!("../../../tests/diagnostics/W0016-root.sisu"),
     include_str!("../../../tests/diagnostics/W0016-push.sisu"),
+    include_str!("../../../tests/diagnostics/W0016-shadow.sisu"),
+    include_str!("../../../tests/diagnostics/W0016-tab.sisu"),
 ];
 
 /// GIVEN each row of the table that gives W0016, and each program of the fixtures. WHEN `sisu

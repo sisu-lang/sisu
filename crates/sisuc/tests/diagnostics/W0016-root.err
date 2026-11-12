@@ -36,7 +36,7 @@ warning[W0016]: this writes to a copy of `a`, and nothing reads the copy
 27 |     a.b = 2
    |     ^^^ `a` does not change
    |
-   = help: write to the place itself, not to the copy
+   = help: delete the write
 
 sisu: 4 warnings
 sisu: for more on a code, run `sisu explain <code>`: W0016

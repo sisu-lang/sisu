@@ -1,0 +1,8 @@
+struct A { b: i64 }
+
+fn main() {
+    let xs = [A(b: 1)]
+    let mut a = xs[	0	]
+    a.b = 2
+    print(xs[0].b)
+}

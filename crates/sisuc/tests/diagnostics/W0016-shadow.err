@@ -1,0 +1,64 @@
+warning[W0016]: this writes to a copy of `a`, and nothing reads the copy
+ --> W0016-shadow.sisu:6:5
+  |
+5 |     let mut a = a
+  |             - a copy
+6 |     a.b = 2
+  |     ^^^ `a` does not change
+  |
+  = help: `a` is a plain parameter: delete the write, or return the changed copy
+
+warning[W0016]: this writes to a copy of `a`, and nothing reads the copy
+  --> W0016-shadow.sisu:12:9
+   |
+11 |         let mut a = a
+   |                 - a copy
+12 |         a.b = 2
+   |         ^^^ `a` does not change
+   |
+   = help: `a` is bound by `if let`: delete the write
+
+warning[W0016]: this writes to a copy of `a.a`, and nothing reads the copy
+  --> W0016-shadow.sisu:19:5
+   |
+18 |     let mut a = a.a
+   |             - a copy
+19 |     a.b = 2
+   |     ^^^ `a.a` does not change
+   |
+   = help: delete the write
+
+warning[W0002]: `a` is never reassigned
+  --> W0016-shadow.sisu:23:13
+   |
+23 |     let mut a = A(b: 1)
+   |             ^
+   |
+help: declare it with `let`
+   |
+23 -     let mut a = A(b: 1)
+23 +     let a = A(b: 1)
+   |
+
+warning[W0016]: this writes to a copy of `a`, and nothing reads the copy
+  --> W0016-shadow.sisu:25:5
+   |
+24 |     let mut a = a
+   |             - a copy
+25 |     a.b = 2
+   |     ^^^ `a` does not change
+   |
+   = help: delete the write
+
+warning[W0016]: this writes to a copy of `(o)`, and nothing reads the copy
+  --> W0016-shadow.sisu:31:5
+   |
+30 |     let mut a = (o)
+   |             - a copy
+31 |     a.b = 2
+   |     ^^^ `(o)` does not change
+   |
+   = help: `o` is a `let`: delete the write, or make `o` a `let mut` and write to the place
+
+sisu: 6 warnings
+sisu: for more on a code, run `sisu explain <code>`: W0002, W0016
