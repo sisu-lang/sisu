@@ -30,6 +30,9 @@ A batch fixes what each issue reports, and the cases in the same function.
 Keep each regression that the batch's own change adds, in any function.
 Drop every other finding, except one that gives wrong output, a crash, or a
 false error on a valid program. Ask the user before you file a new issue.
+Accept a finding that names a mutant no test kills and gives the test that
+kills it, also as a nit. Put that test into the next executor round, before
+the mutation test (step 7.2).
 Each review has one round, and one re-check for each blocking finding; no
 third round. When a blocking finding is still open after its re-check, ask
 the user to defer it or to fix it. These rules replace the fix-round rules of `review-sisu`.
