@@ -7613,6 +7613,7 @@ fn poisoned_join_should_take_the_anchor_type_for_a_sum_or_a_fill() {
 }
 
 /// GIVEN a join whose context failed, with a fill or a `-` of a waiting call as a later branch
+/// AND a waiting branch of a nested join (`else if`) beside a literal
 /// WHEN the program is checked
 /// THEN the context is the only report. The branch holds no integer literal, so it is not a
 ///   branch of literals: it does not take the type of the anchor, and no other report follows
@@ -7634,6 +7635,18 @@ fn poisoned_join_should_add_no_report_for_a_waiting_fill_or_negation() {
         (
             "p66",
             fill_mk_program("let r: Nope = if c == 1 { \"s\" } else { -mk() }"),
+            vec![(UnknownType, (7, 12))],
+        ),
+        (
+            "t3",
+            fill_mk_program("let r: Nope = if c == 1 { v } else if c == 2 { -mk() } else { 3 }"),
+            vec![(UnknownType, (7, 12))],
+        ),
+        (
+            "l6",
+            fill_mk_program(
+                "let r: Nope = if c == 1 { v } else if c == 2 { 3 } else { [mk(); 2] }",
+            ),
             vec![(UnknownType, (7, 12))],
         ),
     ];
