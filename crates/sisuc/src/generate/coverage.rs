@@ -4093,7 +4093,8 @@ fn generation_is_deterministic() {
     }
 }
 
-/// FT-9: one walk of the generated programs checks every property the walk collects.
+/// FT-9: one walk of the generated programs checks five properties: no leak of an inexact value,
+/// no class in the heap, no unbounded loop, no out-of-bounds index and the `f64` operand ratio.
 #[test]
 fn walked_programs_should_hold_every_walk_property() {
     let walk = walk();
