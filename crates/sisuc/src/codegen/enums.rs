@@ -191,16 +191,17 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
 
     /// The name and the fields of each variant of the enum `id`. A struct `id` is one variant, with
     /// its name and its fields.
-    pub(super) fn variants_of(&self, id: Inline) -> Vec<(&'src str, &'src [Payload])> {
-        match id {
-            Inline::Enum(id) => (self.program.enums[id.0].variants.iter())
-                .map(|v| (v.name.as_str(), v.fields.as_slice()))
-                .collect(),
-            Inline::Struct(id) => {
-                let s = &self.program.structs[id.0];
-                vec![(s.name.as_str(), s.fields.as_slice())]
-            }
-        }
+    pub(super) fn variants_of(
+        &self,
+        id: Inline,
+    ) -> impl Iterator<Item = (&'src str, &'src [Payload])> + use<'src> {
+        let (variants, one) = match id {
+            Inline::Enum(id) => (self.program.enums[id.0].variants.as_slice(), None),
+            Inline::Struct(id) => (&[][..], Some(&self.program.structs[id.0])),
+        };
+        (variants.iter())
+            .map(|v| (v.name.as_str(), v.fields.as_slice()))
+            .chain(one.map(|s| (s.name.as_str(), s.fields.as_slice())))
     }
 
     /// The name of the enum or struct `id`.

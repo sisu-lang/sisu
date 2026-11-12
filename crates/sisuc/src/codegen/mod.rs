@@ -936,13 +936,14 @@ impl<'ctx> Codegen<'ctx, '_> {
                 }
             }
             Statement::Take { dest, place } => {
-                // The `check` before it bounds-checked the place. A boxed `F?` field gives its
-                // value and leaves its storage zero.
-                let (slot, ty, _, boxed) = self.located(place.local, &place.projections, false);
+                // The `check` before it bounds-checked the place, a field or an element, as of a
+                // `Store`. A boxed `F?` field gives its value and leaves its storage zero.
+                let (address, ty, tag, boxed) =
+                    self.located(place.local, &place.projections, false);
                 let value = if boxed {
-                    self.take_boxed(slot, ty)
+                    self.take_boxed(address, ty)
                 } else {
-                    self.read(place, false).0
+                    self.load_place(ty, address, "load", tag)
                 };
                 self.store(self.slot(*dest).0, value);
             }

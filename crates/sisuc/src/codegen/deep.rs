@@ -260,7 +260,7 @@ impl Codegen<'_, '_> {
         // A field that `walk` follows in place adds no frames of its own (see `inline_link`).
         let parts = (group.iter())
             .flat_map(|&member| {
-                (self.variants_of(member).into_iter())
+                self.variants_of(member)
                     .flat_map(|(_, fields)| fields)
                     .map(move |field| (member, field))
             })
