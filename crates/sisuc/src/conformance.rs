@@ -173,8 +173,9 @@ pub(crate) enum Generated {
     /// An enum has `Eq` when each payload type of each variant, with the arguments in place of
     /// the enum's parameters, has.
     Payloads(EnumId, TypeArgs),
-    /// A struct has `Eq` when each field type has it.
-    Fields(StructId),
+    /// A struct has `Eq` when each field type, with the arguments in place of the struct's
+    /// parameters, has.
+    Fields(StructId, TypeArgs),
 }
 
 /// The generated rule (spec, "Generated conformances"): what the compiler writes for `ty` and the
@@ -215,7 +216,7 @@ pub(crate) fn generated(lang: LangInterfaces, ty: Type, interface: InterfaceId) 
         _ if number || kind == TypeKind::Bool => Generated::Holds,
         TypeKind::Array(part) | TypeKind::Optional(part) => Generated::Element(part),
         TypeKind::Enum(id, args) => Generated::Payloads(id, args),
-        TypeKind::Struct(id, _) => Generated::Fields(id),
+        TypeKind::Struct(id, args) => Generated::Fields(id, args),
         _ => Generated::Fails,
     }
 }
@@ -412,8 +413,11 @@ pub(crate) fn parts<P: Payloads + ?Sized, S: StructFields + ?Sized>(
                 each(part);
             }
         }),
-        // A struct takes no type argument yet, so its field types are concrete.
-        TypeKind::Struct(id, _) => structs.each(id, &mut each),
+        TypeKind::Struct(id, args) => structs.each(id, &mut |field| {
+            if let Some(part) = normalize(conformances, field.subst(args.get())) {
+                each(part);
+            }
+        }),
         TypeKind::I64
         | TypeKind::U8
         | TypeKind::F64
@@ -554,7 +558,7 @@ pub(crate) fn holds<P: Payloads + ?Sized, S: StructFields + ?Sized>(
                     Holds::No
                 }
             }
-            Generated::Fails | Generated::Payloads(..) | Generated::Fields(_) => Holds::No,
+            Generated::Fails | Generated::Payloads(..) | Generated::Fields(..) => Holds::No,
         },
     })
 }
@@ -576,7 +580,10 @@ fn display_holds<P: Payloads + ?Sized, S: StructFields + ?Sized>(
     } else {
         Holds::No
     };
-    if !matches!(ty.kind(), TypeKind::Class(..) | TypeKind::Enum(..)) {
+    if !matches!(
+        ty.kind(),
+        TypeKind::Class(..) | TypeKind::Struct(..) | TypeKind::Enum(..)
+    ) {
         return generated;
     }
     let key = (ty, display, args);
@@ -649,28 +656,38 @@ fn expanded<P: Payloads + ?Sized, S: StructFields + ?Sized>(
     match generated(src.lang, ty, interface) {
         Generated::Holds => Holds::Generated,
         Generated::Fails | Generated::Element(_) => Holds::No,
-        Generated::Fields(id) => {
+        Generated::Fields(id, own) => {
             let mut parts = Vec::new();
             src.structs.each(id, &mut |field| parts.push(field));
-            let all = parts
-                .into_iter()
-                .all(|part| holds(cx, src, part, interface, TypeArgs::NONE).is_yes());
-            if all { Holds::Generated } else { Holds::No }
+            parts_hold(cx, src, &parts, own, interface)
         }
         Generated::Payloads(id, own) => {
             let mut parts = Vec::new();
             src.enums.each(id, &mut |payload| parts.push(payload));
-            for payload in parts {
-                let Some(part) = normalize(src.conformances, payload.subst(own.get())) else {
-                    continue;
-                };
-                if !holds(cx, src, part, interface, TypeArgs::NONE).is_yes() {
-                    return Holds::No;
-                }
-            }
-            Holds::Generated
+            parts_hold(cx, src, &parts, own, interface)
         }
     }
+}
+
+/// Whether `interface` holds for each of `parts`, the declared field or payload types of a struct
+/// or an enum. The arguments `own` take the place of its parameters. A part whose associated type
+/// has no choice is poison, and holds.
+fn parts_hold<P: Payloads + ?Sized, S: StructFields + ?Sized>(
+    cx: &mut Decide,
+    src: &Source<'_, P, S>,
+    parts: &[Type],
+    own: TypeArgs,
+    interface: InterfaceId,
+) -> Holds {
+    for &declared in parts {
+        let Some(part) = normalize(src.conformances, declared.subst(own.get())) else {
+            continue;
+        };
+        if !holds(cx, src, part, interface, TypeArgs::NONE).is_yes() {
+            return Holds::No;
+        }
+    }
+    Holds::Generated
 }
 
 /// Whether the conformance `k` of `interface` holds when its block's parameters stand for
@@ -1045,6 +1062,7 @@ impl Normalizer<'_> {
             TypeKind::Array(element) => Type::array(self.walk(element)?),
             TypeKind::Optional(payload) => Type::optional(self.walk(payload)?),
             TypeKind::Class(id, args) => Type::intern(TypeKind::Class(id, self.all(args)?)),
+            TypeKind::Struct(id, args) => Type::intern(TypeKind::Struct(id, self.all(args)?)),
             TypeKind::Enum(id, args) => Type::intern(TypeKind::Enum(id, self.all(args)?)),
             TypeKind::Any(id, args) => Type::intern(TypeKind::Any(id, self.all(args)?)),
             TypeKind::Assoc(base, interface, args, k) => {
@@ -1071,7 +1089,7 @@ impl Normalizer<'_> {
         let base = self.walk(base)?;
         let args = self.all(args)?;
         match base.kind() {
-            TypeKind::Class(..) | TypeKind::Enum(..) => {
+            TypeKind::Class(..) | TypeKind::Struct(..) | TypeKind::Enum(..) => {
                 self.choice(Type::intern(TypeKind::Assoc(base, interface, args, k)))
             }
             TypeKind::Param(..) | TypeKind::Assoc(..) => {
@@ -1160,7 +1178,8 @@ pub(crate) fn clash(
     mine.extend_from_slice(args.get());
     // A target without parameters meets the one of its exact type; one with parameters meets the
     // exact targets of its class or enum (the recorded exception of the doc comment).
-    let head = head_of(target).expect("the target of a conformance should be a class or an enum");
+    let head = head_of(target)
+        .expect("the target of a conformance should be a class, a struct or an enum");
     let exact = if params == 0 {
         conformances.exact(interface, target, args)
     } else {
@@ -1204,6 +1223,11 @@ fn matches(pattern: Type, ty: Type, slots: &mut [Option<Type>]) -> Option<()> {
         (TypeKind::Array(p), TypeKind::Array(t))
         | (TypeKind::Optional(p), TypeKind::Optional(t)) => matches(p, t, slots),
         (TypeKind::Class(a, p), TypeKind::Class(b, t))
+            if a == b && p.get().len() == t.get().len() =>
+        {
+            matches_all(p, t, slots)
+        }
+        (TypeKind::Struct(a, p), TypeKind::Struct(b, t))
             if a == b && p.get().len() == t.get().len() =>
         {
             matches_all(p, t, slots)
@@ -1447,6 +1471,11 @@ impl Unifier {
                 self.join(left, right) || self.unify(l, r)
             }
             (TypeKind::Class(from, l), TypeKind::Class(to, r))
+                if from == to && l.get().len() == r.get().len() =>
+            {
+                self.join(left, right) || self.unify_all(l, r)
+            }
+            (TypeKind::Struct(from, l), TypeKind::Struct(to, r))
                 if from == to && l.get().len() == r.get().len() =>
             {
                 self.join(left, right) || self.unify_all(l, r)

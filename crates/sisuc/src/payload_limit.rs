@@ -335,8 +335,12 @@ fn declared<'t>(
             enums[id].instance,
             Kind::Enum,
         ),
-        // A struct takes no type argument yet, so it is no instance.
-        Some(s) => (&structs[s].name, structs[s].span, false, Kind::Struct),
+        Some(s) => (
+            &structs[s].name,
+            structs[s].span,
+            structs[s].instance,
+            Kind::Struct,
+        ),
     }
 }
 

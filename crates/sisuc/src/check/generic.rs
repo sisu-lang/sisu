@@ -12,6 +12,7 @@ use super::any;
 use super::array::innermost;
 use super::expr::{bare_hole, dbg_argument, literal_type, option_written, read_jump};
 use super::interface::{Bounds, Required};
+use super::member::FieldOwner;
 use super::mut_args::{MutParts, MutSite, PlaceShape, marked};
 use super::names::{self, ItemId, Resolved};
 use super::pattern::{LetPattern, LetValue, arm_key, matchable};
@@ -1060,12 +1061,12 @@ fn is_hole(ty: Type) -> bool {
     ty == *HOLE || ty == *REJECTED
 }
 
-/// Whether `kind` is of a class, an enum or an `any` type, which can hold the same type in more
-/// than one of its arguments: a walk over it can use a `WalkMemo`.
+/// Whether `kind` is of a class, a struct, an enum or an `any` type. Such a type can hold the same
+/// type in more than one of its arguments, so a walk over it can use a `WalkMemo`.
 fn has_type_args(kind: TypeKind) -> bool {
     matches!(
         kind,
-        TypeKind::Class(..) | TypeKind::Enum(..) | TypeKind::Any(..)
+        TypeKind::Class(..) | TypeKind::Struct(..) | TypeKind::Enum(..) | TypeKind::Any(..)
     )
 }
 
@@ -1530,6 +1531,9 @@ impl Bindings {
             TypeKind::Optional(payload) => Type::optional(self.resolve(payload, unbound, seen)?),
             TypeKind::Class(id, args) => {
                 Type::intern(TypeKind::Class(id, self.resolve_all(args, unbound, seen)?))
+            }
+            TypeKind::Struct(id, args) => {
+                Type::intern(TypeKind::Struct(id, self.resolve_all(args, unbound, seen)?))
             }
             TypeKind::Enum(id, args) => {
                 Type::intern(TypeKind::Enum(id, self.resolve_all(args, unbound, seen)?))
@@ -4205,7 +4209,7 @@ impl Checker<'_> {
             return CallShape::default();
         };
         match ty.kind() {
-            TypeKind::Class(..) | TypeKind::Enum(..) => {}
+            TypeKind::Class(..) | TypeKind::Struct(..) | TypeKind::Enum(..) => {}
             TypeKind::Param(..) | TypeKind::Assoc(..) | TypeKind::Any(..) => {
                 return self.bound_shape(ty, method, args);
             }
@@ -4286,7 +4290,7 @@ impl Checker<'_> {
             TypeKind::Param(..) | TypeKind::Assoc(..) | TypeKind::Any(..) => {
                 self.required(ty, method.name).len() > 1
             }
-            TypeKind::Class(..) | TypeKind::Enum(..) => {
+            TypeKind::Class(..) | TypeKind::Struct(..) | TypeKind::Enum(..) => {
                 if self.applicable_method(ty, method.name).is_some() {
                     return false;
                 }
@@ -4426,24 +4430,25 @@ impl Checker<'_> {
                 ..CallShape::default()
             };
         }
-        if let Some(Declared::Known(id)) = self.names.struct_id(name) {
-            let info = &self.structs[id.0];
-            return CallShape {
-                shaped: fits(info.fields.iter().map(|f| (f.ty, Some(f.name.name))), args),
-                places: carried_by_construction(info.fields.iter().map(|f| f.ty), 0),
-                ..CallShape::default()
-            };
-        }
-        match (self.names.class(name), self.names.function(name)) {
-            (Some(Declared::Known(class)), _) => {
-                let info = &self.classes[class.0];
+        let holder = match (self.names.struct_id(name), self.names.class(name)) {
+            (Some(Declared::Known(id)), _) => Some(FieldOwner::Struct(id)),
+            (_, Some(Declared::Known(class))) => Some(FieldOwner::Class(class)),
+            _ => None,
+        };
+        match (holder, self.names.function(name)) {
+            (Some(owner), _) => {
+                let info = self.owner_info(owner);
                 let shaped = fits(info.fields.iter().map(|f| (f.ty, Some(f.name.name))), args);
                 let open = if shaped {
                     open_params(info.fields.iter().map(|f| f.ty), &info.type_params, 0)
                 } else {
                     Vec::new()
                 };
-                let built = Type::intern(TypeKind::Class(class, own_args(&info.type_params)));
+                let own = own_args(&info.type_params);
+                let built = Type::intern(match owner {
+                    FieldOwner::Class(class) => TypeKind::Class(class, own),
+                    FieldOwner::Struct(id) => TypeKind::Struct(id, own),
+                });
                 CallShape {
                     generic: !info.type_params.is_empty(),
                     shaped,
@@ -4887,6 +4892,7 @@ impl Checker<'_> {
         let ty = innermost(type_of(receiver)?);
         let field = match ty.kind() {
             TypeKind::Class(id, _) => self.classes[id.0].field(method.name).is_some(),
+            TypeKind::Struct(id, _) => self.structs[id.0].field(method.name).is_some(),
             TypeKind::Enum(..) => false,
             // A built-in's list is reported once its method is found.
             _ => return None,

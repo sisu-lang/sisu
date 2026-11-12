@@ -2040,6 +2040,7 @@ impl WideKind {
 #[derive(Clone, Copy)]
 pub(crate) enum NotInterface {
     Class,
+    Struct,
     Enum,
     BuiltIn,
     TypeParam,
@@ -2054,6 +2055,7 @@ impl NotInterface {
     fn named(self) -> &'static str {
         match self {
             NotInterface::Class => "a class",
+            NotInterface::Struct => "a struct",
             NotInterface::Enum => "an enum",
             NotInterface::BuiltIn => "a built-in type",
             NotInterface::TypeParam => "a type parameter",
@@ -3771,7 +3773,7 @@ impl From<DiagnosticKind> for Diagnostic {
                     ),
                     CannotExtendForm::TypeParam => (
                         format!(
-                            "`extend` takes a class or enum, and `{written}` is a type parameter"
+                            "`extend` takes a class, struct or enum, and `{written}` is a type parameter"
                         ),
                         None,
                     ),
@@ -3784,7 +3786,7 @@ impl From<DiagnosticKind> for Diagnostic {
                     ),
                     CannotExtendForm::Any => (
                         format!(
-                            "`extend` takes a class or enum, and `{written}` is an interface value"
+                            "`extend` takes a class, struct or enum, and `{written}` is an interface value"
                         ),
                         None,
                     ),

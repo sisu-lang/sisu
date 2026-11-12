@@ -344,7 +344,7 @@ impl Checker<'_> {
     ///
     /// A call of a mutating method counts as a change of the place as soon as the receiver is
     /// checked, whatever the call then gets wrong: `stamp_push` stamps it here. A place of a
-    /// class, an enum, a type parameter or an associated type is not stamped, because the call
+    /// class, an enum, a struct, a type parameter or an associated type is not stamped. The call
     /// may be a method of its own, which writes nothing.
     pub(super) fn push_receiver(&mut self, receiver: &ast::Expr) -> Checked {
         let mut place = self.place(receiver.span, receiver, Change::Push);
@@ -353,6 +353,7 @@ impl Checker<'_> {
             Some(
                 TypeKind::Class(..)
                     | TypeKind::Enum(..)
+                    | TypeKind::Struct(..)
                     | TypeKind::Param(..)
                     | TypeKind::Assoc(..)
             )

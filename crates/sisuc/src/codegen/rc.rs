@@ -428,7 +428,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                         .expect("only an enum or a struct should be queued for a component helper");
                     self.define_show_component(id, function, mode);
                 }
-                (Helper::Eq, TypeKind::Class(..) | TypeKind::Enum(..))
+                (Helper::Eq, TypeKind::Class(..) | TypeKind::Enum(..) | TypeKind::Struct(..))
                     if self.written_eq(ty).is_some() =>
                 {
                     self.define_written_eq(function, ty);
@@ -673,14 +673,14 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.call(self.free, &[object.into(), size.into(), align.into()]);
     }
 
-    /// The method of the written `Eq` of the class or enum `ty`, when the program has a record
-    /// for it. After `mono` each record is concrete, so the lookup is exact.
+    /// The method of the written `Eq` of the class, enum or struct `ty`, when the program has a
+    /// record for it. After `mono` each record is concrete, so the lookup is exact.
     pub(super) fn written_eq(&self, ty: Type) -> Option<FuncId> {
         self.written_method(ty, self.program.lang.eq)
     }
 
-    /// The method of the written `Display` of the class or enum `ty`, its `to_string`, when the
-    /// program has a record for it.
+    /// The method of the written `Display` of the class, enum or struct `ty`, its `to_string`,
+    /// when the program has a record for it.
     pub(super) fn written_display(&self, ty: Type) -> Option<FuncId> {
         self.written_method(ty, self.program.lang.display)
     }
@@ -695,11 +695,11 @@ impl<'ctx> Codegen<'ctx, '_> {
             .copied()
     }
 
-    /// `@sisu_rc.eq.<T>(a, b)` for a class or an enum `ty` whose `Eq` is written: a call of its
-    /// `eq`, with each part passed as the method's final `borrowed` flags say. A parameter that
-    /// is not borrowed is owned by the callee, which releases it, so the helper retains the part
-    /// first. A class tests for `null` first, as the generated helper does; there is no look at
-    /// the same pointer, since a written `eq` need not be reflexive.
+    /// `@sisu_rc.eq.<T>(a, b)` for a class, an enum or a struct `ty` whose `Eq` is written: a call
+    /// of its `eq`, with each part passed as the method's final `borrowed` flags say. A parameter
+    /// that is not borrowed is owned by the callee, which releases it, so the helper retains the
+    /// part first. A class tests for `null` first, as the generated helper does; there is no look
+    /// at the same pointer, since a written `eq` need not be reflexive.
     fn define_written_eq(&self, function: FunctionValue<'ctx>, ty: Type) {
         let method = self
             .written_eq(ty)
@@ -725,8 +725,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// A call of the written `eq` `method` on the values of type `ty` at `places`: a class is the
-    /// pointer itself, and an enum is read by address. A part is retained first when the
-    /// method owns its parameter.
+    /// pointer itself, and an enum or a struct is read by address. A part is retained first when
+    /// the method owns its parameter.
     pub(super) fn call_written_eq(
         &self,
         method: FuncId,
@@ -735,7 +735,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         borrowed: &[bool],
     ) -> IntValue<'ctx> {
         let values = places.map(|place| {
-            if let TypeKind::Enum(..) = ty.kind() {
+            if let TypeKind::Enum(..) | TypeKind::Struct(..) = ty.kind() {
                 self.load_value(ty, place)
             } else {
                 place.into()
@@ -1268,12 +1268,15 @@ pub(super) fn reaching_unreflexive(program: &Program) -> Vec<bool> {
     }
     let written = |ty| find(&program.conformances, program.lang.eq, ty, TypeArgs::NONE).is_some();
     let (class_seeds, rest) = reaches.split_at_mut(classes);
-    let enum_seeds = &mut rest[..program.enums.len()];
+    let (enum_seeds, struct_seeds) = rest.split_at_mut(program.enums.len());
     for (id, seed) in class_seeds.iter_mut().enumerate() {
         *seed |= written(Type::intern(TypeKind::Class(ClassId(id), TypeArgs::NONE)));
     }
     for (id, seed) in enum_seeds.iter_mut().enumerate() {
         *seed |= written(Type::intern(TypeKind::Enum(EnumId(id), TypeArgs::NONE)));
+    }
+    for (id, seed) in struct_seeds.iter_mut().enumerate() {
+        *seed |= written(Type::intern(TypeKind::Struct(StructId(id), TypeArgs::NONE)));
     }
     // Each seed is queued once, however many `f64` fields it has.
     let mut work: Vec<usize> = (0..node_count).filter(|&node| reaches[node]).collect();

@@ -558,21 +558,23 @@ impl Checker<'_> {
         if let Some(&reported) = self.rejected_methods.get(&name.name) {
             return Err(reported);
         }
-        let d = match ty.kind() {
-            TypeKind::Class(class, _) => {
-                let info = &self.classes[class.0];
-                if info.field(name.name).is_some() {
-                    DiagnosticKind::FieldNotMethod {
-                        name: name.name.to_string(),
-                        owner: self.type_name(ty),
-                        at: name.span,
-                    }
-                    .into()
-                } else {
-                    let methods = info.methods.keys().map(|method| method.as_str());
-                    no_member(Definition::Method, self.type_name(ty), name, methods)
+        // A class and a struct name a field that a call writes as a method alike.
+        let in_fields = |info: &ClassInfo| {
+            if info.field(name.name).is_some() {
+                DiagnosticKind::FieldNotMethod {
+                    name: name.name.to_string(),
+                    owner: self.type_name(ty),
+                    at: name.span,
                 }
+                .into()
+            } else {
+                let methods = info.methods.keys().map(|method| method.as_str());
+                no_member(Definition::Method, self.type_name(ty), name, methods)
             }
+        };
+        let d = match ty.kind() {
+            TypeKind::Class(class, _) => in_fields(&self.classes[class.0]),
+            TypeKind::Struct(id, _) => in_fields(&self.structs[id.0]),
             TypeKind::Enum(id, _) => {
                 let info = &self.enums[id.0];
                 if info.index.contains_key(&name.name) {

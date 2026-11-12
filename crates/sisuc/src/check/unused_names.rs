@@ -440,6 +440,9 @@ impl Checker<'_> {
         // not shown through the payload of another enum either.
         let hidden: Vec<bool> = (0..self.enums.len())
             .map(|e| written.contains(&Head::Enum(tir::EnumId(e))))
+            .chain(
+                (0..self.structs.len()).map(|s| written.contains(&Head::Struct(tir::StructId(s)))),
+            )
             .collect();
         let params = self.shown_params_with(&hidden);
         let (mut seen, mut declared) = (FxHashSet::default(), FxHashSet::default());
@@ -625,6 +628,7 @@ impl Checker<'_> {
         let conforming_blocks = self.conformance_blocks();
         let chosen = self.chosen_types();
         let mut enum_started = vec![false; self.enums.len()];
+        let mut struct_started = vec![false; self.structs.len()];
         // The interfaces live code uses, and those not yet followed to the ones they name.
         let mut interfaces = vec![false; self.interfaces.len()];
         let mut to_follow = Vec::new();
@@ -649,6 +653,12 @@ impl Checker<'_> {
                     Used::Variant(e, _) => Some((
                         Holder::Enum(e),
                         !std::mem::replace(&mut enum_started[e.0], true),
+                    )),
+                    // The methods of a struct's conformances are live when it is built; Task 7
+                    // counts the struct and its fields.
+                    Used::Struct(s) => Some((
+                        Holder::Struct(s),
+                        !std::mem::replace(&mut struct_started[s.0], true),
                     )),
                     _ => None,
                 };
@@ -780,8 +790,12 @@ impl Checker<'_> {
                         .flat_map(|v| v.fields.iter().flatten().copied()),
                 ),
             ),
-            Holder::Struct(_) | Holder::Array | Holder::I64 => {
-                unreachable!("only a class or an enum is started by a use")
+            Holder::Struct(s) => (
+                &self.structs[s.0].bounds,
+                Box::new((self.structs[s.0].fields.iter()).filter_map(|f| f.ty)),
+            ),
+            Holder::Array | Holder::I64 => {
+                unreachable!("only a class, a struct or an enum is started by a use")
             }
         };
         let bounds = bounds

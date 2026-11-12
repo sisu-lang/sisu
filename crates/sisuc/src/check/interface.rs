@@ -930,6 +930,7 @@ impl Checker<'_> {
         let resolved = self.resolve(ty)?;
         let kind = match resolved.kind() {
             TypeKind::Class(..) => NotInterface::Class,
+            TypeKind::Struct(..) => NotInterface::Struct,
             TypeKind::Enum(..) => NotInterface::Enum,
             TypeKind::Param(..) => NotInterface::TypeParam,
             TypeKind::Optional(..) => NotInterface::Optional,
@@ -1375,7 +1376,7 @@ impl Checker<'_> {
             _ => match generated(self.lang, ty, interface) {
                 Generated::Holds => true,
                 Generated::Element(part) => self.conforms(part, interface, args),
-                Generated::Fails | Generated::Payloads(..) | Generated::Fields(_) => false,
+                Generated::Fails | Generated::Payloads(..) | Generated::Fields(..) => false,
             },
         })
     }
@@ -1420,12 +1421,12 @@ impl Checker<'_> {
         // one gets no second report. It is expanded as before. For a marked enum, its written
         // conformance checks the types of its parameters, and with none it holds with no part
         // query. A class has no generated rule: only a written conformance reads its parts. A
-        // struct is never marked: a struct on a cycle of values has its own error.
+        // marked struct is as a marked enum.
         let holder = holder_of(ty).expect("a key of this walk should be a class, struct or enum");
         let own = match holder {
             Holder::Class(id) => self.growing_classes[id.0],
             Holder::Enum(id) => self.marked[id.0],
-            Holder::Struct(_) => false,
+            Holder::Struct(id) => self.marked[self.enums.len() + id.0],
             Holder::Array | Holder::I64 => {
                 unreachable!("a conforms query keys a class, a struct or an enum")
             }
@@ -1463,35 +1464,23 @@ impl Checker<'_> {
             Generated::Holds => true,
             Generated::Fails | Generated::Element(_) => false,
             Generated::Payloads(id, own) => self.payloads_conform(id, own, interface),
-            Generated::Fields(id) => self.fields_conform(id, interface),
+            Generated::Fields(id, own) => self.fields_conform(id, own, interface),
         }
     }
 
-    /// Whether each field type of the struct `id` conforms to `interface`. A field that is an
-    /// error has its report already, so it holds.
-    fn fields_conform(&mut self, id: StructId, interface: InterfaceId) -> bool {
+    /// Whether each field type of the struct `id`, with `own` for its parameters, conforms to
+    /// `interface`. A struct that grows, or that no value can be built of, holds with no part
+    /// query, as such an enum does. A field that is an error, or whose associated type has no
+    /// choice, has its report already, so it holds.
+    fn fields_conform(&mut self, id: StructId, own: TypeArgs, interface: InterfaceId) -> bool {
+        if self.marked[self.enums.len() + id.0] {
+            return true;
+        }
         (0..self.structs[id.0].fields.len()).all(|index| {
             let part = self.structs[id.0].fields[index].ty;
-            part.is_none_or(|part| self.conforms(part, interface, TypeArgs::NONE))
+            (part.and_then(|part| self.subst(part, own.get())))
+                .is_none_or(|part| self.conforms(part, interface, TypeArgs::NONE))
         })
-    }
-
-    /// The first result of `each` that is `Some`, over the field types of the struct `id` in
-    /// declaration order. A field that is an error has no type, and is left out.
-    fn find_map_field_types<R>(
-        &mut self,
-        id: StructId,
-        mut each: impl FnMut(&mut Self, Type) -> Option<R>,
-    ) -> Option<R> {
-        for index in 0..self.structs[id.0].fields.len() {
-            let Some(part) = self.structs[id.0].fields[index].ty else {
-                continue;
-            };
-            if let Some(found) = each(self, part) {
-                return Some(found);
-            }
-        }
-        None
     }
 
     /// Whether the conformance `k` of `interface` holds when its parameters stand for `stands`:
@@ -1758,24 +1747,29 @@ impl Checker<'_> {
         }
     }
 
-    /// The part that makes the generated rule of `interface` fail for the enum type `ty`, whatever
-    /// record `ty` has itself: as `failing_leaf` finds it, `ty` if the walk finds none. `None`
-    /// when the rule holds. It is for a conformance that the compiler would write, to say why it
-    /// does not.
+    /// The part that makes the generated rule of `interface` fail for the enum or struct type
+    /// `ty`, whatever record `ty` has itself: as `failing_leaf` finds it, `ty` if the walk finds
+    /// none. `None` when the rule holds. It is for a conformance that the compiler would write, to
+    /// say why it does not.
     pub(super) fn rule_failure(&mut self, ty: Type, interface: InterfaceId) -> Option<Type> {
-        match generated(self.lang, ty, interface) {
+        let key = (ty, interface, TypeArgs::NONE);
+        let mut walk = LeafWalk::new();
+        let leaf = match generated(self.lang, ty, interface) {
             Generated::Payloads(id, own) if !self.payloads_conform(id, own, interface) => {
-                let mut walk = LeafWalk::new();
-                walk.enter((ty, interface, TypeArgs::NONE));
-                let leaf = self.payloads_leaf(id, own, interface, &mut walk);
-                // This walk reads the payloads of `ty` and ignores its record, but another walk
-                // reads the record of `ty` and stops there. A type that reaches `ty` is still on
-                // the stack, and its answer is not the answer of another walk, so it is dropped.
-                // A part that closed before `ty` does not reach `ty`, so its answers stay.
-                Some(leaf.unwrap_or(ty))
+                walk.enter(key);
+                self.payloads_leaf(id, own, interface, &mut walk)
             }
-            _ => None,
-        }
+            Generated::Fields(id, own) if !self.fields_conform(id, own, interface) => {
+                walk.enter(key);
+                self.fields_leaf(id, own, interface, &mut walk)
+            }
+            _ => return None,
+        };
+        // This walk reads the parts of `ty` and ignores its record, but another walk reads the
+        // record of `ty` and stops there. A type that reaches `ty` is still on the stack, and its
+        // answer is not the answer of another walk, so it is dropped. A part that closed before
+        // `ty` does not reach `ty`, so its answers stay.
+        Some(leaf.unwrap_or(ty))
     }
 
     /// The payload part of the enum `id`, with `own` for its parameters, that fails `interface` on
@@ -1814,17 +1808,35 @@ impl Checker<'_> {
         param
     }
 
-    /// The first field type of the struct `id` that fails `interface` on its own; `None` when each
-    /// holds. A struct has no type parameter, so no field fails for want of a bound.
+    /// The field part of the struct `id`, with `own` for its parameters, that fails `interface`
+    /// on its own, as `payloads_leaf` finds a payload part; `None` when each holds.
     fn fields_leaf(
         &mut self,
         id: StructId,
+        own: TypeArgs,
         interface: InterfaceId,
         walk: &mut LeafWalk,
     ) -> Option<Type> {
-        self.find_map_field_types(id, |this, part| {
-            this.leaf(part, interface, TypeArgs::NONE, walk)
-        })
+        if self.marked[self.enums.len() + id.0] || self.too_deep.contains(&Holder::Struct(id)) {
+            return None;
+        }
+        let mut param = None;
+        for index in 0..self.structs[id.0].fields.len() {
+            let Some(field) = self.structs[id.0].fields[index].ty else {
+                continue;
+            };
+            let Some(part) = self.subst(field, own.get()) else {
+                continue;
+            };
+            let Some(found) = self.leaf(part, interface, TypeArgs::NONE, walk) else {
+                continue;
+            };
+            if !is_parameter(found) {
+                return Some(found);
+            }
+            param = param.or(Some(found));
+        }
+        param
     }
 
     /// The answers of `leaf` that `ty` uses: the body's for a type that names a type parameter,
@@ -1887,7 +1899,9 @@ impl Checker<'_> {
                                 Generated::Payloads(id, own) => {
                                     self.payloads_leaf(id, own, interface, walk)
                                 }
-                                Generated::Fields(id) => self.fields_leaf(id, interface, walk),
+                                Generated::Fields(id, own) => {
+                                    self.fields_leaf(id, own, interface, walk)
+                                }
                             }
                         };
                     // A part that fails on its own is true for this type at once, whatever the
@@ -1906,7 +1920,7 @@ impl Checker<'_> {
                 }
                 _ => match generated(self.lang, ty, interface) {
                     Generated::Holds => None,
-                    Generated::Fails | Generated::Payloads(..) | Generated::Fields(_) => Some(ty),
+                    Generated::Fails | Generated::Payloads(..) | Generated::Fields(..) => Some(ty),
                     Generated::Element(part) => self.leaf(part, interface, args, walk),
                 },
             }
@@ -1991,8 +2005,10 @@ impl Checker<'_> {
         interface: InterfaceId,
         args: TypeArgs,
     ) -> Option<Make> {
-        (matches!(part.kind(), TypeKind::Class(..) | TypeKind::Enum(..))
-            && interface != self.lang.any_object
+        (matches!(
+            part.kind(),
+            TypeKind::Class(..) | TypeKind::Struct(..) | TypeKind::Enum(..)
+        ) && interface != self.lang.any_object
             && find(&self.conformances, interface, part, args).is_none())
         .then(|| Make {
             ty: self.type_name(part),
@@ -2021,8 +2037,10 @@ impl Checker<'_> {
             (self.blocked_part(leaf, interface, args)).unwrap_or((leaf, interface, args));
         let add = self.add_bound(fix, wants);
         // `none` is for the label: `make_for` decides the help to write a conformance.
-        let none = matches!(leaf.kind(), TypeKind::Class(..) | TypeKind::Enum(..))
-            && find(&self.conformances, interface, leaf, args).is_none();
+        let none = matches!(
+            leaf.kind(),
+            TypeKind::Class(..) | TypeKind::Struct(..) | TypeKind::Enum(..)
+        ) && find(&self.conformances, interface, leaf, args).is_none();
         let class_only = interface == self.lang.any_object;
         let make = self.make_for(fix, wants, wants_args);
         let part_fails = leaf != ty
@@ -2073,8 +2091,10 @@ impl Checker<'_> {
 
     /// `probe_associated`, within the budget that it set.
     fn probe_further(&mut self, ty: Type, interface: InterfaceId, args: TypeArgs) {
-        if !matches!(ty.kind(), TypeKind::Class(..) | TypeKind::Enum(..))
-            || !self.probed_types.insert((ty, interface, args))
+        if !matches!(
+            ty.kind(),
+            TypeKind::Class(..) | TypeKind::Struct(..) | TypeKind::Enum(..)
+        ) || !self.probed_types.insert((ty, interface, args))
         {
             return;
         }
@@ -2233,8 +2253,9 @@ impl Checker<'_> {
     fn check_applied_now(&mut self, ty: Type, ats: &[Span]) -> Result<(), Reported> {
         let (bounds, args) = match ty.kind() {
             TypeKind::Class(id, args) => (self.classes[id.0].bounds.clone(), args),
+            TypeKind::Struct(id, args) => (self.structs[id.0].bounds.clone(), args),
             TypeKind::Enum(id, args) => (self.enums[id.0].bounds.clone(), args),
-            _ => unreachable!("only an applied class or enum should wait for its bounds"),
+            _ => unreachable!("only an applied class, struct or enum should wait for its bounds"),
         };
         let mut holds = Ok(());
         for (k, bounds) in bounds.iter().enumerate() {
@@ -2611,7 +2632,10 @@ fn nesting(ty: Type, limit: usize, depths: &mut FxHashMap<Type, usize>) -> Optio
             one = [t];
             &one
         }
-        TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => args.get(),
+        TypeKind::Class(_, args)
+        | TypeKind::Struct(_, args)
+        | TypeKind::Enum(_, args)
+        | TypeKind::Any(_, args) => args.get(),
         // A normalized type with no type parameter holds no associated type.
         _ => &[],
     };

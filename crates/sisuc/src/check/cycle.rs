@@ -122,11 +122,12 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::extend::holder_of;
 use super::interface::BOUND_CLOSURE_LIMIT;
 use super::{Checker, Lowered};
-use crate::ast::angled;
+use crate::ast::{self, angled};
 use crate::conformance::{always_written, interface_closure};
 use crate::diagnostic::{DiagnosticKind, Hop, Spelled};
 use crate::graph::components;
 use crate::source::Span;
+use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeArgs, TypeKind, head_of};
 use crate::types::{Head, write_args, write_method};
 
@@ -327,28 +328,32 @@ impl Assocs {
 }
 
 struct Graph {
-    /// By declaration, its first node: the functions', then the classes', then the enums'; then
-    /// the number of parameter nodes.
+    /// By declaration, its first node: the functions', then the classes', then the enums' and
+    /// the structs'; then the number of parameter nodes.
     first: Vec<usize>,
     functions: usize,
     classes: usize,
+    /// The number of inline declarations: the enums, then the structs (`inline_of`).
     enums: usize,
+    /// Where the structs start among the inline declarations: the number of enums.
+    structs_at: usize,
     /// Where the declaration of the hub of each interface starts: the interface's index added.
     interface_hubs: usize,
-    /// The declaration of the generated `Eq` node of the first enum; the others follow, and then
-    /// the generated `Display` nodes in the same order.
+    /// The declaration of the generated `Eq` node of the first inline declaration; the others
+    /// follow, and then the generated `Display` nodes in the same order.
     eq_first: usize,
-    /// The declaration of the generated `Display` node of the first enum.
+    /// The declaration of the generated `Display` node of the first inline declaration.
     display_first: usize,
-    /// The declaration of the generated `dbg` node of the first enum; the others follow.
+    /// The declaration of the generated `dbg` node of the first inline declaration; the others
+    /// follow.
     dbg_first: usize,
     /// The declaration of the generated `dbg` node of the first class; the others follow.
     dbg_class_first: usize,
     /// The interface whose operators go to the generated `Display` nodes.
     display: tir::InterfaceId,
-    /// By interface and enum, whether a written conformance has the enum as its target, and
-    /// whether one of them has no bound on its parameters.
-    records: FxHashMap<(tir::InterfaceId, tir::EnumId), (bool, bool)>,
+    /// By interface and inline declaration, whether a written conformance has it as its target,
+    /// and whether one of them has no bound on its parameters.
+    records: FxHashMap<(tir::InterfaceId, usize), (bool, bool)>,
     edges: Vec<Edge>,
     /// By declaration and type, the node of a type argument that mentions a parameter, after
     /// the parameters' first and second nodes. Its parts' edges into it stand for "mentions": a
@@ -521,37 +526,34 @@ impl Graph {
             written => Some((interface, written.unwrap_or(Written::Method))),
         };
         let hub = self.interface_hubs + interface.0;
-        match ty.kind() {
-            TypeKind::Param(_, i) => {
-                let from = self.second(holder, i as usize);
-                self.receive(holder, from, hub, (site, mark), instance);
+        // An enum and a struct have generated nodes.
+        if let Some((v, args)) = inline_of(ty, self.structs_at) {
+            let (listed, unconditional) = self
+                .records
+                .get(&(interface, v))
+                .copied()
+                .unwrap_or_default();
+            if !listed || !unconditional {
+                let first = if interface == self.display {
+                    self.display_first
+                } else {
+                    self.eq_first
+                };
+                let instance = Instance::Type(ty, spelling);
+                self.args(holder, args.get(), first + v, site, mark, instance);
             }
-            TypeKind::Enum(id, args) => {
-                let (listed, unconditional) = self
-                    .records
-                    .get(&(interface, id))
-                    .copied()
-                    .unwrap_or_default();
-                if !listed || !unconditional {
-                    let first = if interface == self.display {
-                        self.display_first
-                    } else {
-                        self.eq_first
-                    };
-                    let target = first + id.0;
-                    let instance = Instance::Type(ty, spelling);
-                    self.args(holder, args.get(), target, site, mark, instance);
-                }
-                if listed {
-                    let from = self.node(holder, ty);
-                    self.receive(holder, from, hub, (site, mark), instance);
-                }
-            }
-            _ => {
+            if listed {
                 let from = self.node(holder, ty);
                 self.receive(holder, from, hub, (site, mark), instance);
             }
+            return;
         }
+        let from = if let TypeKind::Param(_, i) = ty.kind() {
+            self.second(holder, i as usize)
+        } else {
+            self.node(holder, ty)
+        };
+        self.receive(holder, from, hub, (site, mark), instance);
     }
 
     /// The node of `ty`, which mentions a parameter, inside `holder`: a parameter's own, or one
@@ -812,9 +814,9 @@ impl Graph {
         }
     }
 
-    /// The edges of each generic class and enum in `ty`, written at `site` inside `holder`; a
-    /// type shared inside `ty` is walked once. An edge sits at the span `inner` gives its
-    /// instance, else at `site`.
+    /// The edges of each generic class, enum and struct in `ty`, written at `site` inside
+    /// `holder`; a type shared inside `ty` is walked once. An edge sits at the span `inner` gives
+    /// its instance, else at `site`.
     fn types(&mut self, holder: usize, ty: Type, site: Span, inner: &[(Type, Span)]) {
         if !ty.has_param() {
             return;
@@ -834,7 +836,11 @@ impl Graph {
                     continue;
                 }
                 TypeKind::Class(id, args) => (self.functions + id.0, args),
-                TypeKind::Enum(id, args) => (self.functions + self.classes + id.0, args),
+                TypeKind::Enum(..) | TypeKind::Struct(..) => {
+                    let (v, args) = inline_of(ty, self.structs_at)
+                        .expect("an enum or a struct should be an inline declaration");
+                    (self.functions + self.classes + v, args)
+                }
                 TypeKind::Assoc(base, interface, args, k) => {
                     let place = self.assocs.first[interface.0] + k as usize;
                     if let Some(hub) = self.assocs.hub(place, args) {
@@ -935,19 +941,19 @@ impl Strands {
     }
 }
 
-/// The declarations that the types `fields` name, as nodes (the classes, then the enums, then the
-/// choices of `assocs`, then its hubs), and among them those that a type gives an argument which
-/// mentions a parameter and is not one. An associated type names the hub of its choices (the nodes
-/// after the choices), and gives it a changed argument when its base is not a parameter itself:
-/// the base is a type of its own then, which nests the parameter at the growth of the associated
-/// types in it.
+/// The declarations that the types `fields` name, as nodes, and those among them that a type
+/// gives a changed argument. A changed argument mentions a parameter and is not one. The nodes
+/// are the classes, then the enums and the structs, then the choices of `assocs`, then its hubs. An
+/// associated type names the hub of its choices (the nodes after the choices). It gives the hub a
+/// changed argument when its base is not a parameter itself: the base is a type of its own then,
+/// which nests the parameter at the growth of the associated types in it.
 ///
 /// `stack` and `seen` are scratch space for the call. Each type is read once, whatever number of
 /// paths lead to it. So `names` and `changed` hold a declaration once for each type that names it.
 fn named(
     stack: &mut Vec<Type>,
     seen: &mut FxHashSet<Type>,
-    (classes, enums): (usize, usize),
+    (classes, enums, structs_at): (usize, usize, usize),
     assocs: &Assocs,
     fields: impl Iterator<Item = Type>,
 ) -> (Vec<usize>, Vec<usize>) {
@@ -967,7 +973,11 @@ fn named(
                 continue;
             }
             TypeKind::Class(id, args) => (id.0, args),
-            TypeKind::Enum(id, args) => (classes + id.0, args),
+            TypeKind::Enum(..) | TypeKind::Struct(..) => {
+                let (v, args) = inline_of(ty, structs_at)
+                    .expect("an enum or a struct should be an inline declaration");
+                (classes + v, args)
+            }
             TypeKind::Assoc(base, interface, args, k) => {
                 let place = assocs.first[interface.0] + k as usize;
                 if let Some(hub) = assocs.hub(place, args) {
@@ -998,6 +1008,20 @@ fn named(
         stack.extend(args);
     }
     (names, changed)
+}
+
+/// A payload of an enum or a field of a struct, as the graph reads it: its type (`None` is
+/// `Error`), where the type is written, and the class and enum types written in it.
+type Part<'a> = (Option<Type>, Span, &'a [(Type, Span)]);
+
+/// The inline declaration that `ty` names, with its arguments: an enum by its id, and a struct
+/// after the `enums` enums. `None` for any other type.
+fn inline_of(ty: Type, enums: usize) -> Option<(usize, TypeArgs)> {
+    match ty.kind() {
+        TypeKind::Enum(id, args) => Some((id.0, args)),
+        TypeKind::Struct(id, args) => Some((enums + id.0, args)),
+        _ => None,
+    }
 }
 
 impl Checker<'_> {
@@ -1306,28 +1330,22 @@ impl Checker<'_> {
     }
 
     /// The name of the declaration `holder` of the graph, which a diagnostic gives. A generated
-    /// node stands for its enum. A choice is never a holder here: `headline` and the spellings
-    /// of a generated call name the declaration that holds it.
+    /// node stands for its enum or struct. A choice is never a holder here: `headline` and the
+    /// spellings of a generated call name the declaration that holds it.
     fn node_owner_name(&self, graph: &Graph, holder: usize) -> String {
         match holder.checked_sub(graph.functions) {
-            _ if holder >= graph.dbg_class_first => self.classes[holder - graph.dbg_class_first]
-                .name
-                .name
-                .to_string(),
-            _ if holder >= graph.dbg_first => {
-                self.enums[holder - graph.dbg_first].name.name.to_string()
+            _ if holder >= graph.dbg_class_first => {
+                &self.classes[holder - graph.dbg_class_first].name
             }
-            _ if holder >= graph.display_first => self.enums[holder - graph.display_first]
-                .name
-                .name
-                .to_string(),
-            _ if holder >= graph.eq_first => {
-                self.enums[holder - graph.eq_first].name.name.to_string()
-            }
-            None => self.signatures[holder].name.clone(),
-            Some(c) if c < self.classes.len() => self.classes[c].name.name.to_string(),
-            Some(c) => self.enums[c - self.classes.len()].name.name.to_string(),
+            _ if holder >= graph.dbg_first => self.inline_decl(holder - graph.dbg_first).0,
+            _ if holder >= graph.display_first => self.inline_decl(holder - graph.display_first).0,
+            _ if holder >= graph.eq_first => self.inline_decl(holder - graph.eq_first).0,
+            None => return self.signatures[holder].name.clone(),
+            Some(c) if c < self.classes.len() => &self.classes[c].name,
+            Some(c) => self.inline_decl(c - self.classes.len()).0,
         }
+        .name
+        .to_string()
     }
 
     /// The graph of the program's declarations with no edges yet: the nodes of every function,
@@ -1341,7 +1359,8 @@ impl Checker<'_> {
         // the receiver of a call through a bound.
         let assocs = self.assocs(self.holds_assoc);
         let mut hubs = FxHashMap::default();
-        let mut declarations = self.signatures.len() + self.classes.len() + self.enums.len();
+        let inline = self.inline_count();
+        let mut declarations = self.signatures.len() + self.classes.len() + inline;
         for (i, info) in self.interfaces.iter().enumerate() {
             for (m, requirement) in info.requirements.iter().enumerate() {
                 for j in 0..requirement.own.len() {
@@ -1350,21 +1369,22 @@ impl Checker<'_> {
                 }
             }
         }
-        // The hubs of the interfaces follow, one each, and then the generated `Eq` node of each
-        // enum, which has the enum's parameters, and its generated `Display` node and `dbg` node.
-        // The generated `dbg` node of each class, which has the class's parameters, follows.
+        // The hubs of the interfaces follow, one each. Then come the generated `Eq` node of each
+        // enum and struct, which has its parameters, and its generated `Display` and `dbg`
+        // nodes. The generated `dbg` node of each class, which has the class's parameters, follows.
         let interface_hubs = declarations;
         let eq_first = interface_hubs + self.interfaces.len();
-        let display_first = eq_first + self.enums.len();
-        let dbg_first = display_first + self.enums.len();
-        let dbg_class_first = dbg_first + self.enums.len();
+        let display_first = eq_first + inline;
+        let dbg_first = display_first + inline;
+        let dbg_class_first = dbg_first + inline;
+        let inline_params = || (0..inline).map(|v| self.inline_decl(v).1.len());
         let counts = self.signatures.iter().map(|s| s.type_params.len());
         let counts = counts.chain(self.classes.iter().map(|c| c.type_params.len()));
-        let counts = counts.chain(self.enums.iter().map(|e| e.type_params.len()));
+        let counts = counts.chain(inline_params());
         let counts = counts.chain(std::iter::repeat_n(1, hubs.len() + self.interfaces.len()));
-        let counts = counts.chain(self.enums.iter().map(|e| e.type_params.len()));
-        let counts = counts.chain(self.enums.iter().map(|e| e.type_params.len()));
-        let counts = counts.chain(self.enums.iter().map(|e| e.type_params.len()));
+        let counts = counts.chain(inline_params());
+        let counts = counts.chain(inline_params());
+        let counts = counts.chain(inline_params());
         let counts = counts.chain(self.classes.iter().map(|c| c.type_params.len()));
         let counts = counts.chain(assocs.choices.iter().map(|c| c.depths.len()));
         let counts = counts.chain(assocs.hubs.iter().map(|_| 1));
@@ -1378,7 +1398,8 @@ impl Checker<'_> {
             first,
             functions: declared,
             classes: self.classes.len(),
-            enums: self.enums.len(),
+            enums: inline,
+            structs_at: self.enums.len(),
             interface_hubs,
             eq_first,
             display_first,
@@ -1397,11 +1418,13 @@ impl Checker<'_> {
         (graph, hubs, interface_hubs)
     }
 
-    /// A graph of the classes, the enums and the choices of `assocs` alone: no function, hub or
-    /// generated node, so its size follows the declarations that `declaration_edges` reads.
+    /// A graph of the classes, the enums, the structs and the choices of `assocs` alone: no
+    /// function, hub or generated node, so its size follows the declarations that
+    /// `declaration_edges` reads.
     fn declaration_frame(&self, assocs: Assocs) -> Graph {
+        let inline = self.inline_count();
         let counts = (self.classes.iter().map(|c| c.type_params.len()))
-            .chain(self.enums.iter().map(|e| e.type_params.len()))
+            .chain((0..inline).map(|v| self.inline_decl(v).1.len()))
             .chain(assocs.choices.iter().map(|c| c.depths.len()))
             .chain(assocs.hubs.iter().map(|_| 1))
             .chain(assocs.choices.iter().map(|_| 1));
@@ -1409,12 +1432,13 @@ impl Checker<'_> {
         for n in counts {
             first.push(first[first.len() - 1] + n);
         }
-        let end = self.classes.len() + self.enums.len();
+        let end = self.classes.len() + inline;
         Graph {
             first,
             functions: 0,
             classes: self.classes.len(),
-            enums: self.enums.len(),
+            enums: inline,
+            structs_at: self.enums.len(),
             interface_hubs: end,
             eq_first: end,
             display_first: end,
@@ -1640,7 +1664,7 @@ impl Checker<'_> {
     /// part of each payload type is read once, so the pass is linear in the type parameters and
     /// payloads.
     pub(super) fn shown_params(&self) -> Vec<Vec<bool>> {
-        let hidden: Vec<bool> = (0..self.enums.len())
+        let hidden: Vec<bool> = (0..self.inline_count())
             .map(|e| always_written(&self.conformances, self.lang.display, self.own_type(e)))
             .collect();
         self.shown_params_with(&hidden)
@@ -1653,23 +1677,21 @@ impl Checker<'_> {
     pub(super) fn shown_params_with(&self, hidden: &[bool]) -> Vec<Vec<bool>> {
         // A node is ready when its `need` is 0: a parameter needs one of the nodes that lead to it,
         // an argument needs both its holders.
-        let first: Vec<usize> = (self.enums.iter())
-            .scan(0, |at, info| {
+        let inline = self.inline_count();
+        let first: Vec<usize> = (0..inline)
+            .scan(0, |at, v| {
                 let first = *at;
-                *at += info.type_params.len();
+                *at += self.inline_decl(v).1.len();
                 Some(first)
             })
             .collect();
-        let params: usize = self.enums.iter().map(|e| e.type_params.len()).sum();
+        let params: usize = (0..inline).map(|v| self.inline_decl(v).1.len()).sum();
         let mut need = vec![1_u8; params];
         let mut then: Vec<Vec<usize>> = vec![Vec::new(); params];
         let mut ready = Vec::new();
         let mut stack: Vec<(Type, Option<usize>)> = Vec::new();
-        for (e, info) in self.enums.iter().enumerate() {
-            let payloads = info
-                .variants
-                .iter()
-                .flat_map(|v| v.fields.iter().copied().flatten());
+        for e in 0..inline {
+            let payloads = self.inline_parts(e).filter_map(|(ty, ..)| ty);
             stack.extend(payloads.map(|ty| (ty, None)));
             while let Some((ty, from)) = stack.pop() {
                 #[cfg(test)]
@@ -1680,8 +1702,10 @@ impl Checker<'_> {
                         None => ready.push(first[e] + i as usize),
                     },
                     TypeKind::Array(part) | TypeKind::Optional(part) => stack.push((part, from)),
-                    TypeKind::Enum(id, args) => {
-                        if hidden[id.0] {
+                    TypeKind::Enum(..) | TypeKind::Struct(..) => {
+                        let (v, args) = inline_of(ty, self.enums.len())
+                            .expect("an enum or a struct should be an inline declaration");
+                        if hidden[v] {
                             continue;
                         }
                         for (j, &arg) in
@@ -1690,7 +1714,7 @@ impl Checker<'_> {
                             let node = need.len();
                             need.push(1 + u8::from(from.is_some()));
                             then.push(Vec::new());
-                            then[first[id.0] + j].push(node);
+                            then[first[v] + j].push(node);
                             if let Some(from) = from {
                                 then[from].push(node);
                             }
@@ -1713,17 +1737,55 @@ impl Checker<'_> {
                 }
             }
         }
-        (self.enums.iter().enumerate())
-            .map(|(e, info)| done[first[e]..first[e] + info.type_params.len()].to_vec())
+        (0..inline)
+            .map(|e| done[first[e]..first[e] + self.inline_decl(e).1.len()].to_vec())
             .collect()
     }
 
-    /// The enum `e` applied to its own type parameters, as its declaration names it.
-    fn own_type(&self, e: usize) -> Type {
-        let params: Vec<Type> = (self.enums[e].type_params.iter().zip(0..))
+    /// The inline declaration `v` applied to its own type parameters, as its declaration names
+    /// it.
+    fn own_type(&self, v: usize) -> Type {
+        let params: Vec<Type> = (self.inline_decl(v).1.iter().zip(0..))
             .map(|(&name, i)| Type::intern(TypeKind::Param(name, i)))
             .collect();
-        Type::intern(TypeKind::Enum(tir::EnumId(e), TypeArgs::intern(&params)))
+        let args = TypeArgs::intern(&params);
+        Type::intern(match v.checked_sub(self.enums.len()) {
+            None => TypeKind::Enum(tir::EnumId(v), args),
+            Some(s) => TypeKind::Struct(tir::StructId(s), args),
+        })
+    }
+
+    /// How many inline declarations there are: the enums, then the structs. The graph numbers
+    /// each by that order (`inline_of`).
+    fn inline_count(&self) -> usize {
+        self.enums.len() + self.structs.len()
+    }
+
+    /// The name and the type parameters of the inline declaration `v`.
+    fn inline_decl(&self, v: usize) -> (&ast::Ident, &[Symbol]) {
+        match v.checked_sub(self.enums.len()) {
+            None => (&self.enums[v].name, &self.enums[v].type_params),
+            Some(s) => (&self.structs[s].name, &self.structs[s].type_params),
+        }
+    }
+
+    /// The payloads of the enum, or the fields of the struct, that is the inline declaration `v`.
+    fn inline_parts(&self, v: usize) -> impl Iterator<Item = Part<'_>> {
+        let (e, s) = match v.checked_sub(self.enums.len()) {
+            None => (Some(&self.enums[v]), None),
+            Some(s) => (None, Some(&self.structs[s])),
+        };
+        let payloads = (e.into_iter().flat_map(|info| &info.variants)).flat_map(|variant| {
+            (variant
+                .fields
+                .iter()
+                .zip(&variant.spans)
+                .zip(&variant.inner))
+            .map(|((&ty, &span), inner)| (ty, span, inner.as_slice()))
+        });
+        let fields = (s.into_iter().flat_map(|info| &info.fields))
+            .map(|f| (f.ty, f.ty_span, f.inner.as_slice()));
+        payloads.chain(fields)
     }
 
     /// The edges that a `dbg` of an operand of type `ty` adds, inside `holder` at `site`, to those
@@ -1756,8 +1818,10 @@ impl Checker<'_> {
             #[cfg(test)]
             DBG_VISITS.set(DBG_VISITS.get() + 1);
             match ty.kind() {
-                TypeKind::Enum(id, args) => {
-                    let target = graph.dbg_first + id.0;
+                TypeKind::Enum(..) | TypeKind::Struct(..) => {
+                    let (v, args) = inline_of(ty, graph.structs_at)
+                        .expect("an enum or a struct should be an inline declaration");
+                    let target = graph.dbg_first + v;
                     graph.args(
                         holder,
                         args.get(),
@@ -1766,7 +1830,7 @@ impl Checker<'_> {
                         site,
                         Instance::Type(ty, None),
                     );
-                    let on = shown[id.0].iter();
+                    let on = shown[v].iter();
                     stack.extend(
                         args.get()
                             .iter()
@@ -1811,27 +1875,23 @@ impl Checker<'_> {
                 }
             }
         }
-        for (e, info) in self.enums.iter().enumerate() {
-            let holder = graph.dbg_first + e;
-            for variant in &info.variants {
-                for (ty, &span) in variant.fields.iter().zip(&variant.spans) {
-                    if let Some(ty) = *ty {
-                        self.dbg_show(graph, shown, holder, ty, span);
-                    }
+        for v in 0..self.inline_count() {
+            let holder = graph.dbg_first + v;
+            for (ty, span, _) in self.inline_parts(v) {
+                if let Some(ty) = ty {
+                    self.dbg_show(graph, shown, holder, ty, span);
                 }
             }
         }
     }
 
-    /// By interface and enum, whether a written conformance targets the enum, and whether one of
-    /// them has no bound: one pass over the conformances.
-    pub(super) fn written_records(
-        &self,
-    ) -> FxHashMap<(tir::InterfaceId, tir::EnumId), (bool, bool)> {
+    /// By interface and inline declaration, whether a written conformance targets it, and whether
+    /// one of them has no bound: one pass over the conformances.
+    pub(super) fn written_records(&self) -> FxHashMap<(tir::InterfaceId, usize), (bool, bool)> {
         let mut records: FxHashMap<_, (bool, bool)> = FxHashMap::default();
         for (interface, conformance) in self.conformances.iter() {
-            if let TypeKind::Enum(id, _) = conformance.target.kind() {
-                let entry = records.entry((interface, id)).or_default();
+            if let Some((v, _)) = inline_of(conformance.target, self.enums.len()) {
+                let entry = records.entry((interface, v)).or_default();
                 entry.0 = true;
                 entry.1 |= conformance.bounds.iter().all(Vec::is_empty);
             }
@@ -1839,36 +1899,34 @@ impl Checker<'_> {
         records
     }
 
-    /// The edges of the generated `Eq` and `Display` nodes of each enum: one for each payload
-    /// type, chosen as an operand is. An enum that grows, or that no value can be built of, has
-    /// none, as its declaration has none: its own error stands for its cycle.
+    /// The edges of the generated `Eq` and `Display` nodes of each enum and struct: one for each
+    /// payload or field type, chosen as an operand is. One that grows, or that no value can be
+    /// built of, has none, as its declaration has none: its own error stands for its cycle.
     fn generated_edges(&self, graph: &mut Graph) {
-        for (e, info) in self.enums.iter().enumerate() {
-            if self.marked[e] {
+        for v in 0..self.inline_count() {
+            if self.marked[v] {
                 continue;
             }
             for (holder, interface) in [
-                (graph.eq_first + e, self.lang.eq),
-                (graph.display_first + e, self.lang.display),
+                (graph.eq_first + v, self.lang.eq),
+                (graph.display_first + v, self.lang.display),
             ] {
-                for variant in &info.variants {
-                    for (ty, &span) in variant.fields.iter().zip(&variant.spans) {
-                        if let Some(ty) = *ty {
-                            graph.operator(
-                                holder,
-                                ty,
-                                interface,
-                                (span, span),
-                                Some(Written::Generated(ty)),
-                            );
-                        }
+                for (ty, span, _) in self.inline_parts(v) {
+                    if let Some(ty) = ty {
+                        graph.operator(
+                            holder,
+                            ty,
+                            interface,
+                            (span, span),
+                            Some(Written::Generated(ty)),
+                        );
                     }
                 }
             }
         }
     }
 
-    /// By class and then enum, whether the declaration is on a cycle that grows its type
+    /// By class, then enum, then struct, whether the declaration is on a cycle that grows its type
     /// arguments (E0140): a declaration with a parameter in a component of the declarations'
     /// graph that holds a cycle of positive weight (`Strands::grows`). The graph is the
     /// declarations' alone, `declaration_edges` over `Strands`, with no hub. It needs the choices
@@ -1884,7 +1942,7 @@ impl Checker<'_> {
         };
         let growable = self.growable_declarations(&assocs);
         let counts: Vec<usize> = (self.classes.iter().map(|c| c.type_params.len()))
-            .chain(self.enums.iter().map(|e| e.type_params.len()))
+            .chain((0..self.inline_count()).map(|v| self.inline_decl(v).1.len()))
             .collect();
         if !(counts.iter().zip(&growable)).any(|(&n, &on)| on && n > 0) {
             return vec![false; counts.len()];
@@ -1908,17 +1966,18 @@ impl Checker<'_> {
             .collect()
     }
 
-    /// By class and then enum, whether the declaration is on a cycle of declarations that name
-    /// each other in a field or a payload type (at any depth of an argument, array or optional)
-    /// in which a type gives an argument that mentions a parameter and is not one: a type
-    /// argument can grow along such a cycle only. A cycle that passes each parameter on as it is
-    /// has weight 0. An associated type names the type of each choice of it, a declaration of its
-    /// own, which names in turn. Each field and payload type is read once, with its arguments.
+    /// By class, then enum, then struct, whether the declaration is on a cycle of declarations
+    /// that name each other in field or payload types. A name can be at any depth of an
+    /// argument, array or optional. On the cycle, a type gives an argument that mentions a
+    /// parameter and is not one. A type argument can grow along such a cycle only. A cycle that
+    /// passes each parameter on as it is has weight 0. An associated type names the type of each
+    /// choice of it, a declaration of its own, which names in turn. Each field and payload type is
+    /// read once, with its arguments.
     fn growable_declarations(&self, assocs: &Assocs) -> Vec<bool> {
         let (mut stack, mut seen) = (Vec::new(), FxHashSet::default());
-        let declared = (self.classes.len(), self.enums.len());
+        let declared = (self.classes.len(), self.inline_count(), self.enums.len());
         let nodes =
-            self.classes.len() + self.enums.len() + assocs.choices.len() + assocs.hubs.len();
+            self.classes.len() + self.inline_count() + assocs.choices.len() + assocs.hubs.len();
         let mut names: Vec<Vec<usize>> = Vec::with_capacity(nodes);
         let mut changed: Vec<Vec<usize>> = Vec::with_capacity(nodes);
         let mut read = |(named, passed): (Vec<usize>, Vec<usize>)| {
@@ -1934,9 +1993,9 @@ impl Checker<'_> {
                 class.fields.iter().filter_map(|f| f.ty),
             ));
         }
-        for info in &self.enums {
-            let payloads = (info.variants.iter()).flat_map(|v| v.fields.iter().copied().flatten());
-            read(named(&mut stack, &mut seen, declared, assocs, payloads));
+        for v in 0..self.inline_count() {
+            let parts = self.inline_parts(v).filter_map(|(ty, ..)| ty);
+            read(named(&mut stack, &mut seen, declared, assocs, parts));
         }
         for choice in &assocs.choices {
             read(named(
@@ -1969,11 +2028,11 @@ impl Checker<'_> {
             .collect()
     }
 
-    /// The edges that the field types of each class and the payload types of each enum give,
-    /// except for a declaration in `unbuilt`, by class and then enum, whose own error stands for
-    /// its cycle, or that `growable_declarations` leaves out (`growing_declarations`); and those
-    /// that the type of each choice gives. They read the declarations alone, so the marks of
-    /// growing declarations use them with no function.
+    /// The edges that the field types of each class and struct and the payload types of each enum
+    /// give. The type of each choice gives edges too. They leave out a declaration in
+    /// `unbuilt`, by class, then enum, then struct, whose own error stands for its cycle. They also
+    /// leave out one that `growable_declarations` leaves out (`growing_declarations`). They read
+    /// the declarations alone, so the marks of growing declarations use them with no function.
     fn declaration_edges(&self, graph: &mut Graph, unbuilt: &[bool]) {
         let declared = graph.functions;
         for (c, class) in self.classes.iter().enumerate() {
@@ -1986,20 +2045,13 @@ impl Checker<'_> {
                 }
             }
         }
-        for (e, info) in self.enums.iter().enumerate() {
-            if unbuilt[self.classes.len() + e] {
+        for v in 0..self.inline_count() {
+            if unbuilt[self.classes.len() + v] {
                 continue;
             }
-            for variant in &info.variants {
-                let written = variant
-                    .fields
-                    .iter()
-                    .zip(&variant.spans)
-                    .zip(&variant.inner);
-                for ((ty, &span), inner) in written {
-                    if let Some(ty) = *ty {
-                        graph.types(declared + self.classes.len() + e, ty, span, inner);
-                    }
+            for (ty, span, inner) in self.inline_parts(v) {
+                if let Some(ty) = ty {
+                    graph.types(declared + self.classes.len() + v, ty, span, inner);
                 }
             }
         }
@@ -2046,15 +2098,13 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether the type of a field of a class or a payload of an enum holds an associated type.
+    /// Whether the type of a field of a class or a struct, or a payload of an enum, holds an
+    /// associated type.
     pub(super) fn field_assoc(&self) -> bool {
         let fields = (self.classes.iter()).flat_map(|c| c.fields.iter().filter_map(|f| f.ty));
-        let payloads = (self.enums.iter()).flat_map(|e| {
-            e.variants
-                .iter()
-                .flat_map(|v| v.fields.iter().copied().flatten())
-        });
-        fields.chain(payloads).any(Type::has_assoc)
+        let parts =
+            (0..self.inline_count()).flat_map(|v| self.inline_parts(v).filter_map(|(ty, ..)| ty));
+        fields.chain(parts).any(Type::has_assoc)
     }
 
     /// The associated types of the interfaces: their growths and, with `choices`, the choices that
@@ -2559,6 +2609,7 @@ mod tests {
             functions: 1,
             classes: 1,
             enums: 0,
+            structs_at: 0,
             interface_hubs: 2,
             eq_first: 2,
             display_first: 2,
@@ -2729,6 +2780,7 @@ mod tests {
             functions: 1,
             classes: 0,
             enums: 2,
+            structs_at: 2,
             interface_hubs: 3,
             eq_first: 4,
             display_first: 6,
@@ -2795,7 +2847,7 @@ mod tests {
         ] {
             let mut g = graph_with_enums();
             if let Some(records) = records {
-                g.records.insert((interface, tir::EnumId(1)), records);
+                g.records.insert((interface, 1), records);
             }
             g.operator(0, ty, interface, (site, site), Some(Written::Op("==")));
             let into = |node: usize| g.edges.iter().any(|edge| edge.to == node);

@@ -1198,16 +1198,13 @@ impl Checker<'_> {
         args: &[ast::Arg],
         through: Option<&Through>,
     ) -> Checked {
-        let class = match owner {
-            FieldOwner::Class(class) => {
-                self.record(Used::Class(class), span);
-                Some(class)
-            }
-            FieldOwner::Struct(id) => {
-                self.record(Used::Struct(id), span);
-                None
-            }
-        };
+        self.record(
+            match owner {
+                FieldOwner::Class(class) => Used::Class(class),
+                FieldOwner::Struct(id) => Used::Struct(id),
+            },
+            span,
+        );
         self.refuse_mut(
             args,
             Callee::Construct {
@@ -1221,7 +1218,7 @@ impl Checker<'_> {
         let name = info.name.name.as_str();
         let own = match owner {
             FieldOwner::Class(class) => TypeKind::Class(class, own_args(&info.type_params)),
-            FieldOwner::Struct(id) => TypeKind::Struct(id, TypeArgs::NONE),
+            FieldOwner::Struct(id) => TypeKind::Struct(id, own_args(&info.type_params)),
         };
         let (declared, bounds, ret, fields): (_, _, _, Vec<(Symbol, Option<Type>)>) = match through
         {
@@ -1277,11 +1274,11 @@ impl Checker<'_> {
                 _ => Ok(()),
             };
             let ty = self.built_type(ty, held, span)?;
-            let class = class.expect("only a class should take type parameters");
             return match (args.into_iter().collect::<Result<Vec<_>, Poisoned>>(), held) {
-                (Ok(args), Ok(())) => {
-                    Ok(self.spilled(span, ty, args, |args| tir::ExprKind::New { class, args }))
-                }
+                (Ok(args), Ok(())) => Ok(self.spilled(span, ty, args, |args| match owner {
+                    FieldOwner::Class(class) => tir::ExprKind::New { class, args },
+                    FieldOwner::Struct(id) => tir::ExprKind::Struct { id, args },
+                })),
                 (Ok(_), Err(reported)) => Err(Poisoned::untyped(reported)),
                 (Err(failed), held) => {
                     // No argument settles a parameter in a call with a failed part.

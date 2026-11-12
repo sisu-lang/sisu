@@ -619,7 +619,10 @@ fn mentions_self(ty: Type) -> bool {
                 }
             }
             TypeKind::Array(part) | TypeKind::Optional(part) => stack.push(part),
-            TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
+            TypeKind::Class(_, args)
+            | TypeKind::Struct(_, args)
+            | TypeKind::Enum(_, args)
+            | TypeKind::Any(_, args) => {
                 stack.extend_from_slice(args.get());
             }
             TypeKind::Assoc(base, _, args, _) => {

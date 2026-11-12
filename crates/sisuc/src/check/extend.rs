@@ -370,12 +370,17 @@ impl<'a> Checker<'_> {
         let uses = self.aliases.uses;
         let resolved = self.resolve(ty)?;
         let form = match resolved.kind() {
-            TypeKind::Class(..) | TypeKind::Enum(..) if !resolved.has_assoc() => {
+            TypeKind::Class(..) | TypeKind::Struct(..) | TypeKind::Enum(..)
+                if !resolved.has_assoc() =>
+            {
                 return Some(resolved);
             }
             // An associated type in the target: the block's parameters could not be found from
             // the receiver, and `overlap` and `find` compare types structurally.
-            TypeKind::Class(..) | TypeKind::Enum(..) | TypeKind::Assoc(..) => {
+            TypeKind::Class(..)
+            | TypeKind::Struct(..)
+            | TypeKind::Enum(..)
+            | TypeKind::Assoc(..) => {
                 self.cannot_extend_assoc(ty);
                 return None;
             }

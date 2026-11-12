@@ -200,6 +200,38 @@ enum Holder {
     I64,
 }
 
+/// The parts of a class or a struct declaration that pass 2 reads.
+#[derive(Clone, Copy)]
+struct HolderDecl<'a> {
+    name: &'a ast::Ident,
+    type_params: &'a [ast::TypeParam],
+    assoc: &'a [ast::AssocChoice],
+    members: &'a [ast::Member],
+    broken_methods: &'a [ast::Ident],
+}
+
+impl<'a> HolderDecl<'a> {
+    fn of_class(class: &'a ast::Class) -> Self {
+        Self {
+            name: &class.name,
+            type_params: &class.type_params,
+            assoc: &class.assoc,
+            members: &class.members,
+            broken_methods: &class.broken_methods,
+        }
+    }
+
+    fn of_struct(s: &'a ast::Struct) -> Self {
+        Self {
+            name: &s.name,
+            type_params: &s.type_params,
+            assoc: &s.assoc,
+            members: &s.members,
+            broken_methods: &s.broken_methods,
+        }
+    }
+}
+
 /// The type parameters of a declaration with the bounds of each.
 type ParamBounds = (Vec<Symbol>, Vec<Bounds>);
 
@@ -599,8 +631,6 @@ thread_local! {
     pub(super) static PARAM_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many users of an alias `unknown_alias` has visited on this thread.
     pub(super) static ALIAS_USER_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many alias steps `structs::extended` has taken on this thread.
-    pub(super) static EXTENDED_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many times `binding` has walked the open scopes for a name on this thread.
     pub(super) static BINDING_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many inherited interfaces the check for a requirement that an interface declares
@@ -784,11 +814,12 @@ struct Checker<'src> {
     lang: tir::LangInterfaces,
     /// The state of the root query of `conforms` that is open, if one is.
     open: conformance::Open,
-    /// By class and then enum, whether the declaration has the never-built error.
+    /// By class, then enum, then struct, whether the declaration has the never-built error.
     unbuilt: Vec<bool>,
-    /// By `EnumId`, whether the enum grows (`enum Nest<T> { End\n Next(Nest<[T]>) }`, E0140) or
-    /// no value can be built of it (the never-built error): the generated rule answers `true`
-    /// for it with no part query, so its own error is its only diagnostic.
+    /// By `EnumId`, and then by `StructId` after the enums, whether the enum or struct grows
+    /// (`enum Nest<T> { End\n Next(Nest<[T]>) }`, E0140) or cannot be built (the never-built
+    /// error). The generated rule answers `true` for it with no part query, so its own error is
+    /// its only diagnostic.
     marked: Vec<bool>,
     /// By `ClassId`, whether the class grows (`class Nest<T> { next: Nest<[T]>? }`, E0140). A
     /// query still expands it, but a query that is too deep at it gets no second report.
@@ -1499,8 +1530,8 @@ impl Checker<'_> {
         // types are recorded, which a growth through an associated type needs.
         let cyclic = self.never_constructed();
         self.unbuilt = self.never_built(&cyclic);
-        let enums = self.classes.len()..self.classes.len() + self.enums.len();
-        self.marked = self.unbuilt[enums].to_vec();
+        // The enums, then the structs.
+        self.marked = self.unbuilt[self.classes.len()..].to_vec();
         self.growing_classes = vec![false; self.classes.len()];
         self.read_declared_bounds();
         self.conformances(items);
@@ -1588,7 +1619,6 @@ impl Checker<'_> {
         // redeclare a name of the program.
         let mut rejected = Vec::new();
         let mut next_function = 0;
-        let extended = structs::extended(items);
         let mut waiting = broken.iter().peekable();
         for (at, item) in items.iter().enumerate() {
             if at == user_items {
@@ -1618,7 +1648,7 @@ impl Checker<'_> {
                         .count();
                 }
                 ast::Item::Struct(s) => {
-                    next_function += self.collect_struct(s, &extended, &mut first, &mut rejected);
+                    next_function += self.collect_struct(s, &mut first, &mut rejected);
                 }
                 ast::Item::Function(f) => {
                     if !self.built_in(&f.name)
@@ -1905,10 +1935,6 @@ impl Checker<'_> {
     /// Pass 2: each class's fields, each enum's variants and every signature, in `FuncId`
     /// order. Returns each function with the type of a method's `self`. A class's fields and
     /// methods share a namespace.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one arm per kind of item, so the signatures of all of them are collected in one place"
-    )]
     fn collect_signatures<'a>(
         &mut self,
         items: &[&'a ast::Item],
@@ -1935,93 +1961,139 @@ impl Checker<'_> {
                     continue;
                 }
                 ast::Item::Struct(s) => {
-                    next_struct +=
-                        usize::from(self.struct_signatures(s, next_struct, &mut declared));
+                    let id = tir::StructId(next_struct);
+                    next_struct += 1;
+                    let decl = HolderDecl::of_struct(s);
+                    self.holder_signatures(Holder::Struct(id), decl, &mut declared);
                     continue;
                 }
                 ast::Item::Const(_) | ast::Item::Alias(_) | ast::Item::Interface(_) => continue,
             };
             let id = tir::ClassId(next_class);
             next_class += 1;
-            let owner = self.classes[id.0].type_params.clone();
-            let receiver = Type::intern(TypeKind::Class(id, own_args(&owner)));
-            self.body.self_type = SelfType::Known(receiver);
-            self.body.set_type_params(&owner);
-            let bounds = self.declare_bounds(0, Vec::new(), &class.type_params);
-            if self.classes[id.0].bounded {
-                self.classes[id.0].bounds = bounds;
-            }
-            // The choices come before the fields and the signatures, which may name them.
-            self.classes[id.0].assoc = self.declare_choices(&class.assoc, class.name.name.as_str());
-            self.body.set_type_params(&[]);
-            let mut first = FxHashMap::default();
-            let mut scoped = false;
-            for member in &class.members {
-                match member {
-                    ast::Member::Field(field) => {
-                        // The class's parameters stay in scope from one field to the next, and a
-                        // method takes them out.
-                        if !scoped {
-                            self.body.set_type_params(&owner);
-                            self.body.set_bounds(0, self.classes[id.0].bounds.clone());
-                            scoped = true;
-                        }
-                        let from = self.queued();
-                        let FieldType { ty, inner, shown } =
-                            self.resolve_field(&field.ty, owner.is_empty());
-                        let queued = from..self.queued();
-                        if self.first_definition(
-                            &mut first,
-                            Definition::Field,
-                            Some(class.name.name.as_str()),
-                            &field.name,
-                        ) {
-                            self.keep_at(queued, Slot::Field(id, self.classes[id.0].fields.len()));
-                            // `names_to_string_field` reads this flag, not the fields.
-                            if field.name.name.as_str() == "to_string" {
-                                self.classes[id.0].names_to_string = true;
-                            }
-                            self.classes[id.0].add_field(FieldInfo {
-                                name: field.name.clone(),
-                                ty_span: field.ty.span,
-                                inner,
-                                ty,
-                                shown,
-                                mutable: field.mutable,
-                            });
-                        }
-                    }
-                    ast::Member::Method(method) => {
-                        scoped = false;
-                        let func = tir::FuncId(self.signatures.len());
-                        if self.first_definition(
-                            &mut first,
-                            Definition::Method,
-                            Some(class.name.name.as_str()),
-                            &method.name,
-                        ) {
-                            self.classes[id.0]
-                                .methods
-                                .insert(method.name.name, Declared::Known(func));
-                        }
-                        let name = format!("{}.{}", class.name.name, method.name.name);
-                        let bounds = self.classes[id.0].bounds.clone();
-                        self.signature(method, name, &class.type_params, bounds);
-                        declared.push((method, SelfType::Known(receiver)));
-                    }
-                }
-            }
-            self.body.set_type_params(&[]);
-            for method in &class.broken_methods {
-                let reported = self.proof(method.span); // proof: parser mark
-                self.classes[id.0]
-                    .methods
-                    .insert(method.name, Declared::Poisoned(reported));
-            }
-            self.body.self_type = SelfType::Absent;
-            self.body.assoc = Rc::default();
+            self.holder_signatures(
+                Holder::Class(id),
+                HolderDecl::of_class(class),
+                &mut declared,
+            );
         }
         declared
+    }
+
+    /// Pass 2 for the class or struct `holder`, declared as `decl`: its bounds, its choices, its
+    /// fields and the signatures of its methods, which go to `declared` with `self`'s type. Its
+    /// fields and methods share a namespace.
+    fn holder_signatures<'a>(
+        &mut self,
+        holder: Holder,
+        decl: HolderDecl<'a>,
+        declared: &mut Vec<(&'a ast::Function, SelfType)>,
+    ) {
+        let owner_name = decl.name.name.as_str();
+        let owner = self.holder_info(holder).type_params.clone();
+        let receiver = Type::intern(match holder {
+            Holder::Class(id) => TypeKind::Class(id, own_args(&owner)),
+            Holder::Struct(id) => TypeKind::Struct(id, own_args(&owner)),
+            Holder::Enum(_) | Holder::Array | Holder::I64 => {
+                unreachable!("`collect_signatures` should pass only a class or a struct")
+            }
+        });
+        self.body.self_type = SelfType::Known(receiver);
+        self.body.set_type_params(&owner);
+        let bounds = self.declare_bounds(0, Vec::new(), decl.type_params);
+        if self.holder_info(holder).bounded {
+            self.holder_info(holder).bounds = bounds;
+        }
+        // The choices come before the fields and the signatures, which may name them.
+        self.holder_info(holder).assoc = self.declare_choices(decl.assoc, owner_name);
+        self.body.set_type_params(&[]);
+        let mut first = FxHashMap::default();
+        let mut scoped = false;
+        for member in decl.members {
+            match member {
+                ast::Member::Field(field) => {
+                    // The parameters stay in scope from one field to the next, and a method takes
+                    // them out.
+                    if !scoped {
+                        self.body.set_type_params(&owner);
+                        let bounds = self.holder_info(holder).bounds.clone();
+                        self.body.set_bounds(0, bounds);
+                        scoped = true;
+                    }
+                    let from = self.queued();
+                    let FieldType { ty, inner, shown } =
+                        self.resolve_field(&field.ty, owner.is_empty());
+                    let queued = from..self.queued();
+                    if self.first_definition(
+                        &mut first,
+                        Definition::Field,
+                        Some(owner_name),
+                        &field.name,
+                    ) {
+                        let at = self.holder_info(holder).fields.len();
+                        let slot = match holder {
+                            Holder::Struct(id) => Slot::StructField(id, at),
+                            Holder::Class(id) => Slot::Field(id, at),
+                            Holder::Enum(_) | Holder::Array | Holder::I64 => {
+                                unreachable!(
+                                    "`collect_signatures` should pass only a class or a struct"
+                                )
+                            }
+                        };
+                        self.keep_at(queued, slot);
+                        let info = self.holder_info(holder);
+                        // `names_to_string_field` reads this flag, not the fields.
+                        if field.name.name.as_str() == "to_string" {
+                            info.names_to_string = true;
+                        }
+                        info.add_field(FieldInfo {
+                            name: field.name.clone(),
+                            ty_span: field.ty.span,
+                            inner,
+                            ty,
+                            shown,
+                            // A struct field changes as its holder does.
+                            mutable: field.mutable && matches!(holder, Holder::Class(_)),
+                        });
+                    }
+                }
+                ast::Member::Method(method) => {
+                    scoped = false;
+                    let func = tir::FuncId(self.signatures.len());
+                    if self.first_definition(
+                        &mut first,
+                        Definition::Method,
+                        Some(owner_name),
+                        &method.name,
+                    ) {
+                        (self.holder_info(holder).methods)
+                            .insert(method.name.name, Declared::Known(func));
+                    }
+                    let name = format!("{owner_name}.{}", method.name.name);
+                    let bounds = self.holder_info(holder).bounds.clone();
+                    self.signature(method, name, decl.type_params, bounds);
+                    declared.push((method, SelfType::Known(receiver)));
+                }
+            }
+        }
+        self.body.set_type_params(&[]);
+        for method in decl.broken_methods {
+            let reported = self.proof(method.span); // proof: parser mark
+            (self.holder_info(holder).methods).insert(method.name, Declared::Poisoned(reported));
+        }
+        self.body.self_type = SelfType::Absent;
+        self.body.assoc = Rc::default();
+    }
+
+    /// The table entry of the class or struct `holder`.
+    pub(super) fn holder_info(&mut self, holder: Holder) -> &mut ClassInfo {
+        match holder {
+            Holder::Class(id) => &mut self.classes[id.0],
+            Holder::Struct(id) => &mut self.structs[id.0],
+            Holder::Enum(_) | Holder::Array | Holder::I64 => {
+                unreachable!("`collect_signatures` should pass only a class or a struct")
+            }
+        }
     }
 
     /// `f`'s signature, named `name`, where `owner` are the type parameters of a method's class
@@ -2288,12 +2360,15 @@ impl Checker<'_> {
                     .then_some(ty)
             }
             Resolved::Item(ItemId::Struct(id)) => {
-                let list = if args.is_empty() {
+                let list = if args.is_empty() && self.structs[id.0].type_params.is_empty() {
                     TypeArgs::NONE
                 } else {
-                    self.type_args(&ident(), &[], args, angles).ok()?
+                    let declared = self.structs[id.0].type_params.clone();
+                    self.type_args(&ident(), &declared, args, angles).ok()?
                 };
-                Some(Type::intern(TypeKind::Struct(id, list)))
+                let ty = Type::intern(TypeKind::Struct(id, list));
+                self.bounded(self.structs[id.0].bounded, ty, args)
+                    .then_some(ty)
             }
             Resolved::Item(ItemId::Enum(id)) => {
                 self.reaches_prelude(id.0 >= self.prelude.enums, ident().span);
@@ -2510,6 +2585,7 @@ impl Checker<'_> {
     fn owner_bounds(&self, owner: Option<Type>) -> Vec<Bounds> {
         match owner.map(Type::kind) {
             Some(TypeKind::Class(id, _)) => self.classes[id.0].bounds.clone(),
+            Some(TypeKind::Struct(id, _)) => self.structs[id.0].bounds.clone(),
             Some(TypeKind::Enum(id, _)) => self.enums[id.0].bounds.clone(),
             _ => Vec::new(),
         }

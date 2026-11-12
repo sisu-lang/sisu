@@ -477,8 +477,15 @@ impl<'ctx> Codegen<'ctx, '_> {
             }
             TypeKind::Struct(id, _) => {
                 let slot = value.into_pointer_value();
-                if !self.show_in_component(sink, Inline::Struct(id), slot, mode) {
-                    self.show_struct(sink, (id, ty), slot, mode);
+                match self.written_display(ty) {
+                    Some(method) => {
+                        self.show_written(sink, method, ty, self.load_value(ty, slot));
+                    }
+                    None => {
+                        if !self.show_in_component(sink, Inline::Struct(id), slot, mode) {
+                            self.show_struct(sink, id, slot, mode);
+                        }
+                    }
                 }
             }
             _ => unreachable!(
@@ -510,20 +517,20 @@ impl<'ctx> Codegen<'ctx, '_> {
         true
     }
 
-    /// Writes the struct `id`, of type `ty`, at `slot`: its name, then the fields in declaration
+    /// Writes the struct `id` at `slot`: its name, then the fields in declaration
     /// order, each labeled, as a payload field of an enum is. No field writes `Name()`. A struct
     /// or an enum in a field goes by its address in the slot, so the value is not copied.
     fn show_struct(
         &self,
         sink: PointerValue<'ctx>,
-        (id, ty): (StructId, Type),
+        id: StructId,
         slot: PointerValue<'ctx>,
         mode: Mode,
     ) {
         self.show_text(
             "sisu_show_open",
             sink,
-            &format!("{}(", self.program.type_name(ty)),
+            &format!("{}(", self.program.structs[id.0].shown_name()),
         );
         for (index, field) in self.program.structs[id.0].fields.iter().enumerate() {
             if index > 0 {
@@ -942,7 +949,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         // A struct on a cycle has a field: the one that closes it.
         let name = match id {
             Inline::Enum(enum_id) => self.program.enums[enum_id.0].variants[variant].name.clone(),
-            Inline::Struct(_) => self.program.type_name(type_of(id)),
+            Inline::Struct(struct_id) => self.program.structs[struct_id.0].shown_name().to_string(),
         };
         if fields.is_empty() {
             self.show_text("sisu_show_str", show.sink, &name);

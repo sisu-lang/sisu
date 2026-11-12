@@ -4973,7 +4973,7 @@ fn written_records_should_tell_a_conditional_conformance_from_an_unconditional_o
                 .enums
                 .iter()
                 .position(|e| e.name.name.as_str() == name);
-            tir::EnumId(at.expect("the program should hold the enum"))
+            at.expect("the program should hold the enum")
         };
         let records = checker.written_records();
         let of = |name| records.get(&(interface, named(name))).copied();

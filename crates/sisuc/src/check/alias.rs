@@ -1137,12 +1137,13 @@ impl Checker<'_> {
     }
 }
 
-/// How many type arguments the applied class or enum `ty` has.
+/// How many type arguments the applied class, struct or enum `ty` has.
 fn ty_args(ty: Type) -> usize {
     match ty.kind() {
-        TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
-            args.get().len()
-        }
-        _ => unreachable!("only an applied class, enum or `any` type has bounds to check"),
+        TypeKind::Class(_, args)
+        | TypeKind::Struct(_, args)
+        | TypeKind::Enum(_, args)
+        | TypeKind::Any(_, args) => args.get().len(),
+        _ => unreachable!("only an applied class, struct, enum or `any` type has bounds to check"),
     }
 }

@@ -163,7 +163,7 @@ reports the code, and `site/programs/explanations/<code>.json`. After you edit a
 | [E0152](E0152.md) | error | conformance that a type does not meet |
 | [E0153](E0153.md) | error | second conformance to an interface |
 | [E0154](E0154.md) | error | type that does not conform to an interface that is needed |
-| [E0155](E0155.md) | error | `extend` of a type that is not a class or an enum |
+| [E0155](E0155.md) | error | `extend` of a type that is not a class, a struct or an enum |
 | [E0156](E0156.md) | error | call or type that more than one conformance answers |
 | [E0157](E0157.md) | error | bound that gives too many interfaces |
 | [E0158](E0158.md) | error | only classes conform to `AnyObject` |

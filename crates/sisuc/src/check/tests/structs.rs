@@ -1,16 +1,14 @@
 //! Structs in the checker: the declarations, construction, field reads, plain-`self` methods and
 //! the place rules.
 
-use std::fmt::Write as _;
-
 use super::*;
 use Code::{
     ArgumentCount, ArgumentNeedsLabel, AssignToExpression, AssignToImmutable, AssignToSelf,
     BindingNotFound, CannotExtend, CannotInfer, CannotMatch, ConstantType, DefinedTwice, Expected,
-    FieldOutOfOrder, FunctionNotFound, IsNeedsObjects, MayBeNone, MethodAsFunction, Mismatch,
-    MissingField, MutArgumentNotPlace, MutArgumentType, MutPlaceTwice, MutSelf, NeverConstructed,
-    NeverReassigned, NoMember, NoOperator, NotAnInterface, ReservedWord, TooManyArguments,
-    TypeAsValue, UnusedVariable, UnwrapNeedsOptional,
+    FieldOutOfOrder, FunctionNotFound, InstantiationCycle, IsNeedsObjects, MayBeNone,
+    MethodAsFunction, Mismatch, MissingField, MutArgumentNotPlace, MutArgumentType, MutPlaceTwice,
+    MutSelf, NeverConstructed, NeverReassigned, NoMember, NoOperator, NotAnInterface, ReservedWord,
+    TooManyArguments, TypeAsValue, UnusedVariable, UnwrapNeedsOptional,
 };
 
 /// The word `record` is a name, the word `struct` is a keyword that no name can be, and the word
@@ -788,47 +786,6 @@ fn struct_path_should_walk_each_step() {
     );
 }
 
-/// GIVEN a generic struct, a conformance list, a generic method in a struct's body or an `extend`
-/// of a struct. THEN the only error is E0083 at the `struct` keyword.
-#[test]
-fn generic_struct_should_be_rejected_until_task_6() {
-    let rows = [
-        (
-            "a generic struct",
-            "struct P<T> { x: T }\nfn main() {\n    let p = P(x: 1)\n    print(p.x)\n}",
-            (1, 1),
-        ),
-        (
-            "a conformance list",
-            "interface K {}\nstruct P: K { x: i64 }\nfn main() {}",
-            (2, 1),
-        ),
-        (
-            "a generic method",
-            "struct P {\n    x: i64\n    fn m<T>(self, t: T) {}\n}\nfn main() {}",
-            (1, 1),
-        ),
-        (
-            "an extend",
-            "struct P { x: i64 }\nextend P {}\nfn main() {}",
-            (1, 1),
-        ),
-        (
-            "an extend of an alias",
-            "struct P { x: i64 }\ntype A = P\nextend A {}\nfn main() {}",
-            (1, 1),
-        ),
-        (
-            "an extend of an alias of an alias, with a method",
-            "struct P { x: i64 }\ntype A = P\ntype B = A\nextend B {\n    fn m(self) {}\n}\nfn main() {\n    P(x: 1).m()\n}",
-            (1, 1),
-        ),
-    ];
-    for (row, src, pos) in rows {
-        codes_row(row, src, &[(ReservedWord, pos)]);
-    }
-}
-
 /// GIVEN a write through a path of `.xs[0]` steps in a struct `T`. WHEN the path is 10, 20 and 30
 /// steps deep. THEN the path walks grow in step with the depth, so each step is walked once.
 #[test]
@@ -1135,28 +1092,6 @@ fn extend_of_an_optional_should_be_e0155() {
     }
 }
 
-/// GIVEN a struct `P` and a chain of n aliases `A0` to `A(n-1)` of it. AND n blocks `extend
-/// A(n-1) {}`. WHEN n is 20, 40 and 60. THEN the steps that follow the aliases grow in step
-/// with n.
-#[test]
-fn extend_through_aliases_should_follow_each_alias_once() {
-    let steps = |n: usize| {
-        let mut src = "struct P { x: i64 }\ntype A0 = P\n".to_string();
-        for i in 1..n {
-            writeln!(src, "type A{i} = A{}", i - 1).expect("a write to a string should not fail");
-        }
-        for _ in 0..n {
-            writeln!(src, "extend A{} {{}}", n - 1).expect("a write to a string should not fail");
-        }
-        src.push_str("fn main() {}");
-        EXTENDED_STEPS.set(0);
-        let (_, ds) = checked(&src);
-        assert!(ds.iter().any(|d| d.code() == ReservedWord), "{ds:?}");
-        EXTENDED_STEPS.get()
-    };
-    assert_near_linear(steps(20), steps(40), steps(60));
-}
-
 /// GIVEN `struct S { s: string }`, and `struct S { c: C }` with a class `C`. WHEN `is` compares
 /// two values of `S`. THEN it is E0046 at the left operand: a struct is a value, and has no
 /// object for `is` to compare, even when a counted field makes it counted.
@@ -1297,6 +1232,40 @@ fn struct_write_should_keep_its_w0014() {
     );
 }
 
+/// GIVEN a generic struct whose type argument grows: in its own field, or through the generated
+/// `==` or `print` of a struct that a written method of another struct builds. WHEN the program is
+/// checked. THEN each is E0140, at the place that the same program of enums reports.
+#[test]
+fn growing_generic_struct_should_be_e0140() {
+    let eq = "struct S<T> { v: T }\nstruct K<T> { v: T }\nextend<T: Eq> K<T>: Eq {\n    fn eq(self, o: K<T>) -> bool { S(v: K(v: [self.v])) == S(v: K(v: [o.v])) }\n}\nfn main() { print(K(v: 1) == K(v: 1)) }";
+    let display = "struct S<T> { v: T }\nstruct K<T> { v: T }\nextend<T: Display> K<T>: Display {\n    fn to_string(self) -> string { \"{S(v: K(v: [self.v]))}\" }\n}\nfn main() { print(K(v: 1)) }";
+    let rows = [
+        (
+            "its own field",
+            "struct G<T> { v: T; next: G<[T]>? }\nfn main() {\n    print(G(v: 1, next: None))\n}"
+                .to_string(),
+            vec![(InstantiationCycle, (1, 27))],
+        ),
+        (
+            "a generated `==`",
+            eq.to_string(),
+            vec![(InstantiationCycle, (4, 36))],
+        ),
+        (
+            "a generated `print`",
+            display.to_string(),
+            vec![(InstantiationCycle, (4, 38))],
+        ),
+        (
+            "an enum's generated `==`",
+            eq.replace("struct S<T> { v: T }", "enum S<T> { A(v: T) }")
+                .replace("S(v:", "S.A(v:"),
+            vec![(InstantiationCycle, (4, 36))],
+        ),
+    ];
+    error_rows(&rows);
+}
+
 /// GIVEN `struct V { n: i64 }`, `struct W { v: V }`, and a written `eq` of `V` that compares two
 /// values of `W`, whose generated `eq` calls the written `eq` of `V`. WHEN the program is checked.
 /// THEN it reports what the same program of enums reports: nothing.
@@ -1327,7 +1296,7 @@ fn conditional_struct_equality_should_follow_its_argument() {
         &format!(
             "{decls}fn main() {{\n    let p: Pair<any I> = Pair(a: z(), b: z())\n    print(p == p)\n}}"
         ),
-        &[(NoOperator, (12, 11))],
+        &[(NoOperator, (13, 11))],
     );
 }
 
@@ -1518,4 +1487,58 @@ fn struct_bound_failure_should_report_each_code() {
         .map(|(name, src, wanted)| (name.as_str(), src.clone(), wanted.clone()))
         .collect();
     error_rows(&rows);
+}
+
+/// `==` on a struct runs the written `eq` of a class that it holds, directly, through an enum or
+/// through a type argument. A call in the body could change what that `eq` reads. A struct that
+/// holds the poison type gets no W0011 either. A struct of numbers gets W0011.
+#[test]
+fn struct_that_holds_a_class_should_not_get_w0011() {
+    use Code::{UnchangedLoopCondition, UnknownType};
+    let node = "class Node: Eq {\n    v: i64\n    fn eq(self, other: Self) -> bool { self.v == other.v }\n}\n";
+    let tail = "fn f(a: S, b: S) {\n    while a == b { print(1) }\n}";
+    for (row, decls, wanted) in [
+        ("a class field", "struct S { n: Node }", vec![]),
+        (
+            "an enum field that holds a class",
+            "enum E {\n    V(Node)\n}\nstruct S { e: E }",
+            vec![],
+        ),
+        (
+            "an enum payload that holds the struct",
+            "struct T { n: [Node] }\nenum S {\n    V(T)\n}",
+            vec![],
+        ),
+        (
+            "a type argument",
+            "struct G<T> { t: T? }\nstruct S { g: G<Node> }",
+            vec![],
+        ),
+        (
+            "an unknown type",
+            "struct S { n: Fooo }",
+            vec![(UnknownType, (5, 15))],
+        ),
+        (
+            "numbers",
+            "struct S { n: i64 }",
+            vec![(UnchangedLoopCondition, (7, 11))],
+        ),
+    ] {
+        codes_row(
+            row,
+            &format!("{node}{decls}\n{tail}\nfn main() {{}}"),
+            &wanted,
+        );
+    }
+}
+
+/// A `push` of a struct's own method writes nothing to its receiver, as for an enum, so the
+/// `let mut` gets W0002.
+#[test]
+fn own_push_of_a_struct_should_not_change_its_receiver() {
+    codes(
+        "struct S { n: i64 }\nextend S {\n    fn push(self, x: i64) { print(x + self.n) }\n}\nfn main() {\n    let mut t = S(n: 1)\n    t.push(3)\n}",
+        &[(NeverReassigned, (6, 13))],
+    );
 }
