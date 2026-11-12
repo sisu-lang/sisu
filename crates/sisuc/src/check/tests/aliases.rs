@@ -1291,3 +1291,120 @@ fn an_alias_with_n_failed_bounds_and_n_users_should_cost_linear_work() {
     };
     assert_near_linear(steps(20), steps(40), steps(60));
 }
+
+/// The program of a row of the #656 tables: the chain `B1` to `B15`, an enum `Two` and `type
+/// EA<T> = Two<B15<T>, i64>`, eight signatures that fill the memo, `fn s` and `fn t`, and
+/// `fn h(e: Two<B15<i64>, i64>)` with `stmt` as its first line (line 37). `after` follows `h`.
+fn limit_program(stmt: &str, after: &str) -> String {
+    let two = "enum Two<A, B> {\n    V(A)\n    W(B)\n    X\n}\ntype EA<T> = Two<B15<T>, i64>\n";
+    full_memo(
+        &format!("{PAIR}{}{two}", branching(15)),
+        &format!(
+            "fn s(e: i64) -> string {{ return \"a\" }}\nfn t(e: Two<B15<i64>, i64>) -> string {{ return \"a\" }}\nfn h(e: Two<B15<i64>, i64>) {{\n{stmt}\n}}\n{after}fn main() {{}}\n"
+        ),
+    )
+}
+
+/// `limit_program`, as the rows of `error_rows`.
+fn limit_rows(rows: &[(&'static str, &str, &str, Vec<Wanted>)]) -> Vec<ErrorRow<'static>> {
+    rows.iter()
+        .map(|(name, stmt, after, wanted)| (*name, limit_program(stmt, after), wanted.clone()))
+        .collect()
+}
+
+/// GIVEN the aliases `B1` to `B15`, and eight signatures that use `B15`
+/// AND `type EA<T> = Two<B15<T>, i64>`
+/// AND a `+` with a `string` under an expected `u8` or `f64`
+/// AND the checker checks that `+` again, after it drops the reports of the first check
+/// AND a use of `EA` inside that `+` that passes the limit of the whole check
+/// WHEN the program is checked
+/// THEN the second check reports the limit (E0162) after the mismatch of the `+`, as the same
+///   statement with no expected type does
+#[test]
+fn a_plus_that_is_checked_again_should_report_the_limit_that_it_passes() {
+    let rows = limit_rows(&[
+        (
+            "the use on the left, under u8",
+            "let y: u8 = s(EA.W(1)) + \"b\"",
+            "",
+            vec![(Code::Mismatch, (37, 13)), (Code::AliasTooLarge, (37, 15))],
+        ),
+        (
+            "a match on the right",
+            "let y: f64 = \"b\" + (match e { EA.W(n) => \"x\"; _ => \"y\" })",
+            "",
+            vec![(Code::Mismatch, (37, 14)), (Code::AliasTooLarge, (37, 31))],
+        ),
+        (
+            "an if let on the right",
+            "let y: f64 = \"b\" + (if let EA.W(n) = e { \"x\" } else { \"y\" })",
+            "",
+            vec![(Code::Mismatch, (37, 14)), (Code::AliasTooLarge, (37, 28))],
+        ),
+        (
+            "an interpolation on the right",
+            "let y: f64 = \"b\" + \"{s(EA.W(1))}\"",
+            "",
+            vec![(Code::Mismatch, (37, 14)), (Code::AliasTooLarge, (37, 24))],
+        ),
+        (
+            "an argument of a call",
+            "fu(\"b\" + s(EA.W(1)))",
+            "fn fu(x: u8) {}\n",
+            vec![(Code::Mismatch, (37, 4)), (Code::AliasTooLarge, (37, 12))],
+        ),
+        (
+            "two additions",
+            "let y: f64 = (\"b\" + s(EA.W(1))) + \"c\"",
+            "",
+            vec![(Code::Mismatch, (37, 14)), (Code::AliasTooLarge, (37, 23))],
+        ),
+    ]);
+    error_rows(&rows);
+}
+
+/// The repro of #656: the statement is at line 38 with an indent.
+#[test]
+fn a_plus_that_is_checked_again_should_report_the_limit_of_the_page_example() {
+    let src = full_memo(
+        &format!(
+            "{PAIR}{}enum Two<A, B> {{\n    V(A)\n    W(B)\n    X\n}}\ntype EA<T> = Two<B15<T>, i64>\n",
+            branching(15)
+        ),
+        "fn s(e: i64) -> string {\n    return \"a\"\n}\nfn h() {\n    let y: f64 = \"b\" + s(EA.W(1))\n}\nfn main() {}\n",
+    );
+    error_rows(&[(
+        "the page example",
+        src,
+        vec![(Code::Mismatch, (38, 18)), (Code::AliasTooLarge, (38, 26))],
+    )]);
+}
+
+/// GIVEN the same program, and a statement that is not a `+` checked again: the use alone, with
+///   no expected type, or under a `-`
+/// WHEN the program is checked
+/// THEN the reports are as they were before the fix of #656
+#[test]
+fn a_statement_that_is_not_checked_again_should_report_the_limit_holds_before_and_after() {
+    let rows = limit_rows(&[
+        (
+            "the use alone, under f64",
+            "let y: f64 = s(EA.W(1))",
+            "",
+            vec![(Code::Mismatch, (37, 14)), (Code::AliasTooLarge, (37, 16))],
+        ),
+        (
+            "a plus with no expected type",
+            "let y = \"b\" + s(EA.W(1))",
+            "",
+            vec![(Code::AliasTooLarge, (37, 17))],
+        ),
+        (
+            "a negation",
+            "let y = -s(EA.W(1))",
+            "",
+            vec![(Code::Mismatch, (37, 10)), (Code::AliasTooLarge, (37, 12))],
+        ),
+    ]);
+    error_rows(&rows);
+}

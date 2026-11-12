@@ -1036,3 +1036,111 @@ fn array_get_with_a_range_should_report_every_true_error() {
         codes_row(row, &main_with(body), &expected);
     }
 }
+
+/// GIVEN an item that does not parse (E0011), and a string `get` whose argument is a use of that
+///   item
+/// WHEN the program is checked
+/// THEN only the parse error reports
+///   (the use is untyped because of it, so "a string's `get` takes a range" is no true error)
+/// AND this holds for a call, a literal string, an optional chain, a local bound to a call
+/// AND this holds for a `const`, a type, a class and a `mut` argument
+#[test]
+fn a_use_of_a_broken_item_should_add_no_string_get_error() {
+    let parse = |at: (usize, usize)| vec![(Code::Expected, at)];
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "a function",
+            "fn f(x i64) -> i64 { 1 }\nfn main() {\n  let s = \"abc\"\n  print(s.get(f))\n}\n".into(),
+            parse((1, 8)),
+        ),
+        (
+            "a call of it",
+            "fn f(x i64) -> i64 { 1 }\nfn main() {\n  let s = \"abc\"\n  print(s.get(f(1)))\n}\n".into(),
+            parse((1, 8)),
+        ),
+        (
+            "a literal string",
+            "fn f(x i64) -> i64 { 1 }\nfn main() {\n  print(\"abc\".get(f))\n}\n".into(),
+            parse((1, 8)),
+        ),
+        (
+            "an optional chain",
+            "class N {\n    name: string\n}\nfn f(x i64) -> i64 { 1 }\nfn sn() -> N? { N(name: \"a\") }\nfn g() -> string? {\n  sn()?.name?.get(f)\n}\nfn main() { print(g() ?? \"\") }\n".into(),
+            parse((4, 8)),
+        ),
+        (
+            "a class",
+            "class C {\n    x i64\n}\nfn main() {\n  let s = \"abc\"\n  print(s.get(C))\n}\n".into(),
+            parse((2, 7)),
+        ),
+        (
+            "a type that is cut off",
+            "fn h() {}\ntype T = \nfn main() {\n    let s = \"abc\"\n    print(s.get(T))\n}\n".into(),
+            parse((3, 1)),
+        ),
+        (
+            "a local bound to a broken call",
+            "fn f(x i64) -> i64 { 1 }\nfn main() {\n    let s = \"abc\"\n    let r = f(1)\n    print(s.get(r))\n}\n".into(),
+            parse((1, 8)),
+        ),
+        (
+            "a const",
+            "const K i64 = 1\nfn main() {\n  let s = \"abc\"\n  print(s.get(K))\n}\n".into(),
+            parse((1, 9)),
+        ),
+        (
+            "a mut argument",
+            "fn f(x i64) -> i64 { 1 }\nfn take(mut s: string) {}\nfn main() {\n    let mut s = \"abc\"\n    take(mut s.get(f))\n}\n".into(),
+            vec![(Code::Expected, (1, 8)), (Code::MutArgumentNotPlace, (5, 14))],
+        ),
+    ];
+    error_rows(&rows);
+}
+
+/// GIVEN a string `get` whose argument is typed and wrong, or is wrong with no parse error
+/// WHEN the program is checked
+/// THEN E0032 reports as it did before the fix of #653: the argument is a true error
+#[test]
+fn a_typed_wrong_string_get_argument_should_stay_holds_before_and_after() {
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "a typed argument beside another broken item",
+            "fn g(x i64) {}\nfn main() {\n  let s = \"abc\"\n  print(s.get(1))\n}\n".into(),
+            vec![(Code::Expected, (1, 8)), (Code::Mismatch, (4, 15))],
+        ),
+        (
+            "no parse error",
+            "fn main() {\n  let s = \"abc\"\n  print(s.get(1))\n}\n".into(),
+            vec![(Code::Mismatch, (3, 15))],
+        ),
+    ];
+    error_rows(&rows);
+}
+
+/// GIVEN a string `get` whose argument has no type and no error of its own (`[]`, `None`)
+/// AND a parse error in another item, before or after the use
+/// WHEN the program is checked
+/// THEN only the parse error reports
+///   (the E0032 waits for the next run, after the repair. This is the limit of the fix of #653,
+///   as for an error of the checker that comes first.)
+#[test]
+fn a_parse_error_anywhere_should_hide_the_string_get_error_of_an_untyped_value() {
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "an empty array, then the parse error",
+            "fn main() {\n    let s = \"abc\"\n    print(s.get([]))\n}\nfn g(x i64) {}\n".into(),
+            vec![(Code::Expected, (5, 8))],
+        ),
+        (
+            "the parse error, then an empty array",
+            "fn g(x i64) {}\nfn main() {\n    let s = \"abc\"\n    print(s.get([]))\n}\n".into(),
+            vec![(Code::Expected, (1, 8))],
+        ),
+        (
+            "a none, then the parse error",
+            "fn main() {\n    let s = \"abc\"\n    print(s.get(None))\n}\nfn g(x i64) {}\n".into(),
+            vec![(Code::Expected, (5, 8))],
+        ),
+    ];
+    error_rows(&rows);
+}

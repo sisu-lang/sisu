@@ -375,7 +375,6 @@ crates/sisuc/src/check/tests/mod.rs::parenthesized_true_is_endless
 crates/sisuc/src/check/tests/mod.rs::poisoned_binding_reports_once
 crates/sisuc/src/check/tests/mod.rs::poisoned_operand_checks_siblings
 crates/sisuc/src/check/tests/mod.rs::poisoned_receiver_checks_args
-crates/sisuc/src/check/tests/mod.rs::rejected_if_let_scrutinee_reports_once
 crates/sisuc/src/check/tests/mod.rs::repeated_param
 crates/sisuc/src/check/tests/mod.rs::repeated_param_is_poisoned
 crates/sisuc/src/check/tests/mod.rs::return_from_endless_loop
