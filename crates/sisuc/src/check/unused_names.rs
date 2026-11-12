@@ -471,20 +471,24 @@ impl Checker<'_> {
     /// the result holds, by class and by struct, the first live `dbg` that can show it. A class is
     /// written as `print` writes it, so the walk stops at a class.
     ///
-    /// These read each field of each struct that their operand holds, in the same way (spec call
-    /// 26): a generated `print`, an interpolation, a generated `==`, a conversion to `any Display`,
-    /// and a type argument with a `Display` or an `Eq` bound. The result holds, by struct, whether
-    /// live code does this. A `Display` root and an `Eq` root are two walks. A written conformance
-    /// of one interface does not stop the other.
+    /// These read each field of each struct that their operand holds, in the same way:
+    /// - a generated `print`, an interpolation, or a generated `==`;
+    /// - a call of the generated `to_string` or `eq`;
+    /// - a conversion to an `any` type;
+    /// - a type argument of a call.
     ///
-    /// A type with a written conformance of the interface shows its text, so the walk skips it, as
-    /// `Checker::dbg_show` does.
+    /// The result holds, by struct, whether live code does one of these. A `Display` root and an
+    /// `Eq` root are two walks. A written conformance of one interface does not stop the other.
+    ///
+    /// `dbg` skips a type with any written `Display` of its head, as `Checker::dbg_show` does. A
+    /// read mode skips a type only when a written conformance of the interface applies to that
+    /// instance. It still walks the type arguments of such a type, because the written body can
+    /// show them.
     ///
     /// The walk follows the structure of each operand type. It reads the payloads of each enum and
     /// the fields of each struct once, as declared. It reads an argument of an enum or a struct
-    /// only when `shown_params_with` says that it shows it, with the same rule as the walk: a type
-    /// with any written conformance of the interface shows none. So the cost is linear in the
-    /// operand types and the declarations.
+    /// only when `shown_params_with` says that it shows it. For `dbg` a head with a written
+    /// `Display` shows none. So the cost is linear in the operand types and the declarations.
     ///
     /// shortcut: a `dbg` of a type parameter shows the instances that `mono` makes. The checker
     /// does not see them, so such a field gets no label. A class, an enum or a struct with a
@@ -502,7 +506,8 @@ impl Checker<'_> {
     /// walk does not follow which type parameters a generic body shows.
     ///
     /// A `Display` or `Eq` root stops only at a type that a written conformance always covers
-    /// (`applies_written`): `extend B<i64>: Display` stops `B<i64>` and not `B<P>`.
+    /// (`applies_written`): `extend B<i64>: Display` stops `B<i64>` and not `B<P>`. It still walks
+    /// the type arguments of that type, because the written body can show them.
     fn shown_types(&self, live: &[bool]) -> Shown {
         let is_live = |owner: Option<Owner>| owner.is_some_and(|o| live[self.owner_index(o)]);
         let mut dbgs: Vec<(Span, Type)> = (self.dbg_shown.iter())
@@ -554,14 +559,13 @@ impl Checker<'_> {
                 if !seen.insert((ty, mode)) {
                     continue;
                 }
-                let skipped = if mode != Mode::Dbg {
-                    applies_written(&self.conformances, interface, self.lang.display, ty)
-                } else if ty.has_param() {
-                    head_of(ty).is_some_and(|head| rules.written.contains(&head))
-                } else {
-                    has_written(&self.conformances, interface, ty)
-                };
-                if skipped {
+                if self.shown_stops(mode, interface, rules, ty) {
+                    // The written body may show the type arguments, so a read mode walks them.
+                    if mode != Mode::Dbg
+                        && let Some((_, args)) = inline_of(ty, inline)
+                    {
+                        walk.extend(args.get().iter().copied());
+                    }
                     continue;
                 }
                 #[cfg(test)]
@@ -603,12 +607,29 @@ impl Checker<'_> {
         shown
     }
 
+    /// Whether the walk of `shown_types` stops at `ty`, which a written conformance of `interface`
+    /// shows. For `dbg` any written conformance of the head counts. In a read mode the
+    /// conformance must apply to the instance (`applies_written`).
+    fn shown_stops(
+        &self,
+        mode: Mode,
+        interface: tir::InterfaceId,
+        rules: &Rules,
+        ty: Type,
+    ) -> bool {
+        if mode != Mode::Dbg {
+            applies_written(&self.conformances, interface, self.lang.display, ty)
+        } else if ty.has_param() {
+            head_of(ty).is_some_and(|head| rules.written.contains(&head))
+        } else {
+            has_written(&self.conformances, interface, ty)
+        }
+    }
+
     /// The rules of the walk of `shown_types` for `interface`. They name, by declaration, the
-    /// arguments that it shows. A declaration that hides its arguments has a written conformance.
-    /// With `by_head`, any written conformance of the head counts, and `written` names those heads.
-    /// Else only a conformance that always covers the declaration counts (`applies_written`).
-    /// The walk skips such a type. So it shows no argument of it through the payload of another
-    /// one either.
+    /// arguments that it shows. With `by_head`, a declaration with any written conformance of the
+    /// head hides its arguments, and `written` names those heads. This is the rule of `dbg`. A
+    /// read mode hides none, because it walks the arguments of a type that it skips.
     fn shown_rules(&self, interface: tir::InterfaceId, by_head: bool) -> Rules {
         let written: FxHashSet<Head> = (self.conformances.iter())
             .filter(|&(i, _)| by_head && i == interface)
@@ -623,12 +644,7 @@ impl Checker<'_> {
                 )
                 .collect()
         } else {
-            (0..self.inline_count())
-                .map(|v| {
-                    let own = self.own_type(v);
-                    applies_written(&self.conformances, interface, self.lang.display, own)
-                })
-                .collect()
+            vec![false; self.inline_count()]
         };
         Rules {
             params: self.shown_params_with(&hidden),

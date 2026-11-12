@@ -1744,7 +1744,7 @@ impl Checker<'_> {
 
     /// The inline declaration `v` applied to its own type parameters, as its declaration names
     /// it.
-    pub(super) fn own_type(&self, v: usize) -> Type {
+    fn own_type(&self, v: usize) -> Type {
         let params: Vec<Type> = (self.inline_decl(v).1.iter().zip(0..))
             .map(|(&name, i)| Type::intern(TypeKind::Param(name, i)))
             .collect();

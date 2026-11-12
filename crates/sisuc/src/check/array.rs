@@ -161,6 +161,7 @@ impl Checker<'_> {
                 match value {
                     Ok(e) if e.ty != element => {
                         self.instantiates |= is_target(element);
+                        self.record_shown_any(e.ty, element);
                         Ok(widen(e, element))
                     }
                     value => value,
