@@ -7598,6 +7598,44 @@ fn poisoned_join_should_take_the_anchor_type_for_a_sum_or_a_fill() {
             fill_mk_program("let r: Nope = if c == 1 { [v] } else { [5; 2] }"),
             vec![(UnknownType, (7, 12))],
         ),
+        (
+            "r1",
+            fill_mk_program("let r: Nope = if c == 1 { v } else { -mk() + 1 }"),
+            vec![(UnknownType, (7, 12)), (NegatedU8, (7, 42))],
+        ),
+        (
+            "r2",
+            fill_mk_program("let r: Nope = if c == 1 { k } else { -mk() + 1 }"),
+            vec![(UnknownType, (7, 12))],
+        ),
+    ];
+    error_rows(&rows);
+}
+
+/// GIVEN a join whose context failed, with a fill or a `-` of a waiting call as a later branch
+/// WHEN the program is checked
+/// THEN the context is the only report. The branch holds no integer literal, so it is not a
+///   branch of literals: it does not take the type of the anchor, and no other report follows
+///   from that guess.
+#[test]
+fn poisoned_join_should_add_no_report_for_a_waiting_fill_or_negation() {
+    use Code::UnknownType;
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "p05",
+            fill_mk_program("let r: Nope = if c == 1 { v } else { [mk(); 2] }"),
+            vec![(UnknownType, (7, 12))],
+        ),
+        (
+            "p43",
+            fill_mk_program("let r: Nope = if c == 1 { v } else { -mk() }"),
+            vec![(UnknownType, (7, 12))],
+        ),
+        (
+            "p66",
+            fill_mk_program("let r: Nope = if c == 1 { \"s\" } else { -mk() }"),
+            vec![(UnknownType, (7, 12))],
+        ),
     ];
     error_rows(&rows);
 }

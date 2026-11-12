@@ -132,4 +132,10 @@ fn one_of_two_arguments_holds_optional() {
     print(x)
 }
 
+fn enum_argument_holds_optional() {
+    let rr: Result<u8?, bool> = Ok(None)
+    let x: i64? = id(rr)
+    print(x)
+}
+
 fn main() {}

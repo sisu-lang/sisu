@@ -193,5 +193,19 @@ warning[W0015]: `x` can be `None`, and then this writes the word "None"
     |
     = help: use `if let`, give a default with `??`, or call `x.to_string()` to write "None" on purpose
 
-sisu: 21 errors, 6 warnings
+error[E0032]: expected `i64?`, found `Result<u8?, bool>`
+   --> E0032-hint-blames-payload.sisu:137:22
+    |
+137 |     let x: i64? = id(rr)
+    |                      ^^
+
+warning[W0015]: `x` can be `None`, and then this writes the word "None"
+   --> E0032-hint-blames-payload.sisu:138:11
+    |
+138 |     print(x)
+    |           ^
+    |
+    = help: use `if let`, give a default with `??`, or call `x.to_string()` to write "None" on purpose
+
+sisu: 22 errors, 7 warnings
 sisu: for more on a code, run `sisu explain <code>`: E0032, E0167, W0015
