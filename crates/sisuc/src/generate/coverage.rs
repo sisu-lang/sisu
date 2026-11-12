@@ -58,13 +58,6 @@ const EXCLUDED: &[(&str, &str)] = &[
         "ast::BrokenKind::Struct",
         "only an item with a syntax error is broken",
     ),
-    ("ast::Item::Struct", "lands in Task 9"),
-    ("types::TypeKind::Struct", "lands in Task 9"),
-    ("types::Head::Struct", "lands in Task 9"),
-    ("tir::Place::StructField", "lands in Task 9"),
-    ("tir::ExprKind::Struct", "lands in Task 9"),
-    ("tir::ExprKind::StructField", "lands in Task 9"),
-    ("tir::Inline::Struct", "lands in Task 9"),
     (
         "ast::BrokenKind::Enum",
         "only an item with a syntax error is broken",
