@@ -1853,12 +1853,98 @@ fn generated_read_should_count_each_shown_field() {
             ),
             vec![],
         ),
+        (
+            "a written Display for a type with parameters, in a generic body",
+            "struct B<T> { v: T; w: i64 }\nextend<T> B<T>: Display {\n    fn to_string(self) -> string { \"b\" }\n}\nfn f<T>(x: B<T>) { print(x) }\nfn main() { f(B(v: 1, w: 2)) }".to_string(),
+            vec![
+                (UnusedMember, (1, 15), vec![]),
+                (UnusedMember, (1, 21), vec![]),
+            ],
+        ),
     ];
     // Generated code reads a struct through paths that name neither `Display` nor `Eq`. None of
     // these programs has a W0013.
     let p = "struct P { n: i64 }\n";
     let b = "struct B<T> { v: T }\n";
+    let w_display = "struct W<T> { v: T }\nextend<T: Display> W<T>: Display {\n    fn to_string(self) -> string { \"w{self.v}\" }\n}\n";
+    let hinted = "let j = if read_line() == \"x\" { [z] } else { [P(n: 1)] }";
+    let object = "interface I {}\nstruct P: I { n: i64 }\nstruct Z: I {}\n";
     let shown: Vec<(&str, String)> = vec![
+        (
+            "a written Display that shows its argument",
+            own(&format!("{p}{w_display}"), "print(W(v: P(n: 1)))"),
+        ),
+        (
+            "a written Display that shows its argument, interpolated",
+            own(
+                &format!("{p}{w_display}"),
+                "let w = W(v: P(n: 1))\n    print(\"{w}\")",
+            ),
+        ),
+        (
+            "a written Display that shows its argument, in an array",
+            own(&format!("{p}{w_display}"), "print([W(v: P(n: 1))])"),
+        ),
+        (
+            "a written Display of an enum that shows its payload",
+            own(
+                &format!(
+                    "{p}enum E<T> {{ A(T) }}\nextend<T: Display> E<T>: Display {{\n    fn to_string(self) -> string {{\n        match self {{\n            A(v) => \"a{{v}}\"\n        }}\n    }}\n}}\n"
+                ),
+                "print(E.A(P(n: 1)))",
+            ),
+        ),
+        (
+            "a written Display of a struct inside another generic struct",
+            own(
+                &format!("{p}{w_display}struct A<T> {{ w: W<T> }}\n"),
+                "print(A(w: W(v: P(n: 1))))",
+            ),
+        ),
+        (
+            "an array join under an if",
+            own(
+                p,
+                &format!("let z: any Display = 1\n    {hinted}\n    print(j)"),
+            ),
+        ),
+        (
+            "an array join under an if, with an any type of another interface",
+            own(
+                object,
+                &format!("let z: any I = Z()\n    {hinted}\n    print(j.len())"),
+            ),
+        ),
+        (
+            "an array join under an else if",
+            own(
+                p,
+                "let z: any Display = 1\n    let j = if read_line() == \"x\" { [z] } else if read_line() == \"y\" { [z] } else { [P(n: 1)] }\n    print(j)",
+            ),
+        ),
+        (
+            "an any type of another interface through a default",
+            own(
+                "interface I {}\nstruct P: I { n: i64 }\n",
+                "let o: (any I)? = None\n    let x: any I = o ?? P(n: 1)\n    print(1)",
+            ),
+        ),
+        (
+            "an any type of another interface through a break",
+            own(
+                object,
+                "let z: any I = Z()\n    let x = loop {\n        if read_line() == \"x\" { break P(n: 1) }\n        break z\n    }\n    print(1)",
+            ),
+        ),
+        (
+            // A known miss of the over-approximation: the written `eq` of `Q<T>` does not read
+            // `m`, but the walk does not decide the bound `T: Eq` for an instance.
+            "a written Eq with a bound",
+            own(
+                "struct Q<T> { n: T; m: i64 }\nextend<T: Eq> Q<T>: Eq {\n    fn eq(self, other: Q<T>) -> bool { self.n == other.n }\n}\n",
+                "print(Q(n: 1, m: 1) == Q(n: 2, m: 1))",
+            ),
+        ),
         (
             "a type parameter that is printed",
             own(
