@@ -4,7 +4,9 @@
 //! `run_fail` case panics with its `.out` on stdout and its `.err` on stderr. Both read their
 //! `.in`, when they have one, on stdin. A `diagnostics` case makes `sisu check` report its
 //! `.err` on stderr, and `sisu check --format json` its `.json`; a case of a code that only `mono`
-//! reports (`MONO_CODES` in `support`) runs `sisu build --emit mir` in place of `sisu check`. The
+//! reports (`MONO_CODES` in `support`) runs `sisu build --emit mir` in place of `sisu check`. A
+//! `memory` or `site_memory` case runs the memory checkers on a `run` or `site_run` case: `ASan`
+//! and Valgrind on Linux, `--rc-checks` on macOS. It has no bless mode. The
 //! `orphans` binary checks that every file in these directories belongs to a case, as a file its
 //! mode reads, and that none is hidden.
 //!
@@ -34,7 +36,7 @@ fn bless() -> bool {
 }
 
 // datatest-stable names each test `<function>::<path under root>`, so these function names are
-// the `run::` and `run_fail::` prefixes that nextest filters match.
+// the `run::`, `memory::` and `run_fail::` prefixes that nextest filters match.
 
 #[expect(
     clippy::unnecessary_wraps,
@@ -42,6 +44,15 @@ fn bless() -> bool {
 )]
 fn run(path: &Path) -> datatest_stable::Result<()> {
     support::run(path, bless());
+    Ok(())
+}
+
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "datatest-stable accepts only test functions that return a `Result`"
+)]
+fn memory(path: &Path) -> datatest_stable::Result<()> {
+    support::memory(path);
     Ok(())
 }
 
@@ -69,6 +80,15 @@ fn diagnostics(path: &Path) -> datatest_stable::Result<()> {
 )]
 fn site_run(path: &Path) -> datatest_stable::Result<()> {
     support::run(path, bless());
+    Ok(())
+}
+
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "datatest-stable accepts only test functions that return a `Result`"
+)]
+fn site_memory(path: &Path) -> datatest_stable::Result<()> {
+    support::memory(path);
     Ok(())
 }
 
@@ -193,9 +213,11 @@ fn certifies(path: &Path) {
 
 datatest_stable::harness! {
     { test = run, root = "tests/run", pattern = r"\.sisu$" },
+    { test = memory, root = "tests/run", pattern = r"\.sisu$" },
     { test = run_fail, root = "tests/run-fail", pattern = r"\.sisu$" },
     { test = diagnostics, root = "tests/diagnostics", pattern = r"\.sisu$" },
     { test = site_run, root = "../../site/programs/run", pattern = r"\.sisu$" },
+    { test = site_memory, root = "../../site/programs/run", pattern = r"\.sisu$" },
     { test = site_run_fail, root = "../../site/programs/run-fail", pattern = r"\.sisu$" },
     { test = site_diagnostics, root = "../../site/programs/diagnostics", pattern = r"\.sisu$" },
     { test = site_pending, root = "../../site/programs/pending", pattern = r"\.sisu$" },

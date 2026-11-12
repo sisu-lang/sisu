@@ -105,9 +105,16 @@ The end-to-end cases are files. The `cases` test binary runs one test per
 
 | Directory | The program must | Expected output |
 | --- | --- | --- |
-| `run/` | exit 0 with empty stderr unless there is a `<name>.err`, in a plain and an `-O2` build; on Linux also in three ASan builds (plain, `-O2` and `--rc-checks`), in the `-O2` build under Valgrind, and in an `-O2` build on mimalloc; on macOS also in a `--rc-checks` build | `<name>.out`: stdout; optional `<name>.err`: stderr |
+| `run/` | exit 0 with empty stderr unless there is a `<name>.err`, in a plain and an `-O2` build, both on mimalloc, which agree | `<name>.out`: stdout; optional `<name>.err`: stderr |
 | `run-fail/` | panic with exit code 101, the same in a plain and an `-O2` build | `<name>.out`: stdout; `<name>.err`: stderr |
 | `diagnostics/` | report diagnostics under `sisu check` (`sisu build --emit mir` for a code that only `mono` reports, such as E0163, because `check` does not run `mono`), exiting 1 if one is an error and 0 if all are warnings; a case named `<CODE>.sisu` or `<CODE>-<case>.sisu` reports that code | `<name>.err`: the diagnostics; `<name>.json`: the same under `--format json` |
+
+Each `run/` case also has a memory test, `memory::<name>.sisu`, which writes no file.
+On Linux, it runs three ASan builds (plain, `-O2` and `--rc-checks`) and an `-O2` build on the System allocator.
+Then it runs that `-O2` build once under Valgrind.
+On macOS, it runs a `--rc-checks` build.
+Each run must exit 0 and print `<name>.out` on stdout, and `<name>.err` or nothing on stderr.
+`make test` does not run the memory tests.
 
 The top comment of a `diagnostics/` case can name a position, such as `at 7:9`
 or `(6:10)`. Each one must be where a primary or a secondary span of the

@@ -236,55 +236,31 @@ fn output_with_stdin(command: &mut Command, stdin: &[u8]) -> Output {
     })
 }
 
-/// Checks a `tests/run` case: the plain and `-O2` builds differ, exit 0, agree on stdout and on
-/// stderr; then that stdout is `<name>.out`.
+/// The output test of a `tests/run` case: a plain build and an `-O2` build, both on the default
+/// allocator, mimalloc, differ, exit 0 and agree on stdout and on stderr. That stdout is then
+/// `<name>.out`. It builds into `case_dir`. The checks run in this order:
+/// 1. On Linux, both builds link mimalloc. On macOS a symbol name has a leading `_`, so this check
+///    does not run there.
+/// 2. The `-O2` build is not identical to the plain build.
+/// 3. Each `// o2-calls:` and `// o2-indirect-calls:` marker in the case holds in the `-O2` IR (see
+///    `O2_CALLS` and `O2_INDIRECT_CALLS`).
+/// 4. The plain build runs, then the `-O2` build. Each exits 0. Its stderr is empty, unless
+///    `<name>.err` exists.
+/// 5. The two builds agree on stdout and on stderr.
+/// 6. Stdout is `<name>.out`, and stderr is `<name>.err` when that file exists. With `bless`,
+///    rewrites those files instead. This step is last, so a failed check writes nothing.
 ///
-/// On Linux, the checks run in this order:
-/// 1. Three builds that `ASan` checks (`ASAN_O0`, `ASAN_O2` and `ASAN_RC`) exit 0. The `asan-O0`
-///    build is the first program that runs, so that a stack overflow shows as an `ASan` report and
-///    not as a signal.
-/// 2. The plain build (on mimalloc) and the `-O2` build (on the System allocator, for Valgrind)
-///    exit 0 and agree.
-/// 3. The three `ASan` builds print what the plain builds print.
-/// 4. The `-O2` build runs once under Valgrind, which finds no leak or memory error.
-/// 5. An `-O2` build on mimalloc (`MIMALLOC_O2`) prints the same: it is the only build of `-O2`
-///    code on the allocator that users get.
-///
-/// On macOS, `ASan` and Valgrind do not run. The plain and `-O2` builds run natively, then a
-/// `--rc-checks` build, which finds no count fault or live object at exit, prints the same.
-///
-/// Stderr is empty, unless `<name>.err` exists: then the stderr of every run but the Valgrind run
-/// is that file. The Valgrind run's stderr holds Valgrind's own log, so it is never compared.
 /// Every run reads `<name>.in` on its standard input, or empty input without one, and gets the
-/// arguments of the case's `// args:` line.
-/// Each `// o2-calls:` and `// o2-indirect-calls:` marker in the case must hold in the `-O2` IR
-/// (see `O2_CALLS` and `O2_INDIRECT_CALLS`).
-/// With `bless`, rewrites `<name>.out`, and `<name>.err` when it exists, instead, after every
-/// other check passed.
+/// arguments of the case's `// args:` line. `memory` runs the memory checkers on the same case.
 pub(crate) fn run(path: &Path, bless: bool) {
-    run_with(path, bless, Path::new("valgrind"));
-}
-
-/// `run`, with `valgrind` as the Valgrind program.
-pub(crate) fn run_with(path: &Path, bless: bool, valgrind: &Path) {
-    let linux = cfg!(target_os = "linux");
-    let out_dir = case_dir(path);
-    // On macOS, `VALGRIND_O2` is the `-O2` build on mimalloc, and `O0` is the plain build.
-    let [o0, o2] = build_into(path, &out_dir, [O0, VALGRIND_O2]);
-    let asan_builds = linux.then(|| build_into(path, &out_dir, [ASAN_O0, ASAN_O2, ASAN_RC]));
-    // The last build to run: on Linux the `-O2` build on mimalloc, on macOS the `--rc-checks` one.
-    let [last] = if linux {
-        let [exe] = build_into(path, &out_dir, [MIMALLOC_O2]);
-        require_mimalloc(&exe);
-        [exe]
-    } else {
-        build_into(path, &out_dir, [RC_CHECKS])
-    };
-    // On macOS, `o2` is on mimalloc already.
-    let optimized = if linux { &last } else { &o2 };
+    let [o0, o2] = build(path, [O0, MIMALLOC_O2]);
+    if cfg!(target_os = "linux") {
+        require_mimalloc(&o0);
+        require_mimalloc(&o2);
+    }
     assert!(
         fs::read(&o0).expect("reads the plain build")
-            != fs::read(optimized).expect("reads the -O2 build"),
+            != fs::read(&o2).expect("reads the -O2 build"),
         "{}: -O2 build is identical to the plain build",
         path.display()
     );
@@ -293,16 +269,6 @@ pub(crate) fn run_with(path: &Path, bless: bool, valgrind: &Path) {
     let invocation = Invocation::of(path);
     let err_path = path.with_extension("err");
     let expects_stderr = err_path.exists();
-    // The first program that runs, see above.
-    let asan: Vec<(&PathBuf, Output)> = asan_builds
-        .iter()
-        .flatten()
-        .map(|exe| {
-            let out = invocation.run_asan(exe);
-            assert_exits_zero(exe, &out);
-            (exe, out)
-        })
-        .collect();
     let [out0, out2] = [&o0, &o2].map(|exe| {
         let out = invocation.run(exe, false);
         assert_exits_zero(exe, &out);
@@ -318,35 +284,6 @@ pub(crate) fn run_with(path: &Path, bless: bool, valgrind: &Path) {
     });
     let stdout = agreed(path, "stdout", &out0.stdout, &out2.stdout);
     let stderr = agreed(path, "stderr", &out0.stderr, &out2.stderr);
-    for (exe, out) in &asan {
-        assert_same_streams(exe, out, &stdout, &stderr);
-    }
-    // macOS has no Valgrind, and the native runs above already checked these builds.
-    if linux {
-        let checked = invocation.run_under(&o2, valgrind);
-        let valgrind_stderr = String::from_utf8_lossy(&checked.stderr);
-        assert_eq!(
-            checked.status.code(),
-            Some(0),
-            "{}: {valgrind_stderr}",
-            o2.display()
-        );
-        // shortcut: Valgrind 3.26 runs arm64 FMINNM and FMAXNM as FMIN and FMAX
-        // (VEX/priv/guest_arm64_toIR.c:32), so `min` or `max` of a `nan` prints `nan` under it;
-        // compare stdout on aarch64 again once a Valgrind release fixes that.
-        if !cfg!(target_arch = "aarch64") {
-            assert_eq!(
-                String::from_utf8_lossy(&checked.stdout),
-                stdout,
-                "{}: {valgrind_stderr}",
-                o2.display()
-            );
-        }
-    }
-    let out = invocation.run(&last, false);
-    assert_exits_zero(&last, &out);
-    assert_same_streams(&last, &out, &stdout, &stderr);
-    // Last, so that a run failing any check above writes nothing.
     let mut files = vec![(path.with_extension("out"), stdout)];
     if expects_stderr {
         files.push((err_path, stderr));
@@ -354,12 +291,91 @@ pub(crate) fn run_with(path: &Path, bless: bool, valgrind: &Path) {
     expect_files(&files, bless);
 }
 
+/// The memory test of a `tests/run` case. Each run exits 0, prints `<name>.out` on stdout, and
+/// prints `<name>.err` on stderr, or nothing when that file does not exist.
+///
+/// On Linux, the checks run in this order:
+/// 1. Three builds that `ASan` checks run: `ASAN_O0`, `ASAN_O2` and `ASAN_RC`. The `asan-O0`
+///    build is the first program that runs, so that a stack overflow shows as an `ASan` report and
+///    not as a signal.
+/// 2. The `-O2` build on the System allocator (`VALGRIND_O2`) runs natively.
+/// 3. That build runs once under Valgrind, which finds no leak or memory error. Its stderr holds
+///    Valgrind's own log, so it is not compared.
+///
+/// On macOS, `ASan` and Valgrind do not run. A `--rc-checks` build runs, which finds no count
+/// fault or live object at exit.
+///
+/// Every run reads `<name>.in` and gets the arguments of the `// args:` line, as in `run`. It
+/// builds into `memory_dir`, so it can run at the same time as `run` on the same case. It has no
+/// bless mode and writes no file.
+pub(crate) fn memory(path: &Path) {
+    memory_with(path, Path::new("valgrind"));
+}
+
+/// `memory`, with `valgrind` as the Valgrind program.
+pub(crate) fn memory_with(path: &Path, valgrind: &Path) {
+    let out_path = path.with_extension("out");
+    let stdout = read_if_exists(&out_path).unwrap_or_else(|| {
+        panic!(
+            "{} is missing; create it empty, then bless the output test with SISU_BLESS=1",
+            out_path.display()
+        )
+    });
+    let stderr = read_if_exists(&path.with_extension("err")).unwrap_or_default();
+    let invocation = Invocation::of(path);
+    let check = |exe: &Path, out: &Output| {
+        assert_exits_zero(exe, out);
+        assert_same_streams(exe, out, &stdout, &stderr);
+    };
+    let out_dir = memory_dir(path);
+    if !cfg!(target_os = "linux") {
+        let [rc] = build_into(path, &out_dir, [RC_CHECKS]);
+        check(&rc, &invocation.run(&rc, false));
+        return;
+    }
+    let [asan_o0, asan_o2, asan_rc, o2] =
+        build_into(path, &out_dir, [ASAN_O0, ASAN_O2, ASAN_RC, VALGRIND_O2]);
+    // `asan-O0` first, see above.
+    for exe in [&asan_o0, &asan_o2, &asan_rc] {
+        check(exe, &invocation.run_asan(exe));
+    }
+    check(&o2, &invocation.run(&o2, false));
+    let checked = invocation.run_under(&o2, valgrind);
+    let valgrind_stderr = String::from_utf8_lossy(&checked.stderr);
+    assert_eq!(
+        checked.status.code(),
+        Some(0),
+        "{}: {valgrind_stderr}",
+        o2.display()
+    );
+    // shortcut: Valgrind 3.26 runs arm64 FMINNM and FMAXNM as FMIN and FMAX
+    // (VEX/priv/guest_arm64_toIR.c:32), so `min` or `max` of a `nan` prints `nan` under it;
+    // compare stdout on aarch64 again once a Valgrind release fixes that.
+    if !cfg!(target_arch = "aarch64") {
+        assert_eq!(
+            String::from_utf8_lossy(&checked.stdout),
+            stdout,
+            "{}: {valgrind_stderr}",
+            o2.display()
+        );
+    }
+}
+
+/// The text of `path`, or `None` when the file does not exist.
+fn read_if_exists(path: &Path) -> Option<String> {
+    match fs::read_to_string(path) {
+        Ok(text) => Some(text),
+        Err(error) if error.kind() == ErrorKind::NotFound => None,
+        Err(error) => panic!("{}: {error}", path.display()),
+    }
+}
+
 /// Panics unless `out`, the output of `exe`, shows exit code 0.
 fn assert_exits_zero(exe: &Path, out: &Output) {
     assert_eq!(
         out.status.code(),
         Some(0),
-        "{}: {:?}\n{}",
+        "{}: {}\n{}",
         exe.display(),
         out.status,
         String::from_utf8_lossy(&out.stderr)
@@ -651,12 +667,11 @@ pub(crate) const ASAN_RC: Build = ("asan-rc", &["--sanitize", "address", "--rc-c
 const O0: Build = ("O0", &[]);
 const O2: Build = ("O2", &["-O2"]);
 pub(crate) const RC_CHECKS: Build = ("rc", &["--rc-checks"]);
-/// `-O2` on the default allocator, mimalloc, for `run` on Linux, where `VALGRIND_O2` is a System
-/// build: without it, no Linux case runs `-O2` code on mimalloc, the allocator that users get.
-/// On macOS `VALGRIND_O2` is this build already.
+/// `-O2` on the default allocator, mimalloc, the allocator that users get: the `-O2` build of
+/// `run`. On Linux, `memory` builds `VALGRIND_O2` in its place, a System build, for Valgrind.
 pub(crate) const MIMALLOC_O2: Build = ("O2-mimalloc", &["-O2"]);
 /// `--rc-checks` on the System allocator, for a test that runs a count-checked build under
-/// Valgrind on Linux, as it runs `VALGRIND_O0`. `run` does not build it: there, `ASAN_RC` checks
+/// Valgrind on Linux, as it runs `VALGRIND_O0`. `memory` does not build it: there, `ASAN_RC` checks
 /// the counted build. Its stderr is Valgrind's own log, and is not compared. On macOS Valgrind
 /// does not run, and `RC_CHECKS` is this build already.
 pub(crate) const VALGRIND_RC: Build = (
@@ -668,8 +683,8 @@ pub(crate) const VALGRIND_RC: Build = (
     },
 );
 /// `O0` and `O2` for a test that runs a plain build under Valgrind on Linux, on the System
-/// allocator. `run` builds `VALGRIND_O2` and runs it once under Valgrind, but its plain build
-/// is `O0`, on mimalloc.
+/// allocator. `memory` builds `VALGRIND_O2` and runs it once under Valgrind, but it builds no plain
+/// build on the System allocator.
 pub(crate) const VALGRIND_O0: Build = ("O0", VALGRIND_FLAGS);
 // Repeats `VALGRIND_FLAGS`' values after `-O2`, and must stay in step with them: a const cannot
 // concatenate slices.
@@ -711,20 +726,40 @@ fn build_into<const N: usize>(path: &Path, out: &Path, builds: [Build; N]) -> [P
 /// `<CARGO_TARGET_TMPDIR>/cases/<source path>/`, where `case_dir` puts the builds of `source`. The
 /// whole path, nested, keeps same-named cases in different directories apart.
 pub(crate) fn case_path(source: &Path) -> PathBuf {
-    // An absolute path would replace the base in `join`, and a leading `..`, as a case outside
-    // the crate has, would climb out of `cases/`, so both go in without those components.
+    build_path("cases", source)
+}
+
+/// `<CARGO_TARGET_TMPDIR>/memory-cases/<source path>/`, where `memory_dir` puts the builds of
+/// `source`. `run` and `memory` of one case run at the same time, so their builds stay apart.
+pub(crate) fn memory_path(source: &Path) -> PathBuf {
+    build_path("memory-cases", source)
+}
+
+/// `<CARGO_TARGET_TMPDIR>/<root>/<source path>/`.
+fn build_path(root: &str, source: &Path) -> PathBuf {
+    // An absolute path would replace the base in `join`. A leading `..`, as a case outside the
+    // crate has, would climb out of `root`. So both go in without those components.
     let inside: PathBuf = source
         .components()
         .skip_while(|c| matches!(c, Component::RootDir | Component::ParentDir))
         .collect();
     Path::new(env!("CARGO_TARGET_TMPDIR"))
-        .join("cases")
+        .join(root)
         .join(inside)
 }
 
 /// A fresh, empty `case_path`.
 pub(crate) fn case_dir(source: &Path) -> PathBuf {
-    let dir = case_path(source);
+    fresh_dir(case_path(source))
+}
+
+/// A fresh, empty `memory_path`.
+fn memory_dir(source: &Path) -> PathBuf {
+    fresh_dir(memory_path(source))
+}
+
+/// `dir`, emptied, or made when it does not exist.
+fn fresh_dir(dir: PathBuf) -> PathBuf {
     // It is absent on the first run, so a failure here is expected and harmless.
     drop(fs::remove_dir_all(&dir));
     fs::create_dir_all(&dir).expect("creates the case directory");
