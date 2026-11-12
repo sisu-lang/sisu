@@ -6,7 +6,7 @@ indentation parser of test_nightly_workflow.py and use no YAML library.
 
 import unittest
 
-from test_nightly_workflow import ROOT, flow_list, job_map, jobs, run_lines, steps
+from test_nightly_workflow import GATE, ROOT, flow_list, job_map, jobs, part, run_lines, steps
 
 CI = ROOT / ".github" / "workflows" / "ci.yml"
 
@@ -37,9 +37,13 @@ class CiTestJobTests(unittest.TestCase):
         self.assertEqual(keys.get("name"), "Test")
         self.assertEqual(keys.get("needs"), "test")
         self.assertEqual(keys.get("if"), "always()")
-        runs = [line for step in steps(job) for line in run_lines(step)]
-        self.assertIn('test "$RESULT" = success', runs)
-        self.assertNotIn("continue-on-error", "\n".join(job))
+        result_steps = steps(job)
+        self.assertEqual(len(result_steps), 1)
+        step = result_steps[0]
+        self.assertEqual(part(step, "env").get("RESULT"), "${{ needs.test.result }}")
+        self.assertNotIn("if", step)
+        self.assertEqual(run_lines(step), ['test "$RESULT" = success'])
+        self.assertIsNone(GATE.search("\n".join(job)))
 
     def test_whole_list_checks_should_run_in_part_one_only(self) -> None:
         for script in ("scripts/test_names.py", "scripts/nextest_filters.py"):
