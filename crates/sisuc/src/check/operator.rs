@@ -10,7 +10,7 @@ use super::{
     block_expr, is_kept, known_type, optional_of, payload, type_of, wrap,
 };
 use crate::ast::{self, CompareOp, ExprKind};
-use crate::diagnostic::{Diagnostic, DiagnosticKind, Expected, Literal, PeelIs, PeelLayers};
+use crate::diagnostic::{Code, Diagnostic, DiagnosticKind, Expected, Literal, PeelIs, PeelLayers};
 use crate::lang::{self, Dispatch};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
@@ -260,8 +260,12 @@ impl Checker<'_> {
         // The first check is dropped with its result, locals, uninferred literals, misfits and
         // findings. So none is left that nothing binds, none is judged twice, and no value
         // outlives the cut reports.
-        self.diagnostics.drop_since(diagnostics);
-        let rearmed = self.rearm_limit(diagnostics);
+        // A limit of the aliases is reported once for the check, so the second check cannot report
+        // it again: the report of the first check is kept.
+        let limits = self
+            .diagnostics
+            .take_since(diagnostics)
+            .only(Code::AliasTooLarge);
         if !self.body.uninferred.is_empty() {
             for local in locals..self.body.locals.len() {
                 #[cfg(test)]
@@ -274,10 +278,7 @@ impl Checker<'_> {
         self.body.misfits.truncate(misfits);
         self.body.joins.insert(span);
         let result = self.integers(operands, Expectation::None, operator, op);
-        // A limit that the second check does not report waits for no later written type.
-        if rearmed {
-            self.drop_limit();
-        }
+        self.diagnostics.restore(limits);
         result
     }
 

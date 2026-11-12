@@ -33,13 +33,6 @@ pub(super) struct Mark {
     promises: usize,
 }
 
-impl Mark {
-    /// Whether the list held fewer reports at this place than at `other`.
-    pub(super) fn before(self, other: Mark) -> bool {
-        self.reports < other.reports
-    }
-}
-
 /// The reports and the promises that `take_since` cut. `restore` puts them back.
 #[must_use]
 #[derive(Default)]
@@ -49,6 +42,14 @@ pub(super) struct Held {
 }
 
 impl Held {
+    /// Keeps only the reports of `code`, and no promise: each report kept is an error that keeps
+    /// every promise.
+    pub(super) fn only(mut self, code: Code) -> Held {
+        self.reports.retain(|d| d.code() == code);
+        self.promises.clear();
+        self
+    }
+
     /// Adds the reports and the promises of `other` after the ones held.
     pub(super) fn absorb(&mut self, other: Held) {
         self.reports.extend(other.reports);
