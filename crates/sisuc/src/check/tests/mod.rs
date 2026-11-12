@@ -536,7 +536,7 @@ fn if_with_failed_and_never_branches_is_error() {
 fn failed_rule_should_make_its_expression_error() {
     const MISMATCH: Code = Code::Mismatch;
     with_prelude();
-    let rows: [(&str, String, Code, (usize, usize)); 11] = [
+    let rows: [(&str, String, Code, (usize, usize)); 9] = [
         (
             "unary",
             "fn main() {\n    let x = -true\n    print(x == false)\n}".into(),
@@ -591,18 +591,6 @@ fn failed_rule_should_make_its_expression_error() {
                 .into(),
             MISMATCH,
             (2, 34),
-        ),
-        (
-            "if condition with else",
-            "fn main() {\n    let x = if 1 { 2 } else { 3 }\n    print(x == false)\n}".into(),
-            MISMATCH,
-            (2, 16),
-        ),
-        (
-            "if condition without else",
-            "fn main() {\n    let x = if 1 { print(2) }\n    print(x)\n}".into(),
-            MISMATCH,
-            (2, 16),
         ),
     ];
     for (name, src, code, pos) in rows {
@@ -4376,10 +4364,6 @@ fn a_rejected_none_should_be_reported_once() {
             (2, 14),
         ),
         (
-            "fn main() {\n    let x = if None { 1 } else { 2 }\n    print(x && true)\n}",
-            (2, 16),
-        ),
-        (
             "fn main() {\n    let y = None + 1\n    print(y && true)\n}",
             (2, 13),
         ),
@@ -4437,13 +4421,16 @@ fn a_rejected_none_should_be_reported_once() {
     );
 }
 
-/// An `if let` whose value is not optional fails: it is `Error`, so a later use draws
-/// nothing.
+/// An `if let` whose value is not optional fails, and its branches still join: the later use of
+/// the `i64` value is checked.
 #[test]
-fn rejected_if_let_scrutinee_reports_once() {
+fn a_rejected_if_let_subject_should_keep_the_join_of_the_branches() {
     codes(
         "fn main() {\n    let x = if let y = 5 { 1 } else { 2 }\n    print(x && true)\n}",
-        &[(Code::UnwrapNeedsOptional, (2, 24))],
+        &[
+            (Code::UnwrapNeedsOptional, (2, 24)),
+            (Code::Mismatch, (3, 11)),
+        ],
     );
 }
 
