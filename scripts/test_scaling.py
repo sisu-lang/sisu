@@ -914,7 +914,7 @@ class ScalingTest(unittest.TestCase):
         WHEN each row is read
         THEN its case is a shape, or a shape of O2_SHAPES with ` -O2`
         AND its stage is a stage that the case judges
-        AND its issue is a positive integer, or the path of a fallback issue file or of the register
+        AND its issue is a positive integer, or the path of the register
         AND each shape of O2_SHAPES is a shape
         """
         self.assertLessEqual(set(sc.O2_SHAPES), set(sc.SHAPES))
@@ -926,7 +926,7 @@ class ScalingTest(unittest.TestCase):
                 self.assertIn(shape.removesuffix(sc.O2_SUFFIX), sc.SHAPES)
                 self.assertIn(stage, [name for name, _ in sc.STAGES])
                 if isinstance(issue, str):
-                    self.assertTrue(issue.startswith((".scratch/", "docs/register.md")), issue)
+                    self.assertEqual(issue, "docs/register.md")
                 else:
                     self.assertGreater(issue, 0)
 

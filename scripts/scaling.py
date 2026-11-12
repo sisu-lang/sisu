@@ -85,9 +85,7 @@ O2_STAGES = ("codegen", "optimize", "object")
 AS_AT_O0 = "as at -O0"
 # The cases that are superlinear today, and the cases just under the rule that have a known cause:
 # (shape, stage, issue). The pull request that fixes a case removes its row. An issue is a number.
-# It can also be the path of a fallback issue file that is not filed yet (`GitHub: pending`).
-# Or it is `docs/register.md`, for a debt row there. Filing an issue replaces the path with the
-# number.
+# Or it is `docs/register.md`, for a debt row there.
 KNOWN: list[tuple[str, str, int | str]] = [
     ("mut exits", "mir", 502),
     ("mut exits", "codegen", 502),
@@ -108,11 +106,11 @@ KNOWN: list[tuple[str, str, int | str]] = [
     # their seen sets for one field. The struct is one node of it, and adds 1.4% at 8n.
     ("never built", "check", "docs/register.md"),
     # A path of nested structs makes LLVM's `StructType::checkBody` grow with the depth.
-    ("struct paths", "codegen", ".scratch/structs-part-1/issues/01-struct-paths-codegen.md"),
+    ("struct paths", "codegen", 686),
     # The cost is LLVM's: `getUnderlyingObjects` and a pointer set, in a function of hundreds of
     # calls of the helpers that make an array or a box unique.
-    ("struct writes -O2", "optimize", ".scratch/structs-part-1/issues/02-struct-writes-o2.md"),
-    ("struct writes -O2", "object", ".scratch/structs-part-1/issues/02-struct-writes-o2.md"),
+    ("struct writes -O2", "optimize", 687),
+    ("struct writes -O2", "object", 687),
 ]
 ANNOTATE = ["callgrind_annotate", "--inclusive=yes", "--threshold=100", "--show=Ir", "--auto=no"]
 DIAGNOSTIC = re.compile(r"^(error|warning)\[([EW]\d{4})\]")
