@@ -5,6 +5,8 @@
 // array, an optional, a class field, an `any Display` and a generic `Display` function
 // THEN each form writes `P(x: 1)`, and `Rock()` for no fields; a class shows its fields one level
 // deep, a written `to_string` replaces the fields, and the wide struct writes all 33 fields
+// AND a struct that is wider than a line breaks under `{x:#}` and `dbg`: one field to a line, and
+// a field that is too wide for its line breaks as an array does
 struct P { x: i64 }
 struct Rock {}
 class C { p: P }
@@ -45,6 +47,12 @@ struct W {
 }
 class Tag { id: i64 }
 struct Held { t: Tag }
+struct Leaf { id: i64; name: string }
+enum Kind {
+    Big(label: string, size: i64)
+    Small
+}
+struct Long { leaf: Leaf; kind: Kind; xs: [i64]; tail: string }
 
 extend Tag: Display {
     fn to_string(self) -> string {
@@ -79,7 +87,16 @@ fn main() {
     print(w)                         // W(f0: 1, ..., f32: 33)
     show(p)
     dbg(Held(t: Tag(id: 5)))
+    print(Kind.Small)                // Small
     print(Rock())                    // Rock()
     print([Rock(), Rock()])          // [Rock(), Rock()]
     dbg(Rock())
+    let long = Long(
+        leaf: Leaf(id: 1000000, name: "a long name for a leaf"),
+        kind: Kind.Big(label: "a long label for a kind", size: 2000000),
+        xs: [111111, 222222, 333333, 444444, 555555, 666666, 777777, 888888, 999999, 101010, 121212, 131313],
+        tail: "the last field of the long struct"
+    )
+    print("{long:#}")
+    dbg(long)
 }

@@ -1,0 +1,55 @@
+// GIVEN generic enums and classes that the program declares before its structs.
+// So the type ids of the checked program and the type ids after `mono` differ.
+// The structs hold an enum, an instance of a generic enum and a class with a written `to_string`.
+// One struct holds an instance of a generic class with a written `to_string`.
+// WHEN `main` shows each struct with `print`, `dbg` and `any Display`, and uses the generic types.
+// THEN each struct writes its fields as in a program with no generic type.
+// AND a written `to_string` that only a struct field reaches runs.
+enum Gn<T> {
+    V(t: T)
+    N
+}
+enum Ev {
+    X(n: i64)
+    Y
+}
+enum E<T> {
+    A(T)
+}
+class Bx<T> { v: T }
+class Tag { id: i64 }
+class C<T> { v: T }
+struct S1 { e: Ev }
+struct S2 { e: E<i64> }
+struct S3 { t: Tag }
+struct S4 { c: C<i64> }
+
+extend Tag: Display {
+    fn to_string(self) -> string {
+        "tag-{self.id}"
+    }
+}
+
+extend C<i64>: Display {
+    fn to_string(self) -> string {
+        "class-{self.v}"
+    }
+}
+
+fn main() {
+    let g: Gn<i64> = Gn.V(t: 3)
+    let n: Gn<i64> = Gn.N
+    print(g)                         // V(t: 3)
+    print(n)                         // N
+    let b = Bx(v: 2)
+    print(b.v)                       // 2
+    print(S1(e: Ev.X(n: 1)))         // S1(e: X(n: 1))
+    print(S1(e: Ev.Y))               // S1(e: Y)
+    print(S2(e: E.A(7)))             // S2(e: A(7))
+    print(S3(t: Tag(id: 1)))         // S3(t: tag-1)
+    dbg(S3(t: Tag(id: 1)))
+    let a: any Display = S3(t: Tag(id: 2))
+    print(a)                         // S3(t: tag-2)
+    print(C(v: 7))                   // class-7
+    print(S4(c: C(v: 7)))            // S4(c: class-7)
+}

@@ -41,6 +41,8 @@ fn main() {
     print(w.p.xs[0])                                  // 25
 
     let x = Wrap(h: Hold(o: Obj(n: 1)))
+    let old = x.h.o
     x.h.o.n = { x.h = Hold(o: Obj(n: 100)); 5 }
     print(x.h.o.n)                                    // 100
+    print(old.n)                                      // 5: the write went to the old object
 }
