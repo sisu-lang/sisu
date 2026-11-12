@@ -7428,6 +7428,31 @@ fn fill_or_sum_argument_should_take_the_written_context() {
             fill_mk_program("let r: Result<u8, i64> = Ok(1 + loop { break 2 } + loop { break 3 })"),
             vec![],
         ),
+        (
+            "waiting sum, written u8",
+            fill_mk_program("let r: u8 = id(mk() + mk())"),
+            vec![],
+        ),
+        (
+            "waiting sum, written u8?",
+            fill_mk_program("let r: u8? = id(mk() + mk())"),
+            vec![],
+        ),
+        (
+            "waiting sum, hint of ==",
+            fill_mk_program("let r = v == id(mk() + mk())"),
+            vec![],
+        ),
+        (
+            "waiting sum, later branch",
+            fill_mk_program("let r = if c == 1 { v } else { id(mk() + mk()) }"),
+            vec![],
+        ),
+        (
+            "waiting sum, beside u8",
+            fill_mk_program("let r = v + id(mk() + mk())"),
+            vec![],
+        ),
         ("509", REPRO_509.to_string(), vec![]),
         ("509id", REPRO_509_ID.to_string(), vec![]),
         ("557", REPRO_557.to_string(), vec![]),
@@ -7487,6 +7512,86 @@ fn negated_or_later_argument_should_give_the_error_of_its_twin() {
             "d17",
             fill_mk_program("let r: u8 = id(-mk())"),
             vec![(NegatedU8, (7, 20))],
+        ),
+    ];
+    error_rows(&rows);
+}
+
+/// GIVEN a sum, a `-` or an array fill of calls that wait for their types
+/// AND the value is an argument of a generic call, or sits in one
+/// WHEN the program is checked
+/// THEN a sum takes its default type, as the same sum outside the call does, so no type is
+///   missing. A `-` or a fill has no default: the call that waits is the one that misses its type.
+#[test]
+fn sum_of_waiting_calls_should_take_its_default_type() {
+    use Code::CannotInfer;
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "ctl-1",
+            program_in(FILL_MK_HEAD, "print(id(mk() + mk()))", "    print(c)\n}\n"),
+            vec![],
+        ),
+        (
+            "ctl-2",
+            fill_mk_program("let r = Some(mk() + mk())"),
+            vec![],
+        ),
+        (
+            "ctl-3",
+            fill_mk_program("let r = id(mk() - mk() * mk())"),
+            vec![],
+        ),
+        (
+            "ctl-4",
+            fill_mk_program("let r = id(id(mk()) + mk())"),
+            vec![],
+        ),
+        (
+            "ctl-5",
+            fill_mk_program("let r = id([mk() + mk(); 2])"),
+            vec![],
+        ),
+        (
+            "ctl-11",
+            fill_mk_program("let r = id(-(mk() + mk()))"),
+            vec![],
+        ),
+        (
+            "ctl-6",
+            fill_mk_program("let r = id([mk(); 2])"),
+            vec![(CannotInfer, (7, 17))],
+        ),
+        (
+            "ctl-7",
+            fill_mk_program("let r = id(-mk())"),
+            vec![(CannotInfer, (7, 17))],
+        ),
+    ];
+    error_rows(&rows);
+}
+
+/// GIVEN a join whose context failed, with a sum, a `-` or an array fill as a later branch
+/// WHEN the program is checked
+/// THEN the branch takes the type of the first branch, the anchor, as a branch of literals does.
+///   It holds before and after the fix.
+#[test]
+fn poisoned_join_should_take_the_anchor_type_for_a_sum_or_a_fill() {
+    use Code::{NegatedU8, UnknownType};
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "ctl-12",
+            fill_mk_program("let r: Nope = if c == 1 { v } else { 1 + id(2) }"),
+            vec![(UnknownType, (7, 12))],
+        ),
+        (
+            "ctl-13",
+            fill_mk_program("let r: Nope = if c == 1 { v } else { -id(2) }"),
+            vec![(UnknownType, (7, 12)), (NegatedU8, (7, 42))],
+        ),
+        (
+            "ctl-14",
+            fill_mk_program("let r: Nope = if c == 1 { [v] } else { [5; 2] }"),
+            vec![(UnknownType, (7, 12))],
         ),
     ];
     error_rows(&rows);
@@ -7583,6 +7688,7 @@ fn fill_or_sum_argument_should_keep_its_report_before_and_after() {
             fill_program("let r: Result<u8, i64> = Ok((loop { break 2 }))"),
             vec![],
         ),
+        ("ctl-10", fill_mk_program("let r = id(mk() + 1)"), vec![]),
         (
             "a12",
             fill_e_program("let r: E = E.P(v: 1 + loop { break 2 })"),

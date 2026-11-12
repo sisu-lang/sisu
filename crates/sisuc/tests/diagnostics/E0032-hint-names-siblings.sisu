@@ -95,4 +95,11 @@ fn written_optional_value() {
     print(x)
 }
 
+fn equal_to_loop_with_optional() {
+    let o: u8? = None
+    let q: i64 = 5
+    let x = q == loop { break o }
+    print(x)
+}
+
 fn main() {}

@@ -155,5 +155,11 @@ warning[W0015]: `x` can be `None`, and then this writes the word "None"
    |
    = help: use `if let`, give a default with `??`, or call `x.to_string()` to write "None" on purpose
 
-sisu: 13 errors, 2 warnings
+error[E0032]: expected `i64?`, found `u8?`
+   --> E0032-hint-names-siblings.sisu:101:31
+    |
+101 |     let x = q == loop { break o }
+    |                               ^
+
+sisu: 14 errors, 2 warnings
 sisu: for more on a code, run `sisu explain <code>`: E0032, W0015

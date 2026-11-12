@@ -96,4 +96,40 @@ fn mut_marker_missing() {
     print(x)
 }
 
+fn optional_argument_under_written_optional() {
+    let o: u8? = None
+    let x: i64? = id(o)
+    print(x)
+}
+
+fn optional_element_in_array_argument() {
+    let q = 5
+    let x: u8? = first([q, None])
+    print(x)
+}
+
+fn optional_argument_beside_sibling() {
+    let o: u8? = None
+    let q = 5
+    let x = q == id(o)
+    print(x)
+}
+
+fn plain_argument_under_written_optional() {
+    let v: u8 = 7
+    let x: i64? = id(v)
+    print(x)
+}
+
+fn pick<T>(a: T, bs: [T?]) -> T {
+    a
+}
+
+fn one_of_two_arguments_holds_optional() {
+    let v: u8 = 7
+    let ao: [u8?] = [None]
+    let x: i64? = pick(v, ao)
+    print(x)
+}
+
 fn main() {}

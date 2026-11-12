@@ -115,5 +115,83 @@ error[E0032]: expected `[u8]`, found `[i64]`
 95 |     let x = v == first(mut ys)
    |                            ^^
 
-sisu: 15 errors, 2 warnings
+error[E0032]: expected `i64?`, found `u8?`
+   --> E0032-hint-blames-payload.sisu:101:22
+    |
+101 |     let x: i64? = id(o)
+    |                      ^
+
+warning[W0015]: `x` can be `None`, and then this writes the word "None"
+   --> E0032-hint-blames-payload.sisu:102:11
+    |
+102 |     print(x)
+    |           ^
+    |
+    = help: use `if let`, give a default with `??`, or call `x.to_string()` to write "None" on purpose
+
+error[E0032]: expected `[u8?]`, found `[i64?]`
+   --> E0032-hint-blames-payload.sisu:107:24
+    |
+107 |     let x: u8? = first([q, None])
+    |                        ^^^^^^^^^
+
+warning[W0015]: `x` can be `None`, and then this writes the word "None"
+   --> E0032-hint-blames-payload.sisu:108:11
+    |
+108 |     print(x)
+    |           ^
+    |
+    = help: use `if let`, give a default with `??`, or call `x.to_string()` to write "None" on purpose
+
+error[E0032]: expected `i64?`, found `u8?`
+   --> E0032-hint-blames-payload.sisu:114:21
+    |
+114 |     let x = q == id(o)
+    |                     ^
+
+error[E0032]: expected `i64`, found `u8`
+   --> E0032-hint-blames-payload.sisu:120:22
+    |
+120 |     let x: i64? = id(v)
+    |                      ^
+    |
+help: if the types are right, convert it with `i64(...)`
+    |
+120 |     let x: i64? = id(i64(v))
+    |                      ++++ +
+
+warning[W0015]: `x` can be `None`, and then this writes the word "None"
+   --> E0032-hint-blames-payload.sisu:121:11
+    |
+121 |     print(x)
+    |           ^
+    |
+    = help: use `if let`, give a default with `??`, or call `x.to_string()` to write "None" on purpose
+
+error[E0032]: expected `i64?`, found `u8`
+   --> E0032-hint-blames-payload.sisu:131:24
+    |
+131 |     let x: i64? = pick(v, ao)
+    |                        ^
+    |
+help: if the types are right, convert it with `i64(...)`
+    |
+131 |     let x: i64? = pick(i64(v), ao)
+    |                        ++++ +
+
+error[E0032]: expected `[i64??]`, found `[u8?]`
+   --> E0032-hint-blames-payload.sisu:131:27
+    |
+131 |     let x: i64? = pick(v, ao)
+    |                           ^^
+
+warning[W0015]: `x` can be `None`, and then this writes the word "None"
+   --> E0032-hint-blames-payload.sisu:132:11
+    |
+132 |     print(x)
+    |           ^
+    |
+    = help: use `if let`, give a default with `??`, or call `x.to_string()` to write "None" on purpose
+
+sisu: 21 errors, 6 warnings
 sisu: for more on a code, run `sisu explain <code>`: E0032, E0167, W0015
