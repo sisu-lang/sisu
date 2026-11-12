@@ -1492,7 +1492,6 @@ impl Checker<'_> {
         self.lang = self.language_interfaces();
         self.interface_signatures(items);
         let declared = self.collect_signatures(items);
-        self.reject_struct_cycles(items);
         // The first queries for a generated conformance come before the bodies, in
         // `conformances`, so the enums that a query must not expand are known first: those that
         // grow, and those no value can be built of. Each has its own error, which stands alone.

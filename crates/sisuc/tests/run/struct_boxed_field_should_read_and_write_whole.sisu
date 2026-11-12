@@ -19,7 +19,9 @@ fn next_none() {
 fn next_read() {
     let n = Node(v: 1, next: Some(Node(v: 2, next: None)))
     let z = n.next
-    print(z)                         // Node(v: 2, next: None)
+    if let Some(z) = z {
+        print(z)                     // Node(v: 2, next: None)
+    }
     print(n)                         // Node(v: 1, next: Node(v: 2, next: None))
 }
 

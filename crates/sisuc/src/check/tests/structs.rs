@@ -1223,42 +1223,6 @@ fn struct_equality_should_follow_its_field_types() {
     );
 }
 
-/// GIVEN a struct that holds itself through an optional, an enum's variant or an enum's type
-/// argument. WHEN the program is checked. THEN it is E0083 at the struct's keyword until Task 5
-/// gives the box. An array ends the cycle, so `struct S { xs: [S] }` has no error. A class and
-/// a struct that hold each other with no way out are E0027 at the struct, as for an enum.
-#[test]
-fn struct_on_a_cycle_should_be_rejected_until_task_5() {
-    let rows = [
-        (
-            "an optional",
-            "struct S { s: S? }\nfn main() {}".to_string(),
-            vec![(ReservedWord, (1, 1))],
-        ),
-        (
-            "an enum's variant",
-            "struct S { e: E }\nenum E {\n    A(s: S)\n    B\n}\nfn main() {}".to_string(),
-            vec![(ReservedWord, (1, 1))],
-        ),
-        (
-            "an enum's type argument",
-            "enum W<T> {\n    A(x: T)\n    N\n}\nstruct S { w: W<S> }\nfn main() {}".to_string(),
-            vec![(ReservedWord, (5, 1))],
-        ),
-        (
-            "an array",
-            "struct S { xs: [S] }\nfn main() {}".to_string(),
-            vec![],
-        ),
-        (
-            "a class and a struct",
-            "class C { s: S }\nstruct S { c: C }\nfn main() {}".to_string(),
-            vec![(NeverConstructed, (2, 8))],
-        ),
-    ];
-    error_rows(&rows);
-}
-
 /// GIVEN a struct that holds itself, directly, through another struct or through an enum. WHEN
 /// the program is checked. THEN it is E0027 when no value of it can be built, at its first enum,
 /// or else at its first struct. An optional, an array and an enum's variant that needs no `S` end

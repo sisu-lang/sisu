@@ -702,6 +702,7 @@ impl Checker<'_> {
                     })
                     .collect(),
                 counted: false,
+                cycle: None,
                 reaches: false,
             })
             .collect();
@@ -746,12 +747,15 @@ impl Checker<'_> {
                 continue;
             }
             reported[component[n]] = true;
-            let chain = self.chain(n, &mut fix);
+            let (links, first_struct) = self.chain(n, &mut fix);
             let name = self.node_info(n).0;
             self.error(DiagnosticKind::NeverConstructed {
                 name: name.name.to_string(),
                 at: name.span,
-                cause: Unbuilt::Chain(chain),
+                cause: Unbuilt::Chain {
+                    links,
+                    first_struct,
+                },
             });
         }
         (0..nodes)
@@ -763,8 +767,8 @@ impl Checker<'_> {
     /// which can be built by `fix`. It gives each link's holder (`E.V` or `K.f`) and the type held,
     /// with the arguments the chain gives it. At an enum it takes the first variant's first such
     /// field, and at a class or a struct the first such field. It ends at the first type it meets
-    /// again.
-    fn chain(&self, start: usize, fix: &mut Buildable) -> Vec<(String, String)> {
+    /// again. It also gives the name of the first struct on the chain, if there is one.
+    fn chain(&self, start: usize, fix: &mut Buildable) -> (Vec<(String, String)>, Option<String>) {
         let classes = self.classes.len();
         let params = self.node_info(start).1;
         // A field named `name` of type `ty`, if that type cannot be built: its name, its type's
@@ -775,6 +779,7 @@ impl Checker<'_> {
             (!fix.built[key]).then(|| (name.to_string(), self.type_name(ty), (n, args), key))
         };
         let mut chain = Vec::new();
+        let mut first_struct = None;
         // Asking for a key's flags can add keys to `fix`, so this is a set.
         let mut on_chain = FxHashSet::default();
         let (mut at, mut args) = (start, own_args(params));
@@ -800,10 +805,13 @@ impl Checker<'_> {
             };
             let (name, ty, next, next_key) =
                 field.expect("a type no value can be built of should need another such type");
+            if first_struct.is_none() && at >= classes + self.enums.len() {
+                first_struct = Some(holder.name.to_string());
+            }
             chain.push((format!("{}.{name}", holder.name), ty));
             ((at, args), key) = (next, next_key);
         }
-        chain
+        (chain, first_struct)
     }
 
     /// The name and type parameters of node `n` of `never_built`: a class, an enum, then a struct.

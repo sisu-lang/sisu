@@ -96,8 +96,8 @@ type WrittenRoot<'p> = (MirPlace, Vec<Step<'p>>, Option<LocalId>);
 enum Step<'p> {
     /// An element, with its index and the index's operand.
     Index(&'p Expr, Operand),
-    /// A field of a struct.
-    Field(usize),
+    /// A field of a struct, and whether its value is in a box (`opens_box`).
+    Field(usize, bool),
 }
 
 struct Lowering<'a> {
@@ -358,6 +358,26 @@ impl<'a> Lowering<'a> {
     /// How many constructions with a boxed field of enum `f` lowering has counted.
     fn built_of(&self, f: tir::EnumId) -> usize {
         self.built.get(&f).map_or(0, |&(count, _)| count)
+    }
+
+    /// Pushes onto `place` the projection to field `index` of a value of the class or struct type
+    /// `base`. When the field is a boxed struct field of a type that is not optional, it also
+    /// pushes `Box`. So the place reaches the field's value.
+    fn push_field(&self, place: &mut MirPlace, base: Type, index: usize) {
+        place.projections.push(self.field(base, index));
+        if self.opens_box(base, index) {
+            place.projections.push(Projection::Box);
+        }
+    }
+
+    /// Whether field `index` of a value of type `base` is a boxed struct field whose type is not
+    /// optional: its value is in the box, past a `Projection::Box`.
+    fn opens_box(&self, base: Type, index: usize) -> bool {
+        let TypeKind::Struct(id, _) = base.kind() else {
+            return false;
+        };
+        let field = &self.program.structs[id.0].fields[index];
+        field.boxed && !matches!(field.ty.kind(), TypeKind::Optional(_))
     }
 
     /// The projection to field `index` of a value of the class or struct type `base`.
@@ -816,9 +836,7 @@ impl<'a> Lowering<'a> {
     fn base(&mut self, base: &Expr, borrow: bool) -> Option<(MirPlace, Option<LocalId>)> {
         if borrow && let ExprKind::StructField { base: inner, index } = &base.kind {
             let (mut place, temp) = self.path(inner)?;
-            place
-                .projections
-                .push(Projection::StructField { index: *index });
+            self.push_field(&mut place, inner.ty, *index);
             return Some((place, temp));
         }
         if borrow && let Some(local) = local_of(base) {
@@ -843,7 +861,7 @@ impl<'a> Lowering<'a> {
         match &e.kind {
             ExprKind::Field { base, index } => {
                 let (mut place, temp) = self.base(base, true)?;
-                place.projections.push(self.field(base.ty, *index));
+                self.push_field(&mut place, base.ty, *index);
                 Some((place, temp))
             }
             ExprKind::Index { base, index } => {
@@ -975,7 +993,7 @@ impl<'a> Lowering<'a> {
             }
             ExprKind::Field { base, index } => {
                 let (mut place, temp) = self.base(base, true)?;
-                place.projections.push(self.field(base.ty, *index));
+                self.push_field(&mut place, base.ty, *index);
                 return Some(self.read_place(e.ty, place, temp, dest));
             }
             ExprKind::Wrap(operand) => Rvalue::Wrap(self.operand(operand)?),
@@ -1465,7 +1483,7 @@ impl<'a> Lowering<'a> {
     /// the store.
     fn field_store(&mut self, base: &Expr, index: usize, value: &Expr) -> Option<()> {
         let (mut place, temp) = self.base(base, leaves_locals(value))?;
-        place.projections.push(self.field(base.ty, index));
+        self.push_field(&mut place, base.ty, index);
         let value_op = self.placed(value)?;
         self.store(place, value_op, value.ty);
         self.release(temp);
@@ -1510,13 +1528,13 @@ impl<'a> Lowering<'a> {
                     unreachable!("the checker should bind the base of a place whose value exits")
                 };
                 let mut root = whole(local);
-                root.projections.push(self.field(base.ty, *index));
+                self.push_field(&mut root, base.ty, *index);
                 (root, None)
             }
             Place::Field { base, index } => {
                 let temp = self.temp_of(base)?;
                 let mut root = whole(temp);
-                root.projections.push(self.field(base.ty, *index));
+                self.push_field(&mut root, base.ty, *index);
                 (root, Some(temp))
             }
             Place::Index { .. } | Place::StructField { .. } => {
@@ -1533,14 +1551,26 @@ impl<'a> Lowering<'a> {
         let later: Vec<&Expr> = indexes.iter().copied().chain([value]).collect();
         let mut steps = Vec::with_capacity(path.len());
         let mut i = 0;
+        let program = self.program;
+        let mut ty = (root.projections.iter()).fold(self.locals[root.local.0].ty, |ty, p| {
+            p.projected(program, ty)
+        });
         for step in path {
             steps.push(match step {
                 Place::Index { index, .. } => {
                     i += 1;
                     let op = self.operand(index)?;
+                    let TypeKind::Array(element) = ty.kind() else {
+                        unreachable!("the checker should index only an array")
+                    };
+                    ty = element;
                     Step::Index(index, self.pinned(op, &later[i..]))
                 }
-                Place::StructField { index, .. } => Step::Field(*index),
+                Place::StructField { index, .. } => {
+                    let boxed = self.opens_box(ty, *index);
+                    ty = Projection::StructField { index: *index }.projected(program, ty);
+                    Step::Field(*index, boxed)
+                }
                 _ => unreachable!("the loop above should collect only indexes and struct fields"),
             });
         }
@@ -1554,28 +1584,41 @@ impl<'a> Lowering<'a> {
                 index: op.clone(),
                 span: index.span,
             },
-            Step::Field(index) => Projection::StructField { index: *index },
+            Step::Field(index, _) => Projection::StructField { index: *index },
         }
     }
 
-    /// `root` with the projection of every step, with no statement.
+    /// `root` with the projection of every step, and the `Box` of each boxed field, with no
+    /// statement.
     fn indexed(root: &MirPlace, steps: &[Step<'_>]) -> MirPlace {
         let mut place = root.clone();
-        place.projections.extend(steps.iter().map(Self::projection));
+        for step in steps {
+            place.projections.push(Self::projection(step));
+            if let Step::Field(_, true) = step {
+                place.projections.push(Projection::Box);
+            }
+        }
         place
     }
 
     /// Per level of a write, after its value: for an element, the bounds check of its index,
-    /// then `make_unique` of the array it indexes; a struct field has no statement. Gives the
-    /// written place.
+    /// then `make_unique` of the array it indexes; for a boxed struct field, `make_unique` of its
+    /// box. Each is outermost first. Gives the written place.
     fn walk(&mut self, root: MirPlace, steps: &[Step<'_>]) -> MirPlace {
         let mut place = root;
         for step in steps {
             let array = place.clone();
             place.projections.push(Self::projection(step));
-            if let Step::Index(..) = step {
-                self.push(Statement::Check(place.clone()));
-                self.push(Statement::MakeUnique(array));
+            match step {
+                Step::Index(..) => {
+                    self.push(Statement::Check(place.clone()));
+                    self.push(Statement::MakeUnique(array));
+                }
+                Step::Field(_, true) => {
+                    self.push(Statement::MakeUnique(place.clone()));
+                    place.projections.push(Projection::Box);
+                }
+                Step::Field(_, false) => {}
             }
         }
         place

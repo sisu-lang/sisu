@@ -20,7 +20,7 @@ use inkwell::{AddressSpace, GlobalVisibility, IntPredicate};
 use super::rc::param;
 use super::{Codegen, POSITIONED};
 use crate::conformance::ensure_stack;
-use crate::tir::{ClassId, EnumId, StructId, Type, TypeKind};
+use crate::tir::{ClassId, Inline, Type, TypeKind};
 
 /// The drop depth at which a counting drop function stops recursing and defers its block. The
 /// depth counts frames. The value keeps the stack of a drop at the limit, plus the largest
@@ -30,7 +30,7 @@ pub(super) const DEPTH_LIMIT: u64 = 256;
 #[cfg(test)]
 thread_local! {
     /// How many parts the walks of this module have read on this thread. A part is a field of a
-    /// class that `cycle_fields` gives. It is also a payload field that `enum_frames` takes, and
+    /// class that `cycle_fields` gives. It is also a field that `inline_frames` takes, and
     /// an element that `recursing` takes from an array.
     pub(super) static PART_READS: Cell<usize> = const { Cell::new(0) };
 }
@@ -50,15 +50,14 @@ pub(super) struct DropMemo {
     counts: FxHashMap<Type, bool>,
     /// The drop weight of the drop function of a class or an array, under the same keys.
     weights: FxHashMap<Type, u32>,
-    /// The frames that the release of an enum opens, for each component under its first member.
-    enum_frames: FxHashMap<EnumId, u32>,
-    /// The frames that the release of a struct opens.
-    struct_frames: FxHashMap<StructId, u32>,
+    /// The frames that the release of an enum or a struct opens, for each component under its
+    /// first member.
+    inline_frames: FxHashMap<Inline, u32>,
     /// The keys of the drop weights that are being worked out. A walk that reaches its own key
     /// would never end, so it is an error.
     weighing: FxHashSet<Type>,
-    /// The same for the enum components in `enum_frames`.
-    framing: FxHashSet<EnumId>,
+    /// The same for the components in `inline_frames`.
+    framing: FxHashSet<Inline>,
 }
 
 impl Codegen<'_, '_> {
@@ -223,8 +222,8 @@ impl Codegen<'_, '_> {
                     self.drop_weight(ty)
                 }
             }
-            TypeKind::Enum(id, _) => self.enum_frames(id),
-            TypeKind::Struct(id, _) => self.struct_frames(id),
+            TypeKind::Enum(id, _) => self.inline_frames(Inline::Enum(id)),
+            TypeKind::Struct(id, _) => self.inline_frames(Inline::Struct(id)),
             // `release` calls a drop function through the table. It counts the next frames if
             // it counts. If it does not, what it holds is bounded and ends the chain: those
             // frames come once, at the end, and the margin of `DEPTH_LIMIT` holds them.
@@ -232,24 +231,23 @@ impl Codegen<'_, '_> {
         })
     }
 
-    /// The frames that `@sisu_rc.release.<E>` opens before the next counting drop function
-    /// starts. It opens `release`. When the component of `E` has boxes, `release` calls `drain`,
-    /// which calls `walk`, and `walk` calls itself in place for an inline link, one frame for
-    /// each level of inline links. The number of members bounds those levels. A part in the
-    /// component adds none: `walk` lists a box and `drain` frees it in the same frame. Every
-    /// other payload field of a member adds its own frames. The release of a part in an earlier
-    /// component is an enum release again, and the holds-inline graph has no cycle between
+    /// The frames that `@sisu_rc.release.<E>`, of an enum or a struct `E`, opens before the next
+    /// counting drop function starts. It opens `release`. When the component of `E` has boxes,
+    /// `release` calls `drain`, which calls `walk`. `walk` calls itself in place for an inline
+    /// link, one frame for each level of inline links. The number of members bounds those levels. A
+    /// part in the component adds none: `walk` lists a box and `drain` frees it in the same frame.
+    /// Every other field of a member adds its own frames. The release of a part in an earlier
+    /// component is an enum or a struct release again. The holds-inline graph has no cycle between
     /// components, so the count ends.
-    fn enum_frames(&self, id: EnumId) -> u32 {
-        let enums = &self.program.enums;
+    fn inline_frames(&self, id: Inline) -> u32 {
         let members = self.component(id);
         let key = members.as_ref().map_or(id, |members| members[0]);
-        if let Some(&frames) = self.deep.borrow().enum_frames.get(&key) {
+        if let Some(&frames) = self.deep.borrow().inline_frames.get(&key) {
             return frames;
         }
         assert!(
             self.deep.borrow_mut().framing.insert(key),
-            "enum_frames should not reach the component it works out"
+            "inline_frames should not reach the component it works out"
         );
         let boxes = members.as_ref().map_or(0, |members| {
             let levels = u32::try_from(members.len())
@@ -262,8 +260,8 @@ impl Codegen<'_, '_> {
         // A field that `walk` follows in place adds no frames of its own (see `inline_link`).
         let parts = (group.iter())
             .flat_map(|&member| {
-                let variants = &enums[member.0].variants;
-                (variants.iter().flat_map(|variant| &variant.fields))
+                (self.variants_of(member).into_iter())
+                    .flat_map(|(_, fields)| fields)
                     .map(move |field| (member, field))
             })
             .filter(|&(member, field)| {
@@ -278,26 +276,7 @@ impl Codegen<'_, '_> {
         let frames = 1 + boxes + parts;
         let mut memo = self.deep.borrow_mut();
         memo.framing.remove(&key);
-        memo.enum_frames.insert(key, frames);
-        frames
-    }
-
-    /// The frames that `@sisu_rc.release.<S>` opens before the next counting drop function
-    /// starts: its own frame, then the most frames of a field. The checker puts no struct on a
-    /// cycle (E0083), so the walk ends.
-    fn struct_frames(&self, id: StructId) -> u32 {
-        if let Some(&frames) = self.deep.borrow().struct_frames.get(&id) {
-            return frames;
-        }
-        let parts = (self.program.structs[id.0].fields.iter())
-            .map(|field| {
-                count_read();
-                self.part_frames(field.ty)
-            })
-            .max()
-            .unwrap_or(0);
-        let frames = 1 + parts;
-        self.deep.borrow_mut().struct_frames.insert(id, frames);
+        memo.inline_frames.insert(key, frames);
         frames
     }
 }

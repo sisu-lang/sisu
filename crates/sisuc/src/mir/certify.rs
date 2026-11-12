@@ -1337,7 +1337,8 @@ fn indexed_by(t: &Place, local: LocalId) -> bool {
             Projection::Field { .. }
             | Projection::Payload { .. }
             | Projection::Some
-            | Projection::StructField { .. } => {}
+            | Projection::StructField { .. }
+            | Projection::Box => {}
         }
     }
     found

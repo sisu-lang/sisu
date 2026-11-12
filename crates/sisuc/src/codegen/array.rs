@@ -835,7 +835,8 @@ impl<'ctx> Codegen<'ctx, '_> {
             | Helper::ShowComponent(_)
             | Helper::Unbox
             | Helper::Free
-            | Helper::Reuse => {
+            | Helper::Reuse
+            | Helper::UniqueBox => {
                 unreachable!(
                     "`helper` should queue for an array only a helper that `define_array_helper` defines"
                 )

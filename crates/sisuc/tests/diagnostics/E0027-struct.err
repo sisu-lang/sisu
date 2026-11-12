@@ -1,0 +1,10 @@
+error[E0027]: no value of `A` can be built
+ --> E0027-struct.sisu:1:8
+  |
+1 | struct A {
+  |        ^ `A.b` holds a `B`, and `B.a` holds a `A`
+  |
+  = help: a field of type `A?`, or an enum with a variant that holds no `A`, ends the chain
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0027

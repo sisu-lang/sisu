@@ -9,7 +9,6 @@ use super::{
     Checker, ClassInfo, Declared, Definition, DiagnosticKind, FieldInfo, FieldType, SelfType,
 };
 use crate::ast;
-use crate::graph::components;
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, StructId, Type, TypeArgs, TypeKind};
@@ -177,66 +176,5 @@ impl Checker<'_> {
         }
         self.body.self_type = SelfType::Absent;
         true
-    }
-}
-
-impl Checker<'_> {
-    /// Reports E0083 at the keyword of each struct of `items` on a cycle of the types it holds
-    /// inline, and poisons its name. Task 5 gives such a field its box. The walk goes through a
-    /// field's type, an optional, an enum's payloads and its type arguments. It stops at an
-    /// array, a class and an `any`. It is conservative: `struct S { w: W<S> }` is on a cycle.
-    pub(super) fn reject_struct_cycles(&mut self, items: &[&ast::Item]) {
-        let (enums, structs) = (self.enums.len(), self.structs.len());
-        // The nodes are the enums, then the structs. A node holds the nodes its types name.
-        let mut edges = vec![Vec::new(); enums + structs];
-        let mut types: Vec<Type> = Vec::new();
-        let mut seen = FxHashSet::default();
-        for (node, held) in edges.iter_mut().enumerate() {
-            seen.clear();
-            match node.checked_sub(enums) {
-                None => {
-                    let fields = self.enums[node].variants.iter().flat_map(|v| &v.fields);
-                    types.extend(fields.flatten());
-                }
-                Some(s) => types.extend(self.structs[s].fields.iter().filter_map(|f| f.ty)),
-            }
-            while let Some(ty) = types.pop() {
-                if !seen.insert(ty) {
-                    continue;
-                }
-                match ty.kind() {
-                    TypeKind::Optional(inner) => types.push(inner),
-                    TypeKind::Enum(id, args) => {
-                        held.push(id.0);
-                        types.extend_from_slice(args.get());
-                    }
-                    TypeKind::Struct(id, _) => held.push(enums + id.0),
-                    _ => {}
-                }
-            }
-        }
-        let component = components(&edges);
-        let mut size = vec![0usize; edges.len()];
-        for &c in &component {
-            size[c] += 1;
-        }
-        let keywords: FxHashMap<Span, Span> = (items.iter())
-            .filter_map(|item| match item {
-                ast::Item::Struct(s) => Some((s.name.span, s.keyword)),
-                _ => None,
-            })
-            .collect();
-        for s in 0..structs {
-            let node = enums + s;
-            if size[component[node]] == 1 && !edges[node].contains(&node) {
-                continue;
-            }
-            let name = &self.structs[s].name;
-            let (name, at) = (name.name, keywords[&name.span]);
-            let reported = self.error(DiagnosticKind::ReservedWord { word: "struct", at });
-            if matches!(self.names.struct_id(name), Some(Declared::Known(id)) if id.0 == s) {
-                self.names.poison(Definition::Struct, name, reported);
-            }
-        }
     }
 }

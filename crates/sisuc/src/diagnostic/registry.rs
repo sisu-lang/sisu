@@ -3055,9 +3055,13 @@ pub(crate) enum Unbuilt {
         target: String,
         ty: Span,
     },
-    /// An enum, and the links that lead from it back to it: each holder (`D.Q` or `K.d`) and
-    /// the type it holds.
-    Chain(Vec<(String, String)>),
+    /// An enum or a struct, and the links that lead from it back to it: each holder (`D.Q` or
+    /// `K.d`) and the type it holds. `first_struct` is the first struct on the chain, which the
+    /// help names.
+    Chain {
+        links: Vec<(String, String)>,
+        first_struct: Option<String>,
+    },
 }
 
 /// What the report of a missing `mut` offers for the argument.
@@ -4482,7 +4486,10 @@ impl From<DiagnosticKind> for Diagnostic {
                         replacement: "?".to_string(),
                     }],
                 }),
-                Unbuilt::Chain(links) => {
+                Unbuilt::Chain {
+                    links,
+                    first_struct,
+                } => {
                     let (shown, more) = cycle_shown(&links);
                     let mut parts: Vec<_> = (shown.iter())
                         .map(|(holder, held)| format!("`{holder}` holds a `{held}`"))
@@ -4491,8 +4498,15 @@ impl From<DiagnosticKind> for Diagnostic {
                         parts.push(format!("{more} more"));
                     }
                     let chain = parts.join(", and ");
-                    Diagnostic::coded(code, at, format!("no value of `{name}` can be built"))
-                        .with_label(chain)
+                    let d =
+                        Diagnostic::coded(code, at, format!("no value of `{name}` can be built"))
+                            .with_label(chain);
+                    match first_struct {
+                        Some(s) => d.with_help(format!(
+                            "a field of type `{s}?`, or an enum with a variant that holds no `{s}`, ends the chain"
+                        )),
+                        None => d,
+                    }
                 }
             },
             DiagnosticKind::NoMain => {
@@ -4526,7 +4540,7 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::UnknownType { name, at, form } => match form {
                 UnknownForm::Name { suggestion } => similar(
                     Diagnostic::coded(code, at, format!("cannot find type `{name}`")).with_help(
-                        "the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, structs, enums and arrays such as `[i64]`",
+                        "the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums, structs and arrays such as `[i64]`",
                     ),
                     at,
                     suggestion,

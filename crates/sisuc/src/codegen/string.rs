@@ -711,7 +711,8 @@ impl<'ctx> Codegen<'ctx, '_> {
             | Helper::ShowComponent(_)
             | Helper::Unbox
             | Helper::Free
-            | Helper::Reuse => {
+            | Helper::Reuse
+            | Helper::UniqueBox => {
                 unreachable!(
                     "`helper` should queue for a string only a helper that `define_string_helper` defines"
                 )

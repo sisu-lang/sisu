@@ -18,7 +18,7 @@ use inkwell::{AddressSpace, IntPredicate};
 use super::enums::tag_bits;
 use super::{Codegen, POSITIONED};
 use crate::source::Span;
-use crate::tir::{Class, ClassId, EnumId, Program, Type, TypeKind};
+use crate::tir::{Class, ClassId, EnumId, Inline, Program, Type, TypeKind};
 
 /// The tag of a TBAA type `name` under `root`. Every type sits directly under the root, so LLVM
 /// assumes that an access tagged with one never touches memory that an access tagged with
@@ -99,8 +99,8 @@ pub(super) enum HeapBlock<'a, 'ctx> {
     },
     /// A string block of capacity `cap`.
     String { cap: IntValue<'ctx> },
-    /// A box of the enum.
-    Box(EnumId),
+    /// A box of the enum or the struct.
+    Box(Inline),
     /// The counted box that holds a value of this type in an `any` value: see `value_box`.
     Value(Type),
     /// The pending pairs of an `eq_component` helper, with room for `cap` of them.
@@ -295,7 +295,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             // An object is a pointer to its block.
             TypeKind::Class(..) => Some(self.context.ptr_type(AddressSpace::default()).into()),
             // A struct holds its fields inline.
-            TypeKind::Struct(id, _) => Some(self.structs[id.0].into()),
+            TypeKind::Struct(id, _) => Some(self.structs[id.0].ty.into()),
             // An array or a string is three words: its block, its data and its length.
             TypeKind::String | TypeKind::Array(_) => Some(self.value_type().into()),
             TypeKind::Enum(id, _) => Some(self.enum_layout(id).ty),
@@ -856,7 +856,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         };
         match *block {
             HeapBlock::Class(id) => abi(&self.classes[id.0].ty),
-            HeapBlock::Box(inner) => abi(&self.enums[inner.0].boxed),
+            HeapBlock::Box(inner) => abi(&self.box_type(inner)),
             HeapBlock::Value(ty) => abi(&self.value_box(ty)),
             // A capacity that reaches here passed the size checks, or is a literal's or an
             // existing block's.

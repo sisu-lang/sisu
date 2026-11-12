@@ -339,8 +339,12 @@ pub(crate) struct Struct {
     pub(crate) span: Span,
     /// Each field, in declaration order. Its `label` is the field's name.
     pub(crate) fields: Vec<Payload>,
-    /// Whether a value has counted parts: a field is of a counted type (`layout_types`).
+    /// Whether a value has counted parts: its component has a box, or a field is of a counted
+    /// type (`layout_types`).
     pub(crate) counted: bool,
+    /// The struct's strongly connected component of the holds-inline graph, when that component
+    /// has a boxed field, as for `Enum::cycle`.
+    pub(crate) cycle: Option<usize>,
     /// The reach flag of the struct's component, by the rule of `Enum::reaches`.
     pub(crate) reaches: bool,
 }
@@ -1017,6 +1021,7 @@ impl Inline {
     }
 
     /// The enum, when this is one.
+    #[cfg(test)]
     pub(crate) fn enum_id(self) -> Option<EnumId> {
         match self {
             Inline::Enum(id) => Some(id),
@@ -1027,13 +1032,13 @@ impl Inline {
 
 /// Lays out `enums` and `structs`, whose field types are final. It boxes each payload field that
 /// closes a cycle of the holds-inline graph. It sets each enum's `cycle`, `counted` and `reaches`
-/// and each struct's `counted` and `reaches`. The graph numbers the enums first, then the
-/// structs (`Inline::node`). A struct field is never boxed: the checker rejects a struct on a
-/// cycle until the box lands (E0083), so a box on an enum's field breaks each cycle. The
-/// box goes on the declaring enum's own field rather than one inside a generic type. There is a
-/// pass per `Rank`: `Plain`, `Own`, `Open`, `Late`, then `Assoc`. Each pass boxes its fields that
-/// are on a cycle of what the passes before it left unboxed. A cycle that `Plain` leaves holds an
-/// `Own`, `Open` or `Late` field, or an `Assoc` field. Take a cycle with no associated type.
+/// and each struct's `cycle`, `counted` and `reaches`. The graph numbers the enums first, then
+/// the structs (`Inline::node`). A struct field is always `Plain`, so the first pass boxes each
+/// one on a cycle. The box goes on the declaring enum's own field rather than one inside a
+/// generic type. There is a pass per `Rank`: `Plain`, `Own`, `Open`, `Late`, then `Assoc`. Each
+/// pass boxes its fields that are on a cycle of what the passes before it left unboxed. A cycle
+/// that `Plain` leaves holds an `Own`, `Open` or `Late` field, or an `Assoc` field. Take a cycle
+/// with no associated type.
 /// A generic field of one enum on it names the declaration of the next, so the names close a
 /// cycle of declarations. The choice of an associated type is a third source of enum names. It
 /// can name the enum that holds it: `Item = E<W<T>>` for `A(T.Item)` in `E`. Only a field that
@@ -1071,10 +1076,16 @@ pub(crate) fn layout_types(enums: &mut [Enum], structs: &mut [Struct]) {
             enum_edges.chain(struct_edges).collect()
         };
     let component = components(&held(enums, structs, |_| true));
+    let on_cycle =
+        |p: &Payload, node: usize| edge(p).is_some_and(|f| component[f] == component[node]);
     for (e, info) in enums.iter_mut().enumerate() {
         for p in info.variants.iter_mut().flat_map(|v| &mut v.fields) {
-            p.boxed =
-                p.rank == Rank::Plain && edge(p).is_some_and(|f| component[f] == component[e]);
+            p.boxed = p.rank == Rank::Plain && on_cycle(p, e);
+        }
+    }
+    for (s, info) in structs.iter_mut().enumerate() {
+        for p in &mut info.fields {
+            p.boxed = on_cycle(p, count + s);
         }
     }
     // A program with only `Plain` and `Never` fields skips the later passes' graphs.
@@ -1095,12 +1106,8 @@ pub(crate) fn layout_types(enums: &mut [Enum], structs: &mut [Struct]) {
     }
     let nodes = count + structs.len();
     let mut has_box = vec![false; nodes];
-    for (e, info) in enums.iter().enumerate() {
-        has_box[component[e]] |= info
-            .variants
-            .iter()
-            .flat_map(|v| &v.fields)
-            .any(|p| p.boxed);
+    for node in 0..nodes {
+        has_box[component[node]] |= node_fields(enums, structs, node).any(|p| p.boxed);
     }
     // A component is numbered after every component it holds. It holds its own members only
     // when it has a box, so counting in component order sees each other held type counted.
@@ -1126,6 +1133,7 @@ pub(crate) fn layout_types(enums: &mut [Enum], structs: &mut [Struct]) {
             enums[node].cycle = boxed.then_some(component[node]);
             enums[node].counted = counted;
         } else {
+            structs[node - count].cycle = boxed.then_some(component[node]);
             structs[node - count].counted = counted;
         }
     }
@@ -1138,7 +1146,7 @@ pub(crate) fn layout_types(enums: &mut [Enum], structs: &mut [Struct]) {
 }
 
 /// The nodes that node `node` of the holds-inline graph (`Inline::node`) holds inline: each
-/// unboxed field of an enum or a struct type, or of its optional. A struct field is never boxed.
+/// unboxed field of an enum or a struct type, or of its optional.
 pub(crate) fn held_inline<'a>(
     enums: &'a [Enum],
     structs: &'a [Struct],

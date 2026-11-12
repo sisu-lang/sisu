@@ -4,7 +4,7 @@ error[E0030]: cannot find type `Zzz`
 9 | const J: Zzz = 1
   |          ^^^
   |
-  = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, structs, enums and arrays such as `[i64]`
+  = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums, structs and arrays such as `[i64]`
 
 error[E0052]: `W` is a type parameter, not a function
   --> E0052-not-a-function.sisu:14:9

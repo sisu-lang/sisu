@@ -21,7 +21,8 @@ use super::{Codegen, POSITIONED};
 use crate::conformance::find;
 use crate::graph::components;
 use crate::tir::{
-    ClassId, EnumId, FuncId, InterfaceId, LocalId, Program, StructId, Type, TypeArgs, TypeKind,
+    ClassId, EnumId, FuncId, Inline, InterfaceId, LocalId, Program, StructId, Type, TypeArgs,
+    TypeKind,
 };
 
 /// The `==` helper of an array with this many array layers or more gets `noinline` (see
@@ -78,6 +79,9 @@ pub(super) enum Helper {
     /// `@sisu_rc.reuse.<F>(token) -> ptr`: a token's box, or a new block for a box of `F` when
     /// the token is `null`.
     Reuse,
+    /// `@sisu_rc.unique_box.<F>(slot)`: makes the box in a boxed field's slot the only holder of
+    /// its value, as `Unique` does for an array (see `box_unique`).
+    UniqueBox,
     /// `@sisu_show.<T>(sink, value)`: writes the text of a value of an array, a class or an
     /// enum type into a sink, as `print` writes it or as `dbg` does (see `codegen/show.rs`).
     Show(Mode),
@@ -263,6 +267,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             ),
             Helper::Free => ("free", takes_object),
             Helper::Reuse => ("reuse", ptr_type.fn_type(&[ptr_type.into()], false)),
+            Helper::UniqueBox => ("unique_box", takes_object),
             Helper::Show(_) => (
                 "",
                 self.context.void_type().fn_type(
@@ -317,6 +322,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             | Helper::Unbox
             | Helper::Free
             | Helper::Reuse
+            | Helper::UniqueBox
             | Helper::ShowComponent(_) => {}
         }
         self.helpers.borrow_mut().insert(key, function);
@@ -416,7 +422,10 @@ impl<'ctx> Codegen<'ctx, '_> {
             let function = self.helpers.borrow()[&(kind, ty)];
             match (kind, ty.kind()) {
                 (Helper::Show(mode), _) => self.define_show(function, ty, mode),
-                (Helper::ShowComponent(mode), TypeKind::Enum(id, _)) => {
+                (Helper::ShowComponent(mode), _) => {
+                    let id = ty
+                        .inline_type()
+                        .expect("only an enum or a struct should be queued for a component helper");
                     self.define_show_component(id, function, mode);
                 }
                 (Helper::Eq, TypeKind::Class(..) | TypeKind::Enum(..))
@@ -424,8 +433,12 @@ impl<'ctx> Codegen<'ctx, '_> {
                 {
                     self.define_written_eq(function, ty);
                 }
-                (_, TypeKind::Enum(id, _)) => self.define_enum_helper(kind, id, function),
-                (_, TypeKind::Struct(id, _)) => self.define_struct_helper(kind, id, function),
+                (_, TypeKind::Enum(id, _)) => {
+                    self.define_inline_helper(kind, Inline::Enum(id), function);
+                }
+                (_, TypeKind::Struct(id, _)) => {
+                    self.define_inline_helper(kind, Inline::Struct(id), function);
+                }
                 (Helper::Release, _) => self.define_release(function, ty),
                 (Helper::Retain, _) => {
                     unreachable!(
@@ -446,11 +459,11 @@ impl<'ctx> Codegen<'ctx, '_> {
                         "`helper` should queue a helper of this kind only for an array or a string"
                     )
                 }
-                (Helper::Walk | Helper::EqComponent | Helper::ShowComponent(_), _) => {
-                    unreachable!("only an enum type should be queued for a component helper")
+                (Helper::Walk | Helper::EqComponent, _) => {
+                    unreachable!("only an enum or a struct should be queued for a component helper")
                 }
-                (Helper::Unbox | Helper::Free | Helper::Reuse, _) => {
-                    unreachable!("only an enum type should be queued for a box's helper")
+                (Helper::Unbox | Helper::Free | Helper::Reuse | Helper::UniqueBox, _) => {
+                    unreachable!("only an enum or a struct should be queued for a box's helper")
                 }
             }
         }
@@ -1095,6 +1108,12 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// `@sisu_rc.unique.[T]` copies the block into `slot` when another holder shares it.
     pub(super) fn unique(&self, slot: PointerValue<'ctx>, ty: Type) {
         self.call(self.helper(Helper::Unique, ty), &[slot.into()]);
+    }
+
+    /// Makes the box in `slot`, of a boxed field of type `ty`, the only holder of its value:
+    /// `@sisu_rc.unique_box.<F>` copies the value into a new box when another holder shares it.
+    pub(super) fn box_unique(&self, slot: PointerValue<'ctx>, ty: Type) {
+        self.call(self.helper(Helper::UniqueBox, ty), &[slot.into()]);
     }
 
     /// Adds 1 to the count of each reference `value` holds when `ty` is counted.

@@ -21,7 +21,7 @@ use rustc_hash::FxHashSet;
 
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
 use crate::source::Span;
-use crate::tir::{Enum, Struct, held_inline};
+use crate::tir::{Enum, Payload, Struct, held_inline};
 use crate::types::{Type, TypeArgs, TypeKind};
 
 /// The limit in GiB, as the diagnostic writes it.
@@ -156,17 +156,21 @@ fn boxed_layout(mut ty: Type) -> Layout {
     Layout::new(WORD * (1 + flags), WORD)
 }
 
+/// The bound of the layout of the field `field` of an enum's variant or of a struct.
+fn field_layout(field: &Payload, known: &Known, enums: usize) -> Option<Layout> {
+    if field.boxed {
+        Some(boxed_layout(field.ty))
+    } else {
+        layout_of(field.ty, known, enums)
+    }
+}
+
 /// The bound of enum `e`, whose inline-held types are measured. `enums` is the number of enums.
 fn measure_enum(e: &Enum, known: &Known, enums: usize) -> Option<Measured> {
     let mut payload = Layout::EMPTY;
     for variant in &e.variants {
-        let variant = struct_of(variant.fields.iter().map(|field| {
-            if field.boxed {
-                Some(boxed_layout(field.ty))
-            } else {
-                layout_of(field.ty, known, enums)
-            }
-        }))?;
+        let variant =
+            struct_of((variant.fields.iter()).map(|field| field_layout(field, known, enums)))?;
         payload = Layout::new(
             payload.size.max(variant.size),
             payload.align.max(variant.align),
@@ -196,7 +200,7 @@ fn measure_struct(s: &Struct, known: &Known, enums: usize) -> Option<Measured> {
     let value = struct_of(
         s.fields
             .iter()
-            .map(|field| layout_of(field.ty, known, enums)),
+            .map(|field| field_layout(field, known, enums)),
     )?;
     Some(Measured {
         payload: value.size,
