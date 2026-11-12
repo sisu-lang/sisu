@@ -102,9 +102,15 @@ def check(config_path: str, list_path: str) -> list[str]:
 
 
 def default_filter_problems(suites: dict[str, Any]) -> list[str]:
-    """Return one line for each wrong case: a memory test kept, or another test left out."""
+    """Return one line for each wrong case: a memory test kept, or another test left out.
+
+    nextest lists a binary that the default-filter leaves out with no tests. Every memory test is
+    in a binary that has other tests, so such a binary is always wrong.
+    """
     lines: list[str] = []
     for suite_name, suite in suites.items():
+        if suite.get("status") == "skipped-default-filter":
+            lines.append(f"{suite_name}: the default-filter leaves out the whole binary")
         for name, case in suite.get("testcases", {}).items():
             match = case.get("filter-match", {})
             status, reason = match.get("status"), match.get("reason")

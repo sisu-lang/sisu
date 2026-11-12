@@ -243,6 +243,16 @@ class NextestFilters(unittest.TestCase):
         self.assertEqual(len(found), 1)
         self.assertIn("site_memory::b.sisu", found[0])
 
+    def test_default_filter_should_skip_no_whole_binary(self) -> None:
+        suites: dict[str, dict[str, Any]] = {
+            "sisuc::cases": {"status": "listed", "testcases": {}},
+            "sisuc::neighbours": {"status": "skipped-default-filter", "testcases": {}},
+            "sisuc::programs": {"status": "skipped", "testcases": {}},
+        }
+        found = problems("", suites)
+        self.assertEqual(len(found), 1)
+        self.assertIn("sisuc::neighbours", found[0])
+
     def test_a_bad_leaf_should_fail_the_run_and_print_its_line(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = Path(tmp, "nextest.toml")
