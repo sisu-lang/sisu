@@ -138,6 +138,9 @@ Bx().none()
 nn()
 n3()
 mk()
+# A `-` and a fill of a call whose result type waits.
+-mk()
+[mk(); 2]
 Some(None)
 Some(Some(None))
 Some(nothing())

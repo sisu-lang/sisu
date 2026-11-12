@@ -7615,9 +7615,9 @@ fn poisoned_join_should_take_the_anchor_type_for_a_sum_or_a_fill() {
 /// GIVEN a join whose context failed, with a fill or a `-` of a waiting call as a later branch
 /// AND a waiting branch of a nested join (`else if`) beside a literal
 /// WHEN the program is checked
-/// THEN the context is the only report. The branch holds no integer literal, so it is not a
-///   branch of literals: it does not take the type of the anchor, and no other report follows
-///   from that guess.
+/// THEN the context is the only report. A branch that only waited holds no integer literal. So
+///   it is not a branch of literals, and neither is a join with such a branch: it does not take
+///   the type of the anchor, and no other report follows from that guess.
 #[test]
 fn poisoned_join_should_add_no_report_for_a_waiting_fill_or_negation() {
     use Code::UnknownType;
