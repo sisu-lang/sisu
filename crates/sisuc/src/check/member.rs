@@ -7,7 +7,7 @@ use super::call::{Dot, takes_range};
 use super::expr::{if_some, local, no_member, path};
 use super::extend::{holder_of, method_holder};
 use super::generic::{Site, named_params};
-use super::place::{Change, first_safe, name_chain};
+use super::place::{Change, first_safe, is_struct, name_chain};
 use super::reports::Reported;
 use super::unused_names::Used;
 use super::{
@@ -171,6 +171,13 @@ impl Checker<'_> {
     ) -> Checked {
         let ty = known_type(&base).map_err(Poisoned::untyped)?;
         if let TypeKind::Optional(payload) = ty.kind() {
+            // A base that failed under the chain of a write to a struct has reported the write.
+            if let Err(failed) = &base
+                && self.body.write_chain.is_some()
+                && is_struct(innermost(payload))
+            {
+                return Err(Poisoned::untyped(failed.reported()));
+            }
             let (_, reported) = (self.field_of_payload(payload, receiver, name, Access::Read))
                 .map_err(Poisoned::untyped)?;
             // E0062 is reported. The member is untyped: the fix of the E0062 decides it.

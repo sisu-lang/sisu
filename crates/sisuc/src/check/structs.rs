@@ -14,34 +14,50 @@ use crate::symbol::Symbol;
 use crate::tir::{self, Rank, StructId, Type, TypeArgs, TypeKind};
 
 /// The names that an `extend` block of `items` takes as its target. An alias names its target,
-/// so the block of an alias extends the type that the alias names.
+/// so the block of an alias extends the type that the alias names. An optional type names none.
 pub(super) fn extended(items: &[&ast::Item]) -> FxHashSet<Symbol> {
     let named = |ty: &ast::TypeExpr| match &ty.kind {
+        _ if ty.optional > 0 => None,
         ast::TypeKind::Name(name) => Some(*name),
         ast::TypeKind::Applied(applied) => Some(applied.name),
         _ => None,
     };
-    let aliases: FxHashMap<Symbol, Symbol> = (items.iter())
+    // `None` is an alias of no named type.
+    let aliases: FxHashMap<Symbol, Option<Symbol>> = (items.iter())
         .filter_map(|item| match item {
-            ast::Item::Alias(alias) => Some((alias.name.name, named(&alias.ty)?)),
+            ast::Item::Alias(alias) => Some((alias.name.name, named(&alias.ty))),
             _ => None,
         })
         .collect();
-    // The walk takes at most one step for each alias, so a cycle of aliases ends.
-    let resolve = |mut name: Symbol| {
-        for _ in 0..aliases.len() {
+    // What each alias names at the end of its chain, found once for each alias.
+    let mut resolved: FxHashMap<Symbol, Option<Symbol>> = FxHashMap::default();
+    let mut resolve = |name: Symbol| {
+        let mut chain = FxHashSet::default();
+        let mut at = Some(name);
+        let end = loop {
             #[cfg(test)]
             super::EXTENDED_STEPS.set(super::EXTENDED_STEPS.get() + 1);
-            let Some(&target) = aliases.get(&name) else {
-                break;
+            let Some(step) = at else { break None };
+            if let Some(&done) = resolved.get(&step) {
+                break done;
+            }
+            let Some(&target) = aliases.get(&step) else {
+                break Some(step);
             };
-            name = target;
+            // A cycle of aliases names no type.
+            if !chain.insert(step) {
+                break None;
+            }
+            at = target;
+        };
+        for alias in chain {
+            resolved.insert(alias, end);
         }
-        name
+        end
     };
     (items.iter())
         .filter_map(|item| match item {
-            ast::Item::Extend(extend) => named(&extend.target).map(resolve),
+            ast::Item::Extend(extend) => resolve(named(&extend.target)?),
             _ => None,
         })
         .collect()
