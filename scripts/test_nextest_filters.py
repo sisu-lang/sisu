@@ -232,6 +232,16 @@ class NextestFilters(unittest.TestCase):
         self.assertEqual(len(found), 1)
         self.assertIn("run::c.sisu", found[0])
 
+    def test_default_filter_should_leave_out_every_memory_test(self) -> None:
+        left_out = {"filter-match": {"status": "mismatch", "reason": "default-filter"}}
+        matched = {"filter-match": {"status": "matches"}}
+        suites = {"sisuc::cases": {"testcases": {"memory::a.sisu": left_out}}}
+        self.assertEqual(problems("", suites), [])
+        suites["sisuc::cases"]["testcases"]["site_memory::b.sisu"] = matched
+        found = problems("", suites)
+        self.assertEqual(len(found), 1)
+        self.assertIn("site_memory::b.sisu", found[0])
+
     def test_a_bad_leaf_should_fail_the_run_and_print_its_line(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = Path(tmp, "nextest.toml")

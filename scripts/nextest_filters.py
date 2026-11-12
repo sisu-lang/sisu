@@ -9,9 +9,10 @@ CONFIG is .config/nextest.toml. LIST_JSON is the output of
 `cargo nextest list --workspace --message-format json`. It prints one line for each leaf that
 matches no test. It prints one for each leaf that is not `=name` or a substring: nextest also has
 /regex/, ~x and #glob, which this check does not read. It also prints one line for each test that
-the default-filter leaves out and that is not a memory test. It exits 1 when it prints a line. It
-prints each line where a stale leaf is. It skips an override with a `platform` key. It prints
-nothing and exits 0 when every leaf is fine.
+the default-filter leaves out and that is not a memory test. It prints one for each memory test
+that the default-filter keeps. It exits 1 when it prints a line. It prints each line where a stale
+leaf is. It skips an override with a `platform` key. It prints nothing and exits 0 when every leaf
+is fine.
 """
 
 import json
@@ -84,7 +85,10 @@ def problem(leaf: str, names: list[str]) -> str | None:
 
 
 def check(config_path: str, list_path: str) -> list[str]:
-    """Return one line for each bad leaf of the config."""
+    """Return one line for each bad leaf, and one for each test the default-filter treats wrongly.
+
+    A wrong case is a test left out that is not a memory test, or a memory test that is kept.
+    """
     raw = Path(config_path).read_bytes()
     suites = json.loads(Path(list_path).read_text(encoding="utf-8"))["rust-suites"]
     names = [name for suite in suites.values() for name in suite.get("testcases", {})]
@@ -98,15 +102,21 @@ def check(config_path: str, list_path: str) -> list[str]:
 
 
 def left_out(suites: dict[str, Any]) -> list[str]:
-    """Return one line for each test the default-filter leaves out that is not a memory test."""
-    return [
-        f"{suite_name} {name}: the default-filter leaves it out, "
-        "and only memory tests may be left out"
-        for suite_name, suite in suites.items()
-        for name, case in suite.get("testcases", {}).items()
-        if case.get("filter-match") == {"status": "mismatch", "reason": "default-filter"}
-        and not name.startswith(DEFAULT_FILTER_OUT)
-    ]
+    """Return one line for each wrong case: a memory test kept, or another test left out."""
+    lines: list[str] = []
+    for suite_name, suite in suites.items():
+        for name, case in suite.get("testcases", {}).items():
+            match = case.get("filter-match", {})
+            status, reason = match.get("status"), match.get("reason")
+            is_memory = name.startswith(DEFAULT_FILTER_OUT)
+            if (status, reason) == ("mismatch", "default-filter") and not is_memory:
+                lines.append(
+                    f"{suite_name} {name}: the default-filter leaves it out, "
+                    "and only memory tests may be left out"
+                )
+            elif status == "matches" and is_memory:
+                lines.append(f"{suite_name} {name}: the default-filter keeps this memory test")
+    return lines
 
 
 def main(argv: list[str]) -> int:
