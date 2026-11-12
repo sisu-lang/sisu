@@ -1,7 +1,7 @@
 warning[W0016]: this writes to a copy of a part of `xs`, and nothing reads the copy
  --> W0016-tab.sisu:6:5
   |
-5 |     let mut a = xs[	0	]
+5 |     let mut a = xs[    0    ]
   |             - a copy
 6 |     a.b = 2
   |     ^^^ `xs` does not change

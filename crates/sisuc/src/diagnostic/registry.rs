@@ -6915,13 +6915,19 @@ fn immutable_cause(d: Diagnostic, name: &str, element: bool, cause: &Immutable) 
 
 /// The help of W0016 for a copy. The root `root` cannot change for the reason `cause` gives, or
 /// can change when there is none. `place` is the place that the copy holds, when it is more than
-/// the root: then the help says that the place cannot change. A field and a constant give none: a
-/// class step is not a copy, and a constant of a struct or an array is E0085.
+/// the root: then the help says that the place cannot change. A `hidden` root has the name of the
+/// copy, so the copy hides it. Then a root that is a `let` or can change gets no advice that
+/// names it. A field and a constant give none: a class step is not a copy, and a constant of a
+/// struct or an array is E0085.
 pub(crate) fn copy_help(
     cause: Option<&Immutable>,
     root: &str,
     place: Option<&str>,
+    hidden: bool,
 ) -> Option<String> {
+    if hidden && matches!(cause, None | Some(Immutable::Let { .. })) {
+        return Some("delete the write".to_string());
+    }
     let so =
         |here: &str| place.map_or(String::new(), |p| format!(", so `{p}` cannot change{here}"));
     Some(match cause {

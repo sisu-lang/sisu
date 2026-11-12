@@ -94,19 +94,23 @@ pub(super) struct Copied {
     pub(super) cause: Option<Immutable>,
     /// The first write to a part of the local that stays in structs and arrays.
     pub(super) write: Option<Span>,
+    /// Whether the initializer is a bare name or `self`: then the help does not repeat the root.
+    pub(super) bare: bool,
+    /// Whether the root has the name of the copy, so the copy hides it.
+    pub(super) hidden: bool,
     /// Whether a use is a write of another form: the whole local, a `mut` argument, or a path
     /// that crosses a class object.
     pub(super) other: bool,
 }
 
-/// The text of the initializer at `span`, when it is on one line. A line break or a comment would
-/// change the message, so then the message names only the root. A `//` inside a string literal
-/// is part of the text.
+/// The text of the initializer at `span`, when it is on one line and holds no tab. A line break,
+/// a tab or a comment would change the message, so then the message names only the root. A `//`
+/// inside a string literal is part of the text.
 fn quoted(source: Source<'_>, span: Span) -> Option<&str> {
     let text = source.text(span);
     #[cfg(test)]
     COPY_TEXT.set(COPY_TEXT.get() + text.len());
-    source.one_line(span).then_some(text)
+    (source.one_line(span) && !text.contains('\t')).then_some(text)
 }
 
 impl Copied {
@@ -117,7 +121,8 @@ impl Copied {
         let root = self.root.as_str();
         let place = quoted(source, self.init);
         // The help says that the place cannot change only when the place is more than the root.
-        let help = copy_help(self.cause.as_ref(), root, place.filter(|p| *p != root))?;
+        let named = place.filter(|_| !self.bare);
+        let help = copy_help(self.cause.as_ref(), root, named, self.hidden)?;
         Some(DiagnosticKind::WriteToCopy {
             place: place.map(str::to_string),
             root: root.to_string(),

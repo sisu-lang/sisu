@@ -1622,7 +1622,7 @@ impl Checker<'_> {
 
     /// What W0016 needs of the `let mut` `name` whose initializer is `init`: the place it copies,
     /// when that place has a root, crosses no class object and holds no range index (a slice is
-    /// a new value). It holds why the root cannot change, except when the root has the name of the
+    /// a new value). It holds why the root cannot change, and whether the root has the name of the
     /// copy: `let mut a = a` copies an outer `a` that the copy hides. Call it before the local is
     /// declared, because the place may name an outer local of the same name.
     pub(super) fn copy_of(&self, init: &ast::Expr, name: Symbol) -> Option<Copied> {
@@ -1640,7 +1640,9 @@ impl Checker<'_> {
         Some(Copied {
             init: init.span,
             root,
-            cause: cause.filter(|_| root != name),
+            cause,
+            bare: matches!(init.kind, ast::ExprKind::Name(_) | ast::ExprKind::SelfValue),
+            hidden: root == name,
             write: None,
             other: false,
         })
@@ -1654,6 +1656,9 @@ impl Checker<'_> {
         let ast::ExprKind::Name(name) = place_root(target).kind else {
             return;
         };
+        if self.binding(name).is_none_or(|b| b.copy.is_none()) {
+            return;
+        }
         let stays = part && matches!(self.struct_root(target), StructRoot::Binding(_));
         let Some(copy) = self.lookup(name).and_then(|b| b.copy.as_mut()) else {
             return;
