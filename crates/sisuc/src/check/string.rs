@@ -109,6 +109,9 @@ impl Checker<'_> {
                     if !reported {
                         self.warn_if_optional(part, &value);
                     }
+                    if let Some(found) = type_of(&value) {
+                        self.record_shown(found, self.lang.display);
+                    }
                     checked.push(value);
                     continue;
                 }

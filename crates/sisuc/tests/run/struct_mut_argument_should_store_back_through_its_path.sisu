@@ -10,6 +10,11 @@ fn add(mut a: [i64], b: i64) {
     a.push(b)
 }
 
+// Nothing calls this function. Its generated `print` reads each field, so no field is W0013.
+fn _show(b: B) {
+    print(b)
+}
+
 fn main() {
     let x = A(b: B(a: None, n: 1, xs: [1]))
     let mut y = x

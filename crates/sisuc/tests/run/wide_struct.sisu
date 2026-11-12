@@ -171,6 +171,12 @@ fn replaced_in_a_later_argument() {
     print(t.w.b32)                   // 3033
 }
 
+// Nothing calls this function. Its generated `print` reads each field, so no field is W0013.
+fn _show(h: HN, g: HW) {
+    print(h)
+    print(g)
+}
+
 fn main() {
     rows_n()
     rows_w()

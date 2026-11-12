@@ -8,6 +8,11 @@ fn none<T>(o: T?) -> bool {
     return o == None
 }
 
+// Nothing calls this function. Its generated `print` reads each field, so no field is W0013.
+fn _show(p: P) {
+    print(p)
+}
+
 fn main() {
     let o: P? = P(n: 1)
     let e: P? = None

@@ -100,3 +100,8 @@ fn main() {
     print("{long:#}")
     dbg(long)
 }
+
+// Nothing calls this function. Its generated `print` reads each field, so no field is W0013.
+fn _show(h: Held) {
+    print(h)
+}

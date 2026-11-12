@@ -22,6 +22,11 @@ fn pass(b: Bag) -> Bag {
     b
 }
 
+// Nothing calls this function. Its generated `print` reads each field, so no field is W0013.
+fn _show(b: Bag) {
+    print(b)
+}
+
 fn main() {
     let h = Holder(kept: None)
     let mut total = 0

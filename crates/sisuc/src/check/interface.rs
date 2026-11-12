@@ -1381,7 +1381,7 @@ impl Checker<'_> {
         })
     }
 
-    /// `conforms` for the class, struct or enum `ty`. It decides the key (`ty`, `interface`,
+    /// `conforms` for the class, enum or struct `ty`. It decides the key (`ty`, `interface`,
     /// `args`) as `conformance::Open` says: a key whose query is open or pending holds, and any
     /// other key is expanded once.
     fn conforms_holder(&mut self, ty: Type, interface: InterfaceId, args: TypeArgs) -> bool {
@@ -1422,7 +1422,7 @@ impl Checker<'_> {
         // conformance checks the types of its parameters, and with none it holds with no part
         // query. A class has no generated rule: only a written conformance reads its parts. A
         // marked struct is as a marked enum.
-        let holder = holder_of(ty).expect("a key of this walk should be a class, struct or enum");
+        let holder = holder_of(ty).expect("a key of this walk should be a class, enum or struct");
         let own = match holder {
             Holder::Class(id) => self.growing_classes[id.0],
             Holder::Enum(id) => self.marked[id.0],
@@ -1966,6 +1966,7 @@ impl Checker<'_> {
         let args = self.subst_args(bound.args, with);
         if self.conforms(ty, bound.interface, args) {
             self.probe_associated(ty, bound.interface, args);
+            self.record_shown(ty, bound.interface);
             return Ok(());
         }
         let prelude = bound.at.in_prelude();
@@ -2255,7 +2256,7 @@ impl Checker<'_> {
             TypeKind::Class(id, args) => (self.classes[id.0].bounds.clone(), args),
             TypeKind::Struct(id, args) => (self.structs[id.0].bounds.clone(), args),
             TypeKind::Enum(id, args) => (self.enums[id.0].bounds.clone(), args),
-            _ => unreachable!("only an applied class, struct or enum should wait for its bounds"),
+            _ => unreachable!("only an applied class, enum or struct should wait for its bounds"),
         };
         let mut holds = Ok(());
         for (k, bounds) in bounds.iter().enumerate() {

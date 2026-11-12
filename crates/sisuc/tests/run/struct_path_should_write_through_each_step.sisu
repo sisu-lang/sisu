@@ -39,6 +39,11 @@ fn bump(mut a: i64, mut b: i64) {
     b += 2
 }
 
+// Nothing calls this function. Its generated `print` reads each field, so no field is W0013.
+fn _show(i: In) {
+    print(i)
+}
+
 fn main() {
     let s = S(c: C(n: 0))
     s.c.push(1)

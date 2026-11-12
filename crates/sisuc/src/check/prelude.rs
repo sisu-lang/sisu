@@ -58,6 +58,9 @@ impl Checker<'_> {
             Err(failed) => return failed,
         };
         self.warn_if_optional(&arg.value, &checked);
+        if let Some(ty) = type_of(&checked) {
+            self.record_shown(ty, self.lang.display);
+        }
         let kind = unlabeled(checked, labeled).map(|operand| tir::ExprKind::Print {
             stream,
             operand: Box::new(operand),

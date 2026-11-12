@@ -136,6 +136,12 @@ fn run(x: any I, depth: i64) {
     print(w.a0 + n.a0)               // 203
 }
 
+// Nothing calls this function. Its generated `print` reads each field, so no field is W0013.
+fn _show(n: N, w: W) {
+    print(n)
+    print(w)
+}
+
 fn main() {
     // Standard input is empty, so the depth is 0 and `C` is chosen, but the compiler cannot know
     // it.

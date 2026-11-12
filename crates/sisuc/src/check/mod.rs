@@ -864,6 +864,10 @@ struct Checker<'src> {
     /// Each `dbg` call: the body that holds it, if any, the type of its operand, and its span.
     /// W0013 reads them: `dbg` shows a field, and that is not a read.
     dbg_shown: Vec<(Option<Owner>, Type, Span)>,
+    /// Each place where generated code shows a value of a type with `Display` or `Eq`: the body
+    /// that holds it, if any, the type, and the interface. W0013 reads them: a struct that is
+    /// shown has each of its fields read.
+    read_shown: Vec<(Option<Owner>, Type, tir::InterfaceId)>,
     /// How many classes, enums and functions the user's items declare.
     prelude: tir::ItemCounts,
     /// By the span of an expression, how the program wrote it when the typed tree does not say
@@ -1478,6 +1482,7 @@ impl<'src> Checker<'src> {
             pending: Vec::new(),
             instantiates: false,
             dbg_shown: Vec::new(),
+            read_shown: Vec::new(),
             prelude: tir::ItemCounts::default(),
         }
     }

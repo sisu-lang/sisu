@@ -743,6 +743,10 @@ impl Checker<'_> {
     /// checked second, a `char` beside another number, at the side that is not the `char`, and
     /// an `i64` or a `u8` beside an `f64`, at the side that is not the `f64`. A side that is
     /// `f64.nan` is warned about.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the checks of one operator, in the order that they report"
+    )]
     fn equal(&mut self, span: Span, negated: bool, lhs: &ast::Expr, rhs: &ast::Expr) -> Checked {
         let swapped = self.sibling_rank(rhs) < self.sibling_rank(lhs)
             || (self.none_written(lhs) && !self.none_written(rhs));
@@ -858,6 +862,7 @@ impl Checker<'_> {
             }
             _ => Dispatch::Generated,
         };
+        self.record_compared(first, second, [type_of(&l), type_of(&r)]);
         self.nan_comparison(negated, (lhs, &l), (rhs, &r));
         if matches!(dispatch, Dispatch::Method { .. }) {
             let written = Lowered::Operator(eq, if negated { "!=" } else { "==" });
@@ -866,6 +871,17 @@ impl Checker<'_> {
         self.compared(span, l, r, |lhs, rhs| {
             lang::equal(dispatch, negated, lhs, rhs, span)
         })
+    }
+
+    /// Records that `==` reads the values of the two sides of types `types`, which are
+    /// `first` and `second` as written. A comparison with `None` tests presence and reads no
+    /// field.
+    fn record_compared(&mut self, first: &ast::Expr, second: &ast::Expr, types: [Option<Type>; 2]) {
+        if !self.none_written(first) && !self.none_written(second) {
+            for ty in types.into_iter().flatten() {
+                self.record_shown(ty, self.lang.eq);
+            }
+        }
     }
 
     /// `lhs is rhs`: each a class or its optional, of one class, or a type parameter that is
@@ -1222,7 +1238,12 @@ impl Checker<'_> {
         };
         let bind = self.fresh(payload);
         let read = local(bind, payload, lhs.span);
-        let value = if read.ty == ty { read } else { widen(read, ty) };
+        let value = if read.ty == ty {
+            read
+        } else {
+            self.record_shown_any(read.ty, ty);
+            widen(read, ty)
+        };
         match (scrutinee, other) {
             (Ok(scrutinee), Ok(other)) => Ok(if_some(bind, scrutinee, value, Some(other), span)),
             (Err(failed), _) | (_, Err(failed)) => Err(Poisoned::typed(ty, failed.reported())),

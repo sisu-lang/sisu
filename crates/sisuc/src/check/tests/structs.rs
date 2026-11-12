@@ -1757,6 +1757,32 @@ fn generated_read_should_count_each_shown_field() {
             vec![],
         ),
         (
+            "any Display in an array",
+            main(
+                "",
+                &format!("let xs: [any Display] = [{built}]\n    print(xs.len())"),
+            ),
+            vec![],
+        ),
+        (
+            "any Display joined in an array",
+            main(
+                "",
+                &format!("let d: any Display = 1\n    let xs = [d, {built}]\n    print(xs.len())"),
+            ),
+            vec![],
+        ),
+        (
+            "any Display from a default",
+            main(
+                "",
+                &format!(
+                    "let o: T? = Some({built})\n    let d: any Display = 1\n    print(o ?? d)"
+                ),
+            ),
+            vec![],
+        ),
+        (
             "a Display bound",
             main(
                 "fn show<X: Display>(x: X) { print(x) }\n",
@@ -1851,4 +1877,45 @@ fn for_over_a_struct_field_should_read_it_in_place_when_the_root_cannot_change()
     );
     let copied = lowered(&program("t.i.xs.push(3)", "let mut"));
     assert!(!copied.contains("(index (. (. t#0 i) xs)"), "{copied}");
+}
+
+/// GIVEN a struct `S` with a method `m`. WHEN nothing calls `m`. THEN a built `S` gets W0012 for
+/// `m`. An `S` that nothing builds gets W0012 for itself, and none for `m`.
+#[test]
+fn method_of_a_struct_should_follow_its_struct() {
+    let s = "struct S {\n    n: i64\n    fn m(self) -> i64 { self.n }\n}\n";
+    assert_eq!(
+        unused_names(&format!("{s}fn main() {{\n    print(S(n: 1).n)\n}}")),
+        [(Code::UnusedItem, (3, 8), vec![])],
+        "a built struct"
+    );
+    assert_eq!(
+        unused_names(&format!("{s}fn main() {{}}")),
+        [(Code::UnusedItem, (1, 8), vec![])],
+        "a struct that nothing builds"
+    );
+}
+
+/// GIVEN a struct whose build or field read is only in a function that nothing calls. WHEN
+/// `sisu check` runs. THEN the warning for the struct, or for the field, cites that use.
+#[test]
+fn struct_should_cite_its_dead_uses() {
+    let dead_build = "struct S { n: i64 }\nfn dead() -> i64 {\n    S(n: 1).n\n}\nfn main() {}";
+    assert_eq!(
+        unused_names(dead_build),
+        [
+            (Code::UnusedItem, (1, 8), vec![(3, 5)]),
+            (Code::UnusedItem, (2, 4), vec![])
+        ],
+        "a dead build"
+    );
+    let dead_read = "struct S { n: i64 }\nfn dead(s: S) -> i64 {\n    s.n\n}\nfn main() {\n    let _s = S(n: 1)\n}";
+    assert_eq!(
+        unused_names(dead_read),
+        [
+            (UnusedMember, (1, 12), vec![(3, 5)]),
+            (Code::UnusedItem, (2, 4), vec![])
+        ],
+        "a dead read"
+    );
 }

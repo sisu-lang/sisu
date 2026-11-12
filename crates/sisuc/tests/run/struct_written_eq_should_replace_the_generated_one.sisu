@@ -19,6 +19,12 @@ extend Q: Eq {
     }
 }
 
+// Nothing calls this function. Its generated `print` reads each field, so no field is W0013.
+fn _show(p: P, q: Q) {
+    print(p)
+    print(q)
+}
+
 fn main() {
     print(P(x: 1) == P(x: 2))        // true
     print(P(x: 1) != P(x: 2))        // false

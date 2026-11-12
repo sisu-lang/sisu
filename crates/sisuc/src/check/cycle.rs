@@ -1016,7 +1016,7 @@ type Part<'a> = (Option<Type>, Span, &'a [(Type, Span)]);
 
 /// The inline declaration that `ty` names, with its arguments: an enum by its id, and a struct
 /// after the `enums` enums. `None` for any other type.
-fn inline_of(ty: Type, enums: usize) -> Option<(usize, TypeArgs)> {
+pub(super) fn inline_of(ty: Type, enums: usize) -> Option<(usize, TypeArgs)> {
     match ty.kind() {
         TypeKind::Enum(id, args) => Some((id.0, args)),
         TypeKind::Struct(id, args) => Some((enums + id.0, args)),
@@ -1770,7 +1770,7 @@ impl Checker<'_> {
     }
 
     /// The payloads of the enum, or the fields of the struct, that is the inline declaration `v`.
-    fn inline_parts(&self, v: usize) -> impl Iterator<Item = Part<'_>> {
+    pub(super) fn inline_parts(&self, v: usize) -> impl Iterator<Item = Part<'_>> {
         let (e, s) = match v.checked_sub(self.enums.len()) {
             None => (Some(&self.enums[v]), None),
             Some(s) => (None, Some(&self.structs[s])),

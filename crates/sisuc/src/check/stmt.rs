@@ -880,8 +880,9 @@ impl Checker<'_> {
         (Ok(header), Some(element))
     }
 
-    /// Whether `e` names a value that no code can change while a `for` over it runs: a local
-    /// without `mut`, or a field without `mut` of such a place (W0002 and ADR 0011).
+    /// Whether `e` names a value that no code can change while a `for` over it runs. A local
+    /// without `mut` is one. So is a field without `mut` of such a place (W0002 and ADR 0011). So
+    /// is a field of a struct in such a place: a struct has no field that can change alone.
     fn fixed_place(&self, e: &tir::Expr) -> bool {
         match &e.kind {
             ExprKind::Local(local) => !self.body.locals[local.0].mutable,
@@ -890,6 +891,7 @@ impl Checker<'_> {
                     if !self.classes[class.0].fields[*index].mutable)
                     && self.fixed_place(base)
             }
+            ExprKind::StructField { base, .. } => self.fixed_place(base),
             _ => false,
         }
     }
@@ -2056,6 +2058,10 @@ fn reread(e: &tir::Expr) -> tir::Expr {
     let kind = match &e.kind {
         ExprKind::Local(local) => ExprKind::Local(*local),
         ExprKind::Field { base, index } => ExprKind::Field {
+            base: Box::new(reread(base)),
+            index: *index,
+        },
+        ExprKind::StructField { base, index } => ExprKind::StructField {
             base: Box::new(reread(base)),
             index: *index,
         },

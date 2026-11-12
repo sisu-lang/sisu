@@ -279,7 +279,10 @@ impl Checker<'_> {
             .into_iter()
             .map(|slot| {
                 match slot.expect("the three waves should check every element, one rank each") {
-                    Ok(e) if e.ty != element => Ok(widen(e, element)),
+                    Ok(e) if e.ty != element => {
+                        self.record_shown_any(e.ty, element);
+                        Ok(widen(e, element))
+                    }
                     checked => checked,
                 }
             })

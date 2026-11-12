@@ -6,6 +6,11 @@ fn iterations() -> i64 { 1000 }
 // array holds each struct inline, with no box for each element
 struct Point { x: i64; y: i64 }
 
+// Nothing calls this function. Its generated `print` reads each field, so no field is W0013.
+fn _show(p: Point) {
+    print(p)
+}
+
 fn main() {
     let mut xs: [Point] = []
     for i in 0..iterations() + 1000 {
