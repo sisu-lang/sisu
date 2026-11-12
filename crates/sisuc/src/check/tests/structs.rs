@@ -1581,3 +1581,255 @@ fn own_push_of_a_struct_should_not_change_its_receiver() {
         &[(NeverReassigned, (6, 13))],
     );
 }
+
+/// GIVEN `class C { mut n: i64; mut p: P }`, `struct P { n: i64 }` and `class D { p: P }`. WHEN a
+/// program writes a field of a struct that a class holds, or uses a struct as an object. THEN a
+/// field without `mut` is E0001, `is` is E0046, a bound `AnyObject` is E0154, and a conformance to
+/// `AnyObject` is E0158.
+#[test]
+fn struct_should_keep_its_rules_beside_a_class() {
+    use Code::{ClassOnly, NotConform};
+    let decls = "class C { mut n: i64; mut p: P }\nstruct P { n: i64 }\nclass D { p: P }\n";
+    let main = |body: &str| format!("{decls}fn main() {{\n    {body}\n}}");
+    let rows = [
+        (
+            "a field without mut",
+            main("let d = D(p: P(n: 1))\n    d.p.n = 2"),
+            vec![(AssignToImmutable, (6, 5))],
+        ),
+        (
+            "is",
+            main("print(P(n: 1) is P(n: 1))"),
+            vec![(IsNeedsObjects, (5, 11))],
+        ),
+        (
+            "a bound AnyObject",
+            format!("{decls}fn f<T: AnyObject>(x: T) {{}}\nfn main() {{\n    f(P(n: 1))\n}}"),
+            vec![(NotConform, (6, 7))],
+        ),
+        (
+            "a conformance to AnyObject",
+            format!("{decls}extend P: AnyObject {{}}\nfn main() {{}}"),
+            vec![(ClassOnly, (4, 11))],
+        ),
+    ];
+    for (row, src, wanted) in rows {
+        let (_, ds) = checked_with(PRELUDE_SOURCE, &src);
+        let found = errors(&src, &ds);
+        assert_eq!(found, wanted, "row `{row}`");
+    }
+}
+
+/// The warnings W0012 and W0013 of `src`, with the places of their secondary labels, in order of
+/// their places.
+fn unused_names(src: &str) -> Vec<Found> {
+    judge_unused();
+    let mut found: Vec<_> = (found(src).into_iter())
+        .filter(|(code, ..)| matches!(code, Code::UnusedItem | Code::UnusedMember))
+        .collect();
+    found.sort_by_key(|&(_, place, _)| place);
+    found
+}
+
+/// GIVEN `struct T { n: i64; m: i64 }`. WHEN the program has each row. THEN `sisu check` reports
+/// W0002 for a `let mut` that is never changed, and not for a field write. It reports W0012 for a
+/// struct that nothing builds. It reports W0013 for a field that nothing reads, unless a generated
+/// `print` reads it.
+#[test]
+fn struct_should_report_the_unused_warnings() {
+    use Code::{UnusedItem, UnusedMember};
+    judge_unused();
+    let t = "struct T { n: i64; m: i64 }\n";
+    let main = |decls: &str, body: &str| format!("{t}{decls}fn main() {{\n    {body}\n}}");
+    let rows = [
+        (
+            "never changed",
+            main("", "let mut t = T(n: 1, m: 1)\n    print(t.n + t.m)"),
+            vec![(NeverReassigned, (3, 13))],
+        ),
+        (
+            "a field write is a change",
+            main(
+                "",
+                "let mut t = T(n: 1, m: 1)\n    t.n = 2\n    print(t.n + t.m)",
+            ),
+            vec![],
+        ),
+        (
+            "never built",
+            main(
+                "struct U {}\n",
+                "let t = T(n: 1, m: 1)\n    print(t.n + t.m)",
+            ),
+            vec![(UnusedItem, (2, 8))],
+        ),
+        (
+            "a field never read",
+            main("", "print(T(n: 1, m: 1).n)"),
+            vec![(UnusedMember, (1, 20))],
+        ),
+        (
+            "a generated print reads each field",
+            main("", "print(T(n: 1, m: 1))"),
+            vec![],
+        ),
+    ];
+    let mut red = Vec::new();
+    for (row, src, wanted) in rows {
+        let mut found = found(&src);
+        found.sort_by_key(|&(_, place, _)| place);
+        let found: Vec<_> = (found.into_iter())
+            .map(|(code, place, _)| (code, place))
+            .collect();
+        if found != wanted {
+            red.push((row, found));
+        }
+    }
+    assert!(red.is_empty(), "red rows: {red:?}");
+}
+
+/// GIVEN `struct T { n: i64; m: i64 }`. WHEN one of these shows a `T`: a generated `print`, an
+/// interpolation, a generated `==`, a conversion to `any Display`, or a type argument with a
+/// `Display` or `Eq` bound. The `T` can be in an array, an optional, an enum payload, a struct or
+/// a type argument.
+/// THEN no field is W0013. `dbg`, a class, and a struct with the written conformance of the
+/// interface show nothing. So `m` is W0013, and the label of `dbg` shows its call.
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a table of rows, each one program and its warnings"
+)]
+fn generated_read_should_count_each_shown_field() {
+    use Code::{UnusedItem, UnusedMember};
+    let t = "struct T { n: i64; m: i64 }\n";
+    let built = "T(n: 1, m: 1)";
+    let main = |decls: &str, body: &str| format!("{t}{decls}fn main() {{\n    {body}\n}}");
+    let own = |decls: &str, body: &str| format!("{decls}fn main() {{\n    {body}\n}}");
+    let display = "extend T: Display {\n    fn to_string(self) -> string { \"{self.n}\" }\n}\n";
+    let eq = "extend T: Eq {\n    fn eq(self, other: T) -> bool { self.n == other.n }\n}\n";
+    let m = (UnusedMember, (1, 20));
+    // Each row: the program, and the places of the warnings (W0012, W0013) and their labels.
+    let rows: Vec<(&str, String, Vec<Found>)> = vec![
+        ("print", main("", &format!("print({built})")), vec![]),
+        (
+            "an interpolation",
+            main("", &format!("let t = {built}\n    print(\"{{t}}\")")),
+            vec![],
+        ),
+        (
+            "an equality",
+            main("", &format!("print({built} == {built})")),
+            vec![],
+        ),
+        (
+            "a field of a struct",
+            own(
+                "struct B { n: i64 }\nstruct A { b: B }\n",
+                "print(A(b: B(n: 1)))",
+            ),
+            vec![],
+        ),
+        ("an array", main("", &format!("print([{built}])")), vec![]),
+        (
+            "an optional",
+            main("", &format!("print(Some({built}))")),
+            vec![],
+        ),
+        (
+            "an enum payload",
+            main("enum E { A(T) }\n", &format!("print(E.A({built}))")),
+            vec![],
+        ),
+        (
+            "an array equality",
+            main("", &format!("print([{built}] == [{built}])")),
+            vec![],
+        ),
+        (
+            "a cycle through an array",
+            own("struct S { xs: [S]; n: i64 }\n", "print(S(xs: [], n: 1))"),
+            vec![],
+        ),
+        (
+            "any Display",
+            main("", &format!("let a: any Display = {built}\n    print(a)")),
+            vec![],
+        ),
+        (
+            "a Display bound",
+            main(
+                "fn show<X: Display>(x: X) { print(x) }\n",
+                &format!("show({built})"),
+            ),
+            vec![],
+        ),
+        (
+            "an Eq bound",
+            main(
+                "fn same<X: Eq>(x: X) { print(x == x) }\n",
+                &format!("same({built})"),
+            ),
+            vec![],
+        ),
+        (
+            "a comparison with None reads nothing",
+            main(
+                "",
+                &format!("let o: T? = Some({built})\n    print(o == None)"),
+            ),
+            vec![
+                (UnusedMember, (1, 12), vec![]),
+                (UnusedMember, (1, 20), vec![]),
+            ],
+        ),
+        (
+            "dbg",
+            main("", &format!("let t = {built}\n    print(t.n)\n    dbg(t)")),
+            vec![(m.0, m.1, vec![(5, 5)])],
+        ),
+        (
+            "a written Display",
+            main(display, &format!("print({built})")),
+            vec![(m.0, m.1, vec![])],
+        ),
+        (
+            "a function that nothing calls",
+            main(
+                "fn dead(t: T) { print(t) }\n",
+                &format!("let t = {built}\n    print(t.n)"),
+            ),
+            vec![(m.0, m.1, vec![]), (UnusedItem, (2, 4), vec![])],
+        ),
+        (
+            "a function that nothing calls and a struct that nothing builds",
+            main("fn dead(t: T) { print(t) }\n", ""),
+            vec![(UnusedItem, (1, 8), vec![]), (UnusedItem, (2, 4), vec![])],
+        ),
+        (
+            "a class prints its name",
+            main(
+                "class C { t: T }\n",
+                &format!("let c = C(t: {built})\n    print(c.t.n)\n    print(c)"),
+            ),
+            vec![(m.0, m.1, vec![])],
+        ),
+        (
+            "a written Eq",
+            main(eq, &format!("print({built} == {built})")),
+            vec![(m.0, m.1, vec![])],
+        ),
+        (
+            "a written Display does not stop the Eq",
+            main(
+                display,
+                &format!("let t = {built}\n    print(t)\n    print(t == t)"),
+            ),
+            vec![],
+        ),
+    ];
+    let red: Vec<_> = (rows.iter())
+        .filter(|(_, src, wanted)| unused_names(src) != *wanted)
+        .map(|(row, ..)| *row)
+        .collect();
+    assert!(red.is_empty(), "red rows: {red:?}");
+}

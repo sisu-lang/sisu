@@ -1,0 +1,30 @@
+// GIVEN `class C { mut n: i64; mut p: P }` and `struct P { n: i64 }` and `struct S { c: C; n: i64 }`
+// WHEN a copy of an `S` writes `t.c.n`, and `c.p.n = 2` writes the struct in a `mut` field
+// THEN the copy and the original both show 2, and `c.p.n` shows 2
+class C {
+    mut n: i64
+    mut p: P
+}
+struct P { n: i64 }
+struct S { c: C; n: i64 }
+
+fn copy_shares_a_class_field() {
+    let s = S(c: C(n: 1, p: P(n: 1)), n: 1)
+    let t = s
+    t.c.n = 2
+    print(s.c.n)                     // 2: the copy shares the class object
+    print(t.c.n)                     // 2
+    print(s.c.p.n + s.n)             // 2: the struct fields did not change
+}
+
+fn write_through_a_mut_field() {
+    let c = C(n: 1, p: P(n: 1))
+    c.p.n = 2
+    print(c.p.n)                     // 2
+    print(c.n)                       // 1: the class field beside it did not change
+}
+
+fn main() {
+    copy_shares_a_class_field()
+    write_through_a_mut_field()
+}
