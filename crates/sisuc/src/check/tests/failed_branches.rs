@@ -241,6 +241,12 @@ fn a_break_after_a_failed_break_should_wait_for_the_next_run() {
             "let a = loop { if c { break yy }; if c { break m }; break None }",
             vec![(BindingNotFound, (6, 33))],
         ),
+        // A true mismatch of the later values waits too: the loop that failed has no type.
+        (
+            "later values of two types",
+            "let a = loop { if c { break yy }; if c { break 1 }; break \"s\" }",
+            vec![(BindingNotFound, (6, 33))],
+        ),
     ]
     .into_iter()
     .map(|(name, stmt, wanted)| (name, loop_program(stmt), wanted))
