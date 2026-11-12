@@ -2043,8 +2043,12 @@ pub(super) struct Ranked {
     /// value `Concrete` (see `sibling`), so the leader of an operator and the first anchor of a
     /// join stay as they were. `Branch::literal` reads `rank` directly and does look inside: in a
     /// join whose context failed, `1 + id(2)`, `-id(2)` and `[5; 2]` are branches of literals and
-    /// take the type of the anchor.
+    /// take the type of the anchor. A value that only waited, such as `[mk(); 2]` or `-mk()`, is
+    /// not (see `waited`).
     leads: bool,
+    /// Whether the rank is `Literal` only because the value waited (see `or_literal_if_waiting`),
+    /// so the value holds no integer literal. `combine` sets it when each `Literal` part has it.
+    waited: bool,
 }
 
 impl Ranked {
@@ -2057,6 +2061,7 @@ impl Ranked {
         holds_loop: false,
         never: false,
         leads: false,
+        waited: false,
     };
     const LITERAL: Self = Self {
         rank: Rank::Literal,
@@ -2067,6 +2072,7 @@ impl Ranked {
         holds_loop: false,
         never: false,
         leads: false,
+        waited: false,
     };
     /// A value that never ends (see `never`). It ranks `Concrete`, as it always did.
     const NEVER: Self = Self {
@@ -2082,6 +2088,7 @@ impl Ranked {
         holds_loop: false,
         never: false,
         leads: false,
+        waited: false,
     };
 
     /// `self`, but `Literal` when it waits. An array fill, an arithmetic operator and a `-` never
@@ -2092,11 +2099,18 @@ impl Ranked {
         if self.rank == Rank::Waits {
             Self {
                 rank: Rank::Literal,
+                waited: true,
                 ..self
             }
         } else {
             self
         }
+    }
+
+    /// Whether the type of the value comes only from the defaults of its integer literals: its
+    /// rank is `Literal`, and not only because it waited. `Branch::literal` reads it.
+    pub(super) fn of_literals(self) -> bool {
+        self.rank == Rank::Literal && !self.waited
     }
 
     /// The rank that joins and operators order siblings by. They type a `Literal` value with
@@ -2123,11 +2137,13 @@ impl Ranked {
 /// `Waits` when every part waits, `Literal` when no part is `Concrete` and one is `Literal`,
 /// else `Concrete`. It is `optional`, `holds_optional` or `nested` when a part is, and `scalar`
 /// when each `Literal` part is.
-/// It is `leads` when a part is. It stops at the first `Concrete` part and takes `holds_loop` from
-/// it. The parts after it are not ranked.
+/// It is `leads` when a part is. It is `waited` when it is `Literal` and each `Literal` part is
+/// `waited`, so `-mk() + 1` is not: it holds the literal `1`. It stops at the first `Concrete`
+/// part and takes `holds_loop` from it. The parts after it are not ranked.
 fn combine(parts: impl IntoIterator<Item = Ranked>) -> Ranked {
     let mut found = Ranked::WAITS;
     let mut scalar = true;
+    let mut waited = true;
     for part in parts {
         match part.rank {
             Rank::Concrete => {
@@ -2145,9 +2161,11 @@ fn combine(parts: impl IntoIterator<Item = Ranked>) -> Ranked {
         found.leads |= part.leads;
         if part.rank == Rank::Literal {
             scalar &= part.scalar;
+            waited &= part.waited;
         }
     }
     found.scalar = scalar;
+    found.waited = waited && found.rank == Rank::Literal;
     found
 }
 
