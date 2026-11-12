@@ -133,7 +133,7 @@ impl MathOp {
 pub(crate) struct Program {
     pub(crate) classes: Vec<Class>,
     pub(crate) enums: Vec<Enum>,
-    /// Indexed by `StructId`. Only the checker sets it.
+    /// Indexed by `StructId`. The checker builds it, and `mono` copies it and lays it out again.
     pub(crate) structs: Vec<Struct>,
     pub(crate) functions: Vec<Function>,
     /// Whether the checker recorded a type argument: a written one, or one a call inferred, or

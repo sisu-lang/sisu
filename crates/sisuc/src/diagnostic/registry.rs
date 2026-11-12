@@ -638,6 +638,7 @@ pub(crate) enum DiagnosticKind {
         name: String,
         kind: payload_limit::Kind,
         instance: bool,
+        holds: payload_limit::Holds,
         holder: Option<String>,
         at: Span,
         used: Option<Span>,
@@ -3888,6 +3889,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 name,
                 kind,
                 instance,
+                holds,
                 holder,
                 at,
                 used,
@@ -3904,18 +3906,22 @@ impl From<DiagnosticKind> for Diagnostic {
                         format!(
                             "{noun} `{name}` can make the payload of `{holder}` {PAYLOAD_LIMIT_GIB} GiB or more"
                         ),
-                        format!("`{holder}` holds {this} inline"),
+                        Some(format!("`{holder}` holds {this} inline")),
                     ),
                     (None, payload_limit::Kind::Enum) => (
                         format!("the payload of enum `{name}` can be {PAYLOAD_LIMIT_GIB} GiB or more"),
-                        format!("{this} holds other enums or structs inline"),
+                        held_label(&this, holds, "other enums", "structs"),
                     ),
                     (None, payload_limit::Kind::Struct) => (
                         format!("struct `{name}` can be {PAYLOAD_LIMIT_GIB} GiB or more"),
-                        format!("{this} holds other enums or structs inline"),
+                        held_label(&this, holds, "enums", "other structs"),
                     ),
                 };
-                let d = Diagnostic::coded(code, at, message).with_label(label);
+                let d = Diagnostic::coded(code, at, message);
+                let d = match label {
+                    Some(label) => d.with_label(label),
+                    None => d,
+                };
                 let d = match used {
                     Some(used) => d.with_secondary(used, "the instance is used here"),
                     None => d,
@@ -6788,6 +6794,23 @@ fn safe_fix(message: &str, span: Span, replacement: &str) -> Fix {
 /// The last byte of a spec that ends in `?`, which is one ASCII byte.
 fn last_byte(spec: Span) -> Span {
     Span::new(spec.end() - 1, spec.end())
+}
+
+/// The E0160 label for `this`, which names the kinds it holds inline: `enums` and `structs` are
+/// their words. A type that holds neither gets no label.
+fn held_label(
+    this: &str,
+    holds: payload_limit::Holds,
+    enums: &str,
+    structs: &str,
+) -> Option<String> {
+    let held = match (holds.enums, holds.structs) {
+        (true, true) => format!("{enums} and {structs}"),
+        (true, false) => enums.to_string(),
+        (false, true) => structs.to_string(),
+        (false, false) => return None,
+    };
+    Some(format!("{this} holds {held} inline"))
 }
 
 fn unsafe_fix(message: &str, span: Span, replacement: &str) -> Fix {

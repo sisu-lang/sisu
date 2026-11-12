@@ -1204,24 +1204,22 @@ impl<'ctx> Codegen<'ctx, '_> {
             } => {
                 let (lhs, ty) = self.operand(lhs);
                 let (rhs, other) = self.operand(rhs);
-                // `x == None` on a counted optional tests whether `x` holds a value; it compares
-                // no payload, so it calls no `eq` helper, which a class has none of.
+                // `x == None` tests whether `x` holds a value. It compares no payload, so it
+                // calls no `eq` helper, which a class or a struct may have none of.
                 if let Some(side) = none {
                     let (value, held) = match side {
                         Side::Lhs => (rhs, other),
                         Side::Rhs => (lhs, ty),
                     };
-                    if held.is_counted(&self.program.enums, &self.program.structs) {
-                        let present = self.has_value(held, value, "present");
-                        return Some(if *negated {
-                            present.into()
-                        } else {
-                            self.builder
-                                .build_not(present, "none")
-                                .expect(POSITIONED)
-                                .into()
-                        });
-                    }
+                    let present = self.has_value(held, value, "present");
+                    return Some(if *negated {
+                        present.into()
+                    } else {
+                        self.builder
+                            .build_not(present, "none")
+                            .expect(POSITIONED)
+                            .into()
+                    });
                 }
                 self.equal_value(*negated, ty, lhs, rhs).into()
             }

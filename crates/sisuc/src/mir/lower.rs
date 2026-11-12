@@ -807,12 +807,13 @@ impl<'a> Lowering<'a> {
         Some((ops, temps))
     }
 
-    /// The place a read at a borrow position starts from. A source local is read in place, as
-    /// a borrow site when it is counted, when `borrow` holds. A struct field is a projection of
-    /// its base's place (`path`), so no field is copied on the way. Any other base is evaluated
-    /// into a temporary that owns it, which the caller releases after the read.
+    /// The place a read at a borrow position starts from. When `borrow` holds, a source local
+    /// is read in place, as a borrow site when it is counted. A struct field is then a projection
+    /// of its base's place (`path`), so no field is copied on the way. Any other base is
+    /// evaluated into a temporary that owns it, which the caller releases after the read. So
+    /// without `borrow`, a struct field is read before what follows can replace it.
     fn base(&mut self, base: &Expr, borrow: bool) -> Option<(MirPlace, Option<LocalId>)> {
-        if let ExprKind::StructField { base: inner, index } = &base.kind {
+        if borrow && let ExprKind::StructField { base: inner, index } = &base.kind {
             let (mut place, temp) = self.path(inner, borrow)?;
             place
                 .projections
@@ -834,8 +835,9 @@ impl<'a> Lowering<'a> {
         Some((whole(temp), Some(temp)))
     }
 
-    /// `base` for the base of a struct field. A class field or an element is a projection of its
-    /// own base's place, as a read of it is. So the struct inside is not copied.
+    /// `base` for the base of a struct field, which `base` reaches only with `borrow`. A class
+    /// field or an element is a projection of its own base's place, as a read of it is. So the
+    /// struct inside is not copied.
     fn path(&mut self, e: &Expr, borrow: bool) -> Option<(MirPlace, Option<LocalId>)> {
         match &e.kind {
             ExprKind::Field { base, index } => {

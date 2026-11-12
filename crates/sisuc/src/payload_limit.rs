@@ -257,6 +257,13 @@ impl Kind {
     }
 }
 
+/// The kinds of type that a type holds inline, which the label of a report names.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Holds {
+    pub(crate) enums: bool,
+    pub(crate) structs: bool,
+}
+
 /// An enum whose payload may be `PAYLOAD_LIMIT` bytes or more, or a struct of that size.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Oversized {
@@ -268,6 +275,8 @@ pub(crate) struct Oversized {
     pub(crate) at: Span,
     /// Whether `name` is an instance of a generic enum: `at` is then the declaration.
     pub(crate) instance: bool,
+    /// What `name` holds inline.
+    pub(crate) holds: Holds,
     /// The prelude enum that holds it, when the payload over the limit is that enum's: a
     /// `Result<E, E>` is as large as `E` and a tag.
     pub(crate) holder: Option<String>,
@@ -289,6 +298,7 @@ pub(crate) fn diagnostics(
                 name: o.name,
                 kind: o.kind,
                 instance: o.instance,
+                holds: o.holds,
                 holder: o.holder,
                 at: o.at,
                 used: o.used,
@@ -332,9 +342,9 @@ fn declared<'t>(
 /// instances of a generic enum share one. An enum of the prelude is no place for the user to
 /// change, so the report names the user's enum that its largest field holds. When that chain
 /// reaches no user's enum, the report names the prelude's enum. On the checker path, `checked_with`
-/// treats a report in the prelude as an internal error. The reports are in the order of the enums.
-/// `first_uses` is the first use of each enum, which a report gives as the place that uses an
-/// instance.
+/// treats a report in the prelude as an internal error. The reports are in the order of the nodes:
+/// the enums, then the structs. `first_uses` is the first use of each enum, which a report gives as
+/// the place that uses an instance.
 pub(crate) fn oversized(
     enums: &[Enum],
     structs: &[Struct],
@@ -432,11 +442,17 @@ fn oversized_with(
                 let spread = spread.get_or_insert_with(|| spread_uses(enums, structs, first_uses));
                 spread.get(id).copied().flatten()
             };
+            let held = held_inline(enums, structs, target);
+            let holds = held.fold(Holds::default(), |holds, node| Holds {
+                enums: holds.enums || node < enums.len(),
+                structs: holds.structs || node >= enums.len(),
+            });
             found.push(Oversized {
                 name: target_name.to_owned(),
                 kind,
                 at: target_span,
                 instance: target_instance,
+                holds,
                 holder,
                 used: first,
             });
@@ -723,6 +739,7 @@ mod tests {
                 kind: Kind::Enum,
                 at: Span::new(3, 4),
                 instance: false,
+                holds: Holds::default(),
                 holder: Some("Wrap".to_string()),
                 used: None,
             }]
