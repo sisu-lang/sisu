@@ -3113,6 +3113,11 @@ mod tests {
         src
     }
 
+    /// The same chain of generic structs.
+    fn struct_chain(n: usize) -> String {
+        class_chain(n).replace("class ", "struct ")
+    }
+
     /// The same chain of generic enums.
     fn enum_chain(n: usize) -> String {
         let mut src = String::from("enum E1<T> {\n    A([T])\n    B(T?)\n}\n");
@@ -3185,6 +3190,11 @@ mod tests {
     #[test]
     fn mono_should_report_e0163_at_the_first_class_of_a_chain_over_the_limit() {
         assert_chain_stops_at_its_first_item("class", &class_chain(6), "C1");
+    }
+
+    #[test]
+    fn mono_should_report_e0163_at_the_first_struct_of_a_chain_over_the_limit() {
+        assert_chain_stops_at_its_first_item("struct", &struct_chain(6), "C1");
     }
 
     #[test]

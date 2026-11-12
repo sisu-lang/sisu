@@ -1271,7 +1271,7 @@ impl Checker<'_> {
             .insert(self.holder_name(holder), reported);
     }
 
-    /// Reports once for the class, struct or enum `holder` that a query of `conforms` went past
+    /// Reports once for the class, enum or struct `holder` that a query of `conforms` went past
     /// `CONFORMS_DEPTH_LIMIT` keys deep for (E0140). The report stands at its name, as the walk has
     /// no use to point at. It names the interface and the type of the root of the query.
     fn too_deep(&mut self, holder: Holder) {
