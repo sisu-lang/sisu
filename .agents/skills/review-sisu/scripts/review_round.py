@@ -11,7 +11,8 @@ cross-check.
 Run this file from any checkout. It runs origin/main's build_sisu.sh and diff_brief.py, so a
 branch that started before a change to the criteria gets the current ones.
 
-Prepare: python3 review_round.py prepare REPO RUN TARGET [--round N] [--old-main] [OPTION]...
+Prepare: python3 review_round.py prepare REPO RUN TARGET [--round N] [--old-main] [--pr-body FILE]
+    [OPTION]...
 
 Verify: python3 review_round.py verify REPO RUN --report STEM [--report STEM]... [--round N]
 
@@ -38,6 +39,13 @@ prepare stops before it builds when a diff starts on main but origin/main is not
 its head: main moved, so the diff is not what will merge. --old-main lets the diff of one task
 through, such as task 1 of a branch, whose base is where the branch left main.
 
+--pr-body FILE goes to diff_brief.py as one more --doc. prepare first checks each of its lines with
+origin/main's scripts/text_limits.py, and stops when a line breaks a limit.
+
+prepare also stops when a diff makes an "in N fields" count of docs/register.md larger. The Focus
+or the pull request body must name the row by its Where cell, such as check::Body. A diff that
+grows a debt row names the row (docs/register.md, How to use it).
+
 verify also fails on a report whose first line does not start with "Model:".
 
 verify names the commits when HEAD is the only thing that changed. It still fails, because a
@@ -56,6 +64,9 @@ import sys
 from pathlib import Path
 
 SCRIPTS = ".agents/skills/review-sisu/scripts"
+REGISTER = "docs/register.md"
+# A debt row with a field count: its count, then its Where cell without the backticks.
+FIELD_ROW = re.compile(r"^\|[^|]* in (\d+) fields[^|]*\|\s*`?([^|`]*?)`?\s*\|", re.MULTILINE)
 # The Markdown files of a run directory that are not reports, by the stem of their name.
 NOT_REPORTS = {"brief", "focus", "rulings", "target", "diagnostic-issues"}
 
@@ -68,6 +79,13 @@ def git(repo: Path, *args: str) -> bytes:
 def script(repo: Path, name: str) -> bytes:
     """Return origin/main's copy of a script of this skill."""
     return git(repo, "show", f"origin/main:{SCRIPTS}/{name}")
+
+
+def show(repo: Path, rev: str, path: str) -> str:
+    """Return PATH at the commit REV, or an empty string when REV has no such file."""
+    args = ["git", "-C", repo, "show", f"{rev}:{path}"]
+    result = subprocess.run(args, check=False, capture_output=True, text=True)
+    return result.stdout if result.returncode == 0 else ""
 
 
 def is_ancestor(repo: Path, a: str, b: str) -> bool:
@@ -131,6 +149,55 @@ def check_main(repo: Path, target: str) -> None:
             " what will merge. Bring main in first (final-diff.md, step 1), or pass --old-main"
             " for the diff of one task or a range that main has passed."
         )
+
+
+def field_counts(register: str) -> dict[str, int]:
+    """Return the count of each "in N fields" row of the register, by its Where cell."""
+    return {place: int(count) for count, place in FIELD_ROW.findall(register)}
+
+
+def check_debt(repo: Path, run: Path, target: str, round_number: int, body: Path | None) -> None:
+    """Stop when a diff grows a field count of the register, and no Focus or body names the row."""
+    ends = diff_ends(target)
+    if ends is None:
+        return
+    base, head = ends
+    named = "".join(
+        path.read_text(encoding="utf-8")
+        for path in (run / numbered("focus", round_number), body)
+        if path is not None and path.exists()
+    )
+    before = field_counts(show(repo, base, REGISTER))
+    for place, count in field_counts(show(repo, head, REGISTER)).items():
+        old = before.get(place)
+        if old is not None and count > old and place not in named:
+            raise SystemExit(
+                f"review_round: the diff grows the `{place}` row of {REGISTER} from {old} to"
+                f" {count} fields. Name the row and the reason in the Focus or the pull request"
+                f" body ({REGISTER}, How to use it)."
+            )
+
+
+def check_body(repo: Path, body: Path | None) -> list[str]:
+    """Stop when a line of the pull request body breaks a limit of text_limits.py.
+
+    Return the options that give the body to diff_brief.py.
+    """
+    if body is None:
+        return []
+    # text_limits.py reads prose by the file name, so another name would pass with no check.
+    if body.suffix != ".md":
+        raise SystemExit(f"review_round: {body}: the pull request body must be a .md file")
+    result = subprocess.run(
+        ["python3", "-", "--whole", str(body)],
+        input=git(repo, "show", "origin/main:scripts/text_limits.py"),
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        found = (result.stdout + result.stderr).decode()
+        raise SystemExit(f"review_round: correct the pull request body:\n{found}")
+    return ["--doc", str(body)]
 
 
 def prepare(repo: Path, run: Path, target: str, round_number: int, extra: list[str]) -> None:
@@ -275,6 +342,7 @@ def main() -> int:
         command.add_argument("run", type=Path)
     prepare_parser.add_argument("target")
     prepare_parser.add_argument("--old-main", action="store_true")
+    prepare_parser.add_argument("--pr-body", type=Path, metavar="FILE")
     verify_parser.add_argument("--report", action="append", required=True, metavar="STEM")
     save_parser.add_argument("run", type=Path)
     save_parser.add_argument("stem")
@@ -302,6 +370,8 @@ def main() -> int:
     git(args.repo, "fetch", "origin")
     if not args.old_main:
         check_main(args.repo, args.target)
+    extra += check_body(args.repo, args.pr_body)
+    check_debt(args.repo, args.run, args.target, args.round, args.pr_body)
     prepare(args.repo, args.run, args.target, args.round, extra)
     return 0
 

@@ -391,3 +391,22 @@ let _a = loop { if c { break 1 }; break 1 + $ }
 let _a = loop { if c { break 1 }; break $ }
 let _a = match k { 0 => 5; 1 => Some(1); _ => $ }
 let _a = [5, Some(1), $]
+# A branch in a poisoned context: the right side of `??` after an unknown name, an argument of a
+# call with the wrong count, and a `break` after a failed `break`.
+let _a = missing ?? (if c { $ } else { 8 })
+let _a = i64(if c { $ } else { 8 }, 1)
+let _a = loop { if c { break missing }; break $ }
+let _a = loop { if c { break missing }; if c { break 2 }; break $ }
+# A `break` in a join in a poisoned context to a loop that is open outside it: the later branch of
+# the join holds the `break`.
+let _a = loop { let _x = missing ?? (if c { if c { break Some(1) } else { 8 } } else { if c { break $ }; 8 }) }
+let _a = loop { let _x = i64(if c { if c { break Some(1) } else { 8 } } else { if c { break $ }; 8 }, 1) }
+# The same with the value in the earlier branch, and with a `break` after the join. A value with a
+# type of its own fails the loop there.
+let _a = loop { let _x = i64(if c { if c { break $ } else { 8 } } else { if c { break Some(1) }; 8 }, 1) }
+let _a = loop { let _x = i64(if c { if c { break Some(1) } else { 8 } } else { if c { break $ }; 8 }, 1); break $ }
+let _a = loop { let _x = i64(if c { if c { break Some(1) } else { 8 } } else { if c { break $ }; 8 }, 1); if c { break 2 }; break $ }
+# The same in a loop that opens inside a join in a poisoned context, and in the guard of a `match`
+# arm.
+let _a = loop { let _x = i64(if c { let _y = loop { i64(if c { if c { break Some(1) } else { 8 } } else { if c { break $ }; 8 }, 1) }; 8 } else { 9 }, 1) }
+let _a = loop { let _x = i64(match k { 0 => if c { break Some(1) } else { 8 }; _ if (if c { break $ } else { c }) => 9; _ => 8 }, 1) }

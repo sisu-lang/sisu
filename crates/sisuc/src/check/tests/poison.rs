@@ -7,8 +7,9 @@ use super::*;
 use Code::{
     AlreadyConverted, ArgumentCount, AssignToImmutable, BindingNotFound, BraceOnNewLine,
     CannotInfer, CoalesceNotOptional, FunctionNotFound, JumpOutsideLoop, LabeledArgument,
-    MayBeNone, Mismatch, MissingField, NeverNone, NoMember, NotConform, SafeAccessNotOptional,
-    TooManyArguments, TypeArguments, TypeAsValue, UnknownType, UnwrapNeedsOptional,
+    MayBeNone, Mismatch, MissingField, NeverNone, NoMember, NoValue, NotConform,
+    SafeAccessNotOptional, TooManyArguments, TypeArguments, TypeAsValue, UnknownType,
+    UnwrapNeedsOptional,
 };
 
 /// The declarations C: the classes, enums and functions that each row of `c_rows` uses. `Broken`
@@ -694,11 +695,6 @@ fn a_typed_poisoned_operand_should_read_as_its_type() {
             "negation of a failed call",
             "let a = -h() and print(a + true)".into(),
             vec![(ArgumentCount, (41, 14)), (Mismatch, (42, 15))],
-        ),
-        (
-            "negation of a conversion",
-            "let a = -i64(nope) and print(a + true)".into(),
-            vec![(BindingNotFound, (41, 18)), (Mismatch, (42, 15))],
         ),
         (
             "a typed poisoned branch",
@@ -1467,11 +1463,6 @@ fn the_form_should_decide_the_type() {
             vec![(BindingNotFound, (41, 19)), (Mismatch, (42, 11))],
         ),
         (
-            "i64(nothing())",
-            "let a = i64(nothing()) and print(a + true)".into(),
-            vec![(FunctionNotFound, (41, 17)), (Mismatch, (42, 15))],
-        ),
-        (
             "string(nothing())",
             "let a = string(nothing()) and print(a + true)".into(),
             vec![(FunctionNotFound, (41, 20)), (Mismatch, (42, 15))],
@@ -1935,11 +1926,6 @@ fn a_typed_poisoned_part_should_fail_only_a_call() {
             vec![(ArgumentCount, (41, 17)), (Mismatch, (42, 15))],
         ),
         (
-            "conv plus",
-            "let a = i64(nope) + k and print(a + true)".into(),
-            vec![(BindingNotFound, (41, 17)), (Mismatch, (42, 15))],
-        ),
-        (
             "block plus",
             "let a = { nope\n 5 } + 1 and print(a + true)".into(),
             vec![(BindingNotFound, (41, 15)), (Mismatch, (43, 15))],
@@ -1948,11 +1934,6 @@ fn a_typed_poisoned_part_should_fail_only_a_call() {
             "neg",
             "let a = -h() and print(a + true)".into(),
             vec![(ArgumentCount, (41, 14)), (Mismatch, (42, 15))],
-        ),
-        (
-            "neg conv",
-            "let a = -i64(nope) and print(a + true)".into(),
-            vec![(BindingNotFound, (41, 18)), (Mismatch, (42, 15))],
         ),
         (
             "index",
@@ -2060,4 +2041,165 @@ fn equality_on_a_type_with_eq_only_from_a_broken_block_should_be_untyped() {
     ] {
         codes_row(row, src, &wanted);
     }
+}
+
+/// `i64(x)` is `i64?` when `x` is an `f64`, and `i64` for the other sources. So
+/// `i64` of a failed `x` that has no type does not state its type apart from the failed part
+/// (ADR 0049): the call is untyped, and `??`, `if let`, `while let`, `+`, `.` and `==` add no
+/// error after the one of `x`.
+#[test]
+fn a_conversion_to_i64_of_an_untyped_value_should_be_untyped() {
+    c_rows(&[
+        (
+            "coalesce",
+            "let x = i64(missing) ?? 0".into(),
+            vec![(BindingNotFound, (41, 17))],
+        ),
+        (
+            "negation",
+            "let a = -i64(nope) and print(a + true)".into(),
+            vec![(BindingNotFound, (41, 18))],
+        ),
+        (
+            "plus a name",
+            "let a = i64(nope) + k and print(a + true)".into(),
+            vec![(BindingNotFound, (41, 17))],
+        ),
+        (
+            "plus of a call that failed",
+            "let a = i64(nothing()) and print(a + true)".into(),
+            vec![(FunctionNotFound, (41, 17))],
+        ),
+        (
+            "coalesce of a call to an unknown function",
+            "let x = i64(nothing()) ?? 0".into(),
+            vec![(FunctionNotFound, (41, 17))],
+        ),
+        (
+            "if let",
+            "if let v = i64(missing) { print(v) }".into(),
+            vec![(BindingNotFound, (41, 20))],
+        ),
+        (
+            "while let",
+            "while let v = i64(missing) { print(v) }".into(),
+            vec![(BindingNotFound, (41, 23))],
+        ),
+        (
+            "plus",
+            "let a = i64(nope) and print(a + true)".into(),
+            vec![(BindingNotFound, (41, 17))],
+        ),
+        (
+            "conversion of a conversion",
+            "let x = i64(i64(missing)) ?? 0".into(),
+            vec![(BindingNotFound, (41, 21))],
+        ),
+        (
+            "member",
+            "let x = i64(missing).len()".into(),
+            vec![(BindingNotFound, (41, 17))],
+        ),
+        (
+            "equal to none",
+            "let x = i64(missing) == None".into(),
+            vec![(BindingNotFound, (41, 17))],
+        ),
+        (
+            "element of an array",
+            "let x = [i64(missing)] and print(x[0] ?? 0)".into(),
+            vec![(BindingNotFound, (41, 18))],
+        ),
+        (
+            "first branch",
+            "let x = if c { i64(missing) } else { 2 } and print(x ?? 0)".into(),
+            vec![(BindingNotFound, (41, 24))],
+        ),
+        (
+            "second branch",
+            "let x = if c { 2 } else { i64(missing) } and print(x ?? 0)".into(),
+            vec![(BindingNotFound, (41, 35))],
+        ),
+        // `i64` and `i64?` both fail `u8`, so the true error waits for the next run.
+        (
+            "declared u8",
+            "let x: u8 = i64(missing)".into(),
+            vec![(BindingNotFound, (41, 21))],
+        ),
+    ]);
+}
+
+/// `nothing()` has a declaration and gives no value (E0043), so `i64` of it is untyped too.
+#[test]
+fn a_conversion_to_i64_of_a_call_with_no_value_should_be_untyped() {
+    error_rows(&[(
+        "coalesce",
+        "fn nothing() {}\nfn main() {\n    let x = i64(nothing()) ?? 0\n}\n".into(),
+        vec![(NoValue, (3, 17))],
+    )]);
+}
+
+/// The conversions that state their type apart from a failed argument stay typed: `u8(x)` and
+/// `char(x)` are always optional, and `f64(x)` and `string(x)` have one type. A conversion of a
+/// typed failed part keeps its true error. Each row holds before and after the #616 fix.
+#[test]
+fn a_conversion_with_one_type_should_stay_typed_holds_before_and_after() {
+    c_rows(&[
+        (
+            "u8 plus",
+            "let a = u8(nope) and print(a + true)".into(),
+            vec![(BindingNotFound, (41, 16)), (Mismatch, (42, 11))],
+        ),
+        (
+            "f64 plus",
+            "let a = f64(nope) and print(a + true)".into(),
+            vec![(BindingNotFound, (41, 17)), (Mismatch, (42, 15))],
+        ),
+        (
+            "string plus",
+            "let a = string(nope) and print(a + true)".into(),
+            vec![(BindingNotFound, (41, 20)), (Mismatch, (42, 15))],
+        ),
+        (
+            "u8 coalesce",
+            "let x = u8(missing) ?? 0".into(),
+            vec![(BindingNotFound, (41, 16))],
+        ),
+        (
+            "char coalesce",
+            "let x = char(missing) ?? 'a'".into(),
+            vec![(BindingNotFound, (41, 18))],
+        ),
+        (
+            "declared i64",
+            "let y: i64 = i64(missing)".into(),
+            vec![(BindingNotFound, (41, 22))],
+        ),
+        (
+            "declared optional",
+            "let y: i64? = i64(missing)".into(),
+            vec![(BindingNotFound, (41, 23))],
+        ),
+        (
+            "array with an optional",
+            "let x = [i64(missing), Some(2)]".into(),
+            vec![(BindingNotFound, (41, 18))],
+        ),
+        (
+            "branches with an optional",
+            "let x = if c { i64(missing) } else { Some(2) }".into(),
+            vec![(BindingNotFound, (41, 24))],
+        ),
+        // `u8(missing)` is `u8?`, so `i64` of it is a true error, beside the one of `missing`.
+        (
+            "i64 of a u8 that failed",
+            "let x = i64(u8(missing)) ?? 0".into(),
+            vec![(Mismatch, (41, 17)), (BindingNotFound, (41, 20))],
+        ),
+        (
+            "i64 of an f64 that failed",
+            "let x = i64(f64(missing)) ?? 0".into(),
+            vec![(BindingNotFound, (41, 21))],
+        ),
+    ]);
 }
