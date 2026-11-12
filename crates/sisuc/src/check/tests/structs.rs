@@ -2144,3 +2144,312 @@ fn struct_should_cite_its_dead_uses() {
         "a dead read"
     );
 }
+
+/// The items that the rows of `write_to_a_copy_should_warn_only_when_nothing_reads_it` share.
+const COPY_GIVEN: &str = "struct A { b: i64 }\nclass C { mut n: i64 }\nstruct H { c: C }\nstruct W { xs: [i64] }\nfn set(mut a: A) { a.b = 0 }\n";
+
+/// A row of the table of a write to a copy. It holds its name, the items beside `run`, the type
+/// that `run` returns and the lines of its body. It also holds the warnings W0002, W0014 and W0016
+/// that it must give. Each warning is its code, the text where it starts, and a shift from there.
+type CopyRow = (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static [(&'static str, &'static str, usize)],
+);
+
+/// The rows of a write to a copy.
+const COPY_ROWS: [CopyRow; 21] = [
+    (
+        "an element",
+        "",
+        "",
+        "let mut a = xs[0]\na.b = 2",
+        &[("W0016", "a.b = 2", 0)],
+    ),
+    (
+        "no write",
+        "",
+        "",
+        "let mut a = xs[0]",
+        &[("W0014", "let mut a", 8)],
+    ),
+    (
+        "a shared object changes",
+        "",
+        "",
+        "let mut a = c\na.n = 2",
+        &[("W0002", "let mut a", 8)],
+    ),
+    (
+        "the path crosses a class",
+        "",
+        "",
+        "let mut a = h\na.c.n = 2",
+        &[("W0002", "let mut a", 8)],
+    ),
+    (
+        "an element of a copy",
+        "",
+        "",
+        "let mut a = ys[0]\na[0] = 1",
+        &[("W0016", "a[0] = 1", 0)],
+    ),
+    (
+        "a path to an element",
+        "",
+        "",
+        "let mut a = w\na.xs[0] = 1",
+        &[("W0016", "a.xs[0] = 1", 0)],
+    ),
+    (
+        "a compound write",
+        "",
+        "",
+        "let mut a = xs[0]\na.b += 2",
+        &[("W0016", "a.b += 2", 0)],
+    ),
+    (
+        "a local",
+        "",
+        "",
+        "let o = xs[0]\nlet mut a = o\na.b = 2",
+        &[("W0016", "a.b = 2", 0)],
+    ),
+    (
+        "a push on a field of the copy",
+        "",
+        "",
+        "let mut a = w\na.xs.push(1)",
+        &[("W0016", "a.xs.push(1)", 0)],
+    ),
+    (
+        "a push on the copy",
+        "",
+        "",
+        "let mut a = ys[0]\na.push(1)",
+        &[("W0016", "a.push(1)", 0)],
+    ),
+    (
+        "a read",
+        "",
+        "",
+        "let mut a = xs[0]\na.b = 2\nprint(a.b)",
+        &[],
+    ),
+    (
+        "a tail value",
+        "",
+        "A",
+        "let mut a = xs[0]\na.b = 2\na",
+        &[],
+    ),
+    (
+        "a mut argument",
+        "",
+        "",
+        "let mut a = xs[0]\nset(mut a)",
+        &[("W0014", "let mut a", 8)],
+    ),
+    (
+        "a write and a mut argument",
+        "",
+        "",
+        "let mut a = xs[0]\na.b = 2\nset(mut a)",
+        &[("W0014", "let mut a", 8)],
+    ),
+    ("a marked name", "", "", "let mut _a = xs[0]\n_a.b = 2", &[]),
+    (
+        "a fresh value",
+        "",
+        "",
+        "let mut a = A(b: 1)\na.b = 2",
+        &[("W0014", "let mut a", 8)],
+    ),
+    (
+        "a write of the whole copy",
+        "",
+        "",
+        "let mut a = xs[0]\na = A(b: 3)\na.b = 2",
+        &[("W0014", "let mut a", 8)],
+    ),
+    (
+        "two writes",
+        "",
+        "",
+        "let mut a = xs[0]\na.b = 2\na.b = 3",
+        &[("W0016", "a.b = 2", 0)],
+    ),
+    (
+        "a mut parameter",
+        "fn f(mut a: A) {\n    a.b = 2\n}\n",
+        "",
+        "let mut x = xs[0]\nf(mut x)\nprint(x.b)",
+        &[],
+    ),
+    (
+        "a plain parameter",
+        "fn f(s: A) {\n    let mut a = s\n    a.b = 2\n}\n",
+        "",
+        "f(xs[0])",
+        &[("W0016", "a.b = 2", 0)],
+    ),
+    (
+        "only live code",
+        "fn unused() {\n    let mut a = A(b: 1)\n    let mut b = a\n    b.b = 2\n    print(a.b)\n}\n",
+        "",
+        "",
+        &[("W0002", "let mut a", 8)],
+    ),
+];
+
+/// The program of the row `(items, ret, body)`: `run` holds the values of the given and the body,
+/// and `main` calls it.
+fn copy_program((_, items, ret, body, _): &CopyRow) -> String {
+    let (arrow, call) = if ret.is_empty() {
+        (String::new(), "run()")
+    } else {
+        (format!(" -> {ret}"), "let _ = run()")
+    };
+    let lines: String = body.lines().flat_map(|line| ["    ", line, "\n"]).collect();
+    format!(
+        "{COPY_GIVEN}{items}fn run(){arrow} {{\n    let xs = [A(b: 1)]\n    let ys = [[1]]\n    let c = C(n: 1)\n    let h = H(c: c)\n    let w = W(xs: [1])\n    print(xs[0].b + ys[0][0] + c.n + h.c.n + w.xs[0])\n{lines}}}\nfn main() {{\n    {call}\n}}"
+    )
+}
+
+/// The warnings W0002, W0014 and W0016 of `src`, each as its code and its place, in order of their
+/// places.
+fn copy_warnings(src: &str) -> Vec<(&'static str, (usize, usize))> {
+    judge_unused();
+    let (_, ds) = checked(src);
+    let mut found: Vec<_> = (ds.iter())
+        .filter(|d| matches!(d.code().as_str(), "W0002" | "W0014" | "W0016"))
+        .map(|d| (d.code().as_str(), at(src, d.span())))
+        .collect();
+    found.sort_by_key(|&(_, place)| place);
+    found
+}
+
+/// GIVEN `struct A { b: i64 }`, a class `C`, a struct `H` that holds a `C`, a struct `W` that holds
+/// an array, and a `mut` function `set`. WHEN a body writes through a `let mut` that copies a
+/// place, in each shape of the table. THEN `sisu check` gives W0016 at the first write, only when
+/// each use of the copy is a write that stays in structs and arrays. A read, a tail value, a `mut`
+/// argument, a write of the whole copy and a path through a class give none. Dead code gives none.
+#[test]
+fn write_to_a_copy_should_warn_only_when_nothing_reads_it() {
+    let mut red = Vec::new();
+    for row in &COPY_ROWS {
+        let src = copy_program(row);
+        let mut wanted: Vec<_> = (row.4.iter())
+            .map(|&(code, needle, shift)| {
+                let start = src.find(needle).expect("each row should hold its text");
+                (code, line_col(&src, start + shift))
+            })
+            .collect();
+        wanted.sort_by_key(|&(_, place)| place);
+        let found = copy_warnings(&src);
+        if found != wanted {
+            red.push(format!(
+                "row `{}`: found {found:?}, wanted {wanted:?}",
+                row.0
+            ));
+        }
+    }
+    assert!(red.is_empty(), "red rows:\n{}", red.join("\n"));
+}
+
+/// The programs of the fixtures of W0016, one for each help.
+const COPY_FIXTURES: [&str; 5] = [
+    include_str!("../../../tests/diagnostics/W0016.sisu"),
+    include_str!("../../../tests/diagnostics/W0016-let.sisu"),
+    include_str!("../../../tests/diagnostics/W0016-parameter.sisu"),
+    include_str!("../../../tests/diagnostics/W0016-self.sisu"),
+    include_str!("../../../tests/diagnostics/W0016-for.sisu"),
+];
+
+/// GIVEN each row of the table that gives W0016, and each program of the fixtures. WHEN `sisu
+/// check` runs. THEN W0016 has a help and no fix. The `let mut` root of a fixture keeps its W0002.
+#[test]
+fn write_to_a_copy_should_offer_no_fix() {
+    judge_unused();
+    let rows = (COPY_ROWS.iter())
+        .filter(|row| row.4.iter().any(|&(code, ..)| code == "W0016"))
+        .map(|row| (row.0, copy_program(row)));
+    let fixtures = (COPY_FIXTURES.iter()).map(|src| ("a fixture", (*src).to_string()));
+    for (row, src) in rows.chain(fixtures) {
+        let (_, ds) = checked(&src);
+        let copies: Vec<_> = (ds.iter())
+            .filter(|d| d.code().as_str() == "W0016")
+            .collect();
+        assert!(!copies.is_empty(), "row `{row}`: no W0016 in {src}");
+        for d in copies {
+            assert!(d.help().is_some(), "row `{row}`: no help");
+            assert!(d.fixes().is_empty(), "row `{row}`: {:?}", d.fixes());
+        }
+    }
+    assert_eq!(
+        copy_warnings(COPY_FIXTURES[0]),
+        [("W0002", (5, 13)), ("W0016", (8, 5))],
+        "the root keeps its W0002"
+    );
+}
+
+/// GIVEN a class `C` with a `mut` field of the struct `P`. WHEN a `let mut` copies the field, with
+/// `let mut c` or with `let c`, and writes to the copy; or copies an array of classes and writes
+/// to a field of an element. THEN there is no W0016, because the place or the write crosses a
+/// class object. The `let mut` root keeps its W0002.
+#[test]
+fn write_to_a_copy_across_a_class_should_not_warn() {
+    let p = "struct P { n: i64 }\nclass C { mut p: P }\n";
+    let rows = [
+        (
+            "a place through a class, a let mut root",
+            format!("{p}fn main() {{\n    let mut c = C(p: P(n: 1))\n    let mut a = c.p\n    a.n = 2\n}}"),
+            vec![("W0002", (4, 13)), ("W0014", (5, 13))],
+        ),
+        (
+            "a place through a class, a let root",
+            format!("{p}fn main() {{\n    let c = C(p: P(n: 1))\n    let mut a = c.p\n    a.n = 2\n}}"),
+            vec![("W0014", (5, 13))],
+        ),
+        (
+            "a write through a class, read after",
+            "class C { mut n: i64 }\nfn main() {\n    let mut h = [C(n: 1)]\n    let mut b = h\n    b[0].n = 3\n    print(b[0].n)\n}".to_string(),
+            vec![("W0002", (3, 13)), ("W0002", (4, 13))],
+        ),
+        (
+            "a write through a class, never read",
+            "class C { mut n: i64 }\nfn main() {\n    let mut h = [C(n: 1)]\n    let mut b = h\n    b[0].n = 3\n}".to_string(),
+            vec![("W0002", (3, 13)), ("W0002", (4, 13))],
+        ),
+    ];
+    for (row, src, wanted) in rows {
+        assert_eq!(copy_warnings(&src), wanted, "row `{row}`");
+    }
+}
+
+/// GIVEN a function with `n` copies of a place, or a copy with `n` writes. WHEN `n` is 10, 20 and
+/// 30. THEN each reports W0016, and the path walks grow in step with `n`: each copy and each write
+/// is walked once.
+#[test]
+fn write_to_a_copy_should_check_each_step_once() {
+    let steps = |copies: usize, writes: usize| {
+        use std::fmt::Write as _;
+        let mut body = String::new();
+        for i in 0..copies {
+            writeln!(body, "    let mut a{i} = xs[0]").expect("a string should take a write");
+            body += &format!("    a{i}.b = 1\n").repeat(writes);
+        }
+        let src = format!(
+            "struct A {{ b: i64 }}\nfn main() {{\n    let xs = [A(b: 1)]\n{body}    print(xs[0].b)\n}}"
+        );
+        PATH_STEPS.set(0);
+        let found = copy_warnings(&src);
+        let copied = found.iter().filter(|(code, _)| *code == "W0016").count();
+        assert_eq!(copied, copies, "{found:?}");
+        PATH_STEPS.get()
+    };
+    assert_near_linear_for("copies", steps(10, 1), steps(20, 1), steps(30, 1));
+    assert_near_linear_for("writes", steps(1, 10), steps(1, 20), steps(1, 30));
+}
