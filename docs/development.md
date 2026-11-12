@@ -63,7 +63,8 @@ $ make setup   # LLVM 23 into .llvm/23, the pre-commit and commit-msg hooks, car
 ```console
 $ make help    # every target
 $ make build   # sisu and the two runtime archives
-$ make test    # unit tests and end-to-end cases
+$ make test    # unit tests and end-to-end cases, but not the memory tests
+$ make memory-safety   # the memory tests: ASan, Valgrind and --rc-checks on every run case
 $ make lint    # fmt, clippy (also with the fuzz feature), expect messages, unused dependencies, Ruff and Pyrefly on the Python files, typos, file hygiene, shell and workflow lint, as in CI
 $ make deny    # advisories, licenses, sources
 $ make miri    # the runtime's unit tests under Miri, which stops at undefined behaviour
@@ -114,7 +115,12 @@ On Linux, it runs three ASan builds (plain, `-O2` and `--rc-checks`) and an `-O2
 Then it runs that `-O2` build once under Valgrind.
 On macOS, it runs a `--rc-checks` build.
 Each run must exit 0 and print `<name>.out` on stdout, and `<name>.err` or nothing on stderr.
-`make test` does not run the memory tests.
+`make test` does not run the memory tests: the `default-filter` of the default and `ci` profiles in
+`.config/nextest.toml` leaves them out, and `scripts/nextest_filters.py` fails when it leaves out any other test.
+`make memory-safety` runs them with the `memory` profile.
+Run it after a change to code generation, drops, the runtime or the harness, before a pull request.
+CI runs them in the `Memory safety (ASan, Valgrind)` job on a push to main and by hand with `workflow_dispatch`.
+`make mutation-test` and the ARM64 and macOS jobs keep them (`--ignore-default-filter`).
 
 The top comment of a `diagnostics/` case can name a position, such as `at 7:9`
 or `(6:10)`. Each one must be where a primary or a secondary span of the
@@ -372,7 +378,7 @@ and stops. `LOG=<file>` writes the whole output to that file, opened only once
 the run holds the lock. Use it instead of a shell redirect, which would empty a
 running log before the second run could refuse.
 
-`make test`, `make coverage`, `make mutation-test` and `make miri` also hold
+`make test`, `make memory-safety`, `make coverage`, `make mutation-test` and `make miri` also hold
 one lock for all the worktrees of the clone. The lock is a file in the clone's
 `.git` (`scripts/heavy-run.sh`). Two such runs at the same time link hundreds
 of programs at once, and then the disk stops for every other process. So a

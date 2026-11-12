@@ -1,14 +1,17 @@
 """Check that each `test(...)` leaf of a nextest filter matches a test.
 
 A filter that matches no test does nothing and says nothing: a renamed test then loses its
-override.
+override. A `default-filter` is checked the same way. It also must leave out only the memory tests
+(`DEFAULT_FILTER_OUT`), so that a loose leaf cannot drop other tests from `make test`.
 
 Usage: python3 nextest_filters.py CONFIG LIST_JSON
 CONFIG is .config/nextest.toml. LIST_JSON is the output of
 `cargo nextest list --workspace --message-format json`. It prints one line for each leaf that
-matches no test, or that is not `=name` or a substring (nextest also has /regex/, ~x and #glob,
-which this check does not read), and exits 1. It prints each line where a stale leaf is. It skips
-an override with a `platform` key. It prints nothing and exits 0 when every leaf is fine.
+matches no test. It prints one for each leaf that is not `=name` or a substring: nextest also has
+/regex/, ~x and #glob, which this check does not read. It also prints one line for each test that
+the default-filter leaves out and that is not a memory test. It exits 1 when it prints a line. It
+prints each line where a stale leaf is. It skips an override with a `platform` key. It prints
+nothing and exits 0 when every leaf is fine.
 """
 
 import json
@@ -23,13 +26,15 @@ from typing import Any
 LEAF = re.compile(r"\btest\s*\(\s*(/.*?/|[^)]*)\)")
 # A TOML string or comment. Read in order, so a quote in a comment and a `#` in a string are no
 # token.
+# The names of the tests that a profile's `default-filter` may leave out.
+DEFAULT_FILTER_OUT = ("memory::", "site_memory::")
 TOKEN = re.compile(
     r"""'''.*?'''|\"\"\".*?\"\"\"|'[^'\n]*'|"(?:[^"\\\n]|\\.)*"|#[^\n]*""", re.DOTALL
 )
 
 
 def leaves(config: dict[str, Any]) -> list[str]:
-    """Return the argument of each `test(...)` leaf of each override and script filter.
+    """Return the argument of each `test(...)` leaf of each override, script and default filter.
 
     Each argument comes once, as the parsed TOML holds it. nextest trims the space before an
     argument, not the space after it.
@@ -39,6 +44,7 @@ def leaves(config: dict[str, Any]) -> list[str]:
     """
     found: list[str] = []
     for profile in config.get("profile", {}).values():
+        found += LEAF.findall(profile.get("default-filter", ""))
         for table in ("overrides", "scripts"):
             for entry in profile.get(table, []):
                 if "platform" not in entry:
@@ -88,6 +94,18 @@ def check(config_path: str, list_path: str) -> list[str]:
     return [
         f"{config_path}:{line}: filter leaf `test({leaf})` {wrong[leaf]}"
         for line, leaf in sorted((line, leaf) for leaf in wrong for line in where.get(leaf, {1}))
+    ] + left_out(suites)
+
+
+def left_out(suites: dict[str, Any]) -> list[str]:
+    """Return one line for each test the default-filter leaves out that is not a memory test."""
+    return [
+        f"{suite_name} {name}: the default-filter leaves it out, "
+        "and only memory tests may be left out"
+        for suite_name, suite in suites.items()
+        for name, case in suite.get("testcases", {}).items()
+        if case.get("filter-match") == {"status": "mismatch", "reason": "default-filter"}
+        and not name.startswith(DEFAULT_FILTER_OUT)
     ]
 
 

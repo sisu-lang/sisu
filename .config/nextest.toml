@@ -8,6 +8,16 @@ command = "scripts/build-runtime.sh"
 [profile.default.junit]
 path = "junit.xml"
 
+[profile.default]
+# The memory tests of the run cases run in `make memory-safety` and on a push to main, not in
+# `make test`. scripts/nextest_filters.py fails when this filter leaves out any other test.
+default-filter = 'not (binary(cases) & test(memory::))'
+
+[profile.memory]
+default-filter = 'binary(cases) & test(memory::)'
+fail-fast = false
+failure-output = "immediate-final"
+
 [profile.ci]
 # Report every failure, not just the first.
 fail-fast = false

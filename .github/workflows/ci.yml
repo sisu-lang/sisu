@@ -94,6 +94,36 @@ jobs:
           cargo nextest list --workspace --locked --message-format json > "$RUNNER_TEMP/list.json"
           python3 scripts/nextest_filters.py .config/nextest.toml "$RUNNER_TEMP/list.json"
 
+  # The memory tests of the run cases (ASan, Valgrind, --rc-checks), which the Test job leaves out.
+  # They run on main and by hand; `make memory-safety` runs them locally.
+  memory-safety:
+    name: Memory safety (ASan, Valgrind)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-nextest
+      - uses: ./.github/actions/install-llvm
+      - run: sudo apt-get update && sudo apt-get install --yes valgrind
+      - id: nextest
+        run: cargo nextest run --workspace --locked --profile memory
+      # Shows the test health report in the job summary. It never fails the job.
+      - if: (success() || failure()) && steps.nextest.outcome != 'skipped'
+        run: |
+          if [ -f target/nextest/memory/junit.xml ]; then
+            {
+              echo '## Test health'
+              echo '```'
+              python3 scripts/test_health.py target/nextest/memory/junit.xml
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   # The same tests on an aarch64 host. It runs on main and by hand, not on every
   # pull request: a pull request can start it with workflow_dispatch on its branch.
   test-arm64:
@@ -110,7 +140,8 @@ jobs:
           tool: cargo-nextest
       - uses: ./.github/actions/install-llvm
       - run: sudo apt-get update && sudo apt-get install --yes valgrind
-      - run: cargo nextest run --workspace --locked --profile ci
+      # They run on main only, so they keep every check of their platform, the memory tests too.
+      - run: cargo nextest run --workspace --locked --profile ci --ignore-default-filter
 
   # No Valgrind on macOS: the harness runs those cases natively, and the Linux jobs check for leaks.
   test-macos:
@@ -128,7 +159,8 @@ jobs:
         with:
           tool: cargo-nextest
       - uses: ./.github/actions/install-llvm
-      - run: cargo nextest run --workspace --locked --profile ci
+      # They run on main only, so they keep every check of their platform, the memory tests too.
+      - run: cargo nextest run --workspace --locked --profile ci --ignore-default-filter
 
   # Miri runs the runtime's unit tests in an interpreter that stops at undefined
   # behaviour in its unsafe code; it needs nightly, which overrides rust-toolchain.toml.
