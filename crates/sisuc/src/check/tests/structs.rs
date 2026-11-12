@@ -4,10 +4,10 @@
 use super::*;
 use Code::{
     ArgumentCount, ArgumentNeedsLabel, AssignToExpression, AssignToImmutable, AssignToSelf,
-    BindingNotFound, CannotMatch, ConstantType, DefinedTwice, Expected, FieldOutOfOrder,
-    FunctionNotFound, MayBeNone, Mismatch, MissingField, MutArgumentNotPlace, MutArgumentType,
-    MutPlaceTwice, MutSelf, NeverReassigned, NoMember, NotAnInterface, ReservedWord,
-    TooManyArguments, TypeAsValue, UnwrapNeedsOptional,
+    BindingNotFound, CannotInfer, CannotMatch, ConstantType, DefinedTwice, Expected,
+    FieldOutOfOrder, FunctionNotFound, MayBeNone, MethodAsFunction, Mismatch, MissingField,
+    MutArgumentNotPlace, MutArgumentType, MutPlaceTwice, MutSelf, NeverReassigned, NoMember,
+    NoOperator, NotAnInterface, ReservedWord, TooManyArguments, TypeAsValue, UnwrapNeedsOptional,
 };
 
 /// The word `record` is a name, the word `struct` is a keyword that no name can be, and the word
@@ -877,6 +877,16 @@ fn generic_struct_should_be_rejected_until_task_6() {
             "struct P { x: i64 }\nextend P {}\nfn main() {}",
             (1, 1),
         ),
+        (
+            "an extend of an alias",
+            "struct P { x: i64 }\ntype A = P\nextend A {}\nfn main() {}",
+            (1, 1),
+        ),
+        (
+            "an extend of an alias of an alias, with a method",
+            "struct P { x: i64 }\ntype A = P\ntype B = A\nextend B {\n    fn m(self) {}\n}\nfn main() {\n    P(x: 1).m()\n}",
+            (1, 1),
+        ),
     ];
     for (row, src, pos) in rows {
         codes_row(row, src, &[(ReservedWord, pos)]);
@@ -898,4 +908,236 @@ fn struct_path_should_check_each_step_once() {
         PATH_STEPS.get()
     };
     assert_near_linear(steps(10), steps(20), steps(30));
+}
+
+/// GIVEN a struct `P` with the methods `get` and `twice`. WHEN a call names a method on a value,
+/// on `self` or through `?.`. THEN the only error is the stopgap. A bare name of the method is
+/// E0070, as it is for a class.
+#[test]
+fn struct_method_call_should_check_as_a_class_method_does() {
+    let decls = "struct P {\n    n: i64\n    fn get(self) -> i64 {\n        self.n\n    }\n    fn twice(self) -> i64 {\n        self.get() + self.get()\n    }\n}\n";
+    let program = |body: &str| format!("{decls}fn main() {{\n    {body}\n}}");
+    let rows = [
+        ("p.get()", program("let p = P(n: 1)\n    print(p.get())"), vec![]),
+        ("self.get()", program(""), vec![]),
+        (
+            "o?.get()",
+            program("let o: P? = P(n: 1)\n    print(o?.get() ?? 0)"),
+            vec![],
+        ),
+        (
+            "get(p)",
+            program("let p = P(n: 1)\n    print(get(p))"),
+            vec![(MethodAsFunction, (12, 11))],
+        ),
+        (
+            "get() in a method",
+            "struct P {\n    n: i64\n    fn get(self) -> i64 {\n        self.n\n    }\n    fn twice(self) -> i64 {\n        get()\n    }\n}\nfn main() {}".to_string(),
+            vec![(MethodAsFunction, (7, 9))],
+        ),
+    ];
+    lowered_error_rows(rows.into());
+}
+
+/// GIVEN a struct method that is never called. WHEN it calls `push` on a field of `self`. THEN
+/// each gives the code of the class form: none for a class's own `push`, E0063 for a type with
+/// no `push`, and E0001 for an array, which a plain `self` cannot change.
+#[test]
+fn struct_self_push_should_report_as_the_class_form() {
+    let program = |body: &str| {
+        format!(
+            "class C {{\n    fn push(self, x: i64) {{\n        print(x)\n    }}\n}}\nstruct In {{ xs: [[i64]] }}\nstruct P {{\n    c: C\n    n: i64\n    s: string\n    i: In\n    fn m(self) {{\n        {body}\n    }}\n}}\nfn main() {{}}"
+        )
+    };
+    let rows = [
+        ("self.c.push", program("self.c.push(1)"), vec![]),
+        (
+            "self.n.push",
+            program("self.n.push(1)"),
+            vec![(NoMember, (13, 16))],
+        ),
+        (
+            "self.s.push",
+            program("self.s.push(1)"),
+            vec![(NoMember, (13, 16))],
+        ),
+        (
+            "self.i.xs[0].push",
+            program("self.i.xs[0].push(1)"),
+            vec![(AssignToImmutable, (13, 9))],
+        ),
+    ];
+    lowered_error_rows(rows.into());
+}
+
+/// GIVEN a path of `.xs[0]` steps in a struct `T`, 10, 20 and 30 steps deep. WHEN the path ends
+/// in a class's own `push`, or a `?.` write starts it. THEN the path walks grow in step with the
+/// depth.
+#[test]
+fn struct_push_and_chain_path_should_check_each_step_once() {
+    let rows: [(&str, &str, &str); 3] = [
+        (
+            "a class's own push",
+            "let t = T(xs: [], os: [], c: C())\n    t",
+            ".c.push(1)",
+        ),
+        ("a `?.` write", "let mut o: T? = None\n    o?", ".n = 1"),
+        (
+            "a `?.` at each step",
+            "let mut o: T? = None\n    o?",
+            ".n = 1",
+        ),
+    ];
+    for (row, root, end) in rows {
+        let step = if row == "a `?.` at each step" {
+            ".os[0]?"
+        } else {
+            ".xs[0]"
+        };
+        let steps = |depth: usize| {
+            let path = step.repeat(depth);
+            let src = format!(
+                "class C {{\n    fn push(self, x: i64) {{\n        print(x)\n    }}\n}}\nstruct T {{ xs: [T]; os: [T?]; c: C; n: i64 }}\nfn main() {{\n    {root}{path}{end}\n}}"
+            );
+            PATH_STEPS.set(0);
+            let (_, ds) = checked(&src);
+            assert!(
+                ds.iter()
+                    .filter(|d| d.code().severity() == Severity::Error)
+                    .count()
+                    == 1,
+                "row `{row}`: {ds:?}"
+            );
+            PATH_STEPS.get()
+        };
+        assert_near_linear_for(row, steps(10), steps(20), steps(30));
+    }
+}
+
+/// GIVEN `struct P { n: i64 }` and `type A = P`. WHEN the program constructs `A`. THEN it
+/// constructs `P`, with the codes of a class alias.
+#[test]
+fn struct_alias_should_construct_its_struct() {
+    let program = |aliases: &str, body: &str| {
+        format!("struct P {{ n: i64 }}\n{aliases}\nfn main() {{\n    {body}\n}}")
+    };
+    let rows = [
+        (
+            "A(n: 1)",
+            program("type A = P", "let a = A(n: 1)\n    print(a.n)"),
+            vec![],
+        ),
+        (
+            "an alias of an alias",
+            program(
+                "type A = P\ntype B = A",
+                "let a: A = B(n: 1)\n    print(a.n)",
+            ),
+            vec![],
+        ),
+        (
+            "A()",
+            program("type A = P", "let a = A()"),
+            vec![(MissingField, (4, 13))],
+        ),
+        (
+            "A(n: true)",
+            program("type A = P", "let a = A(n: true)"),
+            vec![(Mismatch, (4, 18))],
+        ),
+        (
+            "a generic alias",
+            program("type A<T> = P", "let a = A(n: 1)"),
+            vec![(CannotInfer, (4, 13))],
+        ),
+    ];
+    lowered_error_rows(rows.into());
+}
+
+/// GIVEN a struct `P`. WHEN `<` compares two of its values. THEN it is E0159, as for a class.
+#[test]
+fn struct_order_should_be_e0159() {
+    let src = "struct P { n: i64 }\nfn main() {\n    print(P(n: 1) < P(n: 2))\n}";
+    codes_row("P < P", src, &[(NoOperator, (3, 11))]);
+}
+
+/// GIVEN an optional struct at a place. WHEN a `.` or a `?.` write goes through it. THEN the
+/// help "replace the value" comes only when that place can change: a `let mut` root, and a
+/// `mut` field at each class step.
+#[test]
+fn replace_help_should_name_only_a_place_that_can_change() {
+    let program = |setup: &str, write: &str| {
+        format!(
+            "struct P {{ n: i64 }}\nstruct S {{ o: P? }}\nclass C {{ p: P? }}\nclass M {{ mut p: P? }}\nfn f(o: P?, c: C, m: M) {{\n    {setup}\n    {write}\n}}\nfn main() {{}}"
+        )
+    };
+    let rows = [
+        ("a parameter", "", "o.n = 1", (7, 5), false),
+        ("a field with no mut", "", "c.p.n = 1", (7, 5), false),
+        ("a mut field", "", "m.p.n = 1", (7, 5), true),
+        ("let s", "let s = S(o: None)", "s.o.n = 1", (7, 5), false),
+        (
+            "let mut s",
+            "let mut s = S(o: None)",
+            "s.o.n = 1",
+            (7, 5),
+            true,
+        ),
+        (
+            "let mut s, ?.",
+            "let mut s = S(o: None)",
+            "s.o?.n = 1",
+            (7, 8),
+            true,
+        ),
+        ("a field with no mut, ?.", "", "c.p?.n = 1", (7, 8), false),
+    ];
+    for (row, setup, write, pos, help) in rows {
+        let d = only_error(row, &program(setup, write), MayBeNone, pos);
+        assert_eq!(d.help().is_some(), help, "row `{row}`: {d:?}");
+    }
+}
+
+/// GIVEN `struct In { n: i64; os: [In?]; xs: [i64] }`. WHEN a write indexes an optional array
+/// of optional structs after a `?.`. THEN it is one report: E0062 at the first `?.` with no help
+/// with `let mut i`, E0001 with `let i`. A `mut` argument is one E0062 at the indexed array,
+/// with no help that names an unwrap.
+#[test]
+fn optional_struct_element_under_a_write_should_report_once() {
+    let program = |binding: &str, write: &str| {
+        format!(
+            "struct In {{ n: i64; os: [In?]; xs: [i64] }}\nfn add(mut a: i64, b: i64) {{\n    a += b\n}}\nfn main() {{\n    {binding} = In(n: 1, os: [], xs: [])\n    {write}\n}}"
+        )
+    };
+    let writes = [
+        "i.os[0]?.os[0]?.n = 1",
+        "i.os[0]?.os[0].n = 1",
+        "i.os[0]?.os[0]?.n += 1",
+        "i.os[0]?.os[0].n += 1",
+        "i.os[0]?.os[0]?.xs.push(1)",
+        "i.os[0]?.os[0].xs.push(1)",
+        "i.os[0]?.os[0]?.xs?.push(1)",
+        "i.os[0]?.os[0].xs?.push(1)",
+    ];
+    for write in writes {
+        let d = only(write, &program("let mut i", write), MayBeNone, (7, 12));
+        assert!(d.help().is_none(), "row `{write}`: {d:?}");
+        only(write, &program("let i", write), AssignToImmutable, (7, 5));
+    }
+    for write in [
+        "add(mut i.os[0]?.os[0]?.n, 1)",
+        "add(mut i.os[0]?.os[0].n, 1)",
+    ] {
+        for binding in ["let mut i", "let i"] {
+            let d = only(write, &program(binding, write), MayBeNone, (7, 13));
+            assert!(d.help().is_none(), "row `{write}`: {d:?}");
+        }
+    }
+    let d = only(
+        "i.os[0]?.n",
+        &program("let mut i", "i.os[0]?.n = 1"),
+        MayBeNone,
+        (7, 12),
+    );
+    assert!(d.help().is_some(), "{d:?}");
 }
