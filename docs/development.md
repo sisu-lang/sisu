@@ -114,7 +114,8 @@ Each `run/` case also has a memory test, `memory::<name>.sisu`, which writes no 
 On Linux, it runs three ASan builds (plain, `-O2` and `--rc-checks`) and an `-O2` build on the System allocator.
 Then it runs that `-O2` build once under Valgrind.
 On macOS, it runs a `--rc-checks` build.
-Each run must exit 0 and print `<name>.out` on stdout, and `<name>.err` or nothing on stderr.
+Each native, ASan and `--rc-checks` run must exit 0 and print `<name>.out` on stdout, and `<name>.err` or nothing on stderr.
+The Valgrind run must exit 0 and print `<name>.out` on stdout (not on ARM64). It never checks stderr.
 `make test` does not run the memory tests: the `default-filter` of the default and `ci` profiles in
 `.config/nextest.toml` leaves them out, and `scripts/nextest_filters.py` fails when it leaves out any other test.
 `make memory-safety` runs them with the `memory` profile.
@@ -170,30 +171,37 @@ argument that holds a space, or that is not valid UTF-8, goes in a
 `programs.rs` test instead, which can pass any bytes.
 
 A `run/` case that writes to standard error on purpose, with `eprint`, has a
-`<name>.err` beside it. The plain, `-O2`, ASan and `-O2`-on-mimalloc runs on
-Linux, and the plain, `-O2` and `--rc-checks` runs on macOS, must all write
-exactly that to stderr. Without the file, stderr must stay empty. The Valgrind
-run's stderr holds Valgrind's own log, so it checks only stdout and the exit
-code. To add the file to a case, `touch` it like any expected file.
+`<name>.err` beside it. Each run of the output test, and each native, ASan and
+`--rc-checks` run of the memory test, must write exactly that to stderr.
+Without the file, stderr must stay empty. The Valgrind run's stderr holds
+Valgrind's own log, so it checks only stdout and the exit code. To add the
+file to a case, `touch` it like any expected file.
 
-On Linux the harness makes six builds of a `run/` case and runs them in this
-order. The first failure ends the case.
+The output test of a `run/` case builds a plain and an `-O2` version, both on
+mimalloc, and runs them in this order. The first failure ends the case.
+
+1. The two builds run natively. Each must exit 0, and they must agree on stdout
+   and stderr.
+2. Stdout must equal `<name>.out`, and stderr `<name>.err` or nothing.
+
+On Linux the memory test of a `run/` case builds four versions and runs them in
+this order. The first failure ends the case.
 
 1. The three ASan builds (plain, `-O2` and `--rc-checks`, all with
-   `--sanitize address`). Each must exit 0.
-2. The plain build, which links mimalloc, and the `-O2` build, which links the
-   System allocator. Neither runs under a tool. Both must exit 0 and agree.
-3. A check that stdout and stderr of each ASan run equal those of the plain
-   run.
-4. The `-O2` build, under Valgrind.
-5. A further `-O2` build with no `--allocator` flag, which must link
-   mimalloc, and which must print what the plain run prints.
+   `--sanitize address`). Each must exit 0 and match the files.
+2. The `-O2` build on the System allocator, run natively. It must exit 0 and
+   match the files.
+3. That `-O2` build, once under Valgrind. It must exit 0 and print `<name>.out`
+   (not on ARM64).
 
-ASan runs first because a double free or a wild write can end a plain run with
+On macOS the memory test runs one `--rc-checks` build natively and checks it
+against the files.
+
+ASan runs first because a double free or a wild write can end a native run with
 a bare abort or a signal. Then the case fails with no report. A failed ASan
 run shows its report and names its build. A stack overflow shows as an ASan
-`stack-overflow` report and not as signal 11. The comparison of stderr in step
-3 is stronger than the Valgrind check, which never compares stderr.
+`stack-overflow` report and not as signal 11. The ASan runs compare stderr,
+which is stronger than the Valgrind check, which never compares stderr.
 
 ASan and Valgrind find different faults, so the cases use both. Both find a
 leak, a use after free and an overrun of a heap block. ASan also finds an
@@ -206,12 +214,13 @@ only `-O0` code shows, and one in a `--rc-checks` build. The harness runs the 15
 
 The three ASan builds and the Valgrind build use the System allocator.
 ASan and Valgrind track `malloc`, and see no block that mimalloc hands out.
-The plain build has no `--allocator` flag, so it runs on mimalloc, the
-allocator that users get. The extra `-O2` build runs `-O2` code on mimalloc.
-On macOS there is no ASan and no Valgrind: the plain, `-O2` and `--rc-checks`
-builds run natively on mimalloc.
+The builds of the output test have no `--allocator` flag, so they run on
+mimalloc, the allocator that users get. The `-O2` build of the output test
+runs `-O2` code on mimalloc.
+On macOS there is no ASan and no Valgrind: the memory test runs a `--rc-checks`
+build natively on mimalloc.
 
-A double free fails an ASan run in the first step, with an
+A double free fails an ASan run of the memory test, with an
 `attempting double-free` report. The plain `-O0` run on mimalloc does not check
 for it, and an `-O2` build can remove the double free before any tool sees it. To show what
 Valgrind says about a broken build, build the program with
