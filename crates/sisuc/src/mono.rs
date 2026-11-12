@@ -629,8 +629,8 @@ impl Mono {
         TypeArgs::intern(&list)
     }
 
-    /// The output's type for the concrete checked type `ty`: each class and enum by its output
-    /// id, with no arguments. Reaching a class's instantiation puts it on the worklist.
+    /// The output's type for the concrete checked type `ty`: each class, enum and struct by its
+    /// output id, with no arguments. Reaching a class's instantiation puts it on the worklist.
     fn output(&mut self, ty: Type) -> Type {
         if let Some(&(done, held)) = self.types.get(&ty) {
             if let Some(id) = held {

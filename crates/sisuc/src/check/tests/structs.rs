@@ -1348,26 +1348,17 @@ fn mut_self_on_a_struct_should_be_e0018() {
     );
 }
 
-/// GIVEN a struct whose declaration lists `K` but has no `k`, and one that lists `Ord`. WHEN the
-/// program is checked. THEN each is E0152 at the interface in the list. `E0152-struct-ord` pins
-/// the label of the `Ord` row.
+/// GIVEN a struct whose declaration lists `K` but has no `k`. WHEN the program is checked. THEN
+/// it is E0152 at `K` in the list. `E0152-struct-ord` pins a list with `Ord`.
 #[test]
 fn struct_conformance_list_failure_should_be_e0152() {
-    let rows = [
-        (
-            "a list without the method",
-            "interface K {\n    fn k(self) -> i64\n}\nstruct P: K { x: i64 }\nfn main() {\n    print(P(x: 1).x)\n}",
-            (4, 11),
-        ),
-        (
-            "a list with `Ord`",
-            "struct N: Ord { n: i64 }\nfn main() {\n    print(N(n: 1).n)\n}",
-            (1, 11),
-        ),
-    ];
-    for (row, src, pos) in rows {
-        only_error(row, src, Code::ConformanceBody, pos);
-    }
+    let src = "interface K {\n    fn k(self) -> i64\n}\nstruct P: K { x: i64 }\nfn main() {\n    print(P(x: 1).x)\n}";
+    only_error(
+        "a list without the method",
+        src,
+        Code::ConformanceBody,
+        (4, 11),
+    );
 }
 
 /// GIVEN a program that breaks the rule of a page that a struct now reaches. It has a class, or
