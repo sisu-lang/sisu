@@ -101,6 +101,21 @@ class WatchPr(unittest.TestCase):
         self.table[f"{P}/issues/7/comments"] = [comment(5, "coderabbitai[bot]", "Summary")]
         self.assertEqual(self.watch().stdout, "comment 5 coderabbitai[bot]: Summary u5\n")
 
+    def test_watch_should_skip_a_bot_comment_that_asks_for_no_action(self) -> None:
+        cov = "<!-- sisu-coverage -->\nCoverage: lines 99.0%, regions 98.9%, changed lines"
+        for login, body, wakes in (
+            ("coderabbitai[bot]", "<a><img></a> No actionable comments were generated.", False),
+            ("coderabbitai[bot]", "Actionable comments posted: 2", True),
+            ("github-actions[bot]", f"{cov} 100.0% (44 of 44).", False),
+            ("github-actions[bot]", f"{cov}: none.", False),
+            ("github-actions[bot]", f"{cov} 97.7% (43 of 44).", True),
+            ("someone", "No actionable comments were generated.", True),
+        ):
+            with self.subTest(body=body):
+                self.state.unlink(missing_ok=True)
+                self.table[f"{P}/issues/7/comments"] = [comment(5, login, body)]
+                self.assertEqual(self.watch().returncode, 0 if wakes else 1)
+
     def test_watch_should_stay_asleep_on_an_edit_of_hidden_text_only(self) -> None:
         for path in (f"{P}/pulls/7/comments", f"{P}/issues/7/comments"):
             with self.subTest(path=path):
