@@ -1501,6 +1501,17 @@ fn a_limit_of_a_written_type_in_a_plus_that_is_checked_again_should_be_reported_
             vec![(Code::Mismatch, (23, 14)), (Code::AliasTooLarge, (23, 29))],
         ),
         (
+            "two written types, only the second one again",
+            format!(
+                "let y: f64 = \"b\" + {{ let p: Pair<B15<[i64]>, B15<i64?>>? = None; let q: {BIG}? = None; \"c\" }}"
+            ),
+            vec![
+                (Code::Mismatch, (23, 14)),
+                (Code::AliasTooLarge, (23, 29)),
+                (Code::AliasTooLarge, (23, 73)),
+            ],
+        ),
+        (
             "a block in a nested plus, under u8",
             format!("let y: u8 = \"a\" + (\"b\" + {{ let q: {wider}? = None; \"c\" }})"),
             vec![(Code::Mismatch, (23, 13)), (Code::AliasTooLarge, (23, 35))],
