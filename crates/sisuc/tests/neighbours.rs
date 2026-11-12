@@ -5,7 +5,6 @@
 
 use std::path::Path;
 use std::process::Command;
-use std::thread;
 
 /// The sections of `neighbours.txt`: the template, with its two `{stmt}` places, and the function
 /// whose bound failed, with its one. Then the values, the failed values and the contexts, one for
@@ -91,13 +90,13 @@ fn crash(which: &str, program: &str, stmt: &str) -> Option<String> {
     })
 }
 
-/// GIVEN each value of `[values]` in each of its contexts, in `main` and in a generic function
-/// AND each value of `[failed values]` in each context, in a function whose bound failed, in a
-/// program of its own
-/// WHEN `sisu check` runs on each program
-/// THEN no run crashes: each one ends with no error or with an error.
-#[test]
-fn check_should_end_with_its_own_status_on_each_neighbouring_form() {
+/// The number of tests that share the programs. Each part is one test, so that nextest spreads
+/// them over the cores.
+const PARTS: usize = 16;
+
+/// Each program, as the template or the failed function, the program and its statement: each value
+/// of `[values]` in each context, then each value of `[failed values]` in each context.
+fn programs() -> Vec<(&'static str, String, String)> {
     let forms = forms();
     let statements = |values: &[String]| -> Vec<String> {
         (forms.contexts.iter())
@@ -105,7 +104,7 @@ fn check_should_end_with_its_own_status_on_each_neighbouring_form() {
             .collect()
     };
     let bare = forms.template.replace("{stmt}", "");
-    let mut programs: Vec<(&str, String, String)> = Vec::new();
+    let mut programs = Vec::new();
     for stmt in statements(&forms.values) {
         programs.push(("template", forms.template.replace("{stmt}", &stmt), stmt));
     }
@@ -113,29 +112,107 @@ fn check_should_end_with_its_own_status_on_each_neighbouring_form() {
         let program = bare.clone() + &forms.failed.replace("{stmt}", &stmt);
         programs.push(("failed", program, stmt));
     }
-    let workers = thread::available_parallelism().map_or(4, usize::from);
-    let crashes: Vec<String> = thread::scope(|s| {
-        let handles: Vec<_> = programs
-            .chunks(programs.len().div_ceil(workers))
-            .map(|chunk| {
-                s.spawn(move || {
-                    chunk
-                        .iter()
-                        .filter_map(|(which, program, stmt)| crash(which, program, stmt))
-                        .collect::<Vec<_>>()
-                })
-            })
-            .collect();
-        handles
-            .into_iter()
-            .flat_map(|h| h.join().expect("a worker should not panic"))
-            .collect()
-    });
+    programs
+}
+
+/// The part of the program at `index`. Not slices: the contexts of `neighbours.txt` are in groups,
+/// so slices would give the parts unequal costs.
+fn part(index: usize) -> usize {
+    index % PARTS
+}
+
+/// Runs `crash` on each program of part `n`, one after the other, and asserts that none crashed.
+fn check_part(n: usize) {
+    let programs = programs();
+    let crashes: Vec<String> = (programs.iter().enumerate())
+        .filter(|&(i, _)| part(i) == n)
+        .filter_map(|(_, (which, program, stmt))| crash(which, program, stmt))
+        .collect();
     assert!(
         crashes.is_empty(),
-        "`sisu check` crashed on {} of {} programs:\n{}",
+        "part {n}: `sisu check` crashed on {} of {} programs:\n{}",
         crashes.len(),
-        programs.len(),
+        programs.len().div_ceil(PARTS),
         crashes.join("\n")
+    );
+}
+
+/// GIVEN each value of `[values]` in each of its contexts, in `main` and in a generic function
+/// AND each value of `[failed values]` in each context, in a function whose bound failed, in a
+/// program of its own
+/// WHEN `sisu check` runs on each program of the part
+/// THEN no run crashes: each one ends with no error or with an error.
+///
+/// Each part is one test, so that nextest spreads the parts over the cores.
+macro_rules! parts {
+    ($($name:ident => $n:expr),+ $(,)?) => {
+        $(
+            #[test]
+            fn $name() {
+                check_part($n);
+            }
+        )+
+
+        /// The `n` of each part test.
+        const TESTED_PARTS: [usize; PARTS] = [$($n),+];
+
+        // Each of `0..PARTS` is in `TESTED_PARTS` exactly once.
+        const _: () = {
+            let mut n = 0;
+            while n < PARTS {
+                let mut count = 0;
+                let mut i = 0;
+                while i < PARTS {
+                    if TESTED_PARTS[i] == n {
+                        count += 1;
+                    }
+                    i += 1;
+                }
+                assert!(count == 1, "each part should have one test");
+                n += 1;
+            }
+        };
+    };
+}
+
+parts! {
+    check_should_end_with_its_own_status_on_neighbouring_forms_part_00 => 0,
+    check_should_end_with_its_own_status_on_neighbouring_forms_part_01 => 1,
+    check_should_end_with_its_own_status_on_neighbouring_forms_part_02 => 2,
+    check_should_end_with_its_own_status_on_neighbouring_forms_part_03 => 3,
+    check_should_end_with_its_own_status_on_neighbouring_forms_part_04 => 4,
+    check_should_end_with_its_own_status_on_neighbouring_forms_part_05 => 5,
+    check_should_end_with_its_own_status_on_neighbouring_forms_part_06 => 6,
+    check_should_end_with_its_own_status_on_neighbouring_forms_part_07 => 7,
+    check_should_end_with_its_own_status_on_neighbouring_forms_part_08 => 8,
+    check_should_end_with_its_own_status_on_neighbouring_forms_part_09 => 9,
+    check_should_end_with_its_own_status_on_neighbouring_forms_part_10 => 10,
+    check_should_end_with_its_own_status_on_neighbouring_forms_part_11 => 11,
+    check_should_end_with_its_own_status_on_neighbouring_forms_part_12 => 12,
+    check_should_end_with_its_own_status_on_neighbouring_forms_part_13 => 13,
+    check_should_end_with_its_own_status_on_neighbouring_forms_part_14 => 14,
+    check_should_end_with_its_own_status_on_neighbouring_forms_part_15 => 15,
+}
+
+/// GIVEN the programs of `programs()` and the split of `part`
+/// WHEN the indexes of each part are collected
+/// THEN each program is in exactly one part, and `programs()` holds each value in each context.
+#[test]
+fn parts_should_hold_each_program_once() {
+    let total = programs().len();
+    let mut seen: Vec<usize> = (0..PARTS)
+        .flat_map(|n| (0..total).filter(move |&i| part(i) == n))
+        .collect();
+    seen.sort_unstable();
+    assert_eq!(
+        seen,
+        (0..total).collect::<Vec<_>>(),
+        "each index should be in one part"
+    );
+    let forms = forms();
+    assert_eq!(
+        total,
+        (forms.values.len() + forms.failed_values.len()) * forms.contexts.len(),
+        "there should be one program for each value in each context"
     );
 }
