@@ -464,11 +464,10 @@ fn a_break_in_a_failed_join_should_keep_its_output_holds_before_and_after() {
 /// GIVEN `v1 ?? (if c { NEST } else { 8 })`, where `NEST` is the same `if` again, so that the
 ///   right side of `??` is a poisoned context
 /// WHEN the checker ranks the nested branches at three depths
-/// THEN it ranks each expression once: the steps above those of depth 0 grow with the depth, and
-///   grow linearly
+/// THEN the steps above those of depth 0 grow with the depth, and grow linearly
 /// AND the depths are 10, 20 and 30, because 60 levels overflow the stack of a debug test thread
 #[test]
-fn nested_branches_in_a_failed_context_should_rank_each_expression_once() {
+fn nested_branches_in_a_failed_context_should_rank_in_linear_steps() {
     crate::on_compiler_stack(|| {
         with_prelude();
         let steps = |depth: usize| {
