@@ -236,8 +236,8 @@ fn output_with_stdin(command: &mut Command, stdin: &[u8]) -> Output {
     })
 }
 
-/// The output test of a `tests/run` case: a plain build and an `-O2` build, both on the default
-/// allocator, mimalloc, differ, exit 0 and agree on stdout and on stderr. That stdout is then
+/// The output test of a `tests/run` case. It builds a plain and an `-O2` build on mimalloc, the
+/// default allocator. They differ, exit 0 and agree on stdout and on stderr. That stdout is then
 /// `<name>.out`. It builds into `case_dir`. The checks run in this order:
 /// 1. On Linux, both builds link mimalloc. On macOS a symbol name has a leading `_`, so this check
 ///    does not run there.
