@@ -170,6 +170,12 @@ fn a_failed_context_should_keep_a_true_error_holds_before_and_after() {
             "let _x = v1 ?? (if c { [8] } else { [m] })",
             vec![cut, (Mismatch, (5, 41))],
         ),
+        // `[]` is no literal branch, so it waits for the next run.
+        (
+            "empty array in a match arm beside a typed arm",
+            "f(match c {\n true => m\n false => []\n })",
+            vec![call],
+        ),
     ]));
 }
 
