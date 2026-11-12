@@ -10,6 +10,9 @@ The check cannot tell an instruction, which has a limit of 20 words, from a desc
 does not read diagnostic text in Rust strings or a comment after code. A review checks those.
 
 Usage: python3 text_limits.py --diff REF FILE...
+
+--whole checks each line of each FILE, such as a pull request body that is not in Git:
+python3 text_limits.py --whole FILE...
 """
 
 import argparse
@@ -216,25 +219,29 @@ def changed_lines(ref: str) -> dict[str, set[int]]:
 def main(argv: list[str]) -> int:
     """Check each path in `argv`, and return 1 when a changed line breaks a limit."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--diff", metavar="REF", required=True)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--diff", metavar="REF")
+    mode.add_argument("--whole", action="store_true")
     parser.add_argument("paths", nargs="*")
     args = parser.parse_args(argv)
-    # The diff of a merge holds what the other branch changed.
-    merging = subprocess.run(
-        ["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"], capture_output=True, check=False
-    )
-    if merging.returncode == 0:
-        return 0
+    changed: dict[str, set[int]] = {}
+    if not args.whole:
+        # The diff of a merge holds what the other branch changed.
+        merging = subprocess.run(
+            ["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"], capture_output=True, check=False
+        )
+        if merging.returncode == 0:
+            return 0
+        changed = changed_lines(args.diff)
     bad = 0
-    changed = changed_lines(args.diff)
     for path in args.paths:
         ours = changed.get(os.path.realpath(path))
-        if not ours:
+        if not (ours or args.whole):
             continue
         # A fixture such as `E0072.sisu` holds bytes that are not UTF-8 on purpose.
         with Path(path).open(encoding="utf-8", errors="replace") as f:
             lines = f.readlines()
-        for line in findings(path, lines, ours):
+        for line in findings(path, lines, ours or set(range(1, len(lines) + 1))):
             print(line)
             bad = 1
     return bad

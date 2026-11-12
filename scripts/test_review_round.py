@@ -14,10 +14,13 @@ from pathlib import Path
 from typing import override
 
 SCRIPT = Path(__file__).resolve().parents[1] / ".agents/skills/review-sisu/scripts/review_round.py"
+TEXT_LIMITS = Path(__file__).resolve().parent / "text_limits.py"
 # A pre-commit hook runs these tests with GIT_DIR and its kin set to the outer repository.
 ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 FAKE_BUILD = 'echo "$@" > "$2/build-args"\n'
 REPORT = "Model: m\nVerdict: approve\n"
+LONG = " ".join(["a"] * 26) + "."
+ROW = "| `Body` holds, in {} fields, all the state. | `check::Body` | Closure checking |\n"
 FAKE_BRIEF = """import sys
 from pathlib import Path
 out = Path(sys.argv[3])
@@ -37,6 +40,8 @@ class ReviewRound(unittest.TestCase):
         scripts.mkdir(parents=True)
         (scripts / "build_sisu.sh").write_text(FAKE_BUILD)
         (scripts / "diff_brief.py").write_text(FAKE_BRIEF)
+        (self.repo / "scripts").mkdir()
+        shutil.copy(TEXT_LIMITS, self.repo / "scripts")
         self.git("init", "-q", "-b", "main")
         self.git("add", ".")
         self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "first")
@@ -49,6 +54,13 @@ class ReviewRound(unittest.TestCase):
         (self.repo / message).write_text(message)
         self.git("add", ".")
         self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", message)
+
+    def register(self, fields: int) -> None:
+        """Commit a register whose `check::Body` row has FIELDS fields."""
+        (self.repo / "docs").mkdir(exist_ok=True)
+        (self.repo / "docs/register.md").write_text(ROW.format(fields))
+        self.git("add", ".")
+        self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "register")
 
     def moved_main(self) -> None:
         """Make branch feat from the first commit, then move main past it."""
@@ -146,6 +158,54 @@ class ReviewRound(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("nope", result.stderr)
         self.assertNotIn("main moved", result.stderr)
+
+    def test_a_pr_body_should_go_to_the_brief_as_a_doc(self) -> None:
+        body = self.root / "body.md"
+        body.write_text("Title: Fix it\n\n## Summary\n\nA short sentence.\n")
+        result = self.script("prepare", "main..main", "--pr-body", str(body))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"--doc {body}", (self.run_dir / "brief.md").read_text())
+
+    def test_a_pr_body_over_a_text_limit_should_stop_before_the_build(self) -> None:
+        body = self.root / "body.md"
+        body.write_text(f"Short.\n\n{LONG}\n")
+        result = self.script("prepare", "main..main", "--pr-body", str(body))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(f"{body}:3: a sentence has 26 words", result.stderr)
+        self.assertFalse((self.run_dir / "build-args").exists())
+
+    def test_a_pr_body_that_is_not_markdown_should_stop(self) -> None:
+        body = self.root / "body.txt"
+        body.write_text(f"{LONG}\n")
+        result = self.script("prepare", "main..main", "--pr-body", str(body))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(".md file", result.stderr)
+        self.assertFalse((self.run_dir / "build-args").exists())
+
+    def test_a_grown_field_count_should_stop_until_the_focus_or_the_body_names_the_row(
+        self,
+    ) -> None:
+        self.register(54)
+        self.register(55)
+        result = self.script("prepare", "main~1..main")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("`check::Body` row of docs/register.md from 54 to 55", result.stderr)
+        self.assertFalse((self.run_dir / "build-args").exists())
+        body = self.root / "body.md"
+        body.write_text("It grows the `check::Body` row from 54 to 55 fields.\n")
+        result = self.script("prepare", "main~1..main", "--pr-body", str(body))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        body.unlink()
+        (self.run_dir / "focus.md").write_text("The diff grows the `check::Body` row.\n")
+        result = self.script("prepare", "main~1..main")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_a_smaller_or_a_new_field_count_should_not_stop(self) -> None:
+        self.register(55)
+        self.register(54)
+        result = self.script("prepare", "main~2..main~1", "--old-main")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.script("prepare", "main~1..main").returncode, 0)
 
     def test_verify_without_a_record_should_say_to_prepare(self) -> None:
         result = self.script("verify", "--report", "opus")

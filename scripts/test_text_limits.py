@@ -3,6 +3,7 @@
 import contextlib
 import io
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -282,6 +283,19 @@ class MainTests(unittest.TestCase):
         self.git("add", ".")
         self.write("a.md", f"{LONG}\n\n{LONG}\n")
         self.assertEqual(self.run_main(), (1, self.NEW))
+
+    def test_whole_should_check_each_line_of_a_file_outside_git(self) -> None:
+        outside = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, outside)
+        body = outside / "body.md"
+        body.write_text(f"{FITS}\n\n{LONG}\n", encoding="utf-8")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            status = text_limits.main(["--whole", str(body)])
+        self.assertEqual(
+            (status, out.getvalue()),
+            (1, f"{body}:3: a sentence has 26 words; the limit is 25: split it\n"),
+        )
 
     def test_a_merge_should_pass(self) -> None:
         self.git("checkout", "-qb", "other")
