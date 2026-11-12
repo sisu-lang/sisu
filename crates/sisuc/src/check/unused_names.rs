@@ -103,14 +103,14 @@ pub(super) struct Copied {
     pub(super) other: bool,
 }
 
-/// The text of the initializer at `span`, when it is on one line and holds no tab. A line break,
-/// a tab or a comment would change the message, so then the message names only the root. A `//`
-/// inside a string literal is part of the text.
+/// The text of the initializer at `span`, when it is on one line and holds no tab or carriage
+/// return. A line break, a tab, a carriage return or a comment would change the message, so then
+/// the message names only the root. A `//` inside a string literal is part of the text.
 fn quoted(source: Source<'_>, span: Span) -> Option<&str> {
     let text = source.text(span);
     #[cfg(test)]
     COPY_TEXT.set(COPY_TEXT.get() + text.len());
-    (source.one_line(span) && !text.contains('\t')).then_some(text)
+    (source.one_line(span) && !text.contains(['\t', '\r'])).then_some(text)
 }
 
 impl Copied {
