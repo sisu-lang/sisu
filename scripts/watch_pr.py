@@ -30,8 +30,10 @@ LIMIT = float(os.environ.get("WATCH_PR_LIMIT", str(2 * 60 * 60)))
 IN_PROGRESS = "<!-- This is an auto-generated comment: review in progress"
 PASSED = {"success", "skipped", "neutral"}
 # The shown text of a bot comment that asks for no action.
+# A rounded 100.0% can hide an uncovered line (1999 of 2000), so the two counts must be equal.
 QUIET = re.compile(
-    r"No actionable comments were generated|Coverage: .*changed lines(?: 100\.0%|: none)"
+    r"No actionable comments were generated"
+    r"|Coverage: .*changed lines(?: 100\.0% \((\d+) of \1\)|: none)"
 )
 
 
