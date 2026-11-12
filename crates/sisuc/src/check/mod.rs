@@ -978,7 +978,7 @@ struct Body {
     /// The bare name right after an unlabeled `break`, which may be a misspelled loop label, and
     /// the byte where that `break` starts: only there does E0033 offer the open loop labels.
     label_typo: Option<(Span, usize)>,
-    /// The count of open loops (`loops.len()`) when the outermost join or branch ranking in a
+    /// The count of open loops (`loops.len()`) when the innermost join or branch ranking in a
     /// failed context started. A `break` to one of them, with no type yet, waits for the next
     /// run: the branches are ranked and checked out of source order, so it may come before the
     /// `break` that gives the loop its type.

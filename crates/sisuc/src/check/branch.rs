@@ -588,7 +588,7 @@ impl Checker<'_> {
     fn waiting<T>(&mut self, expected: Expectation, work: impl FnOnce(&mut Self) -> T) -> T {
         let outer = self.body.waiting_loops;
         if expected == Expectation::Poisoned {
-            self.body.waiting_loops = outer.or(Some(self.body.loops.len()));
+            self.body.waiting_loops = Some(self.body.loops.len());
         }
         let result = work(self);
         self.body.waiting_loops = outer;
