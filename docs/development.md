@@ -90,8 +90,7 @@ CI runs the `Test` job in two parts, `Test (part 1 of 2)` and `Test (part 2 of 2
 Each part runs half of the tests (`--partition slice:<part>/2`). The `Test`
 check, which the branch ruleset requires, passes only when both parts pass: a
 part that fails, is cancelled or does not start fails it. The test-name check and
-the filter check need the whole list of tests or the whole diff, so only part 1
-runs them.
+the filter check give the same result in each part, so only part 1 runs them.
 
 After the tests pass, `make test` checks each `test(...)` leaf of a filter in
 `.config/nextest.toml`, and CI does the same. A leaf that matches no test, such
@@ -106,9 +105,11 @@ quotes it before and after.
 
 Each target is one line in the `Makefile`, a script in `scripts/` or a cargo
 command. Run a script directly for the flags no target passes, such as
-`scripts/fuzz.sh --replay`. The `dev` and `test` profiles build `sisuc` at
-`opt-level = 1`, with debug assertions and overflow checks on, because the tests
-run the checker thousands of times.
+`scripts/fuzz.sh --replay`.
+
+The `dev` and `test` profiles build `sisuc` at `opt-level = 1`, with debug
+assertions and overflow checks on, because the tests run the checker thousands
+of times.
 
 The end-to-end cases are files. The `cases` test binary runs one test per
 `.sisu` file in three directories under `crates/sisuc/tests`:

@@ -31,8 +31,8 @@ fn size_of(s: any Shape, depth: i64) -> i64 {
 
 fn main() {
     let n = iterations()
-    // `iterations()` reads the first line, so this reads the next one, which is empty: the depth
-    // is 0, but the compiler cannot know it.
+    // In the allocation-count build, `iterations()` reads the first line first. In each build,
+    // this line is empty: the depth is 0, but the compiler cannot know it.
     let depth = (read_line() ?? "").len()
     let mut total = 0
     for i in 0..n {

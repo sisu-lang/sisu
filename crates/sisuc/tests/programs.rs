@@ -235,8 +235,9 @@ fn numbered_lines(first: &str, count: u32) -> String {
     })
 }
 
-/// One test per row, `allocation_counts::<program>`: (program, stdout at k = 1000, stdout at
-/// k = 0, extra allocations), checked against `extra_allocs` at both optimization levels.
+/// One test per row, `allocation_counts::<program>`: (program, stdout of the run with `go`,
+/// stdout of the run with `no`, extra allocations), checked against `extra_allocs` at both
+/// optimization levels.
 macro_rules! allocation_counts {
     ($(($name:ident, $stdout:expr, $base_stdout:expr, $extra:expr),)*) => {
         mod allocation_counts {
