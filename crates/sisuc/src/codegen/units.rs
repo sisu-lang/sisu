@@ -890,9 +890,10 @@ fn main() { print(e(1)) }";
     /// A chain of 16,000 small functions in 64 units makes about a million steps. A step counter
     /// does not see a scan of the unit's list for a repeat in place of its mark: each edge still
     /// takes one step, and the scan makes the work quadratic. Before `opt-level = 1`, a chain of
-    /// 1,600 already took 13 times longer with the scan (0.134 s against 0.010 s). This input is
-    /// 10 times that size. At `opt-level = 1`, alone, the run takes 0.03 s. With the scan
-    /// it takes 3.3 s. Both were measured in the default profile.
+    /// 1,600 already took 13 times longer with the scan (0.134 s against 0.010 s). The load
+    /// average was 8 to 9. This input is 10 times that size. At `opt-level = 1`, alone, the run
+    /// takes 0.03 s at a load average of 41 to 53. With the scan it takes 3.3 s at a load average
+    /// of 32 to 35. All were measured in the default profile.
     #[test]
     fn copies_should_finish_a_long_chain_in_linear_time() {
         let n = 16_000;

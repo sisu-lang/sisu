@@ -4100,7 +4100,9 @@ fn static_release_should_check_its_slot_under_rc_checks() {
 /// name: a rename must update the override there. Each `+=` is an overflow panic site. Codegen
 /// once found a site's line and column from the start of the text, or built a line index for each
 /// site. Both are quadratic in the number of sites. No step counter sees such a new scan. At
-/// `opt-level = 1` the run alone takes 0.24 s, and with a line index for each site 6.8 s.
+/// `opt-level = 1` the run alone takes 0.24 s, at a load average of 41 to 53. With a line index
+/// for each site it takes 6.8 s, at a load average of 24 to 30. The scan from the start was not
+/// measured at `opt-level = 1`.
 #[test]
 fn many_panic_sites_should_compile_in_linear_time() {
     let src = format!(

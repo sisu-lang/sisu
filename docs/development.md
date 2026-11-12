@@ -432,6 +432,10 @@ tracked tree differs from HEAD, or when HEAD changes during the run. The review
 script (`diff_brief.py --coverage`) refuses coverage of another commit or of
 uncommitted changes.
 
+The run uses the nextest `ci` profile, unless `NEXTEST_PROFILE` names another
+one. The kills of the `ci` profile in `.config/nextest.toml` are sized for
+coverage.
+
 Programs that the tests compile link an uninstrumented runtime, whose two
 archives are built in `target/llvm-cov-runtime` and copied next to the
 instrumented `sisu`. Runtime

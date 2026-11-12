@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Measures the coverage of the changes since <base>: by default where HEAD left
 # main. On a stacked branch, pass the stage's base so earlier stages stay out.
-# It runs the nextest suite under cargo-llvm-cov and honors NEXTEST_PROFILE.
+# It runs the nextest suite under cargo-llvm-cov and honors NEXTEST_PROFILE. Without it, the
+# run uses the `ci` profile, whose kills in .config/nextest.toml are sized for coverage.
 # It fails only when the instrumented run fails, never on low coverage.
 # Programs link an uninstrumented runtime (scripts/build-runtime.sh), so the
 # runtime's coverage comes from its unit tests only.
@@ -25,6 +26,7 @@ git diff --quiet HEAD || dirty=' with uncommitted changes'
 # cargo-llvm-cov passes its target directory to cargo as an argument, so tell
 # the nextest setup script (scripts/build-runtime.sh) where sisu will look.
 export SISU_COVERAGE_TARGET_DIR="$PWD/target/llvm-cov-target"
+export NEXTEST_PROFILE="${NEXTEST_PROFILE:-ci}"
 
 cargo llvm-cov clean --workspace
 # This test exhausts file descriptors, so the profiler's "Too many open files"
