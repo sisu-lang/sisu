@@ -1372,7 +1372,7 @@ impl Mono {
             }
             parts(
                 &self.conformances,
-                self.input_payloads.as_slice(),
+                (self.input_payloads.as_slice(), self.out.structs.as_slice()),
                 ty,
                 |part| {
                     stack.push((part, dbg));

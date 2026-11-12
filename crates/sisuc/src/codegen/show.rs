@@ -43,7 +43,7 @@ use super::{Codegen, POSITIONED, zeroext};
 use crate::conformance::{calls_written, holds_class, prints_by_helper};
 use crate::source::Span;
 use crate::tir::{
-    Align, ClassId, EnumId, Format, FuncId, Inline, Pad, Stream, Type, TypeArgs, TypeKind,
+    Align, ClassId, EnumId, Format, FuncId, Inline, Pad, Stream, StructId, Type, TypeArgs, TypeKind,
 };
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
@@ -176,7 +176,10 @@ impl<'ctx> Codegen<'ctx, '_> {
     pub(super) fn holds_class(&self, ty: Type) -> bool {
         holds_class(
             (&self.program.conformances, self.program.lang.display),
-            self.program.enums.as_slice(),
+            (
+                self.program.enums.as_slice(),
+                self.program.structs.as_slice(),
+            ),
             ty,
             &mut self.class_held.borrow_mut(),
         )
@@ -189,6 +192,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 &self.program.conformances,
                 (
                     self.program.enums.as_slice(),
+                    self.program.structs.as_slice(),
                     self.program.classes.as_slice(),
                 ),
                 ty,
@@ -385,8 +389,8 @@ impl<'ctx> Codegen<'ctx, '_> {
                 );
             }
             TypeKind::Optional(_) => self.show_optional(sink, ty, value, (quoted, mode)),
-            // An enum goes by the address of a scratch slot.
-            TypeKind::Enum(..) => {
+            // An enum or a struct goes by the address of a scratch slot.
+            TypeKind::Enum(..) | TypeKind::Struct(..) => {
                 let args = [
                     vec![sink.into()],
                     self.helper_args(ty, self.enum_slot(value).into()),
@@ -435,8 +439,9 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder.position_at_end(done);
     }
 
-    /// `@sisu_show.<T>(sink, value)`: writes a value of an array, a class or an enum type, as
-    /// `mode` says. The value is the pointer of an array or an object, or the address of an enum.
+    /// `@sisu_show.<T>(sink, value)`: writes a value of an array, a class, an enum or a struct
+    /// type, as `mode` says. The value is the pointer of an array or an object, or the address of
+    /// an enum or a struct.
     pub(super) fn define_show(&self, function: FunctionValue<'ctx>, ty: Type, mode: Mode) {
         let function = match ty.kind() {
             TypeKind::Array(element) if self.grows_stack(element) => {
@@ -476,9 +481,48 @@ impl<'ctx> Codegen<'ctx, '_> {
                     },
                 }
             }
-            _ => unreachable!("only an array, a class or an enum should have a `show` helper"),
+            TypeKind::Struct(id, _) => {
+                self.show_struct(sink, (id, ty), value.into_pointer_value(), mode);
+            }
+            _ => unreachable!(
+                "only an array, a class, an enum or a struct should have a `show` helper"
+            ),
         }
         self.builder.build_return(None).expect(POSITIONED);
+    }
+
+    /// Writes the struct `id`, of type `ty`, at `slot`: its name, then the fields in declaration
+    /// order, each labeled, as a payload field of an enum is. No field writes `Name()`. A struct
+    /// or an enum in a field goes by its address in the slot, so the value is not copied.
+    fn show_struct(
+        &self,
+        sink: PointerValue<'ctx>,
+        (id, ty): (StructId, Type),
+        slot: PointerValue<'ctx>,
+        mode: Mode,
+    ) {
+        self.show_text(
+            "sisu_show_open",
+            sink,
+            &format!("{}(", self.program.type_name(ty)),
+        );
+        for (index, field) in self.program.structs[id.0].fields.iter().enumerate() {
+            if index > 0 {
+                self.show_sep(sink);
+            }
+            let label = (field.label.as_deref()).expect("a struct field should have its name");
+            self.show_text("sisu_show_str", sink, &format!("{label}: "));
+            let place = self.struct_field_ptr(id, slot, index);
+            if let TypeKind::Enum(..) | TypeKind::Struct(..) = field.ty.kind() {
+                self.call(
+                    self.helper(Helper::Show(mode), field.ty),
+                    &[sink.into(), place.into()],
+                );
+            } else {
+                self.show_value(sink, field.ty, self.load_value(field.ty, place), true, mode);
+            }
+        }
+        self.show_text("sisu_show_close", sink, ")");
     }
 
     /// Writes the object `object` of the class `id`, of type `ty`, for `dbg`. It writes the

@@ -58,6 +58,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             match kind {
                 Helper::Retain => self.retain_at(place, field.ty),
                 Helper::Release => self.release_at(place, field.ty),
+                // The checker reports E0159 for `==` on a struct until Task 4 generates it.
                 _ => unreachable!("`helper` should queue for a struct only `retain` or `release`"),
             }
         }

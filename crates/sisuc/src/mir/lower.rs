@@ -323,6 +323,7 @@ impl<'a> Lowering<'a> {
             &self.program.conformances,
             (
                 self.program.enums.as_slice(),
+                self.program.structs.as_slice(),
                 self.program.classes.as_slice(),
             ),
             ty,
@@ -814,7 +815,7 @@ impl<'a> Lowering<'a> {
     /// without `borrow`, a struct field is read before what follows can replace it.
     fn base(&mut self, base: &Expr, borrow: bool) -> Option<(MirPlace, Option<LocalId>)> {
         if borrow && let ExprKind::StructField { base: inner, index } = &base.kind {
-            let (mut place, temp) = self.path(inner, borrow)?;
+            let (mut place, temp) = self.path(inner)?;
             place
                 .projections
                 .push(Projection::StructField { index: *index });
@@ -835,10 +836,10 @@ impl<'a> Lowering<'a> {
         Some((whole(temp), Some(temp)))
     }
 
-    /// `base` for the base of a struct field, which `base` reaches only with `borrow`. A class
-    /// field or an element is a projection of its own base's place, as a read of it is. So the
-    /// struct inside is not copied.
-    fn path(&mut self, e: &Expr, borrow: bool) -> Option<(MirPlace, Option<LocalId>)> {
+    /// `base` with `borrow` for the base of a struct field. A class field or an element is a
+    /// projection of its own base's place, as a read of it is. So the struct inside is not copied.
+    /// An element borrows its base only when its index runs no code that can write the base.
+    fn path(&mut self, e: &Expr) -> Option<(MirPlace, Option<LocalId>)> {
         match &e.kind {
             ExprKind::Field { base, index } => {
                 let (mut place, temp) = self.base(base, true)?;
@@ -846,7 +847,7 @@ impl<'a> Lowering<'a> {
                 Some((place, temp))
             }
             ExprKind::Index { base, index } => {
-                let (mut place, temp) = self.base(base, borrow && leaves_locals(index))?;
+                let (mut place, temp) = self.base(base, leaves_locals(index))?;
                 let at = self.operand(index)?;
                 place.projections.push(Projection::Index {
                     index: at,
@@ -854,7 +855,7 @@ impl<'a> Lowering<'a> {
                 });
                 Some((place, temp))
             }
-            _ => self.base(e, borrow),
+            _ => self.base(e, true),
         }
     }
 

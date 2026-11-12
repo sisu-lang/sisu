@@ -967,7 +967,7 @@ impl Walk {
                             let shown = whole_local(operand).is_some_and(|local| {
                                 holds_class(
                                     (&program.conformances, program.lang.display),
-                                    program.enums.as_slice(),
+                                    (program.enums.as_slice(), program.structs.as_slice()),
                                     function.locals[local.0].ty,
                                     &mut held,
                                 )

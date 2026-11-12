@@ -1,0 +1,9 @@
+Wrap(b: bee, tag: "t1", xs: ["ab"])
+u
+[Wrap(b: bee, tag: "t1", xs: ["ab"])]
+u
+Wrap(b: bee, tag: "t1", xs: ["ab"])
+u
+[Wrap(b: bee, tag: "u", xs: []), Wrap(b: bee, tag: "u", xs: [])]
+t1
+u

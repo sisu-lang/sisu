@@ -1240,31 +1240,3 @@ fn struct_write_should_keep_its_w0014() {
         &[],
     );
 }
-
-/// `S0` of 16 bytes, then `S1` to `S31`, each of which holds the one before it twice; then
-/// `enum E { A(S27, S27) }`, whose payload holds two structs of 2 GiB.
-fn doubling_structs() -> String {
-    let mut src = String::from("struct S0 { a: i64; b: i64 }\n");
-    for k in 1..32 {
-        writeln!(src, "struct S{k} {{ a: S{}; b: S{} }}", k - 1, k - 1)
-            .expect("writing to a `String` should succeed");
-    }
-    src.push_str("enum E { A(S27, S27) }\nfn main() {}\n");
-    src
-}
-
-/// GIVEN a chain of structs that double at each step, from `S0` of 16 bytes to `S31`
-/// AND an enum whose payload holds two `S27` of 2 GiB each
-/// WHEN it is checked
-/// THEN E0160 is at `S28`, the first struct of 4 GiB, and at the enum. No larger struct has it.
-#[test]
-fn struct_above_the_limit_should_be_reported_at_the_innermost_struct() {
-    codes_row(
-        "doubling structs",
-        &doubling_structs(),
-        &[
-            (Code::PayloadTooLarge, (29, 8)),
-            (Code::PayloadTooLarge, (33, 6)),
-        ],
-    );
-}

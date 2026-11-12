@@ -11,7 +11,7 @@ use crate::graph::components;
 use crate::symbol::Symbol;
 use crate::tir::{
     ChoicePlace, Class, ClassId, Conformance, Conformances, Enum, EnumId, Interface, InterfaceId,
-    LangInterfaces, Type, TypeArgs, TypeKind, head_of,
+    LangInterfaces, Struct, Type, TypeArgs, TypeKind, head_of,
 };
 
 #[cfg(test)]
@@ -389,14 +389,15 @@ impl Payloads for [Vec<Type>] {
     }
 }
 
-/// The parts of `ty`, whatever the interface: an array's element, an optional's contents and each
-/// payload type of an enum, with the type's arguments in place of its parameters. Nothing for a
-/// scalar, `string`, a class (it compares by identity, or through a written `Eq`), a type
-/// parameter or an `any` value. A part whose associated type has no choice is poison, and is
-/// left out. A generated `Display`, which asks no part, still lists them.
+/// The parts of `ty`, whatever the interface. They are an array's element, an optional's contents,
+/// each payload type of an enum and each field type of a struct. An enum's payload types have the
+/// type's arguments in place of its parameters. Nothing for a scalar, `string`, a class (it
+/// compares by identity, or through a written `Eq`), a type parameter or an `any` value. A part
+/// whose associated type has no choice is poison, and is left out. A generated `Display`, which
+/// asks no part, still lists them.
 pub(crate) fn parts<P: Payloads + ?Sized>(
     conformances: &Conformances,
-    enums: &P,
+    (enums, structs): (&P, &[Struct]),
     ty: Type,
     mut each: impl FnMut(Type),
 ) {
@@ -407,6 +408,8 @@ pub(crate) fn parts<P: Payloads + ?Sized>(
                 each(part);
             }
         }),
+        // A struct takes no type argument yet, so its field types are concrete.
+        TypeKind::Struct(id, _) => (structs[id.0].fields.iter()).for_each(|field| each(field.ty)),
         TypeKind::I64
         | TypeKind::U8
         | TypeKind::F64
@@ -416,7 +419,6 @@ pub(crate) fn parts<P: Payloads + ?Sized>(
         | TypeKind::Unit
         | TypeKind::Never
         | TypeKind::Class(..)
-        | TypeKind::Struct(..)
         | TypeKind::Param(..)
         | TypeKind::Assoc(..)
         | TypeKind::Any(..) => {}
@@ -748,7 +750,7 @@ pub(crate) fn fields_of<F: Fields + ?Sized>(
 /// writes its fields, each in `print` mode, so each field type is a part of the class.
 pub(crate) fn calls_written<P: Payloads + ?Sized, F: Fields + ?Sized>(
     conformances: &Conformances,
-    (enums, classes): (&P, &F),
+    (enums, structs, classes): (&P, &[Struct], &F),
     ty: Type,
     interface: InterfaceId,
     dbg: bool,
@@ -769,7 +771,7 @@ pub(crate) fn calls_written<P: Payloads + ?Sized, F: Fields + ?Sized>(
                     parts_of((part, interface, false));
                 });
             } else {
-                parts(conformances, enums, key, |part| {
+                parts(conformances, (enums, structs), key, |part| {
                     parts_of((part, interface, dbg));
                 });
             }
@@ -779,14 +781,14 @@ pub(crate) fn calls_written<P: Payloads + ?Sized, F: Fields + ?Sized>(
 }
 
 /// Whether the concrete type `ty` holds a class with no written `Display`. It does when it is
-/// one or an `any` value, whose table may hold one, or when an array, an optional or an enum
-/// payload (any depth) is. Only such a class is written with its fields by `dbg`. A class or an
-/// enum with a written `Display` shows that text, so the walk stops at it. A `dbg` helper of a
-/// type that holds none is the `print` helper. The answers of `held` are the types decided so
-/// far, which later queries read.
+/// one, or an `any` value, whose table may hold one. It also does when an array, an optional, an
+/// enum payload or a struct field (any depth) is one. Only such a class is written with its
+/// fields by `dbg`. A class or an enum with a written `Display` shows that text, so the walk
+/// stops at it. A `dbg` helper of a type that holds none is the `print` helper. The answers of
+/// `held` are the types decided so far, which later queries read.
 pub(crate) fn holds_class<P: Payloads + ?Sized>(
     (conformances, display): (&Conformances, InterfaceId),
-    enums: &P,
+    (enums, structs): (&P, &[Struct]),
     ty: Type,
     held: &mut FxHashMap<Type, bool>,
 ) -> bool {
@@ -798,7 +800,7 @@ pub(crate) fn holds_class<P: Payloads + ?Sized>(
         if matches!(key.kind(), TypeKind::Class(..) | TypeKind::Any(..)) {
             return true;
         }
-        parts(conformances, enums, key, parts_of);
+        parts(conformances, (enums, structs), key, parts_of);
         false
     })
 }
@@ -2579,7 +2581,9 @@ mod tests {
         deciding(src, |program, _, source| {
             let parts = |ty| {
                 let mut out = Vec::new();
-                parts(source.conformances, source.enums, ty, |part| out.push(part));
+                parts(source.conformances, (source.enums, &[]), ty, |part| {
+                    out.push(part);
+                });
                 out
             };
             assert_eq!(parts(Type::array(Type::I64)), [Type::I64]);
@@ -2661,7 +2665,7 @@ mod tests {
         // One collector for the calls: the array has a part; the payload and the field have none.
         let mut listed = Vec::new();
         let mut collect = |part| listed.push(part);
-        let enums = payloads.as_slice();
+        let enums = (payloads.as_slice(), &[][..]);
         parts(&conformances, enums, Type::array(Type::I64), &mut collect);
         parts(&conformances, enums, enum_type, &mut collect);
         parts(&conformances, enums, class, &mut collect);
@@ -2705,6 +2709,9 @@ mod tests {
         if let Some(id) = program.enums.iter().position(|e| e.name == name) {
             return tree(id, &[]);
         }
+        if let Some(id) = program.structs.iter().position(|s| s.name == name) {
+            return Type::intern(TypeKind::Struct(crate::tir::StructId(id), TypeArgs::NONE));
+        }
         let id = (program.classes.iter())
             .position(|c| c.name == name)
             .unwrap_or_else(|| panic!("no type {name}"));
@@ -2719,7 +2726,7 @@ mod tests {
     ) -> bool {
         holds_class(
             (&program.conformances, program.lang.display),
-            program.enums.as_slice(),
+            (program.enums.as_slice(), program.structs.as_slice()),
             ty,
             held,
         )
@@ -2809,7 +2816,11 @@ mod tests {
     fn calls_display(program: &crate::tir::Program, ty: Type, dbg: bool) -> bool {
         calls_written(
             &program.conformances,
-            (program.enums.as_slice(), program.classes.as_slice()),
+            (
+                program.enums.as_slice(),
+                program.structs.as_slice(),
+                program.classes.as_slice(),
+            ),
             ty,
             program.lang.display,
             dbg,
@@ -2845,5 +2856,34 @@ mod tests {
             assert_eq!(calls_display(&program, ty, false), print, "{row}, print");
             assert_eq!(calls_display(&program, ty, true), dbg, "{row}, dbg");
         }
+    }
+
+    /// The `to_string` of `Leaf` is written. A struct has no written one, so `print` of it runs
+    /// one only through a field: a `Leaf`, or a struct, an array or an optional that holds one.
+    /// `dbg` shows a class by its fields, so a struct that holds a class with a `Leaf` runs it.
+    #[test]
+    fn calls_written_should_follow_the_fields_of_a_struct() {
+        let program = instantiated(
+            "class Leaf {\n    v: i64\n}\nextend Leaf: Display {\n    fn to_string(self) -> string {\n        \"leaf\"\n    }\n}\nclass Outer {\n    inner: Leaf\n}\nstruct Plain {\n    n: i64\n    xs: [string]\n}\nstruct Wrap {\n    leaf: Leaf\n}\nstruct Deep {\n    w: Wrap?\n}\nstruct Hold {\n    o: Outer\n}\nstruct Empty {}",
+        );
+        for (row, name, print, dbg) in [
+            ("a struct of scalars and strings", "Plain", false, false),
+            ("a struct with no field", "Empty", false, false),
+            ("a struct that holds a written one", "Wrap", true, true),
+            ("a struct that holds one deeper", "Deep", true, true),
+            ("a struct that holds a class", "Hold", false, true),
+        ] {
+            let ty = named(&program, name);
+            assert_eq!(calls_display(&program, ty, false), print, "{row}, print");
+            assert_eq!(calls_display(&program, ty, true), dbg, "{row}, dbg");
+        }
+        let mut held = FxHashMap::default();
+        assert!(holds_a_class(&program, named(&program, "Hold"), &mut held));
+        assert!(!holds_a_class(&program, named(&program, "Wrap"), &mut held));
+        assert!(!holds_a_class(
+            &program,
+            named(&program, "Plain"),
+            &mut held
+        ));
     }
 }

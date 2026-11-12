@@ -1,0 +1,1 @@
+struct_show_should_keep_its_value_alive_and_free_it.sisu:43:17: m.w = Wrap(b: bee, tag: "t1", xs: ["ab"])
