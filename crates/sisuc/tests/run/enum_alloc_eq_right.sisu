@@ -17,5 +17,6 @@ fn right(depth: i64) -> E {
 }
 
 fn main() {
-    print(right(iterations()) == right(iterations())) // true (true with no iterations)
+    let n = iterations()
+    print(right(n) == right(n)) // true (true with no iterations)
 }
