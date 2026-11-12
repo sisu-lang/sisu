@@ -1902,6 +1902,30 @@ fn generated_read_should_count_each_shown_field() {
             ),
         ),
         (
+            "dbg of a struct with a written Display that shows its argument",
+            own(&format!("{p}{w_display}"), "dbg(W(v: P(n: 1)))"),
+        ),
+        (
+            "dbg of an enum with a written Display that shows its payload",
+            own(
+                &format!(
+                    "{p}enum E<T> {{ A(T) }}\nextend<T: Display> E<T>: Display {{\n    fn to_string(self) -> string {{\n        match self {{\n            A(v) => \"a{{v}}\"\n        }}\n    }}\n}}\n"
+                ),
+                "dbg(E.A(P(n: 1)))",
+            ),
+        ),
+        (
+            "dbg of an array of structs with a written Display",
+            own(&format!("{p}{w_display}"), "dbg([W(v: P(n: 1))])"),
+        ),
+        (
+            "a written Eq that compares the text of its argument",
+            own(
+                "struct P { n: i64; k: i64 }\nextend P: Eq {\n    fn eq(self, other: P) -> bool { self.k == other.k }\n}\nstruct W<T> { v: T }\nextend<T: Display> W<T>: Eq {\n    fn eq(self, other: W<T>) -> bool { \"{self.v}\" == \"{other.v}\" }\n}\n",
+                "print(W(v: P(n: 1, k: 1)) == W(v: P(n: 2, k: 1)))",
+            ),
+        ),
+        (
             "an array join under an if",
             own(
                 p,
