@@ -86,6 +86,12 @@ The pre-commit hook also runs `crates/sisuc/tests/architecture.rs` when a commit
 changes a file that the test reads. CI's lint job skips that hook, because its
 test job runs the test.
 
+CI runs the `Test` job in two parts, `Test (part 1 of 2)` and `Test (part 2 of 2)`.
+Each part runs half of the tests (`--partition slice:<part>/2`). The `Test`
+check, which the branch ruleset requires, passes only when both parts pass: a
+part that fails, is cancelled or does not start fails it. The test-name check and
+the filter check need the whole list of tests, so only part 1 runs them.
+
 After the tests pass, `make test` checks each `test(...)` leaf of a filter in
 `.config/nextest.toml`, and CI does the same. A leaf that matches no test, such
 as one left after a rename, fails the target, because its override then does

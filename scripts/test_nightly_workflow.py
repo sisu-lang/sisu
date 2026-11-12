@@ -171,20 +171,20 @@ TOKEN = re.compile(r"github\W*token|secrets\b|\b(?:GH|GITHUB)_TOKEN\b", re.IGNOR
 GATE = re.compile(r"continue-on-error|\|\|\s*(?:true\b|:|exit\s+0)|set\s+\+e")
 
 
-def workflow(test: unittest.TestCase) -> list[str]:
+def workflow(test: unittest.TestCase, path: Path = WORKFLOW) -> list[str]:
     """The workflow's lines without comments. A missing file fails the test on an assertion."""
-    if not WORKFLOW.is_file():
-        test.fail(f"{WORKFLOW} does not exist")
-    with WORKFLOW.open(encoding="utf-8") as f:
+    if not path.is_file():
+        test.fail(f"{path} does not exist")
+    with path.open(encoding="utf-8") as f:
         return [line for line in f.read().splitlines() if not line.lstrip().startswith("#")]
 
 
-def jobs(test: unittest.TestCase) -> dict[str, list[str]]:
+def jobs(test: unittest.TestCase, path: Path = WORKFLOW) -> dict[str, list[str]]:
     """Job name -> its lines, from the line after the name to the line before the next job."""
     found: dict[str, list[str]] = {}
     name: str | None = None
     in_jobs = False
-    for line in workflow(test):
+    for line in workflow(test, path):
         if line == "jobs:":
             in_jobs = True
         elif line.strip() and not line.startswith(" "):

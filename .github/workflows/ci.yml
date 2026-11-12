@@ -44,9 +44,15 @@ jobs:
         env:
           SKIP: architecture
 
+  # The tests run in two parts, each on its own runner: `--partition slice:<part>/2` splits the
+  # list of tests in turn. A part that fails does not cancel the other.
   test:
-    name: Test
+    name: Test (part ${{ matrix.part }} of 2)
     runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -60,15 +66,16 @@ jobs:
       - uses: ./.github/actions/install-llvm
       - run: sudo apt-get update && sudo apt-get install --yes valgrind
       - id: nextest
-        run: cargo nextest run --workspace --locked --profile ci
-      # The next three steps run when the test step ran, whatever its result; the test-name check
-      # runs only on a pull request. `always()` would also
+        run: cargo nextest run --workspace --locked --profile ci --partition slice:${{ matrix.part }}/2
+      # The next four steps run when the test step ran, whatever its result. The test-name check runs
+      # only on a pull request, and it and the filter check run only in part 1, because they need the
+      # whole list of tests. Each part runs the other steps on its own report. `always()` would also
       # run them after a cancel and after a step before the tests failed.
       # Warns about tests over their time budget (CODING_STANDARDS.md, Tests). It never fails the job.
       - if: (success() || failure()) && steps.nextest.outcome != 'skipped'
         run: python3 scripts/slow_tests.py target/nextest/ci/junit.xml
       # On a pull request, fails for a test name that the pre-commit hook would reject.
-      - if: (success() || failure()) && steps.nextest.outcome != 'skipped' && github.event_name == 'pull_request'
+      - if: (success() || failure()) && steps.nextest.outcome != 'skipped' && github.event_name == 'pull_request' && matrix.part == 1
         env:
           BASE_REF: ${{ github.base_ref }}
         run: |
@@ -89,10 +96,21 @@ jobs:
           fi
       # Fails for a filter leaf of .config/nextest.toml that matches no test. The tests already ran,
       # so the build of the list is cached. A failed `cargo nextest list` fails the step, with its error.
-      - if: (success() || failure()) && steps.nextest.outcome == 'success'
+      - if: (success() || failure()) && steps.nextest.outcome == 'success' && matrix.part == 1
         run: |
           cargo nextest list --workspace --locked --message-format json > "$RUNNER_TEMP/list.json"
           python3 scripts/nextest_filters.py .config/nextest.toml "$RUNNER_TEMP/list.json"
+
+  # The ruleset requires a check named `Test`. A part that fails, is cancelled or is skipped fails it.
+  test-result:
+    name: Test
+    needs: test
+    if: always()
+    runs-on: ubuntu-26.04
+    steps:
+      - env:
+          RESULT: ${{ needs.test.result }}
+        run: test "$RESULT" = success
 
   # The memory tests of the run cases (ASan, Valgrind, --rc-checks), which the Test job leaves out.
   # They run on main and by hand; `make memory-safety` runs them locally.
