@@ -3577,7 +3577,7 @@ fn run_case_should_fail_on_a_signal_and_name_the_executable() {
     );
     let message = panic_message(|| support::run(&dir.join("a.sisu"), false));
     assert!(message.contains("/O0"), "{message}");
-    assert!(message.contains("signal"), "{message}");
+    assert!(message.contains(": signal: "), "{message}");
 }
 
 /// GIVEN a run case whose .out file is wrong
