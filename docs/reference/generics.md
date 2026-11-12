@@ -305,8 +305,7 @@ When the compiler can tell which bound fixes the error, the help names it ([Boun
 - Have a field. [E0063](../diagnostics/E0063.md)
 - Fill an array with `[x; n]`, because `T` can be a class ([Filled arrays](arrays.md#filled-arrays)). `[None; n]` is valid. [E0067](../diagnostics/E0067.md)
 - Be the subject of a `match`. In a payload of the type `T`, a pattern is a name or `_` ([Variant patterns](enums.md#variants)). [E0124](../diagnostics/E0124.md)
-- Meet a value of another type in `==` or `!=`, whatever the bounds are. `a == 5` and `a == b` with a `U` cannot be compared. [E0047](../diagnostics/E0047.md)
-- Meet a value of another type in `<`, `<=`, `>` or `>=`. `a < 5` and `a < b` with a `U` are type mismatches. [E0032](../diagnostics/E0032.md)
+- Meet a value of another type in a comparison (`==`, `!=`, `<`, `<=`, `>` or `>=`), whatever the bounds are. `a == 5`, `a < 5` and `a < b` with a `U` cannot be compared. [E0047](../diagnostics/E0047.md)
 
 ```sisu
 fn smaller<T>(a: T, b: T) -> bool {

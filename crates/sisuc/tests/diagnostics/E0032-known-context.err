@@ -1,4 +1,4 @@
-error[E0032]: expected `i64?`, found `Two<X, bool>?`
+error[E0032]: expected `i64?`, found `Two<_, bool>?`
   --> E0032-known-context.sisu:19:13
    |
 19 |     print(g(mkp(), mk()))

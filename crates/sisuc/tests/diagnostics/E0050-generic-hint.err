@@ -334,61 +334,61 @@ error[E0032]: expected `string`, found `i64`
    |            |
    |            declared as `string` here
 
-error[E0032]: expected `i64`, found `Two<X, bool>`
+error[E0032]: expected `i64`, found `Two<_, bool>`
   --> E0050-generic-hint.sisu:55:36
    |
 55 | fn written_i64() { let z: i64 = id(mk2()) + id(mk2()) }
    |                                    ^^^^^
 
-error[E0032]: expected `i64`, found `Two<X, bool>`
+error[E0032]: expected `i64`, found `Two<_, bool>`
   --> E0050-generic-hint.sisu:56:37
    |
 56 | fn literal_first() { let z = 1 + id(mk2()) }
    |                                     ^^^^^
 
-error[E0032]: expected `i64`, found `Two<X, bool>`
+error[E0032]: expected `i64`, found `Two<_, bool>`
   --> E0050-generic-hint.sisu:57:43
    |
 57 | fn chain_literal_first() { let z = 0 < id(mk2()) < 10 }
    |                                           ^^^^^
 
-error[E0032]: expected `u8`, found `Two<X, bool>`
+error[E0032]: expected `u8`, found `Two<_, bool>`
   --> E0050-generic-hint.sisu:58:34
    |
 58 | fn written_u8() { let z: u8 = id(mk2()) + id(mk2()) }
    |                                  ^^^^^
 
-error[E0032]: expected `i64`, found `Two<X, bool>`
+error[E0032]: expected `i64`, found `Two<_, bool>`
   --> E0050-generic-hint.sisu:61:13
    |
 61 |     n += id(mk2())
    |             ^^^^^
 
-error[E0032]: expected `u8`, found `Two<X, bool>`
+error[E0032]: expected `u8`, found `Two<_, bool>`
   --> E0050-generic-hint.sisu:65:13
    |
 65 |     n += id(mk2())
    |             ^^^^^
 
-error[E0032]: expected `string`, found `Two<X, bool>`
+error[E0032]: expected `string`, found `Two<_, bool>`
   --> E0050-generic-hint.sisu:67:40
    |
 67 | fn string_literal_after() { let z = id(mk2()) + "a" }
    |                                        ^^^^^
 
-error[E0032]: expected `f64`, found `Two<X, bool>`
+error[E0032]: expected `f64`, found `Two<_, bool>`
   --> E0050-generic-hint.sisu:68:37
    |
 68 | fn f64_literal_after() { let z = id(mk2()) * 2.5 }
    |                                     ^^^^^
 
-error[E0032]: expected `i64`, found `Two<X, bool>`
+error[E0032]: expected `i64`, found `Two<_, bool>`
   --> E0050-generic-hint.sisu:69:47
    |
 69 | fn call_after_i64_call() { let z = id(1) + id(mk2()) }
    |                                               ^^^^^
 
-error[E0032]: expected `f64`, found `Two<X, bool>`
+error[E0032]: expected `f64`, found `Two<_, bool>`
   --> E0050-generic-hint.sisu:70:48
    |
 70 | fn call_after_f64_literal() { let z = 1.5 + id(mk2()) }
@@ -418,7 +418,7 @@ error[E0050]: cannot infer `X` for `mk2`
    |
    = help: annotate the result, or write the type: `mk2<...>(...)`
 
-error[E0032]: expected `i64`, found `Two<X, bool>`
+error[E0032]: expected `i64`, found `Two<_, bool>`
   --> E0050-generic-hint.sisu:79:51
    |
 79 | fn typed_sum_first(x: i64) { let z = (x + 1) + id(mk2()) }
@@ -862,7 +862,7 @@ error[E0050]: cannot infer `X` for `mk2`
     |
     = help: annotate the result, or write the type: `mk2<...>(...)`
 
-error[E0032]: expected `i64`, found `Two<X, bool>`
+error[E0032]: expected `i64`, found `Two<_, bool>`
    --> E0050-generic-hint.sisu:142:36
     |
 142 |     let z = id(mk2()) + 1 < 3 + id(mk2())
@@ -1072,7 +1072,7 @@ error[E0050]: cannot infer `X` for `mk2`
     |
     = help: annotate the result, or write the type: `mk2<...>(...)`
 
-error[E0032]: expected `u8`, found `Two<X, bool>`
+error[E0032]: expected `u8`, found `Two<_, bool>`
    --> E0050-generic-hint.sisu:211:21
     |
 211 |     let z = pair(id(mk2()) + 1, x)
@@ -1102,13 +1102,13 @@ error[E0050]: cannot infer `X` for `mk2`
     |
     = help: annotate the result, or write the type: `mk2<...>(...)`
 
-error[E0032]: expected `i64`, found `Two<X, bool>`
+error[E0032]: expected `i64`, found `Two<_, bool>`
    --> E0050-generic-hint.sisu:223:18
     |
 223 |     let z = o ?? mk2()
     |                  ^^^^^
 
-error[E0032]: expected `i64`, found `Two<X, bool>`
+error[E0032]: expected `i64`, found `Two<_, bool>`
    --> E0050-generic-hint.sisu:227:20
     |
 227 |     let z = 1 + id(mk2())
@@ -1144,7 +1144,7 @@ error[E0033]: cannot find binding `nope`
 239 | fn negated_failure_then_call() { let z = -nope + id(mk2()) }
     |                                           ^^^^
 
-error[E0032]: expected `i64`, found `Two<X, bool>`
+error[E0032]: expected `i64`, found `Two<_, bool>`
    --> E0050-generic-hint.sisu:243:26
     |
 243 |     let z = o ?? pair(id(mk2()) + 1, nope)
@@ -1178,7 +1178,7 @@ error[E0050]: cannot infer `X` for `mk2`
     |
     = help: annotate the result, or write the type: `mk2<...>(...)`
 
-error[E0032]: expected `u8`, found `Two<X, bool>`
+error[E0032]: expected `u8`, found `Two<_, bool>`
    --> E0050-generic-hint.sisu:251:23
     |
 251 |     let z = x + id(id(mk2()) + 1)
@@ -1192,7 +1192,7 @@ error[E0032]: expected `string`, found `u8`
     |            |
     |            declared as `string` here
 
-error[E0032]: expected `u8`, found `Two<X, bool>`
+error[E0032]: expected `u8`, found `Two<_, bool>`
    --> E0050-generic-hint.sisu:255:20
     |
 255 |     let z = snd(id(mk2()) + 1, x) + 1
@@ -1486,7 +1486,7 @@ error[E0032]: expected `i64`, `u8` or `f64`, found `bool`
 292 | fn bool_minus_call(b: bool) { let z = b - id(mk2()) }
     |                                       ^
 
-error[E0032]: expected `u8`, found `Two<X, bool>`
+error[E0032]: expected `u8`, found `Two<_, bool>`
    --> E0050-generic-hint.sisu:293:37
     |
 293 | fn call_plus_u8(x: u8) { let z = id(mk2()) + x }
@@ -1498,19 +1498,19 @@ error[E0032]: expected `string`, found `string?`
 294 | fn call_plus_optional_string(o: string?) { let z = id(mk2()) + o }
     |                                                                ^
 
-error[E0032]: expected `i64`, found `Two<X, bool>`
+error[E0032]: expected `i64`, found `Two<_, bool>`
    --> E0050-generic-hint.sisu:295:59
     |
 295 | fn literal_plus_call_minus_bool(b: bool) { let z = 1 + id(mk2()) - b }
     |                                                           ^^^^^
 
-error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `Two<X, bool>`
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `Two<_, bool>`
    --> E0050-generic-hint.sisu:296:48
     |
 296 | fn concrete_plus_optional_u8(o: u8?) { let z = mk2() + o }
     |                                                ^^^^^
 
-error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `Two<X, bool>`
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `Two<_, bool>`
    --> E0050-generic-hint.sisu:297:50
     |
 297 | fn concrete_plus_optional_i64(o: i64?) { let z = mk2() + o }

@@ -1078,8 +1078,9 @@ enum Unbound {
     Fail,
     /// The hole.
     Hole,
-    /// The parameter itself, by the callee's name.
-    Keep,
+    /// The hole, without the hints and without `REJECTED`: a callee's name for a parameter means
+    /// nothing at the call.
+    Print,
 }
 
 /// A callee's type parameters as a call binds them: `found[i]` is parameter `i`'s type once
@@ -1459,11 +1460,11 @@ impl Bindings {
             .expect("a hole should stand for each unbound parameter")
     }
 
-    /// As `known`, with each unbound or rejected parameter by the callee's name, so it always
-    /// gives a type. For a diagnostic: a repeated name shows that two places must be one type.
+    /// As `known`, with a hole for each unbound or rejected parameter, so it always gives a type.
+    /// For a diagnostic: the callee's name for a parameter is not a type of the caller's code.
     fn printed(&self, ty: Type) -> Type {
-        self.resolve(ty, Unbound::Keep, &mut WalkMemo::default())
-            .expect("a parameter should stand for itself while it is unbound")
+        self.resolve(ty, Unbound::Print, &mut WalkMemo::default())
+            .expect("a hole should stand for each unbound parameter")
     }
 
     /// The walk of `known`, `partial` and `printed`: `unbound` says what an unbound parameter
@@ -1479,7 +1480,7 @@ impl Bindings {
     ) -> Option<Type> {
         type_step();
         #[cfg(test)]
-        if !matches!(unbound, Unbound::Keep) {
+        if !matches!(unbound, Unbound::Print) {
             WALKED.set(WALKED.get() + 1);
         }
         if !ty.has_param() {
@@ -1487,20 +1488,19 @@ impl Bindings {
         }
         let kind = ty.kind();
         if matches!(kind, TypeKind::Param(..)) {
-            return self.resolve_kind(ty, kind, unbound, seen);
+            return self.resolve_kind(kind, unbound, seen);
         }
         if let Some(resolved) = seen.get(&ty) {
             return resolved;
         }
-        let resolved = self.resolve_kind(ty, kind, unbound, seen);
+        let resolved = self.resolve_kind(kind, unbound, seen);
         seen.put(ty, resolved);
         resolved
     }
 
-    /// `resolve`, by `kind`, the kind of `ty`, which has a parameter.
+    /// `resolve`, by `kind`, the kind of a type that has a parameter.
     fn resolve_kind(
         &self,
-        ty: Type,
         kind: TypeKind,
         unbound: Unbound,
         seen: &mut WalkMemo<Type, Option<Type>>,
@@ -1516,7 +1516,7 @@ impl Bindings {
                     .copied()
                     .flatten()
                     .unwrap_or(*HOLE),
-                (_, Unbound::Keep) => ty,
+                (_, Unbound::Print) => *HOLE,
             },
             TypeKind::Array(element) => Type::array(self.resolve(element, unbound, seen)?),
             TypeKind::Optional(payload) => Type::optional(self.resolve(payload, unbound, seen)?),
