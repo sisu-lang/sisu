@@ -1473,12 +1473,11 @@ impl Checker<'_> {
         let frame = self.frame(target);
         // With no expected type, an earlier value gives a hint, as the siblings of a hinted loop
         // do.
+        let waiting = waits && frame.expected == Expectation::None && frame.first.is_none();
         let hint = match (frame.expected, frame.first) {
-            // A failed value gives no type, so the next one waits for the next run.
+            // A failed loop has no type, so the next value waits for the next run.
             (Expectation::None, None) if frame.failed.is_some() => Expectation::Poisoned,
-            // In a join in a poisoned context, its branches are checked out of source order (see
-            // `Body`).
-            (Expectation::None, None) if waits => Expectation::Poisoned,
+            (Expectation::None, None) if waiting => Expectation::Poisoned,
             (Expectation::None, Some((ty, at))) => Expectation::Hint {
                 want: ty,
                 siblings: ty,
@@ -1508,6 +1507,14 @@ impl Checker<'_> {
                 frame.valued.get_or_insert(span);
                 let (expected, first) = (frame.expected, frame.first);
                 let hinted = matches!(expected, Expectation::Hint { .. });
+                if waiting {
+                    // The branches of a join in a poisoned context are checked out of source
+                    // order (see `Body::waiting_loops`). A value that would give the loop its
+                    // type waits, so the loop has no type.
+                    let reported = self.poisoned_context(v.span);
+                    self.frame(target).failed.get_or_insert(reported);
+                    return checked;
+                }
                 if expected == Expectation::Poisoned {
                     checked
                 } else {
