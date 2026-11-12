@@ -134,12 +134,16 @@ impl Checker<'_> {
     }
 
     /// Whether `ty` is a concrete type that no `Ord` orders, though it has the look of one that
-    /// a program may compare: a `bool`, an array, an enum, a class or an `any` value.
+    /// a program may compare: a `bool`, an array, an enum, a class, a struct or an `any` value.
     fn unordered(&mut self, ty: Type) -> bool {
         (ty == Type::BOOL
             || matches!(
                 ty.kind(),
-                TypeKind::Array(_) | TypeKind::Enum(..) | TypeKind::Class(..) | TypeKind::Any(..)
+                TypeKind::Array(_)
+                    | TypeKind::Enum(..)
+                    | TypeKind::Class(..)
+                    | TypeKind::Struct(..)
+                    | TypeKind::Any(..)
             ))
             && self.operation(ty, self.lang.ord) == Operation::Missing
     }

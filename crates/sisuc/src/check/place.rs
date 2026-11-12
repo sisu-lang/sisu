@@ -460,11 +460,19 @@ impl Checker<'_> {
 
     /// Records the reads of the receiver `e` of a `push` that is no array's, whose value is
     /// `read`. The local is read. The field at the root of the place is read. A write reads
-    /// neither.
+    /// neither. It walks each step once, and a root that is no binding, such as the value of a
+    /// call, reads nothing.
     pub(super) fn read_pushed(&mut self, read: &tir::Expr, e: &ast::Expr) {
+        #[cfg(test)]
+        super::PATH_STEPS.set(super::PATH_STEPS.get() + 1);
         match (&e.kind, &read.kind) {
             (ast::ExprKind::Index { base, .. }, ExprKind::Index { base: read, .. }) => {
                 self.read_pushed(read, base);
+            }
+            (ast::ExprKind::Index { base, .. }, ExprKind::Block(block)) => {
+                if let Some(read) = spilled_base(block) {
+                    self.read_pushed(read, base);
+                }
             }
             (&ast::ExprKind::Name(name), ExprKind::Local(_)) => {
                 let binding = self.lookup(name);
@@ -483,13 +491,10 @@ impl Checker<'_> {
                     unreachable!("the base of a checked struct field should be a struct")
                 };
                 self.record(Used::StructField(id, *index), e.span);
-                if is_path(base, inner) {
-                    self.read_pushed(base, inner);
-                }
+                self.read_pushed(base, inner);
             }
-            // The read of a value that a call gives reads no binding.
-            _ if !is_path(read, e) => {}
-            _ => unreachable!("the read of a push receiver should match its syntax"),
+            // `self` is no binding that a read marks, and another root is a temporary.
+            _ => {}
         }
     }
 
@@ -1092,7 +1097,7 @@ impl Checker<'_> {
                         let reported = self.optional_array_target(base, &inner);
                         (optional_element(ty), Some(reported))
                     }
-                    None => self.element(base, inner.value_ty(), change.index_usage()),
+                    None => self.element(base, (inner.value_ty(), false), change.index_usage()),
                 };
                 // The index is not part of the chain that it ends.
                 self.body.indexed = false;
@@ -1180,7 +1185,11 @@ impl Checker<'_> {
         );
         let checked = self.value(base, Expectation::None);
         (self.body.indexed, self.body.quiet, self.body.write_chain) = outer;
-        if !safe && type_of(&checked).is_some_and(|ty| is_struct(innermost(ty))) {
+        // A `?.` on a base that failed, such as the `?.` of a write before it, reports nothing
+        // more.
+        if (!safe || checked.is_err())
+            && type_of(&checked).is_some_and(|ty| is_struct(innermost(ty)))
+        {
             return self.struct_place(span, target, (base, name), checked, change);
         }
         if checked.is_err() && change != Change::Push {
@@ -1454,6 +1463,17 @@ impl Checker<'_> {
         };
         let found = (self.structs[id.0].field(name.name))
             .map(|index| (index, self.field_type(holder, index)));
+        // The base reported its error, such as the `?.` of a write before it. The place keeps
+        // the field's type for the value.
+        if let (Some((index, ty)), Err(failed)) = (found, checked) {
+            self.reassign_root(base);
+            return CheckedPlace {
+                shown: self.field_shown(FieldOwner::Struct(id), index),
+                held_ty: ty,
+                reported: Some(failed.reported()),
+                ..CheckedPlace::failed(None)
+            };
+        }
         if let (Some((index, ty)), Ok(_), Some(chain)) = (found, checked, first_safe(base)) {
             let array = ty.is_some_and(|ty| matches!(payload(ty).kind(), TypeKind::Array(_)));
             let writes = match change {
@@ -1558,11 +1578,11 @@ impl Checker<'_> {
         }
         // The value to replace: a place on one line whose `?.` takes out a struct.
         let replace = (name_chain(object) && self.one_line(object.span))
-            .then(|| self.struct_walk(object))
+            .then(|| self.replaceable(object))
             .flatten()
-            .filter(
-                |&(_, ty)| matches!(ty.kind(), TypeKind::Optional(payload) if is_struct(payload)),
-            )
+            .filter(|&(can, ty)| {
+                can && matches!(ty.kind(), TypeKind::Optional(payload) if is_struct(payload))
+            })
             .map(|_| self.source.text(object.span).to_string());
         DiagnosticKind::ChainWriteOnStruct {
             at: Span::new(object.span.end(), name.span.end()),
@@ -1605,6 +1625,8 @@ impl Checker<'_> {
 
     /// The root of `e` and the type of `e`, as `struct_root` walks them.
     fn struct_walk(&self, e: &ast::Expr) -> Option<(StructRoot, Type)> {
+        #[cfg(test)]
+        super::PATH_STEPS.set(super::PATH_STEPS.get() + 1);
         match &e.kind {
             ast::ExprKind::Field { base, name, .. } => {
                 let (root, ty) = self.struct_walk(base)?;
@@ -1629,6 +1651,44 @@ impl Checker<'_> {
                 Some(ty) if is_struct(ty) => Some((StructRoot::SelfValue, ty)),
                 _ => None,
             },
+            _ => None,
+        }
+    }
+
+    /// The type of the place `e`, and whether a write can replace its value, by the declared
+    /// types alone. The root is a `let mut` binding, and each struct step and index keeps its
+    /// base's answer. A class step's `mut` field decides there. A help that replaces a value
+    /// names only such a place.
+    pub(super) fn replaceable(&self, e: &ast::Expr) -> Option<(bool, Type)> {
+        match &e.kind {
+            ast::ExprKind::Field {
+                base,
+                name,
+                safe: false,
+                ..
+            } => {
+                let (can, ty) = self.replaceable(base)?;
+                let (info, can) = match ty.kind() {
+                    TypeKind::Struct(id, _) => (&self.structs[id.0], Some(can)),
+                    TypeKind::Class(id, _) => (&self.classes[id.0], None),
+                    _ => return None,
+                };
+                let index = info.field(name.name)?;
+                let can = can.unwrap_or(info.fields[index].mutable);
+                Some((can, self.field_type(ty, index)?))
+            }
+            ast::ExprKind::Index { base, .. } => {
+                let (can, ty) = self.replaceable(base)?;
+                match ty.kind() {
+                    TypeKind::Array(element) => Some((can, element)),
+                    _ => None,
+                }
+            }
+            &ast::ExprKind::Name(name) => {
+                let b = self.binding(name)?;
+                Some((b.kind == BindingKind::Var, b.ty?))
+            }
+            ast::ExprKind::SelfValue => Some((false, self.body.self_type.known()?)),
             _ => None,
         }
     }
@@ -1947,7 +2007,7 @@ fn binding_cause(b: &Binding) -> Option<Immutable> {
 }
 
 /// Whether `ty` is a struct.
-fn is_struct(ty: Type) -> bool {
+pub(super) fn is_struct(ty: Type) -> bool {
     matches!(ty.kind(), TypeKind::Struct(..))
 }
 
@@ -1955,6 +2015,8 @@ fn is_struct(ty: Type) -> bool {
 pub(super) fn first_safe(mut e: &ast::Expr) -> Option<(&ast::Expr, &ast::Ident)> {
     let mut found = None;
     loop {
+        #[cfg(test)]
+        super::PATH_STEPS.set(super::PATH_STEPS.get() + 1);
         match &e.kind {
             ast::ExprKind::Field {
                 base, name, safe, ..

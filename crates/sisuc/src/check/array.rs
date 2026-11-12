@@ -3,7 +3,7 @@
 use super::any::{AnyJoin, is_target, widen};
 use super::expr::{fits, literal_type, no_member, path, typed};
 use super::generic::{Rank, mark, mismatch_poison};
-use super::place::{Change, first_safe};
+use super::place::{Change, first_safe, is_struct};
 use super::reports::Reported;
 use super::{
     Checked, Checker, Declared, Expectation, Origin, Poisoned, as_optional, known_type, payload,
@@ -533,7 +533,11 @@ impl Checker<'_> {
         let checked = self.value(base, Expectation::None);
         // An optional array is reported, and its element goes on typed, but no code reads it.
         let optional = type_of(&checked).is_some_and(is_optional_array);
-        let (element, report) = self.element(base, type_of(&checked), IndexUsage::Read);
+        let (element, report) = self.element(
+            base,
+            (type_of(&checked), checked.is_err()),
+            IndexUsage::Read,
+        );
         // The index is not part of the chain that it ends.
         self.body.indexed = false;
         let chain = std::mem::take(&mut self.body.write_chain);
@@ -571,10 +575,11 @@ impl Checker<'_> {
     /// The element type of `base`, which is indexed and has type `ty` (`None` is `Error`). An
     /// optional array is reported and gives the element of its payload. A string, or a value that
     /// is no array, is reported and gives `Error`. With the proof of the report, when there is one.
+    /// A base that `failed` under the chain of a write to a struct has reported that write.
     pub(super) fn element(
         &mut self,
         base: &ast::Expr,
-        ty: Option<Type>,
+        (ty, failed): (Option<Type>, bool),
         usage: IndexUsage,
     ) -> (Option<Type>, Option<Reported>) {
         let Some(ty) = ty else {
@@ -586,10 +591,19 @@ impl Checker<'_> {
                 let element = optional_element(ty);
                 // A struct element under the chain of a write, after a `?.`: part 1 cannot write
                 // through that `?.`, and an unwrap gives a copy.
+                let on_struct = self.body.write_chain.is_some()
+                    && element.is_some_and(|e| is_struct(innermost(e)));
+                if on_struct && failed {
+                    return (element, None);
+                }
                 let chain = (self.body.write_chain)
-                    .filter(|&(_, change)| change != Change::MutArg)
-                    .filter(|_| element.is_some_and(|e| matches!(e.kind(), TypeKind::Struct(..))))
+                    .filter(|&(_, change)| on_struct && change != Change::MutArg)
                     .zip(first_safe(base));
+                let unwrap = if on_struct {
+                    UnwrapHelp::Nothing
+                } else {
+                    UnwrapHelp::It
+                };
                 let reported = match chain {
                     Some((write, object)) => {
                         let d = match self.chain_write(write, base, object) {
@@ -600,7 +614,7 @@ impl Checker<'_> {
                         };
                         self.error(d)
                     }
-                    None => self.diagnostics.error(optional_array(base, UnwrapHelp::It)),
+                    None => self.diagnostics.error(optional_array(base, unwrap)),
                 };
                 return (element, Some(reported));
             }

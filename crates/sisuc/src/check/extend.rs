@@ -207,8 +207,8 @@ impl<'a> Checker<'_> {
                 .expect("the block of a method that a call found should cover the receiver");
         }
         match ty.kind() {
-            TypeKind::Class(_, args) | TypeKind::Enum(_, args) => args,
-            _ => unreachable!("only a class or an enum has methods"),
+            TypeKind::Class(_, args) | TypeKind::Struct(_, args) | TypeKind::Enum(_, args) => args,
+            _ => unreachable!("only a class, a struct or an enum has methods"),
         }
     }
 

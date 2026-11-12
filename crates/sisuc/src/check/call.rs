@@ -127,6 +127,9 @@ impl Checker<'_> {
             TypeKind::Class(class, _) => {
                 self.construct_class(span, FieldOwner::Class(class), site, args, Some(through))
             }
+            TypeKind::Struct(id, _) => {
+                self.construct_class(span, FieldOwner::Struct(id), site, args, Some(through))
+            }
             TypeKind::I64 | TypeKind::U8 | TypeKind::F64 | TypeKind::Char | TypeKind::String => {
                 let converted = self.convert(span, site.name.span, through.ty, args);
                 // The parameters of the alias bind to nothing: reported once the call checks.
@@ -339,15 +342,19 @@ impl Checker<'_> {
     }
 
     /// How the method `name` belongs to a receiver of type `ty`: a built-in array or `f64`
-    /// method, or a method of a class, an enum, an array or an `i64` that the program or the
-    /// prelude writes. `None` when the type has no such method.
+    /// method, or a method that the program or the prelude writes. Such a method is of a class,
+    /// a struct, an enum, an array or an `i64`. `None` when the type has no such method.
     fn idiom_of(&self, name: Symbol, ty: Type) -> Option<Idiom> {
         match ty.kind() {
             TypeKind::Array(_) if name.as_str() == "len" => {
                 return Some(Idiom::Built);
             }
             _ if number::method(ty, name.as_str()).is_some() => return Some(Idiom::Built),
-            TypeKind::Class(..) | TypeKind::Enum(..) | TypeKind::Array(_) | TypeKind::I64 => {}
+            TypeKind::Class(..)
+            | TypeKind::Struct(..)
+            | TypeKind::Enum(..)
+            | TypeKind::Array(_)
+            | TypeKind::I64 => {}
             _ => return None,
         }
         match self.own_method(ty, name) {
@@ -1227,8 +1234,9 @@ impl Checker<'_> {
             // The fields have the types that the alias's arguments for the class's parameters
             // make them.
             Some(through) => {
-                let TypeKind::Class(_, list) = through.ty.kind() else {
-                    unreachable!("an alias that builds an object should name a class");
+                let (TypeKind::Class(_, list) | TypeKind::Struct(_, list)) = through.ty.kind()
+                else {
+                    unreachable!("an alias that builds a value should name a class or a struct");
                 };
                 let named: Vec<_> = info.fields.iter().map(|f| (f.name.name, f.ty)).collect();
                 let fields = (named.into_iter())

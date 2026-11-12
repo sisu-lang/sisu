@@ -13,16 +13,33 @@ use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, Rank, StructId, Type, TypeArgs, TypeKind};
 
-/// The names that an `extend` block of `items` takes as its target.
+/// The names that an `extend` block of `items` takes as its target. An alias names its target,
+/// so the block of an alias extends the type that the alias names.
 pub(super) fn extended(items: &[&ast::Item]) -> FxHashSet<Symbol> {
-    let target = |extend: &ast::Extend| match &extend.target.kind {
+    let named = |ty: &ast::TypeExpr| match &ty.kind {
         ast::TypeKind::Name(name) => Some(*name),
         ast::TypeKind::Applied(applied) => Some(applied.name),
         _ => None,
     };
+    let aliases: FxHashMap<Symbol, Symbol> = (items.iter())
+        .filter_map(|item| match item {
+            ast::Item::Alias(alias) => Some((alias.name.name, named(&alias.ty)?)),
+            _ => None,
+        })
+        .collect();
+    // The walk takes at most one step for each alias, so a cycle of aliases ends.
+    let resolve = |mut name: Symbol| {
+        for _ in 0..aliases.len() {
+            let Some(&target) = aliases.get(&name) else {
+                break;
+            };
+            name = target;
+        }
+        name
+    };
     (items.iter())
         .filter_map(|item| match item {
-            ast::Item::Extend(extend) => target(extend),
+            ast::Item::Extend(extend) => named(&extend.target).map(resolve),
             _ => None,
         })
         .collect()

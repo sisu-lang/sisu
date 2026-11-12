@@ -372,6 +372,7 @@ impl Checker<'_> {
             if matches!(payload.kind(), TypeKind::Struct(..))
                 && name_chain(receiver)
                 && self.one_line(receiver.span)
+                && self.replaceable(receiver).is_some_and(|(can, _)| can)
             {
                 UnwrapHelp::Replace(self.source.text(receiver.span).to_string())
             } else {

@@ -590,7 +590,8 @@ thread_local! {
     /// How many calls written `.push` have read a place of a type that is no array, on this
     /// thread.
     pub(crate) static OWN_PUSH_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many steps of a struct path `try_unread` and `is_path` have walked on this thread.
+    /// How many steps of a struct path `try_unread`, `is_path`, `read_pushed`, `struct_walk` and
+    /// `first_safe` have walked on this thread.
     pub(super) static PATH_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many times `pushed_value` has been called on this thread.
     pub(crate) static PUSHED_VALUES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
