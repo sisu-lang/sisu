@@ -99,7 +99,9 @@ quotes it before and after.
 
 Each target is one line in the `Makefile`, a script in `scripts/` or a cargo
 command. Run a script directly for the flags no target passes, such as
-`scripts/fuzz.sh --replay`.
+`scripts/fuzz.sh --replay`. The `dev` and `test` profiles build `sisuc` at
+`opt-level = 1`, with debug assertions and overflow checks on, because the tests
+run the checker thousands of times.
 
 The end-to-end cases are files. The `cases` test binary runs one test per
 `.sisu` file in three directories under `crates/sisuc/tests`:

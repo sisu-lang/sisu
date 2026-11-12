@@ -4096,10 +4096,11 @@ fn static_release_should_check_its_slot_under_rc_checks() {
     assert!(branch_at < release_at, "{body}");
 }
 
-/// `.config/nextest.toml` kills this test after 6 s (12 s in the `ci` profile), matching it by
-/// name: a rename must update the override there. Each `+=` is an overflow panic site, and finding
-/// its line and column from the start of the text, or building a line index for each site, made
-/// codegen quadratic in the number of sites. No step counter sees such a new scan.
+/// `.config/nextest.toml` kills this test after 2 s (4 s in the `ci` profile), matching it by
+/// name: a rename must update the override there. Each `+=` is an overflow panic site. Codegen
+/// once found a site's line and column from the start of the text, or built a line index for each
+/// site. Both are quadratic in the number of sites. No step counter sees such a new scan. At
+/// `opt-level = 1` the run alone takes 0.24 s, and with a line index for each site 6.8 s.
 #[test]
 fn many_panic_sites_should_compile_in_linear_time() {
     let src = format!(

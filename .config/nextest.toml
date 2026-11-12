@@ -32,34 +32,34 @@ filter = 'test(long_gaps_lex_correctly)'
 slow-timeout = { period = "10s", terminate-after = 3 }
 
 # Panic-site locations once scanned the text from the start, so codegen was quadratic and this
-# test hangs instead of failing: no step counter sees such a new scan. It runs in under 1 s on a
-# developer machine, and its regression takes 15 s or more (a scan from the start, or a line index
-# for each site), so the kill is at 6 s: more than 5 times the run alone and less than half of the
-# regression.
+# test hangs instead of failing: no step counter sees such a new scan. Measured at
+# `opt-level = 1` on a developer machine, it runs in 0.24 s alone, and its regression (a line index
+# for each site) takes 6.8 s, so the kill is at 2 s: more than 5 times the run alone and less than
+# half of the regression.
 [[profile.default.overrides]]
 filter = 'test(many_panic_sites_should_compile_in_linear_time)'
-slow-timeout = { period = "2s", terminate-after = 3 }
+slow-timeout = { period = "1s", terminate-after = 2 }
 
-# A CI runner is about twice as slow, and coverage makes a test slower, so the kill is at 12 s: the
+# A CI runner is about twice as slow, and coverage makes a test slower, so the kill is at 4 s: the
 # same ratios as above.
 [[profile.ci.overrides]]
 filter = 'test(many_panic_sites_should_compile_in_linear_time)'
-slow-timeout = { period = "4s", terminate-after = 3 }
+slow-timeout = { period = "2s", terminate-after = 2 }
 
 # `units::copies` once could scan a unit's list of copies for a repeat in place of its mark, which
 # is quadratic, and no step counter sees it: each edge still takes one step. This test hangs
-# instead of failing. It runs in 0.04 s alone and takes 12.8 s with the scan (a load average of 8
-# to 9), so the kill is at 3 s: more than 5 times the run alone and less than half of the
+# instead of failing. Measured at `opt-level = 1`, it runs in 0.03 s alone and takes 3.3 s with
+# the scan, so the kill is at 1 s: more than 5 times the run alone and less than half of the
 # regression.
 [[profile.default.overrides]]
 filter = 'test(copies_should_finish_a_long_chain_in_linear_time)'
-slow-timeout = { period = "1s", terminate-after = 3 }
+slow-timeout = { period = "1s", terminate-after = 1 }
 
-# A CI runner is about twice as slow, and coverage makes a test slower, so the kill is at 6 s: the
+# A CI runner is about twice as slow, and coverage makes a test slower, so the kill is at 2 s: the
 # same ratios as above.
 [[profile.ci.overrides]]
 filter = 'test(copies_should_finish_a_long_chain_in_linear_time)'
-slow-timeout = { period = "2s", terminate-after = 3 }
+slow-timeout = { period = "2s", terminate-after = 1 }
 
 # Each render once cost the whole file, so many diagnostics in a large file were quadratic and
 # this test hangs instead of failing.
@@ -108,17 +108,18 @@ slow-timeout = { period = "10s", terminate-after = 3 }
 # a list of every row that took a row's values is quadratic and hangs instead of failing: no step
 # counter sees such a new loop. The fifth, `match_on_many_variants`, checks a source, so that the
 # parser and `check/pattern.rs` meet a huge `match`: a search of the variants for each name hangs.
-# Each runs in 0.2 to 0.5 s alone on a developer machine, and its regression takes 9 s or more, so
-# the kill is at 4 s: 8 times the run alone and less than half of the shortest regression.
+# Measured at `opt-level = 1` on a developer machine, each runs in 0.11 to 0.30 s alone, and its
+# regression takes 5.1 s or more, so the kill is at 2 s: more than 5 times the slowest run alone
+# and less than half of the shortest regression.
 [[profile.default.overrides]]
 filter = '(test(=check::tests::patterns::variants_should_check_in_linear_time) | test(=check::tests::patterns::literal_arms_should_check_in_linear_time) | test(=check::tests::patterns::long_or_row_should_check_in_linear_time) | test(=check::tests::patterns::takers_should_check_in_linear_time) | test(=check::tests::patterns::match_on_many_variants_should_check_in_linear_time))'
-slow-timeout = { period = "2s", terminate-after = 2 }
+slow-timeout = { period = "1s", terminate-after = 2 }
 
 # A CI runner is about twice as slow, and coverage makes a test slower, so the kill of the same five
-# tests is at 8 s: the same ratios as above.
+# tests is at 4 s: the same ratios as above.
 [[profile.ci.overrides]]
 filter = '(test(=check::tests::patterns::variants_should_check_in_linear_time) | test(=check::tests::patterns::literal_arms_should_check_in_linear_time) | test(=check::tests::patterns::long_or_row_should_check_in_linear_time) | test(=check::tests::patterns::takers_should_check_in_linear_time) | test(=check::tests::patterns::match_on_many_variants_should_check_in_linear_time))'
-slow-timeout = { period = "4s", terminate-after = 2 }
+slow-timeout = { period = "2s", terminate-after = 2 }
 
 # Without the all-wildcard row cut, coverage meets 2^40 distinct matrices, so this test hangs
 # instead of failing.
