@@ -17,11 +17,42 @@ mod writer;
 pub(crate) mod coverage;
 
 use arbitrary::Unstructured;
+use rustc_hash::FxHashSet;
 
 use scope::{Scope, Ty};
 use writer::Writer;
 
+use crate::diagnostic::Diagnostic;
+use crate::{ast, lexer, parser};
+
 pub(crate) use mistake::{Kind, Mistake};
+
+/// The warnings W0013 among `diagnostics` that name a field of a struct of `source`. A generated
+/// program reads each field of each struct, so the checks reject these. A class and a variant may
+/// still leave a field or a variant unused.
+pub(crate) fn unread_struct_fields<'d>(
+    source: &str,
+    diagnostics: &'d [Diagnostic],
+) -> Vec<&'d Diagnostic> {
+    let Ok(lexed) = lexer::lex(source) else {
+        return Vec::new();
+    };
+    let program = parser::parse(lexed, false).program;
+    let fields: FxHashSet<usize> = (program.items.iter())
+        .filter_map(|item| match item {
+            ast::Item::Struct(s) => Some(&s.members),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|member| match member {
+            ast::Member::Field(field) => Some(field.name.span.start()),
+            ast::Member::Method(_) => None,
+        })
+        .collect();
+    (diagnostics.iter())
+        .filter(|d| d.code().as_str() == "W0013" && fields.contains(&d.span().start()))
+        .collect()
+}
 
 pub(crate) struct Generated {
     pub(crate) program: String,

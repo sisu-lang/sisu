@@ -659,11 +659,17 @@ fn checked(name: &str, source: &str) -> Result<Program, Failure> {
     // on every path, and no loop condition may stay unchanged.
     let endless = |d: &Diagnostic| matches!(d.code().as_str(), "W0010" | "W0011");
     let (program, diagnostics) = front_end::front_end(source);
+    // A generated program reads each field of each struct.
+    let unread = generate::unread_struct_fields(source, &diagnostics);
     let failure = |what: String| {
         // Other warnings are allowed, so the detail shows only what fails the property.
         let failing: Vec<Diagnostic> = diagnostics
             .iter()
-            .filter(|d| d.severity() == Severity::Error || endless(d))
+            .filter(|d| {
+                d.severity() == Severity::Error
+                    || endless(d)
+                    || unread.iter().any(|u| std::ptr::eq(*u, *d))
+            })
             .cloned()
             .collect();
         let rendered = render(name, source, &failing);
@@ -675,6 +681,11 @@ fn checked(name: &str, source: &str) -> Result<Program, Failure> {
     if let Some(d) = diagnostics.iter().find(|d| endless(d)) {
         let code = d.code().as_str();
         return Err(failure(format!("the checker reports {code} on the {name}")));
+    }
+    if !unread.is_empty() {
+        return Err(failure(format!(
+            "the {name} leaves a field of a struct unread"
+        )));
     }
     fuzz::assert_compiles(&program, source);
     Ok(program)

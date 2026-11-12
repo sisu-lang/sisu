@@ -202,6 +202,11 @@ const REACH: &[&str] = &[
     "reach: a `while let` walks an enum chain",
     "reach: an index is in bounds",
     "reach: a guard keeps an index of a field in bounds",
+    "reach: a field of a struct is written at depth 2",
+    "reach: a field of a struct is written at depth 3",
+    "reach: a `mut` argument names an element of an array field",
+    "reach: a `mut` argument names an element of an array field at depth 2",
+    "reach: a box of a struct holds a value",
     "reach: an index is meant to panic",
     "reach: an index reads a local",
     "reach: an index reads an immutable local",
@@ -528,11 +533,13 @@ fn checked_with_codes(source: &str) -> (ast::Program, tir::Program, Vec<String>)
     let (program, diagnostics) = crate::front_end::checked(source);
     // An unused loop label would be a label no rule meant to write. Every generated function
     // returns and every generated loop ends, so W0010 and W0011 may not appear.
+    let unread = super::unread_struct_fields(source, &diagnostics);
     let errors: Vec<String> = diagnostics
         .iter()
         .filter(|d| {
             d.severity() == Severity::Error
                 || matches!(d.code().as_str(), "W0008" | "W0010" | "W0011")
+                || unread.iter().any(|u| std::ptr::eq(*u, *d))
         })
         .map(|d| {
             let before = &source[..d.span().start()];
@@ -747,6 +754,8 @@ struct Walk {
     payloads: Vec<Vec<Type>>,
     /// The types each struct's fields hold, by its id.
     struct_fields: Vec<Vec<Type>>,
+    /// Whether each struct is on a cycle of structs and enums, by its id.
+    struct_cycles: Vec<bool>,
     /// Field and element assignments of a value that may hold a class object (decision 4).
     heap_classes: Vec<String>,
     /// Where a `+=` on a name starts.
@@ -2711,6 +2720,7 @@ impl Walk {
                     {
                         self.mark("reach: a plain `=` to a local that is not an array");
                     }
+                    self.struct_depth(place);
                     self.place(place);
                     self.tir_expr(value, Parent::Other);
                 }
@@ -2721,11 +2731,13 @@ impl Walk {
                     if matches!(place, tir::Place::Field { .. }) && value.ty == Type::STRING {
                         self.mark("reach: a `string` field appends to itself");
                     }
+                    self.struct_depth(place);
                     self.place(place);
                     self.tir_expr(value, Parent::Other);
                 }
                 tir::Stmt::Push { place, value, .. } => {
                     self.mark("tir::Stmt::Push");
+                    self.struct_depth(place);
                     // `Some` is outermost: it takes the array out of the optional that the
                     // place after it stores.
                     if let tir::Place::Some(base) = place {
@@ -2802,6 +2814,7 @@ impl Walk {
             .iter()
             .map(|s| s.fields.iter().map(|field| field.ty).collect())
             .collect();
+        self.struct_cycles = program.structs.iter().map(|s| s.cycle.is_some()).collect();
     }
 
     /// Whether a value of `ty` may hold a class object, where `seen` are the enums and structs
@@ -3042,8 +3055,16 @@ impl Walk {
                 self.mark("tir::ExprKind::New");
                 self.tir_exprs(args);
             }
-            tir::ExprKind::Struct { args, .. } => {
+            tir::ExprKind::Struct { id, args } => {
                 self.mark("tir::ExprKind::Struct");
+                // The link of a struct on a cycle holds a `Some` of a struct.
+                let linked = args.iter().any(|arg| {
+                    matches!(&arg.kind, tir::ExprKind::Wrap(inner)
+                        if matches!(inner.ty.kind(), TypeKind::Struct(..)))
+                });
+                if linked && self.struct_cycles[id.0] {
+                    self.mark("reach: a box of a struct holds a value");
+                }
                 self.tir_exprs(args);
             }
             tir::ExprKind::StructField { base, .. } => {
@@ -3378,11 +3399,44 @@ impl Walk {
                     for (_, object) in &m.keep {
                         self.tir_expr(object, Parent::Other);
                     }
+                    if let tir::ExprKind::Index { base, .. } = &m.read.kind
+                        && matches!(base.kind, tir::ExprKind::StructField { .. })
+                    {
+                        self.mark("reach: a `mut` argument names an element of an array field");
+                        if expr_struct_depth(base) >= 2 {
+                            self.mark(
+                                "reach: a `mut` argument names an element of an array field at depth 2",
+                            );
+                        }
+                    }
                     self.tir_expr(&m.read, Parent::Other);
                 }
                 self.tir_expr(call, Parent::Other);
                 self.tir_block(back);
             }
+        }
+    }
+
+    /// Marks a write to a field of a struct at depth 2 or 3: that many struct fields on the
+    /// path of `place`.
+    fn struct_depth(&mut self, place: &tir::Place) {
+        let mut depth = 0;
+        let mut at = place;
+        loop {
+            match at {
+                tir::Place::StructField { base, .. } => {
+                    depth += 1;
+                    at = base;
+                }
+                tir::Place::Index { base, .. } | tir::Place::Some(base) => at = base,
+                tir::Place::Local(_) | tir::Place::Field { .. } => break,
+            }
+        }
+        if depth >= 2 {
+            self.mark("reach: a field of a struct is written at depth 2");
+        }
+        if depth >= 3 {
+            self.mark("reach: a field of a struct is written at depth 3");
         }
     }
 
@@ -3601,6 +3655,15 @@ fn place_text(e: &ast::Expr) -> Option<String> {
             Some(format!("{}[{}]", place_text(base)?, int(index)?))
         }
         _ => None,
+    }
+}
+
+/// How many struct fields lie on the path that `e` reads, through elements too.
+fn expr_struct_depth(e: &tir::Expr) -> usize {
+    match &e.kind {
+        tir::ExprKind::StructField { base, .. } => 1 + expr_struct_depth(base),
+        tir::ExprKind::Index { base, .. } => expr_struct_depth(base),
+        _ => 0,
     }
 }
 

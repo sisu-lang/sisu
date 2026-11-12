@@ -407,22 +407,24 @@ fn interpolation_parts_should_lower_in_linear_steps() {
     }
 }
 
-/// GIVEN a chain of `k + 1` structs, each holding the one before, and an array in the first
-/// WHEN `main` writes an element of the array through all the fields, for `k` of 16, 32 and 64
-/// AND `main` writes a field of the last struct through all the fields
-/// THEN the write of the element copies the place once, for the one element level
-/// AND the write of the field copies it never
+/// GIVEN a chain of `k + 1` structs, each holding the one before, and arrays in the first
+/// WHEN `main` writes an element of an array through all the fields, for `k` of 16, 32 and 64
+/// AND `main` writes an element of an array of arrays, and a field of the last struct
+/// THEN a write copies the place at each element level only, and a copy costs its projections
+/// AND the copies of one element level are `2k + 1` projections, of two levels `4k + 4`, and of
+/// a field none
 #[test]
-fn write_path_should_copy_its_place_once_for_each_element_level() {
+fn write_path_should_copy_its_place_at_each_element_level_only() {
     let chain = |k: usize, tail: &str| {
         let mut structs = String::from(
             "struct L0 {
     xs: [i64]
+    ys: [[i64]]
     n: i64
 }
 ",
         );
-        let mut value = String::from("L0(xs: [1], n: 2)");
+        let mut value = String::from("L0(xs: [1], ys: [[1]], n: 2)");
         for i in 1..=k {
             writeln!(structs, "struct L{i} {{\n    p: L{}\n}}", i - 1)
                 .expect("a string takes a write");
@@ -443,7 +445,17 @@ fn write_path_should_copy_its_place_once_for_each_element_level() {
         })
     };
     for k in [16, 32, 64] {
-        assert_eq!(copies(chain(k, ".xs[0] = 3")), 1, "element, k = {k}");
+        // The array's place before the index has `k` projections, and the checked place `k + 1`.
+        assert_eq!(
+            copies(chain(k, ".xs[0] = 3")),
+            2 * k + 1,
+            "element, k = {k}"
+        );
+        assert_eq!(
+            copies(chain(k, ".ys[0][0] = 3")),
+            4 * k + 4,
+            "two levels, k = {k}"
+        );
         assert_eq!(copies(chain(k, ".n = 3")), 0, "field, k = {k}");
     }
 }
