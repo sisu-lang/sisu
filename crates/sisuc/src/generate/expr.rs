@@ -682,7 +682,21 @@ impl Gen<'_> {
     /// often as its fields name every type parameter, where each field is of its own type
     /// (`Gen::expr`).
     pub(crate) fn object(&mut self, ty: &Ty) -> Info {
+        self.object_in(ty, false)
+    }
+
+    /// `object`, where `nested` says that it is built inside the box of a pair of structs.
+    /// They hold each other (`Gen::struct_pair`). The box holds an `A` now and then, whose own `B`
+    /// is built here too, with a box of `None`.
+    fn object_in(&mut self, ty: &Ty, nested: bool) -> Info {
         let size = ty.floor();
+        let cycle = match ty {
+            Ty::Struct { id, .. } => self.scope.structs[*id]
+                .cycle
+                .as_ref()
+                .map(|c| (c.partner, c.link)),
+            _ => None,
+        };
         let fields = self.scope.fields_of(ty).to_vec();
         // A field of its own type holds at least what `Ty::least` says.
         let fits = fields.iter().all(|field| field.ty.least() <= field.cap);
@@ -712,6 +726,22 @@ impl Gen<'_> {
             }
             self.w.text(&format!("{name}: "));
             self.synth = infer;
+            if let Some((partner, link)) = cycle {
+                let partner = self.scope.struct_ty(partner);
+                if link == Some(f) {
+                    let filled = !nested && *cap > 0 && self.pick(2) == 0;
+                    parts.push(if filled {
+                        self.object_in(&partner, true)
+                    } else {
+                        self.none(&partner)
+                    });
+                    continue;
+                }
+                if nested && link.is_none() && f == 0 {
+                    parts.push(self.object_in(&partner, true));
+                    continue;
+                }
+            }
             parts.push(if infer || !plain {
                 self.expr(field, *cap)
             } else {

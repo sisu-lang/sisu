@@ -48,3 +48,20 @@ duplicate E0154
 #   type G<S> = [S.Named]
 #   fn main() {}
 duplicate E0156
+# The fixed seed 102 gives this pair. A block with a failed statement is the value of a `break`.
+# Then the `else` arm of the `if` gets E0043 at its last statement, a `let`, which has no value.
+# With the statement right, this program has no error.
+#   fn main() {
+#       let v = loop {
+#           if true {
+#               break {
+#                   print(missing)
+#                   true
+#               }
+#           } else {
+#               let a = 1
+#           }
+#       }
+#       print(v)
+#   }
+local E0043

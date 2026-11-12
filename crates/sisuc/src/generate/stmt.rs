@@ -829,7 +829,7 @@ impl Gen<'_> {
 
     /// The paths below the struct that the last step of `steps` names, whose field index it
     /// does not set yet, into `paths`.
-    fn field_paths(
+    pub(crate) fn field_paths(
         &self,
         root: usize,
         element: bool,

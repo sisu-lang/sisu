@@ -2206,16 +2206,20 @@ mod tests {
     }
 
     /// `program` end to end, all eight builds and every check: it passes and leaves no directory
-    /// behind. Seed 3830 has rewrites, a value site and a panic site that its run reaches.
+    /// behind. The first seed has rewrites, a value site and a panic site.
     #[test]
     fn program_should_pass_and_leave_no_directory_behind() {
         let tmp = Scratch::new();
-        let data = seed(3830);
-        let g = generate(&data);
-        assert!(
-            g.rewritten != g.program && panic_sites(&g) == 1 && g.known.len() > 1,
-            "seed 3830 should have rewrites, a value site and a panic site"
-        );
+        let mut found = None;
+        search_seeds(0, |n| {
+            let data = seed(n);
+            let g = generate(&data);
+            if g.rewritten != g.program && panic_sites(&g) == 1 && g.known.len() > 1 {
+                found = Some(data);
+            }
+            found.is_some()
+        });
+        let data = found.expect("some seed should have rewrites, a value site and a panic site");
         crate::on_compiler_stack(|| program_in(&data, &test_runtime(Allocator::Mimalloc), &tmp.0));
         let left = fs::read_dir(&tmp.0)
             .expect("the test's directory should be readable")
@@ -2223,23 +2227,38 @@ mod tests {
         assert_eq!(left, 0, "`program` should remove its directory");
     }
 
-    /// Seed 3830's one panic site is the last thing its O0 run prints, as the marker `item.rs`
-    /// writes. `judge_known` takes a run without that line for an earlier panic, so with it
-    /// the answer check judged this panic site.
+    /// The first seed with one panic site whose O0 run reaches it prints its marker last, as the
+    /// marker `item.rs` writes. `judge_known` takes a run without that line for an earlier panic,
+    /// so with it the answer check judged this panic site.
     #[test]
     fn a_seed_with_a_panic_site_should_print_its_marker_last() {
-        let g = generate(&seed(3830));
-        assert_eq!(panic_sites(&g), 1, "seed 3830 should have one panic site");
-        let marker = g
-            .known
-            .iter()
-            .find_map(|known| matches!(known.answer, Answer::Panic(_)).then_some(&known.marker))
-            .expect("seed 3830 should have a panic site");
-        let Run { exit, stdout, .. } = o0_run(&g);
+        let marker_of = |g: &Generated| {
+            g.known
+                .iter()
+                .find_map(|known| matches!(known.answer, Answer::Panic(_)).then_some(&known.marker))
+                .map(|marker| format!("@{marker} panics"))
+        };
+        let mut found = None;
+        search_seeds(0, |n| {
+            let g = generate(&seed(n));
+            if panic_sites(&g) == 1 {
+                let marker = marker_of(&g).expect("a panic site should have a marker");
+                let run = o0_run(&g);
+                if String::from_utf8_lossy(&run.stdout)
+                    .lines()
+                    .any(|l| l == marker)
+                {
+                    found = Some((g, marker, run));
+                }
+            }
+            found.is_some()
+        });
+        let (g, marker, Run { exit, stdout, .. }) =
+            found.expect("some seed's run should reach its panic site");
         assert_eq!(exit, Exit::Code(101), "{}", g.program);
         assert_eq!(
             String::from_utf8_lossy(&stdout).lines().last(),
-            Some(format!("@{marker} panics").as_str()),
+            Some(marker.as_str()),
             "{}",
             g.program
         );

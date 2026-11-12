@@ -440,6 +440,7 @@ impl Gen<'_> {
                     self.statement(|g| g.let_typed(want.ty.clone(), true));
                 }
             }
+            self.deep_element_local(callee);
             if placeable(&self.mut_wants(callee), &self.mut_places(), &[]) {
                 self.w.line();
                 self.cost.statement();
@@ -447,6 +448,34 @@ impl Gen<'_> {
             }
             self.swap_streams();
             self.fuel = fuel;
+        }
+    }
+
+    /// For a callee with a `mut` parameter of `i64`: a local of a struct that holds an array of
+    /// `i64` two structs deep. It comes if the program has such a struct and no local has the
+    /// array yet. So the call may name an element of it, as in `mut a.b.g[i]`.
+    fn deep_element_local(&mut self, callee: usize) {
+        let takes_int = (self.mut_wants(callee).iter()).any(|want| want.ty == Ty::I64);
+        let held = (self.mut_places().iter())
+            .any(|p| matches!(&p.kind, Kind::PathElement(path) if path.steps.len() >= 2));
+        if !takes_int || held {
+            return;
+        }
+        let deep = |g: &Self, id: usize| {
+            let mut paths = Vec::new();
+            g.field_paths(0, false, &mut vec![(id, 0)], &mut paths);
+            paths.iter().any(|path| {
+                path.steps.len() >= 2
+                    && matches!(&path.field(&g.scope).ty, Ty::Array(e) if *e.as_ref() == Ty::I64)
+            })
+        };
+        let found = (0..self.scope.structs.len())
+            .find(|&id| self.scope.structs[id].cycle.is_none() && deep(self, id));
+        if let Some(id) = found {
+            let ty = self.scope.struct_ty(id);
+            self.w.line();
+            self.cost.statement();
+            self.statement(|g| g.let_typed(ty, true));
         }
     }
 

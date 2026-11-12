@@ -631,6 +631,7 @@ impl Gen<'_> {
                     applied: applied.clone(),
                     inferable,
                     has_class,
+                    cycle: None,
                 });
                 Ty::Struct { id, size, applied }
             }

@@ -631,14 +631,14 @@ mod tests {
         false
     }
 
-    /// GIVEN the programs of the 64 seeds
+    /// GIVEN the programs of the first 64 seeds, and of more while a site is not found
     /// WHEN the generator records the literal sites
     /// THEN some literal mistake sits at an argument of a free function
     /// AND some sits at the tail of a function, each with its E0032 at the literal
     #[test]
     fn literal_mistakes_should_sit_at_a_free_function_argument_and_at_a_function_tail() {
         let (mut arguments, mut tails) = (0, 0);
-        for n in 0..coverage::SEEDS {
+        coverage::search_seeds(coverage::SEEDS, |n| {
             let g = generate(&coverage::seed(n));
             let tokens = tokens(&g.program);
             for m in g.mistakes.iter().filter(|m| m.kind == Kind::Literal) {
@@ -651,7 +651,8 @@ mod tests {
                 arguments += usize::from(argument);
                 tails += usize::from(tail);
             }
-        }
+            arguments > 0 && tails > 0
+        });
         assert!(
             arguments > 0,
             "no literal mistake at a free-function argument"

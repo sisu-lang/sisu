@@ -579,6 +579,16 @@ pub(crate) struct Struct {
     pub(crate) inferable: bool,
     /// Whether a value of it may hold a class object, which no write may store (decision 4).
     pub(crate) has_class: bool,
+    /// For a struct of a pair that hold each other (`Gen::struct_pair`), the pair.
+    pub(crate) cycle: Option<Cycle>,
+}
+
+/// The pair of structs `A` and `B` that hold each other: `A` holds a `B`, and `B` holds an `A?`.
+pub(crate) struct Cycle {
+    /// The other struct of the pair.
+    pub(crate) partner: usize,
+    /// For `B`, the index of its field that holds the `A?`, the box.
+    pub(crate) link: Option<usize>,
 }
 
 /// A variant of an enum.
