@@ -168,7 +168,7 @@ reports the code, and `site/programs/explanations/<code>.json`. After you edit a
 | [E0157](E0157.md) | error | bound that gives too many interfaces |
 | [E0158](E0158.md) | error | only classes conform to `AnyObject` |
 | [E0159](E0159.md) | error | operator on a type that has none |
-| [E0160](E0160.md) | error | enum payload that is too large |
+| [E0160](E0160.md) | error | enum payload or struct that is too large |
 | [E0161](E0161.md) | error | type alias that refers to itself |
 | [E0162](E0162.md) | error | type that holds too many distinct types |
 | [E0163](E0163.md) | error | generic items with too many instances |
@@ -183,6 +183,7 @@ reports the code, and `site/programs/explanations/<code>.json`. After you edit a
 | [E0172](E0172.md) | error | `else` block of a `let ... else` that can finish |
 | [E0173](E0173.md) | error | value of a `let ... else` that ends in `}` |
 | [E0174](E0174.md) | error | `let` pattern with no `else` |
+| [E0175](E0175.md) | error | `mut` on a field of a struct |
 | [W0001](W0001.md) | warning | unreachable code |
 | [W0002](W0002.md) | warning | variable that is never reassigned |
 | [W0003](W0003.md) | warning | `todo` left in the program |

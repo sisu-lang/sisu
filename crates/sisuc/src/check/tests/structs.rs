@@ -1,5 +1,5 @@
 //! Structs in the checker: the declarations, construction, field reads, plain-`self` methods and
-//! the place rules. Until structs lower, a program with a struct and no other error is E0083.
+//! the place rules.
 
 use std::fmt::Write as _;
 
@@ -37,38 +37,6 @@ fn words_should_report_their_code() {
     error_rows(&rows);
 }
 
-/// The codes of `src` until structs lower: `codes` and, when none of them is an error, the E0083
-/// of the stopgap at the first `struct` keyword, in the order of the positions.
-fn until_lowered(src: &str, mut codes: Vec<Wanted>) -> Vec<Wanted> {
-    if codes.iter().any(|(c, _)| c.severity() == Severity::Error) {
-        return codes;
-    }
-    let line = src
-        .lines()
-        .position(|l| l.starts_with("struct "))
-        .expect("a row that waits for the lowering should declare a struct");
-    codes.push((ReservedWord, (line + 1, 1)));
-    codes.sort_by_key(|(_, at)| *at);
-    codes
-}
-
-/// `codes_row` with the stopgap of `until_lowered`.
-fn lowered_row(row: &str, src: &str, codes: Vec<Wanted>) {
-    codes_row(row, src, &until_lowered(src, codes));
-}
-
-/// `error_rows` with the stopgap of `until_lowered` in each row.
-fn lowered_error_rows(rows: Vec<ErrorRow<'_>>) {
-    let rows: Vec<_> = rows
-        .into_iter()
-        .map(|(name, src, wanted)| {
-            let wanted = until_lowered(&src, wanted);
-            (name, src, wanted)
-        })
-        .collect();
-    error_rows(&rows);
-}
-
 /// The one diagnostic of `src`, which is of `code` at `pos`; a failure names `row`.
 fn only(row: &str, src: &str, code: Code, pos: (usize, usize)) -> Diagnostic {
     let (_, mut ds) = checked(src);
@@ -88,41 +56,6 @@ fn only_error(row: &str, src: &str, code: Code, pos: (usize, usize)) -> Diagnost
     let d = errors.remove(0);
     assert_eq!((d.code(), at(src, d.span())), (code, pos), "row `{row}`");
     d
-}
-
-/// GIVEN `struct P { x: i64 }` and no other error THEN the error is E0083 at the keyword. A use
-/// of the name adds no error. A program with another error has no E0083.
-#[test]
-fn struct_should_be_rejected_until_it_lowers() {
-    let rejected = vec![(ReservedWord, (1, 1))];
-    let rows = [
-        (
-            "a struct",
-            "struct P { x: i64 }\nfn main() {}".to_string(),
-            rejected.clone(),
-        ),
-        (
-            "a mut field",
-            "struct P { mut x: i64 }\nfn main() {}".to_string(),
-            rejected.clone(),
-        ),
-        (
-            "spaces after the keyword",
-            "struct   P { x: i64 }\nfn main() {}".to_string(),
-            rejected.clone(),
-        ),
-        (
-            "a use of the name",
-            "struct P { x: i64 }\nfn main() { let p: P = P(x: 1) }".to_string(),
-            rejected,
-        ),
-        (
-            "another error",
-            "struct P { x: i64 }\nfn main() {\n    let p = P(x: 1)\n    p.x = 2\n}".to_string(),
-            vec![(AssignToImmutable, (4, 5))],
-        ),
-    ];
-    error_rows(&rows);
 }
 
 /// The two structs of the write rows: `In` and `T`, which holds an `In`.
@@ -432,7 +365,7 @@ fn chain_write_on_a_struct_should_report_by_its_root() {
     );
     only_error("o?.c.push", &chain(o, "o?.c.push(1)"), MayBeNone, (l, 5));
     // A call or a write past a class object writes nothing in the struct.
-    lowered_error_rows(vec![
+    error_rows(&[
         ("o?.c?.push", chain(o, "o?.c?.push(1)"), vec![]),
         ("o?.e?.push", chain(o, "o?.e?.push(1)"), vec![]),
         ("o?.c?.n", chain(o, "o?.c?.n = 1"), vec![]),
@@ -517,7 +450,7 @@ fn main() {{
         ("f().cs[0].push", "f().cs[0].push(1)", vec![]),
     ];
     for (row, body, wanted) in rows {
-        lowered_row(row, &program(body), wanted);
+        codes_row(row, &program(body), &wanted);
     }
 }
 
@@ -588,7 +521,7 @@ fn g(o: i64?, t0: T, c: C, xs: [P]) {{
 fn main() {{}}"
         )
     };
-    lowered_error_rows(vec![
+    error_rows(&[
         (
             "t.xs[o ?? return].n",
             program("let mut t = t0\n    t.xs[o ?? return].n = 1"),
@@ -664,7 +597,7 @@ fn main() {{}}"
         program("d.p.n = 2"),
         vec![(AssignToImmutable, (21, 5))],
     ));
-    lowered_error_rows(rows);
+    error_rows(&rows);
 }
 
 /// GIVEN programs with no struct THEN each has the codes it has today. With a struct, a write
@@ -699,15 +632,15 @@ fn class_program_should_report_as_today() {
         codes_row(row, &program(body), &wanted);
     }
     let with_struct = |body: &str| format!("{}\nstruct S {{ c: C }}", program(body));
-    lowered_row(
+    codes_row(
         "let s",
         &with_struct("let s = S(c: C(n: 1))\n    s.c.n = 1"),
-        vec![],
+        &[],
     );
-    lowered_row(
+    codes_row(
         "let mut s",
         &with_struct("let mut s = S(c: C(n: 1))\n    s.c.n = 1"),
-        vec![(NeverReassigned, (13, 13))],
+        &[(NeverReassigned, (13, 13))],
     );
 }
 
@@ -717,16 +650,16 @@ fn class_program_should_report_as_today() {
 fn struct_write_should_keep_its_marks() {
     let decls = "class C {\n    mut n: i64\n    fn push(self, x: i64) {\n        print(x)\n    }\n}\nstruct P { n: i64 }\nstruct T { xs: [i64] }\nstruct S { c: C }\n";
     let program = |body: &str| format!("{decls}fn main() {{\n    {body}\n}}");
-    lowered_row("t.n", &program("let mut t = P(n: 1)\n    t.n = 1"), vec![]);
-    lowered_row(
+    codes_row("t.n", &program("let mut t = P(n: 1)\n    t.n = 1"), &[]);
+    codes_row(
         "t.xs.push",
         &program("let mut t = T(xs: [])\n    t.xs.push(1)"),
-        vec![],
+        &[],
     );
-    lowered_row(
+    codes_row(
         "t.c.push",
         &program("let mut t = S(c: C(n: 1))\n    t.c.push(1)"),
-        vec![(NeverReassigned, (11, 13))],
+        &[(NeverReassigned, (11, 13))],
     );
 }
 
@@ -783,17 +716,17 @@ fn plain_self_write_should_report_by_its_form() {
             "class C {{\n    mut n: i64\n}}\nstruct P {{\n    n: i64\n    xs: [i64]\n    c: C\n    fn m(self) {{\n        {body}\n    }}\n}}\nfn main() {{}}"
         )
     };
-    lowered_row(
+    codes_row(
         "push",
         &program("self.xs.push(1)"),
-        vec![(AssignToImmutable, (9, 9))],
+        &[(AssignToImmutable, (9, 9))],
     );
-    lowered_row(
+    codes_row(
         "+=",
         &program("self.n += 1"),
-        vec![(AssignToImmutable, (9, 9))],
+        &[(AssignToImmutable, (9, 9))],
     );
-    lowered_row("a class", &program("self.c.n = 2"), vec![]);
+    codes_row("a class", &program("self.c.n = 2"), &[]);
 }
 
 /// GIVEN a base that fails WHEN a struct path writes through it THEN the base's error is the only
@@ -803,32 +736,32 @@ fn broken_base_should_report_once() {
     let decls = "class Cn {\n    mut n: i64\n}\nclass A {\n    c: Cn\n}\nstruct P { n: i64 }\nstruct T { xs: [P]; n: i64 }\nfn f() -> P {\n    P(n: 1)\n}\n";
     let program = |body: &str| format!("{decls}fn main() {{\n    {body}\n}}");
     let l = 14;
-    lowered_row(
+    codes_row(
         "t.nope",
         &program("let t = T(xs: [], n: 1)\n    t.nope.n = 1"),
-        vec![(NoMember, (l, 7))],
+        &[(NoMember, (l, 7))],
     );
-    lowered_row(
+    codes_row(
         "t.xs[nope]",
         &program("let mut t = T(xs: [], n: 1)\n    t.xs[nope].n = 1"),
-        vec![(BindingNotFound, (l, 10))],
+        &[(BindingNotFound, (l, 10))],
     );
-    lowered_row(
+    codes_row(
         "t.xs[nope] +=",
         &program("let mut t = T(xs: [], n: 1)\n    t.xs[nope].n += 1"),
-        vec![(BindingNotFound, (l, 10))],
+        &[(BindingNotFound, (l, 10))],
     );
-    lowered_row(
+    codes_row(
         "f(\"x\")",
         &program("f(\"x\").n = 2"),
-        vec![(ArgumentCount, (13, 5))],
+        &[(ArgumentCount, (13, 5))],
     );
     let src = format!("{decls}const K: P = P(n: 1)\nfn main() {{\n    K.n = 1\n}}");
-    lowered_row("K.n", &src, vec![(ConstantType, (12, 10))]);
-    lowered_row(
+    codes_row("K.n", &src, &[(ConstantType, (12, 10))]);
+    codes_row(
         "a.c.n",
         &program("let a = A(c: Cn(n: 1))\n    a.c.n = 1"),
-        vec![],
+        &[],
     );
 }
 
@@ -838,20 +771,20 @@ fn broken_base_should_report_once() {
 fn struct_path_should_walk_each_step() {
     let decls = "class C {\n    mut n: i64\n    fn push(self, x: i64) {\n        print(x)\n    }\n}\nstruct S { c: C }\nstruct V { ys: [i64] }\nstruct W { i: V }\nstruct U { s: string }\n";
     let program = |body: &str| format!("{decls}fn main() {{\n    {body}\n}}");
-    lowered_row(
+    codes_row(
         "s.c.push",
         &program("let s = S(c: C(n: 1))\n    s.c.push(1)"),
-        vec![],
+        &[],
     );
-    lowered_row(
+    codes_row(
         "xs[0].i.ys[1]",
         &program("let mut xs = [W(i: V(ys: [1, 2]))]\n    xs[0].i.ys[1] = 2"),
-        vec![],
+        &[],
     );
-    lowered_row(
+    codes_row(
         "t.s +=",
         &program("let mut t = U(s: \"\")\n    t.s += \"x\""),
-        vec![],
+        &[],
     );
 }
 
@@ -939,7 +872,7 @@ fn struct_method_call_should_check_as_a_class_method_does() {
             vec![(MethodAsFunction, (7, 9))],
         ),
     ];
-    lowered_error_rows(rows.into());
+    error_rows(&rows);
 }
 
 /// GIVEN a struct method that is never called. WHEN it calls `push` on a field of `self`. THEN
@@ -970,7 +903,7 @@ fn struct_self_push_should_report_as_the_class_form() {
             vec![(AssignToImmutable, (13, 9))],
         ),
     ];
-    lowered_error_rows(rows.into());
+    error_rows(&rows);
 }
 
 /// GIVEN a path of `.xs[0]`, `.os[0]` or `.os[0]?` steps in a struct `T`, 10, 20 and 30 steps
@@ -1062,7 +995,7 @@ fn struct_alias_should_construct_its_struct() {
             vec![(CannotInfer, (4, 13))],
         ),
     ];
-    lowered_error_rows(rows.into());
+    error_rows(&rows);
 }
 
 /// GIVEN a struct `P`. WHEN `<` compares two of its values. THEN it is E0159, as for a class.
@@ -1257,7 +1190,7 @@ fn equality_should_be_e0159_until_it_lands() {
 /// GIVEN a struct that holds itself through an optional, an enum's variant or an enum's type
 /// argument. WHEN the program is checked. THEN it is E0083 at the struct's keyword until Task 5
 /// gives the box. An array ends the cycle, so `struct S { xs: [S] }` has no error. A class and
-/// a struct that hold each other with no way out are E0027, as two classes are.
+/// a struct that hold each other with no way out are E0027 at the struct, as for an enum.
 #[test]
 fn struct_on_a_cycle_should_be_rejected_until_task_5() {
     let rows = [
@@ -1284,7 +1217,7 @@ fn struct_on_a_cycle_should_be_rejected_until_task_5() {
         (
             "a class and a struct",
             "class C { s: S }\nstruct S { c: C }\nfn main() {}".to_string(),
-            vec![(NeverConstructed, (1, 7))],
+            vec![(NeverConstructed, (2, 8))],
         ),
     ];
     error_rows(&rows);
@@ -1295,6 +1228,7 @@ fn struct_on_a_cycle_should_be_rejected_until_task_5() {
 /// reads `t` is a read, so it has no W0014.
 #[test]
 fn struct_write_should_keep_its_w0014() {
+    judge_unused();
     codes_row(
         "a field write",
         "struct P { n: i64 }\nfn main() {\n    let mut t = P(n: 1)\n    t.n = 1\n}",

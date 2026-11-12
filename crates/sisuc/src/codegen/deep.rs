@@ -20,7 +20,7 @@ use inkwell::{AddressSpace, GlobalVisibility, IntPredicate};
 use super::rc::param;
 use super::{Codegen, POSITIONED};
 use crate::conformance::ensure_stack;
-use crate::tir::{ClassId, EnumId, Type, TypeKind};
+use crate::tir::{ClassId, EnumId, StructId, Type, TypeKind};
 
 /// The drop depth at which a counting drop function stops recursing and defers its block. The
 /// depth counts frames. The value keeps the stack of a drop at the limit, plus the largest
@@ -52,6 +52,8 @@ pub(super) struct DropMemo {
     weights: FxHashMap<Type, u32>,
     /// The frames that the release of an enum opens, for each component under its first member.
     enum_frames: FxHashMap<EnumId, u32>,
+    /// The frames that the release of a struct opens.
+    struct_frames: FxHashMap<StructId, u32>,
     /// The keys of the drop weights that are being worked out. A walk that reaches its own key
     /// would never end, so it is an error.
     weighing: FxHashSet<Type>,
@@ -78,7 +80,7 @@ impl Codegen<'_, '_> {
     pub(super) fn recursing(&self, holder: Option<ClassId>, ty: Type) -> bool {
         let enums = &self.program.enums;
         let ty = ty.without_optionals();
-        if !ty.is_counted(enums) {
+        if !ty.is_counted(enums, &self.program.structs) {
             return false;
         }
         match ty.kind() {
@@ -94,6 +96,7 @@ impl Codegen<'_, '_> {
                 ensure_stack(|| self.counts(ty))
             }
             TypeKind::Enum(id, _) => enums[id.0].reaches,
+            TypeKind::Struct(id, _) => self.program.structs[id.0].reaches,
             _ => true,
         }
     }
@@ -203,7 +206,7 @@ impl Codegen<'_, '_> {
     /// counts as one. Too many frames only make a drop defer sooner.
     fn part_frames(&self, ty: Type) -> u32 {
         let ty = ty.without_optionals();
-        if !ty.is_counted(&self.program.enums) {
+        if !ty.is_counted(&self.program.enums, &self.program.structs) {
             return 0;
         }
         // Each walk of a chain of types passes here, so this is the place for the guard.
@@ -221,6 +224,7 @@ impl Codegen<'_, '_> {
                 }
             }
             TypeKind::Enum(id, _) => self.enum_frames(id),
+            TypeKind::Struct(id, _) => self.struct_frames(id),
             // `release` calls a drop function through the table. It counts the next frames if
             // it counts. If it does not, what it holds is bounded and ends the chain: those
             // frames come once, at the end, and the margin of `DEPTH_LIMIT` holds them.
@@ -275,6 +279,25 @@ impl Codegen<'_, '_> {
         let mut memo = self.deep.borrow_mut();
         memo.framing.remove(&key);
         memo.enum_frames.insert(key, frames);
+        frames
+    }
+
+    /// The frames that `@sisu_rc.release.<S>` opens before the next counting drop function
+    /// starts: its own frame, then the most frames of a field. The checker puts no struct on a
+    /// cycle (E0083), so the walk ends.
+    fn struct_frames(&self, id: StructId) -> u32 {
+        if let Some(&frames) = self.deep.borrow().struct_frames.get(&id) {
+            return frames;
+        }
+        let parts = (self.program.structs[id.0].fields.iter())
+            .map(|field| {
+                count_read();
+                self.part_frames(field.ty)
+            })
+            .max()
+            .unwrap_or(0);
+        let frames = 1 + parts;
+        self.deep.borrow_mut().struct_frames.insert(id, frames);
         frames
     }
 }

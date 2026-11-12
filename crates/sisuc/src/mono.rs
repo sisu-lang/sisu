@@ -24,7 +24,7 @@ use crate::source::Span;
 use crate::tir::{
     Align, AnyLayout, AnyTable, Arm, Block, ChoicePlace, Class, ClassId, CompareOp, Conformance,
     Conformances, Enum, EnumId, Expr, ExprKind, Field, FuncId, Function, InterfaceId, Local, Place,
-    Program, Stmt, Type, TypeArgs, TypeKind, head_of, layout_enums,
+    Program, Stmt, Type, TypeArgs, TypeKind, head_of, layout_types,
 };
 use crate::types::{Head, write_args, write_method, write_type};
 
@@ -116,8 +116,8 @@ fn prelude_method_of_outside_type(program: &Program) -> bool {
             Some(Head::Enum(id)) => id.0 >= prelude.enums,
             // `head_of` gives only a class or an enum, and `Conformances::add` admits only those
             // targets. `false` leaves the fast path.
-            Some(Head::Interface(_) | Head::Assoc(..)) | None => false,
-            Some(Head::Struct(_)) => panic!("a struct lands in Task 3"),
+            // The prelude declares no struct.
+            Some(Head::Interface(_) | Head::Assoc(..) | Head::Struct(_)) | None => false,
         };
         !in_prelude && conformance.methods.iter().any(|f| f.0 >= prelude.funcs)
     })
@@ -239,6 +239,8 @@ impl Mono {
             functions: Vec::new(),
             out: Program {
                 interfaces: program.interfaces,
+                // A struct is never generic, so each keeps its id.
+                structs: program.structs,
                 lang: program.lang,
                 ..Program::default()
             },
@@ -313,14 +315,14 @@ impl Mono {
             }
             return Err(vec![self.too_many_instances()]);
         }
-        layout_enums(&mut self.out.enums);
+        layout_types(&mut self.out.enums, &mut self.out.structs);
         debug_assert!(
-            payload_limit::measure(&self.out.enums)
+            payload_limit::measure(&self.out.enums, &self.out.structs)
                 .iter()
                 .all(Option::is_some),
-            "every enum should have a size bound after the layout: its types are final and the layout boxes each cycle"
+            "every enum and struct should have a size bound after the layout: its types are final and the layout boxes each cycle"
         );
-        let oversized = payload_limit::diagnostics(&self.out.enums, &self.uses);
+        let oversized = payload_limit::diagnostics(&self.out.enums, &self.out.structs, &self.uses);
         if !oversized.is_empty() {
             return Err(oversized);
         }
@@ -350,6 +352,14 @@ impl Mono {
                 payload.ty = self.output(payload.ty);
             }
             self.out.enums[i].variants = variants;
+        }
+        for i in 0..self.out.structs.len() {
+            self.note_item(self.out.structs[i].span);
+            let mut fields = mem::take(&mut self.out.structs[i].fields);
+            for payload in &mut fields {
+                payload.ty = self.output(payload.ty);
+            }
+            self.out.structs[i].fields = fields;
         }
         for i in 0..self.functions.len() {
             let mut f = self.functions[i]
@@ -568,7 +578,6 @@ impl Mono {
         // An optional or an array of an instance has the instance in its type. The entry of the
         // inner type, which `output` has just made, says which: no walk down the type.
         let (done, held) = ensure_stack(|| match ty.kind() {
-            TypeKind::Struct(..) => panic!("a struct lands in Task 3"),
             TypeKind::Class(id, args) => (
                 Type::intern(TypeKind::Class(self.class(id, args), TypeArgs::NONE)),
                 None,
@@ -605,7 +614,9 @@ impl Mono {
             | TypeKind::String
             | TypeKind::Unit
             | TypeKind::Never
-            | TypeKind::Assoc(..) => (ty, None),
+            | TypeKind::Assoc(..)
+            // A struct is never generic, so it keeps its id.
+            | TypeKind::Struct(..) => (ty, None),
         });
         self.types.insert(ty, (done, held));
         done
@@ -784,7 +795,7 @@ impl Mono {
         match head {
             Head::Assoc(..) => unreachable!("mono should replace every associated type"),
             Head::Interface(id) => &self.out.interfaces[id.0].name,
-            Head::Struct(_) => panic!("a struct lands in Task 3"),
+            Head::Struct(id) => &self.out.structs[id.0].name,
             Head::Class(id) => match &self.class_decls[id.0] {
                 Some(decl) => &decl.name,
                 None => &self.out.classes[self.class_ids[&(id, TypeArgs::NONE)].0].name,
@@ -950,8 +961,7 @@ impl Mono {
                 self.place(base, args);
                 self.expr(index, args);
             }
-            Place::Some(base) => self.place(base, args),
-            Place::StructField { .. } => panic!("a struct lands in Task 3"),
+            Place::Some(base) | Place::StructField { base, .. } => self.place(base, args),
         }
     }
 
@@ -1075,7 +1085,6 @@ impl Mono {
             | K::Break { value: None, .. }
             | K::Continue { .. }
             | K::Return(None) => {}
-            K::Struct { .. } | K::StructField { .. } => panic!("a struct lands in Task 3"),
             K::Call {
                 func,
                 types,
@@ -1186,6 +1195,7 @@ impl Mono {
                 self.exprs(operands, args);
             }
             K::ArrayLit(operands)
+            | K::Struct { args: operands, .. }
             | K::Math { operands, .. }
             | K::Interpolate {
                 parts: operands, ..
@@ -1193,6 +1203,7 @@ impl Mono {
             | K::Compare { operands, .. } => self.exprs(operands, args),
             K::DynCall { .. } => unreachable!("the checker should make no call through a table"),
             K::Field { base: operand, .. }
+            | K::StructField { base: operand, .. }
             | K::ToAny(operand)
             | K::Wrap(operand)
             | K::Convert(operand)
@@ -1486,8 +1497,9 @@ fn assert_concrete(program: &Program) {
 fn concrete(ty: Type) -> bool {
     match ty.kind() {
         TypeKind::Param(..) | TypeKind::Assoc(..) => false,
-        TypeKind::Struct(..) => panic!("a struct lands in Task 3"),
-        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => args == TypeArgs::NONE,
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Struct(_, args) => {
+            args == TypeArgs::NONE
+        }
         TypeKind::Any(_, args) => args.get().iter().all(|&arg| concrete(arg)),
         TypeKind::Array(inner) | TypeKind::Optional(inner) => concrete(inner),
         TypeKind::I64

@@ -64,8 +64,11 @@ impl ArrayLayout<'_> {
 
     /// The most elements a block of this layout can have: the header and that many elements
     /// are `byte_limit` bytes at most. A block that has this many elements cannot take another.
+    /// An element of no bytes, such as an empty struct, is bound only by the `i64` length.
     pub(super) fn largest(&self) -> u64 {
-        (self.byte_limit() - self.offset) / self.size
+        (self.byte_limit() - self.offset)
+            .checked_div(self.size)
+            .unwrap_or(i64::MAX.cast_unsigned())
     }
 }
 
@@ -173,6 +176,12 @@ impl<'ctx> Codegen<'ctx, '_> {
         ty.is_struct_type() && self.target_data.get_abi_size(&ty) > LARGEST_LLVM_VALUE
     }
 
+    /// Whether a value of `ty` has no bytes, as an empty struct has. A load or a store of it
+    /// touches no memory, so none is emitted: `ASan` reports one at the end of a block.
+    pub(super) fn is_empty(&self, ty: BasicTypeEnum<'ctx>) -> bool {
+        self.target_data.get_abi_size(&ty) == 0
+    }
+
     /// The value of type `ty` that stays at `place`, which nothing writes while the value is in
     /// use.
     pub(super) fn in_memory(
@@ -203,6 +212,9 @@ impl<'ctx> Codegen<'ctx, '_> {
         if self.by_memory(ty) {
             return self.in_memory(place, ty);
         }
+        if self.is_empty(ty) {
+            return ty.const_zero();
+        }
         self.builder.build_load(ty, place, name).expect(POSITIONED)
     }
 
@@ -218,6 +230,9 @@ impl<'ctx> Codegen<'ctx, '_> {
             let slot = self.entry_alloca(ty, name);
             self.copy_memory(slot, place, ty);
             return self.in_memory(slot, ty);
+        }
+        if self.is_empty(ty) {
+            return ty.const_zero();
         }
         self.builder.build_load(ty, place, name).expect(POSITIONED)
     }
@@ -279,7 +294,8 @@ impl<'ctx> Codegen<'ctx, '_> {
             TypeKind::Unit | TypeKind::Never => None,
             // An object is a pointer to its block.
             TypeKind::Class(..) => Some(self.context.ptr_type(AddressSpace::default()).into()),
-            TypeKind::Struct(..) => panic!("a struct lands in Task 3"),
+            // A struct holds its fields inline.
+            TypeKind::Struct(id, _) => Some(self.structs[id.0].into()),
             // An array or a string is three words: its block, its data and its length.
             TypeKind::String | TypeKind::Array(_) => Some(self.value_type().into()),
             TypeKind::Enum(id, _) => Some(self.enum_layout(id).ty),
@@ -748,6 +764,9 @@ impl<'ctx> Codegen<'ctx, '_> {
         name: &str,
         tag: MetadataValue<'ctx>,
     ) -> BasicValueEnum<'ctx> {
+        if self.is_empty(ty) {
+            return ty.const_zero();
+        }
         let value = self.builder.build_load(ty, ptr, name).expect(POSITIONED);
         let load = value
             .as_instruction_value()
@@ -764,7 +783,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         value: BasicValueEnum<'ctx>,
         tag: MetadataValue<'ctx>,
     ) {
-        if self.memory_type(value).is_some() {
+        if self.memory_type(value).is_some() || self.is_empty(value.get_type()) {
             self.store(ptr, value);
             return;
         }
@@ -1102,10 +1121,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         }
         match tag {
             Some(tag) => self.load_tagged(llvm_ty, place, name, tag),
-            None => self
-                .builder
-                .build_load(llvm_ty, place, name)
-                .expect(POSITIONED),
+            None => self.value_at(llvm_ty, place, name),
         }
     }
 }

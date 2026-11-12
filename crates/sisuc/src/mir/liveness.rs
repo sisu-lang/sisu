@@ -249,6 +249,7 @@ fn rvalue(value: &Rvalue, read: &mut impl FnMut(LocalId)) {
         Rvalue::Call { args, .. }
         | Rvalue::DynCall { args, .. }
         | Rvalue::New { args, .. }
+        | Rvalue::Struct { args, .. }
         | Rvalue::ArrayLit(args)
         | Rvalue::Interpolate { parts: args, .. }
         | Rvalue::Math { operands: args, .. } => {

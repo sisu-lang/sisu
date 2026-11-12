@@ -36,7 +36,7 @@ use super::layout::{HeapBlock, Niche, Storage, next_niche, three_words};
 use super::rc::{Helper, param};
 use super::{Codegen, POSITIONED, enum_of};
 use crate::mir::{Place, Projection};
-use crate::tir::{Enum, EnumId, LocalId, Payload, Type, TypeArgs, TypeKind};
+use crate::tir::{Enum, EnumId, Inline, LocalId, Payload, Type, TypeArgs, TypeKind, held_inline};
 use rustc_hash::FxHashMap;
 
 /// An enum's LLVM types.
@@ -103,7 +103,8 @@ pub(super) fn tag_bits(count: usize) -> u32 {
 
 /// The enum a boxed field holds: its type is `F` or `F?`.
 pub(super) fn boxed_enum(ty: Type) -> EnumId {
-    ty.inline_enum()
+    ty.inline_type()
+        .and_then(Inline::enum_id)
         .expect("the checker should box only a field of an enum type or its optional")
 }
 
@@ -156,15 +157,6 @@ pub(super) fn components(enums: &[Enum]) -> Vec<Option<Component>> {
         .collect()
 }
 
-/// The enums `e` holds inline: each unboxed payload field of an enum type or its optional.
-fn held_inline(e: &Enum) -> impl Iterator<Item = EnumId> + '_ {
-    e.variants
-        .iter()
-        .flat_map(|variant| &variant.fields)
-        .filter(|field| !field.boxed)
-        .filter_map(|field| field.ty.inline_enum())
-}
-
 impl<'ctx> Codegen<'ctx, '_> {
     pub(super) fn enum_layout(&self, id: EnumId) -> &EnumLayout<'ctx> {
         &self.enums[id.0]
@@ -188,13 +180,13 @@ impl<'ctx> Codegen<'ctx, '_> {
         component.index
     }
 
-    /// Builds every enum's layout. First it names each enum's type and its payload structs, so
-    /// that a payload can name any enum. An enum with no field gets its tag integer instead. Then
-    /// it gives each enum its shape and niche, its payloads' bodies and its body. These need the
-    /// layouts of the enums it holds inline. Thus an enum held inline is laid out before its
-    /// holder, in post-order over the inline fields, with an explicit stack.
-    /// `tir::layout_enums` boxes a field on every cycle, so the inline fields form no cycle and
-    /// the walk ends.
+    /// Builds every enum's layout and every struct's type. First it names each enum's type and
+    /// its payload structs, and each struct's type, so that a field can name any of them. An enum
+    /// with no field gets its tag integer instead. Then it gives each enum its shape and niche,
+    /// its payloads' bodies and its body, and each struct its body. These need the layouts of the
+    /// types it holds inline. Thus a type held inline is laid out before its holder, in
+    /// post-order over the inline fields, with an explicit stack. `tir::layout_types` boxes a
+    /// field on every cycle, so the inline fields form no cycle and the walk ends.
     pub(super) fn lay_out_enums(&mut self) {
         let program = self.program;
         let context = self.context;
@@ -234,36 +226,57 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.target_data.get_abi_size(&ptr_type) <= self.target_data.get_abi_size(&i64_type),
             "a pointer should fit the 8-byte count word that links a box into a pending list"
         );
-        let mut done = vec![false; program.enums.len()];
-        // Whether `(id, true)` is on the stack: an enum that waits for the enums it holds.
-        let mut waiting = vec![false; program.enums.len()];
-        for root in 0..program.enums.len() {
-            // `(id, true)` once the enums `id` holds inline are queued before it.
+        self.structs = (program.structs.iter())
+            .map(|s| context.opaque_struct_type(&format!("sisu.{}", s.name)))
+            .collect();
+        let nodes = program.enums.len() + program.structs.len();
+        let mut done = vec![false; nodes];
+        // Whether `(node, true)` is on the stack: a type that waits for the types it holds.
+        let mut waiting = vec![false; nodes];
+        for root in 0..nodes {
+            // `(node, true)` once the types `node` holds inline are queued before it.
             let mut stack = vec![(root, false)];
-            while let Some((id, held_queued)) = stack.pop() {
-                if done[id] {
+            while let Some((node, held_queued)) = stack.pop() {
+                if done[node] {
                     continue;
                 }
                 if held_queued {
-                    self.lay_out_enum(id);
-                    done[id] = true;
-                    waiting[id] = false;
+                    match node.checked_sub(program.enums.len()) {
+                        None => self.lay_out_enum(node),
+                        Some(id) => self.lay_out_struct(id),
+                    }
+                    done[node] = true;
+                    waiting[node] = false;
                     continue;
                 }
                 assert!(
-                    !waiting[id],
-                    "tir::layout_enums should box a field on every cycle of inline fields, \
-                     but enum {} holds itself inline",
-                    program.enums[id].name
+                    !waiting[node],
+                    "tir::layout_types should box a field on every cycle of inline fields, \
+                     but node {node} holds itself inline"
                 );
-                waiting[id] = true;
-                stack.push((id, true));
-                stack.extend(held_inline(&program.enums[id]).map(|held| (held.0, false)));
+                waiting[node] = true;
+                stack.push((node, true));
+                stack.extend(
+                    held_inline(&program.enums, &program.structs, node).map(|held| (held, false)),
+                );
             }
         }
         for layout in &self.enums {
             layout.boxed.set_body(&[i64_type.into(), layout.ty], false);
         }
+    }
+
+    /// Gives struct `id`, whose inline-held types are laid out, its body: its fields' types, in
+    /// declaration order.
+    fn lay_out_struct(&self, id: usize) {
+        let fields: Vec<_> = (self.program.structs[id].fields.iter())
+            .map(|field| {
+                self.llvm_type(field.ty).expect(
+                    "the checker should give every struct field a value type, never `unit` or `never`",
+                )
+            })
+            .collect();
+        self.structs[id].set_body(&fields, false);
     }
 
     /// Lays out enum `id`, whose inline-held enums are laid out. An `Option`-shaped enum gets
@@ -809,7 +822,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         }
     }
 
-    /// A scratch slot holding the enum `value`, for a helper that takes its address.
+    /// A scratch slot holding `value`, an enum or a struct, for a helper that takes its address.
     pub(super) fn enum_slot(&self, value: BasicValueEnum<'ctx>) -> PointerValue<'ctx> {
         if self.memory_type(value).is_some() {
             return value.into_pointer_value();
@@ -831,7 +844,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// under any number of `?`s.
     pub(super) fn inline_link(&self, id: EnumId, payload: &Payload) -> Option<EnumId> {
         let enums = &self.program.enums;
-        (payload.ty.inline_enum())
+        (payload.ty.inline_type().and_then(Inline::enum_id))
             .filter(|g| !payload.boxed && enums[g.0].cycle == enums[id.0].cycle)
     }
 
@@ -865,7 +878,10 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// Starts a helper that returns nothing: returns its first parameter, the value's address,
     /// and the block that returns, and leaves the builder in the entry block.
-    fn enum_entry(&self, function: FunctionValue<'ctx>) -> (PointerValue<'ctx>, BasicBlock<'ctx>) {
+    pub(super) fn enum_entry(
+        &self,
+        function: FunctionValue<'ctx>,
+    ) -> (PointerValue<'ctx>, BasicBlock<'ctx>) {
         let entry = self.context.append_basic_block(function, "entry");
         let done = self.context.append_basic_block(function, "done");
         self.builder.position_at_end(done);
@@ -1387,7 +1403,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     ) -> (EnumId, PointerValue<'ctx>, PointerValue<'ctx>) {
         let payload = &self.program.enums[id.0].variants[variant].fields[field];
         let ty = payload.ty;
-        let inner = (ty.inline_enum()).expect("a link should be of an enum type or its optional");
+        let inner = (ty.inline_type().and_then(Inline::enum_id))
+            .expect("a link should be of an enum type or its optional");
         if payload.boxed {
             let (ty, box_a, box_b) = match nested(ty) {
                 None => (
@@ -1978,7 +1995,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             id,
             self.load_tag(id, value),
             done,
-            |payload| payload.boxed || payload.ty.is_counted(enums),
+            |payload| payload.boxed || payload.ty.is_counted(enums, &self.program.structs),
             each,
         );
     }

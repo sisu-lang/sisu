@@ -490,7 +490,7 @@ fn enum_layouts(src: &str) -> Vec<Compared> {
     let (program, diagnostics) = crate::check::check(&parsed, &prelude, src, &[]);
     let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
     let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
-    let measured = payload_limit::measure(&program.enums);
+    let measured = payload_limit::measure(&program.enums, &program.structs);
     let mir = mir::build(&program);
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
     let module = compile(
@@ -5743,11 +5743,11 @@ fn dbg_should_retain_only_a_mut_field_whose_helper_may_run_a_written_method() {
     assert!(!body.contains("@sisu_rc."), "{body}");
 }
 
-/// `tir::layout_enums` boxes a field on every cycle, so the checker cannot give codegen an
+/// `tir::layout_types` boxes a field on every cycle, so the checker cannot give codegen an
 /// enum that holds itself inline. This test unboxes the one field of a recursive enum, so the
 /// walk of `lay_out_enums` must stop on the cycle and not loop.
 #[test]
-#[should_panic(expected = "tir::layout_enums should box a field on every cycle")]
+#[should_panic(expected = "tir::layout_types should box a field on every cycle")]
 fn lay_out_enums_should_panic_on_an_enum_that_holds_itself_inline() {
     let src = "enum L {\n    End\n    A(L)\n}\nfn main() {\n    let _ = L.A(L.End)\n}";
     let program = parse_ok(src);

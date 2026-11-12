@@ -803,6 +803,8 @@ struct Checker<'src> {
     /// The enums as `tir` holds them, with their boxes and countedness; bodies are checked
     /// after they are lowered.
     lowered_enums: Vec<tir::Enum>,
+    /// The structs, lowered with the enums.
+    lowered_structs: Vec<tir::Struct>,
     /// While a field's or payload's type resolves, the class and enum types in it and where each
     /// is written; `None` otherwise.
     written: Option<Vec<(Type, Span)>>,
@@ -1147,10 +1149,6 @@ fn parser_marked(program: &ast::Program, items: &[&ast::Item]) -> bool {
 /// it: `front_end` takes one that does for an internal error. `source` is the user's text, and
 /// `prelude` holds the prelude's. The prelude's `Option` is no item here: it defines the optional
 /// type, which has no enum.
-#[expect(
-    clippy::too_many_lines,
-    reason = "the passes run in order, and the order is the design"
-)]
 // `scripts/scaling.py` reads this function's instruction count.
 #[inline(never)]
 pub(crate) fn check<'src>(
@@ -1168,8 +1166,8 @@ pub(crate) fn check<'src>(
         .collect();
     let declared = checker.declare_items(&items, program.items.len(), &program.broken);
     checker.fold_constants(&items);
-    checker.lowered_enums = checker.lower_enums();
-    for d in payload_limit::diagnostics(&checker.lowered_enums, &[]) {
+    (checker.lowered_enums, checker.lowered_structs) = checker.lower_types();
+    for d in payload_limit::diagnostics(&checker.lowered_enums, &checker.lowered_structs, &[]) {
         checker.diagnostics.error(d);
     }
     checker.holds_table = checker.holds_table();
@@ -1182,7 +1180,6 @@ pub(crate) fn check<'src>(
     checker.instantiation_cycles(&functions, &unbuilt);
     checker.report_loops();
     let classes = checker.classes.iter().map(lower_class).collect();
-    let structs = checker.structs.iter().map(structs::lower_struct).collect();
     let broken = parser_marked(program, &items);
     debug_assert!(
         checker.diagnostics.promises_kept(broken),
@@ -1219,18 +1216,6 @@ pub(crate) fn check<'src>(
         })
         .collect();
     diagnostics.extend(warnings);
-    // A stopgap until structs lower: a struct that the checker takes must not reach the mir.
-    let erred = |ds: &[Diagnostic]| ds.iter().any(|d| d.severity() == Severity::Error);
-    if !erred(&diagnostics)
-        && !erred(parsed)
-        && let Some(at) = program.items.iter().find_map(|item| match item {
-            ast::Item::Struct(s) => Some(s.keyword),
-            _ => None,
-        })
-    {
-        diagnostics.push(DiagnosticKind::ReservedWord { word: "struct", at }.into());
-    }
-    diagnostics.sort_by_key(order);
     let failed = diagnostics.iter().any(|d| d.severity() == Severity::Error);
     // A use in a failed expression may not be recorded, so an error stops the pass. Only the
     // parser sees an item that fails to parse.
@@ -1241,16 +1226,15 @@ pub(crate) fn check<'src>(
     }
     diagnostics.sort_by_key(order);
     let interfaces = checker.lowered_interfaces();
-    let enums = checker.lowered_enums;
+    let (enums, structs) = (checker.lowered_enums, checker.lowered_structs);
     let (instantiates, prelude, lang) = (checker.instantiates, checker.prelude, checker.lang);
     let (conformances, choice_ats) = (checker.conformances, checker.choice_ats);
     let program = functions
         .into_iter()
         .collect::<Option<_>>()
         .zip(classes)
-        .zip(structs)
         .filter(|_| !failed)
-        .map(|((functions, classes), structs)| tir::Program {
+        .map(|(functions, classes)| tir::Program {
             classes,
             structs,
             enums,
@@ -1437,6 +1421,7 @@ impl<'src> Checker<'src> {
             holds_assoc: false,
             failed_block: None,
             lowered_enums: Vec::new(),
+            lowered_structs: Vec::new(),
             spellings: FxHashMap::default(),
             written: None,
             const_infos: Vec::new(),
@@ -1507,6 +1492,7 @@ impl Checker<'_> {
         self.lang = self.language_interfaces();
         self.interface_signatures(items);
         let declared = self.collect_signatures(items);
+        self.reject_struct_cycles(items);
         // The first queries for a generated conformance come before the bodies, in
         // `conformances`, so the enums that a query must not expand are known first: those that
         // grow, and those no value can be built of. Each has its own error, which stands alone.
@@ -1514,7 +1500,8 @@ impl Checker<'_> {
         // types are recorded, which a growth through an associated type needs.
         let cyclic = self.never_constructed();
         self.unbuilt = self.never_built(&cyclic);
-        self.marked = self.unbuilt[self.classes.len()..].to_vec();
+        let enums = self.classes.len()..self.classes.len() + self.enums.len();
+        self.marked = self.unbuilt[enums].to_vec();
         self.growing_classes = vec![false; self.classes.len()];
         self.read_declared_bounds();
         self.conformances(items);

@@ -26,7 +26,8 @@ fn main() {
     let h = Holder(kept: None)
     let mut total = 0
     for i in 0..10 {
-        let b = Bag(c: C(n: i), xs: [i], s: "s" + "{i}", d: i, e: E.A(s: "e" + "{i}"))
+        let e = if i == 5 { E.B } else { E.A(s: "e" + "{i}") }
+        let b = Bag(c: C(n: i), xs: [i], s: "s" + "{i}", d: i, e: e)
         if i % 2 == 0 {
             keep(b, h)
         } else if i % 3 == 0 {
@@ -36,6 +37,6 @@ fn main() {
         total += i
     }
     print(total)                     // 57: 0 + 1 + ... + 9, and 3 + 9 from `pass`
-    print(h.kept?.c.n ?? 0)          // 8: the last `keep` was at 8
+    print(h.kept?.c?.n ?? 0)         // 8: the last `keep` was at 8
     print(h.kept?.s ?? "")           // s8
 }

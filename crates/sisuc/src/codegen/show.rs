@@ -42,7 +42,9 @@ use super::rc::{Helper, Mode, param};
 use super::{Codegen, POSITIONED, zeroext};
 use crate::conformance::{calls_written, holds_class, prints_by_helper};
 use crate::source::Span;
-use crate::tir::{Align, ClassId, EnumId, Format, FuncId, Pad, Stream, Type, TypeArgs, TypeKind};
+use crate::tir::{
+    Align, ClassId, EnumId, Format, FuncId, Inline, Pad, Stream, Type, TypeArgs, TypeKind,
+};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
@@ -507,7 +509,9 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.show_text("sisu_show_str", sink, &format!("{}: ", field.name));
             let value = self.load_value(field.ty, self.field_ptr(id, object, index));
             let snapshot = field.mutable
-                && field.ty.is_counted(&self.program.enums)
+                && field
+                    .ty
+                    .is_counted(&self.program.enums, &self.program.structs)
                 && self.calls_display(field.ty);
             if snapshot {
                 self.retain(value, field.ty);
@@ -940,7 +944,8 @@ impl<'ctx> Codegen<'ctx, '_> {
         let payload = &self.program.enums[id.0].variants[variant].fields[field];
         let ty = payload.ty;
         let inner = ty
-            .inline_enum()
+            .inline_type()
+            .and_then(Inline::enum_id)
             .expect("a link should be of an enum type or its optional");
         let linked = if payload.boxed {
             // A boxed `F` with k `?`s is k - 1 flags around a box pointer; a clear flag at layer

@@ -34,7 +34,6 @@ use self::wavelet::Wavelet;
 use super::{
     BlockId, Const, Function, LocalId, Operand, Place, Projection, Rvalue, Statement, Terminator,
 };
-use crate::tir::TypeKind;
 
 /// The first point where a function breaks a rule, and the local that breaks it.
 #[derive(Debug, PartialEq, Eq)]
@@ -384,6 +383,7 @@ impl Clobbers {
                         | Rvalue::Borrow(_)
                         | Rvalue::Unwrap(_)
                         | Rvalue::New { .. }
+                        | Rvalue::Struct { .. }
                         | Rvalue::Variant { .. }
                         | Rvalue::ArrayLit(_)
                         | Rvalue::ArrayFill { .. }
@@ -754,8 +754,9 @@ struct Event {
     block: usize,
     at: usize,
     effect: Effect,
-    /// A write whose path starts with `Some`: into the value an optional holds.
-    through_some: bool,
+    /// A write whose path goes through a field of a class, from the local, its optional or a
+    /// struct path: into an object, which a borrow and its root name alike.
+    into_object: bool,
 }
 
 /// Calls `f` with each local `stmt` mentions, its effect and the place it is the root of. With
@@ -831,6 +832,7 @@ fn borrowed_place(value: &Rvalue) -> Option<&Place> {
         | Rvalue::Unwrap(_)
         | Rvalue::Call { .. }
         | Rvalue::New { .. }
+        | Rvalue::Struct { .. }
         | Rvalue::Variant { .. }
         | Rvalue::ArrayLit(_)
         | Rvalue::ArrayFill { .. }
@@ -923,7 +925,7 @@ fn rvalue<'a>(
                 f(*token, Effect::Reuse, None);
             }
         }
-        Rvalue::New { args, .. } | Rvalue::ArrayLit(args) => {
+        Rvalue::New { args, .. } | Rvalue::Struct { args, .. } | Rvalue::ArrayLit(args) => {
             for op in args {
                 consumed(op, lowered, f);
             }
@@ -1201,7 +1203,7 @@ fn mentions(function: &Function, tree: &Tree) -> Result<Vec<Vec<Event>>, Violati
         let mut note = |at: usize,
                         local: LocalId,
                         effect: Effect,
-                        through_some: bool,
+                        into_object: bool,
                         in_place: &mut Vec<LocalId>| {
             if !function.locals[local.0].counted {
                 return;
@@ -1229,16 +1231,18 @@ fn mentions(function: &Function, tree: &Tree) -> Result<Vec<Vec<Event>>, Violati
                 block: b,
                 at,
                 effect,
-                through_some,
+                into_object,
             });
         };
         for (at, stmt) in block.stmts.iter().enumerate() {
             in_place.clear();
             statement(stmt, false, &mut |local, effect, place| {
-                let through_some = place.is_some_and(|place| {
-                    effect == Effect::Write && place.projections.first() == Some(&Projection::Some)
+                let into_object = place.is_some_and(|place| {
+                    effect == Effect::Write
+                        && (place.projections.iter())
+                            .any(|projection| matches!(projection, Projection::Field { .. }))
                 });
-                note(at, local, effect, through_some, &mut in_place);
+                note(at, local, effect, into_object, &mut in_place);
             });
         }
         in_place.clear();
@@ -1330,7 +1334,10 @@ fn indexed_by(t: &Place, local: LocalId) -> bool {
             Projection::Index { index, .. } => operand(index, false, &mut |read, _, _| {
                 found |= read == local;
             }),
-            Projection::Field { .. } | Projection::Payload { .. } | Projection::Some => {}
+            Projection::Field { .. }
+            | Projection::Payload { .. }
+            | Projection::Some
+            | Projection::StructField { .. } => {}
         }
     }
     found
@@ -2252,22 +2259,10 @@ impl Region<'_> {
         if states & bad != 0 {
             return Err(self.violation(block, rule));
         }
-        if effect == Effect::Write && states & BORROWED != 0 && !self.writes_object(event) {
+        if effect == Effect::Write && states & BORROWED != 0 && !event.into_object {
             return Err(self.violation(block, Rule::WriteBorrowed));
         }
         Ok(after)
-    }
-
-    /// Whether the write goes into a class object, which a borrow and its root name alike: the
-    /// local is an object, or an optional one and the path starts with `Some`.
-    fn writes_object(&self, event: &Event) -> bool {
-        match self.function.locals[self.local.0].ty.kind() {
-            TypeKind::Class(..) => true,
-            TypeKind::Optional(payload) => {
-                event.through_some && matches!(payload.kind(), TypeKind::Class(..))
-            }
-            _ => false,
-        }
     }
 
     /// Whether the local is a borrowed parameter, whose borrow lasts the whole body.

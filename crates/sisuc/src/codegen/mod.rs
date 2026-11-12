@@ -15,6 +15,7 @@ mod math;
 mod rc;
 mod show;
 mod string;
+mod structs;
 pub(crate) mod units;
 
 #[cfg(test)]
@@ -37,7 +38,7 @@ use inkwell::passes::PassBuilderOptions;
 use inkwell::targets::{
     CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetData, TargetMachine,
 };
-use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
+use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, StructType};
 use inkwell::values::{
     BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, GlobalValue,
     InstructionOpcode, IntValue, MetadataValue, PointerValue,
@@ -56,8 +57,8 @@ use crate::mir::{
 };
 use crate::source::{LineIndex, Span};
 use crate::tir::{
-    ClassId, EnumId, FuncId, InterfaceId, LocalId, Program, Stream, Type, TypeArgs, TypeKind,
-    UnaryOp,
+    ClassId, EnumId, FuncId, InterfaceId, LocalId, Program, Stream, StructId, Type, TypeArgs,
+    TypeKind, UnaryOp,
 };
 
 /// The `expect` message for a builder call: codegen positions the builder before it emits code.
@@ -175,6 +176,7 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
             source,
             classes: Vec::new(),
             enums: Vec::new(),
+            structs: Vec::new(),
             functions: Vec::new(),
             slots: Vec::new(),
             outs: Vec::new(),
@@ -373,6 +375,14 @@ fn enum_of(ty: Type) -> EnumId {
     id
 }
 
+/// The struct of a struct field projection's base, whose type is `ty`.
+fn struct_of(ty: Type) -> StructId {
+    let TypeKind::Struct(id, _) = ty.kind() else {
+        unreachable!("mir should project a struct field only out of a struct")
+    };
+    id
+}
+
 fn zeroext(context: &Context) -> Attribute {
     context.create_enum_attribute(Attribute::get_named_enum_kind_id("zeroext"), 0)
 }
@@ -450,6 +460,8 @@ struct Codegen<'ctx, 'src> {
     classes: Vec<ClassLayout<'ctx>>,
     /// The LLVM types of each enum, indexed by `EnumId`.
     enums: Vec<EnumLayout<'ctx>>,
+    /// `%sisu.<Struct>`, its fields in declaration order, indexed by `StructId`.
+    structs: Vec<StructType<'ctx>>,
     /// Indexed by `FuncId`.
     functions: Vec<FunctionValue<'ctx>>,
     /// The current function's locals, indexed by `LocalId`: each one's `alloca` and its LLVM
@@ -930,9 +942,12 @@ impl<'ctx> Codegen<'ctx, '_> {
             Statement::Store { place, value } => {
                 let (value, _) = self.operand(value);
                 let (address, _, tag) = self.address(place.local, &place.projections, false);
-                // Lowering stores only into a field or an element; a local is assigned.
-                let tag = tag.expect("a store's place should end in a field or an element");
-                self.store_tagged(address, value, tag);
+                // Lowering stores only into a field or an element; a local is assigned. A field
+                // of a struct has no tag.
+                match tag {
+                    Some(tag) => self.store_tagged(address, value, tag),
+                    None => self.store(address, value),
+                }
             }
             Statement::Push { place, value, at } => {
                 let (value, _) = self.operand(value);
@@ -1067,6 +1082,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 return self.call_value(*func, &args);
             }
             Rvalue::New { class, args } => self.new_object(*class, &self.values(args)).into(),
+            Rvalue::Struct { id, args } => self.struct_value(*id, &self.values(args)),
             Rvalue::Variant {
                 id,
                 variant,
@@ -1195,7 +1211,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                         Side::Lhs => (rhs, other),
                         Side::Rhs => (lhs, ty),
                     };
-                    if held.is_counted(&self.program.enums) {
+                    if held.is_counted(&self.program.enums, &self.program.structs) {
                         let present = self.has_value(held, value, "present");
                         return Some(if *negated {
                             present.into()
@@ -1329,10 +1345,15 @@ impl<'ctx> Codegen<'ctx, '_> {
                 };
                 (self.optional_value(ty, optional, "some"), payload)
             }
-            Some((Projection::Field { .. } | Projection::Index { .. }, _)) => {
+            // A field or an element has a TBAA tag, and a field of a struct has none.
+            Some((
+                Projection::Field { .. }
+                | Projection::Index { .. }
+                | Projection::StructField { .. },
+                _,
+            )) => {
                 let (address, ty, tag) = self.address(local, projections, checked);
-                let tag = tag.expect("a field or an element should have a TBAA tag");
-                (self.load_place(ty, address, "load", Some(tag)), ty)
+                (self.load_place(ty, address, "load", tag), ty)
             }
         }
     }
@@ -1408,6 +1429,15 @@ impl<'ctx> Codegen<'ctx, '_> {
                     let place;
                     (place, ty, boxed) = self.some_place(address, ty, boxed);
                     (place, ty, None)
+                }
+                // A struct field has no TBAA tag: an access with no tag may alias any other.
+                &Projection::StructField { index } => {
+                    let id = struct_of(ty);
+                    (
+                        self.struct_field_ptr(id, address, index),
+                        self.program.structs[id.0].fields[index].ty,
+                        None,
+                    )
                 }
             };
         }
@@ -1559,6 +1589,9 @@ impl<'ctx> Codegen<'ctx, '_> {
     fn store(&self, ptr: PointerValue<'ctx>, value: BasicValueEnum<'ctx>) {
         if let Some(ty) = self.memory_type(value) {
             self.copy_memory(ptr, value.into_pointer_value(), ty);
+            return;
+        }
+        if self.is_empty(value.get_type()) {
             return;
         }
         self.builder.build_store(ptr, value).expect(POSITIONED);

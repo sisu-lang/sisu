@@ -64,6 +64,7 @@ const EXCLUDED: &[(&str, &str)] = &[
     ("tir::Place::StructField", "lands in Task 9"),
     ("tir::ExprKind::Struct", "lands in Task 9"),
     ("tir::ExprKind::StructField", "lands in Task 9"),
+    ("tir::Inline::Struct", "lands in Task 9"),
     (
         "ast::BrokenKind::Enum",
         "only an item with a syntax error is broken",
@@ -2404,6 +2405,11 @@ impl Walk {
                 tir::Rank::Assoc => "tir::Rank::Assoc",
                 tir::Rank::Never => "tir::Rank::Never",
             });
+            match field.ty.inline_type() {
+                Some(tir::Inline::Enum(_)) => self.mark("tir::Inline::Enum"),
+                Some(tir::Inline::Struct(_)) => self.mark("tir::Inline::Struct"),
+                None => {}
+            }
         }
         for (id, e) in program.enums.iter().enumerate() {
             self.option_shaped(id, e);
@@ -2532,7 +2538,13 @@ impl Walk {
             return;
         }
         self.mark("reach: an `Option`-shaped enum has a niche");
-        if field.boxed && field.ty.inline_enum().is_some_and(|held| held.0 == id) {
+        if field.boxed
+            && field
+                .ty
+                .inline_type()
+                .and_then(tir::Inline::enum_id)
+                .is_some_and(|held| held.0 == id)
+        {
             self.mark("reach: an `Option`-shaped enum holds itself");
         }
     }

@@ -353,10 +353,11 @@ impl<'ctx> Codegen<'ctx, '_> {
         );
     }
 
-    /// The parameter types of a helper for one value of the counted type `ty`: an enum is passed
-    /// by the address of its slot, and any other value by the calling convention.
+    /// The parameter types of a helper for one value of the counted type `ty`: an enum or a
+    /// struct is passed by the address of its slot, and any other value by the calling
+    /// convention.
     fn helper_value(&self, ty: Type) -> Vec<BasicMetadataTypeEnum<'ctx>> {
-        if let TypeKind::Enum(..) = ty.kind() {
+        if let TypeKind::Enum(..) | TypeKind::Struct(..) = ty.kind() {
             vec![self.context.ptr_type(AddressSpace::default()).into()]
         } else {
             self.param_types(ty)
@@ -371,10 +372,10 @@ impl<'ctx> Codegen<'ctx, '_> {
         first: u32,
         ty: Type,
     ) -> BasicValueEnum<'ctx> {
-        if let TypeKind::Enum(..) = ty.kind() {
+        if let TypeKind::Enum(..) | TypeKind::Struct(..) = ty.kind() {
             function
                 .get_nth_param(first)
-                .expect("a helper should be declared with a slot pointer for an enum")
+                .expect("a helper should be declared with a slot pointer for an enum or a struct")
         } else {
             self.joined_params(function, first, &[ty])[0]
         }
@@ -386,7 +387,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         ty: Type,
         value: BasicValueEnum<'ctx>,
     ) -> Vec<BasicMetadataValueEnum<'ctx>> {
-        if let TypeKind::Enum(..) = ty.kind() {
+        if let TypeKind::Enum(..) | TypeKind::Struct(..) = ty.kind() {
             vec![value.into()]
         } else {
             self.split(ty, value)
@@ -424,9 +425,12 @@ impl<'ctx> Codegen<'ctx, '_> {
                     self.define_written_eq(function, ty);
                 }
                 (_, TypeKind::Enum(id, _)) => self.define_enum_helper(kind, id, function),
+                (_, TypeKind::Struct(id, _)) => self.define_struct_helper(kind, id, function),
                 (Helper::Release, _) => self.define_release(function, ty),
                 (Helper::Retain, _) => {
-                    unreachable!("only an enum type should be queued for a `retain` helper")
+                    unreachable!(
+                        "only an enum or a struct type should be queued for a `retain` helper"
+                    )
                 }
                 (_, TypeKind::Array(element)) => self.define_array_helper(kind, element, function),
                 (_, TypeKind::String) => self.define_string_helper(kind, function),
@@ -609,7 +613,10 @@ impl<'ctx> Codegen<'ctx, '_> {
             let Some(((heads_type, heads), position)) =
                 heads.zip(self.analyses.class_cycles.link(id, field.ty))
             else {
-                if field.ty.is_counted(&self.program.enums) {
+                if field
+                    .ty
+                    .is_counted(&self.program.enums, &self.program.structs)
+                {
                     self.release_at(place, field.ty);
                 }
                 continue;
@@ -1107,11 +1114,11 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.retain_or_release_at(Helper::Release, place, ty);
     }
 
-    /// `retain_or_release` of the value of type `ty` at `place`. An enum goes to its helper by
-    /// address, with no copy; any other type is loaded. `ty` must be a counted
+    /// `retain_or_release` of the value of type `ty` at `place`. An enum or a struct goes to its
+    /// helper by address, with no copy; any other type is loaded. `ty` must be a counted
     /// type: unlike `retain_or_release`, this does not check.
     fn retain_or_release_at(&self, kind: Helper, place: PointerValue<'ctx>, ty: Type) {
-        if let TypeKind::Enum(..) = ty.kind() {
+        if let TypeKind::Enum(..) | TypeKind::Struct(..) = ty.kind() {
             self.call(self.helper(kind, ty), &[place.into()]);
         } else if three_words(ty) {
             // Only the block is counted, and it is the first word.
@@ -1134,10 +1141,10 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// `retain` or `release`, as `kind` says. A string, object or array counts its block or
-    /// itself, `null` for `None`; an enum goes to its helper by address; the payload of any other
-    /// optional is counted only when the optional holds a value, one layer at a time.
+    /// itself, `null` for `None`; an enum or a struct goes to its helper by address. The payload
+    /// of any other optional is counted only when the optional holds a value, one layer at a time.
     fn retain_or_release(&self, kind: Helper, value: BasicValueEnum<'ctx>, ty: Type) {
-        if ty.is_counted(&self.program.enums) {
+        if ty.is_counted(&self.program.enums, &self.program.structs) {
             self.count_counted(kind, value, ty);
         }
     }
@@ -1151,7 +1158,9 @@ impl<'ctx> Codegen<'ctx, '_> {
             return;
         }
         match ty.kind() {
-            TypeKind::Enum(..) => self.retain_or_release_at(kind, self.enum_slot(value), ty),
+            TypeKind::Enum(..) | TypeKind::Struct(..) => {
+                self.retain_or_release_at(kind, self.enum_slot(value), ty);
+            }
             TypeKind::Any(..) if kind == Helper::Retain => self.retain_any(value),
             TypeKind::Any(..) => self.release_any(value),
             TypeKind::Optional(payload) => {

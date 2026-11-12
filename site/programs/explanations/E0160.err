@@ -2,7 +2,7 @@ error[E0160]: the payload of enum `Cell7` can be 4 GiB or more
   --> E0160.sisu:29:6
    |
 29 | enum Cell7 {
-   |      ^^^^^ this enum holds other enums inline
+   |      ^^^^^ this enum holds other enums or structs inline
    |
    = help: a payload must be less than 4 GiB. Hold a part in a class or an array. A class field adds the size of a pointer to the payload, and an array field adds the size of three pointers.
 

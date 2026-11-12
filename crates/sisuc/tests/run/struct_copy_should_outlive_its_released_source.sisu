@@ -10,7 +10,8 @@ enum E {
 struct Bag { c: C; xs: [i64]; s: string; d: any Display; e: E }
 
 fn make(i: i64) -> Bag {
-    Bag(c: C(n: i), xs: [i], s: "s" + "{i}", d: "d" + "{i}", e: E.A(s: "e" + "{i}"))
+    let e = if i < 0 { E.B } else { E.A(s: "e" + "{i}") }
+    Bag(c: C(n: i), xs: [i], s: "s" + "{i}", d: "d" + "{i}", e: e)
 }
 
 fn main() {

@@ -246,7 +246,7 @@ _Avoid_: global, static
 
 **Reserved keyword**:
 A word that the lexer already treats as a keyword for a feature that comes in
-a later milestone, such as `struct` or `import`. Using one as a name is an
+a later milestone, such as `import` or `move`. Using one as a name is an
 error, so a program written today does not break when the feature lands.
 _Avoid_: future keyword
 
@@ -258,8 +258,7 @@ methods. Sisu classes have no inheritance.
 
 **Struct**:
 A named value with fields, held inline. It has no identity and no count of its
-own. Binding, passing or storing one behaves as a copy, as an array does. The
-word `struct` is reserved until structs work in the compiler.
+own. Binding, passing or storing one behaves as a copy, as an array does.
 _Avoid_: record, data class
 
 **Object**:

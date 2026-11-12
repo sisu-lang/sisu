@@ -1680,20 +1680,13 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// The struct itself, as `class_body` reads a class. A `mut` field parses with `mutable`
-    /// false, and gets no code until a later part.
+    /// The struct itself, as `class_body` reads a class. A `mut` field is E0175 (`member`).
     fn struct_body(
         &mut self,
         errors: &mut Vec<Diagnostic>,
         methods: &mut Vec<Range<usize>>,
     ) -> Result<Struct, Diagnostic> {
-        let mut item = self.type_body(errors, methods, &TokenKind::Struct, "a struct name")?;
-        for member in &mut item.members {
-            if let Member::Field(field) = member {
-                field.mutable = false;
-            }
-        }
-        Ok(item)
+        self.type_body(errors, methods, &TokenKind::Struct, "a struct name")
     }
 
     /// The body of a class or a struct, which start with `word` and then a name that `what`
@@ -1820,8 +1813,22 @@ impl<'a> Parser<'a> {
     fn member(&mut self, owner: &Owner) -> Result<Member, Diagnostic> {
         match self.peek().kind {
             TokenKind::Ident(_) | TokenKind::Underscore | TokenKind::Mut => {
-                let mutable = self.eat(&TokenKind::Mut).is_some();
+                let word = self.eat(&TokenKind::Mut).map(|token| token.span);
                 let name = self.name("a field name")?;
+                // A struct field with `mut` parses with `mutable` false, so the checker sees a
+                // valid struct, and the parser goes on after the error.
+                let mutable = match (word, owner) {
+                    (Some(keyword), Owner::Struct) => {
+                        let remove = Span::new(
+                            keyword.start(),
+                            self.removal_end(keyword.end(), name.span.start()),
+                        );
+                        self.recovered
+                            .push(DiagnosticKind::StructFieldMut { keyword, remove }.into());
+                        false
+                    }
+                    (word, _) => word.is_some(),
+                };
                 self.expect(&TokenKind::Colon)?;
                 Ok(Member::Field(FieldDecl {
                     mutable,
@@ -10930,6 +10937,19 @@ mod tests {
             assert_eq!(apply_fix(src, &d), src.replace("mut self", "self"), "{src}");
             assert!(fix_edits(&d).is_some_and(|(safe, _)| !safe), "{src}");
         }
+    }
+
+    /// GIVEN `struct P { mut x: i64 }`
+    /// WHEN it is parsed
+    /// THEN the one diagnostic is E0175 at 1:12, and its safe fix gives `struct P { x: i64 }`
+    #[test]
+    fn struct_field_with_mut_should_report_its_word_and_a_safe_fix() {
+        let src = "struct P { mut x: i64 }";
+        let d = parse_diagnostic(src);
+        assert_eq!(d.code(), Code::StructFieldMut);
+        assert_eq!(line_col(src, d.span().start()), (1, 12));
+        assert_eq!(apply_fix(src, &d), "struct P { x: i64 }");
+        assert!(fix_edits(&d).is_some_and(|(safe, _)| safe));
     }
 
     #[test]

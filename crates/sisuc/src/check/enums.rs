@@ -12,8 +12,8 @@ use super::mut_args::Callee;
 use super::reports::Reported;
 use super::unused_names::Used;
 use super::{
-    Checked, Checker, Declared, Definition, DiagnosticKind, Expectation, Origin, Poisoned,
-    SelfType, own_args,
+    Checked, Checker, ClassInfo, Declared, Definition, DiagnosticKind, Expectation, Origin,
+    Poisoned, SelfType, own_args,
 };
 use crate::ast;
 use crate::diagnostic::{BuiltIn, Unbuilt, VariantLabels, suggestion};
@@ -624,9 +624,9 @@ impl Checker<'_> {
             .collect()
     }
 
-    /// Lowers every enum, with each payload field's `Rank` from its declared type, and lays them
-    /// out (`tir::layout_enums`).
-    pub(super) fn lower_enums(&self) -> Vec<tir::Enum> {
+    /// Lowers every enum, with each payload field's `Rank` from its declared type, and every
+    /// struct, and lays them out (`tir::layout_types`).
+    pub(super) fn lower_types(&self) -> (Vec<tir::Enum>, Vec<tir::Struct>) {
         // The declarations each enum's generic fields name, inline (see `Rank::Late`); a
         // program without a generic enum has no such field and skips the graph.
         let declared = if self.enums.iter().any(|info| !info.type_params.is_empty()) {
@@ -688,19 +688,36 @@ impl Checker<'_> {
                 reaches: false,
             })
             .collect();
-        tir::layout_enums(&mut lowered);
-        lowered
+        let mut structs: Vec<tir::Struct> = (self.structs.iter())
+            .map(|info| tir::Struct {
+                name: info.name.name.to_string(),
+                span: info.name.span,
+                fields: (info.fields.iter())
+                    .map(|f| tir::Payload {
+                        // An `Error` field's error stops the program before codegen.
+                        ty: f.ty.unwrap_or(Type::NEVER),
+                        label: Some(f.name.name.to_string()),
+                        boxed: false,
+                        rank: Rank::Plain,
+                    })
+                    .collect(),
+                counted: false,
+                reaches: false,
+            })
+            .collect();
+        tir::layout_types(&mut lowered, &mut structs);
+        (lowered, structs)
     }
 
-    /// Reports each enum or class no value can be built of. Which classes and enums can be
-    /// built is a least fixed point over them all, with the arguments they are given: a class
-    /// can when every field's type can, an enum when every field of some variant can, and every
+    /// Reports each enum, struct or class no value can be built of. Which can be built is a
+    /// least fixed point over them all, with the arguments they are given. A class or a struct
+    /// can when every field's type can, and an enum when every field of some variant can. Every
     /// other type always can. A class in `cyclic` counts as built, and so does an enum with no
-    /// variant, since each has its error already. Each component of the rest that needs no
-    /// other, by what the fixed point found each one to need, is reported once, at its first
-    /// enum, or else its first class; a type that only needs one of those is not. Returns, by
-    /// node (the classes, then the enums), whether it is in a component reported here, or is a
-    /// class in `cyclic`: whether it has an error of that kind of its own.
+    /// variant, since each has its error already. The fixed point finds what each one needs.
+    /// Each component of the rest that needs no other is reported once. The report is at its
+    /// first enum or struct, or else its first class; a type that only needs one of those is not.
+    /// Returns, by node (the classes, the enums, then the structs), whether it is in a component
+    /// reported here, or is a class in `cyclic`: whether it has an error of that kind of its own.
     pub(super) fn never_built(&mut self, cyclic: &[bool]) -> Vec<bool> {
         let mut fix = Buildable::new(self, cyclic);
         fix.run();
@@ -730,11 +747,7 @@ impl Checker<'_> {
             }
             reported[component[n]] = true;
             let chain = self.chain(n, &mut fix);
-            let name = if n < classes {
-                &self.classes[n].name
-            } else {
-                &self.enums[n - classes].name
-            };
+            let name = self.node_info(n).0;
             self.error(DiagnosticKind::NeverConstructed {
                 name: name.name.to_string(),
                 at: name.span,
@@ -746,25 +759,18 @@ impl Checker<'_> {
             .collect()
     }
 
-    /// The chain of fields from the enum or class at node `start`, through types none of which
-    /// can be built by `fix`: each link's holder (`E.V` or `K.f`) and the type held, with the
-    /// arguments the chain gives it. At an enum it takes the first variant's first such field,
-    /// at a class the first such field, and it ends at the first type it meets again.
+    /// The chain of fields from the enum, class or struct at node `start`, through types none of
+    /// which can be built by `fix`. It gives each link's holder (`E.V` or `K.f`) and the type held,
+    /// with the arguments the chain gives it. At an enum it takes the first variant's first such
+    /// field, and at a class or a struct the first such field. It ends at the first type it meets
+    /// again.
     fn chain(&self, start: usize, fix: &mut Buildable) -> Vec<(String, String)> {
         let classes = self.classes.len();
-        let params = if start < classes {
-            &self.classes[start].type_params
-        } else {
-            &self.enums[start - classes].type_params
-        };
+        let params = self.node_info(start).1;
         // A field named `name` of type `ty`, if that type cannot be built: its name, its type's
         // name, and its node and arguments.
         let mut unbuilt = |(name, ty): (&str, Type)| {
-            let (n, args) = match ty.kind() {
-                TypeKind::Class(id, args) => (id.0, args),
-                TypeKind::Enum(id, args) => (classes + id.0, args),
-                _ => return None,
-            };
+            let (n, args) = fix.node_of(ty)?;
             let key = fix.key_of(n, args);
             (!fix.built[key]).then(|| (name.to_string(), self.type_name(ty), (n, args), key))
         };
@@ -776,8 +782,7 @@ impl Checker<'_> {
         while on_chain.insert(key) {
             let with = args.get();
             let held = |ty: &Option<Type>| ty.and_then(|ty| self.subst(ty, with));
-            let (holder, field) = if at < classes {
-                let class = &self.classes[at];
+            let (holder, field) = if let Some(class) = self.class_node(at) {
                 let mut fields = class
                     .fields
                     .iter()
@@ -799,6 +804,26 @@ impl Checker<'_> {
             ((at, args), key) = (next, next_key);
         }
         chain
+    }
+
+    /// The name and type parameters of node `n` of `never_built`: a class, an enum, then a struct.
+    fn node_info(&self, n: usize) -> (&ast::Ident, &[Symbol]) {
+        if let Some(info) = self.class_node(n) {
+            (&info.name, &info.type_params)
+        } else {
+            let info = &self.enums[n - self.classes.len()];
+            (&info.name, &info.type_params)
+        }
+    }
+
+    /// The class or struct at node `n` of `never_built`, which have the same table; `None` for
+    /// an enum.
+    fn class_node(&self, n: usize) -> Option<&ClassInfo> {
+        let enums = self.classes.len() + self.enums.len();
+        match n.checked_sub(enums) {
+            Some(s) => Some(&self.structs[s]),
+            None => self.classes.get(n),
+        }
     }
 
     /// What a value of each enum and class may hold. The nodes are the enums, then the classes;
@@ -972,6 +997,8 @@ fn mark_holders(marked: &mut [bool], holders: &[Vec<usize>]) {
 /// enum's follows the classes) and a flag for each of its parameters.
 struct Buildable {
     classes: usize,
+    /// The node of the first struct: the structs follow the enums.
+    structs: usize,
     /// By node, its slots, each of which builds it when all its field types can be built: a
     /// class's fields, or each variant's payload, less the fields `may_wait` says are always
     /// built. A node built at once has none: a class on a cycle of fields, an enum with no
@@ -1004,13 +1031,7 @@ impl Buildable {
         let mut slots = Vec::new();
         let mut params = Vec::new();
         for (c, class) in checker.classes.iter().enumerate() {
-            let fields = class.fields.iter().map(|f| f.ty);
-            let fields: Vec<_> = fields.filter(|&ty| may_wait(ty)).collect();
-            slots.push(if cyclic[c] || fields.is_empty() {
-                Vec::new()
-            } else {
-                vec![fields]
-            });
+            slots.push(fields_slot(class, cyclic[c]));
             params.push(class.type_params.len());
         }
         for info in &checker.enums {
@@ -1031,6 +1052,11 @@ impl Buildable {
             );
             params.push(info.type_params.len());
         }
+        // A struct is built as a class is, and no struct is on a cycle of `cyclic`.
+        for info in &checker.structs {
+            slots.push(fields_slot(info, false));
+            params.push(info.type_params.len());
+        }
         let bound = params
             .iter()
             .map(|&p| {
@@ -1042,6 +1068,7 @@ impl Buildable {
             .fold(0, usize::saturating_add);
         let mut fix = Buildable {
             classes: checker.classes.len(),
+            structs: checker.classes.len() + checker.enums.len(),
             slots,
             bound,
             ids: FxHashMap::default(),
@@ -1111,6 +1138,16 @@ impl Buildable {
         key
     }
 
+    /// The node of the class, enum or struct `ty`, and its arguments; `None` for another type.
+    fn node_of(&self, ty: Type) -> Option<(usize, TypeArgs)> {
+        match ty.kind() {
+            TypeKind::Class(id, args) => Some((id.0, args)),
+            TypeKind::Enum(id, args) => Some((self.classes + id.0, args)),
+            TypeKind::Struct(id, args) => Some((self.structs + id.0, args)),
+            _ => None,
+        }
+    }
+
     /// The key `node` has when given `args`. A type parameter in `args` is a chain's start's,
     /// whose arguments are all buildable.
     fn key_of(&mut self, node: usize, args: TypeArgs) -> usize {
@@ -1133,10 +1170,8 @@ impl Buildable {
         }
         #[cfg(test)]
         TYPE_WALK_STEPS.set(TYPE_WALK_STEPS.get() + 1);
-        let (node, args) = match ty.kind() {
-            TypeKind::Class(id, args) => (id.0, args),
-            TypeKind::Enum(id, args) => (self.classes + id.0, args),
-            _ => return true,
+        let Some((node, args)) = self.node_of(ty) else {
+            return true;
         };
         let key = self.key_in(node, args, known);
         let built = self.built[key];
@@ -1191,9 +1226,10 @@ impl Buildable {
         TYPE_WALK_STEPS.set(TYPE_WALK_STEPS.get() + 1);
         let (node, args) = match ty.kind() {
             TypeKind::Param(_, i) => return flags[i as usize],
-            TypeKind::Class(id, args) => (id.0, args),
-            TypeKind::Enum(id, args) => (self.classes + id.0, args),
-            _ => return true,
+            _ => match self.node_of(ty) {
+                Some(node) => node,
+                None => return true,
+            },
         };
         let given = (args.get().iter())
             .map(|&arg| self.verdict(arg, flags, verdicts))
@@ -1286,15 +1322,28 @@ struct Walk {
     consulted: Vec<usize>,
 }
 
-/// Whether a field of type `ty` can wait to be built: only a class, an enum or a type parameter
-/// can. `Buildable::buildable` finds any other type, and an error type, always buildable.
+/// Whether a field of type `ty` can wait to be built: only a class, an enum, a struct or a type
+/// parameter can. `Buildable::buildable` finds any other type, and an error type, always buildable.
 fn may_wait(ty: Option<Type>) -> bool {
     ty.is_some_and(|ty| {
         matches!(
             ty.kind(),
-            TypeKind::Class(..) | TypeKind::Enum(..) | TypeKind::Param(..)
+            TypeKind::Class(..) | TypeKind::Enum(..) | TypeKind::Struct(..) | TypeKind::Param(..)
         )
     })
+}
+
+/// The one slot of a class or a struct, with the fields `may_wait` keeps; none for a class in
+/// `cyclic` or with no such field, which is built at once.
+fn fields_slot(info: &ClassInfo, cyclic: bool) -> Vec<Vec<Option<Type>>> {
+    let fields: Vec<_> = (info.fields.iter().map(|f| f.ty))
+        .filter(|&ty| may_wait(ty))
+        .collect();
+    if cyclic || fields.is_empty() {
+        Vec::new()
+    } else {
+        vec![fields]
+    }
 }
 
 #[cfg(test)]

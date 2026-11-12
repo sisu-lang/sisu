@@ -2,7 +2,7 @@
 
 use super::{Diagnostic, Edit, Fix, Severity, Suggestion};
 use crate::conformance::CHOICE_DEPTH_LIMIT;
-use crate::payload_limit::PAYLOAD_LIMIT_GIB;
+use crate::payload_limit::{self, PAYLOAD_LIMIT_GIB};
 use crate::source::Span;
 
 /// The code table: each code's variant and number. A number is never reused or changed.
@@ -227,6 +227,7 @@ codes! {
     LetElseCanFinish = "E0172",
     LetElseValueEndsInBrace = "E0173",
     RefutablePattern = "E0174",
+    StructFieldMut = "E0175",
     NanComparison = "W0005",
     UnreachableArm = "W0006",
     RedundantSemicolon = "W0007",
@@ -530,6 +531,9 @@ pub(crate) enum DiagnosticKind {
         shown: String,
         always: bool,
     },
+    /// A `mut` at `keyword` in front of a field of a struct; the fix removes `remove`, from the
+    /// `mut` to the field's name or to a comment before it.
+    StructFieldMut { keyword: Span, remove: Span },
     /// The interface `interface`, as written after `any` at `at`, which cannot be `any`. `owner`
     /// is the interface that has the `reason`: `interface` itself, or one it inherits.
     CannotBeAny {
@@ -624,13 +628,15 @@ pub(crate) enum DiagnosticKind {
         needs: Option<(String, Span)>,
     },
     /// The enum `name`, declared at `at`, has a payload that can be 4 GiB or more
-    /// (`payload_limit`). A payload must be less than 4 GiB: that is the limit of the language for
-    /// every alignment, and a value of that size can never be on the stack. `instance` is
-    /// whether `name` is an instance of the generic enum declared at `at`. `holder` is the enum
-    /// of the prelude that holds `name` inline, when its payload is the one of 4 GiB or more.
-    /// `used` is the first expression that uses the instance, when `mono` knows it.
+    /// (`payload_limit`). Or the struct `name` can be 4 GiB or more, and `kind` says which. A
+    /// payload or a struct must be less than 4 GiB. That is the limit of the language for every
+    /// alignment, and a value of that size can never be on the stack. `instance` is whether `name`
+    /// is an instance of the generic enum declared at `at`. `holder` is the enum of the prelude
+    /// that holds `name` inline, when its payload is the one of 4 GiB or more. `used` is the first
+    /// expression that uses the instance, when `mono` knows it.
     PayloadTooLarge {
         name: String,
+        kind: payload_limit::Kind,
         instance: bool,
         holder: Option<String>,
         at: Span,
@@ -3880,27 +3886,33 @@ impl From<DiagnosticKind> for Diagnostic {
             }
             DiagnosticKind::PayloadTooLarge {
                 name,
+                kind,
                 instance,
                 holder,
                 at,
                 used,
             } => {
-                // The span is the declaration, which holds the other enums in an instance only.
+                let noun = kind.noun();
+                // The span is the declaration, which holds the other types in an instance only.
                 let this = if instance {
-                    "an instance of this enum"
+                    format!("an instance of this {noun}")
                 } else {
-                    "this enum"
+                    format!("this {noun}")
                 };
-                let (message, label) = match holder {
-                    Some(holder) => (
+                let (message, label) = match (holder, kind) {
+                    (Some(holder), _) => (
                         format!(
-                            "enum `{name}` can make the payload of `{holder}` {PAYLOAD_LIMIT_GIB} GiB or more"
+                            "{noun} `{name}` can make the payload of `{holder}` {PAYLOAD_LIMIT_GIB} GiB or more"
                         ),
                         format!("`{holder}` holds {this} inline"),
                     ),
-                    None => (
+                    (None, payload_limit::Kind::Enum) => (
                         format!("the payload of enum `{name}` can be {PAYLOAD_LIMIT_GIB} GiB or more"),
-                        format!("{this} holds other enums inline"),
+                        format!("{this} holds other enums or structs inline"),
+                    ),
+                    (None, payload_limit::Kind::Struct) => (
+                        format!("struct `{name}` can be {PAYLOAD_LIMIT_GIB} GiB or more"),
+                        format!("{this} holds other enums or structs inline"),
                     ),
                 };
                 let d = Diagnostic::coded(code, at, message).with_label(label);
@@ -3908,9 +3920,13 @@ impl From<DiagnosticKind> for Diagnostic {
                     Some(used) => d.with_secondary(used, "the instance is used here"),
                     None => d,
                 };
+                let whole = match kind {
+                    payload_limit::Kind::Enum => "payload",
+                    payload_limit::Kind::Struct => "struct",
+                };
                 d.with_help(format!(
-                    "a payload must be less than {PAYLOAD_LIMIT_GIB} GiB. Hold a part in a class or an array. \
-                     A class field adds the size of a pointer to the payload, and an array field adds \
+                    "a {whole} must be less than {PAYLOAD_LIMIT_GIB} GiB. Hold a part in a class or an array. \
+                     A class field adds the size of a pointer to the {whole}, and an array field adds \
                      the size of three pointers."
                 ))
             }
@@ -4288,6 +4304,19 @@ impl From<DiagnosticKind> for Diagnostic {
             } => Diagnostic::coded(code, at, "this pattern can fail to match")
                 .with_label(format!("`{shown}` may not match"))
                 .with_help("add an `else` block that does not finish, or use `if let` or `match`"),
+            DiagnosticKind::StructFieldMut { keyword, remove } => {
+                Diagnostic::coded(code, keyword, "a field of a struct has no `mut`")
+                    .with_label("delete this word")
+                    .with_help("a `let mut` holder can change each field")
+                    .with_fix(Fix {
+                        message: "remove the `mut`".to_string(),
+                        safe: true,
+                        edits: vec![Edit {
+                            span: remove,
+                            replacement: String::new(),
+                        }],
+                    })
+            }
             DiagnosticKind::CannotBeAny {
                 interface,
                 owner,

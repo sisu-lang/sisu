@@ -1666,9 +1666,9 @@ impl Checker<'_> {
         } else {
             operands.iter().rposition(tir::Expr::exits)
         };
-        let first_counted = operands
-            .iter()
-            .position(|e| e.ty.may_be_counted(&self.lowered_enums));
+        let first_counted = operands.iter().position(|e| {
+            e.ty.may_be_counted(&self.lowered_enums, &self.lowered_structs)
+        });
         let Some(last_exit) = last_exit.filter(|&exit| first_counted.is_some_and(|c| c < exit))
         else {
             return (Vec::new(), operands);

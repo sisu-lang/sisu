@@ -6,7 +6,7 @@ use super::{
     Block, BlockId, Const, Function, LocalId, Operand, Place, Program, Projection, Rvalue,
     Statement, Terminator,
 };
-use crate::tir;
+use crate::tir::{self, Type, TypeKind};
 
 /// `text`, with ` [calls]` after it when the statement may call a written method.
 fn flagged(text: String, calls: bool) -> String {
@@ -89,11 +89,18 @@ impl Printer<'_> {
         local_name(self.function, id)
     }
 
-    /// `o#2.1`, `a#1[i#2]`, `(e#3 as 1).0`, `(p#4 as some)`.
+    /// `o#2.1`, `a#1[i#2]`, `(e#3 as 1).0`, `(p#4 as some)`, `t#5.name`.
     fn place(&self, place: &Place) -> String {
         let mut text = self.local(place.local);
+        let mut ty = self.function.locals[place.local.0].ty;
         for projection in &place.projections {
+            let base = ty;
+            ty = self.projected(ty, projection);
             match projection {
+                Projection::StructField { index } => {
+                    let name = self.tir.struct_field(base, *index);
+                    write!(text, ".{name}").expect("writing to a string should not fail");
+                }
                 Projection::Field { index, .. } => {
                     write!(text, ".{index}").expect("writing to a string should not fail");
                 }
@@ -108,6 +115,24 @@ impl Printer<'_> {
             }
         }
         text
+    }
+
+    /// The type that `projection` reaches from a value of type `ty`.
+    fn projected(&self, ty: Type, projection: &Projection) -> Type {
+        match (projection, ty.kind()) {
+            (Projection::Field { index, .. }, TypeKind::Class(class, _)) => {
+                self.tir.classes[class.0].fields[*index].ty
+            }
+            (Projection::Payload { variant, field }, TypeKind::Enum(id, _)) => {
+                self.tir.enums[id.0].variants[*variant].fields[*field].ty
+            }
+            (Projection::Index { .. }, TypeKind::Array(element)) => element,
+            (Projection::Some, TypeKind::Optional(payload)) => payload,
+            (Projection::StructField { index }, TypeKind::Struct(id, _)) => {
+                self.tir.structs[id.0].fields[*index].ty
+            }
+            _ => unreachable!("lowering should project only a value of the projection's kind"),
+        }
     }
 
     fn operand(&self, operand: &Operand) -> String {
@@ -147,6 +172,10 @@ impl Printer<'_> {
             Rvalue::New { class, args } => {
                 let name = &self.tir.classes[class.0].name;
                 format!("new {name}({})", self.list(args))
+            }
+            Rvalue::Struct { id, args } => {
+                let name = &self.tir.structs[id.0].name;
+                format!("struct {name}({})", self.list(args))
             }
             Rvalue::Variant {
                 id,
@@ -394,7 +423,7 @@ fn with_otherwise(text: String, otherwise: Option<BlockId>) -> String {
 /// A constant as `--emit tir` prints it.
 fn constant(c: &Const) -> String {
     match c {
-        Const::Int(n, ty) if *ty == tir::Type::U8 => format!("{n}u8"),
+        Const::Int(n, ty) if *ty == Type::U8 => format!("{n}u8"),
         Const::Int(n, _) => format!("{n}"),
         // Rust's shortest text, which spells NaN `NaN`; Sisu spells it `nan`.
         Const::Float(x) if x.is_nan() => "nan".to_owned(),
