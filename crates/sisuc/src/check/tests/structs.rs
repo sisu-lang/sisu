@@ -1180,8 +1180,8 @@ fn is_on_a_struct_should_be_e0046() {
 }
 
 /// GIVEN `struct S { f: <field> }`. WHEN `main` compares two values of `S`. THEN a field that has
-/// `==` gives no diagnostic. An `any I` field and a class with no `Eq` are E0159 at the `==`. So is
-/// a field of a struct that holds one, also through an array or an optional.
+/// `==` gives no diagnostic. An `any I` field and a class with no `Eq` are E0159 at the left
+/// operand. So is a field of a struct that holds one, also through an array or an optional.
 #[test]
 fn struct_equality_should_follow_its_field_types() {
     let decls = "enum E {\n    A\n    B\n}\nstruct In { n: i64 }\ninterface I {\n    fn n(self) -> i64\n}\nclass Q {}\n";

@@ -63,7 +63,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 Helper::Retain => self.retain_at(place, field.ty),
                 Helper::Release => self.release_at(place, field.ty),
                 _ => unreachable!(
-                    "`helper` should queue for a struct only `retain`, `release` or `eq`"
+                    "`helper` should queue for a struct only a helper that `define_struct_helper` defines"
                 ),
             }
         }

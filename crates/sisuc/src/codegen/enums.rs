@@ -823,11 +823,11 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// A scratch slot holding `value`, an enum or a struct, for a helper that takes its address.
-    pub(super) fn enum_slot(&self, value: BasicValueEnum<'ctx>) -> PointerValue<'ctx> {
+    pub(super) fn value_slot(&self, value: BasicValueEnum<'ctx>) -> PointerValue<'ctx> {
         if self.memory_type(value).is_some() {
             return value.into_pointer_value();
         }
-        let slot = self.entry_alloca(value.get_type(), "enum");
+        let slot = self.entry_alloca(value.get_type(), "value");
         self.store(slot, value);
         slot
     }

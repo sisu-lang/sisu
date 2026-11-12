@@ -393,7 +393,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             TypeKind::Enum(..) | TypeKind::Struct(..) => {
                 let args = [
                     vec![sink.into()],
-                    self.helper_args(ty, self.enum_slot(value).into()),
+                    self.helper_args(ty, self.value_slot(value).into()),
                 ]
                 .concat();
                 self.call(self.helper(Helper::Show(mode), ty), &args);

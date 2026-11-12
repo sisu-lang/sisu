@@ -4,7 +4,7 @@ error[E0030]: cannot find type `Missing`
 5 | interface Piped: Missing {}
   |                  ^^^^^^^
   |
-  = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums and arrays such as `[i64]`
+  = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, structs, enums and arrays such as `[i64]`
 
 error[E0030]: cannot find type `Nope`
  --> E0030-failed-bound.sisu:7:13
@@ -12,7 +12,7 @@ error[E0030]: cannot find type `Nope`
 7 | fn drain<S: Nope>(s: S) {
   |             ^^^^
   |
-  = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums and arrays such as `[i64]`
+  = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, structs, enums and arrays such as `[i64]`
 
 error[E0030]: cannot find type `Nope`
   --> E0030-failed-bound.sisu:11:12
@@ -20,7 +20,7 @@ error[E0030]: cannot find type `Nope`
 11 | fn same<S: Nope>(a: S, b: S) -> bool {
    |            ^^^^
    |
-   = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums and arrays such as `[i64]`
+   = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, structs, enums and arrays such as `[i64]`
 
 sisu: 3 errors
 sisu: for more on a code, run `sisu explain <code>`: E0030

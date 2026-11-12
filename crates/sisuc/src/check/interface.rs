@@ -1470,14 +1470,27 @@ impl Checker<'_> {
     /// Whether each field type of the struct `id` conforms to `interface`. A field that is an
     /// error has its report already, so it holds.
     fn fields_conform(&mut self, id: StructId, interface: InterfaceId) -> bool {
-        let types: Vec<Type> = self.structs[id.0]
-            .fields
-            .iter()
-            .filter_map(|f| f.ty)
-            .collect();
-        types
-            .into_iter()
-            .all(|part| self.conforms(part, interface, TypeArgs::NONE))
+        let fails =
+            |this: &mut Self, part| (!this.conforms(part, interface, TypeArgs::NONE)).then_some(());
+        self.first_field_type(id, fails).is_none()
+    }
+
+    /// The first result of `each` that is `Some`, over the field types of the struct `id` in
+    /// declaration order. A field that is an error has no type, and is left out.
+    fn first_field_type<R>(
+        &mut self,
+        id: StructId,
+        mut each: impl FnMut(&mut Self, Type) -> Option<R>,
+    ) -> Option<R> {
+        for index in 0..self.structs[id.0].fields.len() {
+            let Some(part) = self.structs[id.0].fields[index].ty else {
+                continue;
+            };
+            if let Some(found) = each(self, part) {
+                return Some(found);
+            }
+        }
+        None
     }
 
     /// Whether the conformance `k` of `interface` holds when its parameters stand for `stands`:
@@ -1808,14 +1821,9 @@ impl Checker<'_> {
         interface: InterfaceId,
         walk: &mut LeafWalk,
     ) -> Option<Type> {
-        let types: Vec<Type> = self.structs[id.0]
-            .fields
-            .iter()
-            .filter_map(|f| f.ty)
-            .collect();
-        types
-            .into_iter()
-            .find_map(|part| self.leaf(part, interface, TypeArgs::NONE, walk))
+        self.first_field_type(id, |this, part| {
+            this.leaf(part, interface, TypeArgs::NONE, walk)
+        })
     }
 
     /// The answers of `leaf` that `ty` uses: the body's for a type that names a type parameter,

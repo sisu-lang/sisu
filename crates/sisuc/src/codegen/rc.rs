@@ -21,7 +21,7 @@ use super::{Codegen, POSITIONED};
 use crate::conformance::find;
 use crate::graph::components;
 use crate::tir::{
-    ClassId, EnumId, FuncId, InterfaceId, LocalId, Program, Type, TypeArgs, TypeKind,
+    ClassId, EnumId, FuncId, InterfaceId, LocalId, Program, StructId, Type, TypeArgs, TypeKind,
 };
 
 /// The `==` helper of an array with this many array layers or more gets `noinline` (see
@@ -860,14 +860,12 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// also be a field of a class, an enum or a struct that the type reaches, boxed or inline.
     /// `unreflexive` answers it for a class, an enum or a struct.
     pub(super) fn reflexive(&self, ty: Type) -> bool {
-        let before = self.program.classes.len();
+        let unreflexive = |node: usize| self.analyses.unreflexive[node];
         match unwrapped(ty).kind() {
             TypeKind::F64 => false,
-            TypeKind::Class(id, _) => !self.analyses.unreflexive[id.0],
-            TypeKind::Enum(id, _) => !self.analyses.unreflexive[before + id.0],
-            TypeKind::Struct(id, _) => {
-                !self.analyses.unreflexive[before + self.program.enums.len() + id.0]
-            }
+            TypeKind::Class(id, _) => !unreflexive(id.0),
+            TypeKind::Enum(id, _) => !unreflexive(enum_node(self.program, id)),
+            TypeKind::Struct(id, _) => !unreflexive(struct_node(self.program, id)),
             _ => true,
         }
     }
@@ -884,7 +882,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         }
         let payload = match ty.kind() {
             TypeKind::Enum(..) | TypeKind::Struct(..) => {
-                return self.equal_at(ty, self.enum_slot(lhs), self.enum_slot(rhs));
+                return self.equal_at(ty, self.value_slot(lhs), self.value_slot(rhs));
             }
             TypeKind::Optional(payload) => payload,
             _ => return self.scalar_equal(lhs, rhs),
@@ -1164,7 +1162,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         }
         match ty.kind() {
             TypeKind::Enum(..) | TypeKind::Struct(..) => {
-                self.retain_or_release_at(kind, self.enum_slot(value), ty);
+                self.retain_or_release_at(kind, self.value_slot(value), ty);
             }
             TypeKind::Any(..) if kind == Helper::Retain => self.retain_any(value),
             TypeKind::Any(..) => self.release_any(value),
@@ -1204,6 +1202,17 @@ fn unwrapped(mut ty: Type) -> Type {
     ty
 }
 
+/// The node of the enum `id` in the graph of `reaching_unreflexive`: the classes come first.
+fn enum_node(program: &Program, id: EnumId) -> usize {
+    program.classes.len() + id.0
+}
+
+/// The node of the struct `id` in the graph of `reaching_unreflexive`: the structs come after the
+/// classes and the enums.
+fn struct_node(program: &Program, id: StructId) -> usize {
+    program.classes.len() + program.enums.len() + id.0
+}
+
 /// Which classes, then which enums, then which structs, of `program` reach an `f64` or a written
 /// `eq` through their fields (see `Codegen::reflexive`). The types with a field of `f64` seed it.
 /// So do the types that have a written `Eq`, since a written `eq` need not be reflexive. Each
@@ -1221,10 +1230,10 @@ pub(super) fn reaching_unreflexive(program: &Program) -> Vec<bool> {
         .flat_map(|(node, class)| class.fields.iter().map(move |field| (node, field.ty)));
     let enum_fields = program.enums.iter().enumerate().flat_map(|(id, decl)| {
         let fields = decl.variants.iter().flat_map(|variant| &variant.fields);
-        fields.map(move |field| (classes + id, field.ty))
+        fields.map(move |field| (enum_node(program, EnumId(id)), field.ty))
     });
     let struct_fields = program.structs.iter().enumerate().flat_map(|(id, decl)| {
-        let node = classes + program.enums.len() + id;
+        let node = struct_node(program, StructId(id));
         decl.fields.iter().map(move |field| (node, field.ty))
     });
     for (node, ty) in class_fields.chain(enum_fields).chain(struct_fields) {
@@ -1233,8 +1242,8 @@ pub(super) fn reaching_unreflexive(program: &Program) -> Vec<bool> {
         match unwrapped(ty).kind() {
             TypeKind::F64 => reaches[node] = true,
             TypeKind::Class(id, _) => holders[id.0].push(node),
-            TypeKind::Enum(id, _) => holders[classes + id.0].push(node),
-            TypeKind::Struct(id, _) => holders[classes + program.enums.len() + id.0].push(node),
+            TypeKind::Enum(id, _) => holders[enum_node(program, id)].push(node),
+            TypeKind::Struct(id, _) => holders[struct_node(program, id)].push(node),
             _ => {}
         }
     }

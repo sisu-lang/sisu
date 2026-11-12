@@ -584,7 +584,7 @@ error[E0030]: cannot find type `Nope`
 250 |     let _s: string = B(v: 1).g<Nope>()
     |                                ^^^^
     |
-    = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums and arrays such as `[i64]`
+    = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, structs, enums and arrays such as `[i64]`
 help: a class with a similar name exists: `Node`
     |
 250 -     let _s: string = B(v: 1).g<Nope>()
@@ -627,7 +627,7 @@ error[E0030]: cannot find type `Nope`
 259 |     let _s: string = h2<Nope>(1, 2)
     |                         ^^^^
     |
-    = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums and arrays such as `[i64]`
+    = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, structs, enums and arrays such as `[i64]`
 help: a class with a similar name exists: `Node`
     |
 259 -     let _s: string = h2<Nope>(1, 2)
@@ -972,7 +972,7 @@ error[E0030]: cannot find type `Nope`
 331 |     let _s: string = B<Nope>()
     |                        ^^^^
     |
-    = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums and arrays such as `[i64]`
+    = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, structs, enums and arrays such as `[i64]`
 help: a class with a similar name exists: `Node`
     |
 331 -     let _s: string = B<Nope>()
