@@ -1346,7 +1346,11 @@ impl Checker<'_> {
         if let Ok(checked) = &mut checked {
             self.discard_tail(body, checked);
             if let (true, Some((ty, _))) = (frame.widened, frame.first) {
-                checked.each_expr_mut(&mut |e| wrap_breaks(e, 0, ty, frame.crossed));
+                let mut widened = Vec::new();
+                checked.each_expr_mut(&mut |e| wrap_breaks(e, 0, ty, frame.crossed, &mut widened));
+                for got in widened {
+                    self.record_shown_any(got, ty);
+                }
             }
         }
         if let (Some(at), Some(valued)) = (frame.bare, frame.valued) {
@@ -2073,7 +2077,7 @@ fn reread(e: &tir::Expr) -> tir::Expr {
 /// Wraps into `ty` each value of another type, `never` aside, that a `break` in `e` gives the
 /// loop `depth` loops out from `e`: the `T` values of a loop that a `T?` value widened. It enters
 /// nested loops only when `crossed`: when a `break` in one targets that loop.
-fn wrap_breaks(e: &mut tir::Expr, depth: usize, ty: Type, crossed: bool) {
+fn wrap_breaks(e: &mut tir::Expr, depth: usize, ty: Type, crossed: bool, widened: &mut Vec<Type>) {
     let nested = matches!(e.kind, ExprKind::Loop(_));
     if nested && !crossed {
         return;
@@ -2083,7 +2087,7 @@ fn wrap_breaks(e: &mut tir::Expr, depth: usize, ty: Type, crossed: bool) {
         super::WRAP_LOOPS.set(super::WRAP_LOOPS.get() + 1);
     }
     let inner = depth + usize::from(nested);
-    e.each_child_mut(&mut |child| wrap_breaks(child, inner, ty, crossed));
+    e.each_child_mut(&mut |child| wrap_breaks(child, inner, ty, crossed, widened));
     if let ExprKind::Break {
         depth: target,
         value: Some(value),
@@ -2094,6 +2098,7 @@ fn wrap_breaks(e: &mut tir::Expr, depth: usize, ty: Type, crossed: bool) {
     {
         let placeholder = tir::Expr::new(ExprKind::None, ty, value.span);
         let payload = std::mem::replace(&mut **value, placeholder);
+        widened.push(payload.ty);
         **value = widen(payload, ty);
         #[cfg(test)]
         if !crossed {

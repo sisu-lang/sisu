@@ -876,9 +876,22 @@ pub(crate) fn has_written(conformances: &Conformances, interface: InterfaceId, t
 /// always applies. It does when each bound of the conformance is on `Display`, which always
 /// holds. A bound on another interface may fail for the types that stand for the parameters.
 pub(crate) fn always_written(conformances: &Conformances, display: InterfaceId, ty: Type) -> bool {
+    applies_written(conformances, display, display, ty)
+}
+
+/// Whether `ty`, a type of a body that may name type parameters, has a written conformance to
+/// `interface` that always applies. It does when it covers `ty` and each bound of the conformance
+/// is on `always`, an interface that each type meets. A conformance for another instance, such as
+/// `extend B<i64>: Display` beside `B<T>`, does not cover `ty`.
+pub(crate) fn applies_written(
+    conformances: &Conformances,
+    interface: InterfaceId,
+    always: InterfaceId,
+    ty: Type,
+) -> bool {
     head_of(ty).is_some()
-        && find_with(conformances, display, ty, TypeArgs::NONE, |c| {
-            (c.bounds.iter().flatten()).all(|bound| bound.interface == display)
+        && find_with(conformances, interface, ty, TypeArgs::NONE, |c| {
+            (c.bounds.iter().flatten()).all(|bound| bound.interface == always)
         })
         .is_some()
 }

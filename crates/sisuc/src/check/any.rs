@@ -375,7 +375,7 @@ impl Checker<'_> {
         // A conversion makes a table, which only `mono` reaches.
         self.instantiates = true;
         self.record(Used::Interface(interface), at);
-        self.record_shown(got, interface);
+        self.record_both(got);
         let converted = match checked {
             Ok(e) => {
                 let e = to_any(e, target);

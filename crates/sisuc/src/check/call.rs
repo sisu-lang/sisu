@@ -842,6 +842,7 @@ impl Checker<'_> {
         }
         match receiver {
             Ok(receiver) => {
+                self.record_shown(receiver.ty, self.lang.display);
                 self.spellings.insert(span, Lowered::Method);
                 Ok(self.spilled(span, Type::STRING, vec![receiver], |parts| {
                     let [part]: [tir::Expr; 1] = parts
@@ -906,6 +907,7 @@ impl Checker<'_> {
         Ok(match (receiver, other) {
             (Ok(lhs), Ok(rhs)) if labeled.is_none() => {
                 let eq = interface == self.lang.eq;
+                self.record_shown(ty, interface);
                 // No program shows this label for `less`: only numbers and strings have a
                 // generated `Ord`, and no cycle can pass them.
                 self.spellings.insert(span, Lowered::Method);
@@ -1046,6 +1048,7 @@ impl Checker<'_> {
         );
         self.marks(args, &mut parts, &mut_site, (&params, list), result);
         let (checked, types, solved) = checked?;
+        self.record_type_args(types);
         let parts = self.mut_overlaps(parts);
         let failed = labeled.is_some() || checked.iter().any(mismatched);
         let parted = labeled.is_some() || checked.iter().any(Result::is_err);

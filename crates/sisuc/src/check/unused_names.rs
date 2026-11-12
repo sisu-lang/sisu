@@ -12,7 +12,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::cycle::inline_of;
 use super::extend::holder_of;
 use super::{Checker, Declared, Holder};
-use crate::conformance::has_written;
+use crate::conformance::{applies_written, has_written};
 use crate::diagnostic::{
     Code, Definition, Diagnostic, DiagnosticKind, NeverReassignedForm, UsedBy,
 };
@@ -496,13 +496,13 @@ impl Checker<'_> {
     /// To give the label, check the bounds, as `record_holds` in `conformance.rs` does, when a
     /// program needs it.
     ///
-    /// shortcut: a type argument is a root only when its bound names `Display` or `Eq`. An
-    /// interface that requires one of them, such as `Ord`, is no root. Nor is a conversion to an
-    /// `any` type of such an interface. A struct field that only generic code shows may get
-    /// W0013. Count the interfaces that inherit them when a program needs it.
+    /// A false W0013 is worse than a missed one, so the roots cover more than they must. Each type
+    /// argument of a call is a root in both modes, whatever its bound: the body of the callee may
+    /// show it. So is the source type of each conversion to an `any` type of any interface. The
+    /// walk does not follow which type parameters a generic body shows.
     ///
-    /// shortcut: a `break` that gives a struct to a loop of type `any Display` is no root. Record
-    /// it in `wrap_breaks` when a program needs it.
+    /// A `Display` or `Eq` root stops only at a type that a written conformance always covers
+    /// (`applies_written`): `extend B<i64>: Display` stops `B<i64>` and not `B<P>`.
     fn shown_types(&self, live: &[bool]) -> Shown {
         let is_live = |owner: Option<Owner>| owner.is_some_and(|o| live[self.owner_index(o)]);
         let mut dbgs: Vec<(Span, Type)> = (self.dbg_shown.iter())
@@ -532,17 +532,21 @@ impl Checker<'_> {
             return shown;
         }
         let inline = self.enums.len();
-        let (display, eq) = (OnceCell::new(), OnceCell::new());
+        let (dbg, display, eq) = (OnceCell::new(), OnceCell::new(), OnceCell::new());
         let (mut seen, mut declared) = (FxHashSet::default(), FxHashSet::default());
         for (mode, call, root) in roots {
             let (interface, rules) = match mode {
-                Mode::Dbg | Mode::Display => (
+                Mode::Dbg => (
                     self.lang.display,
-                    display.get_or_init(|| self.shown_rules(self.lang.display)),
+                    dbg.get_or_init(|| self.shown_rules(self.lang.display, true)),
+                ),
+                Mode::Display => (
+                    self.lang.display,
+                    display.get_or_init(|| self.shown_rules(self.lang.display, false)),
                 ),
                 Mode::Eq => (
                     self.lang.eq,
-                    eq.get_or_init(|| self.shown_rules(self.lang.eq)),
+                    eq.get_or_init(|| self.shown_rules(self.lang.eq, false)),
                 ),
             };
             let mut walk = vec![root];
@@ -550,7 +554,9 @@ impl Checker<'_> {
                 if !seen.insert((ty, mode)) {
                     continue;
                 }
-                let skipped = if ty.has_param() {
+                let skipped = if mode != Mode::Dbg {
+                    applies_written(&self.conformances, interface, self.lang.display, ty)
+                } else if ty.has_param() {
                     head_of(ty).is_some_and(|head| rules.written.contains(&head))
                 } else {
                     has_written(&self.conformances, interface, ty)
@@ -597,21 +603,33 @@ impl Checker<'_> {
         shown
     }
 
-    /// The rules of the walk of `shown_types` for `interface`. They name the types that have a
-    /// written conformance of it, and, by declaration, the arguments that it shows. The walk skips
-    /// a type with any written conformance. So it shows no argument of such a type through the
-    /// payload of another one either.
-    fn shown_rules(&self, interface: tir::InterfaceId) -> Rules {
+    /// The rules of the walk of `shown_types` for `interface`. They name, by declaration, the
+    /// arguments that it shows. A declaration that hides its arguments has a written conformance.
+    /// With `by_head`, any written conformance of the head counts, and `written` names those heads.
+    /// Else only a conformance that always covers the declaration counts (`applies_written`).
+    /// The walk skips such a type. So it shows no argument of it through the payload of another
+    /// one either.
+    fn shown_rules(&self, interface: tir::InterfaceId, by_head: bool) -> Rules {
         let written: FxHashSet<Head> = (self.conformances.iter())
-            .filter(|&(i, _)| i == interface)
+            .filter(|&(i, _)| by_head && i == interface)
             .filter_map(|(_, c)| head_of(c.target))
             .collect();
-        let hidden: Vec<bool> = (0..self.enums.len())
-            .map(|e| written.contains(&Head::Enum(tir::EnumId(e))))
-            .chain(
-                (0..self.structs.len()).map(|s| written.contains(&Head::Struct(tir::StructId(s)))),
-            )
-            .collect();
+        let hidden: Vec<bool> = if by_head {
+            (0..self.enums.len())
+                .map(|e| written.contains(&Head::Enum(tir::EnumId(e))))
+                .chain(
+                    (0..self.structs.len())
+                        .map(|s| written.contains(&Head::Struct(tir::StructId(s)))),
+                )
+                .collect()
+        } else {
+            (0..self.inline_count())
+                .map(|v| {
+                    let own = self.own_type(v);
+                    applies_written(&self.conformances, interface, self.lang.display, own)
+                })
+                .collect()
+        };
         Rules {
             params: self.shown_params_with(&hidden),
             written,
@@ -627,15 +645,35 @@ impl Checker<'_> {
         }
     }
 
-    /// `record_shown` for a value of type `got` that converts to `want`: an `any` type, or its
-    /// optional. A value of any other type is not shown.
+    /// Records that code of unknown reach, in the body being checked, may show a value of type
+    /// `ty` through `Display` or `Eq`. A type that cannot hold a struct is left out.
+    pub(super) fn record_both(&mut self, ty: Type) {
+        let holds = matches!(
+            ty.kind(),
+            TypeKind::Array(_) | TypeKind::Optional(_) | TypeKind::Enum(..) | TypeKind::Struct(..)
+        );
+        if holds {
+            self.record_shown(ty, self.lang.display);
+            self.record_shown(ty, self.lang.eq);
+        }
+    }
+
+    /// `record_both` for each type argument of a call: the callee may show them.
+    pub(super) fn record_type_args(&mut self, types: tir::TypeArgs) {
+        for &ty in types.get() {
+            self.record_both(ty);
+        }
+    }
+
+    /// `record_both` for a value of type `got` that converts to `want`: an `any` type of any
+    /// interface, or its optional. A value of any other type is not converted.
     pub(super) fn record_shown_any(&mut self, got: Type, want: Type) {
         let target = match want.kind() {
             TypeKind::Optional(payload) => payload,
             _ => want,
         };
-        if let TypeKind::Any(interface, _) = target.kind() {
-            self.record_shown(got, interface);
+        if matches!(target.kind(), TypeKind::Any(..)) {
+            self.record_both(got);
         }
     }
 

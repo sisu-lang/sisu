@@ -1938,6 +1938,15 @@ fn generated_read_should_count_each_shown_field() {
             ),
         ),
         (
+            "a generic requirement of an interface",
+            own(
+                &format!(
+                    "{p}interface Sink {{\n    fn put<U>(self, u: U)\n}}\nstruct S {{}}\nextend S: Sink {{\n    fn put<U>(self, u: U) {{ print(u) }}\n}}\nfn f<K: Sink>(k: K) {{ k.put(P(n: 1)) }}\n"
+                ),
+                "f(S())",
+            ),
+        ),
+        (
             "a loop break that a later break widens to any Display",
             own(
                 p,

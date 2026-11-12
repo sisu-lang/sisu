@@ -105,6 +105,7 @@ impl Checker<'_> {
         self.marks(args, &mut parts, &mut_site, (&params, list), met);
         let (checked, list, solved) = result?;
         let (iargs, types) = list.get().split_at(owner.len());
+        self.record_type_args(list);
         let (iargs, types) = (TypeArgs::intern(iargs), TypeArgs::intern(types));
         let parts = self.mut_overlaps(parts);
         let failed = labeled.is_some() || checked.iter().any(mismatched);

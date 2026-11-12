@@ -1744,7 +1744,7 @@ impl Checker<'_> {
 
     /// The inline declaration `v` applied to its own type parameters, as its declaration names
     /// it.
-    fn own_type(&self, v: usize) -> Type {
+    pub(super) fn own_type(&self, v: usize) -> Type {
         let params: Vec<Type> = (self.inline_decl(v).1.iter().zip(0..))
             .map(|(&name, i)| Type::intern(TypeKind::Param(name, i)))
             .collect();
@@ -1757,7 +1757,7 @@ impl Checker<'_> {
 
     /// How many inline declarations there are: the enums, then the structs. The graph numbers
     /// each by that order (`inline_of`).
-    fn inline_count(&self) -> usize {
+    pub(super) fn inline_count(&self) -> usize {
         self.enums.len() + self.structs.len()
     }
 
