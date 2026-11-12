@@ -1,0 +1,8 @@
+// GIVEN `struct N: Ord`, which gets no generated `Ord`
+// WHEN `sisu check` runs on it
+// THEN it reports E0152 at `Ord` (4:11), with a label that says so
+struct N: Ord { n: i64 }
+
+fn main() {
+    print(N(n: 1).n)
+}

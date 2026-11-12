@@ -2972,6 +2972,28 @@ mod tests {
         );
     }
 
+    /// A struct instance has the label as an enum instance does. `P^30` is the type of the
+    /// `None`. In the second row, `W<P^29>` holds the instance of `P` that is over the limit. The
+    /// label then comes from the spread of the use of `W<P^29>`.
+    #[test]
+    fn instantiate_should_point_e0160_at_the_use_of_a_struct_instance() {
+        let nested = |levels: usize| format!("{}i64{}", "P<".repeat(levels), ">".repeat(levels));
+        let pair = "struct P<T> { a: T; b: T }\nstruct W<T> { p: T; n: i64 }\n";
+        for ty in [nested(30), format!("W<{}>", nested(29))] {
+            let src =
+                format!("{pair}fn main() {{\n    let x: {ty}? = None\n    print(x == None)\n}}\n");
+            let at = src.find("= None").expect("the source should hold the use") + 2;
+            assert_eq!(payload_uses(&src), [at], "{ty}");
+        }
+        // The type arguments of the call make the instance, before its argument has the type.
+        let src = format!(
+            "{pair}fn h<T>(x: T?) -> bool {{\n    x == None\n}}\nfn main() {{\n    print(h<{}>(None))\n}}\n",
+            nested(30)
+        );
+        let at = src.find("h<P").expect("the source should hold the use");
+        assert_eq!(payload_uses(&src), [at]);
+    }
+
     /// The type of `None` is an optional of the instance, and the type of `[]` an array of it.
     #[test]
     fn instantiate_should_point_e0160_at_an_expression_whose_type_is_an_optional_or_array() {

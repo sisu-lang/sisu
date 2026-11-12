@@ -1302,23 +1302,71 @@ fn conditional_struct_equality_should_follow_its_argument() {
 
 /// GIVEN `struct P { n: i64 }` with `extend P { fn m(mut self) {} }`. WHEN the program is
 /// checked. THEN it is E0018 at the `mut`, with a help and no fix, as the method of a struct's
-/// own body has: a class's form has a fix that removes the `mut`.
+/// own body has: a class's form has a fix that removes the `mut`. A body that changes `self` or
+/// a part of it gives no E0001 after the E0018: the body is checked as `mut self` asks.
 #[test]
 fn mut_self_on_a_struct_should_be_e0018() {
+    let changes = |body: &str| {
+        format!(
+            "struct In {{ n: i64 }}\nfn bump(mut x: i64) {{ x = 1 }}\n\
+             struct P {{ n: i64; xs: [i64]; i: In; o: In? }}\n\
+             extend P {{\n    fn m(mut self) {{ {body} }}\n}}\nfn main() {{}}"
+        )
+    };
     let rows = [
         (
             "an extend of a struct",
-            "struct P { n: i64 }\nextend P {\n    fn m(mut self) {}\n}\nfn main() {}",
+            "struct P { n: i64 }\nextend P {\n    fn m(mut self) {}\n}\nfn main() {}".to_string(),
         ),
         (
             "an extend of an alias of a struct",
-            "struct P { n: i64 }\ntype A = P\nextend A {\n    fn m(mut self) {}\n}\nfn main() {}",
+            "struct P { n: i64 }\ntype A = P\nextend A {\n    fn m(mut self) {}\n}\nfn main() {}"
+                .to_string(),
+        ),
+        ("a write of a field of `self`", changes("self.n = 2")),
+        ("a `push` to a field of `self`", changes("self.xs.push(1)")),
+        (
+            "a write of a nested field of `self`",
+            changes("self.i.n = 2"),
+        ),
+        (
+            "a field of `self` as a `mut` argument",
+            changes("bump(mut self.n)"),
         ),
     ];
-    for (row, src) in rows {
+    for (row, src) in &rows {
+        let (row, src) = (*row, src.as_str());
         let d = only_error(row, src, MutSelf, (src.lines().count() - 2, 10));
         assert!(d.fixes().is_empty(), "row `{row}`: {d:?}");
         assert!(d.help().is_some(), "row `{row}`: {d:?}");
+    }
+    // A write through `?.` stays E0062, as for a `let mut` root, and is no E0001.
+    codes_row(
+        "a write through `?.` of a field of `self`",
+        &changes("self.o?.n = 2"),
+        &[(MutSelf, (5, 10)), (MayBeNone, (5, 28))],
+    );
+}
+
+/// GIVEN a struct whose declaration lists `K` but has no `k`, and one that lists `Ord`. WHEN the
+/// program is checked. THEN each is E0152 at the interface in the list. `E0152-struct-ord` pins
+/// the label of the `Ord` row.
+#[test]
+fn struct_conformance_list_failure_should_be_e0152() {
+    let rows = [
+        (
+            "a list without the method",
+            "interface K {\n    fn k(self) -> i64\n}\nstruct P: K { x: i64 }\nfn main() {\n    print(P(x: 1).x)\n}",
+            (4, 11),
+        ),
+        (
+            "a list with `Ord`",
+            "struct N: Ord { n: i64 }\nfn main() {\n    print(N(n: 1).n)\n}",
+            (1, 11),
+        ),
+    ];
+    for (row, src, pos) in rows {
+        only_error(row, src, Code::ConformanceBody, pos);
     }
 }
 

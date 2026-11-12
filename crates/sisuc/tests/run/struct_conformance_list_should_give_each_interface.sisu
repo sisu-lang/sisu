@@ -1,0 +1,42 @@
+// GIVEN `struct P: K, Display` with `k` and `to_string` in its body, `struct G<T: Display>:
+// Display`, and `struct Q: Eq` with no written `eq`
+// WHEN `main` calls `k` through a bound, prints `P` and `G`, and compares `Q` through a bound
+// THEN each struct has the methods of its list, and `Q` has the generated `eq`
+interface K {
+    fn k(self) -> i64
+}
+
+struct P: K, Display {
+    x: i64
+    fn k(self) -> i64 {
+        self.x * 2
+    }
+    fn to_string(self) -> string {
+        "p {self.x}"
+    }
+}
+
+struct G<T: Display>: Display {
+    v: T
+    fn to_string(self) -> string {
+        "g {self.v}"
+    }
+}
+
+struct Q: Eq { n: i64 }
+
+fn k_of<T: K>(t: T) -> i64 {
+    t.k()
+}
+
+fn same<T: Eq>(a: T, b: T) -> bool {
+    a == b
+}
+
+fn main() {
+    print(k_of(P(x: 21)))                 // 42
+    print(P(x: 1))                       // p 1
+    print(G(v: P(x: 2)))                 // g p 2
+    print(same(Q(n: 1), Q(n: 1)))        // true
+    print(same(Q(n: 1), Q(n: 2)))        // false
+}

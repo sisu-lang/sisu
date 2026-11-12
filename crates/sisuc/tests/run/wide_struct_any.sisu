@@ -1,9 +1,13 @@
 // GIVEN `N`, a struct of 32 `i64` fields (256 bytes, one value), and `W`, a struct of 33 (264
 // bytes, in memory, ADR 0048)
-// AND a struct `C` that conforms to an interface `I`, whose methods return a `W` and an `N`,
-// and take a `W` and an `N`
-// WHEN `main` calls each method through an `any I`
+// AND two structs `C` and `D` that conform to an interface `I`. Its methods return a `W` and an
+// `N`, and take a `W` and an `N`
+// WHEN `main` chooses `C` or `D` from its input, and `run` calls each method through an `any I`
+// at each level of its recursion
 // THEN each call prints the first and last fields of the value it passes or returns
+// AND the program chooses the receiver and the depth of `run` from its input at run time. Thus
+// `-O2` keeps the four calls through the table in `run`. The marker below checks it
+// o2-indirect-calls: run 4
 struct N {
     a0: i64
     a1: i64
@@ -99,8 +103,28 @@ extend C: I {
     }
 }
 
-fn main() {
-    let x: any I = C(base: 100)
+// `D` is never chosen: it is a second table, so `-O2` cannot know which method a call runs.
+struct D { base: i64 }
+
+extend D: I {
+    fn make_w(self, k: i64) -> W {
+        C(base: self.base).make_w(k)
+    }
+    fn make_n(self, k: i64) -> N {
+        C(base: self.base).make_n(k)
+    }
+    fn take_w(self, _w: W) -> i64 {
+        self.base
+    }
+    fn take_n(self, _n: N) -> i64 {
+        self.base
+    }
+}
+
+fn run(x: any I, depth: i64) {
+    if depth > 0 {
+        run(x, depth - 1)
+    }
     let w = x.make_w(1)
     print(w.a0)                      // 101
     print(w.a32)                     // 133
@@ -110,4 +134,12 @@ fn main() {
     print(x.take_w(w))               // 101233
     print(x.take_n(n))               // 102233
     print(w.a0 + n.a0)               // 203
+}
+
+fn main() {
+    // Standard input is empty, so the depth is 0 and `C` is chosen, but the compiler cannot know
+    // it.
+    let depth = (read_line() ?? "").len()
+    let x: any I = if depth > 5 { D(base: 0) } else { C(base: 100) }
+    run(x, depth)
 }
