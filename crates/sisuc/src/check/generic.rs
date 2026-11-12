@@ -4803,11 +4803,12 @@ impl Checker<'_> {
             self.names.class(n),
             self.names.function(n),
             self.names.enum_id(n),
+            self.names.struct_id(n),
         ) {
             (Some(Declared::Known(id)), ..) => Some(self.classes[id.0].type_params.len()),
-            (_, Some(Declared::Known(id)), _) => Some(self.signatures[id.0].type_params.len()),
-            (.., Some(Declared::Known(id))) => Some(self.enums[id.0].type_params.len()),
-            _ if matches!(self.names.struct_id(n), Some(Declared::Known(_))) => Some(0),
+            (_, Some(Declared::Known(id)), ..) => Some(self.signatures[id.0].type_params.len()),
+            (.., Some(Declared::Known(id)), _) => Some(self.enums[id.0].type_params.len()),
+            (.., Some(Declared::Known(id))) => Some(self.structs[id.0].type_params.len()),
             _ => None,
         };
         match params {
