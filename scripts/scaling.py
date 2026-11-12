@@ -34,7 +34,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
@@ -71,6 +71,8 @@ O2_SHAPES = (
     "nested array ==",
     "string left",
     "string statements",
+    "struct writes",
+    "struct ==",
 )
 # The shapes whose programs are errors, so that nothing after `check` runs for them. The value
 # is the error code that each of their programs above size 0 must give.
@@ -82,8 +84,11 @@ O2_SUFFIX = " -O2"
 O2_STAGES = ("codegen", "optimize", "object")
 AS_AT_O0 = "as at -O0"
 # The cases that are superlinear today, and the cases just under the rule that have a known cause:
-# (shape, stage, issue). The pull request that fixes a case removes its row.
-KNOWN = [
+# (shape, stage, issue). The pull request that fixes a case removes its row. An issue is a number.
+# It can also be the path of a fallback issue file that is not filed yet (`GitHub: pending`).
+# Or it is `docs/register.md`, for a debt row there. Filing an issue replaces the path with the
+# number.
+KNOWN: list[tuple[str, str, int | str]] = [
     ("mut exits", "mir", 502),
     ("mut exits", "codegen", 502),
     ("owned exits", "mir", 502),
@@ -99,6 +104,15 @@ KNOWN = [
     # literals. One step at 96 literals gives the sweep its ratio, so this row is a step and not
     # a curve. #613 is closed.
     ("float left", "object", 613),
+    # The sweep of the checker's type walks: `docs/register.md`, the row of the walks that keep
+    # their seen sets for one field. The struct is one node of it, and adds 1.4% at 8n.
+    ("never built", "check", "docs/register.md"),
+    # A path of nested structs makes LLVM's `StructType::checkBody` grow with the depth.
+    ("struct paths", "codegen", ".scratch/structs-part-1/issues/01-struct-paths-codegen.md"),
+    # The cost is LLVM's: `getUnderlyingObjects` and a pointer set, in a function of thousands of
+    # calls of the helpers that make an array or a box unique.
+    ("struct writes -O2", "optimize", ".scratch/structs-part-1/issues/02-struct-writes-o2.md"),
+    ("struct writes -O2", "object", ".scratch/structs-part-1/issues/02-struct-writes-o2.md"),
 ]
 ANNOTATE = ["callgrind_annotate", "--inclusive=yes", "--threshold=100", "--show=Ir", "--auto=no"]
 DIAGNOSTIC = re.compile(r"^(error|warning)\[([EW]\d{4})\]")
@@ -486,6 +500,119 @@ def nested_array_eq(k: int) -> str:
     return f"fn main() {{\n    let a = {literal}\n    let b = {literal}\n    print(a == b)\n}}\n"
 
 
+def struct_fields(k: int) -> str:
+    """Return a program with a struct of `k + 1` fields, built, read and printed."""
+    # A struct of more than 32 `i64` fields is over 256 bytes. So it stays in memory (ADR 0048),
+    # and no first-class aggregate of it reaches LLVM. `main` adds each field to `total`, so that
+    # no size has a W0013. The print of the struct reads each field again.
+    declared = "".join(f"    f{tag(i)}: i64\n" for i in range(k))
+    given = "".join(f", f{tag(i)}: 1" for i in range(k))
+    read = "    total += w.id\n" + "".join(f"    total += w.f{tag(i)}\n" for i in range(k))
+    return (
+        f"struct Wide {{\n    id: i64\n{declared}}}\n\n"
+        f"fn main() {{\n    let w = Wide(id: 0{given})\n    let mut total = 0\n{read}"
+        '    print("{total}")\n    print(w)\n}\n'
+    )
+
+
+def struct_equality(k: int) -> str:
+    """Return a program that compares two structs of `k + 1` `i64` fields with `==`."""
+    # The generated `==` compares the fields one by one, and it reads each field, so that no size
+    # has a W0013.
+    declared = "".join(f"    f{tag(i)}: i64\n" for i in range(k))
+    given = "".join(f", f{tag(i)}: 1" for i in range(k))
+    other = "".join(f", f{tag(i)}: 2" for i in range(k))
+    return (
+        f"struct Wide {{\n    id: i64\n{declared}}}\n\n"
+        f"fn main() {{\n    let a = Wide(id: 0{given})\n    let b = Wide(id: 0{other})\n"
+        "    print(a == b)\n    print(a != b)\n}\n"
+    )
+
+
+def struct_paths(k: int) -> str:
+    """Return a program with `k + 1` structs that hold one another in a chain, and a path."""
+    # `Level0` holds an `i64`, and each other level holds the level before it. So the value is
+    # `k + 1` structs deep, and its path has `k + 1` fields. `main` writes the whole path and
+    # reads it, so that no size has a W0013 or a W0002.
+    levels = [f"struct Level{tag(0)} {{\n    v: i64\n}}\n"] + [
+        f"struct Level{tag(i)} {{\n    p: Level{tag(i - 1)}\n}}\n" for i in range(1, k + 1)
+    ]
+    value = f"Level{tag(0)}(v: 0)"
+    for i in range(1, k + 1):
+        value = f"Level{tag(i)}(p: {value})"
+    path = ".p" * k + ".v"
+    return (
+        "\n".join(levels) + f"\nfn main() {{\n    let mut s = {value}\n    s{path} = 1\n"
+        f'    print("{{s{path}}}")\n}}\n'
+    )
+
+
+def struct_writes(k: int) -> str:
+    """Return a program whose `main` has `2k` writes to struct paths, and compares the structs."""
+    # `t.i.xs.push(i)` writes through an array field of a struct field, which makes the array
+    # unique. `y.b.n = i` writes through the box of `b`, because `A` and `B` hold each other. `==`
+    # on the struct is generated code, and `print` reads each field, so that no size has a W0013.
+    # The first pair of writes is always there, so that size 0 has no W0002.
+    writes = "    t.i.xs.push(0)\n    y.b.n = 0\n" + "".join(
+        f"    t.i.xs.push({tag(i)})\n    y.b.n = {tag(i)}\n" for i in range(k)
+    )
+    return (
+        "struct In {\n    n: i64\n    xs: [i64]\n}\n\n"
+        "struct T {\n    i: In\n}\n\n"
+        "struct A {\n    b: B\n}\n\n"
+        "struct B {\n    a: A?\n    n: i64\n}\n\n"
+        "fn main() {\n    let mut t = T(i: In(n: 0, xs: [0]))\n"
+        "    let mut y = A(b: B(a: None, n: 0))\n"
+        f"    let u = t\n    let v = y\n{writes}"
+        "    print(t == u)\n    print(t)\n    print(y.b.n)\n    print(v)\n}\n"
+    )
+
+
+def never_built(k: int) -> str:
+    """Return a program with `k` classes, `k - 1` aliases over them, `k` enums and a struct."""
+    # The fixed point of `never_built` (`check/enums.rs`) runs over every class, enum and struct,
+    # with the arguments each one gets. The `k` classes are the leaves of a balanced tree of
+    # `k - 1` aliases through the enum `W`, so the root names `k` classes. Each of the `k` enums
+    # holds the root, and so does the one struct. Without the struct, the cost grows with the
+    # product of the enums and the classes (`docs/register.md`, row 62). The struct is one more
+    # node. It must add no growth of its own. `main` builds both variants of `W`, each class,
+    # each enum and the struct. It reads the field of the struct, so that no size has a W0012,
+    # a W0013 or a W0014. Size 0 has no `W`.
+    if k == 0:
+        return "fn main() {}\n"
+    names = [f"C{tag(i)}" for i in range(k)]
+    # The children of each alias, and the aliases in the order they are declared.
+    children: dict[str, tuple[str, str]] = {}
+    level = names
+    while len(level) > 1:
+        paired = []
+        for i in range(0, len(level) - 1, 2):
+            alias = f"T{tag(len(children))}"
+            children[alias] = (level[i], level[i + 1])
+            paired.append(alias)
+        level = paired + level[len(level) - len(level) % 2 :]
+    root = level[0]
+
+    def down(node: str, edge: int, variant: str) -> str:
+        """Return the value of `node` along its left edge (`edge` 0) or its right one."""
+        if node not in children:
+            return f"{node}()"
+        return f"W.{variant}(x: {down(children[node][edge], edge, variant)})"
+
+    classes = "".join(f"class {name} {{}}\n" for name in names)
+    aliases = "".join(f"type {a} = W<{x}, {y}>\n" for a, (x, y) in children.items())
+    enums = "".join(f"enum E{tag(i)} {{\n    V(x: {root})\n}}\n\n" for i in range(k))
+    built = "".join(f"    let _e{tag(i)} = E{tag(i)}.V(x: a)\n" for i in range(k))
+    made = "".join(f"    let _c{tag(i)} = {name}()\n" for i, name in enumerate(names))
+    return (
+        "enum W<A, B> {\n    A(x: A)\n    B(x: B)\n}\n\n"
+        f"{classes}{aliases}\n{enums}struct S {{\n    r: {root}\n}}\n\n"
+        f"fn main() {{\n    let a: {root} = {down(root, 0, 'A')}\n"
+        f"    let b: {root} = {down(root, 1, 'B')}\n{built}{made}"
+        "    let s = S(r: b)\n    let _r = s.r\n}\n"
+    )
+
+
 def failed_bounds(k: int) -> str:
     """Return a program with `k` failed bounds in one alias, and `k` users of that alias."""
     params = ", ".join(["P", *(f"P{tag(i)}" for i in range(k))])
@@ -535,6 +662,11 @@ SHAPES = {
     "mutable locals": (250, mutable_locals),
     "nested array ==": (5, nested_array_eq),
     "failed bounds": (64, failed_bounds),
+    "struct fields": (50, struct_fields),
+    "struct paths": (24, struct_paths),
+    "struct writes": (250, struct_writes),
+    "struct ==": (50, struct_equality),
+    "never built": (16, never_built),
 }
 
 
@@ -585,7 +717,7 @@ KNOWN_PREFIX = "known case: "
 
 def compare(
     verdicts: dict[tuple[str, str], tuple[str, list[Fraction | None]]],
-    known: list[tuple[str, str, int]],
+    known: Sequence[tuple[str, str, int | str]],
     measured: set[str],
 ) -> tuple[list[str], list[str], int]:
     """Compare the verdicts with the known list.
@@ -602,9 +734,10 @@ def compare(
     for (shape, stage), issue in rows.items():
         if shape not in measured:
             continue
-        case = f"{shape}, {stage} (#{issue})"
+        named = f"#{issue}" if isinstance(issue, int) else issue
+        case = f"{shape}, {stage} ({named})"
         if looks_fixed(*verdicts[shape, stage]):
-            failures.append(f"#{issue} looks fixed: remove its row ({shape}, {stage})")
+            failures.append(f"{named} looks fixed: remove its row ({shape}, {stage})")
         else:
             lines.append(KNOWN_PREFIX + case)
     return lines, failures, 1 if failures else 0
