@@ -121,18 +121,26 @@ fn part(index: usize) -> usize {
     index % PARTS
 }
 
+/// The indexes of the programs of part `n`, out of `total` programs.
+fn part_indexes(n: usize, total: usize) -> impl Iterator<Item = usize> {
+    (0..total).filter(move |&i| part(i) == n)
+}
+
 /// Runs `crash` on each program of part `n`, one after the other, and asserts that none crashed.
 fn check_part(n: usize) {
     let programs = programs();
-    let crashes: Vec<String> = (programs.iter().enumerate())
-        .filter(|&(i, _)| part(i) == n)
-        .filter_map(|(_, (which, program, stmt))| crash(which, program, stmt))
+    let indexes: Vec<usize> = part_indexes(n, programs.len()).collect();
+    let crashes: Vec<String> = (indexes.iter())
+        .filter_map(|&i| {
+            let (which, program, stmt) = &programs[i];
+            crash(which, program, stmt)
+        })
         .collect();
     assert!(
         crashes.is_empty(),
         "part {n}: `sisu check` crashed on {} of {} programs:\n{}",
         crashes.len(),
-        programs.len().div_ceil(PARTS),
+        indexes.len(),
         crashes.join("\n")
     );
 }
@@ -200,9 +208,7 @@ parts! {
 #[test]
 fn parts_should_hold_each_program_once() {
     let total = programs().len();
-    let mut seen: Vec<usize> = (0..PARTS)
-        .flat_map(|n| (0..total).filter(move |&i| part(i) == n))
-        .collect();
+    let mut seen: Vec<usize> = (0..PARTS).flat_map(|n| part_indexes(n, total)).collect();
     seen.sort_unstable();
     assert_eq!(
         seen,
