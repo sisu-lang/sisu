@@ -8176,8 +8176,8 @@ fn a_callee_parameter_printed_as_a_hole_should_report_the_code_and_place_it_did_
 
 /// GIVEN an ordering (`<`, `<=`, `>` or `>=`) of a type parameter and a value of another type
 /// WHEN the program is checked
-/// THEN the error is E0047 (`CannotCompare`), at the start of the leading operand, in every order
-///   of the operands, and a chain gives one error
+/// THEN the error is E0047 (`CannotCompare`), in every order of the operands. It is at the start of
+///   the first of the two operands that cannot be compared. A chain gives one error
 #[test]
 fn an_ordering_with_a_type_parameter_should_report_that_the_operands_cannot_be_compared() {
     // (the row, the function, the place of its one error)
@@ -8258,6 +8258,13 @@ fn an_ordering_with_a_type_parameter_should_report_that_the_operands_cannot_be_c
             (name, src, vec![(Code::CannotCompare, place)])
         })
         .collect();
+    // A generic call of a literal is checked alone: the base gave E0032 at 2:37.
+    rows.push((
+        "a generic call of a literal",
+        "fn id<X>(x: X) -> X { x }\nfn f<T: Ord>(a: T) -> bool { a < id(5) }\nfn main() {}"
+            .to_string(),
+        vec![(Code::CannotCompare, (2, 30))],
+    ));
     // The two functions together, as the issue gave them.
     let both = "fn f<T: Ord>(a: T) -> bool { 5 < a }\nfn g<T: Ord>(a: T) -> bool { a < 5 }\nfn main() {\n    print(f(1))\n    print(g(1))\n}";
     rows.push((
