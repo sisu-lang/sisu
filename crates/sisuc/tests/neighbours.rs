@@ -145,16 +145,16 @@ fn check_part(n: usize) {
     );
 }
 
-/// GIVEN each value of `[values]` in each of its contexts, in `main` and in a generic function
-/// AND each value of `[failed values]` in each context, in a function whose bound failed, in a
-/// program of its own
-/// WHEN `sisu check` runs on each program of the part
-/// THEN no run crashes: each one ends with no error or with an error.
-///
 /// Each part is one test, so that nextest spreads the parts over the cores.
 macro_rules! parts {
     ($($name:ident => $n:expr),+ $(,)?) => {
         $(
+            /// GIVEN each value of `[values]` in each of its contexts, in `main` and in a generic
+            /// function
+            /// AND each value of `[failed values]` in each context, in a function whose bound
+            /// failed, in a program of its own
+            /// WHEN `sisu check` runs on each program of the part
+            /// THEN no run crashes: each one ends with no error or with an error.
             #[test]
             fn $name() {
                 check_part($n);
