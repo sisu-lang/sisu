@@ -115,7 +115,7 @@ On Linux, it runs three ASan builds (plain, `-O2` and `--rc-checks`) and an `-O2
 Then it runs that `-O2` build once under Valgrind.
 On macOS, it runs a `--rc-checks` build.
 Each native, ASan and `--rc-checks` run must exit 0 and print `<name>.out` on stdout, and `<name>.err` or nothing on stderr.
-The Valgrind run must exit 0 and print `<name>.out` on stdout (not on ARM64). It never checks stderr.
+The Valgrind run must exit 0 and print `<name>.out` on stdout. On ARM64 it does not compare stdout. It never checks stderr.
 `make test` does not run the memory tests: the `default-filter` of the default and `ci` profiles in
 `.config/nextest.toml` leaves them out, and `scripts/nextest_filters.py` fails when it leaves out any other test.
 `make memory-safety` runs them with the `memory` profile.
@@ -174,7 +174,7 @@ A `run/` case that writes to standard error on purpose, with `eprint`, has a
 `<name>.err` beside it. Each run of the output test, and each native, ASan and
 `--rc-checks` run of the memory test, must write exactly that to stderr.
 Without the file, stderr must stay empty. The Valgrind run's stderr holds
-Valgrind's own log, so it checks only stdout and the exit code. To add the
+Valgrind's own log, so it checks only stdout and the exit code. On ARM64 it does not compare stdout. To add the
 file to a case, `touch` it like any expected file.
 
 The output test of a `run/` case builds a plain and an `-O2` version, both on
@@ -191,8 +191,8 @@ this order. The first failure ends the case.
    `--sanitize address`). Each must exit 0 and match the files.
 2. The `-O2` build on the System allocator, run natively. It must exit 0 and
    match the files.
-3. That `-O2` build, once under Valgrind. It must exit 0 and print `<name>.out`
-   (not on ARM64).
+3. That `-O2` build, once under Valgrind. It must exit 0 and print `<name>.out`.
+   On ARM64 it does not compare stdout.
 
 On macOS the memory test runs one `--rc-checks` build natively and checks it
 against the files.

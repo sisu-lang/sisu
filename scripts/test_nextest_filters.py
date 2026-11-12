@@ -236,6 +236,7 @@ class NextestFilters(unittest.TestCase):
         left_out = {"filter-match": {"status": "mismatch", "reason": "default-filter"}}
         matched = {"filter-match": {"status": "matches"}}
         suites = {"sisuc::cases": {"testcases": {"memory::a.sisu": left_out}}}
+        suites["sisuc::cases"]["testcases"]["run::c.sisu"] = matched
         self.assertEqual(problems("", suites), [])
         suites["sisuc::cases"]["testcases"]["site_memory::b.sisu"] = matched
         found = problems("", suites)

@@ -98,10 +98,10 @@ def check(config_path: str, list_path: str) -> list[str]:
     return [
         f"{config_path}:{line}: filter leaf `test({leaf})` {wrong[leaf]}"
         for line, leaf in sorted((line, leaf) for leaf in wrong for line in where.get(leaf, {1}))
-    ] + left_out(suites)
+    ] + default_filter_problems(suites)
 
 
-def left_out(suites: dict[str, Any]) -> list[str]:
+def default_filter_problems(suites: dict[str, Any]) -> list[str]:
     """Return one line for each wrong case: a memory test kept, or another test left out."""
     lines: list[str] = []
     for suite_name, suite in suites.items():

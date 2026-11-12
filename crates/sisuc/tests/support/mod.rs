@@ -291,8 +291,8 @@ pub(crate) fn run(path: &Path, bless: bool) {
     expect_files(&files, bless);
 }
 
-/// The memory test of a `tests/run` case. Each run exits 0, prints `<name>.out` on stdout, and
-/// prints `<name>.err` on stderr, or nothing when that file does not exist.
+/// The memory test of a `tests/run` case. Each run exits 0. Each run but the Valgrind run
+/// prints `<name>.out` on stdout, and `<name>.err` or nothing on stderr.
 ///
 /// On Linux, the checks run in this order:
 /// 1. Three builds that `ASan` checks run: `ASAN_O0`, `ASAN_O2` and `ASAN_RC`. The `asan-O0`
@@ -301,6 +301,7 @@ pub(crate) fn run(path: &Path, bless: bool) {
 /// 2. The `-O2` build on the System allocator (`VALGRIND_O2`) runs natively.
 /// 3. That build runs once under Valgrind, which finds no leak or memory error. Its stderr holds
 ///    Valgrind's own log, so it is not compared.
+///    On ARM64 its stdout is not compared.
 ///
 /// On macOS, `ASan` and Valgrind do not run. A `--rc-checks` build runs, which finds no count
 /// fault or live object at exit.
