@@ -257,8 +257,10 @@ A named type whose values are references to objects with the same fields and
 methods. Sisu classes have no inheritance.
 
 **Struct**:
-A named value with fields, held inline. It has no identity and no count of its
-own. Binding, passing or storing one behaves as a copy, as an array does.
+A named value with fields, held inline, declared with `struct`. It has no
+identity and no count of its own. Binding, passing or storing one behaves as a
+copy, as an array does. A field has no `mut`: the root of the place decides
+what can change. A field that closes a cycle holds a box.
 _Avoid_: record, data class
 
 **Object**:

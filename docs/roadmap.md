@@ -67,6 +67,21 @@ before milestone 9.
   `Expr.Num(2)` builds a value, an enum has methods and compares with `==`,
   and a recursive enum such as `Add(Expr, Expr)` works with no annotation,
   its recursive fields stored behind counted boxes; enum values never change
+- structs, declared with `struct`. A struct value holds its fields inline. It is
+  copied when it is bound, passed, stored or returned
+  ([ADR 0046](adr/0046-structs-replace-classes.md)). A struct has fields with no
+  `mut`, methods with plain `self`, type parameters, a conformance list and
+  `extend`. `Point(x: 1, y: 2)` builds one. The compiler writes `==` and `print`
+  when each field has them. One rule decides what can change. A write, or a `mut`
+  argument, needs a root that is a `let mut` or a `mut` parameter (`E0001`,
+  `E0169`). It can go any depth: through a field, a field of a field, or an
+  element of an array in a field. A field that names the struct through an
+  optional or an enum closes a cycle, and holds a box. A struct that no value can
+  be built of is `E0027`. A struct over 256 bytes stays in memory
+  ([ADR 0048](adr/0048-a-large-value-stays-in-memory.md)). A `let mut` that
+  copies a place and is then only written to warns (`W0016`). `mut self` and
+  writes through `?.` on a struct value wait for later parts of the work.
+  Classes work beside structs until they go
 - generic functions, classes, enums and methods, such as
   `fn first<T>(xs: [T]) -> T?`, `class Stack<T>` and `enum Tree<T>`, with
   type arguments inferred from the arguments and the expected type, or

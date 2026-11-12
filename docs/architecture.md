@@ -80,7 +80,8 @@ intact items go on to the checker, and a broken item keeps its name, so a use
 of it is not reported as missing, and a second item of that name is reported
 as defined twice. It parses a format spec's text into its alignment, width and precision, and
 reports a malformed or unsupported one without breaking its item. An `enum` item parses into its variants, each with
-an optional payload of labeled or unlabeled fields, and its methods. A `match`
+an optional payload of labeled or unlabeled fields, and its methods. A `struct` item has the shape of a class: its
+fields, which have no `mut` (E0175), and its methods. A `match`
 parses into its scrutinee and its arms, one per line, each a pattern, an
 optional `if` guard, `=>` and a body; a pattern is one or more alternatives
 joined by `|`. `if let` and `while let` take a pattern too, and so does
@@ -150,9 +151,14 @@ user's file may not (E0155). So `i64`'s `min`, `max` and `clamp`, the `sum` of
 an `[i64]` or an `[f64]`, and the `contains` of a `[T]` with `T: Eq` are
 functions that the prelude writes in Sisu, and a call of one is a call of that
 function. `check/enums.rs` declares each enum and rejects an
-enum that no value can be built of. `tir::layout_enums` then finds the payload
-fields that close a cycle of enums, the ones that go behind a box, and the
-enums that hold a counted part. In a generic enum the box goes on the declaring
+enum, a class or a struct that no value can be built of. `check/structs.rs` declares each struct
+with the table of a class, indexed by `StructId`. A struct name goes through the
+same name maps as a class name. One rule checks a write to a field, to an
+element of an array field, or to a field of a struct in a field. Its root must
+be a `let mut` or a `mut` parameter. `tir::layout_enums` then finds the payload
+fields and the struct fields that close a cycle. These go behind a box. It also
+finds the enums and structs that hold a counted part. An enum and a struct are
+nodes of one holds-inline graph. In a generic enum the box goes on the declaring
 enum's own field, not on one inside a generic type it names. Building a variant, `Expr.Num(2)`, becomes a `Variant` node
 ([ADR 0019](adr/0019-enums-are-values-named-through-their-enum.md)).
 `check/names.rs` owns the maps from a top-level name to its item. Each position asks it one
@@ -289,12 +295,12 @@ in `tir` is a 4-byte `Type` handle into one table (`types.rs`), as a name is a
 handle.
 
 **mono** (`mono.rs`). Monomorphization. Starting from the declarations that are
-not generic, it copies each generic function, class and enum once for each list
-of type arguments the program reaches, and substitutes the arguments into every
-type. Each copy is named as a program writes it: `first<i64>`,
-`Stack<string>.peek`, `Tree<i64>`. A method is copied only when a call reaches
-it, never with its class. `mono` then lays out the enums again with
-`tir::layout_enums`, because an instantiation can close a cycle of enums that
+not generic, it copies each generic function, class, struct and enum. It makes
+one copy for each list of type arguments the program reaches. It substitutes
+the arguments into every type. Each copy is named as a program writes it:
+`first<i64>`, `Stack<string>.peek`, `Tree<i64>`. A method is copied only when a
+call reaches it, never with its class. `mono` then lays out the enums and
+structs again with `tir::layout_enums`. An instantiation can close a cycle that
 no declaration has. A call of a requirement through a bound is an
 `InterfaceCall` in `tir`; `mono` replaces it with a call of the method of the
 conformance that the type argument has, so `total<Circle>` calls `Circle.area`
@@ -441,7 +447,16 @@ stays the same size for a value of any depth. A field of an enum on the same
 cycle that is held inline, such as `Two<Expr>.Both`'s `Expr` in
 `enum Expr { Pair(Two<Expr>) }`, is walked in place with the same lists.
 
-A drop that recurses through an array, an enum or a class outside the cycle
+A struct value has no heap block, no tag and no count. It is `%sisu.<Struct>`,
+with its fields inline in the order of the declaration. A copy copies the
+fields. A field that closes a cycle holds a box, `%sisu.box.<Struct>`, as a
+payload field of an enum does. The struct and the enums on the cycle share the
+pending lists and `sisu_rc.drain`. A struct over 256 bytes stays in memory. In
+`mir`, a struct is an `Rvalue::Struct`, and a field is a `Projection::StructField`.
+A write to a path first makes each array and each box on it unique, from the
+outermost, with `MakeUnique`. So a copy keeps the value that it had.
+
+A drop that recurses through an array, an enum, a struct or a class outside the cycle
 counts its depth ([ADR 0038](adr/0038-deep-drops-defer-past-a-depth-limit.md)).
 `codegen/deep.rs` finds the drop functions that count, and the drop weight of
 each. A counting drop function adds its weight to the global `sisu_rc.depth`,

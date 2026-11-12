@@ -317,10 +317,13 @@ The tables above time the programs. This section times the compilers.
 where the Sisu compiler stands. It does not show which compiler is better,
 because the compilers do different work.
 
-`bench/compile/` holds one unit in each language: the same program, with
+`bench/compile/` holds one unit in each language: the same program. It has
 generic classes, an interface with an associated type, a generic function
-with a bound, an enum, string interpolation and a `run` function. The size is
-the number of copies of the unit. The script gives each copy its own names and
+with a bound, an enum, string interpolation and a `run` function. It also has a
+struct of 100 `i64` fields (800 bytes), once. A function `wide` builds the
+struct, copies it, writes a field of the copy, reads every field and compares
+the two. Each copy of the unit calls `wide` with its own number. The size is the
+number of copies of the unit. The script gives each copy its own names and
 adds a `main` that prints the sum of the results. Size 1000 is about 143k lines
 in Sisu, and 138k to 158k lines in the other languages.
 
@@ -337,7 +340,8 @@ program: `rustc -O2` took 14 minutes of CPU at size 100. Two calls remove the
 bonus. The C++ `run` function is external, so it never had the bonus. The
 inliner of Go has no such bonus. The four programs have the same form.
 
-All ran at commit 73860669 on 2026-11-04. Other jobs ran on the machine
+The table below is from before the unit gained the struct. All ran at commit
+73860669 on 2026-11-04. Other jobs ran on the machine
 during the run, so the times are noisy, most at size 10. The load averages for
 1, 5 and 15 minutes were 1.6, 5.6 and 10.2 at the start of the run. They
 were 1.7, 6.5 and 10.2 at the end. The machine has 32 CPUs. The run took
@@ -565,7 +569,7 @@ prints each known case on stdout. It exits with code 1 when:
 
 The pull request that fixes a known case removes its row. The gaps between
 the numbers keep a row from changing between known and fixed when a change
-moves a ratio a little. `KNOWN` has 10 rows. Seven are for the shapes mut
+moves a ratio a little. `KNOWN` has 14 rows. Seven are for the shapes mut
 exits and owned exits (#502), in `mir`, `codegen` and the LLVM stages. Each
 `return` writes its own cleanup, so n exits and n values give n² statements.
 Real programs have few of these: no exit in the benchmark programs or the
@@ -574,6 +578,19 @@ Each stays. A call with n arguments at -O0 (#612) grows the same way in clang
 on a C function with n parameters. This is mut call width and mut returns. The
 list scheduler of LLVM's SelectionDAG does it. Float left (#613) is a step,
 not a curve: one size of the sweep falls on a one-time step of LLVM's tables.
+
+The other four rows are for the shapes of structs. Struct paths is a chain of
+nested structs. Its `codegen` grows because LLVM's `StructType::checkBody` grows
+with the depth of the chain. Struct writes at `-O2` is a function with thousands
+of writes to struct paths. LLVM's passes grow faster than the writes. Each of
+the two rows waits for an issue, and names the file of the issue until it is
+filed. Never built is a tree of aliases over `k` classes, with `k` enums and one
+struct that hold its root. The `check` stage grows with the product of the enums
+and the classes, as the register says ([docs/register.md](register.md)). The
+struct adds 1.4% of that growth at 8n, and nothing of its own. The shape struct
+fields is linear. The shape struct `==` at `-O2` passes the rule only because its
+ratios fall, from 3.1 to 2.7. Its `optimize` stage takes 1.2 billion instructions
+at 400 fields, and 48 million at 50.
 
 Each `tir::Expr` holds its exit flag. The checker sets it once, when it makes
 the expression. So array literal depth (#344), type depth, method chain,
