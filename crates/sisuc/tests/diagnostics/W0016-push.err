@@ -1,0 +1,12 @@
+warning[W0016]: this writes to a copy of `ys[0]`, and nothing reads the copy
+ --> W0016-push.sisu:4:5
+  |
+3 |     let mut a = ys[0]
+  |             - a copy
+4 |     a.push(2)
+  |     ^^^^^^^^^ `ys[0]` does not change
+  |
+  = help: `ys` is a `let`, so `ys[0]` cannot change: delete the write, or make `ys` a `let mut` and write to the place
+
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0016

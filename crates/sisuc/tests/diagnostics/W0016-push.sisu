@@ -1,0 +1,6 @@
+fn main() {
+    let ys = [[1]]
+    let mut a = ys[0]
+    a.push(2)
+    print(ys[0][0])
+}

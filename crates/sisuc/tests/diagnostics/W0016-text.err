@@ -1,0 +1,22 @@
+warning[W0016]: this writes to a copy of `xs[index("a  b")]`, and nothing reads the copy
+ --> W0016-text.sisu:9:5
+  |
+8 |     let mut a = xs[index("a  b")]
+  |             - a copy
+9 |     a.b = 3
+  |     ^^^ `xs[index("a  b")]` does not change
+  |
+  = help: `xs` is a plain parameter, so `xs[index("a  b")]` cannot change here: delete the write, or return the changed copy
+
+warning[W0016]: this writes to a copy of `(xs[0])`, and nothing reads the copy
+  --> W0016-text.sisu:14:5
+   |
+13 |     let mut a = (xs[0])
+   |             - a copy
+14 |     a.b = 4
+   |     ^^^ `(xs[0])` does not change
+   |
+   = help: `xs` is a plain parameter, so `(xs[0])` cannot change here: delete the write, or return the changed copy
+
+sisu: 2 warnings
+sisu: for more on a code, run `sisu explain <code>`: W0016

@@ -1,0 +1,37 @@
+struct A { b: i64 }
+
+struct Holder {
+    n: i64
+
+    fn touch(self) {
+        let mut a = self
+        a.n = 2
+    }
+}
+
+fn local() {
+    let o = A(b: 1)
+    let mut a = o
+    a.b = 2
+    print(o.b)
+}
+
+fn array(xs: [A]) {
+    let mut a = xs
+    a[0].b = 2
+}
+
+fn shadow() {
+    let a = A(b: 1)
+    let mut a = a
+    a.b = 2
+}
+
+fn main() {
+    let h = Holder(n: 1)
+    h.touch()
+    local()
+    array([A(b: 1)])
+    shadow()
+    print(h.n)
+}

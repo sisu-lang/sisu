@@ -1,0 +1,22 @@
+struct A { b: i64 }
+
+fn index(s: string) -> i64 {
+    if s == "a  b" { 1 } else { 0 }
+}
+
+fn spaced(xs: [A]) {
+    let mut a = xs[index("a  b")]
+    a.b = 3
+}
+
+fn parens(xs: [A]) {
+    let mut a = (xs[0])
+    a.b = 4
+}
+
+fn main() {
+    let xs = [A(b: 1), A(b: 2)]
+    spaced(xs)
+    parens(xs)
+    print(xs[0].b + xs[1].b)
+}

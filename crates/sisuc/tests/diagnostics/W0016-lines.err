@@ -1,0 +1,24 @@
+warning[W0016]: this writes to a copy of a part of `xs`, and nothing reads the copy
+ --> W0016-lines.sisu:7:5
+  |
+5 |     let mut a = xs[0 // the first
+  |             - a copy
+6 |     ]
+7 |     a.b = 2
+  |     ^^^ `xs` does not change
+  |
+  = help: `xs` is a plain parameter: delete the write, or return the changed copy
+
+warning[W0016]: this writes to a copy of a part of `ws`, and nothing reads the copy
+  --> W0016-lines.sisu:14:5
+   |
+11 |     let mut a = ws[
+   |             - a copy
+...
+14 |     a.b = 2
+   |     ^^^ `ws` does not change
+   |
+   = help: `ws` is a plain parameter: delete the write, or return the changed copy
+
+sisu: 2 warnings
+sisu: for more on a code, run `sisu explain <code>`: W0016

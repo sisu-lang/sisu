@@ -2160,7 +2160,7 @@ type CopyRow = (
 );
 
 /// The rows of a write to a copy.
-const COPY_ROWS: [CopyRow; 21] = [
+const COPY_ROWS: [CopyRow; 25] = [
     (
         "an element",
         "",
@@ -2296,6 +2296,34 @@ const COPY_ROWS: [CopyRow; 21] = [
         &[("W0016", "a.b = 2", 0)],
     ),
     (
+        "a slice",
+        "",
+        "",
+        "let mut a = xs[0..1]\na[0].b = 2",
+        &[("W0014", "let mut a", 8)],
+    ),
+    (
+        "an element of a slice",
+        "",
+        "",
+        "let mut a = xs[0..1][0]\na.b = 2",
+        &[("W0014", "let mut a", 8)],
+    ),
+    (
+        "a slice of a field",
+        "",
+        "",
+        "let mut a = w.xs[0..1]\na[0] = 1",
+        &[("W0014", "let mut a", 8)],
+    ),
+    (
+        "an inclusive range",
+        "",
+        "",
+        "let mut a = xs[0..=0]\na[0].b = 2",
+        &[("W0014", "let mut a", 8)],
+    ),
+    (
         "only live code",
         "fn unused() {\n    let mut a = A(b: 1)\n    let mut b = a\n    b.b = 2\n    print(a.b)\n}\n",
         "",
@@ -2360,12 +2388,16 @@ fn write_to_a_copy_should_warn_only_when_nothing_reads_it() {
 }
 
 /// The programs of the fixtures of W0016, one for each help.
-const COPY_FIXTURES: [&str; 5] = [
+const COPY_FIXTURES: [&str; 9] = [
     include_str!("../../../tests/diagnostics/W0016.sisu"),
     include_str!("../../../tests/diagnostics/W0016-let.sisu"),
     include_str!("../../../tests/diagnostics/W0016-parameter.sisu"),
     include_str!("../../../tests/diagnostics/W0016-self.sisu"),
     include_str!("../../../tests/diagnostics/W0016-for.sisu"),
+    include_str!("../../../tests/diagnostics/W0016-text.sisu"),
+    include_str!("../../../tests/diagnostics/W0016-lines.sisu"),
+    include_str!("../../../tests/diagnostics/W0016-root.sisu"),
+    include_str!("../../../tests/diagnostics/W0016-push.sisu"),
 ];
 
 /// GIVEN each row of the table that gives W0016, and each program of the fixtures. WHEN `sisu

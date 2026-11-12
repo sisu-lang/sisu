@@ -1,0 +1,22 @@
+struct A { b: i64 }
+struct W { a: A }
+
+fn comment(xs: [A]) {
+    let mut a = xs[0 // the first
+    ]
+    a.b = 2
+}
+
+fn split(ws: [W]) {
+    let mut a = ws[
+        0
+    ].a
+    a.b = 2
+}
+
+fn main() {
+    let xs = [A(b: 1)]
+    comment(xs)
+    split([W(a: A(b: 1))])
+    print(xs[0].b)
+}

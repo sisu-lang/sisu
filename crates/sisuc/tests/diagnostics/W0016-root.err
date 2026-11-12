@@ -1,0 +1,42 @@
+warning[W0016]: this writes to a copy of `self`, and nothing reads the copy
+ --> W0016-root.sisu:8:9
+  |
+7 |         let mut a = self
+  |                 - a copy
+8 |         a.n = 2
+  |         ^^^ `self` does not change
+  |
+  = help: `self` cannot change in this method: delete the write, or return the changed copy
+
+warning[W0016]: this writes to a copy of `o`, and nothing reads the copy
+  --> W0016-root.sisu:15:5
+   |
+14 |     let mut a = o
+   |             - a copy
+15 |     a.b = 2
+   |     ^^^ `o` does not change
+   |
+   = help: `o` is a `let`: delete the write, or make `o` a `let mut` and write to the place
+
+warning[W0016]: this writes to a copy of `xs`, and nothing reads the copy
+  --> W0016-root.sisu:21:5
+   |
+20 |     let mut a = xs
+   |             - a copy
+21 |     a[0].b = 2
+   |     ^^^^^^ `xs` does not change
+   |
+   = help: `xs` is a plain parameter: delete the write, or return the changed copy
+
+warning[W0016]: this writes to a copy of `a`, and nothing reads the copy
+  --> W0016-root.sisu:27:5
+   |
+26 |     let mut a = a
+   |             - a copy
+27 |     a.b = 2
+   |     ^^^ `a` does not change
+   |
+   = help: write to the place itself, not to the copy
+
+sisu: 4 warnings
+sisu: for more on a code, run `sisu explain <code>`: W0016
