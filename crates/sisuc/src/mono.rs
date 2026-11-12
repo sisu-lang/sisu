@@ -186,6 +186,9 @@ struct Mono {
     /// The field types of the checked program's classes, in its ids. The record walk of a `dbg`
     /// reads them, as the output's classes name the output's ids.
     input_fields: Vec<Vec<Type>>,
+    /// The field types of the checked program's structs, in its ids. The record walk reads them,
+    /// as `fields` of the output's structs name the output's ids.
+    input_structs: Vec<Vec<Type>>,
     /// The `(type, interface, dbg)` triples the record walk has entered, in the checked program's
     /// ids.
     walked: FxHashSet<(Type, InterfaceId, bool)>,
@@ -228,6 +231,10 @@ impl Mono {
 
     /// `new`, with `run` stopping when the instances pass `limit`.
     fn with_limit(program: Program, limit: usize) -> Mono {
+        // `out` takes the structs, so their checked field types are kept first.
+        let input_structs = (program.structs.iter())
+            .map(|s| s.fields.iter().map(|f| f.ty).collect())
+            .collect();
         let mut mono = Mono {
             decls: Vec::with_capacity(program.functions.len()),
             class_decls: Vec::with_capacity(program.classes.len()),
@@ -257,6 +264,7 @@ impl Mono {
                 .iter()
                 .map(|c| c.fields.iter().map(|f| f.ty).collect())
                 .collect(),
+            input_structs,
             decide: Decide::default(),
             walked: FxHashSet::default(),
             locals: Vec::new(),
@@ -1372,7 +1380,10 @@ impl Mono {
             }
             parts(
                 &self.conformances,
-                (self.input_payloads.as_slice(), self.out.structs.as_slice()),
+                (
+                    self.input_payloads.as_slice(),
+                    self.input_structs.as_slice(),
+                ),
                 ty,
                 |part| {
                     stack.push((part, dbg));

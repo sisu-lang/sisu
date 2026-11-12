@@ -11,7 +11,7 @@ use crate::graph::components;
 use crate::symbol::Symbol;
 use crate::tir::{
     ChoicePlace, Class, ClassId, Conformance, Conformances, Enum, EnumId, Interface, InterfaceId,
-    LangInterfaces, Struct, Type, TypeArgs, TypeKind, head_of,
+    LangInterfaces, Struct, StructId, Type, TypeArgs, TypeKind, head_of,
 };
 
 #[cfg(test)]
@@ -395,9 +395,9 @@ impl Payloads for [Vec<Type>] {
 /// compares by identity, or through a written `Eq`), a type parameter or an `any` value. A part
 /// whose associated type has no choice is poison, and is left out. A generated `Display`, which
 /// asks no part, still lists them.
-pub(crate) fn parts<P: Payloads + ?Sized>(
+pub(crate) fn parts<P: Payloads + ?Sized, S: StructFields + ?Sized>(
     conformances: &Conformances,
-    (enums, structs): (&P, &[Struct]),
+    (enums, structs): (&P, &S),
     ty: Type,
     mut each: impl FnMut(Type),
 ) {
@@ -409,7 +409,7 @@ pub(crate) fn parts<P: Payloads + ?Sized>(
             }
         }),
         // A struct takes no type argument yet, so its field types are concrete.
-        TypeKind::Struct(id, _) => (structs[id.0].fields.iter()).for_each(|field| each(field.ty)),
+        TypeKind::Struct(id, _) => structs.each(id, &mut each),
         TypeKind::I64
         | TypeKind::U8
         | TypeKind::F64
@@ -721,6 +721,30 @@ impl Fields for [Vec<Type>] {
     }
 }
 
+/// The field types of each struct, declared: what [`parts`] reads of a struct. The output of
+/// `mono` has `Struct`s; `mono` also keeps the field types of the input, because the output
+/// names the output's ids.
+pub(crate) trait StructFields {
+    /// Calls `each` with the type of each field of the struct `id`.
+    fn each(&self, id: StructId, each: &mut dyn FnMut(Type));
+}
+
+impl StructFields for [Struct] {
+    fn each(&self, id: StructId, each: &mut dyn FnMut(Type)) {
+        for field in &self[id.0].fields {
+            each(field.ty);
+        }
+    }
+}
+
+impl StructFields for [Vec<Type>] {
+    fn each(&self, id: StructId, each: &mut dyn FnMut(Type)) {
+        for &ty in &self[id.0] {
+            each(ty);
+        }
+    }
+}
+
 /// The field types of the class `ty`, with its arguments in place of its parameters, as `dbg`
 /// shows them: in `print` mode. Nothing for any other type.
 pub(crate) fn fields_of<F: Fields + ?Sized>(
@@ -748,14 +772,19 @@ pub(crate) fn fields_of<F: Fields + ?Sized>(
 ///
 /// With `dbg`, the helper is the one that `dbg` calls. A class with no written conformance also
 /// writes its fields, each in `print` mode, so each field type is a part of the class.
-pub(crate) fn calls_written<P: Payloads + ?Sized, F: Fields + ?Sized>(
+pub(crate) fn calls_written<P, S, F>(
     conformances: &Conformances,
-    (enums, structs, classes): (&P, &[Struct], &F),
+    (enums, structs, classes): (&P, &S, &F),
     ty: Type,
     interface: InterfaceId,
     dbg: bool,
     written: &mut Written,
-) -> bool {
+) -> bool
+where
+    P: Payloads + ?Sized,
+    S: StructFields + ?Sized,
+    F: Fields + ?Sized,
+{
     reaches(
         &mut written.settled,
         (ty, interface, dbg),
@@ -786,9 +815,9 @@ pub(crate) fn calls_written<P: Payloads + ?Sized, F: Fields + ?Sized>(
 /// fields by `dbg`. A class or an enum with a written `Display` shows that text, so the walk
 /// stops at it. A `dbg` helper of a type that holds none is the `print` helper. The answers of
 /// `held` are the types decided so far, which later queries read.
-pub(crate) fn holds_class<P: Payloads + ?Sized>(
+pub(crate) fn holds_class<P: Payloads + ?Sized, S: StructFields + ?Sized>(
     (conformances, display): (&Conformances, InterfaceId),
-    (enums, structs): (&P, &[Struct]),
+    (enums, structs): (&P, &S),
     ty: Type,
     held: &mut FxHashMap<Type, bool>,
 ) -> bool {
@@ -1451,6 +1480,9 @@ mod tests {
     const PAIR: usize = 1;
     const CIRCLE: usize = 2;
     const PILE: usize = 3;
+
+    /// The field types of the structs of a program that has none.
+    const NO_STRUCTS: &[Vec<Type>] = &[];
 
     fn class(id: usize, args: &[Type]) -> Type {
         Type::intern(TypeKind::Class(ClassId(id), TypeArgs::intern(args)))
@@ -2581,9 +2613,14 @@ mod tests {
         deciding(src, |program, _, source| {
             let parts = |ty| {
                 let mut out = Vec::new();
-                parts(source.conformances, (source.enums, &[]), ty, |part| {
-                    out.push(part);
-                });
+                parts(
+                    source.conformances,
+                    (source.enums, NO_STRUCTS),
+                    ty,
+                    |part| {
+                        out.push(part);
+                    },
+                );
                 out
             };
             assert_eq!(parts(Type::array(Type::I64)), [Type::I64]);
@@ -2665,7 +2702,7 @@ mod tests {
         // One collector for the calls: the array has a part; the payload and the field have none.
         let mut listed = Vec::new();
         let mut collect = |part| listed.push(part);
-        let enums = (payloads.as_slice(), &[][..]);
+        let enums = (payloads.as_slice(), NO_STRUCTS);
         parts(&conformances, enums, Type::array(Type::I64), &mut collect);
         parts(&conformances, enums, enum_type, &mut collect);
         parts(&conformances, enums, class, &mut collect);
@@ -2710,7 +2747,7 @@ mod tests {
             return tree(id, &[]);
         }
         if let Some(id) = program.structs.iter().position(|s| s.name == name) {
-            return Type::intern(TypeKind::Struct(crate::tir::StructId(id), TypeArgs::NONE));
+            return Type::intern(TypeKind::Struct(StructId(id), TypeArgs::NONE));
         }
         let id = (program.classes.iter())
             .position(|c| c.name == name)
