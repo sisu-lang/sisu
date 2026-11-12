@@ -409,6 +409,7 @@ mod tests {
             ("const c: i64 = 1\n", "c"),
             ("type A = i64\n", "A"),
             ("class C {\n    x: i64\n}\n", "C"),
+            ("struct S {\n    x: i64\n}\n", "S"),
             ("enum E {\n    V\n}\n", "E"),
             ("interface I {\n    type T\n    fn f(self)\n}\n", "I"),
         ];
@@ -513,9 +514,17 @@ mod tests {
                 // Nothing is replaced: the text is the empty range, and the copy starts an item.
                 Kind::Duplicate => {
                     text.is_empty()
-                        && ["fn ", "class ", "enum ", "interface ", "const ", "type "]
-                            .iter()
-                            .any(|keyword| m.by.starts_with(keyword))
+                        && [
+                            "fn ",
+                            "class ",
+                            "struct ",
+                            "enum ",
+                            "interface ",
+                            "const ",
+                            "type ",
+                        ]
+                        .iter()
+                        .any(|keyword| m.by.starts_with(keyword))
                 }
             };
             assert!(ok, "seed {n}: {:?} replaces {text:?}", m.kind);

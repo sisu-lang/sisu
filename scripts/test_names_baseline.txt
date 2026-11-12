@@ -734,7 +734,6 @@ crates/sisuc/src/generate/coverage.rs::a_return_gives_a_value_where_its_function
 crates/sisuc/src/generate/coverage.rs::a_split_counts_what_its_parts_can_take
 crates/sisuc/src/generate/coverage.rs::a_string_appends_itself_only_within_its_room
 crates/sisuc/src/generate/coverage.rs::a_string_at_half_the_cap_does_not_double
-crates/sisuc/src/generate/coverage.rs::a_type_nests_at_most_twice
 crates/sisuc/src/generate/coverage.rs::a_variant_counts_its_node_and_fields
 crates/sisuc/src/generate/coverage.rs::a_while_condition_runs_once_more_than_its_body
 crates/sisuc/src/generate/coverage.rs::an_array_literal_counts_its_slots_and_elements

@@ -2195,15 +2195,15 @@ mod tests {
     }
 
     /// `program` end to end, all eight builds and every check: it passes and leaves no directory
-    /// behind. Seed 3934 has rewrites, a value site and a panic site that its run reaches.
+    /// behind. Seed 3830 has rewrites, a value site and a panic site that its run reaches.
     #[test]
     fn program_should_pass_and_leave_no_directory_behind() {
         let tmp = Scratch::new();
-        let data = seed(3934);
+        let data = seed(3830);
         let g = generate(&data);
         assert!(
             g.rewritten != g.program && panic_sites(&g) == 1 && g.known.len() > 1,
-            "seed 3934 should have rewrites, a value site and a panic site"
+            "seed 3830 should have rewrites, a value site and a panic site"
         );
         crate::on_compiler_stack(|| program_in(&data, &test_runtime(Allocator::Mimalloc), &tmp.0));
         let left = fs::read_dir(&tmp.0)
@@ -2212,18 +2212,18 @@ mod tests {
         assert_eq!(left, 0, "`program` should remove its directory");
     }
 
-    /// Seed 3934's one panic site is the last thing its O0 run prints, as the marker `item.rs`
+    /// Seed 3830's one panic site is the last thing its O0 run prints, as the marker `item.rs`
     /// writes. `judge_known` takes a run without that line for an earlier panic, so with it
     /// the answer check judged this panic site.
     #[test]
     fn a_seed_with_a_panic_site_should_print_its_marker_last() {
-        let g = generate(&seed(3934));
-        assert_eq!(panic_sites(&g), 1, "seed 3934 should have one panic site");
+        let g = generate(&seed(3830));
+        assert_eq!(panic_sites(&g), 1, "seed 3830 should have one panic site");
         let marker = g
             .known
             .iter()
             .find_map(|known| matches!(known.answer, Answer::Panic(_)).then_some(&known.marker))
-            .expect("seed 3934 should have a panic site");
+            .expect("seed 3830 should have a panic site");
         let Run { exit, stdout, .. } = o0_run(&g);
         assert_eq!(exit, Exit::Code(101), "{}", g.program);
         assert_eq!(

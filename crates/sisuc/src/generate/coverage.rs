@@ -107,6 +107,10 @@ const EXCLUDED: &[(&str, &str)] = &[
         "the key by which `types::write_type` asks for a name, which is no type",
     ),
     (
+        "types::Head::Struct",
+        "the key by which `types::write_type` asks for a name, which is no type",
+    ),
+    (
         "types::Head::Enum",
         "the key by which `types::write_type` asks for a name, which is no type",
     ),
@@ -197,6 +201,7 @@ const REACH: &[&str] = &[
     "reach: a `while let` takes its `Some` branch",
     "reach: a `while let` walks an enum chain",
     "reach: an index is in bounds",
+    "reach: a guard keeps an index of a field in bounds",
     "reach: an index is meant to panic",
     "reach: an index reads a local",
     "reach: an index reads an immutable local",
@@ -255,6 +260,7 @@ const REACH: &[&str] = &[
     "reach: an interface requirement names `Self`",
     "reach: a class method names `Self`",
     "reach: an enum method names `Self`",
+    "reach: a struct method names `Self`",
     "reach: a conformance is in a declaration list",
     "reach: a conformance is an `extend` block",
     "reach: a bound lists two interfaces with `&`",
@@ -270,6 +276,7 @@ const REACH: &[&str] = &[
     "reach: an associated type's choice is counted",
     "reach: a declaration names a generated conformance",
     "reach: a class gets `Display` through a `to_string` method",
+    "reach: a struct gets `Display` through a `to_string` method",
     "reach: a bound names a language interface",
     "reach: a bounded type parameter is named bare, then inside other types",
     "reach: an operator runs on a bounded type parameter",
@@ -698,6 +705,9 @@ struct Walk {
     unbounded: Vec<String>,
     /// Indexes neither in bounds nor the one meant to panic, `[e][1]` (decision 3).
     out_of_bounds: Vec<String>,
+    /// The guards `p.len() > k` of the `if`s around the point being walked, as the text of the
+    /// place `p` and `k`: an index of `p` up to `k` is in bounds there.
+    guarded: Vec<(String, i128)>,
     /// The functions of the program being walked.
     funcs: FxHashSet<String>,
     /// The generic functions, classes and enums of it.
@@ -735,6 +745,8 @@ struct Walk {
     result: Option<usize>,
     /// The types each enum's payloads hold, by its id.
     payloads: Vec<Vec<Type>>,
+    /// The types each struct's fields hold, by its id.
+    struct_fields: Vec<Vec<Type>>,
     /// Field and element assignments of a value that may hold a class object (decision 4).
     heap_classes: Vec<String>,
     /// Where a `+=` on a name starts.
@@ -1025,8 +1037,8 @@ impl Walk {
         });
         self.generic_classes = generic_names(program, |item| match item {
             ast::Item::Class(c) => Some((&c.name, &c.type_params)),
+            ast::Item::Struct(s) => Some((&s.name, &s.type_params)),
             ast::Item::Function(_)
-            | ast::Item::Struct(_)
             | ast::Item::Enum(_)
             | ast::Item::Const(_)
             | ast::Item::Alias(_)
@@ -1064,6 +1076,17 @@ impl Walk {
                 | ast::Item::Extend(_) => None,
             })
             .collect();
+        // An alias of an enum builds the enum's variants.
+        for item in &program.items {
+            if let ast::Item::Alias(alias) = item
+                && alias.params.is_empty()
+                && let ast::TypeKind::Name(target) = alias.ty.kind
+                && let Some(variants) = self.variants.get(target.as_str()).cloned()
+            {
+                self.variants
+                    .insert(alias.name.name.as_str().to_string(), variants);
+            }
+        }
         for broken in &program.broken {
             self.mark(match broken.kind {
                 ast::BrokenKind::Function => "ast::BrokenKind::Function",
@@ -1084,8 +1107,7 @@ impl Walk {
                     self.note_bounds(f);
                 }
                 ast::Item::Class(c) => self.ast_class(c),
-                // The generator writes no struct yet.
-                ast::Item::Struct(_) => {}
+                ast::Item::Struct(s) => self.ast_struct(s),
                 ast::Item::Interface(interface) => self.ast_interface(interface),
                 ast::Item::Extend(extend) => self.ast_extend(extend),
                 ast::Item::Enum(e) => self.ast_enum(e),
@@ -1208,6 +1230,40 @@ impl Walk {
                     }
                     if names_self_in(f) {
                         self.mark("reach: a class method names `Self`");
+                    }
+                    self.ast_function(f);
+                }
+            }
+        }
+        self.owner_bounds.clear();
+    }
+
+    /// Walks the bounds and members of the struct `s`.
+    fn ast_struct(&mut self, s: &ast::Struct) {
+        self.mark("ast::Item::Struct");
+        self.bounds(&s.type_params);
+        let methods: Vec<&str> = (s.members.iter())
+            .filter_map(|member| match member {
+                ast::Member::Method(f) => Some(f.name.name.as_str()),
+                ast::Member::Field(_) => None,
+            })
+            .collect();
+        self.listed(&s.conforms, &s.assoc, (&methods, true));
+        self.owner_bounds = written_bounds(&s.type_params);
+        for member in &s.members {
+            match member {
+                ast::Member::Field(field) => {
+                    self.mark("ast::Member::Field");
+                    self.mark(&format!("ast::FieldDecl.mutable = {}", field.mutable));
+                    self.type_expr(&field.ty);
+                }
+                ast::Member::Method(f) => {
+                    self.mark("ast::Member::Method");
+                    if f.name.name.as_str() == "to_string" {
+                        self.mark("reach: a struct gets `Display` through a `to_string` method");
+                    }
+                    if names_self_in(f) {
+                        self.mark("reach: a struct method names `Self`");
                     }
                     self.ast_function(f);
                 }
@@ -1509,6 +1565,28 @@ impl Walk {
             self.unbounded
                 .push(format!("a `while let` at byte {}", value.span.start()));
         }
+    }
+
+    /// Whether an enclosing guard keeps the index `index` of `base` in bounds: `at`, a literal,
+    /// is up to the guard's `k`, or `index` is `n % base.len()` under any guard of `base`.
+    fn guards_index(&self, base: &ast::Expr, at: Option<i128>, index: &ast::Expr) -> bool {
+        let Some(place) = place_text(base) else {
+            return false;
+        };
+        let guards = || self.guarded.iter().filter(|(guarded, _)| *guarded == place);
+        if let Some(at) = at {
+            return guards().any(|&(_, k)| at <= k);
+        }
+        let ast::ExprKind::Binary {
+            op: ast::BinaryOp::Rem,
+            rhs,
+            ..
+        } = &index.kind
+        else {
+            return false;
+        };
+        length_guard_target(rhs).is_some_and(|target| target == place)
+            && guards().any(|&(_, k)| k >= 0)
     }
 
     /// The nodes of the chain a `while let` walks, `None` unless it walks one of at most
@@ -2213,6 +2291,11 @@ impl Walk {
                     {
                         self.mark("reach: an index is meant to panic");
                     }
+                    // A place with a length guard: the index is a literal the guard keeps in
+                    // bounds, or a remainder by the length itself.
+                    (None, at) if self.guards_index(base, at, index) => {
+                        self.mark("reach: a guard keeps an index of a field in bounds");
+                    }
                     _ => self
                         .out_of_bounds
                         .push(format!("an index at byte {}", e.span.start())),
@@ -2239,7 +2322,12 @@ impl Walk {
                     self.later_branch(block);
                 }
                 self.ast_expr(cond);
+                let guard = length_guard(cond);
+                self.guarded.extend(guard.clone());
                 self.ast_block(then_block);
+                if guard.is_some() {
+                    self.guarded.pop();
+                }
                 if let Some(block) = else_block {
                     self.ast_block(block);
                 }
@@ -2375,16 +2463,7 @@ impl Walk {
 
     fn tir(&mut self, program: &tir::Program) {
         self.result = program.enums.iter().position(|e| e.name == "Result");
-        self.payloads = program
-            .enums
-            .iter()
-            .map(|e| {
-                e.variants
-                    .iter()
-                    .flat_map(|v| v.fields.iter().map(|field| field.ty))
-                    .collect()
-            })
-            .collect();
+        self.field_types(program);
         for field in program
             .enums
             .iter()
@@ -2706,18 +2785,45 @@ impl Walk {
         }
     }
 
-    /// Whether a value of `ty` may hold a class object, where `seen` are the enums looked into. A
-    /// type parameter of a generic body may stand for a class.
-    fn holds_class(&self, ty: Type, seen: &mut Vec<tir::EnumId>) -> bool {
+    /// Takes the types that the payloads of each enum and the fields of each struct hold.
+    fn field_types(&mut self, program: &tir::Program) {
+        self.payloads = program
+            .enums
+            .iter()
+            .map(|e| {
+                e.variants
+                    .iter()
+                    .flat_map(|v| v.fields.iter().map(|field| field.ty))
+                    .collect()
+            })
+            .collect();
+        self.struct_fields = program
+            .structs
+            .iter()
+            .map(|s| s.fields.iter().map(|field| field.ty).collect())
+            .collect();
+    }
+
+    /// Whether a value of `ty` may hold a class object, where `seen` are the enums and structs
+    /// looked into. A type parameter of a generic body may stand for a class.
+    fn holds_class(&self, ty: Type, seen: &mut Vec<tir::Inline>) -> bool {
         match ty.kind() {
             TypeKind::Class(..) | TypeKind::Param(..) | TypeKind::Assoc(..) | TypeKind::Any(..) => {
                 true
             }
             TypeKind::Array(inner) | TypeKind::Optional(inner) => self.holds_class(inner, seen),
-            TypeKind::Struct(..) => panic!("a struct lands in Task 9"),
+            TypeKind::Struct(id, args) => {
+                !seen.contains(&tir::Inline::Struct(id)) && {
+                    seen.push(tir::Inline::Struct(id));
+                    let args = args.get();
+                    self.struct_fields[id.0]
+                        .iter()
+                        .any(|field| self.holds_class(field.subst(args), seen))
+                }
+            }
             TypeKind::Enum(id, args) => {
-                !seen.contains(&id) && {
-                    seen.push(id);
+                !seen.contains(&tir::Inline::Enum(id)) && {
+                    seen.push(tir::Inline::Enum(id));
                     // A payload names the enum's parameters, which its arguments stand for.
                     let args = args.get();
                     self.payloads[id.0]
@@ -2737,15 +2843,23 @@ impl Walk {
     }
 
     /// Whether a value of `ty` may hold an optional, as its element or in a payload: its text
-    /// can then write `None` inside a group. `seen` are the enums looked into.
-    fn holds_optional(&self, ty: Type, seen: &mut Vec<tir::EnumId>) -> bool {
+    /// can then write `None` inside a group. `seen` are the enums and structs looked into.
+    fn holds_optional(&self, ty: Type, seen: &mut Vec<tir::Inline>) -> bool {
         match ty.kind() {
             TypeKind::Optional(_) => true,
             TypeKind::Array(inner) => self.holds_optional(inner, seen),
-            TypeKind::Struct(..) => panic!("a struct lands in Task 9"),
+            TypeKind::Struct(id, args) => {
+                !seen.contains(&tir::Inline::Struct(id)) && {
+                    seen.push(tir::Inline::Struct(id));
+                    let args = args.get();
+                    self.struct_fields[id.0]
+                        .iter()
+                        .any(|field| self.holds_optional(field.subst(args), seen))
+                }
+            }
             TypeKind::Enum(id, args) => {
-                !seen.contains(&id) && {
-                    seen.push(id);
+                !seen.contains(&tir::Inline::Enum(id)) && {
+                    seen.push(tir::Inline::Enum(id));
                     let args = args.get();
                     self.payloads[id.0]
                         .iter()
@@ -3445,6 +3559,48 @@ fn enum_name(receiver: &ast::Expr) -> Option<&str> {
     match &receiver.kind {
         ast::ExprKind::Applied { name, .. } => Some(name.name.as_str()),
         _ => name(receiver),
+    }
+}
+
+/// The place `p` and the number `k` of a guard `p.len() > k`, which keeps `p[0..=k]` in bounds.
+fn length_guard(cond: &ast::Expr) -> Option<(String, i128)> {
+    let ast::ExprKind::Compare { operands, ops } = &cond.kind else {
+        return None;
+    };
+    let ([len, bound], [ast::CompareOp::Gt]) = (&operands[..], &ops[..]) else {
+        return None;
+    };
+    Some((length_guard_target(len)?, int(bound)?))
+}
+
+/// The place `p` of `p.len()`.
+fn length_guard_target(e: &ast::Expr) -> Option<String> {
+    let ast::ExprKind::MethodCall {
+        receiver,
+        method,
+        args,
+        ..
+    } = &e.kind
+    else {
+        return None;
+    };
+    (method.name.as_str() == "len" && args.is_empty()).then_some(())?;
+    place_text(receiver)
+}
+
+/// The text of a place made of a name, fields and literal indexes.
+fn place_text(e: &ast::Expr) -> Option<String> {
+    match &e.kind {
+        ast::ExprKind::Name(name) => Some(name.as_str().to_string()),
+        ast::ExprKind::Field {
+            base,
+            name,
+            safe: false,
+        } => Some(format!("{}.{}", place_text(base)?, name.name.as_str())),
+        ast::ExprKind::Index { base, index } => {
+            Some(format!("{}[{}]", place_text(base)?, int(index)?))
+        }
+        _ => None,
     }
 }
 
@@ -7535,7 +7691,7 @@ fn an_index_of_a_local_stays_below_its_length() {
 }
 
 #[test]
-fn a_type_nests_at_most_twice() {
+fn a_type_should_nest_at_most_twice() {
     // Inputs of one repeated byte pick an array or an optional at every level they can.
     fn depth(ty: &Ty) -> u32 {
         match ty {
@@ -7548,6 +7704,7 @@ fn a_type_nests_at_most_twice() {
             | Ty::String
             | Ty::Unit
             | Ty::Class { .. }
+            | Ty::Struct { .. }
             | Ty::Enum { .. } => 0,
         }
     }
@@ -9519,10 +9676,19 @@ fn generated_interfaces_should_be_used() {
     assert!(interfaces > 0, "no seed writes an interface");
 }
 
+/// The methods among the members of a class or a struct.
+fn member_methods(members: &[ast::Member]) -> impl Iterator<Item = &ast::Function> + Clone {
+    members.iter().filter_map(|member| match member {
+        ast::Member::Method(f) => Some(f),
+        ast::Member::Field(_) => None,
+    })
+}
+
 /// `source` without everything W0012 names, deleted all at once: each function, method, constant,
-/// interface and `extend` block, and each conformance block of a deleted interface. A class or an
-/// enum stays: a type that names it is not a use, so deleting it can break correct code. Gives the
-/// new text and how many items it cut.
+/// interface and `extend` block, and each conformance block of a deleted interface; and every
+/// method of a class, a struct or an enum that W0012 names, which are dead too. The type stays: a
+/// type that names it is not a use, so deleting it can break correct code. Gives the new text and
+/// how many items it cut.
 fn without_unused(source: &str) -> (String, usize) {
     let parsed = parser::parse(
         lexer::lex(source).expect("a generated program should lex"),
@@ -9538,17 +9704,48 @@ fn without_unused(source: &str) -> (String, usize) {
     let mut cuts: Vec<std::ops::Range<usize>> = Vec::new();
     let mut interfaces = FxHashSet::default();
     let mut methods: Vec<&ast::Function> = Vec::new();
+    // The methods of a class, a struct or an enum that nothing builds: W0012 names the type and
+    // not them, and they are dead too.
+    let mut dead_methods: Vec<&ast::Function> = Vec::new();
+    let dead_types: FxHashSet<&str> = (program.items.iter())
+        .filter_map(|item| match item {
+            ast::Item::Class(c) => Some(&c.name),
+            ast::Item::Struct(st) => Some(&st.name),
+            ast::Item::Enum(e) => Some(&e.name),
+            _ => None,
+        })
+        .filter(|name| unused.contains(&name.span.start()))
+        .map(|name| name.name.as_str())
+        .collect();
     for item in &program.items {
         match item {
             ast::Item::Function(f) => methods.push(f),
-            ast::Item::Class(c) => methods.extend(c.members.iter().filter_map(|m| match m {
-                ast::Member::Method(f) => Some(f),
-                ast::Member::Field(_) => None,
-            })),
-            ast::Item::Enum(e) => methods.extend(&e.methods),
+            ast::Item::Class(c) => {
+                let held = member_methods(&c.members);
+                if unused.contains(&c.name.span.start()) {
+                    dead_methods.extend(held.clone());
+                }
+                methods.extend(held);
+            }
+            ast::Item::Struct(st) => {
+                let held = member_methods(&st.members);
+                if unused.contains(&st.name.span.start()) {
+                    dead_methods.extend(held.clone());
+                }
+                methods.extend(held);
+            }
+            ast::Item::Enum(e) => {
+                if unused.contains(&e.name.span.start()) {
+                    dead_methods.extend(&e.methods);
+                }
+                methods.extend(&e.methods);
+            }
             ast::Item::Extend(x) => {
-                // W0012 reports a dead block at its keyword, and its methods not at all.
-                if unused.contains(&x.keyword.start()) {
+                // W0012 reports a dead block at its keyword, and its methods not at all. A block
+                // of a type that W0012 names is dead, and it is not reported.
+                let target = x.target.to_string();
+                let head = target.split('<').next().unwrap_or_default();
+                if unused.contains(&x.keyword.start()) || dead_types.contains(head) {
                     cuts.push(x.span.range());
                 }
                 methods.extend(&x.methods);
@@ -9563,15 +9760,13 @@ fn without_unused(source: &str) -> (String, usize) {
                 cuts.push(i.span.range());
                 interfaces.insert(i.name.name.as_str().to_string());
             }
-            ast::Item::Struct(_)
-            | ast::Item::Const(_)
-            | ast::Item::Alias(_)
-            | ast::Item::Interface(_) => {}
+            ast::Item::Const(_) | ast::Item::Alias(_) | ast::Item::Interface(_) => {}
         }
     }
     for f in methods
         .into_iter()
         .filter(|f| unused.contains(&f.name.span.start()))
+        .chain(dead_methods)
     {
         cuts.push(f.span.range());
     }

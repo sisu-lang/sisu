@@ -14,12 +14,15 @@ use super::Gen;
 use super::expr::{CHARS, Info};
 use super::item::MAX_FIELDS;
 use super::item::payload;
-use super::scope::{Applied, Class, Enum, Field, RESULT, Ty, Variant, generic_name};
+use super::scope::{Applied, Class, Enum, Field, RESULT, Struct, Ty, Variant, generic_name};
+use super::stmt::MUT_FUEL;
 
 /// The names of a generic declaration's type parameters, by index.
 const PARAMS: [&str; 2] = ["T", "U"];
 /// The most generic classes and enums a program declares.
 const MAX_GENERICS: usize = 5;
+/// The most generic structs a program declares, besides the generics above.
+const MAX_GENERIC_STRUCTS: usize = 2;
 /// The most generic functions.
 const MAX_GFUNCS: usize = 3;
 /// The room a field of an instance has beyond its floor, for an argument of a generic function.
@@ -68,6 +71,9 @@ impl GTy {
             Ty::Array(element) => GTy::Array(Box::new(GTy::lift(element))),
             Ty::Optional(payload) => GTy::Optional(Box::new(GTy::lift(payload))),
             Ty::Class {
+                applied: Some(a), ..
+            }
+            | Ty::Struct {
                 applied: Some(a), ..
             }
             | Ty::Enum {
@@ -137,7 +143,7 @@ pub(crate) struct GVariant {
     recursive: bool,
 }
 
-/// A field of a generic class.
+/// A field of a generic class or struct.
 #[derive(Clone)]
 pub(crate) struct GField {
     name: String,
@@ -148,10 +154,12 @@ pub(crate) struct GField {
 #[derive(Clone)]
 pub(crate) enum Body {
     Class(Vec<GField>),
+    /// A struct, whose fields are never `mut`.
+    Struct(Vec<GField>),
     Enum(Vec<GVariant>),
 }
 
-/// A generic class or enum: `G<n>`.
+/// A generic class, struct or enum: `G<n>`.
 #[derive(Clone)]
 pub(crate) struct Generic {
     params: usize,
@@ -232,14 +240,23 @@ impl Gen<'_> {
         self.w.text(">");
     }
 
-    /// Declares the generic classes and enums, makes instances of them, and declares the generic
-    /// functions. When the bytes run out, it declares nothing.
+    /// Declares the generic classes and enums, and now and then generic structs, makes instances
+    /// of them, and declares the generic functions. When the bytes run out, it declares nothing.
+    /// The generic structs come from the spare streams with fuel of their own, after the others,
+    /// so no other generic moves for them.
     pub(crate) fn generics(&mut self) {
         for _ in 0..self.pick(MAX_GENERICS + 1) {
             if !self.spend(1) {
                 break;
             }
             self.generic_type();
+        }
+        for _ in 0..self.mut_pick(MAX_GENERIC_STRUCTS + 1) {
+            let fuel = std::mem::replace(&mut self.fuel, MUT_FUEL);
+            self.swap_streams();
+            self.generic_record(true);
+            self.swap_streams();
+            self.fuel = fuel;
         }
         // The instances come before the functions, so that a function can name them.
         // The prelude's `Result` is a generic like the declared ones.
@@ -287,7 +304,7 @@ impl Gen<'_> {
             shapes.push(Shape::Late);
         }
         match shapes[self.pick(shapes.len())] {
-            Shape::Class => self.generic_class(),
+            Shape::Class => self.generic_record(false),
             Shape::Plain => self.generic_enum(Shape::Plain, &wrappers),
             Shape::Recursive => self.generic_enum(Shape::Recursive, &wrappers),
             Shape::Wrapped => self.generic_enum(Shape::Wrapped, &wrappers),
@@ -296,21 +313,23 @@ impl Gen<'_> {
         }
     }
 
-    /// `class G<n><T, U> { g: T ... }`: fields that name each parameter, and then others. A
-    /// field can be `mut`. An assignment to a field of an instance obeys decision 4, as one to a
-    /// field of a declared class does: it never stores a class object.
-    fn generic_class(&mut self) {
+    /// `class G<n><T, U> { g: T ... }`, or with `value`, `struct G<n><T, U> { g: T ... }`: fields
+    /// that name each parameter, and then others. A field of a class can be `mut`; one of a struct
+    /// never is. An assignment to a field of an instance obeys decision 4, as one to a field of a
+    /// declared class does: it never stores a class object.
+    fn generic_record(&mut self, value: bool) {
         let id = self.scope.generics.len();
         let params = 1 + self.pick(2);
         let enums = self.all_generic_enums();
         let types = self.gfields(params, &enums, MAX_FIELDS);
         let mut fields = Vec::new();
         for ty in types {
-            let mutable = self.pick(2) == 1;
+            let mutable = !value && self.pick(2) == 1;
             let name = self.scope.fresh("g");
             fields.push(GField { name, ty, mutable });
         }
-        self.w.text(&format!("class G{id}"));
+        let keyword = if value { "struct" } else { "class" };
+        self.w.text(&format!("{keyword} G{id}"));
         self.tparams(params, id);
         self.w.text(" ");
         self.w.open();
@@ -321,10 +340,12 @@ impl Gen<'_> {
         }
         self.w.close();
         self.w.line();
-        self.scope.generics.push(Generic {
-            params,
-            body: Body::Class(fields),
-        });
+        let body = if value {
+            Body::Struct(fields)
+        } else {
+            Body::Class(fields)
+        };
+        self.scope.generics.push(Generic { params, body });
     }
 
     /// Every generic enum declared so far.
@@ -585,6 +606,34 @@ impl Gen<'_> {
                 });
                 Ty::Class { id, size, applied }
             }
+            Body::Struct(fields) => {
+                let inferable = GTy::name_all(fields.iter().map(|f| &f.ty), params);
+                let mut made = Vec::new();
+                let mut size = 1;
+                for field in &fields {
+                    let ty = self.lower(&field.ty, args);
+                    let cap = self.size_for(&ty, &[GCAP]);
+                    size += cap;
+                    made.push(Field {
+                        name: field.name.clone(),
+                        ty,
+                        mutable: false,
+                        cap,
+                    });
+                }
+                let has_class = made.iter().any(|f| self.scope.contains_class(&f.ty));
+                let id = self.scope.structs.len();
+                let applied = Some(Rc::clone(&key));
+                self.scope.note_struct(&generic_name(generic), &made);
+                self.scope.structs.push(Struct {
+                    fields: made,
+                    size,
+                    applied: applied.clone(),
+                    inferable,
+                    has_class,
+                });
+                Ty::Struct { id, size, applied }
+            }
             Body::Enum(variants) => {
                 let first = self.instance_variant(&variants[0], args, params);
                 let least = 1 + first.fields.iter().map(Ty::floor).sum::<u64>();
@@ -835,7 +884,7 @@ impl Gen<'_> {
         );
         let mut parts = Vec::new();
         let (variant, inferable) = match &generic.body {
-            Body::Class(fields) => {
+            Body::Class(fields) | Body::Struct(fields) => {
                 for field in fields {
                     let part = self.solve(&field.ty.subst(args), env, nesting + 1)?;
                     parts.push((Some(field.name.as_str()), part));
@@ -1087,7 +1136,7 @@ impl Gen<'_> {
         }
         self.w.text(")");
         let size = match ty {
-            Ty::Class { .. } => ty.floor(),
+            Ty::Class { .. } | Ty::Struct { .. } => ty.floor(),
             _ => (parts.iter().map(|p| p.size).sum::<u64>() + func.extra).min(max),
         };
         Info::of(&parts, size, false)

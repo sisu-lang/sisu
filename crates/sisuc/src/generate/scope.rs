@@ -21,7 +21,7 @@ pub(crate) fn generic_name(generic: usize) -> String {
     }
 }
 
-/// An instance of a generic class or enum: `Scope::generics[generic]` applied to `args`.
+/// An instance of a generic class, struct or enum: `Scope::generics[generic]` applied to `args`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Applied {
     pub(crate) generic: usize,
@@ -42,6 +42,13 @@ pub(crate) enum Ty {
     Optional(Box<Ty>),
     /// The class `Scope::classes[id]`, each of whose objects counts `size` (decision 5).
     Class {
+        id: usize,
+        size: u64,
+        applied: Option<Rc<Applied>>,
+    },
+    /// The struct `Scope::structs[id]`, each of whose values counts `size`. A copy of a value has
+    /// the same size, as a class object's does, because a field takes at most its cap.
+    Struct {
         id: usize,
         size: u64,
         applied: Option<Rc<Applied>>,
@@ -68,6 +75,7 @@ impl std::fmt::Display for Ty {
             Ty::Array(element) => write!(f, "[{element}]"),
             Ty::Optional(payload) => write!(f, "{payload}?"),
             Ty::Class { id, applied, .. } => f.write_str(&written("K", *id, applied.as_deref())),
+            Ty::Struct { id, applied, .. } => f.write_str(&written("S", *id, applied.as_deref())),
             Ty::Enum { id, applied, .. } => f.write_str(&written("E", *id, applied.as_deref())),
         }
     }
@@ -92,6 +100,15 @@ impl Ty {
         }
     }
 
+    /// The declared struct `S<id>`.
+    pub(crate) const fn structure(id: usize, size: u64) -> Ty {
+        Ty::Struct {
+            id,
+            size,
+            applied: None,
+        }
+    }
+
     /// The declared enum `E<id>`.
     pub(crate) const fn enumeration(id: usize, least: u64) -> Ty {
         Ty::Enum {
@@ -106,6 +123,9 @@ impl Ty {
     pub(crate) fn bare(&self) -> String {
         match self {
             Ty::Class {
+                applied: Some(a), ..
+            }
+            | Ty::Struct {
                 applied: Some(a), ..
             }
             | Ty::Enum {
@@ -132,16 +152,16 @@ impl Ty {
             Ty::Array(element) => element.least().saturating_add(1),
             Ty::Optional(payload) if matches!(**payload, Ty::Optional(_)) => u64::MAX,
             Ty::Optional(payload) => payload.least(),
-            Ty::Class { .. } | Ty::Enum { .. } => self.floor(),
+            Ty::Class { .. } | Ty::Struct { .. } | Ty::Enum { .. } => self.floor(),
             Ty::I64 | Ty::U8 | Ty::F64 | Ty::Bool | Ty::Char | Ty::String | Ty::Unit => 0,
         }
     }
 
     /// The most a part of this type holds of a value that holds at most `whole`: all of it, but
-    /// a class object, which holds its own size.
+    /// a class object or a struct value, which hold their own size.
     pub(crate) fn within(&self, whole: u64) -> u64 {
         match self {
-            Ty::Class { size, .. } => *size,
+            Ty::Class { size, .. } | Ty::Struct { size, .. } => *size,
             _ => whole,
         }
     }
@@ -154,10 +174,11 @@ impl Ty {
     }
 
     /// The size of its smallest value written with an expected type: `""`, `[]` and `None`
-    /// hold none, but a class object holds its fields and an enum value its first variant.
+    /// hold none, but a class object or a struct value holds its fields and an enum value its
+    /// first variant.
     pub(crate) fn floor(&self) -> u64 {
         match self {
-            Ty::Class { size, .. } => *size,
+            Ty::Class { size, .. } | Ty::Struct { size, .. } => *size,
             Ty::Enum { least, .. } => *least,
             Ty::I64
             | Ty::U8
@@ -171,11 +192,13 @@ impl Ty {
         }
     }
 
-    /// Whether its values have a size: a `string`, an array, a class object, an enum value, or
-    /// an optional of one.
+    /// Whether its values have a size: a `string`, an array, a class object, a struct value, an
+    /// enum value, or an optional of one.
     pub(crate) fn sized(&self) -> bool {
         match self {
-            Ty::String | Ty::Array(_) | Ty::Class { .. } | Ty::Enum { .. } => true,
+            Ty::String | Ty::Array(_) | Ty::Class { .. } | Ty::Struct { .. } | Ty::Enum { .. } => {
+                true
+            }
             Ty::Optional(payload) => payload.sized(),
             Ty::I64 | Ty::U8 | Ty::F64 | Ty::Bool | Ty::Char | Ty::Unit => false,
         }
@@ -184,8 +207,8 @@ impl Ty {
     /// The most chars `print` or an interpolation writes for a value of this type that holds at
     /// most `size`, with `precision` decimals for an `f64`: `-1.2345678901234568e-300` is the
     /// longest `f64` without one, and `1e308` with one has 309 digits before the point. `nodes` is
-    /// `Scope::nodes`, which an enum value needs. An array, an optional, a class and an enum take
-    /// their bound from `Text`.
+    /// `Scope::nodes`, which an enum value and a struct value need. An array, an optional, a class,
+    /// a struct and an enum take their bound from `Text`.
     pub(crate) fn printed(&self, size: u64, precision: Option<u64>, nodes: Nodes) -> u64 {
         match self {
             Ty::I64 => 20,
@@ -194,9 +217,11 @@ impl Ty {
             Ty::Bool => 5,
             Ty::Char => 1,
             Ty::String => size,
-            Ty::Array(_) | Ty::Optional(_) | Ty::Class { .. } | Ty::Enum { .. } => {
-                Text::of(self, nodes).flat(size)
-            }
+            Ty::Array(_)
+            | Ty::Optional(_)
+            | Ty::Class { .. }
+            | Ty::Struct { .. }
+            | Ty::Enum { .. } => Text::of(self, nodes).flat(size),
             Ty::Unit => unreachable!("`unit` has no text"),
         }
     }
@@ -206,7 +231,9 @@ impl Ty {
     /// `#` changes nothing for a scalar, a `string` or a class.
     pub(crate) fn printed_pretty(&self, size: u64, nodes: Nodes) -> u64 {
         match self {
-            Ty::Array(_) | Ty::Optional(_) | Ty::Enum { .. } => Text::of(self, nodes).pretty(size),
+            Ty::Array(_) | Ty::Optional(_) | Ty::Struct { .. } | Ty::Enum { .. } => {
+                Text::of(self, nodes).pretty(size)
+            }
             _ => self.printed(size, None, nodes),
         }
     }
@@ -251,6 +278,10 @@ pub(crate) struct Nodes {
 /// An enum value writes the name of its variant, and in parentheses its fields, with a label and
 /// `: ` for each field that has one. A node adds 1 to the size, and `Nodes::text` is the most
 /// chars that each unit of the size of an enum value writes.
+///
+/// A struct value writes its name and its labeled fields in parentheses, as a variant with labels
+/// does. A struct with no field writes the parentheses too. So `Scope::note` takes a struct as
+/// such a variant, and a struct value counts as an enum value does.
 #[derive(Clone, Copy, Debug)]
 struct Text {
     /// The chars that each unit of size adds.
@@ -310,7 +341,7 @@ impl Text {
                 }
             }
             Ty::Class { .. } => Text::scalar(chars(&ty.to_string())),
-            Ty::Enum { .. } => Text {
+            Ty::Struct { .. } | Ty::Enum { .. } => Text {
                 per_unit: nodes.text,
                 lines: nodes.lines,
                 depth: None,
@@ -511,7 +542,8 @@ impl Adds {
     }
 }
 
-/// A field of a class.
+/// A field of a class or a struct.
+#[derive(Clone)]
 pub(crate) struct Field {
     pub(crate) name: String,
     pub(crate) ty: Ty,
@@ -531,6 +563,22 @@ pub(crate) struct Class {
     /// For an instance: whether its fields name every type parameter of the generic class, so a
     /// construction may leave out the type arguments.
     pub(crate) inferable: bool,
+}
+
+/// A generated struct: `S<id>`. Its fields' types are declared before it, but for the fields of
+/// a pair of structs that hold each other (`Gen::struct_pair`). No field is `mut`, and its `Field`
+/// says `mutable: false`.
+pub(crate) struct Struct {
+    pub(crate) fields: Vec<Field>,
+    /// The size of each of its values: one and each field's cap.
+    pub(crate) size: u64,
+    /// For an instance of a generic struct, which one and with what.
+    pub(crate) applied: Option<Rc<Applied>>,
+    /// For an instance: whether its fields name every type parameter of the generic struct, so a
+    /// construction may leave out the type arguments.
+    pub(crate) inferable: bool,
+    /// Whether a value of it may hold a class object, which no write may store (decision 4).
+    pub(crate) has_class: bool,
 }
 
 /// A variant of an enum.
@@ -567,12 +615,13 @@ pub(crate) struct Scope {
     pub(crate) consts: Vec<Const>,
     pub(crate) funcs: Vec<Func>,
     pub(crate) classes: Vec<Class>,
+    pub(crate) structs: Vec<Struct>,
     pub(crate) enums: Vec<Enum>,
-    /// The types of the classes and enums declared so far.
+    /// The types of the classes, structs and enums declared so far.
     pub(crate) types: Vec<Ty>,
-    /// The instances of generic classes and enums that the program names in its types.
+    /// The instances of generic classes, structs and enums that the program names in its types.
     pub(crate) generic_types: Vec<Ty>,
-    /// The generic classes and enums, each written once.
+    /// The generic classes, structs and enums, each written once.
     pub(crate) generics: Vec<Generic>,
     /// The generic functions.
     pub(crate) gfuncs: Vec<GFunc>,
@@ -634,6 +683,7 @@ impl Scope {
     pub(crate) fn contains_class(&self, ty: &Ty) -> bool {
         match ty {
             Ty::Class { .. } => true,
+            Ty::Struct { id, .. } => self.structs[*id].has_class,
             Ty::Enum { id, .. } => self.enums[*id].has_class,
             Ty::Array(inner) | Ty::Optional(inner) => self.contains_class(inner),
             Ty::I64 | Ty::U8 | Ty::F64 | Ty::Bool | Ty::Char | Ty::String | Ty::Unit => false,
@@ -644,6 +694,12 @@ impl Scope {
     /// class object.
     pub(crate) fn target_field(&self, field: &Field) -> bool {
         field.mutable && !self.contains_class(&field.ty)
+    }
+
+    /// Whether an assignment or a `mut` argument may write the field `field` of a struct: it holds
+    /// no class object. A struct field has no `mut`; the root of the path decides.
+    pub(crate) fn struct_field_writable(&self, field: &Field) -> bool {
+        !self.contains_class(&field.ty)
     }
 
     /// Takes `variant` of an enum into `nodes`. A node of an enum value counts 1, and so does
@@ -680,6 +736,42 @@ impl Scope {
         self.nodes.lines = self.nodes.lines.max(lines);
     }
 
+    /// Takes the struct `name` with `fields` into `nodes`. A struct value prints as a variant
+    /// with labels does, and a struct with no field writes the `()` that a variant does not.
+    pub(crate) fn note_struct(&mut self, name: &str, fields: &[Field]) {
+        let name = if fields.is_empty() {
+            format!("{name}()")
+        } else {
+            name.to_string()
+        };
+        self.note(&Variant {
+            name,
+            fields: fields.iter().map(|field| field.ty.clone()).collect(),
+            labels: fields.iter().map(|field| field.name.clone()).collect(),
+            recursive: false,
+            inferable: false,
+        });
+    }
+
+    /// The fields of the class or struct `holder`.
+    pub(crate) fn fields_of(&self, holder: &Ty) -> &[Field] {
+        match holder {
+            Ty::Class { id, .. } => &self.classes[*id].fields,
+            Ty::Struct { id, .. } => &self.structs[*id].fields,
+            _ => unreachable!("only a class or a struct has fields"),
+        }
+    }
+
+    /// Whether a construction of the class or struct `holder`, an instance of a generic one, may
+    /// leave out the type arguments.
+    pub(crate) fn inferable(&self, holder: &Ty) -> bool {
+        match holder {
+            Ty::Class { id, .. } => self.classes[*id].inferable,
+            Ty::Struct { id, .. } => self.structs[*id].inferable,
+            _ => unreachable!("only a class or a struct is built with its fields"),
+        }
+    }
+
     /// The type of the class `Scope::classes[id]`.
     pub(crate) fn class_ty(&self, id: usize) -> Ty {
         let class = &self.classes[id];
@@ -687,6 +779,16 @@ impl Scope {
             id,
             size: class.size,
             applied: class.applied.clone(),
+        }
+    }
+
+    /// The type of the struct `Scope::structs[id]`.
+    pub(crate) fn struct_ty(&self, id: usize) -> Ty {
+        let value = &self.structs[id];
+        Ty::Struct {
+            id,
+            size: value.size,
+            applied: value.applied.clone(),
         }
     }
 

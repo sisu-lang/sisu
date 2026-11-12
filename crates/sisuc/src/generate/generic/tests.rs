@@ -82,7 +82,7 @@ fn declare(g: &mut Gen<'_>, generics: Vec<Generic>) {
     for (id, generic) in generics.into_iter().enumerate() {
         match generic.body {
             Body::Enum(variants) => g.declare_enum(id, generic.params, variants),
-            Body::Class(_) => g.scope.generics.push(generic),
+            Body::Class(_) | Body::Struct(_) => g.scope.generics.push(generic),
         }
     }
 }
@@ -737,7 +737,7 @@ fn each_count_of_generics_should_reach_its_most_and_stay_within_it() {
         for generic in &g.scope.generics {
             params = params.max(generic.params);
             match &generic.body {
-                Body::Class(list) => {
+                Body::Class(list) | Body::Struct(list) => {
                     fields = fields.max(list.len());
                     for field in list {
                         mutable[usize::from(field.mutable)] = true;
@@ -1246,7 +1246,7 @@ fn an_optional_of_an_optional_should_be_built_with_some() {
 fn a_generic_class_field_should_be_mutable_by_the_second_choice_only() {
     let mutable = |data: &[u8]| {
         let mut g = Gen::new(data);
-        g.generic_class();
+        g.generic_record(false);
         let Body::Class(fields) = &g.scope.generics[0].body else {
             panic!("a class")
         };

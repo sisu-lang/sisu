@@ -1,20 +1,24 @@
 //! The `mut` call rule (S21): a statement that passes places to the `mut` parameters of a
-//! generated function or method, or swaps a place with `exchange`. A place is a local, an element
-//! of an array local, a `mut` field of a class object that a local holds, or such a field of a
-//! field of the object. A call may hold one more `mut` call, as a plain argument
-//! (`Gen::nested_mut_call`). A `mut` parameter stores back a plain write of at most the smallest
-//! value of its type (`item::mut_param`), and, for a local, what it adds (`Adds`), which the call
-//! takes from the room and the growth of the caller's local. So no bound of the value model
-//! moves. A field and an element take no addition: their bounds are caps and element sizes that
-//! no call may raise.
+//! generated function or method, or swaps a place with `exchange`. A place is one of these:
+//! - a local, or an element of an array local;
+//! - a `mut` field of a class object that a local holds, or such a field of a field of the object;
+//! - a field of a struct local at any depth, or of an element of a struct array local;
+//! - an element of the array that such a field holds.
+//!
+//! A call may hold one more `mut` call, as a plain argument (`Gen::nested_mut_call`). A `mut`
+//! parameter stores back a plain write of at most the smallest value of its type
+//! (`item::mut_param`). For a local, it also stores what it adds (`Adds`). The call takes that
+//! from the room and the growth of the caller's local, so no bound of the value model moves. A
+//! field and an element take no addition: no call may raise their bounds, which are caps and
+//! element sizes.
 
 use super::Gen;
 use super::expr::Info;
 use super::scope::{Adds, Ty};
-use super::stmt::MUT_FUEL;
+use super::stmt::{MUT_FUEL, StructPath};
 
 /// What a place is, besides its local.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 enum Kind {
     /// The local.
     Local,
@@ -25,6 +29,11 @@ enum Kind {
     FieldOfField((usize, usize), (usize, usize)),
     /// An element of the array that the local holds.
     Element,
+    /// A field of a struct, at any depth: the local, or its element, and the fields.
+    Path(StructPath),
+    /// An element of the array field that the path names. The array may be empty, so the call
+    /// goes under the guard `p.len() > 0`, and the index is a remainder by the length.
+    PathElement(StructPath),
 }
 
 /// A place that a `mut` argument may name.
@@ -56,6 +65,16 @@ pub(crate) struct Want {
 }
 
 impl Place {
+    /// Whether the place of a struct reads an index, which may panic and so is an effect (decision
+    /// 2): an element of a field, or a field of an element of an array local.
+    fn indexes_struct(&self) -> bool {
+        match &self.kind {
+            Kind::PathElement(_) => true,
+            Kind::Path(path) => path.element,
+            _ => false,
+        }
+    }
+
     /// Whether `exchange` may store a new value there: no write may change an array local, which
     /// would break the length that an index relies on (`stmt::assignable`).
     fn exchangeable(&self) -> bool {
@@ -208,6 +227,7 @@ impl Gen<'_> {
                 });
             }
         }
+        places.extend(self.struct_places());
         for (root, var) in self.scope.vars.iter().enumerate() {
             let Ty::Class { id, .. } = var.ty else {
                 continue;
@@ -232,6 +252,45 @@ impl Gen<'_> {
                     }
                 }
             }
+        }
+        places
+    }
+
+    /// The places in structs: each field of a struct local, at any depth, and an element of each
+    /// array field whose elements have no size.
+    fn struct_places(&self) -> Vec<Place> {
+        let mut places = Vec::new();
+        for path in self.struct_paths() {
+            let field = path.field(&self.scope);
+            let (ty, cap) = (field.ty.clone(), field.cap);
+            // An element of an array of values with no size: the size of the array is its length.
+            if let Ty::Array(element) = &ty
+                && !element.sized()
+                && !self.scope.contains_class(element)
+            {
+                places.push(Place {
+                    kind: Kind::PathElement(path.clone()),
+                    root: path.root,
+                    ty: (**element).clone(),
+                    size: 0,
+                    bound: 0,
+                    len: 0,
+                    room: 0,
+                    grow: 0,
+                    times: 1,
+                });
+            }
+            places.push(Place {
+                root: path.root,
+                kind: Kind::Path(path),
+                ty,
+                size: cap,
+                bound: cap,
+                len: 0,
+                room: 0,
+                grow: 0,
+                times: 1,
+            });
         }
         places
     }
@@ -313,17 +372,17 @@ impl Gen<'_> {
     pub(crate) fn write_place(&mut self, place: &Place, locals: &mut Vec<(String, usize)>) {
         let var = &self.scope.vars[place.root];
         let (name, len) = (var.name.clone(), var.len);
-        match place.kind {
+        match &place.kind {
             Kind::Local => {
                 locals.push((name.clone(), self.w.at()));
                 self.w.text(&name);
             }
-            Kind::Field(class, f) => {
+            &Kind::Field(class, f) => {
                 let field = &self.scope.classes[class].fields[f].name;
                 let text = format!("{name}.{field}");
                 self.w.text(&text);
             }
-            Kind::FieldOfField((class, g), (inner, h)) => {
+            &Kind::FieldOfField((class, g), (inner, h)) => {
                 let outer = &self.scope.classes[class].fields[g].name;
                 let field = &self.scope.classes[inner].fields[h].name;
                 self.w.text(&format!("{name}.{outer}.{field}"));
@@ -331,6 +390,15 @@ impl Gen<'_> {
             Kind::Element => {
                 let at = self.upto(len - 1);
                 self.w.text(&format!("{name}[{at}]"));
+            }
+            Kind::Path(path) => {
+                let text = self.path_text(path);
+                self.w.text(&text);
+            }
+            Kind::PathElement(path) => {
+                let text = self.path_text(path);
+                let at = self.pick(3);
+                self.w.text(&format!("{text}[{at} % {text}.len()]"));
             }
         }
     }
@@ -397,7 +465,9 @@ impl Gen<'_> {
     /// the outer call's locals. It counts as a statement that ran, so the call that holds it is
     /// not copied: the copy would take in the local before the nested call changes it.
     pub(crate) fn nested_mut_call(&mut self, ty: &Ty, max: u64) -> Option<Info> {
-        let places = self.mut_places();
+        // An argument is no statement: it takes no guard.
+        let mut places = self.mut_places();
+        places.retain(|place| !matches!(place.kind, Kind::PathElement(_)));
         let mut callees = self.mut_callees(&places);
         callees.retain(|&f| {
             let func = &self.scope.funcs[f];
@@ -419,6 +489,33 @@ impl Gen<'_> {
         Some(info)
     }
 
+    /// The condition that keeps every array of `places` that names an element of an array field
+    /// from being empty, if any does.
+    fn element_guard(&self, places: &[Place]) -> Option<String> {
+        let guards: Vec<String> = (places.iter())
+            .filter_map(|place| match &place.kind {
+                Kind::PathElement(path) => Some(format!("{}.len() > 0", self.path_text(path))),
+                _ => None,
+            })
+            .collect();
+        (!guards.is_empty()).then(|| guards.join(" && "))
+    }
+
+    /// Writes the statement that `write` writes, under `if guard { ... }` if there is a guard.
+    fn guarded(&mut self, guard: Option<String>, write: impl FnOnce(&mut Self)) {
+        let Some(guard) = guard else {
+            return write(self);
+        };
+        self.w.text(&format!("if {guard} "));
+        self.conditionally(|g| {
+            g.open_block();
+            g.w.line();
+            g.cost.statement();
+            write(g);
+            g.close_block();
+        });
+    }
+
     /// `mut_call`, of the function `forced` if it is one: it is a call, never an `exchange`.
     fn mut_call_of(&mut self, forced: Option<usize>) {
         let places = self.mut_places();
@@ -437,17 +534,24 @@ impl Gen<'_> {
             let wants = self.mut_wants(callee);
             let chosen = self.choose_places(&wants, &places);
             self.take_adds(&wants, &chosen);
-            if self.scope.funcs[callee].ret != Ty::Unit {
-                self.w.text("let _ = ");
-            }
-            self.invoke_with(callee, false, &chosen, &mut locals);
+            let guard = self.element_guard(&chosen);
+            self.guarded(guard, |g| {
+                if g.scope.funcs[callee].ret != Ty::Unit {
+                    g.w.text("let _ = ");
+                }
+                g.invoke_with(callee, false, &chosen, &mut locals);
+            });
         } else {
-            let place = &places[swaps[self.pick(swaps.len())]];
-            self.w.text("let _ = exchange(mut ");
-            self.write_place(place, &mut locals);
-            self.w.text(", ");
-            self.expr(&place.ty, place.bound);
-            self.w.text(")");
+            let place = places[swaps[self.pick(swaps.len())]].clone();
+            let guard = self.element_guard(std::slice::from_ref(&place));
+            self.effect |= place.indexes_struct();
+            self.guarded(guard, |g| {
+                g.w.text("let _ = exchange(mut ");
+                g.write_place(&place, &mut locals);
+                g.w.text(", ");
+                g.expr(&place.ty, place.bound);
+                g.w.text(")");
+            });
         }
         let copy = self.rewrite_pick(2) == 0;
         // The other arguments leave the locals as they are, unless a statement or a `mut` call ran

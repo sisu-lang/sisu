@@ -3,7 +3,7 @@
 
 use super::expr::{Info, array_size};
 use super::mistake::Kind;
-use super::scope::{Ty, Var};
+use super::scope::{Field, Ty, Var};
 use super::writer::{Rewrite, Site, allowed};
 use super::{Gen, MAX_BOUND, MAX_LOOPS, MAX_SIZE};
 
@@ -35,6 +35,28 @@ pub(crate) enum MutUse {
     Push,
     Append,
 }
+
+/// A field of a struct that a statement or a `mut` argument writes: the local `root`, or its
+/// element `at` if `element`, then the fields of `steps`, each as the struct's id and the field's
+/// index in it. The last step is the field itself.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct StructPath {
+    pub(crate) root: usize,
+    pub(crate) element: bool,
+    pub(crate) at: u64,
+    pub(crate) steps: Vec<(usize, usize)>,
+}
+
+impl StructPath {
+    /// The field that the path ends at.
+    pub(crate) fn field<'s>(&self, scope: &'s super::scope::Scope) -> &'s Field {
+        let &(id, f) = self.steps.last().expect("a path should hold a step");
+        &scope.structs[id].fields[f]
+    }
+}
+
+/// The most struct levels a write path nests.
+const MAX_DEPTH: usize = 3;
 
 /// The most statements in a block, before its jump.
 const MAX_STATEMENTS: usize = 8;
@@ -70,6 +92,9 @@ enum Rule {
     Push,
     /// `v.g = e` or `v?.g = e`, or `op=` in place of `=` for a number.
     SetField,
+    /// A write to a field of a struct local at any depth: `v.a.g = e`, `v[i].g = e`, or a guarded
+    /// `push` or element write onto an array field.
+    SetStruct,
     Compound,
     If,
     While,
@@ -184,6 +209,10 @@ impl Gen<'_> {
         }
         if !self.compound_targets().is_empty() {
             rules.push(Rule::Compound);
+        }
+        if !self.struct_paths().is_empty() {
+            // Twice, as `SetField` is: a struct local is rare in scope.
+            rules.extend([Rule::SetStruct, Rule::SetStruct]);
         }
         if self.blocks < MAX_BLOCKS {
             rules.push(Rule::If);
@@ -310,6 +339,7 @@ impl Gen<'_> {
                 self.set_element(vars[pick]);
             }
             Rule::SetField => self.set_field(),
+            Rule::SetStruct => self.set_struct_field(),
             Rule::Push => self.push_stmt(),
             Rule::Compound => self.compound(),
             Rule::If => self.if_stmt(false),
@@ -774,6 +804,127 @@ impl Gen<'_> {
             }
         }
         targets
+    }
+
+    /// The fields a write may target. They are in the struct locals that the body may change,
+    /// and in the elements of the array locals of structs that it may change. A target is each
+    /// field, and each field of a struct in a field, down to `MAX_DEPTH` levels. A field that
+    /// holds a class object is no target (decision 4), but a field of a struct inside it may be.
+    /// The root is a `let mut` or a `mut` parameter, which is the one rule for a write (S3).
+    pub(crate) fn struct_paths(&self) -> Vec<StructPath> {
+        let mut paths = Vec::new();
+        for (root, var) in self.scope.vars.iter().enumerate() {
+            let (id, element) = match &var.ty {
+                Ty::Struct { id, .. } if var.assignable => (*id, false),
+                Ty::Array(element) if self.settable(var) => match **element {
+                    Ty::Struct { id, .. } => (id, true),
+                    _ => continue,
+                },
+                _ => continue,
+            };
+            self.field_paths(root, element, &mut vec![(id, 0)], &mut paths);
+        }
+        paths
+    }
+
+    /// The paths below the struct that the last step of `steps` names, whose field index it
+    /// does not set yet, into `paths`.
+    fn field_paths(
+        &self,
+        root: usize,
+        element: bool,
+        steps: &mut Vec<(usize, usize)>,
+        paths: &mut Vec<StructPath>,
+    ) {
+        let (id, _) = *steps.last().expect("a path should hold a step");
+        for (f, field) in self.scope.structs[id].fields.iter().enumerate() {
+            steps.last_mut().expect("a path should hold a step").1 = f;
+            if self.scope.struct_field_writable(field) {
+                paths.push(StructPath {
+                    root,
+                    element,
+                    at: 0,
+                    steps: steps.clone(),
+                });
+            }
+            if let Ty::Struct { id: inner, .. } = field.ty
+                && steps.len() < MAX_DEPTH
+            {
+                steps.push((inner, 0));
+                self.field_paths(root, element, steps, paths);
+                steps.pop();
+            }
+        }
+    }
+
+    /// The text of `path`: the local, an element of it, and the field names.
+    pub(crate) fn path_text(&self, path: &StructPath) -> String {
+        let root = &self.scope.vars[path.root].name;
+        let element = if path.element {
+            format!("[{}]", path.at)
+        } else {
+            String::new()
+        };
+        let names: Vec<&str> = (path.steps.iter())
+            .map(|&(id, f)| self.scope.structs[id].fields[f].name.as_str())
+            .collect();
+        format!("{root}{element}.{}", names.join("."))
+    }
+
+    /// A write to a field of a struct, at any depth: `p = e`, `p op= e` of a number, or, for an
+    /// array field whose elements have no size, `if p.len() < cap { p.push(e) }` and
+    /// `if p.len() > k { p[k] = e }`. The guard keeps the length of a field in its cap, and an
+    /// index in bounds: the length of a field is not kept (S3).
+    pub(crate) fn set_struct_field(&mut self) {
+        let paths = self.struct_paths();
+        let mut path = paths[self.pick(paths.len())].clone();
+        if path.element {
+            let len = self.scope.vars[path.root].len;
+            path.at = self.upto(len - 1);
+        }
+        let Field { ty, cap, .. } = path.field(&self.scope).clone();
+        let text = self.path_text(&path);
+        let element = match &ty {
+            Ty::Array(element) if !element.sized() && !self.scope.contains_class(element) => {
+                Some((**element).clone())
+            }
+            _ => None,
+        };
+        match element {
+            Some(element) if self.pick(3) == 0 => {
+                self.w.text(&format!("if {text}.len() < {cap} "));
+                self.conditionally(|g| {
+                    g.open_block();
+                    g.w.line();
+                    g.cost.statement();
+                    g.w.text(&format!("{text}.push("));
+                    g.expr(&element, 0);
+                    g.w.text(")");
+                    g.close_block();
+                });
+            }
+            Some(element) if self.pick(2) == 0 => {
+                let at = self.upto(2);
+                self.w.text(&format!("if {text}.len() > {at} "));
+                self.conditionally(|g| {
+                    g.open_block();
+                    g.w.line();
+                    g.cost.statement();
+                    g.w.text(&format!("{text}[{at}] = "));
+                    g.expr(&element, 0);
+                    g.close_block();
+                });
+            }
+            _ => {
+                self.w.text(&text);
+                if matches!(ty, Ty::I64 | Ty::U8 | Ty::F64) && self.pick(3) != 0 {
+                    self.compound_by(&ty);
+                } else {
+                    self.w.text(" = ");
+                    self.expr(&ty, cap);
+                }
+            }
+        }
     }
 
     /// The places a compound assignment may target: a local, `false`, or one of its elements,
@@ -1318,14 +1469,14 @@ impl Gen<'_> {
         }
     }
 
-    fn open_block(&mut self) {
+    pub(crate) fn open_block(&mut self) {
         self.blocks += 1;
         self.w.open();
         self.w.open_block();
         self.scope.open();
     }
 
-    fn close_block(&mut self) {
+    pub(crate) fn close_block(&mut self) {
         self.scope.close();
         self.w.close_block();
         self.w.close();
