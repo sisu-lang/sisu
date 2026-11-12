@@ -42,7 +42,7 @@ filter = 'test(many_panic_sites_should_compile_in_linear_time)'
 slow-timeout = { period = "1s", terminate-after = 2 }
 
 # A CI runner is about twice as slow, so the kill is at 4 s. Under coverage on a developer machine,
-# at a load average of 13 to 27, the test took 0.87 s: the kill is 4.6 times that.
+# the test took 0.87 s, at a load that was not recorded: the kill is 4.6 times that.
 [[profile.ci.overrides]]
 filter = 'test(many_panic_sites_should_compile_in_linear_time)'
 slow-timeout = { period = "2s", terminate-after = 2 }
@@ -57,7 +57,7 @@ filter = 'test(copies_should_finish_a_long_chain_in_linear_time)'
 slow-timeout = { period = "1s", terminate-after = 1 }
 
 # A CI runner is about twice as slow, so the kill is at 2 s. Under coverage on a developer machine,
-# at a load average of 13 to 27, the test took 0.08 s: the kill is 24 times that.
+# the test took 0.08 s, at a load that was not recorded: the kill is 24 times that.
 [[profile.ci.overrides]]
 filter = 'test(copies_should_finish_a_long_chain_in_linear_time)'
 slow-timeout = { period = "2s", terminate-after = 1 }
@@ -118,8 +118,8 @@ filter = '(test(=check::tests::patterns::variants_should_check_in_linear_time) |
 slow-timeout = { period = "1s", terminate-after = 2 }
 
 # A CI runner is about twice as slow, so the kill of the same five tests is at 4 s. Under coverage
-# on a developer machine, at a load average of 13 to 27, they took 0.25 to 1.00 s: the kill is 4.0
-# times the slowest.
+# on a developer machine, they took 0.25 to 1.00 s, at a load that was not recorded: the kill is
+# 4.0 times the slowest.
 [[profile.ci.overrides]]
 filter = '(test(=check::tests::patterns::variants_should_check_in_linear_time) | test(=check::tests::patterns::literal_arms_should_check_in_linear_time) | test(=check::tests::patterns::long_or_row_should_check_in_linear_time) | test(=check::tests::patterns::takers_should_check_in_linear_time) | test(=check::tests::patterns::match_on_many_variants_should_check_in_linear_time))'
 slow-timeout = { period = "2s", terminate-after = 2 }

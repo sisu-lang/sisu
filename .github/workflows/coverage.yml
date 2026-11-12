@@ -18,6 +18,7 @@ jobs:
     name: Coverage
     runs-on: ubuntu-26.04
     env:
+      # The job states the profile that its gate runs, whatever the default of coverage.sh is.
       NEXTEST_PROFILE: ci
     steps:
       - id: checkout
