@@ -60,7 +60,7 @@ A `let mut` binding must change somewhere in its scope. When no assignment chang
 
 A binding in live code that no expression reads builds with a warning ([W0014](../diagnostics/W0014.md)). For a `let mut` that nothing reads, this warning takes the place of W0002. A name that starts with `_` gets no warning.
 
-A `let mut` that copies a place, such as `let mut a = accounts[0]`, and is only written to, such as `a.balance += 100`, builds with a warning ([W0016](../diagnostics/W0016.md)). The writes change the copy and not the place.
+A `let mut` that copies a place, such as `let mut a = accounts[0]`, builds with a warning ([W0016](../diagnostics/W0016.md)) when nothing reads it. This holds when each use is a write to a part of it, such as `a.balance += 100`. The writes change the copy and not the place. A write of the whole copy, `a = e`, gives the warning W0014 instead.
 
 ### let _
 

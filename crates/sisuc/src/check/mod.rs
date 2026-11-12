@@ -586,6 +586,13 @@ impl<'src> Source<'src> {
         self.holding(range.start).slice(range)
     }
 
+    /// Whether `span` holds no line break, which a string literal cannot hold. A comment inside
+    /// it would end at one, so it holds no comment either, and fits inside `{}`.
+    fn one_line(&self, span: Span) -> bool {
+        let next = self.breaks.partition_point(|&b| b < span.start());
+        self.breaks.get(next).is_none_or(|&b| b >= span.end())
+    }
+
     /// The text from offset `from` to the end of the text that holds it.
     fn rest(&self, from: usize) -> &'src str {
         self.holding(from).rest(from)

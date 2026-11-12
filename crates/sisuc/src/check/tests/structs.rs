@@ -2306,7 +2306,7 @@ const COPY_ROWS: [CopyRow; 25] = [
         "an element of a slice",
         "",
         "",
-        "let mut a = xs[0..1][0]\na.b = 2",
+        "let mut a = ys[0..1][0]\na[0] = 1",
         &[("W0014", "let mut a", 8)],
     ),
     (
@@ -2484,4 +2484,32 @@ fn write_to_a_copy_should_check_each_step_once() {
     };
     assert_near_linear_for("copies", steps(10, 1), steps(20, 1), steps(30, 1));
     assert_near_linear_for("writes", steps(1, 10), steps(1, 20), steps(1, 30));
+}
+
+/// GIVEN a clean function with `n` copies, where the initializer of each holds the next copy in a
+/// block. WHEN `n` is 4, 8 and 12. THEN no copy reads the text of its initializer, and the path
+/// walks grow in step with `n`. A copy that warns reads the text of its initializer once.
+#[test]
+fn write_to_a_copy_should_read_no_initializer_text_until_it_warns() {
+    use super::super::unused_names::COPY_TEXT;
+    let steps = |copies: usize| {
+        let mut body = "0".to_string();
+        for i in 0..copies {
+            body = format!("let mut a{i} = xs[{{\n{body}\n}}]\na{i}.b = 2\nprint(a{i}.b)\n0");
+        }
+        let src = format!(
+            "struct A {{ b: i64 }}\nfn main() {{\n    let xs = [A(b: 1)]\n    let _ = {{\n{body}\n    }}\n    print(xs[0].b)\n}}"
+        );
+        PATH_STEPS.set(0);
+        COPY_TEXT.set(0);
+        let found = copy_warnings(&src);
+        assert!(found.is_empty(), "{found:?}");
+        assert_eq!(COPY_TEXT.get(), 0, "{copies} copies read initializer text");
+        PATH_STEPS.get()
+    };
+    assert_near_linear(steps(4), steps(8), steps(12));
+    COPY_TEXT.set(0);
+    let src = "struct A { b: i64 }\nfn main() {\n    let xs = [A(b: 1)]\n    let mut a = xs[0]\n    a.b = 2\n}";
+    assert_eq!(copy_warnings(src).len(), 1);
+    assert_eq!(COPY_TEXT.get(), "xs[0]".len());
 }

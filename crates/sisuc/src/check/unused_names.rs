@@ -11,7 +11,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::cycle::inline_of;
 use super::extend::holder_of;
-use super::{Checker, Declared, Holder};
+use super::{Checker, Declared, Holder, Source};
 use crate::conformance::{applies_written, has_written};
 use crate::diagnostic::{
     Code, Definition, Diagnostic, DiagnosticKind, Immutable, NeverReassignedForm, UsedBy, copy_help,
@@ -26,6 +26,8 @@ use crate::types::Head;
 thread_local! {
     /// How many types `shown_by_dbg` has read on this thread.
     pub(super) static SHOWN_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many bytes of initializer text `quoted` has read on this thread.
+    pub(super) static COPY_TEXT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Whether `d` is a warning that `Checker::unused` gives and `Checker::unjudged` does not: one
@@ -80,12 +82,13 @@ pub(super) struct Use {
 
 /// A `let mut` whose initializer is a place that crosses no class object. It records what W0016
 /// needs: the first write to a part of the local, and whether any other use writes it. A read
-/// of the local is not recorded here: it keeps the binding out of the pass (`Pending`).
+/// of the local is not recorded here: it keeps the binding out of the pass (`Pending`). It holds
+/// no text: the spans and the symbol are all that the `let` costs.
 pub(super) struct Copied {
-    /// The initializer as written, on one line.
-    pub(super) place: String,
+    /// The initializer.
+    pub(super) init: Span,
     /// The name at the root of the place: `self` for the plain `self` of a struct method.
-    pub(super) root: String,
+    pub(super) root: Symbol,
     /// Why the root cannot change; none for a root that can. A root keeps its kind between the
     /// `let` and each write, so this is found once.
     pub(super) cause: Option<Immutable>,
@@ -96,14 +99,28 @@ pub(super) struct Copied {
     pub(super) other: bool,
 }
 
+/// The text of the initializer at `span`, when it is on one line. A line break or a comment would
+/// change the message, so then the message names only the root. A `//` inside a string literal
+/// is part of the text.
+fn quoted(source: Source<'_>, span: Span) -> Option<&str> {
+    let text = source.text(span);
+    #[cfg(test)]
+    COPY_TEXT.set(COPY_TEXT.get() + text.len());
+    source.one_line(span).then_some(text)
+}
+
 impl Copied {
     /// The W0016 of the local declared at `copy`. Each use of it must be a write to a part, and
     /// its root must have a help to give.
-    fn warning(self, copy: Span) -> Option<DiagnosticKind> {
+    fn warning(self, copy: Span, source: Source<'_>) -> Option<DiagnosticKind> {
         let at = self.write.filter(|_| !self.other)?;
-        let help = copy_help(self.cause.as_ref(), &self.root, &self.place)?;
+        let root = self.root.as_str();
+        let place = quoted(source, self.init);
+        // The help says that the place cannot change only when the place is more than the root.
+        let help = copy_help(self.cause.as_ref(), root, place.filter(|p| *p != root))?;
         Some(DiagnosticKind::WriteToCopy {
-            place: self.place,
+            place: place.map(str::to_string),
+            root: root.to_string(),
             at,
             copy,
             help,
@@ -130,10 +147,10 @@ impl Pending {
     /// The W0016 or the W0014 of the binding when its function is judged; otherwise its W0002, if
     /// it is a `let mut` that W0002 warns about. A copy that only writes gets W0016, and not
     /// W0014.
-    fn judged(self, judged: bool) -> Option<Diagnostic> {
+    fn judged(self, judged: bool, source: Source<'_>) -> Option<Diagnostic> {
         let (name, at) = (self.name, self.at);
         if judged {
-            if let Some(kind) = self.copy.and_then(|copy| copy.warning(at)) {
+            if let Some(kind) = self.copy.and_then(|copy| copy.warning(at, source)) {
                 return Some(kind.into());
             }
             let (param, fix) = (self.param, self.fix);
@@ -497,7 +514,7 @@ impl Checker<'_> {
         }
         found.extend(pending.into_iter().filter_map(|p| {
             let live = reached.live[p.func.0];
-            p.judged(live)
+            p.judged(live, self.source)
         }));
         found
     }
@@ -746,7 +763,7 @@ impl Checker<'_> {
         let pending = std::mem::take(&mut self.pending);
         pending
             .into_iter()
-            .filter_map(|p| p.judged(false))
+            .filter_map(|p| p.judged(false, self.source))
             .collect()
     }
 

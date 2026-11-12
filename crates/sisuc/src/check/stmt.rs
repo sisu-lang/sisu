@@ -400,7 +400,7 @@ impl Checker<'_> {
                     BindingKind::Let
                 };
                 // The initializer names the root as it was before this `let`.
-                let copy = mutable.is_some().then(|| self.copy_of(init_expr)).flatten();
+                let copy = mutable.and_then(|_| self.copy_of(init_expr, name.name));
                 let local = self.declare(name, ty, kind, *mutable);
                 if let Some(binding) = self
                     .body

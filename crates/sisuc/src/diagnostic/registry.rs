@@ -1098,9 +1098,11 @@ pub(crate) enum DiagnosticKind {
     /// as written, when it has one.
     PrintsOptional { value: Option<String>, at: Span },
     /// The write at `at` to the local declared at `copy`, a copy of the place `place`, which
-    /// nothing reads; `help` names what the root of the place allows.
+    /// nothing reads; `help` names what the root of the place allows. A `place` that spans lines
+    /// or holds a comment is `None`, and the diagnostic names only the `root`.
     WriteToCopy {
-        place: String,
+        place: Option<String>,
+        root: String,
         at: Span,
         copy: Span,
         help: String,
@@ -5629,17 +5631,24 @@ impl From<DiagnosticKind> for Diagnostic {
             }
             DiagnosticKind::WriteToCopy {
                 place,
+                root,
                 at,
                 copy,
                 help,
-            } => Diagnostic::coded(
-                code,
-                at,
-                format!("this writes to a copy of `{place}`, and nothing reads the copy"),
-            )
-            .with_label(format!("`{place}` does not change"))
-            .with_secondary(copy, "a copy")
-            .with_help(help),
+            } => {
+                let (of, name) = match place {
+                    Some(place) => (format!("`{place}`"), place),
+                    None => (format!("a part of `{root}`"), root),
+                };
+                Diagnostic::coded(
+                    code,
+                    at,
+                    format!("this writes to a copy of {of}, and nothing reads the copy"),
+                )
+                .with_label(format!("`{name}` does not change"))
+                .with_secondary(copy, "a copy")
+                .with_help(help)
+            }
             DiagnosticKind::TodoLeft { at } => {
                 Diagnostic::coded(code, at, "`todo` panics when it runs")
             }
@@ -6904,24 +6913,37 @@ fn immutable_cause(d: Diagnostic, name: &str, element: bool, cause: &Immutable) 
     }
 }
 
-/// The help of W0016 for a copy of `place`. The root `root` cannot change for the reason `cause`
-/// gives, or can change when there is none. A field and a constant give none: a class step is not
-/// a copy, and a constant of a struct or an array is E0085.
-pub(crate) fn copy_help(cause: Option<&Immutable>, root: &str, place: &str) -> Option<String> {
+/// The help of W0016 for a copy. The root `root` cannot change for the reason `cause` gives, or
+/// can change when there is none. `place` is the place that the copy holds, when it is more than
+/// the root: then the help says that the place cannot change. A field and a constant give none: a
+/// class step is not a copy, and a constant of a struct or an array is E0085.
+pub(crate) fn copy_help(
+    cause: Option<&Immutable>,
+    root: &str,
+    place: Option<&str>,
+) -> Option<String> {
+    let so =
+        |here: &str| place.map_or(String::new(), |p| format!(", so `{p}` cannot change{here}"));
     Some(match cause {
         None => "write to the place itself, not to the copy".to_string(),
         Some(Immutable::Let { .. }) => format!(
-            "`{root}` is a `let`, so `{place}` cannot change: delete the write, or make `{root}` a `let mut` and write to the place"
+            "`{root}` is a `let`{}: delete the write, or make `{root}` a `let mut` and write to the place",
+            so("")
         ),
         Some(Immutable::Param { .. }) => format!(
-            "`{root}` is a plain parameter, so `{place}` cannot change here: delete the write, or return the changed copy"
+            "`{root}` is a plain parameter{}: delete the write, or return the changed copy",
+            so(" here")
         ),
         Some(Immutable::StructSelf) => format!(
-            "`self` cannot change in this method, so `{place}` cannot change here: delete the write, or return the changed copy"
+            "`self` cannot change in this method{}: delete the write, or return the changed copy",
+            so(" here")
         ),
-        Some(Immutable::Unwrapped { keyword, .. }) => format!(
-            "`{root}` is bound by `{keyword}`, so `{place}` cannot change here: delete the write"
-        ),
+        Some(Immutable::Unwrapped { keyword, .. }) => {
+            format!(
+                "`{root}` is bound by `{keyword}`{}: delete the write",
+                so(" here")
+            )
+        }
         Some(Immutable::Field { .. } | Immutable::Constant { .. }) => return None,
     })
 }

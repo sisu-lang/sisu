@@ -270,7 +270,11 @@ impl Checker<'_> {
             return reported;
         }
         let place = self.place(span, target, Change::Assign);
-        self.copy_written(target, !matches!(target.kind, ast::ExprKind::Name(_)));
+        self.copy_written(
+            target,
+            target.span,
+            !matches!(target.kind, ast::ExprKind::Name(_)),
+        );
         // A local's type comes from where its name is declared. A field or an index waits.
         let declared = match target.kind {
             ast::ExprKind::Name(name) => self.lookup(name).map(|b| b.span),
@@ -600,7 +604,7 @@ impl Checker<'_> {
         let value = self.expect(&arg.value, Expectation::or_poisoned(element, Origin::None));
         match (value, read, place) {
             (Ok(value), Ok(read), Some(place)) if place.writable => {
-                self.copy_written(receiver_expr, true);
+                self.copy_written(receiver_expr, span, true);
                 let path = unread(read, receiver_expr);
                 // The place stores an optional that `?.` takes the array out of.
                 let some = safe
@@ -677,7 +681,11 @@ impl Checker<'_> {
         if let Some(reported) = self.assign_to_range(target, Some(op), value) {
             return reported;
         }
-        self.copy_written(target, !matches!(target.kind, ast::ExprKind::Name(_)));
+        self.copy_written(
+            target,
+            target.span,
+            !matches!(target.kind, ast::ExprKind::Name(_)),
+        );
         if let ast::ExprKind::Name(name) = target.kind {
             // The target is checked as a value only to give its value back to it: no read.
             let outer = self.body.quiet.replace(target.span);
@@ -1612,45 +1620,46 @@ impl Checker<'_> {
         }
     }
 
-    /// What W0016 needs of a `let mut` whose initializer is `init`: the place it copies, when
-    /// that place has a root and crosses no class object. It holds why the root cannot change.
-    /// Call it before the local is declared, because the place may name an outer local of the same
-    /// name.
-    pub(super) fn copy_of(&self, init: &ast::Expr) -> Option<Copied> {
+    /// What W0016 needs of the `let mut` `name` whose initializer is `init`: the place it copies,
+    /// when that place has a root, crosses no class object and holds no range index (a slice is
+    /// a new value). It holds why the root cannot change, except when the root has the name of the
+    /// copy: `let mut a = a` copies an outer `a` that the copy hides. Call it before the local is
+    /// declared, because the place may name an outer local of the same name.
+    pub(super) fn copy_of(&self, init: &ast::Expr, name: Symbol) -> Option<Copied> {
+        if has_range_index(init) {
+            return None;
+        }
         let (root, cause) = match self.struct_root(init) {
-            StructRoot::Binding(name) => (name.to_string(), binding_cause(self.binding(name)?)),
+            StructRoot::Binding(root) => (root, binding_cause(self.binding(root)?)),
             StructRoot::SelfValue => (
-                "self".to_string(),
+                Symbol::intern("self"),
                 (!self.body.self_mut).then_some(Immutable::StructSelf),
             ),
             StructRoot::Other => return None,
         };
-        let words: Vec<_> = self.source.text(init.span).split_whitespace().collect();
         Some(Copied {
-            place: words.join(" "),
+            init: init.span,
             root,
-            cause,
+            cause: cause.filter(|_| root != name),
             write: None,
             other: false,
         })
     }
 
-    /// Records a use of the local at the root of the place `target` for the W0016 of that local.
-    /// A `part` is a write to a part of it: a field, an element, or a `push`. It counts when the
-    /// path stays in structs and arrays. Any other write, the whole local, a `mut` argument or a
-    /// path through a class object, rules W0016 out.
-    pub(super) fn copy_written(&mut self, target: &ast::Expr, part: bool) {
+    /// Records a use of the local at the root of the place `target`, written at `at`, for the
+    /// W0016 of that local. A `part` is a write to a part of it: a field, an element, or a
+    /// `push`. It counts when the path stays in structs and arrays. Any other write, the whole
+    /// local, a `mut` argument or a path through a class object, rules W0016 out.
+    pub(super) fn copy_written(&mut self, target: &ast::Expr, at: Span, part: bool) {
         let ast::ExprKind::Name(name) = place_root(target).kind else {
             return;
         };
-        if self.binding(name).is_none_or(|b| b.copy.is_none()) {
-            return;
-        }
         let stays = part && matches!(self.struct_root(target), StructRoot::Binding(_));
-        let copy = (self.lookup(name).and_then(|b| b.copy.as_mut()))
-            .expect("a binding that holds a copy should still hold it");
+        let Some(copy) = self.lookup(name).and_then(|b| b.copy.as_mut()) else {
+            return;
+        };
         if stays {
-            copy.write.get_or_insert(target.span);
+            copy.write.get_or_insert(at);
         } else {
             copy.other = true;
         }
@@ -2077,6 +2086,24 @@ pub(super) fn first_safe(mut e: &ast::Expr) -> Option<(&ast::Expr, &ast::Ident)>
             }
             ast::ExprKind::Index { base, .. } => e = base,
             _ => return found,
+        }
+    }
+}
+
+/// Whether a range indexes the chain of fields and indexes of `e`: a slice is a new value.
+fn has_range_index(mut e: &ast::Expr) -> bool {
+    loop {
+        #[cfg(test)]
+        super::PATH_STEPS.set(super::PATH_STEPS.get() + 1);
+        match &e.kind {
+            ast::ExprKind::Index { base, index } => {
+                if matches!(index.kind, ast::ExprKind::Range(_)) {
+                    return true;
+                }
+                e = base;
+            }
+            ast::ExprKind::Field { base, .. } => e = base,
+            _ => return false,
         }
     }
 }
