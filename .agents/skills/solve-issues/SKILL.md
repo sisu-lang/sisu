@@ -29,7 +29,12 @@ to choose the outside seat. When this table and the table in
 A batch fixes what each issue reports, and the cases in the same function.
 Keep each regression that the batch's own change adds, in any function.
 Drop every other finding, except one that gives wrong output, a crash, or a
-false error on a valid program. Ask the user before you file a new issue.
+false error on a valid program. Also keep a finding, even a nit, that names
+a surviving mutant in the batch's changed code and gives the test that kills
+it. Put that test into the next fix round, before the mutation test (step
+7.2) when it has not run yet. The test itself needs no re-check and no new
+mutation test.
+Ask the user before you file a new issue.
 Each review has one round, and one re-check for each blocking finding; no
 third round. When a blocking finding is still open after its re-check, ask
 the user to defer it or to fix it. These rules replace the fix-round rules of `review-sisu`.

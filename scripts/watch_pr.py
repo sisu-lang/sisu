@@ -5,8 +5,10 @@ Usage: python3 scripts/watch_pr.py PR [STATE_FILE]
 An event is a new review with text, or a new inline or issue comment, from someone other than you;
 an edit of one of these outside its HTML comments; the first failed check of the head; or the end of
 all checks of the head with none failed. CodeRabbit's "review in progress" note is not an event; the
-review that replaces it is. After a failed check, a rerun that passes is an event. Each list reads
-100 items. Each line holds the first 300 characters of the body and the URL of the full text.
+review that replaces it is. A bot comment that asks for no action is not an event: CodeRabbit's
+"No actionable comments", and a coverage line with each changed line covered or none. After a failed
+check, a rerun that passes is an event. Each list reads 100 items. Each line holds the first 300
+characters of the body and the URL of the full text.
 STATE_FILE (by default $TMPDIR/watch-pr-<PR>.json) keeps the events already printed, so the next run
 prints only newer ones. Run it with `run_in_background` and the sandbox off (`gh api` is REST and
 needs the network), then run it again after each event. Exit status: 0 an event, 1 the time limit.
@@ -27,6 +29,12 @@ POLL = float(os.environ.get("WATCH_PR_POLL", "60"))
 LIMIT = float(os.environ.get("WATCH_PR_LIMIT", str(2 * 60 * 60)))
 IN_PROGRESS = "<!-- This is an auto-generated comment: review in progress"
 PASSED = {"success", "skipped", "neutral"}
+# The shown text of a bot comment that asks for no action.
+# A rounded 100.0% can hide an uncovered line (1999 of 2000), so the two counts must be equal.
+QUIET = re.compile(
+    r"No actionable comments were generated"
+    r"|Coverage: .*changed lines(?: 100\.0% \((\d+) of \1\)|: none)"
+)
 
 
 @overload
@@ -96,7 +104,9 @@ def events(pr: str, me: str) -> list[tuple[str, str]]:
             f"comment {c['id']} {c['user']['login']}: {text(c['body'])} {c['html_url']}",
         )
         for c in gh(f"{REPO}/issues/{pr}/comments?per_page=100", "")
-        if c["user"]["login"] != me and IN_PROGRESS not in (c["body"] or "")
+        if c["user"]["login"] != me
+        and IN_PROGRESS not in (c["body"] or "")
+        and not (c["user"]["login"].endswith("[bot]") and QUIET.match(text(c["body"])))
     )
     sha = gh(f"{REPO}/pulls/{pr}")["head"]["sha"]
     runs = gh(f"{REPO}/commits/{sha}/check-runs?per_page=100", "check_runs")
