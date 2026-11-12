@@ -6907,6 +6907,10 @@ fn shared_chain(shape: &str, n: usize) -> String {
         "meets" => {
             "fn f<U>(_x: U) -> Two<$A<i64>, U> { panic(\"no\") }\nfn none<T>() -> T? { None }\nfn g<T>(_a: Two<$A<T>, i64>, _b: T?) -> i64 { 0 }\nfn main() {\n    print(g(f(true), none()))\n}"
         }
+        // `holds_optional_type`: the argument that misfits the payload of the context is a chain.
+        "misfitopt" => {
+            "fn mk() -> $A<i64> { panic(\"no\") }\nfn id2<T>(x: T) -> T { x }\nfn main() {\n    let _v: i64? = id2(mk())\n}"
+        }
         _ => unreachable!("no shape `{shape}`"),
     };
     src + &tail.replace("$A", &format!("A{n}"))
@@ -6935,6 +6939,7 @@ fn type_walks_should_visit_each_distinct_type_once() {
         "bareparam",
         "boundbuilt",
         "meets",
+        "misfitopt",
     ] {
         let steps = |n: usize| {
             generic::TYPE_STEPS.set(0);

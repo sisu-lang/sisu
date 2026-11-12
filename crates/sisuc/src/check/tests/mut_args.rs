@@ -2200,7 +2200,8 @@ fn mut_argument_against_a_written_context_should_be_e0170_only() {
 ///   writes its type arguments, or is a safe call, or is not generic, or the place is behind `?.`,
 ///   or the parameter is an associated type, or a parameter that no argument binds is in context
 /// WHEN the call is checked
-/// THEN the reports are those of the call before, but a missing `mut` makes the call untyped
+/// THEN the reports are those of the call before, but a missing `mut` makes the call untyped.
+///   A safe call reports its `mut` argument against the payload of the context.
 #[test]
 fn mut_argument_against_a_written_context_should_keep_the_other_reports() {
     let rows: &[Row] = &[

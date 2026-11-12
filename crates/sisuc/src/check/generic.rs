@@ -913,6 +913,37 @@ fn holds_param(ty: Type, param: Type, seen: &mut WalkMemo<Type, ()>) -> bool {
     holds
 }
 
+/// Whether `ty` is an optional, or an array, an enum, a class or an `any` whose element or type
+/// argument holds one. `seen` holds each type that does not, so each distinct type is visited
+/// once.
+fn holds_optional_type(ty: Type, seen: &mut WalkMemo<Type, ()>) -> bool {
+    type_step();
+    if seen.get(&ty).is_some() {
+        return false;
+    }
+    let holds = match ty.kind() {
+        TypeKind::Optional(_) => true,
+        TypeKind::Array(t) => holds_optional_type(t, seen),
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
+            (args.get().iter()).any(|&arg| holds_optional_type(arg, seen))
+        }
+        TypeKind::I64
+        | TypeKind::U8
+        | TypeKind::F64
+        | TypeKind::Bool
+        | TypeKind::Char
+        | TypeKind::String
+        | TypeKind::Unit
+        | TypeKind::Never
+        | TypeKind::Param(..)
+        | TypeKind::Assoc(..) => false,
+    };
+    if !holds {
+        seen.put(ty, ());
+    }
+    holds
+}
+
 /// Whether `ty` names a type parameter that `marked` marks by its place, other than under an
 /// associated type (see `names_outside_assoc`), and under an optional only if `optionals`.
 fn names_marked(ty: Type, marked: impl Fn(usize) -> bool + Copy, optionals: bool) -> bool {
@@ -2010,7 +2041,9 @@ pub(super) struct Ranked {
     /// Whether the value is an array fill, an arithmetic operator or a `-`, whose rank is that of
     /// its parts. Ranking an argument looks inside such a value. A sibling does not: it ranks the
     /// value `Concrete` (see `sibling`), so the leader of an operator and the first anchor of a
-    /// join stay as they were.
+    /// join stay as they were. `Branch::literal` reads `rank` directly and does look inside: in a
+    /// join whose context failed, `1 + id(2)`, `-id(2)` and `[5; 2]` are branches of literals and
+    /// take the type of the anchor.
     leads: bool,
 }
 
@@ -2050,6 +2083,21 @@ impl Ranked {
         never: false,
         leads: false,
     };
+
+    /// `self`, but `Literal` when it waits. An array fill, an arithmetic operator and a `-` never
+    /// wait for a context: with none they take their default type, as a literal does. So an
+    /// argument of such a value is not a rank-2 argument, which the call could not infer a type
+    /// for. Under a written context the value is still checked after the context binds.
+    fn or_literal_if_waiting(self) -> Self {
+        if self.rank == Rank::Waits {
+            Self {
+                rank: Rank::Literal,
+                ..self
+            }
+        } else {
+            self
+        }
+    }
 
     /// The rank that joins and operators order siblings by. They type a `Literal` value with
     /// `literal_type`, which knows scalars only. So a `Literal` value that is not `scalar` is
@@ -2795,6 +2843,26 @@ impl Checker<'_> {
         })
     }
 
+    /// Whether an argument already checked does not fit what `context` makes of its parameter
+    /// (see `fits_argument`), and its type holds an optional (see `holds_optional_type`). Such an
+    /// argument brings a `?` of its own, so the `?` of a context is not what it misses.
+    fn misfit_holds_optional(
+        &mut self,
+        call: &Inference<'_>,
+        sig: &GenericSig<'_>,
+        context: &Bindings,
+    ) -> bool {
+        let mut seen = WalkMemo::default();
+        iter::zip(&call.slots, sig.params).any(|(slot, &param)| {
+            let (Some(param), Some(got)) = (param, slot.as_ref().and_then(type_of)) else {
+                return false;
+            };
+            self.known(context, param).is_some_and(|fit| {
+                !self.fits_argument(got, fit) && holds_optional_type(got, &mut seen)
+            })
+        })
+    }
+
     /// Reports each argument already checked whose type is not what `want`, the call's context,
     /// makes of its parameter, once `ret` meets `want` or its payload with no argument's help.
     /// Such an argument is rejected, as a rule rejects its operand, and the later arguments
@@ -2807,9 +2875,10 @@ impl Checker<'_> {
     /// `whole` says whether pass 2 of `infer_call` binds the whole optional `want`. When it is
     /// false, pass 2 binds the payload. A trial that binds the whole optional comes first: when
     /// each argument fits it, nothing is blamed. Else a trial that binds the payload follows. When
-    /// an argument does not fit the payload, the arguments are blamed against the payload, as pass
-    /// 2 bound it. Else, and when `whole` is true, the whole optional is blamed first and the
-    /// payload second.
+    /// an argument does not fit it, the arguments are blamed against the payload, as pass 2 bound
+    /// it. But an argument that does not fit and holds an optional (see `misfit_holds_optional`)
+    /// brings its own `?`. Then the blame names the whole optional. The whole optional is also
+    /// blamed first, and the payload second, when `whole` is true.
     fn blame_arguments(
         &mut self,
         call: &mut Inference<'_>,
@@ -2826,8 +2895,10 @@ impl Checker<'_> {
         let payload_first = !whole
             && match bind_alone(want) {
                 Some(alone) if self.every_argument_fits(call, sig, &alone) => return,
-                _ => bind_alone(payload(want))
-                    .is_some_and(|alone| !self.every_argument_fits(call, sig, &alone)),
+                _ => bind_alone(payload(want)).is_some_and(|alone| {
+                    !self.every_argument_fits(call, sig, &alone)
+                        && !self.misfit_holds_optional(call, sig, &alone)
+                }),
             };
         let met = if !payload_first && context.unify(ret, want) {
             want
@@ -3811,7 +3882,7 @@ impl Checker<'_> {
                 nested: false,
                 scalar: false,
                 leads: true,
-                ..combine([self.rank_value(value, fit)])
+                ..combine([self.rank_value(value, fit)]).or_literal_if_waiting()
             },
             K::Binary { op, lhs, rhs, .. }
                 if super::expr::operator(*op).is_some_and(|(_, ty)| ty == Type::I64) =>
@@ -3823,6 +3894,7 @@ impl Checker<'_> {
                             .into_iter()
                             .map(|e| self.rank_value(e, fit)),
                     )
+                    .or_literal_if_waiting()
                 }
             }
             K::Unary {
@@ -3830,7 +3902,7 @@ impl Checker<'_> {
                 operand,
             } => Ranked {
                 leads: true,
-                ..combine([self.rank_value(operand, fit)])
+                ..combine([self.rank_value(operand, fit)]).or_literal_if_waiting()
             },
             K::Field {
                 base,
