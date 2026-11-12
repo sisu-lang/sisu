@@ -1,0 +1,14 @@
+// GIVEN `struct Pair<T> { a: T; b: T }` and `struct Two<T, U> { xs: [T]; ys: [U] }`
+// WHEN `main` builds each with its type arguments written, `Pair<i64>(a: 1, b: 2)`, and prints it
+// THEN each prints its fields, and the written type arguments change nothing
+struct Pair<T> { a: T; b: T }
+struct Two<T, U> { xs: [T]; ys: [U] }
+
+fn main() {
+    let p = Pair<i64>(a: 1, b: 2)
+    print(p)                         // Pair(a: 1, b: 2)
+    let t = Two<i64, string>(xs: [1], ys: ["x"])
+    print(t)                         // Two(xs: [1], ys: ["x"])
+    let u: Pair<string> = Pair<string>(a: "u", b: "v")
+    print(u)                         // Pair(a: "u", b: "v")
+}
