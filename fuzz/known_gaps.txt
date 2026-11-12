@@ -27,3 +27,10 @@ codegen/layout.rs	<sisuc::codegen::Codegen>::copy_memory
 codegen/layout.rs	<sisuc::codegen::Codegen>::in_memory
 codegen/layout.rs	<sisuc::codegen::Codegen>::pair_field
 codegen/layout.rs	<sisuc::codegen::Codegen>::zeroed_slot
+## Only a write or a `mut` argument through `?.` on a struct value reaches these. Part 1 reports E0062 for it, or accepts it past a class object, and part 5 adds the generator rule for `?.` writes.
+check/place.rs	<sisuc::check::Checker>::chain_root_cause
+check/place.rs	<sisuc::check::Checker>::chain_write
+check/place.rs	<sisuc::check::Checker>::safe_struct_place
+## Only a place with an operand that exits (`return`, `break` or `continue`) is spilled into a block. The generator writes a literal index in a place.
+check/place.rs	sisuc::check::place::spilled_base
+check/place.rs	sisuc::check::place::spilled_index
