@@ -18,6 +18,7 @@ mod enums;
 mod expectation;
 mod extend;
 mod failed_bounds;
+mod failed_branches;
 mod failed_calls;
 mod floats;
 mod for_loops;

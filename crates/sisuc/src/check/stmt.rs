@@ -1444,6 +1444,7 @@ impl Checker<'_> {
         v: &ast::Expr,
         typo: Option<&ast::Ident>,
     ) -> Checked {
+        let waits = self.body.waiting_loops.is_some_and(|open| target < open);
         let frame = self.frame(target);
         if frame.kind != LoopKind::Loop {
             let (keyword, loop_at) = (frame.kind.keyword(), frame.keyword);
@@ -1471,8 +1472,14 @@ impl Checker<'_> {
         }
         let frame = self.frame(target);
         // With no expected type, an earlier value gives a hint, as the siblings of a hinted loop
-        // do.
+        // do. A value waits for the next run, and gives the loop no type, in two cases. The loop
+        // failed, so it has no type. Or the value is in a join in a poisoned context: the join
+        // checks its branches out of source order (see `Body::waiting_loops`).
+        let waiting = (waits || frame.failed.is_some())
+            && frame.expected == Expectation::None
+            && frame.first.is_none();
         let hint = match (frame.expected, frame.first) {
+            (Expectation::None, None) if waiting => Expectation::Poisoned,
             (Expectation::None, Some((ty, at))) => Expectation::Hint {
                 want: ty,
                 siblings: ty,
@@ -1502,6 +1509,12 @@ impl Checker<'_> {
                 frame.valued.get_or_insert(span);
                 let (expected, first) = (frame.expected, frame.first);
                 let hinted = matches!(expected, Expectation::Hint { .. });
+                if waiting {
+                    // The value would give the loop its type, so the loop fails instead.
+                    let reported = self.poisoned_context(v.span);
+                    self.frame(target).failed.get_or_insert(reported);
+                    return checked;
+                }
                 if expected == Expectation::Poisoned {
                     checked
                 } else {

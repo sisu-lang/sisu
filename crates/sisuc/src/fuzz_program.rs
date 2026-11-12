@@ -333,7 +333,8 @@ fn judge(g: &Generated, runtime: &Path, dir: &Path) -> Result<(), (Failure, Stri
     // Only checks, so before the builds that take most of the time.
     judge_bounds(g).map_err(|f| (f, String::new()))?;
     let seen = std::env::var_os("SISU_FUZZ_CASCADES");
-    judge_mistakes(g, seen.as_deref().map(Path::new)).map_err(|f| (f, String::new()))?;
+    judge_mistakes(g, known_cascades(), seen.as_deref().map(Path::new))
+        .map_err(|f| (f, String::new()))?;
     // The checks passed, so a later panic has no broken copy to leave.
     note_broken(None);
     let stdin = dir.join("stdin.txt");
@@ -433,14 +434,18 @@ fn judge_bounds(g: &Generated) -> Result<(), Failure> {
 
 /// The single-mistake check for `g`: each mistake alone, then the control (the first two mistakes
 /// of different functions, together). Each must give exactly its errors. A known cascade passes.
-/// Each known pair that it allows is appended to `seen`, as `<kind> <code>\n`, when `seen` names a
-/// file.
-fn judge_mistakes(g: &Generated, seen: Option<&Path>) -> Result<(), Failure> {
+/// `known` holds the pairs it allows. Each known pair that it allows is appended to `seen`, as
+/// `<kind> <code>\n`, when `seen` names a file.
+fn judge_mistakes(
+    g: &Generated,
+    known: &[(Kind, String)],
+    seen: Option<&Path>,
+) -> Result<(), Failure> {
     g.mistakes
         .iter()
-        .try_for_each(|m| judge_edit(g, &[m], seen))?;
+        .try_for_each(|m| judge_edit(g, &[m], known, seen))?;
     let control = control_of(g);
-    control.map_or(Ok(()), |pair| judge_edit(g, &pair, seen))
+    control.map_or(Ok(()), |pair| judge_edit(g, &pair, known, seen))
 }
 
 /// The control of `g`: its first two mistakes, in kind order, of different functions. A copy of an
@@ -462,7 +467,16 @@ fn control_of(g: &Generated) -> Option<[&Mistake; 2]> {
 ///
 /// The matching is linear: the expected errors are counted by code and offset, and each error
 /// looks up the offsets of the run of `(` that starts at it.
-fn judge_edit(g: &Generated, mistakes: &[&Mistake], seen: Option<&Path>) -> Result<(), Failure> {
+#[expect(
+    clippy::too_many_lines,
+    reason = "one pass matches the errors of an edit to the expected ones and writes the known pairs"
+)]
+fn judge_edit(
+    g: &Generated,
+    mistakes: &[&Mistake],
+    known: &[(Kind, String)],
+    seen: Option<&Path>,
+) -> Result<(), Failure> {
     // From the last edit to the first, so that an edit leaves the offsets before it as they are.
     let mut edits = mistakes.to_vec();
     edits.sort_by_key(|m| std::cmp::Reverse(m.at.start));
@@ -523,8 +537,10 @@ fn judge_edit(g: &Generated, mistakes: &[&Mistake], seen: Option<&Path>) -> Resu
         }
     }
     let all_errors = errors.len();
-    let known = |code: &str, m: &Mistake| {
-        (known_cascades().iter()).any(|(kind, known)| *kind == m.kind && known == code)
+    let is_known = |code: &str, m: &Mistake| {
+        known
+            .iter()
+            .any(|(kind, pair)| *kind == m.kind && pair == code)
     };
     let what = if all_errors == 0 {
         Some("reports no error".to_string())
@@ -533,7 +549,7 @@ fn judge_edit(g: &Generated, mistakes: &[&Mistake], seen: Option<&Path>) -> Resu
         Some(format!("misses {code} at {line}:{col}"))
     } else if let Some(code) = extra
         .iter()
-        .find(|&&code| !mistakes.iter().any(|m| known(code, m)))
+        .find(|&&code| !mistakes.iter().any(|m| is_known(code, m)))
     {
         let pairs: Vec<String> = (mistakes.iter())
             .map(|m| format!("`{} {code}`", m.kind.name()))
@@ -558,7 +574,10 @@ fn judge_edit(g: &Generated, mistakes: &[&Mistake], seen: Option<&Path>) -> Resu
         // When two kinds know the code, the cause is not known, so no pair is written.
         let lines: Vec<String> = (extra.iter())
             .filter_map(|code| {
-                let mut kinds = mistakes.iter().filter(|m| known(code, m)).map(|m| m.kind);
+                let mut kinds = mistakes
+                    .iter()
+                    .filter(|m| is_known(code, m))
+                    .map(|m| m.kind);
                 let first = kinds.next()?;
                 kinds
                     .all(|kind| kind == first)
@@ -2083,7 +2102,7 @@ mod tests {
             }
             controls += usize::from(control_of(&g).is_some());
             let start = Instant::now();
-            let result = judge_mistakes(&g, None);
+            let result = judge_mistakes(&g, known_cascades(), None);
             judging += start.elapsed();
             if let Err(f) = result {
                 let first = f.detail.lines().next().unwrap_or("");
@@ -2392,7 +2411,9 @@ mod tests {
         "fn f1(depth: i64) -> i64 {\n    depth\n}\nfn main() {\n    print((f1(3)))\n}\n";
     const TWO: &str =
         "fn f1(depth: i64) -> i64 {\n    5\n}\nfn main() {\n    let v1 = f1(3)\n    print(v1)\n}\n";
-    const KNOWN: &str = "fn main() {\n    let zz: i64? = 1\n    let a = loop { if true { break zz }\n break None }\n}\n";
+    /// A program with a local `n` that a mistake can rename. The mistake `yy + n[0]` gives E0033
+    /// for `yy` and the extra E0068, which stands in for the cascade of a checker.
+    const INDEXED: &str = "fn main() {\n    let n = 1\n    let b = n\n    print(b)\n}\n";
 
     /// A literal mistake of `LITERAL`: `true` for the `5`.
     fn literal_mistake() -> Mistake {
@@ -2412,16 +2433,23 @@ mod tests {
         ]
     }
 
-    /// The mistake of `KNOWN` that has a known cascade: `yy` for the `zz` of `break zz`.
-    fn known_mistake() -> Mistake {
-        let at = nth(KNOWN, "zz", 1);
-        mistake(Kind::Local, (at, "zz"), "yy", &[("E0033", at)])
+    /// The local mistake of `program`, for the `n` that the first `= n` reads: `yy + n[0]`.
+    fn indexed_mistake(program: &str, n: usize) -> Mistake {
+        let at = nth(program, "= n", n) + "= ".len();
+        mistake(Kind::Local, (at, "n"), "yy + n[0]", &[("E0033", at)])
+    }
+
+    /// The pairs of `list`, as a test passes them in place of the file.
+    fn pairs(list: &[(Kind, &str)]) -> Vec<(Kind, String)> {
+        (list.iter())
+            .map(|&(kind, code)| (kind, code.to_string()))
+            .collect()
     }
 
     #[test]
     fn single_mistake_check_should_pass_a_literal_mistake() {
         let g = with_mistakes(LITERAL, vec![literal_mistake()]);
-        judge_mistakes(&g, None).expect("one E0032 at the literal should pass");
+        judge_mistakes(&g, &[], None).expect("one E0032 at the literal should pass");
     }
 
     /// GIVEN a function that the edit writes a second time, before the first one
@@ -2429,7 +2457,7 @@ mod tests {
     /// THEN it expects E0034 at the name of the original, which is now the second definition
     #[test]
     fn single_mistake_check_should_pass_a_duplicate_mistake() {
-        judge_mistakes(&with_mistakes(TWO, vec![duplicate_mistake()]), None)
+        judge_mistakes(&with_mistakes(TWO, vec![duplicate_mistake()]), &[], None)
             .expect("one E0034 at the second definition should pass");
     }
 
@@ -2447,7 +2475,7 @@ mod tests {
     fn single_mistake_check_should_pass_a_callee_mistake() {
         let at = nth(CALLEE, "f1", 1);
         let m = mistake(Kind::Callee, (at, "f1"), "missing", &[("E0052", at)]);
-        judge_mistakes(&with_mistakes(CALLEE, vec![m]), None)
+        judge_mistakes(&with_mistakes(CALLEE, vec![m]), &[], None)
             .expect("one E0052 at the callee should pass");
     }
 
@@ -2456,7 +2484,7 @@ mod tests {
         let program = "fn main() {\n    let v1 = 1\n    print((v1))\n}\n";
         let at = nth(program, "v1", 1);
         let m = mistake(Kind::Local, (at, "v1"), "missing", &[("E0033", at)]);
-        judge_mistakes(&with_mistakes(program, vec![m]), None)
+        judge_mistakes(&with_mistakes(program, vec![m]), &[], None)
             .expect("an E0033 at the parenthesis before the name should pass");
     }
 
@@ -2464,7 +2492,7 @@ mod tests {
     fn single_mistake_check_should_pass_an_argument_mistake_in_parentheses() {
         let (call, arg) = (nth(CALLEE, "f1", 1), nth(CALLEE, "3", 0));
         let m = mistake(Kind::Argument, (arg, "3"), "", &[("E0053", call)]);
-        judge_mistakes(&with_mistakes(CALLEE, vec![m]), None)
+        judge_mistakes(&with_mistakes(CALLEE, vec![m]), &[], None)
             .expect("an E0053 at the parenthesis before the call should pass");
     }
 
@@ -2477,7 +2505,7 @@ mod tests {
         );
         let errors = uses.map(|at| ("E0033", at));
         let m = mistake(Kind::Declaration, (first, "v1"), "missing", &errors);
-        judge_mistakes(&with_mistakes(program, vec![m]), None)
+        judge_mistakes(&with_mistakes(program, vec![m]), &[], None)
             .expect("one E0033 at each use should pass");
     }
 
@@ -2485,7 +2513,7 @@ mod tests {
     fn single_mistake_check_should_fail_when_the_edit_gives_no_error() {
         FORCE.set(Some(Force::Conforming));
         let g = with_mistakes(LITERAL, vec![literal_mistake()]);
-        let failure = judge_mistakes(&g, None).expect_err("an edit with no error should fail");
+        let failure = judge_mistakes(&g, &[], None).expect_err("an edit with no error should fail");
         assert_eq!(failure.property, Property::SingleMistake);
         assert!(
             failure.detail.contains("reports no error"),
@@ -2504,7 +2532,7 @@ mod tests {
             "fn f1(a: i64, b: i64) -> i64 {\n    1\n}\nfn main() {\n    print(f1(1, 2).max())\n}\n";
         let (call, comma) = (nth(program, "f1", 1), nth(program, ", 2", 0));
         let m = mistake(Kind::Argument, (comma, ", 2"), "", &[("E0053", call)]);
-        let failure = judge_mistakes(&with_mistakes(program, vec![m]), None)
+        let failure = judge_mistakes(&with_mistakes(program, vec![m]), &[], None)
             .expect_err("the second E0053 should be an extra error");
         assert!(
             failure.detail.contains("`argument E0053`"),
@@ -2516,7 +2544,7 @@ mod tests {
     #[test]
     fn single_mistake_check_should_report_both_mistakes_of_the_control() {
         let [a, b] = two_mistakes("missing");
-        judge_edit(&with_mistakes(TWO, vec![]), &[&a, &b], None)
+        judge_edit(&with_mistakes(TWO, vec![]), &[&a, &b], &[], None)
             .expect("E0032 and E0052 together should pass");
     }
 
@@ -2524,7 +2552,7 @@ mod tests {
     fn single_mistake_check_should_check_the_control() {
         FORCE.set(Some(Force::QuietControl));
         let g = with_mistakes(TWO, Vec::from(two_mistakes("missing")));
-        let failure = judge_mistakes(&g, None).expect_err("a quiet control should fail");
+        let failure = judge_mistakes(&g, &[], None).expect_err("a quiet control should fail");
         assert_eq!(failure.property, Property::SingleMistake);
         assert!(
             failure.detail.contains("reports no error"),
@@ -2544,7 +2572,7 @@ mod tests {
     fn single_mistake_check_should_fail_when_the_control_misses_an_error() {
         // The callee keeps its own name, so the second edit gives no error.
         let [a, b] = two_mistakes("f1");
-        let failure = judge_edit(&with_mistakes(TWO, vec![]), &[&a, &b], None)
+        let failure = judge_edit(&with_mistakes(TWO, vec![]), &[&a, &b], &[], None)
             .expect_err("a missing E0052 should fail");
         assert_eq!(failure.property, Property::SingleMistake);
         assert!(
@@ -2556,21 +2584,17 @@ mod tests {
 
     #[test]
     fn single_mistake_check_should_pass_a_known_pair() {
-        let g = with_mistakes(KNOWN, vec![known_mistake()]);
-        judge_mistakes(&g, None).expect("`local E0050` is in the baseline");
+        let g = with_mistakes(INDEXED, vec![indexed_mistake(INDEXED, 0)]);
+        judge_mistakes(&g, &pairs(&[(Kind::Local, "E0068")]), None)
+            .expect("`local E0068` is in the list");
     }
 
     #[test]
     fn single_mistake_check_should_fail_a_new_pair() {
-        assert!(
-            !known_cascades().contains(&(Kind::Local, "E0068".to_string())),
-            "`local E0068` is now in the baseline: pick another code for the new pair"
-        );
-        // `n[0]` stands in for a checker that adds E0068 to an unknown local.
-        let program = "fn main() {\n    let n = 1\n    let b = n\n    print(b)\n}\n";
-        let at = program.find("= n").expect("the program should read `n`") + 2;
-        let m = mistake(Kind::Local, (at, "n"), "yy + n[0]", &[("E0033", at)]);
-        let failure = judge_mistakes(&with_mistakes(program, vec![m]), None)
+        // The list holds the code for another kind, so it does not know `local E0068`.
+        let known = pairs(&[(Kind::Literal, "E0068")]);
+        let m = indexed_mistake(INDEXED, 0);
+        let failure = judge_mistakes(&with_mistakes(INDEXED, vec![m]), &known, None)
             .expect_err("a new pair should fail");
         assert_eq!(failure.property, Property::SingleMistake);
         assert_eq!(
@@ -2595,89 +2619,95 @@ mod tests {
         let seen = scratch.0.join("seen.txt");
         // A line of another fuzz process, which the append must keep.
         fs::write(&seen, "literal E0032\n").expect("the test should write the file");
-        let g = with_mistakes(KNOWN, vec![known_mistake()]);
-        judge_mistakes(&g, Some(&seen)).expect("`local E0050` is in the baseline");
+        let g = with_mistakes(INDEXED, vec![indexed_mistake(INDEXED, 0)]);
+        judge_mistakes(&g, &pairs(&[(Kind::Local, "E0068")]), Some(&seen))
+            .expect("`local E0068` is in the list");
         assert_eq!(
             fs::read_to_string(&seen).ok().as_deref(),
-            Some("literal E0032\nlocal E0050\n")
+            Some("literal E0032\nlocal E0068\n")
         );
     }
 
-    /// GIVEN a control where only the `local` mistake knows the extra E0050
+    /// GIVEN a control where only the `local` mistake knows the extra E0068
     /// WHEN `judge_mistakes` checks it with a `seen` file
-    /// THEN it passes, and the file holds `local E0050` for the mistake alone and for the control.
+    /// THEN it passes, and the file holds `local E0068` for the mistake alone and for the control.
     #[test]
     fn single_mistake_check_should_pass_a_control_whose_pair_is_known_for_one_kind() {
-        let program = format!("fn f1(depth: i64) -> i64 {{\n    5\n}}\n{KNOWN}");
+        let program = format!("fn f1(depth: i64) -> i64 {{\n    5\n}}\n{INDEXED}");
         let five = nth(&program, "5", 0);
         let literal = Mistake {
             function: Some(0),
             ..mistake(Kind::Literal, (five, "5"), "true", &[("E0032", five)])
         };
-        let zz = nth(&program, "zz", 1);
-        let local = mistake(Kind::Local, (zz, "zz"), "yy", &[("E0033", zz)]);
+        let local = indexed_mistake(&program, 0);
         let scratch = Scratch::new();
         let seen = scratch.0.join("seen.txt");
         let g = with_mistakes(&program, vec![literal, local]);
-        judge_mistakes(&g, Some(&seen)).expect("`local E0050` is known for the local kind");
+        judge_mistakes(&g, &pairs(&[(Kind::Local, "E0068")]), Some(&seen))
+            .expect("`local E0068` is known for the local kind");
         // Once from the mistake alone, and once from the control, where only one kind knows it.
         assert_eq!(
             fs::read_to_string(&seen).ok().as_deref(),
-            Some("local E0050\nlocal E0050\n")
+            Some("local E0068\nlocal E0068\n")
         );
     }
 
-    /// GIVEN a control of two `local` mistakes, so that one kind knows the extra E0050
+    /// GIVEN a control of two `local` mistakes, so that one kind knows the extra E0068
     /// WHEN `judge_edit` checks it with a `seen` file
-    /// THEN it passes and writes `local E0050` for each extra error, which is true whichever
+    /// THEN it passes and writes `local E0068` for each extra error, which is true whichever
     /// mistake gave the error.
     #[test]
     fn single_mistake_check_should_write_a_pair_that_one_kind_knows_for_both_mistakes_of_a_control()
     {
-        let function = "fn f1(depth: i64) -> i64 {\n    let zz: i64? = 1\n    let a = loop { if true { break zz }\n break None }\n    depth\n}\n";
-        let program = format!("{function}{KNOWN}");
-        let local = |n, function| Mistake {
-            function,
-            ..mistake(
-                Kind::Local,
-                (nth(&program, "zz", n), "zz"),
-                "yy",
-                &[("E0033", nth(&program, "zz", n))],
-            )
-        };
-        let (a, b) = (local(1, Some(0)), local(3, None));
+        let function = "fn f1(depth: i64) -> i64 {\n    let n = 1\n    let b = n\n    print(b)\n    depth\n}\n";
+        let program = format!("{function}{INDEXED}");
+        let (a, b) = (
+            Mistake {
+                function: Some(0),
+                ..indexed_mistake(&program, 0)
+            },
+            indexed_mistake(&program, 1),
+        );
         let scratch = Scratch::new();
         let seen = scratch.0.join("seen.txt");
-        judge_edit(&with_mistakes(&program, vec![]), &[&a, &b], Some(&seen))
-            .expect("`local E0050` is in the baseline");
+        let known = pairs(&[(Kind::Local, "E0068")]);
+        judge_edit(
+            &with_mistakes(&program, vec![]),
+            &[&a, &b],
+            &known,
+            Some(&seen),
+        )
+        .expect("`local E0068` is in the list");
         assert_eq!(
             fs::read_to_string(&seen).ok().as_deref(),
-            Some("local E0050\nlocal E0050\n"),
+            Some("local E0068\nlocal E0068\n"),
             "one line for each of the two extra errors"
         );
     }
 
-    /// GIVEN a control of a `literal` and a `local` mistake, and an extra E0032 that both know
+    /// GIVEN a control of a `literal` and a `local` mistake
+    /// AND an extra E0068 that both kinds know
     /// WHEN `judge_edit` checks it with a `seen` file
     /// THEN it passes and writes no line, because it cannot tell which kind gave the error.
     #[test]
     fn single_mistake_check_should_not_write_a_pair_that_two_kinds_know() {
-        let program = "fn f1(depth: i64) -> i64 {\n    5\n}\nfn main() {\n    let zz: u8 = 1\n    let a = [[if true { loop { break zz } } else { 2 }], [u8(3) ?? 4]]\n}\n";
-        let five = nth(program, "5", 0);
+        let program = format!("fn f1(depth: i64) -> i64 {{\n    5\n}}\n{INDEXED}");
+        let five = nth(&program, "5", 0);
         let literal = Mistake {
             function: Some(0),
             ..mistake(Kind::Literal, (five, "5"), "true", &[("E0032", five)])
         };
-        let zz = nth(program, "zz", 1);
-        let local = mistake(Kind::Local, (zz, "zz"), "yy", &[("E0033", zz)]);
+        let local = indexed_mistake(&program, 0);
         let scratch = Scratch::new();
         let seen = scratch.0.join("seen.txt");
+        let known = pairs(&[(Kind::Literal, "E0068"), (Kind::Local, "E0068")]);
         judge_edit(
-            &with_mistakes(program, vec![]),
+            &with_mistakes(&program, vec![]),
             &[&literal, &local],
+            &known,
             Some(&seen),
         )
-        .expect("`literal E0032` and `local E0032` are in the baseline");
+        .expect("`literal E0068` and `local E0068` are in the list");
         assert_eq!(fs::read_to_string(&seen).unwrap_or_default(), "");
     }
 
@@ -2690,7 +2720,7 @@ mod tests {
         let program = "fn main() {\n    let v1 = 1\n    print(v1)\n    print(v1)\n}\n";
         let (first, second) = (nth(program, "v1", 1), nth(program, "v1", 2));
         let m = mistake(Kind::Local, (first, "v1"), "missing", &[("E0033", second)]);
-        let failure = judge_mistakes(&with_mistakes(program, vec![m]), None)
+        let failure = judge_mistakes(&with_mistakes(program, vec![m]), &[], None)
             .expect_err("an error before its expected offset should not match");
         assert!(
             failure.detail.contains("misses E0033"),
@@ -2707,12 +2737,7 @@ mod tests {
 
     #[test]
     fn the_known_cascades_should_parse() {
-        let pairs = known_cascades();
-        assert!(
-            pairs.contains(&(Kind::Local, "E0050".to_string())),
-            "{pairs:?}"
-        );
-        for (_, code) in pairs {
+        for (_, code) in known_cascades() {
             let digits = code.strip_prefix('E').unwrap_or("");
             assert!(
                 digits.len() == 4 && digits.bytes().all(|b| b.is_ascii_digit()),
@@ -2730,7 +2755,7 @@ mod tests {
         const _: () = assert!(coverage::SEEDS == 64, "add or drop a test of a seed");
         let g = generate(&seed(n));
         judge_bounds(&g)
-            .and_then(|()| judge_mistakes(&g, None))
+            .and_then(|()| judge_mistakes(&g, known_cascades(), None))
             .unwrap_or_else(|f| panic!("seed {n}: property {}: {}", f.property, f.detail));
     }
 
