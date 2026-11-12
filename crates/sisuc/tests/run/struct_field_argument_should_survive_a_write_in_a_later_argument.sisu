@@ -1,0 +1,35 @@
+// GIVEN `struct In { n: i64; xs: [i64] }`, `struct T { i: In }` and `fn f(xs: [i64], k: i64)`
+// WHEN `f(t.i.xs, { t.i = In(n: 2, xs: []); 1 })` runs: the block replaces the struct that holds
+// the argument's array, and the array has no other holder
+// THEN `f` reads the array as it was, and after the call `t.i` holds the new struct;
+// Valgrind finds no read of a freed block
+struct In { n: i64; xs: [i64] }
+struct T { i: In }
+
+fn f(xs: [i64], k: i64) {
+    print(xs)                        // [7, 8, 9]
+    print(k)                         // 1
+}
+
+fn array_argument() {
+    let mut t = T(i: In(n: 1, xs: [7, 8, 9]))
+    f(t.i.xs, { t.i = In(n: 2, xs: []); 1 })
+    print(t.i)                       // In(n: 2, xs: [])
+}
+
+fn g(i: In, k: i64) {
+    print(i)                         // In(n: 1, xs: [7])
+    print(k)                         // 1
+}
+
+fn struct_argument() {
+    let mut t = T(i: In(n: 1, xs: [7]))
+    g(t.i, { t.i = In(n: 3, xs: [4, 5]); 1 })
+    print(t.i.n)                     // 3
+    print(t.i.xs)                    // [4, 5]
+}
+
+fn main() {
+    array_argument()
+    struct_argument()
+}

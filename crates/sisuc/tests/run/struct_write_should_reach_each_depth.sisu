@@ -1,0 +1,57 @@
+// GIVEN `struct In { n: i64; xs: [i64] }`, `struct T { i: In; n: i64 }` and a `let mut t` that
+// holds `T(i: In(n: 1, xs: [1]), n: 1)`
+// WHEN each block writes one place of `t`: a field, a nested field, a compound write, an
+// element, a `push` and a whole field
+// THEN the block prints the place after the write
+struct In { n: i64; xs: [i64] }
+struct T { i: In; n: i64 }
+
+// A `T` that holds `In(n: 1, xs: [1])` and `n: 1`.
+fn source() -> T {
+    T(i: In(n: 1, xs: [1]), n: 1)
+}
+
+fn field() {
+    let mut t = source()
+    t.n = 2
+    print(t.n)                       // 2
+}
+
+fn nested() {
+    let mut t = source()
+    t.i.n = 2
+    print(t.i.n)                     // 2
+}
+
+fn compound() {
+    let mut t = source()
+    t.i.n += 2
+    print(t.i.n)                     // 3
+}
+
+fn element() {
+    let mut t = source()
+    t.i.xs[0] = 2
+    print(t.i.xs)                    // [2]
+}
+
+fn push() {
+    let mut t = source()
+    t.i.xs.push(2)
+    print(t.i.xs)                    // [1, 2]
+}
+
+fn whole() {
+    let mut t = source()
+    t.i = In(n: 2, xs: [])
+    print(t.i)                       // In(n: 2, xs: [])
+}
+
+fn main() {
+    field()
+    nested()
+    compound()
+    element()
+    push()
+    whole()
+}

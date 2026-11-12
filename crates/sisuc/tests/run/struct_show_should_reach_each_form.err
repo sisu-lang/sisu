@@ -1,0 +1,5 @@
+P(x: 1)
+struct_show_should_reach_each_form.sisu:69:17: p = P(x: 1)
+struct_show_should_reach_each_form.sisu:74:9: c = C(p: P(x: 1))
+struct_show_should_reach_each_form.sisu:81:9: Held(t: Tag(id: 5)) = Held(t: tag-5)
+struct_show_should_reach_each_form.sisu:84:9: Rock() = Rock()
