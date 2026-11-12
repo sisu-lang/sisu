@@ -1,0 +1,80 @@
+name: Coverage
+
+on:
+  schedule:
+    - cron: '41 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+# Third-party actions are pinned to commit SHAs; Dependabot bumps them.
+# The job fails when a step fails or when line coverage is below the limit.
+jobs:
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-26.04
+    env:
+      NEXTEST_PROFILE: ci
+    steps:
+      - id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
+      - id: tools
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-nextest,cargo-llvm-cov@0.9.1
+      - id: llvm
+        uses: ./.github/actions/install-llvm
+      - id: valgrind
+        run: sudo apt-get update && sudo apt-get install --yes valgrind
+      - id: coverage
+        timeout-minutes: 60
+        env:
+          BASE: HEAD
+        run: |
+          set -o pipefail
+          scripts/coverage.sh "$BASE" | tee "$RUNNER_TEMP/coverage.txt"
+      - id: summary
+        # A failed step skips the rest; this step still reports what ran.
+        if: ${{ !cancelled() }}
+        env:
+          STEPS: ${{ toJSON(steps) }}
+        run: |
+          rest=
+          if [ "$(jq -r '.coverage.outcome' <<<"$STEPS")" = success ]; then
+            # stdout may carry lines before the report; it starts at "Coverage:".
+            report=$(sed -n '/^Coverage:/,$p' "$RUNNER_TEMP/coverage.txt")
+            line=${report%%$'\n'*}
+            rest=$(printf '%s\n' "${report#"$line"}" | sed '/./,$!d')
+            [ -n "$line" ] || line='Coverage unavailable: no report line.'
+          else
+            failed=coverage
+            for id in checkout toolchain tools llvm valgrind coverage; do
+              if [ "$(jq -r --arg id "$id" '.[$id].outcome' <<<"$STEPS")" != success ]; then
+                failed=$id
+                break
+              fi
+            done
+            line="Coverage unavailable: the $failed step failed."
+          fi
+          {
+            echo "$line"
+            if [ -n "$rest" ]; then
+              echo
+              echo '```text'
+              echo "$rest"
+              echo '```'
+            fi
+          } >>"$GITHUB_STEP_SUMMARY"
+      - id: gate
+        env:
+          MIN_LINE_COVERAGE: 98.5
+        run: |
+          jq -e --argjson min "$MIN_LINE_COVERAGE" '.data[0].totals.lines.percent >= $min' target/llvm-cov/coverage.json >/dev/null || { echo "::error::line coverage $(jq '.data[0].totals.lines.percent' target/llvm-cov/coverage.json)% is below ${MIN_LINE_COVERAGE}%"; exit 1; }

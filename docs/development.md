@@ -422,10 +422,10 @@ coverage therefore comes from the runtime's own unit tests. One of them,
 coverage: it exhausts file descriptors, and the profiler's error breaks its
 exact stderr check.
 
-The CI job "Coverage (informational)" runs the script. It writes the report to
-the job summary and keeps one pull request comment up to date (same-repository
-pull requests only). On `main` it reports totals only. It never turns a check
-red.
+The `Coverage` workflow runs the script each night on `main` and by hand.
+It writes the totals to the job summary. It fails when line coverage is below
+98.5%. A pull request gets no coverage comment; `make coverage` gives the
+coverage of a branch's changes.
 
 CodSpeed measures Sisu against itself in simulation mode. The benchmarks are
 in `codspeed.yml`:
