@@ -99,12 +99,12 @@ A tour of the Sisu language as it works today, one small program at a time.
       <!-- source: docs/adr/0011-let-mut-marks-what-can-change.md, docs/adr/0005-reference-counting.md, docs/adr/0022-classes-compare-by-identity.md, docs/roadmap.md ("What works today": is tests identity, a class has == only with Eq) -->
 
       <h2 id="structs">Structs</h2>
-      <p>A struct declares its fields one per line, and its methods after them. A field has no <code>mut</code>. A struct value is a copy: <code>let mut b = a</code> gives <code>b</code> a value of its own, and a write to <code>b</code> never changes <code>a</code>.</p>
+      <p>A struct declares its fields one per line, and its methods after them. A field has no <code>mut</code>. A struct value is a copy: <code>let mut b = a</code> gives <code>b</code> a value of its own, and a write to a field of <code>b</code> never changes <code>a</code>. A class object in a field is the exception. It stays shared, so a copy of the struct holds the same object.</p>
       <figure class="code"><figcaption class="cap">point.sisu</figcaption><pre data-lang="sisu">
 {{text programs/run/point.sisu}}</pre></figure>
       <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
 {{text programs/run/point.out}}</pre></figure>
-      <p>The compiler writes <code>==</code> and <code>print</code> for a struct when each of its fields has them. One rule decides what can change: a write to a field, at any depth, needs a <code>let mut</code> or a <code>mut</code> parameter as its root. A write through a <code>let</code> is error E0001.</p>
+      <p>The compiler writes <code>==</code> and <code>print</code> for a struct when each of its fields has them. One rule decides what can change: a write to a field, at any depth, needs a <code>let mut</code> or a <code>mut</code> parameter as its root. A write through a <code>let</code> is error E0001. A write that goes through a class object follows the <code>mut</code> field of that class instead.</p>
       <!-- source: docs/reference/structs.md, docs/roadmap.md ("What works today": structs), docs/adr/0046-structs-replace-classes.md, site/programs/run/point.sisu -->
 
       <h2 id="enums">Enums and match</h2>
