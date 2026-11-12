@@ -86,6 +86,19 @@ struct Sc {
 }
 fn sc() -> Sc { Sc(c: Pc()) }
 fn osc() -> Sc? { None }
+struct Sm {
+    n: i64
+    c: Pc
+    fn get(self) -> i64 { self.n }
+    fn own(self) -> i64 { self.get() + self.c.push(1) }
+}
+fn sm() -> Sm { Sm(n: 1, c: Pc()) }
+fn osm() -> Sm? { None }
+fn sso() -> [Sm?] { [] }
+struct Sa {
+    n: i64
+}
+type Am = Sa
 fn take<T>(mut x: T?) { x = None }
 fn take2<T>(mut x: T?, n: i64) { x = None }
 fn keep<T>(mut x: T?) -> T? { x }
@@ -112,6 +125,8 @@ enum Eb {
     A
 }
 extend Eb: Nope {}
+type Ae = Sa
+extend Ae {}
 fn failed<U: Missing, V>(u: U, v: V, c: bool, d: bool, k: i64, n: any Named, p: any Pet, op: (any Pet)?, ob: Bx?) {
     let mut mq: (any Pet)? = op
     {stmt}
@@ -224,6 +239,13 @@ Alias(a: Rock())
 # `$?.push(1)` call that method, and a held report must not reach the write.
 sc().c
 osc()?.c
+# A struct method call on a value, on `self` (in `Sm.own`) and through `?.`, a struct alias
+# constructor, and an element of `[Sm?]` under a write.
+sm().get()
+sm().own()
+osm()?.get()
+Am(n: 1)
+{ let mut os = sso(); os[0]?.n = 1; os[0] }
 
 [failed values]
 # A type parameter read: in the function whose bound failed, `u` is unknown.

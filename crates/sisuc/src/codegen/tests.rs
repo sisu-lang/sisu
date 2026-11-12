@@ -1774,6 +1774,35 @@ fn wide_enum_should_stay_in_memory_at_each_site() {
     }
 }
 
+/// GIVEN `wide_struct.sisu`, with a struct `W` of 33 `i64` fields (264 bytes) and a struct `N` of
+///   32 (256 bytes) at each site
+/// WHEN it compiles
+/// THEN only a type line, an `alloca` or a `getelementptr` names `%sisu.W`
+/// AND some other line, such as a `load`, names `%sisu.N`, so a limit that moves fails one of the
+///   two
+#[test]
+fn wide_struct_should_stay_in_memory_at_each_site() {
+    let context = Context::create();
+    let ir = compiled(&context, include_str!("../../tests/run/wide_struct.sisu"))
+        .print_to_string()
+        .to_string();
+    let names = |line: &str, name: &str| {
+        line.split(|c: char| !(c.is_alphanumeric() || matches!(c, '%' | '.')))
+            .any(|word| word == name)
+    };
+    let in_memory = |line: &str| {
+        line.starts_with('%') || line.contains(" = alloca ") || line.contains(" = getelementptr ")
+    };
+    for line in ir.lines() {
+        assert!(in_memory(line) || !names(line, "%sisu.W"), "{line}");
+    }
+    assert!(
+        ir.lines()
+            .any(|line| !in_memory(line) && names(line, "%sisu.N")),
+        "no value of `%sisu.N` outside memory in\n{ir}"
+    );
+}
+
 /// GIVEN programs that copy an enum of over 256 bytes, which stays in memory
 /// WHEN they compile
 /// THEN no `memcpy` has the same place as its source and its destination
@@ -1802,6 +1831,29 @@ fn wide_enum_copy_should_never_copy_a_place_onto_itself() {
                 .collect();
             assert!(places.len() != 2 || places[0] != places[1], "{call}");
         }
+    }
+}
+
+/// GIVEN `wide_struct.sisu`, which copies a struct of 264 bytes, which stays in memory
+/// WHEN it compiles
+/// THEN no `memcpy` has the same place as its source and its destination
+#[test]
+fn wide_struct_copy_should_never_copy_a_place_onto_itself() {
+    let context = Context::create();
+    let ir = compiled(&context, include_str!("../../tests/run/wide_struct.sisu"))
+        .print_to_string()
+        .to_string();
+    let calls = ir
+        .lines()
+        .filter_map(|line| line.split_once("@llvm.memcpy"));
+    for (_, call) in calls {
+        let arguments = call.split_once('(').map_or("", |(_, arguments)| arguments);
+        let places: Vec<&str> = arguments
+            .split(", ")
+            .filter_map(|argument| argument.strip_prefix("ptr align "))
+            .filter_map(|argument| argument.split_once(' ').map(|(_, place)| place))
+            .collect();
+        assert!(places.len() != 2 || places[0] != places[1], "{call}");
     }
 }
 

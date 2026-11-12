@@ -1,0 +1,13 @@
+// GIVEN `let mut t` that holds an array of structs, and an optional `o` that holds 0
+// WHEN `t.xs[o ?? return].n = 2` runs, with an index that can leave `main`
+// THEN `t.xs[0].n` prints 2: the write reaches the place, and not a copy of `t` that the
+// index spilled
+struct P { n: i64 }
+struct T { xs: [P] }
+
+fn main() {
+    let o: i64? = Some(0)
+    let mut t = T(xs: [P(n: 1)])
+    t.xs[o ?? return].n = 2
+    print(t.xs[0].n)                 // 2
+}

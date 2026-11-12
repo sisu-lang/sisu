@@ -1,0 +1,24 @@
+// GIVEN a class `C` with a field `mut p: P`, and an array `xs` of `P`
+// WHEN a loop copies the struct, writes its field, and copies it again
+// THEN the first copy keeps the old value and the second has the new one
+class C {
+    mut p: P
+}
+struct P { n: i64 }
+
+fn main() {
+    let c = C(p: P(n: 0))
+    let mut xs = [P(n: 0)]
+    for i in 1..4 {
+        let a = c.p
+        c.p.n = i
+        let b = c.p
+        print(a.n)                   // i - 1
+        print(b.n)                   // i
+        let x = xs[0]
+        xs[0].n = i * 10
+        let y = xs[0]
+        print(x.n)                   // (i - 1) * 10
+        print(y.n)                   // i * 10
+    }
+}

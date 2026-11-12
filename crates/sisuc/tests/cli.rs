@@ -221,6 +221,28 @@ fn emit_tokens_and_ast_should_exit_1_when_the_lexer_cannot_finish_the_source() {
     }
 }
 
+/// GIVEN a program with `struct Point { abscissa: i64 }`, which `main` builds and reads
+/// WHEN it is built with `--emit ast`, with `--emit tir` and with `--emit mir`
+/// THEN each run exits 0, and each output holds the struct's name and its field's name
+#[test]
+fn struct_should_appear_in_each_dump() {
+    let source = "struct Point { abscissa: i64 }\nfn main() {\n    let p = Point(abscissa: 1)\n    print(p.abscissa)\n}\n";
+    for stage in ["ast", "tir", "mir"] {
+        let out = run_on("struct_dump", source, &["build", "--emit", stage]);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{stage}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            stdout.contains("Point") && stdout.contains("abscissa"),
+            "{stage}: {stdout}"
+        );
+    }
+}
+
 /// GIVEN no arguments, `help`, `-h` or `--help`
 /// WHEN `sisu` runs
 /// THEN it exits 0, stdout names `build`, `run`, `check` and `explain`, and stderr is empty

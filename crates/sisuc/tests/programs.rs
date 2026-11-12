@@ -3,6 +3,7 @@
 //! rules of the `cases` harness.
 
 use std::ffi::{OsStr, OsString};
+use std::fmt::Write as _;
 use std::fs::{self, File};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::process::ExitStatusExt;
@@ -109,6 +110,7 @@ const SMALL_STACK: &[&str] = &[
     "anyshow",
     "dbgarray",
     "deepshapes",
+    "structorder",
 ];
 
 /// GIVEN the `tests/programs` directory
@@ -360,6 +362,8 @@ const REFERENCES: &[(&str, &str)] = &[
     ("slice_search", "slice_search_ref"),
     // `Some(xs[1..3])` allocates what `Some(xs)` does: `Some` is not a trim point.
     ("slice_some", "slice_some_ref"),
+    // An array of structs grows as an array of `i64`s does: each struct is inline, in no box.
+    ("struct_array_growth", "struct_array_growth_ref"),
 ];
 
 /// GIVEN a program and its reference program, each with an `iterations()` loop
@@ -1106,6 +1110,21 @@ fn chains_of_every_shape_should_print_and_compare_in_a_small_stack() {
     let nested = "N([[".repeat(LINKS) + "N([])" + &"]])".repeat(LINKS);
     let expected = format!("{nested}\ntrue\n500005\ntrue\n800004\ntrue\n500003\n");
     assert_small_stack_prints_at_both("deepshapes", &expected);
+}
+
+/// GIVEN the `structorder` program, with a loop over a struct field of a class and an element.
+/// The loop copies the struct, writes its field, and copies it again.
+/// WHEN it runs, built with `-O2` and without
+/// THEN each first copy has the old value and each second copy has the new one. So no tag lets
+/// LLVM move the store past a load.
+#[test]
+fn struct_path_should_keep_its_order_at_o2() {
+    let mut expected = String::new();
+    for i in 1..4 {
+        writeln!(expected, "{}\n{i}\n{}\n{}", i - 1, (i - 1) * 10, i * 10)
+            .expect("writing to a `String` should succeed");
+    }
+    assert_small_stack_prints_at_both("structorder", &expected);
 }
 
 /// Runs `<name>.sisu` at `-O2` under the small stack and checks that it exits 0 and prints

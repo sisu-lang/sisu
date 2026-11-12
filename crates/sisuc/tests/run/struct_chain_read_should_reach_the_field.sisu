@@ -1,0 +1,25 @@
+// GIVEN `struct P` with a field `n` and a method `m` with plain `self`, and an optional `P`
+// WHEN `o?.n` and `o?.m()` read it, when it holds a value and when it holds `None`
+// THEN each read gives the field or the method's result, or `None`
+struct P {
+    n: i64
+    fn m(self) -> i64 {
+        self.n + 10
+    }
+}
+
+fn find(n: i64) -> P? {
+    if n > 0 {
+        return P(n: n)
+    }
+    None
+}
+
+fn main() {
+    let o = find(1)
+    print(o?.n ?? 0)                 // 1
+    print(o?.m() ?? 0)               // 11
+    let none = find(0)
+    print(none?.n ?? 0)              // 0: `none` holds no `P`
+    print(none?.m() ?? 0)            // 0
+}

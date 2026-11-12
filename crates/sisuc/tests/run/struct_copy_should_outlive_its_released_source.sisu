@@ -1,0 +1,31 @@
+// GIVEN a struct with a class, an array, a string, an `any` and an enum field, made at run time
+// WHEN a copy goes to a binding of the outer scope, and the original is released at the end of
+// its own scope
+// THEN the copy prints each field after that release: the copy holds its own counts
+class C { n: i64 }
+enum E {
+    A(s: string)
+    B
+}
+struct Bag { c: C; xs: [i64]; s: string; d: any Display; e: E }
+
+fn make(i: i64) -> Bag {
+    Bag(c: C(n: i), xs: [i], s: "s" + "{i}", d: "d" + "{i}", e: E.A(s: "e" + "{i}"))
+}
+
+fn main() {
+    let mut copy = make(0)
+    for i in 1..2 {
+        let a = make(i)
+        copy = a
+        print(a.s)                   // s1: the original, released at the end of the loop's body
+    }
+    print(copy.c.n)                  // 1
+    print(copy.xs)                   // [1]
+    print(copy.s)                    // s1
+    print(copy.d)                    // d1
+    match copy.e {
+        E.A(s) => print(s)           // e1
+        E.B => print("b")
+    }
+}

@@ -2879,6 +2879,26 @@ mod tests {
         );
     }
 
+    /// GIVEN a chain of 29 structs: `S0` holds two `i64`, and each `S{k}` holds two of the one
+    /// before it, so `S28` holds 2^32 bytes inline, and `main` binds an `S28?`
+    /// WHEN the front end runs on it
+    /// THEN the one error is E0160 at the name of `S28`, the first struct at the limit
+    #[test]
+    fn struct_above_the_limit_should_be_e0160() {
+        let mut src = String::from("struct S0 { a: i64; b: i64 }\n");
+        for k in 1..28 {
+            writeln!(src, "struct S{k} {{ a: S{}; b: S{} }}", k - 1, k - 1)
+                .expect("writing to a `String` should succeed");
+        }
+        let at = src.len() + "struct ".len();
+        src.push_str("struct S28 { a: S27; b: S27 }\n");
+        src.push_str("fn main() {\n    let x: S28? = None\n    let _ = x\n}\n");
+        assert_eq!(
+            front_end_reports(&src),
+            [(crate::diagnostic::Code::PayloadTooLarge, at)]
+        );
+    }
+
     /// `n` classes in a chain: `C{k}` holds `C{k-1}` twice, with `[T]` and `T?`, so `C{n}<i64>`
     /// makes 2^n - 1 instances in all.
     fn class_chain(n: usize) -> String {

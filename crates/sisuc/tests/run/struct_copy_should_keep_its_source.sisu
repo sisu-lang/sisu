@@ -1,0 +1,95 @@
+// GIVEN `struct In { n: i64; xs: [i64] }`, `struct T { i: In }`, `struct S { t: T }`,
+// `fn id(t: T) -> T` and `let mut a`, a `T` that holds `In(n: 1, xs: [1])`
+// WHEN each row makes a copy of `a`, then writes through the copy
+// THEN the row prints the changed copy, then `a.i.n` and `a.i.xs`, which stay 1 and [1]
+struct In { n: i64; xs: [i64] }
+struct T { i: In }
+struct S { t: T }
+
+fn id(t: T) -> T {
+    t
+}
+
+// A `T` that holds `In(n: 1, xs: [1])`, written once after it is built, so that `a` is a root
+// that changes.
+fn source() -> T {
+    let mut a = T(i: In(n: 0, xs: [1]))
+    a.i.n = 1
+    a
+}
+
+fn binding() {
+    let a = source()
+    let mut b = a
+    b.i.n = 9
+    print(b.i.n)                     // 9
+    print(a.i.n)                     // 1
+    print(a.i.xs)                    // [1]
+}
+
+fn array_in_a_field() {
+    let a = source()
+    let mut b = a
+    b.i.xs.push(9)
+    print(b.i.xs)                    // [1, 9]
+    print(a.i.n)                     // 1
+    print(a.i.xs)                    // [1]
+}
+
+fn read_before_the_write() {
+    let a = source()
+    let mut b = a
+    print(b.i.n)                     // 1: the read before the write
+    b.i.n = 9
+    print(b.i.n)                     // 9
+    print(a.i.n)                     // 1
+    print(a.i.xs)                    // [1]
+}
+
+fn store_into_an_array() {
+    let a = source()
+    let mut bs = [a]
+    bs[0].i.n = 9
+    print(bs[0].i.n)                 // 9
+    print(a.i.n)                     // 1
+    print(a.i.xs)                    // [1]
+}
+
+fn store_into_a_field() {
+    let a = source()
+    let mut s = S(t: a)
+    s.t.i.n = 9
+    print(s.t.i.n)                   // 9
+    print(a.i.n)                     // 1
+    print(a.i.xs)                    // [1]
+}
+
+fn pass_and_return() {
+    let a = source()
+    let mut b = id(a)
+    b.i.n = 9
+    print(b.i.n)                     // 9
+    print(a.i.n)                     // 1
+    print(a.i.xs)                    // [1]
+}
+
+fn copy_of_a_copy() {
+    let a = source()
+    let c = a
+    let mut b = c
+    b.i.n = 9
+    print(b.i.n)                     // 9
+    print(c.i.n)                     // 1
+    print(a.i.n)                     // 1
+    print(a.i.xs)                    // [1]
+}
+
+fn main() {
+    binding()
+    array_in_a_field()
+    read_before_the_write()
+    store_into_an_array()
+    store_into_a_field()
+    pass_and_return()
+    copy_of_a_copy()
+}

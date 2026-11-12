@@ -1,0 +1,12 @@
+// GIVEN `struct T { n: i64 }`, `let mut a = T(n: 1)` and `let b = a`
+// WHEN `a.n = 2` runs
+// THEN `b.n` prints 1 and `a.n` prints 2: the write to the original does not reach the copy
+struct T { n: i64 }
+
+fn main() {
+    let mut a = T(n: 1)
+    let b = a
+    a.n = 2
+    print(b.n)                       // 1
+    print(a.n)                       // 2
+}

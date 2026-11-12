@@ -1,0 +1,9 @@
+// GIVEN `struct P { mut x: i64 }` on line 6, with `mut` at 6:12
+// WHEN `sisu check` runs on it
+// THEN it reports E0175 at 6:12, with the label "delete this word" and the help "a `let mut`
+// holder can change each field"
+// AND its safe fix deletes `mut`, and it reports no other diagnostic
+struct P { mut x: i64 }
+fn main() {
+    print(P(x: 1).x)
+}

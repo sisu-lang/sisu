@@ -7,9 +7,10 @@ use super::*;
 use Code::{
     ArgumentCount, ArgumentNeedsLabel, AssignToExpression, AssignToImmutable, AssignToSelf,
     BindingNotFound, CannotExtend, CannotInfer, CannotMatch, ConstantType, DefinedTwice, Expected,
-    FieldOutOfOrder, FunctionNotFound, MayBeNone, MethodAsFunction, Mismatch, MissingField,
-    MutArgumentNotPlace, MutArgumentType, MutPlaceTwice, MutSelf, NeverReassigned, NoMember,
-    NoOperator, NotAnInterface, ReservedWord, TooManyArguments, TypeAsValue, UnwrapNeedsOptional,
+    FieldOutOfOrder, FunctionNotFound, IsNeedsObjects, MayBeNone, MethodAsFunction, Mismatch,
+    MissingField, MutArgumentNotPlace, MutArgumentType, MutPlaceTwice, MutSelf, NeverConstructed,
+    NeverReassigned, NoMember, NoOperator, NotAnInterface, ReservedWord, TooManyArguments,
+    TypeAsValue, UnusedVariable, UnwrapNeedsOptional,
 };
 
 /// The word `record` is a name, the word `struct` is a keyword that no name can be, and the word
@@ -972,9 +973,9 @@ fn struct_self_push_should_report_as_the_class_form() {
     lowered_error_rows(rows.into());
 }
 
-/// GIVEN a path of `.xs[0]` steps in a struct `T`, 10, 20 and 30 steps deep. WHEN the path ends
-/// in a class's own `push`, or a `?.` write starts it. THEN the path walks grow in step with the
-/// depth.
+/// GIVEN a path of `.xs[0]`, `.os[0]` or `.os[0]?` steps in a struct `T`, 10, 20 and 30 steps
+/// deep. WHEN the path ends in a class's own `push`, or a `?.` write starts it. THEN the path
+/// walks grow in step with the depth.
 #[test]
 fn struct_push_and_chain_path_should_check_each_step_once() {
     let rows: [(&str, &str, &str, &str); 4] = [
@@ -1166,6 +1167,20 @@ fn optional_struct_element_under_a_write_should_report_once() {
     assert!(d.help().is_some(), "{d:?}");
 }
 
+/// GIVEN `class In` with a field `mut os: [In?]`. WHEN a write goes through `?.` and then
+/// through two `.os[0]` steps, each of which gives an optional. THEN each of the two `.` steps
+/// on an optional is E0062: the chain of a write skips a failed base only under a struct, so
+/// this class form reports as today.
+#[test]
+fn optional_class_element_under_a_write_should_report_each_step() {
+    let src = "class In {\n    mut n: i64\n    mut os: [In?]\n}\nfn main() {\n    let i = In(n: 1, os: [])\n    i.os[0]?.os[0].os[0].n = 1\n}";
+    codes_row(
+        "i.os[0]?.os[0].os[0].n",
+        src,
+        &[(MayBeNone, (7, 5)), (MayBeNone, (7, 5))],
+    );
+}
+
 /// GIVEN a struct `P` or a class `P`. WHEN an `extend` block names `P?`, by itself or through an
 /// alias. THEN it is E0155, as for any optional type.
 #[test]
@@ -1207,4 +1222,87 @@ fn extend_through_aliases_should_follow_each_alias_once() {
         EXTENDED_STEPS.get()
     };
     assert_near_linear(steps(20), steps(40), steps(60));
+}
+
+/// GIVEN `struct S { s: string }`, and `struct S { c: C }` with a class `C`. WHEN `is` compares
+/// two values of `S`. THEN it is E0046 at the left operand: a struct is a value, and has no
+/// object for `is` to compare, even when a counted field makes it counted.
+#[test]
+fn is_on_a_struct_should_be_e0046() {
+    let rows = [
+        (
+            "a string field",
+            "struct S { s: string }\nfn main() {\n    print(S(s: \"a\") is S(s: \"a\"))\n}",
+            (3, 11),
+        ),
+        (
+            "a class field",
+            "class C {}\nstruct S { c: C }\nfn main() {\n    print(S(c: C()) is S(c: C()))\n}",
+            (4, 11),
+        ),
+    ];
+    for (row, src, at) in rows {
+        codes_row(row, src, &[(IsNeedsObjects, at)]);
+    }
+}
+
+/// GIVEN `struct P { x: i64 }`. WHEN `==` compares two of its values. THEN it is E0159 until
+/// Task 4 generates the struct's `==`.
+#[test]
+fn equality_should_be_e0159_until_it_lands() {
+    let src = "struct P { x: i64 }\nfn main() {\n    print(P(x: 1) == P(x: 1))\n}";
+    codes_row("P == P", src, &[(NoOperator, (3, 11))]);
+}
+
+/// GIVEN a struct that holds itself through an optional, an enum's variant or an enum's type
+/// argument. WHEN the program is checked. THEN it is E0083 at the struct's keyword until Task 5
+/// gives the box. An array ends the cycle, so `struct S { xs: [S] }` has no error. A class and
+/// a struct that hold each other with no way out are E0027, as two classes are.
+#[test]
+fn struct_on_a_cycle_should_be_rejected_until_task_5() {
+    let rows = [
+        (
+            "an optional",
+            "struct S { s: S? }\nfn main() {}".to_string(),
+            vec![(ReservedWord, (1, 1))],
+        ),
+        (
+            "an enum's variant",
+            "struct S { e: E }\nenum E {\n    A(s: S)\n    B\n}\nfn main() {}".to_string(),
+            vec![(ReservedWord, (1, 1))],
+        ),
+        (
+            "an enum's type argument",
+            "enum W<T> {\n    A(x: T)\n    N\n}\nstruct S { w: W<S> }\nfn main() {}".to_string(),
+            vec![(ReservedWord, (5, 1))],
+        ),
+        (
+            "an array",
+            "struct S { xs: [S] }\nfn main() {}".to_string(),
+            vec![],
+        ),
+        (
+            "a class and a struct",
+            "class C { s: S }\nstruct S { c: C }\nfn main() {}".to_string(),
+            vec![(NeverConstructed, (1, 7))],
+        ),
+    ];
+    error_rows(&rows);
+}
+
+/// GIVEN `let mut t` that holds a struct. WHEN the program writes a field of `t` and never reads
+/// `t`. THEN it is W0014, and not W0002: the write is a change of `t`. A write whose index
+/// reads `t` is a read, so it has no W0014.
+#[test]
+fn struct_write_should_keep_its_w0014() {
+    codes_row(
+        "a field write",
+        "struct P { n: i64 }\nfn main() {\n    let mut t = P(n: 1)\n    t.n = 1\n}",
+        &[(UnusedVariable, (3, 13))],
+    );
+    codes_row(
+        "an index that reads the root",
+        "struct A { a: i64 }\nstruct P { n: i64; xs: [A] }\nfn main() {\n    let mut t = P(n: 0, xs: [A(a: 0)])\n    t.xs[t.n].a = 1\n}",
+        &[],
+    );
 }
