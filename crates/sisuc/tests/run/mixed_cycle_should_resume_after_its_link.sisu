@@ -1,0 +1,26 @@
+// GIVEN `struct S { e: E; marker: i64 }` and `enum E { A(s: S); B }`, which hold each other
+// WHEN two values whose fields `e` are equal and whose `marker` differs are compared and
+// printed, at the outer level and at the inner level
+// THEN they compare unequal, and the print shows each `marker`: `==` and `print` go on with
+// the fields after the link
+struct S { e: E; marker: i64 }
+
+enum E {
+    A(s: S)
+    B
+}
+
+fn main() {
+    let leaf = S(e: E.B, marker: 0)
+    let p = S(e: E.A(s: leaf), marker: 1)
+    let q = S(e: E.A(s: leaf), marker: 2)
+    print(p == q)                    // false
+    print(p == S(e: E.A(s: leaf), marker: 1)) // true
+    print(p)                         // S(e: A(s: S(e: B, marker: 0)), marker: 1)
+    print(q)                         // S(e: A(s: S(e: B, marker: 0)), marker: 2)
+    let r = S(e: E.A(s: S(e: E.B, marker: 3)), marker: 1)
+    let t = S(e: E.A(s: S(e: E.B, marker: 4)), marker: 1)
+    print(r == t)                    // false
+    print(r)                         // S(e: A(s: S(e: B, marker: 3)), marker: 1)
+    print(t)                         // S(e: A(s: S(e: B, marker: 4)), marker: 1)
+}

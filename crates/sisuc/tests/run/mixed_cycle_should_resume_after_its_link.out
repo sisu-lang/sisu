@@ -1,0 +1,7 @@
+false
+true
+S(e: A(s: S(e: B, marker: 0)), marker: 1)
+S(e: A(s: S(e: B, marker: 0)), marker: 2)
+false
+S(e: A(s: S(e: B, marker: 3)), marker: 1)
+S(e: A(s: S(e: B, marker: 4)), marker: 1)

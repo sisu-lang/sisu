@@ -1,0 +1,14 @@
+// A list of 1 000 000 `Node`s, each in the box of the field `next` of the one before it. It
+// runs under a 256 KiB stack. The drop frees the boxes from a pending list, in one frame; a drop that
+// recursed on `next` needs a frame per node and overflows that stack.
+struct Node { v: i64; next: Node? }
+
+fn main() {
+    let mut list = Node(v: 0, next: None)
+    let mut i = 1
+    while i < 1_000_000 {
+        list = Node(v: i, next: Some(list))
+        i += 1
+    }
+    print("done")
+}

@@ -1259,6 +1259,47 @@ fn struct_on_a_cycle_should_be_rejected_until_task_5() {
     error_rows(&rows);
 }
 
+/// GIVEN a struct that holds itself, directly, through another struct or through an enum. WHEN
+/// the program is checked. THEN it is E0027 when no value of it can be built, at its first enum,
+/// or else at its first struct. An optional, an array and an enum's variant that needs no `S` end
+/// the cycle, so each of those has no error.
+#[test]
+fn struct_cycle_should_need_a_way_out() {
+    let rows = [
+        (
+            "direct",
+            "struct S { s: S }\nfn main() {}".to_string(),
+            vec![(NeverConstructed, (1, 8))],
+        ),
+        (
+            "mutual",
+            "struct A { b: B }\nstruct B { a: A }\nfn main() {}".to_string(),
+            vec![(NeverConstructed, (1, 8))],
+        ),
+        (
+            "an optional ends it",
+            "struct S { s: S? }\nfn main() {}".to_string(),
+            vec![],
+        ),
+        (
+            "an array ends it",
+            "struct S { xs: [S] }\nfn main() {}".to_string(),
+            vec![],
+        ),
+        (
+            "an enum's variant ends it",
+            "struct S { e: E }\nenum E {\n    A(s: S)\n    B\n}\nfn main() {}".to_string(),
+            vec![],
+        ),
+        (
+            "an enum with no way out",
+            "struct S { e: E }\nenum E {\n    A(s: S)\n}\nfn main() {}".to_string(),
+            vec![(NeverConstructed, (2, 6))],
+        ),
+    ];
+    error_rows(&rows);
+}
+
 /// GIVEN `let mut t` that holds a struct. WHEN the program writes a field of `t` and never reads
 /// `t`. THEN it is W0014, and not W0002: the write is a change of `t`. A write whose index
 /// reads `t` is a read, so it has no W0014.
