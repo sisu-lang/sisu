@@ -77,4 +77,19 @@ jobs:
         env:
           MIN_LINE_COVERAGE: 98.5
         run: |
-          jq -e --argjson min "$MIN_LINE_COVERAGE" '.data[0].totals.lines.percent >= $min' target/llvm-cov/coverage.json >/dev/null || { echo "::error::line coverage $(jq '.data[0].totals.lines.percent' target/llvm-cov/coverage.json)% is below ${MIN_LINE_COVERAGE}%"; exit 1; }
+          file=target/llvm-cov/coverage.json
+          pct=$(jq -r '.data[0].totals.lines.percent // "no"' "$file" 2>/dev/null) || pct=no
+          # The summary step rounds to one digit; this line gives the exact figure.
+          if [ "$pct" = no ]; then
+            echo "Line coverage (exact): not available" >>"$GITHUB_STEP_SUMMARY"
+          else
+            echo "Line coverage (exact): ${pct}%" >>"$GITHUB_STEP_SUMMARY"
+          fi
+          jq -e --argjson min "$MIN_LINE_COVERAGE" '.data[0].totals.lines.percent >= $min' "$file" >/dev/null 2>&1 || {
+            if [ "$pct" = no ]; then
+              echo "::error::line coverage is not in $file"
+            else
+              echo "::error::line coverage ${pct}% is below ${MIN_LINE_COVERAGE}%"
+            fi
+            exit 1
+          }
