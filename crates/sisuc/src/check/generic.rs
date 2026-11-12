@@ -2041,13 +2041,14 @@ pub(super) struct Ranked {
     /// Whether the value is an array fill, an arithmetic operator or a `-`, whose rank is that of
     /// its parts. Ranking an argument looks inside such a value. A sibling does not: it ranks the
     /// value `Concrete` (see `sibling`), so the leader of an operator and the first anchor of a
-    /// join stay as they were. `Branch::literal` reads `rank` directly and does look inside: in a
-    /// join whose context failed, `1 + id(2)`, `-id(2)` and `[5; 2]` are branches of literals and
-    /// take the type of the anchor. A value that only waited, such as `[mk(); 2]` or `-mk()`, is
-    /// not (see `waited`).
+    /// join stay as they were. The `Branch::literal` of a join's branch reads `of_literals`, which
+    /// does look inside: in a join whose context failed, `1 + id(2)`, `-id(2)` and `[5; 2]` are
+    /// branches of literals and take the type of the anchor. A value that only waited, such as
+    /// `[mk(); 2]` or `-mk()`, is not (see `waited`).
     leads: bool,
     /// Whether the rank is `Literal` only because the value waited (see `or_literal_if_waiting`),
-    /// so the value holds no integer literal. `combine` sets it when each `Literal` part has it.
+    /// so the value holds no integer literal. `combine` sets it when each `Literal` part has it,
+    /// and `combine_branches` when one branch has it.
     waited: bool,
 }
 
@@ -2138,8 +2139,10 @@ impl Ranked {
 /// else `Concrete`. It is `optional`, `holds_optional` or `nested` when a part is, and `scalar`
 /// when each `Literal` part is.
 /// It is `leads` when a part is. It is `waited` when it is `Literal` and each `Literal` part is
-/// `waited`, so `-mk() + 1` is not: it holds the literal `1`. It stops at the first `Concrete`
-/// part and takes `holds_loop` from it. The parts after it are not ranked.
+/// `waited`, so `-mk() + 1` is not: it holds the literal `1`. The parts of an operator make one
+/// value. The branches of a join do not, and `combine_branches` sets `waited` by its own rule. It
+/// stops at the first `Concrete` part and takes `holds_loop` from it. The parts after it are not
+/// ranked.
 fn combine(parts: impl IntoIterator<Item = Ranked>) -> Ranked {
     let mut found = Ranked::WAITS;
     let mut scalar = true;
@@ -2171,13 +2174,25 @@ fn combine(parts: impl IntoIterator<Item = Ranked>) -> Ranked {
 
 /// `combine` of the values of `branches`: each is `None` when its branch ends in an exit, else
 /// the rank of its value. A value that never ends gives no type, so it counts as an exit. The
-/// result never ends when no branch has a value. The iterator stays lazy: ranking a branch has
-/// effects (see `tail_rank`).
+/// result never ends when no branch has a value. The result is `waited` when it is `Literal` and
+/// one of the branches is: each branch is a value of its own, and a branch that only waited holds
+/// no literal. The iterator stays lazy: ranking a branch has effects (see `tail_rank`).
 fn combine_branches(branches: impl IntoIterator<Item = Option<Ranked>>) -> Ranked {
     let mut any = false;
+    let mut waited = false;
     let values = branches.into_iter().flatten().filter(|part| !part.never);
-    let found = combine(values.inspect(|_| any = true));
-    if any { found } else { Ranked::NEVER }
+    let found = combine(values.inspect(|part| {
+        any = true;
+        waited |= part.waited;
+    }));
+    if any {
+        Ranked {
+            waited: waited && found.rank == Rank::Literal,
+            ..found
+        }
+    } else {
+        Ranked::NEVER
+    }
 }
 
 /// Whether `checked`, an argument, was rejected by its parameter's type (see `mark`).
