@@ -788,6 +788,26 @@ fn check_should_exit_0_with_no_output_when_the_file_is_valid() {
     assert_eq!(String::from_utf8_lossy(&out.stderr), "");
 }
 
+/// GIVEN a `let mut` that copies `xs[<CR>0]`, a place with a lone carriage return, and a write to
+/// the copy that nothing reads
+/// WHEN `sisu check` runs on it
+/// THEN stderr has W0016 that names only the root `xs`, and holds the place nowhere in the text
+///
+/// A carriage return in a message would move the cursor of a terminal, as a tab does.
+#[test]
+fn check_should_name_only_the_root_of_a_copied_place_with_a_carriage_return() {
+    let source = "struct A { b: i64 }\nfn main() {\n    let xs = [A(b: 1)]\n    let mut a = xs[\r0]\n    a.b = 2\n    print(xs[0].b)\n}\n";
+    let out = check("check_copy_place_with_a_carriage_return", source);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert!(stderr.contains("W0016"), "{stderr}");
+    assert!(
+        stderr.contains("copy of a part of `xs`"),
+        "the message should name only the root: {stderr}"
+    );
+    assert!(!stderr.contains("`xs[\r"), "{stderr}");
+}
+
 /// GIVEN `tests/run/generics.sisu`, the generics demo
 /// WHEN `sisu check` runs on it
 /// THEN it exits 0 and stderr is empty
