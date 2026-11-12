@@ -1607,18 +1607,25 @@ impl<'a> Lowering<'a> {
     fn walk(&mut self, root: MirPlace, steps: &[Step<'_>]) -> MirPlace {
         let mut place = root;
         for step in steps {
-            let array = place.clone();
+            // Only an element level copies the place before the step. A field level does not, so a
+            // path of `k` fields costs `k` steps and not `k` copies of the place.
+            let array = matches!(step, Step::Index(..)).then(|| {
+                #[cfg(test)]
+                PATH_COPIES.set(PATH_COPIES.get() + 1);
+                place.clone()
+            });
             place.projections.push(Self::projection(step));
-            match step {
-                Step::Index(..) => {
+            match (step, array) {
+                (Step::Index(..), Some(array)) => {
                     self.push(Statement::Check(place.clone()));
                     self.push(Statement::MakeUnique(array));
                 }
-                Step::Field(_, true) => {
+                (Step::Index(..), None) => unreachable!("an element level should copy its array"),
+                (Step::Field(_, true), _) => {
                     self.push(Statement::MakeUnique(place.clone()));
                     place.projections.push(Projection::Box);
                 }
-                Step::Field(_, false) => {}
+                (Step::Field(_, false), _) => {}
             }
         }
         place
@@ -1911,6 +1918,9 @@ thread_local! {
     /// How many entries of `Mentions::at` the count of the mentions of a local in a run of
     /// siblings has read on this thread: each probe of its binary search.
     pub(super) static MENTION_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many times a write path has copied its place for an element level (`Lowering::walk`)
+    /// on this thread.
+    pub(super) static PATH_COPIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// `mentions` of `e`'s own node and its children.
