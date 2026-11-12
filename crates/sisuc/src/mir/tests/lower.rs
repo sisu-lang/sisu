@@ -411,7 +411,7 @@ fn interpolation_parts_should_lower_in_linear_steps() {
 /// WHEN `main` writes an element of an array through all the fields, for `k` of 16, 32 and 64
 /// AND `main` writes an element of an array of arrays, and a field of the last struct
 /// THEN a write copies the place at each element level only, and a copy costs its projections
-/// AND the copies of one element level are `2k + 1` projections, of two levels `4k + 4`, and of
+/// AND the copies of one element level are `2k + 3` projections, of two levels `4k + 8`, and of
 /// a field none
 #[test]
 fn write_path_should_copy_its_place_at_each_element_level_only() {
@@ -445,15 +445,16 @@ fn write_path_should_copy_its_place_at_each_element_level_only() {
         })
     };
     for k in [16, 32, 64] {
-        // The array's place before the index has `k` projections, and the checked place `k + 1`.
+        // The array's place before the index has `k + 1` projections (`k` links and the field),
+        // and the checked place `k + 2`. A second level copies a place of `k + 2` and `k + 3`.
         assert_eq!(
             copies(chain(k, ".xs[0] = 3")),
-            2 * k + 1,
+            2 * k + 3,
             "element, k = {k}"
         );
         assert_eq!(
             copies(chain(k, ".ys[0][0] = 3")),
-            4 * k + 4,
+            4 * k + 8,
             "two levels, k = {k}"
         );
         assert_eq!(copies(chain(k, ".n = 3")), 0, "field, k = {k}");
