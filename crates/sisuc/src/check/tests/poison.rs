@@ -2043,7 +2043,7 @@ fn equality_on_a_type_with_eq_only_from_a_broken_block_should_be_untyped() {
     }
 }
 
-/// `i64(x)` is `i64?` when `x` is an `f64` or a `string`, and `i64` for the other sources. So
+/// `i64(x)` is `i64?` when `x` is an `f64`, and `i64` for the other sources. So
 /// `i64` of a failed `x` that has no type does not state its type apart from the failed part
 /// (ADR 0049): the call is untyped, and `??`, `if let`, `while let`, `+`, `.` and `==` add no
 /// error after the one of `x`.
@@ -2071,7 +2071,7 @@ fn a_conversion_to_i64_of_an_untyped_value_should_be_untyped() {
             vec![(FunctionNotFound, (41, 17))],
         ),
         (
-            "coalesce of a call that gives no value",
+            "coalesce of a call to an unknown function",
             "let x = i64(nothing()) ?? 0".into(),
             vec![(FunctionNotFound, (41, 17))],
         ),

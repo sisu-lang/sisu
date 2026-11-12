@@ -566,7 +566,9 @@ pub(super) struct Branch<'a> {
     rank: Rank,
     optional: bool,
     /// Whether the value is made of literals only (`8`, `[8]`), so that its type is the default
-    /// of those literals.
+    /// of those literals. Only `join` under `Poisoned` reads it. `value_branch` sets it from the
+    /// rank after `Ranked::sibling`, so `[8]` is `false` there; `hinted_elements` joins under
+    /// `None`, where the flag is not read.
     literal: bool,
     span: Span,
     tail: Option<&'a ast::Expr>,

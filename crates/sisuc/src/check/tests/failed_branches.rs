@@ -277,6 +277,113 @@ fn a_break_that_is_first_or_a_true_error_should_stay_holds_before_and_after() {
     error_rows(&rows);
 }
 
+/// GIVEN a join in a failed context: an argument of a call with the wrong count, or the right
+///   side of `??` after an unknown name
+/// AND a branch with a `break` of a value, and a later branch with `break None`, to a `loop`
+///   that was open before the join
+/// WHEN the program is checked
+/// THEN only the failed part reports
+///   (the join checks its branches out of source order. So the `break None` can come before the
+///   `break` that gives the loop its type. It waits for the next run.)
+/// AND this holds for `if`, `else if`, `if let` and `match`, and for a `break` by a label
+/// AND a first `break None` in a failed join waits too: in a failed context a value waits for
+///   the next run, as in #617. Before the fix such a `None` gave E0050 at once.
+#[test]
+fn a_break_in_a_failed_join_should_wait_for_a_loop_outside_it() {
+    let call: Wanted = (ArgumentCount, (5, 20));
+    error_rows(&branch_rows(&[
+        (
+            "statement in a later branch",
+            "let a = loop { f(if c { if c { break Some(1) } else { 8 } } else { if c { break None }; 8 }) }",
+            vec![call],
+        ),
+        (
+            "later branch of a lower rank",
+            "let a = loop { f(if c { if c { break Some(m) } else { 8 } } else { if c { break None } else { m } }) }",
+            vec![call],
+        ),
+        (
+            "else if",
+            "let a = loop { f(if c { if c { break Some(1) } else { 8 } } else if c { 9 } else { if c { break None }; 8 }) }",
+            vec![call],
+        ),
+        (
+            "if let",
+            "let o: u8? = Some(1)\nlet a = loop { f(if let v = o { if c { break Some(v) } else { 8 } } else { if c { break None }; 8 }) }",
+            vec![(ArgumentCount, (6, 20))],
+        ),
+        (
+            "match of blocks",
+            "let a = loop { f(match c {\n true => { if c { break Some(1) } else { 8 } }\n false => { if c { break None }; 8 }\n }) }",
+            vec![call],
+        ),
+        (
+            "match of values",
+            "let a = loop { f(match c {\n true => if c { break Some(m) } else { 8 }\n false => if c { break None } else { m }\n }) }",
+            vec![call],
+        ),
+        (
+            "right side of coalesce",
+            "let a = loop { let _x = yy ?? (if c { if c { break Some(1) } else { 8 } } else { if c { break None }; 8 }) }",
+            vec![(BindingNotFound, (5, 29))],
+        ),
+        (
+            "outer loop by label",
+            "let a = outer: loop { f(if c { if c { break outer Some(1) } else { 8 } } else { loop { if c { break outer None } }; 8 }) }",
+            vec![(ArgumentCount, (5, 27))],
+        ),
+        (
+            "first break none in a failed join",
+            "let a = loop { f(if c { if c { break None }; 8 } else { 9 }) }",
+            vec![call],
+        ),
+        // `m` is a `u8` and `8` is a literal, so `join` reads `expected`, not `carried`: the
+        // branch of literals gets a hint, and it is still in a failed join.
+        (
+            "branch of literals",
+            "let a = loop { f(if c { m } else { if c { break None } else { 8 } }) }",
+            vec![call],
+        ),
+    ]));
+}
+
+/// A loop that opens inside a failed join, a valid program, and a join under no expectation keep
+/// their output. Each row holds before and after the fix of a `break` in a failed join.
+#[test]
+fn a_break_in_a_failed_join_should_keep_its_output_holds_before_and_after() {
+    error_rows(&branch_rows(&[
+        // The loop opens inside the join, and its first `break` has no type: a true error.
+        (
+            "loop opened inside the join",
+            "f(if c { let x = loop { break None }; 8 } else { 9 })",
+            vec![(ArgumentCount, (5, 5)), (CannotInfer, (5, 35))],
+        ),
+        // E0043: the outer loop has no `break`, so it gives no value. E0053: the call has one
+        // argument. E0050: the inner loop opens inside the join, and its first `break` is `None`.
+        (
+            "loop with a typed break inside the join",
+            "let a = loop { f(if c { 8 } else { let b = loop { if c { break None }; break 1 }; 9 }) }",
+            vec![
+                (NoValue, (5, 13)),
+                (ArgumentCount, (5, 20)),
+                (CannotInfer, (5, 68)),
+            ],
+        ),
+        (
+            "valid coalesce",
+            "let o: i64? = None\nlet a = loop { let _x = o ?? (if c { if c { break Some(1) }; 8 } else { if c { break None }; 9 }) }\nprint(a ?? 0)",
+            vec![],
+        ),
+        // Under no expectation the branches are ranked in a different order than the source, and
+        // the `break None` comes first. #676 fixes this false error.
+        (
+            "no expectation",
+            "let a = loop { let _x = if c { if c { break Some(1) } else { 8 } } else { if c { break None }; 8 } }",
+            vec![(CannotInfer, (5, 92))],
+        ),
+    ]));
+}
+
 /// GIVEN `v1 ?? (if c { NEST } else { 8 })`, where `NEST` is the same `if` again, so that the
 ///   right side of `??` is a failed context
 /// WHEN the checker ranks the nested branches at three depths
