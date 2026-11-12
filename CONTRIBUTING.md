@@ -13,7 +13,8 @@ people and agents alike. This page is the route through them.
 4. Use the words in [GLOSSARY.md](GLOSSARY.md), and read the decisions in
    [docs/adr](docs/adr) that touch your change.
 5. Finish with `make check` passing, as CI requires, and `make miri` too
-   when you change `crates/runtime`. Then run
+   when you change `crates/runtime`. Run `make memory-safety` when you change
+   codegen, drops, the runtime or the test harness. Then run
    `make coverage` on your diff, as [AGENTS.md](AGENTS.md) shows, and cover
    or explain each uncovered region.
 

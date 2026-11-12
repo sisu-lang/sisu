@@ -4359,10 +4359,39 @@ fn generation_is_deterministic() {
     }
 }
 
+/// One walk of the generated programs checks five properties. They are no leak of an inexact value,
+/// no class in the heap, no unbounded loop, no out-of-bounds index and the `f64` operand ratio.
 #[test]
-fn no_inexact_value_reaches_output() {
-    let leaks = walk().leaks;
-    assert!(leaks.is_empty(), "an inexact value escapes: {leaks:?}");
+fn walked_programs_should_hold_every_walk_property() {
+    let walk = walk();
+    let mut failed: Vec<String> = Vec::new();
+    if !walk.leaks.is_empty() {
+        failed.push(format!("an inexact value escapes: {:?}", walk.leaks));
+    }
+    if !walk.heap_classes.is_empty() {
+        // Decision 4: an object stored in a field or an element could make a cycle.
+        failed.push(format!(
+            "a class object goes into the heap: {:?}",
+            walk.heap_classes
+        ));
+    }
+    if !walk.unbounded.is_empty() {
+        failed.push(format!("loops not bounded: {:?}", walk.unbounded));
+    }
+    if !walk.out_of_bounds.is_empty() {
+        failed.push(format!("indexes out of bounds: {:?}", walk.out_of_bounds));
+    }
+    // `right_operand` writes its small literal only for an integer type. Float arithmetic, where
+    // optimizers miscompile, takes any `f64` expression on its right, a literal about as often as
+    // not. Were the small literal taken for an `f64` too, literals would outnumber the rest many
+    // times over.
+    let [literal, other] = walk.f64_rights;
+    if other * 2 <= literal {
+        failed.push(format!(
+            "{literal} right operands of `f64` arithmetic or `op=` are literals and {other} are not"
+        ));
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
 }
 
 #[test]
@@ -5288,28 +5317,6 @@ fn rare_constant_forms_check_clean() {
         assert!(g.program.starts_with(form), "{}", g.program);
         checked(&g.program);
     }
-}
-
-#[test]
-fn no_generated_program_assigns_a_class_into_the_heap() {
-    // Decision 4: an object stored in a field or an element could make a cycle.
-    let stores = walk().heap_classes;
-    assert!(
-        stores.is_empty(),
-        "a class object goes into the heap: {stores:?}"
-    );
-}
-
-#[test]
-fn every_loop_is_bounded() {
-    let unbounded = walk().unbounded;
-    assert!(unbounded.is_empty(), "loops not bounded: {unbounded:?}");
-}
-
-#[test]
-fn every_index_is_in_bounds_or_meant_to_panic() {
-    let out_of_bounds = walk().out_of_bounds;
-    assert!(out_of_bounds.is_empty(), "{out_of_bounds:?}");
 }
 
 /// GIVEN `a` as the remainder of a literal by the length of `xs` and one
@@ -8648,19 +8655,6 @@ fn a_mutable_array_of_large_elements_holds_fewer_of_them() {
     assert!(
         fewer > 0,
         "no array should fail to fill all the elements that fit"
-    );
-}
-
-#[test]
-fn an_f64_right_operand_is_any_expression() {
-    // `right_operand` writes its small literal only for an integer type. Float arithmetic, where
-    // optimizers miscompile, takes any `f64` expression on its right, a literal about as often as
-    // not. Were the small literal taken for an `f64` too, literals would outnumber the rest many
-    // times over.
-    let [literal, other] = walk().f64_rights;
-    assert!(
-        other * 2 > literal,
-        "{literal} right operands of `f64` arithmetic or `op=` are literals and {other} are not"
     );
 }
 

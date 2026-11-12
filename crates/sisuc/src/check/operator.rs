@@ -10,7 +10,7 @@ use super::{
     block_expr, is_kept, known_type, optional_of, payload, type_of, wrap,
 };
 use crate::ast::{self, CompareOp, ExprKind};
-use crate::diagnostic::{Diagnostic, DiagnosticKind, Expected, Literal, PeelIs, PeelLayers};
+use crate::diagnostic::{Code, Diagnostic, DiagnosticKind, Expected, Literal, PeelIs, PeelLayers};
 use crate::lang::{self, Dispatch};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
@@ -262,9 +262,14 @@ impl Checker<'_> {
             return result;
         }
         // The first check is dropped with its result, locals, uninferred literals, misfits and
-        // findings. So none is left that nothing binds, none is judged twice, and no value
-        // outlives the cut reports.
-        self.diagnostics.drop_since(diagnostics);
+        // findings, except its E0162 reports. So none is left that nothing binds, none is judged
+        // twice, and no value outlives the cut reports. The reports are kept because the memo does
+        // not roll back: the limit of the check is not reported again, and a limit of one written
+        // type that the second check reports again is kept once.
+        let limits = self
+            .diagnostics
+            .take_since(diagnostics)
+            .only(Code::AliasTooLarge);
         if !self.body.uninferred.is_empty() {
             for local in locals..self.body.locals.len() {
                 #[cfg(test)]
@@ -276,7 +281,10 @@ impl Checker<'_> {
         self.pending.truncate(pending);
         self.body.misfits.truncate(misfits);
         self.body.joins.insert(span);
-        self.integers(operands, Expectation::None, operator, op)
+        let again = self.diagnostics.mark();
+        let result = self.integers(operands, Expectation::None, operator, op);
+        self.diagnostics.restore_new(limits, again);
+        result
     }
 
     /// The operands of one number operator, checked in source order; the type they share,

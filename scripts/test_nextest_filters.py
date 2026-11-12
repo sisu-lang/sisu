@@ -213,6 +213,46 @@ class NextestFilters(unittest.TestCase):
             with self.subTest(row=row):
                 self.assertEqual(problems(config), [no_match(line, "gone_") for line in lines], row)
 
+    def test_default_filter_leaf_that_matches_no_test_should_be_reported(self) -> None:
+        config = "[profile.default]\ndefault-filter = 'not test(nothing_has_this_name)'\n"
+        self.assertEqual(problems(config), [no_match(2, "nothing_has_this_name")])
+
+    def test_default_filter_leaf_that_matches_should_pass(self) -> None:
+        config = "[profile.default]\ndefault-filter = 'not test(run::)'\n"
+        self.assertEqual(problems(config), [])
+
+    def test_default_filter_should_leave_out_only_memory_tests(self) -> None:
+        left_out = {"filter-match": {"status": "mismatch", "reason": "default-filter"}}
+        by_expression = {"filter-match": {"status": "mismatch", "reason": "expression"}}
+        memory = {"memory::a.sisu": left_out, "site_memory::b.sisu": left_out}
+        suites = {"sisuc::cases": {"testcases": {**memory, "run::d.sisu": by_expression}}}
+        self.assertEqual(problems("", suites), [])
+        suites["sisuc::cases"]["testcases"]["run::c.sisu"] = left_out
+        found = problems("", suites)
+        self.assertEqual(len(found), 1)
+        self.assertIn("run::c.sisu", found[0])
+
+    def test_default_filter_should_leave_out_every_memory_test(self) -> None:
+        left_out = {"filter-match": {"status": "mismatch", "reason": "default-filter"}}
+        matched = {"filter-match": {"status": "matches"}}
+        suites = {"sisuc::cases": {"testcases": {"memory::a.sisu": left_out}}}
+        suites["sisuc::cases"]["testcases"]["run::c.sisu"] = matched
+        self.assertEqual(problems("", suites), [])
+        suites["sisuc::cases"]["testcases"]["site_memory::b.sisu"] = matched
+        found = problems("", suites)
+        self.assertEqual(len(found), 1)
+        self.assertIn("site_memory::b.sisu", found[0])
+
+    def test_default_filter_should_skip_no_whole_binary(self) -> None:
+        suites: dict[str, dict[str, Any]] = {
+            "sisuc::cases": {"status": "listed", "testcases": {}},
+            "sisuc::neighbours": {"status": "skipped-default-filter", "testcases": {}},
+            "sisuc::programs": {"status": "skipped", "testcases": {}},
+        }
+        found = problems("", suites)
+        self.assertEqual(len(found), 1)
+        self.assertIn("sisuc::neighbours", found[0])
+
     def test_a_bad_leaf_should_fail_the_run_and_print_its_line(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = Path(tmp, "nextest.toml")

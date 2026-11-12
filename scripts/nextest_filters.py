@@ -1,14 +1,18 @@
 """Check that each `test(...)` leaf of a nextest filter matches a test.
 
 A filter that matches no test does nothing and says nothing: a renamed test then loses its
-override.
+override. A `default-filter` is checked the same way. It also must leave out only the memory tests
+(`DEFAULT_FILTER_OUT`), so that a loose leaf cannot drop other tests from `make test`.
 
 Usage: python3 nextest_filters.py CONFIG LIST_JSON
 CONFIG is .config/nextest.toml. LIST_JSON is the output of
 `cargo nextest list --workspace --message-format json`. It prints one line for each leaf that
-matches no test, or that is not `=name` or a substring (nextest also has /regex/, ~x and #glob,
-which this check does not read), and exits 1. It prints each line where a stale leaf is. It skips
-an override with a `platform` key. It prints nothing and exits 0 when every leaf is fine.
+matches no test. It prints one for each leaf that is not `=name` or a substring: nextest also has
+/regex/, ~x and #glob, which this check does not read. It also prints one line for each test that
+the default-filter leaves out and that is not a memory test. It prints one for each memory test
+that the default-filter keeps. It exits 1 when it prints a line. It prints each line where a stale
+leaf is. It skips an override with a `platform` key. It prints nothing and exits 0 when every leaf
+is fine.
 """
 
 import json
@@ -21,6 +25,8 @@ from typing import Any
 # nextest allows whitespace, a newline too, before `(`. A leaf runs to the first `)`; a regex leaf
 # runs to its closing `/`, so that the message shows all of it.
 LEAF = re.compile(r"\btest\s*\(\s*(/.*?/|[^)]*)\)")
+# The names of the tests that a profile's `default-filter` may leave out.
+DEFAULT_FILTER_OUT = ("memory::", "site_memory::")
 # A TOML string or comment. Read in order, so a quote in a comment and a `#` in a string are no
 # token.
 TOKEN = re.compile(
@@ -29,7 +35,7 @@ TOKEN = re.compile(
 
 
 def leaves(config: dict[str, Any]) -> list[str]:
-    """Return the argument of each `test(...)` leaf of each override and script filter.
+    """Return the argument of each `test(...)` leaf of each override, script and default filter.
 
     Each argument comes once, as the parsed TOML holds it. nextest trims the space before an
     argument, not the space after it.
@@ -39,6 +45,7 @@ def leaves(config: dict[str, Any]) -> list[str]:
     """
     found: list[str] = []
     for profile in config.get("profile", {}).values():
+        found += LEAF.findall(profile.get("default-filter", ""))
         for table in ("overrides", "scripts"):
             for entry in profile.get(table, []):
                 if "platform" not in entry:
@@ -78,7 +85,10 @@ def problem(leaf: str, names: list[str]) -> str | None:
 
 
 def check(config_path: str, list_path: str) -> list[str]:
-    """Return one line for each bad leaf of the config."""
+    """Return one line for each bad leaf, and one for each test the default-filter treats wrongly.
+
+    A wrong case is a test left out that is not a memory test, or a memory test that is kept.
+    """
     raw = Path(config_path).read_bytes()
     suites = json.loads(Path(list_path).read_text(encoding="utf-8"))["rust-suites"]
     names = [name for suite in suites.values() for name in suite.get("testcases", {})]
@@ -88,7 +98,31 @@ def check(config_path: str, list_path: str) -> list[str]:
     return [
         f"{config_path}:{line}: filter leaf `test({leaf})` {wrong[leaf]}"
         for line, leaf in sorted((line, leaf) for leaf in wrong for line in where.get(leaf, {1}))
-    ]
+    ] + default_filter_problems(suites)
+
+
+def default_filter_problems(suites: dict[str, Any]) -> list[str]:
+    """Return one line for each wrong case: a memory test kept, or another test left out.
+
+    nextest lists a binary that the default-filter leaves out with no tests. Every memory test is
+    in a binary that has other tests, so such a binary is always wrong.
+    """
+    lines: list[str] = []
+    for suite_name, suite in suites.items():
+        if suite.get("status") == "skipped-default-filter":
+            lines.append(f"{suite_name}: the default-filter leaves out the whole binary")
+        for name, case in suite.get("testcases", {}).items():
+            match = case.get("filter-match", {})
+            status, reason = match.get("status"), match.get("reason")
+            is_memory = name.startswith(DEFAULT_FILTER_OUT)
+            if (status, reason) == ("mismatch", "default-filter") and not is_memory:
+                lines.append(
+                    f"{suite_name} {name}: the default-filter leaves it out, "
+                    "and only memory tests may be left out"
+                )
+            elif status == "matches" and is_memory:
+                lines.append(f"{suite_name} {name}: the default-filter keeps this memory test")
+    return lines
 
 
 def main(argv: list[str]) -> int:

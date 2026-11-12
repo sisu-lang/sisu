@@ -53,7 +53,8 @@
 set -euo pipefail
 
 # What one mutant costs under the whole suite with 2 mutants at a time, in seconds of one job
-# slot: measured in pass 2 of the name resolver's mutation run.
+# slot: measured in pass 2 of the name resolver's mutation run. With --ignore-default-filter the
+# whole suite does the same work as then (2 output builds and 4 memory builds of a case are 6).
 WHOLE_SUITE_SECONDS=155
 
 count() { if [[ -f mutants.out/$1.txt ]]; then wc -l <"mutants.out/$1.txt"; else echo 0; fi; }
@@ -350,7 +351,7 @@ if [[ -z $test_args && -n $tested ]] && ((status == 2 || status == 3)) && ((miss
   timeouts=0
   group_status=0
   run_group lib-only "$lib_names" "the unit tests (--lib)" -- --lib
-  run_group whole-suite "$suite_names" "the whole suite"
+  run_group whole-suite "$suite_names" "the whole suite" -- --ignore-default-filter
   status=$group_status
 fi
 # A mutant that hangs the tests is caught, but cargo mutants exits 3 for a timeout even

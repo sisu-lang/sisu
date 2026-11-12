@@ -477,6 +477,13 @@ class Mutants(unittest.TestCase):
             f"mutation-test: PASS: 2 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.head()})",
         )
 
+    def test_the_whole_suite_group_should_run_every_test(self) -> None:
+        self.two_groups(
+            lib_caught=1, pass2_caught=1, pass2_missed=0, lib_missed=0, pass2_exit=0, lib_exit=0
+        )
+        self.assertEqual(self.lines("lines2")[-2:], ["--", "--ignore-default-filter"])
+        self.assertNotIn("--ignore-default-filter", self.lines("lines_lib"))
+
     def test_the_second_pass_should_say_which_group_it_runs_and_with_which_tests(self) -> None:
         self.two_groups(
             lib_caught=1, pass2_caught=1, pass2_missed=0, lib_missed=0, pass2_exit=0, lib_exit=0

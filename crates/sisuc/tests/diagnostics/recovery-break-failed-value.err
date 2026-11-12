@@ -1,8 +1,33 @@
+error[E0043]: `break` has no value, but this `loop` gives one
+ --> recovery-break-failed-value.sisu:3:16
+  |
+3 |           if c { break }
+  |                  ^^^^^
+4 | /         break {
+5 | |             missing
+6 | |             1
+7 | |         }
+  | |_________- this `break` gives the loop a value
+  |
+  = help: give every `break` of this `loop` a value, or none
+
 error[E0033]: cannot find binding `missing`
  --> recovery-break-failed-value.sisu:5:13
   |
 5 |             missing
   |             ^^^^^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> recovery-break-failed-value.sisu:15:15
+   |
+14 |           if c { break 1 }
+   |                  ------- this `break` gave the loop the type `i64`
+15 |           break {
+   |  _______________^
+16 | |             missing
+17 | |             "s"
+18 | |         }
+   | |_________^
 
 error[E0033]: cannot find binding `missing`
   --> recovery-break-failed-value.sisu:16:13
@@ -10,5 +35,5 @@ error[E0033]: cannot find binding `missing`
 16 |             missing
    |             ^^^^^^^
 
-sisu: 2 errors
-sisu: for more on a code, run `sisu explain <code>`: E0033
+sisu: 4 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032, E0033, E0043

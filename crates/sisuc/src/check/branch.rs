@@ -34,8 +34,8 @@ fn failed_branch(blocks: &[CheckedBlock]) -> Reported {
 }
 
 impl Checker<'_> {
-    /// Without an `else`, `unit`. With one, the branches joined (see `branches`). A condition
-    /// that is not `bool` makes the `if` untyped, or `Never` when its branches are.
+    /// Without an `else`, `unit`. With one, the branches joined (see `branches`), also when the
+    /// condition failed.
     pub(super) fn if_expr(
         &mut self,
         span: Span,
@@ -44,8 +44,7 @@ impl Checker<'_> {
         else_block: Option<&ast::Block>,
         expected: Expectation,
     ) -> Checked {
-        let (cond, mismatched) =
-            self.operand(cond, Expectation::Required(Type::BOOL, Origin::Condition));
+        let (cond, _) = self.operand(cond, Expectation::Required(Type::BOOL, Origin::Condition));
         let (then, other, ty) = self.branches(
             then_block,
             else_block,
@@ -53,14 +52,6 @@ impl Checker<'_> {
             |_| None,
             |c, expected| c.block(then_block, expected),
         );
-        // A failed join keeps its own `mismatch`, and branches that never end keep `Never`.
-        let ty = match (ty, &cond) {
-            (Ok(ty), Err(failed)) if mismatched => Err(Poisoned::new(
-                (ty == Type::NEVER).then_some(ty),
-                failed.reported(),
-            )),
-            (ty, _) => ty,
-        };
         let part = (cond.as_ref().err())
             .or_else(|| then.as_ref().err())
             .or_else(|| other.as_ref().and_then(|other| other.as_ref().err()))
@@ -81,7 +72,8 @@ impl Checker<'_> {
 
     /// `if let pattern = value { ... }`, typed as `if`; what `pattern` binds is in scope in the
     /// first block. On an optional it is an `IfSome`, on an enum a `Match` (`if_let_match`).
-    /// A `value` that is neither makes it `Error`, or `Never` when its branches are.
+    /// A `value` that is neither is reported, and the branches are still joined: what `pattern`
+    /// binds is then untyped, so a branch that uses it fails.
     pub(super) fn if_let(
         &mut self,
         span: Span,
@@ -92,10 +84,13 @@ impl Checker<'_> {
         expected: Expectation,
     ) -> Checked {
         // Ranking the `if let` for context may have checked its value (see `rank_value`).
-        let (scrutinee, form, mismatched) = match self.kept(value.span, false) {
-            Some((_, Ahead::Let(checked, form, mismatched))) => (checked, form, mismatched),
-            _ => self.let_value(Unwrap::IfLet, pattern, value),
-        };
+        let (scrutinee, form) =
+            if let Some((_, Ahead::Let(checked, form))) = self.kept(value.span, false) {
+                (checked, form)
+            } else {
+                let (checked, form, _) = self.let_value(Unwrap::IfLet, pattern, value);
+                (checked, form)
+            };
         let mut checked = None;
         let bind = |c: &mut Self| Some(c.bind_pattern(Some(Unwrap::IfLet), &form, pattern, None));
         let (then, other, ty) =
@@ -106,14 +101,6 @@ impl Checker<'_> {
                 block
             });
         let bound = checked.expect("`branches` should check the first block, which sets it");
-        // A failed join keeps its own `mismatch`, and branches that never end keep `Never`.
-        let ty = match (ty, &scrutinee) {
-            (Ok(ty), Err(failed)) if mismatched => Err(Poisoned::new(
-                (ty == Type::NEVER).then_some(ty),
-                failed.reported(),
-            )),
-            (ty, _) => ty,
-        };
         let ty = ty?;
         let kind = match (scrutinee, then, other.transpose(), bound) {
             (Ok(scrutinee), Ok(then_block), Ok(else_block), LetPattern::Some { bind }) => {

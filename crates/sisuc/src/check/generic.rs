@@ -1947,7 +1947,7 @@ pub(super) enum Ahead {
     /// A method's checked receiver, or a `match`'s scrutinee.
     Receiver(Checked),
     /// An `if let`'s value, as `let_value` gives it.
-    Let(Checked, LetValue, bool),
+    Let(Checked, LetValue),
     /// A block's scope, and its statements before its value.
     Block(FxHashMap<Symbol, Binding>, BlockSoFar),
     /// A branch with a pattern, an `if let`'s first block or a `match` arm: what the pattern
@@ -4048,14 +4048,14 @@ impl Checker<'_> {
     ) -> Ranked {
         // An argument is not part of the chain that an index ends.
         let indexed = std::mem::take(&mut self.body.indexed);
-        let ((checked, form, mismatched), jumped) =
+        let ((checked, form, _), jumped) =
             self.jumps(|c| c.let_value(Unwrap::IfLet, pattern, value));
         self.body.indexed = indexed;
         let index = self.keep((value.span, false), None, jumped);
         let then = self.block_rank(then_block, fit, |c| {
             Some(c.bind_pattern(Some(Unwrap::IfLet), &form, pattern, None))
         });
-        self.body.ahead[index].1 = Some(Ahead::Let(checked, form, mismatched));
+        self.body.ahead[index].1 = Some(Ahead::Let(checked, form));
         let other = iter::once_with(|| self.block_rank(else_block, fit, |_| None));
         combine_branches(iter::once(then).chain(other))
     }

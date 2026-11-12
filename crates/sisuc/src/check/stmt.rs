@@ -1503,10 +1503,11 @@ impl Checker<'_> {
         self.body.label_typo = typo.map(|name| (name.span, span.start()));
         let checked = self.expr(v, hint);
         self.body.label_typo = None;
-        // A failed value fails the loop, and gives it no type and no second report. A generic
-        // call's misfit is joined by the type it found, as a concrete call is by its type.
+        // An untyped failed value fails the loop, and gives it no type and no second report. A
+        // typed poisoned value joins as its type. A generic call's misfit is joined by the type it
+        // found, as a concrete call is by its type.
         let misfit = self.misfit_type(&checked);
-        if let (Err(failed), None) = (&checked, misfit) {
+        if let (Err(failed), None, None) = (&checked, misfit, type_of(&checked)) {
             self.frame(target).failed.get_or_insert(failed.reported);
             return checked;
         }
@@ -1536,7 +1537,9 @@ impl Checker<'_> {
                 }
             }
         };
-        if let Err(failed) = &checked {
+        if let Err(failed) = &checked
+            && type_of(&checked).is_none_or(|ty| ty == Type::NEVER)
+        {
             self.frame(target).failed.get_or_insert(failed.reported);
         }
         checked
@@ -1569,12 +1572,11 @@ impl Checker<'_> {
             let want = Expectation::Required(first, Origin::Break { at, ty: first });
             return self.against(v, checked, want).0;
         }
-        let value = checked?;
         let Some((first, at)) = first else {
             let frame = self.frame(target);
             frame.first = Some((got, span));
             frame.first_value = v.span;
-            return Ok(value);
+            return checked;
         };
         // Without an expected type, a `T` and a `T?` do not join.
         let expects = expected.ty().is_some();
@@ -1591,20 +1593,22 @@ impl Checker<'_> {
             let objects = object(got) && object(first);
             if objects {
                 self.frame(target).deferred.push((v.span, got));
-                return Ok(value);
+                return checked;
             }
             // A `Some` of an object is the mistake at the object, as in a branch.
-            if let Some((at, want, object)) = self.object_in_some(&value, first) {
+            if let Ok(value) = &checked
+                && let Some((at, want, object)) = self.object_in_some(value, first)
+            {
                 let d = self.leaves_any(at, None, want, object, Origin::None);
                 return Err(Poisoned::untyped(self.diagnostics.error(d)));
             }
             let want = Expectation::Required(first, Origin::Break { at, ty: first });
-            return self.against(v, Ok(value), want).0;
+            return self.against(v, checked, want).0;
         };
         let checked = if got == joined {
-            Ok(value)
+            checked
         } else {
-            self.against(v, Ok(value), Expectation::Required(joined, Origin::None))
+            self.against(v, checked, Expectation::Required(joined, Origin::None))
                 .0
         };
         if joined != first {

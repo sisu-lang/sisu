@@ -8,6 +8,16 @@ command = "scripts/build-runtime.sh"
 [profile.default.junit]
 path = "junit.xml"
 
+[profile.default]
+# The memory tests of the run cases run in `make memory-safety` and on a push to main, not in
+# `make test`. scripts/nextest_filters.py fails when this filter leaves out any other test.
+default-filter = 'not (binary(cases) & test(memory::))'
+
+[profile.memory]
+default-filter = 'binary(cases) & test(memory::)'
+fail-fast = false
+failure-output = "immediate-final"
+
 [profile.ci]
 # Report every failure, not just the first.
 fail-fast = false
@@ -169,19 +179,20 @@ setup = "build-runtime"
 # at most about 80 MB. An ASan run uses at most about 100 MB (the `copies` case). So no cap on how
 # many run at once is needed.
 # The `bless_` tests, `same_named_cases_should_not_share_an_executable_when_run_at_once`, the
-# `run_case_should_` tests, `run_should_build_the_o2_executable_on_mimalloc` and the
-# `o2_indirect_calls_marker_` tests call `support::run`, which runs ASan three times and Valgrind
-# once. So do the seven `o2_calls_marker_` tests. The two tests on invalid UTF-8 and on print
-# buffers run Valgrind only, not ASan. The `asan_runs_should_` test starts the test binary again
-# with `ASAN_OPTIONS` set. The four `selfhost_valgrind_` tests run the lexer in Sisu under
-# Valgrind on two large inputs.
+# `run_case_should_` tests and the `o2_calls_marker_` and `o2_indirect_calls_marker_` tests call
+# `support::run`, which builds twice and runs no ASan or Valgrind. The `memory_case_should_` and
+# `output_and_memory_tests_should_` tests call `support::memory`, which runs ASan three times and
+# Valgrind once. The two tests on invalid UTF-8 and on print buffers run Valgrind only, not ASan.
+# The `asan_runs_should_` test starts the test binary again with `ASAN_OPTIONS` set. The four
+# `selfhost_valgrind_` tests run the lexer in Sisu under Valgrind on two large inputs.
 [[profile.default.overrides]]
-filter = "binary(programs) & (test(allocation_counts) | test(valgrind_run_should_report_a_leaked_cycle) | test(valgrind_runs_should_refuse_a_mimalloc_build_and_a_stripped_build) | test(read_line_should_return_long_lines_whole_across_buffer_refills) | test(bless_) | test(same_named_cases_should_not_share_an_executable_when_run_at_once) | test(invalid_utf8_should_become_the_replacement_character_in_input_and_arguments) | test(print_should_allocate_one_buffer_however_much_it_prints) | test(o2_calls_marker_) | test(o2_indirect_calls_marker_) | test(run_should_build_the_o2_executable_on_mimalloc) | test(selfhost_valgrind_) | test(run_case_should_) | test(asan_runs_should_))"
+filter = "binary(programs) & (test(allocation_counts) | test(valgrind_run_should_report_a_leaked_cycle) | test(valgrind_runs_should_refuse_a_mimalloc_build_and_a_stripped_build) | test(read_line_should_return_long_lines_whole_across_buffer_refills) | test(bless_) | test(same_named_cases_should_not_share_an_executable_when_run_at_once) | test(invalid_utf8_should_become_the_replacement_character_in_input_and_arguments) | test(print_should_allocate_one_buffer_however_much_it_prints) | test(o2_calls_marker_) | test(o2_indirect_calls_marker_) | test(selfhost_valgrind_) | test(run_case_should_) | test(memory_case_should_) | test(output_and_memory_tests_should_) | test(asan_runs_should_))"
 priority = 100
 
-# A `run::` case compiles six times on Linux, and runs under ASan and under Valgrind, so these are
-# the longest tests and start first. A hang is killed after three minutes.
+# A `memory::` case builds four times on Linux, and runs under ASan and under Valgrind, so these
+# are the longest tests and start first. A `run::` case builds twice. A hang is killed after three
+# minutes. `test(memory::)` also matches the `site_memory::` cases.
 [[profile.default.overrides]]
-filter = "binary(cases) & (test(run::) | test(run_fail::) | test(site_run::) | test(site_run_fail::))"
+filter = "binary(cases) & (test(run::) | test(memory::) | test(run_fail::) | test(site_run::) | test(site_run_fail::))"
 priority = 100
 slow-timeout = { period = "60s", terminate-after = 3 }

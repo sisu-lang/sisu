@@ -3,8 +3,8 @@
 
 use super::*;
 use Code::{
-    ArgumentCount, BindingNotFound, CannotInfer, FunctionNotFound, IntegerDoesNotFit, Mismatch,
-    NegatedU8, NoMember, NoValue, UnknownType,
+    ArgumentCount, BindingNotFound, CannotCompare, CannotInfer, FunctionNotFound,
+    IntegerDoesNotFit, Mismatch, NegatedU8, NoMember, NoValue, UnknownType, UnwrapNeedsOptional,
 };
 
 /// The program of a row of the branch tables: `stmt` starts at line 5, and each line break of it
@@ -490,4 +490,259 @@ fn nested_branches_in_a_failed_context_should_rank_in_linear_steps() {
         );
         assert_near_linear(ten, twenty, thirty);
     });
+}
+
+/// The program of a row of the #651 tables: `h` takes one argument, so `h()` has a failed list of
+/// arguments and is still typed `i64`. `stmt` is at line 4, after `let c = true`.
+fn typed_break_program(stmt: &str) -> String {
+    format!("fn h(x: i64) -> i64 {{ x }}\nfn main() {{\n    let c = true\n    {stmt}\n}}\n")
+}
+
+/// GIVEN a `loop` with a `break` of a call that has the wrong count of arguments, so the value is
+///   typed `i64` and poisoned
+/// WHEN the program is checked
+/// THEN the loop has the type of that value, and a true error that uses the loop stays
+/// AND an untyped value of a `break` after it still fails the join, as `break h()` after a
+///   `break true` does
+#[test]
+fn a_typed_poisoned_break_value_should_give_its_loop_the_type() {
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "alone",
+            "fn h(x: i64) -> i64 { x }\nfn main() {\n    let a = loop { break h() }\n    print(a + true)\n}\n"
+                .into(),
+            vec![(ArgumentCount, (3, 26)), (Mismatch, (4, 15))],
+        ),
+        (
+            "first of two, then a number",
+            typed_break_program("let a = loop { if c { break 1 }; break h() }; print(a + true)"),
+            vec![(ArgumentCount, (4, 44)), (Mismatch, (4, 61))],
+        ),
+        (
+            "with a declared type",
+            typed_break_program("let a: bool = loop { break h() }; print(a)"),
+            vec![(ArgumentCount, (4, 32)), (Mismatch, (4, 32))],
+        ),
+        (
+            "with two wrong arguments",
+            typed_break_program("let a = loop { break h(1, 2) }; print(a + true)"),
+            vec![(ArgumentCount, (4, 26)), (Mismatch, (4, 47))],
+        ),
+        (
+            "by a label",
+            "fn h(x: i64) -> i64 { x }\nfn main() {\n    let a = out: loop {\n        loop { break out h() }\n    }\n    print(a + true)\n}\n"
+                .into(),
+            vec![(ArgumentCount, (4, 26)), (Mismatch, (6, 15))],
+        ),
+    ];
+    error_rows(&rows);
+}
+
+/// GIVEN a `loop` with a `break` of a call with the wrong count of arguments, typed `i64`
+/// AND another `break` of a value of another type, or with no value
+/// WHEN the program is checked
+/// THEN the second `break` is a true error against the type of the first one, in either order
+#[test]
+fn a_typed_poisoned_break_value_should_join_with_the_other_breaks() {
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "a bool after it",
+            typed_break_program("let a = loop { if c { break h() }; break true }; print(a)"),
+            vec![(ArgumentCount, (4, 33)), (Mismatch, (4, 46))],
+        ),
+        (
+            "a bool before it",
+            typed_break_program("let a = loop { if c { break true }; break h() }; print(a)"),
+            vec![(ArgumentCount, (4, 47)), (Mismatch, (4, 47))],
+        ),
+        (
+            "a bare break before it",
+            "fn h(x: i64) -> i64 { x }\nfn f(c: bool) {\n    let a = loop {\n        if c { break }\n        break h()\n    }\n}\nfn main() {}\n"
+                .into(),
+            vec![(NoValue, (4, 16)), (ArgumentCount, (5, 15))],
+        ),
+        (
+            "a bare break after it",
+            "fn h(x: i64) -> i64 { x }\nfn main() {\n    let c = true\n    let a = loop { if c { break h() }; break }\n}\n"
+                .into(),
+            vec![(ArgumentCount, (4, 33)), (NoValue, (4, 40))],
+        ),
+        (
+            "a call that gives no value",
+            "fn u(x: i64) {}\nfn main() {\n    let a = loop { break u() }\n    print(a)\n}\n".into(),
+            vec![(ArgumentCount, (3, 26)), (NoValue, (3, 26))],
+        ),
+    ];
+    error_rows(&rows);
+}
+
+/// The cause of #651 on its own: a typed poisoned first `break` sets the type of the loop.
+/// So the use of the loop as a `bool` is the error against `i64`.
+#[test]
+fn a_typed_poisoned_first_break_should_set_the_type_of_the_loop() {
+    error_rows(&[(
+        "first break typed and poisoned",
+        typed_break_program("let a = loop { if c { break h() }; break 1 }; print(a + true)"),
+        vec![(ArgumentCount, (4, 33)), (Mismatch, (4, 61))],
+    )]);
+}
+
+/// GIVEN a `loop` with a `break` of a value that is untyped
+/// AND other rows: a typed value outside a loop, a block that never ends, a value after a `None`
+/// WHEN the program is checked
+/// THEN the errors are as they were before the fix of #651
+#[test]
+fn an_untyped_break_value_should_fail_the_loop_holds_before_and_after() {
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "an unknown name",
+            typed_break_program("let a = loop { break missing }; print(a + true)"),
+            vec![(BindingNotFound, (4, 26))],
+        ),
+        (
+            "a typed value, outside a loop",
+            typed_break_program("let a = h(); print(a + true)"),
+            vec![(ArgumentCount, (4, 13)), (Mismatch, (4, 28))],
+        ),
+        (
+            "a block that never ends",
+            "fn h(x: i64) -> i64 { x }\nfn main() {\n    let a = loop { break { return; h() } }\n    print(a + true)\n}\n"
+                .into(),
+            vec![(ArgumentCount, (3, 36))],
+        ),
+        (
+            "a none first",
+            "fn h(x: i64) -> i64 { x }\nfn f(c: bool) {\n    let a = loop {\n        if c { break None }\n        break h()\n    }\n    print(a + true)\n}\nfn main() {}\n"
+                .into(),
+            vec![(CannotInfer, (4, 22)), (ArgumentCount, (5, 15))],
+        ),
+    ];
+    error_rows(&rows);
+}
+
+/// GIVEN an `if` whose condition is not `bool`, so the condition failed
+/// WHEN the program is checked
+/// THEN the `if` has the type of the join of its branches
+/// AND a true error that uses its value stays
+/// AND this holds for an `else if` condition and an `if let` whose subject is no optional
+/// AND this holds for a condition in a `match` arm, and for a function that returns the `if`
+#[test]
+fn a_condition_that_is_not_bool_should_keep_the_join_of_the_branches() {
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "if condition with else",
+            "fn main() {\n    let x = if 1 { 2 } else { 3 }\n    print(x == false)\n}".into(),
+            vec![(Mismatch, (2, 16)), (CannotCompare, (3, 11))],
+        ),
+        (
+            "if condition without else",
+            "fn main() {\n    let x = if 1 { print(2) }\n    print(x)\n}".into(),
+            vec![(NoValue, (2, 13)), (Mismatch, (2, 16))],
+        ),
+        (
+            "a none as the condition",
+            "fn main() {\n    let x = if None { 1 } else { 2 }\n    print(x && true)\n}".into(),
+            vec![(Mismatch, (2, 16)), (Mismatch, (3, 11))],
+        ),
+        (
+            "a number, then an addition",
+            "fn main() {\n    let a = if 1 { 2 } else { 3 }\n    print(a + true)\n}".into(),
+            vec![(Mismatch, (2, 16)), (Mismatch, (3, 15))],
+        ),
+        (
+            "an else if condition",
+            "fn main() {\n    let c = true\n    let a = if c { 1 } else if 2 { 3 } else { 4 }\n    print(a + true)\n}"
+                .into(),
+            vec![(Mismatch, (3, 32)), (Mismatch, (4, 15))],
+        ),
+        (
+            "an else if condition at depth 3",
+            "fn main() {\n    let c = true\n    loop {\n        let a = if c { 1 } else if c { 2 } else if 3 { 4 } else { 5 }\n        print(a + true)\n    }\n}"
+                .into(),
+            vec![(Mismatch, (4, 52)), (Mismatch, (5, 19))],
+        ),
+        (
+            "a declared type that the join misses",
+            "fn main() {\n    let a: bool = if 1 { 2 } else { 3 }\n    print(a)\n}".into(),
+            vec![(Mismatch, (2, 19)), (Mismatch, (2, 22))],
+        ),
+        (
+            "an if let subject that is no optional",
+            "fn main() {\n    let a = if let Some(v) = 5 { 2 } else { 3 }\n    print(a + true)\n}"
+                .into(),
+            vec![(UnwrapNeedsOptional, (2, 30)), (Mismatch, (3, 15))],
+        ),
+        (
+            "an else if let subject that is no optional",
+            "fn main() {\n    let c = true\n    let a = if c { 1 } else if let Some(v) = 5 { 2 } else { 3 }\n    print(a + true)\n}"
+                .into(),
+            vec![(UnwrapNeedsOptional, (3, 46)), (Mismatch, (4, 15))],
+        ),
+        (
+            "a bad condition in the arm of a failed match",
+            "fn main() {\n    let a = match missing { _ => if 2 { 3 } else { 4 } }\n    print(a + true)\n}"
+                .into(),
+            vec![
+                (BindingNotFound, (2, 19)),
+                (Mismatch, (2, 37)),
+                (Mismatch, (3, 15)),
+            ],
+        ),
+        (
+            "a bad condition before the value that the function returns",
+            "fn g() -> string { if 1 { 2 } else { 3 } }\nfn main() {}\n".into(),
+            vec![(Mismatch, (1, 20)), (Mismatch, (1, 23))],
+        ),
+    ];
+    error_rows(&rows);
+}
+
+/// GIVEN a failed guard, subject or condition that the fix of #652 does not reach
+/// OR the same program, repaired
+/// WHEN the program is checked
+/// THEN the errors are as they were before the fix of #652
+#[test]
+fn a_failure_that_the_join_fix_does_not_reach_should_keep_its_errors_holds_before_and_after() {
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "a branch that uses the binding of an if let",
+            "fn main() {\n    let a = if let Some(v) = 5 { v } else { 3 }\n    print(a + true)\n}"
+                .into(),
+            vec![(UnwrapNeedsOptional, (2, 30))],
+        ),
+        (
+            "an enum subject that is unknown",
+            "enum E {\n    A(i64)\n    B\n}\nfn main() {\n    let e = E.B\n    let a = if let E.A(v) = missing { v } else { 3 }\n    print(a + true)\n}"
+                .into(),
+            vec![(BindingNotFound, (7, 29))],
+        ),
+        (
+            "a while let subject that is no optional",
+            "fn main() {\n    while let Some(v) = 5 { print(v + true) }\n}".into(),
+            vec![(UnwrapNeedsOptional, (2, 25))],
+        ),
+        (
+            "a guard that is not bool",
+            "fn main() {\n    let k = 1\n    let a = match k { 0 if 1 => 2; _ => 3 }\n    print(a + true)\n}"
+                .into(),
+            vec![(Mismatch, (3, 28)), (Mismatch, (4, 15))],
+        ),
+        (
+            "a condition that is not bool, and branches that never end",
+            "fn g() -> i64 {\n    let a = if 1 { return 1 } else { return 2 }\n    a + true\n}\nfn main() { print(g()) }\n"
+                .into(),
+            vec![(NoValue, (2, 13)), (Mismatch, (2, 16))],
+        ),
+        (
+            "an unknown condition",
+            "fn main() {\n    let a = if missing { 2 } else { 3 }\n    print(a + true)\n}".into(),
+            vec![(BindingNotFound, (2, 16)), (Mismatch, (3, 15))],
+        ),
+        (
+            "the same, with the condition repaired",
+            "fn g() -> string { if true { 2 } else { 3 } }\nfn main() {}\n".into(),
+            vec![(Mismatch, (1, 20))],
+        ),
+    ];
+    error_rows(&rows);
 }
