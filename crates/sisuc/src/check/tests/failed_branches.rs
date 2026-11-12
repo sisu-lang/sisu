@@ -189,6 +189,7 @@ fn loop_program(stmt: &str) -> String {
 /// GIVEN a `loop` with a `break` of a value that failed
 /// AND a later `break` of a value that needs a type from its context, such as `None`, `[]` or
 ///   `[None]`
+/// AND a later value with a type of its own waits too, so the loop gets no type from it
 /// WHEN the program is checked
 /// THEN only the poisoned value reports
 #[test]
@@ -234,6 +235,12 @@ fn a_break_after_a_failed_break_should_wait_for_the_next_run() {
             "let a = loop { if c { break yy }; break loop { break None } }",
             vec![(BindingNotFound, (6, 33))],
         ),
+        // The program is valid with a typed `yy`, so an E0032 here would be a cascade.
+        (
+            "typed break between",
+            "let a = loop { if c { break yy }; if c { break m }; break None }",
+            vec![(BindingNotFound, (6, 33))],
+        ),
     ]
     .into_iter()
     .map(|(name, stmt, wanted)| (name, loop_program(stmt), wanted))
@@ -265,11 +272,6 @@ fn a_break_that_is_first_or_a_true_error_should_stay_holds_before_and_after() {
             "declared optional",
             "let a: i64? = loop { if c { break yy }; break None }",
             vec![(BindingNotFound, (6, 39))],
-        ),
-        (
-            "typed break between",
-            "let a = loop { if c { break yy }; if c { break m }; break None }",
-            vec![(BindingNotFound, (6, 33)), (Mismatch, (6, 63))],
         ),
         (
             "conversion of none",
@@ -365,6 +367,16 @@ fn a_break_in_a_failed_join_should_wait_for_a_loop_outside_it() {
             vec![call],
         ),
         (
+            "two later breaks after the join",
+            "let a = loop { f(if c { break Some(m) } else { 8 }); if c { break m }; break None }",
+            vec![call],
+        ),
+        (
+            "later break of another type after the join",
+            "let a = loop { f(if c { if c { break Some(m) } else { 8 } } else { if c { break 1 }; 8 }); if c { break \"s\" }; break 2 }",
+            vec![call],
+        ),
+        (
             "break of a name in a later branch",
             "let a = loop { f(if c { if c { break Some(m) } else { 8 } } else { if c { break m }; 8 }) }",
             vec![call],
@@ -419,6 +431,11 @@ fn a_break_in_a_failed_join_should_keep_its_output_holds_before_and_after() {
         (
             "valid call with a typed break in a later branch",
             "let a = loop { f(if c { if c { break Some(m) } else { 8 } } else { if c { break 1 }; 8 }, true) }\nprint(a ?? 0)",
+            vec![],
+        ),
+        (
+            "valid call with a later break of a name",
+            "let a = loop { f(if c { break Some(m) } else { 8 }, true); if c { break m }; break None }\nprint(a ?? 0)",
             vec![],
         ),
         // E0043: the loop has no value, as `panic("x")` is `never`. A `never` value does not fail

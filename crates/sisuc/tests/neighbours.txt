@@ -363,6 +363,7 @@ let _a = loop { let _x = i64(if c { if c { break Some(1) } else { 8 } } else { i
 # type of its own fails the loop there.
 let _a = loop { let _x = i64(if c { if c { break $ } else { 8 } } else { if c { break Some(1) }; 8 }, 1) }
 let _a = loop { let _x = i64(if c { if c { break Some(1) } else { 8 } } else { if c { break $ }; 8 }, 1); break $ }
+let _a = loop { let _x = i64(if c { if c { break Some(1) } else { 8 } } else { if c { break $ }; 8 }, 1); if c { break 2 }; break $ }
 # The same in a loop that opens inside a join in a poisoned context, and in the guard of a `match`
 # arm.
 let _a = loop { let _x = i64(if c { let _y = loop { i64(if c { if c { break Some(1) } else { 8 } } else { if c { break $ }; 8 }, 1) }; 8 } else { 9 }, 1) }
