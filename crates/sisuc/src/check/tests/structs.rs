@@ -8,7 +8,7 @@ use Code::{
     FieldOutOfOrder, FunctionNotFound, InstantiationCycle, IsNeedsObjects, MayBeNone,
     MethodAsFunction, Mismatch, MissingField, MutArgumentNotPlace, MutArgumentType, MutPlaceTwice,
     MutSelf, NeverConstructed, NeverReassigned, NoMember, NoOperator, NotAnInterface, ReservedWord,
-    TooManyArguments, TypeAsValue, UnusedVariable, UnwrapNeedsOptional,
+    TooManyArguments, TypeAsValue, UnusedMember, UnusedVariable, UnwrapNeedsOptional,
 };
 
 /// The word `record` is a name, the word `struct` is a keyword that no name can be, and the word
@@ -1220,15 +1220,16 @@ fn struct_cycle_should_need_a_way_out() {
 #[test]
 fn struct_write_should_keep_its_w0014() {
     judge_unused();
+    // The write does not read the field, so the field is W0013.
     codes_row(
         "a field write",
         "struct P { n: i64 }\nfn main() {\n    let mut t = P(n: 1)\n    t.n = 1\n}",
-        &[(UnusedVariable, (3, 13))],
+        &[(UnusedMember, (1, 12)), (UnusedVariable, (3, 13))],
     );
     codes_row(
         "an index that reads the root",
         "struct A { a: i64 }\nstruct P { n: i64; xs: [A] }\nfn main() {\n    let mut t = P(n: 0, xs: [A(a: 0)])\n    t.xs[t.n].a = 1\n}",
-        &[],
+        &[(UnusedMember, (1, 12))],
     );
 }
 
@@ -1625,7 +1626,7 @@ fn struct_should_keep_its_rules_beside_a_class() {
 fn unused_names(src: &str) -> Vec<Found> {
     judge_unused();
     let mut found: Vec<_> = (found(src).into_iter())
-        .filter(|(code, ..)| matches!(code, Code::UnusedItem | Code::UnusedMember))
+        .filter(|(code, ..)| matches!(code, Code::UnusedItem | UnusedMember))
         .collect();
     found.sort_by_key(|&(_, place, _)| place);
     found
@@ -1637,7 +1638,7 @@ fn unused_names(src: &str) -> Vec<Found> {
 /// `print` reads it.
 #[test]
 fn struct_should_report_the_unused_warnings() {
-    use Code::{UnusedItem, UnusedMember};
+    use Code::UnusedItem;
     judge_unused();
     let t = "struct T { n: i64; m: i64 }\n";
     let main = |decls: &str, body: &str| format!("{t}{decls}fn main() {{\n    {body}\n}}");
@@ -1700,7 +1701,7 @@ fn struct_should_report_the_unused_warnings() {
     reason = "a table of rows, each one program and its warnings"
 )]
 fn generated_read_should_count_each_shown_field() {
-    use Code::{UnusedItem, UnusedMember};
+    use Code::UnusedItem;
     let t = "struct T { n: i64; m: i64 }\n";
     let built = "T(n: 1, m: 1)";
     let main = |decls: &str, body: &str| format!("{t}{decls}fn main() {{\n    {body}\n}}");
@@ -1832,4 +1833,22 @@ fn generated_read_should_count_each_shown_field() {
         .map(|(row, ..)| *row)
         .collect();
     assert!(red.is_empty(), "red rows: {red:?}");
+}
+
+/// GIVEN `struct In { xs: [i64] }` and `struct T { i: In }`. WHEN a `for` loop runs over `t.i.xs`.
+/// THEN the loop reads the array in place when `t` cannot change, as it does for a class. When
+/// `t` is a `let mut`, the loop reads a copy that the body cannot change.
+#[test]
+fn for_over_a_struct_field_should_read_it_in_place_when_the_root_cannot_change() {
+    let program = |root: &str, decl: &str| {
+        format!(
+            "struct In {{ xs: [i64] }}\nstruct T {{ i: In }}\nfn main() {{\n    {decl} t = T(i: In(xs: [1, 2]))\n    {root}\n    for x in t.i.xs {{\n        print(x)\n    }}\n}}"
+        )
+    };
+    contains(
+        &program("", "let"),
+        &["(index (. (. t#0 i) xs) #2)", "(len (. (. t#0 i) xs))"],
+    );
+    let copied = lowered(&program("t.i.xs.push(3)", "let mut"));
+    assert!(!copied.contains("(index (. (. t#0 i) xs)"), "{copied}");
 }

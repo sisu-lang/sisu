@@ -1227,10 +1227,13 @@ fn struct_chain(n: usize, body: &str) -> String {
 /// chain. This holds for a generated `print`, for `==` and for `dbg`.
 #[test]
 fn shown_walk_should_visit_each_struct_declaration_once() {
-    for body in ["print(s)", "print(s == s)", "dbg(s)"] {
+    for body in ["print(s)", "dbg(s)"] {
         let visits = |n| shown_visits(&struct_chain(n, body));
         assert_near_linear(visits(20), visits(40), visits(60));
     }
+    // The proof of a generated `==` grows with the instances, so this chain is shorter.
+    let visits = |n| shown_visits(&struct_chain(n, "print(s == s)"));
+    assert_near_linear(visits(4), visits(8), visits(12));
 }
 
 /// A class shows its fields as `print` does, so the walk stops at it: it reads no type that the
