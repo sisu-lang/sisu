@@ -174,6 +174,14 @@ class ReviewRound(unittest.TestCase):
         self.assertIn(f"{body}:3: a sentence has 26 words", result.stderr)
         self.assertFalse((self.run_dir / "build-args").exists())
 
+    def test_a_pr_body_that_is_not_markdown_should_stop(self) -> None:
+        body = self.root / "body.txt"
+        body.write_text(f"{LONG}\n")
+        result = self.script("prepare", "main..main", "--pr-body", str(body))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(".md file", result.stderr)
+        self.assertFalse((self.run_dir / "build-args").exists())
+
     def test_a_grown_field_count_should_stop_until_the_focus_or_the_body_names_the_row(
         self,
     ) -> None:

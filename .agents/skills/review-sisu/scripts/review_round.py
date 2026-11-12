@@ -185,6 +185,9 @@ def check_body(repo: Path, body: Path | None) -> list[str]:
     """
     if body is None:
         return []
+    # text_limits.py reads prose by the file name, so another name would pass with no check.
+    if body.suffix != ".md":
+        raise SystemExit(f"review_round: {body}: the pull request body must be a .md file")
     result = subprocess.run(
         ["python3", "-", "--whole", str(body)],
         input=git(repo, "show", "origin/main:scripts/text_limits.py"),
