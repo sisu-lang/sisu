@@ -6987,6 +6987,21 @@ const FILL_MK_HEAD: &str = concat!(
     "    let k = 2\n",
 );
 
+const FILL_LIFT_HEAD: &str = concat!(
+    "fn id<T>(x: T) -> T { x }\n",
+    "fn lift<T>(x: T?) -> T? { x }\n",
+    "fn main() {\n",
+    "    let v: u8 = 1\n",
+    "    let c = 1\n",
+    "    let k = 2\n",
+);
+
+const PICK_HEAD: &str = concat!(
+    "fn pick<T>(a: T, b: T) -> T { a }\n",
+    "fn main() {\n",
+    "    let v: u8 = 1\n",
+);
+
 const BLAME_HEAD: &str = concat!(
     "fn id<T>(x: T) -> T { x }\n",
     "fn first<T>(xs: [T]) -> T { xs[0] }\n",
@@ -7140,6 +7155,14 @@ fn fill_e_program(stmt: &str) -> String {
 
 fn fill_mk_program(stmt: &str) -> String {
     program_in(FILL_MK_HEAD, stmt, "    print(r)\n}\n")
+}
+
+fn fill_lift_program(stmt: &str) -> String {
+    program_in(FILL_LIFT_HEAD, stmt, "    print(r)\n}\n")
+}
+
+fn pick_program(stmt: &str) -> String {
+    program_in(PICK_HEAD, stmt, "    print(r)\n}\n")
 }
 
 fn blame_program(stmt: &str) -> String {
@@ -7461,6 +7484,18 @@ fn fill_or_sum_argument_should_take_the_written_context() {
         ("509", REPRO_509.to_string(), vec![]),
         ("509id", REPRO_509_ID.to_string(), vec![]),
         ("557", REPRO_557.to_string(), vec![]),
+        // The fill holds an optional of its own. That is no optional of the call: the context
+        // `[u8?]??` has one `?` more than the call makes.
+        (
+            "fill of None, three layers",
+            fill_program("let r: [u8?]?? = id([None; 2])"),
+            vec![],
+        ),
+        (
+            "fill of a nested optional, lifted place",
+            fill_lift_program("let r: [u8??]?? = lift([Some(None); 2])"),
+            vec![],
+        ),
     ];
     error_rows(&rows);
 }
@@ -7638,6 +7673,16 @@ fn poisoned_join_should_add_no_report_for_a_waiting_fill_or_negation() {
             vec![(UnknownType, (7, 12))],
         ),
         (
+            "nested `-`",
+            fill_mk_program("let r: Nope = if c == 1 { v } else { -(-mk()) }"),
+            vec![(UnknownType, (7, 12))],
+        ),
+        (
+            "fill of `-`",
+            fill_mk_program("let r: Nope = if c == 1 { v } else { [-mk(); 2] }"),
+            vec![(UnknownType, (7, 12))],
+        ),
+        (
             "t3",
             fill_mk_program("let r: Nope = if c == 1 { v } else if c == 2 { -mk() } else { 3 }"),
             vec![(UnknownType, (7, 12))],
@@ -7658,6 +7703,7 @@ fn poisoned_join_should_add_no_report_for_a_waiting_fill_or_negation() {
 /// WHEN the program is checked
 /// THEN the report is the one that the base gave
 #[test]
+#[expect(clippy::too_many_lines, reason = "a table of rows")]
 fn fill_or_sum_argument_should_keep_its_report_before_and_after() {
     use Code::{CoalesceNotOptional, Mismatch};
     let rows: Vec<ErrorRow<'_>> = vec![
@@ -7754,6 +7800,72 @@ fn fill_or_sum_argument_should_keep_its_report_before_and_after() {
             "a22",
             fill_e_program("let r: Result<u8, i64> = Ok(k * loop { break 2 })"),
             vec![(Mismatch, (8, 33))],
+        ),
+        // A `-` of a call leads, as the call beside it does not: the `u8` is held to `i64`.
+        (
+            "`-` of a call leads a sum",
+            fill_mk_program("let r = -id(2) + v"),
+            vec![(Mismatch, (7, 22))],
+        ),
+        (
+            "`-` of a call leads a join",
+            fill_program("let r = if c == 1 { -id(2) } else { v }"),
+            vec![(Mismatch, (7, 41))],
+        ),
+        (
+            "`-` of a call leads an array",
+            fill_program("let r = [-id(2), v]"),
+            vec![(Mismatch, (7, 22))],
+        ),
+    ];
+    error_rows(&rows);
+}
+
+/// GIVEN a generic call whose arguments are an integer and a `==`, a `!=` or a `&&` of literals
+/// WHEN the program is checked
+/// THEN the operator is a `bool` value, as `true` is. It binds the parameter before the integer
+///   does, so the error is at the integer, as it is with `true`. Only an arithmetic operator
+///   takes its type from its operands.
+#[test]
+fn comparison_argument_should_bind_the_parameter_before_an_integer() {
+    use Code::Mismatch;
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "integer, then `==`",
+            pick_program("let r = pick(5, 1 == 2)"),
+            vec![(Mismatch, (4, 18))],
+        ),
+        (
+            "integer, then `!=`",
+            pick_program("let r = pick(5, 1 != 2)"),
+            vec![(Mismatch, (4, 18))],
+        ),
+        (
+            "`==`, then a `u8`",
+            pick_program("let r = pick(1 == 2, v)"),
+            vec![(Mismatch, (4, 26))],
+        ),
+    ];
+    error_rows(&rows);
+}
+
+/// GIVEN a join whose context failed, with a sum of two `-` of waiting calls as a later branch
+/// WHEN the program is checked
+/// THEN the sum is a value of its own, as it is outside the join: its first call cannot infer its
+///   type. The sum does not take the type of the first branch, so no `u8` is negated.
+#[test]
+fn poisoned_join_should_report_the_unbound_call_of_a_waiting_sum() {
+    use Code::{CannotInfer, UnknownType};
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "sum of `-`",
+            fill_mk_program("let r: Nope = if c == 1 { v } else { -mk() + -mk() }"),
+            vec![(UnknownType, (7, 12)), (CannotInfer, (7, 43))],
+        ),
+        (
+            "difference of `-`",
+            fill_mk_program("let r: Nope = if c == 1 { v } else { -mk() - -mk() }"),
+            vec![(UnknownType, (7, 12)), (CannotInfer, (7, 43))],
         ),
     ];
     error_rows(&rows);
