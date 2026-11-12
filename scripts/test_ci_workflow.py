@@ -46,14 +46,20 @@ class CiTestJobTests(unittest.TestCase):
         self.assertIsNone(GATE.search("\n".join(job)))
 
     def test_whole_list_checks_should_run_in_part_one_only(self) -> None:
-        for script in ("scripts/test_names.py", "scripts/nextest_filters.py"):
+        ran = "(success() || failure()) && steps.nextest.outcome"
+        expected = {
+            "scripts/test_names.py": f"{ran} != 'skipped' && github.event_name == 'pull_request'"
+            " && matrix.part == 1",
+            "scripts/nextest_filters.py": f"{ran} == 'success' && matrix.part == 1",
+        }
+        for script, condition in expected.items():
             found = [
                 step
                 for step in steps(self.job("test"))
                 if any(script in line for line in run_lines(step))
             ]
             self.assertEqual(len(found), 1, script)
-            self.assertIn("matrix.part == 1", str(found[0].get("if")), script)
+            self.assertEqual(found[0].get("if"), condition, script)
 
 
 if __name__ == "__main__":
