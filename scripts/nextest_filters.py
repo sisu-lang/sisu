@@ -24,10 +24,10 @@ from typing import Any
 # nextest allows whitespace, a newline too, before `(`. A leaf runs to the first `)`; a regex leaf
 # runs to its closing `/`, so that the message shows all of it.
 LEAF = re.compile(r"\btest\s*\(\s*(/.*?/|[^)]*)\)")
-# A TOML string or comment. Read in order, so a quote in a comment and a `#` in a string are no
-# token.
 # The names of the tests that a profile's `default-filter` may leave out.
 DEFAULT_FILTER_OUT = ("memory::", "site_memory::")
+# A TOML string or comment. Read in order, so a quote in a comment and a `#` in a string are no
+# token.
 TOKEN = re.compile(
     r"""'''.*?'''|\"\"\".*?\"\"\"|'[^'\n]*'|"(?:[^"\\\n]|\\.)*"|#[^\n]*""", re.DOTALL
 )

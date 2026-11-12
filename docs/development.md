@@ -118,6 +118,7 @@ Each run must exit 0 and print `<name>.out` on stdout, and `<name>.err` or nothi
 `make test` does not run the memory tests: the `default-filter` of the default and `ci` profiles in
 `.config/nextest.toml` leaves them out, and `scripts/nextest_filters.py` fails when it leaves out any other test.
 `make memory-safety` runs them with the `memory` profile.
+A command-line filter is intersected with the default filter, so to run one memory test, add `--profile memory` (or `--ignore-default-filter`), for example `cargo nextest run --profile memory -E 'test(memory::<name>.sisu)'`.
 Run it after a change to code generation, drops, the runtime or the harness, before a pull request.
 CI runs them in the `Memory safety (ASan, Valgrind)` job on a push to main and by hand with `workflow_dispatch`.
 `make mutation-test` and the ARM64 and macOS jobs keep them (`--ignore-default-filter`).
