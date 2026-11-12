@@ -416,11 +416,16 @@ impl Checker<'_> {
     /// It failed when it reported an error. It failed too when its type is unknown and an error
     /// was reported before it: its type comes from a local that failed. With no earlier error, an
     /// unknown type is no failure, so the report is made.
+    /// A parse error counts as an earlier error: a use of an item that did not parse is untyped.
+    /// The limit: a parse error anywhere in the file hides the E0032 of an untyped value that has
+    /// no error, such as `[]` or `None`. This holds also for a parse error after the use. The
+    /// E0032 comes back when the parse error is repaired.
     pub(super) fn checked_alone(&mut self, arg: &ast::Expr) -> (Option<Type>, Option<Reported>) {
         let errors = self.diagnostics.errors();
         let checked = self.expr(arg, Expectation::Poisoned);
         let ty = type_of(&checked);
-        let failed = self.diagnostics.errors() > errors || ty.is_none() && errors > 0;
+        let earlier = errors > 0 || !self.parse_errors.is_empty();
+        let failed = self.diagnostics.errors() > errors || ty.is_none() && earlier;
         let failed = failed.then(|| match checked {
             Err(poisoned) => poisoned.reported(),
             // An error inside a value that did not fail: the count holds it.

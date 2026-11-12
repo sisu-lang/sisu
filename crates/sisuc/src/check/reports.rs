@@ -33,6 +33,13 @@ pub(super) struct Mark {
     promises: usize,
 }
 
+impl Mark {
+    /// Whether the list held fewer reports at this place than at `other`.
+    pub(super) fn before(self, other: Mark) -> bool {
+        self.reports < other.reports
+    }
+}
+
 /// The reports and the promises that `take_since` cut. `restore` puts them back.
 #[must_use]
 #[derive(Default)]

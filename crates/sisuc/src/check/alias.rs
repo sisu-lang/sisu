@@ -18,7 +18,7 @@ use rustc_hash::FxHashSet;
 use super::expr::{bare_none, none_literal};
 use super::generic::{Site, type_meets};
 use super::interface::{Bound, Slot};
-use super::reports::Reported;
+use super::reports::{Mark, Reported};
 use super::{
     Body, Checked, Checker, Declared, DiagnosticKind, Expectation, Origin, Poisoned, UnknownForm,
     built_in_type, own_args, tail, value_span,
@@ -151,6 +151,9 @@ pub(super) struct Aliases {
     /// The limit that a use passed, which is reported at the end of the outermost written type.
     /// A limit that `through` passed waits for the next use that reports one.
     too_large: Option<Passed>,
+    /// The last limit that `report_too_large` reported, and the place in the list before that
+    /// report: a rollback that cuts the report arms the limit again (`rearm_limit`).
+    last_report: Option<(Passed, Mark)>,
     /// Whether the memo passed `MAX_CHECK_ENTRIES`: every later substitution fails, with no
     /// report of its own, so each later use of an alias is `Error`.
     exhausted: bool,
@@ -1047,6 +1050,7 @@ impl Checker<'_> {
     /// Gives the token of the report, when it makes one.
     fn report_too_large(&mut self, at: Span) -> Option<Reported> {
         let passed = self.aliases.too_large.take()?;
+        self.aliases.last_report = Some((passed, self.diagnostics.mark()));
         let reported = self.error(DiagnosticKind::AliasTooLarge {
             ty: self.source.type_text(at).into_owned(),
             at,
@@ -1057,6 +1061,24 @@ impl Checker<'_> {
             check: passed == Passed::Check,
         });
         Some(reported)
+    }
+
+    /// Arms the limit of the last report again, when a rollback to `mark` cut that report: the
+    /// check that follows then reports it once more. Says whether it armed the limit.
+    pub(super) fn rearm_limit(&mut self, mark: Mark) -> bool {
+        let Some((passed, at)) = self.aliases.last_report else {
+            return false;
+        };
+        let cut = !at.before(mark);
+        if cut {
+            self.aliases.too_large = Some(passed);
+        }
+        cut
+    }
+
+    /// Forgets the limit that a use passed and no report took.
+    pub(super) fn drop_limit(&mut self) {
+        self.aliases.too_large = None;
     }
 
     /// The type written as `ty`, when the types it resolved to followed a use of an alias, which

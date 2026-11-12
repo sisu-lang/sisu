@@ -261,6 +261,7 @@ impl Checker<'_> {
         // findings. So none is left that nothing binds, none is judged twice, and no value
         // outlives the cut reports.
         self.diagnostics.drop_since(diagnostics);
+        let rearmed = self.rearm_limit(diagnostics);
         if !self.body.uninferred.is_empty() {
             for local in locals..self.body.locals.len() {
                 #[cfg(test)]
@@ -272,7 +273,12 @@ impl Checker<'_> {
         self.pending.truncate(pending);
         self.body.misfits.truncate(misfits);
         self.body.joins.insert(span);
-        self.integers(operands, Expectation::None, operator, op)
+        let result = self.integers(operands, Expectation::None, operator, op);
+        // A limit that the second check does not report waits for no later written type.
+        if rearmed {
+            self.drop_limit();
+        }
+        result
     }
 
     /// The operands of one number operator, checked in source order; the type they share,
