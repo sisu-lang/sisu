@@ -101,7 +101,7 @@ thread_local! {
 
 #[cfg(test)]
 thread_local! {
-    /// How many calls of `spread_uses`, passes of its early return, enums and `held_inline` edges
+    /// How many calls of `spread_uses`, passes of its early return, nodes and `held_inline` edges
     /// it has visited on this thread.
     static SPREAD_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
@@ -289,8 +289,8 @@ pub(crate) struct Oversized {
     pub(crate) used: Option<Span>,
 }
 
-/// The diagnostics of `oversized`, one for each report. `first_uses` is the first use of each enum
-/// that `mono` found, or `&[]` when there is none.
+/// The diagnostics of `oversized`, one for each report. `first_uses` is the first use of each node
+/// that `mono` found, the enums then the structs, or `&[]` when there is none.
 pub(crate) fn diagnostics(
     enums: &[Enum],
     structs: &[Struct],
@@ -351,7 +351,7 @@ fn declared<'t>(
 /// change, so the report names the user's enum that its largest field holds. When that chain
 /// reaches no user's enum, the report names the prelude's enum. On the checker path, `checked_with`
 /// treats a report in the prelude as an internal error. The reports are in the order of the nodes:
-/// the enums, then the structs. `first_uses` is the first use of each enum, which a report gives as
+/// the enums, then the structs. `first_uses` is the first use of each node, which a report gives as
 /// the place that uses an instance.
 pub(crate) fn oversized(
     enums: &[Enum],
@@ -361,12 +361,12 @@ pub(crate) fn oversized(
     oversized_with(enums, structs, first_uses, PAYLOAD_LIMIT)
 }
 
-/// The use of each instance in `enums`: its own in `first_uses`, else the one of its nearest
-/// holder that is an instance. The pass is breadth first from every instance that has a use, so
-/// it takes time linear in the enums and the `held_inline` edges, however many reports need it.
-/// An enum that is no instance has no use, and a use does not pass through it: a field of a
-/// non-generic enum or class is the declaration's, not the instance's. When no instance has a use
-/// the result is empty.
+/// The use of each instance in `enums` and `structs`: its own in `first_uses`, else the one of its
+/// nearest holder that is an instance. The pass is breadth first from every instance that has a
+/// use. Thus it takes time linear in the nodes and the `held_inline` edges, however many reports
+/// need it. A node that is no instance has no use, and a use does not pass through it: a field of
+/// a non-generic type is the declaration's, not the instance's. When no instance has a use the
+/// result is empty.
 fn spread_uses(
     enums: &[Enum],
     structs: &[Struct],
@@ -375,35 +375,35 @@ fn spread_uses(
     #[cfg(test)]
     SPREAD_STEPS.set(SPREAD_STEPS.get() + 1);
     let own = |id: usize| first_uses.get(id).copied().flatten();
-    let mut queue: VecDeque<usize> = (0..enums.len())
-        .filter(|&id| enums[id].instance && own(id).is_some())
+    let instance = |id: usize| declared(enums, structs, id).2;
+    let nodes = enums.len() + structs.len();
+    let mut queue: VecDeque<usize> = (0..nodes)
+        .filter(|&id| instance(id) && own(id).is_some())
         .collect();
     if queue.is_empty() {
         return Vec::new();
     }
     #[cfg(test)]
     SPREAD_STEPS.set(SPREAD_STEPS.get() + 1);
-    let mut uses = vec![None; enums.len()];
+    let mut uses = vec![None; nodes];
     for &id in &queue {
         uses[id] = own(id);
     }
     while let Some(holder) = queue.pop_front() {
         #[cfg(test)]
         SPREAD_STEPS.set(SPREAD_STEPS.get() + 1);
-        // A struct is no instance, so a use does not pass through it.
-        let held_enums = held_inline(enums, structs, holder).filter(|&held| held < enums.len());
-        for held in held_enums {
+        for held in held_inline(enums, structs, holder) {
             #[cfg(test)]
             SPREAD_STEPS.set(SPREAD_STEPS.get() + 1);
-            if enums[held].instance && uses[held].is_none() {
+            if instance(held) && uses[held].is_none() {
                 uses[held] = uses[holder];
                 queue.push_back(held);
             }
         }
     }
-    // shortcut: an instance that only a field of a non-generic class or enum reaches has no use,
-    // as `mono` lowers the classes before any expression, and a non-generic enum is no instance;
-    // no second label then. Upgrade by giving a class or enum field a span.
+    // shortcut: an instance that only a field of a non-generic type reaches has no use and no
+    // second label. `mono` lowers the classes before any expression, and a non-generic type is no
+    // instance. Upgrade by giving such a field a span.
     uses
 }
 

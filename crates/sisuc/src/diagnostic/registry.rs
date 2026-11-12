@@ -4016,7 +4016,7 @@ impl From<DiagnosticKind> for Diagnostic {
                     )
                 },
             )
-            .with_help("hold an inner part in a field of a class or an enum"),
+            .with_help("hold an inner part in a field of a class, an enum or a struct"),
             DiagnosticKind::AnyForm { at, form } => match form {
                 AnyFormKind::Optional {
                     written,
@@ -5423,7 +5423,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 at,
                 format!("the type that `{ty}` names nests deeper than {limit} levels"),
             )
-            .with_help("hold an inner part in a field of a class or an enum"),
+            .with_help("hold an inner part in a field of a class, an enum or a struct"),
             DiagnosticKind::InvalidUtf8 { at } => {
                 Diagnostic::coded(code, at, "source is not valid UTF-8")
                     .with_help("save the file as UTF-8")

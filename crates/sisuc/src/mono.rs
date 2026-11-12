@@ -153,6 +153,13 @@ enum Work {
     },
 }
 
+/// An output enum or struct that a type holds, whose first use `Mono` records.
+#[derive(Clone, Copy)]
+enum Held {
+    Enum(EnumId),
+    Struct(StructId),
+}
+
 struct Mono {
     /// The checked program's generic functions, and the prelude's functions, at their ids; a
     /// non-generic function of the user's has moved to `functions`.
@@ -169,9 +176,9 @@ struct Mono {
     enum_decls: Vec<Option<Enum>>,
     /// The checked program's generic structs, at their ids.
     struct_decls: Vec<Option<Struct>>,
-    /// The output's type for each concrete checked type met so far, and the output enum that this
-    /// type holds, through arrays and optionals, if any: the enum whose use a hit notes.
-    types: FxHashMap<Type, (Type, Option<EnumId>)>,
+    /// The output's type for each concrete checked type met so far, and what the type holds: the
+    /// output enum or struct in it, through arrays and optionals, if any. A hit notes its use.
+    types: FxHashMap<Type, (Type, Option<Held>)>,
     /// The output's functions, each `None` until the worklist instantiates it.
     functions: Vec<Option<Function>>,
     /// The output, without its functions until the end: its classes name types as they arrive.
@@ -220,6 +227,8 @@ struct Mono {
     /// that only a local's type or a class field reaches has none until an expression meets
     /// its type. `payload_limit` reads it for the error of an instance that is too large.
     uses: Vec<Option<Span>>,
+    /// `uses` for the output structs, in their ids.
+    struct_uses: Vec<Option<Span>>,
     /// The span of the last item or expression of the user's source that `mono` lowered before
     /// `failed` held: the place that E0163 points at when an item of the prelude has the most
     /// instances.
@@ -282,6 +291,7 @@ impl Mono {
             entries: FxHashMap::default(),
             user_at: None,
             uses: Vec::new(),
+            struct_uses: Vec::new(),
             instances: 0,
             limit,
         };
@@ -323,6 +333,7 @@ impl Mono {
                 let id = StructId(mono.out.structs.len());
                 mono.struct_ids.insert((StructId(i), TypeArgs::NONE), id);
                 mono.out.structs.push(s);
+                mono.struct_uses.push(None);
                 mono.struct_decls.push(None);
             } else {
                 mono.struct_decls.push(Some(s));
@@ -347,7 +358,9 @@ impl Mono {
                 .all(Option::is_some),
             "every enum and struct should have a size bound after the layout: its types are final and the layout boxes each cycle"
         );
-        let oversized = payload_limit::diagnostics(&self.out.enums, &self.out.structs, &self.uses);
+        // The nodes of `payload_limit` are the enums, then the structs.
+        let uses: Vec<_> = self.uses.iter().chain(&self.struct_uses).copied().collect();
+        let oversized = payload_limit::diagnostics(&self.out.enums, &self.out.structs, &uses);
         if !oversized.is_empty() {
             return Err(oversized);
         }
@@ -634,12 +647,18 @@ impl Mono {
             ),
             TypeKind::Enum(id, args) => {
                 let id = self.enum_id(id, args);
-                (Type::intern(TypeKind::Enum(id, TypeArgs::NONE)), Some(id))
+                (
+                    Type::intern(TypeKind::Enum(id, TypeArgs::NONE)),
+                    Some(Held::Enum(id)),
+                )
             }
-            TypeKind::Struct(id, args) => (
-                Type::intern(TypeKind::Struct(self.struct_id(id, args), TypeArgs::NONE)),
-                None,
-            ),
+            TypeKind::Struct(id, args) => {
+                let id = self.struct_id(id, args);
+                (
+                    Type::intern(TypeKind::Struct(id, TypeArgs::NONE)),
+                    Some(Held::Struct(id)),
+                )
+            }
             TypeKind::Any(interface, args) => {
                 // Meeting an `any` type is how its layout reaches the output.
                 self.layout(ty);
@@ -785,9 +804,9 @@ impl Mono {
         entries
     }
 
-    /// The output enum that the type `ty` holds, through arrays and optionals, for a type that
-    /// `output` has made.
-    fn held_by(&self, ty: Type) -> Option<EnumId> {
+    /// The output enum or struct that the type `ty` holds, through arrays and optionals, for a
+    /// type that `output` has made.
+    fn held_by(&self, ty: Type) -> Option<Held> {
         self.types.get(&ty).and_then(|&(_, held)| held)
     }
 
@@ -842,7 +861,7 @@ impl Mono {
         out
     }
 
-    /// The declared name of the checked class or enum `head`.
+    /// The declared name of the checked class, struct or enum `head`.
     fn head(&self, head: Head) -> &str {
         match head {
             Head::Assoc(..) => unreachable!("mono should replace every associated type"),
@@ -892,9 +911,13 @@ impl Mono {
         done
     }
 
-    /// Records the expression that `expr` lowers as the first use of the output enum `id`.
-    fn note_use(&mut self, id: EnumId) {
-        let first = &mut self.uses[id.0];
+    /// Records the expression that `expr` lowers as the first use of the output enum or struct
+    /// `held`.
+    fn note_use(&mut self, held: Held) {
+        let first = match held {
+            Held::Enum(id) => &mut self.uses[id.0],
+            Held::Struct(id) => &mut self.struct_uses[id.0],
+        };
         if first.is_none() {
             *first = self.at;
         }
@@ -903,7 +926,7 @@ impl Mono {
     /// The output id of enum `id` with `args`, given and put on the worklist when first reached.
     fn enum_id(&mut self, id: EnumId, args: TypeArgs) -> EnumId {
         if let Some(&done) = self.enum_ids.get(&(id, args)) {
-            self.note_use(done);
+            self.note_use(Held::Enum(done));
             return done;
         }
         self.reach(args.get());
@@ -957,6 +980,7 @@ impl Mono {
             reaches: false,
         };
         self.out.structs.push(s);
+        self.struct_uses.push(self.at);
         self.instances += 1;
         self.struct_ids.insert((id, args), done);
         self.work.push_back((

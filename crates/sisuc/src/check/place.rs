@@ -1408,7 +1408,8 @@ impl Checker<'_> {
                 let named = self.name_place(span, root, root_name, written);
                 (named.writable, named.held, named.refused, named.reported)
             }
-            // The plain `self` of a struct method.
+            // The `self` of a struct method: a `mut self`, with its E0018, can change.
+            (Root::Local(_), _) if self.body.self_mut => (true, None, None, None),
             (Root::Local(_), _) => {
                 let cause = Immutable::StructSelf;
                 if change == Change::MutArg {
@@ -1603,7 +1604,7 @@ impl Checker<'_> {
                 b.reassigned |= b.kind == BindingKind::Var;
                 binding_cause(b)
             }
-            StructRoot::SelfValue => Some(Immutable::StructSelf),
+            StructRoot::SelfValue => (!self.body.self_mut).then_some(Immutable::StructSelf),
             StructRoot::Other => None,
         }
     }

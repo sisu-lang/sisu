@@ -940,6 +940,10 @@ impl SelfType {
     clippy::zero_sized_map_values,
     reason = "the map holds the proof of a report for each key, and a set cannot hold it"
 )]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is a separate fact of one body, and no two of them make a state"
+)]
 struct Body {
     /// The function, method or constant whose body this is; `None` for none, such as a signature.
     owner: Option<Owner>,
@@ -1052,6 +1056,9 @@ struct Body {
     writes: u32,
     /// `writes` at the last write rooted at `self`; 0 for none.
     self_written: u32,
+    /// For a method of an `extend` with `mut self`, which has its E0018: its body may change
+    /// `self`, so no E0001 follows that error.
+    self_mut: bool,
     /// How many `break`, `continue`, `return`, `panic` and `todo` the body has checked.
     exits: u32,
     /// How many W0005 (a comparison with `f64.nan`) the body has reported.
@@ -2465,6 +2472,7 @@ impl Checker<'_> {
             ret,
             ret_shown,
             self_type: owner.map_or(SelfType::Absent, SelfType::Known),
+            self_mut: f.mut_self.is_some(),
             ..Body::default()
         };
         fresh.set_type_params(&sig.type_params);
