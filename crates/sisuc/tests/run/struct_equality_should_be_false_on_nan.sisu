@@ -1,0 +1,24 @@
+// GIVEN `struct F { x: f64 }`, an array of two `F` and an optional `F`, each holding `nan`
+// WHEN `main` compares each value with itself and with a copy
+// THEN every comparison is `false`, and a value with a finite `x` equals its copy
+struct F { x: f64 }
+struct Wrap { f: F; n: i64 }
+
+fn main() {
+    let nan = f64.nan
+    print(F(x: nan) == F(x: nan))                  // false
+    print(F(x: nan) != F(x: nan))                  // true
+    let a = F(x: nan)
+    let b = a
+    print(a == b)                                  // false
+    print([F(x: nan)] == [F(x: nan)])              // false
+    let xs = [F(x: nan)]
+    let ys = xs
+    print(xs == ys)                                // false
+    let o: F? = F(x: nan)
+    print(o == o)                                  // false
+    print(Wrap(f: F(x: nan), n: 1) == Wrap(f: F(x: nan), n: 1))  // false
+    print(F(x: 1.5) == F(x: 1.5))                  // true
+    print(F(x: -0.0) == F(x: 0.0))                 // true
+    print(Wrap(f: F(x: 1.5), n: 1) == Wrap(f: F(x: 1.5), n: 1))  // true
+}

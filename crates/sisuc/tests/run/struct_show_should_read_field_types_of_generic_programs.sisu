@@ -50,6 +50,5 @@ fn main() {
     dbg(S3(t: Tag(id: 1)))
     let a: any Display = S3(t: Tag(id: 2))
     print(a)                         // S3(t: tag-2)
-    print(C(v: 7))                   // class-7
     print(S4(c: C(v: 7)))            // S4(c: class-7)
 }

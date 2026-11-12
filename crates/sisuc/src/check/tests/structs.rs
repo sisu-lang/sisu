@@ -1179,12 +1179,47 @@ fn is_on_a_struct_should_be_e0046() {
     }
 }
 
-/// GIVEN `struct P { x: i64 }`. WHEN `==` compares two of its values. THEN it is E0159 until
-/// Task 4 generates the struct's `==`.
+/// GIVEN `struct S { f: <field> }`. WHEN `main` compares two values of `S`. THEN a field that has
+/// `==` gives no diagnostic, and an `any I` field is E0159 at the `==`. So is a field of a struct
+/// that holds one, also through an array or an optional.
 #[test]
-fn equality_should_be_e0159_until_it_lands() {
-    let src = "struct P { x: i64 }\nfn main() {\n    print(P(x: 1) == P(x: 1))\n}";
-    codes_row("P == P", src, &[(NoOperator, (3, 11))]);
+fn struct_equality_should_follow_its_field_types() {
+    let decls = "enum E {\n    A\n    B\n}\nstruct In { n: i64 }\ninterface I {\n    fn n(self) -> i64\n}\n";
+    let compare = |field: &str| {
+        format!(
+            "{decls}struct S {{ f: {field} }}\nfn same(a: S, b: S) -> bool {{\n    return a == b\n}}\nfn main() {{}}"
+        )
+    };
+    let ok = [
+        ("i64", "a scalar"),
+        ("string", "a string"),
+        ("[i64]", "an array"),
+        ("E", "an enum"),
+        ("In", "a struct"),
+        ("i64?", "an optional"),
+        ("[S]", "an array of the struct itself"),
+        ("[In]?", "an optional array of structs"),
+    ];
+    for (field, row) in ok {
+        codes_row(row, &compare(field), &[]);
+    }
+    let bad = [
+        ("any I", "no `==`"),
+        ("[any I]", "an array of values with no `==`"),
+        ("(any I)?", "an optional of a value with no `==`"),
+    ];
+    for (field, row) in bad {
+        let src = compare(field);
+        codes_row(row, &src, &[(NoOperator, (11, 12))]);
+    }
+    let nested = format!(
+        "{decls}struct W {{ a: any I }}\nstruct S {{ w: W }}\nfn main() {{\n    print(S(w: W(a: x())) == S(w: W(a: x())))\n}}\nfn x() -> any I {{\n    return Q()\n}}\nclass Q: I {{\n    fn n(self) -> i64 {{ 1 }}\n}}"
+    );
+    codes_row(
+        "a struct inside a struct",
+        &nested,
+        &[(NoOperator, (12, 11))],
+    );
 }
 
 /// GIVEN a struct that holds itself through an optional, an enum's variant or an enum's type
