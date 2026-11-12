@@ -239,6 +239,7 @@ codes! {
     UnusedMember = "W0013",
     UnusedVariable = "W0014",
     PrintsOptional = "W0015",
+    WriteToCopy = "W0016",
 }
 
 /// Codes the compiler no longer reports, and their explanations (`docs/diagnostics/README.md`,
@@ -1096,6 +1097,14 @@ pub(crate) enum DiagnosticKind {
     /// The printed or interpolated optional at `at`, which may print `None`. `value` is its path
     /// as written, when it has one.
     PrintsOptional { value: Option<String>, at: Span },
+    /// The write at `at` to the local declared at `copy`, a copy of the place `place`, which
+    /// nothing reads; `help` names what the root of the place allows.
+    WriteToCopy {
+        place: String,
+        at: Span,
+        copy: Span,
+        help: String,
+    },
     /// The `todo` at `at`, which panics when it runs.
     TodoLeft { at: Span },
     /// A `todo` written as Rust's `todo!` or as `todo()`: `at` is the first extra token, and
@@ -5618,6 +5627,19 @@ impl From<DiagnosticKind> for Diagnostic {
                     "use `if let`, give a default with `??`, or call {call} to write \"None\" on purpose"
                 ))
             }
+            DiagnosticKind::WriteToCopy {
+                place,
+                at,
+                copy,
+                help,
+            } => Diagnostic::coded(
+                code,
+                at,
+                format!("this writes to a copy of `{place}`, and nothing reads the copy"),
+            )
+            .with_label(format!("`{place}` does not change"))
+            .with_secondary(copy, "a copy")
+            .with_help(help),
             DiagnosticKind::TodoLeft { at } => {
                 Diagnostic::coded(code, at, "`todo` panics when it runs")
             }
@@ -6880,6 +6902,28 @@ fn immutable_cause(d: Diagnostic, name: &str, element: bool, cause: &Immutable) 
         .with_secondary(declared, "declared with `const` here"),
         Immutable::StructSelf => d.with_help(STRUCT_SELF_HELP),
     }
+}
+
+/// The help of W0016 for a copy of `place`. The root `root` cannot change for the reason `cause`
+/// gives, or can change when there is none. A field and a constant give none: a class step is not
+/// a copy, and a constant of a struct or an array is E0085.
+pub(crate) fn copy_help(cause: Option<&Immutable>, root: &str, place: &str) -> Option<String> {
+    Some(match cause {
+        None => "write to the place itself, not to the copy".to_string(),
+        Some(Immutable::Let { .. }) => format!(
+            "`{root}` is a `let`, so `{place}` cannot change: delete the write, or make `{root}` a `let mut` and write to the place"
+        ),
+        Some(Immutable::Param { .. }) => format!(
+            "`{root}` is a plain parameter, so `{place}` cannot change here: delete the write, or return the changed copy"
+        ),
+        Some(Immutable::StructSelf) => format!(
+            "`self` cannot change in this method, so `{place}` cannot change here: delete the write, or return the changed copy"
+        ),
+        Some(Immutable::Unwrapped { keyword, .. }) => format!(
+            "`{root}` is bound by `{keyword}`, so `{place}` cannot change here: delete the write"
+        ),
+        Some(Immutable::Field { .. } | Immutable::Constant { .. }) => return None,
+    })
 }
 
 /// The help of a write through the plain `self` of a struct method.

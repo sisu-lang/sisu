@@ -322,6 +322,7 @@ impl Checker<'_> {
         for arg in args.iter().filter(|arg| arg.mut_keyword.is_some()) {
             self.body.mut_values.insert(arg.value.span);
             self.stamp_push(&arg.value);
+            self.copy_written(&arg.value, false);
         }
     }
 

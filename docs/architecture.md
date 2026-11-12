@@ -201,12 +201,13 @@ always matches. `check/recursion.rs` walks the `tir` of each function and gives
 W0010 when the function calls itself on every path. After a check with no
 error, `check/unused_names.rs` walks the uses that the checker records, out
 from `main` and each function, method and constant whose name starts with `_`.
-It gives W0012 for an item or an `extend` block that no live code uses, W0013 for a field that live
-code does not read or a variant that it does not build, and W0014 for a local
-or parameter of live code that nothing reads. `check/operator.rs` checks operators (arithmetic, comparison,
-equality, `is` and `??`), `check/branch.rs` `if` and `if let` and the join of
-their branch types, `check/call.rs` calls, method calls and constructors, and
-`check/member.rs` fields and methods found through `.` and `?.`,
+It gives W0012 for an item or an `extend` block that no live code uses. It gives W0013 for a field that live
+code does not read or a variant that it does not build. It gives W0014 for a local
+or parameter of live code that nothing reads. It gives W0016 for a `let mut` that only writes to a copy of a place.
+`check/operator.rs` checks operators (arithmetic, comparison,
+equality, `is` and `??`). `check/branch.rs` checks `if` and `if let` and the join of
+their branch types. `check/call.rs` checks calls, method calls and constructors. `check/member.rs`
+checks fields and methods found through `.` and `?.`,
 including the methods of `extend` blocks.
 `check/alias.rs` resolves each type alias before any signature, each after the
 aliases that its body names, so a chain of any length needs no recursion; an

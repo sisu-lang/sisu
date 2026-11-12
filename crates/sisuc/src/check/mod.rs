@@ -414,6 +414,8 @@ struct Binding {
     also: Vec<Span>,
     /// The type of the annotation as written, when it names an alias.
     shown: Option<Rc<str>>,
+    /// For a `let mut` that copies a place: what W0016 needs of its uses.
+    copy: Option<unused_names::Copied>,
 }
 
 /// Which part of a loop the code being checked is in.

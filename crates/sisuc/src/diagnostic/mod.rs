@@ -19,7 +19,7 @@ pub(crate) use registry::{
     PowerFix, PrecisionHelp, PrintProblem, RETIRED, RangeForm, RangePlace, RangePush, RangeTarget,
     RangeWrite, ReceiverArgument, SliceOf, SpecForm, SpecLimit, Spelled, TypedLiteral, Unbuilt,
     Ungenerated, UnknownForm, Unwrap, UnwrapHelp, UsedBy, VariantLabels, WideKind, Written,
-    invisible,
+    copy_help, invisible,
 };
 pub(crate) use suggest::{Suggestion, alias, closest, suggestion};
 

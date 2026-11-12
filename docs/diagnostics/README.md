@@ -199,6 +199,7 @@ reports the code, and `site/programs/explanations/<code>.json`. After you edit a
 | [W0013](W0013.md) | warning | field that no live code reads, or variant that no live code builds |
 | [W0014](W0014.md) | warning | local or parameter that nothing reads |
 | [W0015](W0015.md) | warning | optional that `print` or an interpolation may write as `None` |
+| [W0016](W0016.md) | warning | write to a copy that nothing reads |
 
 ## Explanations
 

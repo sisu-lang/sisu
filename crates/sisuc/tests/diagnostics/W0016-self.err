@@ -1,9 +1,9 @@
 warning[W0016]: this writes to a copy of `self.account`, and nothing reads the copy
- --> W0016-self.sisu:7:9
+ --> W0016-self.sisu:8:9
   |
-6 |         let mut a = self.account
+7 |         let mut a = self.account
   |                 - a copy
-7 |         a.balance = 2
+8 |         a.balance = 2
   |         ^^^^^^^^^ `self.account` does not change
   |
   = help: `self` cannot change in this method, so `self.account` cannot change here: delete the write, or return the changed copy

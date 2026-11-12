@@ -14,7 +14,7 @@ use super::extend::holder_of;
 use super::{Checker, Declared, Holder};
 use crate::conformance::{applies_written, has_written};
 use crate::diagnostic::{
-    Code, Definition, Diagnostic, DiagnosticKind, NeverReassignedForm, UsedBy,
+    Code, Definition, Diagnostic, DiagnosticKind, Immutable, NeverReassignedForm, UsedBy, copy_help,
 };
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -36,7 +36,7 @@ thread_local! {
 pub(crate) fn is_judged(d: &Diagnostic) -> bool {
     matches!(
         d.code(),
-        Code::UnusedItem | Code::UnusedMember | Code::UnusedVariable
+        Code::UnusedItem | Code::UnusedMember | Code::UnusedVariable | Code::WriteToCopy
     )
 }
 
@@ -78,10 +78,44 @@ pub(super) struct Use {
     at: Span,
 }
 
+/// A `let mut` whose initializer is a place that crosses no class object. It records what W0016
+/// needs: the first write to a part of the local, and whether any other use writes it. A read
+/// of the local is not recorded here: it keeps the binding out of the pass (`Pending`).
+pub(super) struct Copied {
+    /// The initializer as written, on one line.
+    pub(super) place: String,
+    /// The name at the root of the place: `self` for the plain `self` of a struct method.
+    pub(super) root: String,
+    /// Why the root cannot change; none for a root that can. A root keeps its kind between the
+    /// `let` and each write, so this is found once.
+    pub(super) cause: Option<Immutable>,
+    /// The first write to a part of the local that stays in structs and arrays.
+    pub(super) write: Option<Span>,
+    /// Whether a use is a write of another form: the whole local, a `mut` argument, or a path
+    /// that crosses a class object.
+    pub(super) other: bool,
+}
+
+impl Copied {
+    /// The W0016 of the local declared at `copy`. Each use of it must be a write to a part, and
+    /// its root must have a help to give.
+    fn warning(self, copy: Span) -> Option<DiagnosticKind> {
+        let at = self.write.filter(|_| !self.other)?;
+        let help = copy_help(self.cause.as_ref(), &self.root, &self.place)?;
+        Some(DiagnosticKind::WriteToCopy {
+            place: self.place,
+            at,
+            copy,
+            help,
+        })
+    }
+}
+
 /// A binding of the function `func` that nothing read, a parameter when `param`, named `name`
 /// and declared at `at`. `fix` holds each place that binds a `for` or pattern name, which `_`
 /// can replace, and is empty for any other. `remove` is what the fix of W0002 removes for a
 /// `let mut` that W0002 would warn about: it does when the pass does not judge the binding.
+/// `copy` is set for a `let mut` that copies a place.
 pub(super) struct Pending {
     pub(super) func: tir::FuncId,
     pub(super) param: bool,
@@ -89,14 +123,19 @@ pub(super) struct Pending {
     pub(super) at: Span,
     pub(super) fix: Vec<Span>,
     pub(super) remove: Option<Span>,
+    pub(super) copy: Option<Copied>,
 }
 
 impl Pending {
-    /// The W0014 of the binding when its function is judged; otherwise its W0002, if it is a
-    /// `let mut` that W0002 warns about.
+    /// The W0016 or the W0014 of the binding when its function is judged; otherwise its W0002, if
+    /// it is a `let mut` that W0002 warns about. A copy that only writes gets W0016, and not
+    /// W0014.
     fn judged(self, judged: bool) -> Option<Diagnostic> {
         let (name, at) = (self.name, self.at);
         if judged {
+            if let Some(kind) = self.copy.and_then(|copy| copy.warning(at)) {
+                return Some(kind.into());
+            }
             let (param, fix) = (self.param, self.fix);
             return Some(
                 DiagnosticKind::UnusedVariable {
@@ -496,7 +535,9 @@ impl Checker<'_> {
     /// `dbg` prints, so a field behind it gets no label. A type that holds no type parameter, such
     /// as `Gate<string>`, is skipped too when it has a written `Display`. This holds also when a
     /// bound of that `Display` fails. Then `dbg` prints its fields, but they get no label:
-    /// `extend<T: Mark> Gate<T>: Display` and `dbg(Gate(v: "one"))`.
+    /// `extend<T: Mark> Gate<T>: Display` and `dbg(Gate(v: "one"))`. The same stop queues each
+    /// type argument as a read root. So with `dbg(Gate(v: P(n: 1)))` the field `P.n` gets no
+    /// W0013. This miss is allowed, because a false W0013 is worse.
     /// To give the label, check the bounds, as `record_holds` in `conformance.rs` does, when a
     /// program needs it.
     ///
@@ -506,8 +547,9 @@ impl Checker<'_> {
     /// walk does not follow which type parameters a generic body shows.
     ///
     /// A `Display` or `Eq` root stops only at a type that a written conformance always covers
-    /// (`applies_written`): `extend B<i64>: Display` stops `B<i64>` and not `B<P>`. It still walks
-    /// the type arguments of that type, because the written body can show them.
+    /// (`applies_written`): `extend B<i64>: Display` stops `B<i64>` and not `B<P>`. Each type
+    /// argument of a type that it stops becomes a root of both modes, because the written body can
+    /// show them.
     fn shown_types(&self, live: &[bool]) -> Shown {
         let is_live = |owner: Option<Owner>| owner.is_some_and(|o| live[self.owner_index(o)]);
         let mut dbgs: Vec<(Span, Type)> = (self.dbg_shown.iter())

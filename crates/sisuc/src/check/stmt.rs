@@ -399,6 +399,8 @@ impl Checker<'_> {
                 } else {
                     BindingKind::Let
                 };
+                // The initializer names the root as it was before this `let`.
+                let copy = mutable.is_some().then(|| self.copy_of(init_expr)).flatten();
                 let local = self.declare(name, ty, kind, *mutable);
                 if let Some(binding) = self
                     .body
@@ -407,6 +409,7 @@ impl Checker<'_> {
                     .and_then(|s| s.get_mut(&name.name))
                 {
                     binding.shown = shown;
+                    binding.copy = copy;
                 }
                 if let (None, Some(uninferred)) = (ty, uninferred) {
                     self.body.uninferred.insert(local, uninferred);
@@ -1792,6 +1795,7 @@ impl Checker<'_> {
             hides_name: false,
             also: Vec::new(),
             shown: None,
+            copy: None,
         };
         if kind == BindingKind::Param
             && let Some(first) = scope.get_mut(&name.name)
@@ -1813,7 +1817,7 @@ impl Checker<'_> {
         }
         // Nothing can reassign the binding it replaces from here on.
         if let Some(old) = scope.insert(name.name, binding) {
-            self.retire(name.name, &old);
+            self.retire(name.name, old);
         }
         local
     }
@@ -1826,7 +1830,7 @@ impl Checker<'_> {
             .pop()
             .expect("a scope should be open while a block is checked");
         for (name, b) in scope {
-            self.retire(name, &b);
+            self.retire(name, b);
         }
     }
 
@@ -1834,7 +1838,7 @@ impl Checker<'_> {
     /// start with `_` and it is a function's or a method's, it waits for the pass (W0014). A
     /// parameter of a body with a `todo` does not wait. Otherwise a `let mut` that was never
     /// reassigned gets W0002, and so does a `mut` parameter, unless a requirement spells its `mut`.
-    fn retire(&mut self, name: Symbol, b: &Binding) {
+    fn retire(&mut self, name: Symbol, b: Binding) {
         let never = !b.reassigned && !b.loop_named;
         // The fix removes the `mut` and the white space up to the name, but not a comment.
         let remove = b.keyword.filter(|_| never).map(|k| {
@@ -1866,12 +1870,13 @@ impl Checker<'_> {
                 at: b.span,
                 fix,
                 remove,
+                copy: b.copy,
             });
             return;
         }
         let form = match remove {
             Some(remove) => Some(NeverReassignedForm::Let { remove }),
-            None if never => self.never_reassigned_param(b),
+            None if never => self.never_reassigned_param(&b),
             None => None,
         };
         if let Some(form) = form {
