@@ -1,0 +1,30 @@
+// GIVEN `struct P { x: i64 }` with a written `Eq` whose `eq` returns `true`
+// AND `struct Q { x: i64 }` with a written `Eq` whose `eq` returns `false`
+// WHEN `main` compares two values of `P` that differ, and an array of `Q` with itself
+// THEN the written `eq` answers each: the two `P` are equal, and the array is not equal to
+// itself
+struct P { x: i64 }
+
+extend P: Eq {
+    fn eq(self, _o: P) -> bool {
+        true
+    }
+}
+
+struct Q { x: i64 }
+
+extend Q: Eq {
+    fn eq(self, _o: Q) -> bool {
+        false
+    }
+}
+
+fn main() {
+    print(P(x: 1) == P(x: 2))        // true
+    print(P(x: 1) != P(x: 2))        // false
+    print([P(x: 1)] == [P(x: 2)])    // true
+    let qs = [Q(x: 1)]
+    print(qs == qs)                  // false
+    let o: Q? = Q(x: 1)
+    print(o == o)                    // false
+}

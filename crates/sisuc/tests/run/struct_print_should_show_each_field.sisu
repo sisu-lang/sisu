@@ -1,0 +1,26 @@
+// GIVEN `struct Rock {}`, `struct A { b: B }` with `struct B { n: i64 }`, `struct W { xs: [i64];
+// o: i64? }`, and `struct N { n: i64 }` with a written `Display`
+// WHEN `main` prints a value of each, and an interpolation and a struct field show `N`
+// THEN each prints its fields as it builds them, and `N` prints the written text each time
+struct Rock {}
+struct A { b: B }
+struct B { n: i64 }
+struct W { xs: [i64]; o: i64? }
+struct N { n: i64 }
+struct Holds { k: N }
+
+extend N: Display {
+    fn to_string(self) -> string {
+        "n is {self.n}"
+    }
+}
+
+fn main() {
+    print(Rock())                    // Rock()
+    print(A(b: B(n: 1)))             // A(b: B(n: 1))
+    print(W(xs: [1], o: None))       // W(xs: [1], o: None)
+    print(N(n: 1))                   // n is 1
+    let x = N(n: 2)
+    print("{x}")                     // n is 2
+    print(Holds(k: x))               // Holds(k: n is 2)
+}

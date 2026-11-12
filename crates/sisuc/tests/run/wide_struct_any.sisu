@@ -1,0 +1,113 @@
+// GIVEN `N`, a struct of 32 `i64` fields (256 bytes, one value), and `W`, a struct of 33 (264
+// bytes, in memory, ADR 0048)
+// AND a struct `C` that conforms to an interface `I`, whose methods return a `W` and an `N`,
+// and take a `W` and an `N`
+// WHEN `main` calls each method through an `any I`
+// THEN each call prints the first and last fields of the value it passes or returns
+struct N {
+    a0: i64
+    a1: i64
+    a2: i64
+    a3: i64
+    a4: i64
+    a5: i64
+    a6: i64
+    a7: i64
+    a8: i64
+    a9: i64
+    a10: i64
+    a11: i64
+    a12: i64
+    a13: i64
+    a14: i64
+    a15: i64
+    a16: i64
+    a17: i64
+    a18: i64
+    a19: i64
+    a20: i64
+    a21: i64
+    a22: i64
+    a23: i64
+    a24: i64
+    a25: i64
+    a26: i64
+    a27: i64
+    a28: i64
+    a29: i64
+    a30: i64
+    a31: i64
+}
+
+struct W {
+    a0: i64
+    a1: i64
+    a2: i64
+    a3: i64
+    a4: i64
+    a5: i64
+    a6: i64
+    a7: i64
+    a8: i64
+    a9: i64
+    a10: i64
+    a11: i64
+    a12: i64
+    a13: i64
+    a14: i64
+    a15: i64
+    a16: i64
+    a17: i64
+    a18: i64
+    a19: i64
+    a20: i64
+    a21: i64
+    a22: i64
+    a23: i64
+    a24: i64
+    a25: i64
+    a26: i64
+    a27: i64
+    a28: i64
+    a29: i64
+    a30: i64
+    a31: i64
+    a32: i64
+}
+
+interface I {
+    fn make_w(self, k: i64) -> W
+    fn make_n(self, k: i64) -> N
+    fn take_w(self, w: W) -> i64
+    fn take_n(self, n: N) -> i64
+}
+
+struct C { base: i64 }
+
+extend C: I {
+    fn make_w(self, k: i64) -> W {
+        W(a0: self.base + k + 0, a1: self.base + k + 1, a2: self.base + k + 2, a3: self.base + k + 3, a4: self.base + k + 4, a5: self.base + k + 5, a6: self.base + k + 6, a7: self.base + k + 7, a8: self.base + k + 8, a9: self.base + k + 9, a10: self.base + k + 10, a11: self.base + k + 11, a12: self.base + k + 12, a13: self.base + k + 13, a14: self.base + k + 14, a15: self.base + k + 15, a16: self.base + k + 16, a17: self.base + k + 17, a18: self.base + k + 18, a19: self.base + k + 19, a20: self.base + k + 20, a21: self.base + k + 21, a22: self.base + k + 22, a23: self.base + k + 23, a24: self.base + k + 24, a25: self.base + k + 25, a26: self.base + k + 26, a27: self.base + k + 27, a28: self.base + k + 28, a29: self.base + k + 29, a30: self.base + k + 30, a31: self.base + k + 31, a32: self.base + k + 32)
+    }
+    fn make_n(self, k: i64) -> N {
+        N(a0: self.base + k + 0, a1: self.base + k + 1, a2: self.base + k + 2, a3: self.base + k + 3, a4: self.base + k + 4, a5: self.base + k + 5, a6: self.base + k + 6, a7: self.base + k + 7, a8: self.base + k + 8, a9: self.base + k + 9, a10: self.base + k + 10, a11: self.base + k + 11, a12: self.base + k + 12, a13: self.base + k + 13, a14: self.base + k + 14, a15: self.base + k + 15, a16: self.base + k + 16, a17: self.base + k + 17, a18: self.base + k + 18, a19: self.base + k + 19, a20: self.base + k + 20, a21: self.base + k + 21, a22: self.base + k + 22, a23: self.base + k + 23, a24: self.base + k + 24, a25: self.base + k + 25, a26: self.base + k + 26, a27: self.base + k + 27, a28: self.base + k + 28, a29: self.base + k + 29, a30: self.base + k + 30, a31: self.base + k + 31)
+    }
+    fn take_w(self, w: W) -> i64 {
+        self.base + w.a0 * 1000 + w.a32
+    }
+    fn take_n(self, n: N) -> i64 {
+        self.base + n.a0 * 1000 + n.a31
+    }
+}
+
+fn main() {
+    let x: any I = C(base: 100)
+    let w = x.make_w(1)
+    print(w.a0)                      // 101
+    print(w.a32)                     // 133
+    let n = x.make_n(2)
+    print(n.a0)                      // 102
+    print(n.a31)                     // 133
+    print(x.take_w(w))               // 101233
+    print(x.take_n(n))               // 102233
+    print(w.a0 + n.a0)               // 203
+}

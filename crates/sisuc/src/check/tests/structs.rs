@@ -1226,7 +1226,7 @@ fn struct_equality_should_follow_its_field_types() {
 /// GIVEN a struct that holds itself, directly, through another struct or through an enum. WHEN
 /// the program is checked. THEN it is E0027 when no value of it can be built, at its first enum,
 /// or else at its first struct. These end the cycle, so each has no error: an optional, an array,
-/// an enum's variant that needs no `S`, and an enum's type argument.
+/// an enum's variant that needs no `S`, and the variant `N` of `W<S>`, which holds no `S`.
 #[test]
 fn struct_cycle_should_need_a_way_out() {
     let rows = [
@@ -1261,9 +1261,14 @@ fn struct_cycle_should_need_a_way_out() {
             vec![(NeverConstructed, (2, 6))],
         ),
         (
-            "an enum's type argument ends it",
+            "the variant `N` that holds no `S` ends it",
             "enum W<T> {\n    A(x: T)\n    N\n}\nstruct S { w: W<S> }\nfn main() {}".to_string(),
             vec![],
+        ),
+        (
+            "an enum's type argument with no way out",
+            "enum W<T> {\n    A(x: T)\n}\nstruct S { w: W<S> }\nfn main() {}".to_string(),
+            vec![(NeverConstructed, (4, 8))],
         ),
         (
             "a class and a struct",
@@ -1290,4 +1295,227 @@ fn struct_write_should_keep_its_w0014() {
         "struct A { a: i64 }\nstruct P { n: i64; xs: [A] }\nfn main() {\n    let mut t = P(n: 0, xs: [A(a: 0)])\n    t.xs[t.n].a = 1\n}",
         &[],
     );
+}
+
+/// GIVEN `struct V { n: i64 }`, `struct W { v: V }`, and a written `eq` of `V` that compares two
+/// values of `W`, whose generated `eq` calls the written `eq` of `V`. WHEN the program is checked.
+/// THEN it reports what the same program of enums reports: nothing.
+#[test]
+fn eq_through_a_generated_eq_should_be_a_cycle() {
+    let main = "fn main() {\n    print(V.A(n: 1) == V.A(n: 1))\n}";
+    let enums = format!(
+        "enum V {{\n    A(n: i64)\n}}\nenum W {{\n    B(v: V)\n}}\nextend V: Eq {{\n    fn eq(self, o: V) -> bool {{\n        W.B(v: self) == W.B(v: o)\n    }}\n}}\n{main}"
+    );
+    let structs = "struct V { n: i64 }\nstruct W { v: V }\nextend V: Eq {\n    fn eq(self, o: V) -> bool {\n        W(v: self) == W(v: o)\n    }\n}\nfn main() {\n    print(V(n: 1) == V(n: 1))\n}";
+    codes_row("the enums", &enums, &[]);
+    codes_row("the structs", structs, &[]);
+}
+
+/// GIVEN `struct Pair<T> { a: T; b: T }`. WHEN `main` compares two values of `Pair<i64>`, and two
+/// of `Pair<any I>`. THEN the first has `==`, and the second is E0159 at the left operand. The
+/// generated `Eq` of a struct asks each field type for it.
+#[test]
+fn conditional_struct_equality_should_follow_its_argument() {
+    let decls = "struct Pair<T> { a: T; b: T }\ninterface I {\n    fn n(self) -> i64\n}\nclass Z: I {\n    fn n(self) -> i64 { 1 }\n}\nfn z() -> any I {\n    Z()\n}\n";
+    codes_row(
+        "Pair<i64>",
+        &format!("{decls}fn main() {{\n    print(Pair(a: 1, b: 2) == Pair(a: 1, b: 2))\n}}"),
+        &[],
+    );
+    codes_row(
+        "Pair<any I>",
+        &format!(
+            "{decls}fn main() {{\n    let p: Pair<any I> = Pair(a: z(), b: z())\n    print(p == p)\n}}"
+        ),
+        &[(NoOperator, (12, 11))],
+    );
+}
+
+/// GIVEN `struct P { n: i64 }` with `extend P { fn m(mut self) {} }`. WHEN the program is
+/// checked. THEN it is E0018 at the `mut`, with a help and no fix, as the method of a struct's
+/// own body has: a class's form has a fix that removes the `mut`.
+#[test]
+fn mut_self_on_a_struct_should_be_e0018() {
+    let rows = [
+        (
+            "an extend of a struct",
+            "struct P { n: i64 }\nextend P {\n    fn m(mut self) {}\n}\nfn main() {}",
+        ),
+        (
+            "an extend of an alias of a struct",
+            "struct P { n: i64 }\ntype A = P\nextend A {\n    fn m(mut self) {}\n}\nfn main() {}",
+        ),
+    ];
+    for (row, src) in rows {
+        let d = only_error(row, src, MutSelf, (src.lines().count() - 2, 10));
+        assert!(d.fixes().is_empty(), "row `{row}`: {d:?}");
+        assert!(d.help().is_some(), "row `{row}`: {d:?}");
+    }
+}
+
+/// GIVEN a program that breaks the rule of a page that a struct now reaches. It has a class, or
+/// a struct in its place. WHEN each is checked. THEN the struct gives the class's code at the
+/// same place: one row for each page.
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one row for each page, so the table reads in one place"
+)]
+fn struct_bound_failure_should_report_each_code() {
+    use Code::{
+        Ambiguous, ConformanceBody, ConformsTwice, FieldComma, FieldLet, FieldNotMethod,
+        MethodNeedsSelf, MethodNotField, NotConform, SelfNotFirst, SelfOutsideMethod,
+    };
+    // Each row: its page, its program with `KW` for the keyword, its code, and where the class
+    // and the struct report it. The two differ when the report is on a line with the keyword.
+    type Row<'a> = (&'a str, &'a str, Code, (usize, usize), (usize, usize));
+    let table: [Row<'_>; 19] = [
+        (
+            "E0015",
+            "KW P { x: i64, y: i64 }\nfn main() {\n    print(P(x: 1, y: 2).x)\n}",
+            FieldComma,
+            (1, 17),
+            (1, 18),
+        ),
+        (
+            "E0016",
+            "KW P {\n    let x: i64\n}\nfn main() {\n    print(P(x: 1).x)\n}",
+            FieldLet,
+            (2, 5),
+            (2, 5),
+        ),
+        (
+            "E0017",
+            "KW P {\n    x: i64\n    fn m() {}\n}\nfn main() {\n    print(P(x: 1).x)\n}",
+            MethodNeedsSelf,
+            (3, 8),
+            (3, 8),
+        ),
+        (
+            "E0020",
+            "KW P {\n    x: i64\n    fn m(a: i64, self) {}\n}\nfn main() {\n    print(P(x: 1).x)\n}",
+            SelfNotFirst,
+            (3, 18),
+            (3, 18),
+        ),
+        (
+            "E0034",
+            "KW P { x: i64 }\nextend P {\n    fn x(self) {}\n}\nfn main() {\n    print(P(x: 1).x)\n}",
+            DefinedTwice,
+            (3, 8),
+            (3, 8),
+        ),
+        (
+            "E0041",
+            "KW P { x: i64 }\nextend P {\n    fn m(self) {}\n}\nfn show() {\n    print(self.x)\n}\nfn main() {\n    show()\n    P(x: 1).m()\n}",
+            SelfOutsideMethod,
+            (6, 11),
+            (6, 11),
+        ),
+        (
+            "E0057",
+            "KW P { x: i64 }\nextend P {\n    fn m(self) -> i64 { self.x }\n}\nfn main() {\n    print(P(x: 1).m)\n}",
+            MethodNotField,
+            (6, 19),
+            (6, 19),
+        ),
+        (
+            "E0058",
+            "KW P { x: i64 }\nfn main() {\n    print(P(x: 1).x())\n}",
+            FieldNotMethod,
+            (3, 19),
+            (3, 19),
+        ),
+        (
+            "E0070",
+            "KW P { x: i64 }\nextend P {\n    fn m(self) -> i64 { self.x }\n}\nfn main() {\n    print(m(P(x: 1)))\n}",
+            MethodAsFunction,
+            (6, 11),
+            (6, 11),
+        ),
+        (
+            "E0148, a conformance list",
+            "KW Q { x: i64 }\nKW P: Q { x: i64 }\nfn main() {\n    print(P(x: 1).x + Q(x: 1).x)\n}",
+            NotAnInterface,
+            (2, 10),
+            (2, 11),
+        ),
+        (
+            "E0148, a bound",
+            "KW Q { x: i64 }\nfn f<T: Q>(t: T) {}\nfn main() {\n    print(Q(x: 1).x)\n}",
+            NotAnInterface,
+            (2, 9),
+            (2, 9),
+        ),
+        (
+            "E0152, a conformance list",
+            "interface Shape {\n    fn area(self) -> f64\n}\nKW P: Shape { r: f64 }\nfn main() {\n    print(P(r: 1.0).r)\n}",
+            ConformanceBody,
+            (4, 10),
+            (4, 11),
+        ),
+        (
+            "E0152, an extend",
+            "interface Shape {\n    fn area(self) -> f64\n}\nKW P { r: f64 }\nextend P: Shape {}\nfn main() {\n    print(P(r: 1.0).r)\n}",
+            ConformanceBody,
+            (5, 11),
+            (5, 11),
+        ),
+        (
+            "E0153",
+            "KW P: Display { x: i64 }\nextend P: Display {\n    fn to_string(self) -> string { \"p\" }\n}\nfn main() {\n    print(P(x: 1))\n}",
+            ConformsTwice,
+            (2, 11),
+            (2, 11),
+        ),
+        (
+            "E0154, an inherited interface",
+            "interface Named {\n    fn name(self) -> string\n}\ninterface Shape: Named {\n    fn area(self) -> f64\n}\nKW P { r: f64 }\nextend P: Shape {\n    fn area(self) -> f64 { self.r }\n}\nfn main() {\n    print(P(r: 1.0).area())\n}",
+            NotConform,
+            (8, 11),
+            (8, 11),
+        ),
+        (
+            "E0154, a bound of the type",
+            "interface K {\n    fn k(self) -> i64\n}\nKW P<T: K> { t: T }\nfn main() {\n    let p = P(t: 1)\n    print(p.t)\n}",
+            NotConform,
+            (6, 18),
+            (6, 18),
+        ),
+        (
+            "E0155",
+            "KW P { x: i64 }\nextend<T> P {\n    fn m(self) {}\n}\nfn main() {\n    P(x: 1).m()\n}",
+            CannotExtend,
+            (2, 8),
+            (2, 8),
+        ),
+        (
+            "E0156",
+            "interface A {\n    fn name(self) -> string\n}\ninterface B {\n    fn name(self) -> string\n}\nKW P { x: i64 }\nextend P: A {\n    fn name(self) -> string { \"a\" }\n}\nextend P: B {\n    fn name(self) -> string { \"b\" }\n}\nfn main() {\n    let n = P(x: 1).name()\n    print(n)\n}",
+            Ambiguous,
+            (15, 21),
+            (15, 21),
+        ),
+        (
+            "E0159, a written `Eq` whose bound fails",
+            "class Q {}\nKW Pair<T> { a: T }\nextend<T: Ord> Pair<T>: Eq {\n    fn eq(self, o: Pair<T>) -> bool {\n        self.a < o.a\n    }\n}\nfn main() {\n    print(Pair(a: Q()) == Pair(a: Q()))\n}",
+            NoOperator,
+            (9, 11),
+            (9, 11),
+        ),
+    ];
+    let mut rows = Vec::new();
+    for (page, src, code, class_at, struct_at) in table {
+        for (kw, pos) in [("class", class_at), ("struct", struct_at)] {
+            rows.push((
+                format!("{page}, a {kw}"),
+                src.replace("KW", kw),
+                vec![(code, pos)],
+            ));
+        }
+    }
+    let rows: Vec<ErrorRow<'_>> = (rows.iter())
+        .map(|(name, src, wanted)| (name.as_str(), src.clone(), wanted.clone()))
+        .collect();
+    error_rows(&rows);
 }

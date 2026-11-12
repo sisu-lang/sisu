@@ -1,0 +1,71 @@
+// GIVEN `struct Pair<T> { a: T; b: T }`, an `extend<T> Pair<T>` with `first`, an interface `I`
+// that `Pair<i64>` conforms to, a function with the bound `T: I` and an `any I`
+// AND the generic structs that hold themselves: `Node<T>` through an optional, `S<T>` through
+// the enum `E<T>`, and `W<F>` inside the enum `F`, a link of one component that has no box
+// WHEN `main` builds, compares, prints and drops a value of each
+// THEN each prints its fields or its result, a copy equals its source, and two values that
+// differ in one field compare unequal
+struct Pair<T> { a: T; b: T }
+
+extend<T> Pair<T> {
+    fn first(self) -> T { self.a }
+}
+
+interface I {
+    fn n(self) -> i64
+}
+
+extend Pair<i64>: I {
+    fn n(self) -> i64 { self.a }
+}
+
+fn sum_n<T: I>(x: T) -> i64 {
+    x.n()
+}
+
+struct Node<T> { v: T; next: Node<T>? }
+
+struct S<T> { e: E<T> }
+
+enum E<T> {
+    A(s: S<T>)
+    B
+}
+
+struct W<T> { v: T; tag: i64 }
+
+enum F {
+    A(w: W<F>)
+    B
+}
+
+fn main() {
+    print(Pair(a: 1, b: 2))                     // Pair(a: 1, b: 2)
+    print(Pair(a: 1, b: 2).first())             // 1
+    print(sum_n(Pair(a: 1, b: 2)))              // 1
+    let a: any I = Pair(a: 1, b: 2)
+    print(a.n())                                // 1
+    print(Pair(a: "x", b: "y").first())         // x
+    print(Pair(a: 1, b: 2) == Pair(a: 1, b: 3)) // false
+
+    let l = Node(v: "a", next: Node(v: "b", next: None))
+    let m = l
+    print(l)                                    // Node(v: "a", next: Node(v: "b", next: None))
+    print(l == m)                               // true
+    print(l == Node(v: "a", next: Node(v: "c", next: None)))  // false
+
+    let s: S<i64> = S(e: E.A(s: S(e: E.B)))
+    let t: S<i64> = S(e: E.B)
+    print(s)                                    // S(e: A(s: S(e: B)))
+    print(s == s)                               // true
+    print(t == S(e: E.A(s: S(e: E.B))))         // false
+
+    let f1 = F.A(w: W(v: F.A(w: W(v: F.B, tag: 1)), tag: 2))
+    let f2 = F.A(w: W(v: F.A(w: W(v: F.B, tag: 3)), tag: 2))
+    print(f1)                                   // A(w: W(v: A(w: W(v: B, tag: 1)), tag: 2))
+    print(f2)                                   // A(w: W(v: A(w: W(v: B, tag: 3)), tag: 2))
+    print(f1 == f2)                             // false
+    print(f1 == f1)                             // true
+    let w = W(v: f1, tag: 4)
+    print(w)                                    // W(v: A(w: W(v: A(w: W(v: B, tag: 1)), tag: 2)), tag: 4)
+}

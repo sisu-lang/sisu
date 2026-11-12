@@ -1120,6 +1120,7 @@ fn chains_of_every_shape_should_print_and_compare_in_a_small_stack() {
 /// THEN it prints `done`, exits 0 and leaves no live object
 #[test]
 fn struct_chain_should_free_in_a_small_stack() {
+    assert_small_stack_prints_at_both("structchain", "done\n");
     assert_small_stack_checks_at_both("structchain", "done\n");
 }
 
@@ -1131,7 +1132,9 @@ fn struct_chain_should_free_in_a_small_stack() {
 fn mixed_cycle_should_compare_print_and_free_in_a_small_stack() {
     const LEVELS: usize = 100_000;
     let text = "S(e: A(s: ".repeat(LEVELS) + "S(e: B)" + &"))".repeat(LEVELS);
-    assert_small_stack_checks_at_both("mixedcycle", &format!("true\n{text}\ndone\n"));
+    let expected = format!("true\n{text}\ndone\n");
+    assert_small_stack_prints_at_both("mixedcycle", &expected);
+    assert_small_stack_checks_at_both("mixedcycle", &expected);
 }
 
 /// GIVEN the `structorder` program, with a loop over a struct field of a class and an element.

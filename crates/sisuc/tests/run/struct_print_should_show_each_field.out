@@ -1,0 +1,6 @@
+Rock()
+A(b: B(n: 1))
+W(xs: [1], o: None)
+n is 1
+n is 2
+Holds(k: n is 2)
