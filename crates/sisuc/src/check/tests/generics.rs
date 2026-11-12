@@ -7942,6 +7942,82 @@ fn waiting_argument_should_bind_the_payload_of_a_written_optional() {
     error_rows(&rows);
 }
 
+const DECLARED_HEAD: &str = concat!(
+    "fn first<T>(xs: [T]) -> T { xs[0] }\n",
+    "fn two<T>(a: T, b: T) -> T { b }\n",
+    "fn nones<X>(n: i64) -> [X?] { [None; n] }\n",
+    "fn mkl<X>() -> [X?] { [None] }\n",
+    "enum Bx<T> { B(v: T) }\n",
+    "fn mkb<X>() -> Bx<X?> { mkb() }\n",
+    "fn unb<T>(b: Bx<T>) -> T { match b { Bx.B(v) => v } }\n",
+    "fn mkr<X>() -> Result<X?, bool> { Ok(None) }\n",
+    "fn unr<T>(r: Result<T, bool>) -> T { unr(r) }\n",
+    "fn main() {\n",
+    "    let c = 1\n",
+    "    let o: u8? = None\n",
+    "    let w: u8? = Some(3)\n",
+);
+
+fn declared_program(stmt: &str) -> String {
+    program_in(DECLARED_HEAD, stmt, "}\n")
+}
+
+/// GIVEN a generic call whose argument is a call that waits for its type
+/// AND whose declared type holds an optional (`[X?]`, `Bx<X?>` or `Result<X?, bool>`)
+/// WHEN the call has an optional context: a written type, a hint of `??`, `==` or `if`, or a
+///   context through `Ok`, a block or a sibling
+/// THEN the call binds the whole optional, and the program has no error
+#[test]
+fn waiting_argument_should_bind_the_whole_optional_when_its_declared_type_holds_one() {
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "r1",
+            declared_program("let x: i64? = first(nones(3))"),
+            vec![],
+        ),
+        ("r2", declared_program("let x: i64? = first(mkl())"), vec![]),
+        ("r3", declared_program("let x: u8? = first(mkl())"), vec![]),
+        (
+            "r4",
+            declared_program("let y: u8? = o ?? first(mkl())"),
+            vec![],
+        ),
+        (
+            "r5",
+            declared_program("let b: bool = w == first(mkl())"),
+            vec![],
+        ),
+        (
+            "r6",
+            declared_program("let y: u8? = if c == 1 { o } else { first(mkl()) }"),
+            vec![],
+        ),
+        (
+            "r7",
+            declared_program("let r: Result<i64?, bool> = Ok(first(mkl()))"),
+            vec![],
+        ),
+        (
+            "r8",
+            declared_program("let x: i64? = { first(mkl()) }"),
+            vec![],
+        ),
+        (
+            "r9",
+            declared_program("let x: i64? = two(None, first(mkl()))"),
+            vec![],
+        ),
+        ("r10", declared_program("let x: i64? = unb(mkb())"), vec![]),
+        ("r11", declared_program("let x: i64? = unr(mkr())"), vec![]),
+        (
+            "r12",
+            declared_program("let x: i64? = first(if c == 1 { [] } else { mkl() })"),
+            vec![],
+        ),
+    ];
+    error_rows(&rows);
+}
+
 /// GIVEN a generic call that makes an error before and after the fix, with a waiting argument
 /// WHEN the argument holds an optional, or the written type has two layers, or no layer binds
 /// THEN the report is the one that the base gave
