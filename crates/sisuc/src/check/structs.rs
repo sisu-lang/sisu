@@ -30,6 +30,8 @@ pub(super) fn extended(items: &[&ast::Item]) -> FxHashSet<Symbol> {
     // The walk takes at most one step for each alias, so a cycle of aliases ends.
     let resolve = |mut name: Symbol| {
         for _ in 0..aliases.len() {
+            #[cfg(test)]
+            super::EXTENDED_STEPS.set(super::EXTENDED_STEPS.get() + 1);
             let Some(&target) = aliases.get(&name) else {
                 break;
             };

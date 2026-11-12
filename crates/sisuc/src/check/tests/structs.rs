@@ -1,10 +1,12 @@
 //! Structs in the checker: the declarations, construction, field reads, plain-`self` methods and
 //! the place rules. Until structs lower, a program with a struct and no other error is E0083.
 
+use std::fmt::Write as _;
+
 use super::*;
 use Code::{
     ArgumentCount, ArgumentNeedsLabel, AssignToExpression, AssignToImmutable, AssignToSelf,
-    BindingNotFound, CannotInfer, CannotMatch, ConstantType, DefinedTwice, Expected,
+    BindingNotFound, CannotExtend, CannotInfer, CannotMatch, ConstantType, DefinedTwice, Expected,
     FieldOutOfOrder, FunctionNotFound, MayBeNone, MethodAsFunction, Mismatch, MissingField,
     MutArgumentNotPlace, MutArgumentType, MutPlaceTwice, MutSelf, NeverReassigned, NoMember,
     NoOperator, NotAnInterface, ReservedWord, TooManyArguments, TypeAsValue, UnwrapNeedsOptional,
@@ -975,25 +977,33 @@ fn struct_self_push_should_report_as_the_class_form() {
 /// depth.
 #[test]
 fn struct_push_and_chain_path_should_check_each_step_once() {
-    let rows: [(&str, &str, &str); 3] = [
+    let rows: [(&str, &str, &str, &str); 4] = [
         (
             "a class's own push",
             "let t = T(xs: [], os: [], c: C())\n    t",
+            ".xs[0]",
             ".c.push(1)",
         ),
-        ("a `?.` write", "let mut o: T? = None\n    o?", ".n = 1"),
+        (
+            "a `?.` write",
+            "let mut o: T? = None\n    o?",
+            ".xs[0]",
+            ".n = 1",
+        ),
         (
             "a `?.` at each step",
             "let mut o: T? = None\n    o?",
+            ".os[0]?",
+            ".n = 1",
+        ),
+        (
+            "`.` steps after an optional element",
+            "let mut o: T? = None\n    o?.os[0]",
+            ".os[0]",
             ".n = 1",
         ),
     ];
-    for (row, root, end) in rows {
-        let step = if row == "a `?.` at each step" {
-            ".os[0]?"
-        } else {
-            ".xs[0]"
-        };
+    for (row, root, step, end) in rows {
         let steps = |depth: usize| {
             let path = step.repeat(depth);
             let src = format!(
@@ -1100,8 +1110,8 @@ fn replace_help_should_name_only_a_place_that_can_change() {
 
 /// GIVEN `struct In { n: i64; os: [In?]; xs: [i64] }`. WHEN a write indexes an optional array
 /// of optional structs after a `?.`. THEN it is one report: E0062 at the first `?.` with no help
-/// with `let mut i`, E0001 with `let i`. A `mut` argument is one E0062 at the indexed array,
-/// with no help that names an unwrap.
+/// with `let mut i`, E0001 with `let i`, at any depth of `.os[0]` steps after it. A `mut`
+/// argument is one E0062 at the indexed array, with no help that names an unwrap.
 #[test]
 fn optional_struct_element_under_a_write_should_report_once() {
     let program = |binding: &str, write: &str| {
@@ -1133,6 +1143,20 @@ fn optional_struct_element_under_a_write_should_report_once() {
             assert!(d.help().is_none(), "row `{write}`: {d:?}");
         }
     }
+    for depth in [3, 5, 10] {
+        let path = format!("i.os[0]?{}", ".os[0]".repeat(depth - 1));
+        for end in [".n = 1", ".n += 1", ".xs[0] = 1", "?.n = 1", ".xs.push(1)"] {
+            let write = format!("{path}{end}");
+            let d = only(&write, &program("let mut i", &write), MayBeNone, (7, 12));
+            assert!(d.help().is_none(), "row `{write}`: {d:?}");
+            only(&write, &program("let i", &write), AssignToImmutable, (7, 5));
+        }
+        let write = format!("add(mut {path}.n, 1)");
+        for binding in ["let mut i", "let i"] {
+            let d = only(&write, &program(binding, &write), MayBeNone, (7, 13));
+            assert!(d.help().is_none(), "row `{write}`: {d:?}");
+        }
+    }
     let d = only(
         "i.os[0]?.n",
         &program("let mut i", "i.os[0]?.n = 1"),
@@ -1140,4 +1164,47 @@ fn optional_struct_element_under_a_write_should_report_once() {
         (7, 12),
     );
     assert!(d.help().is_some(), "{d:?}");
+}
+
+/// GIVEN a struct `P` or a class `P`. WHEN an `extend` block names `P?`, by itself or through an
+/// alias. THEN it is E0155, as for any optional type.
+#[test]
+fn extend_of_an_optional_should_be_e0155() {
+    for kw in ["struct", "class"] {
+        let rows = [
+            (
+                "an alias of `P?`",
+                format!("{kw} P {{ x: i64 }}\ntype A = P?\nextend A {{}}\nfn main() {{}}"),
+                vec![(CannotExtend, (3, 8))],
+            ),
+            (
+                "`P?`",
+                format!("{kw} P {{ x: i64 }}\nextend P? {{}}\nfn main() {{}}"),
+                vec![(CannotExtend, (2, 8))],
+            ),
+        ];
+        error_rows(&rows);
+    }
+}
+
+/// GIVEN a struct `P` and a chain of n aliases `A0` to `A(n-1)` of it. AND n blocks `extend
+/// A(n-1) {}`. WHEN n is 20, 40 and 60. THEN the steps that follow the aliases grow in step
+/// with n.
+#[test]
+fn extend_through_aliases_should_follow_each_alias_once() {
+    let steps = |n: usize| {
+        let mut src = "struct P { x: i64 }\ntype A0 = P\n".to_string();
+        for i in 1..n {
+            writeln!(src, "type A{i} = A{}", i - 1).expect("a write to a string should not fail");
+        }
+        for _ in 0..n {
+            writeln!(src, "extend A{} {{}}", n - 1).expect("a write to a string should not fail");
+        }
+        src.push_str("fn main() {}");
+        EXTENDED_STEPS.set(0);
+        let (_, ds) = checked(&src);
+        assert!(ds.iter().any(|d| d.code() == ReservedWord), "{ds:?}");
+        EXTENDED_STEPS.get()
+    };
+    assert_near_linear(steps(20), steps(40), steps(60));
 }
