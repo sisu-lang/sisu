@@ -378,3 +378,12 @@ let _a = if let Some(_x) = $ { 1 } else { 2 }
 let _a = loop { break $ }
 let _a = loop { if c { break }; break $ }
 let _y: f64 = "b" + $
+# An argument of a generic call under a written context: the value of an array fill, a side of an
+# arithmetic operator, the operand of `-`, a later element, and the right side of `==`, which
+# hints the optional of the left side.
+let _r: Result<[u8], bool> = Ok([$; 2])
+let _r: Result<u8, bool> = Ok(1 + $)
+let _r: Result<u8, bool> = Ok($ + 1)
+let _r: Result<u8, bool> = Ok(-$)
+let _r: Result<[u8], bool> = Ok([1, $])
+let _x = k == id($)

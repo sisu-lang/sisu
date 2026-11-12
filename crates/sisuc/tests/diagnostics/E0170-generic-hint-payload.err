@@ -1,0 +1,21 @@
+warning[W0002]: `xs` is never reassigned, so its `mut` changes nothing for the caller
+ --> E0170-generic-hint-payload.sisu:1:17
+  |
+1 | fn first<T>(mut xs: [T]) -> T { xs[0] }
+  |                 ^^ never reassigned
+
+error[E0170]: the `mut` argument `ys` has type `[i64]`, but the parameter `xs` of `first` has type `[u8]`
+ --> E0170-generic-hint-payload.sisu:5:26
+  |
+5 |     print(b == first(mut ys))
+  |                          ^^ has type `[i64]`
+  |
+ ::: E0170-generic-hint-payload.sisu:1:17
+  |
+1 | fn first<T>(mut xs: [T]) -> T { xs[0] }
+  |                 -- declared `[T]` here
+  |
+  = help: a `mut` argument must have exactly the parameter's type: the callee stores a `[u8]` back into the place
+
+sisu: 1 error, 1 warning
+sisu: for more on a code, run `sisu explain <code>`: E0170, W0002

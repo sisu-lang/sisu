@@ -2246,7 +2246,7 @@ fn mut_argument_against_a_written_context_should_keep_the_other_reports() {
             "safe: a safe call",
             "",
             "let bo: Bx? = Some(b)\n    let n: i64? = bo?.get(mut names)",
-            &[(E32, "bo?.get(mut names)")],
+            &[(E170, "names")],
         ),
         (
             "nongen: a callee that is not generic",

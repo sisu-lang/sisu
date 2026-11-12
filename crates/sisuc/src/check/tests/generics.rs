@@ -6944,3 +6944,1028 @@ fn type_walks_should_visit_each_distinct_type_once() {
         assert_near_linear_for(&format!("{shape}: "), steps(4), steps(8), steps(12));
     }
 }
+
+// The tables below check how a generic call ranks its arguments under a written context. They
+// also check what its reports name (#509, #557, #428, #499, #538). Each program is a probe of the
+// issue, byte for byte, so that the positions are those of the issue.
+
+/// The program of a row: `head`, then `stmt` indented by four spaces, then `tail`.
+fn program_in(head: &str, stmt: &str, tail: &str) -> String {
+    format!("{head}    {stmt}\n{tail}")
+}
+
+const FILL_HEAD: &str = concat!(
+    "fn id<T>(x: T) -> T { x }\n",
+    "enum Bx<T> { B(v: T) }\n",
+    "fn main() {\n",
+    "    let v: u8 = 1\n",
+    "    let c = 1\n",
+    "    let k = 2\n",
+);
+
+const FILL_E_HEAD: &str = concat!(
+    "fn id<T>(x: T) -> T { x }\n",
+    "enum Bx<T> { B(v: T) }\n",
+    "enum E { P(v: u8) }\n",
+    "fn main() {\n",
+    "    let v: u8 = 1\n",
+    "    let c = 1\n",
+    "    let k = 2\n",
+);
+
+const FILL_MK_HEAD: &str = concat!(
+    "fn id<T>(x: T) -> T { x }\n",
+    "fn mk<T>() -> T { panic(\"x\") }\n",
+    "fn main() {\n",
+    "    let v: u8 = 1\n",
+    "    let c = 1\n",
+    "    let k = 2\n",
+);
+
+const BLAME_HEAD: &str = concat!(
+    "fn id<T>(x: T) -> T { x }\n",
+    "fn first<T>(xs: [T]) -> T { xs[0] }\n",
+    "fn main() {\n",
+    "    let v: u8 = 7\n",
+    "    let o: u8? = None\n",
+    "    let c = true\n",
+    "    let ys = [1]\n",
+);
+
+const BLAME_B_HEAD: &str = concat!(
+    "fn id<T>(x: T) -> T { x }\n",
+    "fn first<T>(xs: [T]) -> T { xs[0] }\n",
+    "fn main() {\n",
+    "    let v: u8 = 7\n",
+    "    let o: u8? = None\n",
+    "    let c = true\n",
+    "    let k = 1\n",
+    "    let q: i64 = 5\n",
+    "    let ys = [1]\n",
+);
+
+const REPORT_HEAD: &str = concat!(
+    "fn id<T>(x: T) -> T { x }\n",
+    "fn main() {\n",
+    "    let c = 1\n",
+    "    let q = 5\n",
+    "    let v: u8 = 7\n",
+    "    let o: i64? = None\n",
+);
+
+const WAIT_HEAD: &str = concat!(
+    "interface Show {\n",
+    "    fn show(self) -> string\n",
+    "}\n",
+    "enum G: Show {\n",
+    "    N(i64)\n",
+    "    fn show(self) -> string { \"g\" }\n",
+    "}\n",
+    "fn first<S: Show>(xs: [S]) -> S { xs[0] }\n",
+    "fn make<S: Show>() -> S { panic(\"x\") }\n",
+    "fn id<T>(x: T) -> T { x }\n",
+    "fn pick<S: Show>(a: S, b: S) -> S { a }\n",
+    "fn opt<S: Show>(xs: [S]) -> S? { None }\n",
+    "fn main() {\n",
+    "    let g = G.N(1)\n",
+    "    let k = 5\n",
+);
+
+/// The program of `428.sisu` up to the first line of `main`.
+const WAIT_REPRO_HEAD: &str = concat!(
+    "interface Show {\n",
+    "    fn show(self) -> string\n",
+    "}\n",
+    "enum G: Show {\n",
+    "    N(i64)\n",
+    "    fn show(self) -> string { \"g\" }\n",
+    "}\n",
+    "fn first<S: Show>(xs: [S]) -> S { xs[0] }\n",
+    "fn make<S: Show>() -> S { panic(\"x\") }\n",
+    "fn main() {\n",
+);
+
+const REPRO_509: &str = concat!(
+    "fn main() {\n",
+    "    let a: Result<[u8], bool> = Ok([5; 2])\n",
+    "    print(a)\n",
+    "}\n",
+);
+
+const REPRO_509_ID: &str = concat!(
+    "fn id<T>(x: T) -> T { x }\n",
+    "fn main() {\n",
+    "    let a: [u8] = id([5; 2])\n",
+    "    print(a)\n",
+    "}\n",
+);
+
+const REPRO_557: &str = concat!(
+    "fn main() {\n",
+    "    let r: Result<u8, i64> = Ok(1 + loop { break 2 })\n",
+    "    print(r)\n",
+    "}\n",
+);
+
+const REPRO_499: &str = concat!(
+    "fn first<T>(xs: [T]) -> T {\n",
+    "    xs[0]\n",
+    "}\n",
+    "fn main() {\n",
+    "    let b: u8 = 1\n",
+    "    let ys = [1]\n",
+    "    print(b == first(ys))\n",
+    "}\n",
+);
+
+const REPRO_499_IF: &str = concat!(
+    "fn first<T>(xs: [T]) -> T { xs[0] }\n",
+    "fn main() {\n",
+    "    let b: u8 = 1\n",
+    "    let c = true\n",
+    "    let ys = [1]\n",
+    "    print(if c { b } else { first(ys) })\n",
+    "}\n",
+);
+
+const REPRO_499_Q: &str = concat!(
+    "fn first<T>(xs: [T]) -> T { xs[0] }\n",
+    "fn main() {\n",
+    "    let o: u8? = None\n",
+    "    let ys = [1]\n",
+    "    print(o ?? first(ys))\n",
+    "}\n",
+);
+
+const REPRO_499_MUT: &str = concat!(
+    "fn first<T>(mut xs: [T]) -> T { xs[0] }\n",
+    "fn main() {\n",
+    "    let b: u8 = 1\n",
+    "    let mut ys = [1]\n",
+    "    print(b == first(mut ys))\n",
+    "}\n",
+);
+
+const REPRO_538_A: &str = concat!(
+    "fn id<T>(x: T) -> T { x }\n",
+    "fn main() {\n",
+    "    let v: u8 = 7\n",
+    "    let x = v == id(loop { break 1 })\n",
+    "    print(x)\n",
+    "}\n",
+);
+
+const REPRO_538_B: &str = concat!(
+    "fn main() {\n",
+    "    let c = 1\n",
+    "    let q = 5\n",
+    "    let v: u8 = 7\n",
+    "    let x = if c == 1 { q } else { loop { break v } }\n",
+    "    print(x)\n",
+    "}\n",
+);
+
+fn fill_program(stmt: &str) -> String {
+    program_in(FILL_HEAD, stmt, "    print(r)\n}\n")
+}
+
+fn fill_e_program(stmt: &str) -> String {
+    program_in(FILL_E_HEAD, stmt, "    print(r)\n}\n")
+}
+
+fn fill_mk_program(stmt: &str) -> String {
+    program_in(FILL_MK_HEAD, stmt, "    print(r)\n}\n")
+}
+
+fn blame_program(stmt: &str) -> String {
+    program_in(BLAME_HEAD, stmt, "    print(x)\n}\n")
+}
+
+fn blame_b_program(stmt: &str) -> String {
+    program_in(BLAME_B_HEAD, stmt, "    print(x)\n}\n")
+}
+
+fn report_program(stmt: &str) -> String {
+    program_in(REPORT_HEAD, stmt, "    print(x)\n}\n")
+}
+
+fn wait_program(stmt: &str) -> String {
+    program_in(WAIT_HEAD, stmt, "    print(x ?? g)\n}\n")
+}
+
+fn wait_c_program(stmt: &str) -> String {
+    program_in(
+        WAIT_HEAD,
+        &format!("let o: G? = None\n    {stmt}"),
+        "    print(x ?? g)\n}\n",
+    )
+}
+
+/// GIVEN a generic call with an argument that holds an array fill, an arithmetic operator, a `-`
+///   or a later element
+/// AND a written context that the argument fits
+/// WHEN the program is checked
+/// THEN the argument takes the written context and no error is reported
+#[test]
+#[expect(clippy::too_many_lines, reason = "a table of rows")]
+fn fill_or_sum_argument_should_take_the_written_context() {
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "n509_1",
+            fill_program("let r: Result<[u8], bool> = Ok([5; 2])"),
+            vec![],
+        ),
+        (
+            "n509_2",
+            fill_program("let r: Result<[u8], bool> = Ok([5; 0])"),
+            vec![],
+        ),
+        (
+            "n509_3",
+            fill_program("let r: Result<bool, [u8]> = Err([5; 2])"),
+            vec![],
+        ),
+        ("n509_4", fill_program("let r: [u8] = id([5; 2])"), vec![]),
+        (
+            "n509_5",
+            fill_program("let r: Bx<[u8]> = Bx.B(v: [5; 2])"),
+            vec![],
+        ),
+        (
+            "n509_7",
+            fill_program("let r: Result<[[u8]], bool> = Ok([[5; 2]])"),
+            vec![],
+        ),
+        (
+            "n509_8",
+            fill_program("let r: Result<[[u8]], bool> = Ok([[5; 2]; 3])"),
+            vec![],
+        ),
+        (
+            "n509_9",
+            fill_program("let r: Result<[[u8]], bool> = Ok([[5, 6]; 3])"),
+            vec![],
+        ),
+        (
+            "n509_10",
+            fill_program("let r: Result<[u8], bool> = Ok([1 + 2; 2])"),
+            vec![],
+        ),
+        (
+            "n509_11",
+            fill_program("let r: Result<[u8], bool> = Ok([id(5); 2])"),
+            vec![],
+        ),
+        (
+            "n509_14",
+            fill_program("let r: Result<[u8?], bool> = Ok([None; 2])"),
+            vec![],
+        ),
+        (
+            "n509_15",
+            fill_program("let r: Result<[u8?], bool> = Ok([5; 2])"),
+            vec![],
+        ),
+        (
+            "n509_19",
+            fill_program("let r: [u8] = if c == 1 { id([5; 2]) } else { [v] }"),
+            vec![],
+        ),
+        (
+            "n557_2",
+            fill_program("let r: Result<u8, i64> = Ok(1 + loop { break 2 })"),
+            vec![],
+        ),
+        (
+            "n557_3",
+            fill_program("let r: Result<u8, i64> = Ok(loop { break 2 } + 1)"),
+            vec![],
+        ),
+        (
+            "n557_5",
+            fill_program("let r: Result<u8, i64> = Ok(loop { break 2 } + v)"),
+            vec![],
+        ),
+        (
+            "n557_7",
+            fill_program("let r: Result<u8, i64> = Ok(1 + id(2))"),
+            vec![],
+        ),
+        (
+            "n557_8",
+            fill_program("let r: Result<u8, i64> = Ok(id(2) + 1)"),
+            vec![],
+        ),
+        (
+            "n557_11",
+            fill_program("let r: Result<u8, i64> = Ok({ 1 + loop { break 2 } })"),
+            vec![],
+        ),
+        (
+            "n557_12",
+            fill_program(
+                "let r: Result<u8, i64> = Ok(match c { 1 => 1 + loop { break 2 }; _ => 3 })",
+            ),
+            vec![],
+        ),
+        (
+            "n557_13",
+            fill_program("let r: Result<u8, i64> = Ok(id(1 + loop { break 2 }))"),
+            vec![],
+        ),
+        (
+            "n557_14",
+            fill_program("let r: Result<u8, i64> = Ok(1 + 2 * loop { break 2 })"),
+            vec![],
+        ),
+        (
+            "n557_15",
+            fill_program("let r: Result<u8, i64> = Ok(loop { break 2 } * 2 + 1)"),
+            vec![],
+        ),
+        (
+            "n557_17",
+            fill_program("let r: Result<[u8], i64> = Ok([v, loop { break 2 }])"),
+            vec![],
+        ),
+        (
+            "n557_23",
+            fill_program("let r: Result<[u8], i64> = Ok([loop { break 2 }; 3])"),
+            vec![],
+        ),
+        (
+            "n557_24",
+            fill_program("let r: Result<[u8], i64> = Ok([1 + loop { break 2 }])"),
+            vec![],
+        ),
+        (
+            "n557_25",
+            fill_program("let r: Result<[[u8]], i64> = Ok([[v], [loop { break 2 }]])"),
+            vec![],
+        ),
+        (
+            "n557_27",
+            fill_program(
+                "let r: Result<u8, i64> = Ok(if c == 9 { 1 + loop { break 2 } } else { 3 })",
+            ),
+            vec![],
+        ),
+        (
+            "n557_28",
+            fill_program("let r: Bx<u8> = Bx.B(v: 1 + loop { break 2 })"),
+            vec![],
+        ),
+        (
+            "n557_29",
+            fill_program("let r: u8 = id(1 + loop { break 2 })"),
+            vec![],
+        ),
+        (
+            "n557_32",
+            fill_program("let r: Result<u8, i64> = Ok(1 + (loop { break 2 }))"),
+            vec![],
+        ),
+        (
+            "a1",
+            fill_e_program("let r: Result<u8, i64> = Ok(5 - loop { break 2 })"),
+            vec![],
+        ),
+        (
+            "a2",
+            fill_e_program("let r: Result<u8, i64> = Ok(5 * loop { break 2 })"),
+            vec![],
+        ),
+        (
+            "a3",
+            fill_e_program("let r: Result<u8, i64> = Ok(5 / loop { break 2 })"),
+            vec![],
+        ),
+        (
+            "a4",
+            fill_e_program("let r: Result<u8, i64> = Ok(5 % loop { break 2 })"),
+            vec![],
+        ),
+        (
+            "a5",
+            fill_e_program("let r: Result<u8, i64> = Ok(5 - id(2))"),
+            vec![],
+        ),
+        (
+            "a11",
+            fill_e_program("let r: E = E.P(v: id(1 + loop { break 2 }))"),
+            vec![],
+        ),
+        (
+            "a13",
+            fill_e_program("let r: Bx<[u8]> = Bx.B(v: [loop { break 2 }; 2])"),
+            vec![],
+        ),
+        (
+            "a16",
+            fill_e_program("let r: Result<u8, i64> = Ok(id(id(1 + loop { break 2 })))"),
+            vec![],
+        ),
+        (
+            "a17",
+            fill_e_program("let r: Result<[u8], i64> = Ok(id(id([5; 2])))"),
+            vec![],
+        ),
+        (
+            "a18",
+            fill_e_program("let r: Result<Result<u8, i64>, i64> = Ok(Ok(1 + loop { break 2 }))"),
+            vec![],
+        ),
+        (
+            "a19",
+            fill_e_program("let r: Result<Result<[u8], i64>, i64> = Ok(Ok([5; 2]))"),
+            vec![],
+        ),
+        (
+            "a28",
+            fill_e_program("let r: Result<[u8], i64> = Ok([v, 1 + loop { break 2 }])"),
+            vec![],
+        ),
+        (
+            "a31",
+            fill_e_program("let r: Result<[[u8]], i64> = Ok([[5; 2], [loop { break 2 }]])"),
+            vec![],
+        ),
+        (
+            "a33",
+            fill_e_program("let r: Result<u8?, i64> = Ok(1 + loop { break 2 })"),
+            vec![],
+        ),
+        (
+            "a34",
+            fill_e_program("let r: Result<[u8]?, i64> = Ok([5; 2])"),
+            vec![],
+        ),
+        (
+            "a35",
+            fill_e_program("let r: Result<u8, i64> = Ok(id(2) + id(3))"),
+            vec![],
+        ),
+        ("b24", blame_b_program("let x = v == first([1; 2])"), vec![]),
+        ("d12", fill_mk_program("let r: u8 = id(1 + mk())"), vec![]),
+        ("d13", fill_mk_program("let r: u8 = id(mk() + 1)"), vec![]),
+        (
+            "d14",
+            fill_mk_program("let r: Result<u8, i64> = Ok(mk() + mk())"),
+            vec![],
+        ),
+        (
+            "d15",
+            fill_mk_program("let r: Result<u8, i64> = Ok(mk() - mk() * 1)"),
+            vec![],
+        ),
+        (
+            "d16",
+            fill_mk_program("let r: Result<[u8], i64> = Ok([mk(); 2])"),
+            vec![],
+        ),
+        (
+            "d20",
+            fill_mk_program("let r: Result<u8, i64> = Ok(1 + loop { break 2 } + loop { break 3 })"),
+            vec![],
+        ),
+        ("509", REPRO_509.to_string(), vec![]),
+        ("509id", REPRO_509_ID.to_string(), vec![]),
+        ("557", REPRO_557.to_string(), vec![]),
+    ];
+    error_rows(&rows);
+}
+
+/// GIVEN a generic call with a `-` argument, or an argument with a later element that does not fit
+/// AND a written context that the value cannot take
+/// WHEN the program is checked
+/// THEN it gives the error that the same statement gives without the generic call
+#[test]
+fn negated_or_later_argument_should_give_the_error_of_its_twin() {
+    use Code::{IntegerDoesNotFit, Mismatch, NegatedU8};
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "n557_6",
+            fill_program("let r: Result<u8, i64> = Ok(-loop { break 2 })"),
+            vec![(NegatedU8, (7, 33))],
+        ),
+        (
+            "n557_20",
+            fill_program("let r: Result<[u8], i64> = Ok([k, loop { break 2 }])"),
+            vec![(Mismatch, (7, 36))],
+        ),
+        (
+            "a6",
+            fill_e_program("let r: Result<u8, i64> = Ok(-id(2))"),
+            vec![(NegatedU8, (8, 33))],
+        ),
+        (
+            "a7",
+            fill_e_program("let r: Result<i64, u8> = Err(-loop { break 2 })"),
+            vec![(NegatedU8, (8, 34))],
+        ),
+        (
+            "a10",
+            fill_e_program("let r: Result<u8, i64> = Ok(1 + -loop { break 2 })"),
+            vec![(NegatedU8, (8, 37))],
+        ),
+        (
+            "a20",
+            fill_e_program("let r: Result<u8, i64> = Ok(1 + loop { break 300 })"),
+            vec![(IntegerDoesNotFit, (8, 50))],
+        ),
+        (
+            "a21",
+            fill_e_program("let r: Result<[u8], bool> = Ok([300; 2])"),
+            vec![(IntegerDoesNotFit, (8, 37))],
+        ),
+        (
+            "a23",
+            fill_e_program("let r: Result<u8, i64> = Ok(1 + loop { break k })"),
+            vec![(Mismatch, (8, 50))],
+        ),
+        (
+            "d17",
+            fill_mk_program("let r: u8 = id(-mk())"),
+            vec![(NegatedU8, (7, 20))],
+        ),
+    ];
+    error_rows(&rows);
+}
+
+/// GIVEN the rows of the two tables above that report the same before and after the fix
+/// AND the rows of values that are `i64` or hold no loop
+/// WHEN the program is checked
+/// THEN the report is the one that the base gave
+#[test]
+fn fill_or_sum_argument_should_keep_its_report_before_and_after() {
+    use Code::{CoalesceNotOptional, Mismatch};
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "n509_6",
+            fill_program("let r: [u8]? = Some([5; 2])"),
+            vec![],
+        ),
+        (
+            "n509_12",
+            fill_program("let r: Result<[u8], bool> = Ok([v; 2])"),
+            vec![],
+        ),
+        (
+            "n509_13",
+            fill_program("let r: Result<[u8], bool> = Ok([k; 2])"),
+            vec![(Mismatch, (7, 36))],
+        ),
+        ("n509_16", fill_program("let r = id([5; 2])"), vec![]),
+        (
+            "n509_17",
+            fill_program("let r = if c == 1 { [5; 2] } else { [v; 2] }"),
+            vec![(Mismatch, (7, 42))],
+        ),
+        (
+            "n509_22",
+            fill_program("let r = [5; 2] == [v]"),
+            vec![(Mismatch, (7, 24))],
+        ),
+        (
+            "n557_1",
+            fill_program("let r: u8 = 1 + loop { break 2 }"),
+            vec![],
+        ),
+        (
+            "n557_4",
+            fill_program("let r: Result<u8, i64> = Ok(v + loop { break 2 })"),
+            vec![],
+        ),
+        (
+            "n557_9",
+            fill_program("let r: Result<u8, i64> = Ok(k + 1)"),
+            vec![(Mismatch, (7, 33))],
+        ),
+        (
+            "n557_10",
+            fill_program("let r: Result<u8, i64> = Ok({ loop { break 2 } })"),
+            vec![],
+        ),
+        (
+            "n557_16",
+            fill_program("let r: Result<u8, i64> = Ok(Bx.B(v: 1) == Bx.B(v: 1) ?? 3)"),
+            vec![(Mismatch, (7, 33)), (CoalesceNotOptional, (7, 47))],
+        ),
+        (
+            "n557_18",
+            fill_program("let r: Result<[u8], i64> = Ok([loop { break 2 }, v])"),
+            vec![],
+        ),
+        (
+            "n557_19",
+            fill_program("let r: Result<[u8], i64> = Ok([2, loop { break 2 }])"),
+            vec![],
+        ),
+        (
+            "n557_21",
+            fill_program("let r = [v, loop { break 2 }]"),
+            vec![(Mismatch, (7, 17))],
+        ),
+        (
+            "n557_26",
+            fill_program(
+                "let r: Result<u8, i64> = Ok(if c == 9 { v } else { 1 + loop { break 2 } })",
+            ),
+            vec![],
+        ),
+        (
+            "n557_30",
+            fill_program("let r: u8? = Some(1 + loop { break 2 })"),
+            vec![],
+        ),
+        (
+            "n557_31",
+            fill_program("let r: Result<u8, i64> = Ok((loop { break 2 }))"),
+            vec![],
+        ),
+        (
+            "a12",
+            fill_e_program("let r: E = E.P(v: 1 + loop { break 2 })"),
+            vec![],
+        ),
+        (
+            "a22",
+            fill_e_program("let r: Result<u8, i64> = Ok(k * loop { break 2 })"),
+            vec![(Mismatch, (8, 33))],
+        ),
+    ];
+    error_rows(&rows);
+}
+
+/// GIVEN one value for each cause of the ranking fix: an array fill, an arithmetic operator, a
+///   `-`, and a loop in a later element
+/// WHEN the argument is under a written context
+/// THEN each takes the context. Undo one cause to see its row red.
+#[test]
+fn each_ranking_cause_should_take_the_written_context() {
+    use Code::NegatedU8;
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "n509_1",
+            fill_program("let r: Result<[u8], bool> = Ok([5; 2])"),
+            vec![],
+        ),
+        (
+            "n557_2",
+            fill_program("let r: Result<u8, i64> = Ok(1 + loop { break 2 })"),
+            vec![],
+        ),
+        (
+            "n557_6",
+            fill_program("let r: Result<u8, i64> = Ok(-loop { break 2 })"),
+            vec![(NegatedU8, (7, 33))],
+        ),
+        (
+            "n557_17",
+            fill_program("let r: Result<[u8], i64> = Ok([v, loop { break 2 }])"),
+            vec![],
+        ),
+    ];
+    error_rows(&rows);
+}
+
+/// GIVEN a generic call with an argument that waits for its type, under a written optional
+/// WHEN the argument holds no optional
+/// THEN the call binds the payload of the optional, and no bound fails
+#[test]
+fn waiting_argument_should_bind_the_payload_of_a_written_optional() {
+    let rows: Vec<ErrorRow<'_>> = vec![
+        ("n428_1", wait_program("let x: G? = first([])"), vec![]),
+        ("n428_10", wait_program("let x: G?? = opt([])"), vec![]),
+        (
+            "n428_14",
+            wait_program("let x: (any Show)? = first([])"),
+            vec![],
+        ),
+        (
+            "c6",
+            wait_c_program("let x: G? = pick(make(), make())"),
+            vec![],
+        ),
+        ("c9", wait_c_program("let x: G? = id(first([]))"), vec![]),
+        ("c10", wait_c_program("let x: G? = first(id([]))"), vec![]),
+        ("c11", wait_c_program("let x: G? = first([make()])"), vec![]),
+        (
+            "c15",
+            wait_c_program("let x: G? = if k == 1 { first([]) } else { g }"),
+            vec![],
+        ),
+        (
+            "428 line 11",
+            program_in(
+                WAIT_REPRO_HEAD,
+                "let a: G? = first([])",
+                "    print(a)\n}\n",
+            ),
+            vec![],
+        ),
+    ];
+    error_rows(&rows);
+}
+
+/// GIVEN a generic call that makes an error before and after the fix, with a waiting argument
+/// WHEN the argument holds an optional, or the written type has two layers, or no layer binds
+/// THEN the report is the one that the base gave
+#[test]
+fn waiting_argument_should_keep_its_report_before_and_after() {
+    use Code::{Mismatch, NotConform};
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "n428_4",
+            wait_program("let x: G?? = first([])"),
+            vec![(NotConform, (16, 18))],
+        ),
+        (
+            "n428_2",
+            wait_program("let x: G?? = make()"),
+            vec![(NotConform, (16, 18))],
+        ),
+        (
+            "n428_5",
+            wait_program("let x: G? = first([None])"),
+            vec![(NotConform, (16, 17))],
+        ),
+        (
+            "n428_11",
+            wait_program("let x: i64?? = k"),
+            vec![(Mismatch, (16, 20)), (Mismatch, (17, 16))],
+        ),
+        (
+            "n428_12",
+            wait_program("let x: G?? = g"),
+            vec![(Mismatch, (16, 18))],
+        ),
+        (
+            "n428_13",
+            wait_program("let x: G?? = id(g)"),
+            vec![(Mismatch, (16, 21))],
+        ),
+        (
+            "c1",
+            wait_c_program("let x: G? = first([o])"),
+            vec![(NotConform, (17, 23))],
+        ),
+        (
+            "c2",
+            wait_c_program("let x: G? = first([Some(g)])"),
+            vec![(NotConform, (17, 23))],
+        ),
+        (
+            "c7",
+            wait_c_program("let x: G? = pick(make(), o)"),
+            vec![(NotConform, (17, 30))],
+        ),
+        (
+            "c12",
+            wait_c_program("let x: G?? = pick(make(), o)"),
+            vec![(NotConform, (17, 31))],
+        ),
+        (
+            "428 line 12",
+            program_in(
+                WAIT_REPRO_HEAD,
+                "let a = 1\n    let b: G?? = make()",
+                "    print(b)\n}\n",
+            ),
+            vec![(NotConform, (12, 18))],
+        ),
+    ];
+    error_rows(&rows);
+}
+
+/// GIVEN the hint of `==`, `if` or `??`, or a `mut` argument, that makes a generic call fail
+/// WHEN the program is checked
+/// THEN the code and the position are those of the base, and only the text changes
+#[test]
+#[expect(clippy::too_many_lines, reason = "a table of rows")]
+fn hint_blame_should_keep_its_code_and_position_before_and_after() {
+    use Code::{CoalesceNotOptional, Mismatch, MutArgumentType};
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "n499_1",
+            blame_program("let x = v == loop { break 1 }"),
+            vec![],
+        ),
+        (
+            "n499_2",
+            blame_program("let x = v == id(loop { break 1 })"),
+            vec![(Mismatch, (8, 21))],
+        ),
+        ("n499_3", blame_program("let x = v == id(1)"), vec![]),
+        (
+            "n499_4",
+            blame_program("let x: u8? = id(loop { break 1 })"),
+            vec![(Mismatch, (8, 21))],
+        ),
+        (
+            "n499_5",
+            blame_program("let x: u8 = id(loop { break 1 })"),
+            vec![],
+        ),
+        (
+            "n499_6",
+            blame_program("let x: u8? = first(ys)"),
+            vec![(Mismatch, (8, 24))],
+        ),
+        (
+            "n499_7",
+            blame_program("let x: u8 = first(ys)"),
+            vec![(Mismatch, (8, 23))],
+        ),
+        (
+            "n499_8",
+            blame_program("let x = v == first(ys)"),
+            vec![(Mismatch, (8, 24))],
+        ),
+        (
+            "n499_9",
+            blame_program("let x = first(ys) == v"),
+            vec![(Mismatch, (8, 26))],
+        ),
+        (
+            "n499_10",
+            blame_program("let x = if c { v } else { first(ys) }"),
+            vec![(Mismatch, (8, 37))],
+        ),
+        (
+            "n499_11",
+            blame_program("let x = if c { v } else { id(loop { break 1 }) }"),
+            vec![(Mismatch, (8, 34))],
+        ),
+        (
+            "n499_12",
+            blame_program("let x = o ?? first(ys)"),
+            vec![(Mismatch, (8, 24))],
+        ),
+        (
+            "n499_13",
+            blame_program("let x = o ?? id(loop { break 1 })"),
+            vec![(Mismatch, (8, 21))],
+        ),
+        (
+            "n499_14",
+            blame_program("let x = [v, first(ys)]"),
+            vec![(Mismatch, (8, 17))],
+        ),
+        (
+            "n499_15",
+            blame_program("let x = v + first(ys)"),
+            vec![(Mismatch, (8, 23))],
+        ),
+        (
+            "n499_16",
+            blame_program("let x = if c { v } else { first([None]) }"),
+            vec![],
+        ),
+        (
+            "n499_17",
+            blame_program("let x = if c { o } else { first(ys) }"),
+            vec![(Mismatch, (8, 37))],
+        ),
+        (
+            "b2",
+            blame_b_program("let x = v < first(ys)"),
+            vec![(Mismatch, (10, 23))],
+        ),
+        (
+            "b3",
+            blame_b_program("let x = v >= first(ys)"),
+            vec![(Mismatch, (10, 24))],
+        ),
+        (
+            "b7",
+            blame_b_program("let x = v < id(loop { break 1 })"),
+            vec![],
+        ),
+        (
+            "b17",
+            blame_b_program("let x: i64? = if c { q } else { v }"),
+            vec![(Mismatch, (10, 37))],
+        ),
+        (
+            "b18",
+            blame_b_program("let x = if c { q } else if c { v } else { q }"),
+            vec![(Mismatch, (10, 36))],
+        ),
+        ("b23", blame_b_program("let x = v == first([1, 2])"), vec![]),
+        (
+            "b26",
+            blame_b_program("let x = q == id(v) ?? q"),
+            vec![(CoalesceNotOptional, (10, 18))],
+        ),
+        ("499", REPRO_499.to_string(), vec![(Mismatch, (7, 22))]),
+        ("499if", REPRO_499_IF.to_string(), vec![(Mismatch, (6, 35))]),
+        ("499q", REPRO_499_Q.to_string(), vec![(Mismatch, (5, 22))]),
+        (
+            "499mut",
+            REPRO_499_MUT.to_string(),
+            vec![(MutArgumentType, (5, 26))],
+        ),
+    ];
+    error_rows(&rows);
+}
+
+/// GIVEN the hint of `==`, `if`, `match` or `??` on a value that does not fit it
+/// WHEN the program is checked
+/// THEN the code and the position are those of the base, and only the text changes
+#[test]
+fn hint_report_should_keep_its_code_and_position_before_and_after() {
+    use Code::{BlockAsStatement, Mismatch};
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "n538_1",
+            report_program("let x = if c == 1 { q } else { loop { break v } }"),
+            vec![(Mismatch, (7, 49))],
+        ),
+        (
+            "n538_2",
+            report_program("let x = if c == 1 { q } else { v }"),
+            vec![(Mismatch, (7, 36))],
+        ),
+        (
+            "n538_3",
+            report_program("let x = if c == 1 { q } else { { v } }"),
+            vec![(BlockAsStatement, (7, 36))],
+        ),
+        (
+            "n538_4",
+            report_program("let x = if c == 1 { q } else { if c == 2 { v } else { q } }"),
+            vec![(Mismatch, (7, 48))],
+        ),
+        (
+            "n538_5",
+            report_program("let x = match c { 1 => q; _ => loop { break v } }"),
+            vec![(Mismatch, (7, 49))],
+        ),
+        (
+            "n538_6",
+            report_program(
+                "let x = if c == 1 { q } else { loop { if c == 2 { break q }; break v } }",
+            ),
+            vec![(Mismatch, (7, 72))],
+        ),
+        (
+            "n538_7",
+            report_program("let x = q == loop { break v }"),
+            vec![(Mismatch, (7, 31))],
+        ),
+        (
+            "n538_8",
+            report_program("let x = o ?? loop { break v }"),
+            vec![(Mismatch, (7, 31))],
+        ),
+        (
+            "n538_9",
+            report_program("let x = [q, loop { break v }]"),
+            vec![(Mismatch, (7, 17))],
+        ),
+        (
+            "n538_10",
+            report_program("let x = loop { if c == 1 { break q }; break loop { break v } }"),
+            vec![(Mismatch, (7, 62))],
+        ),
+        (
+            "n538_11",
+            report_program("let x = if c == 1 { o } else { loop { break v } }"),
+            vec![(Mismatch, (7, 49))],
+        ),
+        (
+            "n538_12",
+            report_program("let x = if c == 1 { q } else { id(v) }"),
+            vec![(Mismatch, (7, 39))],
+        ),
+        (
+            "b10",
+            blame_b_program("let x = q < loop { break v }"),
+            vec![(Mismatch, (10, 30))],
+        ),
+        (
+            "b12",
+            blame_b_program("let x = q < id(v)"),
+            vec![(Mismatch, (10, 20))],
+        ),
+        (
+            "b13",
+            blame_b_program("let x: i64? = v"),
+            vec![(Mismatch, (10, 19))],
+        ),
+        (
+            "b14",
+            blame_b_program("let x: i64? = loop { break v }"),
+            vec![(Mismatch, (10, 32))],
+        ),
+        (
+            "b16",
+            blame_b_program("let x: i64?? = id(v)"),
+            vec![(Mismatch, (10, 23))],
+        ),
+        ("538a", REPRO_538_A.to_string(), vec![(Mismatch, (4, 21))]),
+        ("538b", REPRO_538_B.to_string(), vec![(Mismatch, (5, 49))]),
+    ];
+    error_rows(&rows);
+}

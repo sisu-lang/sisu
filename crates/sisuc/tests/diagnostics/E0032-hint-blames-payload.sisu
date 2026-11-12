@@ -1,0 +1,99 @@
+fn id<T>(x: T) -> T {
+    x
+}
+
+fn first<T>(xs: [T]) -> T {
+    xs[0]
+}
+
+fn equal_to_first() {
+    let b: u8 = 1
+    let ys = [1]
+    print(b == first(ys))
+}
+
+fn if_with_first() {
+    let b: u8 = 1
+    let c = true
+    let ys = [1]
+    print(if c { b } else { first(ys) })
+}
+
+fn coalesce_with_first() {
+    let o: u8? = None
+    let ys = [1]
+    print(o ?? first(ys))
+}
+
+fn written_optional_first() {
+    let ys = [1]
+    let x: u8? = first(ys)
+    print(x)
+}
+
+fn equal_to_loop() {
+    let v: u8 = 7
+    let x = v == id(loop { break 1 })
+    print(x)
+}
+
+fn written_optional_loop() {
+    let x: u8? = id(loop { break 1 })
+    print(x)
+}
+
+fn not_equal_to_first() {
+    let v: u8 = 7
+    let ys = [1]
+    let x = v != first(ys)
+    print(x)
+}
+
+fn match_arm_first() {
+    let v: u8 = 7
+    let k = 1
+    let ys = [1]
+    let x = match k { 0 => v; _ => first(ys) }
+    print(x)
+}
+
+fn not_equal_to_loop() {
+    let v: u8 = 7
+    let x = v != id(loop { break 1 })
+    print(x)
+}
+
+fn equal_to_nested_first() {
+    let v: u8 = 7
+    let ys = [1]
+    let x = v == first(first([ys]))
+    print(x)
+}
+
+fn equal_to_wrapped_first() {
+    let v: u8 = 7
+    let ys = [1]
+    let x = v == id(first(ys))
+    print(x)
+}
+
+fn coalesce_with_wrapped_loop() {
+    let o: u8? = None
+    let x = o ?? id(id(loop { break 1 }))
+    print(x)
+}
+
+fn equal_to_sum_loop() {
+    let v: u8 = 7
+    let x = v == id(1 + loop { break 1 })
+    print(x)
+}
+
+fn mut_marker_missing() {
+    let v: u8 = 7
+    let ys = [1]
+    let x = v == first(mut ys)
+    print(x)
+}
+
+fn main() {}

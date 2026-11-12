@@ -1,0 +1,21 @@
+error[E0154]: `G?` does not conform to `Show`
+  --> E0154-generic-waiting-payload.sisu:16:18
+   |
+16 |     let x: G?? = first([])
+   |                  ^^^^^^^^^
+   |
+  ::: E0154-generic-waiting-payload.sisu:8:13
+   |
+ 8 | fn first<S: Show>(xs: [S]) -> S { xs[0] }
+   |             ---- required by this bound
+
+warning[W0015]: this value can be `None`, and then this writes the word "None"
+  --> E0154-generic-waiting-payload.sisu:17:11
+   |
+17 |     print(x ?? g)
+   |           ^^^^^^
+   |
+   = help: use `if let`, give a default with `??`, or call `.to_string()` on the value to write "None" on purpose
+
+sisu: 1 error, 1 warning
+sisu: for more on a code, run `sisu explain <code>`: E0154, W0015
