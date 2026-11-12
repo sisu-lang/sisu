@@ -2413,29 +2413,39 @@ fn build_should_not_copy_the_runtime_debug_info() {
     support::defined_symbols(&exe);
 }
 
-/// GIVEN a `run` case that passes
-/// WHEN the harness runs it
-/// THEN the case directory holds the `-O2` executable on mimalloc, and it links mimalloc
+/// GIVEN a passing run case
+/// WHEN the output test runs it
+/// THEN its build directory holds O0 and O2-mimalloc and no `ASan` or System build
+/// AND both executables link mimalloc
 ///
-/// Without the build, the harness runs no `-O2` code on the allocator that users get. The harness
-/// also runs the executable and compares its output, but the program cannot see which build runs
-/// it, so only the executable's existence and allocator are checked, with no test-only seam in
-/// `run`.
+/// Without the `-O2` build on mimalloc, no test runs `-O2` code on the allocator that users get.
 #[test]
 #[cfg_attr(
     not(target_os = "linux"),
     ignore = "macOS symbol names have a leading `_`, so the check runs on Linux only"
 )]
-fn run_should_build_the_o2_executable_on_mimalloc() {
-    let dir = fixture(
-        "run_builds_o2_mimalloc",
-        &[("a.sisu", PRINTS_1), ("a.out", "1\n")],
-    );
+fn run_case_should_build_only_the_plain_and_o2_mimalloc_executables() {
+    let dir = fixture("run_case_builds_only_plain_and_o2_mimalloc", &PASSING_CASE);
     let source = dir.join("a.sisu");
     support::run(&source, false);
-    let exe = support::case_path(&source).join(support::MIMALLOC_O2.0);
-    assert!(exe.exists(), "{} should exist", exe.display());
-    support::require_mimalloc(&exe);
+    let builds = support::case_path(&source);
+    assert_eq!(file_names(&builds), ["O0", "O2-mimalloc"]);
+    for name in ["O0", "O2-mimalloc"] {
+        support::require_mimalloc(&builds.join(name));
+    }
+}
+
+/// The names of the entries of `dir`, sorted.
+fn file_names(dir: &Path) -> Vec<String> {
+    support::sorted_entries(dir)
+        .iter()
+        .map(|path| {
+            path.file_name()
+                .expect("an entry should have a name")
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect()
 }
 
 /// Writes `source` to `<CARGO_TARGET_TMPDIR>/<name>.sisu`, builds it with `--rc-checks`, at
@@ -3551,23 +3561,62 @@ const PASSING_CASE: [(&str, &str); 2] = [
     ("a.out", "1\n"),
 ];
 
-/// GIVEN a `run` case that leaks a cycle, with a wrong `.out` file
-/// WHEN the harness runs it in bless mode
-/// THEN it panics with the `LeakSanitizer` report of the `asan-O0` build, which names `sisu.leak`
-/// AND the `.out` file is unchanged
-///
-/// A run that passes natively but fails under `ASan` writes nothing.
+/// A program whose function calls itself and adds 1 to the result. `-O0` keeps each call, so its
+/// stack overflows. `-O2` makes the recursion an endless loop (probed), so it must not run first.
+const RECURSES: &str =
+    "fn dive(n: i64) -> i64 {\n    dive(n + 1) + 1\n}\n\nfn main() {\n    print(dive(0))\n}\n";
+
+/// GIVEN a run case whose function calls itself without end
+/// WHEN the output test runs it
+/// THEN it panics, names the `O0` executable and says that a signal stopped it
+#[test]
+fn run_case_should_fail_on_a_signal_and_name_the_executable() {
+    let dir = fixture(
+        "run_case_fails_on_a_signal",
+        &[("a.sisu", RECURSES), ("a.out", "")],
+    );
+    let message = panic_message(|| support::run(&dir.join("a.sisu"), false));
+    assert!(message.contains("/O0"), "{message}");
+    assert!(message.contains(": signal: "), "{message}");
+}
+
+/// GIVEN a run case whose .out file is wrong
+/// WHEN the memory test runs it (it has no bless mode)
+/// THEN it fails and names the asan-O0 executable
+/// AND the .out file is unchanged
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "names an ASan build, and ASan runs only on Linux"
+)]
+fn memory_case_should_fail_on_a_wrong_out_file_and_write_nothing() {
+    let dir = fixture(
+        "memory_case_fails_on_a_wrong_out",
+        &[("a.sisu", PASSING_CASE[0].1), ("a.out", "wrong\n")],
+    );
+    let message = panic_message(|| support::memory(&dir.join("a.sisu")));
+    assert!(message.contains("asan-O0"), "{message}");
+    assert_eq!(
+        fs::read_to_string(dir.join("a.out")).expect("reads a.out"),
+        "wrong\n"
+    );
+}
+
+/// GIVEN a run case that leaks a cycle, with a wrong .out file
+/// WHEN the memory test runs it
+/// THEN it fails with a `LeakSanitizer` report that names asan-O0 and sisu.leak
+/// AND the .out file is unchanged
 #[test]
 #[cfg_attr(
     not(target_os = "linux"),
     ignore = "reads ASan's output, and ASan runs only on Linux"
 )]
-fn bless_should_not_write_after_an_asan_failure() {
+fn memory_case_should_name_the_leaking_function_and_write_nothing() {
     let dir = fixture(
-        "bless_never_writes_after_an_asan_failure",
+        "memory_case_names_the_leaking_function",
         &[("a.sisu", LEAKS_A_CYCLE), ("a.out", "wrong\n")],
     );
-    let message = panic_message(|| support::run(&dir.join("a.sisu"), true));
+    let message = panic_message(|| support::memory(&dir.join("a.sisu")));
     assert!(message.contains("asan-O0"), "{message}");
     assert!(message.contains("LeakSanitizer"), "{message}");
     assert!(message.contains("sisu.leak"), "{message}");
@@ -3577,107 +3626,165 @@ fn bless_should_not_write_after_an_asan_failure() {
     );
 }
 
-/// GIVEN a `run` case that passes, and a program in place of Valgrind that logs its arguments and
-/// then runs the program it is given
-/// WHEN the harness runs the case with that program
-/// THEN the case passes
-/// AND the program started once
-/// AND that run was of the `O2` executable
-#[test]
-#[cfg_attr(
-    not(target_os = "linux"),
-    ignore = "reads Valgrind's output, and Valgrind runs only on Linux"
-)]
-fn run_case_should_run_valgrind_once_on_the_o2_build() {
-    let dir = fixture("run_case_runs_valgrind_once_on_o2", &PASSING_CASE);
-    let log = dir.join("log");
-    let stub = valgrind_stub(
-        &dir,
-        &format!("echo \"$*\" >> '{}'; shift 3; exec \"$@\"", log.display()),
-    );
-    support::run_with(&dir.join("a.sisu"), false, &stub);
-    let log = fs::read_to_string(log).expect("reads the log");
-    let lines: Vec<&str> = log.lines().collect();
-    assert_eq!(lines.len(), 1, "{log}");
-    assert!(lines[0].ends_with("/O2"), "{log}");
-}
-
-/// GIVEN a `run` case that passes, with a wrong `.out` file, and a program in place of Valgrind
-/// that exits 1
-/// WHEN the harness runs the case with that program in bless mode
-/// THEN it panics and names the `O2` executable, not `O2-mimalloc`
-/// AND the `.out` file is unchanged
+/// GIVEN a run case that recurses without end
+/// WHEN the memory test runs it
+/// THEN it fails with the `ASan` report of asan-O0, which holds stack-overflow
 ///
-/// A run that passes natively but fails under Valgrind writes nothing.
-#[test]
-#[cfg_attr(
-    not(target_os = "linux"),
-    ignore = "reads Valgrind's output, and Valgrind runs only on Linux"
-)]
-fn bless_should_not_write_after_a_valgrind_failure() {
-    let dir = fixture(
-        "bless_never_writes_after_a_valgrind_failure",
-        &[("a.sisu", PASSING_CASE[0].1), ("a.out", "wrong\n")],
-    );
-    let stub = valgrind_stub(&dir, "exit 1");
-    let message = panic_message(|| support::run_with(&dir.join("a.sisu"), true, &stub));
-    assert!(message.contains("/O2: "), "{message}");
-    assert_eq!(
-        fs::read_to_string(dir.join("a.out")).expect("reads a.out"),
-        "wrong\n"
-    );
-}
-
-/// GIVEN a `run` case whose function calls itself and adds 1 to the result
-/// WHEN the harness runs it
-/// THEN it panics with the `ASan` report of the `asan-O0` build, which holds `stack-overflow`
-///
-/// The `asan-O0` build must be the first program that the harness runs: `-O0` keeps each call, but
-/// `-O2` makes this recursion an endless loop (probed), so the test depends on the order of the
-/// runs. A plain run first would die by signal 11, with no report.
+/// A plain run first would die by signal 11, with no report.
 #[test]
 #[cfg_attr(
     not(target_os = "linux"),
     ignore = "reads ASan's output, and ASan runs only on Linux"
 )]
-fn run_case_should_show_the_asan_report_of_a_stack_overflow() {
+fn memory_case_should_show_the_asan_report_of_a_stack_overflow() {
     let dir = fixture(
-        "run_case_shows_the_asan_report_of_a_stack_overflow",
-        &[
-            (
-                "a.sisu",
-                "fn dive(n: i64) -> i64 {\n    dive(n + 1) + 1\n}\n\nfn main() {\n    print(dive(0))\n}\n",
-            ),
-            ("a.out", ""),
-        ],
+        "memory_case_shows_the_asan_report_of_a_stack_overflow",
+        &[("a.sisu", RECURSES), ("a.out", "")],
     );
-    let message = panic_message(|| support::run(&dir.join("a.sisu"), false));
+    let message = panic_message(|| support::memory(&dir.join("a.sisu")));
     assert!(message.contains("asan-O0"), "{message}");
     assert!(message.contains("stack-overflow"), "{message}");
 }
 
-/// GIVEN a `run` case that passes
-/// WHEN the harness runs it
-/// THEN its `O0` executable links mimalloc
-/// AND its `O2` executable does not
+/// GIVEN a passing run case and a stub in place of Valgrind
+/// WHEN the memory test runs it
+/// THEN the stub starts once, on the O2 executable of the memory build directory
+/// AND the O2 executable does not link mimalloc
+///
+/// The stub logs its arguments and then runs the program that it gets.
 #[test]
 #[cfg_attr(
     not(target_os = "linux"),
-    ignore = "reads the symbols of an executable, and the allocator choice is a Linux one"
+    ignore = "reads Valgrind's output, and Valgrind runs only on Linux"
 )]
-fn run_case_should_run_o0_on_mimalloc_and_o2_on_the_system_allocator() {
+fn memory_case_should_run_valgrind_once_on_the_system_o2_build() {
+    let dir = fixture("memory_case_runs_valgrind_once_on_o2", &PASSING_CASE);
+    let source = dir.join("a.sisu");
+    let log = dir.join("log");
+    let stub = valgrind_stub(
+        &dir,
+        &format!("echo \"$*\" >> '{}'; shift 3; exec \"$@\"", log.display()),
+    );
+    support::memory_with(&source, &stub);
+    let log = fs::read_to_string(log).expect("reads the log");
+    let lines: Vec<&str> = log.lines().collect();
+    let o2 = support::memory_path(&source).join("O2");
+    assert_eq!(lines.len(), 1, "{log}");
+    assert!(lines[0].ends_with(&*o2.to_string_lossy()), "{log}");
+    support::refuse_mimalloc(&o2);
+}
+
+/// GIVEN a passing run case, and a program in place of Valgrind that prints the right stdout and
+/// exits 1
+/// WHEN the memory test runs the case with that program
+/// THEN it panics and names the `O2` executable
+///
+/// The stub prints the right stdout, so only the check of the exit code can fail.
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "reads Valgrind's output, and Valgrind runs only on Linux"
+)]
+fn memory_case_should_name_the_o2_build_after_a_valgrind_failure() {
     let dir = fixture(
-        "run_case_runs_o0_on_mimalloc_and_o2_on_system",
+        "memory_case_names_o2_after_a_valgrind_failure",
         &PASSING_CASE,
     );
+    let stub = valgrind_stub(&dir, "echo 1; exit 1");
+    let message = panic_message(|| support::memory_with(&dir.join("a.sisu"), &stub));
+    assert!(message.contains("/O2: "), "{message}");
+}
+
+/// GIVEN a run case that writes `1` to standard error, with an empty .out file and a right .err
+/// file
+/// WHEN the memory test runs it, and runs it again after the .err file changes to `2`
+/// THEN the first run passes
+/// AND the second run fails and names the asan-O0 executable
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "names an ASan build, and ASan runs only on Linux"
+)]
+fn memory_case_should_compare_stderr_with_the_err_file() {
+    let dir = fixture(
+        "memory_case_compares_stderr_with_the_err_file",
+        &[
+            ("a.sisu", "fn main() {\n    eprint(1)\n}\n"),
+            ("a.out", ""),
+            ("a.err", "1\n"),
+        ],
+    );
     let source = dir.join("a.sisu");
-    support::run(&source, false);
-    support::require_mimalloc(&support::case_path(&source).join("O0"));
-    support::refuse_mimalloc(&support::case_path(&source).join("O2"));
+    support::memory(&source);
+    fs::write(dir.join("a.err"), "2\n").expect("writes a.err");
+    let message = panic_message(|| support::memory(&source));
+    assert!(message.contains("asan-O0"), "{message}");
+}
+
+/// GIVEN a run case with a .in file and an args line, whose program prints its input and its
+/// argument
+/// WHEN the memory test runs it with the right .out file, and again with a wrong one
+/// THEN the first run passes
+/// AND the second run fails and shows the input and the argument on stdout
+#[test]
+fn memory_case_should_give_each_run_the_input_and_the_arguments() {
+    let dir = fixture(
+        "memory_case_gives_the_input_and_the_arguments",
+        &[
+            (
+                "a.sisu",
+                "// args: x\nfn main(args: [string]) {\n    while let line = read_line() {\n        \
+                 print(line)\n    }\n    for a in args {\n        print(a)\n    }\n}\n",
+            ),
+            ("a.in", "in\n"),
+            ("a.out", "in\nx\n"),
+        ],
+    );
+    let source = dir.join("a.sisu");
+    support::memory(&source);
+    fs::write(dir.join("a.out"), "wrong\n").expect("writes a.out");
+    let message = panic_message(|| support::memory(&source));
+    assert!(message.contains(r#""in\nx\n""#), "{message}");
+}
+
+/// GIVEN a run case that has no .out file
+/// WHEN the memory test runs it
+/// THEN it panics and names the .out file
+/// AND no .out file exists afterwards
+#[test]
+fn memory_case_should_fail_without_an_out_file() {
+    let dir = fixture("memory_case_fails_without_an_out", &[("a.sisu", PRINTS_1)]);
+    let message = panic_message(|| support::memory(&dir.join("a.sisu")));
+    assert!(message.contains("a.out is missing"), "{message}");
+    assert!(!dir.join("a.out").exists());
+}
+
+/// GIVEN one passing run case
+/// WHEN its output test and its memory test run at the same time
+/// THEN both pass
+/// AND each build directory holds its own executables
+///
+/// A shared directory would hold all six names, so the exact lists fail it whatever the timing.
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "the memory test builds ASan and Valgrind executables on Linux only"
+)]
+fn output_and_memory_tests_should_keep_their_builds_apart_when_run_at_once() {
+    let dir = fixture("output_and_memory_builds_apart", &PASSING_CASE);
+    let source = dir.join("a.sisu");
+    thread::scope(|scope| {
+        scope.spawn(|| support::run(&source, false));
+        scope.spawn(|| support::memory(&source));
+    });
+    let (output, memory) = (support::case_path(&source), support::memory_path(&source));
+    assert_ne!(output, memory);
+    assert_eq!(file_names(&output), ["O0", "O2-mimalloc"]);
+    assert_eq!(file_names(&memory), ["O2", "asan-O0", "asan-O2", "asan-rc"]);
 }
 
 /// GIVEN a `run` case that leaks a cycle, with the right `.out` file
-/// WHEN the harness runs it
+/// WHEN the memory test runs it
 /// THEN it panics with a `LeakSanitizer` report
 ///
 /// `asan_runs_should_replace_the_asan_options_of_the_environment` starts this test with
@@ -3691,7 +3798,7 @@ fn leak_case_should_fail_when_started_by_the_environment_test() {
         "leak_case_fails_when_started_by_the_environment_test",
         &[("a.sisu", LEAKS_A_CYCLE), ("a.out", "1\n")],
     );
-    let message = panic_message(|| support::run(&dir.join("a.sisu"), false));
+    let message = panic_message(|| support::memory(&dir.join("a.sisu")));
     assert!(message.contains("LeakSanitizer"), "{message}");
 }
 

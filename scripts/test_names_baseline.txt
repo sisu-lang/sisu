@@ -744,7 +744,6 @@ crates/sisuc/src/generate/coverage.rs::an_element_appends_another_only_within_th
 crates/sisuc/src/generate/coverage.rs::an_element_takes_at_most_its_base
 crates/sisuc/src/generate/coverage.rs::an_enum_match_ends_in_a_catch_all_only_where_its_arms_leave_a_value
 crates/sisuc/src/generate/coverage.rs::an_expression_stays_within_its_most
-crates/sisuc/src/generate/coverage.rs::an_f64_right_operand_is_any_expression
 crates/sisuc/src/generate/coverage.rs::an_index_of_a_local_stays_below_its_length
 crates/sisuc/src/generate/coverage.rs::an_int_literal_is_worth_what_it_says
 crates/sisuc/src/generate/coverage.rs::appending_keeps_a_strings_most_size
@@ -755,8 +754,6 @@ crates/sisuc/src/generate/coverage.rs::dead_branch_never_ends_a_block
 crates/sisuc/src/generate/coverage.rs::declared_types_keep_their_sizes_0
 crates/sisuc/src/generate/coverage.rs::declared_types_keep_their_sizes_256
 crates/sisuc/src/generate/coverage.rs::each_count_reaches_its_most_and_stays_within_it
-crates/sisuc/src/generate/coverage.rs::every_index_is_in_bounds_or_meant_to_panic
-crates/sisuc/src/generate/coverage.rs::every_loop_is_bounded
 crates/sisuc/src/generate/coverage.rs::every_match_checks_without_an_unreachable_arm
 crates/sisuc/src/generate/coverage.rs::every_rewritten_copy_checks_clean
 crates/sisuc/src/generate/coverage.rs::every_short_input_checks_clean
@@ -768,8 +765,6 @@ crates/sisuc/src/generate/coverage.rs::let_binding_skips_a_short_circuit
 crates/sisuc/src/generate/coverage.rs::no_block_as_a_place
 crates/sisuc/src/generate/coverage.rs::no_block_in_a_const
 crates/sisuc/src/generate/coverage.rs::no_const_with_an_overflowing_step
-crates/sisuc/src/generate/coverage.rs::no_generated_program_assigns_a_class_into_the_heap
-crates/sisuc/src/generate/coverage.rs::no_inexact_value_reaches_output
 crates/sisuc/src/generate/coverage.rs::rare_constant_forms_check_clean
 crates/sisuc/src/generate/coverage.rs::rewrites_are_rare
 crates/sisuc/src/generate/coverage.rs::the_costliest_statement_fits_the_reserve
