@@ -1280,8 +1280,9 @@ impl Checker<'_> {
         let name = match holder {
             Holder::Class(id) => &self.classes[id.0].name,
             Holder::Enum(id) => &self.enums[id.0].name,
-            Holder::Array | Holder::I64 | Holder::Struct(_) => {
-                unreachable!("a conforms query keys a class or an enum")
+            Holder::Struct(id) => &self.structs[id.0].name,
+            Holder::Array | Holder::I64 => {
+                unreachable!("a conforms query keys a class, a struct or an enum")
             }
         };
         let (holder, at) = (name.name.to_string(), name.span);
@@ -1368,18 +1369,20 @@ impl Checker<'_> {
             }
             TypeKind::Assoc(..) => self.assoc_conforms(ty, interface, args),
             TypeKind::Any(..) => self.any_conforms(ty, interface, args),
-            TypeKind::Class(..) | TypeKind::Enum(..) => self.conforms_holder(ty, interface, args),
+            TypeKind::Class(..) | TypeKind::Enum(..) | TypeKind::Struct(..) => {
+                self.conforms_holder(ty, interface, args)
+            }
             _ => match generated(self.lang, ty, interface) {
                 Generated::Holds => true,
                 Generated::Element(part) => self.conforms(part, interface, args),
-                Generated::Fails | Generated::Payloads(..) => false,
+                Generated::Fails | Generated::Payloads(..) | Generated::Fields(_) => false,
             },
         })
     }
 
-    /// `conforms` for the class or enum `ty`. It decides the key (`ty`, `interface`, `args`) as
-    /// `conformance::Open` says: a key whose query is open or pending holds, and any other key is
-    /// expanded once.
+    /// `conforms` for the class, struct or enum `ty`. It decides the key (`ty`, `interface`,
+    /// `args`) as `conformance::Open` says: a key whose query is open or pending holds, and any
+    /// other key is expanded once.
     fn conforms_holder(&mut self, ty: Type, interface: InterfaceId, args: TypeArgs) -> bool {
         let broken = holder_of(ty).is_some_and(|holder| {
             self.broken_extensions
@@ -1416,13 +1419,15 @@ impl Checker<'_> {
         // A growing class and a marked enum have their own report, so a query that is too deep at
         // one gets no second report. It is expanded as before. For a marked enum, its written
         // conformance checks the types of its parameters, and with none it holds with no part
-        // query. A class has no generated rule: only a written conformance reads its parts.
-        let holder = holder_of(ty).expect("a key of this walk should be a class or an enum");
+        // query. A class has no generated rule: only a written conformance reads its parts. A
+        // struct is never marked: a struct on a cycle of values has its own error.
+        let holder = holder_of(ty).expect("a key of this walk should be a class, struct or enum");
         let own = match holder {
             Holder::Class(id) => self.growing_classes[id.0],
             Holder::Enum(id) => self.marked[id.0],
-            Holder::Array | Holder::I64 | Holder::Struct(_) => {
-                unreachable!("a conforms query keys a class or an enum")
+            Holder::Struct(_) => false,
+            Holder::Array | Holder::I64 => {
+                unreachable!("a conforms query keys a class, a struct or an enum")
             }
         };
         let answer = if self.open.depth() > depth_limit() && !own {
@@ -1458,7 +1463,21 @@ impl Checker<'_> {
             Generated::Holds => true,
             Generated::Fails | Generated::Element(_) => false,
             Generated::Payloads(id, own) => self.payloads_conform(id, own, interface),
+            Generated::Fields(id) => self.fields_conform(id, interface),
         }
+    }
+
+    /// Whether each field type of the struct `id` conforms to `interface`. A field that is an
+    /// error has its report already, so it holds.
+    fn fields_conform(&mut self, id: StructId, interface: InterfaceId) -> bool {
+        let types: Vec<Type> = self.structs[id.0]
+            .fields
+            .iter()
+            .filter_map(|f| f.ty)
+            .collect();
+        types
+            .into_iter()
+            .all(|part| self.conforms(part, interface, TypeArgs::NONE))
     }
 
     /// Whether the conformance `k` of `interface` holds when its parameters stand for `stands`:
@@ -1781,6 +1800,24 @@ impl Checker<'_> {
         param
     }
 
+    /// The first field type of the struct `id` that fails `interface` on its own; `None` when each
+    /// holds. A struct has no type parameter, so no field fails for want of a bound.
+    fn fields_leaf(
+        &mut self,
+        id: StructId,
+        interface: InterfaceId,
+        walk: &mut LeafWalk,
+    ) -> Option<Type> {
+        let types: Vec<Type> = self.structs[id.0]
+            .fields
+            .iter()
+            .filter_map(|f| f.ty)
+            .collect();
+        types
+            .into_iter()
+            .find_map(|part| self.leaf(part, interface, TypeArgs::NONE, walk))
+    }
+
     /// The answers of `leaf` that `ty` uses: the body's for a type that names a type parameter,
     /// the checker's for any other.
     fn leaves_of(&mut self, ty: Type) -> &mut LeafAnswers {
@@ -1804,7 +1841,7 @@ impl Checker<'_> {
                 TypeKind::Param(..) | TypeKind::Assoc(..) => {
                     (!self.conforms(ty, interface, args)).then_some(ty)
                 }
-                TypeKind::Class(..) | TypeKind::Enum(..) => {
+                TypeKind::Class(..) | TypeKind::Enum(..) | TypeKind::Struct(..) => {
                     let broken = holder_of(ty).is_some_and(|holder| {
                         self.broken_extensions
                             .contains_key(&self.holder_name(holder))
@@ -1841,6 +1878,7 @@ impl Checker<'_> {
                                 Generated::Payloads(id, own) => {
                                     self.payloads_leaf(id, own, interface, walk)
                                 }
+                                Generated::Fields(id) => self.fields_leaf(id, interface, walk),
                             }
                         };
                     // A part that fails on its own is true for this type at once, whatever the
@@ -1859,7 +1897,7 @@ impl Checker<'_> {
                 }
                 _ => match generated(self.lang, ty, interface) {
                     Generated::Holds => None,
-                    Generated::Fails | Generated::Payloads(..) => Some(ty),
+                    Generated::Fails | Generated::Payloads(..) | Generated::Fields(_) => Some(ty),
                     Generated::Element(part) => self.leaf(part, interface, args, walk),
                 },
             }

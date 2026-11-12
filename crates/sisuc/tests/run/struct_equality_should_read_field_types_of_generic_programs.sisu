@@ -31,7 +31,7 @@ extend Tag: Eq {
 
 extend C<i64>: Eq {
     fn eq(self, other: C<i64>) -> bool {
-        true
+        self.v % 10 == other.v % 10
     }
 }
 
@@ -40,11 +40,15 @@ fn main() {
     let b = Bx(v: 2)
     print(b.v)                                         // 2
     print(g == Gn.V(t: 3))                             // true
+    let n: Gn<i64> = Gn.N
+    print(g == n)                                      // false
+    print(C(v: 3).v)                                   // 3
     print(S1(e: Ev.X(n: 1)) == S1(e: Ev.X(n: 1)))      // true
     print(S1(e: Ev.X(n: 1)) == S1(e: Ev.Y))            // false
     print(S2(e: E.A(7)) == S2(e: E.A(7)))              // true
     print(S2(e: E.A(7)) == S2(e: E.A(8)))              // false
     print(S3(t: Tag(id: 1)) == S3(t: Tag(id: 11)))     // true: the written `eq` of `Tag` runs
     print(S3(t: Tag(id: 1)) == S3(t: Tag(id: 2)))      // false
-    print(S4(c: C(v: 1)) == S4(c: C(v: 2)))            // true: the written `eq` of `C<i64>` runs
+    print(S4(c: C(v: 1)) == S4(c: C(v: 11)))           // true: the written `eq` of `C<i64>` runs
+    print(S4(c: C(v: 1)) == S4(c: C(v: 2)))            // false
 }

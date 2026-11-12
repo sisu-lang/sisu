@@ -855,14 +855,19 @@ impl<'ctx> Codegen<'ctx, '_> {
             .expect(POSITIONED)
     }
 
-    /// Whether every value of `ty` is `==` to itself: no `f64` is reachable from it, directly,
-    /// as an optional's payload, an array's element, or a field of a class or a payload field
-    /// of an enum it reaches, boxed or inline. `unreflexive` answers it for a class or an enum.
+    /// Whether every value of `ty` is `==` to itself. It is not when an `f64` is reachable from
+    /// it. The `f64` can be the type itself, an optional's payload or an array's element. It can
+    /// also be a field of a class, an enum or a struct that the type reaches, boxed or inline.
+    /// `unreflexive` answers it for a class, an enum or a struct.
     pub(super) fn reflexive(&self, ty: Type) -> bool {
+        let before = self.program.classes.len();
         match unwrapped(ty).kind() {
             TypeKind::F64 => false,
             TypeKind::Class(id, _) => !self.analyses.unreflexive[id.0],
-            TypeKind::Enum(id, _) => !self.analyses.unreflexive[self.program.classes.len() + id.0],
+            TypeKind::Enum(id, _) => !self.analyses.unreflexive[before + id.0],
+            TypeKind::Struct(id, _) => {
+                !self.analyses.unreflexive[before + self.program.enums.len() + id.0]
+            }
             _ => true,
         }
     }
@@ -878,7 +883,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             return self.call_eq(core, lhs, rhs);
         }
         let payload = match ty.kind() {
-            TypeKind::Enum(..) => {
+            TypeKind::Enum(..) | TypeKind::Struct(..) => {
                 return self.equal_at(ty, self.enum_slot(lhs), self.enum_slot(rhs));
             }
             TypeKind::Optional(payload) => payload,
@@ -890,7 +895,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.has_value(ty, rhs, "part"),
         );
         let flags = self.int_compare(IntPredicate::EQ, fa, fb);
-        if let TypeKind::Enum(..) | TypeKind::Optional(_) = payload.kind() {
+        if let TypeKind::Enum(..) | TypeKind::Struct(..) | TypeKind::Optional(_) = payload.kind() {
             // Equal flags decide, unless both are set: a `None`'s payload is never read.
             let function = self.current_function();
             let both = self.builder.build_and(fa, fb, "both").expect(POSITIONED);
@@ -926,15 +931,15 @@ impl<'ctx> Codegen<'ctx, '_> {
             .expect(POSITIONED)
     }
 
-    /// Whether the values of type `ty` at `a` and `b` are equal, as `equal` says. An enum goes
-    /// to its helper by address, with no copy; any other type is loaded.
+    /// Whether the values of type `ty` at `a` and `b` are equal, as `equal` says. An enum or a
+    /// struct goes to its helper by address, with no copy; any other type is loaded.
     pub(super) fn equal_at(
         &self,
         ty: Type,
         a: PointerValue<'ctx>,
         b: PointerValue<'ctx>,
     ) -> IntValue<'ctx> {
-        if let TypeKind::Enum(..) = ty.kind() {
+        if let TypeKind::Enum(..) | TypeKind::Struct(..) = ty.kind() {
             return self.call_eq(ty, a.into(), b.into());
         }
         self.equal(ty, self.load_value(ty, a), self.load_value(ty, b))
@@ -1199,14 +1204,14 @@ fn unwrapped(mut ty: Type) -> Type {
     ty
 }
 
-/// Which classes, then which enums, of `program` reach an `f64` or a written `eq` through their
-/// fields (see `Codegen::reflexive`): the types with a field of `f64` and the types that have a
-/// written `Eq` seed it, since a written `eq` need not be reflexive, and each class or enum with
-/// a field of a type already in it joins, by a worklist over the reversed field graph. Every
-/// field is read once.
+/// Which classes, then which enums, then which structs, of `program` reach an `f64` or a written
+/// `eq` through their fields (see `Codegen::reflexive`). The types with a field of `f64` seed it.
+/// So do the types that have a written `Eq`, since a written `eq` need not be reflexive. Each
+/// class, enum or struct with a field of a type already in it joins, by a worklist over the
+/// reversed field graph. Every field is read once.
 pub(super) fn reaching_unreflexive(program: &Program) -> Vec<bool> {
     let classes = program.classes.len();
-    let node_count = classes + program.enums.len();
+    let node_count = classes + program.enums.len() + program.structs.len();
     let mut reaches = vec![false; node_count];
     let mut holders: Vec<Vec<usize>> = vec![Vec::new(); node_count];
     let class_fields = program
@@ -1218,18 +1223,24 @@ pub(super) fn reaching_unreflexive(program: &Program) -> Vec<bool> {
         let fields = decl.variants.iter().flat_map(|variant| &variant.fields);
         fields.map(move |field| (classes + id, field.ty))
     });
-    for (node, ty) in class_fields.chain(enum_fields) {
+    let struct_fields = program.structs.iter().enumerate().flat_map(|(id, decl)| {
+        let node = classes + program.enums.len() + id;
+        decl.fields.iter().map(move |field| (node, field.ty))
+    });
+    for (node, ty) in class_fields.chain(enum_fields).chain(struct_fields) {
         #[cfg(test)]
         super::TYPE_READS.set(super::TYPE_READS.get() + 1);
         match unwrapped(ty).kind() {
             TypeKind::F64 => reaches[node] = true,
             TypeKind::Class(id, _) => holders[id.0].push(node),
             TypeKind::Enum(id, _) => holders[classes + id.0].push(node),
+            TypeKind::Struct(id, _) => holders[classes + program.enums.len() + id.0].push(node),
             _ => {}
         }
     }
     let written = |ty| find(&program.conformances, program.lang.eq, ty, TypeArgs::NONE).is_some();
-    let (class_seeds, enum_seeds) = reaches.split_at_mut(classes);
+    let (class_seeds, rest) = reaches.split_at_mut(classes);
+    let enum_seeds = &mut rest[..program.enums.len()];
     for (id, seed) in class_seeds.iter_mut().enumerate() {
         *seed |= written(Type::intern(TypeKind::Class(ClassId(id), TypeArgs::NONE)));
     }

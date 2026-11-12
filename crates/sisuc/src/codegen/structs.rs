@@ -1,7 +1,7 @@
 //! Structs at run time. A struct value is `%sisu.<Name> = { fields... }`, its fields inline in
 //! declaration order. It has no count and no identity: a copy copies the fields. This module
 //! owns building a value, the address of a field, and the bodies of the struct helpers, which
-//! `define_helpers` reaches through `define_struct_helper`.
+//! `define_helpers` reaches through `define_struct_helper`: `retain`, `release` and `eq`.
 
 use inkwell::values::{BasicValueEnum, FunctionValue, PointerValue};
 
@@ -45,6 +45,10 @@ impl<'ctx> Codegen<'ctx, '_> {
         id: StructId,
         function: FunctionValue<'ctx>,
     ) {
+        if kind == Helper::Eq {
+            self.define_struct_eq(id, function);
+            return;
+        }
         let (value, done) = self.enum_entry(function);
         let fields = &self.program.structs[id.0].fields;
         for (index, field) in fields.iter().enumerate() {
@@ -58,10 +62,38 @@ impl<'ctx> Codegen<'ctx, '_> {
             match kind {
                 Helper::Retain => self.retain_at(place, field.ty),
                 Helper::Release => self.release_at(place, field.ty),
-                // The checker reports E0159 for `==` on a struct until Task 4 generates it.
-                _ => unreachable!("`helper` should queue for a struct only `retain` or `release`"),
+                _ => unreachable!(
+                    "`helper` should queue for a struct only `retain`, `release` or `eq`"
+                ),
             }
         }
         self.branch_to(done);
+    }
+
+    /// `@sisu_rc.eq.<S>(a, b) -> i1`: whether each pair of fields of the values at `a` and `b` is
+    /// `==`, in declaration order, stopping at the first that is not. It neither retains nor
+    /// releases. A struct with no field is equal to itself.
+    fn define_struct_eq(&self, id: StructId, function: FunctionValue<'ctx>) {
+        let nth = |n| {
+            function
+                .get_nth_param(n)
+                .expect("the generated `eq` helper should be declared with two parameters")
+                .into_pointer_value()
+        };
+        let (a, b) = (nth(0), nth(1));
+        let entry = self.context.append_basic_block(function, "entry");
+        let (equal, unequal) = self.eq_returns(function);
+        self.builder.position_at_end(entry);
+        for (index, field) in self.program.structs[id.0].fields.iter().enumerate() {
+            let pair = self.equal_at(
+                field.ty,
+                self.struct_field_ptr(id, a, index),
+                self.struct_field_ptr(id, b, index),
+            );
+            let next = self.context.append_basic_block(function, "next");
+            self.branch_on(pair, next, unequal);
+            self.builder.position_at_end(next);
+        }
+        self.branch_to(equal);
     }
 }

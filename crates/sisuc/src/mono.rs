@@ -1304,6 +1304,7 @@ impl Mono {
         let src = Source {
             conformances: &self.conformances,
             enums: self.input_payloads.as_slice(),
+            structs: self.input_structs.as_slice(),
             lang: self.out.lang,
             interfaces: self.out.interfaces.as_slice(),
         };

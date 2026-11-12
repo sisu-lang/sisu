@@ -1180,11 +1180,11 @@ fn is_on_a_struct_should_be_e0046() {
 }
 
 /// GIVEN `struct S { f: <field> }`. WHEN `main` compares two values of `S`. THEN a field that has
-/// `==` gives no diagnostic, and an `any I` field is E0159 at the `==`. So is a field of a struct
-/// that holds one, also through an array or an optional.
+/// `==` gives no diagnostic. An `any I` field and a class with no `Eq` are E0159 at the `==`. So is
+/// a field of a struct that holds one, also through an array or an optional.
 #[test]
 fn struct_equality_should_follow_its_field_types() {
-    let decls = "enum E {\n    A\n    B\n}\nstruct In { n: i64 }\ninterface I {\n    fn n(self) -> i64\n}\n";
+    let decls = "enum E {\n    A\n    B\n}\nstruct In { n: i64 }\ninterface I {\n    fn n(self) -> i64\n}\nclass Q {}\n";
     let compare = |field: &str| {
         format!(
             "{decls}struct S {{ f: {field} }}\nfn same(a: S, b: S) -> bool {{\n    return a == b\n}}\nfn main() {{}}"
@@ -1205,20 +1205,21 @@ fn struct_equality_should_follow_its_field_types() {
     }
     let bad = [
         ("any I", "no `==`"),
+        ("Q", "a class with no `Eq`"),
         ("[any I]", "an array of values with no `==`"),
         ("(any I)?", "an optional of a value with no `==`"),
     ];
     for (field, row) in bad {
         let src = compare(field);
-        codes_row(row, &src, &[(NoOperator, (11, 12))]);
+        codes_row(row, &src, &[(NoOperator, (12, 12))]);
     }
     let nested = format!(
-        "{decls}struct W {{ a: any I }}\nstruct S {{ w: W }}\nfn main() {{\n    print(S(w: W(a: x())) == S(w: W(a: x())))\n}}\nfn x() -> any I {{\n    return Q()\n}}\nclass Q: I {{\n    fn n(self) -> i64 {{ 1 }}\n}}"
+        "{decls}struct W {{ a: any I }}\nstruct S {{ w: W }}\nfn main() {{\n    print(S(w: W(a: x())) == S(w: W(a: x())))\n}}\nfn x() -> any I {{\n    return Z()\n}}\nclass Z: I {{\n    fn n(self) -> i64 {{ 1 }}\n}}"
     );
     codes_row(
         "a struct inside a struct",
         &nested,
-        &[(NoOperator, (12, 11))],
+        &[(NoOperator, (13, 11))],
     );
 }
 

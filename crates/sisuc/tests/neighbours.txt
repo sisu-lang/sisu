@@ -35,6 +35,11 @@ class Fox: Pet {
     fn tail(self) -> i64 { 1 }
 }
 class Rock {}
+struct Stone {}
+struct Point {
+    x: i64
+    y: i64
+}
 class P {
     v: i64
 }
@@ -206,6 +211,8 @@ mq
 (p)
 ((p))
 Rock()
+Stone()
+Point(x: 1, y: 2)
 []
 [[]]
 [None]

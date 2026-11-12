@@ -1344,8 +1344,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// Whether payload field `field` of variant `variant` is `==` in the values of the enum `id`
-    /// at `a` and `b`, which are of that variant. An enum field is read by address, and a field
-    /// of any other type by value.
+    /// at `a` and `b`, which are of that variant. An enum or a struct field is read by address,
+    /// and a field of any other type by value.
     fn fields_equal(
         &self,
         (id, variant, field): (EnumId, usize, usize),
@@ -1353,7 +1353,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         b: PointerValue<'ctx>,
     ) -> IntValue<'ctx> {
         let ty = self.program.enums[id.0].variants[variant].fields[field].ty;
-        if let TypeKind::Enum(..) = ty.kind() {
+        if let TypeKind::Enum(..) | TypeKind::Struct(..) = ty.kind() {
             return self.equal_at(
                 ty,
                 self.payload_place(a, id, variant, field),

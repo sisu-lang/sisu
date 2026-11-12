@@ -173,16 +173,19 @@ pub(crate) enum Generated {
     /// An enum has `Eq` when each payload type of each variant, with the arguments in place of
     /// the enum's parameters, has.
     Payloads(EnumId, TypeArgs),
+    /// A struct has `Eq` when each field type has it.
+    Fields(StructId),
 }
 
 /// The generated rule (spec, "Generated conformances"): what the compiler writes for `ty` and the
 /// language interface `interface`, when no written conformance covers `ty`. `Display` holds for
 /// every type but `unit` and `never`, a type parameter and a class included, and asks nothing.
-/// `Eq` holds for scalars and `string`, for an array or an optional of a type that has `Eq`, and
-/// for an enum whose payload types have it; never for a class. `Ord` holds for numbers, `char`
-/// and `string`, never for `bool`, and nothing else has it. `AnyObject` holds for a class and for
-/// nothing else. An interface of the program has no generated rule. The caller asks the parts, so
-/// that the checker and `mono` each keep their own answers.
+/// `Eq` holds for scalars and `string`, and for an array or an optional of a type that has `Eq`.
+/// It holds for an enum whose payload types have it, and for a struct whose field types have it.
+/// It never holds for a class. `Ord` holds for numbers, `char` and `string`, never for `bool`, and
+/// nothing else has it. `AnyObject` holds for a class and for nothing else. An interface of the
+/// program has no generated rule. The caller asks the parts, so that the checker and `mono` each
+/// keep their own answers.
 pub(crate) fn generated(lang: LangInterfaces, ty: Type, interface: InterfaceId) -> Generated {
     let holds = |yes: bool| {
         if yes {
@@ -212,6 +215,7 @@ pub(crate) fn generated(lang: LangInterfaces, ty: Type, interface: InterfaceId) 
         _ if number || kind == TypeKind::Bool => Generated::Holds,
         TypeKind::Array(part) | TypeKind::Optional(part) => Generated::Element(part),
         TypeKind::Enum(id, args) => Generated::Payloads(id, args),
+        TypeKind::Struct(id, _) => Generated::Fields(id),
         _ => Generated::Fails,
     }
 }
@@ -484,10 +488,12 @@ impl Holds {
     }
 }
 
-/// What [`holds`] reads: the conformances of the program and the payload types of its enums.
-pub(crate) struct Source<'a, P: Payloads + ?Sized> {
+/// What [`holds`] reads: the conformances of the program, the payload types of its enums and the
+/// field types of its structs.
+pub(crate) struct Source<'a, P: Payloads + ?Sized, S: StructFields + ?Sized> {
     pub(crate) conformances: &'a Conformances,
     pub(crate) enums: &'a P,
+    pub(crate) structs: &'a S,
     pub(crate) lang: LangInterfaces,
     /// The interfaces of the program, for those that an `any` type inherits.
     pub(crate) interfaces: &'a [Interface],
@@ -512,9 +518,9 @@ pub(crate) struct Decide {
 ///
 /// `Display` is different (see [`display_holds`]): a bound on it always holds, and the choice of
 /// a written `to_string` is a root query of its own. Ask it only when no query is open.
-pub(crate) fn holds<P: Payloads + ?Sized>(
+pub(crate) fn holds<P: Payloads + ?Sized, S: StructFields + ?Sized>(
     cx: &mut Decide,
-    src: &Source<'_, P>,
+    src: &Source<'_, P, S>,
     ty: Type,
     interface: InterfaceId,
     args: TypeArgs,
@@ -523,7 +529,9 @@ pub(crate) fn holds<P: Payloads + ?Sized>(
         return display_holds(cx, src, ty, args);
     }
     ensure_stack(|| match ty.kind() {
-        TypeKind::Class(..) | TypeKind::Enum(..) => holder_holds(cx, src, ty, interface, args),
+        TypeKind::Class(..) | TypeKind::Enum(..) | TypeKind::Struct(..) => {
+            holder_holds(cx, src, ty, interface, args)
+        }
         // An `any` value has the interface that it is made from, and those that it inherits.
         TypeKind::Any(..) => {
             let closure = cx.any_closures.entry(ty).or_insert_with(|| {
@@ -546,7 +554,7 @@ pub(crate) fn holds<P: Payloads + ?Sized>(
                     Holds::No
                 }
             }
-            Generated::Fails | Generated::Payloads(..) => Holds::No,
+            Generated::Fails | Generated::Payloads(..) | Generated::Fields(_) => Holds::No,
         },
     })
 }
@@ -556,9 +564,9 @@ pub(crate) fn holds<P: Payloads + ?Sized>(
 /// failed bound is no failure of the query: the key is not on the stack of `cx.open`, and the
 /// bounds of the record are root queries that end before the choice does. A key on that stack
 /// would turn a pending answer of a query below it to `true` when its own fallback holds.
-fn display_holds<P: Payloads + ?Sized>(
+fn display_holds<P: Payloads + ?Sized, S: StructFields + ?Sized>(
     cx: &mut Decide,
-    src: &Source<'_, P>,
+    src: &Source<'_, P, S>,
     ty: Type,
     args: TypeArgs,
 ) -> Holds {
@@ -588,9 +596,9 @@ fn display_holds<P: Payloads + ?Sized>(
     answer
 }
 
-fn holder_holds<P: Payloads + ?Sized>(
+fn holder_holds<P: Payloads + ?Sized, S: StructFields + ?Sized>(
     cx: &mut Decide,
-    src: &Source<'_, P>,
+    src: &Source<'_, P, S>,
     ty: Type,
     interface: InterfaceId,
     args: TypeArgs,
@@ -624,9 +632,9 @@ fn holder_holds<P: Payloads + ?Sized>(
 }
 
 /// The answer for a key that `holder_holds` has opened.
-fn expanded<P: Payloads + ?Sized>(
+fn expanded<P: Payloads + ?Sized, S: StructFields + ?Sized>(
     cx: &mut Decide,
-    src: &Source<'_, P>,
+    src: &Source<'_, P, S>,
     ty: Type,
     interface: InterfaceId,
     args: TypeArgs,
@@ -641,6 +649,14 @@ fn expanded<P: Payloads + ?Sized>(
     match generated(src.lang, ty, interface) {
         Generated::Holds => Holds::Generated,
         Generated::Fails | Generated::Element(_) => Holds::No,
+        Generated::Fields(id) => {
+            let mut parts = Vec::new();
+            src.structs.each(id, &mut |field| parts.push(field));
+            let all = parts
+                .into_iter()
+                .all(|part| holds(cx, src, part, interface, TypeArgs::NONE).is_yes());
+            if all { Holds::Generated } else { Holds::No }
+        }
         Generated::Payloads(id, own) => {
             let mut parts = Vec::new();
             src.enums.each(id, &mut |payload| parts.push(payload));
@@ -660,9 +676,9 @@ fn expanded<P: Payloads + ?Sized>(
 /// Whether the conformance `k` of `interface` holds when its block's parameters stand for
 /// `stands`: each bound of each parameter holds for the type that stands for it. A bound whose
 /// arguments have no choice for an associated type is poison, and holds.
-fn record_holds<P: Payloads + ?Sized>(
+fn record_holds<P: Payloads + ?Sized, S: StructFields + ?Sized>(
     cx: &mut Decide,
-    src: &Source<'_, P>,
+    src: &Source<'_, P, S>,
     interface: InterfaceId,
     k: usize,
     stands: TypeArgs,
@@ -2392,7 +2408,7 @@ mod tests {
     /// The program `src` checks without an error, and `ask` gets what `holds` reads of it.
     fn deciding<R>(
         src: &str,
-        ask: impl FnOnce(&crate::tir::Program, &mut Decide, &Source<'_, [Enum]>) -> R,
+        ask: impl FnOnce(&crate::tir::Program, &mut Decide, &Source<'_, [Enum], [Struct]>) -> R,
     ) -> R {
         let (program, diagnostics) =
             crate::check::check_alone(&crate::parser::parse_ok(src), src, &[]);
@@ -2400,6 +2416,7 @@ mod tests {
         let source = Source {
             conformances: &program.conformances,
             enums: program.enums.as_slice(),
+            structs: program.structs.as_slice(),
             lang: program.lang,
             interfaces: program.interfaces.as_slice(),
         };
@@ -2694,6 +2711,7 @@ mod tests {
         let source = Source {
             conformances: &conformances,
             enums: payloads.as_slice(),
+            structs: NO_STRUCTS,
             lang,
             interfaces: &[],
         };
