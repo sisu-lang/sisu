@@ -482,8 +482,8 @@ impl Checker<'_> {
     ///
     /// `dbg` skips a type with any written `Display` of its head, as `Checker::dbg_show` does. A
     /// read mode skips a type only when a written conformance of the interface applies to that
-    /// instance. It still walks the type arguments of such a type, because the written body can
-    /// show them.
+    /// instance. At each such stop, `dbg` included, every type argument becomes a read root of
+    /// both modes. The written body can show or compare it with either interface.
     ///
     /// The walk follows the structure of each operand type. It reads the payloads of each enum and
     /// the fields of each struct once, as declared. It reads an argument of an enum or a struct
@@ -539,7 +539,9 @@ impl Checker<'_> {
         let inline = self.enums.len();
         let (dbg, display, eq) = (OnceCell::new(), OnceCell::new(), OnceCell::new());
         let (mut seen, mut declared) = (FxHashSet::default(), FxHashSet::default());
-        for (mode, call, root) in roots {
+        let mut next = 0;
+        while let Some(&(mode, call, root)) = roots.get(next) {
+            next += 1;
             let (interface, rules) = match mode {
                 Mode::Dbg => (
                     self.lang.display,
@@ -555,16 +557,18 @@ impl Checker<'_> {
                 ),
             };
             let mut walk = vec![root];
+            let mut later = Vec::new();
             while let Some(ty) = walk.pop() {
                 if !seen.insert((ty, mode)) {
                     continue;
                 }
                 if self.shown_stops(mode, interface, rules, ty) {
-                    // The written body may show the type arguments, so a read mode walks them.
-                    if mode != Mode::Dbg
-                        && let Some((_, args)) = inline_of(ty, inline)
-                    {
-                        walk.extend(args.get().iter().copied());
+                    // The written body may show or compare the type arguments, with either
+                    // interface, so each is a read root of both modes.
+                    if let Some((_, args)) = inline_of(ty, inline) {
+                        for &a in args.get() {
+                            later.extend([(Mode::Display, None, a), (Mode::Eq, None, a)]);
+                        }
                     }
                     continue;
                 }
@@ -603,6 +607,7 @@ impl Checker<'_> {
                     _ => {}
                 }
             }
+            roots.extend(later);
         }
         shown
     }

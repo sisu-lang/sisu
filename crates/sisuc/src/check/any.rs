@@ -430,6 +430,7 @@ impl Checker<'_> {
     /// accepted for the type of `e`.
     pub(super) fn make_any(&mut self, e: tir::Expr, want: Type) -> tir::Expr {
         self.instantiates = true;
+        // Every conversion records its root. Only a class reaches this one today.
         self.record_shown_any(e.ty, want);
         match want.kind() {
             TypeKind::Optional(payload) => wrap(to_any(e, payload), want),
