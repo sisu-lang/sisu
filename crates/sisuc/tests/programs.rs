@@ -3674,9 +3674,12 @@ fn memory_case_should_run_valgrind_once_on_the_system_o2_build() {
     support::refuse_mimalloc(&o2);
 }
 
-/// GIVEN a passing run case, and a program in place of Valgrind that exits 1
+/// GIVEN a passing run case, and a program in place of Valgrind that prints the right stdout and
+/// exits 1
 /// WHEN the memory test runs the case with that program
 /// THEN it panics and names the `O2` executable
+///
+/// The stub prints the right stdout, so only the check of the exit code can fail.
 #[test]
 #[cfg_attr(
     not(target_os = "linux"),
@@ -3687,7 +3690,7 @@ fn memory_case_should_name_the_o2_build_after_a_valgrind_failure() {
         "memory_case_names_o2_after_a_valgrind_failure",
         &PASSING_CASE,
     );
-    let stub = valgrind_stub(&dir, "exit 1");
+    let stub = valgrind_stub(&dir, "echo 1; exit 1");
     let message = panic_message(|| support::memory_with(&dir.join("a.sisu"), &stub));
     assert!(message.contains("/O2: "), "{message}");
 }

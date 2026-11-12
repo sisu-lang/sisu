@@ -307,7 +307,8 @@ pub(crate) fn run(path: &Path, bless: bool) {
 ///
 /// Every run reads `<name>.in` and gets the arguments of the `// args:` line, as in `run`. It
 /// builds into `memory_dir`, so it can run at the same time as `run` on the same case. It has no
-/// bless mode and writes no file.
+/// bless mode and writes no file. A bless rewrites `<name>.out` while a memory test of the same
+/// case can read it, so run the memory tests again after a bless.
 pub(crate) fn memory(path: &Path) {
     memory_with(path, Path::new("valgrind"));
 }
