@@ -1476,7 +1476,8 @@ impl Checker<'_> {
         let hint = match (frame.expected, frame.first) {
             // A failed value gives no type, so the next one waits for the next run.
             (Expectation::None, None) if frame.failed.is_some() => Expectation::Poisoned,
-            // In a failed join, its branches are checked out of source order (see `Body`).
+            // In a join in a poisoned context, its branches are checked out of source order (see
+            // `Body`).
             (Expectation::None, None) if waits => Expectation::Poisoned,
             (Expectation::None, Some((ty, at))) => Expectation::Hint {
                 want: ty,

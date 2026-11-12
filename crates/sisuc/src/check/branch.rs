@@ -200,9 +200,9 @@ impl Checker<'_> {
     /// type is `never`. A `never` join with a branch that only a failed `break` or `continue`
     /// makes `never` is `Err` with that mark (see `Poisoned::jumped`): one such branch is enough.
     ///
-    /// In a failed context (`Expectation::Poisoned`), the branches are in the same order. Only a
-    /// branch of literals expects the type of the first branch. Each other branch stays in the
-    /// failed context, so its mismatch waits for the next run.
+    /// In a poisoned context (`Expectation::Poisoned`), the branches are in the same rank order
+    /// as with no expected type. Only a branch of literals expects the type of the first branch.
+    /// Each other branch stays in the poisoned context, so its mismatch waits for the next run.
     #[expect(
         clippy::too_many_lines,
         reason = "one pass checks the branches and keeps the anchor, its origin and the givers"
@@ -227,8 +227,8 @@ impl Checker<'_> {
         let mut kept = 0;
         for k in 0..order.len() {
             let i = order[k];
-            // In a failed context, only a branch of literals takes the type of the anchor. Another
-            // branch that does not fit waits for the next run.
+            // In a poisoned context, only a branch of literals takes the type of the anchor.
+            // Another branch that does not fit waits for the next run.
             let carried = if expected == Expectation::None
                 || expected == Expectation::Poisoned && sources[i].literal
             {
@@ -565,10 +565,11 @@ impl Checker<'_> {
 pub(super) struct Branch<'a> {
     rank: Rank,
     optional: bool,
-    /// Whether the value is made of literals only (`8`, `[8]`), so that its type is the default
-    /// of those literals. Only `join` under `Poisoned` reads it. `value_branch` sets it from the
-    /// rank after `Ranked::sibling`, so `[8]` is `false` there; `hinted_elements` joins under
-    /// `None`, where the flag is not read.
+    /// Whether the type of the value comes only from the defaults of its integer literals
+    /// (`Rank::Literal`; see `rank_value` in `check/generic.rs`), as in `8`, `[8]` and `id(8)`.
+    /// Only `join` under `Poisoned` reads it. `value_branch` sets it from the rank after
+    /// `Ranked::sibling`, so `[8]` is `false` there; `hinted_elements` joins under `None`, where
+    /// the flag is not read.
     literal: bool,
     span: Span,
     tail: Option<&'a ast::Expr>,

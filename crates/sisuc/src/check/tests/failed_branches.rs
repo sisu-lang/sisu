@@ -1,4 +1,4 @@
-//! A value in a failed context: a branch of an `if` or a `match`, and a value of a `break`, adds
+//! A value in a poisoned context: a branch of an `if` or a `match`, and a value of a `break`, adds
 //! no error that follows only from the failed part. A true error stays.
 
 use super::*;
@@ -25,7 +25,7 @@ fn branch_rows(rows: &[(&'static str, &str, Vec<Wanted>)]) -> Vec<ErrorRow<'stat
 
 /// GIVEN a branch of an `if` or a `match` with a value of type `u8`, and another branch with a
 ///   literal
-/// AND the `if` or `match` is in a failed context: the right side of `??` after an unknown name,
+/// AND the `if` or `match` is in a poisoned context: the right side of `??` after an unknown name,
 ///   or an argument of a call with the wrong count
 /// WHEN the program is checked
 /// THEN the literal takes the type `u8` from the other branch, in each order of the branches
@@ -126,7 +126,7 @@ fn a_literal_branch_in_a_failed_context_should_take_the_type_of_the_others() {
     ]));
 }
 
-/// A branch that must wait in a failed context, a true error and a valid program keep their
+/// A branch that must wait in a poisoned context, a true error and a valid program keep their
 /// output. Each row holds before and after the #617 fix.
 #[test]
 fn a_failed_context_should_keep_a_true_error_holds_before_and_after() {
@@ -190,7 +190,7 @@ fn loop_program(stmt: &str) -> String {
 /// AND a later `break` of a value that needs a type from its context, such as `None`, `[]` or
 ///   `[None]`
 /// WHEN the program is checked
-/// THEN only the failed value reports
+/// THEN only the poisoned value reports
 #[test]
 fn a_break_after_a_failed_break_should_wait_for_the_next_run() {
     let rows: Vec<ErrorRow<'_>> = [
@@ -241,7 +241,7 @@ fn a_break_after_a_failed_break_should_wait_for_the_next_run() {
     error_rows(&rows);
 }
 
-/// A `None` before a typed or failed value has no type to take, and a true error after a failed
+/// A `None` before a typed or poisoned value has no type to take, and a true error after a failed
 /// `break` stays. Each row holds before and after the #618 fix.
 #[test]
 fn a_break_that_is_first_or_a_true_error_should_stay_holds_before_and_after() {
@@ -283,7 +283,7 @@ fn a_break_that_is_first_or_a_true_error_should_stay_holds_before_and_after() {
     error_rows(&rows);
 }
 
-/// GIVEN a join in a failed context: an argument of a call with the wrong count, or the right
+/// GIVEN a join in a poisoned context: an argument of a call with the wrong count, or the right
 ///   side of `??` after an unknown name
 /// AND a branch with a `break` of a value, and a later branch with `break None`, to a `loop`
 ///   that was open before the join
@@ -292,8 +292,9 @@ fn a_break_that_is_first_or_a_true_error_should_stay_holds_before_and_after() {
 ///   (the join checks its branches out of source order. So the `break None` can come before the
 ///   `break` that gives the loop its type. It waits for the next run.)
 /// AND this holds for `if`, `else if`, `if let` and `match`, and for a `break` by a label
-/// AND a first `break None` in a failed join waits too: in a failed context a value waits for
-///   the next run, as in #617. Before the fix such a `None` gave E0050 at once.
+/// AND a first `break None` in a join in a poisoned context waits too: in a poisoned context a
+///   value waits for the next run, as in #617. Before the fix such a `None` gave E0050 at once.
+/// AND a waiting `break` with a value of a type fails the loop, so it gives the loop no type
 #[test]
 fn a_break_in_a_failed_join_should_wait_for_a_loop_outside_it() {
     let call: Wanted = (ArgumentCount, (5, 20));
@@ -344,18 +345,39 @@ fn a_break_in_a_failed_join_should_wait_for_a_loop_outside_it() {
             vec![call],
         ),
         // `m` is a `u8` and `8` is a literal, so `join` reads `expected`, not `carried`: the
-        // branch of literals gets a hint, and it is still in a failed join.
+        // branch of literals gets a hint, and it is still in a join in a poisoned context.
         (
             "branch of literals",
             "let a = loop { f(if c { m } else { if c { break None } else { 8 } }) }",
             vec![call],
         ),
-        // The inner join is a failed join in a loop that opens inside the outer failed join. Its
-        // `break` still waits for the first `break` of that loop: the innermost join counts.
+        // The inner join is a join in a poisoned context in a loop that opens inside the outer
+        // join in a poisoned context. Its `break` still waits for the first `break` of that loop:
+        // the innermost join counts.
         (
             "inner failed join in a loop of a failed join",
             "f(if c { let x = loop { f(if c { if c { break Some(1) } else { 8 } } else { if c { break None }; 8 }) }; 8 } else { 9 })",
             vec![(ArgumentCount, (5, 5)), (ArgumentCount, (5, 29))],
+        ),
+        (
+            "typed break in a later branch",
+            "let a = loop { f(if c { if c { break Some(m) } else { 8 } } else { if c { break 1 }; 8 }) }",
+            vec![call],
+        ),
+        (
+            "break of a name in a later branch",
+            "let a = loop { f(if c { if c { break Some(m) } else { 8 } } else { if c { break m }; 8 }) }",
+            vec![call],
+        ),
+        (
+            "typed break on the right side of coalesce",
+            "let a = loop { let _x = yy ?? (if c { if c { break Some(m) } else { 8 } } else { if c { break 1 }; 8 }) }",
+            vec![(BindingNotFound, (5, 29))],
+        ),
+        (
+            "typed break in a match",
+            "let a = loop { f(match c {\n true => if c { break Some(m) } else { 8 }\n false => { if c { break 1 }; 8 }\n }) }",
+            vec![call],
         ),
         // The guard of an arm is checked out of source order, so its `break` waits too.
         (
@@ -366,8 +388,9 @@ fn a_break_in_a_failed_join_should_wait_for_a_loop_outside_it() {
     ]));
 }
 
-/// A loop that opens inside a failed join, a valid program, and a join under no expectation keep
-/// their output. Each row holds before and after the fix of a `break` in a failed join.
+/// A loop that opens inside a join in a poisoned context, a valid program, and a join under no
+/// expectation keep their output. Each row holds before and after the fix of a `break` in a join
+/// in a poisoned context.
 #[test]
 fn a_break_in_a_failed_join_should_keep_its_output_holds_before_and_after() {
     error_rows(&branch_rows(&[
@@ -393,6 +416,18 @@ fn a_break_in_a_failed_join_should_keep_its_output_holds_before_and_after() {
             "let o: i64? = None\nlet a = loop { let _x = o ?? (if c { if c { break Some(1) }; 8 } else { if c { break None }; 9 }) }\nprint(a ?? 0)",
             vec![],
         ),
+        (
+            "valid call with a typed break in a later branch",
+            "let a = loop { f(if c { if c { break Some(m) } else { 8 } } else { if c { break 1 }; 8 }, true) }\nprint(a ?? 0)",
+            vec![],
+        ),
+        // E0043: the loop has no value, as `panic("x")` is `never`. A `never` value does not fail
+        // the loop.
+        (
+            "never value in a waiting position",
+            "let a = loop { f(if c { if c { break panic(\"x\") } else { 8 } } else { 8 }) }",
+            vec![(NoValue, (5, 13)), (ArgumentCount, (5, 20))],
+        ),
         // Under no expectation the branches are ranked in a different order than the source, and
         // the `break None` comes first. #676 fixes this false error.
         (
@@ -404,7 +439,7 @@ fn a_break_in_a_failed_join_should_keep_its_output_holds_before_and_after() {
 }
 
 /// GIVEN `v1 ?? (if c { NEST } else { 8 })`, where `NEST` is the same `if` again, so that the
-///   right side of `??` is a failed context
+///   right side of `??` is a poisoned context
 /// WHEN the checker ranks the nested branches at three depths
 /// THEN it ranks each expression once: the steps above those of depth 0 grow with the depth, and
 ///   grow linearly
