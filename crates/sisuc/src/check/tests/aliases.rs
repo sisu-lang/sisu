@@ -1472,6 +1472,50 @@ fn a_plus_that_is_checked_again_should_report_the_limit_at_the_use_of_the_alias(
     assert_limit_names_the_alias(&rows);
 }
 
+/// The type that passes the limit of one written type (100,000 entries) in a `+`, in the rows
+/// of `a_limit_of_a_written_type_in_a_plus_that_is_checked_again_should_be_reported_once`.
+const BIG: &str = "Pair<Pair<B15<[i64]>, B15<i64?>>, Pair<B15<[[i64]]>, B15<[i64]?>>>";
+
+/// GIVEN `B1` to `B15`, and a written type `BIG?` that needs more than 100,000 new entries of the
+///   memo
+/// AND a `+` with a `string` under an expected `u8` or `f64`, or in a compound assignment
+/// AND the checker checks that `+` again, and the memo does not roll back
+/// WHEN the program is checked
+/// THEN the limit of the written type (E0162) comes once for its span, however many `+` are
+///   nested
+#[test]
+fn a_limit_of_a_written_type_in_a_plus_that_is_checked_again_should_be_reported_once() {
+    let head = format!(
+        "{PAIR}\n{}fn id<T>(v: T) -> T {{ v }}\nfn main() {{\n",
+        branching(15)
+    );
+    let wider = "Pair<Pair<Pair<B15<[i64]>, B15<i64?>>, Pair<B15<[[i64]]>, B15<[i64]?>>>, Pair<Pair<B15<[[[i64]]]>, B15<[[i64]]?>>, Pair<B15<i64??>, B15<[i64?]>>>>";
+    let rows = [
+        (
+            "a block on the right",
+            format!("let y: f64 = \"b\" + {{ let q: {BIG}? = None; \"c\" }}"),
+            vec![(Code::Mismatch, (23, 14)), (Code::AliasTooLarge, (23, 29))],
+        ),
+        (
+            "a block in a nested plus, under u8",
+            format!("let y: u8 = \"a\" + (\"b\" + {{ let q: {wider}? = None; \"c\" }})"),
+            vec![(Code::Mismatch, (23, 13)), (Code::AliasTooLarge, (23, 35))],
+        ),
+        (
+            "a type argument on the right",
+            format!("let y: f64 = \"b\" + id<{BIG}?>(None).to_string()"),
+            vec![(Code::Mismatch, (23, 14)), (Code::AliasTooLarge, (23, 23))],
+        ),
+        (
+            "a compound assignment",
+            format!("let mut z = 1.0\nz += \"b\" + {{ let q: {BIG}? = None; \"c\" }}"),
+            vec![(Code::Mismatch, (24, 6)), (Code::AliasTooLarge, (24, 21))],
+        ),
+    ]
+    .map(|(name, stmt, wanted)| (name, format!("{head}{stmt}\n}}\n"), wanted));
+    error_rows(&rows);
+}
+
 /// The repro of #656: the statement is at line 38 with an indent.
 #[test]
 fn a_plus_that_is_checked_again_should_report_the_limit_of_the_page_example() {
