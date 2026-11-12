@@ -1,0 +1,37 @@
+enum Two<A, B> {
+    P(a: A, b: B)
+}
+
+fn mkp<X>() -> Two<X, bool>? {
+    None
+}
+
+fn none<X>() -> X? {
+    None
+}
+
+fn id<T>(x: T) -> T {
+    x
+}
+
+fn take<T>(xs: [T]) -> i64 {
+    0
+}
+
+fn nested<U>(a: U, b: [[U]]) {}
+
+fn optional<U>(a: U, b: [U]?) {}
+
+fn from_mkp<X>() -> X? {
+    mkp()
+}
+
+fn from_none<T>() -> [T] {
+    none()
+}
+
+fn main() {
+    print(take(Err("x")))
+    nested(5, id([true]))
+    optional(5, id(true))
+}

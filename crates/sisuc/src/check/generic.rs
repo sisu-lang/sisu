@@ -5110,8 +5110,8 @@ mod tests {
         );
     }
 
-    /// An associated type of a parameter that is not bound is the hole as a whole, and is not known
-    /// while its base or an argument of its interface is unbound; `printed` keeps the names.
+    /// An associated type of a parameter that is not bound is the hole as a whole. It is not known
+    /// while its base or an argument of its interface is unbound. `printed` shows the hole.
     #[test]
     fn an_associated_type_should_wait_for_its_base_and_its_arguments() {
         let param = |name, place| Type::intern(TypeKind::Param(Symbol::intern(name), place));
@@ -5126,7 +5126,7 @@ mod tests {
         let mut bindings = Bindings::new(2, &[]);
         assert_eq!(bindings.partial(item), *HOLE);
         assert_eq!(bindings.known(item), None);
-        assert_eq!(bindings.printed(item), item);
+        assert_eq!(bindings.printed(item), *HOLE);
         assert!(bindings.unify(s, Type::STRING));
         // The base is bound, and the argument is not: the type waits, and a hole stands for it.
         assert_eq!(bindings.known(with_arg), None);

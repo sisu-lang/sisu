@@ -427,7 +427,7 @@ fn values_of_parameter_types_should_have_no_operators() {
         ("fn f<T>(a: T, b: T) -> bool { [a] == [b] }", lacks((1, 31))),
         (
             "fn f<T>(a: T, b: i64) -> bool { b < a }",
-            vec![(Code::Mismatch, (1, 37))],
+            vec![(Code::CannotCompare, (1, 33))],
         ),
         (
             "fn f<T>(xs: [T], a: T) -> bool { xs.contains(a) }",
@@ -6445,7 +6445,7 @@ const Q_DECL: &str = "class Q {\n    fn take(self, _x: i64?) -> i64 { 0 }\n}\n";
 
 /// A generic call whose result cannot meet its context hands the type it found to the code that
 /// uses the value. That code reports what it reports for a concrete callee. So the two programs
-/// give the same codes at the same places. Only the found type differs: `Two<X, bool>` for
+/// give the same codes at the same places. Only the found type differs: `Two<_, bool>` for
 /// `Two<i64, bool>`. No row has a call whose own argument fails: a concrete callee keeps its
 /// result type then, and a generic one whose arguments bind its result does not.
 #[test]
@@ -8128,6 +8128,217 @@ fn hint_report_should_keep_its_code_and_position_before_and_after() {
         ),
         ("538a", REPRO_538_A.to_string(), vec![(Mismatch, (4, 21))]),
         ("538b", REPRO_538_B.to_string(), vec![(Mismatch, (5, 49))]),
+    ];
+    error_rows(&rows);
+}
+
+/// GIVEN a callee type parameter that stays unbound where a diagnostic prints a type
+/// AND a type parameter of the caller in the same place
+/// WHEN the program is checked
+/// THEN each error has the code and the place that it had before the printed type changed. The
+///   text is pinned by the fixture `E0032-callee-parameter-hole`. This test holds before and
+///   after the fix.
+#[test]
+fn a_callee_parameter_printed_as_a_hole_should_report_the_code_and_place_it_did_before() {
+    use Code::Mismatch;
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "405a1e",
+            "enum Two<A, B> { P(a: A, b: B) }\nfn mkp<X>() -> Two<X, bool>? { None }\nfn f<X>() -> X? { mkp() }\nfn main() {}"
+                .to_string(),
+            vec![(Mismatch, (3, 19))],
+        ),
+        (
+            "405a2",
+            "fn none<X>() -> X? { None }\nfn f<T>() -> [T] { none() }\nfn main() {}".to_string(),
+            vec![(Mismatch, (2, 20))],
+        ),
+        (
+            "405a3",
+            "fn take<T>(xs: [T]) -> i64 { 0 }\nfn main() { print(take(Err(\"x\"))) }".to_string(),
+            vec![(Mismatch, (2, 24))],
+        ),
+        (
+            "405a4",
+            "fn id<T>(x: T) -> T { x }\nfn h<U>(a: U, b: [[U]]) {}\nfn main() { h(5, id([true])) }"
+                .to_string(),
+            vec![(Mismatch, (3, 18))],
+        ),
+        (
+            "405a5",
+            "fn id<T>(x: T) -> T { x }\nfn g<U>(a: U, b: [U]?) {}\nfn main() { g(5, id(true)) }"
+                .to_string(),
+            vec![(Mismatch, (3, 18))],
+        ),
+    ];
+    error_rows(&rows);
+}
+
+/// GIVEN an ordering (`<`, `<=`, `>` or `>=`) of a type parameter and a value of another type
+/// WHEN the program is checked
+/// THEN the error is E0047 (`CannotCompare`), at the start of the leading operand, in every order
+///   of the operands, and a chain gives one error
+#[test]
+fn an_ordering_with_a_type_parameter_should_report_that_the_operands_cannot_be_compared() {
+    // (the row, the function, the place of its one error)
+    let rows: &[(&str, &str, (usize, usize))] = &[
+        ("512 f", "fn f<T: Ord>(a: T) -> bool { 5 < a }", (1, 30)),
+        ("512 g", "fn g<T: Ord>(a: T) -> bool { a < 5 }", (1, 30)),
+        ("n512_21", "fn f<T>(a: T) -> bool { 5 < a }", (1, 25)),
+        (
+            "n512_22",
+            "fn f<T: Ord>(a: T) -> bool { 0 <= a < 5 }",
+            (1, 30),
+        ),
+        (
+            "n512_23",
+            "fn f<T: Ord, U: Ord>(a: T, b: U) -> bool { a < b }",
+            (1, 44),
+        ),
+        (
+            "n512_25",
+            "fn f<T: Ord>(a: T, b: i64) -> bool { a < b }",
+            (1, 38),
+        ),
+        (
+            "n512_26",
+            "fn f<T: Ord>(a: T) -> bool { a < \"s\" }",
+            (1, 30),
+        ),
+        (
+            "n512_27",
+            "fn f<T: Ord>(a: T, b: u8) -> bool { b < a }",
+            (1, 37),
+        ),
+        ("n512_5", "fn f<T: Ord>(a: T) -> bool { true < a }", (1, 30)),
+        (
+            "n512_6",
+            "fn f<T: Ord>(a: T, b: i64) -> bool { b < a }",
+            (1, 38),
+        ),
+        ("greater", "fn f<T: Ord>(a: T) -> bool { a > 5 }", (1, 30)),
+        (
+            "at least, literal first",
+            "fn f<T: Ord>(a: T) -> bool { 5 >= a }",
+            (1, 30),
+        ),
+        ("a float", "fn f<T: Ord>(a: T) -> bool { a < 1.5 }", (1, 30)),
+        ("a char", "fn f<T: Ord>(a: T) -> bool { a < 'c' }", (1, 30)),
+        ("a bool", "fn f<T: Ord>(a: T) -> bool { a < true }", (1, 30)),
+        (
+            "an array of parameters",
+            "fn f<T: Ord>(a: [T]) -> bool { 5 < a }",
+            (1, 32),
+        ),
+        (
+            "an optional parameter",
+            "fn f<T: Ord>(a: T?) -> bool { a < 5 }",
+            (1, 31),
+        ),
+        (
+            "an array of a literal",
+            "fn f<T: Ord>(a: T) -> bool { [5] < a }",
+            (1, 30),
+        ),
+        (
+            "a chain that ends with a literal",
+            "fn f<T: Ord>(a: T, b: T) -> bool { a < b < 5 }",
+            (1, 36),
+        ),
+        (
+            "a chain of literals before a parameter",
+            "fn f<T: Ord>(a: T) -> bool { 5 < 6 < a }",
+            (1, 30),
+        ),
+    ];
+    let mut rows: Vec<ErrorRow<'_>> = rows
+        .iter()
+        .map(|&(name, function, place)| {
+            let src = format!("{function}\nfn main() {{}}");
+            (name, src, vec![(Code::CannotCompare, place)])
+        })
+        .collect();
+    // The two functions together, as the issue gave them.
+    let both = "fn f<T: Ord>(a: T) -> bool { 5 < a }\nfn g<T: Ord>(a: T) -> bool { a < 5 }\nfn main() {\n    print(f(1))\n    print(g(1))\n}";
+    rows.push((
+        "512",
+        both.to_string(),
+        vec![
+            (Code::CannotCompare, (1, 30)),
+            (Code::CannotCompare, (2, 30)),
+        ],
+    ));
+    error_rows(&rows);
+}
+
+/// GIVEN comparisons that the ordering rule for type parameters leaves as they were: an equality
+///   of a parameter, an ordering with no parameter, and an operand whose type waits
+/// WHEN the program is checked
+/// THEN each report has the code and the place that it had before the rule. This test holds
+///   before and after the fix.
+#[test]
+fn comparisons_that_the_ordering_rule_leaves_should_report_the_code_and_place_they_did_before() {
+    use Code::{CannotCompare, Mismatch, NoOperator, ParamLacks};
+    let mk = "fn mk<X>() -> [X] { [] }\n";
+    let row = |name, program: &str, wanted: Vec<Wanted>| -> ErrorRow<'_> {
+        (name, format!("{program}\nfn main() {{}}"), wanted)
+    };
+    let rows = vec![
+        row(
+            "n512_4",
+            "fn f<T: Ord>(a: T) -> bool { 5 == a }",
+            vec![(CannotCompare, (1, 30))],
+        ),
+        row(
+            "n512_24",
+            "fn f<T: Ord>(a: T) -> bool { a < Some(a) }",
+            vec![(NoOperator, (1, 34))],
+        ),
+        row(
+            "n512_7",
+            "fn f<T: Ord>(a: T) -> bool { 5 + a < 3 }",
+            vec![(ParamLacks, (1, 34))],
+        ),
+        row(
+            "n512_1",
+            "fn f(s: string) -> bool { 5 < s }",
+            vec![(Mismatch, (1, 27))],
+        ),
+        row(
+            "n512_2",
+            "fn f(s: string) -> bool { s < 5 }",
+            vec![(Mismatch, (1, 31))],
+        ),
+        row(
+            "n512_3",
+            "fn f(s: string) -> bool { 5 == s }",
+            vec![(CannotCompare, (1, 27))],
+        ),
+        row(
+            "n512_8",
+            "fn f(s: string) -> bool { 'a' < s }",
+            vec![(Mismatch, (1, 33))],
+        ),
+        row(
+            "n512_9",
+            &format!("{mk}fn f() -> bool {{ mk() == 5 }}"),
+            vec![(CannotCompare, (2, 18))],
+        ),
+        row(
+            "n512_10",
+            &format!("{mk}fn f() -> bool {{ 5 < mk() }}"),
+            vec![(Mismatch, (2, 22))],
+        ),
+        row(
+            "n512_11",
+            "fn mk<X>() -> X { panic(\"x\") }\nfn f() -> bool { mk() < 5 }",
+            vec![],
+        ),
+        row(
+            "a waiting generic operand does not lead",
+            &format!("{mk}fn f<T: Ord>(a: T) -> bool {{ a < mk() }}"),
+            vec![(Mismatch, (2, 34))],
+        ),
     ];
     error_rows(&rows);
 }

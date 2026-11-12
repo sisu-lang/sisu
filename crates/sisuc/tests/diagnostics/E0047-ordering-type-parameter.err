@@ -1,0 +1,44 @@
+error[E0047]: cannot compare `i64` with `T`
+ --> E0047-ordering-type-parameter.sisu:2:5
+  |
+2 |     5 < a
+  |     ^^^^^
+
+error[E0047]: cannot compare `T` with `i64`
+ --> E0047-ordering-type-parameter.sisu:6:5
+  |
+6 |     a < 5
+  |     ^^^^^
+
+error[E0047]: cannot compare `i64` with `T`
+  --> E0047-ordering-type-parameter.sisu:10:5
+   |
+10 |     0 <= a < 5
+   |     ^^^^^^
+
+error[E0047]: cannot compare `T` with `U`
+  --> E0047-ordering-type-parameter.sisu:14:5
+   |
+14 |     a < b
+   |     ^^^^^
+
+error[E0047]: cannot compare `u8` with `T`
+  --> E0047-ordering-type-parameter.sisu:18:5
+   |
+18 |     b < a
+   |     ^^^^^
+
+error[E0047]: cannot compare `T` with `i64`
+  --> E0047-ordering-type-parameter.sisu:22:5
+   |
+22 |     a < b < 5
+   |     ^^^^^^^^^
+
+error[E0047]: cannot compare `i64` with `T`
+  --> E0047-ordering-type-parameter.sisu:26:5
+   |
+26 |     5 < 6 < a
+   |     ^^^^^^^^^
+
+sisu: 7 errors
+sisu: for more on a code, run `sisu explain <code>`: E0047
