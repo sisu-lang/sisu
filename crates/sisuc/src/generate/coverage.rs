@@ -4093,7 +4093,7 @@ fn generation_is_deterministic() {
     }
 }
 
-/// FT-9: one walk of the generated programs checks five properties: no leak of an inexact value,
+/// One walk of the generated programs checks five properties. They are no leak of an inexact value,
 /// no class in the heap, no unbounded loop, no out-of-bounds index and the `f64` operand ratio.
 #[test]
 fn walked_programs_should_hold_every_walk_property() {
@@ -4113,7 +4113,7 @@ fn walked_programs_should_hold_every_walk_property() {
         failed.push(format!("loops not bounded: {:?}", walk.unbounded));
     }
     if !walk.out_of_bounds.is_empty() {
-        failed.push(format!("{:?}", walk.out_of_bounds));
+        failed.push(format!("indexes out of bounds: {:?}", walk.out_of_bounds));
     }
     // `right_operand` writes its small literal only for an integer type. Float arithmetic, where
     // optimizers miscompile, takes any `f64` expression on its right, a literal about as often as
