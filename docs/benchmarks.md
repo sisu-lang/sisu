@@ -581,7 +581,7 @@ not a curve: one size of the sweep falls on a one-time step of LLVM's tables.
 
 The other four rows are for the shapes of structs. Struct paths is a chain of
 nested structs. Its `codegen` grows because LLVM's `StructType::checkBody` grows
-with the depth of the chain. Struct writes at `-O2` is a function with thousands
+with the depth of the chain. Struct writes at `-O2` is a function with hundreds
 of writes to struct paths. LLVM's passes grow faster than the writes. Each of
 the two rows waits for an issue, and names the file of the issue until it is
 filed. Never built is a tree of aliases over `k` classes, with `k` enums and one

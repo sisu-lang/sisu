@@ -685,7 +685,7 @@ class ScalingTest(unittest.TestCase):
             ("failed bounds", 64),
             ("struct fields", 50),
             ("struct paths", 24),
-            ("struct writes", 250),
+            ("struct writes", 100),
             ("struct ==", 50),
             ("never built", 16),
         ]

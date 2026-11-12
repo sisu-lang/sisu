@@ -109,7 +109,7 @@ KNOWN: list[tuple[str, str, int | str]] = [
     ("never built", "check", "docs/register.md"),
     # A path of nested structs makes LLVM's `StructType::checkBody` grow with the depth.
     ("struct paths", "codegen", ".scratch/structs-part-1/issues/01-struct-paths-codegen.md"),
-    # The cost is LLVM's: `getUnderlyingObjects` and a pointer set, in a function of thousands of
+    # The cost is LLVM's: `getUnderlyingObjects` and a pointer set, in a function of hundreds of
     # calls of the helpers that make an array or a box unique.
     ("struct writes -O2", "optimize", ".scratch/structs-part-1/issues/02-struct-writes-o2.md"),
     ("struct writes -O2", "object", ".scratch/structs-part-1/issues/02-struct-writes-o2.md"),
@@ -664,7 +664,7 @@ SHAPES = {
     "failed bounds": (64, failed_bounds),
     "struct fields": (50, struct_fields),
     "struct paths": (24, struct_paths),
-    "struct writes": (250, struct_writes),
+    "struct writes": (100, struct_writes),
     "struct ==": (50, struct_equality),
     "never built": (16, never_built),
 }
