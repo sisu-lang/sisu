@@ -1315,11 +1315,11 @@ fn limit_rows(rows: &[(&'static str, &str, &str, Vec<Wanted>)]) -> Vec<ErrorRow<
 /// GIVEN the aliases `B1` to `B15`, and eight signatures that use `B15`
 /// AND `type EA<T> = Two<B15<T>, i64>`
 /// AND a `+` with a `string` under an expected `u8` or `f64`
-/// AND the checker checks that `+` again, after it drops the reports of the first check
+/// AND the checker checks that `+` again, after it cuts the reports of the first check
 /// AND a use of `EA` inside that `+` that passes the limit of the whole check
 /// WHEN the program is checked
-/// THEN the second check reports the limit (E0162) after the mismatch of the `+`, as the same
-///   statement with no expected type does
+/// THEN the report of the first check, which the rollback cuts, is kept: the limit (E0162) comes
+///   once, after the mismatch of the `+`, as the same statement with no expected type gives it
 #[test]
 fn a_plus_that_is_checked_again_should_report_the_limit_that_it_passes() {
     let rows = limit_rows(&[
@@ -1363,6 +1363,115 @@ fn a_plus_that_is_checked_again_should_report_the_limit_that_it_passes() {
     error_rows(&rows);
 }
 
+/// What follows `h` in the rows of the #656 tables that need an alias `Small` or a generic `id`.
+const AFTER: &str = "type Small = i64\nfn id<T>(v: T) -> T { v }\n";
+
+/// Each row gives one E0162. Its span covers the written `EA` of the use that passed the limit,
+/// not a written type before it. The report shows the source text of its span as the type.
+fn assert_limit_names_the_alias(rows: &[ErrorRow<'_>]) {
+    let mut red = Vec::new();
+    for (name, src, _) in rows {
+        let (_, ds) = checked_with(PRELUDE_SOURCE, src);
+        let texts: Vec<_> = (ds.iter())
+            .filter(|d| d.code() == Code::AliasTooLarge)
+            .map(|d| &src[d.span().range()])
+            .collect();
+        if texts != ["EA"] {
+            red.push(format!("row `{name}`: found {texts:?}"));
+        }
+    }
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+}
+
+/// GIVEN the same program, and a `+` with a `string` under an expected `u8` or `f64`
+/// AND a written type, a type argument or a block with a written type before the use of `EA`
+///   that passes the limit
+/// WHEN the program is checked
+/// THEN the limit (E0162) names `EA` and stands at that use, once, and the errors of the written
+///   types stay
+#[test]
+fn a_plus_that_is_checked_again_should_report_the_limit_at_the_use_of_the_alias() {
+    let rows = limit_rows(&[
+        (
+            "a block with a written type on the right",
+            "let y: f64 = \"b\" + { let q: string = s(EA.W(1)); q }",
+            AFTER,
+            vec![(Code::Mismatch, (37, 14)), (Code::AliasTooLarge, (37, 40))],
+        ),
+        (
+            "a type argument on the right",
+            "let y: f64 = \"b\" + id<string>(s(EA.W(1)))",
+            AFTER,
+            vec![(Code::Mismatch, (37, 14)), (Code::AliasTooLarge, (37, 33))],
+        ),
+        (
+            "a written type before the use, as a string",
+            "let y: f64 = \"b\" + { let q: string = \"c\"; s(EA.W(1)) }",
+            AFTER,
+            vec![(Code::Mismatch, (37, 14)), (Code::AliasTooLarge, (37, 45))],
+        ),
+        (
+            "a written type on the left",
+            "let y: f64 = { let q: string = \"c\"; \"b\" } + s(EA.W(1))",
+            AFTER,
+            vec![(Code::Mismatch, (37, 14)), (Code::AliasTooLarge, (37, 47))],
+        ),
+        (
+            "a written alias type before the use",
+            "let y: f64 = \"b\" + { let x: Small = 1; s(EA.W(1)) }",
+            AFTER,
+            vec![(Code::Mismatch, (37, 14)), (Code::AliasTooLarge, (37, 42))],
+        ),
+        (
+            "a type argument in a chain of additions",
+            "let y: f64 = \"b\" + id<i64>(1).to_string() + s(EA.W(1))",
+            AFTER,
+            vec![(Code::Mismatch, (37, 14)), (Code::AliasTooLarge, (37, 47))],
+        ),
+        (
+            "an error of a written type inside the block",
+            "let y: f64 = \"b\" + { let x: f64 = \"c\" + s(EA.W(1)); let n: i64 = 1; \"d\" }",
+            AFTER,
+            vec![
+                (Code::Mismatch, (37, 14)),
+                (Code::Mismatch, (37, 35)),
+                (Code::AliasTooLarge, (37, 43)),
+            ],
+        ),
+        (
+            "a written type in the block that holds the use",
+            "let y: f64 = \"b\" + { let x: string = \"c\" + s(EA.W(1)); \"d\" }",
+            AFTER,
+            vec![(Code::Mismatch, (37, 14)), (Code::AliasTooLarge, (37, 46))],
+        ),
+        (
+            "a block with a written type on the left and the use on the right",
+            "let y: f64 = { let a: string = \"c\"; a } + { let q: string = s(EA.W(1)); q }",
+            AFTER,
+            vec![(Code::Mismatch, (37, 14)), (Code::AliasTooLarge, (37, 63))],
+        ),
+        (
+            "a compound assignment",
+            "let mut z = 1.0\nz += { let q: string = \"c\"; q } + s(EA.W(1))\nprint(z)",
+            AFTER,
+            vec![(Code::Mismatch, (38, 6)), (Code::AliasTooLarge, (38, 37))],
+        ),
+        (
+            "an alias with a type argument as the written type",
+            "let y: f64 = \"b\" + { let q: EA<i64> = EA.X; \"d\" }",
+            AFTER,
+            vec![(Code::Mismatch, (37, 14)), (Code::AliasTooLarge, (37, 39))],
+        ),
+    ]);
+    error_rows(&rows);
+    assert_limit_names_the_alias(&rows);
+}
+
 /// The repro of #656: the statement is at line 38 with an indent.
 #[test]
 fn a_plus_that_is_checked_again_should_report_the_limit_of_the_page_example() {
@@ -1382,7 +1491,6 @@ fn a_plus_that_is_checked_again_should_report_the_limit_of_the_page_example() {
 
 /// GIVEN the same program, and a statement that is not a `+` checked again: the use alone, with
 ///   no expected type, or under a `-`
-/// OR a `+` checked again after a report that the rollback does not cut
 /// WHEN the program is checked
 /// THEN the reports are as they were before the fix of #656
 #[test]
@@ -1401,16 +1509,35 @@ fn a_statement_that_is_not_checked_again_should_report_the_limit_holds_before_an
             vec![(Code::AliasTooLarge, (37, 17))],
         ),
         (
-            "a report that the later rollback does not cut",
-            "let y = s(EA.W(1))\nlet z: f64 = \"b\" + \"c\"",
-            "",
-            vec![(Code::AliasTooLarge, (37, 11)), (Code::Mismatch, (38, 14))],
-        ),
-        (
             "a negation",
             "let y = -s(EA.W(1))",
             "",
             vec![(Code::Mismatch, (37, 10)), (Code::AliasTooLarge, (37, 12))],
+        ),
+    ]);
+    error_rows(&rows);
+}
+
+/// GIVEN the same program, and a limit report that no rollback cuts: a `let` before a `+` that is
+///   checked again, or a held report under a compound assignment
+/// AND the `+` has a written type in an operand
+/// WHEN the program is checked
+/// THEN the limit comes once, at its own place, and the mismatches stay, as they did before the
+///   fix of #656
+#[test]
+fn a_limit_report_that_the_rollback_does_not_cut_should_stay_once_holds_before_and_after() {
+    let rows = limit_rows(&[
+        (
+            "a report before the plus that is checked again",
+            "let y = s(EA.W(1))\nlet z: f64 = \"b\" + { let n: i64 = 1; \"c\" }",
+            AFTER,
+            vec![(Code::AliasTooLarge, (37, 11)), (Code::Mismatch, (38, 14))],
+        ),
+        (
+            "a held report under a compound assignment",
+            "let mut ys = [1.0]\nys[t(EA.W(1))] += \"b\" + { let q: string = \"c\"; q }\nprint(ys)",
+            AFTER,
+            vec![(Code::Mismatch, (38, 4)), (Code::AliasTooLarge, (38, 6))],
         ),
     ]);
     error_rows(&rows);
