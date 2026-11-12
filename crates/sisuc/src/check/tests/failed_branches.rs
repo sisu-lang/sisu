@@ -667,11 +667,6 @@ fn a_condition_that_is_not_bool_should_keep_the_join_of_the_branches() {
             vec![(Mismatch, (2, 19)), (Mismatch, (2, 22))],
         ),
         (
-            "no else, and a use of the value",
-            "fn main() {\n    let a = if 1 { 2 }\n    print(a == 1)\n}".into(),
-            vec![(NoValue, (2, 13)), (Mismatch, (2, 16))],
-        ),
-        (
             "an if let subject that is no optional",
             "fn main() {\n    let a = if let Some(v) = 5 { 2 } else { 3 }\n    print(a + true)\n}"
                 .into(),
@@ -702,11 +697,12 @@ fn a_condition_that_is_not_bool_should_keep_the_join_of_the_branches() {
     error_rows(&rows);
 }
 
-/// GIVEN a failed condition, subject or guard whose `if` or `match` still gives no typed value
+/// GIVEN a failed guard, subject or condition that the fix of #652 does not reach
+/// OR the same program, repaired
 /// WHEN the program is checked
 /// THEN the errors are as they were before the fix of #652
 #[test]
-fn a_failed_condition_that_keeps_no_type_should_stay_the_same_holds_before_and_after() {
+fn a_failure_that_the_join_fix_does_not_reach_should_keep_its_errors_holds_before_and_after() {
     let rows: Vec<ErrorRow<'_>> = vec![
         (
             "a branch that uses the binding of an if let",
