@@ -206,7 +206,7 @@ fn branch_with_sum_plus_literal_then_string(c: bool) {
     let w: string = z
 }
 
-// An argument that kept its E0050 is a failed part: no other argument settles the parameter, so the result waits.
+// A sum with a call gives a plain E0032. A block that kept an E0050 is a failed part: it waits.
 fn pair_with_sum_then_string(x: u8) {
     let z = pair(id(mk2()) + 1, x)
     let w: string = z
@@ -238,7 +238,7 @@ fn coalesce_join_of_failures_then_string(c: bool, o: i64?) {
 }
 fn negated_failure_then_call() { let z = -nope + id(mk2()) }
 
-// A call fails on an unbound parameter, and an argument of it kept its E0050.
+// A call fails on an unbound parameter. A sum with a call gives a plain E0032, with no cascade.
 fn coalesce_pair_with_sum_then_string(o: i64?) {
     let z = o ?? pair(id(mk2()) + 1, nope)
     let w: string = z
@@ -246,7 +246,7 @@ fn coalesce_pair_with_sum_then_string(o: i64?) {
 fn pair_with_sum_then_call() { let z = pair(id(mk2()) + 1, nope) + id(mk2()) }
 
 // A type from a sibling is a type, not the hint: a `u8` left decides the sum, so its E0032 stays.
-// A call with an argument that kept its E0050 has a failed part: its result waits, also for a parameter that the hint binds.
+// A sum with a call in it, beside a `u8`, gives a plain E0032, as its concrete twin does.
 fn u8_plus_call_of_sum_then_string(x: u8) {
     let z = x + id(id(mk2()) + 1)
     let w: string = z

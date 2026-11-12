@@ -64,7 +64,7 @@ error[E0032]: expected `i64`, found `Two<X, bool>`
 55 |     let a7: i64 = id(mk2())
    |                      ^^^^^
 
-error[E0032]: expected `i64?`, found `Two<X, bool>`
+error[E0032]: expected `i64`, found `Two<X, bool>`
   --> E0032-generic-context.sisu:56:23
    |
 56 |     let a8: i64? = id(mk2())
@@ -136,7 +136,7 @@ error[E0032]: expected `i64`, found `Two<X, bool>`
 69 |     let b6: i64 = id(id(id(mk2())))
    |                            ^^^^^
 
-error[E0032]: expected `i64??`, found `Two<X, bool>`
+error[E0032]: expected `i64?`, found `Two<X, bool>`
   --> E0032-generic-context.sisu:70:24
    |
 70 |     let b7: i64?? = id(mk2())

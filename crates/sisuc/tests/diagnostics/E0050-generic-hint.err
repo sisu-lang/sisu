@@ -1072,13 +1072,11 @@ error[E0050]: cannot infer `X` for `mk2`
     |
     = help: annotate the result, or write the type: `mk2<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
+error[E0032]: expected `u8`, found `Two<X, bool>`
    --> E0050-generic-hint.sisu:211:21
     |
 211 |     let z = pair(id(mk2()) + 1, x)
-    |                     ^^^
-    |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    |                     ^^^^^
 
 error[E0050]: cannot infer `X` for `mk2`
    --> E0050-generic-hint.sisu:215:36
@@ -1146,27 +1144,17 @@ error[E0033]: cannot find binding `nope`
 239 | fn negated_failure_then_call() { let z = -nope + id(mk2()) }
     |                                           ^^^^
 
-error[E0050]: cannot infer `X` for `mk2`
+error[E0032]: expected `i64`, found `Two<X, bool>`
    --> E0050-generic-hint.sisu:243:26
     |
 243 |     let z = o ?? pair(id(mk2()) + 1, nope)
-    |                          ^^^
-    |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    |                          ^^^^^
 
 error[E0033]: cannot find binding `nope`
    --> E0050-generic-hint.sisu:243:38
     |
 243 |     let z = o ?? pair(id(mk2()) + 1, nope)
     |                                      ^^^^
-
-error[E0032]: expected `string`, found `i64`
-   --> E0050-generic-hint.sisu:244:21
-    |
-244 |     let w: string = z
-    |            ------   ^
-    |            |
-    |            declared as `string` here
 
 error[E0050]: cannot infer `X` for `mk2`
    --> E0050-generic-hint.sisu:246:48
@@ -1190,13 +1178,11 @@ error[E0050]: cannot infer `X` for `mk2`
     |
     = help: annotate the result, or write the type: `mk2<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
+error[E0032]: expected `u8`, found `Two<X, bool>`
    --> E0050-generic-hint.sisu:251:23
     |
 251 |     let z = x + id(id(mk2()) + 1)
-    |                       ^^^
-    |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    |                       ^^^^^
 
 error[E0032]: expected `string`, found `u8`
    --> E0050-generic-hint.sisu:252:21
@@ -1206,13 +1192,11 @@ error[E0032]: expected `string`, found `u8`
     |            |
     |            declared as `string` here
 
-error[E0050]: cannot infer `X` for `mk2`
+error[E0032]: expected `u8`, found `Two<X, bool>`
    --> E0050-generic-hint.sisu:255:20
     |
 255 |     let z = snd(id(mk2()) + 1, x) + 1
-    |                    ^^^
-    |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    |                    ^^^^^
 
 error[E0050]: cannot infer `X` for `mk2`
    --> E0050-generic-hint.sisu:265:42
@@ -1678,5 +1662,5 @@ error[E0050]: cannot infer `X` for `mk2`
     |
     = help: annotate the result, or write the type: `mk2<...>(...)`
 
-sisu: 224 errors
+sisu: 223 errors
 sisu: for more on a code, run `sisu explain <code>`: E0032, E0033, E0050, E0094, E0139
