@@ -18,20 +18,21 @@ extend Tag: Eq {
 struct All { s: string; xs: [i64]; o: i64?; e: E; i: In; t: Tag; xl: [In] }
 struct Tree { v: i64; kids: [Tree] }
 
-fn make(s: string, xs: [i64], o: i64?, e: E, n: i64, t: i64) -> All {
-    return All(s: s, xs: xs, o: o, e: e, i: In(n: n), t: Tag(id: t), xl: [In(n: n)])
+fn make(s: string, xs: [i64], o: i64?, e: E, i: i64, t: i64, xl: i64) -> All {
+    return All(s: s, xs: xs, o: o, e: e, i: In(n: i), t: Tag(id: t), xl: [In(n: xl)])
 }
 
 fn main() {
-    let base = make("a", [1, 2], Some(3), E.A(n: 4), 5, 6)
-    print(base == make("a", [1, 2], Some(3), E.A(n: 4), 5, 6))   // true
-    print(base == make("b", [1, 2], Some(3), E.A(n: 4), 5, 6))   // false
-    print(base == make("a", [1, 3], Some(3), E.A(n: 4), 5, 6))   // false
-    print(base == make("a", [1, 2], None, E.A(n: 4), 5, 6))      // false
-    print(base == make("a", [1, 2], Some(3), E.B, 5, 6))         // false
-    print(base == make("a", [1, 2], Some(3), E.A(n: 4), 7, 6))   // false
-    print(base == make("a", [1, 2], Some(3), E.A(n: 4), 5, 16))  // true: the written `eq` of `Tag` decides
-    print(base == make("a", [1, 2], Some(3), E.A(n: 4), 5, 7))   // false
+    let base = make("a", [1, 2], Some(3), E.A(n: 4), 5, 6, 7)
+    print(base == make("a", [1, 2], Some(3), E.A(n: 4), 5, 6, 7))   // true
+    print(base == make("b", [1, 2], Some(3), E.A(n: 4), 5, 6, 7))   // false: only `s`
+    print(base == make("a", [1, 3], Some(3), E.A(n: 4), 5, 6, 7))   // false: only `xs`
+    print(base == make("a", [1, 2], None, E.A(n: 4), 5, 6, 7))      // false: only `o`
+    print(base == make("a", [1, 2], Some(3), E.B, 5, 6, 7))         // false: only `e`
+    print(base == make("a", [1, 2], Some(3), E.A(n: 4), 8, 6, 7))   // false: only `i`
+    print(base == make("a", [1, 2], Some(3), E.A(n: 4), 5, 16, 7))  // true: the written `eq` of `Tag` decides
+    print(base == make("a", [1, 2], Some(3), E.A(n: 4), 5, 9, 7))   // false: only `t`
+    print(base == make("a", [1, 2], Some(3), E.A(n: 4), 5, 6, 8))   // false: only `xl`
     let leaf = Tree(v: 2, kids: [])
     print(Tree(v: 1, kids: [leaf]) == Tree(v: 1, kids: [Tree(v: 2, kids: [])]))  // true
     print(Tree(v: 1, kids: [leaf]) == Tree(v: 1, kids: [Tree(v: 3, kids: [])]))  // false

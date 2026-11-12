@@ -1,8 +1,22 @@
 // GIVEN `struct F { x: f64 }`, an array of two `F` and an optional `F`, each holding `nan`
+// AND a struct, an enum and an array that hold an `F` through a struct field
+// AND a struct that holds a class whose written `eq` returns `false`
 // WHEN `main` compares each value with itself and with a copy
 // THEN every comparison is `false`, and a value with a finite `x` equals its copy
 struct F { x: f64 }
 struct Wrap { f: F; n: i64 }
+struct Outer { w: Wrap }
+enum E {
+    A(w: Wrap)
+    B
+}
+class K { v: i64 }
+extend K: Eq {
+    fn eq(self, _other: K) -> bool {
+        false
+    }
+}
+struct Holds { k: K }
 
 fn main() {
     let nan = f64.nan
@@ -21,4 +35,18 @@ fn main() {
     print(F(x: 1.5) == F(x: 1.5))                  // true
     print(F(x: -0.0) == F(x: 0.0))                 // true
     print(Wrap(f: F(x: 1.5), n: 1) == Wrap(f: F(x: 1.5), n: 1))  // true
+
+    let ws = [Wrap(f: F(x: nan), n: 1)]
+    let vs = ws
+    print(ws == vs)                                // false
+    print(ws == ws)                                // false
+    let os = [Outer(w: Wrap(f: F(x: nan), n: 1))]
+    print(os == os)                                // false
+    let es = [E.A(w: Wrap(f: F(x: nan), n: 1)), E.B]
+    print(es == es)                                // false
+    let hs = [Holds(k: K(v: 1))]
+    print(hs == hs)                                // false
+    print(hs[0].k.v)                               // 1
+    let fine = [Outer(w: Wrap(f: F(x: 1.5), n: 1))]
+    print(fine == fine)                            // true
 }

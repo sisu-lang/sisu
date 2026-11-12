@@ -1,0 +1,12 @@
+class Q {
+    value: i64
+}
+
+struct W {
+    items: [Q]
+}
+
+fn main() {
+    let a = W(items: [])
+    print(a == W(items: []))
+}
