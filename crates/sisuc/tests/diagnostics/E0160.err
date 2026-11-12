@@ -2,7 +2,7 @@ error[E0160]: the payload of enum `E3` can be 4 GiB or more
   --> E0160.sisu:13:6
    |
 13 | enum E3 {
-   |      ^^ this enum holds other enums or structs inline
+   |      ^^ this enum holds other enums inline
    |
    = help: a payload must be less than 4 GiB. Hold a part in a class or an array. A class field adds the size of a pointer to the payload, and an array field adds the size of three pointers.
 

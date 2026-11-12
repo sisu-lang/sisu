@@ -1,0 +1,42 @@
+error[E0160]: struct `S28` can be 4 GiB or more
+  --> E0160-struct.sisu:36:8
+   |
+36 | struct S28 { a: S27; b: S27 }
+   |        ^^^ this struct holds other structs inline
+   |
+   = help: a struct must be less than 4 GiB. Hold a part in a class or an array. A class field adds the size of a pointer to the struct, and an array field adds the size of three pointers.
+
+error[E0160]: the payload of enum `E` can be 4 GiB or more
+  --> E0160-struct.sisu:40:6
+   |
+40 | enum E { A(S27, S27) }
+   |      ^ this enum holds structs inline
+   |
+   = help: a payload must be less than 4 GiB. Hold a part in a class or an array. A class field adds the size of a pointer to the payload, and an array field adds the size of three pointers.
+
+error[E0160]: the payload of enum `F` can be 4 GiB or more
+  --> E0160-struct.sisu:42:6
+   |
+42 | enum F { A(S27, G) }
+   |      ^ this enum holds other enums and structs inline
+   |
+   = help: a payload must be less than 4 GiB. Hold a part in a class or an array. A class field adds the size of a pointer to the payload, and an array field adds the size of three pointers.
+
+error[E0160]: struct `U` can be 4 GiB or more
+  --> E0160-struct.sisu:43:8
+   |
+43 | struct U { a: G; b: G }
+   |        ^ this struct holds enums inline
+   |
+   = help: a struct must be less than 4 GiB. Hold a part in a class or an array. A class field adds the size of a pointer to the struct, and an array field adds the size of three pointers.
+
+error[E0160]: struct `V` can be 4 GiB or more
+  --> E0160-struct.sisu:44:8
+   |
+44 | struct V { a: G; b: S27 }
+   |        ^ this struct holds enums and other structs inline
+   |
+   = help: a struct must be less than 4 GiB. Hold a part in a class or an array. A class field adds the size of a pointer to the struct, and an array field adds the size of three pointers.
+
+sisu: 5 errors
+sisu: for more on a code, run `sisu explain <code>`: E0160

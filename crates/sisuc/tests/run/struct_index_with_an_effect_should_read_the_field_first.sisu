@@ -1,0 +1,37 @@
+// GIVEN a read of an array in a struct, under an index whose block replaces that struct
+// WHEN the read runs, through a class field, a local, a deeper path and an array element
+// THEN the read sees the array from before the index, as for a class, and the place holds the
+// new one after it
+// AND a write under such an index goes into the new struct, as a write into an array field does
+struct P { xs: [i64] }
+class C { mut p: P }
+struct In { xs: [i64] }
+struct T { i: In }
+struct Q { xs: [i64] }
+struct D { q: Q }
+class K { mut d: D }
+struct E { ys: [i64] }
+
+fn main() {
+    let c = C(p: P(xs: [1]))
+    print(c.p.xs[{ c.p = P(xs: [9]); 0 }])            // 1
+    print(c.p.xs[0])                                  // 9
+
+    let mut t = T(i: In(xs: [1]))
+    print(t.i.xs[{ t.i = In(xs: [9]); 0 }])            // 1
+    print(t.i.xs[0])                                  // 9
+
+    let k = K(d: D(q: Q(xs: [1])))
+    print(k.d.q.xs[{ k.d = D(q: Q(xs: [9])); 0 }])     // 1
+    print(k.d.q.xs[0])                                // 9
+
+    let mut es = [E(ys: [1])]
+    print(es[0].ys[{ es[0] = E(ys: [9]); 0 }])         // 1
+    print(es[0].ys[0])                                // 9
+
+    let w = C(p: P(xs: [1]))
+    w.p.xs[{ w.p = P(xs: [9]); 0 }] = 5
+    print(w.p.xs[0])                                  // 5
+    w.p.xs[{ w.p = P(xs: [20]); 0 }] += 5
+    print(w.p.xs[0])                                  // 25
+}

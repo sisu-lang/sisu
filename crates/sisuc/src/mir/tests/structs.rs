@@ -77,3 +77,29 @@ fn struct_copy_written_through_should_stay_a_copy() {
     let f = function(&printed, "copied");
     assert!(!f.contains("borrow a#0"), "{f}");
 }
+
+/// GIVEN a read of an element of an array in a struct in a class, with a plain index
+/// AND the same read with an index that replaces the struct
+/// WHEN the program is built
+/// THEN the plain read reads in place with no copy. The other copies the array before the index.
+#[test]
+fn struct_field_under_an_index_with_an_effect_should_be_read_first() {
+    let printed = built(
+        "struct P { xs: [i64] }\nclass C { mut p: P }\n\
+         fn plain(c: C) {\n    print(c.p.xs[0])\n}\n\
+         fn effect(c: C) {\n    print(c.p.xs[{ c.p = P(xs: [9]); 0 }])\n}",
+    );
+    has(&printed, "plain", &["_ = c#0.0.xs[0]", "call print(_)"]);
+    let plain = function(&printed, "plain");
+    assert!(!plain.contains("copy"), "{plain}");
+    has(
+        &printed,
+        "effect",
+        &[
+            "_ = copy c#0.0.xs",
+            "_ = take _.0",
+            "release _",
+            "call print(_)",
+        ],
+    );
+}

@@ -1,0 +1,45 @@
+// GIVEN structs that double at each step, from `S0` of 16 bytes to `S31`
+// AND `E`, `F`, `U` and `V`, which each hold two parts of 2 GiB, and `G` of 2 GiB
+// WHEN `sisu check` runs on it
+// THEN it reports E0160 at `S28` (36:8), the first struct of 4 GiB, with the struct text
+// AND it reports E0160 at `E` (40:6), `F` (42:6), `U` (43:8) and `V` (44:8)
+// AND each label names the kinds of type that it holds inline
+// AND it reports nothing at `G` or at a struct after `S28`
+struct S0 { a: i64; b: i64 }
+struct S1 { a: S0; b: S0 }
+struct S2 { a: S1; b: S1 }
+struct S3 { a: S2; b: S2 }
+struct S4 { a: S3; b: S3 }
+struct S5 { a: S4; b: S4 }
+struct S6 { a: S5; b: S5 }
+struct S7 { a: S6; b: S6 }
+struct S8 { a: S7; b: S7 }
+struct S9 { a: S8; b: S8 }
+struct S10 { a: S9; b: S9 }
+struct S11 { a: S10; b: S10 }
+struct S12 { a: S11; b: S11 }
+struct S13 { a: S12; b: S12 }
+struct S14 { a: S13; b: S13 }
+struct S15 { a: S14; b: S14 }
+struct S16 { a: S15; b: S15 }
+struct S17 { a: S16; b: S16 }
+struct S18 { a: S17; b: S17 }
+struct S19 { a: S18; b: S18 }
+struct S20 { a: S19; b: S19 }
+struct S21 { a: S20; b: S20 }
+struct S22 { a: S21; b: S21 }
+struct S23 { a: S22; b: S22 }
+struct S24 { a: S23; b: S23 }
+struct S25 { a: S24; b: S24 }
+struct S26 { a: S25; b: S25 }
+struct S27 { a: S26; b: S26 }
+struct S28 { a: S27; b: S27 }
+struct S29 { a: S28; b: S28 }
+struct S30 { a: S29; b: S29 }
+struct S31 { a: S30; b: S30 }
+enum E { A(S27, S27) }
+enum G { A(S26, S26) }
+enum F { A(S27, G) }
+struct U { a: G; b: G }
+struct V { a: G; b: S27 }
+fn main() {}
