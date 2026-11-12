@@ -1382,6 +1382,7 @@ fn a_plus_that_is_checked_again_should_report_the_limit_of_the_page_example() {
 
 /// GIVEN the same program, and a statement that is not a `+` checked again: the use alone, with
 ///   no expected type, or under a `-`
+/// OR a `+` checked again after a report that the rollback does not cut
 /// WHEN the program is checked
 /// THEN the reports are as they were before the fix of #656
 #[test]
@@ -1398,6 +1399,12 @@ fn a_statement_that_is_not_checked_again_should_report_the_limit_holds_before_an
             "let y = \"b\" + s(EA.W(1))",
             "",
             vec![(Code::AliasTooLarge, (37, 17))],
+        ),
+        (
+            "a report that the later rollback does not cut",
+            "let y = s(EA.W(1))\nlet z: f64 = \"b\" + \"c\"",
+            "",
+            vec![(Code::AliasTooLarge, (37, 11)), (Code::Mismatch, (38, 14))],
         ),
         (
             "a negation",
