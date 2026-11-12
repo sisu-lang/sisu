@@ -344,6 +344,19 @@ fn a_break_in_a_failed_join_should_wait_for_a_loop_outside_it() {
             "let a = loop { f(if c { m } else { if c { break None } else { 8 } }) }",
             vec![call],
         ),
+        // The inner join is a failed join in a loop that opens inside the outer failed join. Its
+        // `break` still waits for the first `break` of that loop: the innermost join counts.
+        (
+            "inner failed join in a loop of a failed join",
+            "f(if c { let x = loop { f(if c { if c { break Some(1) } else { 8 } } else { if c { break None }; 8 }) }; 8 } else { 9 })",
+            vec![(ArgumentCount, (5, 5)), (ArgumentCount, (5, 29))],
+        ),
+        // The guard of an arm is checked out of source order, so its `break` waits too.
+        (
+            "guard of a match arm",
+            "let n = 3\nlet a = loop { f(match n {\n 1 => if c { break Some(m) } else { 8 }\n x if (if c { break None } else { c }) => m\n _ => 8\n }) }",
+            vec![(ArgumentCount, (6, 20))],
+        ),
     ]));
 }
 
