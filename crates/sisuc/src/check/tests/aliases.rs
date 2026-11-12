@@ -1366,16 +1366,21 @@ fn a_plus_that_is_checked_again_should_report_the_limit_that_it_passes() {
 /// What follows `h` in the rows of the #656 tables that need an alias `Small` or a generic `id`.
 const AFTER: &str = "type Small = i64\nfn id<T>(v: T) -> T { v }\n";
 
-/// Each row gives one E0162. Its span covers the written `EA` of the use that passed the limit,
-/// not a written type before it. The report shows the source text of its span as the type.
+/// Checks each row once. Its errors are the wanted ones, and it gives one E0162. The span of that
+/// E0162 covers the written `EA` of the use that passed the limit, not a written type before it.
+/// The report shows the source text of its span as the type.
 fn assert_limit_names_the_alias(rows: &[ErrorRow<'_>]) {
     let mut red = Vec::new();
-    for (name, src, _) in rows {
+    for (name, src, wanted) in rows {
         let (_, ds) = checked_with(PRELUDE_SOURCE, src);
+        let found = errors(src, &ds);
         let texts: Vec<_> = (ds.iter())
             .filter(|d| d.code() == Code::AliasTooLarge)
             .map(|d| &src[d.span().range()])
             .collect();
+        if found != *wanted {
+            red.push(format!("row `{name}`: found {found:?}, wanted {wanted:?}"));
+        }
         if texts != ["EA"] {
             red.push(format!("row `{name}`: found {texts:?}"));
         }
@@ -1468,7 +1473,6 @@ fn a_plus_that_is_checked_again_should_report_the_limit_at_the_use_of_the_alias(
             vec![(Code::Mismatch, (37, 14)), (Code::AliasTooLarge, (37, 39))],
         ),
     ]);
-    error_rows(&rows);
     assert_limit_names_the_alias(&rows);
 }
 

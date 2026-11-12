@@ -258,10 +258,10 @@ impl Checker<'_> {
             return result;
         }
         // The first check is dropped with its result, locals, uninferred literals, misfits and
-        // findings. So none is left that nothing binds, none is judged twice, and no value
-        // outlives the cut reports.
-        // A limit of the aliases is reported once for the check, so the second check cannot report
-        // it again: the report of the first check is kept.
+        // findings, except its E0162 reports. So none is left that nothing binds, none is judged
+        // twice, and no value outlives the cut reports. The reports are kept because the memo does
+        // not roll back: the limit of the check is not reported again, and a limit of one written
+        // type that the second check reports again is kept once.
         let limits = self
             .diagnostics
             .take_since(diagnostics)
@@ -277,8 +277,9 @@ impl Checker<'_> {
         self.pending.truncate(pending);
         self.body.misfits.truncate(misfits);
         self.body.joins.insert(span);
+        let again = self.diagnostics.mark();
         let result = self.integers(operands, Expectation::None, operator, op);
-        self.diagnostics.restore(limits);
+        self.diagnostics.restore_new(limits, again);
         result
     }
 
