@@ -355,3 +355,7 @@ let _a = [5, Some(1), $]
 let _a = missing ?? (if c { $ } else { 8 })
 let _a = i64(if c { $ } else { 8 }, 1)
 let _a = loop { if c { break missing }; break $ }
+# A `break` in a failed join to a loop that is open outside it: the later branch of the join
+# holds the `break`.
+let _a = loop { let _x = missing ?? (if c { if c { break Some(1) } else { 8 } } else { if c { break $ }; 8 }) }
+let _a = loop { let _x = i64(if c { if c { break Some(1) } else { 8 } } else { if c { break $ }; 8 }, 1) }

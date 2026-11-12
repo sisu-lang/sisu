@@ -240,7 +240,7 @@ impl Checker<'_> {
                 order[kept] = i;
                 kept += 1;
             }
-            let block = check(self, i, carried);
+            let block = self.waiting(expected, |c| check(c, i, carried));
             // The first branch of a known type anchors the rest; a failed or `unit` one only
             // until then. An `any` branch widens the anchor, which only the hints read.
             match (block_type(&block), anchor) {
@@ -583,6 +583,18 @@ impl Branch<'_> {
 }
 
 impl Checker<'_> {
+    /// Runs `work`. When `expected` is `Poisoned`, a `break` in it to a loop that is open now
+    /// waits for the next run (see `Body::waiting_loops`).
+    fn waiting<T>(&mut self, expected: Expectation, work: impl FnOnce(&mut Self) -> T) -> T {
+        let outer = self.body.waiting_loops;
+        if expected == Expectation::Poisoned {
+            self.body.waiting_loops = outer.or(Some(self.body.loops.len()));
+        }
+        let result = work(self);
+        self.body.waiting_loops = outer;
+        result
+    }
+
     /// The branch for the value of `block`. Its value is ranked only when no type is expected or
     /// the context failed, as `join` orders the branches only then. `bind` binds what the block
     /// sees (see `block_rank`).
@@ -594,7 +606,7 @@ impl Checker<'_> {
     ) -> Branch<'a> {
         let mut fit = true;
         let ranked = matches!(expected, Expectation::None | Expectation::Poisoned)
-            .then(|| self.block_rank(block, &mut fit, bind))
+            .then(|| self.waiting(expected, |c| c.block_rank(block, &mut fit, bind)))
             .flatten();
         Branch {
             rank: ranked.map_or(Rank::Concrete, |ranked| ranked.sibling(fit)),
@@ -628,8 +640,11 @@ impl Checker<'_> {
         bind: impl FnOnce(&mut Self) -> Option<(LetPattern, Option<Checked>)>,
     ) -> Branch<'a> {
         let mut fit = true;
-        let ranked = matches!(expected, Expectation::None | Expectation::Poisoned)
-            .then(|| self.tail_rank(arm_key(arm), None, e, &mut fit, bind));
+        let ranked = matches!(expected, Expectation::None | Expectation::Poisoned).then(|| {
+            self.waiting(expected, |c| {
+                c.tail_rank(arm_key(arm), None, e, &mut fit, bind)
+            })
+        });
         Branch {
             rank: ranked.map_or(Rank::Concrete, |ranked| ranked.sibling(fit)),
             optional: ranked.is_some_and(|ranked| ranked.optional),
