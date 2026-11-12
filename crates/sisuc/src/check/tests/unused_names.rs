@@ -1222,6 +1222,35 @@ fn struct_chain(n: usize, body: &str) -> String {
         )
 }
 
+/// The struct `W<T>` of `n` fields, and one generic constructor `mk`. `main` prints `n` instances
+/// of `W`. Their type arguments are `i64` in `n` different arrays. `Unread` is built and nothing
+/// reads its field.
+fn wide_instances(n: usize) -> String {
+    let fields: Vec<String> = (0..n).map(|k| format!("f{k}: T")).collect();
+    let labels: Vec<String> = (0..n).map(|k| format!("f{k}: x")).collect();
+    let mut src = format!("struct W<T> {{ {} }}\n", fields.join("; "));
+    writeln!(src, "fn mk<T>(x: T) -> W<T> {{ W({}) }}", labels.join(", "))
+        .expect("writing to a `String` should succeed");
+    writeln!(
+        src,
+        "struct Unread {{ u: i64 }}\nfn main() {{\n    let _u = Unread(u: 1)"
+    )
+    .expect("writing to a `String` should succeed");
+    for k in 0..n {
+        writeln!(src, "    print(mk({}1{}))", "[".repeat(k), "]".repeat(k))
+            .expect("writing to a `String` should succeed");
+    }
+    src + "}"
+}
+
+/// The walk reads a declaration once for all its printed instances. So a wide declaration with
+/// many instances costs the sum of their sizes, not their product.
+#[test]
+fn shown_walk_should_read_a_wide_declaration_once_for_all_its_instances() {
+    let visits = |n| shown_visits(&wide_instances(n));
+    assert_near_linear(visits(10), visits(20), visits(30));
+}
+
 /// The walk of a shown struct reads the structure of the operand and each struct declaration once.
 /// It does not read the instances that the declarations make, which double at each level of the
 /// chain. This holds for a generated `print`, for `==` and for `dbg`.

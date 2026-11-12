@@ -1854,6 +1854,112 @@ fn generated_read_should_count_each_shown_field() {
             vec![],
         ),
     ];
+    // Generated code reads a struct through paths that name neither `Display` nor `Eq`. None of
+    // these programs has a W0013.
+    let p = "struct P { n: i64 }\n";
+    let b = "struct B<T> { v: T }\n";
+    let shown: Vec<(&str, String)> = vec![
+        (
+            "a type parameter that is printed",
+            own(
+                &format!("{p}fn show<T>(x: T) {{ print(x) }}\n"),
+                "show(P(n: 1))",
+            ),
+        ),
+        (
+            "a type parameter that is interpolated",
+            own(
+                &format!("{p}fn show<T>(x: T) {{ print(\"{{x}}\") }}\n"),
+                "show(P(n: 1))",
+            ),
+        ),
+        (
+            "a type parameter that goes to another generic function",
+            own(
+                &format!("{p}fn inner<T>(x: T) {{ print(x) }}\nfn show<T>(x: T) {{ inner(x) }}\n"),
+                "show(P(n: 1))",
+            ),
+        ),
+        (
+            "a method of the prelude with an Eq bound",
+            own(p, "print([P(n: 1)].contains(P(n: 1)))"),
+        ),
+        (
+            "an extend block with a Display bound",
+            own(
+                &format!(
+                    "{p}{b}extend<T: Display> B<T> {{\n    fn show(self) {{ print(self.v) }}\n}}\n"
+                ),
+                "B(v: P(n: 1)).show()",
+            ),
+        ),
+        (
+            "an extend block with an Eq bound",
+            own(
+                &format!(
+                    "{p}{b}extend<T: Eq> B<T> {{\n    fn same(self, o: T) -> bool {{ self.v == o }}\n}}\n"
+                ),
+                "print(B(v: P(n: 1)).same(P(n: 2)))",
+            ),
+        ),
+        (
+            "a call of the generated to_string",
+            own(p, "print(P(n: 1).to_string())"),
+        ),
+        (
+            "a call of the generated to_string in an interpolation",
+            own(p, "print(\"{P(n: 1).to_string()}\")"),
+        ),
+        (
+            "a call of the generated eq",
+            own(p, "print(P(n: 1).eq(P(n: 2)))"),
+        ),
+        (
+            "an any type of an interface that inherits Display",
+            own(
+                &format!("{p}interface I: Display {{}}\nextend P: I {{}}\n"),
+                "let x: any I = P(n: 1)\n    print(x)",
+            ),
+        ),
+        (
+            "an any type of an interface with no requirement",
+            own(
+                "interface I {}\nstruct P: I { n: i64 }\n",
+                "let x: any I = P(n: 1)\n    print(x)",
+            ),
+        ),
+        (
+            "a bound on an interface that inherits Display",
+            own(
+                &format!(
+                    "{p}interface Shown: Display {{}}\nextend P: Shown {{}}\nfn f<T: Shown>(x: T) {{ print(x) }}\n"
+                ),
+                "f(P(n: 1))",
+            ),
+        ),
+        (
+            "a loop break that a later break widens to any Display",
+            own(
+                p,
+                "let d: any Display = 1\n    let x = loop {\n        if read_line() == \"x\" { break P(n: 1) }\n        break d\n    }\n    print(x)",
+            ),
+        ),
+        (
+            "a written Display for one instance of another declaration",
+            own(
+                &format!(
+                    "{p}{b}struct A<T> {{ b: B<T> }}\nextend B<i64>: Display {{\n    fn to_string(self) -> string {{ \"number\" }}\n}}\n"
+                ),
+                "print(A(b: B(v: P(n: 1))))",
+            ),
+        ),
+    ];
+    with_prelude();
+    let red_shown: Vec<_> = (shown.iter())
+        .filter(|(_, src)| !unused_names(src).is_empty())
+        .map(|(row, _)| *row)
+        .collect();
+    assert!(red_shown.is_empty(), "red rows: {red_shown:?}");
     let red: Vec<_> = (rows.iter())
         .filter(|(_, src, wanted)| unused_names(src) != *wanted)
         .map(|(row, ..)| *row)
