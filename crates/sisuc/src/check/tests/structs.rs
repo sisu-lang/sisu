@@ -1225,8 +1225,8 @@ fn struct_equality_should_follow_its_field_types() {
 
 /// GIVEN a struct that holds itself, directly, through another struct or through an enum. WHEN
 /// the program is checked. THEN it is E0027 when no value of it can be built, at its first enum,
-/// or else at its first struct. An optional, an array and an enum's variant that needs no `S` end
-/// the cycle, so each of those has no error.
+/// or else at its first struct. These end the cycle, so each has no error: an optional, an array,
+/// an enum's variant that needs no `S`, and an enum's type argument.
 #[test]
 fn struct_cycle_should_need_a_way_out() {
     let rows = [
@@ -1259,6 +1259,16 @@ fn struct_cycle_should_need_a_way_out() {
             "an enum with no way out",
             "struct S { e: E }\nenum E {\n    A(s: S)\n}\nfn main() {}".to_string(),
             vec![(NeverConstructed, (2, 6))],
+        ),
+        (
+            "an enum's type argument ends it",
+            "enum W<T> {\n    A(x: T)\n    N\n}\nstruct S { w: W<S> }\nfn main() {}".to_string(),
+            vec![],
+        ),
+        (
+            "a class and a struct",
+            "class C { s: S }\nstruct S { c: C }\nfn main() {}".to_string(),
+            vec![(NeverConstructed, (2, 8))],
         ),
     ];
     error_rows(&rows);

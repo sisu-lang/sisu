@@ -1,0 +1,26 @@
+// GIVEN `struct S { e: E; k: [string] }` and `enum E { A(s: S, t: string); B }`, where `E.A.s`
+// and `S.e` are boxes on the cycle
+// WHEN `rebuild` matches an owned `E`, and the arm binds the counted `s` and `t` and uses both
+// THEN the new value has each part, and the old value keeps its own
+struct S { e: E; k: [string] }
+
+enum E {
+    A(s: S, t: string)
+    B
+}
+
+fn rebuild(e: E) -> E {
+    match e {
+        E.A(s, t) => E.A(s: S(e: rebuild(s.e), k: s.k), t: t + "!")
+        E.B => E.B
+    }
+}
+
+fn main() {
+    let e = E.A(s: S(e: E.A(s: S(e: E.B, k: ["a"]), t: "u"), k: ["b", "c"]), t: "t")
+    let f = rebuild(e)
+    print(e)        // A(s: S(e: A(s: S(e: B, k: ["a"]), t: "u"), k: ["b", "c"]), t: "t")
+    print(f)        // A(s: S(e: A(s: S(e: B, k: ["a"]), t: "u!"), k: ["b", "c"]), t: "t!")
+    print(e == f)   // false
+    print(rebuild(E.B) == E.B) // true
+}

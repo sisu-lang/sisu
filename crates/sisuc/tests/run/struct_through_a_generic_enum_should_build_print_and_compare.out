@@ -1,0 +1,4 @@
+S(w: A(x: S(w: N, k: 1)), k: 2)
+S(w: A(x: S(w: N, k: 1)), k: 5)
+false
+true

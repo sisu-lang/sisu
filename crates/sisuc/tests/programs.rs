@@ -1115,22 +1115,23 @@ fn chains_of_every_shape_should_print_and_compare_in_a_small_stack() {
 }
 
 /// GIVEN `struct Node { v: i64; next: Node? }` and a list of 1 000 000 nodes built in a loop
-/// WHEN the list leaves its scope under a 256 KiB stack, with and without `-O2`
-/// THEN it prints `done` and exits 0
+/// WHEN the list leaves its scope under a 256 KiB stack, with and without `-O2`, and with
+/// `--rc-checks`
+/// THEN it prints `done`, exits 0 and leaves no live object
 #[test]
 fn struct_chain_should_free_in_a_small_stack() {
-    assert_small_stack_prints_at_both("structchain", "done\n");
+    assert_small_stack_checks_at_both("structchain", "done\n");
 }
 
 /// GIVEN `struct S { e: E }` with `enum E { A(s: S); B }` and two equal values of 100 000 levels
 /// WHEN they are compared, one is printed, and both leave their scope under a 256 KiB stack, with
-/// and without `-O2`
-/// THEN it prints `true`, the value and `done`, and exits 0
+/// and without `-O2`, and with `--rc-checks`
+/// THEN it prints `true`, the value and `done`, exits 0 and leaves no live object
 #[test]
 fn mixed_cycle_should_compare_print_and_free_in_a_small_stack() {
     const LEVELS: usize = 100_000;
     let text = "S(e: A(s: ".repeat(LEVELS) + "S(e: B)" + &"))".repeat(LEVELS);
-    assert_small_stack_prints_at_both("mixedcycle", &format!("true\n{text}\ndone\n"));
+    assert_small_stack_checks_at_both("mixedcycle", &format!("true\n{text}\ndone\n"));
 }
 
 /// GIVEN the `structorder` program, with a loop over a struct field of a class and an element.

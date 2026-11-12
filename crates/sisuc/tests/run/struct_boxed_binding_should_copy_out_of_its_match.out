@@ -1,0 +1,4 @@
+A(s: S(e: A(s: S(e: B, k: ["a"]), t: "u"), k: ["b", "c"]), t: "t")
+A(s: S(e: A(s: S(e: B, k: ["a"]), t: "u!"), k: ["b", "c"]), t: "t!")
+false
+true
