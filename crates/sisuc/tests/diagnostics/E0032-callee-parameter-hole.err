@@ -1,0 +1,36 @@
+error[E0032]: expected `X?`, found `Two<_, bool>?`
+  --> E0032-callee-parameter-hole.sisu:26:5
+   |
+25 | fn from_mkp<X>() -> X? {
+   |                     -- `from_mkp` returns `X?`
+26 |     mkp()
+   |     ^^^^^
+
+error[E0032]: expected `[T]`, found `[T]?`
+  --> E0032-callee-parameter-hole.sisu:30:5
+   |
+29 | fn from_none<T>() -> [T] {
+   |                      --- `from_none` returns `[T]`
+30 |     none()
+   |     ^^^^^^
+
+error[E0032]: expected `[_]`, found `Result<_, string>`
+  --> E0032-callee-parameter-hole.sisu:34:16
+   |
+34 |     print(take(Err("x")))
+   |                ^^^^^^^^
+
+error[E0032]: expected `[[_]]`, found `[bool]`
+  --> E0032-callee-parameter-hole.sisu:35:15
+   |
+35 |     nested(5, id([true]))
+   |               ^^^^^^^^^^
+
+error[E0032]: expected `[_]?`, found `bool`
+  --> E0032-callee-parameter-hole.sisu:36:17
+   |
+36 |     optional(5, id(true))
+   |                 ^^^^^^^^
+
+sisu: 5 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

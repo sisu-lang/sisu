@@ -1,4 +1,4 @@
-error[E0032]: expected `Two<Result<T, string>, U>`, found `Two<Result<i64, i64>, [E]>`
+error[E0032]: expected `Two<Result<_, string>, _>`, found `Two<Result<i64, i64>, [_]>`
   --> E0032-waiting-misfit-no-param.sisu:15:15
    |
 15 |     let x = f(mk())

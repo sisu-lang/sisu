@@ -1,0 +1,18 @@
+interface Show {
+    fn show(self) -> string
+}
+enum G: Show {
+    N(i64)
+    fn show(self) -> string { "g" }
+}
+fn first<S: Show>(xs: [S]) -> S { xs[0] }
+fn make<S: Show>() -> S { panic("x") }
+fn id<T>(x: T) -> T { x }
+fn pick<S: Show>(a: S, b: S) -> S { a }
+fn opt<S: Show>(xs: [S]) -> S? { None }
+fn main() {
+    let g = G.N(1)
+    let k = 5
+    let x: G?? = first([])
+    print(x ?? g)
+}
