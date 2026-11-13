@@ -151,6 +151,30 @@ fn same_place_through_fields_and_elements() {
     );
 }
 
+/// "The same place" follows struct fields, and a class field whose object a struct field holds:
+/// the same fields of the same root append, and another field or another root does not.
+#[test]
+fn writes_through_struct_fields_should_append_only_to_the_same_place() {
+    let printed = lowered(
+        "struct In {\n    a: string\n}\nstruct S {\n    a: string\n    b: string\n    i: In\n    \
+         j: In\n}\nclass Q {\n    mut name: string\n}\nstruct H {\n    q: Q\n    r: Q\n}\n\
+         fn f(mut s: S, h: H) {\n    s.a = s.a + \"x\"\n    s.a = s.b + \"x\"\n    \
+         s.i.a = s.i.a + \"x\"\n    s.i.a = s.j.a + \"x\"\n    h.q.name = h.q.name + \"x\"\n    \
+         h.q.name = h.r.name + \"x\"\n}\nfn main() {}",
+    );
+    let parts = [
+        "(append (. s#0 a) \"x\")",
+        "(= (. s#0 a) (concat (. s#0 b) \"x\"))",
+        "(append (. (. s#0 i) a) \"x\")",
+        "(= (. (. s#0 i) a) (concat (. (. s#0 j) a) \"x\"))",
+        "(append (. (. h#1 q) name) \"x\")",
+        "(= (. (. h#1 q) name) (concat (. (. h#1 r) name) \"x\"))",
+    ];
+    for part in parts {
+        assert!(printed.contains(part), "{part} in {printed}");
+    }
+}
+
 #[test]
 fn element_type_is_expected_of_the_value() {
     contains(

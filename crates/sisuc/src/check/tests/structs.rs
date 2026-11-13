@@ -2694,3 +2694,13 @@ fn self_applied_struct_field_should_rank_own() {
     let ranks: Vec<tir::Rank> = l.fields.iter().map(|f| f.rank).collect();
     assert_eq!(ranks, [tir::Rank::Never, tir::Rank::Own]);
 }
+
+/// GIVEN `struct T { xs: Nope }`, whose field type fails, and `u.t` of type `T?`. WHEN
+/// `u.t?.xs.push(1)` runs. THEN the one diagnostic is the E0030 of the declaration (2:9): the
+/// `push` holds its proof, and reports nothing more.
+#[test]
+fn safe_push_through_a_failed_field_should_keep_its_proof() {
+    let src = "struct T {\n    xs: Nope\n}\nstruct U { t: T? }\nfn main() {\n    \
+               let mut u = U(t: None)\n    u.t?.xs.push(1)\n    print(u.t == None)\n}";
+    only("safe push", src, Code::UnknownType, (2, 9));
+}
