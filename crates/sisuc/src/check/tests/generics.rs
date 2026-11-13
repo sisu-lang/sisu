@@ -8166,7 +8166,7 @@ fn waiting_variant_should_bind_the_whole_optional_when_its_alias_holds_one() {
 
 /// GIVEN a generic call with a variant through an alias that holds an optional
 /// WHEN the optional is not at the place that the call binds, or the alias holds an array of it
-/// THEN the report is the one that the base gave
+/// THEN the report is the one that `main` gives
 #[test]
 fn waiting_variant_should_keep_its_report_when_its_alias_holds_an_unrelated_optional() {
     let rows: Vec<ErrorRow<'_>> = vec![
@@ -8175,6 +8175,7 @@ fn waiting_variant_should_keep_its_report_when_its_alias_holds_an_unrelated_opti
             alias_variant_program("let x: i64?? = snd(BP.P(a: None, b: 5))"),
             vec![],
         ),
+        // A false E0032, as on `main`: the deferred class of `first(mkll())`.
         (
             "g2",
             alias_variant_program("let x: [i64?]? = unb(BL.B(v: []))"),
