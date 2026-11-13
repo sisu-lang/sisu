@@ -104,6 +104,14 @@ struct Sa {
     n: i64
 }
 type Am = Sa
+struct Sxs {
+    n: i64
+    xs: [i64]
+}
+class Ocs {
+    mut s: Sxs
+}
+fn ocs() -> Ocs? { None }
 fn take<T>(mut x: T?) { x = None }
 fn take2<T>(mut x: T?, n: i64) { x = None }
 fn keep<T>(mut x: T?) -> T? { x }
@@ -253,6 +261,11 @@ sm().own()
 osm()?.get()
 Am(n: 1)
 { let mut os = sso(); os[0]?.n = 1; os[0] }
+# A struct field of a class object that a `?.` takes out of an optional, and a field and an
+# element of that struct: a write, a `push` and a `mut` argument go through the class `?.`.
+ocs()?.s.n
+ocs()?.s.xs
+ocs()?.s.xs[0]
 
 [failed values]
 # A type parameter read: in the function whose bound failed, `u` is unknown.
