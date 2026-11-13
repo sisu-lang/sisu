@@ -1,0 +1,42 @@
+error[E0068]: a string has no single index
+ --> E0068-string-help-names.sisu:7:5
+  |
+7 |     cs[0] = "x"
+  |     ^^ this is a string
+  |
+  = help: to change a character, write `let mut cs2 = cs.chars()`, change `cs2[i]`, then write `cs = string(cs2)`
+
+error[E0068]: a string has no single index
+ --> E0068-string-help-names.sisu:9:11
+  |
+9 |     print(cs[0])
+  |           ^^ this is a string
+  |
+  = help: for bytes, write `let bs = cs.bytes()` once, then `bs[i]`; for characters, write `let cs2 = cs.chars()` once, then `cs2[i]`
+
+error[E0068]: a string has no single index
+  --> E0068-string-help-names.sisu:11:11
+   |
+11 |     print(bs[0])
+   |           ^^ this is a string
+   |
+   = help: for bytes, write `let bs2 = bs.bytes()` once, then `bs2[i]`; for characters, write `let cs = bs.chars()` once, then `cs[i]`
+
+error[E0068]: a string has no single index
+  --> E0068-string-help-names.sisu:14:9
+   |
+14 |         ts[i][0] = "x"
+   |         ^^^^^ this is a string
+   |
+   = help: to change a character, write `let mut cs = ts[i].chars()`, change `cs[i2]`, then write `ts[i] = string(cs)`
+
+error[E0068]: a string has no single index
+  --> E0068-string-help-names.sisu:19:13
+   |
+19 |             us[i][n][0] = "x"
+   |             ^^^^^^^^ this is a string
+   |
+   = help: to change a character, write `let mut cs = us[i][n].chars()`, change `cs[i2]`, then write `us[i][n] = string(cs)`
+
+sisu: 5 errors
+sisu: for more on a code, run `sisu explain <code>`: E0068

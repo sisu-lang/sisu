@@ -1,0 +1,22 @@
+// GIVEN a single index of a string, whose base holds a word that the help would write
+// WHEN `sisu check` runs on it
+// THEN it reports E0068 for each index
+// AND the help writes a new name for each name that the base holds as a whole word
+fn main() {
+    let mut cs = "ab"
+    cs[0] = "x"
+    let cs = "ab"
+    print(cs[0])
+    let bs = "ab"
+    print(bs[0])
+    let mut ts = ["ab"]
+    for i in 0..1 {
+        ts[i][0] = "x"
+    }
+    let mut us = [["ab"]]
+    for i in 0..1 {
+        for n in 0..1 {
+            us[i][n][0] = "x"
+        }
+    }
+}
