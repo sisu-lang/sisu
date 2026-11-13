@@ -24,8 +24,9 @@ ASSERT = re.compile(r"\b(?:debug_)?assert(?:_eq|_ne)?!\(")
 # What `unmeasured` walks back over: the longest statement it follows, in lines.
 CONTINUATION = 30
 # What `code_of` strips: a raw string, a string, a one-char literal (a lifetime has no closing
-# quote) and a `//` comment. A string that runs over several lines is not handled.
-BRACE_NOISE = re.compile(r"""r(#*)".*?"\1|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])'|//.*""")
+# quote), a `/* */` comment and a `//` comment. A string or a `/* */` comment that runs over
+# several lines is not handled.
+BRACE_NOISE = re.compile(r"""r(#*)".*?"\1|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])'|/\*.*?\*/|//.*""")
 TEST_MOD = re.compile(r"^(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*\{")
 HUNK = re.compile(r"^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
@@ -241,10 +242,9 @@ def unmeasured(path: str, number: int, read_line: Callable[[str, int], str]) -> 
     That is an assert, or a line that an assert spans, or a `let ... else {` whose body is
     an invariant panic, as in the region lists. Comments do not count.
 
-    shortcut: a statement ends at a line that ends in `;`, `{` or `}`. After an assert in a
-    match arm (`A => assert!(x),`) or in a closure argument, the walk goes on to the next
-    lines. It goes on over a commented-out line too. So it can hide a branch below such
-    code, or below commented-out code. No such line exists in the repository now.
+    shortcut: a statement ends at a line that ends in `;`, `{` or `}`, or at an assert that
+    closes before line `number`. The walk goes on over a commented-out line, so it can hide a
+    branch below commented-out code. No such line exists in the repository now.
     """
     code = code_of(read_line(path, number))
     if ASSERT.search(code) or INVARIANT.search(code):
@@ -258,7 +258,20 @@ def unmeasured(path: str, number: int, read_line: Callable[[str, int], str]) -> 
         text = code_of(raw).rstrip()
         if text.endswith((";", "{", "}")):
             return False
-        if ASSERT.search(text):
+        if found := ASSERT.search(text):
+            rest = text[found.end() :] + "".join(
+                code_of(read_line(path, n)) for n in range(before + 1, number)
+            )
+            return not closes(rest)
+    return False
+
+
+def closes(code: str) -> bool:
+    """Return whether `code`, which follows an open `(`, closes it."""
+    depth = 1
+    for char in code:
+        depth += {"(": 1, ")": -1}.get(char, 0)
+        if depth == 0:
             return True
     return False
 
