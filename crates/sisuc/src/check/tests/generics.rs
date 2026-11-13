@@ -8095,6 +8095,102 @@ fn waiting_method_should_bind_the_whole_optional_when_its_declared_type_holds_on
     error_rows(&rows);
 }
 
+const RECEIVER_OPTIONAL_HEAD: &str = concat!(
+    "fn first<T>(xs: [T]) -> T { xs[0] }\n",
+    "enum Bx<T> { B(v: T); E }\n",
+    "enum Pr<A, B> { P(a: A, b: B) }\n",
+    "extend<T> Bx<T> {\n",
+    "    fn mkp<X>(self) -> Pr<T, X> { panic(\"no\") }\n",
+    "    fn mkl<X>(self) -> [Pr<T, X>] { panic(\"no\") }\n",
+    "}\n",
+    "extend<T> Bx<[T]> {\n",
+    "    fn mka<X>(self) -> Pr<T, X> { panic(\"no\") }\n",
+    "}\n",
+    "extend<A, B> Pr<A, B> {\n",
+    "    fn mkb<X>(self) -> Pr<A, X> { panic(\"no\") }\n",
+    "}\n",
+    "interface Mk<A> {\n",
+    "    fn mk<X>(self) -> Pr<A, X>\n",
+    "}\n",
+    "fn fst<A>(p: Pr<A, u8>) -> A { match p { Pr.P(a, b) => a } }\n",
+    "fn f<T, M: Mk<i64?>>(m: M, b: Bx<i64?>, a: Bx<[i64?]>, c: Bx<T?>, p: Pr<i64, u8?>, o: i64?) {\n",
+);
+
+/// The line of the statement of `receiver_optional_program`: the line after the head.
+const RECEIVER_OPTIONAL_LINE: usize = 19;
+
+fn receiver_optional_program(stmt: &str) -> String {
+    program_in(RECEIVER_OPTIONAL_HEAD, stmt, "}\nfn main() {}\n")
+}
+
+/// GIVEN a generic call whose argument is a method call that waits for its type
+/// AND whose declared type holds no optional
+/// AND whose receiver gives an optional to a parameter of the method's owner
+/// (`b: Bx<i64?>` for `Pr<T, X>`, or a bound `M: Mk<i64?>` for `Pr<A, X>`)
+/// WHEN the call has an optional context: a written type or a hint of `??`
+/// THEN the call binds the whole optional, and the program has no error
+/// AND a context that holds one optional more or less than the call's type keeps its error
+#[test]
+fn waiting_method_should_bind_the_whole_optional_when_its_receiver_gives_one() {
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "w1",
+            receiver_optional_program("let x: i64? = fst(b.mkp())"),
+            vec![],
+        ),
+        (
+            "w2",
+            receiver_optional_program("let x: i64? = o ?? fst(b.mkp())"),
+            vec![],
+        ),
+        (
+            "w3",
+            receiver_optional_program("let x: i64? = if o == None { o } else { fst(b.mkp()) }"),
+            vec![],
+        ),
+        (
+            "w4",
+            receiver_optional_program("let x: i64? = fst(first(b.mkl()))"),
+            vec![],
+        ),
+        (
+            "w5",
+            receiver_optional_program("let x: i64? = fst(a.mka())"),
+            vec![],
+        ),
+        (
+            "w6",
+            receiver_optional_program("let x: i64? = fst(m.mk())"),
+            vec![],
+        ),
+        (
+            "w7",
+            receiver_optional_program("let y: T? = fst(c.mkp())"),
+            vec![],
+        ),
+        // The call's type `Pr<i64?, X>` has an optional, and so binds `i64?`, not `u8?`.
+        (
+            "g1",
+            receiver_optional_program("let x: u8? = fst(b.mkp())"),
+            vec![(Code::Mismatch, (RECEIVER_OPTIONAL_LINE, 22))],
+        ),
+        // The receiver holds an optional, but the call's type `Pr<i64, X>` does not: the call
+        // binds the payload. This row fails a fix that asks only about the receiver.
+        (
+            "g2",
+            receiver_optional_program("let x: i64? = fst(p.mkb())"),
+            vec![],
+        ),
+        // One more optional in the context than in the call's type.
+        (
+            "g3",
+            receiver_optional_program("let x: i64?? = fst(b.mkp())"),
+            vec![(Code::Mismatch, (RECEIVER_OPTIONAL_LINE, 23))],
+        ),
+    ];
+    error_rows(&rows);
+}
+
 const ALIAS_VARIANT_HEAD: &str = concat!(
     "fn first<T>(xs: [T]) -> T { xs[0] }\n",
     "enum Bx<T> { B(v: T); E }\n",
