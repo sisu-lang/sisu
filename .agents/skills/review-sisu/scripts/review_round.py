@@ -348,6 +348,23 @@ def retro_classes(run: Path) -> list[str]:
     return [c.strip().lower() for c in found]
 
 
+def briefed(runs: list[Path]) -> list[tuple[Path, int]]:
+    """Return each run of RUNS that has a brief, with the round of its last brief.
+
+    Stop on a RUN that is not a directory, and when no RUN has a brief.
+    """
+    found: list[tuple[Path, int]] = []
+    for run in runs:
+        if not run.is_dir():
+            raise SystemExit(f"review_round: {run} is not a directory")
+        briefs = by_round(run, "brief")
+        if briefs:
+            found.append((run, max(n for _, n in briefs)))
+    if not found:
+        raise SystemExit("review_round: no RUN has a brief")
+    return found
+
+
 def stats(runs: list[Path]) -> int:
     """Print the rounds, the rulings and the retro classes of the kept runs RUNS."""
     rounds: Counter[int] = Counter()
@@ -356,13 +373,8 @@ def stats(runs: list[Path]) -> int:
     origins: Counter[str] = Counter()
     classes: Counter[str] = Counter()
     unruled = 0
-    for run in runs:
-        if not run.is_dir():
-            raise SystemExit(f"review_round: {run} is not a directory")
-        briefs = by_round(run, "brief")
-        if not briefs:
-            continue
-        rounds[max(n for _, n in briefs)] += 1
+    for run, last_round in briefed(runs):
+        rounds[last_round] += 1
         ruled = by_round(run, "rulings")
         unruled += not ruled
         for path, round_number in ruled:

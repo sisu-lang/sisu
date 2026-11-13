@@ -122,7 +122,10 @@ no ruling, and its counts go into the report to the user.
 
 A nit that a report lists under `Other nits:` needs no ruling. When one of
 them is blocking, rule on it as your own blocking finding, and name it in
-the report to the user. A nit that names a surviving mutant is never in
+the report to the user. Give it the next number after the last numbered
+finding of its report, such as `sol 4`. Use that number for its ruling
+and its `retro.md` line. `stats` counts it under severity `none`,
+because its report has no block for it. A nit that names a surviving mutant is never in
 that list, because the brief makes it a block.
 
 For each blocking finding that you accept, add one line to `RUN/retro.md`:

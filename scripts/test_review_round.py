@@ -494,6 +494,12 @@ class Stats(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("is not a directory", result.stderr)
 
+    def test_stats_should_stop_when_no_run_has_a_brief(self) -> None:
+        self.run_dir("not-a-review", {"notes.md": ""})
+        result = self.stats()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no RUN has a brief", result.stderr)
+
 
 class SaveReport(unittest.TestCase):
     @override

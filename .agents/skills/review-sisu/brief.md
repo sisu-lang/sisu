@@ -246,7 +246,8 @@ work under review.
   Write `Origin: unfixed` when it is an accepted earlier finding that is
   partly fixed or not fixed. Write `Origin: fix` when a fix round of this
   work added the defect. Write `Origin: missed` when the work had it
-  before round 1, and no earlier report gave it.
+  before round 1, and no earlier report gave it. Write `Origin: rejected`
+  when an earlier report gave it and the caller rejected it.
 
 # Focus
 
