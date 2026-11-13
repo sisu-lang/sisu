@@ -796,18 +796,30 @@ impl Checker<'_> {
     /// which can be built by `fix`. It gives each link's holder (`E.V` or `K.f`) and the type held,
     /// with the arguments the chain gives it. At an enum it takes the first variant's first such
     /// field, and at a class or a struct the first such field. It ends at the first type it meets
-    /// again. It also gives the first struct on the chain, if there is one, with its arguments.
+    /// again. It also gives the first struct on the chain, if there is one, as the field that
+    /// holds it on the chain declares it: that field is where a `?` ends the chain.
     fn chain(&self, start: usize, fix: &mut Buildable) -> (Vec<(String, String)>, Option<String>) {
         let classes = self.classes.len();
         let params = self.node_info(start).1;
         // A field named `name` of type `ty`, if that type cannot be built: its name, its type's
         // name, and its node and arguments.
-        let mut unbuilt = |(name, ty): (&str, Type)| {
+        let mut unbuilt = |(name, ty, declared): (&str, Type, Type)| {
             let (n, args) = fix.node_of(ty)?;
             let key = fix.key_of(n, args);
-            (!fix.built[key]).then(|| (name.to_string(), self.type_name(ty), (n, args), key))
+            (!fix.built[key]).then(|| {
+                (
+                    name.to_string(),
+                    self.type_name(ty),
+                    declared,
+                    (n, args),
+                    key,
+                )
+            })
         };
         let mut chain = Vec::new();
+        // Each link's next node and its field's declared type.
+        let mut held = Vec::new();
+        // The first struct's node, arguments and link.
         let mut first_struct = None;
         // Asking for a key's flags can add keys to `fix`, so this is a set.
         let mut on_chain = FxHashSet::default();
@@ -815,34 +827,42 @@ impl Checker<'_> {
         let mut key = start;
         while on_chain.insert(key) {
             let with = args.get();
-            let held = |ty: &Option<Type>| ty.and_then(|ty| self.subst(ty, with));
+            let typed = |ty: &Option<Type>| ty.and_then(|ty| Some((self.subst(ty, with)?, ty)));
             let (holder, field) = if let Some(class) = self.class_node(at) {
-                let mut fields = class
-                    .fields
-                    .iter()
-                    .filter_map(|f| Some((f.name.name.as_str(), held(&f.ty)?)));
+                let mut fields = (class.fields.iter())
+                    .filter_map(|f| typed(&f.ty).map(|(ty, d)| (f.name.name.as_str(), ty, d)));
                 (&class.name, fields.find_map(&mut unbuilt))
             } else {
                 let e = &self.enums[at - classes];
                 let mut fields = e.variants.first().into_iter().flat_map(|v| {
                     let name = v.name.name.as_str();
-                    v.fields
-                        .iter()
-                        .filter_map(move |ty| Some((name, held(ty)?)))
+                    (v.fields.iter()).filter_map(move |ty| typed(ty).map(|(ty, d)| (name, ty, d)))
                 });
                 (&e.name, fields.find_map(&mut unbuilt))
             };
-            let (name, ty, next, next_key) =
+            let (name, ty, declared, next, next_key) =
                 field.expect("a type no value can be built of should need another such type");
-            if first_struct.is_none()
-                && let Some(s) = at.checked_sub(classes + self.enums.len())
-            {
-                let ty = Type::intern(TypeKind::Struct(tir::StructId(s), args));
-                first_struct = Some(self.type_name(ty));
+            if first_struct.is_none() && at >= classes + self.enums.len() {
+                first_struct = Some((at, args, chain.len()));
             }
             chain.push((format!("{}.{name}", holder.name), ty));
+            held.push((next.0, declared));
             ((at, args), key) = (next, next_key);
         }
+        // The link before the struct holds it. The start is held by the link that closes the
+        // chain, if any. A field that names the struct only through a type parameter, or no such
+        // link, gives the struct with the chain's arguments.
+        let first_struct = first_struct.map(|(at, args, link)| {
+            let id = tir::StructId(at - classes - self.enums.len());
+            let holder = match link.checked_sub(1) {
+                Some(before) => held.get(before),
+                None => held.last().filter(|&&(next, _)| next == at),
+            };
+            let declared = holder
+                .map(|&(_, declared)| declared)
+                .filter(|d| matches!(d.kind(), TypeKind::Struct(s, _) if s == id));
+            self.type_name(declared.unwrap_or_else(|| Type::intern(TypeKind::Struct(id, args))))
+        });
         (chain, first_struct)
     }
 
