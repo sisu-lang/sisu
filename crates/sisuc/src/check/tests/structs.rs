@@ -1857,8 +1857,9 @@ fn struct_should_report_the_unused_warnings() {
 /// interpolation, a generated `==`, a conversion to `any Display`, or a type argument with a
 /// `Display` or `Eq` bound. The `T` can be in an array, an optional, an enum payload, a struct or
 /// a type argument.
-/// THEN no field is W0013. `dbg`, a class, and a struct with the written conformance of the
-/// interface show nothing. So `m` is W0013, and the label of `dbg` shows its call.
+/// THEN no field is W0013. `dbg`, a class, a struct with the written conformance of the
+/// interface, and a bound in a type that is only written show nothing. So `m` is W0013, and the
+/// label of `dbg` shows its call, also beside a written conformance of another interface.
 #[test]
 #[expect(
     clippy::too_many_lines,
@@ -2018,6 +2019,16 @@ fn generated_read_should_count_each_shown_field() {
             vec![],
         ),
         (
+            "dbg in a generic body keeps its label beside a written Eq",
+            "struct B<T> { v: T; w: i64 }\nextend<T> B<T>: Eq {\n    fn eq(self, other: B<T>) -> bool { self.w == other.w }\n}\nfn f<T>(x: B<T>) {\n    print(x.w)\n    dbg(x)\n}\nfn main() { f(B(v: 1, w: 2)) }".to_string(),
+            vec![(UnusedMember, (1, 15), vec![(7, 5)])],
+        ),
+        (
+            "a bound of a type that is only written shows nothing",
+            "interface I {}\nstruct P: I { a: i64; b: i64 }\nstruct H<T: I> { t: T }\nfn get(h: H<P>) -> i64 {\n    h.t.a\n}\nfn main() { print(get(H(t: P(a: 1, b: 2)))) }".to_string(),
+            vec![(UnusedMember, (2, 23), vec![])],
+        ),
+        (
             "a written Display for a type with parameters, in a generic body",
             "struct B<T> { v: T; w: i64 }\nextend<T> B<T>: Display {\n    fn to_string(self) -> string { \"b\" }\n}\nfn f<T>(x: B<T>) { print(x) }\nfn main() { f(B(v: 1, w: 2)) }".to_string(),
             vec![
@@ -2101,6 +2112,13 @@ fn generated_read_should_count_each_shown_field() {
             own(
                 object,
                 &format!("let z: any I = Z()\n    {hinted}\n    print(j.len())"),
+            ),
+        ),
+        (
+            "an array join with an optional any Display",
+            own(
+                p,
+                "let d: (any Display)? = None\n    let xs = [d, P(n: 1)]\n    print(xs.len())",
             ),
         ),
         (
@@ -2306,6 +2324,27 @@ fn struct_should_cite_its_dead_uses() {
             (Code::UnusedItem, (2, 4), vec![])
         ],
         "a dead read"
+    );
+    // The second struct and its second field cite their own uses.
+    let second_build = "struct A { k: i64 }\nstruct S { n: i64 }\nfn dead() -> i64 {\n    \
+                        S(n: 1).n\n}\nfn main() {\n    print(A(k: 1).k)\n}";
+    assert_eq!(
+        unused_names(second_build),
+        [
+            (Code::UnusedItem, (2, 8), vec![(4, 5)]),
+            (Code::UnusedItem, (3, 4), vec![])
+        ],
+        "a dead build of the second struct"
+    );
+    let second_read = "struct A { k: i64 }\nstruct S { n: i64; m: i64 }\nfn dead(s: S) -> i64 {\n    \
+                       s.m\n}\nfn main() {\n    let s = S(n: 1, m: 2)\n    print(A(k: 1).k + s.n)\n}";
+    assert_eq!(
+        unused_names(second_read),
+        [
+            (UnusedMember, (2, 20), vec![(4, 5)]),
+            (Code::UnusedItem, (3, 4), vec![])
+        ],
+        "a dead read of the second field of the second struct"
     );
 }
 
