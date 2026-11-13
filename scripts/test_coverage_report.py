@@ -481,6 +481,19 @@ class BranchNoise(unittest.TestCase):
         lines = ("assert!(a,", "", "if b {", "}")
         self.assertEqual(listed(*lines, branches=[3]), [3])
 
+    def test_a_brace_in_a_multiline_string_should_not_stretch_a_test_module(self) -> None:
+        lines = (
+            "#[cfg(test)]",
+            "mod tests {",
+            '    const INPUT: &str = r#"',
+            '{"#;',
+            "}",
+            "fn production(flag: bool) -> bool {",
+            "    if flag { true } else { false }",
+            "}",
+        )
+        self.assertEqual(listed(*lines, branches=[7]), [7])
+
     def test_a_cfg_test_item_that_is_not_a_module_should_stay(self) -> None:
         lines = (
             "#[cfg(test)]",
@@ -536,6 +549,7 @@ class Main(unittest.TestCase):
             (bad_pct,),
             (json.dumps({"data": [{}]}),),
             (good, "SF:/r/a.rs\nDA:1,x\n", diff()),
+            (json.dumps(branch_export()), "SF:/r/a.rs\nDA:1,1\nend_of_record\n", diff()),
             ("{", "", ""),
         ):
             code, err = self.call(*args)
