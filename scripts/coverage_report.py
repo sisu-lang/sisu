@@ -28,6 +28,10 @@ CONTINUATION = 30
 # several lines is not handled.
 BRACE_NOISE = re.compile(r"""r(#*)".*?"\1|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])'|/\*.*?\*/|//.*""")
 TEST_MOD = re.compile(r"^(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*\{")
+# `BRACE_NOISE` for a whole file, where a string or a `/* */` comment can run over several lines.
+CODE_NOISE = re.compile(
+    r"""(?s:r(#*)".*?"\1|"(?:\\.|[^"\\])*")|'(?:\\.|[^'\\])'|(?s:/\*.*?\*/)|//[^\n]*"""
+)
 HUNK = re.compile(r"^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 
@@ -211,24 +215,31 @@ def report(
 
 def test_module_lines(path: str, last: int, read_line: Callable[[str, int], str]) -> set[int]:
     """Return the lines up to `last` that an inline `#[cfg(test)] mod name {` encloses."""
+    code = code_lines(path, last, read_line)
     result: set[int] = set()
     armed = False
     depth = 0
     for number in range(1, last + 1):
         text = read_line(path, number).strip()
-        code = code_of(text)
+        braces = code[number - 1].count("{") - code[number - 1].count("}")
         if depth > 0:
             result.add(number)
-            depth += code.count("{") - code.count("}")
+            depth += braces
         elif text.startswith("#[cfg(test)]"):
             armed = True
         elif armed and TEST_MOD.match(text):
             result.add(number)
-            depth = code.count("{") - code.count("}")
+            depth = braces
             armed = False
         elif armed and not text.startswith(("#[", "//")):
             armed = False
     return result
+
+
+def code_lines(path: str, last: int, read_line: Callable[[str, int], str]) -> list[str]:
+    """Return lines 1 to `last` of `path` without literals and comments, even multi-line ones."""
+    text = "\n".join(read_line(path, number) for number in range(1, last + 1))
+    return CODE_NOISE.sub(lambda m: "\n" * m.group().count("\n"), text).split("\n")
 
 
 def code_of(line: str) -> str:
@@ -329,6 +340,12 @@ def main(argv: list[str]) -> int:
                 )
         if not isinstance(data["functions"], list):
             raise ValueError("functions is not a list")  # noqa: TRY004, TRY301  as for `percent`: the handler prints the message, and TypeError would change the type name
+        if data["totals"].get("branches", {}).get("count", 0) > 0 and not re.search(
+            r"^BRDA:", texts[1], re.MULTILINE
+        ):
+            raise ValueError(  # noqa: TRY301  as for `percent`: the handler prints the message
+                "the JSON measured branches, but the LCOV file has no BRDA record"
+            )
         root = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True
         ).stdout.strip()
