@@ -1476,14 +1476,9 @@ impl Checker<'_> {
             .map(|index| (index, self.field_type(holder, index)));
         // The base reported its error, such as the `?.` of a write before it. The place keeps
         // the field's type for the value.
-        if let (Some((index, ty)), Err(failed)) = (found, checked) {
+        if let (Some(_), Err(failed)) = (found, checked) {
             self.reassign_root(base);
-            return CheckedPlace {
-                shown: self.field_shown(FieldOwner::Struct(id), index),
-                held_ty: ty,
-                reported: Some(failed.reported()),
-                ..CheckedPlace::failed(None)
-            };
+            return CheckedPlace::failed(Some(failed.reported()));
         }
         if let (Some((index, ty)), Ok(_), Some(chain)) = (found, checked, first_safe(base)) {
             let array = ty.is_some_and(|ty| matches!(payload(ty).kind(), TypeKind::Array(_)));
@@ -1502,7 +1497,7 @@ impl Checker<'_> {
                 };
             }
         }
-        let ((owner, index, ty), on_optional) =
+        let ((owner, index, _), on_optional) =
             match self.field_target(known_type(checked), base, name, (change.access(), change)) {
                 Ok(found) => found,
                 Err(reported) => {
@@ -1513,13 +1508,8 @@ impl Checker<'_> {
         if change == Change::MutArg {
             self.record(owner.used(index), target.span);
         }
-        // The fix of the E0062 decides the place, but its field still declares a type.
-        CheckedPlace {
-            shown: self.field_shown(owner, index),
-            held_ty: ty,
-            reported: on_optional,
-            ..CheckedPlace::failed(None)
-        }
+        // The fix of the E0062 decides the place.
+        CheckedPlace::failed(on_optional)
     }
 
     /// The place `target`, `base?.name` with the struct `payload` that `?.` takes out of
@@ -1540,12 +1530,11 @@ impl Checker<'_> {
                 return CheckedPlace::failed(Some(reported));
             }
         };
-        let shown = self.field_shown(owner, index);
         if matches!(change, Change::Assign | Change::Element | Change::Field) {
             let d = self.chain_write((span, change), base, (base, name));
             return CheckedPlace {
                 ty,
-                shown,
+                shown: self.field_shown(owner, index),
                 reported: Some(self.error(d)),
                 ..CheckedPlace::failed(None)
             };
@@ -1563,7 +1552,6 @@ impl Checker<'_> {
         CheckedPlace {
             path: ty.map(|_| path),
             ty,
-            shown,
             writable: change == Change::MutArg,
             held,
             guard: Some(Guard {
@@ -1594,7 +1582,8 @@ impl Checker<'_> {
             return change.of_part().immutable(root, span, cause);
         }
         // The value to replace: a place on one line whose `?.` takes out a struct.
-        let replace = (name_chain(object) && self.one_line(object.span))
+        let replace = self
+            .one_line(object.span)
             .then(|| self.replaceable(object))
             .flatten()
             .filter(|&(can, ty)| {
@@ -1770,7 +1759,6 @@ impl Checker<'_> {
                 let b = self.binding(name)?;
                 Some((b.kind == BindingKind::Var, b.ty?))
             }
-            ast::ExprKind::SelfValue => Some((false, self.body.self_type.known()?)),
             _ => None,
         }
     }
@@ -2121,17 +2109,5 @@ pub(super) fn first_safe(mut e: &ast::Expr) -> Option<(&ast::Expr, &ast::Ident)>
             ast::ExprKind::Index { base, .. } => e = base,
             _ => return found,
         }
-    }
-}
-
-/// Whether `e` is a name, or a chain of `.` fields and indexes that ends in one.
-pub(super) fn name_chain(e: &ast::Expr) -> bool {
-    match &e.kind {
-        ast::ExprKind::Name(_) => true,
-        ast::ExprKind::Field {
-            base, safe: false, ..
-        }
-        | ast::ExprKind::Index { base, .. } => name_chain(base),
-        _ => false,
     }
 }

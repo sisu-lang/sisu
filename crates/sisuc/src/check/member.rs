@@ -7,7 +7,7 @@ use super::call::{Dot, takes_range};
 use super::expr::{if_some, local, no_member, path};
 use super::extend::{holder_of, method_holder};
 use super::generic::{Site, named_params};
-use super::place::{Change, first_safe, is_struct, name_chain};
+use super::place::{Change, first_safe, is_struct};
 use super::reports::Reported;
 use super::unused_names::Used;
 use super::{
@@ -377,7 +377,6 @@ impl Checker<'_> {
             self.reassign_root(receiver);
             // Only a place on one line can be replaced.
             if matches!(payload.kind(), TypeKind::Struct(..))
-                && name_chain(receiver)
                 && self.one_line(receiver.span)
                 && self.replaceable(receiver).is_some_and(|(can, _)| can)
             {

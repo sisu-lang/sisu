@@ -132,8 +132,7 @@ fn names_itself(ty: Type, (e, count): (usize, usize), enums: usize) -> bool {
 }
 
 /// The `Rank` of a payload or field of type `ty` of the enum or struct at node `e` of
-/// `lower_types`, which has `count` type parameters. `declared` gives the component of each node,
-/// empty when no enum or struct is generic.
+/// `lower_types`, which has `count` type parameters. `declared` gives the component of each node.
 fn rank(ty: Type, (e, count): (usize, usize), declared: &[usize], enums: usize) -> Rank {
     if !ty.has_param() {
         Rank::Plain
@@ -663,32 +662,25 @@ impl Checker<'_> {
     /// type, and lays them out (`tir::layout_types`).
     pub(super) fn lower_types(&self) -> (Vec<tir::Enum>, Vec<tir::Struct>) {
         // The declarations each enum's and struct's generic fields name, inline (see
-        // `Rank::Late`), the structs after the enums; a program without a generic enum or struct
-        // has no such field and skips the graph.
+        // `Rank::Late`), the structs after the enums.
         let enums = self.enums.len();
-        let generic = (self.enums.iter().any(|info| !info.type_params.is_empty()))
-            || self.structs.iter().any(|info| !info.type_params.is_empty());
-        let declared = if generic {
-            let named = |fields: &mut dyn Iterator<Item = Type>| -> Vec<usize> {
-                let generic = fields.filter(|ty| ty.has_param());
-                generic
-                    .flat_map(|ty| inline_enums(ty, false, enums))
-                    .collect()
-            };
-            let enum_names = self.enums.iter().map(|info| {
-                named(
-                    &mut info
-                        .variants
-                        .iter()
-                        .flat_map(|v| v.fields.iter().copied().flatten()),
-                )
-            });
-            let struct_names = (self.structs.iter())
-                .map(|info| named(&mut info.fields.iter().filter_map(|f| f.ty)));
-            components(&enum_names.chain(struct_names).collect::<Vec<_>>())
-        } else {
-            Vec::new()
+        let named = |fields: &mut dyn Iterator<Item = Type>| -> Vec<usize> {
+            let generic = fields.filter(|ty| ty.has_param());
+            generic
+                .flat_map(|ty| inline_enums(ty, false, enums))
+                .collect()
         };
+        let enum_names = self.enums.iter().map(|info| {
+            named(
+                &mut info
+                    .variants
+                    .iter()
+                    .flat_map(|v| v.fields.iter().copied().flatten()),
+            )
+        });
+        let struct_names =
+            (self.structs.iter()).map(|info| named(&mut info.fields.iter().filter_map(|f| f.ty)));
+        let declared = components(&enum_names.chain(struct_names).collect::<Vec<_>>());
         let mut lowered: Vec<tir::Enum> = (self.enums.iter().enumerate())
             .map(|(e, info)| tir::Enum {
                 name: info.name.name.to_string(),
