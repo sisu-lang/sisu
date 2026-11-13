@@ -1237,10 +1237,10 @@ mod tests {
         reason = "one row per witness, so the table reads in one place"
     )]
     fn witnesses_should_name_the_missing_pattern_of_each_row() {
-        let decls = "enum Expr {\n    Num(i64)\n    Add(Expr, Expr)\n    Mul(Expr, Expr)\n}\nenum Name {\n    Named(string)\n    Anon\n}\nenum Shape {\n    Circle(f64)\n    Square(f64)\n}\nenum Holder {\n    V(Shape??)\n    W(i64?, bool)\n}\nfn main() {}";
+        let decls = "enum Expr {\n    Num(i64)\n    Add(Expr, Expr)\n    Mul(Expr, Expr)\n}\nenum Name {\n    Named(string)\n    Anon\n}\nenum Shape {\n    Circle(f64)\n    Square(f64)\n}\nenum Holder {\n    V(Shape??)\n    W(i64?, bool)\n}\nenum Pair {\n    P(bool, bool)\n}\nfn main() {}";
         // Each row: the scrutinee, the arms before `_ => 0`, the missing pattern, the texts of
         // the arm that covers part of its variant, and whether a guarded arm may not match.
-        let rows: [(&str, &[&str], &str, Texts<'_>, bool); 27] = [
+        let rows: [(&str, &[&str], &str, Texts<'_>, bool); 31] = [
             (
                 "e",
                 &["Num(_) => 1", "Add(_, _) => 2"],
@@ -1399,6 +1399,36 @@ mod tests {
                 Some(("W(_, true)", "_, true")),
                 false,
             ),
+            // A `char` that is a space prints as itself; a quote and a backslash print by code.
+            (
+                "c",
+                &["'\\u{0}'..='\\u{1F}' => 1", "'!'..='\\u{10FFFF}' => 2"],
+                "' '",
+                None,
+                false,
+            ),
+            (
+                "c",
+                &["'\\u{0}'..='&' => 1", "'('..='\\u{10FFFF}' => 2"],
+                "'\\u{27}'",
+                None,
+                false,
+            ),
+            (
+                "c",
+                &["'\\u{0}'..='[' => 1", "']'..='\\u{10FFFF}' => 2"],
+                "'\\u{5C}'",
+                None,
+                false,
+            ),
+            // The `bool` that the arms leave is in the bucket of `true`, so it prints as `false`.
+            (
+                "p",
+                &["P(false, _) => 1", "P(true, true) => 2"],
+                "P(true, false)",
+                Some(("P(false, _)", "false, _")),
+                false,
+            ),
         ];
         for (scrutinee, arms, pattern, partly, guarded) in rows {
             let arms = arms
@@ -1407,7 +1437,7 @@ mod tests {
                 .collect::<Vec<_>>()
                 .concat();
             let src = format!(
-                "{decls}\nfn t(e: Expr, i: i64, u: u8, c: char, b: bool, s: string, n: Name, o: i64?, sh: Shape?, oo: i64??, h: Holder) -> i64 {{\n    match {scrutinee} {{\n{arms}        _ => 0\n    }}\n}}"
+                "{decls}\nfn t(e: Expr, i: i64, u: u8, c: char, b: bool, s: string, n: Name, o: i64?, sh: Shape?, oo: i64??, h: Holder, p: Pair) -> i64 {{\n    match {scrutinee} {{\n{arms}        _ => 0\n    }}\n}}"
             );
             let missing = report(&src).missing.expect("the arms should miss a value");
             assert_eq!(missing.pattern, pattern, "{src}");
