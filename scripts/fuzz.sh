@@ -91,7 +91,7 @@ esac
 cd "$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
 export RUST_BACKTRACE=1
 if [[ $target == program ]]; then
-    cargo build --release -p sisu-runtime-mimalloc
+    cargo build --release -p sisu-runtime-mimalloc || exit 2
     export SISU_RUNTIME=$PWD/target/release/libsisu_runtime_mimalloc.a
 fi
 # How many crashes are replayed, each for at most replay_seconds (set per target above, past

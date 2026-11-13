@@ -20,7 +20,8 @@ the rule of code a ruling kept, is green at the base: commit it on its own and s
 1. **<Title> (<stem> <n>).** Cause: <the function and line, and why it gives the wrong result>.
    Fix: <the change, in the shared code that each neighbour reaches>.
    Neighbours: each row is one shape of the same rule, in each position the language allows it
-   (`crates/sisuc/tests/neighbours.txt`).
+   (`crates/sisuc/tests/neighbours.txt`). For a finding in a script, a hook or a doc, each row is
+   one input of the same rule, and the Probe column holds the command that shows the output.
 
    | Shape | Output at the base | Wanted output | Probe |
    | --- | --- | --- | --- |

@@ -684,12 +684,14 @@ class GapsCheck(unittest.TestCase):
 
 # The fake cargo of --against. In an export under target/against, `cargo fuzz run` exits with
 # $FAKE_THERE and `cargo fuzz build` with $FAKE_BUILD_THERE; in the checkout, they exit with
-# $FAKE_HERE and $FAKE_BUILD_HERE. Each run writes its directory and $SISU_RUNTIME to $FAKE_SEEN.
+# $FAKE_HERE and $FAKE_BUILD_HERE. `cargo build` of the runtime exits with $FAKE_BUILD_RUNTIME.
+# Each run writes its directory and $SISU_RUNTIME to $FAKE_SEEN.
 AGAINST_CARGO = """#!/usr/bin/env bash
 there=false
 [[ $PWD == */target/against/* ]] && there=true
 if [[ $1 == fuzz && $2 == build && $there == true ]]; then exit "${FAKE_BUILD_THERE:-0}"; fi
 if [[ $1 == fuzz && $2 == build ]]; then exit "${FAKE_BUILD_HERE:-0}"; fi
+if [[ $1 == build ]]; then exit "${FAKE_BUILD_RUNTIME:-0}"; fi
 [[ $1 == fuzz && $2 == run ]] || exit 0
 echo "$PWD ${SISU_RUNTIME:-none}" >>"$FAKE_SEEN"
 if [[ $there == true ]]; then exit "${FAKE_THERE:-0}"; fi
@@ -775,6 +777,12 @@ class FuzzAgainst(unittest.TestCase):
         self.assertNotIn("fails in this checkout", run.stdout)
         self.assertFalse(self.seen.exists())
 
+    def test_a_failed_runtime_build_should_exit_2_before_a_replay(self) -> None:
+        self.env["FAKE_BUILD_RUNTIME"] = "101"
+        run = self.against(77, 77, target="program")
+        self.assertEqual(run.returncode, 2, run.stdout + run.stderr)
+        self.assertFalse(self.seen.exists())
+
     def test_a_missing_input_should_exit_2_before_a_replay_and_name_the_file(self) -> None:
         self.input.unlink()
         run = self.against(77, 77)
@@ -794,6 +802,10 @@ class FuzzAgainst(unittest.TestCase):
         self.assertFalse(self.seen.exists())
 
     def test_the_export_should_hold_the_commit_and_replace_a_stopped_export(self) -> None:
+        git = ["git", "-C", self.repo, "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run([*git, "switch", "-q", "-c", "work"], check=True, env=ENV)
+        (self.repo / "marker.txt").write_text("work\n")
+        subprocess.run([*git, "commit", "-q", "-am", "work"], check=True, env=ENV)
         stopped = self.repo / "target" / "against" / f"{self.sha}.part"
         stopped.mkdir(parents=True)
         (stopped / "stale.txt").write_text("x")
