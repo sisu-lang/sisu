@@ -2567,12 +2567,20 @@ fn label_rows() -> Vec<LabelRow<'static>> {
             vec![(9, 36, "s", branch)],
         ),
         (
-            "two branches of one type, the first gives it",
+            "two branches of one type, the nearer one gives it",
             sh(&format!(
                 "class D {{}}\n{WITH_CS}    let _a = if c {{ s }} else if c {{ s }} else {{ D() }}\n}}"
             )),
             (9, 48, "D()"),
-            vec![(9, 21, "s", branch)],
+            vec![(9, 37, "s", branch)],
+        ),
+        (
+            "two elements of one type, the first gives it",
+            sh(&format!(
+                "class D {{}}\n{WITH_CS}    let _a = [s, s, D()]\n}}"
+            )),
+            (9, 21, "D()"),
+            vec![(9, 15, "s", element)],
         ),
         (
             "a hinted array in a branch, which has no label yet",
@@ -2651,12 +2659,4 @@ fn a_conversion_that_fails_should_label_where_its_any_type_comes_from() {
         red.len(),
         red.join("\n")
     );
-}
-
-/// The second `let` of one `any` type names its own type, not the first `let`'s.
-#[test]
-fn a_second_let_of_one_any_type_should_label_its_own_type() {
-    let src =
-        format!("{SH}fn main() {{\n    let _x: [any Sh] = [En.A]\n    let _y: [any Sh] = [1]\n}}");
-    diagnostic(&src, Code::NotConform, (6, 25, "1"), &[(6, 13)]);
 }

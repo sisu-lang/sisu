@@ -478,7 +478,8 @@ impl Checker<'_> {
         for &(other, t) in targets {
             match self.any_join(ty, t) {
                 Some(wider) => {
-                    if wider == t {
+                    // A tie keeps the earlier member: it wrote the type first.
+                    if wider != ty {
                         giver = other;
                     }
                     ty = wider;
