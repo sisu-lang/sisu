@@ -8093,6 +8093,95 @@ fn waiting_method_should_bind_the_whole_optional_when_its_declared_type_holds_on
     error_rows(&rows);
 }
 
+const ALIAS_VARIANT_HEAD: &str = concat!(
+    "fn first<T>(xs: [T]) -> T { xs[0] }\n",
+    "enum Bx<T> { B(v: T); E }\n",
+    "type BE<X> = Bx<X?>\n",
+    "enum Pr<A, B> { P(a: A, b: B) }\n",
+    "type PO<X> = Pr<X?, X?>\n",
+    "type BP<Y> = Pr<i64?, Y>\n",
+    "type BL<X> = Bx<[X?]>\n",
+    "fn unb<T>(b: Bx<T>) -> T { match b { Bx.B(v) => v; Bx.E => unb(b) } }\n",
+    "fn snd<A, B>(p: Pr<A, B>) -> B { match p { Pr.P(a, b) => b } }\n",
+    "fn main() {\n",
+    "    let o: u8? = None\n",
+);
+
+fn alias_variant_program(stmt: &str) -> String {
+    program_in(ALIAS_VARIANT_HEAD, stmt, "}\n")
+}
+
+/// GIVEN a generic call whose argument is a variant of an enum that waits for its type
+/// AND whose alias gives the enum an optional (`type BE<X> = Bx<X?>`, `type PO<X> = Pr<X?, X?>`)
+/// WHEN the call has an optional context: a written type or a hint of `??`
+/// THEN the call binds the whole optional, and the program has no error
+#[test]
+fn waiting_variant_should_bind_the_whole_optional_when_its_alias_holds_one() {
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "v1",
+            alias_variant_program("let x: i64? = unb(BE.B(v: None))"),
+            vec![],
+        ),
+        (
+            "v2",
+            alias_variant_program("let x: u8? = unb(BE.B(v: None))"),
+            vec![],
+        ),
+        (
+            "v3",
+            alias_variant_program("let x: i64? = unb(BE.E)"),
+            vec![],
+        ),
+        (
+            "v4",
+            alias_variant_program("let y: u8? = o ?? unb(BE.B(v: None))"),
+            vec![],
+        ),
+        (
+            "v5",
+            alias_variant_program("let x: i64? = first([unb(BE.B(v: None))])"),
+            vec![],
+        ),
+        (
+            "v6",
+            alias_variant_program("let x: i64? = unb(first([BE.B(v: None)]))"),
+            vec![],
+        ),
+        (
+            "v7",
+            alias_variant_program("let x: i64? = snd(PO.P(a: None, b: None))"),
+            vec![],
+        ),
+        (
+            "v8",
+            alias_variant_program("let x: i64? = unb(first([BE.E]))"),
+            vec![],
+        ),
+    ];
+    error_rows(&rows);
+}
+
+/// GIVEN a generic call with a variant through an alias that holds an optional
+/// WHEN the optional is not at the place that the call binds, or the alias holds an array of it
+/// THEN the report is the one that the base gave
+#[test]
+fn waiting_variant_should_keep_its_report_when_its_alias_holds_an_unrelated_optional() {
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "g1",
+            alias_variant_program("let x: i64?? = snd(BP.P(a: None, b: 5))"),
+            vec![],
+        ),
+        (
+            "g2",
+            alias_variant_program("let x: [i64?]? = unb(BL.B(v: []))"),
+            vec![(Code::Mismatch, (12, 26))],
+        ),
+    ];
+    error_rows(&rows);
+}
+
 const LITERAL_HEAD: &str = concat!(
     "fn first<T>(xs: [T]) -> T { xs[0] }\n",
     "fn two<T>(a: T, b: T) -> T { b }\n",
