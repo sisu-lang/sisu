@@ -12,6 +12,7 @@ that review for them. Run it with the sandbox off (`gh api` is REST and needs th
 """
 
 import re
+import subprocess
 import sys
 
 from watch_pr import REPO, gh, text
@@ -26,7 +27,8 @@ def title(body: str | None) -> str:
     severity = ""
     for line in (body or "").splitlines():
         shown = text(line)
-        if "·" in shown and shown.startswith("**"):
+        # Only the first bold line can be the severity line; a title can hold " · " too.
+        if not severity and "·" in shown and shown.startswith("**"):
             severity = shown.split("**")[1].strip() + ": "
             continue
         bold = BOLD_LINE.match(shown)
@@ -64,4 +66,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except subprocess.CalledProcessError as e:
+        # gh prints why it failed (no network, bad credentials); a traceback would hide it.
+        sys.exit(e.stderr.strip() or str(e))
