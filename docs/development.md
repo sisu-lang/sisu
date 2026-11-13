@@ -443,7 +443,8 @@ changed lines". It gives one line for each changed line that has a branch
 outcome which no test took: `path:line: missed N of M: <source>`. M is the
 number of outcomes of the line (two for each condition, such as an `if` or a
 side of `&&` or `||`). The list leaves out `assert!` lines and `unreachable!` or
-`panic!` lines, as the region lists do. It also leaves out these lines:
+`panic!` lines, as the region lists do. A string or a comment with such a word
+does not count. It also leaves out these lines:
 the other lines of a multi-line `assert!`; a `let ... else {` line whose next
 line is such a panic; the lines of an inline `#[cfg(test)] mod` in the same
 file. The region lists keep their own rules for these. It says `(none)` when no

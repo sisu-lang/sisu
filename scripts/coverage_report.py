@@ -188,10 +188,11 @@ def report(
                 text = f"{path}:{r.start}: never run: {source}"
             else:
                 text = f"{path}:{r.start}:{r.start_col}-{r.end}:{r.end_col}: {source}"
+            code = code_of(line)
             hit = any(
                 n in changed[path] for n in range(r.start, r.end + 1)
-            ) and not INVARIANT.search(line)
-            if not r.never_run and ASSERT.search(line) and hits.get(path, {}).get(r.start, 0) > 0:
+            ) and not INVARIANT.search(code)
+            if not r.never_run and ASSERT.search(code) and hits.get(path, {}).get(r.start, 0) > 0:
                 hit = False
             (touching if hit else other).append(text)
     text = (
@@ -242,7 +243,8 @@ def unmeasured(path: str, number: int, read_line: Callable[[str, int], str]) -> 
 
     shortcut: a statement ends at a line that ends in `;`, `{` or `}`. After an assert in a
     match arm (`A => assert!(x),`) or in a closure argument, the walk goes on to the next
-    lines. It can hide a branch there. No such line exists in the repository now.
+    lines. It goes on over a commented-out line too. So it can hide a branch below such
+    code, or below commented-out code. No such line exists in the repository now.
     """
     code = code_of(read_line(path, number))
     if ASSERT.search(code) or INVARIANT.search(code):
