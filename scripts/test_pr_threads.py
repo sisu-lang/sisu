@@ -126,6 +126,10 @@ class PrThreads(unittest.TestCase):
             self.run_script().stdout, f"open 1 {BOT} a.py:3: Minor: Use `a · b` in the table. u1\n"
         )
 
+    def test_threads_should_read_a_first_bold_line_with_a_middle_dot_as_the_title(self) -> None:
+        self.table[f"{P}/pulls/7/comments"] = [inline(1, BOT, "**Use a · b.**\n\n**Details**")]
+        self.assertEqual(self.run_script().stdout, f"open 1 {BOT} a.py:3: Use a · b. u1\n")
+
     def test_threads_should_place_an_outdated_comment_at_its_original_line(self) -> None:
         outdated = inline(1, BOT, "**Old**")
         outdated |= {"line": None, "original_line": 9}
@@ -140,7 +144,9 @@ class PrThreads(unittest.TestCase):
         self.table[f"{P}/pulls/7/reviews"] = [
             {"id": 9, "user": {"login": "me"}, "body": "Outside diff range comments (1)"}
         ]
-        self.assertEqual(self.run_script().stdout, "")
+        # The review has no html_url, so a script that printed it would fail with a KeyError.
+        out = self.run_script()
+        self.assertEqual((out.returncode, out.stdout), (0, ""))
 
     def test_threads_should_print_the_reason_of_a_failed_gh_call(self) -> None:
         self.table["user"] = {"fail": "gh: Bad credentials (HTTP 401)"}
