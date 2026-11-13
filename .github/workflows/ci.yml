@@ -103,6 +103,14 @@ jobs:
         run: |
           cargo nextest list --workspace --locked --message-format json > "$RUNNER_TEMP/list.json"
           python3 scripts/nextest_filters.py .config/nextest.toml "$RUNNER_TEMP/list.json"
+      # Keeps the report, so the time of each test on a runner can be read after the run.
+      - if: (success() || failure()) && steps.nextest.outcome != 'skipped'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-test-part-${{ matrix.part }}
+          path: target/nextest/ci/junit.xml
+          retention-days: 14
+          if-no-files-found: warn
 
   # The ruleset requires a check named `Test`. A part that fails, is cancelled or is skipped fails
   # it.

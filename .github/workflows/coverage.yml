@@ -42,6 +42,15 @@ jobs:
         run: |
           set -o pipefail
           scripts/coverage.sh "$BASE" | tee "$RUNNER_TEMP/coverage.txt"
+      # Keeps the report, so the time of each test under coverage can be read after the run.
+      # nextest writes it under the workspace root, not under the target directory of llvm-cov.
+      - if: ${{ !cancelled() && steps.coverage.outcome != 'skipped' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-coverage
+          path: target/nextest/ci/junit.xml
+          retention-days: 14
+          if-no-files-found: warn
       - id: summary
         # A failed step skips the rest; this step still reports what ran.
         if: ${{ !cancelled() }}
