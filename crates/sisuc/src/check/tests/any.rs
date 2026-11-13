@@ -2543,6 +2543,38 @@ fn label_rows() -> Vec<LabelRow<'static>> {
             vec![],
         ),
         (
+            "a loop that a sibling of the same type hints",
+            sh(&format!(
+                "class D {{}}\n{WITH_CS}    let _a = if c {{ s }} else {{ loop {{ if c {{ break s }}; break D() }} }}\n}}"
+            )),
+            (9, 63, "D()"),
+            vec![(9, 46, "break s", gave)],
+        ),
+        (
+            "a branch that a sibling of the same type hints",
+            sh(&format!(
+                "class D {{}}\n{WITH_CS}    let _a = [s, if c {{ s }} else {{ D() }}]\n}}"
+            )),
+            (9, 36, "D()"),
+            vec![(9, 25, "s", branch)],
+        ),
+        (
+            "a match arm that a sibling of the same type hints",
+            sh(&format!(
+                "class D {{}}\n{WITH_CS}    let _a = [s, match c {{ true => s; false => D() }}]\n}}"
+            )),
+            (9, 48, "D()"),
+            vec![(9, 36, "s", branch)],
+        ),
+        (
+            "two branches of one type, the first gives it",
+            sh(&format!(
+                "class D {{}}\n{WITH_CS}    let _a = if c {{ s }} else if c {{ s }} else {{ D() }}\n}}"
+            )),
+            (9, 48, "D()"),
+            vec![(9, 21, "s", branch)],
+        ),
+        (
             "a hinted array in a branch, which has no label yet",
             sh(&format!(
                 "class D {{}}\n{WITH_CS}    let _a = if c {{ [s] }} else {{ [1] }}\n}}"
