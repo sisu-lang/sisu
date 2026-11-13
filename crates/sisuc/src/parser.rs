@@ -3397,7 +3397,7 @@ impl<'a> Parser<'a> {
             unreachable!("the next token should be a range operator")
         };
         let end = self.range_bound().ok().map(|(_, span)| span);
-        // Rust writes a rest pattern as a bare `..`, and JavaScript as a bare `...`, in a
+        // Rust writes a rest pattern as a bare `..`, and Dart as a bare `...`, in a
         // sub-pattern: no range is meant there. `..<` is no rest pattern.
         if matches!(op, RangeOp::Exclusive | RangeOp::Foreign { lt: None, .. })
             && end.is_none()

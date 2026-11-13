@@ -1,6 +1,6 @@
 // GIVEN a bare `..` in a sub-pattern, where Rust writes a rest pattern
 // AND it stands in a variant, in braces, in a nested pattern, in an `if let` and in a `let`
-// AND a bare `...` in a sub-pattern, where JavaScript writes a rest pattern: after a field, in braces and before a field
+// AND a bare `...` in a sub-pattern, where Dart writes a rest pattern: after a field, in braces and before a field
 // AND a range with one bound or none that is no bare `..` in a sub-pattern: `..=`, `..n` and `..` in an arm
 // WHEN `sisu check` runs on it
 // THEN it reports E0011 "expected a pattern" at 12:16, 19:18, 26:13, 33:13, 40:18, 46:17 and 50:16
