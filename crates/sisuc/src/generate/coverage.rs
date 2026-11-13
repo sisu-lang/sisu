@@ -754,8 +754,8 @@ struct Walk {
     payloads: Vec<Vec<Type>>,
     /// The types each struct's fields hold, by its id.
     struct_fields: Vec<Vec<Type>>,
-    /// Whether each struct is on a cycle of structs and enums, by its id.
-    struct_cycles: Vec<bool>,
+    /// The boxed fields of each struct, by its id: the links of its cycle of structs and enums.
+    struct_links: Vec<Vec<usize>>,
     /// Field and element assignments of a value that may hold a class object (decision 4).
     heap_classes: Vec<String>,
     /// Where a `+=` on a name starts.
@@ -2814,7 +2814,13 @@ impl Walk {
             .iter()
             .map(|s| s.fields.iter().map(|field| field.ty).collect())
             .collect();
-        self.struct_cycles = program.structs.iter().map(|s| s.cycle.is_some()).collect();
+        self.struct_links = (program.structs.iter())
+            .map(|s| {
+                (s.fields.iter().enumerate())
+                    .filter_map(|(i, f)| f.boxed.then_some(i))
+                    .collect()
+            })
+            .collect();
     }
 
     /// Whether a value of `ty` may hold a class object, where `seen` are the enums and structs
@@ -3058,11 +3064,11 @@ impl Walk {
             tir::ExprKind::Struct { id, args } => {
                 self.mark("tir::ExprKind::Struct");
                 // The link of a struct on a cycle holds a `Some` of a struct.
-                let linked = args.iter().any(|arg| {
-                    matches!(&arg.kind, tir::ExprKind::Wrap(inner)
+                let linked = self.struct_links[id.0].iter().any(|&i| {
+                    matches!(&args[i].kind, tir::ExprKind::Wrap(inner)
                         if matches!(inner.ty.kind(), TypeKind::Struct(..)))
                 });
-                if linked && self.struct_cycles[id.0] {
+                if linked {
                     self.mark("reach: a box of a struct holds a value");
                 }
                 self.tir_exprs(args);
@@ -3663,6 +3669,7 @@ fn expr_struct_depth(e: &tir::Expr) -> usize {
     match &e.kind {
         tir::ExprKind::StructField { base, .. } => 1 + expr_struct_depth(base),
         tir::ExprKind::Index { base, .. } => expr_struct_depth(base),
+        // Any other read starts a new path: a local, a call or a class field.
         _ => 0,
     }
 }
