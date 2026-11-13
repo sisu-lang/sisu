@@ -10,4 +10,37 @@ struct R<T> {
     e: E<T>
 }
 
+struct Tree<T> {
+    root: Node<T>
+}
+
+struct Node<U> {
+    v: U
+    kids: Tree<U>
+}
+
+struct G<T> {
+    r: H
+}
+
+struct H {
+    g: G<i64>
+}
+
+struct Fixed<T> {
+    next: Fixed<i64>
+}
+
+struct Nest<T> {
+    next: Nest<[T]>
+}
+
+struct P<A, B> {
+    q: Q<B>
+}
+
+struct Q<X> {
+    p: P<X, X>
+}
+
 fn main() {}

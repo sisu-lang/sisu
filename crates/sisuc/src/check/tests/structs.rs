@@ -300,7 +300,6 @@ fn chain_write_on_a_struct_should_report_by_its_root() {
     let unhelped = [
         ("f()?.n", chain("let x = 1", "f()?.n = x"), (l, 8)),
         ("h()?.i.n", chain("let x = 1", "h()?.i.n = x"), (l, 8)),
-        ("c?.p.n", chain("let c: C? = None", "c?.p.n = 1"), (l, 6)),
         ("c?.p?.n", chain("let c: C? = None", "c?.p?.n = 1"), (l, 9)),
         (
             "s?.o?.n",
@@ -314,6 +313,10 @@ fn chain_write_on_a_struct_should_report_by_its_root() {
         assert!(d.fixes().is_empty(), "row `{row}`: {d:?}");
         assert!(d.help().is_none(), "row `{row}`: {d:?}");
     }
+    // A class `?.` gives the class form: E0062 at the optional object, with its unwrap help.
+    let src = chain("let c: C? = None", "c?.p.n = 1");
+    let class = only("c?.p.n", &src, MayBeNone, (l, 5));
+    assert!(class.help().is_some(), "{class:?}");
     // A root that cannot change.
     let rooted = [
         ("let o", chain("let o: In? = None", "o?.n = 1")),
@@ -780,30 +783,38 @@ fn failed_struct_write_should_keep_its_root_reassigned() {
     );
 }
 
-/// GIVEN a class `C` with an array of structs, and an optional `C`. WHEN a write through `?.` on
-/// it reaches a field of an element. THEN it is the E0062 of an optional array, as a write of a
-/// scalar element is. Only a `?.` that takes out a struct value gives the struct form.
+/// GIVEN a class `C` with an array of structs and a struct field, and an optional `C`. WHEN a
+/// write through `?.` on it reaches a field of an element or of the struct field. THEN it is the
+/// E0062 of the optional value that `?.` gives, as a write of a scalar element is. Only a `?.`
+/// that takes out a struct value gives the struct form.
 #[test]
 fn class_chain_write_should_report_its_optional_array() {
     // `main` declares the one local that the write names.
     let program = |body: &str| {
         let local = if body.starts_with('w') {
-            "let mut w: W? = W(xs: [])"
+            "let mut w: W? = W(xs: [], s: h())"
         } else {
-            "let c: C? = C(xs: [])"
+            "let c: C? = C(xs: [], s: h())"
         };
         format!(
-            "struct S {{ n: i64; ys: [i64] }}\nclass C {{ mut xs: [S] }}\nstruct W {{ xs: [S] }}\nfn get() -> C? {{\n    C(xs: [])\n}}\nfn main() {{\n    {local}\n    {body}\n}}"
+            "struct S {{ n: i64; ys: [i64] }}\nstruct H {{ k: i64; ys: [i64]; xs: [S] }}\nclass C {{ mut xs: [S]; mut s: H }}\nstruct W {{ xs: [S]; s: H }}\nfn h() -> H {{\n    H(k: 1, ys: [], xs: [])\n}}\nfn get() -> C? {{\n    C(xs: [], s: h())\n}}\nfn main() {{\n    {local}\n    {body}\n}}"
         )
     };
-    // Each row: the write, and where its one E0062 is. The optional array is the whole `c?.xs`,
-    // and the struct form is the `?.xs` of the struct value.
+    // Each row: the write, and where its one E0062 is. The optional value is the whole `c?.xs`
+    // or `c?.s`, and the struct form is the `?.xs` or `?.s` of the struct value.
     let rows = [
-        ("assign", "c?.xs[0].n = 2", (9, 5, "c?.xs")),
-        ("compound", "c?.xs[0].n += 2", (9, 5, "c?.xs")),
-        ("push", "c?.xs[0].ys.push(2)", (9, 5, "c?.xs")),
-        ("call", "get()?.xs[0].n = 2", (9, 5, "get()?.xs")),
-        ("struct", "w?.xs[0].n = 2", (9, 6, "?.xs")),
+        ("assign", "c?.xs[0].n = 2", (13, 5, "c?.xs")),
+        ("compound", "c?.xs[0].n += 2", (13, 5, "c?.xs")),
+        ("push", "c?.xs[0].ys.push(2)", (13, 5, "c?.xs")),
+        ("call", "get()?.xs[0].n = 2", (13, 5, "get()?.xs")),
+        ("struct", "w?.xs[0].n = 2", (13, 6, "?.xs")),
+        ("field assign", "c?.s.k = 2", (13, 5, "c?.s")),
+        ("field compound", "c?.s.k += 2", (13, 5, "c?.s")),
+        ("field element", "c?.s.ys[0] = 2", (13, 5, "c?.s")),
+        ("field push", "c?.s.ys.push(2)", (13, 5, "c?.s")),
+        ("field element field", "c?.s.xs[0].n = 2", (13, 5, "c?.s")),
+        ("field call", "get()?.s.k = 2", (13, 5, "get()?.s")),
+        ("struct field", "w?.s.k = 2", (13, 6, "?.s")),
     ];
     let mut red = Vec::new();
     for (row, body, (line, col, text)) in rows {
