@@ -1,0 +1,10 @@
+error[E0062]: `c?.xs` may be `None`
+  --> E0062-class-chain-struct-element.sisu:11:5
+   |
+11 |     c?.xs[0].n = 2
+   |     ^^^^^
+   |
+   = help: unwrap `c` with `if let`, `let ... else` or `?? return`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0062

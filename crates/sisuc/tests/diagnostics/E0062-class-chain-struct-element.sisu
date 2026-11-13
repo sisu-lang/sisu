@@ -1,0 +1,12 @@
+struct S {
+    n: i64
+}
+
+class C {
+    mut xs: [S]
+}
+
+fn main() {
+    let c: C? = C(xs: [S(n: 1)])
+    c?.xs[0].n = 2
+}

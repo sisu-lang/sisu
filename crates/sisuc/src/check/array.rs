@@ -537,11 +537,20 @@ impl Checker<'_> {
         let checked = self.value(base, Expectation::None);
         // An optional array is reported, and its element goes on typed, but no code reads it.
         let optional = type_of(&checked).is_some_and(is_optional_array);
-        let (element, report) = self.element(
-            base,
-            (type_of(&checked), checked.is_err()),
-            IndexUsage::Read,
-        );
+        let class_write = (self.body.write_chain.is_some() && optional)
+            .then(|| self.class_unwrap(base, &checked))
+            .flatten();
+        let (element, report) = match (class_write, type_of(&checked)) {
+            (Some(unwrap), Some(ty)) => {
+                let reported = self.diagnostics.error(optional_array(base, unwrap));
+                (optional_element(ty), Some(reported))
+            }
+            _ => self.element(
+                base,
+                (type_of(&checked), checked.is_err()),
+                IndexUsage::Read,
+            ),
+        };
         // The index is not part of the chain that it ends.
         self.body.indexed = false;
         let chain = std::mem::take(&mut self.body.write_chain);
@@ -574,6 +583,33 @@ impl Checker<'_> {
                 Err(Poisoned::new(ty, reported))
             }
         }
+    }
+
+    /// The help of the E0062 of `base`, an optional array under the chain of a write. It is
+    /// `None` unless the checked value `checked` is a `?.` that takes a class object out of its
+    /// optional. The object's field is a place, so the help unwraps the object. So does
+    /// `Checker::optional_array_target` for an element place.
+    fn class_unwrap(&self, base: &ast::Expr, checked: &Checked) -> Option<UnwrapHelp> {
+        let Ok(tir::Expr {
+            kind: tir::ExprKind::IfSome { bind, .. },
+            ..
+        }) = checked
+        else {
+            return None;
+        };
+        if !matches!(self.body.locals[bind.0].ty.kind(), TypeKind::Class(..)) {
+            return None;
+        }
+        Some(match &base.kind {
+            ast::ExprKind::Field {
+                base: object,
+                safe: true,
+                ..
+            } if self.one_line(object.span) => {
+                UnwrapHelp::Object(self.source.text(object.span).to_string())
+            }
+            _ => UnwrapHelp::Nothing,
+        })
     }
 
     /// The element type of `base`, which is indexed and has type `ty` (`None` is `Error`). An
