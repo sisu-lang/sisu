@@ -196,7 +196,7 @@ class Report(unittest.TestCase):
             5: "    0",
         }
         _, touching, other = sections(
-            run(exp, df=diff(start=3, count=3), read=lambda _p, n: lines[n])
+            run(exp, df=diff(start=3, count=3), read=lambda _p, n: lines.get(n, ""))
         )
         self.assertEqual([t.split(": ")[0] for t in touching], ["a.rs:5:5-5:9"])
         self.assertEqual([t.split(": ")[0] for t in other], ["a.rs:3:5-3:17", "a.rs:4:5-4:11"])
@@ -213,7 +213,7 @@ class Report(unittest.TestCase):
         # Line 4 never ran, so its assert did not run, and its region still counts.
         lc = lcov(**{"a.rs": {3: 1, 4: 0, 5: 0}})
         _, touching, other = sections(
-            run(exp, lc, diff(start=3, count=3), read=lambda _p, n: lines[n])
+            run(exp, lc, diff(start=3, count=3), read=lambda _p, n: lines.get(n, ""))
         )
         self.assertEqual([t.split(": ")[0] for t in touching], ["a.rs:4:30-4:36", "a.rs:5:5-5:9"])
         self.assertEqual([t.split(": ")[0] for t in other], ["a.rs:3:30-3:36"])
@@ -290,7 +290,7 @@ class Branches(unittest.TestCase):
             5: "    if a {",
         }
         lc = branch_lcov("a.rs", n3=[1, 0], n4=[1, 0], n5=[1, 0])
-        out = run(branch_export(), lc, diff(start=3, count=3), read=lambda _p, n: lines[n])
+        out = run(branch_export(), lc, diff(start=3, count=3), read=lambda _p, n: lines.get(n, ""))
         self.assertIn("Missed branches on changed lines:\na.rs:5: missed 1 of 2: if a {\n\n", out)
 
     def test_the_branch_list_should_cut_long_source_lines_at_80_characters(self) -> None:

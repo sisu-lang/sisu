@@ -21,6 +21,11 @@ TEST_DIR = re.compile(r"^crates/[^/]+/(?:tests/|src/(?:.+/)?tests(?:\.rs$|/))")
 INVARIANT = re.compile(r"\b(?:unreachable|panic)!\(")
 # An assert's message arguments run only when it fails, so on a line that ran they stay at zero.
 ASSERT = re.compile(r"\b(?:debug_)?assert(?:_eq|_ne)?!\(")
+# What `unmeasured` walks back over: the longest statement it follows, in lines.
+CONTINUATION = 30
+# A string literal or a `//` comment, which `test_module_lines` strips before it counts braces.
+BRACE_NOISE = re.compile(r'"(?:\\.|[^"\\])*"|//.*')
+TEST_MOD = re.compile(r"^(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*\{")
 HUNK = re.compile(r"^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 
@@ -201,22 +206,73 @@ def report(
     return f"{text}\n\n{head}"
 
 
+def test_module_lines(path: str, last: int, read_line: Callable[[str, int], str]) -> set[int]:
+    """Return the lines up to `last` that an inline `#[cfg(test)] mod name {` encloses.
+
+    shortcut: braces are counted after a rough strip of strings and `//` comments. A raw
+    string or a char literal with a brace can end a module early. Use `syn` if that happens.
+    """
+    result: set[int] = set()
+    armed = False
+    depth = 0
+    for number in range(1, last + 1):
+        text = read_line(path, number).strip()
+        code = BRACE_NOISE.sub("", text)
+        if depth > 0:
+            result.add(number)
+            depth += code.count("{") - code.count("}")
+        elif text.startswith("#[cfg(test)]"):
+            armed = True
+        elif armed and TEST_MOD.match(text):
+            result.add(number)
+            depth = code.count("{") - code.count("}")
+            armed = False
+        elif armed and not text.startswith(("#[", "//")):
+            armed = False
+    return result
+
+
+def unmeasured(path: str, number: int, read_line: Callable[[str, int], str]) -> bool:
+    """Return whether line `number` is one whose branches no test should take.
+
+    That is an assert, or a line that an assert spans, or a `let ... else {` whose body is
+    an invariant panic, as in the region lists.
+    """
+    line = read_line(path, number)
+    if ASSERT.search(line) or INVARIANT.search(line):
+        return True
+    if line.rstrip().endswith("else {") and INVARIANT.search(read_line(path, number + 1)):
+        return True
+    # A statement goes on while the lines before it end in neither `;` nor a brace.
+    for before in range(number - 1, max(number - CONTINUATION, 0), -1):
+        text = read_line(path, before).rstrip()
+        if not text or text.endswith((";", "{", "}")):
+            return False
+        if ASSERT.search(text):
+            return True
+    return False
+
+
 def missed_branches(
     lcov: str, changed: dict[str, set[int]], root: str, read_line: Callable[[str, int], str]
 ) -> list[str]:
     """Return one line per changed line that has a missed branch outcome.
 
-    Lines on an assert or an invariant panic are left out, as in the region lists: their
-    branches are the message of a failure that no test should reach.
+    The list leaves out what `unmeasured` names and the lines of inline test modules. The
+    region lists keep their own rules.
     """
     result = []
     for path, lines in sorted(branch_misses(lcov, root).items()):
-        for number, (missed, total) in sorted(lines.items()):
-            line = read_line(path, number)
-            if number in changed.get(path, ()) and not (
-                ASSERT.search(line) or INVARIANT.search(line)
-            ):
-                result.append(f"{path}:{number}: missed {missed} of {total}: {line.strip()[:80]}")
+        wanted = [n for n in sorted(lines) if n in changed.get(path, ())]
+        if not wanted:
+            continue
+        in_tests = test_module_lines(path, wanted[-1], read_line)
+        for number in wanted:
+            if number in in_tests or unmeasured(path, number, read_line):
+                continue
+            missed, total = lines[number]
+            source = read_line(path, number).strip()[:80]
+            result.append(f"{path}:{number}: missed {missed} of {total}: {source}")
     return result
 
 

@@ -78,6 +78,7 @@ class CoverageSh(unittest.TestCase):
         self.rustc.chmod(self.rustc.stat().st_mode | stat.S_IXUSR)
         self.llvm_cov = toolchain / "bin" / "llvm-cov"
         self.llvm_cov.write_text("", encoding="utf-8")
+        self.llvm_cov.chmod(self.llvm_cov.stat().st_mode | stat.S_IXUSR)
         # Untracked, so the write does not change the marker.
         self.profile_log = bin_dir / "profile"
         self.env = dict(

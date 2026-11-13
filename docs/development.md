@@ -436,15 +436,18 @@ unstable, so the run uses the nightly toolchain that
 `scripts/coverage-toolchain` names, with its `rustc` and the pinned `cargo`.
 Install it once with
 `rustup toolchain install $(cat scripts/coverage-toolchain) --profile minimal --component llvm-tools-preview`.
-When that toolchain is not installed, the run prints one warning line with this
-command and measures lines and regions only. A run with branches adds
-`branches X.X%` to the `Coverage:` line and a third list, "Missed branches on
+When that toolchain is not installed, or has no `llvm-tools-preview`, the run
+prints one warning line with this command and measures lines and regions only.
+A run with branches adds `branches X.X%` to the `Coverage:` line and a third list, "Missed branches on
 changed lines". It gives one line for each changed line that has a branch
 outcome which no test took: `path:line: missed N of M: <source>`. M is the
 number of outcomes of the line (two for each condition, such as an `if` or a
 side of `&&` or `||`). The list leaves out `assert!` lines and `unreachable!` or
-`panic!` lines, as the region lists do, and it says `(none)` when no line
-qualifies. A run with lines only has no third list. The nightly `Coverage` job
+`panic!` lines, as the region lists do. It also leaves out these lines:
+the other lines of a multi-line `assert!`; a `let ... else {` line whose next
+line is such a panic; the lines of an inline `#[cfg(test)] mod` in the same
+file. The region lists keep their own rules for these. It says `(none)` when no
+line qualifies. A run with lines only has no third list. The nightly `Coverage` job
 of CI measures branches too and prints `Branch coverage (exact)`. It has a gate
 for lines only, not for branches. To change the nightly toolchain, edit
 `scripts/coverage-toolchain`: both the script and the job read it. Commit new files, or

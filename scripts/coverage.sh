@@ -6,7 +6,8 @@
 # It fails only when the instrumented run fails, never on low coverage.
 # Branch coverage needs the nightly toolchain that scripts/coverage-toolchain names (the
 # `--branch` flag is unstable). When that toolchain is installed, the run measures branches
-# with its rustc and the pinned cargo; when it is not, the run warns and measures lines only.
+# with its rustc and the pinned cargo; when it is not installed, or lacks the llvm-tools-preview
+# component, the run warns and measures lines only.
 # Programs link an uninstrumented runtime (scripts/build-runtime.sh), so the
 # runtime's coverage comes from its unit tests only.
 # git diff leaves out untracked files, so commit new files or `git add -N`
@@ -33,7 +34,9 @@ export NEXTEST_PROFILE="${NEXTEST_PROFILE:-ci}"
 
 branch=()
 # RUSTUP_AUTO_INSTALL=0: rustup must not install the toolchain by itself with its default profile.
-if rustc=$(RUSTUP_AUTO_INSTALL=0 rustup which --toolchain "$(<scripts/coverage-toolchain)" rustc 2>/dev/null); then
+# The llvm-cov of the toolchain: without it, cargo-llvm-cov would install the component unasked.
+if rustc=$(RUSTUP_AUTO_INSTALL=0 rustup which --toolchain "$(<scripts/coverage-toolchain)" rustc 2>/dev/null) \
+	&& [[ -x $("$rustc" --print target-libdir)/../bin/llvm-cov ]]; then
 	export RUSTC=$rustc
 	branch=(--branch)
 else
