@@ -419,7 +419,8 @@ another number.
 ## Coverage and performance
 
 `make coverage [BASE=<base>]` runs the tests under `cargo-llvm-cov` and prints
-a `Coverage:` line, then three lists. "Uncovered regions touching changed code"
+a `Coverage:` line, then two lists, and a third when it measures branches.
+"Uncovered regions touching changed code"
 names regions that a changed line touches. "Other uncovered regions in changed
 files (advisory)" names the rest of those files, and any region on an
 `unreachable!` or `panic!` line, whose message states an invariant no test
@@ -443,7 +444,7 @@ changed lines". It gives one line for each changed line that has a branch
 outcome which no test took: `path:line: missed N of M: <source>`. M is the
 number of outcomes of the line (two for each condition, such as an `if` or a
 side of `&&` or `||`). The list leaves out `assert!` lines and `unreachable!` or
-`panic!` lines. The region lists put such regions in the advisory list. A
+`panic!` lines. The region lists keep such regions, with the rules above. A
 string or a comment on one line with such a word does not count. A string or a
 `/* */` comment that runs over several lines is not removed, so a word in it
 can leave out a line. It also leaves out these lines:
