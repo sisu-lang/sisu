@@ -3397,15 +3397,16 @@ impl<'a> Parser<'a> {
             unreachable!("the next token should be a range operator")
         };
         let end = self.range_bound().ok().map(|(_, span)| span);
-        if let RangeOp::Foreign { at, lt } = op {
-            return self.foreign_range(at, lt, None, end, false);
-        }
-        // Rust writes a rest pattern as a bare `..` in a sub-pattern: no range is meant there.
-        if matches!(op, RangeOp::Exclusive)
+        // Rust writes a rest pattern as a bare `..`, and JavaScript as a bare `...`, in a
+        // sub-pattern: no range is meant there. `..<` is no rest pattern.
+        if matches!(op, RangeOp::Exclusive | RangeOp::Foreign { lt: None, .. })
             && end.is_none()
             && self.pattern_site == PatternSite::Sub
         {
             return self.expected_at(token, "a pattern");
+        }
+        if let RangeOp::Foreign { at, lt } = op {
+            return self.foreign_range(at, lt, None, end, false);
         }
         let at = end.map_or(dots, |end| dots.to(end));
         self.range_bound_missing(None, op, end, at)
