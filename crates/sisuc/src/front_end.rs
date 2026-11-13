@@ -1193,37 +1193,27 @@ mod tests {
     /// GIVEN a fix of W0006 for an alternative in a nested pattern, with a comment in the gap
     /// before the `|` that the removal takes
     /// WHEN the fix is applied after `sound_fixes`
-    /// THEN the removal takes the `|` and the comment before it, and the fixed text parses
+    /// THEN the removal takes the `|` and keeps each comment, and the fixed text parses
     #[test]
     fn a_forward_alternative_removal_should_take_the_bar_when_a_comment_lies_before_it() {
         let rows = [
-            // A comment lies before the `|` that the first alternative removes with itself: the
-            // removal does not stop at it, or it would keep the `|`. The comment goes with the
-            // alternative.
-            (
-                in_optional_match(
-                    "        Some(1) => print(1)\n        Some(1 // c\n            | 2) => print(2)",
-                ),
-                Code::UnreachableArm,
-                in_optional_match("        Some(1) => print(1)\n        Some(2) => print(2)"),
-                false,
-            ),
-            // The same for a later alternative whose backward gap holds a comment, and another
-            // follows: the comment after the alternative lies before the `|`.
+            // The comment lies before the `|` that a later alternative removes with itself, and
+            // another alternative follows: the comment after the alternative stays, and so does
+            // the one before it. A blank of the removed line stays before the second comment.
             (
                 in_optional_match(
                     "        Some(1) => print(1)\n        Some(2 | // a\n            1 // b\n            | 3) => print(2)",
                 ),
                 Code::UnreachableArm,
                 in_optional_match(
-                    "        Some(1) => print(1)\n        Some(2 // b\n            | 3) => print(2)",
+                    "        Some(1) => print(1)\n        Some(2 // a\n             // b\n            | 3) => print(2)",
                 ),
                 false,
             ),
             (
                 in_variant_match("        A(1 // c\n            | 2) => print(2)"),
                 Code::UnreachableArm,
-                in_variant_match("        A(2) => print(2)"),
+                in_variant_match("        A( // c\n            2) => print(2)"),
                 false,
             ),
             (
@@ -1231,7 +1221,9 @@ mod tests {
                     "        A(2 | // a\n            1 // b\n            | 3) => print(2)",
                 ),
                 Code::UnreachableArm,
-                in_variant_match("        A(2 // b\n            | 3) => print(2)"),
+                in_variant_match(
+                    "        A(2 // a\n             // b\n            | 3) => print(2)",
+                ),
                 false,
             ),
             (
@@ -1240,7 +1232,7 @@ mod tests {
                 ),
                 Code::UnreachableArm,
                 in_optional_match(
-                    "        Some(1) => print(1)\n        Some(5) | Some(2) => print(2)",
+                    "        Some(1) => print(1)\n        Some(5) | Some( // c\n            2) => print(2)",
                 ),
                 false,
             ),
@@ -1250,16 +1242,8 @@ mod tests {
                 ),
                 Code::UnreachableArm,
                 in_variant_optional_match(
-                    "        A(None // b\n            | Some(2)) => print(2)",
+                    "        A(None // a\n             // b\n            | Some(2)) => print(2)",
                 ),
-                false,
-            ),
-            (
-                in_optional_match(
-                    "        Some(1) => print(1)\n        Some(1 // a\n            | // b\n            2) => print(2)",
-                ),
-                Code::UnreachableArm,
-                in_optional_match("        Some(1) => print(1)\n        Some(2) => print(2)"),
                 false,
             ),
         ];
@@ -1267,18 +1251,54 @@ mod tests {
             assert_eq!(fixed(&src, code), (want, safe), "{src}");
         }
         // Two unreachable alternatives next to each other, with a comment after each: each fix
-        // alone leaves the second comment and one `|`.
+        // alone keeps both comments, and takes one `|`.
         let src = in_optional_match(
             "        Some(1) => print(1)\n        Some(1 // a\n            | 1 // b\n            | 2) => print(2)",
         );
-        let want = in_optional_match(
-            "        Some(1) => print(1)\n        Some(1 // b\n            | 2) => print(2)",
-        );
-        for n in 0..2 {
+        let wants = [
+            "        Some(1) => print(1)\n        Some( // a\n            1 // b\n            | 2) => print(2)",
+            "        Some(1) => print(1)\n        Some(1 // a\n             // b\n            | 2) => print(2)",
+        ];
+        for (n, want) in wants.into_iter().enumerate() {
             assert_eq!(
                 fixed_nth(&src, Code::UnreachableArm, n),
-                (want.clone(), false)
+                (in_optional_match(want), false),
+                "fix {n}"
             );
+        }
+    }
+
+    /// GIVEN a fix of W0006 for an alternative inside brackets, with a comment in the text that
+    /// the removal covers
+    /// WHEN the fix is applied after `sound_fixes`
+    /// THEN the removal keeps each comment, and the fixed text parses
+    #[test]
+    fn a_nested_alternative_removal_should_keep_each_comment() {
+        let rows = [
+            // A comment after the `|` of the last alternative.
+            (
+                "        Some(1) => print(1)\n        Some(2 | // c\n            1) => print(2)",
+                "        Some(1) => print(1)\n        Some(2 // c\n            ) => print(2)",
+            ),
+            // A comment before and one after the `|` of the first alternative.
+            (
+                "        Some(1) => print(1)\n        Some(1 // a\n            | // b\n            2) => print(2)",
+                "        Some(1) => print(1)\n        Some( // a\n             // b\n            2) => print(2)",
+            ),
+            // A comment before the `|` of the last alternative.
+            (
+                "        Some(1) => print(1)\n        Some(2 // c\n            | 1) => print(2)",
+                "        Some(1) => print(1)\n        Some(2 // c\n            ) => print(2)",
+            ),
+            // A comment before the `|` of the first alternative.
+            (
+                "        Some(1) => print(1)\n        Some(1 // c\n            | 2) => print(2)",
+                "        Some(1) => print(1)\n        Some( // c\n            2) => print(2)",
+            ),
+        ];
+        for (src, want) in rows {
+            let (src, want) = (in_optional_match(src), in_optional_match(want));
+            assert_eq!(fixed(&src, Code::UnreachableArm), (want, false), "{src}");
         }
     }
 
@@ -1416,13 +1436,13 @@ mod tests {
         }
     }
 
-    /// GIVEN an unreached last alternative with a comment between it and its `|`, at the top of an
-    /// arm and in a payload
+    /// GIVEN an unreached alternative at the top of an arm, with a comment that the fix cannot
+    /// keep: after the `|` of the last alternative, or inside the alternative
     /// WHEN the W0006 fix is applied after `sound_fixes`
-    /// THEN the removal is backward, as on main, and the comment goes: no other alternative
-    /// follows, so no edit keeps it and parses
+    /// THEN the comment goes: its line break would come before the `=>`, or it lies in the
+    /// alternative that goes
     #[test]
-    fn a_last_alternative_removal_should_drop_a_comment_before_it() {
+    fn a_top_level_alternative_removal_should_drop_a_comment_it_cannot_keep() {
         for (src, want) in [
             (
                 in_optional_match(
@@ -1432,7 +1452,7 @@ mod tests {
             ),
             (
                 in_optional_match(
-                    "        Some(1) => print(1)\n        Some(2 | // c\n            1) => print(2)",
+                    "        Some(1) => print(1)\n        Some(1 // c\n            | 1) | Some(2) => print(2)",
                 ),
                 in_optional_match("        Some(1) => print(1)\n        Some(2) => print(2)"),
             ),

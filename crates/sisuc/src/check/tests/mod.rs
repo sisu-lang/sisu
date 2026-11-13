@@ -3369,7 +3369,7 @@ fn method_as_function_should_offer_the_method_call_for_a_class_and_an_enum() {
         (
             class.replace("CALL", "add(p, // c\n        1)"),
             (6, 11, "add"),
-            false,
+            true,
         ),
         // The real call accepts a `T` for a `T?`.
         (optional.to_string(), (6, 11, "add"), true),
@@ -3429,6 +3429,71 @@ fn method_fix(src: &str, pos: (usize, usize, &str)) -> (bool, String) {
     let d = diagnostic(src, Code::MethodAsFunction, pos, &[]);
     assert_eq!(d.fixes().len(), 1, "{src}");
     (d.fixes()[0].safe(), d.fixes()[0].apply(src))
+}
+
+/// GIVEN a call of a method as a function, with a comment before the first argument, or before
+/// or after the comma that follows it
+/// WHEN the fix is applied
+/// THEN each comment stays, and the fix is safe unless it uses `?.`. A first argument that
+/// follows a comment gets parentheses, so that the comment's line break stays inside them
+#[test]
+fn a_method_as_function_fix_should_keep_each_comment() {
+    with_prelude();
+    let program = |ret: &str, body: &str| {
+        format!(
+            "class P {{\n    fn add(self, by: i64) -> i64 {{ by }}\n}}\nfn f(xs: [i64], p: P, q: P?){ret} {{\n    {body}\n}}\nfn main() {{}}"
+        )
+    };
+    // `(return type, written, column of the name, name, fixed, safe)`.
+    let rows = [
+        (
+            "",
+            "print(len(// c\n        xs))",
+            11,
+            "len",
+            "print((// c\n        xs).len())",
+            true,
+        ),
+        (
+            "",
+            "print(add(p, // c\n        1))",
+            11,
+            "add",
+            "print(p.add( // c\n        1))",
+            true,
+        ),
+        (
+            "",
+            "print(add(p // c\n        , 1))",
+            11,
+            "add",
+            "print(p.add( // c\n        1))",
+            true,
+        ),
+        (
+            " -> i64",
+            "return len(// c\n        xs)",
+            12,
+            "len",
+            "return (// c\n        xs).len()",
+            true,
+        ),
+        // The `?.` fix is never safe: it skips the call on `None`.
+        (
+            "",
+            "add(q, // c\n        1)",
+            5,
+            "add",
+            "q?.add( // c\n        1)",
+            false,
+        ),
+    ];
+    for (ret, body, col, name, fixed, safe) in rows {
+        let src = program(ret, body);
+        let (found, result) = method_fix(&src, (5, col, name));
+        assert_eq!(found, safe, "{body}");
+        assert_eq!(result, program(ret, fixed), "{body}");
+    }
 }
 
 /// A method called by its bare name in a method of its own class points to `self.name(...)`.

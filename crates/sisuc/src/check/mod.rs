@@ -581,6 +581,13 @@ impl<'src> Source<'src> {
             .into_owned()
     }
 
+    /// The parts of `span` that a removal deletes so that each comment in it stays: see
+    /// `source::Source::removal_parts`.
+    fn removal_parts(&self, span: Span) -> Vec<Span> {
+        self.holding(span.start())
+            .removal_parts(self.comments, span)
+    }
+
     /// The text between the offsets of `range`, which lie in one text.
     fn slice(&self, range: Range<usize>) -> &'src str {
         self.holding(range.start).slice(range)

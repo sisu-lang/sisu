@@ -158,7 +158,13 @@ impl Checker<'_> {
             ExprKind::Index { base, index } => self.index(e.span, base, index),
             ExprKind::Range(range) => {
                 let d = Self::range_outside(range, RangePlace::Elsewhere);
-                Err(Poisoned::untyped(self.diagnostics.error(d)))
+                let reported = self.diagnostics.error(d);
+                // Only the diagnostics of the bounds matter. A bound can hold a `break` that
+                // uses a label.
+                for bound in [&range.start, &range.end].into_iter().flatten() {
+                    drop(self.expr(bound, Expectation::Poisoned));
+                }
+                Err(Poisoned::untyped(reported))
             }
             ExprKind::NoneLit => self.none(e.span, expected),
             ExprKind::Name(name) => self.name(e.span, *name, expected),

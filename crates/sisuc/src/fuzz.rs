@@ -344,6 +344,7 @@ mod tests {
             "interface I {\n    fn a(self) -> i64\n}\n\nenum Flag: Eq {\n    On(any I)\n    Off\n}\n\nextend Flag: Eq {\n    fn eq(self, other: Self) -> bool\n {\n        true\n    }\n}\n\nfn main() {}\n",
             "enum T{P}fn a(){P<i>.S}",
             "fn main() {\n    match 1 {\n        If => print(1)\n        _ => print(2)\n    }\n}\n",
+            "fn pick(c: bool) -> i64 {\n    rows: loop {..\n        break loop {\n            if c { break rows 1 }\n            break 2\n        }\n    }\n}\n\nfn main() {\n    print(pick(true))\n}\n",
         ];
         let failures: Vec<String> = crate::on_compiler_stack(|| {
             rows.iter()

@@ -1144,3 +1144,111 @@ fn a_parse_error_anywhere_should_hide_the_string_get_error_of_an_untyped_value()
     ];
     error_rows(&rows);
 }
+
+/// GIVEN a label that a `break` or `continue` uses inside a bound of a range in a place that
+///       takes no range
+/// WHEN the program is checked
+/// THEN it reports E0023 at the range, and no W0008 for the label
+#[test]
+fn a_label_used_in_a_misplaced_range_should_count_as_used() {
+    let rows = [
+        (
+            "end",
+            main_with("a: loop { let _r = ..loop { break a } }"),
+            vec![(Code::RangeOutsideFor, (2, 24))],
+        ),
+        (
+            "start",
+            main_with("a: loop { let _r = loop { break a }.. }"),
+            vec![(Code::RangeOutsideFor, (2, 24))],
+        ),
+        (
+            "both bounds",
+            main_with("a: loop { let _r = loop { break a }..loop { break a } }"),
+            vec![(Code::RangeOutsideFor, (2, 24))],
+        ),
+        (
+            "inclusive",
+            main_with("a: loop { let _r = 0..=loop { break a } }"),
+            vec![(Code::RangeOutsideFor, (2, 24))],
+        ),
+        (
+            "argument",
+            main_with("a: loop { print(..loop { break a }) }"),
+            vec![(Code::RangeOutsideFor, (2, 21))],
+        ),
+        (
+            "loop body that is a range",
+            "fn pick(c: bool) -> i64 {\n    rows: loop {..\n        break loop {\n            if c { break rows 1 }\n            break 2\n        }\n    }\n}\n\nfn main() {\n    print(pick(true))\n}\n".into(),
+            vec![(Code::RangeOutsideFor, (2, 17))],
+        ),
+        (
+            "continue",
+            main_with("a: for i in 0..3 { print(i)\n    let _r = ..loop { continue a } }"),
+            vec![(Code::RangeOutsideFor, (3, 14))],
+        ),
+        (
+            "nested range",
+            main_with("a: loop { let _r = ..(..loop { break a }) }"),
+            vec![
+                (Code::RangeOutsideFor, (2, 24)),
+                (Code::RangeOutsideFor, (2, 27)),
+            ],
+        ),
+    ];
+    for (row, src, wanted) in &rows {
+        codes_row(row, src, wanted);
+    }
+}
+
+/// GIVEN a range in a place that takes no range, with an error in a bound
+/// WHEN the program is checked
+/// THEN it reports E0023 at the range, and the error of the bound at its token
+#[test]
+fn an_error_in_a_misplaced_range_should_be_reported() {
+    let rows = [
+        (
+            "mismatch",
+            "let _r = ..(1 + true)",
+            vec![(Code::RangeOutsideFor, (2, 14)), (Code::Mismatch, (2, 21))],
+        ),
+        (
+            "unknown name",
+            "let _r = ..nope",
+            vec![
+                (Code::RangeOutsideFor, (2, 14)),
+                (Code::BindingNotFound, (2, 16)),
+            ],
+        ),
+    ];
+    for (row, body, wanted) in &rows {
+        codes_row(row, &main_with(body), wanted);
+    }
+}
+
+/// GIVEN a range in a place that takes no range, whose bounds are not `i64`, or have no type
+/// WHEN the program is checked
+/// THEN it reports E0023 only: the bounds are no sure `i64`, as a `char` range is a valid pattern
+#[test]
+fn a_misplaced_range_of_another_type_should_report_only_e0023() {
+    for (row, body) in [
+        ("char bounds", "let _r = 'a'..'z'"),
+        ("char start", "let _r = 'a'.."),
+        ("none", "let _r = ..None"),
+        ("empty array", "let _r = ..[]"),
+    ] {
+        codes_row(row, &main_with(body), &[(Code::RangeOutsideFor, (2, 14))]);
+    }
+}
+
+/// GIVEN a range in a place that takes no range, whose bound assigns a variable
+/// WHEN the program is checked
+/// THEN it reports E0023 only: the assignment counts as a reassignment, so `x` needs `mut` and no
+/// W0002 says that it never changes
+#[test]
+fn an_assignment_in_a_misplaced_range_should_count_as_a_reassignment() {
+    codes(
+        &main_with("let mut x = 1\n    let _r = ..{ x = 2; 3 }"),
+        &[(Code::RangeOutsideFor, (3, 14))],
+    );
+}

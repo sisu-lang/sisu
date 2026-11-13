@@ -4,13 +4,10 @@ error[E0054]: `n` is already `i64`
 5 |         n
   |         ^
   |
-help: remove the conversion, and the comments inside it
+help: remove the conversion
   |
 3 -     print(i64(
-4 -         // keep
-5 -         n
-6 -     ))
-3 +     print(n)
+3 +     print((
   |
 
 sisu: 1 error

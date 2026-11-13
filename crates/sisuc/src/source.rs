@@ -108,6 +108,35 @@ pub(crate) fn removal_end(comments: &[usize], after: usize, next: usize) -> usiz
 }
 
 impl<'a> Source<'a> {
+    /// The parts of `span` that a removal deletes so that each comment that starts in `span`
+    /// stays: the text before, between and after the comments. `comments` are the sorted offsets
+    /// where the comments start, as for `removal_end`. A part before a comment ends at its last
+    /// non-blank byte, so the blanks before `//` stay. A part after a comment starts at the first
+    /// non-blank byte after the comment's line break, so the break and the indent stay. The first
+    /// part is always there, even when it is empty, so that a replacement has a place; a later
+    /// empty part is dropped.
+    pub(crate) fn removal_parts(&self, comments: &[usize], span: Span) -> Vec<Span> {
+        let first = comments.partition_point(|&start| start < span.start());
+        let mut parts = Vec::new();
+        let mut from = span.start();
+        for &comment in comments[first..].iter().take_while(|&&c| c < span.end()) {
+            let end = from + self.slice(from..comment).trim_end().len();
+            if end > from || parts.is_empty() {
+                parts.push(Span::new(from, end));
+            }
+            let after = self.slice(comment..span.end());
+            let line = after
+                .find('\n')
+                .map_or_else(|| span.end(), |n| comment + n + 1);
+            let rest = self.slice(line..span.end());
+            from = line + rest.len() - rest.trim_start().len();
+        }
+        if from < span.end() || parts.is_empty() {
+            parts.push(Span::new(from, span.end()));
+        }
+        parts
+    }
+
     /// `text`, whose first byte has offset `base`.
     pub(crate) fn new(text: &'a str, base: usize) -> Source<'a> {
         Source { text, base }
@@ -456,6 +485,52 @@ mod tests {
         assert_eq!(index.render_line("a\nb\n", 2), 2);
         assert_eq!(LineIndex::new("a\nb").render_line("a\nb", 3), 2);
         assert_eq!(LineIndex::new("").render_line("", 0), 1);
+    }
+
+    /// The text starts at offset 100, as the prelude's does: the offsets in the lists and the
+    /// spans count from the start of the file.
+    #[test]
+    fn removal_parts_should_keep_each_comment_and_its_line_break() {
+        // `(text, comment starts, span as start..end, wanted parts as (start, end))`, all
+        // relative to the text.
+        let cases = [
+            // One comment: the blank before `//` stays, and so do the break and the indent.
+            ("1 | // c\n  2", &[4][..], (0, 12), &[(0, 3), (11, 12)][..]),
+            // The span ends where the comment's line ends: no empty part after it.
+            ("1 | // c\n  2", &[4], (0, 11), &[(0, 3)]),
+            // Two comments: no empty part between them.
+            ("a // 1\n // 2\n b", &[2, 8], (0, 15), &[(0, 1), (14, 15)]),
+            // A comment first in the span: the first part is empty and stays.
+            ("// c\nx", &[0], (0, 6), &[(0, 0), (5, 6)]),
+            // A comment last in the span, with no line break in the span.
+            ("x // c", &[2], (0, 6), &[(0, 1)]),
+            // A comment before the span, and one after it, are not in it.
+            ("x // c\n y z // d", &[2, 12], (8, 11), &[(8, 11)]),
+        ];
+        for (written, comments, (start, end), want) in cases {
+            let source = Source::new(written, 100);
+            let shift = |at: usize| at + 100;
+            let comments: Vec<_> = comments.iter().map(|&at| shift(at)).collect();
+            let span = Span::new(shift(start), shift(end));
+            let want: Vec<_> = want
+                .iter()
+                .map(|&(start, end)| Span::new(shift(start), shift(end)))
+                .collect();
+            assert_eq!(
+                source.removal_parts(&comments, span),
+                want,
+                "text {written:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn removal_parts_should_give_the_whole_span_with_no_comment() {
+        let source = Source::new("1 | 2 // c", 100);
+        for span in [Span::new(100, 105), Span::new(102, 102)] {
+            assert_eq!(source.removal_parts(&[107], span), [span]);
+            assert_eq!(source.removal_parts(&[], span), [span]);
+        }
     }
 
     #[test]
