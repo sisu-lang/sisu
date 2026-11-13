@@ -50,6 +50,20 @@ def lcov(**lines: dict[int, int]) -> str:
     )
 
 
+def branch_lcov(path: str, **lines: list[int | None]) -> str:
+    """branch_lcov("a.rs", n3=[1, 0]) gives BRDA lines for line 3; None is a `-` count."""
+    out = f"SF:/r/{path}\n"
+    for key, counts in lines.items():
+        for i, c in enumerate(counts):
+            out += f"BRDA:{key.removeprefix('n')},0,{i},{'-' if c is None else c}\n"
+    return out + "end_of_record\n"
+
+
+def branch_export(count: int = 10, percent: float = 94.26) -> dict[str, Any]:
+    totals = {**TOTALS, "branches": {"count": count, "percent": percent}}
+    return {"data": [{"totals": totals, "functions": []}]}
+
+
 def run(
     exp: dict[str, Any],
     lc: str = "",
@@ -240,6 +254,63 @@ class Report(unittest.TestCase):
         exp = export(func("f", [(1, 1, 9, 1, 1), (3, 1, 4, 1, 0)]))
         out = run(exp, df=diff(start=3), read=lambda _p, _n: "  " + "x" * 100)
         self.assertIn(": " + "x" * 80 + "\n", out + "\n")
+
+
+class Branches(unittest.TestCase):
+    def test_the_figures_should_name_branches_when_branches_were_measured(self) -> None:
+        out = run(branch_export())
+        self.assertEqual(
+            out.splitlines()[0],
+            "Coverage: lines 87.3%, regions 85.1%, branches 94.3%, changed lines: none.",
+        )
+
+    def test_the_figures_should_leave_out_branches_when_none_were_measured(self) -> None:
+        out = run(branch_export(count=0, percent=0.0))
+        self.assertNotIn("branches", out.splitlines()[0])
+
+    def test_a_changed_line_with_a_missed_branch_should_be_listed(self) -> None:
+        lc = branch_lcov("a.rs", n3=[1, 0], n4=[None, 2, 0], n5=[1, 1], n9=[0, 0])
+        out = run(branch_export(), lc, diff(start=3, count=3))
+        self.assertIn(
+            "\n\nMissed branches on changed lines:\na.rs:3: missed 1 of 2: line 3\n"
+            "a.rs:4: missed 2 of 3: line 4\n\n",
+            out,
+        )
+        self.assertNotIn("a.rs:5:", out)  # all branches ran
+        self.assertNotIn("a.rs:9:", out)  # the line did not change
+
+    def test_the_branch_list_should_say_none_when_no_changed_line_misses_a_branch(self) -> None:
+        out = run(branch_export(), branch_lcov("a.rs", n3=[1, 1], n9=[0, 1]), diff(start=3))
+        self.assertIn("Missed branches on changed lines:\n(none)\n\n", out)
+
+    def test_the_branch_list_should_leave_out_assert_and_invariant_lines(self) -> None:
+        lines = {
+            3: '    assert!(n <= 4, "{}", n.get());',
+            4: '    _ => unreachable!("x should be y"),',
+            5: "    if a {",
+        }
+        lc = branch_lcov("a.rs", n3=[1, 0], n4=[1, 0], n5=[1, 0])
+        out = run(branch_export(), lc, diff(start=3, count=3), read=lambda _p, n: lines[n])
+        self.assertIn("Missed branches on changed lines:\na.rs:5: missed 1 of 2: if a {\n\n", out)
+
+    def test_the_branch_list_should_cut_long_source_lines_at_80_characters(self) -> None:
+        out = run(
+            branch_export(),
+            branch_lcov("a.rs", n3=[1, 0]),
+            diff(start=3),
+            read=lambda _p, _n: "  " + "x" * 100,
+        )
+        self.assertIn(": " + "x" * 80 + "\n", out)
+
+    def test_a_line_only_run_should_have_no_branch_list(self) -> None:
+        out = run(export(), branch_lcov("a.rs", n3=[1, 0]), diff(start=3))
+        self.assertNotIn("Missed branches", out)
+
+    def test_the_report_should_end_with_its_figures_after_the_branch_list(self) -> None:
+        out = run(branch_export(), branch_lcov("a.rs", n3=[1, 0]), diff(start=3))
+        lines = out.splitlines()
+        self.assertEqual(lines[-1], lines[0])
+        self.assertLess(out.index("Missed branches"), out.rindex("Coverage:"))
 
 
 class Main(unittest.TestCase):
