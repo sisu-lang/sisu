@@ -820,8 +820,8 @@ fn slice_should_stay_a_move_where_a_borrow_is_wrong() {
 }
 
 /// `t = copy xs[0]`, a read of `t`, and `release t` in one block of a function over `xs`, an
-/// array of `ty`, with `t` of the type `ty`. The pass is run on it.
-fn pair_candidate(ty: Type) -> Function {
+/// array of `ty`, with `t` of the type `ty`.
+fn pair_candidate(ty: Type) -> Builder {
     let mut b = Builder::new("f");
     let xs = b.param("xs", Type::array(ty));
     let t = b.local("t", ty);
@@ -841,7 +841,7 @@ fn pair_candidate(ty: Type) -> Function {
         ],
         ret(),
     );
-    pair_removed(b)
+    b
 }
 
 /// Runs the pass on the function of `b` and gives it back.
@@ -849,6 +849,19 @@ fn pair_removed(b: Builder) -> Function {
     let mut function = b.finish();
     crate::mir::pairs::remove_pairs(&mut function);
     function
+}
+
+/// Runs the pass on the function of `b`, and checks that it changed no statement.
+fn assert_unchanged(b: Builder) {
+    let mut function = b.finish();
+    let before = format!("{:?}", function.blocks);
+    crate::mir::pairs::remove_pairs(&mut function);
+    assert_eq!(
+        format!("{:?}", function.blocks),
+        before,
+        "no statement should change"
+    );
+    assert!(function.owners.is_empty(), "no copy should become a borrow");
 }
 
 /// `local[0]`.
@@ -868,14 +881,23 @@ fn first(local: LocalId) -> Place {
 /// THEN only the counted copy becomes a borrow: an uncounted copy holds no reference to pair
 #[test]
 fn remove_pairs_should_keep_a_copy_into_an_uncounted_local() {
+    let counted = pair_removed(pair_candidate(Type::STRING));
+    let stmts = &counted.blocks[0].stmts;
     assert!(
-        !pair_candidate(Type::STRING).owners.is_empty(),
-        "a counted copy should be a pair"
+        matches!(
+            stmts[0],
+            Statement::Assign {
+                value: Rvalue::Borrow(_),
+                ..
+            }
+        ),
+        "a counted copy should become a borrow: {stmts:?}"
     );
     assert!(
-        pair_candidate(Type::I64).owners.is_empty(),
-        "an uncounted copy should stay"
+        stmts.iter().any(|stmt| matches!(stmt, Statement::End(_))),
+        "the release of a counted copy should become an end: {stmts:?}"
     );
+    assert_unchanged(pair_candidate(Type::I64));
 }
 
 /// GIVEN a copy into `t`, and a second copy into `t` before the release of `t`
@@ -898,10 +920,7 @@ fn remove_pairs_should_keep_two_copies_into_one_local() {
         ],
         ret(),
     );
-    assert!(
-        pair_removed(b).owners.is_empty(),
-        "no copy should become a borrow"
-    );
+    assert_unchanged(b);
 }
 
 /// GIVEN a copy `t = copy xs[0]`, then `u = slice move m[t..]` that consumes `t` as a bound
@@ -936,8 +955,5 @@ fn remove_pairs_should_keep_a_copy_that_a_slice_bound_consumes() {
         ],
         ret(),
     );
-    assert!(
-        pair_removed(b).owners.is_empty(),
-        "no copy should become a borrow"
-    );
+    assert_unchanged(b);
 }
