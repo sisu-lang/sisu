@@ -122,7 +122,8 @@ no ruling, and its counts go into the report to the user.
 
 A nit that a report lists under `Other nits:` needs no ruling. When one of
 them is blocking, rule on it as your own blocking finding, and name it in
-the report to the user.
+the report to the user. A nit that names a surviving mutant is never in
+that list, because the brief makes it a block.
 
 For each blocking finding that you accept, add one line to `RUN/retro.md`:
 `<report> <n>: <class>: <the check that could have caught it before the review>`.
@@ -154,9 +155,12 @@ each must fail, and for the stated cause.
 
 A large fix round of a final diff runs one more mutation test ([final-diff.md](final-diff.md), A large fix round).
 
-When you fixed a blocking finding, review again. A fix range that changes
-only Markdown files gets no second review: read the fix diff yourself, and
-name it in the report. Otherwise, write `RUN/focus-<round>.md`
+When you fixed a blocking finding, review again. In a diff, a fix range
+that changes only Markdown files, and none under `docs/reference/`,
+`docs/diagnostics/` or `.agents/skills/`, gets no second review. `sisu` or
+its tests read the first two, and an agent follows a skill. Read the fix
+diff yourself, and name it in the report. A spec or a plan always gets its
+second review. Otherwise, write `RUN/focus-<round>.md`
 with the fixes and what you probed. Run `review_round.py prepare` with
 the round's target (for a diff, the fix range) and `--round <round>`. It writes
 `RUN/brief-<round>.md` and takes `RUN/rulings-<round - 1>.md` and each earlier report from `RUN`.

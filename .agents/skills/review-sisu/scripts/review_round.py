@@ -323,9 +323,9 @@ def rulings(run: Path, round_number: int, reports: list[str]) -> int:
 
 
 def field(block: str, name: str) -> str:
-    """Return the first word of the line "<NAME>: <value>" of a finding, or "none"."""
-    match = re.search(rf"^{name}: *\W*(\w+)", block, flags=re.MULTILINE)
-    return match.group(1) if match else "none"
+    """Return the first word of the line "<NAME>: <value>" of a finding in lower case, or "none"."""
+    match = re.search(rf"^{name}: *[^\w\n]*(\w+)", block, flags=re.MULTILINE)
+    return match.group(1).lower() if match else "none"
 
 
 def tally(counts: Counter[str]) -> str:

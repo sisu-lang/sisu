@@ -260,7 +260,9 @@ ID>`. Then it has these parts, in this order:
 1. `Verdict: approve` or `Verdict: changes needed`, with the count of
    blocking findings and of nits.
 2. One block per finding, blocking findings first. Write at most three
-   nits as blocks: the three whose change matters most. Then list each
+   nits as blocks: the three whose change matters most. A nit that names
+   a surviving mutant and the test that kills it is always a block, and
+   does not count toward the three. Then list each
    other nit on one line under `Other nits:`, as `- <title> (<where>):
    <the input whose output changes, or "comment only">`.
 

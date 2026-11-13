@@ -464,14 +464,16 @@ class Stats(unittest.TestCase):
 
     def test_stats_should_count_the_origin_of_each_later_blocking_finding(self) -> None:
         finding = "### {n}. C\nSeverity: blocking\n{origin}"
-        origins = ("Origin: fix\n", "Origin: `missed`\n", "Origin: unfixed\n", "")
+        empty = "Origin:\nWhere: x\n"
+        origins = ("Origin: fix\n", "Origin: `missed`\n", "Origin: Missed\n", empty, "")
+        origins += ("Origin: unfixed\n",)
         report = REPORT + "".join(finding.format(n=n, origin=o) for n, o in enumerate(origins))
         rulings = "".join(f"opus {n}: Accept: x.\n" for n in range(len(origins)))
         self.two_rounds({"opus-2.md": report, "rulings-2.md": rulings})
         result = self.stats()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("later rounds, blocking: 4: Accept: 4", result.stdout.splitlines())
-        line = "origin of blocking findings after round 1: fix: 1, missed: 1, none: 1, unfixed: 1"
+        self.assertIn("later rounds, blocking: 6: Accept: 6", result.stdout.splitlines())
+        line = "origin of blocking findings after round 1: missed: 2, none: 2, fix: 1, unfixed: 1"
         self.assertIn(line, result.stdout.splitlines())
 
     def test_stats_should_count_retro_classes_without_case(self) -> None:
