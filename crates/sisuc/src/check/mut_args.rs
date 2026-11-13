@@ -1092,11 +1092,12 @@ impl Checker<'_> {
     }
 
     /// The base of a place, a chain of fields and indexes, from the root outwards. A root that is
-    /// no binding is hidden in a `let`, and so is each index. Each class object along the chain
-    /// that is no binding goes to `keep`. It is a fresh local with the read of the object. That
-    /// read starts at the local of the object before it. No object and no element is read yet.
-    /// The result is the base as the place reads it: the local of the last object, or the
-    /// binding.
+    /// no binding is hidden in a `let`, and so is each index. A struct field is hidden in one
+    /// `let` with its base. That `let` copies a value, but the copy holds the same class objects,
+    /// and the place writes only to a class object. Each class object along the chain that is no
+    /// binding goes to `keep`. It is a fresh local with the read of the object. That read starts
+    /// at the local of the object before it. No object and no element is read yet. The result is
+    /// the base as the place reads it: the local of the last object, or the binding.
     ///
     /// A binding in `rebound` is kept as well, when it holds a class object. `rebound` holds the
     /// root of each `mut` argument of the call that starts at a binding. The store-back of such an
@@ -1120,10 +1121,6 @@ impl Checker<'_> {
             ExprKind::Field { base, index } => {
                 let base = Box::new(self.bind_base(*base, rebound, lets, keep));
                 tir::Expr::new(ExprKind::Field { base, index }, ty, span)
-            }
-            ExprKind::StructField { base, index } => {
-                let base = Box::new(self.bind_base(*base, rebound, lets, keep));
-                tir::Expr::new(ExprKind::StructField { base, index }, ty, span)
             }
             ExprKind::Index { base, index } => {
                 let base = Box::new(self.bind_base(*base, rebound, lets, keep));
