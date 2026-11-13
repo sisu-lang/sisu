@@ -666,6 +666,10 @@ fn struct_write_should_keep_its_marks() {
 /// its own error and no W0002: the fix of that error needs the `mut`. A write through a class
 /// object, a value that fails and a write of the whole binding keep their codes.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one row for each form of write, so the table reads in one place"
+)]
 fn failed_struct_write_should_keep_its_root_reassigned() {
     let decls = "struct In { n: i64 }\nstruct T { n: i64; i: In; ys: [i64] }\nstruct U { t: T? }\nfn f(mut a: i64) {\n    a += 1\n}\n";
     // The local that the write names is the one `let mut` of `main`.
@@ -724,6 +728,12 @@ fn failed_struct_write_should_keep_its_root_reassigned() {
             vec![FunctionNotFound],
         ),
         (
+            "untyped root ?.",
+            "struct T { n: i64 }\nfn main() {\n    let mut t = nope()\n    t?.n = 2\n}".to_string(),
+            vec![FunctionNotFound],
+        ),
+        ("t?.n = 2", made("t?.n = 2"), vec![Code::SafeAccessNotOptional]),
+        (
             "slice",
             slice("xs[0..1][0].b = 2"),
             vec![AssignToExpression],
@@ -744,6 +754,12 @@ fn failed_struct_write_should_keep_its_root_reassigned() {
             "class C { mut n: i64 }\nfn main() {\n    let mut c = C(n: 1)\n    c.m = 2\n}"
                 .to_string(),
             vec![NeverReassigned, NoMember],
+        ),
+        (
+            "class through a slice",
+            "class C { mut ys: [i64] }\nfn main() {\n    let mut xs = [C(ys: [])]\n    xs[0..1][0].ys.push(1)\n    print(xs[0].ys)\n}"
+                .to_string(),
+            vec![NeverReassigned],
         ),
         ("t.n = nope", made("t.n = nope"), vec![BindingNotFound]),
         ("t = nope", made("t = nope"), vec![BindingNotFound]),

@@ -928,17 +928,13 @@ impl Checker<'_> {
     }
 
     /// Stamps what the place `target` of a `push` writes, as `place` stamps a write. A binding at
-    /// the root of a chain of indexes and struct fields is reassigned. The root of a class
-    /// field's base is written.
+    /// the root of a path that crosses no class object is reassigned, as `reassign_root` says.
+    /// The root of a class field's base is written.
     pub(super) fn stamp_push(&mut self, target: &ast::Expr) {
-        let mut root = target;
-        while let ast::ExprKind::Index { base, .. } = &root.kind {
-            root = base;
-        }
-        let ((_, StructRoot::Binding(name)) | (&ast::ExprKind::Name(name), _)) =
-            (&root.kind, self.struct_root(target))
+        let (&ast::ExprKind::Name(name), false) =
+            (&place_root(target).kind, self.crosses_class(target))
         else {
-            return self.stamp_root(root);
+            return self.stamp_root(target);
         };
         let stamp = self.write_stamp();
         if let Some(b) = self.lookup(name) {
@@ -1204,10 +1200,6 @@ impl Checker<'_> {
         {
             return self.struct_place(span, target, (base, name), checked, change);
         }
-        if checked.is_err() && change != Change::Push {
-            // A base that failed may still be a path through structs, which the write changes.
-            self.reassign_root(target);
-        }
         self.read_root(root);
         let mut guard = None;
         // `?.` takes the object out of its optional, where the place starts. The write of the
@@ -1240,6 +1232,7 @@ impl Checker<'_> {
                     if let Some(ty) = ty {
                         let _ = self.find_field(ty, base, name, access);
                     }
+                    self.reassign_root(target);
                     return CheckedPlace::failed(Some(reported));
                 }
             }
@@ -1249,7 +1242,10 @@ impl Checker<'_> {
         let ((owner, index, ty), on_optional) =
             match self.field_target(known_type(&checked), base, name, (access, change)) {
                 Ok(found) => found,
-                Err(reported) => return CheckedPlace::failed(Some(reported)),
+                Err(reported) => {
+                    self.reassign_root(target);
+                    return CheckedPlace::failed(Some(reported));
+                }
             };
         let FieldOwner::Class(class) = owner else {
             unreachable!("a field of a struct should take the struct arms")
@@ -1355,6 +1351,7 @@ impl Checker<'_> {
             Ok(found) => found,
             Err(reported) => {
                 self.read_root(root);
+                self.reassign_root(target);
                 return CheckedPlace::failed(Some(reported));
             }
         };
@@ -1380,6 +1377,7 @@ impl Checker<'_> {
         let untyped = |checker: &mut Self| ty.is_none().then(|| checker.proof(name.span)); // proof: declaration
         if !is_path(&read, base) {
             self.read_root(root);
+            self.reassign_root(target);
             let at = target.span;
             let read = ty.map(|ty| {
                 let kind = ExprKind::StructField {
@@ -1507,7 +1505,10 @@ impl Checker<'_> {
         let ((owner, index, ty), on_optional) =
             match self.field_target(known_type(checked), base, name, (change.access(), change)) {
                 Ok(found) => found,
-                Err(reported) => return CheckedPlace::failed(Some(reported)),
+                Err(reported) => {
+                    self.reassign_root(target);
+                    return CheckedPlace::failed(Some(reported));
+                }
             };
         if change == Change::MutArg {
             self.record(owner.used(index), target.span);
@@ -1534,7 +1535,10 @@ impl Checker<'_> {
     ) -> CheckedPlace {
         let (owner, index, ty) = match self.find_field(payload, base, name, change.access()) {
             Ok(found) => found,
-            Err(reported) => return CheckedPlace::failed(Some(reported)),
+            Err(reported) => {
+                self.reassign_root(target);
+                return CheckedPlace::failed(Some(reported));
+            }
         };
         let shown = self.field_shown(owner, index);
         if matches!(change, Change::Assign | Change::Element | Change::Field) {
@@ -1626,9 +1630,6 @@ impl Checker<'_> {
     /// copy: `let mut a = a` copies an outer `a` that the copy hides. Call it before the local is
     /// declared, because the place may name an outer local of the same name.
     pub(super) fn copy_of(&self, init: &ast::Expr, name: Symbol) -> Option<Copied> {
-        if has_range_index(init) {
-            return None;
-        }
         let (root, cause) = match self.struct_root(init) {
             StructRoot::Binding(root) => (root, binding_cause(self.binding(root)?)),
             StructRoot::SelfValue => (
@@ -1670,51 +1671,69 @@ impl Checker<'_> {
         }
     }
 
-    /// Marks the binding at the root of the struct path `target` as reassigned.
+    /// Marks the binding at the root of the place `target` as reassigned. A path that crosses a
+    /// class object marks nothing: its write needs no `mut` of the root. A path that the declared
+    /// types do not decide also marks it, such as one with a missing field. The fix of its error
+    /// needs the `mut`.
     pub(super) fn reassign_root(&mut self, target: &ast::Expr) {
-        if let StructRoot::Binding(name) = self.struct_root(target)
+        if let ast::ExprKind::Name(name) = place_root(target).kind
+            && !self.crosses_class(target)
             && let Some(b) = self.lookup(name)
         {
             b.reassigned |= b.kind == BindingKind::Var;
         }
     }
 
+    /// Whether the path of the place `target` crosses a class object, as `struct_walk` finds it.
+    fn crosses_class(&self, target: &ast::Expr) -> bool {
+        matches!(self.struct_walk(target), Err(WalkStop::Class))
+    }
+
     /// The root of the place `target`, through each field of a struct and each index, by the
-    /// declared types alone and with no diagnostics. A class step, or another root, is `Other`.
+    /// declared types alone and with no diagnostics. A class step, a path that the types do not
+    /// decide, or another root, is `Other`.
     pub(super) fn struct_root(&self, target: &ast::Expr) -> StructRoot {
         self.struct_walk(target)
             .map_or(StructRoot::Other, |(root, _)| root)
     }
 
-    /// The root of `e` and the type of `e`, as `struct_root` walks them.
-    fn struct_walk(&self, e: &ast::Expr) -> Option<(StructRoot, Type)> {
+    /// The root of `e` and the type of `e`, as `struct_root` walks them, or why the walk stops.
+    fn struct_walk(&self, e: &ast::Expr) -> Result<(StructRoot, Type), WalkStop> {
         #[cfg(test)]
         super::PATH_STEPS.set(super::PATH_STEPS.get() + 1);
         match &e.kind {
             ast::ExprKind::Field { base, name, .. } => {
                 let (root, ty) = self.struct_walk(base)?;
                 let holder = innermost(ty);
-                let TypeKind::Struct(id, _) = holder.kind() else {
-                    return None;
+                let id = match holder.kind() {
+                    TypeKind::Struct(id, _) => id,
+                    TypeKind::Class(..) => return Err(WalkStop::Class),
+                    _ => return Err(WalkStop::Undecided),
                 };
-                let index = self.structs[id.0].field(name.name)?;
-                Some((root, self.field_type(holder, index)?))
+                let index = (self.structs[id.0].field(name.name)).ok_or(WalkStop::Undecided)?;
+                let ty = self.field_type(holder, index).ok_or(WalkStop::Undecided)?;
+                Ok((root, ty))
             }
-            ast::ExprKind::Index { base, .. } => {
+            ast::ExprKind::Index { base, index } => {
                 let (root, ty) = self.struct_walk(base)?;
+                // A range gives a slice: a new value of the same type, which has no root. A class
+                // step after it still stops the walk.
+                if matches!(index.kind, ast::ExprKind::Range(_)) {
+                    return Ok((StructRoot::Other, ty));
+                }
                 match innermost(ty).kind() {
-                    TypeKind::Array(element) => Some((root, element)),
-                    _ => None,
+                    TypeKind::Array(element) => Ok((root, element)),
+                    _ => Err(WalkStop::Undecided),
                 }
             }
-            &ast::ExprKind::Name(name) => {
-                Some((StructRoot::Binding(name), self.binding(name)?.ty?))
-            }
+            &ast::ExprKind::Name(name) => (self.binding(name).and_then(|b| b.ty))
+                .map(|ty| (StructRoot::Binding(name), ty))
+                .ok_or(WalkStop::Undecided),
             ast::ExprKind::SelfValue => match self.body.self_type.known() {
-                Some(ty) if is_struct(ty) => Some((StructRoot::SelfValue, ty)),
-                _ => None,
+                Some(ty) if is_struct(ty) => Ok((StructRoot::SelfValue, ty)),
+                _ => Err(WalkStop::Undecided),
             },
-            _ => None,
+            _ => Err(WalkStop::Undecided),
         }
     }
 
@@ -2055,6 +2074,16 @@ pub(super) enum StructRoot {
     Other,
 }
 
+/// Why `Checker::struct_walk` stops before the root of a place.
+#[derive(Clone, Copy)]
+enum WalkStop {
+    /// The path crosses a class object. A write there changes the object, not the root.
+    Class,
+    /// The declared types do not decide the path. It has a missing or untyped field, or a root
+    /// with no type. Or it takes a field or an element of a value that is no struct or array.
+    Undecided,
+}
+
 /// Why the binding `b` cannot change, if it cannot.
 fn binding_cause(b: &Binding) -> Option<Immutable> {
     let declared = b.span;
@@ -2091,24 +2120,6 @@ pub(super) fn first_safe(mut e: &ast::Expr) -> Option<(&ast::Expr, &ast::Ident)>
             }
             ast::ExprKind::Index { base, .. } => e = base,
             _ => return found,
-        }
-    }
-}
-
-/// Whether a range indexes the chain of fields and indexes of `e`: a slice is a new value.
-fn has_range_index(mut e: &ast::Expr) -> bool {
-    loop {
-        #[cfg(test)]
-        super::PATH_STEPS.set(super::PATH_STEPS.get() + 1);
-        match &e.kind {
-            ast::ExprKind::Index { base, index } => {
-                if matches!(index.kind, ast::ExprKind::Range(_)) {
-                    return true;
-                }
-                e = base;
-            }
-            ast::ExprKind::Field { base, .. } => e = base,
-            _ => return false,
         }
     }
 }
