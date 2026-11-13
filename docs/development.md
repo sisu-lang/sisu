@@ -443,10 +443,12 @@ changed lines". It gives one line for each changed line that has a branch
 outcome which no test took: `path:line: missed N of M: <source>`. M is the
 number of outcomes of the line (two for each condition, such as an `if` or a
 side of `&&` or `||`). The list leaves out `assert!` lines and `unreachable!` or
-`panic!` lines, as the region lists do. A string or a comment with such a word
-does not count. It also leaves out these lines:
-the other lines of a multi-line `assert!`; a `let ... else {` line whose next
-line is such a panic; the lines of an inline `#[cfg(test)] mod` in the same
+`panic!` lines. The region lists put such regions in the advisory list. A
+string or a comment on one line with such a word does not count. A string or a
+`/* */` comment that runs over several lines is not removed, so a word in it
+can leave out a line. It also leaves out these lines:
+the other lines of a multi-line `assert!`; a line that ends in `else {` and
+whose next line is such a panic; the lines of an inline `#[cfg(test)] mod` in the same
 file. The region lists keep their own rules for these. It says `(none)` when no
 line qualifies. A run with lines only has no third list. The nightly `Coverage` job
 of CI measures branches too and prints `Branch coverage (exact)`. It fails when
