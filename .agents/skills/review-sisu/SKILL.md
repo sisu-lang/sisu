@@ -116,6 +116,12 @@ same ruling and name the other line. Then run `python3 <skill base>/scripts/revi
 with the same `--report` options as `verify`. It fails on a finding that has
 no ruling, and its counts go into the report to the user.
 
+For each blocking finding that you accept, add one line to `RUN/retro.md`:
+`<stem> <n>: <class>: <the check that could have caught it before the review>`.
+The class is a few words, such as `incomplete fix` or `missed neighbour`.
+Use a class that `stats` (section 6) already lists, when one fits. The check
+is a hook, a test, a lint, a line of the brief, or `none`.
+
 - **Accept:** you will fix it.
 - **Reject:** with a reason that cites the target, the code, or `CODING_STANDARDS.md`.
 - **Defer:** with where it goes: a later task, a roadmap entry, or a GitHub issue per `docs/agents/issue-tracker.md`.
@@ -126,7 +132,7 @@ Rules for ruling:
 
 1. Check a finding before you rule. Run its repro or read the source it cites. When the claim does not hold, reject it and say what you saw. Save each repro program you run as `RUN/probes/<round>/<reviewer>-<n>.sisu`.
    A fix that a reviewer suggests, or that you write yourself, is a claim too. Check its text, such as the wording of a comment, against the code before it goes into a brief or a commit.
-2. Severity follows "Reviewing" in `CODING_STANDARDS.md`. A blocking finding is fixed or deferred with the user's agreement; a nit may be rejected.
+2. Severity follows "Reviewing" in `CODING_STANDARDS.md`. A blocking finding is fixed or deferred with the user's agreement. Accept a nit only in round 1. In a later round, reject or defer each nit, because each fix of a nit costs one more round.
 3. A ruling must not break a rule in `CODING_STANDARDS.md`.
 4. When two reviewers disagree, rule on the evidence and record the disagreement.
 5. Ask the user instead of ruling when the fix would change the spec's intent, syntax, a diagnostic code, a public interface or the scope, or when you would reject a blocking finding.
@@ -142,7 +148,10 @@ each must fail, and for the stated cause.
 
 A large fix round of a final diff runs one more mutation test ([final-diff.md](final-diff.md), A large fix round).
 
-When you fixed a blocking finding, review again. Write `RUN/focus-<round>.md`
+When you fixed a blocking finding, review again. A diff that changes no file
+under `crates/sisuc/src` or `crates/runtime` gets no second review: read the
+fix diff yourself, run its tests, and give the result in the report.
+Otherwise, write `RUN/focus-<round>.md`
 with the fixes and what you probed. Run `review_round.py prepare` with
 the round's target (for a diff, the fix range) and `--round <round>`. It writes
 `RUN/brief-<round>.md` and takes `RUN/rulings-<round - 1>.md` and each earlier report from `RUN`.
@@ -152,11 +161,12 @@ work. Send it to the Claude seat; its report goes to `RUN/opus-<round>.md`. Allo
 fix rounds. After the review of the second fix round, do the redo below when
 it applies. Otherwise ask the user about
 each blocking finding that is still open: a third round, or a deferral.
+With the question, say whether the open findings have one cause in the
+approach. When they do, name the other approach.
 In a diff, a blocking finding can have a small fix, such as a pattern in a hook:
-fewer than 10 lines, and no change to `sisu` output. It needs no question: give it one more
-round, reviewed by `opus-medium` alone. Do this extra round once, for all
-such findings together. Ask the user about each blocking finding that its
-review reports. A spec or a plan gets no such round. Defer the nits.
+fewer than 10 lines, and no change to `sisu` output. It needs no question and
+no reviewer: make the fix, read its diff yourself, and run its tests. A spec
+or a plan gets no such fix. Defer the nits.
 
 Two fix rounds in a row can each add a blocking regression, or the second
 fix of one finding can fail. Then stop patching and do a redo. Give it to a fresh `opus-high` executor.
@@ -185,6 +195,14 @@ directory above `git rev-parse --path-format=absolute --git-common-dir`.
 ```
 mkdir -p <main checkout>/.scratch/reviews/<RUN name> && cp RUN/*.md <main checkout>/.scratch/reviews/<RUN name>/ && cp -r RUN/probes <main checkout>/.scratch/reviews/<RUN name>/
 ```
+
+Measure the kept runs with `python3 <skill base>/scripts/review_round.py stats <main checkout>/.scratch/reviews/*`.
+It counts the rounds of each run, and the rulings by round and severity.
+It also counts the rulings of each reviewer, the origin of each later
+blocking finding, and the classes of `retro.md`.
+
+- A pull request that changes this skill, its brief or a seat gives the output in its body, so that the next change can compare.
+- At the end of a plan or a `solve-issues` batch, run it on the runs of that work only, such as `.scratch/reviews/sisu-review-m9p2-*`. Give the user each retro class that two or more findings share, with the hook or the test that would catch it.
 
 Then delete everything in `RUN` except the briefs, the reports and `probes`:
 `find RUN -mindepth 1 -maxdepth 1 -type d ! -name probes -exec rm -rf {} +`.

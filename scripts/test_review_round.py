@@ -106,7 +106,7 @@ class ReviewRound(unittest.TestCase):
         self,
     ) -> None:
         names = ("rulings-1.md", "fable.md", "sol.md", "opus.md", "brief.md", "focus.md")
-        for name in (*names, "target-1.md", "diagnostic-issues.md", "focus-2.md"):
+        for name in (*names, "target-1.md", "diagnostic-issues.md", "focus-2.md", "retro.md"):
             (self.run_dir / name).write_text(name)
         result = self.script("prepare", "main..main", "--round", "2")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -416,6 +416,57 @@ class Rulings(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("opus: 2 findings: 1 Accept, 1 Reject", result.stdout)
+
+
+class Stats(unittest.TestCase):
+    @override
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root)
+
+    def run_dir(self, name: str, files: dict[str, str]) -> Path:
+        path = self.root / name
+        path.mkdir()
+        for file, text in files.items():
+            (path / file).write_text(text)
+        return path
+
+    def stats(self) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["python3", SCRIPT, "stats", *sorted(self.root.iterdir())],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=ENV,
+        )
+
+    def test_stats_should_count_rounds_rulings_origins_and_retro_classes(self) -> None:
+        self.run_dir(
+            "two-rounds",
+            {
+                "brief.md": "",
+                "brief-2.md": "",
+                "sol.md": REPORT + "### 1. A\nSeverity: blocking\n### 2. B\nSeverity: nit\n",
+                "rulings-1.md": "sol 1: Accept (same as opus 1): x.\nsol 2: Reject: y.\n",
+                "opus-2.md": REPORT + "### 1. C\nSeverity: blocking\nOrigin: fix round\n",
+                "rulings-2.md": "opus 1: Accept: z.\n",
+                "retro.md": "sol 1: incomplete fix: a neighbour row.\nopus 1: incomplete fix: x.\n",
+            },
+        )
+        self.run_dir("one-round", {"brief.md": ""})
+        self.run_dir("not-a-review", {"notes.md": ""})
+        result = self.stats()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for line in (
+            "runs: 2; last round: 1: 1, 2: 1",
+            "round 1, blocking: 1: Accept: 1",
+            "round 1, nit: 1: Reject: 1",
+            "later rounds, blocking: 1: Accept: 1",
+            "reviewer sol: 2: Accept: 1, Reject: 1",
+            "origin of blocking findings after round 1: fix: 1",
+            "retro classes: incomplete fix: 2",
+        ):
+            self.assertIn(line, result.stdout.splitlines())
 
 
 class SaveReport(unittest.TestCase):

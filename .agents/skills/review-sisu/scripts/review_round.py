@@ -6,7 +6,7 @@ exists. A reviewer that wrote in the repository, or a report that is not there, 
 save-report copies the final reply of a subagent reviewer from its transcript to its report file,
 word for word. rulings checks that each finding of each report has a ruling, and counts them.
 record only records the checkout, for a review that has no target to prepare, such as a
-cross-check.
+cross-check. stats counts the rounds, the rulings and the retro classes of kept runs.
 
 Run this file from any checkout. It runs origin/main's build_sisu.sh and diff_brief.py, so a
 branch that started before a change to the criteria gets the current ones.
@@ -21,6 +21,8 @@ Save a report: python3 review_round.py save-report RUN STEM --agent ID [--round 
 Check the rulings: python3 review_round.py rulings RUN --report STEM [--report STEM]... [--round N]
 
 Record only: python3 review_round.py record REPO RUN [--round N]
+
+Count kept runs: python3 review_round.py stats RUN...
 
 REPO is the root of the checkout that holds the target. A worktree is fine.
 RUN is the run directory.
@@ -55,6 +57,11 @@ reviewer can commit too: go on only when you made each of those commits.
 ID is the agent ID that the Agent tool returned. save-report finds agent-ID.jsonl under
 ~/.claude/projects, or under --transcripts DIR. It reads the last SubagentHandback message of the
 agent, or else its last text.
+
+stats reads each RUN as a kept run of .scratch/reviews/. It counts the runs by their last round,
+and the rulings by round and severity. It also counts the rulings of each reviewer, the Origin of
+each blocking finding after round 1, and the classes of retro.md. A retro.md line is
+"<STEM> <n>: <class>: <the check that could have caught it>".
 """
 
 import argparse
@@ -62,6 +69,7 @@ import json
 import re
 import subprocess
 import sys
+from collections import Counter, defaultdict
 from pathlib import Path
 
 SCRIPTS = ".agents/skills/review-sisu/scripts"
@@ -69,7 +77,9 @@ REGISTER = "docs/register.md"
 # A debt row with a field count: its count, then its Where cell without the backticks.
 FIELD_ROW = re.compile(r"^\|[^|]* in (\d+) fields[^|]*\|\s*`?([^|`]*?)`?\s*\|", re.MULTILINE)
 # The Markdown files of a run directory that are not reports, by the stem of their name.
-NOT_REPORTS = {"brief", "focus", "rulings", "target", "diagnostic-issues"}
+NOT_REPORTS = {"brief", "focus", "rulings", "target", "diagnostic-issues", "retro"}
+# A finding of a report: its number, then its text up to the next finding.
+FINDING = re.compile(r"^### (\d+)\.(.*?)(?=^### |\Z)", re.MULTILINE | re.DOTALL)
 
 
 def git(repo: Path, *args: str) -> bytes:
@@ -278,15 +288,19 @@ def verify(repo: Path, run: Path, round_number: int, reports: list[str]) -> int:
     return 1 if missing else 0
 
 
-def rulings(run: Path, round_number: int, reports: list[str]) -> int:
-    """Return 1 when a finding of a report has no ruling. Print the rulings of each reviewer."""
-    path = run / f"rulings-{round_number}.md"
+def read_rulings(path: Path) -> dict[str, str]:
+    """Return the ruling of each finding in the rulings file PATH, such as {"sol 1": "Accept"}."""
     lines = path.read_text(encoding="utf-8") if path.exists() else ""
     # The ruling ends at the next colon; "Defer to <where>" with a <where> counts as Defer.
-    ruled = {
+    return {
         finding: "Defer" if ruling.startswith("Defer to ") and ruling[9:].strip() else ruling
         for finding, ruling in re.findall(r"^(\S+ \d+): ([^:\n]+)", lines, flags=re.MULTILINE)
     }
+
+
+def rulings(run: Path, round_number: int, reports: list[str]) -> int:
+    """Return 1 when a finding of a report has no ruling. Print the rulings of each reviewer."""
+    ruled = read_rulings(run / f"rulings-{round_number}.md")
     status = 0
     for stem in reports:
         report = (run / numbered(stem, round_number)).read_text(encoding="utf-8")
@@ -305,6 +319,64 @@ def rulings(run: Path, round_number: int, reports: list[str]) -> int:
         tally = ", ".join(f"{count} {ruling}" for ruling, count in counts.items())
         print(f"{stem}: {len(found)} findings: {tally or 'none'}")
     return status
+
+
+def field(block: str, name: str) -> str:
+    """Return the first word of the line "<NAME>: <value>" of a finding, or "none"."""
+    match = re.search(rf"^{name}: *(\w+)", block, flags=re.MULTILINE)
+    return match.group(1) if match else "none"
+
+
+def tally(counts: Counter[str]) -> str:
+    """Return COUNTS as "key: count" pairs, largest first."""
+    return ", ".join(f"{key}: {count}" for key, count in counts.most_common()) or "none"
+
+
+def stats(runs: list[Path]) -> int:
+    """Print the rounds, the rulings and the retro classes of the kept runs RUNS."""
+    rounds: Counter[int] = Counter()
+    stages: defaultdict[str, Counter[str]] = defaultdict(Counter)
+    seats: defaultdict[str, Counter[str]] = defaultdict(Counter)
+    origins: Counter[str] = Counter()
+    classes: Counter[str] = Counter()
+    for run in runs:
+        briefs = [re.fullmatch(r"brief(?:-(\d+))?", p.stem) for p in run.glob("brief*.md")]
+        numbers = [int(m.group(1) or 1) for m in briefs if m]
+        if not numbers:
+            continue
+        rounds[max(numbers)] += 1
+        for path in run.glob("rulings-*.md"):
+            round_number = int(path.stem.removeprefix("rulings-"))
+            findings: dict[str, dict[str, str]] = {}
+            for finding, note in read_rulings(path).items():
+                stem, number = finding.split(" ")
+                # Older rulings carry a note after the word, such as "Accept (same as sol 2)".
+                word = re.match(r"Accept|Reject|Defer|Ask", note)
+                ruling = word.group() if word else "other"
+                if stem not in findings:
+                    report = run / numbered(stem, round_number)
+                    text = report.read_text(encoding="utf-8") if report.exists() else ""
+                    findings[stem] = dict(FINDING.findall(text))
+                block = findings[stem].get(number, "")
+                severity = field(block, "Severity")
+                stage = "round 1" if round_number == 1 else "later rounds"
+                stages[f"{stage}, {severity}"][ruling] += 1
+                seats[stem][ruling] += 1
+                if round_number > 1 and severity == "blocking":
+                    origins[field(block, "Origin")] += 1
+        retro = run / "retro.md"
+        if retro.exists():
+            text = retro.read_text(encoding="utf-8")
+            classes.update(re.findall(r"^\S+ \d+: ([^:\n]+):", text, flags=re.MULTILINE))
+    last = ", ".join(f"{n}: {rounds[n]}" for n in sorted(rounds))
+    print(f"runs: {rounds.total()}; last round: {last}")
+    for stage, counts in sorted(stages.items()):
+        print(f"{stage}: {counts.total()}: {tally(counts)}")
+    for stem, counts in sorted(seats.items()):
+        print(f"reviewer {stem}: {counts.total()}: {tally(counts)}")
+    print(f"origin of blocking findings after round 1: {tally(origins)}")
+    print(f"retro classes: {tally(classes)}")
+    return 0
 
 
 def handback(transcript: Path) -> str:
@@ -365,6 +437,8 @@ def main() -> int:
     save_parser = commands.add_parser("save-report")
     rulings_parser = commands.add_parser("rulings")
     record_parser = commands.add_parser("record")
+    stats_parser = commands.add_parser("stats")
+    stats_parser.add_argument("runs", type=Path, nargs="+", metavar="RUN")
     rulings_parser.add_argument("run", type=Path)
     rulings_parser.add_argument("--report", action="append", required=True, metavar="STEM")
     for command in (prepare_parser, verify_parser, record_parser):
@@ -385,6 +459,8 @@ def main() -> int:
     args, extra = parser.parse_known_args()
     if args.command != "prepare" and extra:
         parser.error(f"unrecognized arguments: {' '.join(extra)}")
+    if args.command == "stats":
+        return stats(args.runs)
     if args.command == "verify":
         return verify(args.repo, args.run, args.round, stems(args))
     if args.command == "rulings":
@@ -398,6 +474,11 @@ def main() -> int:
     # parse_known_args would take the value of an option before TARGET as the target.
     if args.target != sys.argv[4]:
         parser.error("write TARGET just after RUN, before each option")
+    return run_prepare(args, extra)
+
+
+def run_prepare(args: argparse.Namespace, extra: list[str]) -> int:
+    """Check main, the pull request body and the debt rows, then prepare the round."""
     git(args.repo, "fetch", "origin")
     if not args.old_main:
         check_main(args.repo, args.target)
