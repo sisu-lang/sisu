@@ -463,6 +463,16 @@ class BranchNoise(unittest.TestCase):
         )
         self.assertEqual(listed(*lines, branches=[3, 7]), [3, 7])
 
+    def test_a_closed_assert_inside_an_open_assert_should_not_end_the_walk(self) -> None:
+        lines = (
+            "assert!(",
+            "    { assert!(ready); ready },",
+            '    "{}",',
+            "    if verbose { 1 } else { 2 },",
+            ");",
+        )
+        self.assertEqual(listed(*lines, branches=[4]), [])
+
     def test_a_block_comment_that_names_an_invariant_should_not_hide_its_own_line(self) -> None:
         lines = ("if ready /* panic!( */ {", "}", "let x = a /* b */ && c;")
         self.assertEqual(listed(*lines, branches=[1, 3]), [1, 3])
