@@ -34,6 +34,11 @@ pub(crate) fn unread_struct_fields<'d>(
     source: &str,
     diagnostics: &'d [Diagnostic],
 ) -> Vec<&'d Diagnostic> {
+    let unread = |d: &&Diagnostic| d.code().as_str() == "W0013";
+    // A clean program, the usual case, is not lexed and parsed again.
+    if !diagnostics.iter().any(|d| unread(&d)) {
+        return Vec::new();
+    }
     let Ok(lexed) = lexer::lex(source) else {
         return Vec::new();
     };
@@ -41,6 +46,7 @@ pub(crate) fn unread_struct_fields<'d>(
     let fields: FxHashSet<usize> = (program.items.iter())
         .filter_map(|item| match item {
             ast::Item::Struct(s) => Some(&s.members),
+            // The fields of a class may still be unread.
             _ => None,
         })
         .flatten()
@@ -50,7 +56,7 @@ pub(crate) fn unread_struct_fields<'d>(
         })
         .collect();
     (diagnostics.iter())
-        .filter(|d| d.code().as_str() == "W0013" && fields.contains(&d.span().start()))
+        .filter(|d| unread(d) && fields.contains(&d.span().start()))
         .collect()
 }
 
