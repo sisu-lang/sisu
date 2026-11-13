@@ -209,12 +209,12 @@ vague or generic error, or with none.
   and sample a few files rather than read them all. It fails on any
   changed line that is not the old line with those substitutions.
 - When "Focus" names a mutation-test log or a coverage result, check the
-  note on each surviving mutant and on each uncovered region in changed
-  code. Commits that Focus lists after the log were not mutated: check
-  their tests yourself. A surviving mutant is a finding only when you
-  name the contract it breaks; a changed seed-to-program mapping alone
-  breaks none. Without a log or a result, name the riskiest changed path
-  that no test runs.
+  notes. Each surviving mutant, each uncovered region and each missed
+  branch in changed code needs a note. Commits that Focus lists after
+  the log were not mutated: check their tests yourself. A surviving mutant is a
+  finding only when you name the contract it breaks; a changed
+  seed-to-program mapping alone breaks none. Without a log or a result,
+  name the riskiest changed path that no test runs.
 
 # Re-review
 

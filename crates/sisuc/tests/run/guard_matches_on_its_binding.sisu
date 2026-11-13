@@ -1,0 +1,32 @@
+// GIVEN a `match` on a borrowed enum parameter
+// AND a guard that is a `match` on the binding of its own arm, an enum with a string payload
+// WHEN the program is built and run
+// AND the value passes the guard, fails it, takes the `B` case, or is not the arm's variant
+// THEN it prints 1, 0, 0 and 0
+// AND Valgrind and `--rc-checks` see no leak or double free
+enum Inner {
+    A(string)
+    B
+}
+
+enum Outer {
+    W(Inner)
+    N
+}
+
+fn f(o: Outer) -> i64 {
+    match o {
+        W(i) if (match i {
+            A(s) => s.len() > 1
+            B => false
+        }) => 1
+        _ => 0
+    }
+}
+
+fn main() {
+    print(f(Outer.W(Inner.A("ab")))) // 1: the payload is longer than 1
+    print(f(Outer.W(Inner.A("a")))) // 0: the guard fails
+    print(f(Outer.W(Inner.B))) // 0: the inner match takes `B`
+    print(f(Outer.N)) // 0: the arm does not match
+}

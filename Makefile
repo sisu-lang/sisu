@@ -17,13 +17,14 @@ help: ## List the targets
 	@echo 'BASE=<commit> sets where the changes start: by default where HEAD left origin/main.'
 	@echo 'On a stacked branch, pass the stage below, so its changes stay out.'
 
-setup: ## Once per clone: LLVM 23, the pre-commit and commit-msg hooks, cargo-shear, cargo-mutants, cargo-llvm-cov, cargo-fuzz
+setup: ## Once per clone: LLVM 23, the pre-commit and commit-msg hooks, cargo-shear, cargo-mutants, cargo-llvm-cov, cargo-fuzz, the coverage nightly
 	scripts/install-llvm.sh
 	prek install -t pre-commit -t commit-msg
 	cargo install --locked cargo-shear
 	cargo install --locked cargo-mutants
 	cargo install --locked cargo-llvm-cov
 	cargo install --locked cargo-fuzz@0.13.2
+	rustup toolchain install "$$(cat scripts/coverage-toolchain)" --profile minimal --component llvm-tools-preview
 
 audit-setup: ## For the audit-sisu skill: add opt and clang, with the ASan runtime, to .llvm/23
 	scripts/install-llvm.sh --audit

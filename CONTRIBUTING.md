@@ -16,7 +16,7 @@ people and agents alike. This page is the route through them.
    when you change `crates/runtime`. Run `make memory-safety` when you change
    codegen, drops, the runtime or the test harness. Then run
    `make coverage` on your diff, as [AGENTS.md](AGENTS.md) shows, and cover
-   or explain each uncovered region.
+   or explain each uncovered region and each missed branch.
 
 Work is tracked as [GitHub issues](https://github.com/sisu-lang/sisu/issues),
 as [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md) describes.

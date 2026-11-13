@@ -613,7 +613,9 @@ mod tests {
         sisu_rc_fault, sisu_realloc, with_stdout,
     };
     use crate::text::{sisu_eprint_char, sisu_eprint_str};
-    use std::os::fd::AsRawFd;
+    use std::fs::File;
+    use std::io::Read;
+    use std::os::fd::{AsRawFd, OwnedFd};
     use std::os::unix::process::ExitStatusExt;
     use std::process::Command;
 
@@ -622,6 +624,7 @@ mod tests {
     const PANIC_RANGE_VAR: &str = "SISU_RUNTIME_PANIC_RANGE";
     const EPRINT_VAR: &str = "SISU_RUNTIME_EPRINT";
     const RC_CASE_VAR: &str = "SISU_RUNTIME_RC_CASE";
+    const FULL_VAR: &str = "SISU_RUNTIME_FULL_STDOUT";
     const SIGABRT: i32 = 6;
 
     #[expect(
@@ -1175,6 +1178,46 @@ mod tests {
         }
     }
 
+    /// Child entry point for the `*_should_panic_when_standard_output_is_full` tests: standard
+    /// output is `/dev/full`, and the case in the variable writes to it. A no-op unless the
+    /// parent set the env var.
+    #[test]
+    fn full_stdout_child_should_fail_a_write_when_asked() {
+        let Ok(case) = std::env::var(FULL_VAR) else {
+            return;
+        };
+        let full = std::fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/full")
+            .expect("/dev/full should exist on Linux");
+        point_fd_at(full.as_raw_fd(), 1);
+        if case == "print" {
+            // The line that takes the buffer to `BUFFER_CAPACITY` is written out and fails, so
+            // the program exits in it, before the loop ends.
+            for _ in 0..=BUFFER_CAPACITY {
+                sisu_print_int(i64::MIN);
+            }
+        } else {
+            // One line waits in the buffer; the final flush fails.
+            sisu_print_int(5);
+            sisu_flush_stdout();
+        }
+    }
+
+    /// The output of `full_stdout_child_should_fail_a_write_when_asked` for `case`.
+    fn run_full_stdout_child(case: &str) -> std::process::Output {
+        let exe = std::env::current_exe().expect("test binary path");
+        Command::new(exe)
+            .args([
+                "--exact",
+                "tests::full_stdout_child_should_fail_a_write_when_asked",
+                "--nocapture",
+            ])
+            .env(FULL_VAR, case)
+            .output()
+            .expect("spawn child test")
+    }
+
     fn run_rc_child(case: &str) -> std::process::Output {
         let exe = std::env::current_exe().expect("test binary path");
         Command::new(exe)
@@ -1262,6 +1305,29 @@ mod tests {
         assert_eq!(out.buffer.capacity(), RESERVED);
     }
 
+    /// On a terminal, each line is written out at once, not when the buffer is full.
+    #[test]
+    fn append_bytes_should_write_each_line_when_the_sink_is_a_terminal() {
+        let (mut reader, writer) = std::io::pipe().expect("a pipe should open");
+        let mut out = Stdout {
+            buffer: Vec::with_capacity(RESERVED),
+            sink: Some(Sink {
+                file: Some(File::from(OwnedFd::from(writer))),
+                line_buffered: true,
+            }),
+        };
+        out.append_bytes(b"ab")
+            .expect("the pipe should take a line");
+        assert_eq!(out.buffer, b"", "the line should have gone out");
+        // The reader sees the end of the pipe, not a wait, when the line was lost.
+        drop(out);
+        let mut line = [0; 3];
+        reader
+            .read_exact(&mut line)
+            .expect("the line should be in the pipe");
+        assert_eq!(&line, b"ab\n");
+    }
+
     /// A standard output that is open but cannot be duplicated (EMFILE) is a failed write,
     /// not a closed standard output.
     #[test]
@@ -1272,6 +1338,40 @@ mod tests {
             Some(101),
             "sisu: panic: standard output could not be written: Too many open files (os error 24)\n",
         );
+    }
+
+    fn assert_full_stdout_panics(case: &str) {
+        let out = run_full_stdout_child(case);
+        assert_eq!(out.status.code(), Some(101), "{case}: {:?}", out.status);
+        assert_eq!(
+            String::from_utf8_lossy(&out.stderr),
+            "sisu: panic: standard output could not be written: No space left on device (os error 28)\n",
+            "{case}"
+        );
+    }
+
+    /// A `print` whose write fails is a Sisu panic: exit code 101 and the message on standard
+    /// error. The write fails when the line takes the buffer to its capacity.
+    #[test]
+    #[cfg_attr(miri, ignore = "spawns a child process, which Miri cannot")]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        ignore = "writes to /dev/full, which only Linux has"
+    )]
+    fn print_should_panic_when_standard_output_is_full() {
+        assert_full_stdout_panics("print");
+    }
+
+    /// The final flush of a program that ends normally is a Sisu panic too when its write
+    /// fails, though no `print` had to write.
+    #[test]
+    #[cfg_attr(miri, ignore = "spawns a child process, which Miri cannot")]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        ignore = "writes to /dev/full, which only Linux has"
+    )]
+    fn flush_should_panic_when_standard_output_is_full() {
+        assert_full_stdout_panics("flush");
     }
 
     /// A fault whose stdout flush fails still reports itself and exits 102, never 101 or a

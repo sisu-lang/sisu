@@ -7681,3 +7681,52 @@ fn a_string_append_to_a_field_or_an_element_should_call_the_join_helper() {
         .count();
     assert_eq!(calls, 2, "calls of the join helper in\n{f}");
 }
+
+/// GIVEN a call into `d` and a `goto` to a block that returns `d`
+/// AND the same with a read of a field of `d`
+/// WHEN `tail_return` looks for the statements that follow the call
+/// THEN it finds the `return` of the whole local only: a field of the result is not the result.
+/// No lowering returns a place with a projection, so the mir is by hand
+#[test]
+fn tail_return_should_not_take_a_read_of_a_projection_as_the_result() {
+    let tail = |projections: Vec<Projection>| {
+        let mut b = mir::tests::Builder::new("f");
+        let d = b.local("d", Type::I64);
+        b.block(
+            vec![Statement::Assign {
+                dest: Some(d),
+                value: Rvalue::Call {
+                    func: FuncId(0),
+                    args: Vec::new(),
+                    borrowed: Vec::new(),
+                    span: Span::new(0, 0),
+                    quiet: false,
+                },
+            }],
+            Terminator::Goto(BlockId(1)),
+        );
+        b.block(
+            vec![],
+            Terminator::Return(Some(mir::Operand::Read(Place {
+                local: d,
+                projections,
+                borrow: false,
+                guard: false,
+            }))),
+        );
+        let f = b.finish();
+        tail_return(&f, &empty_goto_ends(&f), &f.blocks[0]).is_some()
+    };
+    assert!(
+        tail(Vec::new()),
+        "a read of the whole result should be the result"
+    );
+    let field = Projection::Field {
+        index: 0,
+        mutable: false,
+    };
+    assert!(
+        !tail(vec![field]),
+        "a read of a field should not be the result"
+    );
+}

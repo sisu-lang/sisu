@@ -2666,3 +2666,44 @@ fn a_mut_argument_for_a_parameter_with_no_type_should_report_only_the_declaratio
     let src = "fn f(mut x: Nope) {}\nfn main() {\n    let mut a = 1\n    f(mut a)\n}";
     codes(src, &[(Code::NeverReassigned, (1, 10)), (E30, (1, 13))]);
 }
+
+/// GIVEN `const N = 3` and `bump(mut n: i64)`
+/// WHEN `main` calls `bump(mut N)`
+/// THEN the call is E0169 at `N`, with the `const` as its secondary span: a constant is no place
+#[test]
+fn a_constant_should_not_be_a_mut_argument() {
+    let src = "const N = 3\nfn bump(mut n: i64) {\n    n = 1\n}\nfn main() {\n    bump(mut N)\n}";
+    diagnostic(src, E169, (6, 14, "N"), &[(1, 7)]);
+}
+
+/// GIVEN a `mut` field `f` whose type `Nope` fails with E0030, and `set(mut n: Nope)`, whose
+///   parameter has no type either
+/// WHEN `main` calls `set(c.f)`, with no `mut`
+/// THEN the E0166 stands at `c.f` and offers no fix: two unknown types are not the same type
+#[test]
+fn a_missing_mut_before_a_field_with_no_type_should_offer_no_fix() {
+    let src = "class C {\n    mut f: Nope\n}\nfn set(mut n: Nope) {\n    n = 1\n}\n\
+        fn main() {\n    let c = C(f: 1)\n    set(c.f)\n}";
+    let (_, ds) = checked(src);
+    let found: Vec<_> = ds.iter().map(|d| (d.code(), at(src, d.span()))).collect();
+    assert_eq!(
+        found,
+        [
+            (E30, (2, 12)),
+            (E30, (4, 15)),
+            (Code::MutMarkerMissing, (9, 9))
+        ],
+        "{src}"
+    );
+    assert!(ds[2].fixes().is_empty(), "{ds:?}");
+}
+
+/// GIVEN a `mut` field `f` whose type `Nope` fails with E0030, and `set(mut n: i64)`
+/// WHEN `main` calls `set(mut c.f)`
+/// THEN the E0030 of the declaration is the one error: the place has no type to compare
+#[test]
+fn a_mut_argument_that_is_a_field_with_no_type_should_report_only_the_declaration() {
+    let src = "class C {\n    mut f: Nope\n}\nfn set(mut n: i64) {\n    n = 1\n}\n\
+        fn main() {\n    let c = C(f: 1)\n    set(mut c.f)\n}";
+    codes(src, &[(E30, (2, 12))]);
+}
