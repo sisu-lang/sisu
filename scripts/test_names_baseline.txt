@@ -92,7 +92,6 @@ crates/sisuc/src/check/tests/arrays.rs::unknown_expected_type_is_reported_once
 crates/sisuc/src/check/tests/arrays.rs::unknown_name_poisons
 crates/sisuc/src/check/tests/chars.rs::already_converted_groups_what_is_not_one_term
 crates/sisuc/src/check/tests/chars.rs::already_converted_keeps_comments_it_does_not_delete
-crates/sisuc/src/check/tests/chars.rs::already_converted_with_a_comment_is_unsafe
 crates/sisuc/src/check/tests/chars.rs::already_converted_with_a_label_has_no_fix
 crates/sisuc/src/check/tests/chars.rs::char_as_a_type_name_suggestion
 crates/sisuc/src/check/tests/chars.rs::char_beside_a_number_in_equality

@@ -1240,3 +1240,15 @@ fn a_misplaced_range_of_another_type_should_report_only_e0023() {
         codes_row(row, &main_with(body), &[(Code::RangeOutsideFor, (2, 14))]);
     }
 }
+
+/// GIVEN a range in a place that takes no range, whose bound assigns a variable
+/// WHEN the program is checked
+/// THEN it reports E0023 only: the assignment counts as a reassignment, so `x` needs `mut` and no
+/// W0002 says that it never changes
+#[test]
+fn an_assignment_in_a_misplaced_range_should_count_as_a_reassignment() {
+    codes(
+        &main_with("let mut x = 1\n    let _r = ..{ x = 2; 3 }"),
+        &[(Code::RangeOutsideFor, (3, 14))],
+    );
+}

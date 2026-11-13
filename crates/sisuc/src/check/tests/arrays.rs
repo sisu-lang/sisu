@@ -716,21 +716,24 @@ fn a_poisoned_operand_should_leave_the_idiom_unsafe_or_unfound() {
     assert!(!diags(src)[0].fixes()[0].safe());
 }
 
-/// The rewrite would delete a comment between the name and the array, or after the array.
+/// The rewrite keeps a comment between the name and the array, or after the array. A comment
+/// before the array puts it in parentheses, so that the comment's line break stays inside them.
 #[test]
-fn the_idiom_should_be_unsafe_over_a_comment() {
+fn the_idiom_should_keep_a_comment_and_be_safe() {
     with_prelude();
-    for (src, pos) in [
+    for (src, pos, fixed) in [
         (
             "fn f(xs: [i64]) -> i64 {\n    len( // the list\n        xs)\n}\nfn main() {}",
             (2, 5, "len"),
+            "fn f(xs: [i64]) -> i64 {\n    ( // the list\n        xs).len()\n}\nfn main() {}",
         ),
         (
             "fn f(xs: [i64]) -> bool {\n    contains(xs, // the value\n        2)\n}\nfn main() {}",
             (2, 5, "contains"),
+            "fn f(xs: [i64]) -> bool {\n    xs.contains( // the value\n        2)\n}\nfn main() {}",
         ),
     ] {
-        assert!(!idiom(src, pos).0, "{src}");
+        assert_eq!(idiom(src, pos), (true, fixed.to_owned()), "{src}");
     }
     // Without the comment, the same multi-line call stays safe.
     let src = "fn f(xs: [i64]) -> i64 {\n    len(\n        xs)\n}\nfn main() {}";

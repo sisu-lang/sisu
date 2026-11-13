@@ -311,26 +311,49 @@ fn already_converted_groups_what_is_not_one_term() {
     }
 }
 
-/// The fix deletes what stands between the conversion and its operand, so a comment there makes
-/// it unsafe: the person may want it kept.
+/// The fix keeps each comment in the conversion, with the parentheses that hold its line break,
+/// so it stays safe.
 #[test]
-fn already_converted_with_a_comment_is_unsafe() {
-    for (body, fixed) in [
-        ("print(i64(\n        // c\n        n\n    ))", "print(n)"),
-        ("print(i64(n // t\n    ))", "print(n)"),
+fn already_converted_with_a_comment_should_keep_it_and_be_safe() {
+    let rows = [
+        ("print(i64(// c\n        n))", "print((// c\n        n))"),
+        (
+            "print(i64(\n        // c\n        n\n    ))",
+            "print((\n        // c\n        n\n    ))",
+        ),
+        ("print(i64(n // t\n    ))", "print((n // t\n    ))"),
         (
             "print(i64(\n        // c\n        n + 1\n    ))",
-            "print((n + 1\n    ))",
+            "print((\n        // c\n        n + 1\n    ))",
         ),
-    ] {
+        (
+            "let y = i64(n // c\n    ) + 1",
+            "let y = (n // c\n    ) + 1",
+        ),
+        // The comment lies in the parentheses around the conversion, not in the conversion.
+        (
+            "print((// c\n        i64(n)))",
+            "print((// c\n        (n)))",
+        ),
+    ];
+    for (body, fixed) in rows {
         let src = scalars(body);
         let d = &diags(&src)[0];
         assert_eq!(d.code(), Code::AlreadyConverted, "{src}");
         let found = fixes(&src, d);
         assert_eq!(found.len(), 1, "{src}");
-        assert!(!found[0].0, "{src}");
+        assert!(found[0].0, "{src}");
         assert_eq!(applied(&src, d), scalars(fixed), "{body}");
     }
+    // A `return` takes its value on the same line, so the comment stays inside parentheses.
+    let src = "fn g(n: i64) -> i64 {\n    return i64(// c\n        n)\n}\nfn main() {}";
+    let d = &diags(src)[0];
+    assert_eq!(d.code(), Code::AlreadyConverted, "{src}");
+    assert!(fixes(src, d)[0].0, "{src}");
+    assert_eq!(
+        applied(src, d),
+        "fn g(n: i64) -> i64 {\n    return (// c\n        n)\n}\nfn main() {}"
+    );
 }
 
 /// A comment the removal keeps, or that stands outside the conversion, does not demote the fix.

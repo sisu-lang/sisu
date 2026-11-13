@@ -698,10 +698,16 @@ fn math_written_another_way_should_be_reported_with_a_fix_where_it_checks() {
     codes(src, &[(Code::FunctionNotFound, (2, 13))]);
     // A call on another type's name is still a type read as a value.
     codes(&program("i64.max(n, 3)"), &[(Code::TypeAsValue, (2, 13))]);
-    // The rewrite would delete the comment.
+    // The comment stays, in parentheses around the receiver.
     let src = "fn f(x: f64) {\n    let _ = math.sqrt( // root\n        x)\n}\nfn main() {}";
     let d = diagnostic(src, math, (2, 13, "math.sqrt"), &[]);
-    assert_eq!(fixes(src, &d), []);
+    let [(true, _)] = fixes(src, &d)[..] else {
+        panic!("one safe fix: {d:?}")
+    };
+    assert_eq!(
+        applied(src, &d),
+        "fn f(x: f64) {\n    let _ = ( // root\n        x).sqrt()\n}\nfn main() {}"
+    );
     // A bad argument is reported once, beside the idiom.
     codes(
         &program("math.sqrt(y_)"),
@@ -710,6 +716,53 @@ fn math_written_another_way_should_be_reported_with_a_fix_where_it_checks() {
     codes(
         &program("math.pow(x, z_)"),
         &[(Code::MathIdiom, (2, 13)), (Code::BindingNotFound, (2, 25))],
+    );
+}
+
+/// GIVEN `math.pow` called with a comment before the first argument, or after its comma
+/// WHEN the fix is applied
+/// THEN the comment stays, and the receiver gets parentheses when the comment comes before it
+#[test]
+fn a_math_idiom_fix_should_keep_each_comment_in_a_call() {
+    for (body, fixed) in [
+        (
+            "print(math.pow(x, // c\n        2.0))",
+            "print(x.pow( // c\n        2.0))",
+        ),
+        (
+            "print(math.pow(// c\n        x, 2.0))",
+            "print((// c\n        x).pow(2.0))",
+        ),
+    ] {
+        let program = |body: &str| format!("fn f(x: f64) {{\n    {body}\n}}\nfn main() {{}}");
+        let src = program(body);
+        let d = diagnostic(&src, Code::MathIdiom, (2, 11, "math.pow"), &[]);
+        let [(true, _)] = fixes(&src, &d)[..] else {
+            panic!("one safe fix: {d:?}")
+        };
+        assert_eq!(applied(&src, &d), program(fixed), "{body}");
+    }
+}
+
+/// GIVEN a constant of `math` whose name follows a comment
+/// WHEN the fix is applied after `sound_fixes`
+/// THEN the comment goes and the fix is unsafe: keeping the comment would put the next token on
+/// a new line, after `f64.pi`
+#[test]
+fn a_math_constant_fix_after_a_comment_should_stay_unsafe() {
+    let src = "fn f() {\n    print(math // c\n        .PI)\n}\nfn main() {}";
+    let ds = crate::front_end::sound_fixes(src, &diags(src));
+    let [d] = &ds[..] else {
+        panic!("one diagnostic: {ds:?}")
+    };
+    assert_eq!(d.code(), Code::MathIdiom, "{src}");
+    let [fix] = d.fixes() else {
+        panic!("one fix: {d:?}")
+    };
+    assert!(!fix.safe(), "{src}");
+    assert_eq!(
+        fix.apply(src),
+        "fn f() {\n    print(f64.pi)\n}\nfn main() {}"
     );
 }
 
