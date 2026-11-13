@@ -1,4 +1,4 @@
-error[E0032]: expected `T??`, found `i64`
+error[E0032]: expected `_??`, found `i64`
  --> E0032-nested-generic.sisu:6:16
   |
 6 |     print(deep(5))

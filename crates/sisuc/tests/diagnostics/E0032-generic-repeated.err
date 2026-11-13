@@ -1,4 +1,4 @@
-error[E0032]: expected `Three<string, B, B>`, found `Three<string, i64, bool>`
+error[E0032]: expected `Three<string, _, _>`, found `Three<string, i64, bool>`
   --> E0032-generic-repeated.sisu:11:12
    |
 11 |     f("s", t)

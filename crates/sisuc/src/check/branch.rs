@@ -2,7 +2,7 @@
 
 use super::any::{AnyJoin, is_target};
 use super::expr::fits;
-use super::generic::{Ahead, Rank};
+use super::generic::{Ahead, Rank, Ranked};
 use super::pattern::{LetPattern, arm_key};
 use super::reports::Reported;
 use super::{
@@ -553,7 +553,8 @@ pub(super) struct Branch<'a> {
     rank: Rank,
     optional: bool,
     /// Whether the type of the value comes only from the defaults of its integer literals
-    /// (`Rank::Literal`; see `rank_value` in `check/generic.rs`), as in `8`, `[8]` and `id(8)`.
+    /// (`Ranked::of_literals`; see `rank_value` in `check/generic.rs`), as in `8`, `[8]` and
+    /// `id(8)`. A value that only waited, such as `[mk(); 2]`, holds no literal.
     /// Only `join` under `Poisoned` reads it. `value_branch` sets it from the rank after
     /// `Ranked::sibling`, so `[8]` is `false` there; `hinted_elements` joins under `None`, where
     /// the flag is not read.
@@ -599,7 +600,7 @@ impl Checker<'_> {
         Branch {
             rank: ranked.map_or(Rank::Concrete, |ranked| ranked.sibling(fit)),
             optional: ranked.is_some_and(|ranked| ranked.optional),
-            literal: fit && ranked.is_some_and(|ranked| ranked.rank == Rank::Literal),
+            literal: fit && ranked.is_some_and(Ranked::of_literals),
             span: value_span(block),
             tail: tail(block),
         }
@@ -636,7 +637,7 @@ impl Checker<'_> {
         Branch {
             rank: ranked.map_or(Rank::Concrete, |ranked| ranked.sibling(fit)),
             optional: ranked.is_some_and(|ranked| ranked.optional),
-            literal: fit && ranked.is_some_and(|ranked| ranked.rank == Rank::Literal),
+            literal: fit && ranked.is_some_and(Ranked::of_literals),
             span: e.span,
             tail: Some(e),
         }
