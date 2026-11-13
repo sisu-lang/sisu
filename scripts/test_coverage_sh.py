@@ -30,8 +30,10 @@ case ${FAKE_ACTION:-} in
 esac
 """
 # `rustup which --toolchain <name> rustc` prints a path when FAKE_NIGHTLY is not `missing`.
+# A real rustup installs a missing toolchain unless RUSTUP_AUTO_INSTALL is 0; the fake fails then.
 FAKE_RUSTUP = """#!/usr/bin/env bash
 [[ ${FAKE_NIGHTLY:-installed} == missing ]] && exit 1
+[[ ${RUSTUP_AUTO_INSTALL-} == 0 ]] || { echo "fake rustup: would install" >&2; exit 1; }
 echo "/fake/$3/bin/rustc"
 """
 STUB_REPORT = "print('Coverage: stub')\n"

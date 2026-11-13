@@ -32,7 +32,8 @@ export SISU_COVERAGE_TARGET_DIR="$PWD/target/llvm-cov-target"
 export NEXTEST_PROFILE="${NEXTEST_PROFILE:-ci}"
 
 branch=()
-if rustc=$(rustup which --toolchain "$(<scripts/coverage-toolchain)" rustc 2>/dev/null); then
+# RUSTUP_AUTO_INSTALL=0: rustup must not install the toolchain by itself with its default profile.
+if rustc=$(RUSTUP_AUTO_INSTALL=0 rustup which --toolchain "$(<scripts/coverage-toolchain)" rustc 2>/dev/null); then
 	export RUSTC=$rustc
 	branch=(--branch)
 else
