@@ -675,6 +675,9 @@ struct CallShape {
     some: bool,
     /// How the call makes an optional by itself (see `Ranked::optional`).
     makes: Makes,
+    /// Whether the declared type of the call holds an optional: `[X?]`, `Bx<X?>`, or the type that
+    /// a construction through an alias builds (see `Ranked::holds_optional`).
+    ret_optional: bool,
     /// The places whose arguments give the call its type (see `Places`).
     places: Places,
     /// The places of the callee's `mut` parameters, as bits. A `mut` argument is a place, whose
@@ -904,37 +907,6 @@ fn holds_param(ty: Type, param: Type, seen: &mut WalkMemo<Type, ()>) -> bool {
         | TypeKind::Unit
         | TypeKind::Never
         | TypeKind::Optional(_)
-        | TypeKind::Param(..)
-        | TypeKind::Assoc(..) => false,
-    };
-    if !holds {
-        seen.put(ty, ());
-    }
-    holds
-}
-
-/// Whether `ty` is an optional, or an array, an enum, a class or an `any` whose element or type
-/// argument holds one. `seen` holds each type that does not, so each distinct type is visited
-/// once.
-fn holds_optional_type(ty: Type, seen: &mut WalkMemo<Type, ()>) -> bool {
-    type_step();
-    if seen.get(&ty).is_some() {
-        return false;
-    }
-    let holds = match ty.kind() {
-        TypeKind::Optional(_) => true,
-        TypeKind::Array(t) => holds_optional_type(t, seen),
-        TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
-            (args.get().iter()).any(|&arg| holds_optional_type(arg, seen))
-        }
-        TypeKind::I64
-        | TypeKind::U8
-        | TypeKind::F64
-        | TypeKind::Bool
-        | TypeKind::Char
-        | TypeKind::String
-        | TypeKind::Unit
-        | TypeKind::Never
         | TypeKind::Param(..)
         | TypeKind::Assoc(..) => false,
     };
@@ -2009,8 +1981,11 @@ pub(super) struct Ranked {
     /// declared return type names too, by a path with no optional on it (see `Places::plain`):
     /// `id([Some(2)])`, `wrap(Some(2))` for `-> [T]`, and `Bx(v: Some(2))`. Not `k2(Some(1), [2])`
     /// for `fn k2<T, U>(a: T, b: U) -> U`, and not `h(1, Some(2))` for `fn h<T>(a: T, b: T?) -> T`:
-    /// there the optional fills the `?` of the place. The order of the arguments of a call reads
-    /// it (see `infer_call`), and joins do not.
+    /// there the optional fills the `?` of the place. So does a call that waits for its type, when
+    /// its declared type holds an optional: `mkl()` for `fn mkl<X>() -> [X?]`. Not a call of
+    /// literals, as `kp(5)` for `fn kp<Y>(y: Y) -> Pr<i64?, Y>`: its argument binds `Y`, and the
+    /// optional of its declared type is not at a place that an outer call binds. The order of the
+    /// arguments of a call reads it (see `infer_call`), and joins do not.
     pub(super) holds_optional: bool,
     /// Whether the value is an optional that has an optional payload, which the value makes by
     /// itself: `Some(Some(2))`, `opt(Some(2))` for `fn opt<T>(x: T) -> T?`, and `Some(if c {
@@ -2877,7 +2852,7 @@ impl Checker<'_> {
     }
 
     /// Whether an argument already checked does not fit what `context` makes of its parameter
-    /// (see `fits_argument`), and its type holds an optional (see `holds_optional_type`). Such an
+    /// (see `fits_argument`), and its type holds an optional (see `Type::holds_optional`). Such an
     /// argument brings a `?` of its own, so the `?` of a context is not what it misses.
     fn misfit_holds_optional(
         &mut self,
@@ -2885,14 +2860,12 @@ impl Checker<'_> {
         sig: &GenericSig<'_>,
         context: &Bindings,
     ) -> bool {
-        let mut seen = WalkMemo::default();
         iter::zip(&call.slots, sig.params).any(|(slot, &param)| {
             let (Some(param), Some(got)) = (param, slot.as_ref().and_then(type_of)) else {
                 return false;
             };
-            self.known(context, param).is_some_and(|fit| {
-                !self.fits_argument(got, fit) && holds_optional_type(got, &mut seen)
-            })
+            self.known(context, param)
+                .is_some_and(|fit| !self.fits_argument(got, fit) && got.holds_optional())
         })
     }
 
@@ -4045,6 +4018,7 @@ impl Checker<'_> {
             shaped,
             open,
             makes,
+            ret_optional,
             places,
             muts,
             ..
@@ -4081,7 +4055,7 @@ impl Checker<'_> {
         found.scalar &= passes;
         found.optional = through || makes.wraps();
         found.nested = nests;
-        found.holds_optional = holds || found.optional;
+        found.holds_optional = holds || found.optional || ret_optional && found.rank == Rank::Waits;
         *fit &= found.rank != Rank::Waits || shaped;
         found
     }
@@ -4161,6 +4135,7 @@ impl Checker<'_> {
                         open: false,
                         some: true,
                         makes: Makes::some(),
+                        ret_optional: false,
                         places: Places::FIRST,
                         muts: 0,
                         wait: None,
@@ -4409,6 +4384,7 @@ impl Checker<'_> {
             shaped,
             open: !open.is_empty(),
             makes: Makes::of(sig.ret, sig.params.iter().copied()),
+            ret_optional: sig.ret.is_some_and(Type::holds_optional),
             places: carried(
                 sig.ret,
                 sig.params.iter().copied(),
@@ -4480,6 +4456,7 @@ impl Checker<'_> {
                     shaped,
                     open: !open.is_empty(),
                     makes: Makes::of(requirement.ret, requirement.params.iter().copied()),
+                    ret_optional: requirement.ret.is_some_and(Type::holds_optional),
                     places: carried(
                         requirement.ret,
                         requirement.params.iter().copied(),
@@ -4608,6 +4585,7 @@ impl Checker<'_> {
                     shaped,
                     open: !open.is_empty(),
                     makes: Makes::of(sig.ret, sig.params.iter().copied()),
+                    ret_optional: sig.ret.is_some_and(Type::holds_optional),
                     places: carried(
                         sig.ret,
                         sig.params.iter().copied(),
@@ -4627,6 +4605,7 @@ impl Checker<'_> {
                 open: false,
                 some: true,
                 makes: Makes::some(),
+                ret_optional: false,
                 places: Places::FIRST,
                 muts: 0,
                 wait: None,
@@ -4681,6 +4660,7 @@ impl Checker<'_> {
             shaped,
             open: !open.is_empty(),
             places: carried_by_construction(fields.iter().map(|f| f.0), through.params.len()),
+            ret_optional: through.ty.holds_optional(),
             wait: open_call(open, Some(through.ty), through.params.len()),
             ..CallShape::default()
         }

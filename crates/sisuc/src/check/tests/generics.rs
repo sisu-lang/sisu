@@ -6843,6 +6843,7 @@ fn shared_chain(shape: &str, n: usize) -> String {
         ]
         .concat();
     }
+    let repeated;
     let tail = match shape {
         // `bind` and `resolve`: the chain is the declared result, and the context is concrete.
         "chain" => {
@@ -6907,9 +6908,19 @@ fn shared_chain(shape: &str, n: usize) -> String {
         "meets" => {
             "fn f<U>(_x: U) -> Two<$A<i64>, U> { panic(\"no\") }\nfn none<T>() -> T? { None }\nfn g<T>(_a: Two<$A<T>, i64>, _b: T?) -> i64 { 0 }\nfn main() {\n    print(g(f(true), none()))\n}"
         }
-        // `holds_optional_type`: the argument that misfits the payload of the context is a chain.
+        // `misfit_holds_optional`, which reads `Type::holds_optional`: the argument that misfits
+        // the payload of the context is a chain.
         "misfitopt" => {
             "fn mk() -> $A<i64> { panic(\"no\") }\nfn id2<T>(x: T) -> T { x }\nfn main() {\n    let _v: i64? = id2(mk())\n}"
+        }
+        // The same misfit in `n` calls, over a chain of depth `n`: a walk of the chain for each
+        // call, even with a memo for each call, has `n * n` steps.
+        "misfitrep" => {
+            repeated = format!(
+                "fn mk() -> $A<i64> {{ panic(\"no\") }}\nfn id2<T>(x: T) -> T {{ x }}\nfn main() {{\n{}}}",
+                "    let _v: i64? = id2(mk())\n".repeat(n)
+            );
+            repeated.as_str()
         }
         _ => unreachable!("no shape `{shape}`"),
     };
@@ -6948,6 +6959,20 @@ fn type_walks_should_visit_each_distinct_type_once() {
         };
         assert_near_linear_for(&format!("{shape}: "), steps(4), steps(8), steps(12));
     }
+}
+
+/// `n` calls that do not fit, over a type of depth `n`, read the optional flag of the type of each
+/// call. A walk of the type for each call, even with a memo for each walk, reads `n * n` steps:
+/// from 3 to 6 calls that walk reads 5.5 times as many, and the flag reads 2 times as many.
+#[test]
+fn repeated_misfit_should_read_the_optional_flag_of_each_type() {
+    let steps = |n: usize| {
+        generic::TYPE_STEPS.set(0);
+        diags(&shared_chain("misfitrep", n));
+        generic::TYPE_STEPS.get()
+    };
+    assert_near_linear(steps(4), steps(8), steps(12));
+    crate::mir::tests::assert_subquadratic(steps(3), steps(6));
 }
 
 // The tables below check how a generic call ranks its arguments under a written context. They
@@ -8012,6 +8037,46 @@ fn waiting_argument_should_bind_the_whole_optional_when_its_declared_type_holds_
         (
             "r12",
             declared_program("let x: i64? = first(if c == 1 { [] } else { mkl() })"),
+            vec![],
+        ),
+    ];
+    error_rows(&rows);
+}
+
+const LITERAL_HEAD: &str = concat!(
+    "fn first<T>(xs: [T]) -> T { xs[0] }\n",
+    "fn two<T>(a: T, b: T) -> T { b }\n",
+    "enum Pr<A, B> { P(a: A, b: B) }\n",
+    "fn kp<Y>(y: Y) -> Pr<i64?, Y> { Pr.P(a: None, b: y) }\n",
+    "fn snd<A, B>(p: Pr<A, B>) -> B { match p { Pr.P(a, b) => b } }\n",
+    "fn kl<Y>(y: Y) -> [Pr<i64?, Y>] { [kp(y)] }\n",
+    "fn kv<X>(x: X) -> Pr<X?, X> { Pr.P(a: None, b: x) }\n",
+    "fn main() {\n",
+);
+
+fn literal_program(stmt: &str) -> String {
+    program_in(LITERAL_HEAD, stmt, "}\n")
+}
+
+/// GIVEN a generic call of literals, whose declared type holds an optional at a place that its
+///   argument does not bind (`-> Pr<i64?, Y>`, `-> [Pr<i64?, Y>]`, `-> Pr<X?, X>`)
+/// WHEN an outer call takes it under a context with more optionals
+/// THEN the outer call binds the payload of the context, and the program has no error
+///
+/// The row holds before and after the fix: a call of literals is not a waiting call.
+#[test]
+fn call_of_literals_should_bind_the_payload_when_its_declared_type_holds_an_unrelated_optional() {
+    let rows: Vec<ErrorRow<'_>> = vec![
+        ("u1", literal_program("let x: i64?? = snd(kp(5))"), vec![]),
+        (
+            "u2",
+            literal_program("let p: Pr<i64?, u8>? = first(kl(5))"),
+            vec![],
+        ),
+        ("u3", literal_program("let x: i64?? = snd(kv(5))"), vec![]),
+        (
+            "u4",
+            literal_program("let x: i64?? = two(snd(kp(5)), None)"),
             vec![],
         ),
     ];

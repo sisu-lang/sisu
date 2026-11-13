@@ -460,8 +460,8 @@ impl Checker<'_> {
             let start = self.diagnostics.mark();
             let value = match first.take_if(|(k, _)| *k == i) {
                 Some((_, operand)) => operand,
-                // A generic call of literals, such as `id(5)`, is checked alone, so its own type
-                // meets the parameter below: E0047.
+                // A literal, or a generic call of literals such as `id(5)`, is checked alone, so
+                // its own type meets the parameter below: E0047.
                 None if !arithmetic
                     && ranks[i] == Rank::Literal
                     && want.is_some_and(Type::has_param) =>
