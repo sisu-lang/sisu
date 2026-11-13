@@ -661,6 +661,109 @@ fn struct_write_should_keep_its_marks() {
     );
 }
 
+/// GIVEN a `let mut` struct, or a `mut` parameter. WHEN a write through it fails at a missing
+/// field, a struct whose declaration failed, a root with no type or a slice. THEN the write gives
+/// its own error and no W0002: the fix of that error needs the `mut`. A write through a class
+/// object, a value that fails and a write of the whole binding keep their codes.
+#[test]
+fn failed_struct_write_should_keep_its_root_reassigned() {
+    let decls = "struct In { n: i64 }\nstruct T { n: i64; i: In; ys: [i64] }\nstruct U { t: T? }\nfn f(mut a: i64) {\n    a += 1\n}\n";
+    // The local that the write names is the one `let mut` of `main`.
+    let made = |body: &str| {
+        let init = if body.contains("ts[") {
+            "ts = [T(n: 1, i: In(n: 1), ys: [])]"
+        } else if body.contains("u.") {
+            "u = U(t: None)"
+        } else {
+            "t = T(n: 1, i: In(n: 1), ys: [])"
+        };
+        format!("{decls}fn main() {{\n    let mut {init}\n    {body}\n}}")
+    };
+    let comma = "struct T { n: i64; xs: [i64],}\nfn f(mut a: i64) {\n    a += 1\n}\n";
+    let poisoned = |body: &str| {
+        format!("{comma}fn main() {{\n    let mut t = T(n: 1, xs: [1])\n    {body}\n}}")
+    };
+    let slice = |body: &str| {
+        format!(
+            "struct B {{ b: i64; bs: [i64] }}\nfn f(mut a: i64) {{\n    a += 1\n}}\nfn main() {{\n    let mut xs = [B(b: 1, bs: [])]\n    {body}\n}}"
+        )
+    };
+    let rows = [
+        ("t.m = 2", made("t.m = 2"), vec![NoMember]),
+        ("t.m += 2", made("t.m += 2"), vec![NoMember]),
+        ("t.i.m = 2", made("t.i.m = 2"), vec![NoMember]),
+        ("ts[0].m = 2", made("ts[0].m = 2"), vec![NoMember]),
+        ("t.zs.push(2)", made("t.zs.push(2)"), vec![NoMember]),
+        ("t.n.x = 2", made("t.n.x = 2"), vec![NoMember]),
+        ("f(mut t.m)", made("f(mut t.m)"), vec![NoMember]),
+        ("u.t?.m = 2", made("u.t?.m = 2"), vec![NoMember]),
+        (
+            "while",
+            made("while t.n < 3 {\n        t.m = 2\n    }"),
+            vec![NoMember],
+        ),
+        ("comma t.n = 2", poisoned("t.n = 2"), vec![Code::FieldComma]),
+        (
+            "comma t.xs[0] = 2",
+            poisoned("t.xs[0] = 2"),
+            vec![Code::FieldComma],
+        ),
+        (
+            "comma t.n.push(2)",
+            poisoned("t.n.push(2)"),
+            vec![Code::FieldComma],
+        ),
+        (
+            "comma mut parameter",
+            format!("{comma}fn g(mut t: T) {{\n    t.n = 2\n}}\nfn main() {{}}"),
+            vec![Code::FieldComma],
+        ),
+        (
+            "untyped root",
+            "struct T { n: i64 }\nfn main() {\n    let mut t = nope()\n    t.n = 2\n}".to_string(),
+            vec![FunctionNotFound],
+        ),
+        (
+            "slice",
+            slice("xs[0..1][0].b = 2"),
+            vec![AssignToExpression],
+        ),
+        (
+            "slice push",
+            slice("xs[0..1][0].bs.push(2)"),
+            vec![AssignToExpression],
+        ),
+        (
+            "slice mut argument",
+            slice("f(mut xs[0..1][0].b)"),
+            vec![MutArgumentNotPlace],
+        ),
+        // The negative rows: a class object, a value that fails, a write of the whole binding.
+        (
+            "class c.m = 2",
+            "class C { mut n: i64 }\nfn main() {\n    let mut c = C(n: 1)\n    c.m = 2\n}"
+                .to_string(),
+            vec![NeverReassigned, NoMember],
+        ),
+        ("t.n = nope", made("t.n = nope"), vec![BindingNotFound]),
+        ("t = nope", made("t = nope"), vec![BindingNotFound]),
+    ];
+    let mut red = Vec::new();
+    for (row, src, wanted) in &rows {
+        let ds = crate::front_end::front_end(src).1;
+        let found: Vec<_> = ds.iter().map(Diagnostic::code).collect();
+        if found != *wanted {
+            red.push(format!("row `{row}`: found {found:?}, wanted {wanted:?}"));
+        }
+    }
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+}
+
 /// GIVEN a `let`, a plain parameter and a pattern binding of a struct `T`. WHEN `t.n = 2` and
 /// `t.i.xs[0] = 1` write through it. THEN each is E0001 at the write.
 #[test]
