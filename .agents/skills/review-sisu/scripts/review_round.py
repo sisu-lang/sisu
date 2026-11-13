@@ -58,10 +58,11 @@ ID is the agent ID that the Agent tool returned. save-report finds agent-ID.json
 ~/.claude/projects, or under --transcripts DIR. It reads the last SubagentHandback message of the
 agent, or else its last text.
 
-stats reads each RUN as a kept run of .scratch/reviews/. It counts the runs by their last round,
-and the rulings by round and severity. It also counts the rulings of each reviewer, the Origin of
-each blocking finding after round 1, and the classes of retro.md. A retro.md line is
-"<STEM> <n>: <class>: <the check that could have caught it>".
+stats reads each RUN as a kept run of .scratch/reviews/. It counts the runs by their last brief,
+the runs with no rulings file, and the rulings by round and severity. It also counts the rulings
+of each reviewer, the Origin of each blocking finding after round 1, and the classes of retro.md.
+A retro.md line is "<report> <n>: <class>: <the check that could have caught it>", where <report>
+is the file stem of the report, such as sol or opus-2. A class counts without case.
 """
 
 import argparse
@@ -316,20 +317,35 @@ def rulings(run: Path, round_number: int, reports: list[str]) -> int:
                 status = 1
             else:
                 counts[ruling] = counts.get(ruling, 0) + 1
-        tally = ", ".join(f"{count} {ruling}" for ruling, count in counts.items())
-        print(f"{stem}: {len(found)} findings: {tally or 'none'}")
+        summary = ", ".join(f"{count} {ruling}" for ruling, count in counts.items())
+        print(f"{stem}: {len(found)} findings: {summary or 'none'}")
     return status
 
 
 def field(block: str, name: str) -> str:
     """Return the first word of the line "<NAME>: <value>" of a finding, or "none"."""
-    match = re.search(rf"^{name}: *(\w+)", block, flags=re.MULTILINE)
+    match = re.search(rf"^{name}: *\W*(\w+)", block, flags=re.MULTILINE)
     return match.group(1) if match else "none"
 
 
 def tally(counts: Counter[str]) -> str:
-    """Return COUNTS as "key: count" pairs, largest first."""
-    return ", ".join(f"{key}: {count}" for key, count in counts.most_common()) or "none"
+    """Return COUNTS as "key: count" pairs, largest first, then by key."""
+    pairs = sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))
+    return ", ".join(f"{key}: {count}" for key, count in pairs) or "none"
+
+
+def by_round(run: Path, name: str) -> list[tuple[Path, int]]:
+    """Return each file NAME.md or NAME-<round>.md of RUN with its round. NAME.md is round 1."""
+    found = [(p, re.fullmatch(rf"{name}(?:-(\d+))?", p.stem)) for p in run.glob(f"{name}*.md")]
+    return [(path, int(m.group(1) or 1)) for path, m in found if m]
+
+
+def retro_classes(run: Path) -> list[str]:
+    """Return the class of each line of RUN/retro.md, in lower case."""
+    retro = run / "retro.md"
+    text = retro.read_text(encoding="utf-8") if retro.exists() else ""
+    found = re.findall(r"^\S+ \d+: ([^:\n]+):", text, flags=re.MULTILINE)
+    return [c.strip().lower() for c in found]
 
 
 def stats(runs: list[Path]) -> int:
@@ -339,14 +355,17 @@ def stats(runs: list[Path]) -> int:
     seats: defaultdict[str, Counter[str]] = defaultdict(Counter)
     origins: Counter[str] = Counter()
     classes: Counter[str] = Counter()
+    unruled = 0
     for run in runs:
-        briefs = [re.fullmatch(r"brief(?:-(\d+))?", p.stem) for p in run.glob("brief*.md")]
-        numbers = [int(m.group(1) or 1) for m in briefs if m]
-        if not numbers:
+        if not run.is_dir():
+            raise SystemExit(f"review_round: {run} is not a directory")
+        briefs = by_round(run, "brief")
+        if not briefs:
             continue
-        rounds[max(numbers)] += 1
-        for path in run.glob("rulings-*.md"):
-            round_number = int(path.stem.removeprefix("rulings-"))
+        rounds[max(n for _, n in briefs)] += 1
+        ruled = by_round(run, "rulings")
+        unruled += not ruled
+        for path, round_number in ruled:
             findings: dict[str, dict[str, str]] = {}
             for finding, note in read_rulings(path).items():
                 stem, number = finding.split(" ")
@@ -364,12 +383,10 @@ def stats(runs: list[Path]) -> int:
                 seats[stem][ruling] += 1
                 if round_number > 1 and severity == "blocking":
                     origins[field(block, "Origin")] += 1
-        retro = run / "retro.md"
-        if retro.exists():
-            text = retro.read_text(encoding="utf-8")
-            classes.update(re.findall(r"^\S+ \d+: ([^:\n]+):", text, flags=re.MULTILINE))
+        classes.update(retro_classes(run))
     last = ", ".join(f"{n}: {rounds[n]}" for n in sorted(rounds))
-    print(f"runs: {rounds.total()}; last round: {last}")
+    print(f"runs: {rounds.total()}; last brief: {last}")
+    print(f"runs with no rulings file: {unruled}")
     for stage, counts in sorted(stages.items()):
         print(f"{stage}: {counts.total()}: {tally(counts)}")
     for stem, counts in sorted(seats.items()):

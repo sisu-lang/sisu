@@ -240,10 +240,13 @@ work under review.
 - A defect can be in code or text that this round did not change. When
   the work did not add it, report it under "Outside this round", after
   "Unverified", not as a finding.
-- Report no nits.
+- Report no nits, except a surviving mutant in the changed code with the
+  test that kills it.
 - Give each blocking finding an `Origin:` line after its `Severity:` line.
-  Write `Origin: fix` when a fix round of this work added the defect.
-  Write `Origin: missed` when the work had it before round 1.
+  Write `Origin: unfixed` when it is an accepted earlier finding that is
+  partly fixed or not fixed. Write `Origin: fix` when a fix round of this
+  work added the defect. Write `Origin: missed` when the work had it
+  before round 1, and no earlier report gave it.
 
 # Focus
 
@@ -257,8 +260,9 @@ ID>`. Then it has these parts, in this order:
 1. `Verdict: approve` or `Verdict: changes needed`, with the count of
    blocking findings and of nits.
 2. One block per finding, blocking findings first. Write at most three
-   nits as blocks: the three whose change matters most. Then give the
-   count of the other nits on one line, `Other nits: <n>`.
+   nits as blocks: the three whose change matters most. Then list each
+   other nit on one line under `Other nits:`, as `- <title> (<where>):
+   <the input whose output changes, or "comment only">`.
 
    ```
    ### <n>. <title>

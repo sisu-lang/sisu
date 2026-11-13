@@ -440,33 +440,57 @@ class Stats(unittest.TestCase):
             env=ENV,
         )
 
-    def test_stats_should_count_rounds_rulings_origins_and_retro_classes(self) -> None:
-        self.run_dir(
-            "two-rounds",
-            {
-                "brief.md": "",
-                "brief-2.md": "",
-                "sol.md": REPORT + "### 1. A\nSeverity: blocking\n### 2. B\nSeverity: nit\n",
-                "rulings-1.md": "sol 1: Accept (same as opus 1): x.\nsol 2: Reject: y.\n",
-                "opus-2.md": REPORT + "### 1. C\nSeverity: blocking\nOrigin: fix round\n",
-                "rulings-2.md": "opus 1: Accept: z.\n",
-                "retro.md": "sol 1: incomplete fix: a neighbour row.\nopus 1: incomplete fix: x.\n",
-            },
-        )
+    def two_rounds(self, files: dict[str, str]) -> None:
+        """Make a run of two rounds, with one blocking finding and one nit in round 1."""
+        report = REPORT + "### 1. A\nSeverity: blocking\n### 2. B\nSeverity: nit\n"
+        rulings = "sol 1: Accept (same as opus 1): x.\nsol 2: Defer to #12: later.\n"
+        later = {"brief.md": "", "brief-2.md": "", "sol.md": report, "rulings-1.md": rulings}
+        self.run_dir("two-rounds", later | files)
+
+    def test_stats_should_count_rounds_and_rulings_by_round_and_severity(self) -> None:
+        self.two_rounds({"rulings-final.md": "sol 1: Reject: not a round.\n"})
         self.run_dir("one-round", {"brief.md": ""})
         self.run_dir("not-a-review", {"notes.md": ""})
         result = self.stats()
         self.assertEqual(result.returncode, 0, result.stderr)
         for line in (
-            "runs: 2; last round: 1: 1, 2: 1",
+            "runs: 2; last brief: 1: 1, 2: 1",
+            "runs with no rulings file: 1",
             "round 1, blocking: 1: Accept: 1",
-            "round 1, nit: 1: Reject: 1",
-            "later rounds, blocking: 1: Accept: 1",
-            "reviewer sol: 2: Accept: 1, Reject: 1",
-            "origin of blocking findings after round 1: fix: 1",
-            "retro classes: incomplete fix: 2",
+            "round 1, nit: 1: Defer: 1",
+            "reviewer sol: 2: Accept: 1, Defer: 1",
         ):
             self.assertIn(line, result.stdout.splitlines())
+
+    def test_stats_should_count_the_origin_of_each_later_blocking_finding(self) -> None:
+        finding = "### {n}. C\nSeverity: blocking\n{origin}"
+        origins = ("Origin: fix\n", "Origin: `missed`\n", "Origin: unfixed\n", "")
+        report = REPORT + "".join(finding.format(n=n, origin=o) for n, o in enumerate(origins))
+        rulings = "".join(f"opus {n}: Accept: x.\n" for n in range(len(origins)))
+        self.two_rounds({"opus-2.md": report, "rulings-2.md": rulings})
+        result = self.stats()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("later rounds, blocking: 4: Accept: 4", result.stdout.splitlines())
+        line = "origin of blocking findings after round 1: fix: 1, missed: 1, none: 1, unfixed: 1"
+        self.assertIn(line, result.stdout.splitlines())
+
+    def test_stats_should_count_retro_classes_without_case(self) -> None:
+        retro = "sol 1: Incomplete fix: a neighbour row.\nopus-2 1: incomplete fix: x.\nno class\n"
+        self.two_rounds({"retro.md": retro})
+        result = self.stats()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("retro classes: incomplete fix: 2", result.stdout.splitlines())
+
+    def test_stats_should_stop_on_a_run_that_is_not_a_directory(self) -> None:
+        result = subprocess.run(
+            ["python3", SCRIPT, "stats", self.root / "nope"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=ENV,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("is not a directory", result.stderr)
 
 
 class SaveReport(unittest.TestCase):
