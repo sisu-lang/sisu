@@ -1252,9 +1252,9 @@ fn modes_after_main(g: Function) -> Vec<bool> {
 /// AND another block that passes `binding`, a borrow of `root`, to `g` in tail position
 /// WHEN the modes are inferred
 /// THEN `s` stays borrowed: `g` consumes `root`, but `root` is a local, not a parameter
-/// AND the borrow of `root` in the call makes no parameter of `g` owned
+/// AND `s` is the only counted parameter
 #[test]
-fn infer_should_keep_a_parameter_borrowed_when_a_tail_call_passes_a_borrow_of_a_consumed_local() {
+fn infer_should_keep_a_parameter_borrowed_when_a_tail_call_borrows_a_consumed_local() {
     let mut builder = Builder::new("g");
     let cond = builder.param("cond", Type::BOOL);
     builder.param("s", Type::STRING);
@@ -1280,8 +1280,7 @@ fn infer_should_keep_a_parameter_borrowed_when_a_tail_call_passes_a_borrow_of_a_
     assert_eq!(TAIL_ARGUMENTS.get(), 1, "the call should be a tail call");
 }
 
-/// GIVEN a call of `g` with a fresh argument, then a `goto` to a block that returns a field of
-/// the call's result
+/// GIVEN a call of `g` with a fresh argument, then a `return` of a field of the call's result
 /// WHEN the modes are inferred
 /// THEN `s` stays borrowed: the call is not in tail position, since a field of the result is not
 /// the result. No lowering returns a place with a projection, so the mir is by hand
@@ -1290,11 +1289,8 @@ fn infer_should_not_take_a_call_before_the_return_of_a_field_for_a_tail_call() {
     let mut b = Builder::new("g");
     b.param("s", Type::STRING);
     let t = b.local("t", Type::STRING);
-    let result = b.local("result", Type::STRING);
-    b.block(
-        vec![fresh(t), call_g(Some(result), vec![Operand::Use(t)])],
-        goto(1),
-    );
+    let class = Type::intern(TypeKind::Class(ClassId(0), TypeArgs::NONE));
+    let result = b.local("result", class);
     let field = Place {
         projections: vec![Projection::Field {
             index: 0,
@@ -1302,9 +1298,12 @@ fn infer_should_not_take_a_call_before_the_return_of_a_field_for_a_tail_call() {
         }],
         ..whole(result)
     };
-    b.block(vec![], Terminator::Return(Some(Operand::Read(field))));
+    b.block(
+        vec![fresh(t), call_g(Some(result), vec![Operand::Use(t)])],
+        Terminator::Return(Some(Operand::Read(field))),
+    );
     let mut g = b.finish();
-    g.ret = Type::STRING;
+    g.ret = class;
     TAIL_ARGUMENTS.set(0);
     assert_eq!(modes_after_main(g), [true]);
     assert_eq!(

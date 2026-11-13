@@ -857,6 +857,7 @@ fn place_should_reject_a_borrowed_take_with_a_store_to_another_local() {
             borrow: true,
             ..whole(other)
         },
+        // The check fires before the value is read, so its type does not matter.
         value: Operand::Const(Const::Int(0, Type::I64)),
     });
 }
@@ -874,6 +875,7 @@ fn place_should_reject_a_borrowed_take_with_a_store_to_an_element_of_its_local()
             borrow: true,
             ..whole(a)
         },
+        // The check fires before the value is read, so its type does not matter.
         value: Operand::Const(Const::Int(0, Type::I64)),
     });
 }
