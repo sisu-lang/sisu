@@ -3,7 +3,6 @@
 // WHEN the program is built and run
 // AND the value passes the guard, fails it, takes the `B` case, or is not the arm's variant
 // THEN it prints 1, 0, 0 and 0
-// AND the inner `match` reads the binding as a copy, since the binding is on the guard stack
 // AND Valgrind and `--rc-checks` see no leak or double free
 enum Inner {
     A(string)
