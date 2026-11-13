@@ -434,7 +434,7 @@ coverage.
 The run also measures branches. The `--branch` flag of `cargo-llvm-cov` is
 unstable, so the run uses the nightly toolchain that
 `scripts/coverage-toolchain` names, with its `rustc` and the pinned `cargo`.
-Install it once with
+`make setup` installs it; by hand:
 `rustup toolchain install $(cat scripts/coverage-toolchain) --profile minimal --component llvm-tools-preview`.
 When that toolchain is not installed, or has no `llvm-tools-preview`, the run
 prints one warning line with this command and measures lines and regions only.
@@ -473,8 +473,8 @@ coverage: it exhausts file descriptors, and the profiler's error breaks its
 exact stderr check.
 
 The `Coverage` workflow runs the script each night on `main` and by hand.
-It writes the totals to the job summary. It fails when line coverage is below
-98.5%. A pull request gets no coverage comment; `make coverage` gives the
+It writes the totals to the job summary. Its gates are in the text on branches
+above. A pull request gets no coverage comment; `make coverage` gives the
 coverage of a branch's changes.
 
 CodSpeed measures Sisu against itself in simulation mode. The benchmarks are
