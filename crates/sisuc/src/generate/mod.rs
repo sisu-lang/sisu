@@ -642,3 +642,22 @@ impl Cost {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::unread_struct_fields;
+
+    /// GIVEN a struct and a class, each with a field that no code reads. WHEN the checker warns
+    /// W0013 on both. THEN only the field of the struct is an unread struct field.
+    #[test]
+    fn unread_struct_fields_should_name_only_a_field_of_a_struct() {
+        let source = "struct S {\n    a: i64\n    b: i64\n}\n\nclass K {\n    c: i64\n    d: i64\n}\n\nfn main() {\n    print(S(a: 1, b: 2).a)\n    print(K(c: 3, d: 4).c)\n}\n";
+        let (_, diagnostics) = crate::front_end::checked(source);
+        let unread = unread_struct_fields(source, &diagnostics);
+        let found: Vec<(&str, &str)> = unread
+            .iter()
+            .map(|d| (d.code().as_str(), &source[d.span().range()]))
+            .collect();
+        assert_eq!(found, [("W0013", "b")]);
+    }
+}

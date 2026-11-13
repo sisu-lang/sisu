@@ -4048,6 +4048,31 @@ fn main() {
     }
 }
 
+/// GIVEN a struct on a cycle with its link field and another optional struct field. WHEN only
+/// the other field holds a value, and then when the link does. THEN the walk marks a filled box
+/// only for the link.
+#[test]
+fn box_key_should_mark_only_a_filled_link() {
+    let program = |args: &str| {
+        format!(
+            "struct In {{\n    n: i64\n}}\n\nstruct L {{\n    o: In?\n    next: L?\n}}\n\nfn main() {{\n    let l = L({args})\n    print(l.o?.n ?? 0)\n    print(l.next == None)\n}}\n"
+        )
+    };
+    let key = "reach: a box of a struct holds a value";
+    for (args, marked) in [
+        ("o: In(n: 1), next: None", false),
+        ("o: None, next: L(o: None, next: None)", true),
+    ] {
+        let mut walk = Walk::default();
+        walk.program(&program(args));
+        assert_eq!(
+            walk.seen.contains(key),
+            marked,
+            "`L({args})` should mark it: {marked}"
+        );
+    }
+}
+
 /// What no generated program writes yet, the walk marks all the same: an `extend` block,
 /// bounds, a member type, and a broken item of each new kind. Without
 /// this, the walk's arms for them would never run until the generator writes them.
