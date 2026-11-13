@@ -814,3 +814,68 @@ fn borrowed_parameter_is_never_moved() {
     assert_eq!(count(&printed, "f", "move s#0"), 0);
     assert_eq!(count(&printed, "f", "move t#1"), 0);
 }
+
+/// GIVEN a `take` of a borrow site of `a`, then `next`
+/// WHEN the ownership pass places the function over `a` and `other`, two arrays of strings
+/// THEN the debug check stops it: lowering emits the `take` and the `store` to its place together
+fn place_after_a_borrowed_take(next: impl FnOnce(LocalId, LocalId) -> Statement) {
+    let mut b = Builder::new("f");
+    let a = b.param("a", Type::array(Type::STRING));
+    let other = b.param("other", Type::array(Type::STRING));
+    let old = b.local("old", Type::STRING);
+    let borrowed = Place {
+        borrow: true,
+        ..whole(a)
+    };
+    b.block(
+        vec![
+            Statement::Take {
+                dest: old,
+                place: borrowed,
+            },
+            next(a, other),
+            Statement::Release(old),
+        ],
+        ret(),
+    );
+    let mut function = b.finish();
+    crate::mir::ownership::place(&mut function);
+}
+
+#[test]
+#[should_panic(expected = "a borrowed take should be followed by the store to its place")]
+fn place_should_reject_a_borrowed_take_with_no_store_after_it() {
+    place_after_a_borrowed_take(|_, other| Statement::Check(whole(other)));
+}
+
+/// The store has the take's borrow flag, so only the local tells the two places apart.
+#[test]
+#[should_panic(expected = "a borrowed take should be followed by the store to its place")]
+fn place_should_reject_a_borrowed_take_with_a_store_to_another_local() {
+    place_after_a_borrowed_take(|_, other| Statement::Store {
+        place: Place {
+            borrow: true,
+            ..whole(other)
+        },
+        // The check fires before the value is read, so its type does not matter.
+        value: Operand::Const(Const::Int(0, Type::I64)),
+    });
+}
+
+/// The store has the take's borrow flag and local, so only the projection tells the places apart.
+#[test]
+#[should_panic(expected = "a borrowed take should be followed by the store to its place")]
+fn place_should_reject_a_borrowed_take_with_a_store_to_an_element_of_its_local() {
+    place_after_a_borrowed_take(|a, _| Statement::Store {
+        place: Place {
+            projections: vec![Projection::Index {
+                index: Operand::Const(Const::Int(0, Type::I64)),
+                span: Span::new(0, 0),
+            }],
+            borrow: true,
+            ..whole(a)
+        },
+        // The check fires before the value is read, so its type does not matter.
+        value: Operand::Const(Const::Int(0, Type::I64)),
+    });
+}

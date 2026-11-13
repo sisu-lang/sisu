@@ -818,3 +818,142 @@ fn slice_should_stay_a_move_where_a_borrow_is_wrong() {
         );
     }
 }
+
+/// `t = copy xs[0]`, a read of `t`, and `release t` in one block of a function over `xs`, an
+/// array of `ty`, with `t` of the type `ty`.
+fn pair_candidate(ty: Type) -> Builder {
+    let mut b = Builder::new("f");
+    let xs = b.param("xs", Type::array(ty));
+    let t = b.local("t", ty);
+    b.block(
+        vec![
+            assign(t, Rvalue::Copy(first(xs))),
+            Statement::Assign {
+                dest: None,
+                value: Rvalue::Print {
+                    stream: Stream::Stdout,
+                    operand: read(t),
+                    calls: false,
+                },
+            },
+            Statement::Release(t),
+            Statement::Release(xs),
+        ],
+        ret(),
+    );
+    b
+}
+
+/// Runs the pass on the function of `b` and gives it back.
+fn pair_removed(b: Builder) -> Function {
+    let mut function = b.finish();
+    crate::mir::pairs::remove_pairs(&mut function);
+    function
+}
+
+/// Runs the pass on the function of `b`, and checks that it changed no statement.
+fn assert_unchanged(b: Builder) {
+    let mut function = b.finish();
+    let before = format!("{:?}", function.blocks);
+    crate::mir::pairs::remove_pairs(&mut function);
+    assert_eq!(
+        format!("{:?}", function.blocks),
+        before,
+        "no statement should change"
+    );
+    assert!(function.owners.is_empty(), "no copy should become a borrow");
+}
+
+/// `local[0]`.
+fn first(local: LocalId) -> Place {
+    Place {
+        projections: vec![Projection::Index {
+            index: Operand::Const(Const::Int(0, Type::I64)),
+            span: Span::new(0, 0),
+        }],
+        ..whole(local)
+    }
+}
+
+/// GIVEN a copy `t = copy xs[0]` that is read and then released, once with a counted `t` and once
+/// with an uncounted one
+/// WHEN the pairs are removed
+/// THEN only the counted copy becomes a borrow: an uncounted copy holds no reference to pair
+#[test]
+fn remove_pairs_should_keep_a_copy_into_an_uncounted_local() {
+    let counted = pair_removed(pair_candidate(Type::STRING));
+    let stmts = &counted.blocks[0].stmts;
+    assert!(
+        matches!(
+            stmts[0],
+            Statement::Assign {
+                value: Rvalue::Borrow(_),
+                ..
+            }
+        ),
+        "a counted copy should become a borrow: {stmts:?}"
+    );
+    assert!(
+        stmts.iter().any(|stmt| matches!(stmt, Statement::End(_))),
+        "the release of a counted copy should become an end: {stmts:?}"
+    );
+    assert_unchanged(pair_candidate(Type::I64));
+}
+
+/// GIVEN a copy into `t`, and a second copy into `t` before the release of `t`
+/// WHEN the pairs are removed
+/// THEN no copy becomes a borrow: an open member that is assigned again keeps its copy and its
+/// release. No lowering assigns a local twice in a pair, so the mir is by hand
+#[test]
+fn remove_pairs_should_keep_two_copies_into_one_local() {
+    let mut b = Builder::new("f");
+    let xs = b.param("xs", Type::array(Type::STRING));
+    let ys = b.param("ys", Type::array(Type::STRING));
+    let t = b.local("t", Type::STRING);
+    b.block(
+        vec![
+            assign(t, Rvalue::Copy(first(xs))),
+            assign(t, Rvalue::Copy(first(ys))),
+            Statement::Release(t),
+            Statement::Release(xs),
+            Statement::Release(ys),
+        ],
+        ret(),
+    );
+    assert_unchanged(b);
+}
+
+/// GIVEN a copy `t = copy xs[0]`, then `u = slice move m[t..]` that consumes `t` as a bound
+/// WHEN the pairs are removed
+/// THEN nothing changes: a step that consumes another member than the one it moves invalidates
+/// the candidate. No lowering gives a slice a counted bound
+#[test]
+fn remove_pairs_should_keep_a_copy_that_a_slice_bound_consumes() {
+    let mut b = Builder::new("f");
+    let xs = b.param("xs", Type::array(Type::STRING));
+    let m = b.local("m", Type::array(Type::STRING));
+    let t = b.local("t", Type::STRING);
+    let u = b.local("u", Type::array(Type::STRING));
+    b.block(
+        vec![
+            fresh(m),
+            assign(t, Rvalue::Copy(first(xs))),
+            assign(
+                u,
+                Rvalue::Slice {
+                    base: Operand::Move(m),
+                    start: Some(Operand::Move(t)),
+                    end: None,
+                    inclusive: false,
+                    safe: false,
+                    span: Span::new(0, 0),
+                },
+            ),
+            Statement::Release(t),
+            Statement::Release(u),
+            Statement::Release(xs),
+        ],
+        ret(),
+    );
+    assert_unchanged(b);
+}
