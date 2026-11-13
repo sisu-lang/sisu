@@ -1026,3 +1026,27 @@ fn push_on_failed_array_receiver_should_report_the_temporary() {
         ],
     );
 }
+
+/// A compound write to a field whose declared type fails with E0030 adds no error of its own:
+/// the declaration's error is the only one. A plain `=` does not read the field, so it would not
+/// need the token of the declaration's error.
+#[test]
+fn write_to_a_field_with_no_type_should_report_only_the_declaration() {
+    codes(
+        "class C {\n    mut f: Nope\n}\nfn main() {\n    let c = C(f: 1)\n    c.f += 2\n}",
+        &[(Code::UnknownType, (2, 12))],
+    );
+}
+
+/// `p.a = p.b + "x"` reads another field of the same object, so it is no append to `p.a`.
+#[test]
+fn concat_of_another_field_of_the_same_object_should_not_be_an_append() {
+    let printed = lowered(
+        "class P {\n    mut a: string\n    mut b: string\n}\nfn f(p: P) {\n    p.a = p.b + \"x\"\n}\nfn main() {}",
+    );
+    assert!(!printed.contains("(append"), "{printed}");
+    assert!(
+        printed.contains("(= (. p#0 a) (concat (. p#0 b) \"x\"))"),
+        "{printed}"
+    );
+}
