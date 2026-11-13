@@ -313,6 +313,90 @@ class Branches(unittest.TestCase):
         self.assertLess(out.index("Missed branches"), out.rindex("Coverage:"))
 
 
+def source(*lines: str) -> Callable[[str, int], str]:
+    """A line reader over `lines`, numbered from 1; a line outside them is empty."""
+    return lambda _path, n: lines[n - 1] if 0 < n <= len(lines) else ""
+
+
+def listed(*lines: str, branches: list[int]) -> list[int]:
+    """The lines of `lines` that the branch list names, when each line of `branches` misses one."""
+    missed: list[int | None] = [1, 0]
+    lc = branch_lcov("a.rs", **{f"n{n}": missed for n in branches})
+    out = run(branch_export(), lc, diff(start=1, count=len(lines)), read=source(*lines))
+    section = out.split("Missed branches on changed lines:\n")[1].split("\n\n")[0]
+    return [int(x.split(":")[1]) for x in section.splitlines() if x != "(none)"]
+
+
+class BranchNoise(unittest.TestCase):
+    """Lines whose branches no test should take, or that no test of the product measures."""
+
+    def test_a_let_else_before_an_invariant_panic_should_be_left_out(self) -> None:
+        lines = (
+            "let Ok(x) = y else {",
+            '    unreachable!("y should be ok")',
+            "};",
+            "let Some(z) = y else {",
+            "    return None;",
+            "};",
+            'let Ok(x) = y else { panic!("y should be ok") };',
+        )
+        self.assertEqual(listed(*lines, branches=[1, 4, 7]), [4])
+
+    def test_the_lines_of_a_multiline_assert_should_be_left_out(self) -> None:
+        lines = (
+            "let a = 1;",
+            "assert!(",
+            "    a.map(|x| if x { 1 } else { 2 }) == b,",
+            '    "message {}",',
+            "    c.map(|y| if y { 1 } else { 2 })",
+            ");",
+            "foo(",
+            "    if a { 1 } else { 2 },",
+            ");",
+            "if a {",
+            "    debug_assert_eq!(",
+            "        a,",
+            "        if b { 1 } else { 2 },",
+            "    );",
+            "}",
+        )
+        self.assertEqual(listed(*lines, branches=[3, 5, 8, 10, 13]), [8, 10])
+
+    def test_a_one_line_assert_after_a_closed_statement_should_not_hide_the_next_line(self) -> None:
+        lines = ("assert!(a);", "if b {", "}")
+        self.assertEqual(listed(*lines, branches=[2]), [2])
+
+    def test_an_inline_test_module_should_be_left_out(self) -> None:
+        lines = (
+            "fn f() { if a {} }",
+            "#[cfg(test)]",
+            "#[allow(clippy::x)]",
+            "mod tests {",
+            '    const S: &str = "{";',
+            "    mod inner {",
+            "        fn g() { if b {} }",
+            "    }",
+            "    fn h() { if c {} }",
+            "}",
+            "fn k() { if d {} }",
+        )
+        self.assertEqual(listed(*lines, branches=[1, 7, 9, 11]), [1, 11])
+
+    def test_a_cfg_test_item_that_is_not_a_module_should_stay(self) -> None:
+        lines = (
+            "#[cfg(test)]",
+            "fn t() { if a {} }",
+            "#[cfg(test)]",
+            "mod tests;",
+            "fn k() { if d {} }",
+            "#[cfg(not(test))]",
+            "mod real {",
+            "    fn m() { if e {} }",
+            "}",
+        )
+        self.assertEqual(listed(*lines, branches=[2, 5, 8]), [2, 5, 8])
+
+
 class Main(unittest.TestCase):
     def call(self, exp_text: str, lcov_text: str = "", diff_text: str = "") -> tuple[int, str]:
         with tempfile.TemporaryDirectory() as d:
