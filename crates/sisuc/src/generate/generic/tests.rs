@@ -1246,7 +1246,7 @@ fn an_optional_of_an_optional_should_be_built_with_some() {
 fn a_generic_class_field_should_be_mutable_by_the_second_choice_only() {
     let mutable = |data: &[u8]| {
         let mut g = Gen::new(data);
-        g.generic_record(false);
+        g.generic_struct(false);
         let Body::Class(fields) = &g.scope.generics[0].body else {
             panic!("a class")
         };

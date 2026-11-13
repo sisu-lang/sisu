@@ -1498,10 +1498,10 @@ impl<'a> Parser<'a> {
         unreachable!("the tokens should end with `Eof`")
     }
 
-    /// Whether token `i` is `fn`, `class`, `const`, `enum`, `interface` or `extend` and the first
-    /// token on its line. These words only start an item or a member, so one at the start of a
-    /// line starts the next one, also when a token that cannot end a line, such as `+`, leaves no
-    /// `Newline` before it.
+    /// Whether token `i` is `fn`, `class`, `struct`, `const`, `type`, `enum`, `interface` or
+    /// `extend` and the first token on its line. These words only start an item or a member. So
+    /// one at the start of a line starts the next one. This is true also when a token that cannot
+    /// end a line, such as `+`, leaves no `Newline` before it.
     fn starts_item_line(&self, i: usize) -> bool {
         let (before, after) = (self.tokens[i - 1].span.end(), self.tokens[i].span.start());
         matches!(

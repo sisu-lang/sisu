@@ -572,10 +572,10 @@ def never_built(k: int) -> str:
     # with the arguments each one gets. The `k` classes are the leaves of a balanced tree of
     # `k - 1` aliases through the enum `W`, so the root names `k` classes. Each of the `k` enums
     # holds the root, and so does the one struct. Without the struct, the cost grows with the
-    # product of the enums and the classes (`docs/register.md`, row 62). The struct is one more
-    # node. It must add no growth of its own. `main` builds both variants of `W`, each class,
-    # each enum and the struct. It reads the field of the struct, so that no size has a W0012,
-    # a W0013 or a W0014. Size 0 has no `W`.
+    # product of the enums and the classes (`docs/register.md`, the `check::enums::Buildable` row).
+    # The struct is one more node. It must add no growth of its own. `main` builds both variants
+    # of `W`, each class, each enum and the struct. It reads the field of the struct, so that no
+    # size has a W0012, a W0013 or a W0014. Size 0 has no `W`.
     if k == 0:
         return "fn main() {}\n"
     names = [f"C{tag(i)}" for i in range(k)]

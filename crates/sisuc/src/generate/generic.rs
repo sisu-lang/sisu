@@ -254,7 +254,7 @@ impl Gen<'_> {
         for _ in 0..self.mut_pick(MAX_GENERIC_STRUCTS + 1) {
             let fuel = std::mem::replace(&mut self.fuel, MUT_FUEL);
             self.swap_streams();
-            self.generic_record(true);
+            self.generic_struct(true);
             self.swap_streams();
             self.fuel = fuel;
         }
@@ -304,7 +304,7 @@ impl Gen<'_> {
             shapes.push(Shape::Late);
         }
         match shapes[self.pick(shapes.len())] {
-            Shape::Class => self.generic_record(false),
+            Shape::Class => self.generic_struct(false),
             Shape::Plain => self.generic_enum(Shape::Plain, &wrappers),
             Shape::Recursive => self.generic_enum(Shape::Recursive, &wrappers),
             Shape::Wrapped => self.generic_enum(Shape::Wrapped, &wrappers),
@@ -317,7 +317,7 @@ impl Gen<'_> {
     /// that name each parameter, and then others. A field of a class can be `mut`; one of a struct
     /// never is. An assignment to a field of an instance obeys decision 4, as one to a field of a
     /// declared class does: it never stores a class object.
-    fn generic_record(&mut self, value: bool) {
+    fn generic_struct(&mut self, value: bool) {
         let id = self.scope.generics.len();
         let params = 1 + self.pick(2);
         let enums = self.all_generic_enums();
