@@ -2,7 +2,7 @@
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::any::{AnyJoin, is_target, widen};
+use super::any::{AnyJoin, SEED, is_target, widen};
 use super::array::optional_array;
 use super::enums::unwrapped;
 use super::expr::{fits, local};
@@ -1408,9 +1408,9 @@ impl Checker<'_> {
                 giver,
                 member: (i, got),
             } => {
-                // The seed of a hinted loop, member `usize::MAX`, is no `break`.
+                // The seed of a hinted loop, member `SEED`, is no `break`.
                 let given = match giver {
-                    usize::MAX => Origin::None,
+                    SEED => Origin::None,
                     0 => Origin::Break { at, ty: first },
                     _ => Origin::Break {
                         at: span(giver),

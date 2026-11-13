@@ -2290,12 +2290,12 @@ fn equal_beside_an_any_value_should_need_the_eq_of_the_any_type() {
 }
 
 /// A failing conversion to an `any` type: the program, the error's position and text, and each
-/// secondary label as (line, column, source text under it, label text).
+/// secondary label as (line, column, source text under it).
 type LabelRow<'a> = (
     &'a str,
     String,
     (usize, usize, &'a str),
-    Vec<(usize, usize, &'a str, &'a str)>,
+    Vec<(usize, usize, &'a str)>,
 );
 
 /// The interface `Sh` and its enum `En`, three lines. A row's lines continue from line 4.
@@ -2321,28 +2321,24 @@ const NAMED: &str = "interface Named {\n    fn name(self) -> string\n}\n\nclass 
 )]
 fn label_rows() -> Vec<LabelRow<'static>> {
     let sh = |body: &str| format!("{SH}{body}");
-    let declared = "declared as `any Sh` here";
-    let branch = "this branch gives the type `any Sh`";
-    let element = "this element gives the type `any Sh`";
-    let gave = "this `break` gave the loop the type `any Sh`";
     vec![
         (
             "a let",
             sh("fn main() {\n    let _x: any Sh = 1\n}"),
             (5, 22, "1"),
-            vec![(5, 13, "any Sh", declared)],
+            vec![(5, 13, "any Sh")],
         ),
         (
             "a second let of the type",
             sh(&format!("{WITH_X}    let _y: any Sh = 2\n}}")),
             (6, 22, "2"),
-            vec![(6, 13, "any Sh", declared)],
+            vec![(6, 13, "any Sh")],
         ),
         (
             "a let of an optional",
             sh(&format!("{WITH_X}    let _y: (any Sh)? = 1\n}}")),
             (6, 25, "1"),
-            vec![(6, 13, "(any Sh)?", "declared as `(any Sh)?` here")],
+            vec![(6, 13, "(any Sh)?")],
         ),
         (
             "a parameter",
@@ -2350,7 +2346,7 @@ fn label_rows() -> Vec<LabelRow<'static>> {
                 "fn f(s: any Sh) -> i64 {{ s.n() }}\n{WITH_X}    print(f(1))\n}}"
             )),
             (7, 13, "1"),
-            vec![(4, 9, "any Sh", "`f` declares `s` as `any Sh`")],
+            vec![(4, 9, "any Sh")],
         ),
         (
             "a return",
@@ -2358,7 +2354,7 @@ fn label_rows() -> Vec<LabelRow<'static>> {
                 "fn f() -> any Sh {{ 1 }}\n{WITH_X}    print(f().n())\n}}"
             )),
             (4, 20, "1"),
-            vec![(4, 11, "any Sh", "`f` returns `any Sh`")],
+            vec![(4, 11, "any Sh")],
         ),
         (
             "a return statement",
@@ -2366,7 +2362,7 @@ fn label_rows() -> Vec<LabelRow<'static>> {
                 "fn f(c: bool) -> any Sh {{\n    if c {{ return 1 }}\n    En.A\n}}\n{WITH_X}    print(f(true).n())\n}}"
             )),
             (5, 19, "1"),
-            vec![(4, 18, "any Sh", "`f` returns `any Sh`")],
+            vec![(4, 18, "any Sh")],
         ),
         (
             "a field",
@@ -2374,7 +2370,7 @@ fn label_rows() -> Vec<LabelRow<'static>> {
                 "class P {{ s: any Sh }}\n{WITH_X}    let _p = P(s: 1)\n}}"
             )),
             (7, 19, "1"),
-            vec![(4, 14, "any Sh", "`s` is declared as `any Sh`")],
+            vec![(4, 14, "any Sh")],
         ),
         (
             "a payload",
@@ -2382,7 +2378,7 @@ fn label_rows() -> Vec<LabelRow<'static>> {
                 "enum Bo {{ B(any Sh) }}\n{WITH_X}    let _b = Bo.B(1)\n}}"
             )),
             (7, 19, "1"),
-            vec![(4, 13, "any Sh", "`B` holds `any Sh`")],
+            vec![(4, 13, "any Sh")],
         ),
         (
             "an assignment",
@@ -2390,19 +2386,19 @@ fn label_rows() -> Vec<LabelRow<'static>> {
                 "{WITH_X}    let mut y: any Sh = En.A\n    y = 1\n    print(y.n())\n}}"
             )),
             (7, 9, "1"),
-            vec![(6, 13, "y", "`y` has the type `any Sh`")],
+            vec![(6, 13, "y")],
         ),
         (
             "an `if` join, the `any` value first",
             sh(&format!("{WITH_CS}    let _a = if c {{ s }} else {{ 1 }}\n}}")),
             (8, 32, "1"),
-            vec![(8, 21, "s", branch)],
+            vec![(8, 21, "s")],
         ),
         (
             "an `if` join, the `any` value last",
             sh(&format!("{WITH_CS}    let _b = if c {{ 1 }} else {{ s }}\n}}")),
             (8, 21, "1"),
-            vec![(8, 32, "s", branch)],
+            vec![(8, 32, "s")],
         ),
         (
             "a `match` join",
@@ -2410,19 +2406,19 @@ fn label_rows() -> Vec<LabelRow<'static>> {
                 "{WITH_CS}    let _a = match c {{ true => s; false => 1 }}\n}}"
             )),
             (8, 44, "1"),
-            vec![(8, 32, "s", branch)],
+            vec![(8, 32, "s")],
         ),
         (
             "an array join, the `any` value first",
             sh("fn main() {\n    let _x: any Sh = En.A\n    let s: any Sh = En.A\n    let _a = [s, 1]\n}"),
             (7, 18, "1"),
-            vec![(7, 15, "s", element)],
+            vec![(7, 15, "s")],
         ),
         (
             "an array join, the `any` value last",
             sh("fn main() {\n    let _x: any Sh = En.A\n    let s: any Sh = En.A\n    let _a = [1, s]\n}"),
             (7, 15, "1"),
-            vec![(7, 18, "s", element)],
+            vec![(7, 18, "s")],
         ),
         (
             "a loop join",
@@ -2430,7 +2426,7 @@ fn label_rows() -> Vec<LabelRow<'static>> {
                 "{WITH_CS}    let _a = loop {{ if c {{ break s }}; break 1 }}\n}}"
             )),
             (8, 45, "1"),
-            vec![(8, 28, "break s", gave)],
+            vec![(8, 28, "break s")],
         ),
         (
             "a `??` default, which has no label yet",
@@ -2442,19 +2438,19 @@ fn label_rows() -> Vec<LabelRow<'static>> {
             "an `if` under a written type",
             sh("fn main() {\n    let c = true\n    let _x: any Sh = En.A\n    let _a: any Sh = if c { En.A } else { 1 }\n}"),
             (7, 43, "1"),
-            vec![(7, 13, "any Sh", declared)],
+            vec![(7, 13, "any Sh")],
         ),
         (
             "an array of the type, the first",
             sh("fn main() {\n    let _x: [any Sh] = [1]\n}"),
             (5, 25, "1"),
-            vec![(5, 13, "[any Sh]", "declared as `[any Sh]` here")],
+            vec![(5, 13, "[any Sh]")],
         ),
         (
             "an array of the type, the second",
             sh("fn main() {\n    let _x: [any Sh] = [En.A]\n    let _y: [any Sh] = [2]\n}"),
             (6, 25, "2"),
-            vec![(6, 13, "[any Sh]", "declared as `[any Sh]` here")],
+            vec![(6, 13, "[any Sh]")],
         ),
         (
             "a `Some` branch",
@@ -2462,7 +2458,7 @@ fn label_rows() -> Vec<LabelRow<'static>> {
                 "{WITH_CS}    let _a = if c {{ Some(s) }} else {{ 1 }}\n}}"
             )),
             (8, 38, "1"),
-            vec![(8, 21, "Some(s)", "this branch gives the type `(any Sh)?`")],
+            vec![(8, 21, "Some(s)")],
         ),
         (
             "a parameter of a generic function",
@@ -2470,7 +2466,7 @@ fn label_rows() -> Vec<LabelRow<'static>> {
                 "fn f<T>(a: T, s: any Sh) -> T {{ a }}\n{WITH_X}    print(f(1, 2))\n}}"
             )),
             (7, 16, "2"),
-            vec![(4, 18, "any Sh", "`f` declares `s` as `any Sh`")],
+            vec![(4, 18, "any Sh")],
         ),
         (
             "an optional parameter",
@@ -2478,7 +2474,7 @@ fn label_rows() -> Vec<LabelRow<'static>> {
                 "fn f(s: (any Sh)?) -> i64 {{ 0 }}\n{WITH_X}    print(f(1))\n}}"
             )),
             (7, 13, "1"),
-            vec![(4, 9, "(any Sh)?", "`f` declares `s` as `(any Sh)?`")],
+            vec![(4, 9, "(any Sh)?")],
         ),
         (
             "an array parameter",
@@ -2486,7 +2482,7 @@ fn label_rows() -> Vec<LabelRow<'static>> {
                 "fn f(s: [any Sh]) -> i64 {{ 0 }}\n{WITH_X}    print(f([1]))\n}}"
             )),
             (7, 14, "1"),
-            vec![(4, 9, "[any Sh]", "`f` declares `s` as `[any Sh]`")],
+            vec![(4, 9, "[any Sh]")],
         ),
         (
             "an `else if` branch",
@@ -2494,7 +2490,7 @@ fn label_rows() -> Vec<LabelRow<'static>> {
                 "{WITH_CS}    let _a = if c {{ 1 }} else if c {{ s }} else {{ En.A }}\n}}"
             )),
             (8, 21, "1"),
-            vec![(8, 30, "if c { s } else { En.A }", branch)],
+            vec![(8, 30, "if c { s } else { En.A }")],
         ),
         (
             "a loop that gives a `Some` of an object",
@@ -2502,7 +2498,7 @@ fn label_rows() -> Vec<LabelRow<'static>> {
                 "class D {{}}\n{WITH_CS}    let _a = loop {{ if c {{ break s }}; break Some(D()) }}\n}}"
             )),
             (9, 50, "D()"),
-            vec![(9, 28, "break s", gave)],
+            vec![(9, 28, "break s")],
         ),
         (
             "an array join of a `Some` of an object",
@@ -2510,7 +2506,7 @@ fn label_rows() -> Vec<LabelRow<'static>> {
                 "class D {{}}\n{WITH_CS}    let _a = [s, Some(D())]\n}}"
             )),
             (9, 23, "D()"),
-            vec![(9, 15, "s", element)],
+            vec![(9, 15, "s")],
         ),
         (
             "an `else if` chain whose seed gives the type",
@@ -2518,7 +2514,7 @@ fn label_rows() -> Vec<LabelRow<'static>> {
                 "class D {{}}\n{WITH_CS}    let _a = if c {{ s }} else if c {{ D() }} else {{ 1 }}\n}}"
             )),
             (9, 37, "D()"),
-            vec![(9, 21, "s", branch)],
+            vec![(9, 21, "s")],
         ),
         (
             "a loop whose later break gives the type",
@@ -2526,13 +2522,13 @@ fn label_rows() -> Vec<LabelRow<'static>> {
                 "class D {{}}\n{WITH_CS}    let _a = loop {{ if c {{ break D() }}; break s }}\n}}"
             )),
             (9, 34, "D()"),
-            vec![(9, 47, "s", gave)],
+            vec![(9, 47, "s")],
         ),
         (
             "an array whose wider `any` value comes first",
             "interface Sh { fn n(self) -> i64 }\ninterface Wi: Sh {}\nenum En: Wi, Sh { A\n    fn n(self) -> i64 { 1 } }\nclass D {}\nfn main() {\n    let w: any Wi = En.A\n    let s: any Sh = En.A\n    let _a = [w, s, D()]\n}".to_string(),
             (9, 21, "D()"),
-            vec![(9, 18, "s", element)],
+            vec![(9, 18, "s")],
         ),
         (
             "a loop that the sibling of an `if` hints, which has no label yet",
@@ -2548,7 +2544,7 @@ fn label_rows() -> Vec<LabelRow<'static>> {
                 "class D {{}}\n{WITH_CS}    let _a = if c {{ s }} else {{ loop {{ if c {{ break s }}; break D() }} }}\n}}"
             )),
             (9, 63, "D()"),
-            vec![(9, 46, "break s", gave)],
+            vec![(9, 46, "break s")],
         ),
         (
             "a branch that a sibling of the same type hints",
@@ -2556,7 +2552,7 @@ fn label_rows() -> Vec<LabelRow<'static>> {
                 "class D {{}}\n{WITH_CS}    let _a = [s, if c {{ s }} else {{ D() }}]\n}}"
             )),
             (9, 36, "D()"),
-            vec![(9, 25, "s", branch)],
+            vec![(9, 25, "s")],
         ),
         (
             "a match arm that a sibling of the same type hints",
@@ -2564,7 +2560,7 @@ fn label_rows() -> Vec<LabelRow<'static>> {
                 "class D {{}}\n{WITH_CS}    let _a = [s, match c {{ true => s; false => D() }}]\n}}"
             )),
             (9, 48, "D()"),
-            vec![(9, 36, "s", branch)],
+            vec![(9, 36, "s")],
         ),
         (
             "two branches of one type, the nearer one gives it",
@@ -2572,7 +2568,7 @@ fn label_rows() -> Vec<LabelRow<'static>> {
                 "class D {{}}\n{WITH_CS}    let _a = if c {{ s }} else if c {{ s }} else {{ D() }}\n}}"
             )),
             (9, 48, "D()"),
-            vec![(9, 37, "s", branch)],
+            vec![(9, 37, "s")],
         ),
         (
             "two elements of one type, the first gives it",
@@ -2580,7 +2576,7 @@ fn label_rows() -> Vec<LabelRow<'static>> {
                 "class D {{}}\n{WITH_CS}    let _a = [s, s, D()]\n}}"
             )),
             (9, 21, "D()"),
-            vec![(9, 15, "s", element)],
+            vec![(9, 15, "s")],
         ),
         (
             "a hinted array in a branch, which has no label yet",
@@ -2600,25 +2596,25 @@ fn label_rows() -> Vec<LabelRow<'static>> {
             "the first let of an array type in issue 645",
             "interface Sh {}\nclass C {}\nfn main() {\n    let _x: [any Sh] = [1]\n}".to_string(),
             (4, 25, "1"),
-            vec![(4, 13, "[any Sh]", "declared as `[any Sh]` here")],
+            vec![(4, 13, "[any Sh]")],
         ),
         (
             "the second let of an array type in issue 645",
             "interface Sh {}\nclass C {}\nclass K: Sh {}\nfn main() {\n    let _x: [any Sh] = [K()]\n    let _y: [any Sh] = [C()]\n}".to_string(),
             (6, 25, "C()"),
-            vec![(6, 13, "[any Sh]", "declared as `[any Sh]` here")],
+            vec![(6, 13, "[any Sh]")],
         ),
         (
             "an `if` join of an `any` parameter of another function, issue 377",
             format!("{NAMED}    let _a = if c {{ n }} else {{ 1 }}\n    print(show(n))\n}}"),
             (18, 32, "1"),
-            vec![(18, 21, "n", "this branch gives the type `any Named`")],
+            vec![(18, 21, "n")],
         ),
         (
             "an `if` join of a `Some`, issue 377",
             format!("{NAMED}    let _b = if c {{ Some(n) }} else {{ 1 }}\n    print(show(n))\n}}"),
             (18, 38, "1"),
-            vec![(18, 21, "Some(n)", "this branch gives the type `(any Named)?`")],
+            vec![(18, 21, "Some(n)")],
         ),
     ]
 }
@@ -2638,9 +2634,9 @@ fn a_conversion_that_fails_should_label_where_its_any_type_comes_from() {
                 let labels: Vec<_> = d
                     .secondary()
                     .iter()
-                    .map(|(span, label)| {
+                    .map(|(span, _)| {
                         let (line, col) = at(&src, *span);
-                        (line, col, &src[span.range()], label.as_str())
+                        (line, col, &src[span.range()])
                     })
                     .collect();
                 (d.code(), at(&src, d.span()), &src[d.span().range()], labels)

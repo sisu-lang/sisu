@@ -1,6 +1,6 @@
 //! Branches: `if`, `if let` and the join of branch types.
 
-use super::any::{AnyJoin, is_target};
+use super::any::{AnyJoin, SEED, is_target};
 use super::expr::fits;
 use super::generic::{Ahead, Rank, Ranked};
 use super::pattern::{LetPattern, arm_key};
@@ -413,7 +413,7 @@ impl Checker<'_> {
                 member: (i, t),
             } => {
                 // The giver is the seed, the sibling's type, when it is no branch.
-                let given = if giver == usize::MAX {
+                let given = if giver == SEED {
                     siblings.map_or(Origin::None, |(_, origin)| origin)
                 } else {
                     types[giver].map_or(Origin::None, |ty| Origin::Branch {

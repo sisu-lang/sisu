@@ -39,7 +39,7 @@ pub(super) enum AnyJoin {
     },
     /// The `any` types join to `ty`, the widest, and `member`, an index and a type that is no
     /// `any` type, does not convert to it. The member `giver` has the type `ty`; it is
-    /// `usize::MAX` for the seed of a hinted join.
+    /// `SEED` for the seed of a hinted join.
     Leaves {
         ty: Type,
         giver: usize,
@@ -78,6 +78,9 @@ enum ReasonKind {
     /// The root inherits the interface `owner` with these arguments, which name `Self`.
     InheritsSelf(TypeArgs),
 }
+
+/// The index of the seed of a hinted join, the sibling's type: no member of `any_join_all` has it.
+pub(super) const SEED: usize = usize::MAX;
 
 impl Checker<'_> {
     /// The type `any I` that `interface`, written as `written`, makes. The interface and its
@@ -478,7 +481,8 @@ impl Checker<'_> {
         for &(other, t) in targets {
             match self.any_join(ty, t) {
                 Some(wider) => {
-                    // A tie keeps the earlier member: it wrote the type first.
+                    // A tie keeps the earlier member of `members`; the seed of a hinted join
+                    // is last.
                     if wider != ty {
                         giver = other;
                     }
@@ -520,7 +524,7 @@ impl Checker<'_> {
         };
         let mut with = members.to_vec();
         // No member has this index, and only a member that is no `any` type leaves the join.
-        with.push((usize::MAX, seed));
+        with.push((SEED, seed));
         match self.any_join_all(&with) {
             AnyJoin::Fails { .. } => AnyJoin::NoAny,
             join => join,
