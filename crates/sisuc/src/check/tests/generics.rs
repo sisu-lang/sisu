@@ -8043,6 +8043,56 @@ fn waiting_argument_should_bind_the_whole_optional_when_its_declared_type_holds_
     error_rows(&rows);
 }
 
+const DECLARED_METHOD_HEAD: &str = concat!(
+    "fn first<T>(xs: [T]) -> T { xs[0] }\n",
+    "enum Bx<T> { B(v: T) }\n",
+    "fn unb<T>(b: Bx<T>) -> T { match b { Bx.B(v) => v } }\n",
+    "extend<T> Bx<T> {\n",
+    "    fn mkl<X>(self) -> [X?] { [None] }\n",
+    "    fn mkb<X>(self) -> Bx<X?> { Bx.B(v: None) }\n",
+    "}\n",
+    "interface Mk {\n",
+    "    fn mkl<X>(self) -> [X?]\n",
+    "}\n",
+    "fn f<M: Mk>(m: M, o: u8?) {\n",
+    "    let b = Bx.B(v: 1)\n",
+);
+
+fn declared_method_program(stmt: &str) -> String {
+    program_in(DECLARED_METHOD_HEAD, stmt, "}\nfn main() {}\n")
+}
+
+/// GIVEN a generic call whose argument is a method call that waits for its type
+/// AND whose declared type holds an optional (`[X?]` or `Bx<X?>`), on an enum or through a bound
+/// WHEN the call has an optional context: a written type or a hint of `??`
+/// THEN the call binds the whole optional, and the program has no error
+#[test]
+fn waiting_method_should_bind_the_whole_optional_when_its_declared_type_holds_one() {
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "m1",
+            declared_method_program("let x: i64? = first(b.mkl())"),
+            vec![],
+        ),
+        (
+            "m2",
+            declared_method_program("let x: i64? = first(m.mkl())"),
+            vec![],
+        ),
+        (
+            "m3",
+            declared_method_program("let y: u8? = o ?? first(m.mkl())"),
+            vec![],
+        ),
+        (
+            "m4",
+            declared_method_program("let x: i64? = unb(b.mkb())"),
+            vec![],
+        ),
+    ];
+    error_rows(&rows);
+}
+
 const LITERAL_HEAD: &str = concat!(
     "fn first<T>(xs: [T]) -> T { xs[0] }\n",
     "fn two<T>(a: T, b: T) -> T { b }\n",
