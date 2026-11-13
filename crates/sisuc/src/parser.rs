@@ -10486,7 +10486,7 @@ mod tests {
     /// AND a range whose end is no bound keeps its error, and a foreign operator is E0132
     /// AND the fixtures E0011-range-pattern-no-start, -no-end and -forms pin the text
     #[test]
-    fn a_range_pattern_with_one_bound_should_name_the_missing_bound() {
+    fn a_range_pattern_with_one_bound_should_get_one_error_over_the_range_with_no_fix() {
         let arm = |arm: &str| {
             format!(
                 "fn f(e: E, n: i64, c: char, lo: i64) {{\n    match n {{\n        {arm}\n        _ => print(2)\n    }}\n}}"
