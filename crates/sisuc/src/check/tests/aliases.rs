@@ -1601,3 +1601,41 @@ fn a_limit_report_that_the_rollback_does_not_cut_should_stay_once_holds_before_a
     ]);
     error_rows(&rows);
 }
+
+/// A type alias that takes the name of a language interface is an error (E0026). A read of the
+/// name finds the alias, as it finds a class with that name. The fixture
+/// `E0105-alias-with-interface-name` pins that the report says "type", not "interface".
+#[test]
+fn an_alias_with_the_name_of_an_interface_should_be_read_as_a_type() {
+    let rows: Vec<ErrorRow<'_>> = [
+        (
+            "p640",
+            "type Eq = i64\nfn main() { let _a = Eq }",
+            vec![(Code::BuiltInName, (1, 6)), (Code::TypeAsValue, (2, 22))],
+        ),
+        (
+            "p640-aliasother",
+            "type Ord = [i64]\nfn main() { let _a = Ord }",
+            vec![(Code::BuiltInName, (1, 6)), (Code::TypeAsValue, (2, 22))],
+        ),
+        (
+            "a write",
+            "type Eq = i64\nfn main() { Eq = 1 }",
+            vec![(Code::BuiltInName, (1, 6)), (Code::TypeAsValue, (2, 13))],
+        ),
+        (
+            "a generic alias",
+            "type Eq<T> = T?\nfn main() { let _a = Eq }",
+            vec![(Code::BuiltInName, (1, 6)), (Code::TypeAsValue, (2, 22))],
+        ),
+        (
+            "p640-class, the control",
+            "class Eq {}\nfn main() { let _a = Eq }",
+            vec![(Code::BuiltInName, (1, 7)), (Code::TypeAsValue, (2, 22))],
+        ),
+    ]
+    .into_iter()
+    .map(|(row, src, wanted)| (row, src.to_owned(), wanted))
+    .collect();
+    error_rows(&rows);
+}
