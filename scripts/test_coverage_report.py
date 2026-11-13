@@ -450,6 +450,23 @@ class BranchNoise(unittest.TestCase):
         )
         self.assertEqual(listed(*lines, branches=[4]), [])
 
+    def test_an_assert_that_closed_on_an_earlier_line_should_not_hide_the_next_line(self) -> None:
+        lines = (
+            "match x {",
+            "    A => assert!(ready),",
+            "    B if left && right => run(),",
+            "}",
+            "foo(",
+            "    xs.iter().for_each(|x| assert!(f(x))),",
+            "    if a { 1 } else { 2 },",
+            ");",
+        )
+        self.assertEqual(listed(*lines, branches=[3, 7]), [3, 7])
+
+    def test_a_block_comment_that_names_an_invariant_should_not_hide_its_own_line(self) -> None:
+        lines = ("if ready /* panic!( */ {", "}", "let x = a /* b */ && c;")
+        self.assertEqual(listed(*lines, branches=[1, 3]), [1, 3])
+
     def test_a_blank_line_should_end_the_walk_back_from_an_assert(self) -> None:
         lines = ("assert!(a,", "", "if b {", "}")
         self.assertEqual(listed(*lines, branches=[3]), [3])
