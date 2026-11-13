@@ -19,6 +19,7 @@ from watch_pr import REPO, gh, text
 
 # CodeRabbit puts the severity on a line of bold runs joined by " · ", then the title alone in bold.
 BOLD_LINE = re.compile(r"^\*\*(.+?)\*\*\s*$")
+SEVERITY_LINE = re.compile(r"^\*\*\s*([^*]+?)\s*\*\*(?: · \*\*[^*]+\*\*)+$")
 OUTSIDE = re.compile(r"Outside diff range comments \((\d+)\)")
 
 
@@ -27,9 +28,9 @@ def title(body: str | None) -> str:
     severity = ""
     for line in (body or "").splitlines():
         shown = text(line)
-        # Only the first bold line can be the severity line; a title can hold " · " too.
-        if not severity and "·" in shown and shown.startswith("**"):
-            severity = shown.split("**")[1].strip() + ": "
+        header = None if severity else SEVERITY_LINE.match(shown)
+        if header:
+            severity = header.group(1) + ": "
             continue
         bold = BOLD_LINE.match(shown)
         if bold:
