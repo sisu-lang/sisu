@@ -5349,7 +5349,8 @@ impl From<DiagnosticKind> for Diagnostic {
                 let example = match (call, base) {
                     (GetCall::Plain, Some(base)) => format!("{base}.get(1..3)"),
                     (GetCall::Safe, Some(base)) => format!("{base}?.get(1..3)"),
-                    _ => "1..3".to_owned(),
+                    (GetCall::SafeFailed | GetCall::Payload, _)
+                    | (GetCall::Plain | GetCall::Safe, None) => "1..3".to_owned(),
                 };
                 Diagnostic::coded(code, at, "a string's `get` takes a range")
                     .with_label("this is not a range")

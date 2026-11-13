@@ -5,6 +5,7 @@ use std::rc::Rc;
 use super::array::{innermost, is_optional_array, must_unwrap, optional_element};
 use super::expr::{if_some, literal_type, local, operator};
 use super::member::{Access, FieldOwner, FoundField, safe_value};
+use super::names::{Resolved, Site};
 use super::operator::Operator;
 use super::reports::Reported;
 use super::unused_names::{Copied, Used};
@@ -994,6 +995,10 @@ impl Checker<'_> {
             // A poisoned item's own error is reported, and the name is no typo for a binding.
             let reported = if let Some(reported) = self.use_poison(name, target.span) {
                 reported
+            } else if let Some(wrong) = self.hidden_name(name, target.span) {
+                // A type parameter or an associated type hides a function of this name, as it
+                // does in a read.
+                wrong
             } else if self.is_function(name) {
                 self.error(DiagnosticKind::AssignToFunction {
                     name: name.to_string(),
@@ -1036,6 +1041,17 @@ impl Checker<'_> {
             reported,
             temporary: None,
         }
+    }
+
+    /// The error for a write to `name`, at `at`, when a type parameter or an associated type holds
+    /// the name: it is no value, as in a read.
+    fn hidden_name(&mut self, name: Symbol, at: Span) -> Option<Reported> {
+        let answer = self.value_kind(name);
+        if !matches!(answer, Resolved::TypeParam(_) | Resolved::AssocType) {
+            return None;
+        }
+        self.wrong_kind(name, at, Site::value(true), answer)
+            .map(|wrong| self.error(wrong))
     }
 
     /// The field `name` of the base of a place, a value of type `ty`, as `find_field` finds it. It
