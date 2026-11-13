@@ -12,8 +12,8 @@ gitignore = true
 # Each `|` in `Region::apply` joins disjoint one-bit states, where `^` gives the same value.
 exclude_re = [
     "replace \\| with \\^ in Region<'_>::apply",
-    # `after > b` in `starts_item_line`: a break is `\n`, which never starts a keyword, so `>=` gives
-    # the same count.
+    # `after > b` in `starts_item_line`: a break is `\n`, which never starts a keyword, so `>=`
+    # gives the same count.
     "replace > with >= in Parser<'a>::starts_item_line",
     # `self.pick(2) == 1` in `Gen::let_else`: `pick(2)` gives 0 or 1 with equal chance, so `!=` only
     # swaps which draw takes the enum form. Both forms still come at the same rate, and no test

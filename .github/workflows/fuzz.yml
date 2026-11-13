@@ -68,7 +68,8 @@ jobs:
           fi
           status=0
           timeout -k 10 900 scripts/fuzz.sh --tmin "$input" || status=$?
-          # Each successful tmin step writes a new minimized-from-<hash> file; the newest is the last step's.
+          # Each successful tmin step writes a new minimized-from-<hash> file; the newest is the
+          # last step's.
           m=
           for f in fuzz/artifacts/front_end/minimized-from-*; do
             if [ -f "$f" ] && { [ -z "$m" ] || [ "$f" -nt "$m" ]; }; then

@@ -1,4 +1,5 @@
-# Format as in codspeed.yml. Pushes to main run these after codspeed.yml's entries, through .codspeed-main-merged.yml, which scripts/codspeed-prep.sh writes.
+# Format as in codspeed.yml. Pushes to main run these after codspeed.yml's entries, through
+# .codspeed-main-merged.yml, which scripts/codspeed-prep.sh writes.
 benchmarks:
   - name: build_large
     id: build_large
