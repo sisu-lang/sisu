@@ -1,0 +1,17 @@
+// GIVEN `fill(mut b?.\n cells, 3)`, whose head `b` is on one line and whose place spans two lines
+// WHEN `sisu check` runs on it
+// THEN it reports E0170 on the argument, with the message and no help, because the place is not on one line
+class Board {
+    mut cells: [i64]
+}
+
+fn fill(mut xs: [i64], n: i64) {
+    xs[0] = n
+}
+
+fn main() {
+    let b: Board? = Board(cells: [1])
+    fill(mut b?.
+        cells, 3)
+    print(b == None)
+}

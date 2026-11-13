@@ -1649,6 +1649,45 @@ mod tests {
         }
     }
 
+    /// The variable that makes `char_child_should_abort_when_asked` run.
+    const CHAR_VAR: &str = "SISU_RUNTIME_SHOW_CHAR";
+
+    /// The child of `show_char_should_abort_when_the_value_is_no_scalar`: it shows a surrogate,
+    /// which is no `char`. It does nothing unless the variable is set.
+    #[expect(unsafe_code, reason = "the test calls the runtime's C ABI")]
+    #[test]
+    fn char_child_should_abort_when_asked() {
+        if std::env::var(CHAR_VAR).is_err() {
+            return;
+        }
+        let mut slot = MaybeUninit::<Sink>::uninit();
+        let sink = slot.as_mut_ptr();
+        // SAFETY: `sink` is writable for one sink.
+        unsafe { sisu_show_buffer(sink, 0) };
+        // SAFETY: the sink is started.
+        unsafe { sisu_show_char(sink, 0xD800, false) };
+    }
+
+    /// Generated code passes only scalar values, so a value that is none means a compiler bug:
+    /// the process aborts, as the runtime does for a call that generated code cannot make.
+    #[test]
+    #[cfg_attr(miri, ignore = "spawns a child process, which Miri cannot")]
+    fn show_char_should_abort_when_the_value_is_no_scalar() {
+        use std::os::unix::process::ExitStatusExt;
+
+        let exe = std::env::current_exe().expect("the test binary should have a path");
+        let status = std::process::Command::new(exe)
+            .args([
+                "--exact",
+                "show::tests::char_child_should_abort_when_asked",
+                "--nocapture",
+            ])
+            .env(CHAR_VAR, "1")
+            .status()
+            .expect("the child test should start");
+        assert_eq!(status.signal(), Some(6), "{status:?}");
+    }
+
     #[expect(unsafe_code, reason = "declares libc `dup2`")]
     unsafe extern "C" {
         fn dup2(old: i32, new: i32) -> i32;

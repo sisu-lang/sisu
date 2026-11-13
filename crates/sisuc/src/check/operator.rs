@@ -1198,7 +1198,7 @@ impl Checker<'_> {
         // payload converts to.
         let other = match type_of(&other) {
             Some(got) if got != payload && self.any_join(payload, got) != Some(got) => {
-                match self.any_conversion(rhs.span, other, payload, got) {
+                match self.any_conversion(rhs.span, other, payload, got, Origin::None) {
                     // The conversion failed: its value is untyped, with the proof of its report.
                     Ok((failed, true)) => return failed,
                     Ok((converted, false)) | Err(converted) => converted,
