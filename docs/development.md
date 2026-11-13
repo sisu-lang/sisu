@@ -55,7 +55,7 @@ audit-sisu skill's probes; `.llvm/23` then takes about 1.2 GB.
 Run this once per clone:
 
 ```console
-$ make setup   # LLVM 23 into .llvm/23, the pre-commit and commit-msg hooks, cargo-shear, cargo-mutants, cargo-llvm-cov, cargo-fuzz
+$ make setup   # LLVM 23 into .llvm/23, the pre-commit and commit-msg hooks, cargo-shear, cargo-mutants, cargo-llvm-cov, cargo-fuzz, the coverage nightly
 ```
 
 ## Build and test
@@ -419,7 +419,8 @@ another number.
 ## Coverage and performance
 
 `make coverage [BASE=<base>]` runs the tests under `cargo-llvm-cov` and prints
-a `Coverage:` line, then two lists. "Uncovered regions touching changed code"
+a `Coverage:` line, then two lists, and a third when it measures branches.
+"Uncovered regions touching changed code"
 names regions that a changed line touches. "Other uncovered regions in changed
 files (advisory)" names the rest of those files, and any region on an
 `unreachable!` or `panic!` line, whose message states an invariant no test
@@ -429,7 +430,33 @@ which runs only when the assert fails. Test code is left out:
 `crates/*/tests/`, and unit-test modules in their own file, `src/**/tests.rs`
 or under `src/**/tests/`. The `Coverage:` line comes again as the last line,
 so the end of a long log gives the figures. The report never fails on low
-coverage. Commit new files, or
+coverage.
+
+The run also measures branches. The `--branch` flag of `cargo-llvm-cov` is
+unstable, so the run uses the nightly toolchain that
+`scripts/coverage-toolchain` names, with its `rustc` and the pinned `cargo`.
+`make setup` installs it; by hand:
+`rustup toolchain install $(cat scripts/coverage-toolchain) --profile minimal --component llvm-tools-preview`.
+When that toolchain is not installed, or has no `llvm-tools-preview`, the run
+prints one warning line with this command and measures lines and regions only.
+A run with branches adds `branches X.X%` to the `Coverage:` line and a third list, "Missed branches on
+changed lines". It gives one line for each changed line that has a branch
+outcome which no test took: `path:line: missed N of M: <source>`. M is the
+number of outcomes of the line (two for each condition, such as an `if` or a
+side of `&&` or `||`). The list leaves out `assert!` lines and `unreachable!` or
+`panic!` lines. The region lists keep such regions, with the rules above. A
+string or a comment on one line with such a word does not count. A string or a
+`/* */` comment that runs over several lines is not removed, so a word in it
+can leave out a line. It also leaves out these lines:
+the other lines of a multi-line `assert!`; a line that ends in `else {` and
+whose next line is such a panic; the lines of an inline `#[cfg(test)] mod` in the same
+file. The region lists keep their own rules for these. It says `(none)` when no
+line qualifies. A run with lines only has no third list. The nightly `Coverage` job
+of CI measures branches too and prints `Branch coverage (exact)`. It fails when
+line coverage is below 98.5%, when branch coverage is below 94.0%, or when the
+branch figure is missing. `make setup` installs the nightly toolchain, so a
+local `make coverage` measures branches. To change the nightly toolchain, edit
+`scripts/coverage-toolchain`: both the script and the job read it. Commit new files, or
 `git add -N` them, so the diff sees them. Before the report, the output has a
 line `coverage: measured (HEAD <sha>)`, with `with uncommitted changes` when the
 tracked tree differs from HEAD, or when HEAD changes during the run. The review
@@ -449,8 +476,8 @@ coverage: it exhausts file descriptors, and the profiler's error breaks its
 exact stderr check.
 
 The `Coverage` workflow runs the script each night on `main` and by hand.
-It writes the totals to the job summary. It fails when line coverage is below
-98.5%. A pull request gets no coverage comment; `make coverage` gives the
+It writes the totals to the job summary. Its gates are in the text on branches
+above. A pull request gets no coverage comment; `make coverage` gives the
 coverage of a branch's changes.
 
 CodSpeed measures Sisu against itself in simulation mode. The benchmarks are

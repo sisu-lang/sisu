@@ -1,6 +1,7 @@
-"""Report the uncovered regions that a change touches.
+"""Report the uncovered regions and missed branches that a change touches.
 
 The script turns a cargo-llvm-cov export, its LCOV file and a git diff into the report.
+The branch list appears only when the export holds branch data (a `--branch` run).
 
 Usage: python3 coverage_report.py COVERAGE.json LCOV.info CHANGES.diff
 Exits 0 for any valid report, however low the coverage, and 1 when an input is unusable.
@@ -20,6 +21,17 @@ TEST_DIR = re.compile(r"^crates/[^/]+/(?:tests/|src/(?:.+/)?tests(?:\.rs$|/))")
 INVARIANT = re.compile(r"\b(?:unreachable|panic)!\(")
 # An assert's message arguments run only when it fails, so on a line that ran they stay at zero.
 ASSERT = re.compile(r"\b(?:debug_)?assert(?:_eq|_ne)?!\(")
+# What `unmeasured` walks back over: the longest statement it follows, in lines.
+CONTINUATION = 30
+# What `code_of` strips: a raw string, a string, a one-char literal (a lifetime has no closing
+# quote), a `/* */` comment and a `//` comment. A string or a `/* */` comment that runs over
+# several lines is not handled.
+BRACE_NOISE = re.compile(r"""r(#*)".*?"\1|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])'|/\*.*?\*/|//.*""")
+TEST_MOD = re.compile(r"^(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*\{")
+# `BRACE_NOISE` for a whole file, where a string or a `/* */` comment can run over several lines.
+CODE_NOISE = re.compile(
+    r"""(?s:r(#*)".*?"\1|"(?:\\.|[^"\\])*")|'(?:\\.|[^'\\])'|(?s:/\*.*?\*/)|//[^\n]*"""
+)
 HUNK = re.compile(r"^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 
@@ -123,6 +135,27 @@ def line_hits(lcov: str, root: str) -> dict[str, dict[int, int]]:
     return result
 
 
+def branch_misses(lcov: str, root: str) -> dict[str, dict[int, tuple[int, int]]]:
+    """Return (missed, total) branch outcomes per line with a missed one, per file under `root`.
+
+    A `BRDA:<line>,<block>,<branch>,<taken>` record is one outcome; it is missed when `taken`
+    is `-` (the branch was never reached) or 0.
+    """
+    result: dict[str, dict[int, tuple[int, int]]] = {}
+    seen: dict[int, tuple[int, int]] = {}
+    for text in lcov.splitlines():
+        if text.startswith("SF:"):
+            path = relative(text[3:], root)
+            seen = {}
+            if path:
+                result[path] = seen
+        elif text.startswith("BRDA:"):
+            number, _block, _branch, taken = text[5:].split(",")
+            missed, total = seen.get(int(number), (0, 0))
+            seen[int(number)] = (missed + (taken in ("-", "0")), total + 1)
+    return {path: {n: mt for n, mt in lines.items() if mt[0] > 0} for path, lines in result.items()}
+
+
 def report(
     export: dict[str, Any], lcov: str, diff: str, root: str, read_line: Callable[[str, int], str]
 ) -> str:
@@ -140,9 +173,12 @@ def report(
         )
     else:
         pct = "changed lines: none"
+    branches = totals.get("branches", {})
+    measured = branches.get("count", 0) > 0
+    branch_pct = f"branches {branches['percent']:.1f}%, " if measured else ""
     head = (
         f"Coverage: lines {totals['lines']['percent']:.1f}%, "
-        f"regions {totals['regions']['percent']:.1f}%, {pct}."
+        f"regions {totals['regions']['percent']:.1f}%, {branch_pct}{pct}."
     )
 
     touching: list[str] = []
@@ -157,19 +193,123 @@ def report(
                 text = f"{path}:{r.start}: never run: {source}"
             else:
                 text = f"{path}:{r.start}:{r.start_col}-{r.end}:{r.end_col}: {source}"
+            code = code_of(line)
             hit = any(
                 n in changed[path] for n in range(r.start, r.end + 1)
-            ) and not INVARIANT.search(line)
-            if not r.never_run and ASSERT.search(line) and hits.get(path, {}).get(r.start, 0) > 0:
+            ) and not INVARIANT.search(code)
+            if not r.never_run and ASSERT.search(code) and hits.get(path, {}).get(r.start, 0) > 0:
                 hit = False
             (touching if hit else other).append(text)
-    return (
+    text = (
         f"{head}\n\nUncovered regions touching changed code:\n"
         + "\n".join(touching or ["(none)"])
         + "\n\nOther uncovered regions in changed files (advisory):\n"
         + "\n".join(other or ["(none)"])
-        + f"\n\n{head}"
     )
+    if measured:
+        text += "\n\nMissed branches on changed lines:\n" + "\n".join(
+            missed_branches(lcov, changed, root, read_line) or ["(none)"]
+        )
+    return f"{text}\n\n{head}"
+
+
+def test_module_lines(path: str, last: int, read_line: Callable[[str, int], str]) -> set[int]:
+    """Return the lines up to `last` that an inline `#[cfg(test)] mod name {` encloses."""
+    code = code_lines(path, last, read_line)
+    result: set[int] = set()
+    armed = False
+    depth = 0
+    for number in range(1, last + 1):
+        text = read_line(path, number).strip()
+        braces = code[number - 1].count("{") - code[number - 1].count("}")
+        if depth > 0:
+            result.add(number)
+            depth += braces
+        elif text.startswith("#[cfg(test)]"):
+            armed = True
+        elif armed and TEST_MOD.match(text):
+            result.add(number)
+            depth = braces
+            armed = False
+        elif armed and not text.startswith(("#[", "//")):
+            armed = False
+    return result
+
+
+def code_lines(path: str, last: int, read_line: Callable[[str, int], str]) -> list[str]:
+    """Return lines 1 to `last` of `path` without literals and comments, even multi-line ones."""
+    text = "\n".join(read_line(path, number) for number in range(1, last + 1))
+    return CODE_NOISE.sub(lambda m: "\n" * m.group().count("\n"), text).split("\n")
+
+
+def code_of(line: str) -> str:
+    """Return `line` without its literals and comments, which hold no code."""
+    return BRACE_NOISE.sub("", line)
+
+
+def unmeasured(path: str, number: int, read_line: Callable[[str, int], str]) -> bool:
+    """Return whether line `number` is one whose branches no test should take.
+
+    That is an assert, or a line that an assert spans, or a `let ... else {` whose body is
+    an invariant panic, as in the region lists. Comments do not count.
+
+    shortcut: a statement ends at a line that ends in `;`, `{` or `}`. The walk goes on past
+    an assert that closes before line `number`, because an outer assert can still be open. It
+    goes on over a commented-out line too, so it can hide a branch below commented-out code.
+    No such line exists in the repository now.
+    """
+    code = code_of(read_line(path, number))
+    if ASSERT.search(code) or INVARIANT.search(code):
+        return True
+    if code.rstrip().endswith("else {") and INVARIANT.search(code_of(read_line(path, number + 1))):
+        return True
+    for before in range(number - 1, max(number - CONTINUATION, 0), -1):
+        raw = read_line(path, before).strip()
+        if not raw:
+            return False
+        text = code_of(raw).rstrip()
+        if text.endswith((";", "{", "}")):
+            return False
+        if found := ASSERT.search(text):
+            rest = text[found.end() :] + "".join(
+                code_of(read_line(path, n)) for n in range(before + 1, number)
+            )
+            if not closes(rest):
+                return True
+    return False
+
+
+def closes(code: str) -> bool:
+    """Return whether `code`, which follows an open `(`, closes it."""
+    depth = 1
+    for char in code:
+        depth += {"(": 1, ")": -1}.get(char, 0)
+        if depth == 0:
+            return True
+    return False
+
+
+def missed_branches(
+    lcov: str, changed: dict[str, set[int]], root: str, read_line: Callable[[str, int], str]
+) -> list[str]:
+    """Return one line per changed line that has a missed branch outcome.
+
+    The list leaves out what `unmeasured` names and the lines of inline test modules. The
+    region lists keep their own rules.
+    """
+    result = []
+    for path, lines in sorted(branch_misses(lcov, root).items()):
+        wanted = [n for n in sorted(lines) if n in changed.get(path, ())]
+        if not wanted:
+            continue
+        in_tests = test_module_lines(path, wanted[-1], read_line)
+        for number in wanted:
+            if number in in_tests or unmeasured(path, number, read_line):
+                continue
+            missed, total = lines[number]
+            source = read_line(path, number).strip()[:80]
+            result.append(f"{path}:{number}: missed {missed} of {total}: {source}")
+    return result
 
 
 def main(argv: list[str]) -> int:
@@ -200,6 +340,12 @@ def main(argv: list[str]) -> int:
                 )
         if not isinstance(data["functions"], list):
             raise ValueError("functions is not a list")  # noqa: TRY004, TRY301  as for `percent`: the handler prints the message, and TypeError would change the type name
+        if data["totals"].get("branches", {}).get("count", 0) > 0 and not re.search(
+            r"^BRDA:", texts[1], re.MULTILINE
+        ):
+            raise ValueError(  # noqa: TRY301  as for `percent`: the handler prints the message
+                "the JSON measured branches, but the LCOV file has no BRDA record"
+            )
         root = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True
         ).stdout.strip()

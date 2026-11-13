@@ -4,6 +4,10 @@
 # It runs the nextest suite under cargo-llvm-cov and honors NEXTEST_PROFILE. Without it, the
 # run uses the `ci` profile, whose kills in .config/nextest.toml are sized for coverage.
 # It fails only when the instrumented run fails, never on low coverage.
+# Branch coverage needs the nightly toolchain that scripts/coverage-toolchain names (the
+# `--branch` flag is unstable). When that toolchain is installed, the run measures branches
+# with its rustc and the pinned cargo; when it is not installed, or lacks the llvm-tools-preview
+# component, the run warns and measures lines only.
 # Programs link an uninstrumented runtime (scripts/build-runtime.sh), so the
 # runtime's coverage comes from its unit tests only.
 # git diff leaves out untracked files, so commit new files or `git add -N`
@@ -28,16 +32,28 @@ git diff --quiet HEAD || dirty=' with uncommitted changes'
 export SISU_COVERAGE_TARGET_DIR="$PWD/target/llvm-cov-target"
 export NEXTEST_PROFILE="${NEXTEST_PROFILE:-ci}"
 
+branch=()
+# RUSTUP_AUTO_INSTALL=0: rustup must not install the toolchain by itself with its default profile.
+# The llvm-cov of the toolchain: without it, cargo-llvm-cov would install the component unasked.
+if rustc=$(RUSTUP_AUTO_INSTALL=0 rustup which --toolchain "$(<scripts/coverage-toolchain)" rustc 2>/dev/null) \
+	&& [[ -x $("$rustc" --print target-libdir)/../bin/llvm-cov ]]; then
+	export RUSTC=$rustc
+	branch=(--branch)
+else
+	echo "coverage: no branch coverage: run \`rustup toolchain install $(<scripts/coverage-toolchain)" \
+		"--profile minimal --component llvm-tools-preview\` to measure it" >&2
+fi
+
 cargo llvm-cov clean --workspace
 # This test exhausts file descriptors, so the profiler's "Too many open files"
 # line breaks its exact stderr check.
-cargo llvm-cov nextest --workspace --locked --no-report \
+cargo llvm-cov nextest --workspace --locked --no-report "${branch[@]}" \
 	-E 'not (package(sisu-runtime) & test(=tests::print_panics_when_standard_output_cannot_be_duplicated))'
 
 out=target/llvm-cov
 mkdir -p "$out"
-cargo llvm-cov report --json --output-path "$out/coverage.json"
-cargo llvm-cov report --lcov --output-path "$out/lcov.info"
+cargo llvm-cov report "${branch[@]}" --json --output-path "$out/coverage.json"
+cargo llvm-cov report "${branch[@]}" --lcov --output-path "$out/lcov.info"
 git diff --no-color --no-ext-diff -U0 --src-prefix=a/ --dst-prefix=b/ "$base" >"$out/changes.diff"
 
 # A commit or an edit made during the run means the report does not describe $head.

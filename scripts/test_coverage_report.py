@@ -50,6 +50,20 @@ def lcov(**lines: dict[int, int]) -> str:
     )
 
 
+def branch_lcov(path: str, **lines: list[int | None]) -> str:
+    """branch_lcov("a.rs", n3=[1, 0]) gives BRDA lines for line 3; None is a `-` count."""
+    out = f"SF:/r/{path}\n"
+    for key, counts in lines.items():
+        for i, c in enumerate(counts):
+            out += f"BRDA:{key.removeprefix('n')},0,{i},{'-' if c is None else c}\n"
+    return out + "end_of_record\n"
+
+
+def branch_export(count: int = 10, percent: float = 94.26) -> dict[str, Any]:
+    totals = {**TOTALS, "branches": {"count": count, "percent": percent}}
+    return {"data": [{"totals": totals, "functions": []}]}
+
+
 def run(
     exp: dict[str, Any],
     lc: str = "",
@@ -182,7 +196,7 @@ class Report(unittest.TestCase):
             5: "    0",
         }
         _, touching, other = sections(
-            run(exp, df=diff(start=3, count=3), read=lambda _p, n: lines[n])
+            run(exp, df=diff(start=3, count=3), read=lambda _p, n: lines.get(n, ""))
         )
         self.assertEqual([t.split(": ")[0] for t in touching], ["a.rs:5:5-5:9"])
         self.assertEqual([t.split(": ")[0] for t in other], ["a.rs:3:5-3:17", "a.rs:4:5-4:11"])
@@ -199,10 +213,22 @@ class Report(unittest.TestCase):
         # Line 4 never ran, so its assert did not run, and its region still counts.
         lc = lcov(**{"a.rs": {3: 1, 4: 0, 5: 0}})
         _, touching, other = sections(
-            run(exp, lc, diff(start=3, count=3), read=lambda _p, n: lines[n])
+            run(exp, lc, diff(start=3, count=3), read=lambda _p, n: lines.get(n, ""))
         )
         self.assertEqual([t.split(": ")[0] for t in touching], ["a.rs:4:30-4:36", "a.rs:5:5-5:9"])
         self.assertEqual([t.split(": ")[0] for t in other], ["a.rs:3:30-3:36"])
+
+    def test_a_panic_or_an_assert_in_a_string_should_not_move_a_region_out_of_the_list(
+        self,
+    ) -> None:
+        exp = export(func("f", [(1, 1, 9, 1, 1), (3, 5, 3, 30, 0), (4, 5, 4, 30, 0)]))
+        lines = {3: '    if a { f("panic!(x)") }', 4: '    if a { f("assert!(x)") }'}
+        lc = lcov(**{"a.rs": {3: 1, 4: 1}})
+        _, touching, other = sections(
+            run(exp, lc, diff(start=3, count=2), read=lambda _p, n: lines[n])
+        )
+        self.assertEqual([t.split(": ")[0] for t in touching], ["a.rs:3:5-3:30", "a.rs:4:5-4:30"])
+        self.assertEqual(other, ["(none)"])
 
     def test_changed_lines_coverage_counts_only_instrumented_lines(self) -> None:
         out = run(export(), lcov(**{"a.rs": {1: 1, 2: 1, 3: 0}}), diff(start=1, count=4))
@@ -240,6 +266,247 @@ class Report(unittest.TestCase):
         exp = export(func("f", [(1, 1, 9, 1, 1), (3, 1, 4, 1, 0)]))
         out = run(exp, df=diff(start=3), read=lambda _p, _n: "  " + "x" * 100)
         self.assertIn(": " + "x" * 80 + "\n", out + "\n")
+
+
+class Branches(unittest.TestCase):
+    def test_the_figures_should_name_branches_when_branches_were_measured(self) -> None:
+        out = run(branch_export())
+        self.assertEqual(
+            out.splitlines()[0],
+            "Coverage: lines 87.3%, regions 85.1%, branches 94.3%, changed lines: none.",
+        )
+
+    def test_the_figures_should_leave_out_branches_when_none_were_measured(self) -> None:
+        out = run(branch_export(count=0, percent=0.0))
+        self.assertNotIn("branches", out.splitlines()[0])
+
+    def test_a_changed_line_with_a_missed_branch_should_be_listed(self) -> None:
+        lc = branch_lcov("a.rs", n3=[1, 0], n4=[None, 2, 0], n5=[1, 1], n9=[0, 0])
+        out = run(branch_export(), lc, diff(start=3, count=3))
+        self.assertIn(
+            "\n\nMissed branches on changed lines:\na.rs:3: missed 1 of 2: line 3\n"
+            "a.rs:4: missed 2 of 3: line 4\n\n",
+            out,
+        )
+        self.assertNotIn("a.rs:5:", out)  # all branches ran
+        self.assertNotIn("a.rs:9:", out)  # the line did not change
+
+    def test_the_branch_list_should_say_none_when_no_changed_line_misses_a_branch(self) -> None:
+        out = run(branch_export(), branch_lcov("a.rs", n3=[1, 1], n9=[0, 1]), diff(start=3))
+        self.assertIn("Missed branches on changed lines:\n(none)\n\n", out)
+
+    def test_the_branch_list_should_leave_out_assert_and_invariant_lines(self) -> None:
+        lines = {
+            3: '    assert!(n <= 4, "{}", n.get());',
+            4: '    _ => unreachable!("x should be y"),',
+            5: "    if a {",
+        }
+        lc = branch_lcov("a.rs", n3=[1, 0], n4=[1, 0], n5=[1, 0])
+        out = run(branch_export(), lc, diff(start=3, count=3), read=lambda _p, n: lines.get(n, ""))
+        self.assertIn("Missed branches on changed lines:\na.rs:5: missed 1 of 2: if a {\n\n", out)
+
+    def test_the_branch_list_should_cut_long_source_lines_at_80_characters(self) -> None:
+        out = run(
+            branch_export(),
+            branch_lcov("a.rs", n3=[1, 0]),
+            diff(start=3),
+            read=lambda _p, _n: "  " + "x" * 100,
+        )
+        self.assertIn(": " + "x" * 80 + "\n", out)
+
+    def test_a_line_only_run_should_have_no_branch_list(self) -> None:
+        out = run(export(), branch_lcov("a.rs", n3=[1, 0]), diff(start=3))
+        self.assertNotIn("Missed branches", out)
+
+    def test_the_report_should_end_with_its_figures_after_the_branch_list(self) -> None:
+        out = run(branch_export(), branch_lcov("a.rs", n3=[1, 0]), diff(start=3))
+        lines = out.splitlines()
+        self.assertEqual(lines[-1], lines[0])
+        self.assertLess(out.index("Missed branches"), out.rindex("Coverage:"))
+
+
+def source(*lines: str) -> Callable[[str, int], str]:
+    """A line reader over `lines`, numbered from 1; a line outside them is empty."""
+    return lambda _path, n: lines[n - 1] if 0 < n <= len(lines) else ""
+
+
+def listed(*lines: str, branches: list[int]) -> list[int]:
+    """The lines of `lines` that the branch list names, when each line of `branches` misses one."""
+    missed: list[int | None] = [1, 0]
+    lc = branch_lcov("a.rs", **{f"n{n}": missed for n in branches})
+    out = run(branch_export(), lc, diff(start=1, count=len(lines)), read=source(*lines))
+    section = out.split("Missed branches on changed lines:\n")[1].split("\n\n")[0]
+    return [int(x.split(":")[1]) for x in section.splitlines() if x != "(none)"]
+
+
+class BranchNoise(unittest.TestCase):
+    """Lines whose branches no test should take, or that no test of the product measures."""
+
+    def test_a_let_else_before_an_invariant_panic_should_be_left_out(self) -> None:
+        lines = (
+            "let Ok(x) = y else {",
+            '    unreachable!("y should be ok")',
+            "};",
+            "let Some(z) = y else {",
+            "    return None;",
+            "};",
+            'let Ok(x) = y else { panic!("y should be ok") };',
+        )
+        self.assertEqual(listed(*lines, branches=[1, 4, 7]), [4])
+
+    def test_the_lines_of_a_multiline_assert_should_be_left_out(self) -> None:
+        lines = (
+            "let a = 1;",
+            "assert!(",
+            "    a.map(|x| if x { 1 } else { 2 }) == b,",
+            '    "message {}",',
+            "    c.map(|y| if y { 1 } else { 2 })",
+            ");",
+            "foo(",
+            "    if a { 1 } else { 2 },",
+            ");",
+            "if a {",
+            "    debug_assert_eq!(",
+            "        a,",
+            "        if b { 1 } else { 2 },",
+            "    );",
+            "}",
+        )
+        self.assertEqual(listed(*lines, branches=[3, 5, 8, 10, 13]), [8, 10])
+
+    def test_a_one_line_assert_after_a_closed_statement_should_not_hide_the_next_line(self) -> None:
+        lines = ("assert!(a);", "if b {", "}")
+        self.assertEqual(listed(*lines, branches=[2]), [2])
+
+    def test_an_inline_test_module_should_be_left_out(self) -> None:
+        lines = (
+            "fn f() { if a {} }",
+            "#[cfg(test)]",
+            "#[allow(clippy::x)]",
+            "mod tests {",
+            '    const S: &str = "{";',
+            "    mod inner {",
+            "        fn g() { if b {} }",
+            "    }",
+            "    fn h() { if c {} }",
+            "}",
+            "fn k() { if d {} }",
+        )
+        self.assertEqual(listed(*lines, branches=[1, 7, 9, 11]), [1, 11])
+
+    def test_a_pub_crate_inline_test_module_should_be_left_out(self) -> None:
+        lines = (
+            "#[cfg(test)]",
+            "pub(crate) mod tests {",
+            "    fn h() { if c {} }",
+            "}",
+            "fn k() { if d {} }",
+        )
+        self.assertEqual(listed(*lines, branches=[3, 5]), [5])
+
+    def test_braces_in_raw_strings_and_char_literals_should_not_end_a_test_module_wrongly(
+        self,
+    ) -> None:
+        lines = (
+            "#[cfg(test)]",
+            "mod tests {",
+            '    const S: &str = r#"{ "a": {"#;',
+            '    const R: &str = r#""}""#;',
+            "    const C: char = '{';",
+            "    const Q: char = '\\'';",
+            "    fn f<'a>(x: &'a str) { if b {} }",
+            '    const T: &str = r"}";',
+            "}",
+            "fn k() { if d {} }",
+        )
+        self.assertEqual(listed(*lines, branches=[7, 10]), [10])
+
+    def test_a_comment_after_an_assert_should_not_hide_the_next_line(self) -> None:
+        lines = ("debug_assert!(n > 0); // why", "if n > 1 {", "}")
+        self.assertEqual(listed(*lines, branches=[2]), [2])
+
+    def test_a_comment_that_names_an_assert_should_not_hide_the_next_line(self) -> None:
+        lines = ("// see assert!(x)", "if a && b {", "}")
+        self.assertEqual(listed(*lines, branches=[2]), [2])
+
+    def test_a_comment_that_names_an_invariant_should_not_hide_its_own_line(self) -> None:
+        lines = (
+            "if a { // not unreachable!(x)",
+            "}",
+            "let Some(z) = y else { // x",
+            "    return;",
+            "let Some(x) = y else {",
+            "    return; // not panic!(x)",
+        )
+        self.assertEqual(listed(*lines, branches=[1, 3, 5]), [1, 3, 5])
+
+    def test_comments_inside_a_multiline_assert_should_not_end_the_walk(self) -> None:
+        lines = (
+            "assert!( // why",
+            "    a, // and why",
+            "    // why",
+            "    if b { 1 } else { 2 }, // more",
+            ");",
+        )
+        self.assertEqual(listed(*lines, branches=[4]), [])
+
+    def test_an_assert_that_closed_on_an_earlier_line_should_not_hide_the_next_line(self) -> None:
+        lines = (
+            "match x {",
+            "    A => assert!(ready),",
+            "    B if left && right => run(),",
+            "}",
+            "foo(",
+            "    xs.iter().for_each(|x| assert!(f(x))),",
+            "    if a { 1 } else { 2 },",
+            ");",
+        )
+        self.assertEqual(listed(*lines, branches=[3, 7]), [3, 7])
+
+    def test_a_closed_assert_inside_an_open_assert_should_not_end_the_walk(self) -> None:
+        lines = (
+            "assert!(",
+            "    { assert!(ready); ready },",
+            '    "{}",',
+            "    if verbose { 1 } else { 2 },",
+            ");",
+        )
+        self.assertEqual(listed(*lines, branches=[4]), [])
+
+    def test_a_block_comment_that_names_an_invariant_should_not_hide_its_own_line(self) -> None:
+        lines = ("if ready /* panic!( */ {", "}", "let x = a /* b */ && c;")
+        self.assertEqual(listed(*lines, branches=[1, 3]), [1, 3])
+
+    def test_a_blank_line_should_end_the_walk_back_from_an_assert(self) -> None:
+        lines = ("assert!(a,", "", "if b {", "}")
+        self.assertEqual(listed(*lines, branches=[3]), [3])
+
+    def test_a_brace_in_a_multiline_string_should_not_stretch_a_test_module(self) -> None:
+        lines = (
+            "#[cfg(test)]",
+            "mod tests {",
+            '    const INPUT: &str = r#"',
+            '{"#;',
+            "}",
+            "fn production(flag: bool) -> bool {",
+            "    if flag { true } else { false }",
+            "}",
+        )
+        self.assertEqual(listed(*lines, branches=[7]), [7])
+
+    def test_a_cfg_test_item_that_is_not_a_module_should_stay(self) -> None:
+        lines = (
+            "#[cfg(test)]",
+            "fn t() { if a {} }",
+            "#[cfg(test)]",
+            "mod tests;",
+            "fn k() { if d {} }",
+            "#[cfg(not(test))]",
+            "mod real {",
+            "    fn m() { if e {} }",
+            "}",
+        )
+        self.assertEqual(listed(*lines, branches=[2, 5, 8]), [2, 5, 8])
 
 
 class Main(unittest.TestCase):
@@ -282,6 +549,7 @@ class Main(unittest.TestCase):
             (bad_pct,),
             (json.dumps({"data": [{}]}),),
             (good, "SF:/r/a.rs\nDA:1,x\n", diff()),
+            (json.dumps(branch_export()), "SF:/r/a.rs\nDA:1,1\nend_of_record\n", diff()),
             ("{", "", ""),
         ):
             code, err = self.call(*args)
