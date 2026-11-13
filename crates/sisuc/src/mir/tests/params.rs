@@ -1224,57 +1224,92 @@ fn slice_of_a_parameter_passed_on_should_stay_borrowed() {
     assert!(!f.contains("= copy xs#0"), "{f}");
 }
 
-/// GIVEN a function `g` that passes `x`, a borrow of its local `r`, to itself in tail position
-/// AND another block of `g` that returns the element `xs[0]`
-/// WHEN the modes are inferred
-/// THEN `g`'s string parameter stays borrowed: `g` keeps `r` alive past the call, so it hands
-/// nothing over. No lowering returns a place with a projection, so the mir is by hand
-#[test]
-fn infer_should_keep_a_parameter_borrowed_when_a_tail_call_passes_a_borrow_of_a_local() {
+/// A call of `g`, `FuncId(1)`, with the arguments `args`, into `dest`. `g` is the second function.
+fn call_g(dest: Option<LocalId>, args: Vec<Operand>) -> Statement {
+    Statement::Assign {
+        dest,
+        value: Rvalue::Call {
+            func: FuncId(1),
+            borrowed: vec![false; args.len()],
+            args,
+            span: Span::new(0, 0),
+            quiet: false,
+        },
+    }
+}
+
+/// The modes that `infer` gives `functions` after a `main` that calls nothing.
+fn modes_after_main(g: Function) -> Vec<bool> {
     let mut main = Builder::new("main");
     main.block(vec![], ret());
-
-    let mut b = Builder::new("g");
-    let c = b.param("c", Type::BOOL);
-    let _s = b.param("s", Type::STRING);
-    let xs = b.param("xs", Type::array(Type::I64));
-    let r = b.local("r", Type::STRING);
-    let x = b.local("x", Type::STRING);
-    b.owner(x, r);
-    b.block(vec![], branch(c, 1, 2));
-    // A projection in the returned place is no `Return` of a local.
-    b.block(
-        vec![],
-        Terminator::Return(Some(Operand::Read(Place {
-            projections: vec![Projection::Index {
-                index: Operand::Const(Const::Int(0, Type::I64)),
-                span: Span::new(0, 0),
-            }],
-            ..whole(xs)
-        }))),
-    );
-    b.block(
-        vec![
-            fresh(r),
-            assign(x, Rvalue::Borrow(whole(r))),
-            Statement::Assign {
-                dest: None,
-                value: Rvalue::Call {
-                    func: FuncId(1),
-                    args: vec![read(c), Operand::Use(x)],
-                    borrowed: vec![false, false],
-                    span: Span::new(0, 0),
-                    quiet: false,
-                },
-            },
-            Statement::End(x),
-            Statement::ScopeRelease(r),
-        ],
-        ret(),
-    );
-    let functions = [main.finish(), b.finish()];
-    TAIL_ARGUMENTS.set(0);
+    let functions = [main.finish(), g];
     let modes = super::super::params::infer(&functions, FuncId(0), &[vec![], vec![]]);
+    modes[1].clone()
+}
+
+/// GIVEN a function `g` that takes `cond` and `s`, and makes a local `root`
+/// AND a block of `g` that returns `root`, so `g` consumes it
+/// AND another block that passes `binding`, a borrow of `root`, to `g` in tail position
+/// WHEN the modes are inferred
+/// THEN `s` stays borrowed: `g` consumes `root`, but `root` is a local, not a parameter
+/// AND the borrow of `root` in the call makes no parameter of `g` owned
+#[test]
+fn infer_should_keep_a_parameter_borrowed_when_a_tail_call_passes_a_borrow_of_a_consumed_local() {
+    let mut builder = Builder::new("g");
+    let cond = builder.param("cond", Type::BOOL);
+    builder.param("s", Type::STRING);
+    let root = builder.local("root", Type::STRING);
+    let binding = builder.local("binding", Type::STRING);
+    let result = builder.local("result", Type::STRING);
+    builder.owner(binding, root);
+    builder.block(vec![fresh(root)], branch(cond, 1, 2));
+    builder.block(vec![], Terminator::Return(Some(Operand::Move(root))));
+    builder.block(
+        vec![
+            assign(binding, Rvalue::Borrow(whole(root))),
+            call_g(Some(result), vec![read(cond), Operand::Use(binding)]),
+            Statement::End(binding),
+            Statement::ScopeRelease(root),
+        ],
+        Terminator::Return(Some(Operand::Move(result))),
+    );
+    let mut g = builder.finish();
+    g.ret = Type::STRING;
+    TAIL_ARGUMENTS.set(0);
+    assert_eq!(modes_after_main(g), [false, true]);
     assert_eq!(TAIL_ARGUMENTS.get(), 1, "the call should be a tail call");
-    assert_eq!(modes[1], [false, true, true]);
+}
+
+/// GIVEN a call of `g` with a fresh argument, then a `goto` to a block that returns a field of
+/// the call's result
+/// WHEN the modes are inferred
+/// THEN `s` stays borrowed: the call is not in tail position, since a field of the result is not
+/// the result. No lowering returns a place with a projection, so the mir is by hand
+#[test]
+fn infer_should_not_take_a_call_before_the_return_of_a_field_for_a_tail_call() {
+    let mut b = Builder::new("g");
+    b.param("s", Type::STRING);
+    let t = b.local("t", Type::STRING);
+    let result = b.local("result", Type::STRING);
+    b.block(
+        vec![fresh(t), call_g(Some(result), vec![Operand::Use(t)])],
+        goto(1),
+    );
+    let field = Place {
+        projections: vec![Projection::Field {
+            index: 0,
+            mutable: false,
+        }],
+        ..whole(result)
+    };
+    b.block(vec![], Terminator::Return(Some(Operand::Read(field))));
+    let mut g = b.finish();
+    g.ret = Type::STRING;
+    TAIL_ARGUMENTS.set(0);
+    assert_eq!(modes_after_main(g), [true]);
+    assert_eq!(
+        TAIL_ARGUMENTS.get(),
+        0,
+        "the call should not be a tail call"
+    );
 }

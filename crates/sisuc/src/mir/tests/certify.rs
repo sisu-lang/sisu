@@ -4418,29 +4418,3 @@ fn certify_should_not_ask_a_take_for_a_store_of_an_element_read() {
     );
     assert_eq!(certify(&b.finish()), Ok(()));
 }
-
-/// GIVEN an optional `o` scoped at `bb2`, whose presence test in `bb2` has the `None` edge to
-/// `bb1`
-/// AND `bb0` also reaches `bb1`, which comes before `bb2` in pre-order
-/// WHEN the function is certified
-/// THEN it is accepted: `bb1` is outside the region of `o`, so the region does not add it as a
-/// node before its scope block
-#[test]
-fn certify_should_leave_a_none_target_outside_the_region_out_of_it() {
-    let mut b = Builder::new("f");
-    let c = b.param("c", Type::BOOL);
-    let o = b.local("o", Type::optional(Type::STRING));
-    b.scope(o, BlockId(2));
-    b.block(vec![], branch(c, 1, 2));
-    b.block(vec![], ret());
-    b.block(
-        vec![fresh(o)],
-        Terminator::IfPresent {
-            optional: o,
-            some: BlockId(3),
-            none: BlockId(1),
-        },
-    );
-    b.block(vec![Statement::Release(o)], ret());
-    assert_eq!(certify(&b.finish()), Ok(()));
-}

@@ -820,10 +820,10 @@ fn slice_should_stay_a_move_where_a_borrow_is_wrong() {
 }
 
 /// `t = copy xs[0]`, a read of `t`, and `release t` in one block of a function over `xs`, an
-/// array of strings, with `t` of the type `ty`. The pass is run on it.
+/// array of `ty`, with `t` of the type `ty`. The pass is run on it.
 fn pair_candidate(ty: Type) -> Function {
     let mut b = Builder::new("f");
-    let xs = b.param("xs", Type::array(Type::STRING));
+    let xs = b.param("xs", Type::array(ty));
     let t = b.local("t", ty);
     b.block(
         vec![
@@ -878,10 +878,10 @@ fn remove_pairs_should_keep_a_copy_into_an_uncounted_local() {
     );
 }
 
-/// GIVEN two copies into the same local `t` before its release
+/// GIVEN a copy into `t`, and a second copy into `t` before the release of `t`
 /// WHEN the pairs are removed
-/// THEN nothing changes: the second copy cannot open a candidate for a member that is open, and
-/// the first is not valid once `t` is assigned again. No lowering assigns a local twice in a pair
+/// THEN no copy becomes a borrow: an open member that is assigned again keeps its copy and its
+/// release. No lowering assigns a local twice in a pair, so the mir is by hand
 #[test]
 fn remove_pairs_should_keep_two_copies_into_one_local() {
     let mut b = Builder::new("f");
