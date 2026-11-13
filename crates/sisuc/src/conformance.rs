@@ -1558,6 +1558,10 @@ mod tests {
         Type::intern(TypeKind::Enum(EnumId(id), TypeArgs::intern(args)))
     }
 
+    fn structure(id: usize, args: &[Type]) -> Type {
+        Type::intern(TypeKind::Struct(StructId(id), TypeArgs::intern(args)))
+    }
+
     /// The conformances of interface 0 that `rows` write: the target with `params` parameters,
     /// and the interface's arguments.
     fn conformances(rows: &[(Type, usize, &[Type])]) -> Conformances {
@@ -1588,7 +1592,8 @@ mod tests {
         let (t, u) = (param(0), param(0));
         let pair = |a, b| class(PAIR, &[a, b]);
         let circle = class(CIRCLE, &[]);
-        let rows: [Row<'_>; 25] = [
+        let cell = |arg| structure(0, &[arg]);
+        let rows: [Row<'_>; 28] = [
             // `extend<T> Box<T>: Convert<T>` and `extend<U> Box<U>: Convert<i64>`.
             (
                 &[boxed(t), t],
@@ -1654,6 +1659,17 @@ mod tests {
             (&[tree(0, &[t, t])], 1, &[tree(0, &[u])], 1, None),
             (&[class(BOX, &[t, t])], 1, &[class(BOX, &[u])], 1, None),
             (&[boxed(t)], 1, &[class(PILE, &[u])], 1, None),
+            // Structs as classes: the same struct with arguments that unify, another struct, and
+            // the same struct with other arguments.
+            (
+                &[cell(t)],
+                1,
+                &[cell(Type::I64)],
+                0,
+                Some(vec![cell(Type::I64)]),
+            ),
+            (&[cell(t)], 1, &[structure(1, &[u])], 1, None),
+            (&[cell(Type::I64)], 0, &[cell(Type::BOOL)], 0, None),
             // A parameter never stands for a type that holds it, in a class or an enum.
             (&[boxed(t), t], 1, &[boxed(u), boxed(u)], 1, None),
             (
@@ -1866,6 +1882,15 @@ mod tests {
         );
         assert_eq!(binds(tree(0, t), 1, tree(1, Type::I64)), None);
         assert_eq!(binds(tree(0, t), 1, boxed(Type::I64)), None);
+        // Structs match structs by their ids and arguments.
+        assert_eq!(
+            binds(structure(0, &[t]), 1, structure(0, &[Type::I64])),
+            Some(vec![Type::I64])
+        );
+        assert_eq!(
+            binds(structure(0, &[t]), 1, structure(1, &[Type::I64])),
+            None
+        );
     }
 
     /// A target without parameters is found by its exact type and its arguments; one with

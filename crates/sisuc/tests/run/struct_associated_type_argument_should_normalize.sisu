@@ -1,0 +1,19 @@
+// GIVEN `struct Bx<T> { v: T }` and `fn wrap<T: I>(x: T.Item) -> Bx<T.Item>`
+// WHEN `wrap<W>(5)` runs, with `W.Item = i64`
+// THEN the result is a `Bx<i64>`: `b` prints `Bx(v: 5)`, and a `W` prints its field 0
+interface I {
+    type Item
+}
+class W: I {
+    n: i64
+    type Item = i64
+}
+struct Bx<T> { v: T }
+fn wrap<T: I>(x: T.Item) -> Bx<T.Item> {
+    Bx(v: x)
+}
+fn main() {
+    let b: Bx<i64> = wrap<W>(5)
+    print(b)
+    print(W(n: 0).n)
+}
