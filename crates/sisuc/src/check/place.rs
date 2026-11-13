@@ -133,9 +133,10 @@ impl Change {
     }
 
     /// How the index that this change reaches uses its element: an assignment writes it, when
-    /// it is the whole target. A `push` and a deeper index only read it.
-    fn index_usage(self) -> IndexUsage {
-        if self == Change::Assign {
+    /// it is the whole target and its place `changes`. A `push`, a deeper index and a place that
+    /// cannot change only read it.
+    fn index_usage(self, changes: bool) -> IndexUsage {
+        if self == Change::Assign && changes {
             IndexUsage::Write
         } else {
             IndexUsage::Read
@@ -340,6 +341,17 @@ impl Checker<'_> {
             }
             &ast::ExprKind::Name(name) => self.lookup(name).is_some(),
             _ => true,
+        }
+    }
+
+    /// Whether the root of the place `e` is a binding that a write can change, a `let mut` or a
+    /// `mut` parameter. A constant, `self` and a value that a call gives are not.
+    pub(super) fn root_can_change(&self, e: &ast::Expr) -> bool {
+        match &place_root(e).kind {
+            &ast::ExprKind::Name(name) => self
+                .binding(name)
+                .is_some_and(|b| binding_cause(b).is_none()),
+            _ => false,
         }
     }
 
@@ -1100,12 +1112,14 @@ impl Checker<'_> {
                 let inner = self.place(span, base, inner_change);
                 // The array of an optional array is no place, but its element has a type.
                 let optional = inner.value_ty().filter(|&ty| is_optional_array(ty));
+                // A root that failed or cannot change has no write to help with.
+                let usage = change.index_usage(inner.reported.is_none() && inner.writable);
                 let (element, element_report) = match optional {
                     Some(ty) => {
                         let reported = self.optional_array_target(base, &inner);
                         (optional_element(ty), Some(reported))
                     }
-                    None => self.element(base, (inner.value_ty(), false), change.index_usage()),
+                    None => self.element(base, (inner.value_ty(), false), usage),
                 };
                 // The index is not part of the chain that it ends.
                 self.body.indexed = false;

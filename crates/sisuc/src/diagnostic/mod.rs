@@ -7,6 +7,8 @@ mod registry;
 mod render;
 mod suggest;
 
+#[cfg(test)]
+pub(crate) use registry::string_index_names;
 pub(crate) use registry::{
     AddBound, Annotate, AnyFormKind, ArgumentsForm, BadRange, BlockBound, BlockNeed, BoundLabel,
     BoundSite, BuiltIn, CannotExtendForm, ChainForm, ChainLabel, ClashForm, ClashKind, Code,

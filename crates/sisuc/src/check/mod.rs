@@ -581,6 +581,13 @@ impl<'src> Source<'src> {
             .into_owned()
     }
 
+    /// `span` as one line, to quote in a message or a help. It is `None` when a line break stays,
+    /// as in a block with statements: see `line_text`.
+    fn quote(&self, span: Span) -> Option<String> {
+        let text = self.line_text(span);
+        (!text.contains('\n')).then_some(text)
+    }
+
     /// The parts of `span` that a removal deletes so that each comment in it stays: see
     /// `source::Source::removal_parts`.
     fn removal_parts(&self, span: Span) -> Vec<Span> {

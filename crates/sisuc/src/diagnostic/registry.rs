@@ -974,17 +974,19 @@ pub(crate) enum DiagnosticKind {
     /// index into one that is neither an array nor a string.
     CannotIndex { ty: String, at: Span, range: bool },
     /// A single index into the string at `at`: a string takes a range index only. `base` is the
-    /// string as written, and `usage` says whether the index reads or is the target of a write.
+    /// string as written on one line, or `None` when it has no such text. `usage` says whether the
+    /// index reads or is the target of a write.
     StringIndex {
         at: Span,
-        base: String,
+        base: Option<String>,
         usage: IndexUsage,
     },
     /// The argument at `at` of a string's `get`, which is no range written in the call: `base` is
-    /// the receiver as written, and `call` how the call is written.
+    /// the receiver as written on one line, or `None` when it has no such text, and `call` how the
+    /// call is written.
     StringGetNeedsRange {
         at: Span,
-        base: String,
+        base: Option<String>,
         call: GetCall,
     },
     /// The range at `at`, given to an array's `get`, which takes an `i64`. `base` is the receiver
@@ -2357,6 +2359,25 @@ fn unwrap_text(unwrap: UnwrapHelp, fix: bool) -> Option<String> {
     }
 }
 
+/// The names `bs`, `cs` and `i` that the help of a single index of a string writes. A name that
+/// `base` holds as a whole word gets the first number from 2 that `base` does not hold. So the
+/// help does not name `base` twice.
+pub(crate) fn string_index_names(base: &str) -> [String; 3] {
+    let words: Vec<&str> = base
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|word| !word.is_empty())
+        .collect();
+    ["bs", "cs", "i"].map(|name| {
+        let mut fresh = name.to_owned();
+        let mut number = 1;
+        while words.contains(&fresh.as_str()) {
+            number += 1;
+            fresh = format!("{name}{number}");
+        }
+        fresh
+    })
+}
+
 /// The help that replaces the optional struct value `base`, as written.
 fn replace_text(base: &str) -> String {
     format!("replace the value: `{base} = Some(...)`")
@@ -2500,14 +2521,20 @@ pub(crate) enum RangeForm {
         missing: MissingBound,
         place: RangePlace,
     },
-    /// `start..=` with no end in an index or a string's `get`, which is no range there: `range` is
-    /// its source text.
-    NoEnd { range: String, start: String },
-    /// `base[..]` or `base[..=]`: the whole of `base`, which is `base`.
-    NoBounds { base: String, inclusive: bool },
+    /// `start..=` with no end in an index or a string's `get`, which is no range there: `quote` is
+    /// its source text and the source text of `start`, each on one line, or `None` when one of
+    /// them has no such text.
+    NoEnd { quote: Option<(String, String)> },
+    /// `base[..]` or `base[..=]`: the whole of `base`, which is `base`. `base` is `None` when it
+    /// has no one-line text.
+    NoBounds {
+        base: Option<String>,
+        inclusive: bool,
+    },
     /// `base.get(..)` or `base.get(..=)`, a string's `get` of its whole value, written as `call`.
+    /// `base` is `None` when it has no one-line text.
     NoBoundsGet {
-        base: String,
+        base: Option<String>,
         inclusive: bool,
         call: GetCall,
     },
@@ -2584,19 +2611,33 @@ impl RangeForm {
                     .with_label(label)
                     .with_help(help)
             }
-            Self::NoEnd { range, start } => {
-                Diagnostic::coded(code, at, format!("`{range}` has no end"))
+            Self::NoEnd { quote: None } => {
+                Diagnostic::coded(code, at, "this `..=` range has no end")
                     .with_label("this range has no end")
-                    .with_help(format!("write `{start}..`"))
+                    .with_help("a `..=` range must have an end")
             }
+            Self::NoEnd {
+                quote: Some((range, start)),
+            } => Diagnostic::coded(code, at, format!("`{range}` has no end"))
+                .with_label("this range has no end")
+                .with_help(format!("write `{start}..`")),
             Self::NoBounds { base, inclusive } => {
                 let dots = if inclusive { "..=" } else { ".." };
-                let help = if inclusive {
-                    format!("write `{base}`")
-                } else {
-                    format!("`{base}[..]` is `{base}`; write `{base}`")
+                let (message, help) = match base {
+                    None => (
+                        format!("`[{dots}]` has no bounds"),
+                        format!("`[{dots}]` gives the whole value, so it has no effect"),
+                    ),
+                    Some(base) if inclusive => (
+                        format!("`{base}[{dots}]` has no bounds"),
+                        format!("write `{base}`"),
+                    ),
+                    Some(base) => (
+                        format!("`{base}[{dots}]` has no bounds"),
+                        format!("`{base}[..]` is `{base}`; write `{base}`"),
+                    ),
                 };
-                Diagnostic::coded(code, at, format!("`{base}[{dots}]` has no bounds"))
+                Diagnostic::coded(code, at, message)
                     .with_label("this range has no bounds")
                     .with_help(help)
             }
@@ -2606,6 +2647,10 @@ impl RangeForm {
                 call: how,
             } => {
                 let dots = if inclusive { "..=" } else { ".." };
+                let Some(base) = base else {
+                    return Diagnostic::coded(code, at, format!("`get({dots})` has no bounds"))
+                        .with_label("this range has no bounds");
+                };
                 let (call, value) = match how {
                     GetCall::Plain => (format!("{base}.get"), Some(format!("Some({base})"))),
                     GetCall::Safe => (format!("{base}?.get"), Some(base)),
@@ -5278,14 +5323,22 @@ impl From<DiagnosticKind> for Diagnostic {
                 })
             }
             DiagnosticKind::StringIndex { at, base, usage } => {
-                // `string` takes no `[u8]`, so a write has no bytes form.
-                let help = match usage {
-                    IndexUsage::Read => format!(
-                        "for bytes, write `let bs = {base}.bytes()` once, then `bs[i]`; for characters, write `let cs = {base}.chars()` once, then `cs[i]`"
-                    ),
-                    IndexUsage::Write => format!(
-                        "to change a character, write `let mut cs = {base}.chars()`, change `cs[i]`, then write `{base} = string(cs)`"
-                    ),
+                // `string` takes no `[u8]`, so a write has no bytes form. A base with no one-line
+                // text has no code to repeat, so the help states the steps.
+                let help = match (base, usage) {
+                    (Some(base), usage) => {
+                        let [bs, cs, i] = string_index_names(&base);
+                        match usage {
+                            IndexUsage::Read => format!(
+                                "for bytes, write `let {bs} = {base}.bytes()` once, then `{bs}[{i}]`; for characters, write `let {cs} = {base}.chars()` once, then `{cs}[{i}]`"
+                            ),
+                            IndexUsage::Write => format!(
+                                "to change a character, write `let mut {cs} = {base}.chars()`, change `{cs}[{i}]`, then write `{base} = string({cs})`"
+                            ),
+                        }
+                    }
+                    (None, IndexUsage::Read) => "for bytes, put `bytes()` of the string in a `let`, then index it; for characters, do the same with `chars()`".to_owned(),
+                    (None, IndexUsage::Write) => "to change a character, put `chars()` of the string in a `let mut`, change it, then write `string(...)` back".to_owned(),
                 };
                 Diagnostic::coded(code, at, "a string has no single index")
                     .with_label("this is a string")
@@ -5293,10 +5346,10 @@ impl From<DiagnosticKind> for Diagnostic {
             }
             DiagnosticKind::StringGetNeedsRange { at, base, call } => {
                 // A call after a failed `?.` fails again, so its help names the range only.
-                let example = match call {
-                    GetCall::Plain => format!("{base}.get(1..3)"),
-                    GetCall::Safe => format!("{base}?.get(1..3)"),
-                    GetCall::SafeFailed | GetCall::Payload => "1..3".to_owned(),
+                let example = match (call, base) {
+                    (GetCall::Plain, Some(base)) => format!("{base}.get(1..3)"),
+                    (GetCall::Safe, Some(base)) => format!("{base}?.get(1..3)"),
+                    _ => "1..3".to_owned(),
                 };
                 Diagnostic::coded(code, at, "a string's `get` takes a range")
                     .with_label("this is not a range")

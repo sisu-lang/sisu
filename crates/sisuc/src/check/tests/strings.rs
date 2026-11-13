@@ -1026,6 +1026,7 @@ fn a_string_index_help_should_name_new_words_that_the_base_does_not_hold() {
 /// is the read help, as the index of a value that is no place. Each row is a program whose one
 /// E0068 the registry builds from `(base, usage)`; the fixtures pin the wording.
 #[test]
+#[expect(clippy::too_many_lines, reason = "a table of programs, one row each")]
 fn a_string_index_write_help_should_need_a_place_that_can_change() {
     use IndexUsage::{Read, Write};
     const ROWS: &[(&str, &str, &str, IndexUsage)] = &[
@@ -1081,6 +1082,12 @@ fn a_string_index_write_help_should_need_a_place_that_can_change() {
             "self",
             "struct O {\n    s: string\n\n    fn f(self) {\n        self.s[0] = \"x\"\n    }\n}",
             "self.s",
+            Read,
+        ),
+        (
+            "self, substring",
+            "struct O {\n    s: string\n\n    fn f(self) {\n        self.s[..1][0] = \"x\"\n    }\n}",
+            "self.s[..1]",
             Read,
         ),
         (
