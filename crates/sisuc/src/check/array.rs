@@ -19,10 +19,23 @@ use crate::tir::{self, Type, TypeArgs, TypeKind};
 enum ObjectJoin {
     /// The elements join, optional, with each such `Some` taken off.
     Joined(Type),
-    /// The objects do not join: the element at `at`, of type `got`, leaves the `any` type `want`.
-    Leaves { at: usize, want: Type, got: Type },
+    /// The objects do not join: the element at `at`, of type `got`, leaves the `any` type `want`,
+    /// which the element `giver` gives. The fields are `(at, giver)`, `want` and `got`.
+    Leaves((usize, usize), Type, Type),
     /// No such join: the elements join as they are.
     Not,
+}
+
+/// The origin of the element `giver` of the `typed` elements, each an index and a type: it gave
+/// the join its type.
+fn giver_origin(elements: &[ast::Expr], typed: &[(usize, Type)], giver: usize) -> Origin {
+    typed
+        .iter()
+        .find(|&&(i, _)| i == giver)
+        .map_or(Origin::None, |&(_, ty)| Origin::Element {
+            at: elements[giver].span,
+            ty,
+        })
 }
 
 /// Whether `ty` is an `any` type, or an array or an optional of one, at any depth.
@@ -218,14 +231,15 @@ impl Checker<'_> {
                 .collect();
             match self.join_objects(&mut slots, &typed) {
                 ObjectJoin::Joined(ty) => joined = Some(ty),
-                ObjectJoin::Leaves { at, want, got } => {
+                ObjectJoin::Leaves((at, giver), want, got) => {
                     let value = slots[at].as_ref().and_then(|slot| slot.as_ref().ok());
                     let (at_span, source, want, got) =
                         match value.and_then(|v| self.object_in_some(v, want)) {
                             Some((span, want, object)) => (span, None, want, object),
                             None => (elements[at].span, Some(&elements[at]), want, got),
                         };
-                    let d = self.leaves_any(at_span, source, want, got, Origin::None);
+                    let origin = giver_origin(elements, &typed, giver);
+                    let d = self.leaves_any(at_span, source, want, got, origin);
                     failed = Some(self.diagnostics.error(d));
                 }
                 ObjectJoin::Not => {
@@ -328,8 +342,9 @@ impl Checker<'_> {
             AnyJoin::Joined { ty } => ty,
             AnyJoin::Leaves {
                 ty,
+                giver,
                 member: (at, got),
-            } => return ObjectJoin::Leaves { at, want: ty, got },
+            } => return ObjectJoin::Leaves((at, giver), ty, got),
             AnyJoin::NoAny | AnyJoin::Fails { .. } => return ObjectJoin::Not,
         };
         for &(i, _) in typed {
@@ -406,6 +421,7 @@ impl Checker<'_> {
             }
             AnyJoin::Leaves {
                 ty,
+                giver,
                 member: (at, got),
             } => {
                 let d = self.leaves_any(
@@ -413,7 +429,7 @@ impl Checker<'_> {
                     Some(&elements[at]),
                     ty,
                     got,
-                    Origin::None,
+                    giver_origin(elements, typed, giver),
                 );
                 return (None, Some(self.diagnostics.error(d)));
             }

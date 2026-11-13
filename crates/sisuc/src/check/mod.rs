@@ -703,8 +703,6 @@ struct Checker<'src> {
     any_entries: FxHashMap<(tir::InterfaceId, TypeArgs), Option<any::AnyReason>>,
     /// The interfaces that each `any` type conforms to (`any_interfaces`).
     any_closures: FxHashMap<Type, any::AnyClosure>,
-    /// Where each `any` type is first written in the user's program.
-    any_written: FxHashMap<Type, Span>,
     /// A buffer for the walk of an interface closure, kept from one closure to the next.
     closure_seen: FxHashSet<(tir::InterfaceId, TypeArgs)>,
     /// Each `extend` block whose target is a class or an enum, in source order.
@@ -1378,7 +1376,6 @@ impl<'src> Checker<'src> {
             any_roots: FxHashMap::default(),
             any_entries: FxHashMap::default(),
             any_closures: FxHashMap::default(),
-            any_written: FxHashMap::default(),
             closure_seen: FxHashSet::default(),
             extensions: Vec::new(),
             extension_methods: FxHashMap::default(),
@@ -2185,7 +2182,7 @@ impl Checker<'_> {
                 }
             },
             ast::TypeKind::Member { base, name } => self.member_type(ty, base, name)?,
-            ast::TypeKind::Any(interface) => self.resolve_any(ty, interface)?,
+            ast::TypeKind::Any(interface) => self.resolve_any(interface)?,
         };
         // Only an applied name can be an instance that grows: a plain name has no arguments.
         // Arguments on a parameter or a built-in type are E0137, and no instance has that type.
@@ -2409,7 +2406,7 @@ impl Checker<'_> {
                 c.discard_tail(&f.body, checked);
             }
             if let Some(want) = ret {
-                c.any_block(&mut body, want, value_span(&f.body));
+                c.any_block(&mut body, want, value_span(&f.body), c.returns());
             }
             if let Some(want) = ret
                 && let TypeKind::Optional(payload) = want.kind()
