@@ -804,7 +804,7 @@ impl Checker<'_> {
     /// which can be built by `fix`. It gives each link's holder (`E.V` or `K.f`) and the type held,
     /// with the arguments the chain gives it. At an enum it takes the first variant's first such
     /// field, and at a class or a struct the first such field. It ends at the first type it meets
-    /// again. It also gives the name of the first struct on the chain, if there is one.
+    /// again. It also gives the first struct on the chain, if there is one, with its arguments.
     fn chain(&self, start: usize, fix: &mut Buildable) -> (Vec<(String, String)>, Option<String>) {
         let classes = self.classes.len();
         let params = self.node_info(start).1;
@@ -842,8 +842,11 @@ impl Checker<'_> {
             };
             let (name, ty, next, next_key) =
                 field.expect("a type no value can be built of should need another such type");
-            if first_struct.is_none() && at >= classes + self.enums.len() {
-                first_struct = Some(holder.name.to_string());
+            if first_struct.is_none()
+                && let Some(s) = at.checked_sub(classes + self.enums.len())
+            {
+                let ty = Type::intern(TypeKind::Struct(tir::StructId(s), args));
+                first_struct = Some(self.type_name(ty));
             }
             chain.push((format!("{}.{name}", holder.name), ty));
             ((at, args), key) = (next, next_key);
