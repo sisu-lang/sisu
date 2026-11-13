@@ -373,7 +373,7 @@ A literal pattern accepts the values that are equal to it. The literal has the t
 A range `a..b` accepts the values from `a` up to, but not including, `b`. A range `a..=b` includes `b`. Both bounds are literals. The type of a range is an integer or a `char`.
 
 - A range that accepts no value is an error, such as `5..=4` and `5..5` ([E0135](../diagnostics/E0135.md)). So is a range of any type but an integer and a `char`, such as a `string`.
-- A range has two bounds. `a..<b` and `a...b` are errors ([E0132](../diagnostics/E0132.md)).
+- A range has two bounds. A range with one bound, `..b`, `..=b` or `a..`, is an error ([E0011](../diagnostics/E0011.md)). `a..<b` and `a...b` are errors ([E0132](../diagnostics/E0132.md)).
 - A string pattern is the text as written. It has no interpolation ([E0134](../diagnostics/E0134.md)).
 
 ### Variants

@@ -1,0 +1,15 @@
+// GIVEN a pattern with labels and a comment between the first label and its `:`
+// WHEN `sisu check` runs on it
+// THEN it reports E0123 at the first label, 12:13
+// AND it gives no fix, because the fix would delete the comment
+enum E {
+    P(x: i64, y: i64)
+}
+
+fn main() {
+    let e = E.P(x: 1, y: 2)
+    match e {
+        E.P(x // c
+            : a, y: b) => print(a)
+    }
+}

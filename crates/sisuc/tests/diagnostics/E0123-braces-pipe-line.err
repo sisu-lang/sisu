@@ -1,0 +1,18 @@
+error[E0123]: write `E.P(x | y)`
+  --> E0123-braces-pipe-line.sisu:12:13
+   |
+12 |           E.P {
+   |  _____________^
+13 | |             x
+14 | |             | y
+15 | |         } => print(1)
+   | |_________^
+   |
+help: write `E.P(x | y)`
+   |
+12 ~         E.P(x
+13 ~             | y) => print(1)
+   |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0123

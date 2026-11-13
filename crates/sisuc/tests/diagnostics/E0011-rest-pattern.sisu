@@ -1,0 +1,100 @@
+// GIVEN a bare `..` in a sub-pattern, where Rust writes a rest pattern
+// AND it stands in a variant, in braces, in a nested pattern, in an `if let` and in a `let`
+// AND a bare `...` in a sub-pattern, where Dart writes a rest pattern: after a field, in braces and before a field
+// AND a range with one bound or none that is no bare `..` in a sub-pattern: `..=`, `..n` and `..` in an arm
+// WHEN `sisu check` runs on it
+// THEN it reports E0011 "expected a pattern" at 12:16, 19:18, 26:13, 33:13, 40:18, 46:17 and 50:16
+// AND it reports E0011 "expected a pattern" at 76:16, 83:18 and 90:13, as for a bare `..`
+// AND it reports E0011 "a range pattern needs a start and an end" at 55:16, 62:16 and 69:9
+// AND the help of the last three is `start..=end`, `start..n` and `start..end`
+fn rest_after_a_field(e: E) {
+    match e {
+        E.P(x, ..) => print(x)
+        _ => print(2)
+    }
+}
+
+fn rest_in_braces(e: E) {
+    match e {
+        E.P { x, .. } => print(x)
+        _ => print(2)
+    }
+}
+
+fn rest_alone(e: E) {
+    match e {
+        E.P(..) => print(1)
+        _ => print(2)
+    }
+}
+
+fn rest_before_a_field(e: E) {
+    match e {
+        E.P(.., y) => print(y)
+        _ => print(2)
+    }
+}
+
+fn rest_in_a_nested_pattern(e: E) {
+    match e {
+        E.R(Some(..)) => print(1)
+        _ => print(2)
+    }
+}
+
+fn rest_in_an_if_let(o: Option<i64>) {
+    if let Some(..) = o { }
+}
+
+fn rest_in_a_let_else(e: E) {
+    let E.P(x, ..) = e else { return }
+}
+
+fn range_inclusive_no_end(e: E) {
+    match e {
+        E.P(x, ..=) => print(x)
+        _ => print(2)
+    }
+}
+
+fn range_with_name_end(e: E, n: i64) {
+    match e {
+        E.P(x, ..n) => print(x)
+        _ => print(2)
+    }
+}
+
+fn range_in_an_arm(e: E) {
+    match e {
+        .. => print(1)
+        _ => print(2)
+    }
+}
+
+fn ellipsis_after_a_field(e: E) {
+    match e {
+        E.P(x, ...) => print(x)
+        _ => print(2)
+    }
+}
+
+fn ellipsis_in_braces(e: E) {
+    match e {
+        E.P { x, ... } => print(x)
+        _ => print(2)
+    }
+}
+
+fn ellipsis_before_a_field(e: E) {
+    match e {
+        E.P(..., y) => print(y)
+        _ => print(2)
+    }
+}
+
+enum E {
+    P(x: i64, y: i64)
+    R(o: Option<i64>)
+}
+
+fn main() {}

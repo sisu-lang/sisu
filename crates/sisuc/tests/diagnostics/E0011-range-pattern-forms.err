@@ -1,0 +1,74 @@
+error[E0011]: a range pattern needs a start and an end
+ --> E0011-range-pattern-forms.sisu:8:9
+  |
+8 |         ..=2 => print(1)
+  |         ^^^^
+  |
+  = help: write `start..=2`
+
+error[E0011]: a range pattern needs a start and an end
+  --> E0011-range-pattern-forms.sisu:15:9
+   |
+15 |         5..= => print(1)
+   |         ^^^^
+   |
+   = help: write `5..=end`
+
+error[E0011]: a range pattern needs a start and an end
+  --> E0011-range-pattern-forms.sisu:22:9
+   |
+22 |         .. => print(1)
+   |         ^^
+   |
+   = help: write `start..end`
+
+error[E0011]: a range pattern needs a start and an end
+  --> E0011-range-pattern-forms.sisu:29:9
+   |
+29 |         'a'.. => print(1)
+   |         ^^^^^
+   |
+   = help: write `'a'..end`
+
+error[E0011]: a range pattern needs a start and an end
+  --> E0011-range-pattern-forms.sisu:36:9
+   |
+36 |         ..lo => print(1)
+   |         ^^^^
+   |
+   = help: write `start..lo`
+
+error[E0011]: a range pattern needs a start and an end
+  --> E0011-range-pattern-forms.sisu:43:16
+   |
+43 |         E.P(x, 5..) => print(1)
+   |                ^^^
+   |
+   = help: write `5..end`
+
+error[E0011]: a range pattern needs a start and an end
+  --> E0011-range-pattern-forms.sisu:50:9
+   |
+50 |         -5.. => print(1)
+   |         ^^^^
+   |
+   = help: write `-5..end`
+
+error[E0011]: a range pattern needs a start and an end
+  --> E0011-range-pattern-forms.sisu:60:12
+   |
+60 |     if let ..2 = n { }
+   |            ^^^
+   |
+   = help: write `start..2`
+
+error[E0011]: a range pattern needs a start and an end
+  --> E0011-range-pattern-forms.sisu:65:9
+   |
+65 |         5.. if true => print(1)
+   |         ^^^
+   |
+   = help: write `5..end`
+
+sisu: 9 errors
+sisu: for more on a code, run `sisu explain <code>`: E0011

@@ -1,0 +1,74 @@
+// GIVEN range patterns with one bound: a name, a char or a negative number
+// AND the same in an arm, in a sub-pattern and in an `if let`
+// WHEN `sisu check` runs on it
+// THEN it reports E0011 at each range: 8:9, 15:9, 22:9, 29:9, 36:9, 43:16, 50:9, 60:12 and 65:9
+// AND each help writes the bound as written and the missing bound as `start` or `end`
+fn start_inclusive(n: i64) {
+    match n {
+        ..=2 => print(1)
+        _ => print(2)
+    }
+}
+
+fn end_inclusive(n: i64) {
+    match n {
+        5..= => print(1)
+        _ => print(2)
+    }
+}
+
+fn neither(n: i64) {
+    match n {
+        .. => print(1)
+        _ => print(2)
+    }
+}
+
+fn char_end(c: char) {
+    match c {
+        'a'.. => print(1)
+        _ => print(2)
+    }
+}
+
+fn name_start(n: i64, lo: i64) {
+    match n {
+        ..lo => print(1)
+        _ => print(2)
+    }
+}
+
+fn in_variant(e: E) {
+    match e {
+        E.P(x, 5..) => print(1)
+        _ => print(2)
+    }
+}
+
+fn negative(n: i64) {
+    match n {
+        -5.. => print(1)
+        _ => print(2)
+    }
+}
+
+fn if_let(n: i64) {
+    match n {
+        1 => print(1)
+        _ => print(2)
+    }
+    if let ..2 = n { }
+}
+
+fn before_guard(n: i64) {
+    match n {
+        5.. if true => print(1)
+        _ => print(2)
+    }
+}
+
+enum E {
+    P(x: i64, y: i64)
+}
+
+fn main() {}

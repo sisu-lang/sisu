@@ -1,0 +1,11 @@
+// GIVEN an arm that is `case let` and then `=>`, with no pattern
+// WHEN `sisu check` runs on it
+// THEN it reports E0122 at the `case`, 8:9
+// AND it gives no fix, because removing `case` and `let` leaves an arm with no pattern
+fn main() {
+    let x = 1
+    match x {
+        case let => print(1)
+        _ => print(0)
+    }
+}

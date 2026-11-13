@@ -1,0 +1,8 @@
+error[E0123]: a pattern binds by position: `E.P(a, b)`
+  --> E0123-label-comment-before-colon.sisu:12:13
+   |
+12 |         E.P(x // c
+   |             ^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0123

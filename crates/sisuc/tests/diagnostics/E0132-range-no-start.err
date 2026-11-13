@@ -1,0 +1,26 @@
+error[E0132]: write `start..5`
+ --> E0132-range-no-start.sisu:8:9
+  |
+8 |         ..<5 => print(1)
+  |         ^^^
+
+error[E0132]: write `start..=5` to include `5`, or `start..5` to leave it out
+  --> E0132-range-no-start.sisu:15:9
+   |
+15 |         ...5 => print(1)
+   |         ^^^
+
+error[E0132]: write `start..=5` to include `5`, or `start..5` to leave it out
+  --> E0132-range-no-start.sisu:22:16
+   |
+22 |         E.P(x, ...5) => print(x)
+   |                ^^^
+
+error[E0132]: write `start..end`
+  --> E0132-range-no-start.sisu:29:16
+   |
+29 |         E.P(x, ..<) => print(x)
+   |                ^^^
+
+sisu: 4 errors
+sisu: for more on a code, run `sisu explain <code>`: E0132

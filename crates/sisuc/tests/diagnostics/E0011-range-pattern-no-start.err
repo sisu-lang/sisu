@@ -1,0 +1,10 @@
+error[E0011]: a range pattern needs a start and an end
+ --> E0011-range-pattern-no-start.sisu:8:9
+  |
+8 |         ..2 => print("low")
+  |         ^^^
+  |
+  = help: write `start..2`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0011

@@ -1,0 +1,86 @@
+error[E0011]: expected a pattern, found `..`
+  --> E0011-rest-pattern.sisu:12:16
+   |
+12 |         E.P(x, ..) => print(x)
+   |                ^^
+
+error[E0011]: expected a pattern, found `..`
+  --> E0011-rest-pattern.sisu:19:18
+   |
+19 |         E.P { x, .. } => print(x)
+   |                  ^^
+
+error[E0011]: expected a pattern, found `..`
+  --> E0011-rest-pattern.sisu:26:13
+   |
+26 |         E.P(..) => print(1)
+   |             ^^
+
+error[E0011]: expected a pattern, found `..`
+  --> E0011-rest-pattern.sisu:33:13
+   |
+33 |         E.P(.., y) => print(y)
+   |             ^^
+
+error[E0011]: expected a pattern, found `..`
+  --> E0011-rest-pattern.sisu:40:18
+   |
+40 |         E.R(Some(..)) => print(1)
+   |                  ^^
+
+error[E0011]: expected a pattern, found `..`
+  --> E0011-rest-pattern.sisu:46:17
+   |
+46 |     if let Some(..) = o { }
+   |                 ^^
+
+error[E0011]: expected a pattern, found `..`
+  --> E0011-rest-pattern.sisu:50:16
+   |
+50 |     let E.P(x, ..) = e else { return }
+   |                ^^
+
+error[E0011]: a range pattern needs a start and an end
+  --> E0011-rest-pattern.sisu:55:16
+   |
+55 |         E.P(x, ..=) => print(x)
+   |                ^^^
+   |
+   = help: write `start..=end`
+
+error[E0011]: a range pattern needs a start and an end
+  --> E0011-rest-pattern.sisu:62:16
+   |
+62 |         E.P(x, ..n) => print(x)
+   |                ^^^
+   |
+   = help: write `start..n`
+
+error[E0011]: a range pattern needs a start and an end
+  --> E0011-rest-pattern.sisu:69:9
+   |
+69 |         .. => print(1)
+   |         ^^
+   |
+   = help: write `start..end`
+
+error[E0011]: expected a pattern, found `..`
+  --> E0011-rest-pattern.sisu:76:16
+   |
+76 |         E.P(x, ...) => print(x)
+   |                ^^
+
+error[E0011]: expected a pattern, found `..`
+  --> E0011-rest-pattern.sisu:83:18
+   |
+83 |         E.P { x, ... } => print(x)
+   |                  ^^
+
+error[E0011]: expected a pattern, found `..`
+  --> E0011-rest-pattern.sisu:90:13
+   |
+90 |         E.P(..., y) => print(y)
+   |             ^^
+
+sisu: 13 errors
+sisu: for more on a code, run `sisu explain <code>`: E0011
