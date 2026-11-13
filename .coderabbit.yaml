@@ -30,6 +30,16 @@ reviews:
         docs/diagnostics/<code>.md for each code that the file reports. A change to that .md file
         changes this line in every .json file that reports the code. Find the changed key before
         you call the change out of scope.
+    - path: ".agents/skills/**"
+      instructions: "Agents follow these steps literally. Find steps that contradict each other or another skill, a command whose exit status a pipe hides, and a case that no step covers."
+    - path: "{scripts,.agents/skills}/**/*.{py,sh}"
+      instructions: "Find inputs that make the script report success on a failed or empty run."
+    - path: "{docs,site}/**"
+      instructions: "Read the code behind each claim about what a command, flag or test does. Report each claim that the code contradicts."
+    - path: "crates/sisuc/src/{codegen,mir}/**"
+      instructions: "Trace ownership, drops and reference counts through each changed path. Report a value that is dropped twice, never dropped, or used after its drop."
+    - path: "crates/sisuc/src/check/**"
+      instructions: "One mistake gets one diagnostic. Report an input for which the change gives a second diagnostic for the same root cause, or none."
   finishing_touches:
     docstrings:
       enabled: false
@@ -45,8 +55,27 @@ reviews:
     title:
       mode: warning
       requirements: "An imperative sentence in ASD-STE100 English. No Conventional Commits prefix."
+    # Advice only: CI stays the merge gate. Each check covers a finding class that came back.
+    custom_checks:
+      - name: "Docs state observed facts"
+        mode: warning
+        instructions: |
+          For each changed sentence in docs/, site/ or a SKILL.md that states what a command,
+          flag or test does, read the code that does it. Fail, and quote each sentence that the
+          code contradicts. Pass when no changed sentence makes such a claim.
+      - name: "Tests prove their names"
+        mode: warning
+        instructions: |
+          For each new or renamed test, read its name, its doc comment and its assertions.
+          Fail when the assertions would still pass if the result that the name or the THEN
+          line states did not hold. Quote the test and give the change that would not fail it.
   tools:
-    # CI and prek run clippy, shellcheck and actionlint already.
+    # CI and prek run clippy, ruff, shellcheck and actionlint already.
+    # Biome reads the .json test fixtures as code and reports false syntax errors.
+    biome:
+      enabled: false
+    ruff:
+      enabled: false
     clippy:
       enabled: false
     shellcheck:
