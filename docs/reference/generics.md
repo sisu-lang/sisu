@@ -200,11 +200,11 @@ The examples use `fn pick<T>(a: T, b: T) -> T`, `fn h<T>(a: T, b: T?) -> T` and 
 - With written type arguments, as in `id<i64>(n)`, the error is at the call.
 - An argument also meets the parts that an earlier argument fixed. For `f<A, B>(a: A, p: Two<A, B>)`, `f("s", Two(a: 1, b: true))` reports `1`: expected `string`, found `i64`. This is also true inside `Some(...)`, an array literal or another generic call.
 - When the argument has the wrong shape, the error is at the whole argument. While the parameter type names a type parameter that the call has not fixed, the error gives the shape in words. For `take<T>(xs: [T])`, `take(5)` reports `5`: expected an array, found `i64`. For a `Box<U>` parameter, it reports expected a `Box`.
-- An optional parameter type keeps the type in the message. For `fn topt<T>(xs: [T]?)`, `topt(5)` reports expected `[T]?`, found `i64`.
-- A call that waits also keeps the type. `take(Ok(1))` reports `Ok(1)`: expected `[T]`, found `Result<i64, E>`.
+- An optional parameter type keeps the type in the message. For `fn topt<T>(xs: [T]?)`, `topt(5)` reports expected `[_]?`, found `i64`.
+- A call that waits also keeps the type. `take(Ok(1))` reports `Ok(1)`: expected `[_]`, found `Result<i64, _>`.
 - When a call that waited does not agree with the argument that fixed its type, the error is at the call that waited. For `fn mks<E>() -> Result<string, E>`, `fn mkr<X>() -> Two<i64, Two<X, bool>>` and `gn<T>(c: Two<T, Two<T, bool>>, d: Result<T, string>)`, `gn(mkr(), mks())` reports `mkr()`: expected `Two<string, Two<string, bool>>`, found `Two<i64, Two<string, bool>>`.
-- A result that cannot fit the expected type gives the error of a call that is not generic, also when a type parameter stays open. `let y: i64 = mk2()` reports expected `i64`, found `Two<X, bool>`. [E0032](../diagnostics/E0032.md)
-- `1 == mk2()` reports cannot compare `i64` with `Two<X, bool>`. [E0047](../diagnostics/E0047.md)
+- A result that cannot fit the expected type gives the error of a call that is not generic, also when a type parameter stays open. `let y: i64 = mk2()` reports expected `i64`, found `Two<_, bool>`. [E0032](../diagnostics/E0032.md)
+- `1 == mk2()` reports cannot compare `i64` with `Two<_, bool>`. [E0047](../diagnostics/E0047.md)
 
 ```sisu
 fn first<T>(xs: [T]) -> T? {
@@ -305,8 +305,7 @@ When the compiler can tell which bound fixes the error, the help names it ([Boun
 - Have a field. [E0063](../diagnostics/E0063.md)
 - Fill an array with `[x; n]`, because `T` can be a class ([Filled arrays](arrays.md#filled-arrays)). `[None; n]` is valid. [E0067](../diagnostics/E0067.md)
 - Be the subject of a `match`. In a payload of the type `T`, a pattern is a name or `_` ([Variant patterns](enums.md#variants)). [E0124](../diagnostics/E0124.md)
-- Meet a value of another type in `==` or `!=`, whatever the bounds are. `a == 5` and `a == b` with a `U` cannot be compared. [E0047](../diagnostics/E0047.md)
-- Meet a value of another type in `<`, `<=`, `>` or `>=`. `a < 5` and `a < b` with a `U` are type mismatches. [E0032](../diagnostics/E0032.md)
+- Meet a value of another type in a comparison (`==`, `!=`, `<`, `<=`, `>` or `>=`), whatever the bounds are. `a == 5`, `a < 5` and `a < b` with a `U` cannot be compared. [E0047](../diagnostics/E0047.md) A `T` beside a `T?` is not another type: with `T: Eq`, `a == o` is valid for `a: T` and `o: T?`. `<` does not take a `T` beside a `T?`. [E0159](../diagnostics/E0159.md)
 
 ```sisu
 fn smaller<T>(a: T, b: T) -> bool {

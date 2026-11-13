@@ -1,0 +1,105 @@
+fn id<T>(x: T) -> T {
+    x
+}
+
+fn if_branch_loop() {
+    let c = 1
+    let q = 5
+    let v: u8 = 7
+    let x = if c == 1 { q } else { loop { break v } }
+    print(x)
+}
+
+fn equal_to_id_loop() {
+    let v: u8 = 7
+    let x = v == id(loop { break 1 })
+    print(x)
+}
+
+fn right_of_equal_loop() {
+    let q = 5
+    let v: u8 = 7
+    let x = q == loop { break v }
+    print(x)
+}
+
+fn coalesce_loop() {
+    let v: u8 = 7
+    let o: i64? = None
+    let x = o ?? loop { break v }
+    print(x)
+}
+
+fn else_branch_id() {
+    let c = 1
+    let q = 5
+    let v: u8 = 7
+    let x = if c == 1 { q } else { id(v) }
+    print(x)
+}
+
+fn else_branch_optional_sibling() {
+    let c = 1
+    let v: u8 = 7
+    let o: i64? = None
+    let x = if c == 1 { o } else { loop { break v } }
+    print(x)
+}
+
+fn match_arm_loop() {
+    let v: u8 = 7
+    let k = 1
+    let q: i64 = 5
+    let x = match k { 0 => q; _ => loop { break v } }
+    print(x)
+}
+
+fn later_arm_id_loop() {
+    let v: u8 = 7
+    let k = 1
+    let x = match k { 0 => v; 1 => v; _ => id(loop { break 1 }) }
+    print(x)
+}
+
+fn not_equal_loop() {
+    let v: u8 = 7
+    let q: i64 = 5
+    let x = q != loop { break v }
+    print(x)
+}
+
+fn equal_to_id() {
+    let v: u8 = 7
+    let q: i64 = 5
+    let x = q == id(v)
+    print(x)
+}
+
+fn else_if_loop() {
+    let v: u8 = 7
+    let c = true
+    let q: i64 = 5
+    let x = if c { q } else if c { q } else { loop { break v } }
+    print(x)
+}
+
+fn written_optional_id() {
+    let v: u8 = 7
+    let x: i64? = id(v)
+    print(x)
+}
+
+fn written_optional_value() {
+    let v: u8 = 7
+    let x: i64? = v
+    print(x)
+}
+
+fn equal_to_loop_with_optional() {
+    let o: u8? = None
+    let q: i64 = 5
+    let x = q == loop { break o }
+    print(x)
+}
+
+fn main() {}

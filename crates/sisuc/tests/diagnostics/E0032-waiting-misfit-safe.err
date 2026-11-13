@@ -1,4 +1,4 @@
-error[E0032]: expected `Two<T, bool>?`, found `Two<E, string>?`
+error[E0032]: expected `Two<_, bool>?`, found `Two<_, string>?`
   --> E0032-waiting-misfit-safe.sisu:18:7
    |
 18 |     f(m?.make())

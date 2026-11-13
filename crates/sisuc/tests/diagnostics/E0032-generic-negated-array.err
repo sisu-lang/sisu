@@ -1,0 +1,8 @@
+error[E0032]: expected `i64` or `f64`, found `[u8]`
+ --> E0032-generic-negated-array.sisu:2:36
+  |
+2 |     let r: Result<[u8], i64> = Ok(-[5; 2])
+  |                                    ^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

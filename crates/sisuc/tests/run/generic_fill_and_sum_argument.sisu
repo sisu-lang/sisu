@@ -1,0 +1,53 @@
+// GIVEN a generic call or constructor with an array fill, a sum or a later array element
+// AND a `loop` in an argument, and a written type for the call
+// WHEN the program runs
+// THEN the argument takes the written type, and the value is the one that the program writes
+// AND Valgrind and `--rc-checks` find every object freed exactly once
+fn id<T>(x: T) -> T {
+    x
+}
+
+enum Bx<T> {
+    B(v: T)
+}
+
+fn main() {
+    let v: u8 = 7
+    let c = 1
+
+    // An array fill takes the written element type.
+    let a: Result<[u8], bool> = Ok([5; 2])
+    if let Ok(x) = a { print(x[1]) }                             // 5
+    let b: Result<bool, [u8]> = Err([5; 2])
+    if let Err(x) = b { print(x[0]) }                            // 5
+    let d: [u8] = id([5; 2])
+    print(d[1])                                                  // 5
+    let e: Result<[[u8]], bool> = Ok([[5; 2]; 3])
+    if let Ok(x) = e { print(x[2][1]) }                          // 5
+    let f: Result<[u8?], bool> = Ok([None; 2])
+    if let Ok(x) = f { print(x[0] ?? 9) }                        // 9
+
+    // A side of an arithmetic operator takes it too.
+    let g: Result<u8, i64> = Ok(1 + loop { if c == 1 { break 2 }; break v })
+    if let Ok(x) = g { print(x) }                                // 3
+    let h: Result<u8, i64> = Ok(loop { break 2 } + v)
+    if let Ok(x) = h { print(x) }                                // 9
+    let i: Result<u8, i64> = Ok(1 + id(2))
+    if let Ok(x) = i { print(x) }                                // 3
+    let j: Result<u8, i64> = Ok(1 + 2 * loop { break 2 })
+    if let Ok(x) = j { print(x) }                                // 5
+
+    // A loop in a later element, a constructor and a call that returns its argument.
+    let k: Result<[u8], i64> = Ok([v, loop { break 2 }])
+    if let Ok(x) = k { print(x[1]) }                             // 2
+    let m: Bx<u8> = Bx.B(v: 1 + loop { break 2 })
+    match m { Bx.B(x) => print(x) }                              // 3
+    let n: u8 = id(1 + loop { break 2 })
+    print(n)                                                     // 3
+
+    // A generic call inside a generic call.
+    let p: Result<Result<[u8], bool>, bool> = Ok(Ok([5; 2]))
+    if let Ok(Ok(x)) = p { print(x[0]) }                         // 5
+    let q: Result<u8, i64> = Ok(id(1 + loop { break 2 }))
+    if let Ok(x) = q { print(x) }                                // 3
+}
