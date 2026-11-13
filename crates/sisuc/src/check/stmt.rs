@@ -3,7 +3,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::any::{AnyJoin, is_target, widen};
-use super::array::optional_array;
+use super::array::must_unwrap;
 use super::enums::unwrapped;
 use super::expr::{fits, local};
 use super::generic::Ahead;
@@ -822,7 +822,7 @@ impl Checker<'_> {
             Some((_, TypeKind::Optional(payload)))
                 if matches!(payload.kind(), TypeKind::Array(_)) =>
             {
-                (None, Some(optional_array(e, UnwrapHelp::It)))
+                (None, Some(must_unwrap(e, UnwrapHelp::It)))
             }
             Some((ty, _)) => {
                 let found = self.type_name(ty);

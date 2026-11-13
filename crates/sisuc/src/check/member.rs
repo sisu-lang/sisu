@@ -2,7 +2,7 @@
 
 use rustc_hash::FxHashMap;
 
-use super::array::innermost;
+use super::array::{innermost, must_unwrap};
 use super::call::{Dot, takes_range};
 use super::expr::{if_some, local, no_member, path};
 use super::extend::{holder_of, method_holder};
@@ -177,6 +177,15 @@ impl Checker<'_> {
                 && is_struct(innermost(payload))
             {
                 return Err(Poisoned::untyped(failed.reported()));
+            }
+            // Under the chain of a write, a `?.` that takes out a class object needs the object
+            // unwrapped: its struct field is a place.
+            if self.body.write_chain.is_some()
+                && is_struct(innermost(payload))
+                && let Some(unwrap) = self.class_unwrap(receiver, &base)
+            {
+                let reported = self.diagnostics.error(must_unwrap(receiver, unwrap));
+                return Err(Poisoned::untyped(reported));
             }
             let (_, reported) = (self.field_of_payload(payload, receiver, name, Access::Read))
                 .map_err(Poisoned::untyped)?;

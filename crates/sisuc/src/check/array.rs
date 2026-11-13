@@ -542,7 +542,7 @@ impl Checker<'_> {
             .flatten();
         let (element, report) = match (class_write, type_of(&checked)) {
             (Some(unwrap), Some(ty)) => {
-                let reported = self.diagnostics.error(optional_array(base, unwrap));
+                let reported = self.diagnostics.error(must_unwrap(base, unwrap));
                 (optional_element(ty), Some(reported))
             }
             _ => self.element(
@@ -583,33 +583,6 @@ impl Checker<'_> {
                 Err(Poisoned::new(ty, reported))
             }
         }
-    }
-
-    /// The help of the E0062 of `base`, an optional array under the chain of a write. It is
-    /// `None` unless the checked value `checked` is a `?.` that takes a class object out of its
-    /// optional. The object's field is a place, so the help unwraps the object. So does
-    /// `Checker::optional_array_target` for an element place.
-    fn class_unwrap(&self, base: &ast::Expr, checked: &Checked) -> Option<UnwrapHelp> {
-        let Ok(tir::Expr {
-            kind: tir::ExprKind::IfSome { bind, .. },
-            ..
-        }) = checked
-        else {
-            return None;
-        };
-        if !matches!(self.body.locals[bind.0].ty.kind(), TypeKind::Class(..)) {
-            return None;
-        }
-        Some(match &base.kind {
-            ast::ExprKind::Field {
-                base: object,
-                safe: true,
-                ..
-            } if self.one_line(object.span) => {
-                UnwrapHelp::Object(self.source.text(object.span).to_string())
-            }
-            _ => UnwrapHelp::Nothing,
-        })
     }
 
     /// The element type of `base`, which is indexed and has type `ty` (`None` is `Error`). An
@@ -654,7 +627,7 @@ impl Checker<'_> {
                         };
                         self.error(d)
                     }
-                    None => self.diagnostics.error(optional_array(base, unwrap)),
+                    None => self.diagnostics.error(must_unwrap(base, unwrap)),
                 };
                 return (element, Some(reported));
             }
@@ -803,9 +776,9 @@ impl Checker<'_> {
     }
 }
 
-/// "`m` may be `None`", at the optional array `base` that an index or a `for` needs unwrapped.
-/// `unwrap` says what the help unwraps.
-pub(super) fn optional_array(base: &ast::Expr, unwrap: UnwrapHelp) -> Diagnostic {
+/// "`m` may be `None`", at the optional `base` that an index, a `for` or a write through a class
+/// `?.` needs unwrapped. `unwrap` says what the help unwraps.
+pub(super) fn must_unwrap(base: &ast::Expr, unwrap: UnwrapHelp) -> Diagnostic {
     DiagnosticKind::MayBeNone {
         value: path(base),
         at: base.span,

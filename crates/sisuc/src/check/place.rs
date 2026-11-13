@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use super::array::{innermost, is_optional_array, optional_array, optional_element};
+use super::array::{innermost, is_optional_array, must_unwrap, optional_element};
 use super::expr::{if_some, literal_type, local, operator};
 use super::member::{Access, FieldOwner, FoundField, safe_value};
 use super::operator::Operator;
@@ -1080,7 +1080,7 @@ impl Checker<'_> {
             }
             _ => UnwrapHelp::Nothing,
         };
-        self.diagnostics.error(optional_array(base, unwrap))
+        self.diagnostics.error(must_unwrap(base, unwrap))
     }
 
     /// The place `target` names, which `span` changes as `change` says: `Element` when it is the
@@ -1480,14 +1480,31 @@ impl Checker<'_> {
             self.reassign_root(base);
             return CheckedPlace::failed(Some(failed.reported()));
         }
-        if let (Some((index, ty)), Ok(_), Some(chain)) = (found, checked, first_safe(base)) {
+        if let (Some((index, ty)), Ok(_)) = (found, checked) {
             let array = ty.is_some_and(|ty| matches!(payload(ty).kind(), TypeKind::Array(_)));
             let writes = match change {
                 Change::Push => array,
                 Change::MutArg => false,
                 Change::Assign | Change::Element | Change::Field => true,
             };
-            if writes {
+            // A `?.` that takes out a class object: the field of the object is a place, and only
+            // the optional is wrong.
+            if (writes || change == Change::MutArg)
+                && let Some(unwrap) = self.class_unwrap(base, checked)
+            {
+                let reported = self.diagnostics.error(must_unwrap(base, unwrap));
+                if change == Change::MutArg {
+                    self.record(FieldOwner::Struct(id).used(index), target.span);
+                    return CheckedPlace::failed(Some(reported));
+                }
+                return CheckedPlace {
+                    ty,
+                    shown: self.field_shown(FieldOwner::Struct(id), index),
+                    reported: Some(reported),
+                    ..CheckedPlace::failed(None)
+                };
+            }
+            if writes && let Some(chain) = first_safe(base) {
                 let d = self.chain_write((span, change), base, chain);
                 return CheckedPlace {
                     ty,
@@ -1510,6 +1527,33 @@ impl Checker<'_> {
         }
         // The fix of the E0062 decides the place.
         CheckedPlace::failed(on_optional)
+    }
+
+    /// The help of the E0062 of `base`, the optional value of a write after `?.`. It is `None`
+    /// unless the checked value `checked` is a `?.` that takes a class object out of its optional.
+    /// The object's field is a place, so the help unwraps the object. So does
+    /// `Checker::optional_array_target` for an element place.
+    pub(super) fn class_unwrap(&self, base: &ast::Expr, checked: &Checked) -> Option<UnwrapHelp> {
+        let Ok(tir::Expr {
+            kind: ExprKind::IfSome { bind, .. },
+            ..
+        }) = checked
+        else {
+            return None;
+        };
+        if !matches!(self.body.locals[bind.0].ty.kind(), TypeKind::Class(..)) {
+            return None;
+        }
+        Some(match &base.kind {
+            ast::ExprKind::Field {
+                base: object,
+                safe: true,
+                ..
+            } if self.one_line(object.span) => {
+                UnwrapHelp::Object(self.source.text(object.span).to_string())
+            }
+            _ => UnwrapHelp::Nothing,
+        })
     }
 
     /// The place `target`, `base?.name` with the struct `payload` that `?.` takes out of
