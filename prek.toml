@@ -154,7 +154,9 @@ id = "python-tests"
 name = "script unit tests"
 language = "system"
 entry = "python3 -m unittest discover -s scripts -p 'test_*.py'"
-files = '^(scripts|\.agents/skills/[^/]+/scripts)/.*\.py$|^bench/compile/.*\.json$|^crates/sisuc/src/generate/coverage\.rs$|^scripts/fuzz\.sh$|^\.github/workflows/fuzz-program\.yml$|^install\.sh$|^\.github/workflows/nightly-build\.yml$|^\.github/workflows/ci\.yml$|^scripts/nightly_.*$'
+# The tests read the scripts, the workflows and the actions, so a change to any file there
+# runs them. A list of single files became stale each time a test started to read a new file.
+files = '^(scripts|\.agents/skills/[^/]+/scripts|\.github)/|^bench/compile/.*\.json$|^crates/sisuc/src/generate/coverage\.rs$|^install\.sh$'
 pass_filenames = false
 
 # A new diagnostic code needs a category, or the site build fails long after the commit.
