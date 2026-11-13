@@ -1677,7 +1677,7 @@ must accept any syntax those programs use.
 | `bench` | The benchmark programs, under `features/` the Sisu-only ones for CodSpeed, and under `compile/` the compile-speed units and the saved counts that the tests of `scripts/scaling.py` read. |
 | `selfhost` | The lexer in Sisu, `lexer.sisu`, which the tests check against `sisu build --emit tokens` (see [The growing proof program](#the-growing-proof-program)). |
 | `codspeed.yml`, `codspeed-main.yml` | The CodSpeed benchmark lists: `codspeed.yml` on every run, `codspeed-main.yml` on pushes to `main` only. |
-| `.coderabbit.yaml`, `.greptile/` | The settings of the CodeRabbit and Greptile pull request reviews. Their findings are advice; CI is the merge gate. A `@coderabbitai review` or `@greptileai` comment starts a review again. |
+| `.coderabbit.yaml`, `.greptile/` | The settings of the CodeRabbit and Greptile pull request reviews. Their findings are advice; CI is the merge gate. A `@coderabbitai review` or `@greptileai` comment starts a review again. A reply that starts with `@coderabbitai` and gives the reason for a rejected finding becomes a CodeRabbit learning; a reply without the mention does not. |
 | `fuzz` | The fuzz targets, `front_end` and `program`, in their own Cargo workspace, run by `scripts/fuzz.sh`. |
 | `ruff.toml`, `pyrefly.toml` | The rules for each tracked Python file: Ruff for lint and format, Pyrefly for types. The Python hooks of `prek.toml` run them (see `CODING_STANDARDS.md`, Python). |
 | `Makefile` | The entry point for the commands; `make help` lists its targets. |
