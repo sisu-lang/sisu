@@ -8185,7 +8185,7 @@ fn waiting_method_should_bind_the_whole_optional_when_its_receiver_gives_one() {
         (
             "g3",
             receiver_optional_program("let x: i64?? = fst(b.mkp())"),
-            vec![(Code::Mismatch, (RECEIVER_OPTIONAL_LINE, 23))],
+            vec![(Code::Mismatch, (RECEIVER_OPTIONAL_LINE, 24))],
         ),
     ];
     error_rows(&rows);

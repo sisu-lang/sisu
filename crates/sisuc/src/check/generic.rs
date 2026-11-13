@@ -340,6 +340,15 @@ fn open_params(
         .collect()
 }
 
+/// The type parameters of a callee after its `owner` ones, as themselves at their indices.
+/// They follow the owner's arguments in a list that `Type::subst` reads.
+fn own_params(names: &[Symbol], owner: usize) -> impl Iterator<Item = Type> {
+    (0u32..)
+        .zip(names)
+        .skip(owner)
+        .map(|(i, &name)| Type::intern(TypeKind::Param(name, i)))
+}
+
 /// The open parameters (see `open_params`) of a call of a function or method that returns `ret`,
 /// or none when the call is not open. The context binds only what the type of the call names. So
 /// the call is open if `ret` names a parameter that no parameter type does. It is not open if
@@ -676,7 +685,8 @@ struct CallShape {
     /// How the call makes an optional by itself (see `Ranked::optional`).
     makes: Makes,
     /// Whether the declared type of the call holds an optional: `[X?]`, `Bx<X?>`, or the type that
-    /// a construction through an alias builds (see `Ranked::holds_optional`).
+    /// a construction through an alias builds (see `Ranked::holds_optional`). For a method it
+    /// reads the type after the receiver binds the owner's type parameters.
     ret_optional: bool,
     /// The places whose arguments give the call its type (see `Places`).
     places: Places,
@@ -4384,12 +4394,16 @@ impl Checker<'_> {
         let shaped = sig.ret.is_some() && fits(sig.params.iter().map(|&ty| (ty, None)), args);
         let ret = sig.ret.filter(|_| shaped);
         let open = open_params_of_call(sig.params.iter().copied(), ret, &sig.type_params, owner);
+        let mut with = self.owner_args(func, ty).get().to_vec();
+        with.extend(own_params(&sig.type_params, owner));
+        let ret_optional =
+            (sig.ret.and_then(|ret| self.subst(ret, &with))).is_some_and(Type::holds_optional);
         CallShape {
             generic: sig.own > 0,
             shaped,
             open: !open.is_empty(),
             makes: Makes::of(sig.ret, sig.params.iter().copied()),
-            ret_optional: sig.ret.is_some_and(Type::holds_optional),
+            ret_optional,
             places: carried(
                 sig.ret,
                 sig.params.iter().copied(),
@@ -4456,12 +4470,17 @@ impl Checker<'_> {
                 let params = requirement.params.iter().copied();
                 let owner = interface.type_params.len();
                 let open = open_params_of_call(params, ret, &names, owner);
+                let mut with = vec![receiver];
+                with.extend_from_slice(one.args.get());
+                with.extend(own_params(&names, owner));
+                let ret_optional = (requirement.ret.and_then(|ret| self.subst(ret, &with)))
+                    .is_some_and(Type::holds_optional);
                 CallShape {
                     generic: !requirement.own.is_empty(),
                     shaped,
                     open: !open.is_empty(),
                     makes: Makes::of(requirement.ret, requirement.params.iter().copied()),
-                    ret_optional: requirement.ret.is_some_and(Type::holds_optional),
+                    ret_optional,
                     places: carried(
                         requirement.ret,
                         requirement.params.iter().copied(),
