@@ -8129,7 +8129,8 @@ fn receiver_optional_program(stmt: &str) -> String {
 /// (`b: Bx<i64?>` for `Pr<T, X>`, or a bound `M: Mk<i64?>` for `Pr<A, X>`)
 /// WHEN the call has an optional context: a written type or a hint of `??`
 /// THEN the call binds the whole optional, and the program has no error
-/// AND a context that holds one optional more or less than the call's type keeps its error
+/// AND a context of another payload type, or with one optional more, keeps its error
+/// AND a call whose type does not hold the receiver's optional binds the payload
 #[test]
 fn waiting_method_should_bind_the_whole_optional_when_its_receiver_gives_one() {
     let rows: Vec<ErrorRow<'_>> = vec![
