@@ -27,7 +27,8 @@ RUN is the run directory.
 TARGET is BASE..HEAD for a diff, or the path of a spec or a plan with --kind spec|plan.
 STEM is the first part of the name of a report, such as sol or opus: the report of round 1 is
 sol.md and the report of round 2 is sol-2.md. A finding of a report starts with "### <n>.", and
-its ruling in rulings-<N>.md starts with "<STEM> <n>: <ruling>".
+its ruling in rulings-<N>.md starts with "<STEM> <n>: <ruling>". A report's path, such as
+RUN/sol-2.md, is accepted in place of its STEM.
 
 Each file name follows the round: round 1 writes brief.md and tree-1.txt, round 2 writes brief-2.md
 and tree-2.txt. RUN/focus.md (focus-N.md in a later round) goes in when it exists. A later round
@@ -105,6 +106,30 @@ def diff_ends(target: str) -> tuple[str, str] | None:
     return None
 
 
+def unnumbered(name: str) -> str:
+    """Return a file stem without its round number: sol-2 gives sol."""
+    return re.sub(r"-\d+$", "", name)
+
+
+def stem_of(value: str, run: Path, round_number: int) -> str:
+    """Return the STEM of `value`: a stem as it is, or the stem of a path such as RUN/sol.md.
+
+    A path must name the report of RUN for this round, or the script stops. A stem must not end
+    in -<digits>, because that is the round number of a report path.
+    """
+    if not value.endswith(".md"):
+        return value
+    path = Path(value)
+    stem = unnumbered(path.stem)
+    if path.name != numbered(stem, round_number) or (
+        path.parent != Path() and path.parent.resolve() != run.resolve()
+    ):
+        raise SystemExit(
+            f"review_round: {value} is not the report of round {round_number} in {run}"
+        )
+    return stem
+
+
 def numbered(stem: str, round_number: int) -> str:
     """Return a Markdown file name: only a later round has a number in it."""
     return f"{stem}.md" if round_number == 1 else f"{stem}-{round_number}.md"
@@ -131,7 +156,7 @@ def round_options(run: Path, round_number: int) -> list[str]:
             raise SystemExit(f"review_round: {rulings} does not exist")
         options += ["--rulings", str(rulings)]
         for report in sorted(run.glob("*.md")):
-            if re.sub(r"-\d+$", "", report.stem) not in NOT_REPORTS:
+            if unnumbered(report.stem) not in NOT_REPORTS:
                 options += ["--prior", str(report)]
     return options
 
@@ -326,6 +351,11 @@ def save_report(run: Path, stem: str, agent: str, round_number: int, transcripts
     return 0
 
 
+def stems(args: argparse.Namespace) -> list[str]:
+    """Return the STEM of each --report value of the command line."""
+    return [stem_of(r, args.run, args.round) for r in args.report]
+
+
 def main() -> int:
     """Run the action that the command line names."""
     parser = argparse.ArgumentParser(description="Do the fixed steps of one review round.")
@@ -356,14 +386,15 @@ def main() -> int:
     if args.command != "prepare" and extra:
         parser.error(f"unrecognized arguments: {' '.join(extra)}")
     if args.command == "verify":
-        return verify(args.repo, args.run, args.round, args.report)
+        return verify(args.repo, args.run, args.round, stems(args))
     if args.command == "rulings":
-        return rulings(args.run, args.round, args.report)
+        return rulings(args.run, args.round, stems(args))
     if args.command == "record":
         record(args.repo, args.run / f"tree-{args.round}.txt")
         return 0
     if args.command == "save-report":
-        return save_report(args.run, args.stem, args.agent, args.round, args.transcripts)
+        stem = stem_of(args.stem, args.run, args.round)
+        return save_report(args.run, stem, args.agent, args.round, args.transcripts)
     # parse_known_args would take the value of an option before TARGET as the target.
     if args.target != sys.argv[4]:
         parser.error("write TARGET just after RUN, before each option")
