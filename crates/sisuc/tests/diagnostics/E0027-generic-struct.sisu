@@ -1,0 +1,13 @@
+struct S<T> {
+    next: S<T>
+}
+
+enum E<T> {
+    A(R<T>)
+}
+
+struct R<T> {
+    e: E<T>
+}
+
+fn main() {}

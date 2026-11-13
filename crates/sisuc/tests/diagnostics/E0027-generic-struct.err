@@ -1,0 +1,18 @@
+error[E0027]: no value of `S` can be built
+ --> E0027-generic-struct.sisu:1:8
+  |
+1 | struct S<T> {
+  |        ^ `S.next` holds a `S<T>`
+  |
+  = help: a field of type `S<T>?`, or an enum with a variant that holds no `S<T>`, ends the chain
+
+error[E0027]: no value of `E` can be built
+ --> E0027-generic-struct.sisu:5:6
+  |
+5 | enum E<T> {
+  |      ^ `E.A` holds a `R<T>`, and `R.e` holds a `E<T>`
+  |
+  = help: a field of type `R<T>?`, or an enum with a variant that holds no `R<T>`, ends the chain
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0027
