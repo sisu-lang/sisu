@@ -38,10 +38,12 @@ esac
 FAKE_RUSTC = """#!/usr/bin/env bash
 [[ $1 == --print && $2 == target-libdir ]] && echo "${0%/bin/rustc}/lib"
 """
-# `rustup which --toolchain <name> rustc` prints $FAKE_RUSTC when FAKE_NIGHTLY is not `missing`.
+# `rustup which --toolchain <pin> rustc` prints $FAKE_RUSTC when FAKE_NIGHTLY is not `missing`;
+# it fails for any other name, so the script must ask for the pin in scripts/coverage-toolchain.
 # A real rustup installs a missing toolchain unless RUSTUP_AUTO_INSTALL is 0; the fake fails then.
 FAKE_RUSTUP = """#!/usr/bin/env bash
 [[ ${FAKE_NIGHTLY:-installed} == missing ]] && exit 1
+[[ $3 == "$(<scripts/coverage-toolchain)" ]] || { echo "fake rustup: wrong toolchain $3" >&2; exit 1; }
 [[ ${RUSTUP_AUTO_INSTALL-} == 0 ]] || { echo "fake rustup: would install" >&2; exit 1; }
 echo "$FAKE_RUSTC_PATH"
 """

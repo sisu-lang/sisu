@@ -382,6 +382,57 @@ class BranchNoise(unittest.TestCase):
         )
         self.assertEqual(listed(*lines, branches=[1, 7, 9, 11]), [1, 11])
 
+    def test_a_pub_crate_inline_test_module_should_be_left_out(self) -> None:
+        lines = (
+            "#[cfg(test)]",
+            "pub(crate) mod tests {",
+            "    fn h() { if c {} }",
+            "}",
+            "fn k() { if d {} }",
+        )
+        self.assertEqual(listed(*lines, branches=[3, 5]), [5])
+
+    def test_braces_in_raw_strings_and_char_literals_should_not_end_a_test_module_wrongly(
+        self,
+    ) -> None:
+        lines = (
+            "#[cfg(test)]",
+            "mod tests {",
+            '    const S: &str = r#"{ "a": {"#;',
+            "    const C: char = '{';",
+            "    const Q: char = '\\'';",
+            "    fn f<'a>(x: &'a str) { if b {} }",
+            '    const T: &str = r"}";',
+            "}",
+            "fn k() { if d {} }",
+        )
+        self.assertEqual(listed(*lines, branches=[6, 9]), [9])
+
+    def test_a_comment_after_an_assert_should_not_hide_the_next_line(self) -> None:
+        lines = ("debug_assert!(n > 0); // why", "if n > 1 {", "}")
+        self.assertEqual(listed(*lines, branches=[2]), [2])
+
+    def test_a_comment_that_names_an_assert_should_not_hide_the_next_line(self) -> None:
+        lines = ("// see assert!(x)", "if a && b {", "}")
+        self.assertEqual(listed(*lines, branches=[2]), [2])
+
+    def test_a_comment_that_names_an_invariant_should_not_hide_its_own_line(self) -> None:
+        lines = ("if a { // not unreachable!(x)", "}", "let Some(z) = y else { // x", "    return;")
+        self.assertEqual(listed(*lines, branches=[1, 3]), [1, 3])
+
+    def test_comments_inside_a_multiline_assert_should_not_end_the_walk(self) -> None:
+        lines = (
+            "assert!( // why",
+            "    a, // and why",
+            "    if b { 1 } else { 2 }, // more",
+            ");",
+        )
+        self.assertEqual(listed(*lines, branches=[3]), [])
+
+    def test_a_blank_line_should_end_the_walk_back_from_an_assert(self) -> None:
+        lines = ("assert!(a,", "", "if b {", "}")
+        self.assertEqual(listed(*lines, branches=[3]), [3])
+
     def test_a_cfg_test_item_that_is_not_a_module_should_stay(self) -> None:
         lines = (
             "#[cfg(test)]",
