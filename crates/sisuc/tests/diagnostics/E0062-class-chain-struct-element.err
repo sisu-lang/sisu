@@ -1,49 +1,63 @@
 error[E0062]: `c?.xs` may be `None`
-  --> E0062-class-chain-struct-element.sisu:29:5
+  --> E0062-class-chain-struct-element.sisu:32:5
    |
-29 |     c?.xs[0].n = 2
+32 |     c?.xs[0].n = 2
    |     ^^^^^
    |
    = help: unwrap `c` with `if let`, `let ... else` or `?? return`
 
 error[E0062]: `c?.s` may be `None`
-  --> E0062-class-chain-struct-element.sisu:30:5
+  --> E0062-class-chain-struct-element.sisu:33:5
    |
-30 |     c?.s.k = 2
+33 |     c?.s.k = 2
    |     ^^^^
    |
    = help: unwrap `c` with `if let`, `let ... else` or `?? return`
 
 error[E0062]: `c?.s` may be `None`
-  --> E0062-class-chain-struct-element.sisu:31:5
+  --> E0062-class-chain-struct-element.sisu:34:5
    |
-31 |     c?.s.xs[0].n = 2
+34 |     c?.s.xs[0].n = 2
    |     ^^^^
    |
    = help: unwrap `c` with `if let`, `let ... else` or `?? return`
 
 error[E0062]: `c?.s` may be `None`
-  --> E0062-class-chain-struct-element.sisu:32:11
+  --> E0062-class-chain-struct-element.sisu:35:11
    |
-32 |     f(mut c?.s.k)
+35 |     f(mut c?.s.k)
    |           ^^^^
    |
    = help: unwrap `c` with `if let`, `let ... else` or `?? return`
 
-error[E0062]: this value may be `None`
-  --> E0062-class-chain-struct-element.sisu:33:5
+error[E0062]: `c?.s` may be `None`
+  --> E0062-class-chain-struct-element.sisu:36:5
    |
-33 | /     get(
-34 | |     )?.xs[0].n = 2
+36 |     c?.s.id = "x"
+   |     ^^^^
+   |
+   = help: unwrap `c` with `if let`, `let ... else` or `?? return`
+
+error[E0032]: expected `Id`, found `string`
+  --> E0062-class-chain-struct-element.sisu:36:15
+   |
+36 |     c?.s.id = "x"
+   |               ^^^
+
+error[E0062]: this value may be `None`
+  --> E0062-class-chain-struct-element.sisu:37:5
+   |
+37 | /     get(
+38 | |     )?.xs[0].n = 2
    | |_________^
 
 error[E0062]: `?.` cannot write a field of a struct value yet
-  --> E0062-class-chain-struct-element.sisu:36:6
+  --> E0062-class-chain-struct-element.sisu:40:6
    |
-36 |     w?.s.k = 2
+40 |     w?.s.k = 2
    |      ^^^
    |
    = help: replace the value: `w = Some(...)`
 
-sisu: 6 errors
-sisu: for more on a code, run `sisu explain <code>`: E0062
+sisu: 8 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032, E0062

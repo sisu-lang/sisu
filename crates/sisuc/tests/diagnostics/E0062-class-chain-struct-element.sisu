@@ -2,9 +2,12 @@ struct S {
     n: i64
 }
 
+type Id = i64
+
 struct H {
     k: i64
     xs: [S]
+    id: Id
 }
 
 class C {
@@ -25,13 +28,14 @@ fn f(mut k: i64) {
 }
 
 fn main() {
-    let c: C? = C(xs: [S(n: 1)], s: H(k: 1, xs: []))
+    let c: C? = C(xs: [S(n: 1)], s: H(k: 1, xs: [], id: 1))
     c?.xs[0].n = 2
     c?.s.k = 2
     c?.s.xs[0].n = 2
     f(mut c?.s.k)
+    c?.s.id = "x"
     get(
     )?.xs[0].n = 2
-    let mut w: W? = W(s: H(k: 1, xs: []))
+    let mut w: W? = W(s: H(k: 1, xs: [], id: 1))
     w?.s.k = 2
 }
