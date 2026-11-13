@@ -67,12 +67,13 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install --yes valgrind
       - id: nextest
         run: cargo nextest run --workspace --locked --profile ci --partition slice:${{ matrix.part }}/2
-      # The next four steps run when the test step ran, whatever its result; the filter check runs
+      # The next five steps run when the test step ran, whatever its result; the filter check runs
       # only when the tests passed. The test-name check runs only on a pull request. These two give
       # the same result in each part, so only part 1 runs them. Each part runs the other steps on
       # its own report. `always()` would also run them after a cancel and after a step before the
       # tests failed.
-      # Warns about tests over their time budget (CODING_STANDARDS.md, Tests). It never fails the job.
+      # Warns about tests over their time budget (CODING_STANDARDS.md, Tests). It never fails the
+      # job.
       - if: (success() || failure()) && steps.nextest.outcome != 'skipped'
         run: python3 scripts/slow_tests.py target/nextest/ci/junit.xml
       # On a pull request, fails for a test name that the pre-commit hook would reject.
@@ -96,13 +97,25 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
       # Fails for a filter leaf of .config/nextest.toml that matches no test. The tests already ran,
-      # so the build of the list is cached. A failed `cargo nextest list` fails the step, with its error.
+      # so the build of the list is cached. A failed `cargo nextest list` fails the step, with its
+      # error.
       - if: (success() || failure()) && steps.nextest.outcome == 'success' && matrix.part == 1
         run: |
           cargo nextest list --workspace --locked --message-format json > "$RUNNER_TEMP/list.json"
           python3 scripts/nextest_filters.py .config/nextest.toml "$RUNNER_TEMP/list.json"
+      # Keeps the report, so the time of each test on a runner can be read after the run.
+      - if: (success() || failure()) && steps.nextest.outcome != 'skipped'
+        # A failed upload, such as a full artifact quota, must not fail the required check.
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-test-part-${{ matrix.part }}
+          path: target/nextest/ci/junit.xml
+          retention-days: 14
+          if-no-files-found: warn
 
-  # The ruleset requires a check named `Test`. A part that fails, is cancelled or is skipped fails it.
+  # The ruleset requires a check named `Test`. A part that fails, is cancelled or is skipped fails
+  # it.
   test-result:
     name: Test
     needs: test
@@ -131,7 +144,8 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install --yes valgrind
       - id: nextest
         run: cargo nextest run --workspace --locked --profile memory
-      # Warns about tests over their time budget (CODING_STANDARDS.md, Tests). It never fails the job.
+      # Warns about tests over their time budget (CODING_STANDARDS.md, Tests). It never fails the
+      # job.
       - if: (success() || failure()) && steps.nextest.outcome != 'skipped'
         run: python3 scripts/slow_tests.py target/nextest/memory/junit.xml
       # Shows the test health report in the job summary. It never fails the job.

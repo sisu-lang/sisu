@@ -230,7 +230,8 @@ jobs:
           sisu run welcome.sisu > "$GITHUB_WORKSPACE/welcome.actual"
       - run: diff welcome.actual site/programs/run/welcome.out
 
-  # The `timeout-minutes` of the job is the time limit of the whole step, because no step follows it.
+  # The `timeout-minutes` of the job is the time limit of the whole step, because no step follows
+  # it.
   prune:
     needs: [publish, live-check]
     runs-on: ubuntu-26.04

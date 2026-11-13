@@ -94,9 +94,9 @@ jobs:
       # The fuzzer first runs each corpus input and each of the 128 seeds once, one at a time, and
       # -max_total_time does not stop that pass. It took 16 and 18 minutes in the runs of 2026-11-06
       # and 2026-11-07. New finds are mutants of the full-size seeds, so the pass can get longer as
-      # nights pass. So a run keeps 500 inputs at random and removes the others. cmin and the cache then see only those
-      # and the new finds, so each run starts with at most 500 corpus inputs and the 128 seeds. A
-      # removed input is lost; the fuzzer can find its coverage again.
+      # nights pass. So a run keeps 500 inputs at random and removes the others. cmin and the cache
+      # then see only those and the new finds, so each run starts with at most 500 corpus inputs and
+      # the 128 seeds. A removed input is lost; the fuzzer can find its coverage again.
       # CORPUS_PASS_MINUTES in scripts/fuzz_program_plan.py is the time of this pass.
       - name: Sample the corpus
         run: |
@@ -143,7 +143,8 @@ jobs:
           fi
           status=0
           timeout -k 10 900 scripts/fuzz.sh --target program --tmin "$input" || status=$?
-          # Each successful tmin step writes a new minimized-from-<hash> file; the newest is the last step's.
+          # Each successful tmin step writes a new minimized-from-<hash> file; the newest is the
+          # last step's.
           m=
           for f in fuzz/artifacts/program/minimized-from-*; do
             if [ -f "$f" ] && { [ -z "$m" ] || [ "$f" -nt "$m" ]; }; then

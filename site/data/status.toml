@@ -1,6 +1,10 @@
-# The status board and tables, one [[area]] per area in page order. See site/build.py (status_board, status_tables).
+# The status board and tables, one [[area]] per area in page order. See site/build.py (status_board,
+# status_tables).
 
-# source: docs/roadmap.md ("What works today", the sections on decided and proposed work and "Modules", "What can start now" (test blocks), "Gaps before production" (number types), "Concurrency"); docs/adr/0003, 0007, 0008, 0010, 0011, 0012, 0014, 0017, 0019-0021, 0023, 0024, 0029, 0035, 0042, 0043
+# source: docs/roadmap.md ("What works today", the sections on decided and proposed work and
+# "Modules", "What can start now" (test blocks), "Gaps before production" (number types),
+# "Concurrency"); docs/adr/0003, 0007, 0008, 0010, 0011, 0012, 0014, 0017, 0019-0021, 0023, 0024,
+# 0029, 0035, 0042, 0043
 [[area]]
 id = "language"
 name = "Language"
@@ -152,7 +156,8 @@ text = "Concurrency"
 state = "planned"
 notes = [["ADR 0010", "docs/adr/0010-tasks-share-no-objects.md"], ["Roadmap: concurrency", "docs/roadmap.md"]]
 
-# source: docs/roadmap.md ("What works today", the sections on decided and proposed work (Map, os.env, os.exit, io), "Open decisions" (substring views)); docs/adr/0009, 0014-0017, 0042
+# source: docs/roadmap.md ("What works today", the sections on decided and proposed work (Map,
+# os.env, os.exit, io), "Open decisions" (substring views)); docs/adr/0009, 0014-0017, 0042
 [[area]]
 id = "stdlib"
 name = "Standard library"
@@ -194,7 +199,10 @@ text = "Files, environment and exit codes"
 state = "planned"
 notes = [["Roadmap: proposed next steps", "docs/roadmap.md"], ["ADR 0009", "docs/adr/0009-runtime-owns-io.md"]]
 
-# source: docs/architecture.md; docs/roadmap.md ("Early tooling" (-O2, -O3, --linker, ARM64, macOS), "What panics", "Fuzzing", "mir", "Later and stretch goals" (DWARF, Windows, --target, C FFI), "The growing proof program"); docs/development.md "Fuzz the front end", "Fuzz generated programs"; docs/adr/0003, 0005
+# source: docs/architecture.md; docs/roadmap.md ("Early tooling" (-O2, -O3, --linker, ARM64, macOS),
+# "What panics", "Fuzzing", "mir", "Later and stretch goals" (DWARF, Windows, --target, C FFI), "The
+# growing proof program"); docs/development.md "Fuzz the front end", "Fuzz generated programs";
+# docs/adr/0003, 0005
 [[area]]
 id = "compiler"
 name = "Compiler"
@@ -277,7 +285,10 @@ text = "Parser in Sisu"
 state = "planned"
 notes = [["Roadmap: the growing proof program", "docs/roadmap.md#the-growing-proof-program"]]
 
-# source: docs/development.md ("Look inside the compiler", "Coverage and performance": CodSpeed runs on pull requests that touch the code); docs/benchmarks.md "Running them"; docs/roadmap.md ("Early tooling", "Gaps before production" (distributing sisu, packages), "Deliberately avoided" (no registry))
+# source: docs/development.md ("Look inside the compiler", "Coverage and performance": CodSpeed runs
+# on pull requests that touch the code); docs/benchmarks.md "Running them"; docs/roadmap.md ("Early
+# tooling", "Gaps before production" (distributing sisu, packages), "Deliberately avoided" (no
+# registry))
 [[area]]
 id = "toolchain"
 name = "Toolchain"
@@ -314,7 +325,10 @@ text = "Packages from a path or Git"
 state = "planned"
 notes = [["Roadmap: gaps before production", "docs/roadmap.md#gaps-before-production"], ["deliberately avoided", "docs/roadmap.md#deliberately-avoided"]]
 
-# source: docs/adr/0013; docs/diagnostics/README.md (the codes; `sisu explain` accepts each, checked with target/release/sisu); docs/roadmap.md ("Early tooling" (TextMate grammar, --leaks), "Later and stretch goals" (sisu fmt, sisu lsp, lints, parser error recovery, doc comments), "Gaps before production" (language reference, recovery inside a body))
+# source: docs/adr/0013; docs/diagnostics/README.md (the codes; `sisu explain` accepts each, checked
+# with target/release/sisu); docs/roadmap.md ("Early tooling" (TextMate grammar, --leaks), "Later
+# and stretch goals" (sisu fmt, sisu lsp, lints, parser error recovery, doc comments), "Gaps before
+# production" (language reference, recovery inside a body))
 [[area]]
 id = "dx"
 name = "Developer experience"

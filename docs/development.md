@@ -81,6 +81,9 @@ rest. Neither CI nor the hook fails on a slow test: wall-clock time depends on
 the machine and its load. A CI warning for a test you added or changed is a nit.
 The budget is for a CI runner, so a local time is only a hint. See one with
 `python3 scripts/slow_tests.py target/nextest/default/junit.xml --diff <base>`.
+CI keeps the report of each part of the `Test` job and of the `Coverage` run
+for 14 days. The artifacts are `junit-test-part-<part>` and `junit-coverage`.
+They give the time of each test on a runner.
 
 The pre-commit hook also runs `crates/sisuc/tests/architecture.rs` when a commit
 changes a file that the test reads. CI's lint job skips that hook, because its
