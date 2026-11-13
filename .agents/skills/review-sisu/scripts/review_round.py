@@ -27,7 +27,8 @@ RUN is the run directory.
 TARGET is BASE..HEAD for a diff, or the path of a spec or a plan with --kind spec|plan.
 STEM is the first part of the name of a report, such as sol or opus: the report of round 1 is
 sol.md and the report of round 2 is sol-2.md. A finding of a report starts with "### <n>.", and
-its ruling in rulings-<N>.md starts with "<STEM> <n>: <ruling>".
+its ruling in rulings-<N>.md starts with "<STEM> <n>: <ruling>". A report's path, such as
+RUN/sol-2.md, is accepted in place of its STEM.
 
 Each file name follows the round: round 1 writes brief.md and tree-1.txt, round 2 writes brief-2.md
 and tree-2.txt. RUN/focus.md (focus-N.md in a later round) goes in when it exists. A later round
@@ -103,6 +104,13 @@ def diff_ends(target: str) -> tuple[str, str] | None:
         base, head = target.split("..", 1)
         return base, head
     return None
+
+
+def stem_of(value: str) -> str:
+    """Return the STEM of `value`: a stem as it is, or the stem of a path such as RUN/sol-2.md."""
+    if not value.endswith(".md"):
+        return value
+    return re.sub(r"-\d+$", "", Path(value).stem)
 
 
 def numbered(stem: str, round_number: int) -> str:
@@ -336,16 +344,20 @@ def main() -> int:
     rulings_parser = commands.add_parser("rulings")
     record_parser = commands.add_parser("record")
     rulings_parser.add_argument("run", type=Path)
-    rulings_parser.add_argument("--report", action="append", required=True, metavar="STEM")
+    rulings_parser.add_argument(
+        "--report", action="append", required=True, metavar="STEM", type=stem_of
+    )
     for command in (prepare_parser, verify_parser, record_parser):
         command.add_argument("repo", type=Path)
         command.add_argument("run", type=Path)
     prepare_parser.add_argument("target")
     prepare_parser.add_argument("--old-main", action="store_true")
     prepare_parser.add_argument("--pr-body", type=Path, metavar="FILE")
-    verify_parser.add_argument("--report", action="append", required=True, metavar="STEM")
+    verify_parser.add_argument(
+        "--report", action="append", required=True, metavar="STEM", type=stem_of
+    )
     save_parser.add_argument("run", type=Path)
-    save_parser.add_argument("stem")
+    save_parser.add_argument("stem", type=stem_of)
     save_parser.add_argument("--agent", required=True, metavar="ID")
     save_parser.add_argument(
         "--transcripts", type=Path, default=Path.home() / ".claude" / "projects"

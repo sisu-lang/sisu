@@ -5,7 +5,10 @@
 # three ways with its rewritten copy, and judges the runs (ADR 0033).
 # Every libFuzzer flag lives here, so CI never repeats one.
 #   scripts/fuzz.sh [--target <target>] [seconds]   fuzz for <seconds>, 1800 by default
-#   scripts/fuzz.sh [--target <target>] --replay <input>   run one input
+#   scripts/fuzz.sh [--target <target>] --replay <input>   run one input.
+#   scripts/fuzz.sh [--target <target>] --against <commit> <input>   run one input here and on an
+#                                     export of <commit>, such as origin/main. It says where the
+#                                     input fails. It exits 1 only when it fails here alone.
 #   scripts/fuzz.sh [--target <target>] --tmin <input>   minimize one input into fuzz/artifacts/<target>/
 #   scripts/fuzz.sh [--target <target>] --cmin   minimize fuzz/corpus/<target> in place
 #   scripts/fuzz.sh [--target <target>] --coverage   line coverage per compiler stage of the corpus
@@ -32,7 +35,7 @@
 # It is a warning, and the exit status stays the same.
 set -euo pipefail
 
-usage="usage: scripts/fuzz.sh [--target front_end|program] [seconds] | --replay <input> | --tmin <input> | --cmin | --coverage | --target program --gaps"
+usage="usage: scripts/fuzz.sh [--target front_end|program] [seconds] | --replay <input> | --against <commit> <input> | --tmin <input> | --cmin | --coverage | --target program --gaps"
 target=front_end
 if [[ ${1:-} == --target ]]; then
     if (($# < 2)); then
@@ -70,6 +73,10 @@ fi
 # Resolve the input before the cd, so a path relative to the caller's directory works.
 case ${1:-} in
 --replay | --tmin) input=$(realpath "${2:?$1 needs an input}") ;;
+--against)
+    ref=${2:?--against needs a commit}
+    input=$(realpath "${3:?--against needs an input}")
+    ;;
 esac
 # The script's own checkout, not the caller's: run from another worktree, it still fuzzes this one.
 cd "$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
@@ -194,8 +201,48 @@ gaps() {
     exit "$status"
 }
 
+# Replays the input here and on an export of the commit $ref, and says which of the two fail. So
+# a crash that this checkout brought is told from one that $ref has too. The export stays in
+# target/against/<commit>, so a later replay on the same commit does not build it again.
+against() {
+    local sha dir dump here=0 there=0
+    sha=$(git rev-parse --verify "$ref^{commit}")
+    dir=$PWD/target/against/$sha
+    dump=$(dump_dir "$input")
+    if [[ ! -d $dir ]]; then
+        # Into a temporary name first, so a stopped export is never taken as a whole one.
+        rm -rf "$dir.part"
+        mkdir -p "$dir.part"
+        git archive "$sha" | tar -x -C "$dir.part"
+        mv "$dir.part" "$dir"
+    fi
+    # .cargo/config.toml finds LLVM at .llvm/23 relative to the checkout.
+    ln -sfn "$PWD/.llvm" "$dir/.llvm"
+    echo "scripts/fuzz.sh: replay at HEAD"
+    SISU_FUZZ_DUMP=$dump cargo fuzz run --sanitizer none "$target" "$input" -- "${limits[@]}" || here=$?
+    echo "scripts/fuzz.sh: replay at ${ref} (${sha})"
+    (
+        cd "$dir"
+        if [[ $target == program ]]; then
+            cargo build --release -p sisu-runtime-mimalloc
+            export SISU_RUNTIME=$PWD/target/release/libsisu_runtime_mimalloc.a
+        fi
+        SISU_FUZZ_DUMP=$dump.against cargo fuzz run --sanitizer none "$target" "$input" -- "${limits[@]}"
+    ) || there=$?
+    if ((here == 0)); then
+        echo "scripts/fuzz.sh: the input passes at HEAD"
+    elif ((there == 0)); then
+        echo "scripts/fuzz.sh: the input fails at HEAD only: this checkout brought the failure"
+        exit 1
+    else
+        echo "scripts/fuzz.sh: the input fails at HEAD and at ${ref}: compare the two panic messages above"
+    fi
+    exit 0
+}
+
 # These exec cargo, so the trap below would never run: they come before the seeds exist.
 case ${1:-} in
+--against) against ;;
 --replay) SISU_FUZZ_DUMP=$(dump_dir "$input") exec cargo fuzz run --sanitizer none "$target" "$input" -- "${limits[@]}" ;;
 --tmin)
     # A minimizing step sets the input's length itself, and libFuzzer asserts that -max_len did not.

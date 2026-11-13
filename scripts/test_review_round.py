@@ -302,6 +302,28 @@ class Rulings(unittest.TestCase):
             env=ENV,
         )
 
+    def test_rulings_should_take_the_path_of_a_report_as_its_stem(self) -> None:
+        (self.run_dir / "rulings-2.md").write_text("sol 1: Accept: x.\nsol 2: Reject: y.\n")
+        (self.run_dir / "sol-2.md").write_bytes((self.run_dir / "sol.md").read_bytes())
+        result = subprocess.run(
+            [
+                "python3",
+                SCRIPT,
+                "rulings",
+                self.run_dir,
+                "--round",
+                "2",
+                "--report",
+                str(self.run_dir / "sol-2.md"),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=ENV,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("sol: 2 findings: 1 Accept, 1 Reject", result.stdout)
+
     def test_rulings_should_count_each_ruling_of_each_reviewer(self) -> None:
         result = self.rulings(
             "sol 1: Accept: same as opus 1.\nsol 2: Defer to #12: later.\nopus 1: Accept: x.\n"

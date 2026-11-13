@@ -682,5 +682,72 @@ class GapsCheck(unittest.TestCase):
         self.assertNotIn("## Generator gaps", run.summary)
 
 
+# The fake cargo of --against: `cargo fuzz run` exits with $FAKE_HERE in the checkout and with
+# $FAKE_THERE in an export under target/against, and logs where it ran to $FAKE_SEEN.
+AGAINST_CARGO = """#!/usr/bin/env bash
+[[ $1 == fuzz && $2 == run ]] || exit 0
+echo "$PWD" >>"$FAKE_SEEN"
+if [[ $PWD == */target/against/* ]]; then exit "${FAKE_THERE:-0}"; fi
+exit "${FAKE_HERE:-0}"
+"""
+
+
+class FuzzAgainst(unittest.TestCase):
+    @override
+    def setUp(self) -> None:
+        self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.dir)
+        self.repo = self.dir / "repo"
+        (self.repo / "scripts").mkdir(parents=True)
+        shutil.copy(SCRIPT, self.repo / "scripts")
+        (self.repo / "marker.txt").write_text("base\n")
+        bin_dir = self.dir / "bin"
+        bin_dir.mkdir()
+        cargo = bin_dir / "cargo"
+        cargo.write_text(AGAINST_CARGO)
+        cargo.chmod(cargo.stat().st_mode | stat.S_IXUSR)
+        git = ["git", "-C", self.repo, "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run([*git, "init", "-q"], check=True, env=ENV)
+        subprocess.run([*git, "add", "."], check=True, env=ENV)
+        subprocess.run([*git, "commit", "-q", "-m", "base"], check=True, env=ENV)
+        self.input = self.dir / "crash-1"
+        self.input.write_text("fn")
+        self.seen = self.dir / "seen"
+        self.env = dict(ENV, PATH=f"{bin_dir}:{ENV['PATH']}", FAKE_SEEN=str(self.seen))
+
+    def against(self, here: int, there: int) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", "scripts/fuzz.sh", "--against", "HEAD", str(self.input)],
+            cwd=self.repo,
+            capture_output=True,
+            text=True,
+            env=dict(self.env, FAKE_HERE=str(here), FAKE_THERE=str(there)),
+            timeout=60,
+            check=False,
+        )
+
+    def test_a_failure_on_both_commits_should_pass_and_say_both_fail(self) -> None:
+        run = self.against(77, 77)
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertIn("fails at HEAD and at HEAD", run.stdout)
+
+    def test_a_failure_here_only_should_fail_and_say_the_checkout_brought_it(self) -> None:
+        run = self.against(77, 0)
+        self.assertEqual(run.returncode, 1, run.stdout + run.stderr)
+        self.assertIn("this checkout brought the failure", run.stdout)
+
+    def test_a_pass_here_should_say_so(self) -> None:
+        run = self.against(0, 77)
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertIn("the input passes at HEAD", run.stdout)
+
+    def test_the_export_should_hold_the_commit_and_run_the_second_replay(self) -> None:
+        self.against(77, 77)
+        here, there = self.seen.read_text().split()
+        self.assertEqual(Path(here), self.repo.resolve())
+        self.assertEqual((Path(there) / "marker.txt").read_text(), "base\n")
+        self.assertFalse(Path(f"{there}.part").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

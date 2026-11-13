@@ -586,6 +586,7 @@ $ cargo install --locked cargo-fuzz@0.13.2   # or make setup
 ```console
 $ make fuzz [SECS=<seconds>]         # fuzz for 1800 s by default
 $ scripts/fuzz.sh --replay <input>   # run one input
+$ scripts/fuzz.sh --against origin/main <input>   # run it here and on main
 $ scripts/fuzz.sh --tmin <input>     # minimize one failing input
 $ scripts/fuzz.sh --cmin             # shrink fuzz/corpus/front_end in place
 ```
@@ -599,6 +600,11 @@ named `crash-`, `timeout-` or `oom-` and its hash. The script exits 1 when
 this run left such a file, and otherwise with cargo-fuzz's status. Files
 from an earlier run do not count. `--tmin` writes a `minimized-from-` file
 to the same directory.
+
+`--against <commit>` replays one input in this checkout and in an export of
+`<commit>` under `target/against/`, and says which of the two fail. It exits
+1 only when the input fails here and not at `<commit>`, so the checkout
+brought the failure. The first run on a commit builds the export.
 
 Three limits of fork mode:
 
@@ -1710,7 +1716,7 @@ must accept any syntax those programs use.
 | `fuzz` | The fuzz targets, `front_end` and `program`, in their own Cargo workspace, run by `scripts/fuzz.sh`. |
 | `ruff.toml`, `pyrefly.toml` | The rules for each tracked Python file: Ruff for lint and format, Pyrefly for types. The Python hooks of `prek.toml` run them (see `CODING_STANDARDS.md`, Python). |
 | `Makefile` | The entry point for the commands; `make help` lists its targets. |
-| `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `codspeed-prep.sh`, `fuzz.sh`, `fuzz_program_plan.py`, which plans each run of the program fuzz workflow, `fuzz_seeds.py`, which writes the program fuzzer's 128 seeds, `fuzz_gaps.py`, which finds the generator gaps, `text_limits.py`, which checks the sentence and comment limits on changed text or on a whole file such as a pull request body, `watch_pr.py`, which waits for the next review with text, comment from someone other than you, or check result of a pull request, `diag_diff.py`, which compares the diagnostics of two `sisu` builds for a review, `golden_diff.py`, which checks that a re-bless only reworded expected files, `count_instructions.py`, which counts the instructions of one `sisu` command on a base commit and on the working tree, `scaling.py`, which finds the shapes of program for which a compiler stage is superlinear, `merge_pr.py`, which squash-merges a pull request once its checks pass (`--cleanup` removes the worktree of one merged in the UI), and the scripts prek hooks run, such as `check-expect-messages.sh` and `slow_tests.py`. |
+| `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `codspeed-prep.sh`, `fuzz.sh`, `fuzz_program_plan.py`, which plans each run of the program fuzz workflow, `fuzz_seeds.py`, which writes the program fuzzer's 128 seeds, `fuzz_gaps.py`, which finds the generator gaps, `text_limits.py`, which checks the sentence and comment limits on changed text or on a whole file such as a pull request body, `watch_pr.py`, which waits for the next review with text, comment from someone other than you, or check result of a pull request, `diag_diff.py`, which compares the diagnostics of two `sisu` builds for a review, `golden_diff.py`, which checks that a re-bless only reworded expected files, `count_instructions.py`, which counts the instructions of one `sisu` command on a base commit and on the working tree, `scaling.py`, which finds the shapes of program for which a compiler stage is superlinear, `open_pr.py`, which opens a pull request from a title and a body file, `merge_pr.py`, which squash-merges a pull request once its checks pass (`--cleanup` removes the worktree of one merged in the UI), and the scripts prek hooks run, such as `check-expect-messages.sh` and `slow_tests.py`. |
 | `scripts/nightly_build.py` | The steps of the nightly build workflow that use the GitHub API: `pick`, `publish`, `prune` and `report`. |
 | `scripts/nightly_check.py` | The checks of the nightly build: the binary's commit, its Linux and macOS libraries, and the tarball's names. |
 | `scripts/nightly_smoke.sh` | Runs each site program that has an `.out` file with both allocators, on a clean machine of the nightly build. |
