@@ -135,7 +135,7 @@ class CoverageSh(unittest.TestCase):
         calls = self.cargo_log.read_text(encoding="utf-8").splitlines()
         for call in calls:
             self.assertTrue(call.endswith(f"RUSTC=/fake/{pin}/bin/rustc"), call)
-        measured = [c for c in calls if c.split()[2] in {"nextest", "report"}]
+        measured = [c for c in calls if c.split()[1] in {"nextest", "report"}]
         self.assertEqual(len(measured), 3)  # one nextest run, two reports
         for call in measured:
             self.assertIn(" --branch", call)

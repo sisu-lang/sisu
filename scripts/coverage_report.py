@@ -1,6 +1,7 @@
-"""Report the uncovered regions that a change touches.
+"""Report the uncovered regions and missed branches that a change touches.
 
 The script turns a cargo-llvm-cov export, its LCOV file and a git diff into the report.
+The branch list appears only when the export holds branch data (a `--branch` run).
 
 Usage: python3 coverage_report.py COVERAGE.json LCOV.info CHANGES.diff
 Exits 0 for any valid report, however low the coverage, and 1 when an input is unusable.
@@ -123,6 +124,27 @@ def line_hits(lcov: str, root: str) -> dict[str, dict[int, int]]:
     return result
 
 
+def branch_misses(lcov: str, root: str) -> dict[str, dict[int, tuple[int, int]]]:
+    """Return (missed, total) branch outcomes per line with a missed one, per file under `root`.
+
+    A `BRDA:<line>,<block>,<branch>,<taken>` record is one outcome; it is missed when `taken`
+    is `-` (the branch was never reached) or 0.
+    """
+    result: dict[str, dict[int, tuple[int, int]]] = {}
+    seen: dict[int, tuple[int, int]] = {}
+    for text in lcov.splitlines():
+        if text.startswith("SF:"):
+            path = relative(text[3:], root)
+            seen = {}
+            if path:
+                result[path] = seen
+        elif text.startswith("BRDA:"):
+            number, _block, _branch, taken = text[5:].split(",")
+            missed, total = seen.get(int(number), (0, 0))
+            seen[int(number)] = (missed + (taken in ("-", "0")), total + 1)
+    return {path: {n: mt for n, mt in lines.items() if mt[0] > 0} for path, lines in result.items()}
+
+
 def report(
     export: dict[str, Any], lcov: str, diff: str, root: str, read_line: Callable[[str, int], str]
 ) -> str:
@@ -140,9 +162,12 @@ def report(
         )
     else:
         pct = "changed lines: none"
+    branches = totals.get("branches", {})
+    measured = branches.get("count", 0) > 0
+    branch_pct = f"branches {branches['percent']:.1f}%, " if measured else ""
     head = (
         f"Coverage: lines {totals['lines']['percent']:.1f}%, "
-        f"regions {totals['regions']['percent']:.1f}%, {pct}."
+        f"regions {totals['regions']['percent']:.1f}%, {branch_pct}{pct}."
     )
 
     touching: list[str] = []
@@ -163,13 +188,36 @@ def report(
             if not r.never_run and ASSERT.search(line) and hits.get(path, {}).get(r.start, 0) > 0:
                 hit = False
             (touching if hit else other).append(text)
-    return (
+    text = (
         f"{head}\n\nUncovered regions touching changed code:\n"
         + "\n".join(touching or ["(none)"])
         + "\n\nOther uncovered regions in changed files (advisory):\n"
         + "\n".join(other or ["(none)"])
-        + f"\n\n{head}"
     )
+    if measured:
+        text += "\n\nMissed branches on changed lines:\n" + "\n".join(
+            missed_branches(lcov, changed, root, read_line) or ["(none)"]
+        )
+    return f"{text}\n\n{head}"
+
+
+def missed_branches(
+    lcov: str, changed: dict[str, set[int]], root: str, read_line: Callable[[str, int], str]
+) -> list[str]:
+    """Return one line per changed line that has a missed branch outcome.
+
+    Lines on an assert or an invariant panic are left out, as in the region lists: their
+    branches are the message of a failure that no test should reach.
+    """
+    result = []
+    for path, lines in sorted(branch_misses(lcov, root).items()):
+        for number, (missed, total) in sorted(lines.items()):
+            line = read_line(path, number)
+            if number in changed.get(path, ()) and not (
+                ASSERT.search(line) or INVARIANT.search(line)
+            ):
+                result.append(f"{path}:{number}: missed {missed} of {total}: {line.strip()[:80]}")
+    return result
 
 
 def main(argv: list[str]) -> int:

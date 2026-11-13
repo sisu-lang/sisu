@@ -419,7 +419,7 @@ another number.
 ## Coverage and performance
 
 `make coverage [BASE=<base>]` runs the tests under `cargo-llvm-cov` and prints
-a `Coverage:` line, then two lists. "Uncovered regions touching changed code"
+a `Coverage:` line, then three lists. "Uncovered regions touching changed code"
 names regions that a changed line touches. "Other uncovered regions in changed
 files (advisory)" names the rest of those files, and any region on an
 `unreachable!` or `panic!` line, whose message states an invariant no test
@@ -429,7 +429,25 @@ which runs only when the assert fails. Test code is left out:
 `crates/*/tests/`, and unit-test modules in their own file, `src/**/tests.rs`
 or under `src/**/tests/`. The `Coverage:` line comes again as the last line,
 so the end of a long log gives the figures. The report never fails on low
-coverage. Commit new files, or
+coverage.
+
+The run also measures branches. The `--branch` flag of `cargo-llvm-cov` is
+unstable, so the run uses the nightly toolchain that
+`scripts/coverage-toolchain` names, with its `rustc` and the pinned `cargo`.
+Install it once with
+`rustup toolchain install $(cat scripts/coverage-toolchain) --profile minimal --component llvm-tools-preview`.
+When that toolchain is not installed, the run prints one warning line with this
+command and measures lines and regions only. A run with branches adds
+`branches X.X%` to the `Coverage:` line and a third list, "Missed branches on
+changed lines". It gives one line for each changed line that has a branch
+outcome which no test took: `path:line: missed N of M: <source>`. M is the
+number of outcomes of the line (two for each condition, such as an `if` or a
+side of `&&` or `||`). The list leaves out `assert!` lines and `unreachable!` or
+`panic!` lines, as the region lists do, and it says `(none)` when no line
+qualifies. A run with lines only has no third list. The nightly `Coverage` job
+of CI measures branches too and prints `Branch coverage (exact)`. It has a gate
+for lines only, not for branches. To change the nightly toolchain, edit
+`scripts/coverage-toolchain`: both the script and the job read it. Commit new files, or
 `git add -N` them, so the diff sees them. Before the report, the output has a
 line `coverage: measured (HEAD <sha>)`, with `with uncommitted changes` when the
 tracked tree differs from HEAD, or when HEAD changes during the run. The review

@@ -12,7 +12,8 @@ env:
   CARGO_TERM_COLOR: always
 
 # Third-party actions are pinned to commit SHAs; Dependabot bumps them.
-# The job fails when a step fails or when line coverage is below the limit.
+# The job fails when a step fails or when line coverage is below the limit. It measures
+# branches too, on the nightly toolchain that scripts/coverage-toolchain names. No branch gate.
 jobs:
   coverage:
     name: Coverage
@@ -27,6 +28,9 @@ jobs:
           persist-credentials: false
       - id: toolchain
         uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
+      # `--branch` is unstable, so coverage.sh measures branches with this nightly rustc.
+      - id: nightly
+        run: rustup toolchain install "$(cat scripts/coverage-toolchain)" --profile minimal --component llvm-tools-preview
       - id: tools
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
@@ -68,7 +72,7 @@ jobs:
             [ -n "$line" ] || line='Coverage unavailable: no report line.'
           else
             failed=coverage
-            for id in checkout toolchain tools llvm valgrind coverage; do
+            for id in checkout toolchain nightly tools llvm valgrind coverage; do
               if [ "$(jq -r --arg id "$id" '.[$id].outcome' <<<"$STEPS")" != success ]; then
                 failed=$id
                 break
@@ -91,11 +95,18 @@ jobs:
         run: |
           file=target/llvm-cov/coverage.json
           pct=$(jq -r '.data[0].totals.lines.percent // "no"' "$file" 2>/dev/null) || pct=no
-          # The summary step rounds to one digit; this line gives the exact figure.
+          # The summary step rounds to one digit; these lines give the exact figures.
           if [ "$pct" = no ]; then
             echo "Line coverage (exact): not available" >>"$GITHUB_STEP_SUMMARY"
           else
             echo "Line coverage (exact): ${pct}%" >>"$GITHUB_STEP_SUMMARY"
+          fi
+          # No gate on branches: the figure only shows how it moves.
+          bpct=$(jq -r 'if .data[0].totals.branches.count > 0 then .data[0].totals.branches.percent else "no" end' "$file" 2>/dev/null) || bpct=no
+          if [ "$bpct" = no ]; then
+            echo "Branch coverage (exact): not available" >>"$GITHUB_STEP_SUMMARY"
+          else
+            echo "Branch coverage (exact): ${bpct}%" >>"$GITHUB_STEP_SUMMARY"
           fi
           jq -e --argjson min "$MIN_LINE_COVERAGE" '.data[0].totals.lines.percent >= $min' "$file" >/dev/null 2>&1 || {
             if [ "$pct" = no ]; then
